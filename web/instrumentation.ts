@@ -14,6 +14,25 @@
 
 export async function register(): Promise<void> {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
+  try {
+    await registerNodeRuntime();
+  } catch (error) {
+    const { failApplicationStartup } = await import("@/lib/server-lifecycle");
+
+    failApplicationStartup(error);
+    throw error;
+  }
+}
+
+async function registerNodeRuntime(): Promise<void> {
+  const { assertSupportedNode } = await import("../runtime/node-version");
+
+  assertSupportedNode(process.versions.node);
+  const { projectionLimitsFromEnv } = await import(
+    "@/lib/execution-host/events/projection-limits"
+  );
+
+  projectionLimitsFromEnv();
 
   // Migration-drift guard (2026-06-25 Studio crash): a journal migration that
   // never reached this DB — silently skipped by db:migrate on an out-of-order
@@ -75,15 +94,28 @@ export async function register(): Promise<void> {
   for (const step of [
     "ensureLocalExecutionHost",
     "recoverExecutionCommands",
+    "startCanonicalProjectionWorker",
+    "sweepExpiredRuntimeObjects",
     "reportLegacyActiveRuns",
   ] as const) {
     try {
       const hosts = await import("@/lib/execution-host");
 
       if (step === "ensureLocalExecutionHost") {
-        await hosts.ensureLocalExecutionHost();
+        // B1/B4: registration and consumer startup are one idempotent
+        // activation. Lazy resolution and the system sweep invoke the same
+        // operation, closing the web-first rolling-upgrade window.
+        await hosts.ensureLocalExecutionDataPlane();
       } else if (step === "recoverExecutionCommands") {
         await hosts.recoverExecutionCommands({ graceMs: 0 });
+      } else if (step === "startCanonicalProjectionWorker") {
+        const { startCanonicalProjectionWorker } = await import(
+          "@/lib/execution-host/events/projection-runtime"
+        );
+
+        startCanonicalProjectionWorker();
+      } else if (step === "sweepExpiredRuntimeObjects") {
+        await hosts.sweepExpiredRuntimeObjects();
       } else {
         // ADR-166 D9: pre-Stage-A runs still executing without a placement
         // are reported here; the reconcile sweep classifies the Running ones.
@@ -96,6 +128,18 @@ export async function register(): Promise<void> {
         err instanceof Error ? err.message : String(err),
       );
     }
+  }
+
+  try {
+    const hosts = await import("@/lib/execution-host");
+
+    hosts.startRuntimeObjectRetentionTimer();
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(
+      "[instrumentation] runtime-object retention timer failed to start:",
+      err instanceof Error ? err.message : String(err),
+    );
   }
 
   try {
@@ -145,6 +189,48 @@ export async function register(): Promise<void> {
 
   startSchedulerTimer();
 
+  const { registerApplicationLifecycle } = await import(
+    "@/lib/server-lifecycle"
+  );
+  const { stopSchedulerTimer } = await import("@/lib/scheduler/timer");
+  const { stopRuntimeObjectRetentionTimer } = await import(
+    "@/lib/execution-host/runtime-object-retention"
+  );
+  const { stopRuntimeEventConsumers } = await import(
+    "@/lib/execution-host/events/consumer"
+  );
+  const { stopCanonicalProjectionWorker } = await import(
+    "@/lib/execution-host/events/projection-runtime"
+  );
+  const { beginDbShutdown, closeDb } = await import("@/lib/db/client");
+  let draining: Promise<PromiseSettledResult<void>[]> | undefined;
+
+  registerApplicationLifecycle({
+    quiesce: () => {
+      draining ??= Promise.allSettled([
+        stopSchedulerTimer(),
+        stopRuntimeObjectRetentionTimer(),
+        stopRuntimeEventConsumers(),
+        stopCanonicalProjectionWorker(),
+      ]);
+    },
+    drain: async () => {
+      const results = await draining;
+
+      await packageBootstrap;
+      const failures =
+        results?.filter((result) => result.status === "rejected") ?? [];
+
+      if (failures.length > 0)
+        throw new AggregateError(
+          failures.map((result) => result.reason),
+          "web workers could not drain",
+        );
+      beginDbShutdown();
+      await closeDb();
+    },
+  });
+
   // ADR-088: fire-and-forget package bootstrap — first ensure the env-driven
   // default package source row(s) exist (insert-only, idempotent, honors admin
   // disable; MAISTER_DEFAULT_PACKAGE_SOURCES), then refresh enabled sources
@@ -152,7 +238,7 @@ export async function register(): Promise<void> {
   // (default 24). Ensuring before the sweep lets freshly-seeded rows
   // (lastCheckedAt === null) be picked up on the same boot. Sequential,
   // per-source try/catch; failures degrade to the cached snapshot.
-  void import("@/lib/packages/catalog")
+  const packageBootstrap = import("@/lib/packages/catalog")
     .then(async ({ ensureDefaultPackageSources, refreshStaleSources }) => {
       await ensureDefaultPackageSources();
       await refreshStaleSources();

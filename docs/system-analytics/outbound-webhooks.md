@@ -14,8 +14,8 @@ attention routing, CI triggers, external board sync — none of which this domai
 implements; it only emits the events they subscribe to. Boundary: this domain
 does NOT own the inbound gate-unblock surface (`external_check`), the run state
 machine itself ([runs.md](runs.md)), the background clock it borrows
-([scheduler.md](scheduler.md)), or the low-level `run.events.jsonl` session
-stream (ADR-022) — webhook events are CURATED lifecycle facts, never raw
+([scheduler.md](scheduler.md)), or the low-level canonical execution-event
+stream (ADR-167) — webhook events are CURATED lifecycle facts, never raw
 `session/update` noise.
 
 ## Cut-over webhook behavior (ADR-131 — Implemented)
@@ -247,8 +247,8 @@ Each is additive later (one emit site + one row); none is a wire contract today.
   not a `Pending → Running` start, so no `run.started`. A recover that instead
   re-queues to `Pending` still emits `run.started { trigger: "queue_promote" }`
   on its eventual `Pending → Running` leg.
-- **All `session.*` stream events** — raw `run.events.jsonl` session noise
-  (ADR-022), explicitly NOT the curated taxonomy.
+- **All `session.*` stream events** — raw canonical execution-event noise
+  (ADR-167), explicitly NOT the curated taxonomy.
 
 ## Envelope v1
 

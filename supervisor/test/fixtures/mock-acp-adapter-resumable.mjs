@@ -24,6 +24,9 @@
 //                             Required for resume behaviour to work.
 //   MOCK_ACP_STOP_REASON      stopReason returned from prompt(). Default "end_turn".
 //   MOCK_ACP_REQUEST_PERMISSION  "1" → call requestPermission on first prompt.
+//   MOCK_ACP_HOLD_AFTER_PERMISSION  "1" → retain the selected turn until teardown.
+//   MOCK_ACP_FAIL_AFTER_PERMISSION  ACP request error after a selected permission.
+//   MOCK_ACP_COMPLETE_ON_CHECKPOINT "1" → finish the held turn during teardown.
 
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -34,6 +37,11 @@ import * as acp from "@agentclientprotocol/sdk";
 
 const STOP_REASON = process.env.MOCK_ACP_STOP_REASON ?? "end_turn";
 const REQUEST_PERMISSION = process.env.MOCK_ACP_REQUEST_PERMISSION === "1";
+const HOLD_AFTER_PERMISSION =
+  process.env.MOCK_ACP_HOLD_AFTER_PERMISSION === "1";
+const FAIL_AFTER_PERMISSION = process.env.MOCK_ACP_FAIL_AFTER_PERMISSION;
+const COMPLETE_ON_CHECKPOINT =
+  process.env.MOCK_ACP_COMPLETE_ON_CHECKPOINT === "1";
 const STATE_DIR = process.env.MOCK_ACP_STATE_DIR ?? null;
 
 function log(level, payload) {
@@ -91,6 +99,7 @@ function extractText(blocks) {
 // cleared after the replay round-trip completes (selected) or is re-issued
 // (cancelled-again).
 let pendingReplay = null;
+let finishHeldPrompt = null;
 
 class MockAgent {
   constructor(connection) {
@@ -130,9 +139,12 @@ class MockAgent {
   // recorded pending-permission for replay on the next prompt. MUST NOT replay
   // conversation history, per the ACP spec.
   async resumeSession(params) {
-    this.sessions.set(params.sessionId, { prompts: 0 });
+    this.sessions.set(params.sessionId, { prompts: 0, resumed: true });
     const journal = readJournal(params.sessionId);
 
+    // Integration tests can revoke this exact persisted resume handle.
+    if (journal?.rejectResume)
+      throw new acp.RequestError(-32001, "session resume handle not found");
     if (journal && journal.pendingPermission) {
       pendingReplay = journal.pendingPermission;
     }
@@ -172,6 +184,8 @@ class MockAgent {
   async prompt(params) {
     const text = extractText(params.prompt);
     const session = this.sessions.get(params.sessionId);
+    let completionText = readJournal(params.sessionId)?.completionText;
+    let permissionSelected = HOLD_AFTER_PERMISSION && session?.resumed === true;
 
     if (session) session.prompts += 1;
 
@@ -186,6 +200,7 @@ class MockAgent {
     if (pendingReplay) {
       const toolCall = pendingReplay.toolCall;
       const options = pendingReplay.options;
+      const nextPermission = pendingReplay.nextPermission;
       // Clear in-memory marker BEFORE the await so a second prompt
       // doesn't double-replay if the first cancels again.
       pendingReplay = null;
@@ -201,6 +216,8 @@ class MockAgent {
       });
       const outcome = result?.outcome;
 
+      permissionSelected = outcome?.outcome === "selected";
+
       if (outcome?.outcome === "selected") {
         writeJournal(params.sessionId, {
           acpSessionId: params.sessionId,
@@ -215,10 +232,40 @@ class MockAgent {
             },
           },
         });
+        // A test may chain a distinct permission in this exact session journal.
+        // It must remain unanswered until the new HITL receives its own choice.
+        if (nextPermission) {
+          writeJournal(params.sessionId, {
+            acpSessionId: params.sessionId,
+            pendingPermission: nextPermission,
+          });
+          const nextResult = await this.connection.requestPermission({
+            sessionId: params.sessionId,
+            ...nextPermission,
+          });
+
+          permissionSelected = nextResult?.outcome?.outcome === "selected";
+          if (permissionSelected)
+            writeJournal(params.sessionId, { acpSessionId: params.sessionId });
+          await this.connection.sessionUpdate({
+            sessionId: params.sessionId,
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              content: {
+                type: "text",
+                text: `second permission outcome: ${nextResult?.outcome?.outcome}`,
+              },
+            },
+          });
+        }
       } else {
         writeJournal(params.sessionId, {
           acpSessionId: params.sessionId,
-          pendingPermission: { toolCall, options },
+          pendingPermission: {
+            toolCall,
+            options,
+            ...(nextPermission ? { nextPermission } : {}),
+          },
         });
         await this.connection.sessionUpdate({
           sessionId: params.sessionId,
@@ -231,7 +278,11 @@ class MockAgent {
           },
         });
       }
-    } else if (REQUEST_PERMISSION) {
+    } else if (
+      REQUEST_PERMISSION &&
+      (!(HOLD_AFTER_PERMISSION && session?.resumed) ||
+        readJournal(params.sessionId)?.requestFreshPermission)
+    ) {
       const toolCall = {
         toolCallId: "tc-1",
         title: "Mock tool",
@@ -256,6 +307,8 @@ class MockAgent {
         options,
       });
       const outcome = result?.outcome;
+
+      permissionSelected = outcome?.outcome === "selected";
 
       if (outcome?.outcome === "selected") {
         writeJournal(params.sessionId, { acpSessionId: params.sessionId });
@@ -283,6 +336,28 @@ class MockAgent {
       }
     }
 
+    if (permissionSelected && HOLD_AFTER_PERMISSION && !session?.resumed) {
+      await new Promise((resolve) => {
+        finishHeldPrompt = resolve;
+      });
+      finishHeldPrompt = null;
+      completionText = readJournal(params.sessionId)?.completionText;
+    }
+
+    if (permissionSelected && typeof completionText === "string") {
+      await this.connection.sessionUpdate({
+        sessionId: params.sessionId,
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: completionText },
+        },
+      });
+    }
+
+    if (permissionSelected && FAIL_AFTER_PERMISSION) {
+      throw new acp.RequestError(-32001, FAIL_AFTER_PERMISSION);
+    }
+
     return { stopReason: STOP_REASON };
   }
 }
@@ -292,9 +367,16 @@ const stream = acp.ndJsonStream(
   Readable.toWeb(process.stdin),
 );
 
-new acp.AgentSideConnection((connToAgent) => new MockAgent(connToAgent), stream);
+new acp.AgentSideConnection(
+  (connToAgent) => new MockAgent(connToAgent),
+  stream,
+);
 
-process.on("SIGTERM", () => process.exit(0));
+process.on("SIGTERM", () => {
+  if (!COMPLETE_ON_CHECKPOINT || !finishHeldPrompt) process.exit(0);
+  finishHeldPrompt();
+  setTimeout(() => process.exit(0), 100);
+});
 process.on("SIGINT", () => process.exit(0));
 
 setInterval(() => {}, 1 << 30);

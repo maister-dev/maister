@@ -341,11 +341,6 @@ export async function materializeCapabilityProfile(
     settingsLocalPath,
     mcpServers: artifacts.mcpServers,
     materializedFiles,
-    adapterLaunch: {
-      env: {
-        MAISTER_CAPABILITY_PROFILE_PATH: profilePath,
-        MAISTER_CAPABILITY_INSTRUCTIONS_PATH: instructionsPath,
-      },
-    },
+    adapterLaunch: {},
   };
 }

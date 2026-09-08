@@ -39,8 +39,6 @@ export function directoryWorkspace(opts: {
     confineRoot: opts.confineRoot,
     runDir,
     logPath: join(runDir, `${stepId}.log`),
-    eventsLogPath: join(runDir, "run.events.jsonl"),
-    costPath: join(runDir, "cost.jsonl"),
     contextMounts: opts.contextMounts,
   };
 }

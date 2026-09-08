@@ -51,7 +51,10 @@ function loadFixture(): FixtureRecord {
 // in `Review`. A rework claim is only offered from `Review`, so the proof that
 // the loop closed is a fresh review HITL, which renders M11b's owner-agnostic
 // "Take over" affordance.
-async function reloadUntilFreshReview(page: Page, runId: string): Promise<void> {
+async function reloadUntilFreshReview(
+  page: Page,
+  runId: string,
+): Promise<void> {
   await expect(async () => {
     await page.goto(`/runs/${runId}`);
     await expect(

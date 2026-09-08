@@ -69,7 +69,7 @@ pnpm dev                # next dev
 pnpm dev:clean          # remove .next, then next dev
 pnpm clean              # remove .next
 pnpm build              # remove .next, then next build
-pnpm start              # next start (after build)
+pnpm start              # production server with worker drain (after build)
 pnpm lint               # eslint --fix
 pnpm typecheck          # tsc --noEmit
 pnpm test               # unit + integration (vitest)

@@ -60,6 +60,7 @@ import {
   createFakeExecutionHost,
   fakeExecutionHosts,
 } from "@/test-support/fake-execution-host";
+import { executionCommands } from "@/lib/db/schema";
 
 const schema = schemaModule as unknown as Record<string, any>;
 const { flowRevisions, flows, projects, runs, tasks, users, workspaces } =
@@ -203,6 +204,9 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.delete(workspaces);
+  // Command evidence protects its run from deletion (D6): discharge it
+  // explicitly instead of relying on the FK cascade.
+  await db.delete(executionCommands);
   await db.delete(runs);
   await db.delete(tasks);
   process.env.MAISTER_MAX_CONCURRENT_RUNS = "3";

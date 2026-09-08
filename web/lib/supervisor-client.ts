@@ -9,13 +9,22 @@ import type { ContextMountSnapshot } from "@/lib/context-mounts/types";
 import type { SessionEnforcementProfile } from "@/lib/flows/enforcement-profile";
 import type { HooksConfig } from "@/lib/flows/hooks-config";
 
+import { createHash } from "node:crypto";
+
 import pino from "pino";
 import {
   Agent,
+  Request as UndiciRequest,
   fetch as undiciFetch,
   type RequestInit as UndiciRequestInit,
+  type Response as UndiciResponse,
 } from "undici";
 import { z } from "zod";
+
+import {
+  parseCommandReceiptV2,
+  type CommandReceiptV2,
+} from "../../runtime/command-evidence";
 
 import { ADAPTER_IDS, type AdapterId } from "@/lib/acp-runners/adapter-support";
 import { contextMountsToWire } from "@/lib/context-mounts/types";
@@ -31,6 +40,10 @@ const DEFAULT_HEALTH_TIMEOUT_MS = 1_000;
 const longLivedDispatcher = new Agent({
   headersTimeout: 0,
   bodyTimeout: 0,
+});
+const binaryDispatcher = new Agent({
+  headersTimeout: 10_000,
+  bodyTimeout: 10_000,
 });
 
 export type SupervisorExecutorInput = {
@@ -87,12 +100,14 @@ export type CreateSessionInput = {
   stepId: string;
   nodeAttemptId?: string;
   // M42 (ADR-114): the logical Flow session this ACP process serves — stamped
-  // onto cost.jsonl + run.events.jsonl. Absent → supervisor defaults to "default".
+  // into canonical usage and session events. Absent → supervisor defaults to "default".
   sessionName?: string;
   executor: SupervisorExecutorInput;
   runner?: SupervisorRunnerInput;
   resumeSessionId?: string;
-  capabilityProfilePath?: string;
+  capabilityProfileObjectId?: string;
+  capabilityInstructionsObjectId?: string;
+  outputObjects?: SupervisorRuntimeOutputBinding[];
   adapterLaunch?: SupervisorAdapterLaunchInput;
   mcpServers?: AgentMcpServer[];
   // M34 (ADR-090 L1): session-scoped read-only — the supervisor auto-denies
@@ -135,6 +150,33 @@ export type PromptStopReason =
 export type PromptResult = {
   stopReason: PromptStopReason;
   meta?: unknown;
+  runtimeObjects?: RuntimeObjectWireMetadata[];
+};
+
+export type SupervisorRuntimeOutputBinding = {
+  objectId: string;
+  kind:
+    | "session_log"
+    | "raw_transcript"
+    | "cost_diagnostic"
+    | "checkpoint"
+    | "attachment"
+    | "capability_profile"
+    | "agent_memory_snapshot"
+    | "node_result"
+    | "evidence"
+    | "generated_artifact"
+    | "plan_review"
+    | "diagnostic";
+  logicalName: string;
+  mimeType: string;
+  generation: number;
+  retentionClass: "run" | "delivery" | "ephemeral";
+  expiresAt?: string | null;
+  envName:
+    | "MAISTER_OUTPUT_FILE"
+    | "MAISTER_PLAN_DOCUMENT_FILE"
+    | "MAISTER_PLAN_REVIEW_FILE";
 };
 
 // T5.4: structured ACP prompt content the web tier assembles (text + a
@@ -146,6 +188,16 @@ export type PromptContentBlock =
   | {
       type: "resource_link";
       uri: string;
+      name: string;
+      mimeType?: string;
+      description?: string;
+    }
+  // A manager-owned opaque object reference. The supervisor resolves it to a
+  // confined file URI only after checking the run and assignment fence; this
+  // variant is never forwarded to ACP verbatim.
+  | {
+      type: "runtime_object";
+      objectId: string;
       name: string;
       mimeType?: string;
       description?: string;
@@ -219,6 +271,26 @@ export const ExecutionHostIdentitySchema = z
   .strict();
 
 export type ExecutionHostIdentity = z.infer<typeof ExecutionHostIdentitySchema>;
+
+export const ExecutionHostDataPlaneCapabilitiesSchema = z
+  .object({
+    dataPlaneVersion: z.literal("execution-host-data-plane.v1"),
+    eventStream: z.boolean(),
+    asyncPrompt: z.boolean(),
+    runtimeObjects: z.boolean(),
+    limits: z
+      .object({
+        maxEventBytes: z.literal(1_048_576),
+        maxObjectBytes: z.literal(26_214_400),
+        maxReplayBatch: z.literal(500),
+      })
+      .strict(),
+  })
+  .strict();
+
+export type ExecutionHostDataPlaneCapabilities = z.infer<
+  typeof ExecutionHostDataPlaneCapabilitiesSchema
+>;
 
 const SupervisorHealthSchema = z
   .object({
@@ -874,6 +946,104 @@ export async function* streamSession(
   }
 }
 
+export async function* streamRuntimeEvents(
+  opts: { afterSequence?: string; signal?: AbortSignal } = {},
+): AsyncGenerator<Record<string, unknown>, void, void> {
+  const url = `${baseUrl()}/runtime-events`;
+  const headers: Record<string, string> = {};
+
+  if (opts.afterSequence !== undefined) {
+    headers["Last-Event-ID"] = opts.afterSequence;
+  }
+  logger.debug(
+    { url, afterSequence: opts.afterSequence },
+    "streamRuntimeEvents",
+  );
+
+  let res: Response;
+
+  try {
+    res = await fetchLongLivedSupervisor(
+      url,
+      { headers, signal: opts.signal },
+      "streamRuntimeEvents",
+    );
+  } catch (error) {
+    throw networkErrorToMaister(error, "streamRuntimeEvents");
+  }
+  if (!res.ok || !res.body) {
+    throw await asMaisterError(res, "ACP_PROTOCOL");
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let frameId: string | null = null;
+  let currentData = "";
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let newline = buffer.indexOf("\n");
+
+      while (newline !== -1) {
+        const rawLine = buffer.slice(0, newline);
+
+        buffer = buffer.slice(newline + 1);
+        const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
+
+        if (line === "") {
+          if (!currentData || frameId === null) {
+            throw new MaisterError(
+              "ACP_PROTOCOL",
+              "runtime event SSE frame is missing an id or data",
+            );
+          }
+          let data: unknown;
+
+          try {
+            data = JSON.parse(currentData);
+          } catch (error) {
+            throw new MaisterError(
+              "ACP_PROTOCOL",
+              `runtime event SSE payload is not JSON: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+            );
+          }
+          if (!data || typeof data !== "object") {
+            throw new MaisterError(
+              "ACP_PROTOCOL",
+              "runtime event SSE payload must be an object",
+            );
+          }
+          if ((data as { sequence?: unknown }).sequence !== frameId) {
+            throw new MaisterError(
+              "ACP_PROTOCOL",
+              "runtime event SSE id does not match envelope sequence",
+            );
+          }
+          yield data as Record<string, unknown>;
+          frameId = null;
+          currentData = "";
+        } else if (line.startsWith("id:")) {
+          frameId = line.slice(3).trim();
+        } else if (line.startsWith("data:")) {
+          const chunk = line.slice(5).trimStart();
+
+          currentData = currentData ? `${currentData}\n${chunk}` : chunk;
+        }
+        newline = buffer.indexOf("\n");
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 // ============================================================================
 // ADR-166 (Implemented) — enveloped wire. Importable ONLY from
 // `web/lib/execution-host/**` (the local-direct transport); domain code goes
@@ -892,6 +1062,8 @@ export type WireCommandFence = {
 };
 
 export type WireEnvelope<TPayload = unknown> = {
+  requestVersion?: 2;
+  target?: { hostSessionId: string };
   command: { id: string; kind: string; issuedAt: string };
   fence: WireCommandFence;
   payload: TPayload;
@@ -923,7 +1095,9 @@ export type WorkspaceRecordWire = {
   releasedAt: string | null;
 };
 
-export type CommandReceiptWire = {
+export type CommandReceiptWire = CommandReceiptV2 | LegacyCommandReceiptWire;
+
+export type LegacyCommandReceiptWire = {
   commandId: string;
   runId: string;
   kind: string;
@@ -933,16 +1107,22 @@ export type CommandReceiptWire = {
   body: Record<string, unknown>;
   receivedAt: string;
   completedAt: string | null;
+  eventId: string | null;
   // `accepted` + `inflight:false` = the host restarted mid-turn (turn_lost).
   inflight: boolean;
 };
 
 export type DeleteSessionOutcome = "terminated" | "gone";
 
+export type PromptAccepted = {
+  commandId: string;
+  state: "accepted";
+};
+
 export const COMMAND_REPLAYED_HEADER = "x-maister-command-replayed";
 
 type WireRequest = {
-  method: "GET" | "POST" | "DELETE";
+  method: "GET" | "POST" | "DELETE" | "PUT";
   path: string;
   body?: unknown;
   ctx: string;
@@ -979,47 +1159,55 @@ async function request<T>(spec: WireRequest): Promise<WireResponse<T>> {
   };
   let res: Response;
 
-  logger.debug({ url, method: spec.method, ctx: spec.ctx }, "wire-request");
-
   try {
-    res = spec.longLived
-      ? await fetchLongLivedSupervisor(url, init, spec.ctx)
-      : await fetch(url, { ...init, cache: "no-store" });
-  } catch (err) {
-    throw networkErrorToMaister(err, spec.ctx);
+    logger.debug({ url, method: spec.method, ctx: spec.ctx }, "wire-request");
+
+    try {
+      res = spec.longLived
+        ? await fetchLongLivedSupervisor(url, init, spec.ctx)
+        : await fetch(url, { ...init, cache: "no-store" });
+    } catch (err) {
+      throw networkErrorToMaister(err, spec.ctx);
+    }
+
+    const replayed = res.headers.get(COMMAND_REPLAYED_HEADER) === "true";
+
+    if (res.ok) {
+      if (res.status === 204) {
+        return { status: res.status, body: null as T, replayed };
+      }
+
+      try {
+        return { status: res.status, body: (await res.json()) as T, replayed };
+      } catch (error) {
+        // A truncated/timed-out success body may follow an already applied
+        // effect. Keep the original request unknown rather than guessing failure.
+        throw networkErrorToMaister(error, spec.ctx);
+      }
+    }
+
+    let errorBody: unknown = null;
+    let parsed = false;
+
+    try {
+      errorBody = await res.json();
+      parsed = true;
+    } catch {
+      /* non-JSON error body */
+    }
+
+    if (!parsed && res.status >= 500) {
+      throw unknownOutcomeError(
+        new Error(`supervisor ${res.status} (non-JSON body)`),
+        spec.ctx,
+        "non_json_5xx",
+      );
+    }
+
+    throw supervisorErrorToMaister(res.status, errorBody, spec.fallbackCode);
   } finally {
     if (timer) clearTimeout(timer);
   }
-
-  const replayed = res.headers.get(COMMAND_REPLAYED_HEADER) === "true";
-
-  if (res.ok) {
-    if (res.status === 204) {
-      return { status: res.status, body: null as T, replayed };
-    }
-
-    return { status: res.status, body: (await res.json()) as T, replayed };
-  }
-
-  let errorBody: unknown = null;
-  let parsed = false;
-
-  try {
-    errorBody = await res.json();
-    parsed = true;
-  } catch {
-    /* non-JSON error body */
-  }
-
-  if (!parsed && res.status >= 500) {
-    throw unknownOutcomeError(
-      new Error(`supervisor ${res.status} (non-JSON body)`),
-      spec.ctx,
-      "non_json_5xx",
-    );
-  }
-
-  throw supervisorErrorToMaister(res.status, errorBody, spec.fallbackCode);
 }
 
 function httpStatusOf(err: unknown): number | null {
@@ -1053,6 +1241,58 @@ function sessionPath(sessionId: string, suffix = ""): string {
 const ADMIN_READ_TIMEOUT_MS = 10_000;
 
 export type CommandWireOptions = { timeoutMs?: number | null };
+
+export type RuntimeObjectWireMetadata = {
+  objectId: string;
+  kind: string;
+  logicalName: string;
+  mimeType: string;
+  sizeBytes: number | null;
+  sha256: string | null;
+  generation: number;
+  retentionClass: string;
+  state: string;
+  createdAt: string;
+  sealedAt: string | null;
+  expiresAt: string | null;
+  deletedAt: string | null;
+};
+
+const RuntimeObjectWireMetadataSchema = z
+  .object({
+    objectId: z.string().uuid(),
+    kind: z.string().min(1),
+    logicalName: z.string().min(1),
+    mimeType: z.string().min(1),
+    sizeBytes: z.number().int().nonnegative().nullable(),
+    sha256: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .nullable(),
+    generation: z.number().int().min(1),
+    retentionClass: z.string().min(1),
+    state: z.string().min(1),
+    createdAt: z.string().datetime({ offset: true }),
+    sealedAt: z.string().datetime({ offset: true }).nullable(),
+    expiresAt: z.string().datetime({ offset: true }).nullable(),
+    deletedAt: z.string().datetime({ offset: true }).nullable(),
+  })
+  .strict();
+
+function parseRuntimeObjectWireMetadata(
+  value: unknown,
+): RuntimeObjectWireMetadata {
+  const parsed = RuntimeObjectWireMetadataSchema.safeParse(value);
+
+  if (!parsed.success) {
+    throw new MaisterError(
+      "ACP_PROTOCOL",
+      "supervisor returned invalid runtime object metadata",
+    );
+  }
+
+  return parsed.data;
+}
 
 export async function adoptWorkspace(
   envelope: WireEnvelope<AdoptWorkspaceWirePayload>,
@@ -1133,11 +1373,433 @@ export async function getCommandReceipt(
       timeoutMs: ADMIN_READ_TIMEOUT_MS,
     });
 
+    if ("receiptVersion" in res.body) return parseCommandReceiptV2(res.body);
+
     return { ...res.body, inflight: res.body.inflight === true };
   } catch (err) {
     if (httpStatusOf(err) === 404) return null;
     throw err;
   }
+}
+
+// Structural twins of the `contracts.ts` retirement pair. This module is the
+// lower layer (contracts imports from it, never the reverse), so the shapes are
+// declared here and flow outward by assignability.
+export type CommandRetirementRequest = {
+  expectedRequestSha256: string | null;
+  expectedPhase: "completed" | "rejected";
+  assignmentEpoch: number;
+};
+
+export type CommandRetirementAck = {
+  commandId: string;
+  requestSha256: string | null;
+  phase: "completed" | "rejected";
+  retiredAt: string;
+  compacted: boolean;
+};
+
+export async function retireCommand(
+  commandId: string,
+  proof: CommandRetirementRequest,
+): Promise<CommandRetirementAck> {
+  const res = await request<CommandRetirementAck>({
+    method: "POST",
+    path: `/commands/${encodeURIComponent(commandId)}/retirement`,
+    body: proof,
+    ctx: "retireCommand",
+    fallbackCode: "PRECONDITION",
+    timeoutMs: ADMIN_READ_TIMEOUT_MS,
+  });
+
+  return res.body;
+}
+
+export async function getRuntimeObject(
+  objectId: string,
+): Promise<RuntimeObjectWireMetadata | null> {
+  try {
+    const response = await request<unknown>({
+      method: "GET",
+      path: `/runtime-objects/${encodeURIComponent(objectId)}`,
+      ctx: "getRuntimeObject",
+      fallbackCode: "PRECONDITION",
+      timeoutMs: ADMIN_READ_TIMEOUT_MS,
+    });
+
+    return parseRuntimeObjectWireMetadata(response.body);
+  } catch (error) {
+    if (httpStatusOf(error) === 404) return null;
+    throw error;
+  }
+}
+
+export async function reserveRuntimeObject(
+  envelope: WireEnvelope,
+  opts: CommandWireOptions = {},
+): Promise<RuntimeObjectWireMetadata> {
+  const response = await request<unknown>({
+    method: "POST",
+    path: "/runtime-objects",
+    body: envelope,
+    ctx: "reserveRuntimeObject",
+    fallbackCode: "ACP_PROTOCOL",
+    timeoutMs: opts.timeoutMs,
+  });
+
+  return parseRuntimeObjectWireMetadata(response.body);
+}
+
+function invalidBinaryRequest(ctx: string): MaisterError {
+  logger.warn(
+    { ctx, transport: "not_sent", reason: "transport_request_invalid" },
+    "runtime-object-request-refused",
+  );
+
+  return new MaisterError("ACP_PROTOCOL", `${ctx}: invalid binary request`, {
+    details: { transport: "not_sent", reason: "transport_request_invalid" },
+  });
+}
+
+type BinaryReply = { response: UndiciResponse; finish: () => void };
+
+async function runtimeObjectBinaryResponse(input: {
+  path: string;
+  method: "GET" | "PUT";
+  headers?: Record<string, string>;
+  bytes?: Uint8Array;
+  timeoutMs?: number | null;
+  signal?: AbortSignal;
+  ctx: string;
+}): Promise<BinaryReply> {
+  if (
+    input.timeoutMs !== undefined &&
+    input.timeoutMs !== null &&
+    (!Number.isSafeInteger(input.timeoutMs) || input.timeoutMs <= 0)
+  ) {
+    throw invalidBinaryRequest(input.ctx);
+  }
+  const timeoutMs = input.timeoutMs ?? ADMIN_READ_TIMEOUT_MS;
+  const controller = new AbortController();
+  let request: UndiciRequest;
+
+  // Construction is synchronous and cannot have reached the peer. Do not
+  // classify malformed local headers/URLs as uncertain remote execution.
+  try {
+    request = new UndiciRequest(`${baseUrl()}${input.path}`, {
+      method: input.method,
+      headers: input.headers,
+      body: input.bytes,
+      cache: "no-store",
+      signal: combineSignals(input.signal, controller.signal),
+    });
+  } catch {
+    throw invalidBinaryRequest(input.ctx);
+  }
+  const timer = controller
+    ? setTimeout(() => controller.abort(), timeoutMs)
+    : null;
+  const finish = () => {
+    if (timer) clearTimeout(timer);
+  };
+
+  try {
+    const response = await undiciFetch(request, {
+      dispatcher: binaryDispatcher,
+    });
+
+    logger.debug(
+      {
+        ctx: input.ctx,
+        method: input.method,
+        bytes: input.bytes?.byteLength,
+        status: response.status,
+      },
+      "runtime-object-response",
+    );
+
+    // The deadline covers body consumption, not only response headers.
+    return { response, finish };
+  } catch (error) {
+    finish();
+    throw networkErrorToMaister(error, input.ctx);
+  }
+}
+
+async function throwRuntimeObjectWireError(
+  response: UndiciResponse,
+  ctx: string,
+): Promise<never> {
+  let body: unknown = null;
+
+  try {
+    body = await response.json();
+  } catch {
+    // A non-JSON 5xx cannot prove whether host state advanced.
+    if (response.status >= 500) {
+      throw unknownOutcomeError(
+        new Error(`supervisor ${response.status} (non-JSON body)`),
+        ctx,
+        "non_json_5xx",
+      );
+    }
+  }
+  throw supervisorErrorToMaister(response.status, body, "ACP_PROTOCOL");
+}
+
+export async function uploadRuntimeObject(input: {
+  objectId: string;
+  envelope: WireEnvelope<{
+    generation: number;
+    sizeBytes: number;
+    sha256: string;
+  }>;
+  bytes: Uint8Array;
+  timeoutMs?: number | null;
+}): Promise<RuntimeObjectWireMetadata> {
+  const uploadSchema = z.object({
+    objectId: z.string().uuid(),
+    commandId: z.string().uuid(),
+    assignmentId: z.string().uuid(),
+    assignmentEpoch: z.number().int().positive(),
+    generation: z.number().int().positive(),
+    sizeBytes: z.number().int().min(0).max(26_214_400),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  });
+  const parsed = uploadSchema.safeParse({
+    objectId: input.objectId,
+    commandId: input.envelope.command.id,
+    assignmentId: input.envelope.fence.assignmentId,
+    assignmentEpoch: input.envelope.fence.assignmentEpoch,
+    ...input.envelope.payload,
+  });
+
+  if (
+    !parsed.success ||
+    input.envelope.payload.sizeBytes !== input.bytes.byteLength ||
+    createHash("sha256").update(input.bytes).digest("hex") !==
+      input.envelope.payload.sha256
+  ) {
+    throw invalidBinaryRequest("uploadRuntimeObject");
+  }
+  const digest = `sha-256=:${Buffer.from(input.envelope.payload.sha256, "hex").toString("base64")}:`;
+  const { response, finish } = await runtimeObjectBinaryResponse({
+    path: `/runtime-objects/${encodeURIComponent(input.objectId)}/content`,
+    method: "PUT",
+    headers: {
+      "content-type": "application/octet-stream",
+      "content-length": String(input.bytes.byteLength),
+      "content-digest": digest,
+      "x-maister-command-id": input.envelope.command.id,
+      "x-maister-command-issued-at": input.envelope.command.issuedAt,
+      "x-maister-assignment-id": input.envelope.fence.assignmentId,
+      "x-maister-assignment-epoch": String(
+        input.envelope.fence.assignmentEpoch,
+      ),
+      "x-maister-object-generation": String(input.envelope.payload.generation),
+      "x-maister-sha256": input.envelope.payload.sha256,
+    },
+    bytes: input.bytes,
+    timeoutMs: input.timeoutMs,
+    ctx: "uploadRuntimeObject",
+  });
+
+  try {
+    if (!response.ok)
+      return await throwRuntimeObjectWireError(response, "uploadRuntimeObject");
+
+    return parseRuntimeObjectWireMetadata(await response.json());
+  } catch (error) {
+    if (error instanceof MaisterError) throw error;
+    throw networkErrorToMaister(error, "uploadRuntimeObject");
+  } finally {
+    finish();
+  }
+}
+
+export async function getRuntimeObjectContent(
+  objectId: string,
+  opts: { range?: { start: number; end?: number }; signal?: AbortSignal } = {},
+): Promise<{
+  bytes: Uint8Array;
+  contentRange: string | null;
+  contentDigest: string | null;
+}> {
+  const opened = await openRuntimeObjectContent(objectId, opts);
+
+  return {
+    bytes: new Uint8Array(await new Response(opened.body).arrayBuffer()),
+    contentRange: opened.contentRange,
+    contentDigest: opened.contentDigest,
+  };
+}
+
+export async function openRuntimeObjectContent(
+  objectId: string,
+  opts: { range?: { start: number; end?: number }; signal?: AbortSignal } = {},
+): Promise<{
+  body: ReadableStream<Uint8Array>;
+  contentLength: number | null;
+  contentRange: string | null;
+  contentDigest: string | null;
+}> {
+  const range = opts.range
+    ? `bytes=${opts.range.start}-${opts.range.end ?? ""}`
+    : undefined;
+  const { response, finish } = await runtimeObjectBinaryResponse({
+    path: `/runtime-objects/${encodeURIComponent(objectId)}/content`,
+    method: "GET",
+    headers: range ? { range } : undefined,
+    timeoutMs: ADMIN_READ_TIMEOUT_MS,
+    ctx: "getRuntimeObjectContent",
+    signal: opts.signal,
+  });
+
+  if (!response.ok) {
+    try {
+      return await throwRuntimeObjectWireError(
+        response,
+        "getRuntimeObjectContent",
+      );
+    } finally {
+      finish();
+    }
+  }
+  if (!response.body) {
+    finish();
+    throw new MaisterError(
+      "ACP_PROTOCOL",
+      "runtime object content response is missing its body stream",
+      { details: { reason: "runtime_object_missing" } },
+    );
+  }
+  const contentLength = response.headers.get("content-length");
+  const parsedContentLength =
+    contentLength === null ? null : Number(contentLength);
+
+  if (
+    parsedContentLength !== null &&
+    (!Number.isSafeInteger(parsedContentLength) || parsedContentLength < 0)
+  ) {
+    await response.body.cancel();
+    finish();
+    throw new MaisterError(
+      "ACP_PROTOCOL",
+      "runtime object content response has an invalid content length",
+      { details: { reason: "runtime_object_integrity_mismatch" } },
+    );
+  }
+
+  const reader = response.body.getReader();
+  const body = new ReadableStream<Uint8Array>({
+    async pull(stream) {
+      try {
+        const chunk = await reader.read();
+
+        if (chunk.done) {
+          finish();
+          reader.releaseLock();
+          stream.close();
+        } else if (chunk.value instanceof Uint8Array) {
+          stream.enqueue(chunk.value);
+        } else {
+          throw new MaisterError(
+            "ACP_PROTOCOL",
+            "runtime object body is not binary",
+          );
+        }
+      } catch (error) {
+        finish();
+        stream.error(
+          error instanceof MaisterError
+            ? error
+            : networkErrorToMaister(error, "getRuntimeObjectContent"),
+        );
+      }
+    },
+    async cancel(reason: unknown) {
+      try {
+        await reader.cancel(reason);
+      } finally {
+        finish();
+        reader.releaseLock();
+      }
+    },
+  });
+
+  return {
+    body,
+    contentLength: parsedContentLength,
+    contentRange: response.headers.get("content-range"),
+    contentDigest: response.headers.get("content-digest"),
+  };
+}
+
+export async function deleteRuntimeObject(
+  objectId: string,
+  envelope: WireEnvelope<{ generation: number }>,
+  opts: CommandWireOptions = {},
+): Promise<void> {
+  await request<null>({
+    method: "DELETE",
+    path: `/runtime-objects/${encodeURIComponent(objectId)}`,
+    body: envelope,
+    ctx: "deleteRuntimeObject",
+    fallbackCode: "ACP_PROTOCOL",
+    timeoutMs: opts.timeoutMs,
+  });
+}
+
+export async function getExecutionHostCapabilities(): Promise<ExecutionHostDataPlaneCapabilities | null> {
+  try {
+    const res = await request<unknown>({
+      method: "GET",
+      path: "/capabilities",
+      ctx: "getExecutionHostCapabilities",
+      fallbackCode: "ACP_PROTOCOL",
+      timeoutMs: ADMIN_READ_TIMEOUT_MS,
+    });
+
+    return ExecutionHostDataPlaneCapabilitiesSchema.parse(res.body);
+  } catch (err) {
+    if (httpStatusOf(err) === 404) return null;
+    throw err;
+  }
+}
+
+export type RuntimeEventAckWire = {
+  streamId: string;
+  acknowledgedThrough: string;
+};
+
+export async function acknowledgeRuntimeEvents(input: {
+  streamId: string;
+  throughSequence: string;
+}): Promise<RuntimeEventAckWire> {
+  const res = await request<unknown>({
+    method: "POST",
+    path: "/runtime-events/ack",
+    body: input,
+    ctx: "acknowledgeRuntimeEvents",
+    fallbackCode: "ACP_PROTOCOL",
+    timeoutMs: ADMIN_READ_TIMEOUT_MS,
+  });
+  const parsed = z
+    .object({
+      streamId: z.string().uuid(),
+      acknowledgedThrough: z.string().regex(/^(0|[1-9][0-9]{0,18})$/),
+    })
+    .strict()
+    .safeParse(res.body);
+
+  if (!parsed.success) {
+    throw new MaisterError(
+      "ACP_PROTOCOL",
+      "supervisor returned a malformed runtime event acknowledgement",
+    );
+  }
+
+  return parsed.data;
 }
 
 export async function createSessionEnveloped(
@@ -1156,23 +1818,39 @@ export async function createSessionEnveloped(
   return res.body;
 }
 
-export async function sendPromptEnveloped(
+export async function startPromptEnveloped(
   sessionId: string,
   envelope: WireEnvelope<SendPromptInput>,
-  opts: CommandWireOptions & { signal?: AbortSignal } = {},
-): Promise<PromptResult> {
-  const res = await request<PromptResult>({
+  opts: CommandWireOptions = {},
+): Promise<PromptAccepted> {
+  const response = await request<PromptAccepted>({
     method: "POST",
-    path: sessionPath(sessionId, "/prompt"),
+    path: sessionPath(sessionId, "/prompts"),
     body: envelope,
-    ctx: "sendPrompt",
+    ctx: "startPrompt",
     fallbackCode: "ACP_PROTOCOL",
-    timeoutMs: opts.timeoutMs ?? null,
-    longLived: true,
-    signal: opts.signal,
+    timeoutMs: opts.timeoutMs ?? 10_000,
   });
+  const body = response.body;
 
-  return res.body;
+  if (
+    response.status !== 202 ||
+    body?.commandId !== envelope.command.id ||
+    body?.state !== "accepted"
+  ) {
+    throw new MaisterError(
+      "ACP_PROTOCOL",
+      "supervisor returned an invalid asynchronous prompt acceptance",
+      {
+        details: {
+          reason: "prompt_admission_mismatch",
+          commandId: envelope.command.id,
+        },
+      },
+    );
+  }
+
+  return body;
 }
 
 // Input keeps its status-specific rules: 410 (and the pre-M7 404) is a

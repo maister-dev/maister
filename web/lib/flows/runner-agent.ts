@@ -2,17 +2,61 @@ import "server-only";
 
 import type { CapabilityAgent } from "@/lib/config.schema";
 import type { ScratchAdapterLaunch } from "@/lib/db/schema";
+import type { ExecutionCommand } from "@/lib/db/schema";
+import type { Db } from "@/lib/execution-host/db";
 import type { AgentMcpServer } from "@/lib/capabilities/agent-map";
 import type { SessionEnforcementProfile } from "./enforcement-profile";
 import type { HooksConfig } from "./hooks-config";
 import type { FlowContext, StepResult } from "./types";
+import type { CreateSessionPayload } from "@/lib/execution-host/contracts";
 
 import { randomUUID } from "node:crypto";
 
 import { eq, and, isNull, isNotNull, sql } from "drizzle-orm";
 import pino from "pino";
 
+import { PERMISSION_RESUME_PROMPT } from "./graph/permission-resume";
 import { renderStrict } from "./templating";
+import {
+  admitNodePrompt,
+  nodePromptOperationKey,
+  type NodePromptOwner,
+} from "./graph/node-prompt-owner";
+import {
+  admitGatePrompt,
+  flowPromptOwners,
+  FlowPromptContinuationPending,
+  gatePromptOperationKey,
+  waitForGateApplication,
+  waitForPromptIncarnation,
+  type GatePromptOwner,
+} from "./graph/prompt-owner";
+import {
+  admitConsensusPrompt,
+  type ConsensusPromptOwner,
+} from "./graph/consensus/prompt-owner";
+function isConsensusOwner(
+  owner: GatePromptOwner | NodePromptOwner | ConsensusPromptOwner,
+): owner is ConsensusPromptOwner {
+  return (
+    owner.variant === "consensus_verifier" ||
+    owner.variant === "consensus_synthesis"
+  );
+}
+import {
+  assertFlowDriverClaim,
+  assertFlowDriverCommit,
+  FlowDriverClaimLost,
+  isFlowDriverClaimLost,
+  type FlowDriverClaim,
+} from "./graph/driver-claim";
+import { closeAppliedFlowPromptSession } from "./graph/prompt-session-cleanup";
+import {
+  handleFlowPermission,
+  hasPendingFlowPermission,
+  replayAdmittedFlowPermissionInputs,
+  type FlowPermissionOwner,
+} from "./graph/prompt-permission";
 
 import { normalizeCapabilityTokens } from "@/lib/capabilities/token-normalizer";
 import { appendCapped } from "@/lib/flows/capped-text";
@@ -22,12 +66,19 @@ import {
   systemCloseActiveAssignmentsForRun,
 } from "@/lib/assignments/service";
 import { getDb } from "@/lib/db/client";
-import { hitlRequests, nodeAttempts, runs } from "@/lib/db/schema";
+import {
+  executionAssignments,
+  executionCommands,
+  hitlRequests,
+  nodeAttempts,
+  runs,
+} from "@/lib/db/schema";
 import { nextKeepaliveAt } from "@/lib/runs/keepalive-config";
 import { markCheckpointedFromExit } from "@/lib/runs/state-transitions";
 import {
   createExecutionHosts,
   isFencedError,
+  publishCapabilityBundle,
   type BoundClient,
   type CreateSessionResult,
   type ExecutionHosts,
@@ -35,6 +86,7 @@ import {
   type HostSessionId,
   type PlacementReason,
   type PromptResult,
+  type RuntimeObjectOutputBinding,
   type SupervisorEvent,
   type SupervisorExecutorInput,
   type SupervisorRunnerInput,
@@ -42,6 +94,10 @@ import {
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { escalateHookTrip } from "@/lib/runs/hook-trip";
 import { haltRuleFromEvent } from "@/lib/runs/hook-trip-rule";
+import { staleSessionBinding } from "@/lib/execution-host/session-binding";
+import { PromptOwnerInvariantError } from "@/lib/execution-host/prompt-owners";
+import { isMaisterError } from "@/lib/errors";
+import { SessionCreatePending } from "@/lib/execution-host/owned-session-create";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 
 const log = pino({
@@ -71,6 +127,11 @@ export type RunAgentStepCtx = {
   runId: string;
   stepId: string;
   nodeAttemptId?: string;
+  // S2.12: required. A node dispatch that cannot name its owner has no
+  // prompt to send.
+  promptOwner: GatePromptOwner | NodePromptOwner | ConsensusPromptOwner;
+  flowDriverClaim?: FlowDriverClaim;
+  signal?: AbortSignal;
   worktreePath: string;
   // ADR-166: the caller's once-per-driver-generation binding, resolved lazily
   // at the first agent dispatch (so a mocked step never binds and a failed
@@ -95,6 +156,8 @@ export type RunAgentStepCtx = {
   sessionName?: string;
   context: FlowContext;
   capabilityProfilePath?: string;
+  capabilityInstructionsPath?: string;
+  outputObjects?: RuntimeObjectOutputBinding[];
   adapterLaunch?: ScratchAdapterLaunch;
   mcpServers?: AgentMcpServer[];
   profileDigest?: string;
@@ -131,6 +194,19 @@ export async function bindExecution(
   opts: { assignmentId?: string | null; reason?: PlacementReason } = {},
 ): Promise<AgentExecution> {
   return hosts.executionFor(runId, opts);
+}
+
+async function assignmentIsCurrent(
+  db: DbClientLike,
+  execution: AgentExecution,
+): Promise<boolean> {
+  const rows = await db
+    .select({ state: executionAssignments.state })
+    .from(executionAssignments)
+    .where(eq(executionAssignments.id, execution.client.assignment.id))
+    .limit(1);
+
+  return rows[0]?.state === "active";
 }
 
 type PermissionDeliverer = (
@@ -180,6 +256,7 @@ type PermissionContext = {
   supervisorSessionId: string;
   cancelPermission: PermissionCanceller;
   deliverPermission: PermissionDeliverer;
+  ownedPrompt?: { owner: FlowPermissionOwner; client: BoundClient };
 };
 
 // M8 T11 / D9: look for a prior hitl_requests row where the operator
@@ -301,6 +378,19 @@ async function handlePermissionRequest(
   ev: Extract<SupervisorEvent, { type: "session.permission_request" }>,
   pctx: PermissionContext,
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
+  if (pctx.ownedPrompt) {
+    await handleFlowPermission({
+      db: pctx.db,
+      client: pctx.ownedPrompt.client,
+      owner: pctx.ownedPrompt.owner,
+      hostSessionId: pctx.supervisorSessionId,
+      stepId: pctx.stepId,
+      event: ev,
+      prompt: synthesizePermissionPrompt(ev.toolCall),
+    });
+
+    return { ok: true };
+  }
   const auto = await tryAutoDeliverStoredIntent(ev, pctx);
 
   if (auto.delivered) {
@@ -569,6 +659,7 @@ async function transitionBackToRunning(
 
 type EventConsumer = {
   abort: AbortController;
+  failureSignal: AbortSignal;
   done: Promise<void>;
   snapshot: () => string;
   reset: () => void;
@@ -612,6 +703,7 @@ function startEventConsumer(
   permissionCtx?: PermissionContext,
 ): EventConsumer {
   const abort = new AbortController();
+  const failure = new AbortController();
   let buf = "";
   let pendingPermissionRequestId: string | null = null;
   let persistFailure: { reason: string } | null = null;
@@ -686,15 +778,37 @@ function startEventConsumer(
         if (ev.type === "session.permission_request" && permissionCtx) {
           pendingPermissionRequestId = ev.requestId;
           pendingWork.push(
-            handlePermissionRequest(ev, permissionCtx).then((outcome) => {
-              if (!outcome.ok && !persistFailure) {
-                persistFailure = { reason: outcome.reason };
-              }
-            }),
+            handlePermissionRequest(ev, permissionCtx).then(
+              (outcome) => {
+                if (!outcome.ok && !persistFailure) {
+                  persistFailure = { reason: outcome.reason };
+                }
+              },
+              (error: unknown) => {
+                persistFailure = {
+                  reason: isMaisterError(error)
+                    ? error.code
+                    : "permission_handler_failed",
+                };
+                log.error(
+                  {
+                    runId: permissionCtx.runId,
+                    requestId: ev.requestId,
+                    reason: persistFailure.reason,
+                  },
+                  "owned-permission-handler-failed",
+                );
+                failure.abort(error);
+              },
+            ),
           );
         }
         if (ev.type === "session.update") {
-          if (pendingPermissionRequestId && permissionCtx) {
+          if (
+            pendingPermissionRequestId &&
+            permissionCtx &&
+            !permissionCtx.ownedPrompt
+          ) {
             const requestId = pendingPermissionRequestId;
 
             pendingWork.push(
@@ -753,6 +867,7 @@ function startEventConsumer(
 
   return {
     abort,
+    failureSignal: failure.signal,
     done,
     snapshot: () => buf,
     reset: () => {
@@ -789,11 +904,269 @@ const RESUME_READONLY_LIFT =
   "Note: any earlier read-only review-chat instructions no longer apply — " +
   "this is a rework turn and workspace edits are expected.\n\n";
 
+async function findOwnedPrompt(
+  db: Db,
+  runId: string,
+  key: string,
+): Promise<ExecutionCommand | null> {
+  const [command] = await db
+    .select()
+    .from(executionCommands)
+    .where(
+      and(
+        eq(executionCommands.runId, runId),
+        eq(executionCommands.kind, "session.prompt"),
+        eq(executionCommands.logicalOperationKey, key),
+      ),
+    )
+    .limit(1);
+
+  return command ?? null;
+}
+
+async function waitForNodeApplication(
+  db: Db,
+  client: BoundClient,
+  commandId: string,
+  owner: NodePromptOwner,
+  signal?: AbortSignal,
+): Promise<StepResult> {
+  let waitError: unknown;
+
+  try {
+    try {
+      await client.waitForPrompt(
+        { commandId },
+        { owners: flowPromptOwners, signal },
+      );
+    } catch (error) {
+      waitError = error;
+    }
+    const [row] = await db
+      .select({ attempt: nodeAttempts, run: runs, command: executionCommands })
+      .from(nodeAttempts)
+      .innerJoin(runs, eq(runs.id, nodeAttempts.runId))
+      .innerJoin(executionCommands, eq(executionCommands.id, commandId))
+      .where(eq(nodeAttempts.id, owner.nodeAttemptId));
+    const completion = row?.attempt.actionCompletion;
+
+    if (
+      !row ||
+      !completion ||
+      completion.commandId !== commandId ||
+      completion.promptOrdinal !== owner.promptOrdinal ||
+      row.command.applicationState !== "applied" ||
+      row.command.runId !== row.run.id ||
+      row.command.executionAssignmentId !== client.assignment.id ||
+      row.run.status !== "Running" ||
+      row.run.currentStepId !== row.attempt.nodeId ||
+      row.run.executionAssignmentId !== client.assignment.id ||
+      row.attempt.executionAssignmentId !== client.assignment.id
+    )
+      throw new FlowPromptContinuationPending(
+        commandId,
+        waitError ??
+          new PromptOwnerInvariantError("node_action_completion_pending"),
+      );
+
+    return {
+      ...completion.result,
+      originalOutput: completion.originalOutput,
+      durationMs: 0,
+    };
+  } catch (error) {
+    if (error instanceof FlowPromptContinuationPending) throw error;
+    throw new FlowPromptContinuationPending(commandId, error);
+  }
+}
+
+async function replayPermissionInputsForContinuation(
+  db: Db,
+  client: BoundClient,
+  commandId: string,
+): Promise<void> {
+  log.debug(
+    { runId: client.assignment.runId, commandId },
+    "owned-permission-input-replay",
+  );
+  try {
+    await replayAdmittedFlowPermissionInputs(db, client, commandId);
+  } catch (cause) {
+    throw new FlowPromptContinuationPending(commandId, cause);
+  }
+}
+
+async function reattachNodePrompt(
+  ctx: RunAgentStepCtx,
+  owner: NodePromptOwner,
+  execution?: AgentExecution,
+): Promise<StepResult | null> {
+  const db = ctx.db ?? getDb();
+  const existing = await findOwnedPrompt(
+    db,
+    ctx.runId,
+    nodePromptOperationKey(owner),
+  );
+
+  if (!existing) return null;
+  const bound =
+    execution ??
+    (ctx.bindExecution
+      ? await ctx.bindExecution()
+      : await bindExecution(createExecutionHosts({ db }), ctx.runId));
+
+  if (existing.executionAssignmentId !== bound.client.assignment.id)
+    throw staleSessionBinding(ctx.runId, existing.executionAssignmentId);
+  if (!existing.targetSessionId)
+    throw new PromptOwnerInvariantError("node_permission_session_missing");
+  await replayPermissionInputsForContinuation(db, bound.client, existing.id);
+  const consumer = startEventConsumer(existing.targetSessionId, bound, {
+    db,
+    runId: ctx.runId,
+    stepId: ctx.stepId,
+    supervisorSessionId: existing.targetSessionId,
+    cancelPermission: permissionCancellerFor(bound.client),
+    deliverPermission: permissionDelivererFor(bound.client),
+    ownedPrompt: { owner, client: bound.client },
+  });
+  let result: StepResult;
+
+  try {
+    result = await waitForNodeApplication(
+      db,
+      bound.client,
+      existing.id,
+      owner,
+      AbortSignal.any([
+        consumer.failureSignal,
+        ...(ctx.signal ? [ctx.signal] : []),
+      ]),
+    );
+  } finally {
+    consumer.abort.abort();
+    await consumer.done;
+  }
+  if (consumer.permissionPersistFailure())
+    throw new FlowPromptContinuationPending(
+      existing.id,
+      new PromptOwnerInvariantError("node_permission_pending"),
+    );
+
+  await closeAppliedFlowPromptSession(db, bound.client, existing.id);
+
+  return result;
+}
+
+async function assertGatePermissionSettled(
+  db: Db,
+  runId: string,
+  commandId: string,
+): Promise<void> {
+  const [run] = await db
+    .select({ status: runs.status })
+    .from(runs)
+    .where(eq(runs.id, runId));
+  const pending = await hasPendingFlowPermission(db, runId, commandId);
+
+  if (run?.status !== "Running" || pending)
+    throw new FlowPromptContinuationPending(
+      commandId,
+      new PromptOwnerInvariantError("gate_permission_pending"),
+    );
+}
+
+export async function reattachGatePrompt(
+  ctx: Pick<
+    RunAgentStepCtx,
+    "db" | "runId" | "stepId" | "bindExecution" | "signal"
+  >,
+  owner: GatePromptOwner,
+  execution?: AgentExecution,
+): Promise<StepResult | null> {
+  const db = ctx.db ?? getDb();
+  const existing = await findOwnedPrompt(
+    db,
+    ctx.runId,
+    gatePromptOperationKey(owner),
+  );
+
+  if (!existing) return null;
+  const bound =
+    execution ??
+    (ctx.bindExecution
+      ? await ctx.bindExecution()
+      : await bindExecution(createExecutionHosts({ db }), ctx.runId));
+
+  if (existing.executionAssignmentId !== bound.client.assignment.id)
+    throw staleSessionBinding(ctx.runId, existing.executionAssignmentId);
+  if (!existing.targetSessionId)
+    throw new PromptOwnerInvariantError("gate_permission_session_missing");
+  await replayPermissionInputsForContinuation(db, bound.client, existing.id);
+  const consumer = startEventConsumer(existing.targetSessionId, bound, {
+    db,
+    runId: ctx.runId,
+    stepId: ctx.stepId,
+    supervisorSessionId: existing.targetSessionId,
+    cancelPermission: permissionCancellerFor(bound.client),
+    deliverPermission: permissionDelivererFor(bound.client),
+    ownedPrompt: { owner, client: bound.client },
+  });
+
+  try {
+    await waitForGateApplication(
+      db,
+      bound.client,
+      existing.id,
+      AbortSignal.any([
+        consumer.failureSignal,
+        ...(ctx.signal ? [ctx.signal] : []),
+      ]),
+    );
+  } finally {
+    consumer.abort.abort();
+    await consumer.done;
+  }
+  if (consumer.permissionPersistFailure())
+    throw new FlowPromptContinuationPending(
+      existing.id,
+      new PromptOwnerInvariantError("gate_permission_pending"),
+    );
+  await assertGatePermissionSettled(db, ctx.runId, existing.id);
+  await closeAppliedFlowPromptSession(db, bound.client, existing.id);
+  log.info(
+    {
+      runId: ctx.runId,
+      nodeAttemptId: owner.nodeAttemptId,
+      evaluationId: owner.evaluationId,
+      commandId: existing.id,
+    },
+    "gate-prompt-reattached",
+  );
+
+  return { ok: true, stdout: "", vars: {}, durationMs: 0 };
+}
+
 export async function runAgentStep(
   step: AgentStepLike,
   ctx: RunAgentStepCtx,
   execution?: AgentExecution,
-): Promise<StepResult & { acpSessionId?: string; sessionFallback?: boolean }> {
+): Promise<
+  StepResult & {
+    acpSessionId?: string;
+    sessionFallback?: boolean;
+  }
+> {
+  // Existing immutable requests do not depend on today's template or context.
+  // A consensus cell re-enters through its own logical operation key instead.
+  if (ctx.promptOwner && !isConsensusOwner(ctx.promptOwner)) {
+    const completed =
+      ctx.promptOwner.variant === "node" ||
+      ctx.promptOwner.variant === "permission_resume"
+        ? await reattachNodePrompt(ctx, ctx.promptOwner, execution)
+        : await reattachGatePrompt(ctx, ctx.promptOwner, execution);
+
+    if (completed) return completed;
+  }
   let promptTemplate = step.prompt;
 
   // M34 (ADR-089): a catalog-agent binding substitutes the inline prompt —
@@ -857,9 +1230,16 @@ export async function runAgentStep(
     );
   }
 
+  const actionPrompt =
+    ctx.promptOwner?.variant === "permission_resume" ||
+    ((ctx.promptOwner?.variant === "gate_ai" ||
+      ctx.promptOwner?.variant === "gate_skill") &&
+      ctx.promptOwner.promptOrdinal > 0)
+      ? PERMISSION_RESUME_PROMPT
+      : normalized.text;
   const resolvedPrompt = ctx.resumeSessionId
-    ? RESUME_READONLY_LIFT + normalized.text
-    : normalized.text;
+    ? RESUME_READONLY_LIFT + actionPrompt
+    : actionPrompt;
 
   log.info(
     {
@@ -874,7 +1254,12 @@ export async function runAgentStep(
   // Capture the resolved prompt for this attempt before dispatch so it stays
   // visible even if the step later crashes or stalls. Best-effort: audit data,
   // a failed write must never block dispatch.
-  if (ctx.nodeAttemptId) {
+  if (
+    ctx.nodeAttemptId &&
+    (!ctx.promptOwner ||
+      ctx.promptOwner.variant === "node" ||
+      ctx.promptOwner.variant === "permission_resume")
+  ) {
     try {
       // Write-once per attempt: a NeedsInput resume can re-enter the node with
       // the same nodeAttemptId; preserve the first dispatch's prompt instead of
@@ -930,7 +1315,12 @@ async function runNewSession(
   ctx: RunAgentStepCtx,
   execution: AgentExecution,
   resolvedPrompt: string,
-): Promise<StepResult & { acpSessionId?: string; sessionFallback?: boolean }> {
+): Promise<
+  StepResult & {
+    acpSessionId?: string;
+    sessionFallback?: boolean;
+  }
+> {
   const startedAt = Date.now();
   const { client } = execution;
   let session: (CreateSessionResult & { hostSessionId: HostSessionId }) | null =
@@ -938,49 +1328,118 @@ async function runNewSession(
   let consumer: EventConsumer | null = null;
   let sessionFallback = false;
   let fenced = false;
+  let continuationPending = false;
+  let nodeCompletion: StepResult | null = null;
 
   try {
-    // ADR-166 D7: the handle form — the worktree, repo root, and context
-    // mounts are adopted ONCE per assignment (`runs.context_mounts` rides the
-    // adopt payload); the session body carries no path.
-    const createInput = {
-      stepId: ctx.stepId,
-      nodeAttemptId: ctx.nodeAttemptId,
-      sessionName: ctx.sessionName,
-      executor: executorToSupervisorInput(ctx.executor),
-      runner: ctx.runner,
-      capabilityProfilePath: ctx.capabilityProfilePath,
-      adapterLaunch: ctx.adapterLaunch,
-      mcpServers: ctx.mcpServers,
-      autoApprovePermissions: ctx.autoApprovePermissions,
-      hooksConfig: ctx.hooksConfig,
-      enforcementProfile: ctx.enforcementProfile,
+    const prepareCreatePayload = async (): Promise<
+      Omit<CreateSessionPayload, "executionWorkspaceId">
+    > => {
+      const capabilityBundle =
+        ctx.capabilityProfilePath && ctx.capabilityInstructionsPath
+          ? await publishCapabilityBundle({
+              client,
+              runId: ctx.runId,
+              sourceId: ctx.nodeAttemptId ?? ctx.stepId,
+              profileLogicalName: `${ctx.stepId}-capability-profile.json`,
+              profilePath: ctx.capabilityProfilePath,
+              instructionsLogicalName: `${ctx.stepId}-capability-instructions.md`,
+              instructionsPath: ctx.capabilityInstructionsPath,
+            })
+          : undefined;
+
+      // ADR-166 D7: the handle form — the worktree, repo root, and context
+      // mounts are adopted ONCE per assignment (`runs.context_mounts` rides the
+      // adopt payload); the session body carries no path.
+      return {
+        stepId: ctx.stepId,
+        nodeAttemptId: ctx.nodeAttemptId,
+        sessionName: ctx.sessionName,
+        executor: executorToSupervisorInput(ctx.executor),
+        runner: ctx.runner,
+        capabilityProfileObjectId: capabilityBundle?.profileObjectId,
+        capabilityInstructionsObjectId: capabilityBundle?.instructionsObjectId,
+        outputObjects: ctx.outputObjects,
+        adapterLaunch: ctx.adapterLaunch,
+        mcpServers: ctx.mcpServers,
+        autoApprovePermissions: ctx.autoApprovePermissions,
+        hooksConfig: ctx.hooksConfig,
+        enforcementProfile: ctx.enforcementProfile,
+      };
     };
 
-    if (ctx.resumeSessionId) {
-      // M30 (ADR-081): try the resume respawn first; a gone/unresumable
-      // session degrades OBSERVABLY to a fresh one (session_fallback).
-      try {
-        session = await client.createSession({
-          ...createInput,
-          resumeSessionId: ctx.resumeSessionId,
-        });
-      } catch (err) {
-        if (isFencedError(err)) throw err;
-        sessionFallback = true;
-        log.warn(
-          {
-            runId: ctx.runId,
-            stepId: ctx.stepId,
-            resumeSessionId: ctx.resumeSessionId,
-            err: (err as Error).message,
+    const createOwner =
+      ctx.promptOwner && isConsensusOwner(ctx.promptOwner)
+        ? undefined
+        : ctx.promptOwner;
+
+    if (createOwner) {
+      const created = await client.createOwnedSession(
+        createOwner.variant === "permission_resume"
+          ? {
+              variant: "node",
+              nodeAttemptId: createOwner.nodeAttemptId,
+              promptOrdinal: createOwner.promptOrdinal,
+            }
+          : createOwner.variant === "node"
+            ? createOwner
+            : {
+                variant: createOwner.variant,
+                nodeAttemptId: createOwner.nodeAttemptId,
+                gateId: createOwner.gateId,
+                evaluationId: createOwner.evaluationId,
+              },
+        async () => ({
+          ...(await prepareCreatePayload()),
+          ...(ctx.resumeSessionId
+            ? { resumeSessionId: ctx.resumeSessionId }
+            : {}),
+        }),
+        {
+          assertCommit: async (tx) => {
+            if (!ctx.flowDriverClaim) return;
+            if (ctx.signal?.aborted)
+              throw new FlowDriverClaimLost(ctx.flowDriverClaim);
+            await assertFlowDriverClaim(tx, ctx.flowDriverClaim);
           },
-          "[session-policy] resume failed — falling back to a new session",
-        );
+        },
+      );
+
+      session = created;
+      sessionFallback = created.sessionFallback;
+    } else {
+      const createInput = await prepareCreatePayload();
+
+      if (ctx.resumeSessionId) {
+        // M30 (ADR-081): try the resume respawn first; a gone/unresumable
+        // session degrades OBSERVABLY to a fresh one (session_fallback).
+        try {
+          session = await client.createSession({
+            ...createInput,
+            resumeSessionId: ctx.resumeSessionId,
+          });
+        } catch (err) {
+          if (
+            isFencedError(err) ||
+            !isMaisterError(err) ||
+            err.code !== "CHECKPOINT"
+          )
+            throw err;
+          sessionFallback = true;
+          log.warn(
+            {
+              runId: ctx.runId,
+              stepId: ctx.stepId,
+              resumeSessionId: ctx.resumeSessionId,
+              err: (err as Error).message,
+            },
+            "[session-policy] resume failed — falling back to a new session",
+          );
+          session = await client.createSession(createInput);
+        }
+      } else {
         session = await client.createSession(createInput);
       }
-    } else {
-      session = await client.createSession(createInput);
     }
 
     consumer = startEventConsumer(session.hostSessionId, execution, {
@@ -990,30 +1449,124 @@ async function runNewSession(
       supervisorSessionId: session.hostSessionId,
       cancelPermission: permissionCancellerFor(client),
       deliverPermission: permissionDelivererFor(client),
+      ...(ctx.promptOwner && !isConsensusOwner(ctx.promptOwner)
+        ? { ownedPrompt: { owner: ctx.promptOwner, client } }
+        : {}),
     });
 
     let promptResult: PromptResult;
 
     try {
-      const handle = await client.prompt(session.hostSessionId, {
-        stepId: ctx.stepId,
-        nodeAttemptId: ctx.nodeAttemptId,
-        prompt: resolvedPrompt,
-      });
+      const hostSessionId = session.hostSessionId;
+      const promptOwner = ctx.promptOwner;
+
+      await waitForPromptIncarnation(ctx.db ?? getDb(), client, hostSessionId);
+      const handle = await client.prompt(
+        hostSessionId,
+        {
+          stepId: ctx.stepId,
+          nodeAttemptId: ctx.nodeAttemptId,
+          prompt: resolvedPrompt,
+        },
+        {
+          admitOwner: async (tx) => {
+            if (ctx.flowDriverClaim) {
+              if (ctx.signal?.aborted)
+                throw new FlowDriverClaimLost(ctx.flowDriverClaim);
+              await assertFlowDriverClaim(tx, ctx.flowDriverClaim);
+            }
+            const admission =
+              promptOwner.variant === "node" ||
+              promptOwner.variant === "permission_resume"
+                ? await admitNodePrompt(tx, client, hostSessionId, promptOwner)
+                : isConsensusOwner(promptOwner)
+                  ? await admitConsensusPrompt(
+                      tx,
+                      client,
+                      hostSessionId,
+                      promptOwner,
+                    )
+                  : await admitGatePrompt(
+                      tx,
+                      client,
+                      hostSessionId,
+                      promptOwner,
+                    );
+            const claim = ctx.flowDriverClaim;
+
+            return {
+              ...admission,
+              ...(claim
+                ? {
+                    assertCommit: async () => {
+                      if (ctx.signal?.aborted)
+                        throw new FlowDriverClaimLost(claim);
+                      await assertFlowDriverCommit(tx, claim);
+                    },
+                  }
+                : {}),
+            };
+          },
+        },
+      );
 
       try {
-        promptResult = await handle.completion;
+        if (
+          promptOwner?.variant === "node" ||
+          promptOwner?.variant === "permission_resume"
+        ) {
+          nodeCompletion = await waitForNodeApplication(
+            ctx.db ?? getDb(),
+            client,
+            handle.commandId,
+            promptOwner,
+            AbortSignal.any([
+              consumer.failureSignal,
+              ...(ctx.signal ? [ctx.signal] : []),
+            ]),
+          );
+          if (consumer.failureSignal.aborted)
+            throw new FlowPromptContinuationPending(
+              handle.commandId,
+              consumer.failureSignal.reason,
+            );
+          promptResult = { stopReason: "end_turn", meta: null };
+        } else if (promptOwner) {
+          await waitForGateApplication(
+            ctx.db ?? getDb(),
+            client,
+            handle.commandId,
+            AbortSignal.any([
+              consumer.failureSignal,
+              ...(ctx.signal ? [ctx.signal] : []),
+            ]),
+          );
+          if (!isConsensusOwner(promptOwner))
+            await assertGatePermissionSettled(
+              ctx.db ?? getDb(),
+              ctx.runId,
+              handle.commandId,
+            );
+          // The gate/consensus caller reads the applied domain row, including
+          // a host failure the owner already settled.
+          promptResult = { stopReason: "end_turn", meta: null };
+        } else {
+          promptResult = await client.waitForPrompt(handle);
+        }
       } catch (err) {
+        if (err instanceof FlowPromptContinuationPending) throw err;
         // A checkpoint (keep-alive sweep, budget park, node interrupt) tears
         // the adapter down mid-turn; the host then answers the in-flight turn
         // with a failure ("ACP connection closed") that is NOT the step's — the
         // consumer sees `session.exited{reason:"checkpoint"}` on the stream.
         // Give that signal a moment to land, then treat the turn as paused.
-        if (
-          isFencedError(err) ||
-          !(await consumer.checkpointObserved(10_000))
-        ) {
-          throw err;
+        if (await assignmentIsCurrent(ctx.db ?? getDb(), execution)) {
+          if (
+            isFencedError(err) ||
+            !(await consumer.checkpointObserved(10_000))
+          ) {
+            throw err;
+          }
         }
         log.info(
           {
@@ -1028,6 +1581,38 @@ async function runNewSession(
     } finally {
       consumer.abort.abort();
       await consumer.done;
+    }
+
+    // A checkpoint command may commit and release this assignment before its
+    // terminal host event reaches the canonical stream. That event is then
+    // correctly retained as stale and cannot drive projections, so the old
+    // session consumer cannot rely on seeing `session.exited{checkpoint}`.
+    // Re-check manager ownership after every terminal prompt result: a driver
+    // whose assignment is no longer active must yield before it can mark the
+    // parked node Failed or overwrite the newer resume generation.
+    if (!(await assignmentIsCurrent(ctx.db ?? getDb(), execution))) {
+      fenced = true;
+      log.warn(
+        {
+          runId: ctx.runId,
+          stepId: ctx.stepId,
+          assignmentId: client.assignment.id,
+          assignmentEpoch: client.assignment.epoch,
+          hostSessionId: session.hostSessionId,
+        },
+        "driver-yielded after prompt completion",
+      );
+
+      return {
+        ok: false,
+        fenced: true,
+        stdout: consumer.snapshot(),
+        vars: {},
+        durationMs: Date.now() - startedAt,
+        errorCode: "CONFLICT" as const,
+        acpSessionId: session.acpSessionId,
+        sessionFallback,
+      };
     }
 
     // Permission-persistence failure overrides the adapter's stopReason:
@@ -1118,12 +1703,14 @@ async function runNewSession(
       };
     }
 
-    const ok = !persistFailure && promptResult.stopReason === "end_turn";
+    const ok =
+      !persistFailure &&
+      (nodeCompletion?.ok ?? promptResult.stopReason === "end_turn");
     const errorCode = persistFailure
       ? ("CRASH" as const)
       : ok
         ? undefined
-        : ("ACP_PROTOCOL" as const);
+        : (nodeCompletion?.errorCode ?? "ACP_PROTOCOL");
 
     if (persistFailure) {
       log.error(
@@ -1137,20 +1724,32 @@ async function runNewSession(
     }
 
     return {
+      ...nodeCompletion,
       ok,
-      stdout: consumer.snapshot(),
-      vars: {},
+      stdout: nodeCompletion?.stdout ?? consumer.snapshot(),
+      vars: nodeCompletion?.vars ?? {},
       durationMs: Date.now() - startedAt,
       errorCode,
       acpSessionId: session.acpSessionId,
       sessionFallback,
     };
   } catch (err) {
+    if (err instanceof SessionCreatePending) {
+      continuationPending = true;
+      throw new FlowPromptContinuationPending(
+        String(err.details?.commandId),
+        err,
+      );
+    }
+    if (err instanceof FlowPromptContinuationPending) {
+      continuationPending = true;
+      throw err;
+    }
     // ADR-166 E-EH-11 (driver yield rule): `assignment_fenced` means a newer
     // driver generation owns this run — this incarnation must write no run,
     // ledger, HITL, or scratch state, and must not even tear the session down
     // (the host already evicted it under the newer epoch).
-    if (isFencedError(err)) {
+    if (isFencedError(err) || isFlowDriverClaimLost(err)) {
       fenced = true;
       log.warn(
         {
@@ -1176,7 +1775,7 @@ async function runNewSession(
     }
     throw err;
   } finally {
-    if (session && !fenced) {
+    if (session && !fenced && !continuationPending) {
       await client
         .deleteSession(session.hostSessionId)
         .catch((err) =>

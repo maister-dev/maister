@@ -1,0 +1,35 @@
+{
+  "envelopeVersion": 1,
+  "eventId": "6f63db3b-1843-5475-b293-b4b995a38a5d",
+  "hostKey": "eh_0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+  "hostBootId": "e2f7c57a-bb0d-4e78-99f9-70f34f3928ab",
+  "streamId": "76103277-0889-49d7-87f1-f0fd2f5f5922",
+  "sequence": "42",
+  "runId": "run-abc",
+  "assignmentId": "6a7b8c9d-0e1f-4a2b-8c3d-4e5f6a7b8c9d",
+  "assignmentEpoch": 3,
+  "hostSessionId": "session-opaque-17",
+  "eventType": "runtime_object.available",
+  "occurredAt": "2026-09-04T12:00:00.000Z",
+  "payloadSchema": "maister.runtime-object.available.v1",
+  "payload": {
+    "objectId": "07a72d88-9cab-4fdd-9d97-314c4bfb015c",
+    "kind": "raw_transcript",
+    "logicalName": "stdout-overflow.ndjson",
+    "mimeType": "application/x-ndjson",
+    "sizeBytes": 6,
+    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "generation": 1,
+    "retentionClass": "run",
+    "state": "available",
+    "sealedAt": "2026-09-04T12:00:00.000Z",
+    "expiresAt": null,
+    "stdoutSegment": {
+      "commandId": "973cce6c-9ca2-4c8d-b41f-fd220048d116",
+      "firstLogByteOffset": 1234,
+      "capturedBytes": 6,
+      "completeFrames": 1,
+      "trailingFrameBytes": 0
+    }
+  }
+}

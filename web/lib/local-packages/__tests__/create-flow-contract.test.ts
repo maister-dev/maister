@@ -24,8 +24,10 @@ const FLOW = {
 describe("canonical create-flow contract", () => {
   it("requires the package and complete required Flow metadata for a first Flow", () => {
     expect(
-      createLocalPackageWithFlowSchema.safeParse({ name: "Bug fixes", flow: FLOW })
-        .success,
+      createLocalPackageWithFlowSchema.safeParse({
+        name: "Bug fixes",
+        flow: FLOW,
+      }).success,
     ).toBe(true);
     expect(
       createLocalPackageWithFlowSchema.safeParse({
@@ -36,8 +38,12 @@ describe("canonical create-flow contract", () => {
   });
 
   it("rejects an unsafe or traversal-shaped Flow ID before it can become a path", () => {
-    expect(createFlowInputSchema.safeParse({ ...FLOW, id: "../escape" }).success).toBe(false);
-    expect(createFlowInputSchema.safeParse({ ...FLOW, id: "has spaces" }).success).toBe(false);
+    expect(
+      createFlowInputSchema.safeParse({ ...FLOW, id: "../escape" }).success,
+    ).toBe(false);
+    expect(
+      createFlowInputSchema.safeParse({ ...FLOW, id: "has spaces" }).success,
+    ).toBe(false);
   });
 
   it("builds a valid graph-only starter manifest with explicit safe defaults", () => {
@@ -51,7 +57,10 @@ describe("canonical create-flow contract", () => {
     expect(manifest.capabilities).toEqual([]);
     expect(manifest.artifacts).toEqual([]);
     expect(manifest.nodes).toEqual([
-      expect.objectContaining({ id: "start", transitions: { success: "done" } }),
+      expect.objectContaining({
+        id: "start",
+        transitions: { success: "done" },
+      }),
     ]);
   });
 });

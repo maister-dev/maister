@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: MAIster Supervisor HTTP API
-  version: "0.8.0"
+  version: "0.9.0"
   description: |
     HTTP + SSE surface exposed by `supervisor/` (the Node daemon that owns ACP
     sessions and spawns adapter binaries. Implemented adapters are
@@ -10,10 +10,10 @@ info:
     families.
     Consumed by the Next.js web tier through `web/lib/supervisor-client.ts`.
 
-    **Implemented contract.** The lifecycle
+    **Implemented route surface; A/B stabilization is Designed.** The lifecycle
     (`POST` / `DELETE` `/sessions`, `GET /sessions`,
-    `GET /sessions/:id/stream`), ACP prompt boundary
-    (`POST /sessions/:id/prompt`), permission-only HITL input
+    `GET /sessions/:id/stream`), asynchronous ACP prompt admission
+    (`POST /sessions/{id}/prompts`), permission-only HITL input
     (`POST /sessions/:id/input`), and checkpoint endpoint
     (`POST /sessions/:id/checkpoint`) are implemented end-to-end.
 
@@ -39,8 +39,19 @@ info:
     pre-ADR-166 path field (`runId`, `projectSlug`, `worktreePath`,
     `repoPath`, `confineRoot`, `contextMounts`) is
     `409 PRECONDITION {reason: legacy_field, field}`.
-    Stage A is single-host, loopback, shared-filesystem, and unauthenticated —
-    see [`../system-analytics/execution-hosts.md`](../system-analytics/execution-hosts.md).
+    The supported deployment is single-host and loopback. Repository/worktree
+    material stays local until Stage C, but Stage B removes web access to the
+    supervisor runtime-data filesystem. Remote enrollment/authentication is
+    intentionally not part of this unauthenticated local contract. See
+    [`../system-analytics/execution-hosts.md`](../system-analytics/execution-hosts.md).
+
+    **Stage B data plane (Implemented — ADR-167, 0.9.0).** `GET /capabilities`
+    is additive and read-only. `GET /runtime-events` and
+    `POST /runtime-events/ack` implement the host-global, durable local SSE/ACK
+    adapter. `POST /sessions/{id}/prompts` accepts a durable prompt command and
+    returns before its ACP turn finishes; completion is available through the
+    canonical event stream and `GET /commands/{id}`. There is no synchronous
+    prompt-completion route. Runtime objects use opaque ids, never host paths.
 
     See [`../architecture.md`](../architecture.md), [`../supervisor.md`](../supervisor.md),
     and [`../decisions.md#adr-002-supervisor-runs-as-a-separate-node-daemon`](../decisions.md).
@@ -54,7 +65,7 @@ servers:
   - url: http://localhost:{port}
     description: |
       Local supervisor on the operator's workstation. POC ships single-host
-      docker compose; production deployments substitute their own host.
+      host web/supervisor processes with Postgres-only compose.
     variables:
       port:
         default: "7777"
@@ -79,6 +90,207 @@ tags:
       (Implemented — ADR-166) Execution-host contract: opaque workspace adoption
       and command receipts.
 paths:
+  /capabilities:
+    get:
+      tags: [execution-host]
+      summary: Read additive Stage B execution-host capabilities (Implemented — ADR-167)
+      description: |
+        Read-only, host-derived capability document. The web registrar obtains
+        `hostKey` and `bootId` from `/health`, not this body; a 404 is the only
+        bounded legacy signal. Malformed or partial documents fail closed and
+        cannot select canonical runs. No request-body identifier is accepted.
+      operationId: getExecutionHostCapabilities
+      responses:
+        "200":
+          description: Versioned features and fixed negotiated limits.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExecutionHostCapabilities" }
+        "404":
+          description: Legacy supervisor without the additive capability surface.
+  /runtime-events:
+    get:
+      tags: [execution-host]
+      summary: Replay host-global durable runtime events after an exclusive cursor (Implemented — ADR-167)
+      description: |
+        `Last-Event-ID` is an optional canonical decimal sequence on the
+        supervisor-selected stream, not a URL-selected run id. It is exclusive:
+        replay starts strictly after it. Omission starts at the replay floor;
+        a cursor before that floor or on another stream fails explicitly.
+        Each event is redacted, ≤1 MiB, and uses SSE `id = sequence`.
+      operationId: streamExecutionHostRuntimeEvents
+      parameters:
+        - name: Last-Event-ID
+          in: header
+          required: false
+          schema: { $ref: "#/components/schemas/RuntimeEventSequence" }
+          description: Exclusive decimal replay cursor; JSON numbers and leading zeroes are invalid.
+      responses:
+        "200":
+          description: "text/event-stream durable replay then live tail."
+          content:
+            text/event-stream:
+              schema: { $ref: "#/components/schemas/RuntimeEventEnvelope" }
+        "409":
+          description: Invalid cursor, replay-floor loss, or stream identity conflict.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+  /runtime-events/ack:
+    post:
+      tags: [execution-host]
+      summary: Confirm a durable contiguous runtime-event watermark (Implemented — ADR-167)
+      description: |
+        The manager supplies `streamId` and an absolute `throughSequence`.
+        The host verifies it against its current stream and emitted contiguous
+        prefix. Acknowledgement is idempotent; regression returns the current
+        watermark and an ACK never destroys a replay record before its grace.
+      operationId: acknowledgeExecutionHostRuntimeEvents
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RuntimeEventAck" }
+      responses:
+        "200":
+          description: Confirmed absolute watermark.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [streamId, acknowledgedThrough]
+                properties:
+                  streamId: { type: string, format: uuid }
+                  acknowledgedThrough: { $ref: "#/components/schemas/RuntimeEventSequence" }
+        "409":
+          description: Missing, stale, foreign, non-contiguous, or beyond-emitted ACK.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+  /runtime-objects:
+    post:
+      tags: [execution-host]
+      summary: Reserve an opaque runtime object upload (Implemented — ADR-167)
+      description: |
+        Fenced host command. The command fence is request-body supplied and
+        verified against the host's durable fence ledger; object content, local
+        paths, and credentials are forbidden. The caller supplies an opaque
+        UUID and the host persists its binding before returning metadata.
+      operationId: reserveRuntimeObject
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RuntimeObjectReserveCommand" }
+      responses:
+        "201":
+          description: Opaque object id and one-shot upload limit.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RuntimeObjectMetadata" }
+        "409":
+          description: Fence, idempotency, or immutable object-state conflict.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+  /runtime-objects/{objectId}:
+    get:
+      tags: [execution-host]
+      summary: Read path-free runtime-object metadata (Implemented — ADR-167)
+      operationId: getRuntimeObjectMetadata
+      parameters:
+        - $ref: "#/components/parameters/RuntimeObjectId"
+      responses:
+        "200":
+          description: Object catalog record without content or filesystem path.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RuntimeObjectMetadata" }
+        "409": { description: "Object is absent, expired, or cannot be read in its current state." }
+    delete:
+      tags: [execution-host]
+      summary: Apply a fenced runtime-object retention deletion (Implemented — ADR-167)
+      operationId: deleteRuntimeObject
+      parameters:
+        - $ref: "#/components/parameters/RuntimeObjectId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RuntimeObjectDeleteCommand" }
+      responses:
+        "204": { description: Object is deleted or already absent under the recorded retention policy. }
+  /runtime-objects/{objectId}/content:
+    put:
+      tags: [execution-host]
+      summary: Upload a reserved runtime object once (Implemented — ADR-167)
+      operationId: uploadRuntimeObject
+      parameters:
+        - $ref: "#/components/parameters/RuntimeObjectId"
+        - name: Content-Digest
+          in: header
+          required: true
+          schema: { type: string, pattern: "^sha-256=:[A-Za-z0-9+/]+={0,2}:$" }
+        - name: X-Maister-Command-Id
+          in: header
+          required: true
+          schema: { type: string, format: uuid }
+        - name: X-Maister-Command-Issued-At
+          in: header
+          required: true
+          schema: { type: string, format: date-time }
+        - name: X-Maister-Assignment-Id
+          in: header
+          required: true
+          schema: { type: string, format: uuid }
+        - name: X-Maister-Assignment-Epoch
+          in: header
+          required: true
+          schema: { type: integer, minimum: 1 }
+        - name: X-Maister-Object-Generation
+          in: header
+          required: true
+          schema: { type: integer, minimum: 1 }
+        - name: X-Maister-Sha256
+          in: header
+          required: true
+          schema: { type: string, pattern: "^[a-f0-9]{64}$" }
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        "200":
+          description: Content checksum and immutable available metadata.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RuntimeObjectMetadata" }
+        "413": { description: Upload exceeds the reserved or negotiated fixed size limit. }
+    get:
+      tags: [execution-host]
+      summary: Read a single byte range of an opaque runtime object (Implemented — ADR-167)
+      operationId: readRuntimeObjectContent
+      parameters:
+        - $ref: "#/components/parameters/RuntimeObjectId"
+        - name: Range
+          in: header
+          required: false
+          schema: { type: string, pattern: "^bytes=[0-9]+-[0-9]*$" }
+          description: At most one inclusive byte range; multi-range is rejected.
+      description: |
+        (Implemented — AB-12) Both success responses carry the shared
+        safe-download policy: `Content-Type: application/octet-stream` (never
+        the reserved MIME), `Content-Disposition: attachment` with a sanitized
+        `filename` / RFC 8187 `filename*` from the logical name,
+        `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox;
+        default-src 'none'`, `Cache-Control: private, no-store`, plus
+        `Content-Digest`, `ETag` and `Accept-Ranges`.
+      responses:
+        "200": { description: Full bytes only for an object no larger than 8 MiB. }
+        "206": { description: One byte range with `Content-Range`. }
+        "416": { description: "Invalid, unsatisfiable, or multi-range request." }
   /health:
     get:
       tags: [health]
@@ -101,6 +313,11 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorHealthResponse" }
+        "503":
+          description: Runtime storage failed; repair storage before restarting admissions.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
   /diagnostics:
     get:
       tags: [health]
@@ -317,9 +534,15 @@ paths:
         (`accepted` for a prompt whose turn is in flight, `completed` with the
         stored response body, `rejected` with the stored error body) and the
         HTTP status that was — or will be — returned. The web tier reads it
-        exactly once after an unknown-outcome transport failure on an accepted
-        prompt, and during startup recovery of `delivering` / `accepted`
-        ledger rows. Receipts are pruned on a 7-day TTL at boot and hourly.
+        after unknown-outcome transport failures, during canonical prompt
+        preparation, and during recovery of open ledger rows. A terminal prompt
+        receipt is persisted in Postgres and must agree with its exact canonical
+        event before settling the command. Nested errors remain intact. Verified
+        agreement can be read without another host request. Legacy host receipts
+        with no target identity cannot replay against a new session. Receipts are
+        never reclaimed by age: the only reclamation is the state-aware
+        retirement handshake below, which compacts a receipt to a tombstone and
+        keeps its key.
       operationId: getCommandReceipt
       parameters:
         - name: commandId
@@ -331,7 +554,10 @@ paths:
           description: The receipt.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/CommandReceipt" }
+              schema:
+                oneOf:
+                  - { $ref: "#/components/schemas/CommandReceipt" }
+                  - { $ref: "#/components/schemas/CommandReceiptV2" }
               examples:
                 completedPrompt:
                   value:
@@ -344,8 +570,81 @@ paths:
                     body: { stopReason: "end_turn", meta: null }
                     receivedAt: "2026-09-02T10:00:02.050Z"
                     completedAt: "2026-09-02T10:04:41.900Z"
+                    eventId: "7a7b8c9d-0e1f-4a2b-8c3d-4e5f6a7b8c9d"
         "404":
-          description: No receipt for that id (never received, or pruned).
+          description: No receipt for that id (never received).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+  /commands/{commandId}/retirement:
+    post:
+      tags: [execution-host]
+      summary: Retire a command's receipt evidence (Implemented — ADR-167 S2.11)
+      description: |
+        The host half of the D6 retirement handshake, over the existing trusted
+        local administrative transport. The body carries the manager's proof —
+        expected request digest, terminal phase and assignment epoch — and the
+        host re-derives eligibility from its OWN receipt: terminal phase, epoch,
+        digest agreement, no open producer wallet, and for a v2 request a
+        terminal sequence at or below the acknowledged frontier. A null
+        `expectedRequestSha256` asserts no digest (the manager records one only
+        for owned prompts); it never matches a digest the host holds. On success
+        the receipt is COMPACTED to a tombstone that keeps identity, digests and
+        disposition, so a stale replay is still recognised and no valid retry
+        loses idempotency. Idempotent: retiring an already-retired command
+        returns the same identity with `compacted: false`.
+      operationId: retireCommand
+      parameters:
+        - name: commandId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [expectedRequestSha256, expectedPhase, assignmentEpoch]
+              properties:
+                expectedRequestSha256:
+                  type: string
+                  nullable: true
+                  pattern: "^[a-f0-9]{64}$"
+                expectedPhase: { type: string, enum: [completed, rejected] }
+                assignmentEpoch: { type: integer, minimum: 0 }
+      responses:
+        "200":
+          description: The command is retired on this host.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  [commandId, requestSha256, phase, retiredAt, compacted]
+                properties:
+                  commandId: { type: string, format: uuid }
+                  requestSha256: { type: string, nullable: true }
+                  phase: { type: string, enum: [completed, rejected] }
+                  retiredAt: { type: string, format: date-time }
+                  compacted: { type: boolean }
+        "400":
+          description: The retirement proof is not a valid shape.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+        "404":
+          description: |
+            No retained receipt for that id — a typed reconciliation condition
+            (`retirement_evidence_missing`), not a licence to reclaim.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+        "409":
+          description: |
+            Not eligible on this host: `not_terminal`, `identity_mismatch`,
+            `terminal_event_unacked` or `producer_open`.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
@@ -365,12 +664,14 @@ paths:
         an `acpSessionId`; everything after that is observable via the SSE
         stream.
 
-        Capability launch fields are server-derived by the web tier:
-        `capabilityProfilePath` points at the run-scoped profile snapshot
-        materialized in the worktree/runtime area, and `adapterLaunch` carries
-        only validated env/arg additions for the selected adapter. The
-        supervisor does not resolve project policy or trust; it validates and
-        passes these fields to the spawned child.
+        Capability launch fields are server-derived by the web tier.
+        `capabilityProfileObjectId` and `capabilityInstructionsObjectId` name
+        manager-catalogued opaque objects; the host validates each
+        run/assignment/kind binding and privately resolves its path.
+        `outputObjects` predeclares bounded host-owned output objects
+        and allow-listed child environment destinations. `adapterLaunch`
+        carries only validated env/arg additions for the selected adapter.
+        The supervisor does not resolve project policy or trust.
 
         ADR-085 adds `nodeAttemptId` attribution metadata for graph-runner
         sessions. The supervisor validates it as a safe id and stamps it on
@@ -434,10 +735,9 @@ paths:
             a fence refusal (`host_mismatch`, `assignment_mismatch`,
             `run_mismatch`), an unknown/released handle
             (`unknown_workspace` / `workspace_released`), a stale epoch
-            (`FENCED`), a residual `capabilityProfilePath` outside the handle
-            (`workspace_rejected` + `outside_workspace`), a missing envelope
-            (`missing_envelope`), or a legacy path field (`legacy_field` +
-            `details.field`).
+            (`FENCED`), a missing or cross-assignment capability/output object,
+            a missing envelope (`missing_envelope`), or a legacy path field
+            (`legacy_field` + `details.field`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
@@ -501,50 +801,33 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
-  /sessions/{id}/prompt:
+  /sessions/{id}/prompts:
     post:
       tags: [prompt]
-      summary: Send an ACP prompt to a live session
+      summary: Accept a durable asynchronous ACP prompt command (Implemented — ADR-167)
       description: |
-        Drives the M5 Flow DSL `agent` step. The supervisor forwards the
-        prompt onto the per-session `ClientSideConnection` (built on
-        `@agentclientprotocol/sdk@0.22.1`) and blocks until the adapter
-        returns a `stopReason`. Concurrent `agent` steps in
-        `slash-in-existing` mode reuse one session across multiple prompt
-        calls; `new-session` steps create a fresh session per prompt.
-
-        Permission requests raised by the adapter mid-turn surface as
-        `session.permission_request` SSE events (M7+). The supervisor
-        parks the ACP deferred until the web tier resolves it via
-        `POST /sessions/{id}/input`; the prompt promise stays in flight
-        for the duration of the HITL turn.
-
-        ADR-085 requires `nodeAttemptId` on graph-runner prompt sends,
-        including `slash-in-existing` reused sessions, so active cost
-        attribution changes at prompt time instead of relying on timestamp
-        inference. Concurrent prompts in one reused session are refused by the
-        web tier before they become ambiguous.
-
-        (Implemented — ADR-166) Enveloped as a `PromptCommand`
-        (`command.kind = session.prompt`). Completion rides THREE durable
-        signals: the SSE `session.command {phase: accepted}` when the turn
-        starts, the SSE `session.command {phase: completed, status, result}`
-        plus the receipt (`GET /commands/{id}`) when it ends, and this HTTP
-        response. A duplicate id while the turn is in flight JOINS the
-        running turn; a duplicate after the host restarted mid-turn (receipt
-        `accepted`, no in-flight promise) → `409 PRECONDITION turn_lost`. A
-        session evicted by a higher epoch answers its pending prompt with
-        `409 FENCED`. Liveness is judged inside the receipt-guarded execution,
-        so a duplicate id whose original completed replays the stored `200`
-        even after the session exited.
-      operationId: sendSessionPrompt
+        The Stage B prompt-admission endpoint. It performs the same strict
+        envelope, assignment fence, session liveness, and content confinement
+        validation as the canonical prompt command, and durably records the
+        accepted receipt and canonical `session.command` event before returning
+        `202`. The ACP turn settles later as a terminal `session.command` event
+        and receipt. A lost acknowledgement is recovered by the original
+        command id; duplicate delivery never starts a second ACP turn.
+        Explicit requestVersion 2 additionally binds target.hostSessionId to
+        the URL and returns CommandReceiptV2 from the receipt read. A command
+        cannot change wire version on replay. Production owner activation is
+        held until the S2 gate; legacy callers retain the original wire shape.
+      operationId: acceptSessionPrompt
       parameters:
         - $ref: "#/components/parameters/SessionId"
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/PromptCommand" }
+            schema:
+              oneOf:
+                - { $ref: "#/components/schemas/PromptCommand" }
+                - { $ref: "#/components/schemas/ImmutablePromptRequestV2" }
             examples:
               enveloped:
                 value:
@@ -562,80 +845,29 @@ paths:
                     nodeAttemptId: "na-1"
                     prompt: "/aif-plan Add a healthz route"
       responses:
-        "200":
-          description: |
-            Prompt completed. The adapter's `stopReason` indicates whether
-            the turn ended cleanly, hit a token cap, exceeded max turn
-            requests, or was refused.
+        "202":
+          description: Durable prompt admission; not ACP completion.
           headers:
             X-Maister-Command-Replayed:
               $ref: "#/components/headers/CommandReplayed"
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/SendPromptResponse" }
+              schema: { $ref: "#/components/schemas/PromptAccepted" }
         "404":
           description: No session with that id.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
-              examples:
-                unknown:
-                  value: { code: "PRECONDITION", message: "unknown session" }
         "409":
-          description: |
-            Session exists but cannot accept the prompt — either it is no
-            longer `live` (already `exited`/`crashed`), no ACP connection
-            has been attached (initialization race), or a `contentBlocks`
-            resource URI failed the session-bound confinement check (a remote
-            scheme, or a `file:` path outside repo ∪ worktree ∪ run dir). The
-            content blocks are NOT forwarded on a confinement violation.
-            (Implemented — ADR-166) Also a missing envelope
-            (`missing_envelope`), a fence refusal (`host_mismatch`,
-            `run_mismatch`, `assignment_mismatch`), a stale epoch (`FENCED`),
-            or a restart-lost turn (`turn_lost`). A duplicate id with a
-            stored receipt never reaches these checks — it replays.
+          description: Invalid envelope, fenced/stale assignment, unavailable session, or restart-lost accepted turn.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
-              examples:
-                notLive:
-                  value: { code: "PRECONDITION", message: "session not live" }
-                noConnection:
-                  value:
-                    code: "PRECONDITION"
-                    message: "session has no ACP connection"
-                uriEscape:
-                  value:
-                    code: "PRECONDITION"
-                    message: "resource URI escapes the run sandbox: file:///etc/passwd"
-                zodReject:
-                  value:
-                    code: "PRECONDITION"
-                    message: "stepId: Required"
-                turnLost:
-                  value:
-                    code: "PRECONDITION"
-                    message: "the turn for this command id was lost in a host restart"
-                    details: { reason: "turn_lost" }
-                fenced:
-                  value:
-                    code: "FENCED"
-                    message: "session evicted by assignment epoch 2"
-                    details:
-                      reason: "assignment_fenced"
-                      runId: "run-abc"
-                      commandEpoch: 1
-                      hostEpoch: 2
         "500":
-          description: |
-            Adapter returned a malformed or non-conforming ACP frame, or
-            the ACP transport itself faulted mid-turn.
+          description: The host could not durably record admission or terminal evidence.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
-              examples:
-                acpProtocol:
-                  value: { code: "ACP_PROTOCOL", message: "prompt failed: ..." }
   /sessions/{id}:
     delete:
       tags: [sessions]
@@ -823,8 +1055,8 @@ paths:
         Sends a protocol-level ACP `session/cancel` notification to the agent
         without tearing the session down — the adapter-agnostic interrupt used
         by the composer Stop control (claude, codex, gemini, opencode all honor
-        it). Sets a per-session `cancelRequested` flag so the blocked
-        `POST /sessions/{id}/prompt` resolves with the `cancelled` stop reason
+        it). Sets a per-session `cancelRequested` flag so the canonical prompt
+        command terminalizes with the `cancelled` stop reason
         as a clean turn end (the session stays live) rather than an
         `ACP_PROTOCOL` abort. Also resolves every open `pendingPermissions`
         deferred for the session with `{outcome: "cancelled"}` so a turn blocked
@@ -1155,6 +1387,14 @@ paths:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
 components:
   parameters:
+    RuntimeObjectId:
+      name: objectId
+      in: path
+      required: true
+      description: Opaque host-scoped runtime-object id; never a filesystem path.
+      schema:
+        type: string
+        format: uuid
     ExecutionWorkspaceId:
       name: id
       in: path
@@ -1176,7 +1416,7 @@ components:
         resume handle (used in `resumeSessionId` on `POST /sessions`
         and in `StartSessionResponse.acpSessionId` /
         `SessionRecord.acpSessionId`). Calling
-        `POST /sessions/{acpSessionId}/prompt` with that handle will
+        `POST /sessions/{acpSessionId}/prompts` with that handle will
         return 404 even when the underlying ACP session is live.
       schema:
         type: string
@@ -1587,7 +1827,7 @@ components:
         confinement roots, the run dir, `runId`, `projectSlug`, and the context
         mounts from the handle (server state). The pre-ADR-166 path fields
         (`runId`, `projectSlug`, `worktreePath`, `repoPath`, `confineRoot`,
-        `contextMounts`) are refused by name: their presence is
+        `contextMounts`, `capabilityProfilePath`, `capabilityInstructionsPath`) are refused by name: their presence is
         `409 PRECONDITION {reason: legacy_field, field}`. Context mounts travel
         on the `workspace.adopt` payload (`AdoptWorkspacePayload.contextMounts`).
       example:
@@ -1604,6 +1844,16 @@ components:
           model: "claude-sonnet-4-6"
           provider: { kind: "anthropic" }
           permissionPolicy: "default"
+        capabilityProfileObjectId: "86456f19-ef72-46be-88bb-dc86c3ecf85b"
+        capabilityInstructionsObjectId: "50ba2f75-bc42-4968-bbd0-1ac0a50ec840"
+        outputObjects:
+          - objectId: "9742068b-0371-44bd-8108-e779461be15a"
+            kind: plan_review
+            logicalName: plan-review.json
+            mimeType: application/json
+            generation: 1
+            retentionClass: run
+            envName: MAISTER_PLAN_REVIEW_FILE
       properties:
         executionWorkspaceId:
           type: string
@@ -1631,7 +1881,7 @@ components:
           description: |
             (M42 — Implemented, ADR-114) Logical Flow session this ACP process
             serves (`default` | solo node id | named session). Stamped onto
-            `cost.jsonl` and `run.events.jsonl` so spend and events are
+            canonical host events so spend and events are
             attributable per logical session, not only per supervisor
             `sessionId`. Absent → treated as `default` (single-session run).
         nodeAttemptId:
@@ -1645,19 +1895,25 @@ components:
             only; it never authorizes access to a run or filesystem path.
         executor: { $ref: "#/components/schemas/Executor" }
         runner: { $ref: "#/components/schemas/RunnerLaunch" }
-        capabilityProfilePath:
+        capabilityProfileObjectId:
           type: string
-          minLength: 1
-          maxLength: 4096
+          format: uuid
           description: |
-            Absolute filesystem path to the web-materialized, run-scoped
-            capability profile. Must start with `/` and must not contain `..`
-            segments. The supervisor passes it only through validated
-            `adapterLaunch` env/args; it does not inspect policy. (Implemented —
-            ADR-166) The one residual path in the handle form: it MUST resolve
-            inside the handle's path → otherwise `409 PRECONDITION
-            {reason: workspace_rejected, rule: outside_workspace}`. It leaves
-            with Stage C materialization.
+            Opaque `capability_profile` object previously published under the
+            same run and assignment fence. The host derives its private path;
+            neither caller nor response can select or observe that path.
+        capabilityInstructionsObjectId:
+          type: string
+          format: uuid
+          description: |
+            Opaque `capability_instructions` object previously published under
+            the same run and assignment fence. The host validates the kind and
+            derives `MAISTER_CAPABILITY_INSTRUCTIONS_PATH` privately.
+        outputObjects:
+          type: array
+          maxItems: 32
+          items:
+            $ref: "#/components/schemas/RuntimeObjectOutputBinding"
         adapterLaunch:
           $ref: "#/components/schemas/AdapterLaunch"
         resumeSessionId:
@@ -1749,7 +2005,7 @@ components:
             `capability_guard` seam interceptor. Present iff the resolved node/agent
             declares `enforcement.tools: strict` and/or `enforcement.mcps: strict` on
             an enforceable adapter. Seeded onto the in-memory SessionRecord like
-            `hooksConfig`; distinct from `capabilityProfilePath` (child-env only).
+            `hooksConfig`; distinct from the opaque capability profile object.
             Each class key is present iff that class is strict-enforced; an
             out-of-profile tool call is denied at the seam (deny-and-continue) and the
             Nth consecutive deny halts. See `system-analytics/guardrail-hooks.md`.
@@ -1809,7 +2065,8 @@ components:
       description: |
         Constrained launch additions produced by the web capability
         materializer. It cannot override the adapter binary, `cwd`, run id,
-        project slug, worktree path, session id, or ACP session id.
+        project slug, worktree path, session id, ACP session id, or any
+        server-derived runtime-object environment variable.
       properties:
         env:
           type: object
@@ -1819,8 +2076,10 @@ components:
             maxLength: 4096
           description: |
             Extra environment variables for the spawned adapter. Values are
-            never logged. Applied after `executor.env` so run-scoped materialized
-            paths can win on collision.
+            never logged. The reserved `MAISTER_CAPABILITY_PROFILE_PATH`,
+            `MAISTER_CAPABILITY_INSTRUCTIONS_PATH`, `MAISTER_OUTPUT_FILE`,
+            `MAISTER_PLAN_DOCUMENT_FILE`, and `MAISTER_PLAN_REVIEW_FILE` names
+            are rejected because the host derives them from opaque objects.
         preArgs:
           type: array
           maxItems: 32
@@ -1891,23 +2150,23 @@ components:
           maxItems: 64
           description: |
             (Implemented, T5.4 — capability composer, FR-D5) Optional
-            pre-assembled ACP content blocks (a `text` block plus
-            `resource_link`/`resource` blocks). When present the supervisor
-            forwards them **verbatim** as
-            the ACP `prompt` content array — it does NOT re-template or rewrite;
-            `prompt` stays the plain-text equivalent/fallback. The web tier has
-            already normalized capability tokens to wire form (FR-E) and confined
-            resource URIs to the run worktree before this call.
+            pre-assembled content blocks (a `text` block plus ACP
+            `resource_link`/`resource` blocks). `runtime_object` is a
+            supervisor-only opaque reference: the host verifies its run and
+            assignment fence, then derives a private confined `file:` URI before
+            forwarding it to ACP. It is never forwarded verbatim and no host path
+            is returned to the manager. `prompt` stays the plain-text equivalent.
           items:
             type: object
             required: [type]
             additionalProperties: true
             properties:
-              type: { type: string, enum: [text, resource_link, resource] }
+              type: { type: string, enum: [text, resource_link, resource, runtime_object] }
               text: { type: string }
               uri: { type: string }
               name: { type: string }
               mimeType: { type: string }
+              objectId: { type: string, format: uuid }
     SendPromptStopReason:
       type: string
       enum: [end_turn, max_tokens, max_turn_requests, refusal, cancelled]
@@ -1921,6 +2180,7 @@ components:
     SendPromptResponse:
       type: object
       required: [stopReason]
+      additionalProperties: false
       properties:
         stopReason: { $ref: "#/components/schemas/SendPromptStopReason" }
         meta:
@@ -1931,6 +2191,24 @@ components:
             ACP `_meta` passthrough (opaque object provided by the
             adapter; shape is provider-specific). May be `null` or
             omitted when the adapter sent no `_meta`.
+        runtimeObjects:
+          type: array
+          maxItems: 32
+          description: |
+            Metadata for predeclared output objects sealed after the ACP turn.
+            The list contains no private path or object content. It is recorded
+            in the terminal command receipt and mirrored by the canonical
+            terminal `session.command` event.
+          items:
+            $ref: "#/components/schemas/RuntimeObjectMetadata"
+    PromptAccepted:
+      type: object
+      required: [commandId, state]
+      additionalProperties: false
+      description: Stable durable admission response; terminal result is deliberately absent.
+      properties:
+        commandId: { type: string, format: uuid }
+        state: { type: string, enum: [accepted] }
     SessionStatus:
       type: string
       enum: [live, exited, crashed]
@@ -2011,6 +2289,210 @@ components:
             (M42 — Implemented, ADR-114) Logical Flow session name this record
             serves (`default` for a single-session run), echoed from
             `StartSessionRequest.sessionName`.
+    RuntimeEventSequence:
+      type: string
+      pattern: "^(0|[1-9][0-9]{0,18})$"
+      maxLength: 19
+      description: Canonical non-negative signed-BIGINT decimal. It is a JSON string, never a number; maximum `9223372036854775807`.
+    SessionContentReference:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          schema,
+          commandId,
+          hostSessionId,
+          source,
+          firstFrame,
+          frameCount,
+          objectId,
+          kind,
+          logicalName,
+          mimeType,
+          generation,
+          sizeBytes,
+          sha256,
+          retentionClass,
+          state,
+          sealedAt,
+          expiresAt,
+        ]
+      description: |
+        Exact host-owned UTF-8 session payload JSON. This reference-bearing
+        session event is also the sealed object's availability evidence.
+        Trusted consumers verify the envelope fence, generation, length and
+        actual bytes before decoding outside their domain transaction.
+        Browser content reads require readRepoFiles; metadata grants do not
+        authorize reconstruction. A lost object never means an empty result.
+      properties:
+        schema: { type: string, enum: [maister.session-content.v2] }
+        sourcePayloadSchema: { type: string, enum: [maister.session.command.v2] }
+        commandId: { type: string, format: uuid }
+        hostSessionId: { type: string, pattern: "^[A-Za-z0-9._-]{1,128}$" }
+        source:
+          { type: string, enum: [raw_stdout, session_update, terminal_output] }
+        firstFrame: { type: integer, minimum: 0, maximum: 9007199254740991 }
+        frameCount: { type: integer, enum: [1] }
+        objectId: { type: string, format: uuid }
+        kind: { type: string, enum: [raw_transcript] }
+        logicalName: { type: string, enum: [session-content.json] }
+        mimeType: { type: string, enum: [application/json] }
+        generation: { type: integer, minimum: 1, maximum: 2147483647 }
+        sizeBytes: { type: integer, minimum: 0, maximum: 2097152 }
+        sha256: { type: string, pattern: "^[a-f0-9]{64}$" }
+        retentionClass: { type: string, enum: [run] }
+        state: { type: string, enum: [available] }
+        sealedAt: { type: string, format: date-time }
+        expiresAt: { nullable: true, enum: [null] }
+    RuntimeEventEnvelope:
+      type: object
+      additionalProperties: false
+      required: [envelopeVersion, eventId, hostKey, hostBootId, streamId, sequence, runId, assignmentId, assignmentEpoch, hostSessionId, eventType, occurredAt, payloadSchema, payload]
+      description: |
+        Designed ADR-167 deterministic event spine. `eventId` is UUIDv5 of the
+        host-derived `(hostKey, streamId, sequence)`. The payload is open JSON
+        only after the declared known schema/redactor accepts it; it never
+        contains a host path, prompt, content bytes, secret, or environment value.
+      properties:
+        envelopeVersion: { type: integer, enum: [1] }
+        eventId: { type: string, format: uuid }
+        hostKey: { type: string, pattern: "^[A-Za-z0-9_-]{8,64}$" }
+        hostBootId: { type: string, format: uuid }
+        streamId: { type: string, format: uuid }
+        sequence: { $ref: "#/components/schemas/RuntimeEventSequence" }
+        runId: { type: string, minLength: 1, maxLength: 128, description: Server-derived assignment run identity. }
+        assignmentId: { type: string, format: uuid, description: Server-derived assignment identity. }
+        assignmentEpoch: { type: integer, minimum: 1, maximum: 2147483647, description: Server-derived fence epoch. }
+        hostSessionId:
+          type: string
+          pattern: '^[A-Za-z0-9._-]{1,128}$'
+          nullable: true
+          description: Opaque host-derived ACP session identity when one exists; clients must not parse it.
+        eventType:
+          type: string
+          enum: [session.created, session.line, session.update, session.permission_request, session.hook_trip, session.command, session.chat_turn, session.exited, session.crashed, usage.recorded, runtime_object.available, runtime_object.state]
+        occurredAt: { type: string, format: date-time, description: "Host occurrence metadata, never an ordering authority." }
+        payloadSchema:
+          type: string
+          enum: [maister.session.created.v1, maister.session.line.v1, maister.session.update.v1, maister.session.permission-request.v1, maister.session.hook-trip.v1, maister.session.command.v1, maister.session.chat-turn.v1, maister.session.exited.v1, maister.session.crashed.v1, maister.usage.recorded.v1, maister.runtime-object.available.v1, maister.runtime-object.state.v1, maister.session.content.v2, maister.session.command.v2]
+        payload:
+          type: object
+          additionalProperties: true
+          properties:
+            contentRef: { $ref: "#/components/schemas/SessionContentReference" }
+            createdByCommandId:
+              type: string
+              description: Host-derived session.create command on created and terminal events; identifies the exact create generation for binding and historical incarnation evidence.
+            sessionName:
+              type: string
+              description: Host-derived logical session name; must match the creator command.
+            acpSessionId:
+              type: string
+              nullable: true
+              description: Terminal resume handle; null when ACP initialization never completed.
+    RuntimeEventAck:
+      type: object
+      additionalProperties: false
+      required: [streamId, throughSequence]
+      properties:
+        streamId: { type: string, format: uuid, description: "Request-body supplied, verified against the selected host stream." }
+        throughSequence: { $ref: "#/components/schemas/RuntimeEventSequence" }
+    ExecutionHostCapabilities:
+      type: object
+      additionalProperties: false
+      required: [dataPlaneVersion, eventStream, asyncPrompt, runtimeObjects, limits]
+      properties:
+        dataPlaneVersion: { type: string, enum: ["execution-host-data-plane.v1"] }
+        eventStream: { type: boolean }
+        asyncPrompt: { type: boolean }
+        runtimeObjects: { type: boolean }
+        limits:
+          type: object
+          additionalProperties: false
+          required: [maxEventBytes, maxObjectBytes, maxReplayBatch]
+          properties:
+            maxEventBytes: { type: integer, enum: [1048576] }
+            maxObjectBytes: { type: integer, enum: [26214400] }
+            maxReplayBatch: { type: integer, enum: [500] }
+    RuntimeObjectReserveCommand:
+      type: object
+      additionalProperties: false
+      required: [command, fence, payload]
+      properties:
+        command: { $ref: "#/components/schemas/CommandEnvelope/properties/command" }
+        fence: { $ref: "#/components/schemas/CommandFence" }
+        payload:
+          type: object
+          additionalProperties: false
+          required: [objectId, kind, logicalName, mimeType, sizeBytes, sha256, generation, retentionClass]
+          properties:
+            objectId: { type: string, format: uuid }
+            kind: { type: string, enum: [session_log, raw_transcript, cost_diagnostic, checkpoint, attachment, capability_profile, capability_instructions, agent_memory_snapshot, node_result, evidence, generated_artifact, plan_review, diagnostic] }
+            logicalName: { type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$", maxLength: 255 }
+            mimeType: { type: string, maxLength: 255 }
+            sizeBytes: { type: integer, minimum: 0, maximum: 26214400 }
+            sha256: { type: string, pattern: "^[a-f0-9]{64}$" }
+            generation: { type: integer, minimum: 1 }
+            retentionClass: { type: string, enum: [run, delivery, ephemeral] }
+            expiresAt: { type: string, format: date-time, nullable: true }
+    RuntimeObjectDeleteCommand:
+      type: object
+      additionalProperties: false
+      required: [command, fence, payload]
+      properties:
+        command: { $ref: "#/components/schemas/CommandEnvelope/properties/command" }
+        fence: { $ref: "#/components/schemas/CommandFence" }
+        payload:
+          type: object
+          additionalProperties: false
+          required: [generation]
+          properties:
+            generation: { type: integer, minimum: 1 }
+    RuntimeObjectOutputBinding:
+      type: object
+      additionalProperties: false
+      required:
+        - objectId
+        - kind
+        - logicalName
+        - mimeType
+        - generation
+        - retentionClass
+        - envName
+      description: |
+        Server-derived declaration for one host-owned ACP output. The host
+        allocates a private path, injects it through the allow-listed `envName`,
+        and seals the object after the prompt. Duplicate object IDs or env names
+        in one session request are rejected before spawn.
+      properties:
+        objectId: { type: string, format: uuid }
+        kind: { type: string, enum: [session_log, raw_transcript, cost_diagnostic, checkpoint, attachment, capability_profile, capability_instructions, agent_memory_snapshot, node_result, evidence, generated_artifact, plan_review, diagnostic] }
+        logicalName: { type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$", maxLength: 255 }
+        mimeType: { type: string, minLength: 1, maxLength: 255 }
+        generation: { type: integer, minimum: 1 }
+        retentionClass: { type: string, enum: [run, delivery, ephemeral] }
+        expiresAt: { type: string, format: date-time, nullable: true }
+        envName:
+          type: string
+          enum: [MAISTER_OUTPUT_FILE, MAISTER_PLAN_DOCUMENT_FILE, MAISTER_PLAN_REVIEW_FILE]
+    RuntimeObjectMetadata:
+      type: object
+      additionalProperties: false
+      required: [objectId, kind, logicalName, mimeType, sizeBytes, sha256, generation, retentionClass, state, createdAt, sealedAt, expiresAt, deletedAt]
+      properties:
+        objectId: { type: string, format: uuid }
+        kind: { type: string, enum: [session_log, raw_transcript, cost_diagnostic, checkpoint, attachment, capability_profile, capability_instructions, agent_memory_snapshot, node_result, evidence, generated_artifact, plan_review, diagnostic] }
+        logicalName: { type: string }
+        mimeType: { type: string }
+        sizeBytes: { type: integer, minimum: 0, nullable: true }
+        sha256: { type: string, pattern: "^[a-f0-9]{64}$", nullable: true }
+        generation: { type: integer, minimum: 1 }
+        retentionClass: { type: string, enum: [run, delivery, ephemeral] }
+        state: { type: string, enum: [pending, available, deleting, missing, deleted, expired, corrupt] }
+        createdAt: { type: string, format: date-time }
+        sealedAt: { type: string, format: date-time, nullable: true }
+        expiresAt: { type: string, format: date-time, nullable: true }
+        deletedAt: { type: string, format: date-time, nullable: true }
     SupervisorErrorCode:
       type: string
       enum:
@@ -2052,6 +2534,23 @@ components:
         - workspace_rejected
         - legacy_field
         - missing_envelope
+        - invalid_event_sequence
+        - replay_floor_lost
+        - stream_identity_conflict
+        - ack_not_contiguous
+        - ack_beyond_emitted
+        - unsupported_event_schema
+        - event_redaction_failed
+        - event_payload_oversize
+        - event_outbox_backpressure
+        - runtime_storage_unavailable
+        - runtime_storage_pressure
+        - runtime_output_buffer_capacity
+        - runtime_output_frame_too_large
+        - required_output_incomplete
+        - runtime_object_missing
+        - runtime_object_range_invalid
+        - runtime_object_integrity_mismatch
       description: |
         (Implemented — ADR-166) Machine-readable refusal discriminator carried in
         `SupervisorErrorBody.details.reason`. Tests assert the token, never
@@ -2080,6 +2579,26 @@ components:
         the web-tier `MaisterError.details`.
       properties:
         reason: { $ref: "#/components/schemas/ReasonToken" }
+        outputFailure:
+          type: string
+          enum:
+            [
+              producer_retained_limit,
+              producer_chunk_limit,
+              producer_frame_limit,
+              producer_spool_incomplete,
+              producer_frame_incomplete,
+              producer_output_storage,
+              producer_json_complexity,
+              producer_frame_invalid,
+              producer_permission_limit,
+              producer_permission_invalid,
+              producer_permission_failed,
+              producer_response_failed,
+              producer_update_invalid,
+              producer_method_unsupported,
+              producer_output_incomplete,
+            ]
         rule: { $ref: "#/components/schemas/WorkspaceRule" }
         field:
           type: string
@@ -2353,7 +2872,7 @@ components:
       type: object
       required: [command, fence, payload]
       additionalProperties: false
-      description: (Implemented — ADR-166) Enveloped `POST /sessions/{id}/prompt` body.
+      description: (Implemented — ADR-167) Enveloped asynchronous prompt command body.
       properties:
         command:
           type: object
@@ -2447,6 +2966,7 @@ components:
           httpStatus,
           body,
           receivedAt,
+          eventId,
           inflight,
         ]
       additionalProperties: false
@@ -2466,6 +2986,7 @@ components:
         body: { stopReason: "end_turn", meta: null }
         receivedAt: "2026-09-02T10:00:02.050Z"
         completedAt: "2026-09-02T10:04:41.900Z"
+        eventId: "7a7b8c9d-0e1f-4a2b-8c3d-4e5f6a7b8c9d"
         inflight: false
       properties:
         inflight:
@@ -2485,6 +3006,11 @@ components:
           description: The stored response (success body or `SupervisorErrorBody`); empty while `accepted`.
         receivedAt: { type: string, format: date-time }
         completedAt: { type: string, format: date-time, nullable: true }
+        eventId:
+          type: string
+          format: uuid
+          nullable: true
+          description: Canonical host outbox event written atomically with this receipt for a session command; null for legacy non-session commands.
     CheckpointResponse:
       type: object
       description: |
@@ -2633,3 +3159,196 @@ components:
           type: integer
           minimum: 0
           description: Cache validity window for this draft key.
+    ImmutablePromptRequestV2:
+      x-implementation-status: Designed
+      description: |
+        Private exact JCS input retained by the manager. Activated with the v2
+        prompt capability after all owner adapters are ready. This is never a
+        public command DTO. IDs/issuedAt are reused from the logical-key lookup.
+        The URL-selected hostSessionId is part of the SHA-256 request identity.
+      type: object
+      additionalProperties: false
+      required: [requestVersion, command, fence, target, payload]
+      properties:
+        requestVersion: { type: integer, enum: [2] }
+        command:
+          type: object
+          additionalProperties: false
+          required: [id, kind, issuedAt]
+          properties:
+            id: { type: string, format: uuid }
+            kind: { type: string, enum: [session.prompt] }
+            issuedAt: { type: string, format: date-time }
+        fence: { $ref: '#/components/schemas/CommandFence' }
+        target:
+          type: object
+          additionalProperties: false
+          required: [hostSessionId]
+          properties:
+            hostSessionId: { type: string, minLength: 1, maxLength: 128 }
+        payload: { $ref: '#/components/schemas/SendPromptRequest' }
+    CommandOutputReferenceV2:
+      x-implementation-status: Designed
+      type: object
+      additionalProperties: false
+      required: [objectId, generation, sizeBytes, sha256, commandId, hostSessionId, acceptedSequence, terminalSequence]
+      properties:
+        objectId: { type: string, format: uuid }
+        generation: { type: integer, minimum: 1, maximum: 2147483647 }
+        sizeBytes: { type: integer, minimum: 0, maximum: 9007199254740991 }
+        sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        commandId: { type: string, format: uuid }
+        hostSessionId: { type: string, minLength: 1, maxLength: 128 }
+        acceptedSequence: { type: string, pattern: '^(0|[1-9][0-9]{0,18})$', maxLength: 19 }
+        terminalSequence: { type: string, pattern: '^(0|[1-9][0-9]{0,18})$', maxLength: 19 }
+      description: |
+        Immutable full semantic output. Sequence strings are signed-BIGINT-safe;
+        command, session, generation and both sequence bounds must agree with
+        canonical evidence. Required bytes cannot be replaced by a redacted snippet.
+    CommandOutputManifestV2:
+      x-implementation-status: Designed
+      type: object
+      additionalProperties: false
+      required: [schema, commandId, hostKey, runId, assignmentId, assignmentEpoch, hostSessionId, requestSha256, streamId, acceptedSequence, terminalSequence, response]
+      properties:
+        schema: { type: string, enum: [maister.command-output.v2] }
+        commandId: { type: string, format: uuid }
+        hostKey: { type: string, pattern: '^[A-Za-z0-9_-]{8,64}$' }
+        runId: { type: string, minLength: 1, maxLength: 128 }
+        assignmentId: { type: string, format: uuid }
+        assignmentEpoch: { type: integer, minimum: 1, maximum: 2147483647 }
+        hostSessionId: { type: string, minLength: 1, maxLength: 128 }
+        requestSha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        streamId: { type: string, format: uuid }
+        acceptedSequence: { type: string, pattern: '^(0|[1-9][0-9]{0,18})$', maxLength: 19 }
+        terminalSequence: { type: string, pattern: '^(0|[1-9][0-9]{0,18})$', maxLength: 19 }
+        response:
+          type: object
+          additionalProperties: false
+          required: [objectId, generation, sizeBytes, sha256]
+          properties:
+            objectId: { type: string, format: uuid }
+            generation: { type: integer, minimum: 1, maximum: 2147483647 }
+            sizeBytes: { type: integer, minimum: 0, maximum: 9007199254740991 }
+            sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+      description: |
+        Immutable JSON manifest, at most 2 MiB, addressing the original
+        command-attributed event span and a separately sealed original ACP
+        response (including opaque _meta). Response bytes repeat command,
+        session and request binding. Require acceptedSequence < terminalSequence,
+        signed-BIGINT-safe bounds and contiguous ingestion through terminal.
+        Reconstruct semantic output only from matching sourceCommandId events
+        in this exact fenced session span and verified original content objects.
+        Retain the span and objects through owner application and retirement.
+    CommandTerminalEvidenceV2:
+      x-implementation-status: Designed
+      type: object
+      additionalProperties: false
+      required: [outcomeVersion, status, eventId, streamId, sequence, result, error]
+      properties:
+        outcomeVersion: { type: integer, enum: [2] }
+        status: { type: string, enum: [succeeded, failed, fenced] }
+        eventId: { type: string, format: uuid }
+        streamId: { type: string, format: uuid }
+        sequence: { type: string, pattern: '^(0|[1-9][0-9]{0,18})$', maxLength: 19 }
+        result:
+          type: object
+          nullable: true
+          additionalProperties: true
+          description: Versioned bounded per-kind result, including output reference for prompt success; never raw semantic output.
+          properties:
+            output: { $ref: '#/components/schemas/CommandOutputReferenceV2' }
+        error:
+          nullable: true
+          allOf: [{ $ref: '#/components/schemas/SupervisorErrorBody' }]
+      description: |
+        Success requires a result and null error; failure/fencing requires an
+        exact nested error and null result. The reducer validates the per-kind
+        result contract and preserves nested details. Its canonical identity
+        must match independently acquired receipt and canonical-event evidence.
+    CommandReceiptV2:
+      x-implementation-status: Designed
+      type: object
+      additionalProperties: false
+      required: [receiptVersion, commandId, kind, hostKey, runId, assignmentId, assignmentEpoch, hostSessionId, requestSchema, requestSha256, phase, httpStatus, receivedAt, terminal]
+      properties:
+        receiptVersion: { type: integer, enum: [2] }
+        commandId: { type: string, format: uuid }
+        kind: { $ref: '#/components/schemas/CommandKind' }
+        hostKey: { type: string, pattern: '^[A-Za-z0-9_-]{8,64}$' }
+        runId: { type: string, minLength: 1, maxLength: 128 }
+        assignmentId: { type: string, format: uuid }
+        assignmentEpoch: { type: integer, minimum: 1, maximum: 2147483647 }
+        hostSessionId: { type: string, nullable: true, minLength: 1, maxLength: 128 }
+        requestSchema: { type: string, enum: [maister.command.request.v2] }
+        requestSha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        phase: { type: string, enum: [accepted, completed, rejected] }
+        httpStatus: { type: integer, minimum: 100, maximum: 599 }
+        receivedAt: { type: string, format: date-time }
+        terminal:
+          nullable: true
+          allOf: [{ $ref: '#/components/schemas/CommandTerminalEvidenceV2' }]
+      description: |
+        Host/fence/target are derived from the stored admission, never the querying
+        caller. Accepted has null terminal; completed/rejected has exact terminal
+        evidence. Receipt alone cannot settle a prompt. Absence or failed reads
+        preserve unknown outcome. Pre-effect refusal is explicit typed evidence.
+    CommandRetirementRequestV1:
+      x-implementation-status: Designed
+      type: object
+      additionalProperties: false
+      required: [retirementId, generation, requestSha256, terminalEvidenceSha256, terminalSequence, ownerDisposition, eligibleAt]
+      properties:
+        retirementId: { type: string, format: uuid }
+        generation: { type: integer, minimum: 1, maximum: 2147483647 }
+        requestSha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        terminalEvidenceSha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        terminalSequence: { type: string, pattern: '^(0|[1-9][0-9]{0,18})$', maxLength: 19 }
+        ownerDisposition: { type: string, enum: [applied, superseded, not_applicable] }
+        eligibleAt: { type: string, format: date-time }
+      description: |
+        POST /commands/{commandId}/retirement over the existing trusted local
+        administrative transport. URL commandId selects the host receipt; the host
+        rechecks request/terminal identity, terminal phase, contiguous ACK and grace.
+        The manager admits this proof only under terminal run and delivery/reference
+        holds. Same retirement ID/generation replays, conflict or ineligibility is
+        409; ACK loss retains manager evidence. Response echoes the verified request
+        plus commandId and confirmedAt. Parent deletion cannot bypass this protocol.
+    HistoricalImportChunkIdentityV1:
+      x-implementation-status: Designed
+      type: object
+      additionalProperties: false
+      required: [generation, manifestSha256, offset, sizeBytes, sha256, objectId]
+      properties:
+        generation: { type: integer, minimum: 1, maximum: 2147483647 }
+        manifestSha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        offset: { type: integer, minimum: 0, maximum: 9007199254740991 }
+        sizeBytes: { type: integer, minimum: 0, maximum: 8388608 }
+        sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        objectId: { type: string, format: uuid }
+      description: |
+        Maintenance Unix-socket transport only; no TCP import route. URL-selected
+        importId/itemId/chunkIndex and these header-derived metadata values must
+        match the locally enabled frozen manifest. Request body is exact bytes;
+        Content-Length and Content-Digest must agree. Supervisor-derived host and
+        manifest bindings replace an active assignment, never a forged fence.
+        Matching chunk/seal retries replay; changed bytes or generation is 409.
+        Local OS authority, explicit enablement and revocation govern access.
+
+x-ab-stabilization:
+  status: Designed
+  activation: Paired host/manager capabilities after existing commands are drained or explicitly held for repair; no indefinite legacy execution path.
+  commandIdentity: ImmutablePromptRequestV2 and CommandReceiptV2 bind the URL-selected target as well as the envelope and exact result/error identity.
+  readPolicy:
+    contentType: application/octet-stream
+    contentDisposition: attachment
+    xContentTypeOptions: nosniff
+    contentSecurityPolicy: "sandbox; default-src 'none'"
+    cacheControl: private, no-store
+    contentDigest: SHA-256 of actual 200/206 message bytes
+    reprDigest: SHA-256 of the full verified representation
+    etag: Strong generation and full-representation hash identity
+    verification: No-follow descriptor, full streaming hash and bounded private response spool verified before success headers; manager verifies actual response bytes.
+  identifiers: ../system-analytics/execution-hosts.md#identifier-classification-and-refusal-contract-designed
+  refusalReasons: ../error-taxonomy.md#ab-stabilization-reasons-designed
+  maintenanceImport: ../system-analytics/execution-data-cutover.md#historical-import-and-guarded-upgrade-protocol-designed

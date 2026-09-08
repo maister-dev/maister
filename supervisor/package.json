@@ -4,11 +4,12 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=22.13"
+    "node": ">=24.15.0 <25"
   },
   "scripts": {
+    "test:integration:ab": "node ../scripts/run-stage-ab-tests.mjs supervisor",
     "dev": "tsx watch --env-file-if-exists=.env src/main.ts",
-    "start": "tsx --env-file-if-exists=.env src/main.ts",
+    "start": "node --import tsx --env-file-if-exists=.env src/main.ts",
     "smoke:acp": "tsx scripts/smoke-acp-adapter.ts",
     "lint": "eslint --fix",
     "typecheck": "tsc --noEmit",

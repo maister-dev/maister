@@ -58,6 +58,11 @@ import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { isLaunchedLineageRun } from "@/lib/evaluations/membership";
 import { runFlow } from "@/lib/flows/runner";
 import {
+  assertFlowPermissionDelivery,
+  completeFlowPermissionDelivery,
+  prepareFlowPermissionResponse,
+} from "@/lib/flows/graph/prompt-permission";
+import {
   assertReviewFeedbackPresent,
   buildReviewFeedbackPreview,
 } from "@/lib/review-comments/feedback-packet";
@@ -70,6 +75,14 @@ import {
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import { claimAgentIdleResumeInTransaction } from "@/lib/runs/state-transitions";
 import { revokeAgentRunTokensForRun } from "@/lib/agents/tokens";
+import {
+  reconcileAgentPermissionResume,
+  readAgentPermissionResume,
+} from "@/lib/agents/permission-resume";
+import {
+  prepareAgentPermissionResponse,
+  completeAgentPermissionDelivery,
+} from "@/lib/agents/permission";
 import {
   assertBudgetBreachOptionAvailable,
   budgetBreachClaimRef,
@@ -280,7 +293,18 @@ export type AgentResumeClaim =
 export async function claimAgentResumeSlot(
   db: any,
   runId: string,
+  executionHosts?: ExecutionHosts,
 ): Promise<AgentResumeClaim> {
+  const hosts = executionHosts ?? createExecutionHosts({ db });
+  const placementHost = await localHost({ db, transport: hosts.transport });
+  const [current] = await db
+    .select({ status: runs.status })
+    .from(runs)
+    .where(eq(runs.id, runId));
+
+  if (current?.status === "NeedsInputIdle" || current?.status === "NeedsInput")
+    await reconcileAgentPermissionResume(db, runId, hosts.transport);
+
   return db.transaction(async (tx: any): Promise<AgentResumeClaim> => {
     await takeSchedulerLock(tx);
 
@@ -293,12 +317,39 @@ export async function claimAgentResumeSlot(
         executionAssignmentId: runs.executionAssignmentId,
       })
       .from(runs)
-      .where(eq(runs.id, runId));
+      .where(eq(runs.id, runId))
+      .for("update");
 
     if (!cur) return { outcome: "noop" };
 
     // NeedsInput holds the slot — flip directly, no cap gate needed.
     if (cur.status === "NeedsInput") {
+      const handoff = await readAgentPermissionResume(tx, runId);
+
+      if (handoff?.kind === "pending") {
+        await tx
+          .update(runs)
+          .set({
+            resumeRequestedAt: sql`coalesce(${runs.resumeRequestedAt}, clock_timestamp())`,
+          })
+          .where(eq(runs.id, runId));
+
+        return { outcome: "queued" };
+      }
+      if (handoff?.kind === "ready" && handoff.source.pause) {
+        await tx
+          .update(runs)
+          .set({ status: "NeedsInputIdle", checkpointAt: new Date() })
+          .where(eq(runs.id, runId));
+        await releaseAssignmentForRun(tx, runId, "checkpointed");
+        const claim = await claimAgentIdleResumeInTransaction(tx, runId, {
+          placement: { host: placementHost },
+        });
+
+        return claim.ok
+          ? { outcome: "claimed", assignmentId: claim.assignment?.id ?? null }
+          : { outcome: "noop" };
+      }
       const flipped = await tx
         .update(runs)
         .set({ status: "Running", keepaliveUntil: null, checkpointAt: null })
@@ -323,7 +374,9 @@ export async function claimAgentResumeSlot(
 
       // ADR-166 D3: the idle wake is a new driver generation, minted inside
       // this claim.
-      const claim = await claimAgentIdleResumeInTransaction(tx, runId);
+      const claim = await claimAgentIdleResumeInTransaction(tx, runId, {
+        placement: { host: placementHost },
+      });
 
       return claim.ok
         ? { outcome: "claimed", assignmentId: claim.assignment?.id ?? null }
@@ -441,6 +494,7 @@ async function scheduleBudgetBreachResume(args: {
     if (r.ok) {
       scheduleResumedSessionDrive({
         runId,
+        db,
         supervisorSessionId: r.newSupervisorSessionId,
         acpSessionId: r.acpSessionId,
         stepId,
@@ -850,16 +904,22 @@ async function handlePermissionResponse(
   // "another request already finished — return 200 idempotently".
 
   const claim: PermissionClaim = await db.transaction(async (tx: any) => {
-    const lockedHitl = await lockHitlRow(tx, hitlRequestId);
     const lockedRunRows = await tx
       .select()
       .from(runs)
-      .where(eq(runs.id, runId));
+      .where(eq(runs.id, runId))
+      .for("update");
+    const lockedHitl = await lockHitlRow(tx, hitlRequestId);
     const lockedRun = lockedRunRows[0];
 
     if (!lockedHitl || !lockedRun) {
       throw new MaisterError("PRECONDITION", "row vanished mid-transaction");
     }
+    if (lockedHitl.supersededAt)
+      throw new MaisterError(
+        "CONFLICT",
+        "permission was superseded by a checkpoint pause",
+      );
     if (TERMINAL_RUN_STATUS.has(lockedRun.status)) {
       throw new MaisterError(
         "CONFLICT",
@@ -890,17 +950,18 @@ async function handlePermissionResponse(
     // no live session to address — its resume re-issues the intent instead.
     const prepareDelivery = async () => {
       if (lockedRun.status !== "NeedsInput") return null;
+      await assertFlowPermissionDelivery(tx, lockedHitl.schema ?? {});
+      const deliverySchema = lockedHitl.schema as typeof schema;
       const client = await args.executionHosts.forRun(runId);
-      const prepared = await client.prepareInput(
-        tx,
-        schema.supervisorSessionId,
-        {
+      const prepared =
+        (await prepareFlowPermissionResponse(tx, client, hitlRequestId)) ??
+        (await prepareAgentPermissionResponse(tx, client, hitlRequestId)) ??
+        (await client.prepareInput(tx, deliverySchema.supervisorSessionId, {
           kind: "permission",
           action: "select",
-          requestId: schema.requestId,
+          requestId: deliverySchema.requestId,
           optionId,
-        },
-      );
+        }));
 
       return { client, prepared };
     };
@@ -986,6 +1047,16 @@ async function handlePermissionResponse(
   // requestId once the resumed session re-issues the permission.
   if (claim.runStatus === "NeedsInputIdle") {
     if (runRow.runKind === "agent") {
+      await reconcileAgentPermissionResume(
+        db,
+        runId,
+        args.executionHosts.transport,
+      );
+      const placementHost = await localHost({
+        db,
+        transport: args.executionHosts.transport,
+      });
+
       // ADR-121 (T14, G4): cap-gate the agent idle-resume claim atomically (closes
       // the D2 over-cap bypass on the agent pool too). Under the scheduler lock,
       // count the agent pool; if at cap, DEFER — stamp resume_requested_at (the C3
@@ -1009,6 +1080,7 @@ async function handlePermissionResponse(
         // ADR-166 D3: the idle wake is a new driver generation, minted inside
         // this claim; startAgentSession binds to it.
         const claim = await claimAgentIdleResumeInTransaction(tx, runId, {
+          placement: { host: placementHost },
           recordSuccessAudit: async (t: any) => {
             await args.recordSuccessAudit?.(t, 202);
           },
@@ -1016,19 +1088,22 @@ async function handlePermissionResponse(
 
         return claim.ok
           ? { assignmentId: claim.assignment?.id ?? null }
-          : (false as const);
+          : claim.reason === "pending-evidence"
+            ? ("pending" as const)
+            : (false as const);
       });
 
-      if (claimed === "queued") {
+      if (claimed === "queued" || claimed === "pending") {
         log.info(
           {
             runId,
             hitlRequestId,
             branch: "agent-idle",
             phase: "resume-queued",
+            reason: claimed === "queued" ? "capacity" : "source-evidence",
             latencyMs: Date.now() - startedAt,
           },
-          "permission stored; agent pool at cap — resume queued for the next free slot",
+          "permission stored; agent resume awaits its normal claim",
         );
 
         return NextResponse.json(
@@ -1127,6 +1202,7 @@ async function handlePermissionResponse(
       // or auto-delivered the stored intent.
       const driveId = scheduleResumedSessionDrive({
         runId,
+        db,
         supervisorSessionId: r.newSupervisorSessionId,
         acpSessionId: r.acpSessionId,
         stepId: hitlRow.stepId,
@@ -1139,18 +1215,18 @@ async function handlePermissionResponse(
           runId,
           hitlRequestId,
           branch: "idle",
-          phase: "resume-spawned",
+          phase: "resume-authorized",
           newSupervisorSessionId: r.newSupervisorSessionId,
           driveId,
           latencyMs: Date.now() - startedAt,
         },
-        "permission stored; resume spawned + driver scheduled — auto-deliver async",
+        "permission resume authorized; driver scheduled",
       );
 
       return NextResponse.json(
         {
           ok: true,
-          runStatus: "NeedsInput",
+          runStatus: r.runStatus,
           state: "resume-in-progress",
         },
         { status: 202 },
@@ -1277,12 +1353,18 @@ async function handlePermissionResponse(
     await prepared.deliver({
       onAck: async (tx: any, delivery) => {
         delivered = true;
+        const currentHitl = await lockHitlRow(tx, hitlRequestId);
         const stamped = await tx
           .update(hitlRequests)
           .set({
             respondedAt: new Date(),
             ...(delivery.replayed
-              ? { response: withDeliveryReplayed(hitlRow.response, optionId) }
+              ? {
+                  response: withDeliveryReplayed(
+                    currentHitl?.response,
+                    optionId,
+                  ),
+                }
               : {}),
           })
           .where(
@@ -1293,6 +1375,16 @@ async function handlePermissionResponse(
           )
           .returning({ id: hitlRequests.id });
 
+        await completeFlowPermissionDelivery(
+          tx,
+          hitlRequestId,
+          prepared.commandId,
+        );
+        await completeAgentPermissionDelivery(
+          tx,
+          hitlRequestId,
+          prepared.commandId,
+        );
         await markScratchPermissionDelivered(tx, runRow, runId);
         await markSyncResolverPermissionDelivered(tx, runId);
         await completeResponseAssignment(tx, assignmentClaim, { optionId });
@@ -1326,10 +1418,7 @@ async function handlePermissionResponse(
       "permission delivered",
     );
 
-    return NextResponse.json(
-      { ok: true, runStatus: "NeedsInput" },
-      { status: 200 },
-    );
+    return NextResponse.json({ ok: true, state: "delivered" }, { status: 200 });
   } catch (err) {
     // ADR-166 driver yield rule: a fenced delivery means another driver
     // generation owns this run (a resume raced the response) — write nothing,
@@ -1349,6 +1438,33 @@ async function handlePermissionResponse(
       );
 
       throw err;
+    }
+
+    if (
+      isMaisterError(err) &&
+      err.code === "CONFLICT" &&
+      err.details?.commandId === prepared.commandId &&
+      (err.details.reason === "permission_ack_superseded" ||
+        err.details.reason === "command_not_claimable")
+    ) {
+      // A competing delivery of this exact command still owns the deferred.
+      // Losing its delivery CAS cannot authorize a cancellation command.
+      const [current] = await db
+        .select({ respondedAt: hitlRequests.respondedAt })
+        .from(hitlRequests)
+        .where(eq(hitlRequests.id, hitlRequestId));
+      const completed =
+        current?.respondedAt !== null && current?.respondedAt !== undefined;
+
+      log.info(
+        { runId, hitlRequestId, commandId: prepared.commandId, completed },
+        "permission-delivery-rejoined",
+      );
+
+      return NextResponse.json(
+        { ok: true, state: completed ? "delivered" : "delivery-in-progress" },
+        { status: completed ? 200 : 202 },
+      );
     }
 
     if (isMaisterError(err) && err.code === "HITL_TIMEOUT") {
@@ -4105,6 +4221,11 @@ async function handleBudgetBreachResponse(args: {
   }
 
   const outcome = await db.transaction(async (tx: any) => {
+    await tx
+      .select({ id: runs.id })
+      .from(runs)
+      .where(eq(runs.id, runId))
+      .for("update");
     const locked = await lockHitlRow(tx, hitlRequestId);
 
     if (!locked) {
@@ -4685,6 +4806,11 @@ async function handleHookTripResponse(args: {
   const isAgent = runRow.runKind === "agent";
 
   const outcome = await db.transaction(async (tx: any) => {
+    await tx
+      .select({ id: runs.id })
+      .from(runs)
+      .where(eq(runs.id, runId))
+      .for("update");
     const locked = await lockHitlRow(tx, hitlRequestId);
 
     if (!locked) {
@@ -4694,6 +4820,11 @@ async function handleHookTripResponse(args: {
       );
     }
     if (locked.respondedAt) {
+      if (locked.response?.optionId && locked.response.optionId !== decision)
+        throw new MaisterError(
+          "CONFLICT",
+          "hook_trip already has a different decision",
+        );
       const [r] = await tx
         .select({ status: runs.status })
         .from(runs)
@@ -4707,7 +4838,7 @@ async function handleHookTripResponse(args: {
 
     await tx
       .update(hitlRequests)
-      .set({ respondedAt: new Date() })
+      .set({ respondedAt: new Date(), response: { optionId: decision } })
       .where(eq(hitlRequests.id, hitlRequestId));
 
     if (decision === "abort") {

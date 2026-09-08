@@ -1,0 +1,533 @@
+asyncapi: 2.6.0
+info:
+  title: MAIster execution-host canonical event stream
+  version: "1.0.0"
+  description: |
+    Implemented Stage B local-direct host-global event delivery. The execution host
+    owns private files and its durable SQLite outbox; the manager owns canonical
+    redacted event metadata after at-least-once delivery. This contract is
+    transport-neutral: local SSE/ACK is the first adapter and a future trusted
+    relay or WebSocket must preserve the same envelope, replay, and ACK rules.
+
+    Identifier provenance: `hostKey` is host-derived and verified by transport
+    health; `runId`, `assignmentId`, and epoch are server-derived from the
+    assignment; `hostSessionId` is host-derived; `streamId`/`sequence`/`eventId`
+    are host-derived durable outbox fields. The manager never accepts a client
+    filesystem path, prompt, attachment bytes, environment value, or secret in
+    this stream. Payloads are redacted before publication and capped at 1 MiB.
+  contact:
+    name: MAIster maintainers
+  license:
+    name: MIT
+servers:
+  local:
+    url: http://localhost:7777
+    protocol: http
+    description: Default single-host loopback supervisor; no remote enrollment or relay is required.
+defaultContentType: application/json
+channels:
+  /runtime-events:
+    bindings:
+      http:
+        type: response
+        method: GET
+        headers:
+          Content-Type: { type: string, const: text/event-stream }
+          Last-Event-ID:
+            $ref: "#/components/schemas/Sequence"
+    subscribe:
+      operationId: subscribeExecutionHostRuntimeEvents
+      summary: Replay canonical host events after an exclusive stream cursor
+      description: |
+        The manager supplies only `Last-Event-ID`; it is an exclusive decimal
+        sequence for the selected stream. Omission begins at the replay floor.
+        SSE `id` is the same decimal sequence. Invalid, leading-zero, negative,
+        JSON-number, or overflow cursor values fail with
+        `invalid_event_sequence`; a replay-floor miss fails explicitly rather
+        than skipping a gap.
+      message:
+        $ref: "#/components/messages/RuntimeEvent"
+  /runtime-events/ack:
+    publish:
+      operationId: acknowledgeExecutionHostRuntimeEvents
+      summary: Acknowledge a contiguous absolute watermark for one stream
+      message:
+        $ref: "#/components/messages/RuntimeEventAck"
+components:
+  messages:
+    RuntimeEvent:
+      name: runtime.event
+      title: Redacted durable execution-host event envelope
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/RuntimeEventEnvelope"
+    RuntimeEventAck:
+      name: runtime.event.ack
+      title: Manager acknowledgement of contiguous persisted host events
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/RuntimeEventAck"
+  schemas:
+    Sequence:
+      type: string
+      pattern: "^(0|[1-9][0-9]{0,18})$"
+      maxLength: 19
+      description: Canonical non-negative signed-BIGINT decimal, never a JSON number; maximum 9223372036854775807.
+    EventId:
+      type: string
+      format: uuid
+      description: UUIDv5 URL-namespace derivation of percent-encoded hostKey, streamId, and sequence.
+    SessionContentReference:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          schema,
+          commandId,
+          hostSessionId,
+          source,
+          firstFrame,
+          frameCount,
+          objectId,
+          kind,
+          logicalName,
+          mimeType,
+          generation,
+          sizeBytes,
+          sha256,
+          retentionClass,
+          state,
+          sealedAt,
+          expiresAt,
+        ]
+      description: |
+        Exact host-owned UTF-8 session payload JSON. This reference-bearing
+        session event is also the sealed object's availability evidence.
+        Trusted consumers verify the envelope fence, generation, length and
+        actual bytes before decoding outside their domain transaction.
+        Browser content reads require readRepoFiles; metadata grants do not
+        authorize reconstruction. A lost object never means an empty result.
+      properties:
+        schema: { type: string, enum: [maister.session-content.v2] }
+        sourcePayloadSchema: { type: string, enum: [maister.session.command.v2] }
+        commandId: { type: string, format: uuid }
+        hostSessionId: { type: string, pattern: "^[A-Za-z0-9._-]{1,128}$" }
+        source:
+          { type: string, enum: [raw_stdout, session_update, terminal_output] }
+        firstFrame: { type: integer, minimum: 0, maximum: 9007199254740991 }
+        frameCount: { type: integer, enum: [1] }
+        objectId: { type: string, format: uuid }
+        kind: { type: string, enum: [raw_transcript] }
+        logicalName: { type: string, enum: [session-content.json] }
+        mimeType: { type: string, enum: [application/json] }
+        generation: { type: integer, minimum: 1, maximum: 2147483647 }
+        sizeBytes: { type: integer, minimum: 0, maximum: 2097152 }
+        sha256: { type: string, pattern: "^[a-f0-9]{64}$" }
+        retentionClass: { type: string, enum: [run] }
+        state: { type: string, enum: [available] }
+        sealedAt: { type: string, format: date-time }
+        expiresAt: { nullable: true, enum: [null] }
+    RuntimeEventEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+        - envelopeVersion
+        - eventId
+        - hostKey
+        - hostBootId
+        - streamId
+        - sequence
+        - runId
+        - assignmentId
+        - assignmentEpoch
+        - hostSessionId
+        - eventType
+        - occurredAt
+        - payloadSchema
+        - payload
+      properties:
+        envelopeVersion: { type: integer, const: 1 }
+        eventId: { $ref: "#/components/schemas/EventId" }
+        hostKey: { type: string, pattern: "^[A-Za-z0-9_-]{8,64}$", maxLength: 64 }
+        hostBootId: { type: string, format: uuid }
+        streamId: { type: string, format: uuid }
+        sequence: { $ref: "#/components/schemas/Sequence" }
+        runId: { type: string, minLength: 1, maxLength: 128 }
+        assignmentId: { type: string, format: uuid }
+        assignmentEpoch: { type: integer, minimum: 1, maximum: 2147483647 }
+        hostSessionId:
+          type: string
+          pattern: '^[A-Za-z0-9._-]{1,128}$'
+          nullable: true
+          description: Opaque host-derived session identifier; clients must not parse it.
+        eventType:
+          type: string
+          enum:
+            - session.created
+            - session.line
+            - session.update
+            - session.permission_request
+            - session.hook_trip
+            - session.command
+            - session.chat_turn
+            - session.exited
+            - session.crashed
+            - usage.recorded
+            - runtime_object.available
+            - runtime_object.state
+        occurredAt: { type: string, format: date-time }
+        payloadSchema:
+          type: string
+          enum:
+            - maister.session.created.v1
+            - maister.session.line.v1
+            - maister.session.update.v1
+            - maister.session.permission-request.v1
+            - maister.session.hook-trip.v1
+            - maister.session.command.v1
+            - maister.session.chat-turn.v1
+            - maister.session.exited.v1
+            - maister.session.crashed.v1
+            - maister.usage.recorded.v1
+            - maister.runtime-object.available.v1
+            - maister.runtime-object.state.v1
+            - maister.session.content.v2
+            - maister.session.command.v2
+        payload:
+          type: object
+          properties:
+            sourceCommandId: { type: string, format: uuid }
+            contentRef: { $ref: "#/components/schemas/SessionContentReference" }
+            createdByCommandId:
+              type: string
+              description: Host-derived session.create command on created and terminal events; identifies the exact create generation for binding and historical incarnation evidence.
+            sessionName:
+              type: string
+              description: Host-derived logical session name; must match the creator command.
+            acpSessionId:
+              type: [string, 'null']
+              description: Terminal resume handle; null when ACP initialization never completed.
+            stdoutSegment: { $ref: "#/components/schemas/StdoutSegmentMetadata" }
+          additionalProperties: true
+          description: Open JSON only after a known eventType/payloadSchema validator and deterministic redactor accepts it.
+      example:
+        envelopeVersion: 1
+        eventId: "6f63db3b-1843-5475-b293-b4b995a38a5d"
+        hostKey: "eh_0f1e2d3c4b5a69788796a5b4c3d2e1f0"
+        hostBootId: "e2f7c57a-bb0d-4e78-99f9-70f34f3928ab"
+        streamId: "76103277-0889-49d7-87f1-f0fd2f5f5922"
+        sequence: "42"
+        runId: "run-abc"
+        assignmentId: "6a7b8c9d-0e1f-4a2b-8c3d-4e5f6a7b8c9d"
+        assignmentEpoch: 3
+        hostSessionId: session-opaque-17
+        eventType: "session.command"
+        occurredAt: "2026-09-04T12:00:00.000Z"
+        payloadSchema: "maister.session.command.v1"
+        payload: { commandId: "3d4e5f6a-7b8c-4d9e-8f0a-1b2c3d4e5f6a", phase: "accepted" }
+    StdoutSegmentMetadata:
+      x-implementation-status: Implemented
+      type: object
+      additionalProperties: false
+      required: [commandId, firstLogByteOffset, capturedBytes, completeFrames, trailingFrameBytes]
+      properties:
+        commandId: { type: string, format: uuid }
+        firstLogByteOffset: { type: integer, minimum: 0, maximum: 9007199254740991 }
+        capturedBytes: { type: integer, minimum: 1, maximum: 2097152 }
+        completeFrames: { type: integer, minimum: 0, maximum: 2097152 }
+        trailingFrameBytes: { type: integer, minimum: 0, maximum: 2097152 }
+      description: |
+        Optional only on runtime_object.available with a non-null hostSessionId,
+        kind raw_transcript, logicalName stdout-overflow.ndjson and MIME
+        application/x-ndjson. capturedBytes equals the object's sizeBytes.
+        Frame count and trailing length cannot exceed capturedBytes; end offset
+        must remain a safe integer. A credited pressured teardown seals exact
+        captured NDJSON bytes before its terminal evidence. This raw segment
+        does not claim successful semantic application; the interrupted prompt
+        fails explicitly with required_output_incomplete.
+    RuntimeEventAck:
+      type: object
+      additionalProperties: false
+      required: [streamId, throughSequence]
+      properties:
+        streamId: { type: string, format: uuid, description: Request-body supplied but verified against the selected host current stream. }
+        throughSequence: { $ref: "#/components/schemas/Sequence" }
+      example:
+        streamId: "76103277-0889-49d7-87f1-f0fd2f5f5922"
+        throughSequence: "42"
+    SessionOutputReferencePayloadV2:
+      x-implementation-status: Implemented
+      type: object
+      additionalProperties: false
+      required: [sourceMonotonicId, sessionName, contentRef]
+      properties:
+        sourceMonotonicId:
+          { type: integer, minimum: 0, maximum: 9007199254740991 }
+        sourceCommandId: { type: string, format: uuid }
+        sessionName: { type: string, minLength: 1, maxLength: 128 }
+        nodeAttemptId: { type: string, format: uuid }
+        commandId: { type: string, format: uuid }
+        kind: { type: string, enum: [session.prompt] }
+        requestSchema: { type: string, const: maister.command.request.v2 }
+        requestSha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        contentRef: { $ref: "#/components/schemas/SessionContentReference" }
+      description: |
+        Activates as maister.session.content.v2 for session events only. Old
+        managers reject the unknown payload version before ACK. The descriptor
+        binds the exact original session payload to its command and source frame;
+        firstFrame equals sourceMonotonicId and frameCount is one. When present,
+        sourceCommandId equals contentRef.commandId and the original payload
+        sourceCommandId. source is
+        raw_stdout for session.line, terminal_output for session.command or
+        session terminal, and session_update for other session events.
+        Envelope binding derives ownership. No bytes, paths or full prompts
+        are embedded. The host seals bytes before append. Session terminal
+        publication waits for every captured frame to be preserved or explicitly
+        classified incomplete; no normal append is legal after session terminal.
+        A referenced command-v2 payload also carries commandId/kind and exact
+        requestSchema/requestSha256 outside the object, and sourcePayloadSchema
+        in its descriptor. These fields must match original payload bytes.
+        Hydration validates its terminal position before receipt agreement.
+        Late acceptance requires exact command target and request digest.
+        These headers never grant authority to mutate successor state.
+    SessionCommandPayloadV2:
+      x-implementation-status: Designed
+      type: object
+      additionalProperties: false
+      required: [commandId, kind, phase, sourceCommandId, requestSchema, requestSha256, terminal]
+      properties:
+        commandId: { type: string, format: uuid }
+        kind: { type: string, enum: [session.prompt] }
+        phase: { type: string, enum: [accepted, completed, rejected] }
+        sourceCommandId: { type: string, format: uuid }
+        sourceMonotonicId: { type: integer, minimum: 0, maximum: 9007199254740991 }
+        sessionName: { type: string, minLength: 1, maxLength: 128 }
+        nodeAttemptId: { type: string, format: uuid }
+        requestSchema: { type: string, const: maister.command.request.v2 }
+        requestSha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        terminal:
+          description: |
+            Null while accepted; otherwise the exact CommandTerminalEvidenceV2
+            identity specified by supervisor.openapi.yaml. Result/error details
+            are compared as canonical nested JSON without flattening. The outer
+            event spine and terminal event/stream/sequence fields must agree.
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/CommandTerminalEvidenceV2'
+      description: |
+        Activates as maister.session.command.v2 with agreeing receipt capability.
+        Event/receipt arrival order is arbitrary; only their common reducer may
+        terminalize. A stale event settles only its exact historical command.
+        Owner application is a separate guarded transaction. Ingest ACK follows
+        canonical commit independently of every projector's success.
+    # Wire mirror of the OpenAPI terminal evidence; AsyncAPI uses JSON Schema null.
+    CommandTerminalEvidenceV2:
+      x-implementation-status: Designed
+      type: object
+      additionalProperties: false
+      required:
+        - outcomeVersion
+        - status
+        - eventId
+        - streamId
+        - sequence
+        - result
+        - error
+      properties:
+        outcomeVersion:
+          type: integer
+          enum:
+            - 2
+        status:
+          type: string
+          enum:
+            - succeeded
+            - failed
+            - fenced
+        eventId:
+          type: string
+          format: uuid
+        streamId:
+          type: string
+          format: uuid
+        sequence:
+          type: string
+          pattern: ^(0|[1-9][0-9]{0,18})$
+          maxLength: 19
+        result:
+          oneOf:
+            - type: object
+              additionalProperties: true
+              description: Versioned bounded per-kind result, including output reference for prompt success; never
+                raw semantic output.
+              properties:
+                output:
+                  $ref: "#/components/schemas/CommandOutputReferenceV2"
+            - type: "null"
+        error:
+          oneOf:
+            - allOf:
+                - $ref: "#/components/schemas/SupervisorErrorBody"
+            - type: "null"
+      description: |
+        Success requires a result and null error; failure/fencing requires an
+        exact nested error and null result. The reducer validates the per-kind
+        result contract and preserves nested details. Its canonical identity
+        must match independently acquired receipt and canonical-event evidence.
+    CommandOutputReferenceV2:
+      x-implementation-status: Designed
+      type: object
+      additionalProperties: false
+      required:
+        - objectId
+        - generation
+        - sizeBytes
+        - sha256
+        - commandId
+        - hostSessionId
+        - acceptedSequence
+        - terminalSequence
+      properties:
+        objectId:
+          type: string
+          format: uuid
+        generation:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+        sizeBytes:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        sha256:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        commandId:
+          type: string
+          format: uuid
+        hostSessionId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        acceptedSequence:
+          type: string
+          pattern: ^(0|[1-9][0-9]{0,18})$
+          maxLength: 19
+        terminalSequence:
+          type: string
+          pattern: ^(0|[1-9][0-9]{0,18})$
+          maxLength: 19
+      description: |
+        Immutable full semantic output. Sequence strings are signed-BIGINT-safe;
+        command, session, generation and both sequence bounds must agree with
+        canonical evidence. Required bytes cannot be replaced by a redacted snippet.
+    SupervisorErrorBody:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          $ref: "#/components/schemas/SupervisorErrorCode"
+        message:
+          type: string
+        details:
+          $ref: "#/components/schemas/SupervisorErrorDetails"
+    SupervisorErrorCode:
+      type: string
+      enum:
+        - PRECONDITION
+        - SPAWN
+        - EXECUTOR_UNAVAILABLE
+        - ACP_PROTOCOL
+        - CHECKPOINT
+        - CRASH
+        - HITL_TIMEOUT
+        - FENCED
+      description: |
+        Subset of the web-tier `MaisterErrorCode`. The web client translates
+        this body into `MaisterError({ code })` at the boundary.
+
+        `HITL_TIMEOUT` (M7+, HTTP 410) is returned by
+        `POST /sessions/{id}/input` when the session is known but no pending
+        permission exists for the given `(sessionId, requestId)` — the
+        deferred aged past `MAISTER_KEEPALIVE_MINUTES` or was already
+        resolved / cancelled. An unknown session on that route is
+        `EXECUTOR_UNAVAILABLE` (503, retryable).
+
+        `FENCED` (Implemented — ADR-166, HTTP 409) is returned when
+        `fence.assignmentEpoch` is below the host's persisted high-water for
+        that run, or when a session evicted by a higher epoch answers its
+        pending prompt. It is NOT a `MaisterErrorCode`: the web client maps
+        it to `MaisterError("CONFLICT")` with
+        `details.reason = "assignment_fenced"`.
+    SupervisorErrorDetails:
+      type: object
+      additionalProperties: false
+      description: |
+        (Implemented — ADR-166) Typed error details. Passed through verbatim to
+        the web-tier `MaisterError.details`.
+      properties:
+        reason:
+          $ref: "#/components/schemas/ReasonToken"
+        rule:
+          $ref: "#/components/schemas/WorkspaceRule"
+        field:
+          type: string
+          description: (`legacy_field`) The refused pre-ADR-166 path field, by name.
+        mount:
+          type: string
+          description: (`workspace_rejected` on a context mount) The offending mount's slug.
+        runId:
+          type: string
+        commandEpoch:
+          type: integer
+          minimum: 0
+        hostEpoch:
+          type: integer
+          minimum: 0
+    ReasonToken:
+      type: string
+      enum:
+        - host_mismatch
+        - assignment_mismatch
+        - run_mismatch
+        - assignment_fenced
+        - turn_lost
+        - unknown_workspace
+        - workspace_released
+        - workspace_rejected
+        - legacy_field
+        - missing_envelope
+        - invalid_event_sequence
+        - replay_floor_lost
+        - stream_identity_conflict
+        - ack_not_contiguous
+        - ack_beyond_emitted
+        - unsupported_event_schema
+        - event_redaction_failed
+        - event_payload_oversize
+        - event_outbox_backpressure
+        - runtime_object_missing
+        - runtime_object_range_invalid
+        - runtime_object_integrity_mismatch
+      description: |
+        (Implemented — ADR-166) Machine-readable refusal discriminator carried in
+        `SupervisorErrorBody.details.reason`. Tests assert the token, never
+        the message text.
+    WorkspaceRule:
+      type: string
+      enum:
+        - relative_path
+        - parent_segment
+        - not_found
+        - outside_roots
+        - symlink_escape
+        - gitdir_mismatch
+        - not_a_repo
+        - repo_path_mismatch
+        - inside_state_dir
+        - outside_workspace
+      description: |
+        (Implemented — ADR-166) Which adoption rule rejected a path; present
+        iff `details.reason = workspace_rejected`.

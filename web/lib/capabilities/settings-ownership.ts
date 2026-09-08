@@ -169,7 +169,10 @@ function parseCapabilitySettingsOperation(
     parsed.runId.includes("..") ||
     typeof parsed.hadSettings !== "boolean"
   ) {
-    throw new MaisterError("CONFIG", "capability settings operation is corrupt");
+    throw new MaisterError(
+      "CONFIG",
+      "capability settings operation is corrupt",
+    );
   }
 
   if (parsed.version === 1) {
@@ -189,7 +192,10 @@ function parseCapabilitySettingsOperation(
       parsed.phase as CapabilitySettingsOperationPhase,
     )
   ) {
-    throw new MaisterError("CONFIG", "capability settings operation is corrupt");
+    throw new MaisterError(
+      "CONFIG",
+      "capability settings operation is corrupt",
+    );
   }
 
   return {
@@ -269,7 +275,9 @@ async function writeCapabilitySettingsOperationAtCwd(args: {
   };
 }
 
-async function clearCapabilitySettingsLifecycleAtCwd(cwd: string): Promise<void> {
+async function clearCapabilitySettingsLifecycleAtCwd(
+  cwd: string,
+): Promise<void> {
   await rm(path.join(cwd, SETTINGS_BACKUP_RELATIVE), { force: true });
   await rm(path.join(cwd, SETTINGS_MARKER_RELATIVE), { force: true });
   await rm(path.join(cwd, SETTINGS_OPERATION_RELATIVE), { force: true });
@@ -526,12 +534,7 @@ export async function materializeCapabilitySettings(args: {
       await mkdir(path.join(cwd, ".claude"), { recursive: true });
       await assertSafeAgentMaterializationPath(cwd, ".claude");
       await assertCapabilitySettingsPaths(cwd);
-      await recordIntent([
-        settingsPath,
-        markerPath,
-        backupPath,
-        operationPath,
-      ]);
+      await recordIntent([settingsPath, markerPath, backupPath, operationPath]);
 
       if (owner === null) {
         const hadSettings = await pathExists(settingsPath);
@@ -550,7 +553,10 @@ export async function materializeCapabilitySettings(args: {
           phase: "prepared",
         });
         if (hadSettings) {
-          await atomicWriteText(backupPath, await readFile(settingsPath, "utf8"));
+          await atomicWriteText(
+            backupPath,
+            await readFile(settingsPath, "utf8"),
+          );
           await writeCapabilitySettingsOperationAtCwd({
             cwd,
             runId: args.runId,

@@ -62,6 +62,21 @@ export function projectorArtifactId({
   return `proj:${runId}:${monotonicId}`;
 }
 
+/**
+ * Deterministic id for artifacts derived from the canonical execution-event
+ * plane. `execution_events.id` is the stable replay identity; a run sequence
+ * is intentionally not narrowed into the legacy integer `monotonic_id` field.
+ */
+export function canonicalProjectorArtifactId({
+  runId,
+  eventId,
+}: {
+  runId: string;
+  eventId: string;
+}): string {
+  return `proj:${runId}:event:${eventId}`;
+}
+
 // --- Store operations ---------------------------------------------------
 
 type RecordArtifactArgs = Omit<ArtifactInstanceInsert, "id" | "createdAt"> & {

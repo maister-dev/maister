@@ -1,12 +1,15 @@
 import "server-only";
 
-import { createHash } from "node:crypto";
-import { readFile, stat } from "node:fs/promises";
-import path from "node:path";
+import type { Db } from "./runner-core";
+import type { RuntimeObjectOutputBinding } from "@/lib/execution-host";
+import type { ExecutionRuntimeObject } from "@/lib/db/schema";
 
 import pino from "pino";
 
-import { atomicWriteBuffer } from "@/lib/atomic";
+import {
+  deterministicRuntimeOutputObjectId,
+  readRuntimeObjectContent,
+} from "@/lib/execution-host";
 import { MaisterError } from "@/lib/errors";
 import {
   parsePlanReviewContract,
@@ -18,19 +21,15 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-export type PlanReviewStagingPaths = {
-  planDocumentStagingPath: string;
-  planReviewStagingPath: string;
-  planDocumentArtifactPath: string;
-  planReviewArtifactPath: string;
-  planDocumentArtifactRelativePath: string;
-  planReviewArtifactRelativePath: string;
+export type PlanReviewOutputBindings = {
+  planDocument: RuntimeObjectOutputBinding;
+  planReview: RuntimeObjectOutputBinding;
 };
 
 export type CapturedPlanReviewArtifact = {
+  objectId: string;
   bytes: number;
   hash: string;
-  relativePath: string;
 };
 
 export type CapturedPlanReviewArtifacts = {
@@ -39,166 +38,140 @@ export type CapturedPlanReviewArtifacts = {
   planReview: CapturedPlanReviewArtifact;
 };
 
-function runDirectory(
-  runtimeRoot: string,
-  projectSlug: string,
-  runId: string,
-): string {
-  return path.join(runtimeRoot, ".maister", projectSlug, "runs", runId);
+export function planReviewOutputBindings(input: {
+  runId: string;
+  nodeAttemptId: string;
+  assignmentId: string;
+}): PlanReviewOutputBindings {
+  return {
+    planDocument: {
+      objectId: deterministicRuntimeOutputObjectId({
+        runId: input.runId,
+        sourceKey: `plan-review:${input.nodeAttemptId}:assignment:${input.assignmentId}:document`,
+      }),
+      kind: "plan_review",
+      logicalName: "plan-document.md",
+      mimeType: "text/markdown",
+      generation: 1,
+      retentionClass: "run",
+      envName: "MAISTER_PLAN_DOCUMENT_FILE",
+    },
+    planReview: {
+      objectId: deterministicRuntimeOutputObjectId({
+        runId: input.runId,
+        sourceKey: `plan-review:${input.nodeAttemptId}:assignment:${input.assignmentId}:contract`,
+      }),
+      kind: "plan_review",
+      logicalName: "plan-review.json",
+      mimeType: "application/json",
+      generation: 1,
+      retentionClass: "run",
+      envName: "MAISTER_PLAN_REVIEW_FILE",
+    },
+  };
 }
 
-function artifactHash(data: Buffer): string {
-  return createHash("sha256").update(Uint8Array.from(data)).digest("hex");
-}
-
-function captureError(
-  code: "CONFIG" | "PRECONDITION",
-  message: string,
-  cause?: unknown,
-): MaisterError {
-  return new MaisterError(code, message, {
-    cause: cause instanceof Error ? cause : undefined,
-  });
-}
-
-async function readBoundedRegularFile(
-  filePath: string,
+function validateOutputMetadata(
+  metadata: ExecutionRuntimeObject,
+  binding: RuntimeObjectOutputBinding,
   maxBytes: number,
-  label: "plan document" | "plan review contract",
-): Promise<Buffer> {
-  let fileStats: Awaited<ReturnType<typeof stat>>;
-
-  try {
-    fileStats = await stat(filePath);
-  } catch (err) {
-    throw captureError(
+): CapturedPlanReviewArtifact {
+  if (
+    metadata.id !== binding.objectId ||
+    metadata.kind !== binding.kind ||
+    metadata.logicalName !== binding.logicalName ||
+    metadata.mimeType !== binding.mimeType ||
+    metadata.generation !== binding.generation ||
+    metadata.state !== "available" ||
+    metadata.sizeBytes === null ||
+    metadata.sha256 === null
+  ) {
+    throw new MaisterError(
       "PRECONDITION",
-      `${label} staging output is missing`,
-      err,
+      `runtime output ${binding.logicalName} was not sealed by the execution host`,
+      { details: { reason: "runtime_object_missing" } },
+    );
+  }
+  if (metadata.sizeBytes > BigInt(maxBytes)) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `plan-review output exceeds the ${maxBytes}-byte limit`,
+      { details: { reason: "runtime_object_too_large" } },
     );
   }
 
-  if (!fileStats.isFile()) {
-    throw captureError("PRECONDITION", `${label} staging output is not a file`);
-  }
-
-  if (fileStats.size > maxBytes) {
-    throw captureError(
-      "PRECONDITION",
-      `${label} staging output exceeds the ${maxBytes}-byte limit`,
-    );
-  }
-
-  try {
-    return await readFile(filePath);
-  } catch (err) {
-    throw captureError("PRECONDITION", `${label} staging output is unreadable`, err);
-  }
+  return {
+    objectId: metadata.id,
+    bytes: Number(metadata.sizeBytes),
+    hash: metadata.sha256,
+  };
 }
 
-function parsePlanReviewBytes(data: Buffer): PlanReviewV1 {
+export function parsePlanReviewBytes(data: Uint8Array): PlanReviewV1 {
   let decoded: unknown;
 
   try {
-    decoded = JSON.parse(data.toString("utf8")) as unknown;
-  } catch (err) {
-    throw captureError("CONFIG", "plan review contract is not valid JSON", err);
+    decoded = JSON.parse(new TextDecoder().decode(data)) as unknown;
+  } catch (cause) {
+    throw new MaisterError("CONFIG", "plan review contract is not valid JSON", {
+      cause: cause instanceof Error ? cause : undefined,
+    });
   }
 
   try {
     return parsePlanReviewContract(decoded);
-  } catch (err) {
-    throw captureError("CONFIG", "plan review contract does not match V1", err);
+  } catch (cause) {
+    throw new MaisterError("CONFIG", "plan review contract does not match V1", {
+      cause: cause instanceof Error ? cause : undefined,
+    });
   }
 }
 
-export function planReviewStagingPaths({
-  runtimeRoot,
-  projectSlug,
-  runId,
-  nodeAttemptId,
-}: {
-  runtimeRoot: string;
-  projectSlug: string;
+export async function capturePlanReviewArtifacts(input: {
+  db: Db;
   runId: string;
-  nodeAttemptId: string;
-}): PlanReviewStagingPaths {
-  const directory = runDirectory(runtimeRoot, projectSlug, runId);
-  const stagingDirectory = path.join(directory, "plan-review-staging", nodeAttemptId);
-  const artifactDirectory = path.join(directory, "artifacts", nodeAttemptId);
-  const planDocumentArtifactRelativePath = path.join(
-    "artifacts",
-    nodeAttemptId,
-    "plan-document.md",
-  );
-  const planReviewArtifactRelativePath = path.join(
-    "artifacts",
-    nodeAttemptId,
-    "plan-review.json",
-  );
-
-  return {
-    planDocumentStagingPath: path.join(stagingDirectory, "plan.md"),
-    planReviewStagingPath: path.join(stagingDirectory, "plan-review.json"),
-    planDocumentArtifactPath: path.join(artifactDirectory, "plan-document.md"),
-    planReviewArtifactPath: path.join(artifactDirectory, "plan-review.json"),
-    planDocumentArtifactRelativePath,
-    planReviewArtifactRelativePath,
-  };
-}
-
-export async function capturePlanReviewArtifacts({
-  paths,
-  maxBytes,
-}: {
-  paths: PlanReviewStagingPaths;
+  bindings: PlanReviewOutputBindings;
   maxBytes: number;
 }): Promise<CapturedPlanReviewArtifacts> {
   const [planDocument, planReview] = await Promise.all([
-    readBoundedRegularFile(
-      paths.planDocumentStagingPath,
-      maxBytes,
-      "plan document",
-    ),
-    readBoundedRegularFile(
-      paths.planReviewStagingPath,
-      maxBytes,
-      "plan review contract",
-    ),
+    readRuntimeObjectContent({
+      db: input.db,
+      runId: input.runId,
+      objectId: input.bindings.planDocument.objectId,
+    }),
+    readRuntimeObjectContent({
+      db: input.db,
+      runId: input.runId,
+      objectId: input.bindings.planReview.objectId,
+    }),
   ]);
-  const contract = parsePlanReviewBytes(planReview);
-
-  await atomicWriteBuffer(
-    paths.planDocumentArtifactPath,
-    Uint8Array.from(planDocument),
+  const planDocumentMetadata = validateOutputMetadata(
+    planDocument.object,
+    input.bindings.planDocument,
+    input.maxBytes,
   );
-  await atomicWriteBuffer(
-    paths.planReviewArtifactPath,
-    Uint8Array.from(planReview),
+  const planReviewMetadata = validateOutputMetadata(
+    planReview.object,
+    input.bindings.planReview,
+    input.maxBytes,
   );
-
+  const contract = parsePlanReviewBytes(planReview.content.bytes);
   const captured = {
     contract,
-    planDocument: {
-      bytes: planDocument.byteLength,
-      hash: artifactHash(planDocument),
-      relativePath: paths.planDocumentArtifactRelativePath,
-    },
-    planReview: {
-      bytes: planReview.byteLength,
-      hash: artifactHash(planReview),
-      relativePath: paths.planReviewArtifactRelativePath,
-    },
+    planDocument: planDocumentMetadata,
+    planReview: planReviewMetadata,
   };
 
   log.info(
     {
+      planDocumentObjectId: captured.planDocument.objectId,
       planDocumentBytes: captured.planDocument.bytes,
       planDocumentHash: captured.planDocument.hash,
+      planReviewObjectId: captured.planReview.objectId,
       planReviewBytes: captured.planReview.bytes,
       planReviewHash: captured.planReview.hash,
     },
-    "plan-review artifacts captured",
+    "plan-review runtime objects captured",
   );
 
   return captured;

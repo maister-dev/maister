@@ -8,6 +8,12 @@ MAIster-managed worktree, while keeping branch state, uploaded context,
 capability choices, HITL, diff review, and active workspace visibility under
 the same web, database, supervisor, and worktree contracts as Flow runs.
 
+**Stage B transition (Designed):** scratch prompt and attachment traffic use
+the shared [execution-prompt-lifecycle.md](execution-prompt-lifecycle.md) and
+[execution-runtime-objects.md](execution-runtime-objects.md) seams. The
+`scratch_runs.supervisor_session_id` mirror remains only until the proven
+canonical-incarnation migration in [execution-data-cutover.md](execution-data-cutover.md).
+
 ## ADR-148 workspace removal (Implemented)
 
 Scratch Discard joins the shared fenced preserve-first protocol and returns the
@@ -65,8 +71,12 @@ but no Recover, Files/Diff, branch export, or other worktree-backed action.
 - **Scratch metadata** - Implemented. `scratch_runs` is keyed by `run_id` and
   stores name, initial prompt, legacy `plan_mode`, `work_mode`,
   `reasoning_effort`, optional links, base/target branch metadata,
-  `dialog_status`, supervisor session id, legacy creator fallback, error fields,
+  `dialog_status`, creator fallback, error fields,
   and last message timestamps.
+- **Host-session authority** - Implemented (ADR-167, migration `0134`). The
+  live scratch target is `run_sessions.host_session_id`; immutable
+  `run_session_incarnations` records each host lifecycle. The removed
+  `scratch_runs.supervisor_session_id` mirror is neither read nor written.
 - **Run message** - Implemented. `run_messages` (generalized from
   `scratch_messages`, migration `0085`; shared with flow node transcripts — see
   [`runs.md`](runs.md) "Run transparency") is an append-only dialog
@@ -136,7 +146,7 @@ status remains on `runs.status`.
 ```mermaid
 stateDiagram-v2
     [*] --> Starting: launch accepted
-    Starting --> Running: supervisor session stored
+    Starting --> Running: canonical run session bound
     Starting --> Crashed: setup or spawn failure
 
     Running --> WaitingForUser: prompt completed
@@ -165,6 +175,12 @@ stateDiagram-v2
 | `Starting` | `Running` | `Running` | Setup, worktree, session, or first prompt is in flight. |
 | `Running` | `Running` | `Running` | A prompt is actively running in the supervisor session. |
 | `WaitingForUser` | `Running` | `WaitingForUser` | Session is live and idle between dialog turns. |
+
+A project scratch turn's `Running -> WaitingForUser` transition is applied by
+that turn's own prompt owner, inside the command application transaction (see
+[prompt lifecycle](execution-prompt-lifecycle.md#project-scratch-dialog-turn-implemented)),
+so the next message is admitted exactly when the previous result is durable and
+a dead web process cannot strand the dialog in `Running`.
 | `NeedsInput` | `NeedsInput` | `NeedsInput` | ACP permission or HITL input is waiting for the operator. |
 | n/a | `NeedsInputIdle` | `NeedsInputIdle` | Shared idle checkpoint state; scratch resumes through recovery/HITL paths. |
 | n/a | `HumanWorking` | `HumanWorking` | Manual takeover state from the shared run lifecycle. |

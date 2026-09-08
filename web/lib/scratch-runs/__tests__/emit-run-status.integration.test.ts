@@ -177,6 +177,7 @@ describe("live scratch terminal → run.crashed", () => {
       sessionId: "sess-1",
       stepId: "scratch",
       prompt: "go",
+      owner: { variant: "initial" },
       db,
       execution: legacyScratchApiToExecution(
         fakeApi({ type: "session.crashed" }) as never,
@@ -208,6 +209,7 @@ describe("live scratch terminal → run.review", () => {
       sessionId: "sess-1",
       stepId: "scratch",
       prompt: "go",
+      owner: { variant: "initial" },
       db,
       execution: legacyScratchApiToExecution(
         fakeApi({ type: "session.exited", reason: "intentional" }) as never,

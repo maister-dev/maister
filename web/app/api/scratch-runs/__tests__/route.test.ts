@@ -61,6 +61,9 @@ const state: {
   project: Record<string, unknown>;
   runners: Record<string, unknown>[];
   runtimeSettings: Record<string, unknown>[];
+  // S2.9: the owned initial prompt's application returns the dialog to
+  // WaitingForUser; the prompt stub emulates that flip on this row.
+  dialogStatus: string;
 } = {
   inserts: [],
   updates: [],
@@ -69,6 +72,7 @@ const state: {
   project: {},
   runners: [],
   runtimeSettings: [],
+  dialogStatus: "Running",
 };
 
 function rowsForTable(table: unknown): Record<string, unknown>[] {
@@ -78,7 +82,7 @@ function rowsForTable(table: unknown): Record<string, unknown>[] {
   if (tableName === "platform_acp_runners") return state.runners;
   if (tableName === "platform_runtime_settings") return state.runtimeSettings;
   if (tableName === "scratch_runs") {
-    return [{ runId: "run-1", dialogStatus: "Running" }];
+    return [{ runId: "run-1", dialogStatus: state.dialogStatus }];
   }
 
   return [];
@@ -94,9 +98,20 @@ const fakeDb: FakeDb = {
         return rowsForTable(table);
       };
 
+      // S2: the session-binding lock reads `…where().for("update").limit(1)`.
+      const lockable = () => {
+        const rows = nextRows() as Promise<Record<string, unknown>[]> & {
+          limit: () => Promise<Record<string, unknown>[]>;
+        };
+
+        rows.limit = () => nextRows();
+
+        return rows;
+      };
+
       return {
         where: () => ({
-          for: async () => nextRows(),
+          for: () => lockable(),
           then: <TResult1 = Record<string, unknown>[], TResult2 = never>(
             onfulfilled?:
               | ((
@@ -128,13 +143,30 @@ const fakeDb: FakeDb = {
   }),
   update: (table: unknown) => ({
     set: (values: unknown) => ({
-      where: async () => {
+      where: () => {
         state.updates.push({ table, values });
+        const result = Promise.resolve(undefined) as Promise<undefined> & {
+          returning: () => Promise<Record<string, unknown>[]>;
+        };
+
+        // S2: crash marking reads the row back (`.returning()`).
+        result.returning = async () => [{ ...(values as object) }];
+
+        return result;
       },
     }),
   }),
   transaction: async <T>(fn: (tx: typeof fakeDb) => Promise<T>) => fn(fakeDb),
 };
+
+// S2 (ADR-166 E-EH-11): every post-create write asserts the run's current
+// session binding under the assignment lock. This fake db keeps no `runs`
+// rows, so the assertion is stubbed at the seam; its semantics are covered by
+// lib/execution-host/__tests__/{assignments,command-recovery}.integration.
+vi.mock("@/lib/execution-host/session-binding", () => ({
+  assertCurrentSessionBinding: vi.fn(async () => undefined),
+  staleSessionBinding: vi.fn(),
+}));
 
 vi.mock("@/lib/authz", () => ({
   requireActiveSession: mocks.requireActiveSession,
@@ -322,8 +354,13 @@ beforeEach(async () => {
     acpSessionId: "acp-session-1",
   });
   mocks.sendPrompt.mockResolvedValue({ stopReason: "end_turn" });
-  mocks.sendScratchPromptAndProjectEvents.mockResolvedValue({
-    stopReason: "end_turn",
+  // S2.9: the owned initial prompt's application returns the dialog to
+  // WaitingForUser inside sendScratchPromptAndProjectEvents, not in the route.
+  state.dialogStatus = "Running";
+  mocks.sendScratchPromptAndProjectEvents.mockImplementation(async () => {
+    state.dialogStatus = "WaitingForUser";
+
+    return { stopReason: "end_turn" };
   });
 
   ({ POST } = await import("../route"));
@@ -418,12 +455,14 @@ describe("POST /api/scratch-runs", () => {
     expect(mocks.createSession).toHaveBeenCalledWith(
       expect.objectContaining({
         stepId: "dialog",
-        capabilityProfilePath:
-          "/tmp/maister-worktrees/demo/run/.maister/capabilities/run/profile.json",
+        capabilityProfileObjectId: "f7f4ea9b-598b-4f97-97b5-5ca52d46056e",
       }),
     );
     expect(mocks.createSession.mock.calls[0]?.[0]).not.toHaveProperty(
       "worktreePath",
+    );
+    expect(mocks.createSession.mock.calls[0]?.[0]).not.toHaveProperty(
+      "capabilityProfilePath",
     );
     const createArg = mocks.createSession.mock.calls[0]?.[0] as
       | { readOnlySession?: boolean }
@@ -550,11 +589,9 @@ describe("POST /api/scratch-runs", () => {
       byteSize: 5,
     });
     expect(uploaded?.value).toMatch(
-      /^\.maister\/demo\/runs\/.+\/uploads\/launch\/notes\.txt$/,
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
     );
-    expect(uploaded?.storagePath).toEqual(
-      expect.stringContaining(state.runtimeRoot ?? ""),
-    );
+    expect(uploaded?.storagePath).toBeNull();
   });
 
   it("rejects multipart upload count limits before worktree side effects", async () => {

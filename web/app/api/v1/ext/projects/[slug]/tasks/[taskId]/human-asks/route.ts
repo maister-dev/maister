@@ -66,7 +66,7 @@ export async function POST(
       try {
         body = bodySchema.parse(await req.json());
         validateFormSchemaVersion(body.schema, 1);
-      } catch (error) {
+      } catch {
         return NextResponse.json(
           { code: "CONFIG", message: "invalid human ask body" },
           { status: 422 },

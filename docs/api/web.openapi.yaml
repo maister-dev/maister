@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: MAIster Web HTTP API
-  version: "0.10.0"
+  version: "0.12.0"
   description: |
     HTTP surface exposed by the Next.js web tier under `app/api/`. Consumed
     by the MAIster UI and (in M7+) by any process that wants to drive HITL
@@ -70,13 +70,16 @@ info:
       human-review flows write `input-<stepId>.json` after a DB claim, and
       the runner's resume-from-existing-input branch picks it up. Requires
       project membership at `member` or above (`answerHitl`).
-    - `GET /api/runs/{runId}/stream` (M7) — Server-Sent Events bridge.
-      Tails the per-run durable replay log at
-      `.maister/<projectSlug>/runs/<runId>/run.events.jsonl` (produced by
-      the supervisor — see `supervisor.openapi.yaml`). Reconnect via
-      `Last-Event-ID`. Event shape mirrors the supervisor SSE doc
-      (`async/web-runs.asyncapi.yaml`). Requires project membership at
-      `viewer` or above (`readBoard`).
+    - `GET /api/runs/{runId}/stream` (Stage B, ADR-167) — Server-Sent Events
+      bridge over manager-owned PostgreSQL events. Reconnect uses exclusive
+      `Last-Event-ID`; the browser
+      never sees host paths, prompt content, secrets, or raw object bytes.
+      Project runs require `viewer`; projectless assistant runs require the
+      authenticated creator derived from the run row.
+    - `GET /api/runs/{runId}/runtime-objects/{objectId}` and `/content`
+      (Stage B, ADR-167) — manager-catalogued opaque runtime-object metadata
+      and bounded bytes. URL values select only the run/object IDs; the server
+      derives project authorization and host binding from Postgres.
 
     **Authentication.** All routes require a valid session (Auth.js v5
     credentials). Unauthenticated requests return `401 UNAUTHENTICATED`.
@@ -5144,7 +5147,8 @@ paths:
       description: |
         Requires project membership at `member` or above. The route appends the
         next user message under a row lock, rejects concurrent prompts, then
-        calls supervisor `POST /sessions/{sessionId}/prompt`. The body carries
+        submits supervisor `POST /sessions/{sessionId}/prompts` and persists a
+        `PromptHandle`; terminal state is reconciled asynchronously. The body carries
         message content and attachment refs only. It MUST NOT include session
         ids, project slug, worktree path, step id, or message sequence.
         Accepts JSON for text/metadata-only messages and multipart form data
@@ -5717,10 +5721,12 @@ paths:
       tags: [runs]
       summary: Implemented — read the live token-cost rollup for the run inspector
       description: |
-        Reconciles `cost.jsonl` into the run cost rollup and returns the token
-        totals. The live run inspector polls this on each SSE tick so its token
-        and wall-clock facts grow during a live run instead of being frozen at
-        the server-rendered snapshot. Flow/agent runs require `readBoard`;
+        Returns the token totals used by the live run inspector. For an
+        immutable `canonical_events_v1` run, the manager folds bounded
+        `usage.recorded` events into Postgres and this route never reads a host
+        runtime file. Cost reconciliation reads only canonical events. The live inspector polls
+        on SSE ticks so token and wall-clock facts grow instead of being frozen
+        at the server-rendered snapshot. Flow/agent runs require `readBoard`;
         scratch runs require `readScratchRun`. A project-less local-package
         assistant run returns 404 (it surfaces its own token-budget meter).
       operationId: getRunCostSummary
@@ -5897,10 +5903,11 @@ paths:
       description: |
         Requires the `readRepoFiles` action (project `member` — strictly above
         `readBoard`/viewer): a transcript exposes tool outputs / file contents a
-        viewer must not see (mirrors the workbench file-content gate). Reconciles
-        the durable `run.events.jsonl` into `run_messages` (reconcile-on-read,
-        idempotent), then returns the LATEST attempt of the `?node=` node as
-        ordered `TranscriptMessage` rows plus the node's latest usage. `?node=`
+        viewer must not see (mirrors the workbench file-content gate). For a
+        run it projects ordered manager-owned `execution_events` into
+        `run_messages`; no route handler reads a host transcript or event file.
+        It returns the LATEST attempt of the `?node=` node as ordered
+        `TranscriptMessage` rows plus the node's latest usage. `?node=`
         is server-state validated against the run's compiled flow graph — an
         unknown node is a `409` PRECONDITION. No internal handles (e.g.
         `acpSessionId`) are serialized.
@@ -6046,12 +6053,23 @@ paths:
       tags: [runs]
       summary: (M12) Fetch the raw payload for one artifact
       description: |
-        Requires project membership at `viewer` or above. Resolves the
-        artifact's `locator` to a file path that is **path-confined to the
-        run directory** and streams its raw payload. Diff / log / git / inline
-        output is served as `text/plain`; gate-verdict / hitl-response
-        payloads are served as `application/json`. A `locator` that resolves
-        outside the run dir is treated as not found (404), never served.
+        Requires project membership at `viewer` or above; an `execution-object`
+        locator additionally requires `readRepoFiles` (`member`), the same
+        grant as the direct runtime-object content route, because agent
+        session output can quote any file the agent read (M22 ADR-053: a viewer
+        cannot browse source). Resolves the artifact's locator. Legacy file
+        locators are path-confined to the run directory; `execution-object`
+        locators resolve through the manager-owned object catalogue and typed
+        host contract, never a web runtime path. Diff / log / git / inline output is served as
+        `text/plain; charset=utf-8`; gate-verdict / hitl-response payloads as
+        `application/json; charset=utf-8`; `execution-object` bytes as
+        `application/octet-stream`. (Implemented — AB-12) Every payload is a
+        `Content-Disposition: attachment` (sanitized `filename` + RFC 8187
+        `filename*`) under `X-Content-Type-Options: nosniff`,
+        `Content-Security-Policy: sandbox; default-src 'none'` and
+        `Cache-Control: private, no-store`; an object's catalogued MIME is never
+        reflected. A locator outside its authorized binding is not found (404),
+        never served.
       operationId: getRunArtifactPayload
       parameters:
         - name: runId
@@ -6062,6 +6080,11 @@ paths:
           in: path
           required: true
           schema: { type: string }
+        - name: Range
+          in: header
+          required: false
+          description: Single `bytes=start-end` range for an execution-object locator only.
+          schema: { type: string, pattern: "^bytes=[0-9]+-[0-9]*$" }
       responses:
         "200":
           description: Raw artifact payload.
@@ -6114,6 +6137,81 @@ paths:
                   value:
                     code: PRECONDITION
                     message: Artifact payload is gone (file deleted).
+        "416":
+          description: The execution-object Range header is malformed or unsatisfiable.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
+  /api/runs/{runId}/runtime-objects/{objectId}:
+    get:
+      tags: [runs]
+      summary: Stage B — read authorized opaque runtime-object metadata
+      description: |
+        `runId` and `objectId` are URL-selected only. Project authorization or
+        projectless creator ownership, plus host, assignment, and private
+        storage location, are derived server-side and never returned.
+      operationId: getRunRuntimeObject
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: objectId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Manager-owned runtime-object catalogue metadata.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RuntimeObjectMetadata" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/runs/{runId}/runtime-objects/{objectId}/content:
+    get:
+      tags: [runs]
+      summary: Stage B — read authorized bounded runtime-object bytes
+      description: |
+        Project runs require `readRepoFiles`; projectless assistant runs require
+        the authenticated creator. The host is selected from the catalogue, never
+        a URL or request-body value. A full response is bounded to 8 MiB; larger
+        objects require one valid inclusive byte range. Response headers include
+        `Content-Digest`.
+
+        (Implemented — AB-12) The bytes are untrusted and are delivered under the
+        shared safe-download policy: `Content-Type: application/octet-stream`
+        (the catalogued MIME is never reflected), `Content-Disposition:
+        attachment` with a sanitized `filename` and an RFC 8187 `filename*`
+        derived from the object's logical name, `X-Content-Type-Options:
+        nosniff`, `Content-Security-Policy: sandbox; default-src 'none'` and
+        `Cache-Control: private, no-store`, on both 200 and 206.
+      operationId: getRunRuntimeObjectContent
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: objectId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: Range
+          in: header
+          required: false
+          schema: { type: string, pattern: "^bytes=[0-9]+-[0-9]*$" }
+      responses:
+        "200": { description: Full bytes for a bounded object. }
+        "206": { description: Requested bounded byte range. }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "410": { description: Catalogue metadata remains but host bytes are gone. }
+        "416": { description: Range is malformed or unsatisfiable. }
+        "503": { description: The selected execution host transport is unavailable. }
 
   /api/runs/{runId}/promote:
     post:
@@ -6846,6 +6944,13 @@ paths:
           `respondedAt`. Conflicting optionId on retry → 409. Same
           optionId on retry → idempotent 200. Supervisor 404 racing a
           concurrent winner → 200 (no `runs.status = Failed`).
+          Owned Flow node permissions derive their exact command, attempt,
+          ordinal, assignment and incarnation from `schema.flowPrompt`.
+          The server stores `_delivery` with the original input command and
+          complete selection before dispatch; process recovery replays that
+          command. Input success, delivery audit, `respondedAt` and the graph
+          wake commit together. The request body still accepts only the
+          declared choice; clients cannot supply either authority descriptor.
         - **form / human**: schema validation runs first (NEEDS_INPUT 422
           on failure). Then a row-level claim stores `response`. Only
           after the claim succeeds does the route write
@@ -6988,9 +7093,12 @@ paths:
         from the body. `provide-resolution` requires bounded non-empty
         `response.resolution`; free-form resolution text is not logged.
 
-        On every success path the body returns `runStatus: "NeedsInput"`
-        — the runner (not this route) is the single owner of the
-        `NeedsInput → Running` transition.
+        Successful live permission delivery returns `state: "delivered"`.
+        For an owned node prompt, the exact input ACK transaction also wakes
+        the run from `NeedsInput` when that turn has no unanswered permission.
+        Other resume responses may return `runStatus: "NeedsInput"` while
+        the runner processes their stored intent. Observe subsequent run
+        status changes through the run stream.
       operationId: respondHitl
       parameters:
         - name: runId
@@ -7128,7 +7236,7 @@ paths:
                       in the implementation DTO.
                   state:
                     type: string
-                    enum: [awaiting-decisions]
+                    enum: [awaiting-decisions, delivered]
                   remainingDecisionCount:
                     type: integer
                     minimum: 0
@@ -7171,16 +7279,20 @@ paths:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "202":
           description: |
-            M8 idle-branch: claim succeeded and `resumeRun` spawned a
-            fresh supervisor session. Returns 202
-            `{ ok: true, runStatus: "NeedsInput", state: "resume-in-progress" }`.
-            Auto-delivery against the new requestId happens asynchronously
-            inside the runner-agent (typically 5-60 s). Subsequent
+            Idle-branch: a capacity claim authorizes resume. Owned graph node
+            permission resumes return before their leased session creation.
+            A confirmed original-input/result handoff instead retains the
+            original prompt and returns `runStatus: "Running"`; no new ACP
+            prompt is created. A new permission turn returns `NeedsInput`,
+            with delivery against its reissued request happening asynchronously.
+            A cap-deferred claim may return `NeedsInputIdle`. Subsequent
             same-payload retries while `respondedAt IS NULL` keep
             returning 202; after auto-delivery completes the retries
             return 200 idempotent. For ADR-137 Plan-review final answers, the
             graph-only claim returns `rework-scheduled` or `resume-queued` and
-            never calls `resumeRun`.
+            never calls `resumeRun`. A concurrent replay of the same permission
+            input returns `state: "delivery-in-progress"` while its winning
+            delivery is pending; it does not cancel the pending permission.
           content:
             application/json:
               schema:
@@ -7188,10 +7300,10 @@ paths:
                 required: [ok, state]
                 properties:
                   ok: { type: boolean, enum: [true] }
-                  runStatus: { type: string, enum: ["NeedsInput"] }
+                  runStatus: { type: string, enum: ["NeedsInput", "NeedsInputIdle", "Running"] }
                   state:
                     type: string
-                    enum: [resume-in-progress, rework-scheduled, resume-queued]
+                    enum: [resume-in-progress, rework-scheduled, resume-queued, delivery-in-progress]
                   remainingDecisionCount:
                     type: integer
                     minimum: 0
@@ -9970,17 +10082,18 @@ paths:
         (`requireProjectRole(run.projectId, "viewer")`). The `projectId`
         is derived from the run row, never from the query string.
 
-        Server-Sent Events bridge. Tails a single per-run durable replay
-        log at `.maister/<projectSlug>/runs/<runId>/run.events.jsonl`
-        (written by the supervisor — see `supervisor.openapi.yaml`).
+        Server-Sent Events bridge over manager-owned PostgreSQL event records.
+        An in-process wake is only a latency hint. The browser never reads a
+        supervisor path, a runtime event file, or live supervisor state.
 
         Use the standard SSE `Last-Event-ID` header (or `?lastEventId=N`
         query string fallback) to resume after disconnect. Terminal
         states (`Done`, `Abandoned`, `Failed`, `Crashed`) close the
         stream cleanly after draining trailing events.
 
-        Event shape is the supervisor's `SessionEvent` union. See the
-        AsyncAPI doc at `async/web-runs.asyncapi.yaml`.
+        Canonical frames contain only `type`, `eventId`, `runSequence`,
+        `occurredAt`, and `hostSessionId`; they do not expose the host payload.
+        See `async/web-runs.asyncapi.yaml`.
       operationId: streamRunEvents
       parameters:
         - name: runId
@@ -14906,7 +15019,7 @@ components:
           properties:
             text: { type: string }
             at: { type: string, format: date-time }
-          description: Trailing coalesced `agent_message_chunk` from `run.events.jsonl`.
+          description: Trailing coalesced `agent_message_chunk` from canonical execution events.
         gates:
           type: array
           items:
@@ -19764,6 +19877,40 @@ components:
           type: object
           additionalProperties: true
         updatedAt: { type: string, format: date-time, nullable: true }
+    RuntimeObjectMetadata:
+      type: object
+      additionalProperties: false
+      required:
+        - objectId
+        - kind
+        - logicalName
+        - mimeType
+        - sizeBytes
+        - sha256
+        - generation
+        - retentionClass
+        - state
+        - createdAt
+        - sealedAt
+        - expiresAt
+        - deletedAt
+      properties:
+        objectId: { type: string, format: uuid }
+        kind:
+          type: string
+          enum: [session_log, raw_transcript, cost_diagnostic, checkpoint, attachment, capability_profile, capability_instructions, agent_memory_snapshot, node_result, evidence, generated_artifact, plan_review, diagnostic]
+        logicalName: { type: string, maxLength: 255 }
+        mimeType: { type: string, maxLength: 255 }
+        sizeBytes: { type: string, nullable: true, pattern: "^[0-9]+$" }
+        sha256: { type: string, nullable: true, pattern: "^[a-f0-9]{64}$" }
+        generation: { type: integer, minimum: 1 }
+        retentionClass: { type: string, enum: [run, delivery, ephemeral] }
+        state: { type: string, enum: [available, deleting, missing, deleted, expired, corrupt] }
+        createdAt: { type: string, format: date-time }
+        sealedAt: { type: string, format: date-time, nullable: true }
+        expiresAt: { type: string, format: date-time, nullable: true }
+        deletedAt: { type: string, format: date-time, nullable: true }
+
     MaisterErrorBody:
       type: object
       required: [code, message]

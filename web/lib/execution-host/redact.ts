@@ -68,7 +68,10 @@ const PAYLOAD_PROJECTION: Readonly<Record<CommandKind, Projection>> = {
         provider: pickScalars(provider, ["kind"]),
       },
       mcpServerCount: countOf(p.mcpServers),
-      hasCapabilityProfile: typeof p.capabilityProfilePath === "string",
+      hasCapabilityProfile: typeof p.capabilityProfileObjectId === "string",
+      hasCapabilityInstructions:
+        typeof p.capabilityInstructionsObjectId === "string",
+      runtimeOutputCount: countOf(p.outputObjects),
       hasAdapterLaunch:
         p.adapterLaunch !== undefined && p.adapterLaunch !== null,
       hasHooksConfig: p.hooksConfig !== undefined && p.hooksConfig !== null,
@@ -87,6 +90,28 @@ const PAYLOAD_PROJECTION: Readonly<Record<CommandKind, Projection>> = {
   "session.cancel": () => ({}),
   "session.checkpoint": () => ({}),
   "session.delete": () => ({}),
+  "runtime_object.reserve": (p) => ({
+    ...pickScalars(p, [
+      "objectId",
+      "kind",
+      "logicalName",
+      "mimeType",
+      "sizeBytes",
+      "sha256",
+      "generation",
+      "retentionClass",
+      "expiresAt",
+    ]),
+  }),
+  "runtime_object.upload": (p) =>
+    pickScalars(p, [
+      "objectId",
+      "generation",
+      "sizeBytes",
+      "sha256",
+      "mimeType",
+    ]),
+  "runtime_object.delete": (p) => pickScalars(p, ["objectId", "generation"]),
 };
 
 export function redactPayload(kind: CommandKind, payload: unknown): Payload {

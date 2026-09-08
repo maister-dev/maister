@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
@@ -81,14 +83,26 @@ beforeAll(async () => {
       startedAt: new Date(base + i * 60_000),
       endedAt: new Date(base + i * 60_000 + 30_000),
     });
-    await db.insert(schema.runCostRollups).values({
+    await db.insert(schema.executionEvents).values({
+      id: randomUUID(),
+      source: "manager",
+      sourceKey: `task-detail:${runId}:0`,
       runId,
-      projectId: "proj-cap",
-      taskId: "task-cap",
-      inputTokens: PER_RUN.input,
-      outputTokens: PER_RUN.output,
-      cacheReadTokens: PER_RUN.cacheRead,
-      cacheCreationTokens: PER_RUN.cacheCreation,
+      eventType: "usage.recorded",
+      payloadSchema: "maister.usage.recorded.v1",
+      payload: {
+        sessionName: "default",
+        model: "claude-sonnet-4-6",
+        inputTokens: PER_RUN.input,
+        outputTokens: PER_RUN.output,
+        cacheReadInputTokens: PER_RUN.cacheRead,
+        cacheCreationInputTokens: PER_RUN.cacheCreation,
+        resumed: false,
+      },
+      occurredAt: new Date(base + i * 60_000 + 29_000),
+      receivedAt: new Date(base + i * 60_000 + 29_000),
+      runSequence: BigInt(0),
+      ingestDisposition: "accepted",
     });
   }
 

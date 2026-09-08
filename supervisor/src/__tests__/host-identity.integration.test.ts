@@ -14,10 +14,13 @@ import {
   HOST_STATE_SCHEMA_VERSION,
   openHostState,
 } from "../host-state";
+import { bootExecutionHost } from "../main";
+import { DEFAULT_RUNTIME_LIMITS } from "../runtime-limits";
 
 import {
   bootHost,
   cleanupRuntimeRoot,
+  silentLogger,
   type BootedHost,
 } from "./_fixtures/boot-host";
 
@@ -38,6 +41,36 @@ async function tempRoot(): Promise<string> {
 }
 
 describe("execution-host identity", () => {
+  it("applies, removes and reapplies explicit resource settings on the actual boot path", async () => {
+    const root = await tempRoot();
+    const env = { MAISTER_EVENT_OUTBOX_SOFT_ROWS: "70000" };
+
+    for (const config of [env, {}, env]) {
+      const state = bootExecutionHost({
+        runtimeRoot: root,
+        logger: silentLogger,
+        env: config,
+      });
+
+      try {
+        expect(state.limits.eventSoftRows).toBe(
+          "MAISTER_EVENT_OUTBOX_SOFT_ROWS" in config
+            ? 70000
+            : DEFAULT_RUNTIME_LIMITS.eventSoftRows,
+        );
+      } finally {
+        state.close();
+      }
+    }
+    expect(() =>
+      bootExecutionHost({
+        runtimeRoot: root,
+        logger: silentLogger,
+        env: { MAISTER_EVENT_OUTBOX_SOFT_ROWS: "garbage" },
+      }),
+    ).toThrow(/MAISTER_EVENT_OUTBOX_SOFT_ROWS/);
+  });
+
   it("H1: a fresh state dir mints a key matching the pattern and /health reports it with a bootId", async () => {
     const host = await bootHost({ runtimeRoot: await tempRoot() });
 

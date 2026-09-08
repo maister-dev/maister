@@ -26,14 +26,22 @@ import {
   CONSENSUS_TEXT_CAP_BYTES,
   latestConsensusRound,
   loadConsensusDraftEvidence,
+  loadConsensusVerdictCell,
   loadConsensusVerdicts,
   recordConsensusVerdict,
   type ConsensusDraftEvidence,
   type ConsensusVerdictEvidence,
 } from "./ledger";
+import {
+  ConsensusGenerationPending,
+  consensusSynthesisOwner,
+  consensusVerifierOwner,
+  loadConsensusSynthesis,
+} from "./prompt-owner";
 
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 import { runAgentStep } from "@/lib/flows/runner-agent";
+import { FlowPromptContinuationPending } from "@/lib/flows/graph/prompt-owner";
 import { MaisterError } from "@/lib/errors";
 import { isFencedError } from "@/lib/execution-host";
 import * as schemaModule from "@/lib/db/schema";
@@ -388,9 +396,16 @@ async function runVerifier(
     actorId: args.verifierId,
   });
   let rawOutput = "";
-  let parsed: ParsedConsensusVerdict;
+  let parsed: ParsedConsensusVerdict | null = null;
+  let applied: ConsensusVerdictEvidence | null = null;
   let errorCode: string | undefined;
   let verifierRuntime: ConsensusRoleRuntime | null = null;
+  const owner = consensusVerifierOwner({
+    nodeAttemptId: args.nodeAttemptId,
+    round: args.round,
+    verifierId: args.verifierId,
+    targetParticipantId: args.target.participantId,
+  });
 
   try {
     if (args.target.status !== "Done" || !args.target.artifactText) {
@@ -410,10 +425,11 @@ async function runVerifier(
           }),
         },
         {
+          promptOwner: owner,
           runtimeRoot: args.runtimeRoot,
           projectSlug: args.loaded.projectSlug,
           runId: args.loaded.run.id,
-          stepId: `${args.node.id}:verify`,
+          stepId: `${args.node.id}-verify`,
           nodeAttemptId: args.nodeAttemptId,
           worktreePath: args.worktreePath,
           bindExecution: args.bindExecution,
@@ -439,12 +455,23 @@ async function runVerifier(
       );
 
       if (res.fenced) throw fencedYield(args.loaded.run.id, args.node.id);
-      rawOutput = res.stdout ?? "";
-      parsed = parseConsensusVerdict(rawOutput, args.def.material_axes);
-      if (!res.ok) errorCode = res.errorCode ?? "EXECUTOR_UNAVAILABLE";
+      // The owner already committed this cell from the verified command output.
+      applied = await loadConsensusVerdictCell({
+        db: args.db,
+        nodeAttemptId: args.nodeAttemptId,
+        round: args.round,
+        verifierId: args.verifierId,
+        targetParticipantId: args.target.participantId,
+      });
+      if (!applied) throw new ConsensusGenerationPending(owner.verdictId);
     }
   } catch (err) {
-    if (isFencedError(err)) throw err;
+    if (
+      isFencedError(err) ||
+      err instanceof FlowPromptContinuationPending ||
+      err instanceof ConsensusGenerationPending
+    )
+      throw err;
     parsed = failClosedVerdict(args.def.material_axes);
     errorCode =
       err instanceof MaisterError
@@ -470,19 +497,21 @@ async function runVerifier(
     );
   }
 
-  const recorded = await recordConsensusVerdict({
-    db: args.db,
-    runId: args.loaded.run.id,
-    nodeId: args.node.id,
-    nodeAttemptId: args.nodeAttemptId,
-    attempt: args.nodeAttemptNumber,
-    round: args.round,
-    verifierId: args.verifierId,
-    targetParticipantId: args.target.participantId,
-    result: parsed,
-    rawOutput,
-    ...(errorCode ? { errorCode } : {}),
-  });
+  const recorded =
+    applied ??
+    (await recordConsensusVerdict({
+      db: args.db,
+      runId: args.loaded.run.id,
+      nodeId: args.node.id,
+      nodeAttemptId: args.nodeAttemptId,
+      attempt: args.nodeAttemptNumber,
+      round: args.round,
+      verifierId: args.verifierId,
+      targetParticipantId: args.target.participantId,
+      result: parsed ?? failClosedVerdict(args.def.material_axes),
+      rawOutput,
+      ...(errorCode ? { errorCode } : {}),
+    }));
 
   log.info(
     {
@@ -646,6 +675,26 @@ async function synthesizeConsensus(
 
   const startedAt = Date.now();
   const debateLog = debateLogText(args);
+  const owner = consensusSynthesisOwner({
+    nodeAttemptId: args.nodeAttemptId,
+    round: args.round,
+    source: args.source,
+  });
+  // A parent stack that died after the paid turn re-enters on its own output.
+  const applied = await loadConsensusSynthesis({
+    db: args.db,
+    synthesisId: owner.synthesisId,
+  });
+
+  if (applied !== null)
+    return finishConsensusSynthesis({
+      ...args,
+      debateLog,
+      planText: capText(applied),
+      startedAt,
+      synthesizerRef: synthesizer.roleRef,
+      synthesizerKind: synthesizer.roleKind,
+    });
   const release = await acquireConsensusAgentCapacity({
     runId: args.loaded.run.id,
     nodeId: args.node.id,
@@ -668,10 +717,11 @@ async function synthesizeConsensus(
         }),
       },
       {
+        promptOwner: owner,
         runtimeRoot: args.runtimeRoot,
         projectSlug: args.loaded.projectSlug,
         runId: args.loaded.run.id,
-        stepId: `${args.node.id}:synthesize`,
+        stepId: `${args.node.id}-synthesize`,
         nodeAttemptId: args.nodeAttemptId,
         worktreePath: args.worktreePath,
         bindExecution: args.bindExecution,
@@ -697,19 +747,47 @@ async function synthesizeConsensus(
     );
 
     if (res.fenced) throw fencedYield(args.loaded.run.id, args.node.id);
-    if (!res.ok) {
-      const code = res.errorCode ?? "EXECUTOR_UNAVAILABLE";
+    const output = await loadConsensusSynthesis({
+      db: args.db,
+      synthesisId: owner.synthesisId,
+    });
 
-      throw new MaisterError(
-        code,
-        `consensus synthesizer failed for node ${args.node.id}`,
-      );
-    }
-
-    planText = capText(res.stdout ?? "");
+    if (output === null)
+      throw new ConsensusGenerationPending(owner.synthesisId);
+    planText = capText(output);
   } finally {
     release();
   }
+
+  if (planText.trim().length === 0) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `consensus synthesizer produced empty output for node ${args.node.id}`,
+    );
+  }
+
+  return finishConsensusSynthesis({
+    ...args,
+    debateLog,
+    planText,
+    startedAt,
+    synthesizerRef: synthesizer.roleRef,
+    synthesizerKind: synthesizer.roleKind,
+  });
+}
+
+async function finishConsensusSynthesis(
+  args: RunConsensusNodeInput & {
+    round: number;
+    source: string;
+    debateLog: string;
+    planText: string;
+    startedAt: number;
+    synthesizerRef: string;
+    synthesizerKind: "agent" | "runner";
+  },
+): Promise<ConsensusNodeResult> {
+  const { debateLog, planText, startedAt } = args;
 
   if (planText.trim().length === 0) {
     throw new MaisterError(
@@ -760,8 +838,8 @@ async function synthesizeConsensus(
       runId: args.loaded.run.id,
       nodeId: args.node.id,
       nodeAttemptId: args.nodeAttemptId,
-      synthesizerId: synthesizer.roleRef,
-      synthesizerKind: synthesizer.roleKind,
+      synthesizerId: args.synthesizerRef,
+      synthesizerKind: args.synthesizerKind,
       source: args.source,
       artifactIds: ["consensus_plan", "debate_log"],
       durationMs: Date.now() - startedAt,

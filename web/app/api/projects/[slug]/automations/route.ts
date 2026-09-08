@@ -36,6 +36,7 @@ export async function GET(
       limit: req.nextUrl.searchParams.get("limit") ?? undefined,
       cursor: req.nextUrl.searchParams.get("cursor") ?? undefined,
     });
+
     if (!parsedQuery.success) {
       throw new MaisterError("CONFIG", "automation page query is invalid");
     }

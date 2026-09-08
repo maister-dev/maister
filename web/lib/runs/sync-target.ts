@@ -1463,6 +1463,11 @@ async function driveSyncResolver(
       runnerTier,
       executionHosts: args.executionHosts,
       assignmentId,
+      owner: {
+        syncAttemptId: claim.attemptId,
+        operationAttemptId: claim.lifecycleAttemptId,
+        promptOrdinal: 0,
+      },
     });
   } catch (err) {
     // ADR-166 E-EH-11: a fenced resolver belongs to a superseded generation —
@@ -1486,9 +1491,15 @@ async function driveSyncResolver(
   }
 
   const { sessionId, stopReason } = session;
+  let sessionTornDown = false;
+  const teardownSession = async (): Promise<void> => {
+    if (sessionTornDown) return;
+    sessionTornDown = true;
+    await teardownResolverSession(args.executionHosts, runId, sessionId);
+  };
 
   if (stopReason !== "end_turn") {
-    await teardownResolverSession(args.executionHosts, runId, sessionId);
+    await teardownSession();
     await failResolver({
       db,
       claim,
@@ -1549,7 +1560,7 @@ async function driveSyncResolver(
     );
 
     if (!gate.ok) {
-      await teardownResolverSession(args.executionHosts, runId, sessionId);
+      await teardownSession();
       await failResolver({
         db,
         claim,
@@ -1575,7 +1586,7 @@ async function driveSyncResolver(
 
     if (shouldPush) {
       if (args.remoteShaIndeterminate) {
-        await teardownResolverSession(args.executionHosts, runId, sessionId);
+        await teardownSession();
         await failResolver({
           db,
           claim,
@@ -1598,7 +1609,7 @@ async function driveSyncResolver(
       const push = await pushWithLease(worktree, branch, args.remoteShaBefore);
 
       if (!push.pushed) {
-        await teardownResolverSession(args.executionHosts, runId, sessionId);
+        await teardownSession();
         await failResolver({
           db,
           claim,
@@ -1633,7 +1644,7 @@ async function driveSyncResolver(
     //
     // `deleteSession` stays outside (it cannot throw) and `promoteNextPending` stays
     // outside because it is a scheduler side effect, not part of the terminal fact.
-    await teardownResolverSession(args.executionHosts, runId, sessionId);
+    await teardownSession();
     await settleAttempt(db, claim, {
       runId,
       // The resolver only reaches here having resolved and committed, so HEAD moved
@@ -1652,7 +1663,7 @@ async function driveSyncResolver(
     );
   } catch (err) {
     // The session is torn down on every failing path (idempotent).
-    await teardownResolverSession(args.executionHosts, runId, sessionId);
+    await teardownSession();
 
     // `settled` — a handled path above already terminalized this attempt.
     // `pushCommitted` — the force-push LANDED. Aborting now would restore the

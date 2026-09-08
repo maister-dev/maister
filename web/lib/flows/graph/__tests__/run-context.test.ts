@@ -29,7 +29,8 @@ describe("buildRunContext (P7, ADR-103)", () => {
   it("projects {intent, nodes(summary+vars), gates(status+verdict?), promoted}", () => {
     const ctx = buildRunContext({
       taskPrompt: "fix the bug",
-      effectivePrompt: "fix the bug\n\n## Human clarifications\n\nAnswer: production",
+      effectivePrompt:
+        "fix the bug\n\n## Human clarifications\n\nAnswer: production",
       clarifications: [
         {
           id: "clarification-1",
@@ -51,7 +52,8 @@ describe("buildRunContext (P7, ADR-103)", () => {
     expect(ctx.intent).toBe("fix the bug");
     expect(ctx.task).toEqual({
       prompt: "fix the bug",
-      effectivePrompt: "fix the bug\n\n## Human clarifications\n\nAnswer: production",
+      effectivePrompt:
+        "fix the bug\n\n## Human clarifications\n\nAnswer: production",
       clarifications: [
         {
           id: "clarification-1",

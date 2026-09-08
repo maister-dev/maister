@@ -6,6 +6,11 @@ import { and, eq } from "drizzle-orm";
 import pino from "pino";
 
 import * as schemaModule from "@/lib/db/schema";
+import {
+  admitSyncPrompt,
+  type SyncPromptOwner,
+  waitForSyncPrompt,
+} from "@/lib/runs/sync-prompt-owner";
 import { MaisterError } from "@/lib/errors";
 import { nextKeepaliveAt } from "@/lib/runs/keepalive-config";
 import {
@@ -20,10 +25,7 @@ import {
 } from "@/lib/execution-host";
 
 // FIXME(any): dual drizzle-orm peer-dep variants — mirror sync-target.ts.
-const { hitlRequests, runs, runSessions } = schemaModule as unknown as Record<
-  string,
-  any
->;
+const { hitlRequests, runs } = schemaModule as unknown as Record<string, any>;
 
 // FIXME(any): the injected db seam is a Drizzle client OR a Testcontainers pg
 // client; both expose select/insert/update/transaction.
@@ -231,6 +233,9 @@ export async function runResolverSession(args: {
   executionHosts?: ExecutionHosts;
   // ADR-166: the `sync_resolver` generation the claim minted.
   assignmentId?: string | null;
+  // S2.10: the sync claim this turn belongs to. The owner makes the ACP
+  // boundary durable so a restart continues the sync instead of re-prompting.
+  owner: SyncPromptOwner;
 }): Promise<{ sessionId: string; stopReason: PromptStopReason }> {
   const hosts = args.executionHosts ?? createExecutionHosts({ db: args.db });
   // Bound to the `sync_resolver` generation the claim minted.
@@ -239,38 +244,6 @@ export async function runResolverSession(args: {
   });
   const created = await client.createSession(args.input);
   const sessionId = created.sessionId;
-
-  // Persist the ACP handle onto the resolver's `run_sessions` row. The row is
-  // inserted in the CAS tx BEFORE the session exists, so it starts null — and
-  // nothing ever wrote it, which made reconcile's whole W2 arm unreachable:
-  // `activeRunSessionsFor` resolves `liveSession` from this column, so a live
-  // resolver always looked session-less. Worse than merely null — that helper
-  // lets a LATER row replace an incumbent only when the incumbent lacks a
-  // handle, so the handle-less resolver row loses to the run's OLD flow session
-  // and W2 would tear THAT session down instead.
-  //
-  // Fails closed under the module's deferred-release contract: an unpersisted
-  // handle means a crash leaves an agent process nothing can find or kill, which
-  // is strictly worse than not resolving at all.
-  try {
-    await args.db
-      .update(runSessions)
-      .set({ acpSessionId: created.acpSessionId, updatedAt: new Date() })
-      .where(
-        and(
-          eq(runSessions.runId, args.runId),
-          eq(runSessions.sessionName, args.input.sessionName),
-        ),
-      );
-  } catch (err) {
-    await client.deleteSession(sessionId).catch(() => undefined);
-    throw new MaisterError(
-      "CRASH",
-      `sync resolver could not persist its acp session handle: ${
-        err instanceof Error ? err.message : String(err)
-      }`,
-    );
-  }
 
   // ADR-141: mark this run as owned by a LIVE in-process resolver
   // driver — the skip-vs-abort discriminant for the periodic reconcile sweep.
@@ -296,15 +269,20 @@ export async function runResolverSession(args: {
     admin,
   });
 
-  let promptResult: PromptResult;
+  // Null when the owner already applied the successful advance: the attempt has
+  // left `agent_running` and this turn ended cleanly.
+  let promptResult: PromptResult | null;
 
   try {
-    promptResult = await (
-      await client.prompt(sessionId, {
-        stepId: SYNC_STEP_ID,
-        prompt: args.prompt,
-      })
-    ).completion;
+    const promptHandle = await client.prompt(
+      sessionId,
+      { stepId: SYNC_STEP_ID, prompt: args.prompt },
+      {
+        admitOwner: (tx) => admitSyncPrompt(tx, client, sessionId, args.owner),
+      },
+    );
+
+    promptResult = await waitForSyncPrompt(args.db, client, promptHandle);
   } catch (err) {
     consumer.abort.abort();
     await consumer.done.catch(() => undefined);
@@ -330,9 +308,13 @@ export async function runResolverSession(args: {
   }
 
   log.info(
-    { runId: args.runId, sessionId, stopReason: promptResult.stopReason },
+    {
+      runId: args.runId,
+      sessionId,
+      stopReason: promptResult?.stopReason ?? null,
+    },
     "sync resolver session ended",
   );
 
-  return { sessionId, stopReason: promptResult.stopReason };
+  return { sessionId, stopReason: promptResult?.stopReason ?? "end_turn" };
 }

@@ -102,6 +102,7 @@ beforeEach(async () => {
   for (const t of [
     "run_sync_attempts",
     "workspaces",
+    "execution_commands",
     "runs",
     "tasks",
     "flows",

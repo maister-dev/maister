@@ -437,9 +437,7 @@ describe("materializeCapabilityProfile", () => {
     const instructions = await readFile(materialized.instructionsPath, "utf8");
 
     expect(materialized.profilePath.startsWith(workDir)).toBe(true);
-    expect(materialized.adapterLaunch.env).toMatchObject({
-      MAISTER_CAPABILITY_PROFILE_PATH: materialized.profilePath,
-    });
+    expect(materialized.adapterLaunch).toEqual({});
     expect(profileJson).toContain("GITHUB_TOKEN");
     expect(profileJson).not.toContain("secret");
     expect(instructions).toContain("mcp/github");
@@ -642,12 +640,7 @@ describe("materializeCapabilityProfile", () => {
     expect(profileJson).toContain("GITHUB_TOKEN");
   });
 
-  // R-SECRET / ITEM B: `materialized.adapterLaunch` is persisted VERBATIM into
-  // scratch_capability_profiles.adapter_launch (scratch-runs/service.ts:736). The
-  // materialize API takes NO `secrets` arg and agent-map emits no env, so
-  // adapterLaunch.env can ONLY ever hold the two non-secret MAISTER_* paths —
-  // nothing secret can reach that DB column. This pins that at the source.
-  it("adapterLaunch.env (the value persisted to scratch_capability_profiles) carries only the MAISTER_* paths, never secret values (ITEM B regression guard)", async () => {
+  it("keeps capability file paths out of the persisted adapter launch payload", async () => {
     const result = await materializeCapabilityProfile({
       runId: "run-1",
       worktreePath: workDir,
@@ -655,10 +648,7 @@ describe("materializeCapabilityProfile", () => {
       tools: ["Read"],
     });
 
-    expect(Object.keys(result.adapterLaunch.env ?? {})).toEqual([
-      "MAISTER_CAPABILITY_PROFILE_PATH",
-      "MAISTER_CAPABILITY_INSTRUCTIONS_PATH",
-    ]);
+    expect(result.adapterLaunch.env).toBeUndefined();
     expect(result.adapterLaunch.preArgs).toBeUndefined();
     expect(result.adapterLaunch.postArgs).toBeUndefined();
     for (const value of Object.values(result.adapterLaunch.env ?? {})) {

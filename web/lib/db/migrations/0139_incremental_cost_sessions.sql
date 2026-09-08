@@ -1,0 +1,1 @@
+ALTER TABLE "run_cost_rollups" ADD COLUMN "by_session" jsonb DEFAULT '{}'::jsonb NOT NULL;

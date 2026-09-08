@@ -216,22 +216,65 @@ export async function loadConsensusVerdicts(args: {
   }));
 }
 
-export async function recordConsensusVerdict(args: {
-  db: Db;
-  runId: string;
-  nodeId: string;
+export type ConsensusVerdictCell = Readonly<{
   nodeAttemptId: string;
-  attempt: number;
   round: number;
   verifierId: string;
   targetParticipantId: string;
-  result: ParsedConsensusVerdict;
-  rawOutput: string;
-  errorCode?: string;
-}): Promise<ConsensusVerdictEvidence> {
+}>;
+
+/** One matrix cell has exactly one ledger row and one raw-output artifact, so
+ * an owned verification command can key on the cell it was paid for. */
+export function consensusVerdictLedgerId(cell: ConsensusVerdictCell): string {
+  return `run:${cell.nodeAttemptId}:consensus-verdict-ledger:r${cell.round}:${cell.verifierId}:${cell.targetParticipantId}`;
+}
+
+export function consensusVerdictArtifactId(cell: ConsensusVerdictCell): string {
+  return `run:${cell.nodeAttemptId}:consensus-verdict:r${cell.round}:${cell.verifierId}:${cell.targetParticipantId}`;
+}
+
+export type ConsensusVerdictWrite = ConsensusVerdictCell &
+  Readonly<{
+    runId: string;
+    nodeId: string;
+    attempt: number;
+    result: ParsedConsensusVerdict;
+    rawOutput: string;
+    errorCode?: string;
+  }>;
+
+export async function loadConsensusVerdictCell(
+  args: ConsensusVerdictCell & { db: Db },
+): Promise<ConsensusVerdictEvidence | null> {
+  const verdicts = await loadConsensusVerdicts({
+    db: args.db,
+    nodeAttemptId: args.nodeAttemptId,
+    round: args.round,
+  });
+
+  return (
+    verdicts.find(
+      (verdict) =>
+        verdict.verifierId === args.verifierId &&
+        verdict.targetParticipantId === args.targetParticipantId,
+    ) ?? null
+  );
+}
+
+export async function recordConsensusVerdict(
+  args: ConsensusVerdictWrite & { db: Db },
+): Promise<ConsensusVerdictEvidence> {
+  return args.db.transaction((tx: Db) => writeConsensusVerdict(tx, args));
+}
+
+/** DB-only; an owner application commits it with its command marker. */
+export async function writeConsensusVerdict(
+  tx: Db,
+  args: ConsensusVerdictWrite,
+): Promise<ConsensusVerdictEvidence> {
   const rawOutputText = args.rawOutput.slice(0, CONSENSUS_TEXT_CAP_BYTES);
-  const rawOutputArtifactId = `run:${args.nodeAttemptId}:consensus-verdict:r${args.round}:${args.verifierId}:${args.targetParticipantId}`;
-  const id = `run:${args.nodeAttemptId}:consensus-verdict-ledger:r${args.round}:${args.verifierId}:${args.targetParticipantId}`;
+  const rawOutputArtifactId = consensusVerdictArtifactId(args);
+  const id = consensusVerdictLedgerId(args);
   const rawOutputArtifact = {
     id: rawOutputArtifactId,
     runId: args.runId,
@@ -262,29 +305,27 @@ export async function recordConsensusVerdict(args: {
     errorCode: args.errorCode,
   } satisfies ConsensusRoundVerdictInsert;
 
-  await args.db.transaction(async (tx: Db) => {
-    await recordArtifact(rawOutputArtifact, tx);
-    await tx
-      .insert(consensusRoundVerdicts)
-      .values(row)
-      .onConflictDoUpdate({
-        target: [
-          consensusRoundVerdicts.nodeAttemptId,
-          consensusRoundVerdicts.round,
-          consensusRoundVerdicts.verifierKey,
-          consensusRoundVerdicts.targetKey,
-        ],
-        set: {
-          parseStatus: row.parseStatus,
-          verdict: row.verdict,
-          axes: row.axes,
-          disagreements: row.disagreements,
-          confidence: row.confidence,
-          rawOutputArtifactId,
-          errorCode: row.errorCode,
-        },
-      });
-  });
+  await recordArtifact(rawOutputArtifact, tx);
+  await tx
+    .insert(consensusRoundVerdicts)
+    .values(row)
+    .onConflictDoUpdate({
+      target: [
+        consensusRoundVerdicts.nodeAttemptId,
+        consensusRoundVerdicts.round,
+        consensusRoundVerdicts.verifierKey,
+        consensusRoundVerdicts.targetKey,
+      ],
+      set: {
+        parseStatus: row.parseStatus,
+        verdict: row.verdict,
+        axes: row.axes,
+        disagreements: row.disagreements,
+        confidence: row.confidence,
+        rawOutputArtifactId,
+        errorCode: row.errorCode,
+      },
+    });
 
   return {
     verifierId: args.verifierId,

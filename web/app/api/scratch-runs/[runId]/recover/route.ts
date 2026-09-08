@@ -4,11 +4,14 @@ import type { Db as ExecutionDb } from "@/lib/execution-host/db";
 import type { AdapterId } from "@/lib/acp-runners/adapter-support";
 import type { RunnerSnapshot } from "@/lib/acp-runners/resolve";
 
+import { join } from "node:path";
+
 import { and, eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 import { z } from "zod";
 
+import { assertCurrentSessionBinding } from "@/lib/execution-host/session-binding";
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import {
   mergeRunnerAdapterLaunch,
@@ -19,27 +22,25 @@ import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import {
   classifyScratchRecovery,
-  liveScratchSupervisorSessionIds,
+  liveScratchHostSessionIds,
 } from "@/lib/scratch-runs/recovery";
 import {
   normalizeScratchPrompt,
   sendScratchPromptAndProjectEvents,
 } from "@/lib/scratch-runs/events";
 import { scratchStepId } from "@/lib/scratch-runs/launch";
-import {
-  loadActiveRunSession,
-  persistRunSessionAcpSessionId,
-} from "@/lib/runs/active-run-session";
+import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import {
   assertLocalPackageAssistantActor,
-  completeScratchPromptTurn,
   markScratchCrashed,
 } from "@/lib/scratch-runs/service";
+import { readScratchDialogStatus } from "@/lib/scratch-runs/turn-completion";
 import {
   createExecutionHosts,
   isFencedError,
   localHost,
   mintPlacement,
+  publishCapabilityBundle,
   releaseAssignmentForRun,
 } from "@/lib/execution-host";
 
@@ -210,6 +211,7 @@ async function loadScratchRecoveryRows(db: Db, runId: string) {
     projectSlug,
     confineRoot,
     acpSessionId: activeSession?.acpSessionId ?? null,
+    hostSessionId: activeSession?.hostSessionId ?? null,
     executor: recoveredRunner.executor,
     runnerSnapshot: recoveredRunner.snapshot,
     profile: profileRows[0] ?? null,
@@ -333,6 +335,7 @@ export async function POST(
       executor,
       runnerSnapshot,
       acpSessionId,
+      hostSessionId,
       profile,
     } = await loadScratchRecoveryRows(db, runId);
 
@@ -353,16 +356,39 @@ export async function POST(
       transport: hosts.transport,
     });
 
-    const liveSessionIds = liveScratchSupervisorSessionIds(
-      await hosts.local().listSessions(),
-    );
+    // The logical run session is the association authority. A targeted host
+    // listing only diagnoses whether that already-associated host session is
+    // still live; it must never discover a session for this run by scanning.
+    let liveSessionIds = new Set<string>();
+
+    if (hostSessionId) {
+      try {
+        const activeExecution = await hosts.executionFor(runId);
+
+        liveSessionIds = liveScratchHostSessionIds(
+          await activeExecution.admin.listSessions(),
+        );
+      } catch (err) {
+        // The preceding crash/release can legitimately leave no active
+        // assignment. Canonical state already selected the host session; a
+        // diagnostic probe must not block same-host checkpoint recovery.
+        log.info(
+          {
+            runId,
+            hostSessionId,
+            reason: isMaisterError(err) ? err.code : "diagnostic_unavailable",
+          },
+          "scratch-recover-host-diagnostic-unavailable",
+        );
+      }
+    }
     const action = classifyScratchRecovery({
       runStatus: run.status,
       dialogStatus: scratch.dialogStatus,
       acpSessionId,
-      supervisorSessionId: scratch.supervisorSessionId,
+      hostSessionId,
       workspaceRemoved,
-      liveSupervisorSessionIds: liveSessionIds,
+      liveHostSessionIds: liveSessionIds,
     });
 
     if (action === "open") {
@@ -433,12 +459,25 @@ export async function POST(
     let session: Awaited<ReturnType<typeof execution.client.createSession>>;
 
     try {
+      const capabilityBundle = profile?.materializedPath
+        ? await publishCapabilityBundle({
+            client: execution.client,
+            runId,
+            sourceId: "scratch-session",
+            profileLogicalName: "scratch-capability-profile.json",
+            profilePath: join(profile.materializedPath, "profile.json"),
+            instructionsLogicalName: "scratch-capability-instructions.md",
+            instructionsPath: join(profile.materializedPath, "instructions.md"),
+          })
+        : undefined;
+
       session = await execution.client.createSession({
         stepId: scratchStepId(),
         executor,
         runner: runnerSupervisorInput({ snapshot: runnerSnapshot }),
         resumeSessionId: acpSessionId,
-        capabilityProfilePath: profile?.materializedPath ?? undefined,
+        capabilityProfileObjectId: capabilityBundle?.profileObjectId,
+        capabilityInstructionsObjectId: capabilityBundle?.instructionsObjectId,
         adapterLaunch: mergeRunnerAdapterLaunch(
           runnerSnapshot,
           profile?.adapterLaunch ?? undefined,
@@ -457,17 +496,17 @@ export async function POST(
     const now = new Date();
 
     await db.transaction(async (tx: Db) => {
-      await persistRunSessionAcpSessionId(
-        tx,
+      await assertCurrentSessionBinding(tx, {
         runId,
-        "default",
-        session.acpSessionId,
-      );
+        sessionName: "default",
+        assignmentId: claimed.id,
+        hostSessionId: session.sessionId,
+        acpSessionId: session.acpSessionId,
+      });
       await tx
         .update(scratchRuns)
         .set({
           dialogStatus: "Running",
-          supervisorSessionId: session.sessionId,
           errorCode: null,
           errorMessage: null,
           errorMetadata: null,
@@ -483,9 +522,10 @@ export async function POST(
         stepId: scratchStepId(),
         prompt: normalizeScratchPrompt(body.prompt, executor.agent, { runId }),
         execution,
+        owner: { variant: "recovery" },
       });
 
-      const dialogStatus = await completeScratchPromptTurn({ db, runId });
+      const dialogStatus = await readScratchDialogStatus(db as never, runId);
 
       return NextResponse.json(
         {
@@ -507,7 +547,6 @@ export async function POST(
         db,
         runId,
         err,
-        clearSupervisorSession: true,
       }).catch((markErr) =>
         log.error(
           {

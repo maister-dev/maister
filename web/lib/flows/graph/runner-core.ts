@@ -39,6 +39,7 @@ export type Db = any;
 
 export type RunFlowOptions = {
   db?: Db;
+  signal?: AbortSignal;
   runtimeRoot?: string;
   // ADR-166: the execution-host seam. `executionHosts` is what the graph
   // binds its driver generation on (defaults to a local-direct instance over

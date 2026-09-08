@@ -37,9 +37,11 @@ import {
   createFakeExecutionHost,
   definitiveUnavailableError,
   fakeBoundClient,
+  fakeExecutionHosts,
   fencedError,
   unknownOutcomeError,
 } from "@/test-support/fake-execution-host";
+import { seedNodePromptOwner } from "@/test-support/prompt-owner-fixture";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -60,8 +62,15 @@ const CREATE_PAYLOAD = {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-async function bound(status = "Running") {
-  const runId = await seedRun(testDatabase.db, { projectId, status });
+async function bound(
+  status = "Running",
+  dataPlaneMode: "canonical_events_v1" = "canonical_events_v1",
+) {
+  const runId = await seedRun(testDatabase.db, {
+    projectId,
+    status,
+    executionDataPlaneMode: dataPlaneMode,
+  });
 
   await seedWorkspace(testDatabase.db, {
     runId,
@@ -69,10 +78,9 @@ async function bound(status = "Running") {
     worktreePath: `/tmp/eh/${runId}`,
     parentRepoPath: "/tmp/eh/repo",
   });
-  const assignment = await db.transaction((tx) =>
-    mintAssignment(tx as unknown as Db, { runId, hostId, reason: "launch" }),
-  );
-  const { client } = await fakeBoundClient({ db, fake, assignment });
+  const installed = await fakeExecutionHosts(db, { fake, runId });
+  const assignment = installed.assignment!;
+  const client = await installed.hosts.forAssignment(assignment);
 
   return { runId, assignment, client };
 }
@@ -118,37 +126,6 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
       setTimeout(() => reject(new Error(`did not settle in ${ms} ms`)), ms),
     ),
   ]);
-}
-
-// A db whose `update` calls throw once armed — every ledger transition is an
-// UPDATE, so this is "the ledger cannot be written" from the deliverer's view.
-function withUpdateFault(base: Db): {
-  db: Db;
-  arm: () => void;
-  disarm: () => void;
-} {
-  let armed = false;
-  const proxied = new Proxy(base, {
-    get(target, prop, receiver) {
-      if (prop === "update" && armed) {
-        return () => {
-          throw new Error("injected: ledger write failed");
-        };
-      }
-
-      return Reflect.get(target, prop, receiver);
-    },
-  });
-
-  return {
-    db: proxied as Db,
-    arm: () => {
-      armed = true;
-    },
-    disarm: () => {
-      armed = false;
-    },
-  };
 }
 
 async function untilState(id: string, states: string[], timeoutMs = 5_000) {
@@ -376,46 +353,51 @@ describe("ledger + deliverer (fake transport)", () => {
     );
   });
 
-  it("L7: prompt — SSE accepted folds accepted_at; SSE completed BEFORE the HTTP response wins and the late fold is a no-op", async () => {
+  it("L7: prompt completion is read from the canonical command ledger", async () => {
     const { client } = await bound();
     const created = await client.createSession(CREATE_PAYLOAD);
     const httpGate = deferred();
     let httpReturned = false;
 
     fake.setPromptBehavior(async (ctx) => {
-      ctx.emit("accepted");
-      // The SSE accepted fold has landed before the completion is signalled.
-      await untilState(ctx.envelope.command.id, ["accepted"]);
       ctx.setReceipt("completed", { stopReason: "end_turn", meta: null });
-      ctx.emit("completed", {
-        status: "succeeded",
-        result: { stopReason: "end_turn", meta: null },
-      });
-      // The HTTP response is held until the test has seen the SSE settle.
+      // The host turn is held so the manager can observe admission separately
+      // from canonical completion.
       await httpGate.promise;
       httpReturned = true;
 
       return { stopReason: "end_turn", meta: null };
     });
 
-    const handle = await client.prompt(created.hostSessionId, {
-      stepId: "s1",
-      prompt: "hi",
-    });
-    const result = await handle.completion;
+    const handle = await client.prompt(
+      created.hostSessionId,
+      {
+        stepId: "s1",
+        prompt: "hi",
+      },
+      {
+        admitOwner: await seedNodePromptOwner(
+          db,
+          client,
+          created.hostSessionId,
+        ),
+      },
+    );
+    const completion = client.waitForPrompt(handle);
+
+    httpGate.resolve();
+    const result = await completion;
 
     expect(result.stopReason).toBe("end_turn");
-    expect(httpReturned).toBe(false);
+    expect(httpReturned).toBe(true);
 
     const settled = await untilState(handle.commandId, ["succeeded"]);
 
     expect(settled.acceptedAt).not.toBeNull();
     expect(settled.completedAt).not.toBeNull();
 
-    httpGate.resolve();
     await vi.waitFor(() => expect(httpReturned).toBe(true));
-    // The deliverer's own HTTP path folds after the response — a no-op on
-    // the settled row.
+    // A duplicate completion fold is a no-op on the terminal ledger row.
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
     const after = await getCommand(db, handle.commandId);
@@ -423,24 +405,32 @@ describe("ledger + deliverer (fake transport)", () => {
     expect(after!.state).toBe("succeeded");
     expect(after!.completedAt!.getTime()).toBe(settled.completedAt!.getTime());
 
-    // Plain path: SSE accepted, HTTP completes → succeeded via the response.
-    fake.setPromptBehavior(async (ctx) => {
-      ctx.emit("accepted");
-
+    // A normal asynchronous turn follows the same event-backed ledger path.
+    fake.setPromptBehavior(async () => {
       return { stopReason: "end_turn", meta: null };
     });
-    const plain = await client.prompt(created.hostSessionId, {
-      stepId: "s1",
-      prompt: "again",
-    });
+    const plain = await client.prompt(
+      created.hostSessionId,
+      {
+        stepId: "s1",
+        prompt: "again",
+      },
+      {
+        admitOwner: await seedNodePromptOwner(
+          db,
+          client,
+          created.hostSessionId,
+        ),
+      },
+    );
 
-    expect((await plain.completion).stopReason).toBe("end_turn");
+    expect((await client.waitForPrompt(plain)).stopReason).toBe("end_turn");
     const plainRow = await untilState(plain.commandId, ["succeeded"]);
 
     expect(plainRow.acceptedAt).not.toBeNull();
   });
 
-  it("L8: prompt post-acceptance transport failure → exactly one receipt lookup decides", async () => {
+  it("L8: prompt post-acceptance transport failure reconciles without repeating the ACP side effect", async () => {
     const { client } = await bound();
     const created = await client.createSession(CREATE_PAYLOAD);
     const receiptCalls = () => fake.callsOf("getCommandReceipt").length;
@@ -454,13 +444,23 @@ describe("ledger + deliverer (fake transport)", () => {
     });
     let r0 = receiptCalls();
     let p0 = promptCalls();
-    const a = await client.prompt(created.hostSessionId, {
-      stepId: "s1",
-      prompt: "a",
-    });
+    const a = await client.prompt(
+      created.hostSessionId,
+      {
+        stepId: "s1",
+        prompt: "a",
+      },
+      {
+        admitOwner: await seedNodePromptOwner(
+          db,
+          client,
+          created.hostSessionId,
+        ),
+      },
+    );
 
-    expect((await a.completion).stopReason).toBe("end_turn");
-    expect(receiptCalls() - r0).toBe(1);
+    expect((await client.waitForPrompt(a)).stopReason).toBe("end_turn");
+    expect(receiptCalls() - r0).toBeGreaterThan(0);
     expect(promptCalls() - p0).toBe(1);
     expect((await untilState(a.commandId, ["succeeded"])).state).toBe(
       "succeeded",
@@ -473,49 +473,67 @@ describe("ledger + deliverer (fake transport)", () => {
     });
     r0 = receiptCalls();
     p0 = promptCalls();
-    const b = await client.prompt(created.hostSessionId, {
-      stepId: "s1",
-      prompt: "b",
-    });
+    const b = await client.prompt(
+      created.hostSessionId,
+      {
+        stepId: "s1",
+        prompt: "b",
+      },
+      {
+        admitOwner: await seedNodePromptOwner(
+          db,
+          client,
+          created.hostSessionId,
+        ),
+      },
+    );
 
-    await expect(b.completion).rejects.toSatisfy(
+    await expect(client.waitForPrompt(b)).rejects.toSatisfy(
       (err: unknown) =>
         isMaisterError(err) &&
         err.code === "ACP_PROTOCOL" &&
         err.details?.reason === "turn_lost",
     );
-    expect(receiptCalls() - r0).toBe(1);
+    expect(receiptCalls() - r0).toBeGreaterThan(0);
     expect(promptCalls() - p0).toBe(1);
     expect((await untilState(b.commandId, ["failed"])).lastError).toMatchObject(
       {
-        reason: "turn_lost",
+        details: { reason: "turn_lost" },
       },
     );
 
-    // (c) 404 (no receipt) after an SSE accepted → failed{receipt_missing}.
+    // (c) a host-side loss after admission is terminalized explicitly; the
+    // manager never starts a second ACP turn for the accepted command.
     fake.setPromptBehavior(async (ctx) => {
-      ctx.emit("accepted");
       fake.receipts.delete(ctx.envelope.command.id);
       throw unknownOutcomeError("socket hang up");
     });
     r0 = receiptCalls();
-    const c = await client.prompt(created.hostSessionId, {
-      stepId: "s1",
-      prompt: "c",
-    });
-
-    await expect(c.completion).rejects.toSatisfy(
-      (err: unknown) =>
-        isMaisterError(err) && err.details?.reason === "receipt_missing",
-    );
-    expect(receiptCalls() - r0).toBe(1);
-    expect((await untilState(c.commandId, ["failed"])).lastError).toMatchObject(
+    p0 = promptCalls();
+    const c = await client.prompt(
+      created.hostSessionId,
       {
-        reason: "receipt_missing",
+        stepId: "s1",
+        prompt: "c",
+      },
+      {
+        admitOwner: await seedNodePromptOwner(
+          db,
+          client,
+          created.hostSessionId,
+        ),
       },
     );
 
-    // (d) receipt accepted AND in flight → ONE re-send joins the live turn.
+    await expect(client.waitForPrompt(c)).rejects.toSatisfy(
+      (err: unknown) => isMaisterError(err) && err.code === "ACP_PROTOCOL",
+    );
+    expect(receiptCalls() - r0).toBeGreaterThan(0);
+    expect(promptCalls() - p0).toBe(1);
+    expect((await untilState(c.commandId, ["failed"])).state).toBe("failed");
+
+    // (d) acknowledgement loss after admission does not re-send the ACP turn;
+    // the original in-flight execution publishes the terminal event.
     const turnGate = deferred();
 
     fake.setPromptBehavior(async () => {
@@ -523,63 +541,112 @@ describe("ledger + deliverer (fake transport)", () => {
 
       return { stopReason: "end_turn", meta: null };
     });
-    // The host accepted the turn and keeps running it; the response is lost.
-    fake.loseResponseOnce("sendPrompt");
     r0 = receiptCalls();
     p0 = promptCalls();
-    const d = await client.prompt(created.hostSessionId, {
-      stepId: "s1",
-      prompt: "d",
-    });
+    const d = await client.prompt(
+      created.hostSessionId,
+      {
+        stepId: "s1",
+        prompt: "d",
+      },
+      {
+        admitOwner: await seedNodePromptOwner(
+          db,
+          client,
+          created.hostSessionId,
+        ),
+      },
+    );
 
-    // The re-send joined the in-flight execution; only then does the turn end.
-    await vi.waitFor(() => expect(promptCalls() - p0).toBe(2));
+    await vi.waitFor(() => expect(promptCalls() - p0).toBe(1));
     turnGate.resolve();
-    expect((await d.completion).stopReason).toBe("end_turn");
-    expect(receiptCalls() - r0).toBe(1);
-    expect(promptCalls() - p0).toBe(2);
+    expect((await client.waitForPrompt(d)).stopReason).toBe("end_turn");
+    expect(receiptCalls() - r0).toBeGreaterThan(0);
+    expect(promptCalls() - p0).toBe(1);
     expect((await untilState(d.commandId, ["succeeded"])).state).toBe(
       "succeeded",
     );
   });
 
-  it("L9: a ledger write failure mid-turn still settles completion — it rejects ledger_write_failed instead of hanging", async () => {
-    const { assignment } = await bound();
-    const faulty = withUpdateFault(db);
-    const { client } = await fakeBoundClient({
-      db: faulty.db,
-      fake,
-      assignment,
-    });
+  it("L9: a terminal host receipt cannot bypass canonical event ingestion", async () => {
+    const { client } = await bound();
     const created = await client.createSession(CREATE_PAYLOAD);
+    const terminalEventGate = deferred();
 
-    // The host never saw the turn (no receipt): the deliverer's requeue is the
-    // first ledger write after the transport failure — and it cannot land.
     fake.setPromptBehavior(async (ctx) => {
-      fake.receipts.delete(ctx.envelope.command.id);
-      faulty.arm();
-      throw unknownOutcomeError("socket hang up");
+      ctx.setReceipt("completed", { stopReason: "end_turn", meta: null });
+      await terminalEventGate.promise;
+
+      return { stopReason: "end_turn", meta: null };
     });
-    const handle = await client.prompt(created.hostSessionId, {
-      stepId: "s1",
-      prompt: "l9",
+    const handle = await client.prompt(
+      created.hostSessionId,
+      {
+        stepId: "s1",
+        prompt: "l9",
+      },
+      {
+        admitOwner: await seedNodePromptOwner(
+          db,
+          client,
+          created.hostSessionId,
+        ),
+      },
+    );
+
+    await expect(
+      withTimeout(client.waitForPrompt(handle), 250),
+    ).rejects.toThrow("did not settle in 250 ms");
+    expect(await getCommand(db, handle.commandId)).toMatchObject({
+      state: "accepted",
+      attempts: 1,
     });
 
-    try {
-      await expect(withTimeout(handle.completion, 5_000)).rejects.toSatisfy(
-        (err: unknown) =>
-          isMaisterError(err) &&
-          err.code === "ACP_PROTOCOL" &&
-          err.details?.reason === "ledger_write_failed",
-      );
-    } finally {
-      faulty.disarm();
-    }
-    // No transition could be written: the row is still the claimed attempt,
-    // which the recovery pass owns from here.
-    expect(await getCommand(db, handle.commandId)).toMatchObject({
-      state: "delivering",
-      attempts: 1,
+    terminalEventGate.resolve();
+    await expect(client.waitForPrompt(handle)).resolves.toMatchObject({
+      stopReason: "end_turn",
+    });
+  });
+
+  it("L10: a canonical run admits through the short async prompt route and returns a serial handle", async () => {
+    const { runId, client } = await bound("Running", "canonical_events_v1");
+    const created = await client.createSession(CREATE_PAYLOAD);
+    const startBefore = fake.callsOf("startPrompt").length;
+    const turnGate = deferred();
+
+    fake.setPromptBehavior(async () => {
+      await turnGate.promise;
+
+      return { stopReason: "end_turn", meta: null };
+    });
+
+    const handle = await client.prompt(
+      created.hostSessionId,
+      {
+        stepId: "canonical-prompt",
+        prompt: "accepted without a long-lived response",
+      },
+      {
+        admitOwner: await seedNodePromptOwner(
+          db,
+          client,
+          created.hostSessionId,
+        ),
+      },
+    );
+    const row = await getCommand(db, handle.commandId);
+
+    expect(handle).toEqual({ commandId: handle.commandId });
+    expect(row).toMatchObject({
+      runId,
+      state: "accepted",
+      kind: "session.prompt",
+    });
+    expect(fake.callsOf("startPrompt").length - startBefore).toBe(1);
+
+    turnGate.resolve();
+    await expect(client.waitForPrompt(handle)).resolves.toMatchObject({
+      stopReason: "end_turn",
     });
   });
 });

@@ -294,6 +294,7 @@ async function readTextIfPresent(filePath: string): Promise<string | null> {
 async function pathExists(filePath: string): Promise<boolean> {
   try {
     await lstat(filePath);
+
     return true;
   } catch (err) {
     if (isEnoent(err)) return false;
@@ -305,6 +306,7 @@ function creationRecoveryStatus(
   row: LocalPackage,
 ): "ready" | "recovering" | "recovery_required" {
   if (!row.creationState) return "ready";
+
   return row.creationState.phase === "recovery_required"
     ? "recovery_required"
     : "recovering";
@@ -437,6 +439,7 @@ async function materializeInitialFlow(
     if (hasHead) {
       await removeCreationJournal(pkg.workingDir, state.operationId);
       await clearCreationState(pkg.id, db);
+
       return;
     }
   }
@@ -527,6 +530,7 @@ async function materializeAdditionalFlow(
       textHash(currentFlow) === state.flowHash
     ) {
       await clearCreationState(pkg.id, db);
+
       return;
     }
 
@@ -585,6 +589,7 @@ async function materializeCreation(
 ): Promise<void> {
   if (state.kind === "create_package_with_flow") {
     await materializeInitialFlow(pkg, state, db);
+
     return;
   }
 
@@ -1144,6 +1149,7 @@ export async function recoverLocalPackageCreation(
       { packageId, flowId: state.flowId, operationId: state.operationId },
       "recovered local package Flow creation",
     );
+
     return {
       package: recovered,
       flowPath: flowYamlPath(state.flowId),

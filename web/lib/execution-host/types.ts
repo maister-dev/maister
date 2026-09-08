@@ -1,3 +1,10 @@
+import {
+  COMMAND_KINDS,
+  type CommandKind,
+} from "../../../runtime/command-kinds";
+
+export { COMMAND_KINDS, type CommandKind };
+
 // Execution-host contract vocabulary (ADR-166). Pure constants + branded ids:
 // no node:* imports, no DB, no env — `lib/db/schema.ts` aliases these arrays
 // for its CHECK constraints, so the wire, the ledger, and the schema can never
@@ -30,17 +37,46 @@ export const PLACEMENT_REASONS = [
 ] as const;
 export type PlacementReason = (typeof PLACEMENT_REASONS)[number];
 
-export const COMMAND_KINDS = [
-  "workspace.adopt",
-  "workspace.release",
-  "session.create",
-  "session.prompt",
-  "session.input",
-  "session.cancel",
-  "session.checkpoint",
-  "session.delete",
+export const RUNTIME_OBJECT_KINDS = [
+  "session_log",
+  "raw_transcript",
+  "cost_diagnostic",
+  "checkpoint",
+  "attachment",
+  "capability_profile",
+  "capability_instructions",
+  "agent_memory_snapshot",
+  "node_result",
+  "evidence",
+  "generated_artifact",
+  "plan_review",
+  "diagnostic",
 ] as const;
-export type CommandKind = (typeof COMMAND_KINDS)[number];
+export type RuntimeObjectKind = (typeof RUNTIME_OBJECT_KINDS)[number];
+
+export const RUNTIME_OBJECT_RETENTION_CLASSES = [
+  "run",
+  "delivery",
+  "ephemeral",
+] as const;
+export type RuntimeObjectRetentionClass =
+  (typeof RUNTIME_OBJECT_RETENTION_CLASSES)[number];
+
+export const RUNTIME_OBJECT_STATES = [
+  "pending",
+  "available",
+  "deleting",
+  "missing",
+  "deleted",
+  "expired",
+  "corrupt",
+] as const;
+export type RuntimeObjectState = (typeof RUNTIME_OBJECT_STATES)[number];
+
+export type RuntimeObjectLocator = {
+  kind: "execution-object";
+  objectId: string;
+};
 
 export const COMMAND_STATES = [
   "queued",
@@ -51,6 +87,26 @@ export const COMMAND_STATES = [
   "fenced",
 ] as const;
 export type CommandState = (typeof COMMAND_STATES)[number];
+
+export const COMMAND_TRANSPORT_STATES = [
+  "not_sent",
+  "dispatching",
+  "acknowledged",
+  "unknown",
+  "reconciliation_required",
+] as const;
+export const COMMAND_APPLICATION_STATES = [
+  "pending",
+  "applying",
+  "applied",
+  "superseded",
+  "poisoned",
+] as const;
+export type CommandApplicationError = Readonly<{
+  reason: string;
+  phase: "prepare" | "apply" | "continuation";
+  causeCode?: string;
+}>;
 
 export const TERMINAL_COMMAND_STATES = [
   "succeeded",
@@ -147,6 +203,8 @@ export type CommandFence = {
 };
 
 export type CommandEnvelope<TPayload = Record<string, unknown>> = {
+  requestVersion?: 2;
+  target?: { hostSessionId: string };
   command: { id: CommandId; kind: CommandKind; issuedAt: string };
   fence: CommandFence;
   payload: TPayload;

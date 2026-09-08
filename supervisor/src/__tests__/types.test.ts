@@ -200,19 +200,48 @@ describe("StartSessionRequestSchema", () => {
     }
   });
 
-  it("accepts server-derived capability launch fields", () => {
+  it("accepts opaque capability and output object bindings", () => {
     const result = StartSessionRequestSchema.safeParse({
       ...validRequest,
-      capabilityProfilePath:
-        "/repos/x/.maister/capabilities/run-1/profile.json",
+      capabilityProfileObjectId: "f7f4ea9b-598b-4f97-97b5-5ca52d46056e",
+      capabilityInstructionsObjectId: "50ba2f75-bc42-4968-bbd0-1ac0a50ec840",
+      outputObjects: [
+        {
+          objectId: "75cb17b1-ea05-45af-9209-15f181b10925",
+          kind: "plan_review",
+          logicalName: "plan-review.json",
+          mimeType: "application/json",
+          generation: 1,
+          retentionClass: "run",
+          envName: "MAISTER_PLAN_REVIEW_FILE",
+        },
+      ],
       adapterLaunch: {
-        env: { MAISTER_CAPABILITY_INSTRUCTIONS_PATH: "/repos/x/i.md" },
+        env: { MAISTER_PROFILE_MODE: "strict" },
         preArgs: ["--profile"],
         postArgs: ["--after"],
       },
     });
 
     expect(result.success).toBe(true);
+  });
+
+  it("rejects manager-derived runtime object environment names", () => {
+    const result = StartSessionRequestSchema.safeParse({
+      ...validRequest,
+      adapterLaunch: {
+        env: { MAISTER_CAPABILITY_INSTRUCTIONS_PATH: "/repos/x/i.md" },
+      },
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues[0].path).toEqual([
+        "adapterLaunch",
+        "env",
+        "MAISTER_CAPABILITY_INSTRUCTIONS_PATH",
+      ]);
+    }
   });
 
   it("accepts a versioned platform runner payload alongside legacy executor", () => {
@@ -296,9 +325,8 @@ describe("StartSessionRequestSchema", () => {
     expect(result.success).toBe(false);
   });
 
-  // The residual capabilityProfilePath is checked against the ADOPTED handle
-  // at resolve time (workspace-adoption W8: `outside_workspace`), not here —
-  // the schema no longer knows any worktree path.
+  // Runtime paths are never accepted by the session schema. The host resolves
+  // opaque input and output object IDs into private paths after fencing.
 
   it("rejects unknown start-session fields", () => {
     const result = StartSessionRequestSchema.safeParse({

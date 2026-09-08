@@ -39,6 +39,7 @@ import {
   hitlRequests as hitlRequestsTable,
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import { openRuntimeObjectContent } from "@/lib/execution-host/runtime-objects";
 import { getRunDetail } from "@/lib/queries/run";
 import { diffRange, logRange } from "@/lib/worktree";
 
@@ -127,6 +128,10 @@ vi.mock("@/lib/worktree", () => ({
   logRange: vi.fn(async () => "abc1234 commit one\n"),
 }));
 
+vi.mock("@/lib/execution-host/runtime-objects", () => ({
+  openRuntimeObjectContent: vi.fn(),
+}));
+
 let runtimeRoot: string;
 const ORIGINAL_RUNTIME_ROOT = process.env.MAISTER_RUNTIME_ROOT;
 
@@ -167,12 +172,16 @@ function seedArtifact(
   return id;
 }
 
-async function invokeGet(artifactId: string, runId: string = RUN_ID) {
+async function invokeGet(
+  artifactId: string,
+  runId: string = RUN_ID,
+  headers?: HeadersInit,
+) {
   const { GET } = await import("../route");
   const req = new NextRequest(
     new Request(
       `http://localhost/api/runs/${runId}/artifacts/${artifactId}/payload`,
-      { method: "GET" },
+      { method: "GET", headers },
     ),
   );
 
@@ -217,6 +226,7 @@ beforeEach(() => {
   });
   vi.mocked(logRange).mockClear();
   vi.mocked(logRange).mockResolvedValue("abc1234 commit one\n");
+  vi.mocked(openRuntimeObjectContent).mockReset();
 });
 
 afterEach(() => {
@@ -321,7 +331,161 @@ describe("GET /api/runs/[runId]/artifacts/[artifactId]/payload", () => {
 
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("application/json");
+    expect(res.headers.get("content-disposition")).toMatch(
+      /^attachment; filename="[A-Za-z0-9._-]+\.json"; filename\*=UTF-8''/,
+    );
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(res.headers.get("content-security-policy")).toBe(
+      "sandbox; default-src 'none'",
+    );
+    expect(res.headers.get("cache-control")).toBe("private, no-store");
     expect(await res.json()).toEqual(response);
+  });
+
+  it("execution-object locator → 200 uses the manager-authorized opaque content contract", async () => {
+    const objectId = "d0b23d15-a3de-49e8-a73f-5e9e96c847cb";
+    const body = new TextEncoder().encode("host-owned artifact");
+
+    vi.mocked(openRuntimeObjectContent).mockResolvedValue({
+      object: {
+        id: objectId,
+        logicalName: "plan.log",
+        mimeType: "text/html",
+        sha256: "abc",
+      },
+      content: {
+        body: new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(body);
+            controller.close();
+          },
+        }),
+        contentLength: body.byteLength,
+        contentRange: `bytes 0-${body.byteLength - 1}/${body.byteLength}`,
+        contentDigest: "sha-256=:abc=:",
+      },
+    } as never);
+    seedArtifact({
+      id: "art-object",
+      locator: { kind: "execution-object", objectId },
+    });
+
+    const res = await invokeGet("art-object");
+
+    expect(res.status).toBe(206);
+    // AT-12 (D5): the object's supplied MIME was `text/html`; the payload route
+    // exposes the same bytes as the content route and applies the same
+    // attachment policy — the earlier inline text/plain assumption is retired.
+    expect(res.headers.get("content-type")).toBe("application/octet-stream");
+    expect(res.headers.get("content-disposition")).toBe(
+      `attachment; filename="plan.log"; filename*=UTF-8''plan.log`,
+    );
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(res.headers.get("content-security-policy")).toBe(
+      "sandbox; default-src 'none'",
+    );
+    expect(res.headers.get("cache-control")).toBe("private, no-store");
+    expect(res.headers.get("content-range")).toBe(
+      `bytes 0-${body.byteLength - 1}/${body.byteLength}`,
+    );
+    expect(res.headers.get("etag")).toBe('"abc"');
+    expect(await res.text()).toBe("host-owned artifact");
+    expect(openRuntimeObjectContent).toHaveBeenCalledWith({
+      db: fakeDb,
+      runId: RUN_ID,
+      objectId,
+      range: undefined,
+    });
+  });
+
+  it("execution-object locator requires the repository-content grant a viewer lacks", async () => {
+    // AB-12 follow-up: agent output can quote any file the agent read, so the
+    // payload route carries the same `readRepoFiles` grant as the direct
+    // content route. Board-level (`readBoard`) access alone is not enough.
+    vi.mocked(requireProjectAction).mockImplementation(
+      async (_projectId, action) => {
+        if (action === "readRepoFiles")
+          throw new MaisterError(
+            "UNAUTHORIZED",
+            "repository content permission is required",
+          );
+
+        return { role: "viewer" } as never;
+      },
+    );
+    seedArtifact({
+      id: "art-object-viewer",
+      locator: {
+        kind: "execution-object",
+        objectId: "d0b23d15-a3de-49e8-a73f-5e9e96c847cb",
+      },
+    });
+
+    const res = await invokeGet("art-object-viewer");
+
+    expect(res.status).toBe(403);
+    expect(openRuntimeObjectContent).not.toHaveBeenCalled();
+    expect(requireProjectAction).toHaveBeenCalledWith(
+      expect.any(String),
+      "readRepoFiles",
+    );
+  });
+
+  it("execution-object locator rejects an invalid range without exposing host details", async () => {
+    const objectId = "d0b23d15-a3de-49e8-a73f-5e9e96c847cb";
+
+    seedArtifact({
+      id: "art-object-invalid-range",
+      locator: { kind: "execution-object", objectId },
+    });
+
+    const res = await invokeGet("art-object-invalid-range", RUN_ID, {
+      range: "bytes=-64",
+    });
+
+    expect(res.status).toBe(416);
+    expect(await res.json()).toEqual({
+      code: "PRECONDITION",
+      message: "artifact payload Range must be one bounded byte range",
+    });
+    expect(openRuntimeObjectContent).not.toHaveBeenCalled();
+  });
+
+  it("execution-object locator forwards a single valid range to the manager contract", async () => {
+    const objectId = "d0b23d15-a3de-49e8-a73f-5e9e96c847cb";
+    const body = new TextEncoder().encode("owned");
+
+    vi.mocked(openRuntimeObjectContent).mockResolvedValue({
+      object: { id: objectId, logicalName: "plan.log", mimeType: "text/plain" },
+      content: {
+        body: new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(body);
+            controller.close();
+          },
+        }),
+        contentLength: body.byteLength,
+        contentRange: "bytes 4-8/10",
+        contentDigest: "sha-256=:abc=:",
+      },
+    } as never);
+    seedArtifact({
+      id: "art-object-range",
+      locator: { kind: "execution-object", objectId },
+    });
+
+    const res = await invokeGet("art-object-range", RUN_ID, {
+      range: "bytes=4-8",
+    });
+
+    expect(res.status).toBe(206);
+    expect(await res.text()).toBe("owned");
+    expect(openRuntimeObjectContent).toHaveBeenCalledWith({
+      db: fakeDb,
+      runId: RUN_ID,
+      objectId,
+      range: { start: 4, end: 8 },
+    });
   });
 
   it("git-range locator → 200 text/plain == diffRange output, called with the stored headRef SHA", async () => {
@@ -335,6 +499,16 @@ describe("GET /api/runs/[runId]/artifacts/[artifactId]/payload", () => {
 
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("text/plain");
+    // AT-12 (D5): server-derived text keeps its passive type but is delivered
+    // as a no-store attachment under nosniff + a sandboxing CSP.
+    expect(res.headers.get("content-disposition")).toMatch(
+      /^attachment; filename="[A-Za-z0-9._-]+\.txt"; filename\*=UTF-8''/,
+    );
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(res.headers.get("content-security-policy")).toBe(
+      "sandbox; default-src 'none'",
+    );
+    expect(res.headers.get("cache-control")).toBe("private, no-store");
     expect(await res.text()).toContain("diff --git");
     // F3: rendered against the stored immutable headRef, NOT the live branch.
     expect(diffRange).toHaveBeenCalledWith(

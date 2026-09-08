@@ -224,9 +224,9 @@ export default async function StudioEditPage({
   return (
     <div className="flex h-[calc(100vh-130px)] min-h-[560px] w-full flex-col">
       <LocalPackageEditor
-        canManage={user.role !== "viewer"}
         blockingValidationMessage={blockingValidationMessage}
         bom={bom}
+        canManage={user.role !== "viewer"}
         canvasAvailable={canvasAvailable}
         diff=""
         divergence={divergence}

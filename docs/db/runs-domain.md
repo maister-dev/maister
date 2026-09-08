@@ -321,6 +321,10 @@ erDiagram
         timestamptz created_at "DEFAULT now()"
     }
     NODE_ATTEMPTS {
+        integer action_prompt_ordinal "0143: current admitted action generation"
+        jsonb action_completion "0143: verified output snapshot for the current ordinal"
+        jsonb finish_continuation "0144: selected edge, input context and retry decision"
+        jsonb action_resume "0145-0149: authorized turn or result handoff; orchestrator retains permissionResult lineage"
         text id PK
         text run_id FK
         text node_id "node id in compiled FlowGraph"
@@ -355,6 +359,8 @@ erDiagram
     }
 
     GATE_RESULTS {
+        integer prompt_ordinal "0150: initial 0; advances only at the gate permission capacity claim"
+        jsonb permission_resume "0150-0151: source/current authority, ACP handle, HITL choice, parent/verdict digests and result-handoff lineage"
         text id PK
         text run_id FK
         text node_attempt_id FK
@@ -610,6 +616,11 @@ BY started_at DESC LIMIT 1`; designed run-attempt schema switches to
   per node attempt.
 - Attachment indexes on `(run_id)` and `(message_id)` — run and
   message attachment lookups.
+- `run_transcript_states_run_attempt_uq` on `(run_id, node_attempt_id)`
+  UNIQUE `NULLS NOT DISTINCT` and `run_messages_projection_tool_idx`
+  (migration `0138`) support bounded canonical transcript coalescing. The
+  state holds only message-sequence pointers; tool lookup and content
+  concatenation do not load the full transcript into the worker.
 - `scratch_capability_profiles.run_id` UNIQUE — run-scoped capability snapshot
   lookup.
 - `workspaces.worktree_path` UNIQUE — globally unique across the host.

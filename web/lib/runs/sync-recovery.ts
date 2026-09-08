@@ -3,6 +3,7 @@ import "server-only";
 import { and, desc, eq, notInArray } from "drizzle-orm";
 import pino from "pino";
 
+import { reconcileOwnedSyncTurn } from "@/lib/runs/sync-prompt-owner";
 import { RELEASED_LIFECYCLE_CLAIM } from "@/lib/runs/lifecycle-claim";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
@@ -360,6 +361,31 @@ export async function recoverSyncAttemptOnReconcile(args: {
 
   // --- W2: an orphaned LIVE resolver session with no in-proc driver -----------
   if (args.liveSessionId) {
+    // D2: an orphaned session is not evidence the resolution is worthless. If
+    // the resolver's own command already completed, apply it and continue down
+    // the idempotent re-verify path instead of discarding the work.
+    if (
+      attempt.mode === "agent" &&
+      attempt.phase === "agent_running" &&
+      (await reconcileOwnedSyncTurn(
+        db,
+        attempt.id,
+        0,
+        new AbortController().signal,
+      ))
+    ) {
+      await teardownResolverSession(hosts, runId, args.liveSessionId);
+      log.info(
+        { window: "w2", runId, attempt: attempt.id },
+        "sync recovery: resolver turn resolved from durable command evidence",
+      );
+
+      return await recoverSyncAttemptOnReconcile({
+        ...args,
+        db,
+        liveSessionId: null,
+      });
+    }
     await teardownResolverSession(hosts, runId, args.liveSessionId);
     await failAgentAttemptToReview(db, {
       attempt,

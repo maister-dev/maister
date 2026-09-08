@@ -24,7 +24,10 @@ import {
   vi,
 } from "vitest";
 
-import { TEST_HOST_IDENTITY } from "@/test-support/supervisor-health-fixture";
+import {
+  readyExecutionHostCapabilities,
+  TEST_HOST_IDENTITY,
+} from "@/test-support/supervisor-health-fixture";
 import * as schemaModule from "@/lib/db/schema";
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import {
@@ -75,6 +78,7 @@ vi.mock("@/lib/supervisor-client", async (importOriginal) => {
   return {
     ...actual,
     checkSupervisorHealth: () => checkSupervisorHealthMock(),
+    getExecutionHostCapabilities: async () => readyExecutionHostCapabilities(),
   };
 });
 

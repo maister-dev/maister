@@ -207,8 +207,8 @@ describe("workbench stop — scratch runs", () => {
       [runId, projectId],
     );
     await pool.query(
-      `INSERT INTO "scratch_runs" ("run_id", "project_id", "initial_prompt", "base_branch", "base_commit", "dialog_status", "supervisor_session_id", "created_by_user_id")
-       VALUES ($1, $2, 'do a thing', 'main', 'abc1234', 'WaitingForUser', NULL, $3)`,
+      `INSERT INTO "scratch_runs" ("run_id", "project_id", "initial_prompt", "base_branch", "base_commit", "dialog_status", "created_by_user_id")
+       VALUES ($1, $2, 'do a thing', 'main', 'abc1234', 'WaitingForUser', $3)`,
       [runId, projectId, userId],
     );
 

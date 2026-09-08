@@ -30,7 +30,10 @@ or the orchestrator delegation MCP toolset ([orchestrator.md](orchestrator.md)).
   runner resolution.
 - **Draft child run** (Implemented) — governed `run_kind = agent` child row with
   `parent_run_id`, `root_run_id`, `delegation_snapshot`, `runner_snapshot`, and
-  `launch_mode` populated by server code.
+  `launch_mode` populated by server code. Its draft prompt is one owned
+  `consensus_draft` agent turn, so the draft artifact and the child's completion
+  are applied from the durable command output rather than a live consumer stack
+  (see [prompt lifecycle](execution-prompt-lifecycle.md#consensus-draft-agent-turn-implemented)).
 - **Consensus round** (Implemented) — one draft fan-out plus one rotational
   cross-verification pass.
 - **Consensus verdict** (Implemented) — parsed verifier output for one
@@ -134,15 +137,23 @@ flowchart LR
 - A failed draft child MUST be treated as settled unavailable evidence unless
   parent cancellation or abandon is active.
 - Cross-verification MUST rotate as `i audits (i + 1) mod N` and MUST persist
-  one idempotent verdict row per verifier-target pair.
+  one idempotent verdict row per verifier-target pair, owned by the matrix cell
+  it was paid for
+  (see [prompt lifecycle](execution-prompt-lifecycle.md#consensus-verifier-matrix-cell-implemented)).
+- A verification or synthesis turn whose owner application is still pending MUST
+  refuse with `consensus_generation_pending`; it MUST NOT be recorded as a
+  fail-closed disagreement or an empty plan.
 - Malformed verifier output MUST fail closed into a persisted disagree verdict,
   not throw away the node lifecycle.
+- A draft child MUST publish its artifact and settle only from its own verified
+  command output; an incomplete or empty draft turn MUST fail the child instead
+  of recording an empty successful draft.
 - The tally MUST be unanimous over every verifier verdict and every declared
   `material_axes` boolean.
 - No-consensus v1 MUST escalate through the existing HITL respond route with
   server-derived decisions and bounded context.
 - Synthesis MUST write current `consensus_plan` and `debate_log` artifacts
-  before the node transitions success.
+  before the node transitions success, from its own applied generation output.
 - Consensus UI surfaces MUST use the existing Flow Studio, read-only graph,
   inbox, run-detail, and workbench patterns with EN/RU parity.
 - Consensus runtime logs MUST use structured fields and MUST NOT include prompt

@@ -131,7 +131,7 @@ let resumeRun: (
   code?: string;
   retryable?: boolean;
   message?: string;
-  newSupervisorSessionId?: string;
+  newSupervisorSessionId?: string | null;
   acpSessionId?: string;
 }>;
 

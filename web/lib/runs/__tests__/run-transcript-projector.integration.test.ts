@@ -1,13 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 
 import { eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import * as fullSchema from "@/lib/db/schema";
+import { coalesceSessionUpdates } from "@/lib/run-transcript/coalesce";
 import {
   getWholeRunTranscriptMessages,
   getRunNodeTranscript,
@@ -24,19 +22,16 @@ type Db = NodePgDatabase<typeof fullSchema>;
 
 let testDatabase: StartedPostgresTestDb;
 let db: Db;
-let runtimeRoot: string;
 
 beforeAll(async () => {
   testDatabase = await startMainPostgresTestDb({
     databaseName: "maister_transcript_projector_test",
   });
   db = testDatabase.db as unknown as Db;
-  runtimeRoot = await mkdtemp(join(tmpdir(), "transcript-projector-"));
 }, 180_000);
 
 afterAll(async () => {
   await testDatabase?.stop();
-  if (runtimeRoot) await rm(runtimeRoot, { recursive: true, force: true });
 });
 
 function textLine(nodeAttemptId: string, monotonicId: number, text: string) {
@@ -91,7 +86,9 @@ function usageLine(nodeAttemptId: string, monotonicId: number, used: number) {
   });
 }
 
-async function seed(): Promise<{
+async function seed(
+  executionDataPlaneMode: "canonical_events_v1" = "canonical_events_v1",
+): Promise<{
   runId: string;
   slug: string;
   planAttemptId: string;
@@ -114,6 +111,7 @@ async function seed(): Promise<{
     projectId,
     runKind: "flow",
     status: "Running",
+    executionDataPlaneMode,
     flowVersion: "v1",
     flowRevision: "manual",
   });
@@ -171,14 +169,174 @@ async function seedStandaloneAgentRun(): Promise<{
   return { runId, slug };
 }
 
-async function writeEvents(slug: string, runId: string, lines: string[]) {
-  const dir = join(runtimeRoot, ".maister", slug, "runs", runId);
+async function writeEvents(_slug: string, runId: string, lines: string[]) {
+  for (const line of lines) {
+    const parsed = JSON.parse(line) as Record<string, unknown>;
+    const monotonicId = parsed.monotonicId;
 
-  await mkdir(dir, { recursive: true });
-  await writeFile(join(dir, "run.events.jsonl"), lines.join("\n") + "\n");
+    if (typeof monotonicId !== "number") {
+      throw new Error("canonical transcript fixture requires a monotonic id");
+    }
+    const type = parsed.type;
+    const payload = Object.fromEntries(
+      Object.entries(parsed).filter(
+        ([key]) => !["type", "monotonicId", "sessionName"].includes(key),
+      ),
+    );
+
+    if (typeof type !== "string") {
+      throw new Error("canonical transcript fixture requires an event type");
+    }
+    await db
+      .insert(schema.executionEvents)
+      .values({
+        id: randomUUID(),
+        source: "manager",
+        sourceKey: `canonical-transcript:${runId}:${monotonicId}`,
+        runId,
+        eventType: type,
+        payloadSchema: `maister.${type}.v1`,
+        payload,
+        occurredAt: new Date(),
+        receivedAt: new Date(),
+        runSequence: BigInt(monotonicId),
+        ingestDisposition: "accepted",
+      })
+      .onConflictDoNothing();
+  }
 }
 
 describe("projectRunTranscript", () => {
+  it("keeps text and tool coalescing stable across bounded projection quanta", async () => {
+    const { runId, slug, implAttemptId } = await seed();
+    const lines = Array.from({ length: 220 }, (_, index) => {
+      if (index === 0) return toolLine(implAttemptId, index + 1);
+      if (index === 100 || index === 200)
+        return JSON.stringify({
+          type: "session.update",
+          monotonicId: index + 1,
+          nodeAttemptId: implAttemptId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "call-1",
+            status: "completed",
+            content: [
+              {
+                type: "content",
+                content: { type: "text", text: `result-${index}` },
+              },
+            ],
+          },
+        });
+
+      return textLine(implAttemptId, index + 1, "x");
+    });
+
+    await writeEvents(slug, runId, lines);
+    await expect
+      .poll(
+        async () => {
+          await projectRunTranscript(runId, { client: db });
+          const [cursor] = await db
+            .select({
+              last: fullSchema.executionEventConsumers.lastRunSequence,
+            })
+            .from(fullSchema.executionEventConsumers)
+            .where(eq(fullSchema.executionEventConsumers.runId, runId));
+
+          return cursor?.last;
+        },
+        { timeout: 15_000 },
+      )
+      .toBe(220n);
+    const actual = await getRunNodeTranscript(runId, "implement", {
+      client: db,
+    });
+    const expected = coalesceSessionUpdates(
+      lines.map((line, index) => ({
+        kind: "update",
+        update: (JSON.parse(line) as { update: unknown }).update,
+        supervisorEventId: String(index + 1),
+      })),
+    );
+    const content = (message: { role: string; content: string }): unknown =>
+      message.role === "assistant"
+        ? message.content
+        : JSON.parse(message.content);
+
+    expect(
+      actual?.messages.map((message) => ({
+        role: message.role,
+        content: content(message),
+      })),
+    ).toEqual(
+      expected.map((message) => ({
+        role: message.role,
+        content: content(message),
+      })),
+    );
+  });
+
+  it("projects a canonical transcript from Postgres without reading the host runtime directory", async () => {
+    const { runId, implAttemptId } = await seed("canonical_events_v1");
+
+    await db.insert(schema.executionEvents).values([
+      {
+        id: randomUUID(),
+        source: "manager",
+        sourceKey: "canonical-transcript:0",
+        runId,
+        eventType: "session.update",
+        payloadSchema: "maister.session.update.v1",
+        payload: {
+          nodeAttemptId: implAttemptId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "canonical " },
+          },
+        },
+        occurredAt: new Date(),
+        receivedAt: new Date(),
+        runSequence: BigInt(0),
+        ingestDisposition: "accepted",
+      },
+      {
+        id: randomUUID(),
+        source: "manager",
+        sourceKey: "canonical-transcript:1",
+        runId,
+        eventType: "session.update",
+        payloadSchema: "maister.session.update.v1",
+        payload: {
+          nodeAttemptId: implAttemptId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "event" },
+          },
+        },
+        occurredAt: new Date(),
+        receivedAt: new Date(),
+        runSequence: BigInt(1),
+        ingestDisposition: "accepted",
+      },
+    ]);
+
+    const result = await projectRunTranscript(runId, {
+      client: db,
+    });
+    const transcript = await getRunNodeTranscript(runId, "implement", {
+      client: db,
+    });
+
+    expect(result).toMatchObject({ status: "projected", nodeAttempts: 1 });
+    expect(transcript?.messages).toEqual([
+      expect.objectContaining({
+        role: "assistant",
+        content: "canonical event",
+      }),
+    ]);
+  });
+
   it("attributes coalesced messages to the right node attempt and is idempotent", async () => {
     const { runId, slug, planAttemptId, implAttemptId } = await seed();
 
@@ -192,7 +350,6 @@ describe("projectRunTranscript", () => {
 
     const first = await projectRunTranscript(runId, {
       client: db,
-      runtimeRoot,
     });
 
     expect(first.status).toBe("projected");
@@ -220,7 +377,6 @@ describe("projectRunTranscript", () => {
     // Idempotent: re-projection with no new events is a no-op; row count holds.
     const again = await projectRunTranscript(runId, {
       client: db,
-      runtimeRoot,
     });
 
     expect(again.status).toBe("unchanged");
@@ -234,7 +390,7 @@ describe("projectRunTranscript", () => {
     const { runId, slug, planAttemptId } = await seed();
 
     await writeEvents(slug, runId, [textLine(planAttemptId, 1, "plan output")]);
-    await projectRunTranscript(runId, { client: db, runtimeRoot });
+    await projectRunTranscript(runId, { client: db });
 
     // A run-level marker (e.g. `run.needs_input`) advances the file's max
     // monotonicId but carries no nodeAttemptId, so it must not re-trigger
@@ -246,7 +402,6 @@ describe("projectRunTranscript", () => {
 
     const again = await projectRunTranscript(runId, {
       client: db,
-      runtimeRoot,
     });
 
     expect(again.status).toBe("unchanged");
@@ -259,7 +414,7 @@ describe("projectRunTranscript", () => {
     const { runId, slug, planAttemptId } = await seed();
 
     await writeEvents(slug, runId, [textLine(planAttemptId, 1, "plan output")]);
-    await projectRunTranscript(runId, { client: db, runtimeRoot });
+    await projectRunTranscript(runId, { client: db });
 
     await writeEvents(slug, runId, [
       textLine(planAttemptId, 1, "plan output"),
@@ -279,7 +434,6 @@ describe("projectRunTranscript", () => {
 
     const again = await projectRunTranscript(runId, {
       client: db,
-      runtimeRoot,
     });
 
     expect(again.status).toBe("projected");
@@ -325,7 +479,7 @@ describe("projectRunTranscript", () => {
       textLine(attempt2, 2, "second attempt output"),
     ]);
 
-    await projectRunTranscript(runId, { client: db, runtimeRoot });
+    await projectRunTranscript(runId, { client: db });
 
     const transcript = await getRunNodeTranscript(runId, nodeId, {
       client: db,
@@ -338,7 +492,6 @@ describe("projectRunTranscript", () => {
   it("returns missing-run for an unknown run and empty for a node with no attempt", async () => {
     const missing = await projectRunTranscript(randomUUID(), {
       client: db,
-      runtimeRoot,
     });
 
     expect(missing.status).toBe("missing-run");
@@ -351,8 +504,10 @@ describe("projectRunTranscript", () => {
     expect(empty?.messages).toEqual([]);
   });
 
-  // Codex adversarial finding #2: cross-run attribution must not leak.
-  it("never attributes transcript rows to a node attempt owned by a different run", async () => {
+  // Codex adversarial finding #2: cross-run attribution must not leak. A
+  // canonical event carrying an impossible association is poison, not a line
+  // that the projector may silently skip.
+  it("fails loudly and atomically for a node attempt owned by a different run", async () => {
     const a = await seed();
     const b = await seed();
 
@@ -362,13 +517,20 @@ describe("projectRunTranscript", () => {
       textLine(b.planAttemptId, 2, "would leak into A's transcript"),
     ]);
 
-    await projectRunTranscript(a.runId, { client: db, runtimeRoot });
+    await expect(
+      projectRunTranscript(a.runId, { client: db }),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+    });
 
-    // A's own attempt projected correctly.
-    const aPlan = await getRunNodeTranscript(a.runId, "plan", { client: db });
+    // The transaction is atomic: even the preceding valid event did not
+    // become a partial transcript and the durable cursor did not advance.
+    const aRows = await db
+      .select()
+      .from(schema.runMessages)
+      .where(eq(schema.runMessages.runId, a.runId));
 
-    expect(aPlan?.messages).toHaveLength(1);
-    expect(aPlan?.messages[0].content).toBe("legit A output");
+    expect(aRows).toHaveLength(0);
 
     // The mis-attributed line created NO row for run B's attempt (insert-side
     // ownership guard), and run B's transcript stays empty.
@@ -398,12 +560,10 @@ describe("projectRunTranscript", () => {
       client: db,
     });
 
-    expect(aPlanAfter?.messages.map((m) => m.content)).toEqual([
-      "legit A output",
-    ]);
+    expect(aPlanAfter?.messages).toEqual([]);
   });
 
-  it("replays standalone whole-run transcripts with a stable monotonic horizon and no DB rows", async () => {
+  it("replays standalone whole-run transcripts from canonical DB rows", async () => {
     const { runId, slug } = await seedStandaloneAgentRun();
 
     await writeEvents(slug, runId, [
@@ -414,12 +574,10 @@ describe("projectRunTranscript", () => {
 
     const feed = await getWholeRunTranscriptMessages(runId, {
       client: db,
-      runtimeRoot,
     });
 
     expect(feed.messages).toHaveLength(1);
     expect(feed.messages[0]).toMatchObject({
-      id: `${runId}:0`,
       role: "assistant",
       content: "Plan ready!",
       supervisorEventId: "3",
@@ -431,7 +589,11 @@ describe("projectRunTranscript", () => {
       .from(schema.runMessages)
       .where(eq(schema.runMessages.runId, runId));
 
-    expect(rows).toEqual([]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      role: "assistant",
+      content: "Plan ready!",
+    });
   });
 
   // Codex adversarial finding #1: a partial/failed projection must not advance
@@ -445,13 +607,42 @@ describe("projectRunTranscript", () => {
       textLine(implAttemptId, 2, "impl output"),
     ]);
 
-    // Inject a failure on the 2nd insert INSIDE the projection transaction.
-    await expect(
-      projectRunTranscript(runId, {
-        client: clientFailingOnNthInsert(db, 2),
-        runtimeRoot,
-      }),
-    ).rejects.toThrow();
+    // A real database trigger rejects the second attempt's message inside the
+    // bounded transaction, including the first message and coalescing state.
+    await testDatabase.pool.query(
+      "CREATE TABLE transcript_projection_fault (attempt_id text PRIMARY KEY)",
+    );
+    await testDatabase.pool.query(
+      "INSERT INTO transcript_projection_fault VALUES ($1)",
+      [implAttemptId],
+    );
+    await testDatabase.pool
+      .query(`CREATE FUNCTION fail_transcript_projection() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF EXISTS (SELECT 1 FROM transcript_projection_fault WHERE attempt_id = NEW.node_attempt_id) THEN
+          RAISE EXCEPTION 'injected transcript projection failure' USING ERRCODE = '40001';
+        END IF;
+        RETURN NEW;
+      END $$`);
+    await testDatabase.pool
+      .query(`CREATE TRIGGER fail_transcript_projection BEFORE INSERT ON run_messages
+      FOR EACH ROW EXECUTE FUNCTION fail_transcript_projection()`);
+    try {
+      const failed = await projectRunTranscript(runId, { client: db });
+
+      expect(failed).toMatchObject({
+        status: "missing-events",
+        rowsUpserted: 0,
+      });
+    } finally {
+      await testDatabase.pool.query(
+        "DROP TRIGGER fail_transcript_projection ON run_messages",
+      );
+      await testDatabase.pool.query(
+        "DROP FUNCTION fail_transcript_projection()",
+      );
+      await testDatabase.pool.query("DROP TABLE transcript_projection_fault");
+    }
 
     // The transaction rolled back — nothing committed, so the cursor (max
     // supervisor_event_id) never advanced past the missing rows.
@@ -462,10 +653,13 @@ describe("projectRunTranscript", () => {
 
     expect(afterFailure).toHaveLength(0);
 
-    // A clean re-projection derives and commits the FULL transcript.
+    // The durable retry is due; a subsequent quantum replays from its cursor.
+    await testDatabase.pool.query(
+      "UPDATE execution_event_consumers SET next_retry_at = now() WHERE run_id = $1 AND consumer_name = 'canonical-run-transcript-v2'",
+      [runId],
+    );
     const repaired = await projectRunTranscript(runId, {
       client: db,
-      runtimeRoot,
     });
 
     expect(repaired.status).toBe("projected");
@@ -477,43 +671,3 @@ describe("projectRunTranscript", () => {
     expect(impl?.messages).toHaveLength(1);
   });
 });
-
-// Wraps the real client so the Nth `insert` issued inside a `transaction`
-// throws — simulating a mid-batch DB/timeout failure to prove atomic rollback.
-function clientFailingOnNthInsert(real: Db, failOnNth: number): Db {
-  let inserts = 0;
-  const bound = (target: any, prop: PropertyKey) => {
-    const value = target[prop];
-
-    return typeof value === "function" ? value.bind(target) : value;
-  };
-
-  return new Proxy(real as unknown as Record<PropertyKey, unknown>, {
-    get(target, prop) {
-      if (prop !== "transaction") return bound(target, prop);
-
-      return (cb: (tx: unknown) => unknown, ...rest: unknown[]) =>
-        (target as any).transaction(
-          (tx: any) => {
-            const txProxy = new Proxy(tx, {
-              get(t, p) {
-                if (p !== "insert") return bound(t, p);
-
-                return (...args: unknown[]) => {
-                  inserts += 1;
-                  if (inserts >= failOnNth) {
-                    throw new Error("injected projection failure");
-                  }
-
-                  return t.insert(...args);
-                };
-              },
-            });
-
-            return cb(txProxy);
-          },
-          ...rest,
-        );
-    },
-  }) as unknown as Db;
-}

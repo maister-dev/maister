@@ -19,9 +19,9 @@ describe("isEngineCompatible", () => {
   });
 
   it("is compatible when engine is within [min, max]", () => {
-    expect(
-      isEngineCompatible("0.1.0", MAISTER_ENGINE_VERSION).compatible,
-    ).toBe(true);
+    expect(isEngineCompatible("0.1.0", MAISTER_ENGINE_VERSION).compatible).toBe(
+      true,
+    );
     expect(
       isEngineCompatible(MAISTER_ENGINE_VERSION, MAISTER_ENGINE_VERSION)
         .compatible,

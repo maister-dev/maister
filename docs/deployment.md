@@ -1,5 +1,7 @@
 [← Getting started](getting-started.md) · [Back to README](../README.md)
 
+> A/B stabilization is in progress. The [runtime floor, resource budgets and host-process wiring](configuration.md#ab-runtime-and-deployment-qualification-designed) are Designed until their validation gates pass. The [qualification topology](system-analytics/test-infrastructure.md#ab-stabilization-test-lanes-designed) defines executable evidence; earlier aggregate pass counts do not qualify this release.
+
 # Deploying MAIster on a Linux VPS
 
 Production deployment for a single host. Per [ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres),
@@ -16,7 +18,7 @@ this guide does not restate them.
 
 ```
             ┌─────────────── VPS (single host) ───────────────┐
- client ──TLS──▶ nginx :443 ──▶ web (next start) :3000  [systemd: maister-web]
+ client ──TLS──▶ nginx :443 ──▶ web (application server) :3000  [systemd: maister-web]
             │                          │ HTTP+SSE                │
             │                          ▼                         │
             │                 supervisor :7777  [systemd: maister-supervisor]
@@ -34,7 +36,7 @@ exposed publicly. Only `:443` (and `:22`) face the internet.
 ## 1. Prerequisites
 
 - **OS**: any modern Linux with systemd.
-- **Node 24** ([ADR-015](decisions.md#adr-015-pnpm-workspace-node-24)) installed system-wide (e.g. NodeSource), then `corepack enable` to provide `pnpm`.
+- **Node >=24.15.0 <25** (qualified patches: 24.15.0 and 24.19.0; [ADR-015](decisions.md#adr-015-pnpm-workspace-node-24)) installed system-wide (e.g. NodeSource), then `corepack enable` to provide `pnpm`.
 - **git** and **Docker** (Docker only runs Postgres here).
 - **Agent adapters** ship as workspace dependencies — `pnpm install` provides `claude-agent-acp` and `codex-acp` under `node_modules/.bin`. **No `gh` or other provider CLI is required for core operation** (clone, worktree, `local_merge` promotion). **Optional (Implemented, [ADR-093](decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons)):** the `gh` CLI, when present and authed, enables auto-token for `github.com` HTTPS clones — best-effort, never required. **Exception (Implemented — ADR-049):** `pull_request` promotion runs in the web tier and needs, per the run's provider, `gh`/`glab` on `PATH` (github/gitlab) **or** `GITEA_TOKEN`/`GITVERSE_TOKEN` in the web-tier env (gitea/gitverse), **plus** a git push credential helper. The **default compose does not provision** these — it is a host-operator concern ([ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)). `local_merge` promotion needs none of them. See [`configuration.md`](configuration.md) for the per-provider table.
 - A dedicated unprivileged user **`maister`** that owns the checkout, the agent credentials (`~/.claude`, `~/.codex`), and the git credentials.
@@ -111,9 +113,22 @@ when you intentionally want MAIster to supply an explicit compatible-provider,
 gateway, model-discovery, or sidecar override (the supervisor spawns the
 adapters, so its env is what they inherit).
 
-`MAISTER_RUNTIME_ROOT` MUST equal the checkout dir (`/opt/maister`) for both
-services — supervisor and web resolve `.maister/` from it, so a mismatch breaks
-the run event stream.
+`MAISTER_RUNTIME_ROOT` no longer has to be the same directory for both
+services: since the Stage B cut-over the run event stream, costs, prompt
+completion and runtime-object metadata are Postgres-owned, and the web never
+reads a host runtime path (enforced by the operation-scoped filesystem guard in
+`web/lib/execution-host/__tests__/runtime-data-boundary-inventory.test.ts`).
+The supported single-host layout in this guide keeps `/opt/maister` for both
+because the two units run as the same `maister` user; the AT-16 qualification
+(`web/test-support/__tests__/execution-ab-isolation.integration.test.ts`)
+runs them on disjoint private roots with only the worktrees root shared and the
+web denied the supervisor's root at the kernel. What must stay true when the
+roots differ: the supervisor identity must still read the web's runtime root
+where read-only context mounts are materialized (ADR-157) and write the
+shared worktrees root; `MAISTER_WORKSPACE_ROOTS` must list every root the web
+creates worktrees or local packages under. A separate-user deployment with a
+`0700` supervisor root has not been qualified on Linux yet (S5.3); until it
+is, treat the shared-user layout as the supported one.
 
 **Execution-host state (Implemented — [ADR-166](decisions.md#adr-166-local-execution-host-contract--durable-host-identity-epoch-fenced-assignments-command-ledger-opaque-adopted-workspaces)).**
 The supervisor keeps a private `node:sqlite` state store under
@@ -132,8 +147,19 @@ the allow-list a run worktree / local-package dir must live under to be
 adopted: **if you move `MAISTER_WORKTREES_ROOT` or
 `MAISTER_LOCAL_PACKAGES_ROOT` in the web env, mirror the new path here** or
 every launch fails at adoption with `PRECONDITION workspace_rejected /
-outside_roots`. Both processes still share the filesystem — this is a
-single-host topology.
+outside_roots`. Repository/worktree compatibility files remain on this one
+host, but the web tier does not mount or read supervisor runtime data. Browser
+replay, events, costs, prompt completion, and runtime-object metadata are
+Postgres-owned.
+
+**Stage B data plane (Implemented — ADR-167).** No compose service,
+volume, relay, object store, enrollment secret, or environment variable is
+required. `GET /capabilities` is a local supervisor endpoint; protocol
+capabilities are fixed rather than operator toggles. Upgrade a supervisor and
+web to canonical support, run `pnpm --filter maister-web
+execution-data-plane:import-legacy` with the explicit legacy root, then apply
+migrations `0135` and `0136`. The migration fails before destructive changes
+unless every legacy run has all preservation lanes proven.
 
 Apply migrations and seed the first admin:
 
@@ -244,13 +270,20 @@ sudo systemctl enable --now maister-web
 journalctl -u maister-supervisor -u maister-web -f      # pino logs land in journald
 ```
 
-Both units run as `maister`, `WorkingDirectory=/opt/maister`, and start through
-`pnpm` so `node_modules/.bin` (the agent adapters) is on `PATH`. They read
-**different** env files: `maister-web.service` reads the shared
+Both units run as `maister` and execute Node directly, from `/opt/maister/web`
+and `/opt/maister/supervisor` respectively. Their explicit `PATH` includes
+`node_modules/.bin` for the agent adapters. They read different env files:
+`maister-web.service` reads
 `/etc/maister/maister.env`; `maister-supervisor.service` reads its own
-`/opt/maister/supervisor/.env` (seed it from `supervisor/.env.sample`; keep
-`MAISTER_RUNTIME_ROOT` equal to the web unit's). Edit the unit `PATH=` / paths
-if your layout differs.
+`/opt/maister/supervisor/.env` (seed it from `supervisor/.env.sample`). Runtime
+data roots and host storage limits belong to the supervisor. Edit the unit
+`PATH=` / paths if your layout differs.
+
+The main process receives SIGTERM and drains its work before exiting. Both
+units use `KillMode=mixed`: systemd sends the initial signal to the main process
+and kills remaining children after exit or the 30-second stop deadline. This
+allows the supervisor to mark intentional shutdown and drain agent output
+before child termination. See the [systemd kill contract](https://github.com/systemd/systemd/blob/main/man/systemd.kill.xml).
 
 ## 8. Reverse proxy + TLS
 
@@ -531,8 +564,14 @@ LEFT JOIN step_runs ON step_runs.run_id = terminal_legacy.id;
 Inventory logs contain counts and identifiers only. Never print manifest bodies
 or database credentials.
 
-- **Supervisor restart orphans live runs** until startup reconciliation (ADR-033..036). `Restart=always` recovers the process, not in-flight sessions.
-- **Single host only.** Multi-host (supervisor on a separate machine) needs durable HTTP replay from `run.events.jsonl` — deferred ([ADR-022](decisions.md#adr-022-structured-run-data-projection--runeventsjsonl-is-the-event-log-postgres-holds-derived-read-models)).
+- **Supervisor restart terminates live ACP turns explicitly.** Startup converts
+  accepted non-live prompt receipts to durable `turn_lost`; manager command and
+  run reconciliation then applies the existing checkpoint/crash policy.
+- **Single host only.** The web tier needs no supervisor runtime-data mount:
+  events replay from the host outbox into canonical Postgres state and runtime
+  bytes use opaque object APIs. Repository/worktree placement remains local;
+  multi-host placement and remote trust/relay belong to Stage C/D
+  ([ADR-167](decisions/adr-167.md)).
 - **No managed git secrets.** Provider auth lives in the host's SSH/credential config, not in MAIster ([ADR-025](decisions.md#adr-025-project-repo-onboarding--url-clone-or-local-path-host-credential-auth-configurable-roots)). Git auth is **host-ambient** — ssh-agent/keys, the credential helper, optional `gh`, and the one-off Add-project token (Implemented, [ADR-093](decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons)). **Persist-config push and remote push/fetch reuse this same host-ambient auth** — there is no managed credential store, and on an auth failure the action returns an advisory without rolling back the local commit / DB state.
 
 ## Running the MCP facade

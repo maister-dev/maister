@@ -397,6 +397,7 @@ describe("local-packages substrate (integration)", () => {
       join(pkg.workingDir, "maister-package.yaml"),
       "utf8",
     );
+
     expect(manifest).toContain("id: one");
     expect(manifest).toContain("id: two");
     await expect(
@@ -407,6 +408,7 @@ describe("local-packages substrate (integration)", () => {
       join(pkg.workingDir, "maister-package.yaml"),
       "utf8",
     );
+
     await expect(
       addFlowToLocalPackage({
         packageId: pkg.id,

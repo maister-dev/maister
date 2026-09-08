@@ -11,7 +11,11 @@ vi.mock("@/lib/db/check-migrations", () => ({
   findPendingBrainMigrations,
   findPendingMigrations,
 }));
-vi.mock("@/lib/db/client", () => ({ getDb }));
+vi.mock("@/lib/db/client", () => ({
+  getDb,
+  beginDbShutdown: vi.fn(),
+  closeDb: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock("@/lib/runs/resume-recovery", () => ({
   runResumeRecoverySweep: vi.fn().mockResolvedValue(undefined),
   runTakeoverReturnRecoverySweep: vi.fn().mockResolvedValue(undefined),
@@ -29,13 +33,17 @@ vi.mock("@/lib/projector/catch-up-sweep", () => ({
 vi.mock("@/lib/runs/keepalive-sweeper", () => ({
   startKeepaliveSweeper,
 }));
-vi.mock("@/lib/scheduler/timer", () => ({ startSchedulerTimer }));
+vi.mock("@/lib/scheduler/timer", () => ({
+  startSchedulerTimer,
+  stopSchedulerTimer: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock("@/lib/packages/catalog", () => ({
   ensureDefaultPackageSources: vi.fn().mockResolvedValue(undefined),
   refreshStaleSources: vi.fn().mockResolvedValue(undefined),
 }));
 
 import { register } from "../../instrumentation";
+import { applicationLifecycle } from "../server-lifecycle";
 
 const originalRuntime = process.env.NEXT_RUNTIME;
 
@@ -53,7 +61,9 @@ describe("instrumentation DB boot boundary", () => {
     startSchedulerTimer.mockReset();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    applicationLifecycle()?.quiesce();
+    await applicationLifecycle()?.drain();
     if (originalRuntime === undefined) delete process.env.NEXT_RUNTIME;
     else process.env.NEXT_RUNTIME = originalRuntime;
   });

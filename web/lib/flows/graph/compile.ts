@@ -507,7 +507,10 @@ function compileGraph(
 
   const reentry = manifestReentry ?? null;
 
-  log.debug({ reentry, resolved: reentry !== null }, "[compile] reentry resolved");
+  log.debug(
+    { reentry, resolved: reentry !== null },
+    "[compile] reentry resolved",
+  );
 
   return { entry: graphNodes[0].id, order, nodes, sessions, reentry };
 }

@@ -299,22 +299,30 @@ export function AutomationsPanel(props: {
   }
 
   return (
-    <section className="flex flex-col gap-6" aria-label={props.labels.title}>
+    <section aria-label={props.labels.title} className="flex flex-col gap-6">
       <div className="rounded-[12px] border border-line bg-paper p-5">
         <div className="mb-4 flex items-baseline justify-between gap-3">
-          <h2 className="text-[18px] font-semibold text-ink">{props.labels.title}</h2>
+          <h2 className="text-[18px] font-semibold text-ink">
+            {props.labels.title}
+          </h2>
         </div>
-        <div className="mb-4 flex flex-wrap gap-2" role="group" aria-label={props.labels.title}>
-          {([
-            ["all", props.labels.all],
-            ["one_time_task_launch", props.labels.oneTime],
-            ["recurring_task_schedule", props.labels.recurring],
-            ["agent", props.labels.agent],
-          ] as const).map(([value, label]) => (
+        <div
+          aria-label={props.labels.title}
+          className="mb-4 flex flex-wrap gap-2"
+          role="group"
+        >
+          {(
+            [
+              ["all", props.labels.all],
+              ["one_time_task_launch", props.labels.oneTime],
+              ["recurring_task_schedule", props.labels.recurring],
+              ["agent", props.labels.agent],
+            ] as const
+          ).map(([value, label]) => (
             <button
+              key={value}
               aria-pressed={filter === value}
               className="rounded border border-line px-2 py-1 font-mono text-[10px] font-bold uppercase text-ink hover:border-amber aria-pressed:border-amber aria-pressed:text-amber"
-              key={value}
               type="button"
               onClick={() => setFilter(value)}
             >
@@ -323,7 +331,11 @@ export function AutomationsPanel(props: {
           ))}
         </div>
         {error && !cancelling ? (
-          <p aria-live="polite" className="mb-3 rounded-[8px] border border-red-200 bg-red-50 px-3 py-2 font-mono text-[12px] text-red-700" role="alert">
+          <p
+            aria-live="polite"
+            className="mb-3 rounded-[8px] border border-red-200 bg-red-50 px-3 py-2 font-mono text-[12px] text-red-700"
+            role="alert"
+          >
             {error}
           </p>
         ) : null}
@@ -395,19 +407,28 @@ export function AutomationsPanel(props: {
                 disabled={busyId === editing.id}
                 type="submit"
               >
-                {busyId === editing.id ? props.labels.saving : props.labels.save}
+                {busyId === editing.id
+                  ? props.labels.saving
+                  : props.labels.save}
               </button>
             </div>
           </form>
         ) : null}
         {visibleRows.length === 0 ? (
-          <p className="font-mono text-[12px] text-mute">{props.labels.empty}</p>
+          <p className="font-mono text-[12px] text-mute">
+            {props.labels.empty}
+          </p>
         ) : (
           <ul className="divide-y divide-line-soft">
             {visibleRows.map((row) => (
-              <li className="flex flex-wrap items-center justify-between gap-3 py-3" key={`${row.type}:${row.id}`}>
+              <li
+                key={`${row.type}:${row.id}`}
+                className="flex flex-wrap items-center justify-between gap-3 py-3"
+              >
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-semibold text-ink">{row.name}</p>
+                  <p className="truncate text-sm font-semibold text-ink">
+                    {row.name}
+                  </p>
                   <p className="font-mono text-[11px] text-mute">
                     {row.target} · {row.trigger}
                     {row.timezone ? ` · ${row.timezone}` : ""}
@@ -425,13 +446,11 @@ export function AutomationsPanel(props: {
                   </p>
                   {row.lateByMs !== null && row.lateByMs > 0 ? (
                     <p className="font-mono text-[10px] text-amber">
-                      {formatLateBy(
-                        {
-                          one: props.labels.lateByOne,
-                          other: props.labels.lateByOther,
-                          minutes: lateMinutes(row.lateByMs),
-                        },
-                      )}
+                      {formatLateBy({
+                        one: props.labels.lateByOne,
+                        other: props.labels.lateByOther,
+                        minutes: lateMinutes(row.lateByMs),
+                      })}
                     </p>
                   ) : null}
                 </div>

@@ -366,6 +366,7 @@ test("canonical Studio wizard creates a package Flow and adds another Flow in th
 
   expect(task.status()).toBe(201);
   const { taskId } = (await task.json()) as { taskId: string };
+
   await page.goto(`/projects/${fx.projectSlug}`);
   const launch = page
     .locator("[data-board]")
@@ -379,6 +380,7 @@ test("canonical Studio wizard creates a package Flow and adds another Flow in th
       response.url().includes("/api/runs") &&
       response.request().method() === "POST",
   );
+
   await launch.click();
   const dialog = page.getByTestId("task-launch-dialog");
 

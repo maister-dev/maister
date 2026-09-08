@@ -1,19 +1,23 @@
 import { spawn } from "node:child_process";
-import { EventEmitter } from "node:events";
+import { EventEmitter, once } from "node:events";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { waitForChildExit } from "../execution-fence";
 import { SupervisorDiagnosticsResponseSchema } from "../types";
+import { stopRegisteredSessions } from "../shutdown";
 
 import {
   bootHost,
   cleanupRuntimeRoot,
+  completePrompt,
   createEnvelope,
   envelope,
   fenceFor,
   postJson,
+  silentLogger,
   type BootedHost,
 } from "./_fixtures/boot-host";
 
@@ -54,8 +58,9 @@ async function createSession(
 }
 
 async function sendPrompt(host: BootedHost, sessionId: string): Promise<void> {
-  const res = await postJson(
-    `${host.url}/sessions/${sessionId}/prompt`,
+  const res = await completePrompt(
+    host,
+    sessionId,
     envelope("session.prompt", fenceFor(host, RUN_ID), {
       stepId: "step-1",
       prompt: "hello",
@@ -64,7 +69,7 @@ async function sendPrompt(host: BootedHost, sessionId: string): Promise<void> {
 
   if (res.status !== 200) {
     throw new Error(
-      `POST /sessions/${sessionId}/prompt failed: ${res.status} ${JSON.stringify(res.body)}`,
+      `asynchronous prompt ${sessionId} failed: ${res.status} ${JSON.stringify(res.body)}`,
     );
   }
 }
@@ -152,6 +157,57 @@ afterEach(async () => {
 });
 
 describe("supervisor lifecycle integration", () => {
+  it("shutdown escalates a TERM-resistant child and awaits durable terminal output", async () => {
+    const host = await bootFor(["--exit-delay-ms", "60000"]);
+    const sessionId = await createSession(host);
+    const entry = host.registry.get(sessionId)!;
+
+    await stopRegisteredSessions(host.registry, silentLogger, 50);
+    expect(entry.child.signalCode).toBe("SIGKILL");
+    expect(entry.record.terminalPublished).toBe(true);
+    expect(entry.record.outputTerminal).toBeDefined();
+    await entry.record.outputDrained;
+    await entry.record.outputTerminal;
+    expect(() => process.kill(entry.record.pid, 0)).toThrow();
+  });
+  it("keeps exit and checkpoint acknowledgment behind the captured-output barrier", async () => {
+    const host = await bootFor(["--hang", "--lines", "0"]);
+    const sessionId = await createSession(host);
+    const entry = host.registry.get(sessionId)!;
+    const captured = entry.record.outputDrained;
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    entry.record.outputDrained = Promise.all([captured, gate]).then(() => {});
+    const exited = once(entry.child, "exit");
+
+    entry.child.kill("SIGTERM");
+    try {
+      await exited;
+      await captured;
+      expect(
+        host.registry
+          .snapshotEvents(sessionId)
+          .some(
+            (event) =>
+              event.type === "session.exited" ||
+              event.type === "session.crashed",
+          ),
+      ).toBe(false);
+      expect(await waitForChildExit(entry, 20)).toBe(false);
+    } finally {
+      release();
+    }
+    await entry.record.outputTerminal;
+    expect(await waitForChildExit(entry, 1000)).toBe(true);
+    expect(host.registry.snapshotEvents(sessionId).at(-1)?.type).toBe(
+      "session.crashed",
+    );
+    expect(entry.record.terminalPublished).toBe(true);
+  });
+
   it("GET /health reports readiness and session status counts", async () => {
     const host = await bootFor(["--hang"]);
     const { url, registry } = host;
@@ -354,12 +410,21 @@ describe("supervisor lifecycle integration", () => {
   });
 
   it("SSE stream emits N line events then session.exited (clean exit)", async () => {
-    const host = await bootFor(["--lines", "3", "--emit-usage"]);
+    const host = await bootFor([
+      "--controlled-exit",
+      "--lines",
+      "3",
+      "--emit-usage",
+    ]);
     const { url } = host;
     const sessionId = await createSession(host);
     const eventPromise = collectSSE(`${url}/sessions/${sessionId}/stream`);
 
     await sendPrompt(host, sessionId);
+    const entry = host.registry.get(sessionId);
+
+    expect(entry).toBeDefined();
+    entry!.child.kill("SIGUSR2");
 
     const events = await eventPromise;
     const lines = events.filter((e) => e.event === "session.update");
@@ -372,12 +437,22 @@ describe("supervisor lifecycle integration", () => {
   });
 
   it("session.crashed when fixture exits non-zero", async () => {
-    const host = await bootFor(["--lines", "1", "--exit-code", "1"]);
+    const host = await bootFor([
+      "--controlled-exit",
+      "--lines",
+      "1",
+      "--exit-code",
+      "1",
+    ]);
     const { url } = host;
     const sessionId = await createSession(host);
     const eventPromise = collectSSE(`${url}/sessions/${sessionId}/stream`);
 
     await sendPrompt(host, sessionId);
+    const entry = host.registry.get(sessionId);
+
+    expect(entry).toBeDefined();
+    entry!.child.kill("SIGUSR2");
 
     const events = await eventPromise;
     const crashed = events.find((e) => e.event === "session.crashed");
@@ -480,8 +555,8 @@ describe("supervisor lifecycle integration", () => {
 
   it("logs do NOT contain the sentinel ANTHROPIC_AUTH_TOKEN value", async () => {
     const sentinel = "sk-test-redact-sentinel";
-    const host = await bootFor(["--lines", "2"]);
-    const { url, runtimeRoot } = host;
+    const host = await bootFor(["--lines", "2", "--hang"]);
+    const { url } = host;
     const sessionId = await createSession(host, {
       executorEnv: { ANTHROPIC_AUTH_TOKEN: sentinel },
     });
@@ -490,7 +565,7 @@ describe("supervisor lifecycle integration", () => {
     await sendPrompt(host, sessionId);
     await eventPromise;
 
-    const logPath = `${runtimeRoot}/.maister/demo/runs/run-int/step-1.log`;
+    const logPath = host.registry.get(sessionId)!.record.logPath;
     const logContents = await readFile(logPath, "utf8");
 
     expect(logContents).not.toContain(sentinel);

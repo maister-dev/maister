@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { ExecutionAssignment, ExecutionHost } from "@/lib/db/schema";
+import type { PreparedPermissionHandoff } from "@/lib/flows/graph/permission-resume";
 import type {
   ExecutionHostTransport,
   PlacementReason,
@@ -11,6 +12,11 @@ import pino from "pino";
 
 import { nextKeepaliveAt } from "./keepalive-config";
 
+import {
+  authorizeGatePermissionResume,
+  authorizeGatePermissionResult,
+  authorizeGatePermissionContinuation,
+} from "@/lib/flows/graph/gate-permission-resume";
 import { RELEASED_LIFECYCLE_CLAIM } from "@/lib/runs/lifecycle-claim";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
@@ -21,6 +27,18 @@ import { emitDelegatedReviewIfChild } from "@/lib/runs/delegated-review-emit";
 import { mintPlacement, releaseAssignmentForRun } from "@/lib/execution-host";
 import { gcAgeDays } from "@/lib/instance-config";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
+import { authorizeOrchestratorActionResume } from "@/lib/flows/graph/action-resume";
+import {
+  authorizeNodePermissionResume,
+  authorizeNodePermissionResult,
+  authorizeNodePermissionContinuation,
+} from "@/lib/flows/graph/permission-resume";
+import { capForPool, countLiveRuns, takeSchedulerLock } from "@/lib/scheduler";
+import { admitCompletedAgentResume } from "@/lib/agents/resume";
+import {
+  readAgentPermissionResume,
+  authorizeAgentPermissionResume,
+} from "@/lib/agents/permission-resume";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { hitlRequests, runs, workspaces, runSyncAttempts } =
@@ -39,7 +57,14 @@ export type StateTransitionResult =
   // D3) — the caller binds its execution to THAT row, never to "the run's
   // active assignment" resolved later.
   | { ok: true; assignment?: ExecutionAssignment }
-  | { ok: false; reason: "status-guard-mismatch" | "not-found" };
+  | {
+      ok: false;
+      reason:
+        | "status-guard-mismatch"
+        | "not-found"
+        | "capacity"
+        | "pending-evidence";
+    };
 
 // ADR-141: a run that terminalizes MUST NOT strand a live branch-sync claim.
 // `run_sync_attempts` and the workspace lifecycle slot outlive `runs.status`, and
@@ -239,7 +264,9 @@ export async function markCheckpointedFromExit(
 // fresh live session for diagnostics.
 export async function markResumed(
   runId: string,
-  opts: StateTransitionOptions = {},
+  opts: StateTransitionOptions & {
+    permissionResult?: PreparedPermissionHandoff;
+  } = {},
 ): Promise<StateTransitionResult> {
   const db = opts.db ?? getDb();
 
@@ -267,6 +294,35 @@ export async function markResumed(
       // The resume is a new driver generation: mint inside the claim.
       const assignment = await mintForClaim(tx, runId, "resume", opts);
 
+      if (assignment) {
+        if (opts.permissionResult?.kind === "interrupted") {
+          if (opts.permissionResult.domain === "gate")
+            await authorizeGatePermissionContinuation(
+              tx,
+              assignment,
+              opts.permissionResult,
+            );
+          else
+            await authorizeNodePermissionContinuation(
+              tx,
+              assignment,
+              opts.permissionResult,
+            );
+        } else if (opts.permissionResult?.domain === "gate")
+          await authorizeGatePermissionResult(
+            tx,
+            assignment,
+            opts.permissionResult,
+          );
+        else if (opts.permissionResult)
+          await authorizeNodePermissionResult(
+            tx,
+            assignment,
+            opts.permissionResult,
+          );
+        else if (!(await authorizeGatePermissionResume(tx, assignment)))
+          await authorizeNodePermissionResume(tx, assignment);
+      }
       await opts.recordSuccessAudit?.(tx);
 
       log.info(
@@ -291,6 +347,27 @@ export async function claimAgentIdleResumeInTransaction(
   runId: string,
   opts: Pick<StateTransitionOptions, "placement" | "recordSuccessAudit"> = {},
 ): Promise<StateTransitionResult> {
+  await tx
+    .select({ id: runs.id })
+    .from(runs)
+    .where(eq(runs.id, runId))
+    .for("update");
+  const permission = await readAgentPermissionResume(tx, runId);
+
+  if (permission?.kind === "pending") {
+    await tx
+      .update(runs)
+      .set({
+        resumeRequestedAt: sql`coalesce(${runs.resumeRequestedAt}, clock_timestamp())`,
+      })
+      .where(and(eq(runs.id, runId), eq(runs.status, "NeedsInputIdle")));
+    log.info(
+      { runId, reason: permission.reason },
+      "agent-resume-awaits-checkpoint-evidence",
+    );
+
+    return { ok: false, reason: "pending-evidence" };
+  }
   const rows = await tx
     .update(runs)
     .set({
@@ -313,6 +390,8 @@ export async function claimAgentIdleResumeInTransaction(
 
   const assignment = await mintForClaim(tx, runId, "resume", opts);
 
+  await authorizeAgentPermissionResume(tx, assignment);
+  await admitCompletedAgentResume(tx, assignment);
   await opts.recordSuccessAudit?.(tx);
 
   log.info(
@@ -384,9 +463,24 @@ export async function markResumedFromWait(
 
   return await (db as { transaction: any }).transaction(
     async (tx: Db): Promise<StateTransitionResult> => {
+      await takeSchedulerLock(tx);
+      if ((await countLiveRuns(tx, "flow")) >= capForPool("flow")) {
+        const deferred = await tx
+          .update(runs)
+          .set({
+            resumeRequestedAt: sql`coalesce(${runs.resumeRequestedAt}, clock_timestamp())`,
+          })
+          .where(and(eq(runs.id, runId), eq(runs.status, "WaitingOnChildren")))
+          .returning({ id: runs.id });
+
+        return {
+          ok: false,
+          reason: deferred.length > 0 ? "capacity" : "status-guard-mismatch",
+        };
+      }
       const rows = await tx
         .update(runs)
-        .set({ status: "Running", checkpointAt: null })
+        .set({ status: "Running", checkpointAt: null, resumeRequestedAt: null })
         .where(and(eq(runs.id, runId), eq(runs.status, "WaitingOnChildren")))
         .returning({ id: runs.id });
 
@@ -402,6 +496,7 @@ export async function markResumedFromWait(
       // The woken coordinator is a new driver generation (ADR-166 D3).
       const assignment = await mintForClaim(tx, runId, "wait_resume", opts);
 
+      await authorizeOrchestratorActionResume(tx, assignment);
       await opts.recordSuccessAudit?.(tx);
 
       log.info(
@@ -857,6 +952,7 @@ export async function failResumedRun(
     { runId, to: "Failed", reason },
     "run-state transition — failed during resume",
   );
+
   return { ok: true };
 }
 
@@ -1149,6 +1245,7 @@ export async function markAbandoned(
   }
 
   log.info({ runId, to: "Abandoned" }, "run-state transition — abandoned");
+
   return { ok: true };
 }
 
@@ -1223,6 +1320,7 @@ export async function crashResumedRun(
     { runId, from: "NeedsInput", to: "Crashed", reason },
     "run-state transition — crashed during resume",
   );
+
   return { ok: true };
 }
 
@@ -1344,6 +1442,7 @@ export async function crashRunningRun(
     { runId, from: "Running", to: "Crashed", reason },
     "run-state transition — crashed (reconcile/GC)",
   );
+
   return { ok: true };
 }
 
@@ -1431,5 +1530,6 @@ export async function crashWaitingOnChildren(
     { runId, from: "WaitingOnChildren", to: "Crashed", reason },
     "run-state transition — orchestrator crashed (reconcile)",
   );
+
   return { ok: true };
 }

@@ -9,9 +9,9 @@
 // real teardown / flow execution runs and the calls are observable.
 //
 // The watchdog reads token sums from run_cost_rollups (queryRunTokens etc.). It
-// force-reconciles via reconcileRunCostRollups first, but with no cost.jsonl on
-// disk that returns `missing-cost-file` BEFORE any delete — the seeded rollup
-// rows survive, so seeding run_cost_rollups directly drives the meters.
+// force-reconciles those projections from canonical usage.recorded events
+// before enforcing a budget, so the fixture seeds the event authority rather
+// than writing projection rows directly.
 
 import type { ExecutionHosts } from "@/lib/execution-host";
 import type {
@@ -94,9 +94,9 @@ vi.mock("@/lib/authz", () => ({
 }));
 
 // E11: the budget pass force-reconciles each budgeted candidate's rollups before
-// reading its meters. Spy on reconcileRunCostRollups but call THROUGH to the real
-// impl (which returns `missing-cost-file` with no cost.jsonl on disk, so the
-// seeded rollups survive) so the call is observable without changing behavior.
+// reading its meters. Spy on reconcileRunCostRollups but call through to the
+// real canonical-event projection so both reconciliation and enforcement remain
+// observable in the same integration test.
 const reconcileRollupsSpy = vi.fn((_runId: string) => undefined);
 
 vi.mock("@/lib/runs/cost-rollups", async (importOriginal) => {
@@ -121,6 +121,7 @@ let runSweepTick: (opts?: {
   executionHosts?: ExecutionHosts;
 }) => Promise<unknown>;
 let hosts: ExecutionHosts;
+const canonicalSequenceByRun = new Map<string, bigint>();
 
 import * as schemaModule from "@/lib/db/schema";
 import {
@@ -228,6 +229,7 @@ beforeEach(async () => {
   checkpointSessionSpy.mockResolvedValue({});
   runFlowSpy.mockClear();
   reconcileRollupsSpy.mockClear();
+  canonicalSequenceByRun.clear();
 });
 
 async function seedTask(): Promise<string> {
@@ -301,27 +303,36 @@ async function seedRun(opts: {
   return runId;
 }
 
-// Seed a run_cost_rollups row carrying the four BASE token columns — the budget
-// token meter sums these. resume* columns are a subset already folded into the
-// base, set low to prove they are not double-counted.
+// Seed the manager-owned usage authority. Task association is intentionally
+// derived from the run row during projection rather than trusted from a caller.
 async function seedRollup(
   runId: string,
-  taskId: string | null,
+  _taskId: string | null,
   totalBaseTokens: number,
 ): Promise<void> {
-  await db.insert(schema.runCostRollups).values({
+  const runSequence = canonicalSequenceByRun.get(runId) ?? BigInt(0);
+
+  canonicalSequenceByRun.set(runId, runSequence + BigInt(1));
+  await db.insert(schema.executionEvents).values({
+    id: randomUUID(),
+    source: "manager",
+    sourceKey: `budget-watchdog:${runId}:${runSequence.toString()}`,
     runId,
-    projectId,
-    taskId,
-    inputTokens: totalBaseTokens,
-    outputTokens: 0,
-    cacheReadTokens: 0,
-    cacheCreationTokens: 0,
-    resumeInputTokens: 0,
-    resumeOutputTokens: 0,
-    resumeCacheReadTokens: 0,
-    resumeCacheCreationTokens: 0,
-    sourceEventCount: 1,
+    eventType: "usage.recorded",
+    payloadSchema: "maister.usage.recorded.v1",
+    payload: {
+      sessionName: "default",
+      model: "claude-sonnet-4-6",
+      inputTokens: totalBaseTokens,
+      outputTokens: 0,
+      cacheReadInputTokens: 0,
+      cacheCreationInputTokens: 0,
+      resumed: false,
+    },
+    occurredAt: new Date(),
+    receivedAt: new Date(),
+    runSequence,
+    ingestDisposition: "accepted",
   });
 }
 

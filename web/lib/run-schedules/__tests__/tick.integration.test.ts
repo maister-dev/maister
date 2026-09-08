@@ -67,37 +67,39 @@ afterAll(async () => {
 
 beforeEach(async () => {
   mocks.launchRun.mockReset();
-  mocks.launchRun.mockImplementation(async (input: {
-    taskId: string;
-    scheduledReservation?: { runId: string; scheduledLaunchId: string };
-  }) => {
-    const runId = input.scheduledReservation?.runId ?? randomUUID();
-    const taskRows = await db
-      .select({
-        projectId: schema.tasks.projectId,
-        flowId: schema.tasks.flowId,
-      })
-      .from(schema.tasks)
-      .where(eq(schema.tasks.id, input.taskId));
-    const task = taskRows[0]!;
+  mocks.launchRun.mockImplementation(
+    async (input: {
+      taskId: string;
+      scheduledReservation?: { runId: string; scheduledLaunchId: string };
+    }) => {
+      const runId = input.scheduledReservation?.runId ?? randomUUID();
+      const taskRows = await db
+        .select({
+          projectId: schema.tasks.projectId,
+          flowId: schema.tasks.flowId,
+        })
+        .from(schema.tasks)
+        .where(eq(schema.tasks.id, input.taskId));
+      const task = taskRows[0]!;
 
-    await db.insert(schema.runs).values({
-      id: runId,
-      projectId: task.projectId,
-      taskId: input.taskId,
-      flowId: task.flowId,
-      status: "Review",
-      flowVersion: "v1.0.0",
-      ...(input.scheduledReservation
-        ? {
-            scheduledLaunchId: input.scheduledReservation.scheduledLaunchId,
-            triggerSource: "scheduled" as const,
-          }
-        : {}),
-    });
+      await db.insert(schema.runs).values({
+        id: runId,
+        projectId: task.projectId,
+        taskId: input.taskId,
+        flowId: task.flowId,
+        status: "Review",
+        flowVersion: "v1.0.0",
+        ...(input.scheduledReservation
+          ? {
+              scheduledLaunchId: input.scheduledReservation.scheduledLaunchId,
+              triggerSource: "scheduled" as const,
+            }
+          : {}),
+      });
 
-    return { runId, status: "Review" };
-  });
+      return { runId, status: "Review" };
+    },
+  );
   // Make the dispatcher claimable again regardless of the previous tick.
   await db.execute(sql`
     UPDATE scheduler_jobs
@@ -247,7 +249,9 @@ describe("runSchedulerTick × run_schedule dispatcher (engine-level)", () => {
 
     expect(attempt.status).toBe("Succeeded");
     expect((attempt.summary.recurring as { fired: number }).fired).toBe(1);
-    expect((attempt.summary.recurring as { launchFailed: number }).launchFailed).toBe(0);
+    expect(
+      (attempt.summary.recurring as { launchFailed: number }).launchFailed,
+    ).toBe(0);
   });
 
   it("dispatches a due one-time intent through the same claimed run_schedule job", async () => {
@@ -300,7 +304,9 @@ describe("runSchedulerTick × run_schedule dispatcher (engine-level)", () => {
     const attempt = await latestDispatcherAttempt();
 
     expect(attempt.status).toBe("Succeeded");
-    expect((attempt.summary.recurring as { launchFailed: number }).launchFailed).toBe(1);
+    expect(
+      (attempt.summary.recurring as { launchFailed: number }).launchFailed,
+    ).toBe(1);
 
     const jobRows = await db
       .select({ failures: schema.schedulerJobs.consecutiveFailures })

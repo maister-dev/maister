@@ -310,7 +310,8 @@ describe("workspace adoption", () => {
       hostState: l.host.hostState,
     });
 
-    booted.push(handleHost);
+    // Shared-state consumers must stop before the fixture that owns the store.
+    booted.unshift(handleHost);
     process.env.MOCK_ACP_NEWSESSION_RECORD_PATH = recordPath;
     const handle = await postJson(
       `${handleHost.url}/sessions`,
@@ -337,13 +338,13 @@ describe("workspace adoption", () => {
     expect(record.repoPath).toBe(l.repo);
     expect(record.confineRoot).toBeUndefined();
     expect(record.contextMounts).toEqual(mounts);
-    expect(record.logPath).toBe(join(runDir, "plan.log"));
+    expect(record.logPath).toBe(join(runDir, `${record.sessionId}.log`));
     expect(record.executionWorkspaceId).toBe(adopted.body.executionWorkspaceId);
     expect(record.runId).toBe(l.runId);
     expect(record.projectSlug).toBe("demo");
   });
 
-  it("W8: a capabilityProfilePath outside the handle path is workspace_rejected:outside_workspace", async () => {
+  it("W8: legacy capabilityProfilePath is rejected before session creation", async () => {
     const l = await lab();
     const adopted = await adopt(l, {
       runId: l.runId,
@@ -366,9 +367,10 @@ describe("workspace adoption", () => {
       ),
     );
 
+    expect(res.status).toBe(409);
     expect(res.body.details).toEqual({
-      reason: "workspace_rejected",
-      rule: "outside_workspace",
+      reason: "legacy_field",
+      field: "capabilityProfilePath",
     });
   });
 

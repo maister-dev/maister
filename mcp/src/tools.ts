@@ -469,13 +469,14 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
   },
   run_message: {
     description:
-      "Re-message a PERSISTENT child agent in the calling orchestrator's run-tree by its addressableKey (or childRunId). If the child is parked between turns it is respawned and resumed with prior context; if live the prompt is delivered to the running session. The child re-parks on its next end_turn. Addressing is scoped to the caller's own tree — a child in another tree is invisible. Agent children only: a flow child has no addressable session and is refused PRECONDITION. Returns { childRunId, status }.",
+      "Send a follow-up to a PERSISTENT child agent in the calling orchestrator's run-tree by addressableKey or childRunId. Input is saved before dispatch. A busy session or full agent pool leaves it queued for normal resume; a completed turn re-parks the child. Reuse requestKey to retry the same message without duplicating it; different input under that key is refused. Addressing stays within the caller's own tree. Flow children have no addressable agent session and are refused PRECONDITION. Returns { childRunId, messageId, status, messageState }; messageState 'queued' means accepted and awaiting delivery.",
     inputSchema: {
       type: "object",
       properties: {
         addressableKey: { type: "string", minLength: 1 },
         childRunId: { type: "string" },
-        prompt: { type: "string", minLength: 1 },
+        prompt: { type: "string", minLength: 1, maxLength: 1000000 },
+        requestKey: { type: "string", minLength: 1, maxLength: 128 },
       },
       required: ["prompt"],
     },
@@ -493,12 +494,12 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
   },
   run_rework: {
     description:
-      "Re-open a reviewed delegated child of the calling orchestrator for another turn with a rework prompt. Agent children only — a flow child owns its own review/rework loop and is refused PRECONDITION (promote or cancel it instead). The child must be a direct child of the bound orchestrator run and currently in Review. It is respawned and resumed with prior context against its existing worktree, then re-reviews on its next end_turn. Returns { childRunId, status }.",
+      "Re-open a reviewed delegated child of the calling orchestrator for another turn with a rework prompt. Agent children only — a flow child owns its own review/rework loop and is refused PRECONDITION (promote or cancel it instead). The child must be a direct child of the bound orchestrator run and currently in Review. A full agent pool refuses the claim with CONFLICT. The accepted prompt is retained with its new assignment and survives Web restart. It resumes with prior context against its existing worktree, then re-reviews on its next end_turn. Returns { childRunId, status } with the current run status, which may already reflect completion.",
     inputSchema: {
       type: "object",
       properties: {
         childRunId: { type: "string" },
-        prompt: { type: "string", minLength: 1 },
+        prompt: { type: "string", minLength: 1, maxLength: 1_000_000 },
       },
       required: ["childRunId", "prompt"],
     },
@@ -605,7 +606,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
   },
   comment_list: {
     description:
-      "List comments on a task (markdown bodies with mentions already expanded). Two expanded forms appear: `[KEY-N](/projects/<slug>/tasks/<n>)` is a real task link, while `[@<agentId>](/agents/<agentId>)` marks an AGENT MENTION — that href is a marker, not a route, so read it as \"this comment mentioned <agentId>\" and never follow it.",
+      'List comments on a task (markdown bodies with mentions already expanded). Two expanded forms appear: `[KEY-N](/projects/<slug>/tasks/<n>)` is a real task link, while `[@<agentId>](/agents/<agentId>)` marks an AGENT MENTION — that href is a marker, not a route, so read it as "this comment mentioned <agentId>" and never follow it.',
     inputSchema: {
       type: "object",
       properties: {
@@ -1164,15 +1165,17 @@ function resolveRouting(
       };
     }
     case "run_message": {
-      const { addressableKey, childRunId, prompt } = args as {
+      const { addressableKey, childRunId, prompt, requestKey } = args as {
         addressableKey?: string;
         childRunId?: string;
         prompt: string;
+        requestKey?: string;
       };
       const body: Record<string, unknown> = { prompt };
 
       if (addressableKey !== undefined) body.addressableKey = addressableKey;
       if (childRunId !== undefined) body.childRunId = childRunId;
+      if (requestKey !== undefined) body.requestKey = requestKey;
 
       return { method: "POST", path: `/api/v1/ext/runs/message`, body };
     }

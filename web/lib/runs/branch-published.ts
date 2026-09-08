@@ -23,5 +23,7 @@ export async function isBranchPublished(args: {
   repo: string;
   branch: string;
 }): Promise<boolean> {
-  return args.prUrl != null || (await branchHasUpstream(args.repo, args.branch));
+  return (
+    args.prUrl != null || (await branchHasUpstream(args.repo, args.branch))
+  );
 }

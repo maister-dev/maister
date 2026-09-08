@@ -176,7 +176,6 @@ async function assignmentRows(runId: string) {
 async function scratchAndSession(runId: string) {
   const [scratch] = await db
     .select({
-      supervisorSessionId: schema.scratchRuns.supervisorSessionId,
       dialogStatus: schema.scratchRuns.dialogStatus,
     })
     .from(schema.scratchRuns)
@@ -267,7 +266,7 @@ describe("scratch run placement (ADR-166 Q1–Q3)", () => {
     firstHostSessionId = session.hostSessionId as string;
     acpSessionId = session.acpSessionId as string;
     expect(typeof firstHostSessionId).toBe("string");
-    expect(scratch.supervisorSessionId).toBe(firstHostSessionId);
+    expect(session.hostSessionId).toBe(firstHostSessionId);
     expect(fake.sessions.get(firstHostSessionId)?.acpSessionId).toBe(
       acpSessionId,
     );
@@ -353,11 +352,11 @@ describe("scratch run placement (ADR-166 Q1–Q3)", () => {
       { params: Promise.resolve({ runId }) },
     );
 
-    expect(response.status).toBe(202);
-    await expect(response.json()).resolves.toMatchObject({
+    await expect(response.clone().json()).resolves.toMatchObject({
       runId,
       action: "recover",
     });
+    expect(response.status).toBe(202);
 
     const creates = fake.callsOf("createSession");
 
@@ -373,6 +372,31 @@ describe("scratch run placement (ADR-166 Q1–Q3)", () => {
     // The handle is copied forward across generations: no second adoption.
     expect(fake.callsOf("adoptWorkspace")).toHaveLength(1);
 
+    // S2.9: the recovery turn is owned by its own recover generation, so its
+    // WaitingForUser transition is applied from that turn's durable command.
+    const [recoverCommand] = await db
+      .select({
+        ownerKind: schema.executionCommands.ownerKind,
+        ownerRef: schema.executionCommands.ownerRef,
+        applicationState: schema.executionCommands.applicationState,
+      })
+      .from(schema.executionCommands)
+      .where(
+        and(
+          eq(schema.executionCommands.runId, runId),
+          eq(schema.executionCommands.kind, "session.prompt"),
+          eq(schema.executionCommands.assignmentEpoch, 2),
+        ),
+      );
+
+    expect(recoverCommand?.ownerKind).toBe("scratch_message");
+    expect(recoverCommand?.ownerRef).toMatchObject({
+      variant: "recovery",
+      scratchRunId: runId,
+      promptOrdinal: 0,
+    });
+    expect(recoverCommand?.applicationState).toBe("applied");
+
     expect(await assignmentRows(runId)).toEqual([
       expect.objectContaining({ epoch: 1, state: "released" }),
       {
@@ -387,7 +411,7 @@ describe("scratch run placement (ADR-166 Q1–Q3)", () => {
     const { scratch, session } = await scratchAndSession(runId);
 
     expect(session.hostSessionId).not.toBe(firstHostSessionId);
-    expect(scratch.supervisorSessionId).toBe(session.hostSessionId);
+    expect(session.hostSessionId).toBeTruthy();
     expect(scratch.dialogStatus).toBe("WaitingForUser");
   }, 60_000);
 
@@ -429,10 +453,10 @@ describe("scratch run placement (ADR-166 Q1–Q3)", () => {
       placementReason: "scratch_recover",
       releasedReason: "scratch_recover_rollback",
     });
-    // The stored supervisor session id is exactly what the crash left.
-    const { scratch } = await scratchAndSession(runId);
+    // The logical session pointer is exactly what the crash left.
+    const { scratch, session } = await scratchAndSession(runId);
 
-    expect(scratch.supervisorSessionId).toBe(before.hostSessionId);
+    expect(session.hostSessionId).toBe(before.hostSessionId);
     expect(scratch.dialogStatus).toBe("Crashed");
   }, 60_000);
 

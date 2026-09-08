@@ -141,6 +141,7 @@ async function runClaimedJob(
       }
       case "command": {
         await runCommandJob(job.target);
+
         return recordSucceeded(job);
       }
       case "agent_tick": {
@@ -164,6 +165,7 @@ async function runClaimedJob(
       }
       case "flow_run": {
         await runScheduledFlowJob(job.target);
+
         return recordSucceeded(job);
       }
       case "run_schedule": {
@@ -317,6 +319,7 @@ async function runSystemSweepWithLease(
     heartbeat,
     Math.max(250, Math.floor(schedulerAttemptTimeoutSeconds() * 500)),
   );
+
   timer.unref();
 
   try {

@@ -14,7 +14,8 @@ const planReviewSettings = {
 describe("human settings plan_review capability", () => {
   it("accepts an explicit bounded Plan-review declaration", () => {
     expect(
-      humanSettingsSchema.safeParse({ plan_review: planReviewSettings }).success,
+      humanSettingsSchema.safeParse({ plan_review: planReviewSettings })
+        .success,
     ).toBe(true);
   });
 

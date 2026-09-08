@@ -40,25 +40,41 @@ function mapDomainEvent(row: DomainEventActivityRow): DomainEventMapping {
     case "task.created":
       return {
         salience: "high",
-        action: { verb: "create", object: `task ${taskLabel(row)}`, outcome: "created" },
+        action: {
+          verb: "create",
+          object: `task ${taskLabel(row)}`,
+          outcome: "created",
+        },
         summary: `created task ${taskLabel(row)}`,
       };
     case "task.comment_added":
       return {
         salience: "high",
-        action: { verb: "comment", object: `task ${taskLabel(row)}`, outcome: "added" },
+        action: {
+          verb: "comment",
+          object: `task ${taskLabel(row)}`,
+          outcome: "added",
+        },
         summary: `added a comment on ${taskLabel(row)}`,
       };
     case "task.triage_requeued":
       return {
         salience: "high",
-        action: { verb: "requeue", object: `task ${taskLabel(row)}`, outcome: "triage" },
+        action: {
+          verb: "requeue",
+          object: `task ${taskLabel(row)}`,
+          outcome: "triage",
+        },
         summary: `requeued ${taskLabel(row)} for triage`,
       };
     case "task.clarification_answered":
       return {
         salience: "high",
-        action: { verb: "answer", object: `clarification for ${taskLabel(row)}`, outcome: "answered" },
+        action: {
+          verb: "answer",
+          object: `clarification for ${taskLabel(row)}`,
+          outcome: "answered",
+        },
         summary: `answered a clarification for ${taskLabel(row)}`,
         hitlRequestId: stringField(row.payload, "hitlRequestId"),
       };
@@ -123,9 +139,7 @@ function mapDomainEvent(row: DomainEventActivityRow): DomainEventMapping {
           object: gateId ? `gate ${gateId}` : "gate",
           outcome: "failed",
         },
-        summary: gateId
-          ? `gate ${gateId} failed`
-          : "a gate failed",
+        summary: gateId ? `gate ${gateId} failed` : "a gate failed",
         gateId,
       };
     }

@@ -1,17 +1,54 @@
 import "server-only";
 
 import type { ContextRepoDecl } from "@/lib/context-mounts/types";
-import type { ResultStatus } from "@/lib/run-results/types";
 import type { RunResultContract } from "@/lib/run-results/types";
 import type { Db as ExecutionDb } from "@/lib/execution-host/db";
+import type { AgentTurn, Run, ExecutionAssignment } from "@/lib/db/schema";
 
 import { randomUUID } from "node:crypto";
 import { mkdir, stat } from "node:fs/promises";
 import path from "node:path";
 
-import { and, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 import pino from "pino";
 
+import {
+  admitAgentTurnPrompt,
+  findInitialAgentPrompt,
+  waitForAgentPrompt,
+  waitForHistoricalAgentPrompt,
+  agentSessionHasOwnedPrompt,
+  AgentPromptContinuationPending,
+} from "./prompt-owner";
+import { applyPersistentAgentPark, afterPersistentAgentPark } from "./park";
+import { acceptAgentMessage } from "./turns";
+import { claimAgentMessage } from "./turn-claim";
+import { admitAgentGenerationTurn, resumeVariantFor } from "./generation-turn";
+import { settleAgentCreateFailure } from "./create-failure";
+import {
+  assertAgentResumeTurn,
+  findAgentPermissionResult,
+  deliverResumedAgentPermission,
+} from "./permission-resume";
+import {
+  recordOwnedAgentPermission,
+  replayAgentPermissionDelivery,
+} from "./permission";
+import {
+  finalizeAgentRun as finalizeAgentRunPrepared,
+  type AgentFinalizeOptions,
+  type AgentTerminalOutcome,
+  type AgentFinalStatus,
+} from "./finalization";
+import {
+  agentReadOnlyWorkdirPath,
+  agentWorkdirPath,
+  sharedAgentWorktreePath,
+} from "./workspace-paths";
+
+import { waitForPromptIncarnation } from "@/lib/execution-host/prompt-incarnation";
+import { latestOwnedCreate } from "@/lib/execution-host/create-intent";
+import { SessionCreatePending } from "@/lib/execution-host/owned-session-create";
 import {
   mergeRunnerAdapterLaunch,
   runnerExecutorInput,
@@ -33,13 +70,7 @@ import {
   type AgentCapabilityProfile,
   type ParsedAgentDefinition,
 } from "@/lib/agents/definition";
-import {
-  checkRepoReadDirt,
-  loadAgentWorkspaceContext,
-  materializeAgentReadOnlySettings,
-  quarantineAgentInTx,
-  restoreAgentMaterialization,
-} from "@/lib/agents/dirty-watchdog";
+import { materializeAgentReadOnlySettings } from "@/lib/agents/dirty-watchdog";
 import {
   resolveEffectiveAgentDefinition,
   type EffectiveAgentDefinition,
@@ -47,20 +78,12 @@ import {
 import { resolveFacadeLaunch } from "@/lib/agents/facade-launch";
 import { readAgentMemory } from "@/lib/agents/memory-store";
 import { prepareContextMounts } from "@/lib/context-mounts/launch";
-import { releaseRunContextMounts } from "@/lib/context-mounts/terminal";
 import { atomicWriteText } from "@/lib/atomic";
 import { runDirPath } from "@/lib/flows/graph/mutation-check";
 import { runtimeRoot } from "@/lib/runtime-root";
 import { hookEnvDefaults, resolveHooksConfig } from "@/lib/flows/hooks-config";
 import { resolveAgentExecutionPolicy } from "@/lib/agents/execution-policy";
-import {
-  issueAgentRunToken,
-  revokeAgentRunTokensForRun,
-} from "@/lib/agents/tokens";
-import {
-  cancelActiveAssignmentsForRun,
-  systemCloseActiveAssignmentsForRun,
-} from "@/lib/assignments/service";
+import { issueAgentRunToken } from "@/lib/agents/tokens";
 import { type AgentMcpServer } from "@/lib/capabilities/agent-map";
 import { materializeAdapterCapabilityHome } from "@/lib/capabilities/adapter-home";
 import { getDb } from "@/lib/db/client";
@@ -70,30 +93,20 @@ import {
   type AgentExecutionPolicyRecommendation,
   type DelegationSnapshot,
   type ExecutionHost,
+  agentTurns,
+  runResults,
+  executionAssignments,
+  executionCommands,
+  runSessionIncarnations,
 } from "@/lib/db/schema";
-import { emitDomainEvent } from "@/lib/domain-events/outbox";
+import { agentMessageText } from "@/lib/run-transcript/agent-text";
 import { appendCapped } from "@/lib/flows/capped-text";
-import { decideAgentResult } from "@/lib/run-results/agent-result";
-import { engineArtifactManifest } from "@/lib/run-results/artifact-manifest";
-import {
-  publishRunResult,
-  recordInvalidRunResult,
-} from "@/lib/run-results/ledger";
-import { type RunReviewCause } from "@/lib/domain-events/taxonomy";
 import { MaisterError, type MaisterErrorCode } from "@/lib/errors";
 import { cancelOpenAgentQuestionsForTaskInTransaction } from "@/lib/services/agent-question";
 import { resolveAgentChainDepth } from "@/lib/agents/chain-depth";
-import {
-  gcAgeDays,
-  maxAgentChainDepth,
-  worktreesRoot,
-} from "@/lib/instance-config";
+import { maxAgentChainDepth } from "@/lib/instance-config";
 import { admitDelegatedChild } from "@/lib/orchestrator/admission";
-import { removeOwnedPlainAgentDirectory } from "@/lib/gc/plain-agent-directory-gc";
-import {
-  loadActiveRunSession,
-  persistRunSessionAcpSessionId,
-} from "@/lib/runs/active-run-session";
+import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import { applyDefaultBudgetForUnattended } from "@/lib/runs/budget-default";
 import {
   permissionsFromSnapshot,
@@ -107,14 +120,14 @@ import {
   resolveSharedTreeWorkspaceForUpdate,
 } from "@/lib/runs/shared-tree";
 import {
-  claimAgentIdleResumeInTransaction,
   markReworkFromReview,
   type StateTransitionResult,
 } from "@/lib/runs/state-transitions";
 import {
-  promoteNextPending,
-  releaseSlotOnIdle,
   tryStartRun,
+  takeSchedulerLock,
+  countLiveRuns,
+  capForPool,
 } from "@/lib/scheduler";
 import {
   createExecutionHosts,
@@ -122,12 +135,12 @@ import {
   isFencedError,
   localHost,
   mintPlacement,
-  releaseAssignmentForRun,
   type BoundClient,
   type ExecutionHosts,
   type HostAdminClient,
   type SupervisorEvent,
 } from "@/lib/execution-host";
+import { executionDataPlaneModeForHost } from "@/lib/execution-host/data-plane-capabilities";
 import { escalateHookTrip } from "@/lib/runs/hook-trip";
 import { haltRuleFromEvent } from "@/lib/runs/hook-trip-rule";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
@@ -144,7 +157,16 @@ import {
   ensureWorktreeProvenance,
   readWorktreeProvenanceMetadata,
 } from "@/lib/worktree-provenance";
-import { recordArtifact } from "@/lib/flows/graph/artifact-store";
+import {
+  admitConsensusDraftPrompt,
+  waitForConsensusDraftPrompt,
+} from "@/lib/flows/graph/consensus/draft-prompt-owner";
+
+export {
+  agentReadOnlyWorkdirPath,
+  agentWorkdirPath,
+  sharedAgentWorktreePath,
+} from "./workspace-paths";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const {
@@ -171,7 +193,6 @@ const log = pino({
 });
 
 const COMMENT_THREAD_TAIL_LIMIT = 6;
-const CONSENSUS_DRAFT_OUTPUT_CAP_BYTES = 1024 * 1024;
 
 export type AgentTriggerSource =
   | "manual"
@@ -626,21 +647,6 @@ export async function resolveAgentLaunchRuntime(
   return { ...ctx, resolution };
 }
 
-export function agentWorkdirPath(projectSlug: string, runId: string): string {
-  return path.join(worktreesRoot(), projectSlug, runId);
-}
-
-// M37 Phase 10 (ADR-099): the SHARED worktree for an orchestrator tree —
-// keyed by the tree root, so every shared-mode child of the same rootRunId
-// resolves to one tree. Deterministic from rootRunId, so the 2nd shared child
-// recomputes the same path and reuses the tree the 1st allocated.
-export function sharedAgentWorktreePath(
-  projectSlug: string,
-  rootRunId: string,
-): string {
-  return path.join(worktreesRoot(), projectSlug, "agents", rootRunId);
-}
-
 function branchSafeSegment(value: string): string {
   return value.replace(/[^A-Za-z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "");
 }
@@ -653,24 +659,6 @@ export function agentWorktreeBranchName(input: {
   const safeAgentId = branchSafeSegment(input.agentId);
 
   return `${input.prefix}agent-${safeAgentId}-${input.runId.slice(0, 8)}`;
-}
-
-// ADR-090 rework (workspace_ref): the EPHEMERAL read-only checkout for a
-// repo_read run pinned to a trigger-derived ref. Deterministic from the run
-// id — the terminal choke point derives it back without any schema state.
-export function agentReadOnlyWorkdirPath(
-  projectSlug: string,
-  runId: string,
-): string {
-  return path.join(worktreesRoot(), projectSlug, `${runId}-ro`);
-}
-
-async function pathIsDirectory(p: string): Promise<boolean> {
-  try {
-    return (await stat(p)).isDirectory();
-  } catch {
-    return false;
-  }
 }
 
 // Resolve `workspace_ref` to a committish (v1, owner decision 8):
@@ -1109,6 +1097,7 @@ export async function launchAgentRun(
   // unreachable/refused surfaces as EXECUTOR_UNAVAILABLE before any worktree
   // or row exists. The host row is what the launch tx places the run on.
   const placementHost = await localHost({ db: _db as unknown as ExecutionDb });
+  const executionDataPlaneMode = executionDataPlaneModeForHost(placementHost);
 
   let worktreePath: string | null = null;
   let branch: string | null = null;
@@ -1352,6 +1341,7 @@ export async function launchAgentRun(
   const runRow = {
     id: runId,
     runKind: "agent" as const,
+    executionDataPlaneMode,
     agentChainDepth: chain.depth,
     agentId: input.agentId,
     executionPolicy,
@@ -2115,76 +2105,6 @@ function consensusAgentDraftPrompt(
   return [basePrompt, consensusDraftPromptBlock(payload)].join("\n\n");
 }
 
-function appendCappedConsensusDraftOutput(
-  current: string,
-  chunk: string,
-): string {
-  const remaining = CONSENSUS_DRAFT_OUTPUT_CAP_BYTES - current.length;
-
-  if (remaining <= 0) return current;
-
-  return current + chunk.slice(0, remaining);
-}
-
-function consensusDraftUpdateText(update: unknown): string | null {
-  if (!isRecord(update)) return null;
-  if (update.sessionUpdate !== "agent_message_chunk") return null;
-
-  const content = update.content;
-
-  if (!isRecord(content) || content.type !== "text") return null;
-
-  return typeof content.text === "string" ? content.text : null;
-}
-
-async function loadConsensusDraftPayload(
-  db: Db,
-  runId: string,
-): Promise<ConsensusDraftPayload | null> {
-  const rows = await db
-    .select({ triggerPayload: runs.triggerPayload })
-    .from(runs)
-    .where(eq(runs.id, runId));
-  const row = rows[0];
-
-  return row ? consensusDraftPayload(row) : null;
-}
-
-async function recordConsensusDraftArtifact(args: {
-  db: Db;
-  runId: string;
-  payload: ConsensusDraftPayload;
-  text: string;
-}): Promise<void> {
-  const text = args.text.slice(0, CONSENSUS_DRAFT_OUTPUT_CAP_BYTES);
-
-  if (text.trim().length === 0) {
-    throw new MaisterError(
-      "PRECONDITION",
-      `consensus draft participant "${args.payload.participantId}" produced no text`,
-    );
-  }
-
-  await recordArtifact(
-    {
-      id: `run:${args.runId}:consensus-draft:${args.payload.nodeAttemptId}:${args.payload.participantId}:r${args.payload.round}`,
-      runId: args.runId,
-      nodeId: "consensus-draft",
-      artifactDefId: "default:consensus-draft",
-      kind: "human_note",
-      producer: "runner",
-      locator: {
-        kind: "inline",
-        text,
-      },
-      validity: "current",
-      visibility: "internal",
-      retention: "run",
-    },
-    args.db,
-  );
-}
-
 async function startConsensusRunnerDraftSession(args: {
   db: Db;
   hosts: ExecutionHosts;
@@ -2214,44 +2134,31 @@ async function startConsensusRunnerDraftSession(args: {
       runId,
       args.assignmentId,
     );
-    const session = await execution.client.createSession({
-      stepId: "agent",
-      executor: runnerExecutorInput(args.snapshot),
-      runner: runnerSupervisorInput({ snapshot: args.snapshot }),
-      adapterLaunch: mergeRunnerAdapterLaunch(args.snapshot),
-      readOnlySession: true,
-      ...(args.run.acpSessionId
-        ? { resumeSessionId: args.run.acpSessionId }
-        : {}),
-    });
-
-    await persistRunSessionAcpSessionId(
-      args.db,
-      runId,
-      "default",
-      session.acpSessionId,
+    // S2.7: the draft's accepted input, create and prompt belong to one durable
+    // turn, so a dead consumer stack can never lose the participant's answer.
+    const turn = await args.db.transaction((tx: ExecutionDb) =>
+      admitAgentGenerationTurn(tx, {
+        runId,
+        assignmentId: execution.client.assignment.id,
+        variant: "consensus_draft",
+        prompt: consensusDraftPromptBlock(args.payload),
+      }),
+    );
+    const session = await execution.client.createOwnedSession(
+      { variant: "agent", turnId: turn.id, promptOrdinal: turn.ordinal },
+      async () => ({
+        stepId: "agent",
+        executor: runnerExecutorInput(args.snapshot),
+        runner: runnerSupervisorInput({ snapshot: args.snapshot }),
+        adapterLaunch: mergeRunnerAdapterLaunch(args.snapshot),
+        readOnlySession: true,
+        ...(args.run.acpSessionId
+          ? { resumeSessionId: args.run.acpSessionId }
+          : {}),
+      }),
     );
 
-    queueMicrotask(() => {
-      void consumeAgentSession({
-        db: args.db,
-        execution,
-        runId,
-        sessionId: session.sessionId,
-      }).catch((err: unknown) => {
-        log.error(
-          { runId, err: err instanceof Error ? err.message : String(err) },
-          "consensus runner draft session consumer threw",
-        );
-      });
-    });
-
-    await (
-      await execution.client.prompt(session.sessionId, {
-        stepId: "agent",
-        prompt: consensusDraftPromptBlock(args.payload),
-      })
-    ).completion;
+    await dispatchStoredAgentTurn(args.db, execution, turn, session.sessionId);
 
     log.info(
       {
@@ -2282,574 +2189,13 @@ async function startConsensusRunnerDraftSession(args: {
   }
 }
 
-type AgentTerminalOutcome = "Done" | "Failed" | "Crashed" | "Abandoned";
-type AgentFinalStatus = AgentTerminalOutcome | "Review";
-
-type AgentAssignmentClose =
-  | {
-      kind: "user";
-      actorId: string;
-      eventKind?: "cancelled" | "superseded" | "system_closed";
-      reason?: string;
-    }
-  | {
-      kind: "system";
-      reason: string;
-    };
-
-type AgentFinalizeOptions = {
-  db?: Db;
-  reason?: string;
-  closeOpenHitl?: boolean;
-  closeAssignments?: AgentAssignmentClose;
-  // ADR-165 (T5.4): the completing turn's agent text, from which the public
-  // result sentinel is extracted. Absent on every non-session caller (an
-  // explicit stop, a reconcile), which reads as "no result was emitted".
-  finalText?: string;
-};
-
-const TERMINAL_CAS_SOURCE: Record<AgentTerminalOutcome, string[]> = {
-  Done: ["Running", "NeedsInput"],
-  Failed: ["Running", "NeedsInput"],
-  // Crashed also admits a checkpointed (NeedsInputIdle) or reviewing agent
-  // child: the reconcile sweep crashes an orphan of a dead coordinator in ANY
-  // paused/reviewing status (per-status orphan recovery), and it does so via
-  // this choke point so token revocation, HITL close and the agent-pool
-  // promote still run. Pending is deliberately absent — a never-started orphan
-  // is abandoned, not crashed.
-  Crashed: ["Running", "NeedsInput", "NeedsInputIdle", "Review"],
-  Abandoned: [
-    "Pending",
-    "Running",
-    "NeedsInput",
-    "NeedsInputIdle",
-    "Review",
-    "Crashed",
-  ],
-};
-
-const DOMAIN_KIND_BY_OUTCOME: Record<
-  AgentTerminalOutcome,
-  "run.done" | "run.failed" | "run.crashed" | "run.abandoned"
-> = {
-  Done: "run.done",
-  Failed: "run.failed",
-  Crashed: "run.crashed",
-  Abandoned: "run.abandoned",
-};
-
-const WEBHOOK_TYPE_BY_STATUS: Record<
-  AgentFinalStatus,
-  "run.review" | "run.done" | "run.failed" | "run.crashed" | "run.abandoned"
-> = {
-  Review: "run.review",
-  Done: "run.done",
-  Failed: "run.failed",
-  Crashed: "run.crashed",
-  Abandoned: "run.abandoned",
-};
-
-function finalStatusForCleanAgentExit(hasWorkspace: boolean): AgentFinalStatus {
-  return hasWorkspace ? "Review" : "Done";
-}
-
-function shouldReleaseAgentMaterialization(
-  status: AgentFinalStatus,
-  workspace: "none" | "repo_read" | "worktree",
-): boolean {
-  if (status === "Review") return false;
-
-  // A worktree-backed crash is resumable through the workspace/session
-  // recovery flow. The other workspace modes have no recovery workspace and
-  // must release before their terminal cleanup can remove their cwd.
-  return status !== "Crashed" || workspace !== "worktree";
-}
-
-// The terminal choke point for agent runs (ADR-090 sequencing rule): the
-// dirty-watchdog (Phase 4) and the token revoke run BEFORE/WITHIN the
-// status-flip transaction; nothing writes the run row after the flip.
+/** Preserve the launch module's legacy DB seam; terminal work lives in the typed adapter. */
 export async function finalizeAgentRun(
   runId: string,
   outcome: AgentTerminalOutcome,
-  opts: AgentFinalizeOptions = {},
+  opts: Omit<AgentFinalizeOptions, "db"> & { db?: Db } = {},
 ): Promise<{ finalized: boolean; status?: AgentFinalStatus }> {
-  const _db = opts.db ?? getDb();
-
-  // Set inside the transaction when the run used an ephemeral workspace_ref
-  // checkout — removed AFTER the commit (fs cleanup must never roll back the
-  // terminal flip; a failure leaves a stale dir the next spawn recreates).
-  let ephemeralCleanup: { repoPath: string; worktreePath: string } | null =
-    null;
-  let materializationCleanup: {
-    cwd: string;
-    workspace: "none" | "repo_read" | "worktree";
-  } | null = null;
-
-  const finalizeResult = await _db.transaction(async (tx: Db) => {
-    // M37 (ADR-102): read the shared-tree axes up front for the finalize
-    // branch below. The CAS gates on status.
-    const preRows = await tx
-      .select({
-        workspaceMode: runs.workspaceMode,
-        agentWorkspace: runs.agentWorkspace,
-        rootRunId: runs.rootRunId,
-        // ADR-165: the launch-time public-result contract. The finalizer reads
-        // ONLY this snapshot — never the parent's revision again.
-        resultContract: runs.resultContract,
-      })
-      .from(runs)
-      .where(eq(runs.id, runId))
-      .for("update");
-    const pendingHumanAskRows = await tx
-      .select({ id: hitlRequests.id })
-      .from(hitlRequests)
-      .where(
-        and(
-          eq(hitlRequests.runId, runId),
-          eq(hitlRequests.kind, "agent_question"),
-          eq(hitlRequests.activationState, "pending_termination"),
-          isNull(hitlRequests.respondedAt),
-          isNull(hitlRequests.supersededAt),
-        ),
-      )
-      .limit(1);
-
-    if (pendingHumanAskRows[0]) {
-      log.info(
-        {
-          runId,
-          outcome,
-          hitlRequestId: pendingHumanAskRows[0].id,
-        },
-        "agent finalization deferred to pending human-ask activation",
-      );
-
-      return false;
-    }
-
-    // M37 (ADR-102): a shared writable-worktree child finalizes to Review even
-    // when it owns no `workspaces` row (a reuser child — the allocator owns the
-    // UNIQUE worktree_path). The shared tree is one branch = one diff, reviewed and
-    // promoted once; a shared writable child is NEVER auto-Done on a clean exit.
-    const isSharedWritableExit =
-      preRows[0]?.workspaceMode === "shared" &&
-      preRows[0]?.agentWorkspace === "worktree";
-
-    const workspaceRows = await tx
-      .select({ id: workspaces.id, worktreePath: workspaces.worktreePath })
-      .from(workspaces)
-      .where(eq(workspaces.runId, runId));
-    const status =
-      outcome === "Done"
-        ? isSharedWritableExit
-          ? "Review"
-          : finalStatusForCleanAgentExit(workspaceRows.length > 0)
-        : outcome;
-
-    if (outcome === "Done") {
-      log.debug(
-        {
-          runId,
-          workspaceMode: preRows[0]?.workspaceMode ?? null,
-          agentWorkspace: preRows[0]?.agentWorkspace ?? null,
-          hasWorkspace: workspaceRows.length > 0,
-          status,
-        },
-        "agent clean-exit final status",
-      );
-    }
-
-    // ADR-165 (T5.4 / D10): the public-result decision, taken BEFORE the CAS so
-    // a result failure can turn a clean exit into `Failed`. `Failed` / `Crashed`
-    // / `Abandoned` outcomes never publish — the run did not finish, so whatever
-    // text it produced is not an answer.
-    const resultContract = (preRows[0]?.resultContract ??
-      null) as RunResultContract | null;
-    const resultDecision =
-      outcome === "Done" && resultContract
-        ? decideAgentResult({
-            contract: resultContract,
-            finalText: opts.finalText,
-          })
-        : { kind: "none" as const };
-    const effectiveStatus =
-      resultDecision.kind === "invalid" ? "Failed" : status;
-    const endedAt = new Date();
-
-    // M42 (ADR-114): the agent run's session resume handle lives on its
-    // `run_sessions` row (sole source of truth) — a delegated child reaching
-    // Review keeps it for run_rework session/resume; a terminal run is never
-    // resumed (status-gated), so no run-level marker reset is needed here.
-    const rows = await tx
-      .update(runs)
-      .set({
-        status: effectiveStatus,
-        endedAt,
-        currentStepId: null,
-      })
-      .where(
-        and(
-          eq(runs.id, runId),
-          eq(runs.runKind, "agent"),
-          inArray(runs.status, TERMINAL_CAS_SOURCE[outcome]),
-        ),
-      )
-      .returning({
-        projectId: runs.projectId,
-        taskId: runs.taskId,
-        agentId: runs.agentId,
-        agentWorkspace: runs.agentWorkspace,
-        parentRunId: runs.parentRunId,
-      });
-    const row = rows[0];
-
-    if (!row) return false;
-
-    // ADR-166 D7: the terminal status ends the run's driver generation (a
-    // Review child re-enters through a NEW generation on rework/re-message).
-    await releaseAssignmentForRun(
-      tx as unknown as ExecutionDb,
-      runId,
-      "run_terminal",
-    );
-
-    // ADR-165 (D9/W3): the result row commits in THIS transaction — the same one
-    // that flips the status and emits the wake — so a woken parent's
-    // `run_collect` can never observe a settle without its result.
-    let resultStatus: ResultStatus | null = null;
-
-    if (resultDecision.kind === "valid") {
-      await publishRunResult(tx, {
-        runId,
-        value: resultDecision.value,
-        valueBytes: resultDecision.valueBytes,
-        contract: resultContract as RunResultContract,
-        producerKind: "agent_session",
-        producerRef: "session:default",
-        artifactManifest: await engineArtifactManifest(tx, runId),
-      });
-      resultStatus = "valid";
-    } else if (resultDecision.kind === "invalid") {
-      await recordInvalidRunResult(tx, {
-        runId,
-        contract: resultContract as RunResultContract,
-        reason: resultDecision.reason,
-        producerKind: "agent_session",
-        producerRef: "session:default",
-      });
-      resultStatus = "unavailable";
-      log.warn(
-        {
-          runId,
-          outcome,
-          resultStatus,
-          reasonClass: resultDecision.reason,
-        },
-        "[run-result.agent] public result rejected — finalizing Failed",
-      );
-    } else if (resultDecision.kind === "absent") {
-      resultStatus = "absent";
-    }
-
-    if (effectiveStatus === "Abandoned") {
-      const scheduledRemovalAt = new Date(
-        endedAt.getTime() + gcAgeDays() * 86_400_000,
-      );
-
-      await tx
-        .update(workspaces)
-        .set({ scheduledRemovalAt })
-        .where(eq(workspaces.runId, runId));
-    }
-
-    // Cleanup cwd derives from immutable run/workspace/project provenance, not
-    // the mutable catalog agent row. Agent deletion is ON DELETE SET NULL and
-    // runner-backed consensus drafts intentionally have no agent id; both still
-    // own L2/package materialization that must release after the terminal flip.
-    const wsCtx = row.agentId
-      ? await loadAgentWorkspaceContext(tx, row.agentId, row.projectId)
-      : null;
-    const projectRows = row.projectId
-      ? await tx
-          .select({ slug: projects.slug, repoPath: projects.repoPath })
-          .from(projects)
-          .where(eq(projects.id, row.projectId))
-      : [];
-    const project = projectRows[0] ?? null;
-    // Persisted agent_workspace is authoritative. The live agent definition is
-    // only a compatibility fallback for historical rows that predate the run
-    // snapshot and still have an agent row.
-    const ranAs = row.agentWorkspace ?? wsCtx?.workspace;
-
-    if (project && ranAs === "repo_read") {
-      // workspace_ref runs leave a deterministic `-ro` checkout: when it
-      // exists, the L3 target IS that ephemeral dir (the parent checkout was
-      // never the session cwd).
-      const ephemeralPath = agentReadOnlyWorkdirPath(project.slug, runId);
-      const usedEphemeral = await pathIsDirectory(ephemeralPath);
-      const l3Target = usedEphemeral ? ephemeralPath : project.repoPath;
-
-      if (shouldReleaseAgentMaterialization(effectiveStatus, ranAs)) {
-        materializationCleanup = { cwd: l3Target, workspace: ranAs };
-      }
-
-      // ADR-090 L3 is agent-specific: only a live catalog agent can be
-      // quarantined. Its read-only porcelain inspection remains inside the
-      // transaction, while all filesystem release stays post-commit.
-      if (wsCtx && row.agentId) {
-        const verdict = await checkRepoReadDirt(l3Target, runId);
-
-        if (verdict.kind !== "clean") {
-          const violation =
-            verdict.kind === "dirty"
-              ? verdict.porcelain.slice(0, 512)
-              : `watchdog indeterminate: ${verdict.error.slice(0, 512)}`;
-
-          await quarantineAgentInTx({
-            tx,
-            agentId: row.agentId,
-            runId,
-            projectId: row.projectId,
-            taskId: row.taskId,
-            reason: `repo_read workspace contract failed for ${l3Target}: ${violation}`,
-          });
-        }
-      }
-
-      if (usedEphemeral) {
-        ephemeralCleanup = {
-          repoPath: project.repoPath,
-          worktreePath: ephemeralPath,
-        };
-      }
-    } else if (project && ranAs === "none") {
-      if (shouldReleaseAgentMaterialization(status, ranAs)) {
-        materializationCleanup = {
-          cwd: agentWorkdirPath(project.slug, runId),
-          workspace: ranAs,
-        };
-      }
-    } else if (project && ranAs === "worktree") {
-      const worktreePath =
-        workspaceRows[0]?.worktreePath ??
-        (preRows[0]?.workspaceMode === "shared" && preRows[0]?.rootRunId
-          ? sharedAgentWorktreePath(project.slug, preRows[0].rootRunId)
-          : agentWorkdirPath(project.slug, runId));
-
-      if (shouldReleaseAgentMaterialization(status, ranAs)) {
-        materializationCleanup = { cwd: worktreePath, workspace: ranAs };
-      }
-    }
-
-    await revokeAgentRunTokensForRun(runId, tx);
-
-    if (opts.closeOpenHitl) {
-      await tx
-        .update(hitlRequests)
-        .set({ respondedAt: endedAt })
-        .where(
-          and(eq(hitlRequests.runId, runId), isNull(hitlRequests.respondedAt)),
-        );
-    }
-
-    if (opts.closeAssignments?.kind === "user") {
-      await cancelActiveAssignmentsForRun({
-        db: tx,
-        runId,
-        actorId: opts.closeAssignments.actorId,
-        eventKind: opts.closeAssignments.eventKind,
-        reason: opts.closeAssignments.reason,
-      });
-    } else if (opts.closeAssignments?.kind === "system") {
-      await systemCloseActiveAssignmentsForRun({
-        db: tx,
-        runId,
-        reason: opts.closeAssignments.reason,
-      });
-    }
-
-    await emitWebhookEvent({
-      db: tx,
-      type: WEBHOOK_TYPE_BY_STATUS[effectiveStatus],
-      projectId: row.projectId,
-      runId,
-      data: {
-        kind: "agent",
-        agentId: row.agentId,
-        ...(effectiveStatus === "Review" ? { source: "agent" } : {}),
-        ...(opts.reason && effectiveStatus !== "Review"
-          ? { reason: opts.reason }
-          : {}),
-      },
-    });
-
-    // M37 (ADR-098/097): a DELEGATED child reaching Review emits `run.review` so
-    // the parked coordinator wakes to promote/rework the diff (and as-plan
-    // auto-promote fires). A top-level Review (no parent) emits nothing — there is
-    // no orchestrator to route to. Terminal outcomes emit their terminal kind.
-    if (effectiveStatus === "Review") {
-      if (row.parentRunId) {
-        await emitDomainEvent({
-          db: tx,
-          kind: "run.review",
-          projectId: row.projectId,
-          taskId: row.taskId,
-          runId,
-          actor: { type: "agent", id: row.agentId },
-          parentRunId: row.parentRunId,
-          payload: {
-            runKind: "agent",
-            agentId: row.agentId,
-            status: effectiveStatus,
-            // Codex review F1: the same cause field the flow emit helper
-            // writes — a clean agent exit IS a completion and stays
-            // auto-promotable.
-            cause: "agent_exit" satisfies RunReviewCause,
-            // ADR-165 (Q10-A): additive, omitted when the run carries no
-            // contract — an omitted value is honestly absent.
-            ...(resultStatus ? { resultStatus } : {}),
-          },
-        });
-      }
-    } else {
-      await emitDomainEvent({
-        db: tx,
-        // ADR-165: a result-caused failure emits `run.failed`, not the clean
-        // exit's `run.done` — the outcome the coordinator must react to is the
-        // FAILURE, and a `run.done` here would wake it into believing the child
-        // succeeded.
-        kind:
-          resultDecision.kind === "invalid"
-            ? "run.failed"
-            : DOMAIN_KIND_BY_OUTCOME[outcome],
-        projectId: row.projectId,
-        taskId: row.taskId,
-        runId,
-        actor: { type: "agent", id: row.agentId },
-        parentRunId: row.parentRunId,
-        payload: {
-          runKind: "agent",
-          agentId: row.agentId,
-          status: effectiveStatus,
-          ...(opts.reason ? { reason: opts.reason } : {}),
-          ...(resultDecision.kind === "invalid"
-            ? {
-                reason:
-                  resultDecision.reason === "result_missing"
-                    ? "result_missing"
-                    : "result_invalid",
-              }
-            : {}),
-          ...(resultStatus ? { resultStatus } : {}),
-        },
-      });
-    }
-
-    return { finalized: true as const, status: effectiveStatus };
-  });
-
-  if (finalizeResult !== false) {
-    let materializationReleaseFailedFor: string | null = null;
-
-    if (materializationCleanup) {
-      const cleanup = materializationCleanup as {
-        cwd: string;
-        workspace: "none" | "repo_read" | "worktree";
-      };
-
-      await restoreAgentMaterialization(cleanup.cwd, runId).catch(
-        (err: unknown) => {
-          materializationReleaseFailedFor = cleanup.cwd;
-          log.error(
-            {
-              runId,
-              workspace: cleanup.workspace,
-              errorType: err instanceof Error ? err.name : "unknown",
-            },
-            "post-commit agent materialization release failed",
-          );
-        },
-      );
-    }
-
-    log.info(
-      { runId, outcome, status: finalizeResult.status, reason: opts.reason },
-      "agent run finalized",
-    );
-
-    if (ephemeralCleanup) {
-      const cleanup = ephemeralCleanup as {
-        repoPath: string;
-        worktreePath: string;
-      };
-
-      if (materializationReleaseFailedFor === cleanup.worktreePath) {
-        log.warn(
-          { runId, workspace: "repo_read" },
-          "ephemeral checkout retained because materialization release must be retried",
-        );
-      } else {
-        await removeWorktree({
-          projectRepoPath: cleanup.repoPath,
-          worktreePath: cleanup.worktreePath,
-          force: true,
-        }).catch((err: unknown) => {
-          log.warn(
-            {
-              runId,
-              errorType: err instanceof Error ? err.name : "unknown",
-            },
-            "ephemeral checkout removal failed — next spawn recreates it",
-          );
-        });
-      }
-    }
-
-    const plainAgentCleanup = materializationCleanup as {
-      cwd: string;
-      workspace: "none" | "repo_read" | "worktree";
-    } | null;
-
-    if (
-      plainAgentCleanup?.workspace === "none" &&
-      materializationReleaseFailedFor !== plainAgentCleanup.cwd
-    ) {
-      await removeOwnedPlainAgentDirectory({
-        root: worktreesRoot(),
-        directoryPath: plainAgentCleanup.cwd,
-      }).catch((err: unknown) => {
-        log.warn(
-          {
-            runId,
-            errorType: err instanceof Error ? err.name : "unknown",
-          },
-          "plain agent directory removal failed and will retry during GC",
-        );
-      });
-    }
-
-    // ADR-157 (T32): release this run's read-only sibling mounts from the SAME
-    // post-commit choke that releases the ephemeral `-ro` checkout. Reads the
-    // launch snapshot off `runs.context_mounts` and is status-gated inside, so a
-    // clean-exit `Review` (shared writable tree) keeps its mounts for the rework.
-    await releaseRunContextMounts({ runId, db: _db }).catch((err: unknown) => {
-      log.warn(
-        { runId, err: err instanceof Error ? err.message : String(err) },
-        "context mount release failed — left to the GC backstop",
-      );
-    });
-
-    await promoteNextPending({ db: _db, pool: "agent" }).catch(
-      (err: unknown) => {
-        log.error(
-          { runId, err: err instanceof Error ? err.message : String(err) },
-          "agent slot promote failed",
-        );
-      },
-    );
-  }
-
-  return finalizeResult !== false ? finalizeResult : { finalized: false };
+  return finalizeAgentRunPrepared(runId, outcome, opts);
 }
 
 // M37 Phase 8 (ADR-099): a persistent swarm member PARKS on a clean end_turn
@@ -2860,186 +2206,83 @@ export async function finalizeAgentRun(
 // not terminal). A genuine failure/crash still goes through finalizeAgentRun.
 export async function parkPersistentAgent(
   runId: string,
-  opts: { db?: Db; acpSessionId?: string | null } = {},
+  opts: { db?: Db } = {},
 ): Promise<{ parked: boolean }> {
   const _db = opts.db ?? getDb();
 
-  const parked: boolean = await _db.transaction(async (tx: Db) => {
-    const rows = await tx
-      .update(runs)
-      .set({
-        status: "NeedsInputIdle",
-        checkpointAt: new Date(),
-        keepaliveUntil: null,
-      })
-      .where(
-        and(
-          eq(runs.id, runId),
-          eq(runs.runKind, "agent"),
-          eq(runs.status, "Running"),
-        ),
-      )
-      .returning({ id: runs.id });
+  const application = await _db.transaction((tx: ExecutionDb) =>
+    applyPersistentAgentPark(tx, runId),
+  );
 
-    if (rows.length > 0) {
-      // ADR-166 D7: a parked agent's driver generation ended with the turn;
-      // the next re-message mints a fresh `resume` generation.
-      await releaseAssignmentForRun(
-        tx as unknown as ExecutionDb,
-        runId,
-        "parked",
+  await afterPersistentAgentPark(_db, runId, application).catch(
+    (error: unknown) => {
+      log.warn(
+        { runId, errorType: error instanceof Error ? error.name : "unknown" },
+        "agent park promotion deferred to scheduler",
       );
-    }
+    },
+  );
 
-    // M42 (ADR-114): the resume handle lives on `run_sessions`, not a dropped
-    // runs column — refresh the active session's handle if a newer turn produced
-    // one.
-    if (rows.length > 0 && opts.acpSessionId) {
-      await persistRunSessionAcpSessionId(
-        tx,
-        runId,
-        "default",
-        opts.acpSessionId,
-      );
-    }
-
-    return rows.length > 0;
-  });
-
-  if (!parked) {
-    log.warn(
-      { runId, from: "Running", to: "NeedsInputIdle" },
-      "parkPersistentAgent: status-guard mismatch — concurrent transition won",
-    );
-
-    return { parked: false };
-  }
-
-  // Free the agent-pool slot the parked member no longer needs (mirrors the
-  // NeedsInputIdle checkpoint path) and promote any queued agent run.
-  await releaseSlotOnIdle({ runId, db: _db }).catch((err: unknown) => {
-    log.warn(
-      { runId, err: err instanceof Error ? err.message : String(err) },
-      "parkPersistentAgent: releaseSlotOnIdle failed",
-    );
-  });
-
-  log.info({ runId }, "persistent agent parked on clean end_turn");
-
-  return { parked: true };
+  return { parked: application.parked };
 }
 
 export type SendAgentMessageResult = {
   childRunId: string;
-  status: "Running";
+  messageId: string;
+  status: Run["status"];
+  messageState: AgentTurn["state"];
 };
 
-// M37 Phase 8 (ADR-099): re-message a persistent child agent. A parked child
-// (NeedsInputIdle) is woken — CAS NeedsInputIdle → Running, then
-// startAgentSession respawns + session/resumes (run.acpSessionId) and delivers
-// the override prompt as a fresh turn; the consume loop re-parks it on the next
-// clean end_turn. A live child (Running, mid-turn) gets the prompt delivered to
-// its already-attached session. Never exposes acp_session_id. Mirrors the HITL
-// idle-resume path's claim-then-startAgentSession mechanics.
+/** Acceptance persists before any capacity or host operation. */
 export async function sendAgentMessage(
   childRunId: string,
   prompt: string,
   opts: {
     db?: Db;
     executionHosts?: ExecutionHosts;
+    requestKey?: string;
+    signal?: AbortSignal;
   } = {},
 ): Promise<SendAgentMessageResult> {
   const _db = opts.db ?? getDb();
   const hosts = opts.executionHosts ?? createExecutionHosts({ db: _db });
+  const turn = await acceptAgentMessage(_db, childRunId, prompt, {
+    requestKey: opts.requestKey,
+  });
+  const host = await localHost({ db: _db, transport: hosts.transport });
+  const claim = await claimAgentMessage(_db, turn.id, host);
 
-  const rows = await _db
-    .select({
-      status: runs.status,
-      runKind: runs.runKind,
-    })
-    .from(runs)
-    .where(eq(runs.id, childRunId));
-  const baseRun = rows[0];
-
-  if (!baseRun || baseRun.runKind !== "agent") {
-    throw new MaisterError(
-      "PRECONDITION",
-      `run ${childRunId} is not an agent run`,
-    );
-  }
-
-  // M42 (ADR-114): the agent run's resume handle is on its ACTIVE session.
-  const run = {
-    ...baseRun,
-    acpSessionId:
-      (await loadActiveRunSession(_db, childRunId))?.acpSessionId ?? null,
-  };
-
-  // Parked: claim NeedsInputIdle → Running (startAgentSession early-returns on
-  // any non-Running status), then respawn + resume + deliver the new prompt.
-  // Mirrors the agent-idle HITL resume CAS in lib/services/hitl.ts.
-  if (run.status === "NeedsInputIdle") {
-    // ADR-166 D3: the re-message is a new driver generation (`resume`) minted
-    // inside the same CAS claim; the local host resolves BEFORE the claim.
-    const placementHost = await localHost({
-      db: _db as unknown as ExecutionDb,
-      transport: hosts.transport,
-    });
-    const claim = await _db.transaction((tx: Db) =>
-      claimAgentIdleResumeInTransaction(tx, childRunId, {
-        placement: { host: placementHost, transport: hosts.transport },
-      }),
-    );
-
-    if (!claim.ok) {
-      throw new MaisterError(
-        "CONFLICT",
-        `child run ${childRunId} is being resumed concurrently`,
-      );
-    }
-
+  if (claim.kind === "claimed") {
     await startAgentSession(childRunId, {
       db: _db,
       executionHosts: hosts,
-      overridePrompt: prompt,
-      assignmentId: claim.assignment?.id ?? null,
+      agentTurnId: claim.turn.id,
+      assignmentId: claim.turn.executionAssignmentId,
+      signal: opts.signal,
     });
-
-    return { childRunId, status: "Running" };
   }
+  const [current]: Run[] = await _db
+    .select()
+    .from(runs)
+    .where(eq(runs.id, childRunId));
+  const [message]: AgentTurn[] = await _db
+    .select()
+    .from(agentTurns)
+    .where(eq(agentTurns.id, turn.id));
 
-  // Live: deliver the prompt to the running session (its consumer re-parks it).
-  if (run.status === "Running") {
-    if (!run.acpSessionId) {
-      throw new MaisterError(
-        "PRECONDITION",
-        `child run ${childRunId} has no live session handle yet`,
-      );
-    }
-
-    const client = await hosts.forRun(childRunId);
-    const live = (await client.sessionsForRun()).find(
-      (s) => s.status === "live" && s.acpSessionId === run.acpSessionId,
+  if (!current || !message)
+    throw new MaisterError(
+      "PRECONDITION",
+      "agent message was removed before acknowledgment",
+      { details: { runId: childRunId, turnId: turn.id } },
     );
 
-    if (!live) {
-      throw new MaisterError(
-        "PRECONDITION",
-        `child run ${childRunId} has no live supervisor session`,
-      );
-    }
-
-    await (
-      await client.prompt(live.sessionId, { stepId: "agent", prompt })
-    ).completion;
-
-    return { childRunId, status: "Running" };
-  }
-
-  throw new MaisterError(
-    "PRECONDITION",
-    `child run ${childRunId} is not re-messageable (status=${run.status})`,
-  );
+  return {
+    childRunId,
+    messageId: message.id,
+    status: current.status,
+    messageState: message.state,
+  };
 }
 
 // The rework claim + its driver generation, in the caller's transaction.
@@ -3047,6 +2290,7 @@ async function claimReworkGeneration(
   tx: Db,
   childRunId: string,
   placementHost: ExecutionHost,
+  prompt: string,
 ): Promise<StateTransitionResult> {
   const flip = await markReworkFromReview(childRunId, { db: tx });
 
@@ -3057,13 +2301,45 @@ async function claimReworkGeneration(
     reason: "rework_return",
     host: placementHost,
   });
+  const turn = await admitAgentGenerationTurn(tx, {
+    runId: childRunId,
+    assignmentId: assignment.id,
+    variant: "rework",
+    prompt,
+  });
+
+  await tx
+    .update(runResults)
+    .set({ validity: "stale" })
+    .where(
+      and(eq(runResults.runId, childRunId), eq(runResults.validity, "valid")),
+    );
+  log.info(
+    { runId: childRunId, turnId: turn.id, assignmentId: assignment.id },
+    "agent rework admitted",
+  );
 
   return { ok: true, assignment };
 }
 
+async function claimAgentReworkCapacity(
+  tx: ExecutionDb,
+  runId: string,
+): Promise<void> {
+  await takeSchedulerLock(tx);
+  if ((await countLiveRuns(tx, "agent")) >= capForPool("agent"))
+    throw new MaisterError(
+      "CONFLICT",
+      "agent pool is full; retry rework when a slot is available",
+      {
+        details: { reason: "agent_pool_full", runId },
+      },
+    );
+}
+
 export type ReworkChildRunResult = {
   childRunId: string;
-  status: "Running";
+  status: Run["status"];
 };
 
 // FOR UPDATE load of an OWN (non-shared) child's `workspaces` row promotion_state —
@@ -3148,6 +2424,7 @@ export async function reworkChildRun(
 
   if (run.workspaceMode === "shared" && run.agentWorkspace === "worktree") {
     claim = await _db.transaction(async (tx: Db) => {
+      await claimAgentReworkCapacity(tx, childRunId);
       const ws = await resolveSharedTreeWorkspaceForUpdate(tx, run);
 
       if (ws.promotionState === "claiming" || ws.promotionState === "done") {
@@ -3165,10 +2442,11 @@ export async function reworkChildRun(
         );
       }
 
-      return claimReworkGeneration(tx, childRunId, placementHost);
+      return claimReworkGeneration(tx, childRunId, placementHost, prompt);
     });
   } else {
     claim = await _db.transaction(async (tx: Db) => {
+      await claimAgentReworkCapacity(tx, childRunId);
       const ws = await loadOwnWorkspacePromotionStateForUpdate(tx, childRunId);
 
       if (
@@ -3185,7 +2463,7 @@ export async function reworkChildRun(
         );
       }
 
-      return claimReworkGeneration(tx, childRunId, placementHost);
+      return claimReworkGeneration(tx, childRunId, placementHost, prompt);
     });
   }
 
@@ -3199,11 +2477,21 @@ export async function reworkChildRun(
   await startAgentSession(childRunId, {
     db: _db,
     executionHosts: hosts,
-    overridePrompt: prompt,
     assignmentId: claim.assignment?.id ?? null,
   });
+  const [current]: Array<{ status: Run["status"] }> = await _db
+    .select({ status: runs.status })
+    .from(runs)
+    .where(eq(runs.id, childRunId));
 
-  return { childRunId, status: "Running" };
+  if (!current)
+    throw new MaisterError(
+      "PRECONDITION",
+      "agent run was removed before rework acknowledgment",
+      { details: { runId: childRunId } },
+    );
+
+  return { childRunId, status: current.status };
 }
 
 async function recordAgentPermissionRequest(args: {
@@ -3351,6 +2639,69 @@ export function agentFacadeMcpServer(
   };
 }
 
+async function dispatchStoredAgentTurn(
+  db: ExecutionDb,
+  execution: AgentExecution,
+  turn: AgentTurn,
+  sessionId: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  signal?.throwIfAborted();
+  const draft = turn.variant === "consensus_draft";
+
+  observeOwnedAgentSession(db, execution, turn, sessionId, signal);
+  await waitForPromptIncarnation(db, execution.client, sessionId);
+  const handle = await execution.client.prompt(
+    sessionId,
+    { stepId: "agent", prompt: turn.prompt },
+    {
+      admitOwner: (tx) =>
+        draft
+          ? admitConsensusDraftPrompt(tx, execution.client, sessionId, turn.id)
+          : admitAgentTurnPrompt(tx, execution.client, sessionId, turn.id),
+    },
+  );
+
+  await (draft ? waitForConsensusDraftPrompt : waitForAgentPrompt)(
+    db,
+    execution.client,
+    handle.commandId,
+    signal,
+  );
+}
+
+function observeOwnedAgentSession(
+  db: ExecutionDb,
+  execution: AgentExecution,
+  turn: AgentTurn,
+  sessionId: string,
+  signal?: AbortSignal,
+): void {
+  log.info(
+    { runId: turn.runId, turnId: turn.id, sessionId },
+    "agent-owned-session-observing",
+  );
+  queueMicrotask(() => {
+    void consumeAgentSession({
+      db,
+      execution,
+      runId: turn.runId,
+      sessionId,
+      signal,
+    }).catch((error: unknown) => {
+      if (signal?.aborted) return;
+      log.error(
+        {
+          runId: turn.runId,
+          turnId: turn.id,
+          errorType: error instanceof Error ? error.name : "unknown",
+        },
+        "agent session consumer failed",
+      );
+    });
+  });
+}
+
 // Drives one standalone agent session end-to-end: spawn (resume-aware),
 // prompt, then consume supervisor events until a terminal transition.
 export async function startAgentSession(
@@ -3362,11 +2713,14 @@ export async function startAgentSession(
     db?: Db;
     executionHosts?: ExecutionHosts;
     overridePrompt?: string;
+    agentTurnId?: string;
+    signal?: AbortSignal;
     // ADR-166: the generation the caller's claim minted. Absent (the launch
     // dispatch, a scheduler promotion), the run's active pointer is bound.
     assignmentId?: string | null;
   } = {},
 ): Promise<void> {
+  opts.signal?.throwIfAborted();
   const _db = opts.db ?? getDb();
   const hosts = opts.executionHosts ?? createExecutionHosts({ db: _db });
 
@@ -3395,13 +2749,227 @@ export async function startAgentSession(
     runnerResolutionTier: activeSession?.runnerResolutionTier ?? null,
   };
 
-  if (run.status !== "Running") {
+  if (!["Running", "NeedsInput"].includes(run.status)) {
     log.warn(
       { runId, status: run.status },
-      "startAgentSession skipped — run is not Running",
+      "startAgentSession skipped — run is not awaiting live agent work",
     );
 
     return;
+  }
+
+  let agentTurn: AgentTurn | undefined;
+
+  if (assignmentId) {
+    const historical = await findAgentPermissionResult(
+      _db,
+      runId,
+      assignmentId,
+    );
+
+    if (historical) {
+      await waitForHistoricalAgentPrompt(
+        _db,
+        hosts.transport,
+        historical,
+        opts.signal,
+      );
+
+      return;
+    }
+  }
+  if (opts.agentTurnId) {
+    [agentTurn] = await _db
+      .select()
+      .from(agentTurns)
+      .where(
+        and(eq(agentTurns.id, opts.agentTurnId), eq(agentTurns.runId, runId)),
+      );
+    if (!agentTurn || agentTurn.executionAssignmentId !== assignmentId)
+      throw new MaisterError(
+        "CONFLICT",
+        "agent message no longer owns the launch assignment",
+        { details: { runId, turnId: opts.agentTurnId } },
+      );
+  } else if (assignmentId) {
+    [agentTurn] = await _db
+      .select()
+      .from(agentTurns)
+      .where(
+        and(
+          eq(agentTurns.runId, runId),
+          eq(agentTurns.executionAssignmentId, assignmentId),
+          inArray(agentTurns.state, ["claimed", "dispatched"]),
+        ),
+      )
+      .limit(1);
+    if (
+      !agentTurn &&
+      activeSession?.executionAssignmentId &&
+      activeSession.executionAssignmentId !== assignmentId
+    ) {
+      const [previous]: ExecutionAssignment[] = await _db
+        .select()
+        .from(executionAssignments)
+        .where(
+          eq(executionAssignments.id, activeSession.executionAssignmentId),
+        );
+
+      if (previous?.releasedReason === "parked") {
+        const [pending]: AgentTurn[] = await _db
+          .select()
+          .from(agentTurns)
+          .where(
+            and(eq(agentTurns.runId, runId), eq(agentTurns.state, "queued")),
+          )
+          .orderBy(asc(agentTurns.ordinal))
+          .limit(1);
+
+        if (pending) {
+          const placement = await localHost({
+            db: _db,
+            transport: hosts.transport,
+          });
+          const claim = await claimAgentMessage(_db, pending.id, placement);
+
+          if (claim.kind !== "claimed") return;
+          agentTurn = claim.turn;
+        }
+      }
+    }
+  }
+  const overridePrompt = agentTurn?.prompt ?? opts.overridePrompt;
+
+  if (agentTurn) {
+    const execution = await bindAgentExecution(hosts, runId, assignmentId);
+
+    await assertAgentResumeTurn(_db, agentTurn, execution.client.assignment);
+    if (agentTurn.commandId) {
+      const [command] = await _db
+        .select()
+        .from(executionCommands)
+        .where(eq(executionCommands.id, agentTurn.commandId));
+
+      if (command?.targetSessionId)
+        observeOwnedAgentSession(
+          _db,
+          execution,
+          agentTurn,
+          command.targetSessionId,
+          opts.signal,
+        );
+      await waitForAgentPrompt(
+        _db,
+        execution.client,
+        agentTurn.commandId,
+        opts.signal,
+      );
+
+      return;
+    }
+    if (run.status !== "Running") return;
+    const createOwner = {
+      variant: "agent" as const,
+      turnId: agentTurn.id,
+      promptOrdinal: agentTurn.ordinal,
+    };
+    const originalCreate = await latestOwnedCreate(_db, {
+      runId,
+      assignmentId: execution.client.assignment.id,
+      owner: createOwner,
+    });
+
+    if (originalCreate) {
+      try {
+        const session = await execution.client.createOwnedSession(
+          createOwner,
+          async () => {
+            throw new MaisterError(
+              "CONFLICT",
+              "retained agent creation lost its original request",
+              {
+                details: {
+                  runId,
+                  turnId: createOwner.turnId,
+                  commandId: originalCreate.id,
+                },
+              },
+            );
+          },
+        );
+
+        await dispatchStoredAgentTurn(
+          _db,
+          execution,
+          agentTurn,
+          session.sessionId,
+          opts.signal,
+        );
+      } catch (error) {
+        if (
+          isFencedError(error) ||
+          error instanceof SessionCreatePending ||
+          error instanceof AgentPromptContinuationPending
+        ) {
+          log.warn(
+            { runId, turnId: agentTurn.id, commandId: originalCreate.id },
+            "agent create continuation retained for recovery",
+          );
+
+          return;
+        }
+        if (await settleAgentCreateFailure(_db, execution.client, agentTurn))
+          return;
+        throw error;
+      }
+
+      return;
+    }
+    const [live]: Array<{ hostSessionId: string }> = await _db
+      .select({ hostSessionId: runSessionIncarnations.hostSessionId })
+      .from(runSessionIncarnations)
+      .where(
+        and(
+          eq(runSessionIncarnations.runSessionId, agentTurn.runSessionId ?? ""),
+          eq(runSessionIncarnations.executionAssignmentId, assignmentId ?? ""),
+          eq(runSessionIncarnations.state, "active"),
+        ),
+      )
+      .limit(1);
+
+    if (live) {
+      await dispatchStoredAgentTurn(
+        _db,
+        execution,
+        agentTurn,
+        live.hostSessionId,
+        opts.signal,
+      );
+
+      return;
+    }
+  }
+
+  if (run.status !== "Running") return;
+  if (assignmentId && overridePrompt === undefined) {
+    const existingPrompt = await findInitialAgentPrompt(
+      _db,
+      runId,
+      assignmentId,
+    );
+
+    if (existingPrompt) {
+      const execution = await bindAgentExecution(hosts, runId, assignmentId);
+
+      await waitForAgentPrompt(
+        _db,
+        execution.client,
+        existingPrompt,
+        opts.signal,
+      );
+
+      return;
+    }
   }
 
   const draftPayload = consensusDraftPayload(run);
@@ -3585,7 +3153,7 @@ export async function startAgentSession(
       _db,
       run,
       project.slug as string,
-      opts.overridePrompt != null,
+      overridePrompt != null,
     );
     const basePrompt = await buildAgentPrompt(
       _db,
@@ -3594,7 +3162,7 @@ export async function startAgentSession(
       memoryText,
     );
     const prompt =
-      opts.overridePrompt ??
+      overridePrompt ??
       (draftPayload
         ? consensusAgentDraftPrompt(basePrompt, draftPayload)
         : basePrompt);
@@ -3708,7 +3276,41 @@ export async function startAgentSession(
     // ADR-166: the create is handle-form — the workspace (and its context
     // mounts, snapshotted on the run above) is adopted by the bound client.
     const execution = await bindAgentExecution(hosts, runId, assignmentId);
-    const session = await execution.client.createSession({
+
+    // S2.12: a resume that reaches here resolved NO turn above, so its
+    // generation is named by the placement its claim minted. A turn resolved
+    // earlier keeps its identity — minting a second one here would strand the
+    // original queued and consume another pool slot.
+    if (!agentTurn) {
+      const ownedVariant =
+        overridePrompt === undefined && !run.acpSessionId
+          ? draftPayload
+            ? ("consensus_draft" as const)
+            : ("initial" as const)
+          : resumeVariantFor(execution.client.assignment.placementReason);
+
+      if (!ownedVariant)
+        throw new MaisterError(
+          "CONFLICT",
+          "agent prompt requires an owned generation",
+          {
+            details: {
+              runId,
+              reason: "unowned_agent_generation",
+              placementReason: execution.client.assignment.placementReason,
+            },
+          },
+        );
+      agentTurn = await _db.transaction((tx: ExecutionDb) =>
+        admitAgentGenerationTurn(tx, {
+          runId,
+          assignmentId: execution.client.assignment.id,
+          variant: ownedVariant,
+          prompt,
+        }),
+      );
+    }
+    const createPayload = {
       stepId: "agent",
       executor: runnerExecutorInput(snapshot),
       runner: runnerSupervisorInput({ snapshot }),
@@ -3737,14 +3339,29 @@ export async function startAgentSession(
       autoApprovePermissions:
         permissionsFromSnapshot(run.executionPolicy ?? null) === "auto_approve",
       ...(run.acpSessionId ? { resumeSessionId: run.acpSessionId } : {}),
-    });
+    };
+    const session = agentTurn
+      ? await execution.client.createOwnedSession(
+          {
+            variant: "agent",
+            turnId: agentTurn.id,
+            promptOrdinal: agentTurn.ordinal,
+          },
+          async () => createPayload,
+        )
+      : await execution.client.createSession(createPayload);
 
-    await persistRunSessionAcpSessionId(
-      _db,
-      runId,
-      "default",
-      session.acpSessionId,
-    );
+    if (agentTurn) {
+      await dispatchStoredAgentTurn(
+        _db,
+        execution,
+        agentTurn,
+        session.sessionId,
+        opts.signal,
+      );
+
+      return;
+    }
 
     queueMicrotask(() => {
       void consumeAgentSession({
@@ -3759,13 +3376,6 @@ export async function startAgentSession(
         );
       });
     });
-
-    await (
-      await execution.client.prompt(session.sessionId, {
-        stepId: "agent",
-        prompt,
-      })
-    ).completion;
   } catch (err) {
     if (isFencedError(err)) {
       // ADR-166: a newer driver generation owns the run — yield without
@@ -3774,10 +3384,34 @@ export async function startAgentSession(
 
       return;
     }
+    if (
+      err instanceof AgentPromptContinuationPending ||
+      err instanceof SessionCreatePending
+    ) {
+      log.warn(
+        { runId, commandId: err.details?.commandId },
+        "agent prompt retained for owner recovery",
+      );
+
+      return;
+    }
     log.error(
-      { runId, err: err instanceof Error ? err.message : String(err) },
+      {
+        runId,
+        errorType: err instanceof Error ? err.name : "unknown",
+        code: err instanceof MaisterError ? err.code : undefined,
+        causeCode:
+          err instanceof MaisterError ? err.details?.causeCode : undefined,
+      },
       "agent session spawn/prompt failed",
     );
+    if (agentTurn) {
+      const execution = await bindAgentExecution(hosts, runId, assignmentId);
+
+      if (await settleAgentCreateFailure(_db, execution.client, agentTurn))
+        return;
+      throw err;
+    }
     await finalizeAgentRun(runId, "Failed", {
       db: _db,
       reason: err instanceof Error ? err.message : String(err),
@@ -3790,38 +3424,27 @@ export async function consumeAgentSession(args: {
   execution: AgentExecution;
   runId: string;
   sessionId: string;
+  signal?: AbortSignal;
 }): Promise<void> {
   let sawPermissionRequest = false;
-  const draftPayload = await loadConsensusDraftPayload(args.db, args.runId);
-  let consensusDraftOutput = "";
   // ADR-165 (T5.3): the agent's own text, accumulated per PROMPT TURN. It is
   // reset when a new turn begins (a resume after a permission answer) so a
   // sentinel block from an EARLIER turn can never be read as this turn's final
   // answer — the contract is "the block that ends the completing turn".
   let finalText = "";
 
-  for await (const event of args.execution.admin.streamSession(
-    args.sessionId,
-  )) {
+  for await (const event of args.execution.admin.streamSession(args.sessionId, {
+    signal: args.signal,
+  })) {
     switch (event.type) {
       case "session.update": {
-        if (draftPayload) {
-          const chunk = consensusDraftUpdateText(event.update);
-
-          if (chunk) {
-            consensusDraftOutput = appendCappedConsensusDraftOutput(
-              consensusDraftOutput,
-              chunk,
-            );
-          }
-        }
         // ADR-165: the reset comes BEFORE the append. This update both ENDS the
         // permission wait and carries the first text of the NEW turn, so
         // appending first and clearing after would discard the very chunk that
         // starts the turn we care about.
         if (sawPermissionRequest) finalText = "";
         {
-          const chunk = consensusDraftUpdateText(event.update);
+          const chunk = agentMessageText(event.update);
 
           if (chunk) finalText = appendCapped(finalText, chunk);
         }
@@ -3829,14 +3452,43 @@ export async function consumeAgentSession(args: {
           // The permission was answered (the session is active again);
           // the runner owns NeedsInput → Running for agent runs too.
           sawPermissionRequest = false;
-          await args.db
-            .update(runs)
-            .set({ status: "Running", keepaliveUntil: null })
-            .where(and(eq(runs.id, args.runId), eq(runs.status, "NeedsInput")));
+          if (
+            !(await agentSessionHasOwnedPrompt(
+              args.db,
+              args.runId,
+              args.sessionId,
+            ))
+          )
+            await args.db
+              .update(runs)
+              .set({ status: "Running", keepaliveUntil: null })
+              .where(
+                and(eq(runs.id, args.runId), eq(runs.status, "NeedsInput")),
+              );
         }
         break;
       }
       case "session.permission_request": {
+        if (
+          await replayAgentPermissionDelivery(
+            args.db,
+            args.execution.client,
+            event,
+          )
+        ) {
+          sawPermissionRequest = false;
+          break;
+        }
+        if (
+          await deliverResumedAgentPermission(
+            args.db,
+            args.execution.client,
+            event,
+          )
+        ) {
+          sawPermissionRequest = false;
+          break;
+        }
         const autoDelivered = await tryAutoDeliverAgentPermission({
           db: args.db,
           execution: args.execution,
@@ -3850,6 +3502,14 @@ export async function consumeAgentSession(args: {
           break;
         }
         sawPermissionRequest = true;
+        if (
+          await recordOwnedAgentPermission(
+            args.db,
+            args.execution.client,
+            event,
+          )
+        )
+          break;
         await recordAgentPermissionRequest({
           db: args.db,
           runId: args.runId,
@@ -3858,6 +3518,10 @@ export async function consumeAgentSession(args: {
         break;
       }
       case "session.exited": {
+        if (
+          await agentSessionHasOwnedPrompt(args.db, args.runId, args.sessionId)
+        )
+          return;
         // ADR-166 E-EH-11: the host evicted this session for a newer driver
         // generation — that generation owns the run; finalize nothing.
         if (event.reason === "fenced") {
@@ -3901,39 +3565,6 @@ export async function consumeAgentSession(args: {
           }
         }
 
-        if (
-          draftPayload &&
-          event.exitCode === 0 &&
-          event.reason === undefined
-        ) {
-          try {
-            await recordConsensusDraftArtifact({
-              db: args.db,
-              runId: args.runId,
-              payload: draftPayload,
-              text: consensusDraftOutput,
-            });
-            log.info(
-              {
-                runId: args.runId,
-                participantId: draftPayload.participantId,
-                nodeId: draftPayload.nodeId,
-                nodeAttemptId: draftPayload.nodeAttemptId,
-                round: draftPayload.round,
-                outputLength: consensusDraftOutput.length,
-              },
-              "consensus draft output artifact recorded",
-            );
-          } catch (err) {
-            await finalizeAgentRun(args.runId, "Failed", {
-              db: args.db,
-              reason: err instanceof Error ? err.message : String(err),
-            });
-
-            return;
-          }
-        }
-
         await finalizeAgentRun(
           args.runId,
           event.exitCode === 0 || event.reason === "intentional"
@@ -3954,6 +3585,10 @@ export async function consumeAgentSession(args: {
         return;
       }
       case "session.crashed": {
+        if (
+          await agentSessionHasOwnedPrompt(args.db, args.runId, args.sessionId)
+        )
+          return;
         await finalizeAgentRun(args.runId, "Crashed", {
           db: args.db,
           reason: "supervisor reported session crash",
@@ -3981,6 +3616,7 @@ export async function consumeAgentSession(args: {
               runId: args.runId,
               stepId: "agent",
               supervisorSessionId: args.sessionId,
+              assignmentId: args.execution.client.assignment.id,
               rule: haltRule,
               toolCall: event.toolCall,
               runKind: "agent",
@@ -4056,6 +3692,12 @@ async function findStoredAgentPermissionIntent(
     );
 
   for (const row of rows) {
+    if (
+      row.schema &&
+      typeof row.schema === "object" &&
+      "agentPrompt" in row.schema
+    )
+      continue;
     const optionId = (row.response as { optionId?: unknown } | null)?.optionId;
 
     if (typeof optionId !== "string" || optionId.length === 0) continue;

@@ -1,7 +1,7 @@
 # CLAUDE.md — `web/` (MAIster Web Control Plane)
 
 > Read `../CLAUDE.md` first. It holds the product spine, locked architectural
-> decisions (ACP-driven HITL + checkpoint/resume, SSE pipe-to-disk, typed
+> decisions (ACP-driven HITL + checkpoint/resume, durable canonical SSE, typed
 > `MaisterError`, concurrency cap, multi-executor via ACP, Flow Engine v2
 > plugin model) and the out-of-POC list. This file is the Web/Next.js slice
 > only. Agent processes live in `../supervisor/`, NOT here.
@@ -320,7 +320,10 @@ add`, supervisor `POST /sessions` — body carries `taskId` and optional
 - `GET /api/runs/[id]/artifacts` (M12 — list the typed-artifact evidence index;
   optional `node`/`kind`/`validity` filters)
 - `GET /api/runs/[id]/artifacts/[artifactId]/payload` (M12 — raw payload per
-  locator; `text/plain` or `application/json`; path-confined to the run dir)
+  locator; `text/plain` or `application/json`, `execution-object` bytes as
+  `application/octet-stream` and gated by `readRepoFiles` like the direct
+  content route; always a sandboxed no-store attachment — AB-12;
+  path-confined to the run dir)
 - `GET /api/cron/gc` (Abandoned/Done worktrees + checkpointed sessions >7d,
   all projects)
 
@@ -609,6 +612,8 @@ Flag these in PRs but do NOT mass-delete in unrelated commits (surgical-changes 
 - No `chokidar` / `fs.watch` / polling for state transitions. The live path is supervisor's ACP notifications bridged through SSE; the recovery path is supervisor heartbeat + reconcile-on-startup.
 - All writes to `.maister/<project-slug>/runs/<run-id>/` are atomic (`tmp + rename` via `atomicWriteJson`). Flow / agent may read them mid-write otherwise.
 - Throw `MaisterError` with a `code` for known domain failures; UI branches on `code`. New codes: `EXECUTOR_UNAVAILABLE`, `FLOW_INSTALL`, `ACP_PROTOCOL`, `CHECKPOINT`.
-- Every ACP `session/update` line must be written to **both** the SSE bridge AND `.maister/<project-slug>/runs/<run-id>/<step-id>.log` — read-side tails the file for reconnect via `lastEventId`.
+- Every externally visible ACP event must be committed to the supervisor
+  outbox before publication and projected through canonical Postgres state.
+  Raw logs stay host-private and are exposed only as opaque runtime objects.
 - Agent processes live in `../supervisor/`, NOT in Next.js. Web tier talks to them via `lib/execution-host/` only (ADR-166, Implemented); `lib/supervisor-client.ts` is its lint-fenced transport.
 - Anything in the root CLAUDE.md "Out of POC scope" list does not get implemented here either.

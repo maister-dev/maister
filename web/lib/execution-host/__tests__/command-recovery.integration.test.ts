@@ -24,13 +24,23 @@ import {
   listCommandsForRun,
 } from "@/lib/execution-host/commands";
 import {
-  pruneExecutionCommands,
   recoverExecutionCommands,
   releaseStaleAssignments,
 } from "@/lib/execution-host/recovery";
+import { retireEligibleCommands } from "@/lib/execution-host/retirement";
 import { OPEN_COMMANDS_PAGE_SIZE } from "@/lib/execution-host/commands";
 import { resetRegistrarStateForTests } from "@/lib/execution-host/registrar";
 import { resetResolverForTests } from "@/lib/execution-host/resolver";
+import { canonicalProjectors } from "@/lib/execution-host/events/projection-runtime";
+import {
+  startProjectionWorker,
+  type ProjectionWorker,
+} from "@/lib/execution-host/events/projection-worker";
+import { stopRuntimeEventConsumers } from "@/lib/execution-host/events/consumer";
+import {
+  publishRuntimeObject,
+  readRuntimeObjectContent,
+} from "@/lib/execution-host/runtime-objects";
 import { runReconcileSweep } from "@/lib/reconcile";
 import {
   seedProjectRow,
@@ -47,6 +57,7 @@ import {
   startRealSupervisor,
   useRealSupervisorUrl,
 } from "@/test-support/real-supervisor";
+import { seedNodePromptOwner } from "@/test-support/prompt-owner-fixture";
 
 const schema = fullSchema as unknown as Record<string, any>;
 
@@ -57,6 +68,7 @@ let restoreUrl: () => void = () => {};
 let hosts: ExecutionHosts;
 let project: { id: string; slug: string; repoPath: string };
 let hostId: string;
+let projectionWorker: ProjectionWorker;
 
 const CREATE_PAYLOAD = {
   stepId: "s1",
@@ -172,10 +184,16 @@ beforeAll(async () => {
   });
 
   hostId = probe.host.id;
+  projectionWorker = startProjectionWorker({
+    db,
+    projectors: canonicalProjectors,
+  });
 }, 180_000);
 
 afterAll(async () => {
   restoreUrl();
+  await stopRuntimeEventConsumers();
+  await projectionWorker?.stop();
   await sup?.kill();
   await testDatabase?.stop();
 });
@@ -298,23 +316,21 @@ describe("execution-command recovery (real supervisor)", () => {
     const created = await client.createSession(CREATE_PAYLOAD);
     const beforeHealth = await hosts.local().health();
 
-    // Feed `commandSignals` like a real SSE consumer would.
-    const consumer = (async () => {
-      try {
-        for await (const event of hosts
-          .local()
-          .streamSession(created.hostSessionId)) {
-          // Signals are published by the admin stream itself.
-          void event;
-        }
-      } catch {
-        /* the stream dies with the host */
-      }
-    })();
-    const handle = await client.prompt(created.hostSessionId, {
-      stepId: "s1",
-      prompt: "hang",
-    });
+    // Durable prompt recovery must work without a process-local SSE subscriber.
+    const handle = await client.prompt(
+      created.hostSessionId,
+      {
+        stepId: "s1",
+        prompt: "hang",
+      },
+      {
+        admitOwner: await seedNodePromptOwner(
+          db,
+          client,
+          created.hostSessionId,
+        ),
+      },
+    );
 
     await untilState(handle.commandId, ["accepted"]);
 
@@ -330,24 +346,25 @@ describe("execution-command recovery (real supervisor)", () => {
     );
 
     // The live driver observes the loss through its own receipt lookup.
-    await expect(handle.completion).rejects.toSatisfy(
+    await expect(
+      client.waitForPrompt(handle, { signal: AbortSignal.timeout(15_000) }),
+    ).rejects.toSatisfy(
       (err: unknown) =>
         isMaisterError(err) && err.details?.reason === "turn_lost",
     );
-    await consumer;
 
-    // Recovery on a fresh process sees the same row still `accepted`: the
-    // host's receipt is `accepted` with no in-flight execution.
-    await db
-      .update(schema.executionCommands)
-      .set({ state: "accepted", completedAt: null, lastError: null })
-      .where(eq(schema.executionCommands.id, handle.commandId));
-    const summary = await recoverExecutionCommands({ db, graceMs: 0 });
-
-    expect(summary.turnLost).toBe(1);
+    // Startup already committed a rejected receipt and canonical terminal.
+    // A second recovery pass preserves that exact nested error and evidence;
+    // it cannot reset a verified command to synthesize a second failure.
+    await recoverExecutionCommands({ db, graceMs: 0 });
     expect(await getCommand(db, handle.commandId)).toMatchObject({
       state: "failed",
-      lastError: { reason: "turn_lost" },
+      lastError: { code: "PRECONDITION", details: { reason: "turn_lost" } },
+      terminalEvidenceSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+      receiptEvidence: {
+        phase: "rejected",
+        body: { details: { reason: "turn_lost" } },
+      },
     });
 
     // The existing reconcile classifies the run: Running, no live session,
@@ -416,7 +433,7 @@ describe("execution-command recovery (real supervisor)", () => {
     }
   });
 
-  it("V6: prune deletes terminal rows older than 7 days only", async () => {
+  it("V6: age alone retires nothing — an 8-day-old terminal row with no owner disposition stays whole", async () => {
     const runId = await seedRun(testDatabase.db, { projectId: project.id });
     const assignment = await mint(runId);
     const insertTerminal = async (ageDays: number) => {
@@ -442,10 +459,13 @@ describe("execution-command recovery (real supervisor)", () => {
     const old = await insertTerminal(8);
     const recent = await insertTerminal(6);
 
-    const pruned = await pruneExecutionCommands({ db });
+    const summary = await retireEligibleCommands({ db, hosts });
 
-    expect(pruned).toBe(1);
-    expect(await getCommand(db, old)).toBeNull();
+    // The run is still live, so BOTH are protected by state, not by age; the
+    // scan still advanced past them.
+    expect(summary.retired).toBe(0);
+    expect(summary.reasons.run_retained).toBeGreaterThanOrEqual(2);
+    expect(await getCommand(db, old)).not.toBeNull();
     expect(await getCommand(db, recent)).not.toBeNull();
   });
 
@@ -500,6 +520,66 @@ describe("execution-command recovery (real supervisor)", () => {
       attempts: 1,
       lastError: { reason: "ORPHANED" },
     });
+  }, 60_000);
+
+  it("V7b: recovery re-delivers a queued runtime-object deletion and folds catalogue state", async () => {
+    const runId = await seedFlowRun("v7-runtime-object");
+    const assignment = await mint(runId);
+    const client = await hosts.forAssignment(assignment);
+    const objectId = randomUUID();
+    const bytes = new TextEncoder().encode("recover deletion\u0000é");
+
+    await publishRuntimeObject({
+      client,
+      objectId,
+      kind: "generated_artifact",
+      logicalName: "recovery.txt",
+      mimeType: "text/plain",
+      retentionClass: "run",
+      bytes,
+    });
+    const full = await readRuntimeObjectContent({ db, runId, objectId });
+    const partial = await readRuntimeObjectContent({
+      db,
+      runId,
+      objectId,
+      range: { start: 3, end: 9 },
+    });
+
+    expect(full.content.bytes).toEqual(bytes);
+    expect(partial.content.bytes).toEqual(bytes.slice(3, 10));
+    const command = await insertCommand(db, {
+      runId,
+      assignmentId: assignment.id,
+      hostId,
+      assignmentEpoch: assignment.epoch,
+      kind: "runtime_object.delete",
+      targetSessionId: objectId,
+      payload: { generation: 1 },
+      maxAttempts: 3,
+      driverless: true,
+    });
+
+    await db
+      .update(schema.executionRuntimeObjects)
+      .set({ state: "deleting" })
+      .where(eq(schema.executionRuntimeObjects.id, objectId));
+
+    const summary = await recoverExecutionCommands({ db, graceMs: 0 });
+    const [object] = (await db
+      .select()
+      .from(schema.executionRuntimeObjects)
+      .where(eq(schema.executionRuntimeObjects.id, objectId))) as Array<{
+      state: string;
+      deletedAt: Date | null;
+    }>;
+
+    expect(summary.redelivered).toBeGreaterThanOrEqual(1);
+    expect(await getCommand(db, command.id)).toMatchObject({
+      state: "succeeded",
+    });
+    expect(object.state).toBe("deleted");
+    expect(object.deletedAt).toBeInstanceOf(Date);
   }, 60_000);
 
   it("V8: recovery pages past the open-row page size — every queued driverless row of a 501-row backlog is re-delivered", async () => {

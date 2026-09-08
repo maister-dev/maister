@@ -1,20 +1,28 @@
+import type { ImmutableObjectReference } from "../../runtime/command-evidence";
+import type { ReceiptAdmission } from "./outbox-budget";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import type * as acp from "@agentclientprotocol/sdk";
 import type { Logger } from "pino";
-import type { EventsLogWriter } from "./events-log";
-import type { HostState } from "./host-state";
+import type {
+  AppendRuntimeEventInput,
+  HostRuntimeObjectRow,
+  HostState,
+} from "./host-state";
 import type { SessionRegistry, RegistryEntry } from "./registry";
 import type { WorkspaceResolution } from "./workspace-registry";
 
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { constants as fsConstants } from "node:fs";
-import { access, appendFile } from "node:fs/promises";
+import { constants as fsConstants, createReadStream } from "node:fs";
+import { access } from "node:fs/promises";
 import { delimiter, dirname, join } from "node:path";
 
 import { z, ZodError, type ZodType, type ZodTypeDef } from "zod";
 
+import { safeDownloadHeaders } from "../../runtime/safe-download";
+
 import { createAcpConnection, sendPromptOnConnection } from "./acp-client";
+import { retainedOutputBudget } from "./bounded-acp-stream";
 import {
   adapterSmokeCachePath,
   readAdapterSmokeCache,
@@ -40,7 +48,11 @@ import {
   waitForChildExit,
 } from "./execution-fence";
 import { attachHeartbeat } from "./heartbeat";
-import { EXECUTION_HOST_PROTOCOL_VERSION } from "./host-state";
+import { executionHostCapabilities } from "./data-plane-capabilities";
+import {
+  EXECUTION_HOST_PROTOCOL_VERSION,
+  HostRuntimeEventError,
+} from "./host-state";
 import {
   modelCatalogCache,
   type ModelCatalogCache,
@@ -51,11 +63,23 @@ import { resolveModelCatalog } from "./model-catalog/resolve";
 import { ModelCatalogDraftSchema } from "./model-catalog/types";
 import { pendingPermissions } from "./pending-permissions";
 import { contentBlockUriViolation } from "./prompt-confinement";
+import { resolvePromptRuntimeObjects } from "./prompt-runtime-objects";
 import { SESSION_EVENT_CHANNEL } from "./registry";
+import { RuntimeEventPublisher } from "./runtime-event-publisher";
+import {
+  MAX_RUNTIME_OBJECT_BYTES,
+  RuntimeObjectRegistry,
+  type RuntimeObjectPublicMetadata,
+} from "./runtime-objects";
+import {
+  RuntimeEventAckSchema,
+  RuntimeEventSequenceSchema,
+} from "./runtime-events";
 import { spawnSession } from "./spawn";
 import {
   AdoptWorkspacePayloadSchema,
   CommandEnvelopeSchema,
+  DeleteRuntimeObjectPayloadSchema,
   errorBody,
   httpStatusForCode,
   isEnvelopedBody,
@@ -63,6 +87,9 @@ import {
   isSupervisorError,
   parseGateChatHitlId,
   SendPromptRequestSchema,
+  CommandRetirementProofSchema,
+  ReserveRuntimeObjectPayloadSchema,
+  RuntimeObjectUploadHeadersSchema,
   SESSION_COMMAND_KINDS,
   StartSessionRequestSchema,
   SupervisorError,
@@ -70,11 +97,13 @@ import {
   type AdoptWorkspaceResponse,
   type CommandEnvelope,
   type CommandKind,
+  type RuntimeObjectOutputBinding,
   type SessionEvent,
   type SessionStatus,
   type SupervisorDiagnosticsResponse,
   type SupervisorErrorBody,
   type SupervisorHealthResponse,
+  type SendPromptRequest,
   type WorkspaceKind,
   type WorkspaceRecordResponse,
 } from "./types";
@@ -136,6 +165,7 @@ export type CheckpointResponse = {
 export type InputBody = z.infer<typeof InputBodySchema>;
 
 const DEFAULT_KILL_GRACE_MS = 5_000;
+const MAX_RUNTIME_EVENT_SSE_PENDING = 500;
 const SUPERVISOR_STARTED_AT_MS = Date.now();
 const SUPERVISOR_VERSION = process.env.npm_package_version ?? "0.0.1";
 const DIAGNOSTIC_ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -216,6 +246,69 @@ function countSessionsByStatus(
   }
 
   return counts;
+}
+
+function runtimeEventSupervisorError(error: unknown): SupervisorError {
+  if (error instanceof HostRuntimeEventError) {
+    if (
+      error.reason === "runtime_storage_unavailable" ||
+      error.reason === "runtime_storage_pressure"
+    )
+      return new SupervisorError("EXECUTOR_UNAVAILABLE", error.message, {
+        details: { reason: error.reason },
+      });
+    const reason =
+      error.reason === "replay_floor_exceeded"
+        ? "replay_floor_lost"
+        : error.reason === "event_outbox_soft_limit" ||
+            error.reason === "event_outbox_hard_limit" ||
+            error.reason === "event_outbox_terminal_reserve_exhausted"
+          ? "event_outbox_backpressure"
+          : error.reason;
+
+    if (
+      reason === "command_in_progress" ||
+      reason === "command_invariant_conflict" ||
+      reason === "stream_identity_conflict" ||
+      reason === "replay_floor_lost" ||
+      reason === "ack_not_contiguous" ||
+      reason === "ack_beyond_emitted" ||
+      reason === "event_outbox_backpressure"
+    ) {
+      return new SupervisorError("PRECONDITION", error.message, {
+        details: { reason },
+      });
+    }
+  }
+
+  return new SupervisorError(
+    "ACP_PROTOCOL",
+    error instanceof Error ? error.message : String(error),
+  );
+}
+
+function parseRuntimeEventCursor(
+  header: string | string[] | undefined,
+): string | null {
+  if (header === undefined) return null;
+  if (Array.isArray(header)) {
+    throw new SupervisorError(
+      "PRECONDITION",
+      "Last-Event-ID must be one canonical decimal cursor",
+      { details: { reason: "invalid_event_sequence" } },
+    );
+  }
+  const parsed = RuntimeEventSequenceSchema.safeParse(header);
+
+  if (!parsed.success) {
+    throw new SupervisorError(
+      "PRECONDITION",
+      "Last-Event-ID must be a canonical signed-BIGINT decimal cursor",
+      { details: { reason: "invalid_event_sequence" } },
+    );
+  }
+
+  return parsed.data;
 }
 
 async function findExecutablePath(binary: string): Promise<string | null> {
@@ -415,7 +508,48 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     throw new Error("registerRoutes requires an execution-host state store");
   }
 
+  app.addContentTypeParser("application/octet-stream", (_request, body, done) =>
+    done(null, body),
+  );
+
+  const unsubscribeStorageFailure = hostState.subscribeRuntimeStorageFailure(
+    () => {
+      registry.forEach((entry) => {
+        if (entry.record.status !== "live") return;
+        entry.record.abortOutput?.(
+          new SupervisorError(
+            "EXECUTOR_UNAVAILABLE",
+            "runtime storage failed; required output could not be committed",
+            { details: { reason: "runtime_storage_unavailable" } },
+          ),
+        );
+      });
+    },
+  );
+
+  app.addHook("onClose", async () => unsubscribeStorageFailure());
+  // D6 ordering invariant: `turn_lost` repair runs here, before the retirement
+  // route below exists, so no reclamation can precede it. Boot no longer prunes
+  // receipts at all — the only reclamation is that explicit handshake.
   const receipts = new CommandReceipts(hostState, logger);
+  const recoveredPromptReceipts = receipts.recoverAcceptedPrompts();
+
+  if (recoveredPromptReceipts > 0) {
+    logger.warn(
+      { recoveredPromptReceipts },
+      "supervisor-startup-recovered-accepted-prompts",
+    );
+  }
+  const runtimeObjects = new RuntimeObjectRegistry(
+    hostState,
+    join(hostState.stateDirReal ?? runtimeRoot, "runtime-objects"),
+  );
+  const runtimeEvents = new RuntimeEventPublisher(
+    hostState,
+    logger,
+    undefined,
+    runtimeObjects,
+  );
   const workspaces = new WorkspaceRegistry({
     state: hostState,
     roots: opts.workspaceRoots,
@@ -423,10 +557,6 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     logger,
   });
   const fenceLog = logger.child({ component: "execution-fence" });
-  // Post-terminal `session.command` completions append to a CLOSED per-run
-  // log: they wait for the writer to drain and are serialized per writer, so
-  // the file keeps its monotonicId order.
-  const postCloseAppends = new WeakMap<EventsLogWriter, Promise<void>>();
 
   // ADR-166 D4/D10 (strict): every host-bound command is a `CommandEnvelope`
   // whose `payload` is the route's body. A bare body is refused by name
@@ -461,50 +591,32 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
   }
 
   // ADR-166 D5: the durable completion signal that is NOT the long-lived HTTP
-  // response. After a terminal `session.exited` the registry has closed the
-  // per-run events log, so a post-terminal completion is appended directly.
-  function emitCommandEvent(
+  // response. The host outbox records post-terminal completion independently
+  // of the ACP session's lifecycle.
+  type SessionCommandEvent = Extract<SessionEvent, { type: "session.command" }>;
+
+  function createCommandEvent(
     entry: RegistryEntry,
-    event: Omit<
-      Extract<SessionEvent, { type: "session.command" }>,
-      "sessionId" | "monotonicId"
-    >,
-  ): void {
+    event: Omit<SessionCommandEvent, "sessionId" | "monotonicId">,
+  ): SessionCommandEvent {
     entry.record.monotonicId += 1;
-    const full: SessionEvent = {
+
+    return {
       ...event,
       sessionId: entry.record.sessionId,
       monotonicId: entry.record.monotonicId,
     };
+  }
 
-    entry.emitter.emit(SESSION_EVENT_CHANNEL, full);
-
-    if (entry.eventsLog?.isClosed()) {
-      const eventsLog = entry.eventsLog;
-      const stamped = {
-        ...full,
-        sessionName: entry.record.sessionName,
-        ...(entry.record.nodeAttemptId
-          ? { nodeAttemptId: entry.record.nodeAttemptId }
-          : {}),
-      };
-
-      const queued = (postCloseAppends.get(eventsLog) ?? eventsLog.closed())
-        .then(() =>
-          appendFile(eventsLog.path(), `${JSON.stringify(stamped)}\n`),
-        )
-        .catch((err: unknown) => {
-          logger.warn(
-            {
-              sessionId: entry.record.sessionId,
-              commandId: event.commandId,
-              err: err instanceof Error ? err.message : String(err),
-            },
-            "session-command-append-failed",
-          );
-        });
-
-      postCloseAppends.set(eventsLog, queued);
+  function emitCommandEvent(
+    entry: RegistryEntry,
+    event: SessionCommandEvent,
+    canonicallyPersisted: boolean,
+  ): void {
+    if (canonicallyPersisted) {
+      registry.emitCanonicallyPersisted(entry.record.sessionId, event);
+    } else {
+      entry.emitter.emit(SESSION_EVENT_CHANNEL, event);
     }
   }
 
@@ -530,11 +642,33 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     kind: CommandKind;
     expectedRunId?: string;
     entry?: RegistryEntry;
+    runtimeEvent?: (transition: {
+      phase: "accepted" | "completed" | "rejected";
+      outcome: CommandOutcome;
+    }) => AppendRuntimeEventInput | null;
     execute: () => Promise<CommandOutcome>;
   }): Promise<void> {
     const { reply, parsed, kind, entry } = args;
     const envelope = parsed.envelope;
     const sessionKind = isSessionCommandKind(kind) ? kind : null;
+    const admission: ReceiptAdmission | undefined =
+      kind === "session.create"
+        ? {
+            kind: "producer",
+            outputBindingCount:
+              StartSessionRequestSchema.parse(parsed.payload).outputObjects
+                ?.length ?? 0,
+          }
+        : entry?.record.status === "live" &&
+            ["session.cancel", "session.checkpoint", "session.delete"].includes(
+              kind,
+            )
+          ? { kind: "teardown", walletId: entry.record.createdByCommandId }
+          : undefined;
+    const commandEvents = new Map<
+      "accepted" | "completed" | "rejected",
+      SessionCommandEvent
+    >();
     const fence = applyFence({
       state: hostState,
       fence: envelope.fence,
@@ -544,16 +678,66 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
 
     const outcome = await receipts.execute({
       envelope,
-      onAccepted:
-        entry && kind === "session.prompt"
-          ? () =>
-              emitCommandEvent(entry, {
+      hostSessionId: entry?.record.sessionId,
+      persistReceipt: args.runtimeEvent
+        ? (transition) => {
+            const event = args.runtimeEvent?.(transition);
+
+            if (event)
+              hostState.putReceiptWithRuntimeEvent(
+                transition.row,
+                event,
+                transition.admission,
+              );
+            else hostState.putReceipt(transition.row, transition.admission);
+          }
+        : entry && sessionKind
+          ? (transition) => {
+              const status = commandStatus(transition.outcome);
+              const event = createCommandEvent(entry, {
                 type: "session.command",
                 commandId: envelope.command.id,
-                kind,
-                phase: "accepted",
-              })
+                kind: sessionKind,
+                phase:
+                  transition.phase === "accepted" ? "accepted" : "completed",
+                ...(transition.phase === "accepted"
+                  ? {}
+                  : status === "succeeded"
+                    ? {
+                        status,
+                        result: (transition.outcome.body ?? {}) as Record<
+                          string,
+                          unknown
+                        >,
+                      }
+                    : {
+                        status,
+                        error: transition.outcome.body as SupervisorErrorBody,
+                      }),
+              });
+
+              hostState.putReceiptWithRuntimeEvent(
+                transition.row,
+                runtimeEvents.sessionEventInput(entry.record, event),
+                transition.admission,
+              );
+              commandEvents.set(transition.phase, event);
+            }
           : undefined,
+      afterReceipt:
+        entry && sessionKind
+          ? (transition) => {
+              const event = commandEvents.get(transition.phase);
+
+              if (!event) {
+                throw new Error(
+                  `canonical command event was not persisted for ${envelope.command.id}`,
+                );
+              }
+              emitCommandEvent(entry, event, true);
+            }
+          : undefined,
+      admission,
       run: async () => {
         if (fence.advanced) {
           await evictLowerEpochSessions({
@@ -565,24 +749,15 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
           });
         }
 
-        return args.execute();
+        try {
+          return await args.execute();
+        } catch (error) {
+          if (error instanceof HostRuntimeEventError)
+            throw runtimeEventSupervisorError(error);
+          throw error;
+        }
       },
     });
-
-    if (entry && sessionKind && !outcome.replayed) {
-      const status = commandStatus(outcome);
-
-      emitCommandEvent(entry, {
-        type: "session.command",
-        commandId: envelope.command.id,
-        kind: sessionKind,
-        phase: "completed",
-        status,
-        ...(status === "succeeded"
-          ? { result: (outcome.body ?? {}) as Record<string, unknown> }
-          : { error: outcome.body as SupervisorErrorBody }),
-      });
-    }
 
     if (outcome.replayed) reply.header(REPLAYED_HEADER, "true");
 
@@ -595,9 +770,537 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     reply.status(outcome.status).send(outcome.body);
   }
 
+  async function runRestartableUploadCommand(args: {
+    reply: FastifyReply;
+    parsed: ParsedCommand<unknown>;
+    expectedRunId: string;
+    runtimeEvent: (transition: {
+      phase: "accepted" | "completed" | "rejected";
+      outcome: CommandOutcome;
+    }) => AppendRuntimeEventInput | null;
+    execute: () => Promise<CommandOutcome>;
+  }): Promise<void> {
+    const fence = applyFence({
+      state: hostState,
+      fence: args.parsed.envelope.fence,
+      expectedRunId: args.expectedRunId,
+      logger: fenceLog,
+    });
+    const outcome = await receipts.executeRestartableUpload({
+      envelope: args.parsed.envelope,
+      hostSessionId:
+        args.parsed.envelope.payload &&
+        typeof args.parsed.envelope.payload === "object" &&
+        "objectId" in args.parsed.envelope.payload
+          ? String(args.parsed.envelope.payload.objectId)
+          : undefined,
+      persistReceipt: (transition) => {
+        const event = args.runtimeEvent(transition);
+
+        if (event)
+          hostState.putReceiptWithRuntimeEvent(
+            transition.row,
+            event,
+            transition.admission,
+          );
+        else hostState.putReceipt(transition.row, transition.admission);
+      },
+      run: async () => {
+        if (fence.advanced) {
+          await evictLowerEpochSessions({
+            registry,
+            runId: args.parsed.envelope.fence.runId,
+            epoch: args.parsed.envelope.fence.assignmentEpoch,
+            killGraceMs,
+            logger: fenceLog,
+          });
+        }
+
+        return args.execute();
+      },
+    });
+
+    if (outcome.replayed) args.reply.header(REPLAYED_HEADER, "true");
+    args.reply.status(outcome.status).send(outcome.body);
+  }
+
+  function assertRuntimeObjectDeleteFence(
+    object: HostRuntimeObjectRow,
+    envelope: CommandEnvelope,
+  ): void {
+    const fence = envelope.fence;
+
+    if (fence.hostKey !== hostState.hostKey) {
+      throw new SupervisorError(
+        "PRECONDITION",
+        "runtime object deletion names a different execution host",
+        { details: { reason: "host_mismatch", runId: fence.runId } },
+      );
+    }
+    if (fence.runId !== object.runId) {
+      throw new SupervisorError(
+        "PRECONDITION",
+        "runtime object deletion names a different run",
+        { details: { reason: "run_mismatch", runId: fence.runId } },
+      );
+    }
+    if (
+      fence.assignmentId !== object.assignmentId ||
+      fence.assignmentEpoch !== object.assignmentEpoch
+    ) {
+      throw new SupervisorError(
+        "FENCED",
+        "runtime object deletion does not match the object's immutable assignment",
+        { details: { reason: "assignment_fenced", runId: fence.runId } },
+      );
+    }
+  }
+
+  async function runRuntimeObjectDeleteCommand(args: {
+    reply: FastifyReply;
+    parsed: ParsedCommand<unknown>;
+    object: HostRuntimeObjectRow;
+    runtimeEvent: (transition: {
+      phase: "accepted" | "completed" | "rejected";
+      outcome: CommandOutcome;
+    }) => AppendRuntimeEventInput | null;
+    execute: () => Promise<CommandOutcome>;
+  }): Promise<void> {
+    assertRuntimeObjectDeleteFence(args.object, args.parsed.envelope);
+    const outcome = await receipts.execute({
+      envelope: args.parsed.envelope,
+      hostSessionId: args.object.id,
+      persistReceipt: (transition) => {
+        const event = args.runtimeEvent(transition);
+
+        if (event)
+          hostState.putReceiptWithRuntimeEvent(
+            transition.row,
+            event,
+            transition.admission,
+          );
+        else hostState.putReceipt(transition.row, transition.admission);
+      },
+      run: args.execute,
+    });
+
+    if (outcome.replayed) args.reply.header(REPLAYED_HEADER, "true");
+    if (outcome.status === 204) {
+      args.reply.status(204).send();
+
+      return;
+    }
+    args.reply.status(outcome.status).send(outcome.body);
+  }
+
+  async function runAsyncPromptCommand(args: {
+    reply: FastifyReply;
+    parsed: ParsedCommand<unknown>;
+    entry: RegistryEntry;
+    execute: () => Promise<CommandOutcome>;
+  }): Promise<void> {
+    const { reply, parsed, entry } = args;
+    const envelope = parsed.envelope;
+    const commandEvents = new Map<
+      "accepted" | "completed" | "rejected",
+      SessionCommandEvent
+    >();
+    const fence = applyFence({
+      state: hostState,
+      fence: envelope.fence,
+      expectedRunId: entry.record.runId,
+      logger: fenceLog,
+    });
+
+    if (
+      entry.record.activePromptCommandId &&
+      entry.record.activePromptCommandId !== envelope.command.id &&
+      (envelope.requestVersion === 2 ||
+        receipts.lookup(entry.record.activePromptCommandId)?.requestVersion ===
+          2) &&
+      !receipts.lookup(envelope.command.id)
+    ) {
+      throw new SupervisorError(
+        "PRECONDITION",
+        "session already has an active prompt",
+        {
+          details: { reason: "command_in_progress" },
+        },
+      );
+    }
+    const outcome = await receipts.executeAsync({
+      envelope,
+      hostSessionId: entry.record.sessionId,
+      persistReceipt: (transition) => {
+        const status = commandStatus(transition.outcome);
+        let receiptBody = transition.outcome.body;
+
+        if (
+          envelope.requestVersion === 2 &&
+          transition.phase === "completed" &&
+          status === "succeeded"
+        ) {
+          const accepted = hostState.getReceipt(envelope.command.id);
+          const response = transition.outcome.responseReference;
+
+          if (
+            !accepted?.acceptedSequence ||
+            !accepted.requestDigest ||
+            !response
+          ) {
+            throw new SupervisorError(
+              "ACP_PROTOCOL",
+              "command output evidence is incomplete",
+              {
+                details: { reason: "required_output_incomplete" },
+              },
+            );
+          }
+          const position = hostState.nextRuntimeEventPosition();
+          const manifest = {
+            schema: "maister.command-output.v2" as const,
+            commandId: envelope.command.id,
+            ...envelope.fence,
+            hostSessionId: entry.record.sessionId,
+            requestSha256: accepted.requestDigest,
+            streamId: position.streamId,
+            acceptedSequence: accepted.acceptedSequence,
+            terminalSequence: position.sequence,
+            response,
+          };
+          const output = runtimeObjects.captureCommandOutput({
+            manifest,
+            funding: {
+              kind: "wallet",
+              walletId: entry.record.createdByCommandId,
+            },
+          });
+
+          receiptBody = {
+            ...(receiptBody as Record<string, unknown>),
+            output: {
+              ...output,
+              commandId: envelope.command.id,
+              hostSessionId: entry.record.sessionId,
+              acceptedSequence: accepted.acceptedSequence,
+              terminalSequence: position.sequence,
+            },
+          };
+        }
+        const event = createCommandEvent(entry, {
+          type: "session.command",
+          commandId: envelope.command.id,
+          kind: "session.prompt",
+          phase: transition.phase === "accepted" ? "accepted" : "completed",
+          ...(transition.phase === "accepted"
+            ? {}
+            : status === "succeeded"
+              ? {
+                  status,
+                  result: (receiptBody ?? {}) as Record<string, unknown>,
+                }
+              : {
+                  status,
+                  error: transition.outcome.body as SupervisorErrorBody,
+                }),
+        });
+
+        hostState.putReceiptWithRuntimeEvent(
+          { ...transition.row, body: receiptBody },
+          runtimeEvents.commandReceiptEventInput(entry.record, event, {
+            ...transition.row,
+            body: receiptBody,
+          }),
+          transition.admission,
+        );
+        commandEvents.set(transition.phase, event);
+      },
+      afterReceipt: (transition) => {
+        const event = commandEvents.get(transition.phase);
+
+        if (!event) {
+          throw new Error(
+            `canonical command event was not persisted for ${envelope.command.id}`,
+          );
+        }
+        if (transition.phase === "accepted") {
+          entry.record.activePromptCommandId = envelope.command.id;
+        }
+        emitCommandEvent(entry, event, true);
+        if (
+          transition.phase !== "accepted" &&
+          entry.record.activePromptCommandId === envelope.command.id
+        ) {
+          delete entry.record.activePromptCommandId;
+        }
+      },
+      run: async () => {
+        if (fence.advanced) {
+          await evictLowerEpochSessions({
+            registry,
+            runId: envelope.fence.runId,
+            epoch: envelope.fence.assignmentEpoch,
+            killGraceMs,
+            logger: fenceLog,
+          });
+        }
+
+        try {
+          return await args.execute();
+        } finally {
+          if (
+            entry.record.outputTeardownStarted ||
+            entry.child.exitCode !== null ||
+            entry.child.signalCode !== null
+          ) {
+            await entry.record.outputDrained;
+          }
+        }
+      },
+    });
+
+    if (outcome.replayed) reply.header(REPLAYED_HEADER, "true");
+    reply.status(outcome.status).send(outcome.body);
+  }
+
+  async function executePromptTurn(input: {
+    entry: RegistryEntry;
+    sessionId: string;
+    parsed: ParsedCommand<SendPromptRequest>;
+  }): Promise<CommandOutcome> {
+    const { entry, sessionId, parsed } = input;
+    const body = parsed.payload;
+
+    if (
+      entry.record.status !== "live" ||
+      entry.child.exitCode !== null ||
+      entry.child.signalCode !== null
+    ) {
+      throw new SupervisorError("PRECONDITION", "session not live");
+    }
+    if (!entry.connection || !entry.acpSessionId) {
+      throw new SupervisorError(
+        "PRECONDITION",
+        "session has no ACP connection",
+      );
+    }
+    const uriViolation = contentBlockUriViolation(body.contentBlocks, {
+      worktreePath: entry.record.worktreePath,
+      repoPath: entry.record.repoPath,
+      runDir: dirname(entry.record.logPath),
+      confineRoot: entry.record.confineRoot,
+    });
+
+    if (uriViolation) {
+      logger.warn(
+        { sessionId, status: 409, message: uriViolation },
+        "prompt route: content-block URI confinement violation",
+      );
+      throw new SupervisorError("PRECONDITION", uriViolation);
+    }
+    const contentBlocks = await resolvePromptRuntimeObjects({
+      blocks: body.contentBlocks,
+      resolver: runtimeObjects,
+      runId: entry.record.runId,
+      assignmentId: parsed.envelope.fence.assignmentId,
+      assignmentEpoch: parsed.envelope.fence.assignmentEpoch,
+    });
+
+    entry.record.stepId = body.stepId;
+    entry.record.activePromptCommandId = parsed.envelope.command.id;
+    if (body.nodeAttemptId) entry.record.nodeAttemptId = body.nodeAttemptId;
+    else delete entry.record.nodeAttemptId;
+
+    const chatHitlId = parseGateChatHitlId(body.stepId);
+    let chatBuf = "";
+    const chatBudget = retainedOutputBudget();
+    const chatListener = (event: SessionEvent): void => {
+      if (event.type !== "session.update") return;
+      const update = event.update as {
+        sessionUpdate?: string;
+        content?: { type?: string; text?: string };
+      } | null;
+
+      if (
+        update?.sessionUpdate === "agent_message_chunk" &&
+        update.content?.type === "text" &&
+        typeof update.content.text === "string"
+      ) {
+        chatBudget.reserve(update.content.text.length * 2);
+        chatBuf += update.content.text;
+      }
+    };
+
+    if (chatHitlId) entry.emitter.on(SESSION_EVENT_CHANNEL, chatListener);
+    entry.record.readOnlyTurn = body.readOnlyTurn === true;
+    const mountPreamble = takeContextMountPreamble(entry.record);
+
+    if (mountPreamble) {
+      logger.info(
+        {
+          sessionId,
+          mounts: entry.record.contextMounts?.map((mount) => mount.slug),
+        },
+        "context-mount preamble prepended",
+      );
+    }
+
+    let response: Awaited<ReturnType<typeof sendPromptOnConnection>>;
+    let responseReference: ImmutableObjectReference | undefined;
+
+    try {
+      response = await sendPromptOnConnection(
+        entry.connection,
+        {
+          adapter: entry.record.adapter,
+          acpSessionId: entry.acpSessionId,
+          stepId: body.stepId,
+          prompt: body.prompt,
+          contentBlocks,
+          preamble: mountPreamble ?? undefined,
+          isUserCancel: () => entry.record.cancelRequested === true,
+        },
+        logger,
+      );
+      if (parsed.envelope.requestVersion === 2) {
+        const accepted = hostState.getReceipt(parsed.envelope.command.id);
+
+        if (!accepted?.requestDigest) {
+          throw new SupervisorError(
+            "ACP_PROTOCOL",
+            "accepted command request digest is missing",
+            {
+              details: { reason: "required_output_incomplete" },
+            },
+          );
+        }
+        // Capture before the decoder releases this response continuation. Large
+        // opaque metadata must not survive across asynchronous sealing work.
+        responseReference = runtimeObjects.captureCommandResponse({
+          ...parsed.envelope.fence,
+          hostSessionId: sessionId,
+          commandId: parsed.envelope.command.id,
+          requestSha256: accepted.requestDigest,
+          response,
+          funding: {
+            kind: "producer",
+            walletId: entry.record.createdByCommandId,
+          },
+        });
+        response = { stopReason: response.stopReason };
+      }
+    } catch (error) {
+      chatBudget.release();
+      throwIfFenced(entry, parsed.envelope);
+      if (entry.record.outputFailure) {
+        throw new SupervisorError(
+          entry.record.outputFailure.code,
+          entry.record.outputFailure.message,
+          { details: entry.record.outputFailure.details },
+        );
+      }
+      throw error;
+    } finally {
+      entry.record.readOnlyTurn = false;
+      entry.record.cancelRequested = false;
+      if (chatHitlId) entry.emitter.off(SESSION_EVENT_CHANNEL, chatListener);
+    }
+    try {
+      throwIfFenced(entry, parsed.envelope);
+      if (entry.record.outputFailure) {
+        throw new SupervisorError(
+          entry.record.outputFailure.code,
+          entry.record.outputFailure.message,
+          { details: entry.record.outputFailure.details },
+        );
+      }
+      if (chatHitlId) {
+        entry.record.monotonicId += 1;
+        entry.emitter.emit(SESSION_EVENT_CHANNEL, {
+          type: "session.chat_turn",
+          sessionId,
+          monotonicId: entry.record.monotonicId,
+          hitlRequestId: chatHitlId,
+          role: "agent",
+          body: chatBuf,
+        } satisfies SessionEvent);
+      }
+    } finally {
+      chatBuf = "";
+      chatBudget.release();
+    }
+    logger.info(
+      {
+        sessionId,
+        stepId: body.stepId,
+        stopReason: response.stopReason,
+        readOnlyTurn: body.readOnlyTurn === true,
+        commandId: parsed.envelope.command.id,
+      },
+      "prompt-turn-completed",
+    );
+    const sealedRuntimeObjects: RuntimeObjectPublicMetadata[] = [];
+
+    for (const objectId of entry.record.runtimeOutputObjectIds ?? []) {
+      const metadata = await runtimeObjects.sealOutput({
+        objectId,
+        hostSessionId: sessionId,
+      });
+
+      hostState.appendRuntimeEvent(
+        runtimeEvents.runtimeObjectInput({
+          runId: entry.record.runId,
+          assignmentId: entry.record.assignmentId,
+          assignmentEpoch: entry.record.assignmentEpoch,
+          metadata,
+          walletId: entry.record.createdByCommandId,
+        }),
+      );
+      sealedRuntimeObjects.push(metadata);
+    }
+    if (entry.record.reapOnEndTurn && response.stopReason === "end_turn") {
+      entry.intentionalShutdown = true;
+      entry.child.kill("SIGTERM");
+    }
+
+    return {
+      status: 200,
+      ...(responseReference ? { responseReference } : {}),
+      body: {
+        stopReason: response.stopReason,
+        ...(response._meta === undefined ? {} : { meta: response._meta }),
+        ...(sealedRuntimeObjects.length > 0
+          ? { runtimeObjects: sealedRuntimeObjects }
+          : {}),
+      },
+    };
+  }
+
   app.setErrorHandler((err, _req, reply) => {
+    hostState.reportRuntimeStorageFailure(err);
+    if (!hostState.runtimeStorageAvailable()) {
+      reply.status(503).send({
+        code: "EXECUTOR_UNAVAILABLE",
+        message: "runtime storage requires repair",
+        details: { reason: "runtime_storage_unavailable" },
+      });
+
+      return;
+    }
+    if (err instanceof HostRuntimeEventError) {
+      const failure = runtimeEventSupervisorError(err);
+
+      reply.status(httpStatusForCode(failure.code)).send(errorBody(failure));
+
+      return;
+    }
     if (isSupervisorError(err)) {
-      const status = httpStatusForCode(err.code);
+      const status =
+        err.details?.reason === "runtime_object_range_invalid"
+          ? 416
+          : err.details?.reason === "runtime_object_too_large"
+            ? 413
+            : httpStatusForCode(err.code);
 
       reply.status(status).send(errorBody(err));
 
@@ -621,6 +1324,15 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
   });
 
   app.get("/health", async (_req, reply) => {
+    if (!hostState.runtimeStorageAvailable()) {
+      reply.status(503).send({
+        code: "EXECUTOR_UNAVAILABLE",
+        message: "runtime storage requires repair",
+        details: { reason: "runtime_storage_unavailable" },
+      });
+
+      return;
+    }
     const body: SupervisorHealthResponse = {
       status: "ready",
       host: {
@@ -635,6 +1347,532 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     };
 
     reply.status(200).send(body);
+  });
+
+  app.get("/capabilities", async (_req, reply) => {
+    const capabilities = executionHostCapabilities();
+
+    logger.info(
+      {
+        eventStream: capabilities.eventStream,
+        asyncPrompt: capabilities.asyncPrompt,
+        runtimeObjects: capabilities.runtimeObjects,
+      },
+      "execution-host-capabilities-read",
+    );
+    reply.status(200).send(capabilities);
+  });
+
+  function runtimeObjectEvent(
+    fence: CommandEnvelope["fence"],
+    outcome: CommandOutcome,
+  ): AppendRuntimeEventInput | null {
+    if (outcome.status >= 400) return null;
+    const body = outcome.body as Partial<RuntimeObjectPublicMetadata> | null;
+
+    if (
+      !body ||
+      typeof body.objectId !== "string" ||
+      typeof body.kind !== "string" ||
+      typeof body.logicalName !== "string" ||
+      typeof body.mimeType !== "string" ||
+      typeof body.generation !== "number" ||
+      typeof body.retentionClass !== "string" ||
+      typeof body.state !== "string" ||
+      typeof body.createdAt !== "string"
+    ) {
+      throw new Error(
+        "runtime object command completed without typed metadata",
+      );
+    }
+
+    return runtimeEvents.runtimeObjectInput({
+      runId: fence.runId,
+      assignmentId: fence.assignmentId,
+      assignmentEpoch: fence.assignmentEpoch,
+      metadata: body as RuntimeObjectPublicMetadata,
+    });
+  }
+
+  app.post("/runtime-objects", async (req, reply) => {
+    const parsed = parseCommandBody(
+      req.body,
+      "runtime_object.reserve",
+      ReserveRuntimeObjectPayloadSchema,
+      { route: "POST /runtime-objects" },
+    );
+
+    await runCommand({
+      reply,
+      parsed,
+      kind: "runtime_object.reserve",
+      expectedRunId: parsed.envelope.fence.runId,
+      runtimeEvent: (transition) =>
+        transition.phase === "accepted"
+          ? null
+          : runtimeObjectEvent(parsed.envelope.fence, transition.outcome),
+      execute: async () => ({
+        status: 201,
+        body: await runtimeObjects.reserve({
+          runId: parsed.envelope.fence.runId,
+          assignmentId: parsed.envelope.fence.assignmentId,
+          assignmentEpoch: parsed.envelope.fence.assignmentEpoch,
+          payload: parsed.payload,
+        }),
+      }),
+    });
+  });
+
+  app.get("/runtime-objects/:id", async (req, reply) => {
+    const parsed = z
+      .string()
+      .uuid()
+      .safeParse((req.params as { id?: unknown }).id);
+
+    if (!parsed.success) {
+      throw new SupervisorError(
+        "PRECONDITION",
+        "runtime object id is invalid",
+        {
+          details: { reason: "runtime_object_missing" },
+        },
+      );
+    }
+    const metadata = runtimeObjects.metadata(parsed.data);
+
+    if (metadata.sha256) {
+      reply.header("ETag", `\"${metadata.sha256}\"`);
+    }
+    reply.status(200).send(metadata);
+  });
+
+  app.put("/runtime-objects/:id/content", async (req, reply) => {
+    const objectId = z
+      .string()
+      .uuid()
+      .safeParse((req.params as { id?: unknown }).id);
+
+    if (!objectId.success) {
+      throw new SupervisorError(
+        "PRECONDITION",
+        "runtime object id is invalid",
+        {
+          details: { reason: "runtime_object_missing" },
+        },
+      );
+    }
+    const rawContentLength = req.headers["content-length"];
+    const contentLength =
+      typeof rawContentLength === "string" ? Number(rawContentLength) : NaN;
+
+    if (
+      Number.isSafeInteger(contentLength) &&
+      contentLength > MAX_RUNTIME_OBJECT_BYTES
+    ) {
+      throw new SupervisorError(
+        "PRECONDITION",
+        `runtime object upload exceeds ${MAX_RUNTIME_OBJECT_BYTES} bytes`,
+        { details: { reason: "runtime_object_too_large" } },
+      );
+    }
+    const headers = RuntimeObjectUploadHeadersSchema.safeParse({
+      commandId: req.headers["x-maister-command-id"],
+      commandIssuedAt: req.headers["x-maister-command-issued-at"],
+      assignmentId: req.headers["x-maister-assignment-id"],
+      assignmentEpoch: req.headers["x-maister-assignment-epoch"],
+      generation: req.headers["x-maister-object-generation"],
+      sizeBytes: req.headers["content-length"],
+      sha256: req.headers["x-maister-sha256"],
+      contentDigest: req.headers["content-digest"],
+    });
+
+    if (!headers.success) {
+      throw new SupervisorError(
+        "PRECONDITION",
+        "runtime object upload headers are invalid",
+        {
+          details: { reason: "runtime_object_integrity_mismatch" },
+        },
+      );
+    }
+    const object = hostState.getRuntimeObject(objectId.data);
+
+    if (!object) {
+      throw new SupervisorError("PRECONDITION", "runtime object is missing", {
+        details: { reason: "runtime_object_missing" },
+      });
+    }
+    const expectedDigest = `sha-256=:${Buffer.from(headers.data.sha256, "hex").toString("base64")}:`;
+
+    if (headers.data.contentDigest !== expectedDigest) {
+      throw new SupervisorError(
+        "PRECONDITION",
+        "Content-Digest does not match x-maister-sha256",
+        {
+          details: { reason: "runtime_object_integrity_mismatch" },
+        },
+      );
+    }
+    const uploadStream = req.body;
+
+    if (
+      !uploadStream ||
+      typeof uploadStream !== "object" ||
+      !(Symbol.asyncIterator in uploadStream)
+    ) {
+      throw new SupervisorError(
+        "PRECONDITION",
+        "runtime object upload must be binary",
+        {
+          details: { reason: "runtime_object_integrity_mismatch" },
+        },
+      );
+    }
+    const envelope: CommandEnvelope = {
+      command: {
+        id: headers.data.commandId,
+        kind: "runtime_object.upload",
+        issuedAt: headers.data.commandIssuedAt,
+      },
+      fence: {
+        hostKey: hostState.hostKey,
+        assignmentId: headers.data.assignmentId,
+        assignmentEpoch: headers.data.assignmentEpoch,
+        runId: object.runId,
+      },
+      payload: {
+        objectId: objectId.data,
+        generation: headers.data.generation,
+        sizeBytes: headers.data.sizeBytes,
+        sha256: headers.data.sha256,
+      },
+    };
+
+    await runRestartableUploadCommand({
+      reply,
+      parsed: { envelope, payload: envelope.payload },
+      expectedRunId: object.runId,
+      runtimeEvent: (transition) =>
+        transition.phase === "accepted"
+          ? null
+          : runtimeObjectEvent(envelope.fence, transition.outcome),
+      execute: async () => ({
+        status: 200,
+        body: await runtimeObjects.upload({
+          objectId: objectId.data,
+          assignmentId: headers.data.assignmentId,
+          assignmentEpoch: headers.data.assignmentEpoch,
+          generation: headers.data.generation,
+          sizeBytes: headers.data.sizeBytes,
+          sha256: headers.data.sha256,
+          chunks: uploadStream as AsyncIterable<Uint8Array>,
+        }),
+      }),
+    });
+  });
+
+  app.get("/runtime-objects/:id/content", async (req, reply) => {
+    const objectId = z
+      .string()
+      .uuid()
+      .safeParse((req.params as { id?: unknown }).id);
+
+    if (!objectId.success) {
+      throw new SupervisorError(
+        "PRECONDITION",
+        "runtime object id is invalid",
+        {
+          details: { reason: "runtime_object_missing" },
+        },
+      );
+    }
+    const content = await runtimeObjects.read(objectId.data);
+    const total = content.metadata.sizeBytes;
+
+    if (total === null) throw new Error("available runtime object has no size");
+    const maxRangeBytes = 8 * 1024 * 1024;
+    const range = req.headers.range;
+
+    if (range && Array.isArray(range)) {
+      throw new SupervisorError(
+        "PRECONDITION",
+        "runtime object range is invalid",
+        {
+          details: { reason: "runtime_object_range_invalid" },
+        },
+      );
+    }
+    const match = range?.match(/^bytes=(\d+)-(\d*)$/);
+
+    if (range && !match) {
+      throw new SupervisorError(
+        "PRECONDITION",
+        "runtime object range is invalid",
+        {
+          details: { reason: "runtime_object_range_invalid" },
+        },
+      );
+    }
+    if (!match) {
+      if (total > maxRangeBytes) {
+        throw new SupervisorError(
+          "PRECONDITION",
+          "a runtime object larger than 8 MiB requires an explicit byte range",
+          { details: { reason: "runtime_object_range_invalid" } },
+        );
+      }
+      // AB-12 (D5): never the reserved MIME — the bytes are untrusted and leave
+      // the host as an opaque attachment; the manager proxy repeats the policy.
+      reply
+        .headers(
+          safeDownloadHeaders({
+            fileName: content.metadata.logicalName,
+            mediaClass: "opaque",
+          }),
+        )
+        .header("Accept-Ranges", "bytes")
+        .header("Content-Length", String(total))
+        .header("ETag", `\"${content.metadata.sha256}\"`)
+        .header(
+          "Content-Digest",
+          `sha-256=:${Buffer.from(content.metadata.sha256 ?? "", "hex").toString("base64")}:`,
+        );
+
+      return reply.status(200).send(createReadStream(content.path));
+    }
+    const start = Number(match[1]);
+    const requestedEnd = match[2] ? Number(match[2]) : total - 1;
+    const requestedLength = requestedEnd - start + 1;
+
+    if (
+      !Number.isSafeInteger(start) ||
+      !Number.isSafeInteger(requestedEnd) ||
+      start >= total ||
+      requestedEnd < start ||
+      requestedEnd >= total ||
+      requestedLength > maxRangeBytes
+    ) {
+      throw new SupervisorError(
+        "PRECONDITION",
+        "runtime object range is invalid",
+        {
+          details: { reason: "runtime_object_range_invalid" },
+        },
+      );
+    }
+    reply
+      .headers(
+        safeDownloadHeaders({
+          fileName: content.metadata.logicalName,
+          mediaClass: "opaque",
+        }),
+      )
+      .header("Accept-Ranges", "bytes")
+      .header("Content-Length", String(requestedLength))
+      .header("ETag", `\"${content.metadata.sha256}\"`)
+      .header(
+        "Content-Digest",
+        `sha-256=:${Buffer.from(content.metadata.sha256 ?? "", "hex").toString("base64")}:`,
+      );
+
+    return reply
+      .header("Content-Range", `bytes ${start}-${requestedEnd}/${total}`)
+      .status(206)
+      .send(createReadStream(content.path, { start, end: requestedEnd }));
+  });
+
+  app.delete("/runtime-objects/:id", async (req, reply) => {
+    const objectId = z
+      .string()
+      .uuid()
+      .safeParse((req.params as { id?: unknown }).id);
+
+    if (!objectId.success) {
+      throw new SupervisorError(
+        "PRECONDITION",
+        "runtime object id is invalid",
+        {
+          details: { reason: "runtime_object_missing" },
+        },
+      );
+    }
+    const object = hostState.getRuntimeObject(objectId.data);
+
+    if (!object) {
+      throw new SupervisorError("PRECONDITION", "runtime object is missing", {
+        details: { reason: "runtime_object_missing" },
+      });
+    }
+    const parsed = parseCommandBody(
+      req.body,
+      "runtime_object.delete",
+      DeleteRuntimeObjectPayloadSchema,
+      { route: "DELETE /runtime-objects/:id" },
+    );
+
+    await runRuntimeObjectDeleteCommand({
+      reply,
+      parsed,
+      object,
+      runtimeEvent: (transition) =>
+        transition.phase === "accepted"
+          ? null
+          : runtimeObjectEvent(parsed.envelope.fence, transition.outcome),
+      execute: async () => ({
+        status: 204,
+        body: await runtimeObjects.remove({
+          objectId: objectId.data,
+          assignmentId: parsed.envelope.fence.assignmentId,
+          assignmentEpoch: parsed.envelope.fence.assignmentEpoch,
+          generation: parsed.payload.generation,
+        }),
+      }),
+    });
+  });
+
+  // Stage B host-global outbox transport. `Last-Event-ID` is an exclusive
+  // decimal sequence cursor; reconnect first replays durable SQLite rows, then
+  // receives only committed appends. A slow socket is closed rather than
+  // buffering payloads: reconnect resumes from the same durable cursor.
+  app.get("/runtime-events", (req, reply) => {
+    const afterSequence = parseRuntimeEventCursor(req.headers["last-event-id"]);
+    const streamId = hostState.getRuntimeEventStreamId();
+    let replay: ReturnType<typeof hostState.runtimeEventsAfter>;
+
+    try {
+      replay = hostState.runtimeEventsAfter(streamId, afterSequence, 500);
+    } catch (error) {
+      throw runtimeEventSupervisorError(error);
+    }
+
+    reply.raw.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+    reply.raw.flushHeaders();
+
+    let closed = false;
+    let replaying = true;
+    let highestSequence = afterSequence;
+    const pending: ReturnType<typeof hostState.runtimeEventsAfter> = [];
+    const send = (
+      event: ReturnType<typeof hostState.runtimeEventsAfter>[number],
+    ): void => {
+      if (closed) return;
+      if (
+        highestSequence !== null &&
+        BigInt(event.sequence) <= BigInt(highestSequence)
+      ) {
+        return;
+      }
+
+      const frame = `id: ${event.sequence}\nevent: ${String(event.envelope.eventType)}\ndata: ${JSON.stringify(event.envelope)}\n\n`;
+
+      highestSequence = event.sequence;
+      if (!reply.raw.write(frame)) {
+        close("slow_client");
+      }
+    };
+    const close = (
+      reason: "disconnect" | "slow_client" | "replay_page",
+    ): void => {
+      if (closed) return;
+      closed = true;
+      unsubscribe();
+      logger.info(
+        {
+          streamId,
+          afterSequence,
+          highestSequence,
+          reason,
+          pending: pending.length,
+        },
+        "runtime-event-stream-closed",
+      );
+      if (!reply.raw.writableEnded) reply.raw.end();
+    };
+    const unsubscribe = hostState.subscribeRuntimeEvents((event) => {
+      if (event.streamId !== streamId || closed) return;
+
+      if (replaying) {
+        if (pending.length >= MAX_RUNTIME_EVENT_SSE_PENDING) {
+          close("slow_client");
+
+          return;
+        }
+        pending.push(event);
+
+        return;
+      }
+      send(event);
+    });
+
+    req.raw.once("close", () => close("disconnect"));
+    logger.info(
+      { streamId, afterSequence, replayCount: replay.length },
+      "runtime-event-stream-opened",
+    );
+
+    for (const event of replay) send(event);
+    if (
+      !closed &&
+      highestSequence !== null &&
+      hostState.hasRuntimeEventsAfter(streamId, highestSequence)
+    ) {
+      close("replay_page");
+    }
+    replaying = false;
+    pending
+      .sort((left, right) =>
+        BigInt(left.sequence) < BigInt(right.sequence) ? -1 : 1,
+      )
+      .forEach(send);
+  });
+
+  app.post("/runtime-events/ack", async (req, reply) => {
+    const parsed = RuntimeEventAckSchema.safeParse(req.body);
+
+    if (!parsed.success) {
+      throw new SupervisorError(
+        "PRECONDITION",
+        "runtime event acknowledgement has an invalid stream or sequence",
+        { details: { reason: "invalid_event_sequence" } },
+      );
+    }
+    const currentStreamId = hostState.getRuntimeEventStreamId();
+
+    if (parsed.data.streamId !== currentStreamId) {
+      throw new SupervisorError(
+        "PRECONDITION",
+        "runtime event acknowledgement names a different host stream",
+        { details: { reason: "stream_identity_conflict" } },
+      );
+    }
+
+    try {
+      const acknowledgedThrough = hostState.ackRuntimeEvents(
+        parsed.data.streamId,
+        parsed.data.throughSequence,
+      );
+
+      logger.info(
+        {
+          streamId: parsed.data.streamId,
+          throughSequence: parsed.data.throughSequence,
+          acknowledgedThrough,
+          queueDepth: hostState.runtimeEventOutboxStats().unacknowledgedCount,
+        },
+        "runtime-event-acknowledged",
+      );
+      reply.status(200).send({
+        streamId: parsed.data.streamId,
+        acknowledgedThrough,
+      });
+    } catch (error) {
+      throw runtimeEventSupervisorError(error);
+    }
   });
 
   app.get("/diagnostics", async (_req, reply) => {
@@ -758,6 +1996,55 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     });
   });
 
+  app.post<CommandIdParams>(
+    "/commands/:commandId/retirement",
+    async (req, reply) => {
+      const proof = CommandRetirementProofSchema.safeParse(req.body);
+
+      if (!proof.success) {
+        reply.status(400).send({
+          code: "PRECONDITION",
+          message: "invalid retirement proof",
+          details: { reason: "invalid_retirement_proof" },
+        });
+
+        return;
+      }
+
+      const outcome = receipts.retire(req.params.commandId, proof.data);
+
+      if (outcome.outcome === "missing") {
+        reply.status(404).send({
+          code: "PRECONDITION",
+          message: "no retained receipt for this command",
+          details: { reason: "retirement_evidence_missing" },
+        });
+
+        return;
+      }
+      if (
+        outcome.outcome !== "retired" &&
+        outcome.outcome !== "already_retired"
+      ) {
+        reply.status(409).send({
+          code: "CONFLICT",
+          message: "command is not eligible for retirement",
+          details: { reason: outcome.outcome },
+        });
+
+        return;
+      }
+
+      reply.status(200).send({
+        commandId: outcome.commandId,
+        requestSha256: outcome.requestSha256,
+        phase: outcome.phase,
+        retiredAt: outcome.retiredAt,
+        compacted: outcome.outcome === "retired",
+      });
+    },
+  );
+
   app.get<CommandIdParams>("/commands/:commandId", async (req, reply) => {
     const receipt = receipts.lookup(req.params.commandId);
 
@@ -814,15 +2101,67 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
         // site.
         const workspace: WorkspaceResolution = workspaces.resolveForSession(
           request.executionWorkspaceId,
-          {
-            stepId: request.stepId,
-            capabilityProfilePath: request.capabilityProfilePath,
-          },
+          { stepId: request.stepId },
         );
         const sessionId = randomUUID();
-        const { child, emitter, record, acpStdoutTap, eventsLog } =
-          await spawnSession({
+        const outputPaths: Partial<
+          Record<RuntimeObjectOutputBinding["envName"], string>
+        > = {};
+        const outputObjectIds = new Set<string>();
+        const outputEnvironmentNames = new Set<string>();
+
+        for (const binding of request.outputObjects ?? []) {
+          if (
+            outputObjectIds.has(binding.objectId) ||
+            outputEnvironmentNames.has(binding.envName)
+          ) {
+            throw new SupervisorError(
+              "PRECONDITION",
+              "runtime output bindings must use unique object IDs and environment names",
+              { details: { reason: "command_invariant_conflict" } },
+            );
+          }
+          outputObjectIds.add(binding.objectId);
+          outputEnvironmentNames.add(binding.envName);
+        }
+        let spawned: Awaited<ReturnType<typeof spawnSession>>;
+
+        try {
+          for (const binding of request.outputObjects ?? []) {
+            const allocated = await runtimeObjects.allocateOutput({
+              runId: parsed.envelope.fence.runId,
+              assignmentId: parsed.envelope.fence.assignmentId,
+              assignmentEpoch: parsed.envelope.fence.assignmentEpoch,
+              hostSessionId: sessionId,
+              walletId: parsed.envelope.command.id,
+              binding,
+            });
+
+            outputPaths[binding.envName] = allocated.path;
+          }
+          const capabilityProfile = request.capabilityProfileObjectId
+            ? await runtimeObjects.resolvePromptReference({
+                objectId: request.capabilityProfileObjectId,
+                runId: parsed.envelope.fence.runId,
+                assignmentId: parsed.envelope.fence.assignmentId,
+                assignmentEpoch: parsed.envelope.fence.assignmentEpoch,
+                expectedKind: "capability_profile",
+              })
+            : null;
+          const capabilityInstructions = request.capabilityInstructionsObjectId
+            ? await runtimeObjects.resolvePromptReference({
+                objectId: request.capabilityInstructionsObjectId,
+                runId: parsed.envelope.fence.runId,
+                assignmentId: parsed.envelope.fence.assignmentId,
+                assignmentEpoch: parsed.envelope.fence.assignmentEpoch,
+                expectedKind: "capability_instructions",
+              })
+            : null;
+
+          spawned = await spawnSession({
             sessionId,
+            hostState,
+            runtimeEventPublisher: runtimeEvents,
             request,
             workspace,
             createdBy: {
@@ -833,17 +2172,32 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
             logger,
             binaryOverride: opts.spawnOverrides?.binary,
             preArgs: opts.spawnOverrides?.preArgs,
+            runtimeObjectEnv: {
+              capabilityProfilePath: capabilityProfile?.path,
+              capabilityInstructionsPath: capabilityInstructions?.path,
+              outputPaths,
+              outputObjectIds: [...outputObjectIds],
+            },
           });
+        } catch (error) {
+          await runtimeObjects.discardPendingOutputs({
+            objectIds: [...outputObjectIds],
+            hostSessionId: sessionId,
+          });
+          throw error;
+        }
+        const { child, emitter, record, acpStdoutTap } = spawned;
 
         // M34 lifecycle: propagate the reap-on-end-turn flag onto the record so
         // the prompt handler can reap a one-shot agent session when its turn ends.
         record.reapOnEndTurn = request.reapOnEndTurn === true;
-        registry.register(record, child, emitter, { eventsLog });
+        registry.register(record, child, emitter, {
+          runtimeEventPublisher: runtimeEvents,
+        });
         attachHeartbeat({ sessionId, child, registry, logger });
         await attachCost({
           sessionId,
           sessionName: record.sessionName,
-          costPath: workspace.costPath,
           projectSlug: workspace.projectSlug,
           runId: workspace.runId,
           stepId: request.stepId,
@@ -859,6 +2213,16 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
           emitter,
           logger,
           resumed: Boolean(request.resumeSessionId),
+          onRecorded: (cost) => {
+            const latest = registry.get(sessionId)?.record;
+
+            if (!latest) {
+              throw new Error(
+                `cannot publish canonical usage for removed session ${sessionId}`,
+              );
+            }
+            runtimeEvents.publishUsage(latest, cost);
+          },
         });
 
         if (!child.stdin) {
@@ -906,22 +2270,11 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
           }
 
           registry.remove(sessionId, "acp-handshake-failed");
-          await eventsLog.close().catch((closeErr: unknown) => {
-            logger.warn(
-              {
-                sessionId,
-                err:
-                  closeErr instanceof Error
-                    ? closeErr.message
-                    : String(closeErr),
-              },
-              "events-log close failed after acp handshake failure",
-            );
-          });
           throw err;
         }
 
         registry.attachAcp(sessionId, connection, acpSessionId);
+        runtimeEvents.publishSessionCreated(record);
 
         logger.info(
           {
@@ -946,7 +2299,9 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     });
   });
 
-  app.post<SessionIdParams>("/sessions/:id/prompt", async (req, reply) => {
+  // Prompt admission is short-lived. Its durable receipt is the authoritative
+  // completion seam; the asynchronous turn itself publishes canonical events.
+  app.post<SessionIdParams>("/sessions/:id/prompts", async (req, reply) => {
     const entry = registry.get(req.params.id);
 
     if (!entry) {
@@ -956,197 +2311,26 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
 
       return;
     }
-
     const parsed = parseCommandBody(
       req.body,
       "session.prompt",
       SendPromptRequestSchema,
-      { route: "POST /sessions/:id/prompt" },
+      { route: "POST /sessions/:id/prompts" },
     );
-    const body = parsed.payload;
 
-    await runCommand({
+    await runAsyncPromptCommand({
       reply,
       parsed,
-      kind: "session.prompt",
-      expectedRunId: entry.record.runId,
       entry,
-      execute: async () => {
-        // Liveness is judged inside the receipt-guarded execution: a duplicate
-        // id whose original completed replays the stored response even after
-        // the session exited (X-EH-07).
-        if (entry.record.status !== "live") {
-          throw new SupervisorError("PRECONDITION", "session not live");
-        }
-        if (!entry.connection || !entry.acpSessionId) {
-          throw new SupervisorError(
-            "PRECONDITION",
-            "session has no ACP connection",
-          );
-        }
-
-        const connection = entry.connection;
-        const acpSessionId = entry.acpSessionId;
-
-        // Defense-in-depth: independently confine every content-block file URI
-        // to roots bound to THIS session at creation (worktree ∪ repo ∪ run dir)
-        // before forwarding — the web tier confines too, but the supervisor must
-        // not trust a direct caller. Remote schemes + sandbox escapes are
-        // rejected, not forwarded.
-        const uriViolation = contentBlockUriViolation(body.contentBlocks, {
-          worktreePath: entry.record.worktreePath,
-          repoPath: entry.record.repoPath,
-          runDir: dirname(entry.record.logPath),
-          confineRoot: entry.record.confineRoot,
-        });
-
-        if (uriViolation) {
-          logger.warn(
-            { sessionId: req.params.id, status: 409, message: uriViolation },
-            "prompt route: content-block URI confinement violation",
-          );
-          throw new SupervisorError("PRECONDITION", uriViolation);
-        }
-
-        entry.record.stepId = body.stepId;
-        if (body.nodeAttemptId) {
-          entry.record.nodeAttemptId = body.nodeAttemptId;
-        } else {
-          delete entry.record.nodeAttemptId;
-        }
-
-        // M30 (ADR-078 DD4): a gate-chat prompt accumulates the agent's reply
-        // text from this turn's session.update chunks and emits ONE
-        // session.chat_turn at completion — the chat surface renders it without
-        // polluting the flow timeline.
-        const chatHitlId = parseGateChatHitlId(body.stepId);
-        let chatBuf = "";
-        const chatListener = (event: SessionEvent): void => {
-          if (event.type !== "session.update") return;
-          const update = event.update as {
-            sessionUpdate?: string;
-            content?: { type?: string; text?: string };
-          } | null;
-
-          if (
-            update?.sessionUpdate === "agent_message_chunk" &&
-            update.content?.type === "text" &&
-            typeof update.content.text === "string"
-          ) {
-            chatBuf += update.content.text;
-          }
-        };
-
-        if (chatHitlId) {
-          entry.emitter.on(SESSION_EVENT_CHANNEL, chatListener);
-        }
-        // M30 (ADR-078 L2): arm the read-only auto-reject for the duration of
-        // this prompt only.
-        entry.record.readOnlyTurn = body.readOnlyTurn === true;
-
-        // ADR-157: ground the agent in its read-only sibling-repo mounts on the
-        // FIRST prompt of the session — MAISTER_CONTEXT_REPOS serves scripts,
-        // this preamble is how the agent learns the mounts exist. A respawn
-        // (resume) rebuilds the record, so a resumed session re-grounds once.
-        const mountPreamble = takeContextMountPreamble(entry.record);
-
-        if (mountPreamble) {
-          logger.info(
-            {
-              sessionId: req.params.id,
-              mounts: entry.record.contextMounts?.map((m) => m.slug),
-            },
-            "context-mount preamble prepended",
-          );
-        }
-
-        let resp: Awaited<ReturnType<typeof sendPromptOnConnection>>;
-
-        try {
-          resp = await sendPromptOnConnection(
-            connection,
-            {
-              adapter: entry.record.adapter,
-              acpSessionId,
-              stepId: body.stepId,
-              prompt: body.prompt,
-              // Validated by SendPromptRequestSchema; cast to the SDK block
-              // type at this trust boundary for verbatim forward (T5.4).
-              contentBlocks: body.contentBlocks as
-                | acp.ContentBlock[]
-                | undefined,
-              preamble: mountPreamble ?? undefined,
-              isUserCancel: () => entry.record.cancelRequested === true,
-            },
-            logger,
-          );
-        } catch (err) {
-          // ADR-166 E-EH-04 / X-EH-19: a session evicted by a higher epoch
-          // answers its pending prompt with FENCED, never a protocol error.
-          throwIfFenced(entry, parsed.envelope);
-          throw err;
-        } finally {
-          entry.record.readOnlyTurn = false;
-          entry.record.cancelRequested = false;
-          if (chatHitlId) {
-            entry.emitter.off(SESSION_EVENT_CHANNEL, chatListener);
-          }
-        }
-
-        throwIfFenced(entry, parsed.envelope);
-
-        if (chatHitlId) {
-          entry.record.monotonicId += 1;
-          const chatEvent: SessionEvent = {
-            type: "session.chat_turn",
-            sessionId: req.params.id,
-            monotonicId: entry.record.monotonicId,
-            hitlRequestId: chatHitlId,
-            role: "agent",
-            body: chatBuf,
-          };
-
-          entry.emitter.emit(SESSION_EVENT_CHANNEL, chatEvent);
-        }
-
-        logger.info(
-          {
-            sessionId: req.params.id,
-            stepId: body.stepId,
-            stopReason: resp.stopReason,
-            status: 200,
-            readOnlyTurn: body.readOnlyTurn === true,
-            commandId: parsed.envelope.command.id,
-          },
-          "http POST /sessions/:id/prompt",
-        );
-
-        // M34 lifecycle: a one-shot standalone agent session (reapOnEndTurn)
-        // has no external driver that acts on a clean `end_turn` (a flow
-        // session is driven by the flow runner; a persistent agent parks +
-        // re-messages). Reap the now-idle adapter so the heartbeat emits a bare
-        // `session.exited{exitCode:0}` and the web consumer finalizes the run —
-        // otherwise it lingers `Running` and leaks a concurrency slot.
-        // `intentionalShutdown` with NO reason selects the natural-completion
-        // path (a "checkpoint"/"intentional" reason would detach or
-        // operator-cancel instead).
-        if (entry.record.reapOnEndTurn && resp.stopReason === "end_turn") {
-          entry.intentionalShutdown = true;
-          entry.child.kill("SIGTERM");
-        }
-
-        return {
-          status: 200,
-          body: { stopReason: resp.stopReason, meta: resp._meta },
-        };
-      },
+      execute: () =>
+        executePromptTurn({ entry, sessionId: req.params.id, parsed }),
     });
   });
 
   // Interrupt the in-flight prompt turn WITHOUT tearing the session down: a
   // protocol-level `session/cancel` notification (adapter-agnostic — claude,
-  // codex, gemini, opencode all honour it). The blocked /sessions/:id/prompt
-  // request resolves with the `cancelled` stop reason; the cancelRequested flag
+  // codex, gemini, opencode all honour it). The asynchronous prompt command
+  // terminalizes with the `cancelled` stop reason; the cancelRequested flag
   // makes sendPromptOnConnection treat that as a clean turn end (session stays
   // live, dialog returns to WaitingForUser) rather than a crash. Idempotent: a
   // non-live or connectionless session acks with cancelled:false.
@@ -1234,6 +2418,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       entry,
       execute: async () => {
         registry.markIntentionalShutdown(req.params.id, "intentional");
+        entry.record.stopOutputForTeardown?.();
         entry.child.kill("SIGTERM");
         const exited = await waitForChildExit(entry, killGraceMs);
 
@@ -1415,6 +2600,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
         }
 
         registry.markIntentionalShutdown(sessionId, "checkpoint");
+        entry.record.stopOutputForTeardown?.();
         entry.child.kill("SIGTERM");
 
         const exited = await waitForChildExit(entry, killGraceMs);

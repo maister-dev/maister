@@ -257,7 +257,7 @@ export function readEngineVars(
 
 export type ValidateNodeStructuredOutputArgs = {
   node: Pick<CompiledNode, "id" | "nodeType" | "output">;
-  result: Pick<StepResult, "stdout" | "vars">;
+  result: Pick<StepResult, "stdout" | "vars" | "originalOutput">;
   attempt: number;
   nodeAttemptId: string;
   runId: string;
@@ -316,7 +316,9 @@ export async function validateNodeStructuredOutput(
   let payload: RawNodeOutputPayload;
 
   if (transport === "sentinel") {
-    payload = extractSentinelBlock(args.result.stdout, maxBytes);
+    payload =
+      args.result.originalOutput ??
+      extractSentinelBlock(args.result.stdout, maxBytes);
   } else if (transport === "engine_vars") {
     payload = readEngineVars(args.result.vars, maxBytes);
   } else {
@@ -334,7 +336,9 @@ export async function validateNodeStructuredOutput(
       return failAttempt(args, (err as Error).message);
     }
 
-    payload = await readCliOutputFile(filePath, maxBytes);
+    payload =
+      args.result.originalOutput ??
+      (await readCliOutputFile(filePath, maxBytes));
   }
 
   if (payload.kind === "absent") {

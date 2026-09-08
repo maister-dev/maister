@@ -23,7 +23,7 @@ describe("runner spawn intent", () => {
     });
   });
 
-  it("adds Claude dangerous permission args without dropping existing adapter env", () => {
+  it("adds Claude dangerous permission args and strips manager-derived path env", () => {
     expect(
       mergeRunnerAdapterLaunch(
         {
@@ -34,10 +34,15 @@ describe("runner spawn intent", () => {
           providerKind: "anthropic",
           permissionPolicy: "dangerously_skip_permissions",
         },
-        { env: { MAISTER_CAPABILITY_PROFILE_PATH: "/profile.json" } },
+        {
+          env: {
+            MAISTER_CAPABILITY_PROFILE_PATH: "/profile.json",
+            SAFE_VALUE: "preserved",
+          },
+        },
       ),
     ).toEqual({
-      env: { MAISTER_CAPABILITY_PROFILE_PATH: "/profile.json" },
+      env: { SAFE_VALUE: "preserved" },
       preArgs: ["--dangerously-skip-permissions"],
     });
   });

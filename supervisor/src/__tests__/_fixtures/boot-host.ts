@@ -1,3 +1,4 @@
+import type { RuntimeLimits } from "../../runtime-limits";
 // ADR-166 test harness: boot the supervisor routes in-process on a REAL
 // execution-host state store (temp dir) with a fake ACP adapter fixture.
 import type { FastifyInstance } from "fastify";
@@ -37,6 +38,8 @@ export type BootedHost = {
 };
 
 export type BootHostOptions = {
+  limits?: RuntimeLimits;
+  now?: () => Date;
   fixture?: string;
   fixtureArgs?: string[];
   stateDir?: string;
@@ -62,12 +65,18 @@ export async function bootHost(
   const ownsHostState = !opts.hostState;
   const hostState =
     opts.hostState ??
-    openHostState({ stateDir, pinnedKey: opts.pinnedKey, logger });
+    openHostState({
+      stateDir,
+      pinnedKey: opts.pinnedKey,
+      logger,
+      limits: opts.limits,
+      now: opts.now,
+    });
   const registry = new SessionRegistry(logger);
   const app = Fastify({ logger: false });
   const workspaceRoots = opts.workspaceRoots ?? [await realpath(runtimeRoot)];
   const spawnOverrides: SpawnOverrides = opts.spawnOverrides ?? {
-    binary: "node",
+    binary: process.execPath,
     preArgs: [
       join(FIXTURES_DIR, opts.fixture ?? "mock-acp-lifecycle.mjs"),
       ...(opts.fixtureArgs ?? []),
@@ -102,19 +111,50 @@ export async function bootHost(
     workspaceRoots,
     stop: async () => {
       stopHeartbeat();
+      const exits: Promise<void>[] = [];
+
       for (const entry of registry.list()) {
         const live = registry.get(entry.sessionId);
 
-        // Unit suites register fake children (bare EventEmitters) — nothing to kill.
+        // Unit suites register fake children (bare EventEmitters) — nothing to
+        // kill. Real children are owned by the host even after a protocol
+        // terminal event changed the session record away from `live`.
         if (
-          live?.record.status === "live" &&
-          typeof live.child.kill === "function"
+          live &&
+          typeof live.child.pid === "number" &&
+          live.child.exitCode === null &&
+          live.child.signalCode === null
         ) {
-          live.child.kill("SIGKILL");
+          exits.push(
+            new Promise<void>((resolve) => {
+              const timeout = setTimeout(() => resolve(), 5_000);
+
+              live.child.once("exit", () => {
+                clearTimeout(timeout);
+                resolve();
+              });
+              if (!live.child.kill("SIGKILL")) {
+                clearTimeout(timeout);
+                resolve();
+              }
+            }),
+          );
         }
       }
+      await Promise.all(exits);
+      const terminals = await Promise.allSettled(
+        registry
+          .list()
+          .map((record) => record.outputTerminal ?? record.outputDrained),
+      );
+      const failed = terminals.find((result) => result.status === "rejected");
+      const storageAvailable = hostState.runtimeStorageAvailable();
+
       await app.close();
+      registry.clear("test-shutdown");
       if (ownsHostState) hostState.close();
+      if (failed?.status === "rejected" && storageAvailable)
+        throw failed.reason;
     },
   };
 }
@@ -163,6 +203,54 @@ export async function postJson(
     status: res.status,
     body: text ? JSON.parse(text) : null,
     headers: res.headers,
+  };
+}
+
+// Tests that need a terminal prompt outcome intentionally perform two distinct
+// protocol phases: a short admission request followed by receipt observation.
+// This keeps legacy tests from accidentally restoring a long-lived HTTP API.
+export async function completePrompt(
+  host: BootedHost,
+  sessionId: string,
+  body: CommandEnvelope,
+): Promise<{
+  status: number;
+  body: Record<string, unknown>;
+  headers: Headers;
+}> {
+  const admitted = await postJson(
+    `${host.url}/sessions/${sessionId}/prompts`,
+    body,
+  );
+
+  if (admitted.status !== 202) {
+    return admitted;
+  }
+
+  await waitFor(() => {
+    const receipt = host.hostState.getReceipt(body.command.id);
+
+    return receipt?.phase === "completed" || receipt?.phase === "rejected";
+  });
+  const receipt = host.hostState.getReceipt(body.command.id);
+
+  if (!receipt) {
+    throw new Error(`prompt ${body.command.id} completed without a receipt`);
+  }
+  if (
+    !receipt.body ||
+    typeof receipt.body !== "object" ||
+    Array.isArray(receipt.body)
+  ) {
+    throw new Error(
+      `prompt ${body.command.id} completed with a malformed receipt body`,
+    );
+  }
+
+  return {
+    status: receipt.httpStatus,
+    body: receipt.body as Record<string, unknown>,
+    headers: admitted.headers,
   };
 }
 
@@ -280,30 +368,6 @@ export async function createSession(
   }
 
   return res.body as { sessionId: string; pid: number; acpSessionId: string };
-}
-
-export async function readEventsLog(
-  runtimeRoot: string,
-  projectSlug: string,
-  runId: string,
-): Promise<Array<Record<string, unknown>>> {
-  const { readFile } = await import("node:fs/promises");
-  const raw = await readFile(
-    join(
-      runtimeRoot,
-      ".maister",
-      projectSlug,
-      "runs",
-      runId,
-      "run.events.jsonl",
-    ),
-    "utf8",
-  );
-
-  return raw
-    .split("\n")
-    .filter((line) => line.trim().length > 0)
-    .map((line) => JSON.parse(line) as Record<string, unknown>);
 }
 
 export function waitFor(

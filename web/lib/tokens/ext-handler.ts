@@ -4,12 +4,11 @@ import type { ProjectAction } from "@/lib/authz";
 import type { TokenAuditInput } from "@/lib/tokens/audit";
 import type { TokenActor } from "@/lib/tokens/verify";
 
-import { canAgentReachProject } from "@/lib/agents/cross-project-reach";
-
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import pino from "pino";
 
+import { canAgentReachProject } from "@/lib/agents/cross-project-reach";
 import { requireProjectActionForUser } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";

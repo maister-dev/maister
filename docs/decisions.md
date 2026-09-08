@@ -63,8 +63,8 @@ validate:docs` enforces stub ↔ body equality and the file bijection.
 | [ADR-019](#adr-019-project-slug--repopath-uniqueness-soft-archival)                                                                                          | Project slug + repo_path uniqueness, soft archival                                                                                             | Accepted                                                             | 2026-05-22 |
 | [ADR-020](#adr-020-fastify--pino-in-the-supervisor)                                                                                                          | Fastify + pino in the supervisor                                                                                                               | Accepted                                                             | 2026-05-25 |
 | [ADR-021](#adr-021-flow-package-lifecycle-multi-revision-trust-and-compatibility)                                                                            | Flow package lifecycle: multi-revision, trust, and compatibility                                                                               | Accepted (amended by ADR-088: a package groups multiple flow source… | 2026-05-30 |
-| [ADR-022](#adr-022-structured-run-data-projection--runeventsjsonl-is-the-event-log-postgres-holds-derived-read-models)                                       | Structured run-data projection — `run.events.jsonl` is the event log, Postgres holds derived read-models                                       | Accepted                                                             | 2026-05-30 |
-| [ADR-023](#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)                                                                               | Run `web` + `supervisor` on the host; containerize only Postgres                                                                               | Accepted                                                             | 2026-05-30 |
+| [ADR-022](#adr-022-structured-run-data-projection--runeventsjsonl-is-the-event-log-postgres-holds-derived-read-models)                                       | Structured run-data projection — `run.events.jsonl` is the event log, Postgres holds derived read-models                                       | Superseded by ADR-167                                                | 2026-05-30 |
+| [ADR-023](#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)                                                                               | Run `web` + `supervisor` on the host; containerize only Postgres                                                                               | Accepted; runtime-data sharing superseded by ADR-167                 | 2026-05-30 |
 | [ADR-024](#adr-024-external-operations-surface--rest--thin-mcp-facade-project-tokens-mandatory-audit-hitl-assessment--flow-owned-escalation)                 | External operations surface — REST + thin MCP facade, project tokens, mandatory audit, HITL assessment & Flow-owned escalation                 | Accepted                                                             | 2026-05-30 |
 | [ADR-025](#adr-025-project-repo-onboarding--url-clone-or-local-path-host-credential-auth-configurable-roots)                                                 | Project repo onboarding — URL clone or local path, host-credential auth, configurable roots                                                    | Accepted                                                             | 2026-05-31 |
 | [ADR-026](#adr-026-flow-graph-manifest-v1-nodes--engine-version-bump)                                                                                        | Flow graph manifest v1 (`nodes[]`) + engine version bump                                                                                       | Accepted                                                             | 2026-05-30 |
@@ -208,6 +208,7 @@ validate:docs` enforces stub ↔ body equality and the file bijection.
 | [ADR-164](#adr-164-remove-managed-claude-code-router-support)                                                                                                | Remove managed Claude Code Router support                                                                                                      | Implemented                                                          | 2026-09-02 |
 | [ADR-165](#adr-165-governed-recursive-agent-harness--public-run-results-result-profiles-effective-recursion-bounds-result-only-completion)                   | Governed recursive agent harness — public run results, result profiles, effective recursion bounds, result-only completion                     | Implemented                                                          | 2026-09-02 |
 | [ADR-166](#adr-166-local-execution-host-contract--durable-host-identity-epoch-fenced-assignments-command-ledger-opaque-adopted-workspaces) | Local execution-host contract — durable host identity, epoch-fenced assignments, command ledger, opaque adopted workspaces | Implemented | 2026-09-02 |
+| [ADR-167](#adr-167-durable-execution-host-event-and-runtime-data-plane) | Durable execution-host event and runtime-data plane | Implemented | 2026-09-04 |
 
 ---
 
@@ -402,7 +403,7 @@ Full record: [`decisions/adr-021.md`](decisions/adr-021.md)
 
 ### ADR-022: Structured run-data projection — `run.events.jsonl` is the event log, Postgres holds derived read-models
 
-**Status:** Accepted
+**Status:** Superseded by ADR-167 for execution events and runtime data; historical pre-Stage-B record
 **Date:** 2026-05-30
 
 Full record: [`decisions/adr-022.md`](decisions/adr-022.md)
@@ -411,7 +412,7 @@ Full record: [`decisions/adr-022.md`](decisions/adr-022.md)
 
 ### ADR-023: Run `web` + `supervisor` on the host; containerize only Postgres
 
-**Status:** Accepted
+**Status:** Partially superseded by ADR-167; runtime-data sharing removed, repository/worktree boundary retained until Stage C
 **Date:** 2026-05-30
 
 Full record: [`decisions/adr-023.md`](decisions/adr-023.md)
@@ -1689,6 +1690,15 @@ Full record: [`decisions/adr-165.md`](decisions/adr-165.md)
 **Date:** 2026-09-02
 
 Full record: [`decisions/adr-166.md`](decisions/adr-166.md)
+
+---
+
+### ADR-167: Durable execution-host event and runtime-data plane
+
+**Status:** Implemented
+**Date:** 2026-09-04
+
+Full record: [`decisions/adr-167.md`](decisions/adr-167.md)
 
 ---
 

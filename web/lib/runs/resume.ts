@@ -11,6 +11,11 @@ import {
 
 import { getDb } from "@/lib/db/client";
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
+import {
+  hasFlowPermissionResume,
+  prepareFlowPermissionResult,
+} from "@/lib/flows/graph/permission-resume";
+import { failCheckpointedFlowPermission } from "@/lib/flows/graph/permission-rejection";
 import * as schemaModule from "@/lib/db/schema";
 import {
   isMaisterError,
@@ -47,7 +52,9 @@ const log = pino({
 export type ResumeRunResult =
   | {
       ok: true;
-      newSupervisorSessionId: string;
+      runStatus: "NeedsInput" | "Running";
+      // Owned Flow creates its session under the graph driver lease.
+      newSupervisorSessionId: string | null;
       acpSessionId: string;
       // ADR-166: the `resume` generation the claim minted — the resumed-session
       // driver binds to THIS row, so a later re-entry fences it structurally.
@@ -227,6 +234,57 @@ export async function resumeRun(
     };
   }
 
+  let permissionResult: Awaited<ReturnType<typeof prepareFlowPermissionResult>>;
+
+  try {
+    permissionResult = await prepareFlowPermissionResult(
+      db,
+      runId,
+      hosts.transport,
+    );
+  } catch (error) {
+    if (
+      !isMaisterError(error) ||
+      !["EXECUTOR_UNAVAILABLE", "PRECONDITION"].includes(error.code)
+    )
+      throw error;
+    log.warn(
+      { runId, code: error.code },
+      "permission result evidence unavailable; no resume claim taken",
+    );
+
+    return {
+      ok: false,
+      code: "EXECUTOR_UNAVAILABLE",
+      retryable: true,
+      message: error.message,
+    };
+  }
+  if (permissionResult?.kind === "rejected") {
+    await failCheckpointedFlowPermission(db, runId, permissionResult);
+
+    return {
+      ok: false,
+      code: "HITL_TIMEOUT",
+      retryable: false,
+      message:
+        "The original permission delivery was rejected; the run has failed",
+    };
+  }
+  if (permissionResult?.kind === "pending") {
+    log.warn(
+      { runId, reason: permissionResult.reason },
+      "permission result evidence pending; no resume claim taken",
+    );
+
+    return {
+      ok: false,
+      code: "EXECUTOR_UNAVAILABLE",
+      retryable: true,
+      message: "Original permission delivery evidence is not yet complete",
+    };
+  }
+
   // ADR-121 (T14, G4): cap-gate the resume claim atomically. Under the scheduler
   // advisory lock, count the flow pool; if it is at cap, DEFER — stamp
   // `resume_requested_at` (the C3 FIFO key) and return QUEUED instead of claiming
@@ -262,6 +320,7 @@ export async function resumeRun(
       const result = await markResumed(runId, {
         db: tx,
         placement: { host: placementHost, transport: hosts.transport },
+        ...(permissionResult ? { permissionResult } : {}),
         ...(opts.recordSuccessAudit
           ? { recordSuccessAudit: opts.recordSuccessAudit }
           : {}),
@@ -303,6 +362,18 @@ export async function resumeRun(
 
   const assignmentId = claim.assignment?.id ?? null;
 
+  if (await hasFlowPermissionResume(db, runId)) {
+    log.info({ runId, assignmentId }, "owned permission resume authorized");
+
+    return {
+      ok: true,
+      runStatus: permissionResult ? "Running" : "NeedsInput",
+      newSupervisorSessionId: null,
+      acpSessionId: runRow.acpSessionId,
+      assignmentId,
+    };
+  }
+
   try {
     // Bound to the generation the claim just minted — never "the run's active
     // assignment", which a racing re-entry could have replaced; the workspace
@@ -343,6 +414,7 @@ export async function resumeRun(
 
     return {
       ok: true,
+      runStatus: "NeedsInput",
       newSupervisorSessionId: result.sessionId,
       acpSessionId: result.acpSessionId,
       assignmentId,

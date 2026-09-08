@@ -60,12 +60,12 @@ mAIster/
 ├── pnpm-workspace.yaml         # Monorepo: web + supervisor + site + site-docs
 ├── pnpm-lock.yaml              # Frozen lockfile (root)
 ├── Dockerfile                  # Single image; web/supervisor selected via command:
-├── compose.yml                 # Base: app + supervisor + postgres
+├── compose.yml                 # Postgres only; web + supervisor run on the host
 ├── compose.production.yml      # Prod hardening: read_only, cap_drop, tmpfs
 ├── docs/                       # Product & engineering documentation
 │   ├── VISION.md
 │   ├── PRODUCT_VIEW.md
-│   ├── supervisor.md           # HTTP+SSE API, lifecycle, cost.jsonl
+│   ├── supervisor.md           # HTTP+SSE API, lifecycle, event/object plane
 │   ├── configuration.md
 │   ├── database-schema.md
 │   ├── error-taxonomy.md
@@ -93,7 +93,7 @@ mAIster/
 │   │   ├── http-api.ts         # 6 routes (POST/DELETE/GET /sessions, SSE, checkpoint/input stubs)
 │   │   ├── spawn.ts            # child_process dispatch (claude-agent-acp | codex-acp)
 │   │   ├── heartbeat.ts        # exit/error → session.exited/crashed + orphan watcher
-│   │   ├── cost.ts             # cache_creation/input/output tokens → cost.jsonl
+│   │   ├── cost.ts             # cache/input/output usage normalization
 │   │   ├── registry.ts         # In-memory SessionRecord map + per-session event ring buffer
 │   │   ├── types.ts            # Zod schemas + SessionEvent union + SupervisorError
 │   │   └── __tests__/          # 30 unit + 9 integration tests
@@ -133,8 +133,9 @@ mAIster/
 Two Node processes: `web/` (Next.js — UI + Route Handlers + server actions
 + Drizzle DB access + SSE bridge) and `supervisor/` (Fastify daemon —
 owns ACP sessions and spawns agent processes). They communicate over
-HTTP+SSE through `web/lib/supervisor-client.ts`; the supervisor can run
-on a different host than the web tier.
+HTTP+SSE through `web/lib/supervisor-client.ts`; the supervisor runs as a
+separate process on the supported single host. Stage B removes the web
+runtime-data mount; Stage C owns remote repository/workspace placement.
 
 ## Key Entry Points
 
@@ -147,6 +148,7 @@ on a different host than the web tier.
 | `web/lib/supervisor-client.ts` | The ONLY place `web/` talks to `supervisor/` (HTTP+SSE) |
 | `web/lib/errors.ts` | `MaisterError` discriminated union (11 codes) |
 | `web/lib/db/schema.ts` | Drizzle schema; `node_attempts` is the sole Flow execution ledger |
+| `web/lib/execution-host/events/projection-runtime.ts` | Autonomous canonical projection registry and worker activation |
 | `web/lib/config.ts` | `maister.yaml` v2 loader (zod-validated) |
 | `site/app/[locale]/page.tsx` | Public localized landing page |
 | `site/app/api/github/route.ts` | Validated live GitHub repository widget endpoint |
@@ -169,7 +171,7 @@ on a different host than the web tier.
 | Code of Conduct | `CODE_OF_CONDUCT.md` | Community behavior and enforcement policy |
 | Getting Started | `docs/getting-started.md` | Install, dev workflow, first run |
 | Russian Guide | `docs/ru/README.md` | Purpose, workflow, operator guide |
-| Supervisor | `docs/supervisor.md` | ACP daemon: HTTP+SSE API, lifecycle, env vars, cost.jsonl |
+| Supervisor | `docs/supervisor.md` | ACP daemon: HTTP+SSE API, lifecycle, durable events, runtime objects, env vars |
 | Database Schema | `docs/database-schema.md` | 8 tables, FK cascade chain, indexes, Drizzle workflow |
 | Error Taxonomy | `docs/error-taxonomy.md` | `MaisterError` codes — when each fires, what the UI does |
 | Configuration | `docs/configuration.md` | `maister.yaml` v2 + `flow.yaml` v1 + `form_schema` versioning + env vars |

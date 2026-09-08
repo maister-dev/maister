@@ -70,7 +70,7 @@ describe("supervisor OpenAPI 0.8.0 examples ↔ Zod", () => {
       ["/workspaces/adopt", "post", "gitWorktree"],
       ["/workspaces/{id}", "delete", "release"],
       ["/sessions", "post", "enveloped"],
-      ["/sessions/{id}/prompt", "post", "enveloped"],
+      ["/sessions/{id}/prompts", "post", "enveloped"],
       ["/sessions/{id}/checkpoint", "post", "enveloped"],
       ["/sessions/{id}/cancel", "post", "enveloped"],
       ["/sessions/{id}/input", "post", "envelopedSelect"],

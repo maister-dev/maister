@@ -22,14 +22,21 @@ export function SchedulerScheduledLaunchesOverview(props: {
 }): ReactElement {
   return (
     <section className="rounded-[12px] border border-line bg-paper p-5">
-      <h2 className="m-0 text-[16px] font-semibold text-ink">{props.labels.title}</h2>
+      <h2 className="m-0 text-[16px] font-semibold text-ink">
+        {props.labels.title}
+      </h2>
       <p className="mt-1 text-[12px] text-mute">{props.labels.subtitle}</p>
       {props.launches.length === 0 ? (
-        <p className="mt-4 font-mono text-[12px] text-mute">{props.labels.empty}</p>
+        <p className="mt-4 font-mono text-[12px] text-mute">
+          {props.labels.empty}
+        </p>
       ) : (
         <ul className="mt-4 divide-y divide-line-soft">
           {props.launches.map((launch) => (
-            <li className="flex items-center justify-between gap-3 py-2.5" key={launch.scheduledLaunchId}>
+            <li
+              key={launch.scheduledLaunchId}
+              className="flex items-center justify-between gap-3 py-2.5"
+            >
               <div className="min-w-0">
                 <Link
                   className="text-sm font-semibold text-ink hover:text-amber"
@@ -37,7 +44,9 @@ export function SchedulerScheduledLaunchesOverview(props: {
                 >
                   {launch.projectName} · {launch.taskKey}-{launch.taskNumber}
                 </Link>
-                <p className="truncate font-mono text-[10px] text-mute">{launch.taskTitle}</p>
+                <p className="truncate font-mono text-[10px] text-mute">
+                  {launch.taskTitle}
+                </p>
               </div>
               <p className="text-right font-mono text-[10px] text-mute">
                 {launch.state} · {props.labels.attempt} {launch.attemptCount}

@@ -10,23 +10,29 @@ Wants=network-online.target
 Type=simple
 User=maister
 Group=maister
-WorkingDirectory=/opt/maister
+WorkingDirectory=/opt/maister/supervisor
 # Supervisor reads its OWN env file (not the shared /etc/maister/maister.env the
 # web unit uses). Seed it from supervisor/.env.sample. The runtime also loads it
 # via `tsx --env-file-if-exists=.env`; declaring it here makes the vars part of
-# the unit environment too. MAISTER_RUNTIME_ROOT must equal the web unit's.
+# the unit environment too. Runtime roots and host-state limits belong here;
+# the web unit does not mount or read the supervisor runtime-data root.
 EnvironmentFile=/opt/maister/supervisor/.env
 # pnpm must be on PATH so node_modules/.bin (claude-agent-acp, codex-acp, tsx)
-# resolves for the spawned ACP adapters. Install Node 24 + corepack system-wide
+# resolves for the spawned ACP adapters. Install Node >=24.15.0 <25 + corepack system-wide
 # (pnpm shim in /usr/local/bin). Adjust the repo node_modules/.bin path if needed.
 Environment=PATH=/usr/local/bin:/usr/bin:/bin:/opt/maister/node_modules/.bin:/opt/maister/supervisor/node_modules/.bin
-ExecStart=/usr/bin/env pnpm --filter @maister/supervisor start
+# Execute Node directly; package-manager wrappers can exit before forwarding SIGTERM.
+ExecStart=/usr/bin/env node --import tsx --env-file-if-exists=.env src/main.ts
 Restart=always
 RestartSec=3
 # Graceful: supervisor SIGTERMs its agents (MAISTER_SHUTDOWN_GRACE_MS, ~15s) then
-# SIGKILLs (MAISTER_KILL_GRACE_MS, ~5s). NOTE: a restart drops the in-memory ACP
-# session registry — live runs orphan until startup reconciliation lands (M19).
+# SIGKILLs and drains durable output before closing SQLite. Total budget is
+# shutdown grace + kill grace + 5s. Increase TimeoutStopSec if either is raised.
+# Restart reconstructs durable receipts/events; an in-memory ACP connection is
+# not restored by restarting the daemon.
 KillSignal=SIGTERM
+# Let the supervisor drain its agents before systemd kills remaining children.
+KillMode=mixed
 TimeoutStopSec=30
 NoNewPrivileges=true
 

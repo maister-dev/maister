@@ -127,6 +127,7 @@ beforeEach(async () => {
     "task_relations",
     "run_sync_attempts",
     "workspaces",
+    "execution_commands",
     "runs",
     "tasks",
     "flows",

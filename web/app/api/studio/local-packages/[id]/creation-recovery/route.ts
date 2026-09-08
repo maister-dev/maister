@@ -40,7 +40,10 @@ export async function POST(
 
     if (await requestHasBody(req)) {
       return NextResponse.json(
-        { code: "CONFIG", message: "this recovery endpoint does not accept a request body" },
+        {
+          code: "CONFIG",
+          message: "this recovery endpoint does not accept a request body",
+        },
         { status: 422 },
       );
     }

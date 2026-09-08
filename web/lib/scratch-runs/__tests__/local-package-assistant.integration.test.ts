@@ -13,6 +13,7 @@
 //     project-scoped on a terminal transition (markScratchCrashed no-ops the
 //     domain/webhook outbox for a null project).
 
+import type { CommandEnvelope } from "@/lib/execution-host/types";
 import type { WorktreeInfo } from "@/lib/worktree";
 
 import { randomUUID } from "node:crypto";
@@ -34,7 +35,8 @@ import {
 
 import * as schemaModule from "@/lib/db/schema";
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
-import { acquireLock } from "@/lib/local-packages/lock";
+import { acquireLock, assertHoldsLock } from "@/lib/local-packages/lock";
+import { settlePendingFlowAssistantActions } from "@/lib/studio/flow-assistant/turn";
 import { classifyRunReconcile, runReconcileSweep } from "@/lib/reconcile";
 import { assertRunScratchMetadataInvariant } from "@/lib/runs/run-kind-invariants";
 import { parseScratchMessageContent } from "@/lib/scratch-runs/transcript";
@@ -99,6 +101,7 @@ let getLocalPackage: typeof import("@/lib/local-packages/service").getLocalPacka
 
 const schema = schemaModule as unknown as Record<string, any>;
 const {
+  executionCommands,
   domainEvents,
   localPackages,
   runs,
@@ -133,13 +136,51 @@ beforeAll(async () => {
   fake = createFakeExecutionHost();
 
   Object.assign(fake.transport, {
-    createSession: async (envelope: { payload: unknown }) =>
-      supervisorMock.createSession(envelope.payload),
-    sendPrompt: async (
-      sessionId: string,
-      envelope: { payload: unknown },
-      opts?: unknown,
-    ) => supervisorMock.sendPrompt(sessionId, envelope.payload, opts),
+    createSession: async (envelope: {
+      command: { id: string };
+      fence: { runId: string; assignmentEpoch: number };
+      payload: {
+        executionWorkspaceId: string;
+        stepId?: string;
+        sessionName?: string;
+      };
+    }) => {
+      const result = (await supervisorMock.createSession(envelope.payload)) as {
+        sessionId: string;
+        pid: number;
+        acpSessionId: string;
+      };
+
+      fake.sessions.set(result.sessionId, {
+        sessionId: result.sessionId,
+        runId: envelope.fence.runId,
+        stepId: envelope.payload.stepId ?? "assistant",
+        sessionName: envelope.payload.sessionName ?? "default",
+        acpSessionId: result.acpSessionId,
+        executionWorkspaceId: envelope.payload.executionWorkspaceId,
+        assignmentEpoch: envelope.fence.assignmentEpoch,
+        createdByCommandId: envelope.command.id,
+        status: "live",
+      });
+      // This override replaces the fake's own createSession, so it owes the
+      // event plane the same `session.created` that method publishes. Without
+      // it no incarnation is ever projected and an OWNED prompt on this run
+      // can never be admitted.
+      await fake.publishCanonical(
+        envelope as unknown as CommandEnvelope<unknown>,
+        result.sessionId,
+        {
+          type: "session.created",
+          createdByCommandId: envelope.command.id,
+          sessionId: result.sessionId,
+          monotonicId: fake.monotonic(),
+          sessionName: envelope.payload.sessionName ?? "default",
+          acpSessionId: result.acpSessionId,
+        },
+      );
+
+      return result;
+    },
     streamSession: (sessionId: string, opts?: unknown) =>
       supervisorMock.streamSession(sessionId, opts),
     listSessions: () => supervisorMock.listSessions(),
@@ -160,6 +201,15 @@ beforeAll(async () => {
 
       return { ok: true as const, replayed: false };
     },
+  });
+  fake.setPromptBehavior(async ({ sessionId, envelope }) => {
+    const result = await supervisorMock.sendPrompt(sessionId, envelope.payload);
+
+    for await (const event of supervisorMock.streamSession(sessionId)) {
+      fake.pushEvent(sessionId, event);
+    }
+
+    return result;
   });
   await fakeExecutionHosts(db, { fake });
 
@@ -228,6 +278,9 @@ beforeEach(async () => {
   await db.delete(domainEvents);
   await db.delete(webhookEvents);
   await db.delete(scratchRuns);
+  // Command evidence protects its run from deletion (D6): discharge it
+  // explicitly instead of relying on the FK cascade.
+  await db.delete(executionCommands);
   await db.delete(runs);
 
   // Reset the supervisor stub to its happy-path defaults each test.
@@ -896,6 +949,150 @@ describe("launchLocalPackageAssistant + a turn (ADR-097 T5.7)", () => {
   });
 });
 
+describe("flow assistant action journal (S2.9)", () => {
+  async function seedPendingAction(label: string) {
+    const pkg = await createLocalPackage({
+      name: `assistant-${label}-${randomUUID().slice(0, 8)}`,
+      createdBy: userId,
+      db: db as never,
+    });
+
+    streamAssistantText("no action in this turn");
+    const sessionId = await lockLocalPackage(pkg.id, `assistant-${label}`);
+    const launched = await launchLocalPackageAssistant({
+      body: { localPackageId: pkg.id, sessionId, prompt: "hello" },
+      userId,
+    });
+    const [message] = await db
+      .select({ id: scratchMessages.id })
+      .from(scratchMessages)
+      .where(
+        and(
+          eq(scratchMessages.runId, launched.runId),
+          eq(scratchMessages.role, "assistant"),
+        ),
+      );
+    const actionId = `act_${label}`;
+
+    // Exactly the evidence a process leaves when it dies after consuming the
+    // action block but before the package apply: a sanitized message plus a
+    // retained pending intent.
+    await db.insert(schema.flowAssistantActions).values({
+      id: randomUUID(),
+      runId: launched.runId,
+      localPackageId: pkg.id,
+      lockGeneration: sessionId,
+      messageId: message.id,
+      action: {
+        schemaVersion: FLOW_ASSISTANT_ACTION_SCHEMA_VERSION,
+        actionId,
+        summary: "Add recovered flow",
+        operations: [
+          {
+            op: "upsert_file",
+            path: `flows/${label}/flow.yaml`,
+            baseHash: null,
+            content: validFlowYaml(label),
+          },
+        ],
+      },
+    });
+
+    return { pkg, sessionId, runId: launched.runId, label };
+  }
+
+  it("owner-scratch-package-recovery: a retained action applies exactly once", async () => {
+    const seeded = await seedPendingAction("recovered");
+    const fresh = await getLocalPackage(seeded.pkg.id, db as never);
+
+    expect((await diffWorkingDir(fresh!)).changedCount).toBe(0);
+    const applied = await settlePendingFlowAssistantActions({
+      db: db as never,
+      localPackage: fresh!,
+      runId: seeded.runId,
+      lockGeneration: seeded.sessionId,
+      assertCanApply: () =>
+        assertHoldsLock(seeded.pkg.id, seeded.sessionId, db as never),
+    });
+
+    expect(applied?.status).toBe("applied");
+    const [row] = await db
+      .select()
+      .from(schema.flowAssistantActions)
+      .where(eq(schema.flowAssistantActions.runId, seeded.runId));
+
+    expect(row.state).toBe("applied");
+    const afterFirst = await diffWorkingDir(
+      (await getLocalPackage(seeded.pkg.id, db as never))!,
+    );
+
+    expect(
+      afterFirst.files.some((file) =>
+        file.path.endsWith("flows/recovered/flow.yaml"),
+      ),
+    ).toBe(true);
+
+    // A second recovery pass is a no-op: the settled intent is never re-applied.
+    expect(
+      await settlePendingFlowAssistantActions({
+        db: db as never,
+        localPackage: fresh!,
+        runId: seeded.runId,
+        lockGeneration: seeded.sessionId,
+        assertCanApply: () =>
+          assertHoldsLock(seeded.pkg.id, seeded.sessionId, db as never),
+      }),
+    ).toBeNull();
+    const results = await db
+      .select({ content: scratchMessages.content })
+      .from(scratchMessages)
+      .where(
+        and(
+          eq(scratchMessages.runId, seeded.runId),
+          eq(scratchMessages.role, "system"),
+        ),
+      );
+
+    expect(
+      results.filter(
+        (message) =>
+          parseScratchMessageContent("system", message.content).kind ===
+          "flow_action_result",
+      ),
+    ).toHaveLength(1);
+  }, 120_000);
+
+  it("owner-scratch-package-lock-takeover: a superseded generation never edits", async () => {
+    const seeded = await seedPendingAction("takeover");
+    const takeover = await lockLocalPackage(seeded.pkg.id, "assistant-newlock");
+    const fresh = await getLocalPackage(seeded.pkg.id, db as never);
+
+    expect(
+      await settlePendingFlowAssistantActions({
+        db: db as never,
+        localPackage: fresh!,
+        runId: seeded.runId,
+        lockGeneration: takeover,
+        assertCanApply: () =>
+          assertHoldsLock(seeded.pkg.id, takeover, db as never),
+      }),
+    ).toBeNull();
+    const [row] = await db
+      .select()
+      .from(schema.flowAssistantActions)
+      .where(eq(schema.flowAssistantActions.runId, seeded.runId));
+
+    expect(row.state).toBe("skipped");
+    expect(
+      (
+        await diffWorkingDir(
+          (await getLocalPackage(seeded.pkg.id, db as never))!,
+        )
+      ).changedCount,
+    ).toBe(0);
+  }, 120_000);
+});
+
 function streamAssistantText(text: string): void {
   supervisorMock.streamSession.mockImplementation(async function* () {
     yield {
@@ -989,18 +1186,17 @@ describe("deferred-release on a failure path (ADR-097 T5.6)", () => {
 
     expect(supervisorMock.deleteSession).toHaveBeenCalledWith("sup-1");
 
-    // The run lands Crashed with its supervisor session cleared.
+    // The run lands Crashed. The host session stays in run_sessions as immutable
+    // audit/recovery state; scratch metadata no longer mirrors it.
     const rows = await db
       .select({
         status: runs.status,
-        supervisorSessionId: scratchRuns.supervisorSessionId,
       })
       .from(runs)
       .innerJoin(scratchRuns, eq(scratchRuns.runId, runs.id))
       .where(eq(runs.localPackageId, pkg.id));
 
     expect(rows[0].status).toBe("Crashed");
-    expect(rows[0].supervisorSessionId).toBeNull();
   });
 
   it("a follow-up turn failure also releases the supervisor session", async () => {

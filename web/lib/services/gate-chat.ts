@@ -3,9 +3,6 @@ import "server-only";
 import type { ExecutionAssignment } from "@/lib/db/schema";
 
 import { execFile } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
 import { promisify } from "node:util";
 
 import { and, asc, eq, lt, sql } from "drizzle-orm";
@@ -16,10 +13,19 @@ import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import {
-  applyWorkspacePolicy,
   captureCheckpoint,
   checkpointRefName,
 } from "@/lib/flows/graph/workspace-checkpoint";
+import {
+  failGateChatTurn,
+  senseAndRestore,
+} from "@/lib/services/gate-chat-turn-completion";
+import {
+  admitGateChatPrompt,
+  loadAppliedGateChatReply,
+  reconcileOwnedGateChatTurn,
+  waitForGateChatPrompt,
+} from "@/lib/services/gate-chat-prompt-owner";
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import {
   bumpKeepalive,
@@ -36,6 +42,7 @@ import {
   isFencedError,
   type BoundClient,
   type ExecutionHosts,
+  type HostAdminClient,
 } from "@/lib/execution-host";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
@@ -260,47 +267,6 @@ export async function assertNoActiveGateChatTurn(
   }
 }
 
-async function failGateChatTurn(args: {
-  db: Db;
-  turnId: string;
-  hitlRequestId: string;
-  errorCode: string;
-  terminalState?: "failed" | "aborted";
-}): Promise<void> {
-  await args.db.transaction(async (tx: Db) => {
-    const hitlRows = await tx
-      .select({
-        response: hitlRequests.response,
-        respondedAt: hitlRequests.respondedAt,
-      })
-      .from(hitlRequests)
-      .where(eq(hitlRequests.id, args.hitlRequestId))
-      .for("update");
-    const hitl = hitlRows[0];
-    const turnRows = await tx
-      .select({ id: gateChatTurns.id, state: gateChatTurns.state })
-      .from(gateChatTurns)
-      .where(eq(gateChatTurns.id, args.turnId))
-      .for("update");
-    const turn = turnRows[0];
-
-    if (!turn || turn.state !== "pending") return;
-
-    const isClaimed =
-      !hitl || hitl.response !== null || hitl.respondedAt !== null;
-
-    await tx
-      .update(gateChatTurns)
-      .set({
-        state: args.terminalState ?? (isClaimed ? "aborted" : "failed"),
-        leaseExpiresAt: null,
-        completedAt: new Date(),
-        errorCode: args.errorCode,
-      })
-      .where(eq(gateChatTurns.id, args.turnId));
-  });
-}
-
 // ADR-166: the chat turn rides the client bound to the run's assignment — the
 // live driver's epoch on a NeedsInput run, a fresh `gate_chat` generation on
 // an idle one (D2). Host-scoped reads (session list, stream) go through the
@@ -460,6 +426,7 @@ export async function recoverExpiredGateChatTurns(args: {
   const hosts = args.executionHosts ?? createExecutionHosts({ db: d });
   const now = args.now ?? (() => new Date());
   const observedAt = now();
+  const recoverySignal = new AbortController().signal;
   const candidates = (await d
     .select({
       id: gateChatTurns.id,
@@ -508,6 +475,20 @@ export async function recoverExpiredGateChatTurns(args: {
     );
 
     try {
+      // D2: reconcile this turn's own command evidence BEFORE treating an
+      // expired lease as a failure. A completed turn lands its reply here.
+      if (await reconcileOwnedGateChatTurn(d, claim.id, recoverySignal)) {
+        recovered += 1;
+        log.info(
+          {
+            runId: claim.runId,
+            hitlRequestId: claim.hitlRequestId,
+            turnId: claim.id,
+          },
+          "[FIX:gate-chat-recovery] expired lease resolved from durable command evidence",
+        );
+        continue;
+      }
       const cancellation = liveSession
         ? await (
             await hosts.forRun(claim.runId, { teardown: true })
@@ -599,127 +580,6 @@ export async function listGateChatMessages(args: {
     .orderBy(gateChatMessages.seq);
 
   return rows as GateChatMessageView[];
-}
-
-async function git(
-  worktreePath: string,
-  args: string[],
-  env?: NodeJS.ProcessEnv,
-): Promise<string> {
-  try {
-    const { stdout } = await execFileAsync(
-      "git",
-      ["-C", worktreePath, ...args],
-      {
-        timeout: GIT_TIMEOUT_MS,
-        maxBuffer: 16 * 1024 * 1024,
-        env: env ?? process.env,
-      },
-    );
-
-    return stdout;
-  } catch (err) {
-    throw new MaisterError(
-      "CHECKPOINT",
-      `git ${args[0]} failed in ${worktreePath}: ${err instanceof Error ? err.message : String(err)}`,
-      { cause: err instanceof Error ? err : undefined },
-    );
-  }
-}
-
-// Tree SHA of the CURRENT worktree content (tracked + untracked, ignored
-// excluded) via a temp index — the L3 comparison probe. Same mechanism as
-// captureCheckpoint, without writing a ref.
-async function currentContentTree(worktreePath: string): Promise<string> {
-  const tmpDir = await mkdtemp(path.join(tmpdir(), "maister-l3-probe-"));
-  const env: NodeJS.ProcessEnv = {
-    ...process.env,
-    GIT_INDEX_FILE: path.join(tmpDir, "index"),
-  };
-
-  try {
-    await git(worktreePath, ["add", "-A"], env);
-
-    return (await git(worktreePath, ["write-tree"], env)).trim();
-  } finally {
-    await rm(tmpDir, { recursive: true, force: true });
-  }
-}
-
-async function treePaths(
-  worktreePath: string,
-  tree: string,
-): Promise<Set<string>> {
-  const out = await git(worktreePath, ["ls-tree", "-r", "--name-only", tree]);
-
-  return new Set(
-    out
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean),
-  );
-}
-
-// M30 (ADR-078 L3): the hard neutrality guarantee. Compares the current
-// worktree content (tree probe + branch tip) against the first-turn
-// baseline; on a delta restores the baseline (ADR-079 rewind overlay) and
-// deletes ONLY the rogue untracked paths absent from the baseline tree —
-// never a blanket clean, never `.maister/`. Fail-closed: a sensor that
-// cannot sense throws CHECKPOINT.
-async function senseAndRestore(args: {
-  worktreePath: string;
-  baselineRef: string;
-}): Promise<{ reverted: boolean }> {
-  const baselineSha = (
-    await git(args.worktreePath, [
-      "rev-parse",
-      "--verify",
-      `${args.baselineRef}^{commit}`,
-    ])
-  ).trim();
-  const baselineTree = (
-    await git(args.worktreePath, ["rev-parse", `${baselineSha}^{tree}`])
-  ).trim();
-  const baselineTip = (
-    await git(args.worktreePath, ["rev-parse", `${baselineSha}^`])
-  ).trim();
-
-  const currentTip = (
-    await git(args.worktreePath, ["rev-parse", "HEAD"])
-  ).trim();
-  const currentTree = await currentContentTree(args.worktreePath);
-
-  if (currentTree === baselineTree && currentTip === baselineTip) {
-    return { reverted: false };
-  }
-
-  // Rogue untracked paths: present in the current content, absent from the
-  // baseline tree. Computed BEFORE the restore (the rewind overlay leaves
-  // attempt-created untracked files in place by design — DD6).
-  const currentPaths = await treePaths(args.worktreePath, currentTree);
-  const baselinePaths = await treePaths(args.worktreePath, baselineSha);
-  const rogue = [...currentPaths].filter((p) => !baselinePaths.has(p));
-
-  await applyWorkspacePolicy({
-    policy: "rewind-to-node-checkpoint",
-    worktreePath: args.worktreePath,
-    checkpointRef: args.baselineRef,
-  });
-
-  for (const rel of rogue) {
-    const abs = path.resolve(args.worktreePath, rel);
-
-    // Path containment: the restore never reaches outside the worktree.
-    if (!abs.startsWith(path.resolve(args.worktreePath) + path.sep)) continue;
-    await rm(abs, { force: true });
-  }
-
-  log.warn(
-    { worktreePath: args.worktreePath, rogueCount: rogue.length },
-    "[neutrality] reverted mutation",
-  );
-
-  return { reverted: true };
 }
 
 export interface SendGateChatTurnResult {
@@ -991,6 +851,7 @@ export async function sendGateChatTurn(args: {
   let resumed = false;
   // Assigned on every non-throwing branch below (live lookup or chat resume).
   let client!: BoundClient;
+  let admin!: HostAdminClient;
 
   try {
     if (run.status === "NeedsInput") {
@@ -1112,38 +973,24 @@ export async function sendGateChatTurn(args: {
     return created.sessionId;
   }
 
+  // A run-bound reader reconstructs canonical sessions from Postgres. The
+  // host-global admin client remains reserved for host operational reads.
+  admin = (
+    await hosts.executionFor(args.runId, {
+      assignmentId: client.assignment.id,
+    })
+  ).admin;
+
   // (4b) prompt — L1 preamble + verbatim reviewer text (NEVER templated),
-  // L2 readOnlyTurn flag, DD4 stepId marker. Reply text accumulates from the
-  // session stream (chat_turn event preferred, chunks as fallback).
-  let replyFromEvent: string | null = null;
-  let replyChunks = "";
+  // L2 readOnlyTurn flag, DD4 stepId marker. The reply itself is decoded by the
+  // owner from this command's durable output, not from this stack; the consumer
+  // remains only to drain the session stream for the duration of the turn.
   const abort = new AbortController();
   const consumer = (async () => {
     try {
-      for await (const ev of hosts.local().streamSession(supervisorSessionId, {
+      for await (const ev of admin.streamSession(supervisorSessionId, {
         signal: abort.signal,
       }) as AsyncGenerator<SupervisorEvent>) {
-        if (
-          ev.type === "session.chat_turn" &&
-          ev.hitlRequestId === args.hitlRequestId &&
-          ev.role === "agent"
-        ) {
-          replyFromEvent = ev.body;
-        }
-        if (ev.type === "session.update") {
-          const update = ev.update as {
-            sessionUpdate?: string;
-            content?: { type?: string; text?: string };
-          } | null;
-
-          if (
-            update?.sessionUpdate === "agent_message_chunk" &&
-            update.content?.type === "text" &&
-            typeof update.content.text === "string"
-          ) {
-            replyChunks += update.content.text;
-          }
-        }
         if (ev.type === "session.exited" || ev.type === "session.crashed") {
           break;
         }
@@ -1165,16 +1012,34 @@ export async function sendGateChatTurn(args: {
     sessionId: supervisorSessionId,
     leaseExpiresAt: admitted.leaseExpiresAt,
   });
-  let promptResult: PromptResult;
+  // Null when the owner already settled this command durably, so there is no
+  // live outcome to report.
+  let promptResult: PromptResult | null;
 
   try {
-    const handle = await client.prompt(supervisorSessionId, {
-      stepId,
-      prompt: GATE_CHAT_READONLY_PREAMBLE + args.message,
-      readOnlyTurn: true,
-    });
+    const handle = await client.prompt(
+      supervisorSessionId,
+      {
+        stepId,
+        prompt: GATE_CHAT_READONLY_PREAMBLE + args.message,
+        readOnlyTurn: true,
+      },
+      {
+        admitOwner: (tx: Db) =>
+          admitGateChatPrompt(tx, client, supervisorSessionId, {
+            hitlRequestId: args.hitlRequestId,
+            turnId: admitted.turnId,
+            userMessageId: admitted.userMessage.id,
+            leaseGeneration: admitted.leaseExpiresAt.toISOString(),
+          }),
+      },
+    );
 
-    promptResult = await handle.completion;
+    // The owner decodes the reply from this command's own verified output,
+    // performs the L3 restore and commits both with the application marker, so
+    // a death anywhere after the host finished the turn still lands the same
+    // reply instead of expiring the lease.
+    promptResult = await waitForGateChatPrompt(d, client, handle);
   } catch (err) {
     // X-DEFER: release the stream consumer on EVERY failure path.
     abort.abort();
@@ -1192,8 +1057,11 @@ export async function sendGateChatTurn(args: {
       db: d,
       turnId: admitted.turnId,
       hitlRequestId: args.hitlRequestId,
-      errorCode: "ACP_PROTOCOL",
+      errorCode: err instanceof MaisterError ? err.code : "ACP_PROTOCOL",
     });
+    // A typed refusal keeps its own code and details: callers and the UI branch
+    // on the taxonomy, and flattening every failure to ACP_PROTOCOL destroys it.
+    if (err instanceof MaisterError) throw err;
     throw new MaisterError(
       "ACP_PROTOCOL",
       `gate-chat prompt failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -1205,152 +1073,22 @@ export async function sendGateChatTurn(args: {
 
   abort.abort();
   await consumer;
+  // The pause stays warm while the reviewer is asking questions.
+  await bumpKeepalive(args.runId, { db: d });
 
-  let sensed: { reverted: boolean };
-
-  try {
-    // The pause stays warm while the reviewer is asking questions.
-    await bumpKeepalive(args.runId, { db: d });
-
-    // (5) L3 sense + restore — unconditional, fail-closed.
-    sensed = await senseAndRestore({
-      worktreePath: workspace.worktreePath,
-      baselineRef,
-    });
-  } catch (err) {
-    await failGateChatTurn({
-      db: d,
-      turnId: admitted.turnId,
-      hitlRequestId: args.hitlRequestId,
-      errorCode: err instanceof MaisterError ? err.code : "CHECKPOINT",
-    });
-    throw err;
-  }
-
-  if (promptResult.stopReason === "cancelled") {
-    await failGateChatTurn({
-      db: d,
-      turnId: admitted.turnId,
-      hitlRequestId: args.hitlRequestId,
-      errorCode: deadline.expired() ? "LEASE_EXPIRED" : "PROMPT_CANCELLED",
-      terminalState: "aborted",
-    });
+  if (promptResult?.stopReason === "cancelled") {
     throw new MaisterError(
       "PRECONDITION",
       "gate-chat turn was cancelled; retry after the workspace restore completes",
     );
   }
+  const agentMessage = await loadAppliedGateChatReply(d, admitted.turnId);
 
-  // (6) persist the agent turn and mark the coordinator completed in one
-  // transaction. A pending coordinator fences response claim until this L3
-  // restore has completed; lease expiry requests cancellation but never clears
-  // that fence early.
-  const replyBody = replyFromEvent ?? replyChunks;
-  let agentMessage: GateChatMessageView & { mutationReverted: boolean };
-
-  try {
-    agentMessage = await d.transaction(async (tx: Db) => {
-      const lockedHitlRows = await tx
-        .select({
-          response: hitlRequests.response,
-          respondedAt: hitlRequests.respondedAt,
-        })
-        .from(hitlRequests)
-        .where(eq(hitlRequests.id, args.hitlRequestId))
-        .for("update");
-      const lockedHitl = lockedHitlRows[0];
-      const turnRows = await tx
-        .select({ id: gateChatTurns.id, state: gateChatTurns.state })
-        .from(gateChatTurns)
-        .where(eq(gateChatTurns.id, admitted.turnId))
-        .for("update");
-      const turn = turnRows[0];
-
-      if (
-        !turn ||
-        turn.state !== "pending" ||
-        !lockedHitl ||
-        lockedHitl.response !== null ||
-        lockedHitl.respondedAt !== null
-      ) {
-        if (turn?.state === "pending") {
-          await tx
-            .update(gateChatTurns)
-            .set({
-              state: "aborted",
-              leaseExpiresAt: null,
-              completedAt: new Date(),
-              errorCode: "RESPONSE_CLAIMED",
-            })
-            .where(eq(gateChatTurns.id, turn.id));
-        }
-        throw new MaisterError(
-          "PRECONDITION",
-          "gate-chat turn became stale before its agent reply could be stored",
-        );
-      }
-
-      const agentRows = await tx
-        .insert(gateChatMessages)
-        .values({
-          runId: args.runId,
-          hitlRequestId: args.hitlRequestId,
-          nodeId: admitted.nodeId,
-          gateAttempt: admitted.gateAttempt,
-          role: "agent",
-          authorUserId: null,
-          authorLabel: "agent",
-          body: replyBody,
-          acpSessionId: activeAcpSessionId,
-          seq: admitted.userMessage.seq + 1,
-          mutationReverted: sensed.reverted,
-        })
-        .returning({
-          id: gateChatMessages.id,
-          createdAt: gateChatMessages.createdAt,
-        });
-      const storedAgent = agentRows[0];
-
-      if (!storedAgent) {
-        throw new MaisterError(
-          "PRECONDITION",
-          "gate-chat agent turn was not written",
-        );
-      }
-
-      await tx
-        .update(gateChatTurns)
-        .set({
-          state: "completed",
-          agentMessageId: storedAgent.id,
-          leaseExpiresAt: null,
-          completedAt: new Date(),
-        })
-        .where(
-          and(
-            eq(gateChatTurns.id, admitted.turnId),
-            eq(gateChatTurns.state, "pending"),
-          ),
-        );
-
-      return {
-        id: storedAgent.id,
-        role: "agent" as const,
-        authorLabel: "agent",
-        body: replyBody,
-        seq: admitted.userMessage.seq + 1,
-        mutationReverted: sensed.reverted,
-        createdAt: storedAgent.createdAt,
-      };
-    });
-  } catch (err) {
-    await failGateChatTurn({
-      db: d,
-      turnId: admitted.turnId,
-      hitlRequestId: args.hitlRequestId,
-      errorCode: err instanceof MaisterError ? err.code : "ACP_PROTOCOL",
-    });
-    rethrowSeqConflict(err);
+  if (!agentMessage) {
+    throw new MaisterError(
+      "PRECONDITION",
+      "gate-chat turn became stale before its agent reply could be stored",
+    );
   }
 
   log.debug(
@@ -1358,8 +1096,8 @@ export async function sendGateChatTurn(args: {
       runId: args.runId,
       hitlRequestId: args.hitlRequestId,
       live: !resumed,
-      reverted: sensed.reverted,
-      replyLen: replyBody.length,
+      reverted: agentMessage.mutationReverted,
+      replyLen: agentMessage.body.length,
     },
     "[gate-chat] turn complete",
   );

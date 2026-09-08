@@ -175,6 +175,7 @@ export function LocalPackagesList({
             t(`local.createFlow.${key}`),
           ),
         );
+
         return;
       }
 
@@ -184,6 +185,7 @@ export function LocalPackagesList({
 
       if (recovered.recoveryStatus === "rolled_back") {
         router.push("/studio/packages?create=flow&recovery=rolled-back");
+
         return;
       }
 

@@ -19,7 +19,7 @@ function stored(
   };
 }
 
-describe("scratchPromptContentBlocks — attachments → resource_link blocks (T5.4 B)", () => {
+describe("scratchPromptContentBlocks — attachments → path-free prompt blocks", () => {
   it("returns undefined when there are no file attachments (string path)", () => {
     expect(scratchPromptContentBlocks("hello", [])).toBeUndefined();
     expect(
@@ -30,22 +30,22 @@ describe("scratchPromptContentBlocks — attachments → resource_link blocks (T
     ).toBeUndefined();
   });
 
-  it("emits a leading text block then a resource_link for an uploaded file", () => {
+  it("emits a leading text block then an opaque object reference for an uploaded file", () => {
     const blocks = scratchPromptContentBlocks("review this", [
       stored({
         kind: "uploaded_file",
-        value: ".maister/demo/runs/r1/uploads/m1/notes.txt",
+        value: "b7e5e032-6049-48b2-806f-e5db714a93cb",
         fileName: "notes.txt",
         mimeType: "text/plain",
-        storagePath: "/runtime/.maister/demo/runs/r1/uploads/m1/notes.txt",
+        storagePath: null,
       }),
     ]);
 
     expect(blocks).toEqual([
       { type: "text", text: "review this" },
       {
-        type: "resource_link",
-        uri: "file:///runtime/.maister/demo/runs/r1/uploads/m1/notes.txt",
+        type: "runtime_object",
+        objectId: "b7e5e032-6049-48b2-806f-e5db714a93cb",
         name: "notes.txt",
         mimeType: "text/plain",
       },
@@ -81,15 +81,18 @@ describe("scratchPromptContentBlocks — attachments → resource_link blocks (T
       stored({ kind: "text_note", value: "note" }),
       stored({
         kind: "uploaded_file",
-        value: "ref",
+        value: "b7e5e032-6049-48b2-806f-e5db714a93cb",
         fileName: "a.txt",
-        storagePath: "/runtime/a.txt",
+        storagePath: null,
       }),
       stored({ kind: "issue_url", value: "https://x/1" }),
     ]);
 
     expect(blocks).toHaveLength(2);
     expect(blocks?.[0]).toEqual({ type: "text", text: "mix" });
-    expect(blocks?.[1]).toMatchObject({ type: "resource_link", name: "a.txt" });
+    expect(blocks?.[1]).toMatchObject({
+      type: "runtime_object",
+      name: "a.txt",
+    });
   });
 });

@@ -149,6 +149,28 @@ async function existingDraftRun(
   };
 }
 
+// A consensus participant is a child of an already-admitted Flow run. Its
+// runtime contract must therefore inherit the parent's immutable data-plane
+// mode, rather than re-negotiating against a potentially changed host record.
+async function executionDataPlaneModeForParent(
+  input: ConsensusDraftLaunchInput,
+): Promise<"canonical_events_v1"> {
+  const rows = await input.db
+    .select({ executionDataPlaneMode: runs.executionDataPlaneMode })
+    .from(runs)
+    .where(eq(runs.id, input.parentRunId));
+  const mode = rows[0]?.executionDataPlaneMode;
+
+  if (mode === "canonical_events_v1") {
+    return mode;
+  }
+
+  throw new MaisterError(
+    "PRECONDITION",
+    `consensus parent run ${input.parentRunId} has no immutable data-plane mode`,
+  );
+}
+
 async function defaultCreateRunnerDraftRun(
   input: ConsensusDraftLaunchInput,
   participant: ConsensusParticipantDef & { runner: RunnerSlot },
@@ -166,6 +188,7 @@ async function defaultCreateRunnerDraftRun(
   });
   const snapshot = resolved.runnerSnapshot;
   const runId = randomUUID();
+  const executionDataPlaneMode = await executionDataPlaneModeForParent(input);
   const delegationSnapshot = {
     kind: "runner",
     runnerId: snapshot.id,
@@ -179,6 +202,7 @@ async function defaultCreateRunnerDraftRun(
   const runRow = {
     id: runId,
     runKind: "agent",
+    executionDataPlaneMode,
     agentId: null,
     triggerSource: "flow",
     triggerPayload: payload,

@@ -76,19 +76,18 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `evaluation_suite_studies`             | **(ADR-147 — Implemented, migration `0113`)** Immutable suite-scan-round → generated one-task Study link (`suite_version`, deterministic `scan_key`); UNIQUE `(suite_id, task_id, scan_key)` is the at-least-once scan dedup unit.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | `evaluation_suites.id` (CASCADE), `evaluation_studies.id` (CASCADE), `tasks.id` (RESTRICT)                                                        |
 | `evaluation_standardized_recipes`      | **(ADR-147 — Implemented, migration `0114`)** Append-only human-approved recipe-standardization ledger: `standardize\|rollback` revisions per `(project_id, slot)` (UNIQUE revision), copied self-contained `definition` + digest, SET-NULL source provenance, `rolled_back_to_revision`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | `projects.id` (CASCADE), optional `evaluation_studies.id`, `evaluation_recipes.id`, `evaluation_human_verdicts.id`, `users.id`                    |
 | `workspaces`                           | `git worktree` instances tied to a run.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | `runs.id`, `projects.id`                                                                                                                          |
-| `scratch_runs`                         | Scratch-only metadata: dialog status, name, plan mode, links, branch base, target, and supervisor session. **(ADR-097, migration `0059`)** `project_id` is NULLABLE; `local_package_id` is the project-less owner of a docked-assistant run (CHECK: exactly one of the two).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | `runs.id`, optional `projects.id`, `local_packages.id`, `users.id`, optional `tasks.id`                                                           |
+| `scratch_runs`                         | Scratch-only metadata: dialog status, name, plan mode, links, branch base, and target. **(ADR-167, migration `0134`)** removes the duplicated supervisor-session mirror; the authoritative target is `run_sessions.host_session_id` plus `run_session_incarnations`. **(ADR-097, migration `0059`)** `project_id` is NULLABLE; `local_package_id` is the project-less owner of a docked-assistant run (CHECK: exactly one of the two).                                                                                                                                                                                                                                                                                                                                 | `runs.id`, optional `projects.id`, `local_packages.id`, `users.id`, optional `tasks.id`                                                           |
 | `run_messages`                         | Run-kind-agnostic transcript ledger (generalized from `scratch_messages`, migration `0085`). Append/upsert message rows with monotonic `sequence`; nullable `node_attempt_id` attributes a flow node session's transcript (NULL for scratch / single-session). Unique `(run_id, node_attempt_id, sequence)` `NULLS NOT DISTINCT` keeps scratch's `(run_id, sequence)` invariant.                                                                                                                                                                                                                                                                                                                                                                                                    | `runs.id`, optional `node_attempts.id`                                                                                                            |
 | `scratch_attachments`                  | Text note, file path, or issue URL attachments attached to a scratch run or message.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | `scratch_runs.run_id`, optional `run_messages.id`                                                                                                 |
 | `scratch_capability_profiles`          | Launch-time MCP/skill/rule/settings/restriction snapshot and materialized profile path.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | `scratch_runs.run_id`                                                                                                                             |
 | `node_attempts`                        | Append-only per-node-attempt ledger for the graph runner. **(ADR-030, migration `0011`)** adds takeover columns (`owner_user_id`, `base_ref`, `returned_commits`, `returned_diff`). **(ADR-032, migration `0013`)** adds the nullable, append-only `enforcement_snapshot` verdict audit. **(migration `0053`)** adds the nullable per-attempt `resolved_prompt` capture. **(ADR-109, migration `0070`)** adds node type `consensus`. **(ADR-118 — Implemented, migration `0086`)** adds the nullable `rework_baseline integer` (attempt number at which the node's current rework epoch began; `NULL ⇒ 0`; effective attempts = `attempt − (rework_baseline ?? 0)`).                                                                                                                | `runs.id`, `users.id` (takeover owner)                                                                                                            |
-| `run_cost_rollups`                     | **(ADR-087 — Implemented, migration `0047`; `by_runner` ADR-117, migration `0083`)** Derived token rollup per run, reconciled from `.maister/<project>/runs/<runId>/cost.jsonl`. Stores token totals by kind, resume-tax totals, per-model breakdown (`by_model`), per-runner breakdown (`by_runner`, keyed `"<adapter>/<model>"`), and source cursor; no duration columns.                                                                                                                                                                                                                                                                                                                                                                                                         | `runs.id`, `projects.id`, optional `flows.id`, optional `tasks.id`                                                                                |
+| `run_cost_rollups`                     | **(ADR-087 — Implemented, migration `0047`; `by_runner` ADR-117, migration `0083`; canonical source ADR-167)** Derived token rollup per run. It folds manager-owned canonical `usage.recorded` facts transactionally; there is no runtime-file source. Stores token totals by kind, resume-tax totals, per-model breakdown (`by_model`), per-runner breakdown (`by_runner`, keyed `"<adapter>/<model>"`), and source cursor; no duration columns. | `runs.id`, `projects.id`, optional `flows.id`, optional `tasks.id`                                                                                |
 | `node_attempt_cost_rollups`            | **(ADR-085 — Designed, migration `0047`)** Derived token rollup per graph node attempt/model, reconciled from enriched supervisor cost records stamped with `nodeAttemptId`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | `runs.id`, `projects.id`, `node_attempts.id`                                                                                                      |
 | `repo_delivery_rollups`                | **(ADR-134 — Implemented, migration `0098`)** Cached, path-cleaned daily target-branch delivery denominator, written only by the scheduled repository scanner and read by project Observatory.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | `projects.id`                                                                                                                                     |
 | `gate_results`                         | **(Designed, migration `0010`)** Gate execution verdicts (`command_check`/`ai_judgment`/`human_review`/…).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | `runs.id`, `node_attempts.id`                                                                                                                     |
 | `consensus_round_verdicts`             | **(Implemented, migration `0070`)** Per-round cross-verification verdict ledger for `consensus` nodes. Unique by node attempt, round, verifier, and target; malformed verifier output is persisted as failed-closed disagree evidence.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | `runs.id`, `node_attempts.id`                                                                                                                     |
 | `run_results`                 | **(Implemented — ADR-165, migration `0129`)** Public run-result ledger — one row per result REVISION (including `invalid` rows) for any run kind. Engine-owned identity (schema, producer, attempt, revision), validity FSM (`valid`/`stale`/`superseded`/`invalid`), supersession chain, publish-time artifact manifest, first-collected marker. At most one `valid` row per run. | `runs.id`, `node_attempts.id`, self-ref `superseded_by_id` |
 | `artifact_instances`                   | **(Implemented, migration `0015`)** Typed evidence index (diff/log/report/judgment/note/commit_set/checkpoint/preview/plan; + `mutation_report`, ADR-074 — text column, no migration). Deterministic upsert PK.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | `runs.id`, `node_attempts.id`, self-ref `superseded_by_id`                                                                                        |
-| `artifact_projection_cursors`          | **(Implemented, migration `0015`)** One projector cursor per run over `run.events.jsonl`. UNIQUE `(run_id, scope)`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | `runs.id`                                                                                                                                         |
 | `hitl_requests`                        | HITL prompts emitted during a run (the graph engine adds review-decision columns).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | `runs.id`                                                                                                                                         |
 | `review_comments`                      | **(ADR-072 — Implemented, migration `0039`)** Line-anchored, 1-level-threaded review comments drafted at an open review gate. Root rows carry the anchor (`file_path`/`side`/`line`/`line_content`) + `open\|resolved` status; replies carry none (DB CHECK).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | `runs.id`, `hitl_requests.id`, self-ref `parent_id`; `users.id` SET NULL (author/resolver)                                                        |
 | `gate_chat_messages`                   | **(Implemented, migration `0041`)** Answer-only gate-chat turns at a `human`/`form` HITL pause (`role` user/agent, `seq` per pause, `mutation_reverted` L3 flag). Never resolves the HITL, never drives `→Running`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | `runs.id`, `hitl_requests.id` (cascade); `users.id` SET NULL (author)                                                                             |
@@ -121,7 +120,15 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 
 | `execution_hosts` | **(ADR-166 — Implemented, migration `0130`)** Registered execution hosts. Stage A: exactly one non-retired `kind='local_direct'` row (partial unique index), identity `host_key` minted by the supervisor, readiness + capabilities refreshed by the web registrar. The supervisor URL is env, never a column. | (none — retired via `retired_at`, never deleted while referenced) |
 | `execution_assignments` | **(ADR-166 — Implemented, migration `0130`)** Append-only per-run placement ledger: one row per `(run_id, epoch)`, `state ∈ active|superseded|released`, `placement_reason`, the opaque `execution_workspace_id` handle. At most one `active` row per run (partial unique index). | `runs.id`, `execution_hosts.id` (RESTRICT), self-ref `superseded_by_id` (SET NULL) |
-| `execution_commands` | **(ADR-166 — Implemented, migration `0130`)** Host-bound command intent + delivery ledger (`queued → delivering → accepted → succeeded|failed|fenced`), one row per wire `command.id`, REDACTED payload, per-kind retry budget, `driverless` recovery flag. Terminal rows pruned after 7 days. | `runs.id`, `execution_assignments.id`, `execution_hosts.id` (RESTRICT) |
+| `execution_commands` | **(ADR-166 — Implemented, migration `0130`)** Host-bound command intent + delivery ledger (`queued → delivering → accepted → succeeded|failed|fenced`), one row per wire `command.id`, REDACTED payload, per-kind retry budget, `driverless` recovery flag. **(ADR-167 S2.11/S2.12 — Implemented, migrations `0158`/`0159`)** Reclamation is the two-sided retirement handshake below, never age: `retired_at` marks the compacted tombstone, deleting a run or assignment around it is refused by `execution_commands_protected_evidence`, and every new `session.prompt` row must carry an owner (`execution_commands_prompt_owner_required`, NOT VALID so pre-v2 history is preserved unreconstructed). | `runs.id`, `execution_assignments.id`, `execution_hosts.id` (RESTRICT) |
+| `execution_event_streams` | **(ADR-167 — Implemented, migrations `0131`–`0132`)** Manager-side host stream identity, durable received/contiguous/acknowledged cursors, gap state, boot observation, and consumer claim fields. | `execution_hosts.id` (RESTRICT) |
+| `execution_events` | **(ADR-167 — Implemented, migrations `0131`–`0132`)** Canonical redacted host/manager/import event facts. Partial unique host position and per-run sequence indexes make at-least-once delivery exactly-one at storage. | `runs.id` (CASCADE), host/stream (RESTRICT), assignment/incarnation (SET NULL) |
+| `execution_event_consumers` | **(ADR-167 — Implemented, migration `0131`)** Per-consumer, per-run projection cursor with poison/retry claim state; it is deliberately distinct from ingestion. | `runs.id` (CASCADE), poison event (SET NULL) |
+| `run_session_incarnations` | **(ADR-167 — Implemented, migration `0131`)** Canonical host-session incarnation history across same-host restart/checkpoint/loss. | `run_sessions.id`, `runs.id` (CASCADE), host (RESTRICT), assignment (SET NULL) |
+| `execution_runtime_objects` | **(ADR-167 — Implemented, migration `0133`)** Manager-owned opaque catalog for host-owned runtime bytes: run/assignment/incarnation binding, MIME, hash, byte count, retention, lifecycle state, and source event. It deliberately contains no host path. | `runs.id` (CASCADE), host (RESTRICT), assignment/incarnation/source event (SET NULL) |
+| `scratch_runs` cutover | **(ADR-167 — Implemented, migration `0134`)** Guarded destructive preservation of `scratch_runs.supervisor_session_id`: an active legacy run, ambiguous assignment, conflicting canonical pointer, or cross-run host session aborts the migration. A uniquely proven value backfills the default logical session and `legacy_backfill` incarnation before the mirror is dropped. | `run_sessions.id`, `execution_assignments.id`, `run_session_incarnations.id` |
+| `execution_data_plane_imports` | **(ADR-167 — Implemented, migration `0131`)** One preserved legacy import lane for every historical run and source kind; missing history is explicit rather than silently discarded. | `runs.id` (CASCADE) |
+| `execution_event_ingest_failures` | **(ADR-167 — Implemented, migration `0131`)** Sanitized malformed/oversized/unsupported host envelope quarantine facts. | `execution_hosts.id` (RESTRICT) |
 
 ## `users`
 
@@ -1921,11 +1928,11 @@ retry_ordinal)` coexist — silently destroying the dedup this constraint
   migrated Studies stay queryable after the drop and that `legacy_snapshot`
   survives intact.
 
-## Cost rollup tables (Designed — ADR-085, migration `0047`)
+## Cost rollup tables (Implemented — ADR-085/ADR-167)
 
-`.maister/<project>/runs/<runId>/cost.jsonl` remains the source of truth. The
+Canonical `usage.recorded` execution events are the source of truth. The
 tables below are derived projections for UI and Observatory reads, so they are
-reconcilable from JSONL and safe to rebuild. They store token counts only;
+reconcilable from manager-owned events and safe to rebuild. They store token counts only;
 active and wall-clock durations are derived from `runs.started_at` /
 `runs.ended_at` and `node_attempts.started_at` / `ended_at`.
 
@@ -2274,7 +2281,6 @@ agent path drives `Review→Running→…→Review`. Behavior:
   targetBranch,
   dialogStatus: 'Starting' | 'WaitingForUser' | 'Running' | 'NeedsInput'
               | 'Review' | 'Crashed' | 'Done' | 'Abandoned',
-  supervisorSessionId?,
   errorCode?,
   errorMessage?,
   errorMetadata?,
@@ -2289,6 +2295,9 @@ agent path drives `Review→Running→…→Review`. Behavior:
 `dialogStatus` is the scratch-specific conversation axis. It carries
 `WaitingForUser`; `runs.status` remains the shared lifecycle enum. The mapping
 is defined in [`system-analytics/scratch-runs.md`](system-analytics/scratch-runs.md).
+The current host target is derived from the run's logical `run_sessions` row;
+the immutable `run_session_incarnations` table retains prior host-session
+history. The removed scratch mirror is never a targeting fallback.
 
 **Project-less local-package variant (migration 0059, ADR-097).** A docked
 AI authoring assistant run sets `localPackageId` and leaves `projectId` NULL —
@@ -2312,6 +2321,61 @@ plan-first behavior and is derived from `workMode`: `plan_first` maps to
 Index: `scratch_runs_project_status_idx` on `(projectId, dialogStatus)` for
 active workspace lists. The primary key on `runId` covers detail joins from
 `runs`.
+
+## `agent_turns` (Implemented)
+
+Migration `0153_agent_turn_admission` stores accepted agent input before a
+capacity claim or host dispatch. `runs` remains the run state authority;
+`run_messages` remains the canonical transcript projection. Turn admission
+uses the run lock to allocate an ordinal and retain the original input.
+
+| Columns | Contract |
+| --- | --- |
+| `id`, `run_id`, `ordinal` | Server-generated ID, owning agent run and immutable run-local order. |
+| `variant`, `logical_key`, `prompt` | Immutable operation kind (`initial`, `resume`, `rework`, `live_message`, `persistent_message`, and `consensus_draft` since migration `0156_consensus_draft_turn`), same-run retry key and original input; prompts are private server data and never logged. |
+| `state` | `queued` → `claimed` → `dispatched` → `applied`; any unfinished state may become `superseded`. |
+| `execution_assignment_id`, `assignment_epoch`, `run_session_id` | All null while queued; fixed together on claim and checked against the owning run. |
+| `incarnation_id`, `command_id` | Fixed together at prompt admission; the command must match the exact turn, variant, ordinal, assignment and incarnation. |
+| `created_at`, `updated_at`, `completed_at` | UTC timestamps; terminal turn state requires `completed_at`, which cannot be rewritten. |
+
+Unique `(run_id, logical_key)` makes retrying the same accepted input return its
+existing turn; different text under the same key is a conflict. Unique
+`(run_id, ordinal)` preserves distinct message order. A partial unique index
+permits at most one claimed/dispatched turn per run, and `command_id` is unique.
+The due index covers unfinished turns. Postgres guards reject source/binding
+rewrites, phase regression and cross-run bindings. Run deletion cascades to its
+turns; individual referenced assignments, sessions, incarnations and commands
+are restricted while retained by a turn.
+
+The persistence helper is qualified with concurrent retries, distinct input,
+terminal admission refusal, immutable source, exact command binding and run
+cascade. Production messages use the scheduler-cap claim, retain FIFO order
+across persistent parks and acknowledge the exact command atomically with the
+domain result. Initial turns retain ordinal zero and the launch assignment ID
+before owned session creation. Rework stores its input with the new assignment
+and stales the prior public result in that claim. A `consensus_draft` turn is a
+consensus participant child's own run-scoped input and shares the initial turn's
+ordinal zero and launch-assignment identity. Resume continuation wiring remains Designed;
+see [prompt lifecycle](system-analytics/execution-prompt-lifecycle.md).
+
+## `flow_assistant_actions` (Implemented)
+
+Migration `0157_flow_assistant_actions` retains a local-package assistant's
+parsed structured action as durable intent. Extraction sanitizes the assistant
+message, so the action row is written in that same transaction; a process that
+dies before the package apply recovers the action instead of losing it.
+
+| Columns | Contract |
+| --- | --- |
+| `id`, `run_id`, `local_package_id` | Server-generated ID and the owning assistant run and package. |
+| `lock_generation` | The edit-lock session that authorized the action; a takeover settles the row `skipped` instead of editing. |
+| `message_id` | The sanitized assistant message; unique, so one message can retain at most one action. |
+| `action`, `result` | The parsed action and the applied/rejected result payload; bodies are private server data and never logged. |
+| `state`, `created_at`, `completed_at` | `pending` becomes `applied`, `rejected` or `skipped`; a terminal state requires `completed_at`. |
+
+Settlement is a CAS out of `pending`, so a competing recovery pass yields and
+the package action is applied exactly once. Run deletion cascades; the retained
+message is restricted while an action references it.
 
 ## `run_messages`
 
@@ -2698,6 +2762,10 @@ validity FSM.
 }
 ```
 
+`file{path}` remains only for manager-owned Flow/repository evidence. Stage B
+does not permit it for execution-host runtime content: host-owned bytes use
+`execution-object{objectId}` locators backed by `execution_runtime_objects`.
+
 **Deterministic id contract.** Every row's `id` is derived so re-execution and
 projector replay **upsert** idempotently (`onConflictDoUpdate`):
 
@@ -2709,8 +2777,8 @@ projector replay **upsert** idempotently (`onConflictDoUpdate`):
 | Projector-derived                                  | `proj:<runId>:<monotonicId>`                 | `proj:run_xyz789:42`                   |
 | Gate mutation report, undeclared output            | `run:<nodeAttemptId>:mutation:<gateId>`      | `run:na_abc123:mutation:impl-mutation` |
 
-`monotonicId` is **run-global** across the single per-run `run.events.jsonl`
-log, so each projector `id` is unique across the entire run's event stream.
+The canonical `runSequence` is run-global, so each projector id is unique
+across the entire retained event stream.
 
 Indexed on `(runId)`, `(nodeAttemptId)`, `(runId, kind)`, and
 `(runId, validity)`. Cascade: `ON DELETE CASCADE` from both `runs.id` and
@@ -2718,32 +2786,22 @@ Indexed on `(runId)`, `(nodeAttemptId)`, `(runId, kind)`, and
 NULL` — deleting a superseding row never blocks deletion and leaves the
 superseded row's pointer null.
 
-## `artifact_projection_cursors`
+## Canonical event consumer cursors
 
-**(Implemented, migration `0015`.)** One projector cursor **per run**
-([ADR-038](decisions.md) per-run-scope correction). Tracks how far the artifact
-projector has consumed the run's `run.events.jsonl`.
+`execution_event_consumers` replaces the removed
+`artifact_projection_cursors` table (migration `0135`). Its primary key is
+`(consumer_name, run_id)` and records canonical event sequence, claim lease,
+retry, and poison-event state. The artifact and transcript projectors consume
+only manager-owned `execution_events`; a host path is not persisted in either
+cursor or locator.
 
-```ts
-{
-  id,                                       // PK = runId (one cursor per run)
-  runId,                                    // NOT NULL, FK -> runs.id, ON DELETE CASCADE
-  scope: 'run',                             // run-scoped; UNIQUE (runId, scope)
-  eventsLogPath,                            // .maister/<slug>/runs/<runId>/run.events.jsonl
-  lastMonotonicId,                          // DEFAULT 0; run-global high-water mark
-  status: 'idle' | 'running'
-        | 'caught_up' | 'failed',           // DEFAULT 'idle'
-  updatedAt                                 // DEFAULT now()
-}
-```
-
-The cursor PK is the bare `<runId>` and `scope = "run"` — **not** the per-step
-`<runId>::<stepId>` the original plan assumed. The supervisor writes one
-`run.events.jsonl` per run with a run-global `monotonicId`, so a single
-run-scoped cursor advances past every event regardless of which session or step
-emitted it. The `UNIQUE (run_id, scope)` constraint leaves room for a future
-secondary scope without a schema change. Cascade: `ON DELETE CASCADE` from
-`runs.id`.
+Migrations `0137`–`0139` add the autonomous projection service index and
+bootstrap cursor (`execution_projection_backfills`), fixed-size transcript
+coalescing state (`run_transcript_states`), the message tool-key index and
+incremental cost session buckets. Their fields are specified in the
+[stabilization persistence contract](#ab-stabilization-persistence-contract-designed);
+these projection fields are implemented. Other fields in that contract remain
+Designed until their owning increment is verified.
 
 ## `project_tokens`
 
@@ -2929,6 +2987,18 @@ body schema (`{ optionId?, response? }`) is unchanged — no new top-level body
 field. See [`api/web.openapi.yaml`](api/web.openapi.yaml) and
 [`system-analytics/flow-graph.md`](system-analytics/flow-graph.md).
 
+Owned Flow node permissions additionally store server-derived
+`schema.flowPrompt = { version: 1, commandId, nodeAttemptId, promptOrdinal,
+assignmentId, incarnationId }`. The original command/request pair identifies
+the HITL across driver restart. A selected answer retains
+`response._delivery = { commandId, hostSessionId, payload: { kind: "permission",
+action: "select", requestId, optionId } }` in the input admission transaction.
+The ACK transaction writes `respondedAt` and `_audit` fields
+`deliveryCommandId`, `sourceCommandId`, `assignmentId`, `incarnationId`,
+`requestId`; an explicit retry of a definitive 503 also retains
+`previousDeliveryCommandId`. These JSON fields add no table or migration and
+are never accepted as caller-supplied delivery authority.
+
 `kind=permission` is binary approve/deny (delivered via ACP
 `session/request_permission`). `kind=form` is a structured payload defined
 by `schema` (see [Configuration](configuration.md) §form_schema versioning).
@@ -2976,9 +3046,9 @@ round-trip.
 
 `agent_question` extends `hitl_requests` without changing legacy Flow HITL.
 It alone may have a non-null `task_id`, an `activation_state` of
-`pending_termination | active | failed`, and supersession metadata. A CHECK
-requires `task_id` and activation state for this kind, preserves null additions
-for every legacy kind, and permits at most one of
+`pending_termination | active | failed`. A CHECK
+requires `task_id` and activation state for this kind, preserves those null additions
+for every other kind, and permits at most one of
 `superseded_by_hitl_request_id` and `superseded_by_run_id`. `responded_at` is
 set only by a winning human answer.
 
@@ -2990,6 +3060,17 @@ request IDs, plus partial indexes for active Inbox rows and answered context
 reads. Its source IDs deliberately have no cascading foreign keys to the source
 run/HITL rows, so clarification history survives source cleanup; task deletion
 remains the owning lifecycle.
+
+### Agent permission supersession (Implemented — migration `0155`)
+
+A source-bound agent `permission` may retain `superseded_at` and
+`superseded_by_hitl_request_id` while `responded_at` remains null. The trigger
+requires a same-run hook/budget pause with the exact original command, turn,
+ordinal, assignment, incarnation and host session. It rejects source rewrites
+and reactivation after supersession. All other non-question HITL kinds retain
+null supersession fields. The private pause handoff lives in the existing JSONB
+schema/response; its contract is defined in
+[the prompt lifecycle](system-analytics/execution-prompt-lifecycle.md#agent-hook-and-budget-checkpoint-handoffs-implemented).
 
 ### Plan-review decision extension (Implemented — ADR-137, migration `0100`)
 
@@ -3797,7 +3878,7 @@ explicitly chooses that as a temporary bridge.
 | `flow_package_revisions`                                                                  | Immutable Flow package revisions: source, version label, resolved SHA, manifest digest, compatibility, trust, setup, package contract summary.                                                                         | project or system cache          |
 | `project_flow_enablements`                                                                | Project pointer to the package revision new runs should use; enables upgrade/rollback without mutating old runs.                                                                                                       | `projects.id`, package revision  |
 | ~~`node_attempts`~~ → **Implemented**                                                     | Graph-node attempts, lifecycle status, decision/rework/staleness state. See [`node_attempts`](#node_attempts) above.                                                                                                   | `runs.id`                        |
-| ~~`artifacts`~~ → **Implemented as `artifact_instances` + `artifact_projection_cursors`** | Typed evidence index for diffs, logs, reports, AI judgments, human notes, commit sets, checkpoints, previews; plus the per-run projector cursor. See [`artifact_instances`](#artifact_instances) above.                | `runs.id`, `node_attempts.id`    |
+| ~~`artifacts`~~ → **Implemented as `artifact_instances` + `execution_event_consumers`** | Typed evidence index for diffs, logs, reports, AI judgments, human notes, commit sets, checkpoints, previews; plus canonical per-consumer cursor state. See [`artifact_instances`](#artifact_instances) above.                | `runs.id`, `node_attempts.id`    |
 | `artifact_edges`                                                                          | Dependency graph between task inputs, node attempts, artifacts, gates, and stale/current evidence.                                                                                                                     | `artifacts.id`                   |
 | ~~`gate_results`~~ → **Implemented**                                                      | Gate execution verdicts + status lifecycle. See [`gate_results`](#gate_results) above. The readiness policy (ADR-048) consumes them.                                                                                   | `runs.id`, `node_attempts.id`    |
 | ~~`assignments`~~ → **Implemented**                                                       | Claimable work persistence, runtime assignment creation, assignment actions, and run-detail ledger history landed as `assignments` + `assignment_events` in migration `0018`. See [`assignments`](#assignments) above. | `runs.id`, optional task         |
@@ -3808,7 +3889,7 @@ explicitly chooses that as a temporary bridge.
 | `flow_package_revisions`                                                                  | Immutable Flow package revisions: source, version label, resolved SHA, manifest digest, compatibility, trust, setup, package contract summary.                                                                         | project or system cache          |
 | `project_flow_enablements`                                                                | Project pointer to the package revision new runs should use; enables upgrade/rollback without mutating old runs.                                                                                                       | `projects.id`, package revision  |
 | ~~`node_attempts`~~ → **Implemented**                                                     | Graph-node attempts, lifecycle status, decision/rework/staleness state. See [`node_attempts`](#node_attempts) above.                                                                                                   | `runs.id`                        |
-| ~~`artifacts`~~ → **Implemented as `artifact_instances` + `artifact_projection_cursors`** | Typed evidence index for diffs, logs, reports, AI judgments, human notes, commit sets, checkpoints, previews; plus the per-run projector cursor. See [`artifact_instances`](#artifact_instances) above.                | `runs.id`, `node_attempts.id`    |
+| ~~`artifacts`~~ → **Implemented as `artifact_instances` + `execution_event_consumers`** | Typed evidence index for diffs, logs, reports, AI judgments, human notes, commit sets, checkpoints, previews; plus canonical per-consumer cursor state. See [`artifact_instances`](#artifact_instances) above.                | `runs.id`, `node_attempts.id`    |
 | `artifact_edges`                                                                          | Dependency graph between task inputs, node attempts, artifacts, gates, and stale/current evidence.                                                                                                                     | `artifacts.id`                   |
 | ~~`gate_results`~~ → **Implemented**                                                      | Gate execution verdicts + status lifecycle. See [`gate_results`](#gate_results) above. The readiness policy (ADR-048) consumes them.                                                                                   | `runs.id`, `node_attempts.id`    |
 | `assignments`                                                                             | Claimable human work: permission, form, review, manual takeover, conflict resolution, external waits.                                                                                                                  | `runs.id`, optional task         |
@@ -3870,7 +3951,7 @@ projects
   │           ├── consensus_round_verdicts (FK runId, cascade) ← (also direct)
   │           ├── artifact_instances (FK runId,     cascade)   ← (also direct)
   │           │     └── artifact_instances.superseded_by_id (self-ref, SET NULL)
-  │           ├── artifact_projection_cursors (FK runId, cascade)        ←
+  │           ├── execution_event_consumers (FK runId, cascade)          ← ADR-167
   │           ├── hitl_requests   (FK runId,        cascade)
   │           │     ├── assignments (FK hitlRequestId, cascade)          ←
   │           │     └── review_comments (FK hitlRequestId, cascade)      ← ADR-072
@@ -4024,8 +4105,105 @@ capability_ref_id)`, `project_flow_roles(project_id, role_ref)`,
 `actor_identities(project_id, user_id)`, `(id, attempt_number)`,
 `(run_id, step_id, attempt)`, `run_messages(run_id, node_attempt_id, sequence)` (NULLS NOT DISTINCT),
 `scratch_capability_profiles.run_id`,
-`artifact_projection_cursors(run_id, scope)`, and
+`execution_event_consumers(consumer_name, run_id)`, and
 `assignments.hitl_request_id`) implicitly create their own indexes in Postgres.
+
+## A/B stabilization persistence contract (Designed)
+
+These forward additions belong to the existing command/catalog/consumer ledgers.
+S1 consumer state is implemented. Migration `0140_immutable_command_requests`
+adds the private request, transport and application fields below, a closed
+v2 owner/request CHECK, and a trigger protecting admitted request/owner/routing
+identity. Existing applied markers initialize application state without creating
+request bytes or hashes. The server-only `issueOwnedPrompt` admission API is
+available for the S2 owner adapters; production callers activate after all
+adapters are wired and legacy rows are classified. Migration 0141 adds
+`receipt_evidence`, `terminal_event_id` and `terminal_evidence_sha256`, checks
+receipt identity, and protects recorded evidence and agreed results with a
+trigger. The terminal event FK restricts deletion. The shared reducer currently
+stores normalized legacy receipts and strict request-bound v2 evidence. The
+registered owner engine uses the existing application claim/marker fields;
+production owner activation, retirement and object additions remain designed. The
+[command reducer and recovery windows](system-analytics/execution-prompt-lifecycle.md)
+define transition authority. New prompt rows activate only after every owner
+adapter supports the contract and existing accepted/unknown rows are drained or
+explicitly held for repair. They cannot be backfilled from redacted payloads.
+
+| Table / column | Type / initial value | Constraint and purpose |
+| --- | --- | --- |
+| `execution_commands.request_canonical_json` | `text`, nullable only before activation or for existing non-prompt commands | Immutable exact JCS UTF-8 request; `request_schema = maister.command.request.v2`, SHA-256 must match; private, excluded from DTOs/logs. |
+| `execution_commands.transport_state` | `text`, `not_sent` | CHECK `not_sent|dispatching|acknowledged|unknown|reconciliation_required`; implemented prompt delivery/recovery preserves open execution after unknown admission. |
+| `execution_commands.next_attempt_at` | Existing `timestamptz`, null | Prompt send backoff or receipt-read due/claim CAS token (30-second read claim, then 5-second delay). Terminal agreement clears it; outbound exhaustion does not stop evidence reads. |
+| `execution_commands.receipt_evidence` | `jsonb`, null | Normalized terminal receipt identity/outcome, independent of event order; conflicting replay quarantines without overwrite. Legacy and strict request-bound v2 storage are implemented. |
+| `execution_commands.terminal_event_id` | `text`, null | Exact canonical event ID, resolved against the same command/fence/target; event cannot be pruned while referenced. |
+| `execution_commands.terminal_evidence_sha256` | `text`, null | Lowercase 64-hex digest of the agreed versioned terminal identity. |
+| `execution_commands.application_state` | `text`, `pending` | CHECK `pending|applying|applied|superseded|poisoned`; `applied` iff `completion_applied_at` nonnull. Non-prompt rows have no application obligation. |
+| `execution_commands.application_claim_owner` | `text`, null | Unique claim token; populated exactly with lease expiry while applying. |
+| `execution_commands.application_claim_expires_at` | `timestamptz`, null | DB-clock 30-second owner lease, renewed every 10 seconds during output preparation; application/failure CAS checks the token and unexpired deadline. |
+| `execution_commands.application_attempts` | `integer`, 0 | Nonnegative failure count; transient failure advances attempts and next retry without changing command terminal evidence. Claim/renewal, shutdown and service unavailability do not consume attempts. |
+| `execution_commands.application_next_retry_at` | `timestamptz`, null | Indexed due selection; poison has no automatic retry deadline. |
+| `execution_commands.application_error` | `jsonb`, null | Closed safe reason/phase/cause fields, bounded; no arbitrary provider text. |
+| `runs.flow_driver_token`, `runs.flow_driver_lease_expires_at` | Paired nullable text / timestamptz, Flow-only CHECK (`0142`) | Existing graph traversal ownership: fresh token and DB-clock 30-second lease, renewed every 10 seconds. Scoped graph transactions check active assignment at entry and token/pointer/lease before commit. Expired-lease index supports autonomous continuation. Independent of command application leases. |
+| `node_attempts.action_completion`, `node_attempts.action_prompt_ordinal` | Nullable JSONB / nonnegative integer default 0 (`0143`) | Versioned action result, exact source command and matching ordinal, bounded stdout plus separately decoded original structured output. Local CLI/check actions capture their file result before gates. This is action readiness within the existing attempt, not node success or a second execution ledger. |
+| `node_attempts.finish_continuation` | Nullable version-1 JSONB (`0144`) | Selected outgoing target, private injected context, resolved session policy and retry marker. The source close and cursor move commit together; recovery restores this decision without recalculating or granting an ACP turn. |
+| `execution_commands.create_intent` | Nullable private version-1 JSONB (`0146`, expanded by `0154`) | Exact Flow node ordinal, gate evaluation or agent turn ID/ordinal, create generation/source, canonical original envelope and SHA-256. Unique run/assignment/operation/generation; no prompt-owner or application fields are repurposed. Recovery preserves command ID and issue time. Payload bytes stay outside DTOs/logs. Agent creation does not use the Flow-specific fresh-session fallback on CHECKPOINT refusal. |
+| `gate_results.prompt_ordinal`, `gate_results.permission_resume` | Nonnegative integer default 0 / nullable version-1 JSONB (`0150`, expanded by `0151`–`0152`) | The existing gate evaluation owns its resumed prompt ordinal. The capacity claim records exact source/receiving assignments, command/incarnation/request/HITL/choice and ACP handle, plus a SHA-256 of the nullable parent action snapshot. It rebinds the same parent attempt and clears its obsolete action-turn authorization while preserving its action ordinal/result. A positive gate ordinal requires resume authority. Unavailable ACP handles fail without a fresh session; restart reuses the persisted turn. `kind: permission_result` instead preserves the ordinal (including 0) and complete verified verdict, with original input/checkpoint/incarnation lineage and a verdict digest. Its claim atomically settles the HITL; later graph reads validate both digests and historical authority before consuming the result. `kind: permission_continue` retains the same input/checkpoint lineage for a confirmed input interrupted by checkpoint, advances the gate ordinal, clears its unfinished verdict and preserves the parent action digest. |
+| `node_attempts.action_resume` | Nullable version-1 JSONB (`0145`, expanded by `0147`–`0149` and `0152`) | Source command/assignment, admitted current assignment and ordinal, retained ACP resume handle. `kind: orchestrator` and `kind: permission` authorize a new turn under their capacity claims; permission also binds HITL/request/choice. They advance the ordinal and clear the old action snapshot atomically. `kind: permission_result` instead retains the original ordinal and verified action snapshot, with the original input, checkpoint command and incarnation IDs. Its CHECK binds the snapshot command to the source command. Historical owners remain fenced; only the current assignment can consume this handoff. An orchestrator wake after a handoff retains its full `permissionResult` source authorization, including the receiving assignment, through pre-prompt rollback/reclaim. The nested CHECK binds its source IDs, ACP handle and prior ordinal to the new turn. `kind: permission_continue` advances the ordinal after confirmed input and acknowledged checkpoint interruption, preserving the input/checkpoint/incarnation IDs and original ACP handle. Its claim settles the original HITL; later permissions require independent responses. |
+| `execution_commands.retirement_state` | `text`, `retained` | CHECK `retained|eligible|host_confirmed|tombstone`; eligible requires terminal evidence, owner disposition and run/delivery/ACK/grace predicates. |
+| `execution_commands.retirement_eligible_at` | `timestamptz`, null | Immutable time at eligibility-generation admission. |
+| `execution_commands.retirement_receipt` | `jsonb`, null | Exact host-confirmed eligibility identity; no compaction before confirmation. |
+| `execution_event_consumers.last_served_at` | `timestamptz`, null | Fair due selection by service time plus run/consumer key; existing `claim_owner` is a fresh token per claim. |
+| `execution_projection_backfills.consumer_name` | `text`, primary key | One bounded bootstrap scan per registered projection version; an operational cursor, not a Flow ledger. |
+| `execution_projection_backfills.after_run_id` | `text`, null | Last examined run key, committed with missing consumer inserts; no FK because deleting that run must not reset progress. |
+| `execution_projection_backfills.completed_at` | `timestamptz`, null | Set after the keyset scan is exhausted. All live canonical writers seed affected consumer pairs in their own transaction. |
+| `execution_projection_backfills.updated_at` | `timestamptz`, now | Last committed bootstrap quantum. |
+| `run_transcript_states` | Run/nullable attempt unique (`NULLS NOT DISTINCT`), deterministic text ID; FK cascade to run/attempt | Bounded coalescing state for `canonical-run-transcript-v2`: next message sequence and nullable open text, thought and usage sequences. No payloads or tool map. Changes commit with the event cursor. |
+| `run_messages.projection_tool_key` | Nullable SHA-256 text, indexed with run/attempt and descending sequence | Looks up the latest message for one canonical tool call without loading the transcript or an unbounded tool map. Existing message IDs and sequence upsert keys remain stable during v2 replay. |
+| `run_cost_rollups.by_session` | Non-null JSONB, default `{}` | Incremental token buckets retain session attribution. Existing runner-snapshot changes rederive `by_runner` in PostgreSQL from these buckets without replaying or transferring all usage events. |
+| `execution_runtime_objects.declared_size_bytes` | `bigint`, null | Optional immutable expected size, distinct from null pending sealed metadata. |
+| `execution_runtime_objects.declared_sha256` | `text`, null | Optional immutable expected hash; lowercase 64-hex when supplied. |
+| `execution_runtime_objects.origin` | `jsonb`, required for new allocations | Closed native-command versus historical-import union; import has `importId`, `manifestHash`, `itemId`; no fabricated active assignment. |
+| `execution_runtime_objects.last_examined_at` | `timestamptz`, null | Fair retention selection advances for protected and failing candidates too. |
+| `execution_runtime_objects.delete_command_id` | `text`, null | Stable delete intent identity while deleting; no new key on lost ACK. |
+
+Retain `(run_id, logical_operation_key)` uniqueness for prompts. Namespace the
+key by owner variant and its durable generation; lock/look up that key before
+allocating command UUID/issuedAt. A new v2 prompt requires `owner_kind`, strictly
+typed `owner_ref`, logical key, exact request/digest/schema, target incarnation
+and accepted assignment generation together. Versioned owner references keep
+`flow_node_attempt|scratch_message|gate_chat|agent_turn|sync_resolution` as the
+coarse family and distinguish the concrete variants below. Owner IDs are
+server-derived and revalidated against authoritative rows under the owner lock.
+
+| Family / `owner_ref.variant` | Required exact owner identity fields beyond `version: 1`, `runId`, `runSessionId`, `incarnationId`, `assignmentId`, `assignmentEpoch` |
+| --- | --- |
+| flow / `node|permission_resume|gate_skill|gate_ai` | `nodeAttemptId`, `promptOrdinal`; permission resume adds `hitlRequestId`; gates add `gateId`, `evaluationId`. |
+| flow / `consensus_verifier|consensus_synthesis` | `nodeAttemptId`, `round`; verifier adds `verifierId`, `targetId`, `verdictId`; synthesis adds `synthesisId`. |
+| agent / `initial|resume|rework|live_message|persistent_message|consensus_draft` | `turnId`, `promptOrdinal`; message variants add `messageId`; draft adds `nodeAttemptId`, `round`, `participantId`. |
+| scratch / `initial|message|recovery|package_initial|package_message|package_recovery` | `scratchRunId`, `turnId`, `promptOrdinal`; message variants add `messageId`; package variants add `localPackageId`, `postprocessActionId`, `lockGeneration`. |
+| gate chat / `reply` | `hitlRequestId`, `turnId`, `userMessageId`, `leaseGeneration`. |
+| sync / `resolver` | `syncAttemptId`, `operationAttemptId`, `expectedPhase: agent_running`, `promptOrdinal`. |
+
+Every variant is a closed object, not an untyped JSON bag. IDs use the existing
+owning column's validated type; ordinals/rounds are nonnegative safe integers,
+assignment epochs positive bounded integers. A generation is the exact stable
+owning record/claim identity, never a retry UUID or freshly sampled clock.
+Unknown variant, missing row, wrong association or generation refuses before
+dispatch. Pending admission stores the full owner reference and request in one
+transaction. Additional owner action phases are persisted in their existing
+domain ledgers; completion and durable successor readiness share that domain
+transaction with the command application marker.
+
+Indexes cover command evidence reconciliation by transport state/next attempt,
+owner application by application state/due time/lease, consumer service order,
+and object retention by last examination/id. Each index belongs to a generated
+forward migration and is proven by a real two-connection race. All new enum,
+nonnegative, paired-null and terminal-marker constraints are generated from
+Drizzle. Run/assignment deletes must refuse protected evidence before existing
+FK cascades; they cannot bypass retirement. The host stores its own receipt,
+terminal-wallet and import progress in private SQLite, never in a second Flow
+ledger. Pre-0134 import progress uses existing 0131 lane fields and the private
+host manifest; forward columns are not prerequisites for that stage.
 
 ## Workflow
 

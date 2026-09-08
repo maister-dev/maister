@@ -123,7 +123,7 @@ describe("scratch attachment helpers", () => {
     ]);
   });
 
-  it("builds uploaded-file artifact metadata outside the git worktree", () => {
+  it("builds uploaded-file metadata with an opaque execution-object ID", () => {
     const metadata = uploadedFileMetadata({
       file: {
         fileName: "notes.txt",
@@ -131,10 +131,7 @@ describe("scratch attachment helpers", () => {
         byteSize: 5,
         bytes: new TextEncoder().encode("hello"),
       },
-      projectSlug: "demo",
-      runId: "run-1",
-      scope: "launch",
-      runtimeRoot: "/runtime",
+      objectId: "b7e5e032-6049-48b2-806f-e5db714a93cb",
     });
 
     expect(metadata).toMatchObject({
@@ -142,8 +139,8 @@ describe("scratch attachment helpers", () => {
       fileName: "notes.txt",
       mimeType: "text/plain",
       byteSize: 5,
-      value: ".maister/demo/runs/run-1/uploads/launch/notes.txt",
-      storagePath: "/runtime/.maister/demo/runs/run-1/uploads/launch/notes.txt",
+      value: "b7e5e032-6049-48b2-806f-e5db714a93cb",
+      storagePath: null,
     });
     expect(metadata.sha256).toHaveLength(64);
     expect(() => safeUploadFileName("../secret.txt")).toThrow(/invalid/);
@@ -176,7 +173,7 @@ describe("scratch message and state helpers", () => {
         runId: "run-1",
         runStatus: "Running",
         dialogStatus: "WaitingForUser",
-        supervisorSessionId: "sup-1",
+        hostSessionId: "sup-1",
       }),
     ).not.toThrow();
 
@@ -185,7 +182,7 @@ describe("scratch message and state helpers", () => {
         runId: "run-1",
         runStatus: "Running",
         dialogStatus: "Running",
-        supervisorSessionId: "sup-1",
+        hostSessionId: "sup-1",
       }),
     ).toThrow(/not accepted/);
 
@@ -278,6 +275,12 @@ describe("scratch event projection", () => {
       },
     };
     const db = {
+      // S2.9: the admission wait reads the session incarnation first.
+      select: () => ({
+        from: () => ({
+          where: () => ({ limit: async () => [{ state: "active" }] }),
+        }),
+      }),
       async transaction() {
         throw new Error("insert failed");
       },
@@ -289,6 +292,7 @@ describe("scratch event projection", () => {
         sessionId: "sup-1",
         stepId: "dialog",
         prompt: "go",
+        owner: { variant: "initial" },
         db,
         execution: legacyScratchApiToExecution(api as never),
       }),
@@ -303,14 +307,26 @@ describe("scratch event projection", () => {
     // scratch_messages_run_sequence_uq. Sequential projection must not.
     const rows: Array<{ runId: string; sequence: number }> = [];
     const db = {
-      select() {
+      select(selection?: Record<string, unknown>) {
         return {
           from() {
             return {
-              async where() {
-                await Promise.resolve();
+              where() {
+                const query = async () => {
+                  await Promise.resolve();
+                  if (selection && "state" in selection) {
+                    return [{ state: "active" }];
+                  }
 
-                return rows.map((row) => ({ sequence: row.sequence }));
+                  return rows.map((row) => ({ sequence: row.sequence }));
+                };
+                const result = query() as Promise<unknown[]> & {
+                  limit: () => Promise<unknown[]>;
+                };
+
+                result.limit = () => query();
+
+                return result;
               },
             };
           },
@@ -384,6 +400,7 @@ describe("scratch event projection", () => {
       sessionId: "sup-1",
       stepId: "dialog",
       prompt: "go",
+      owner: { variant: "initial" },
       db,
       execution: legacyScratchApiToExecution(api as never),
     });

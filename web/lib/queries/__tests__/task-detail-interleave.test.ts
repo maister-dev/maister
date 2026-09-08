@@ -102,13 +102,7 @@ describe("interleaveTimeline agent mentions (ADR-151)", () => {
   it("keeps agent_summon_suppressed as its own timeline row", () => {
     const items = interleaveTimeline(
       [comment("c1", "2026-06-01T00:00:00Z")],
-      [
-        activity(
-          "a-sup",
-          "agent_summon_suppressed",
-          "2026-06-02T00:00:00Z",
-        ),
-      ],
+      [activity("a-sup", "agent_summon_suppressed", "2026-06-02T00:00:00Z")],
     );
 
     expect(items.map((i) => i.id)).toEqual(["c1", "a-sup"]);

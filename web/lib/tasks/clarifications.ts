@@ -49,7 +49,9 @@ export function orderedAnsweredClarifications(
     .sort((left, right) => {
       const sequenceDelta = left.seq - right.seq;
 
-      return sequenceDelta !== 0 ? sequenceDelta : left.id.localeCompare(right.id);
+      return sequenceDelta !== 0
+        ? sequenceDelta
+        : left.id.localeCompare(right.id);
     })
     .slice(0, MAX_CLARIFICATIONS_IN_PROMPT)
     .map((row) => ({

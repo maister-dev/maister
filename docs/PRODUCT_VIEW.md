@@ -146,16 +146,18 @@ Project -> Flow package -> Task / Evaluation Study / Scratch run -> External ope
 - ACP supervisor process with code-owned Claude, Codex, Gemini CLI, and
   OpenCode/MiMo adapter families; Gemini/OpenCode/MiMo stay gated by diagnostics and
   smoke-proven readiness before production launch.
-- Durable run SSE via `run.events.jsonl`.
+- Durable run SSE from manager-owned canonical Postgres events, ingested from
+  the execution host's private replayable outbox.
 - HITL response route with row-level claim, atomic artifacts, permission
   delivery, and runner-owned resume.
 - The graph-only engine implements node lifecycle, typed settings,
   review-driven rework, manual takeover, the append-only run ledger,
   stale-gate reruns, orchestrator delegation, and the first-class M41 consensus
   node for unanimous read-only plan verification.
-- Typed Flow artifacts and an evidence graph are required for review: payloads
-  stay in the run directory/worktree/git, while MAIster stores queryable
-  artifact metadata, validity, and dependency edges.
+- Typed Flow artifacts and an evidence graph are required for review:
+  repository payloads remain in worktree/git, execution-runtime payloads stay
+  host-owned behind opaque object IDs, and MAIster stores queryable metadata,
+  validity, checksums, retention, and dependency edges.
 - Role-owned assignments show role, assignee/unclaimed state, elapsed time,
   action kind, branch/ref, and stale-evidence summary. Global/project RBAC
   blocks unauthorized actions; assignment roles additionally explain ownership

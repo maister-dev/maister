@@ -69,6 +69,14 @@ not restated here).
 
 ## Domain entities
 
+- **`agent_turns`** — accepted immutable agent input, its ordinal and exact
+  assignment/session/command binding. The shared prompt owner applies retained
+  output and acknowledges a turn with the existing finalization or park
+  transition. Initial, message, rework, completed-turn resume and checkpointed
+  permission, hook and budget pause paths use this boundary; global continuation-worker activation is
+  held until the S2 gate. See the owning
+  [prompt lifecycle contract](execution-prompt-lifecycle.md#agent-checkpoint-permission-handoff-implemented)
+  for source proofs, checkpoint handoffs and failure handling.
 - **`agents`** (Implemented) — catalog projection over
   `maister-agents/<stem>.md` inside the providing package's NEWEST Installed
   revision: `{ id (PK, package-qualified <packageName>:<stem>), package_name

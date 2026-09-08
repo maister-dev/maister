@@ -14,7 +14,10 @@ import pino from "pino";
 import { runBrainDecaySweep } from "@/lib/brain/decay";
 import { runBrainReindexSweep } from "@/lib/brain/reindex";
 import { runCapabilitiesCleanupSweep } from "@/lib/capabilities/cleanup";
-import { executionCommandReconcilePass } from "@/lib/execution-host";
+import {
+  ensureLocalExecutionDataPlane,
+  executionCommandReconcilePass,
+} from "@/lib/execution-host";
 import { runEphemeralAgentGcSweep } from "@/lib/gc/ephemeral-agent-gc";
 import { runContextMountGcSweep } from "@/lib/gc/context-mount-gc";
 import { runAgentMaterializationCleanupSweep } from "@/lib/gc/agent-materialization-gc";
@@ -53,6 +56,11 @@ export type SystemSweepSummary = GcCompatibilitySummary & {
   executionHost: Awaited<
     ReturnType<typeof executionCommandReconcilePass>
   > | null;
+  executionEventPlane:
+    | { status: "active"; executionHostId: string }
+    | { status: "refused"; executionHostId: string; reason: string }
+    | { status: "unavailable"; executionHostId: string | null; reason: string }
+    | null;
   workspace: WorkspaceGcSummary | null;
   workspaceReconciliation: WorkspaceReconciliationSummary | null;
   revision: RevisionGcSummary | null;
@@ -257,6 +265,7 @@ export async function runSystemSweep(): Promise<SystemSweepSummary> {
   let reconcile: SystemSweepSummary["reconcile"] = null;
   let syncRecovery: SystemSweepSummary["syncRecovery"] = null;
   let cost: SystemSweepSummary["cost"] = null;
+  let executionEventPlane: SystemSweepSummary["executionEventPlane"] = null;
 
   try {
     keepalive = await runSweepTick();
@@ -299,6 +308,31 @@ export async function runSystemSweep(): Promise<SystemSweepSummary> {
   }
 
   let executionHost: SystemSweepSummary["executionHost"] = null;
+
+  try {
+    const activation = await ensureLocalExecutionDataPlane();
+
+    executionEventPlane =
+      activation.status === "registered"
+        ? { status: "active", executionHostId: activation.host.id }
+        : activation.status === "refused"
+          ? {
+              status: "refused",
+              executionHostId: activation.host.id,
+              reason: "host_identity_mismatch",
+            }
+          : {
+              status: "unavailable",
+              executionHostId: activation.host?.id ?? null,
+              reason: activation.reason,
+            };
+  } catch (err) {
+    const message = errorMessage(err);
+
+    errors.push(`execution event-plane activation failed: ${message}`);
+    bundleErrors.push(`execution event-plane activation failed: ${message}`);
+    log.error({ err: message }, "system_sweep event-plane activation threw");
+  }
 
   try {
     executionHost = await executionCommandReconcilePass();
@@ -347,6 +381,7 @@ export async function runSystemSweep(): Promise<SystemSweepSummary> {
     reconcile,
     syncRecovery,
     cost,
+    executionEventPlane,
     executionHost,
     brain,
     brainReindex,

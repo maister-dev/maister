@@ -8,22 +8,26 @@
     "dev:clean": "pnpm clean && next dev",
     "clean": "node scripts/clean-next-artifacts.mjs",
     "build": "pnpm clean && next build",
-    "start": "next start",
+    "start": "node --import tsx server.ts",
     "lint": "eslint --fix",
     "typecheck": "tsc --noEmit",
     "test": "pnpm test:unit && pnpm test:integration",
     "test:unit": "vitest run --project unit --passWithNoTests",
     "test:integration": "vitest run --project integration --passWithNoTests",
+    "test:integration:ab": "node ../scripts/run-stage-ab-tests.mjs web",
     "test:watch": "vitest --project unit",
     "test:e2e": "tsx e2e/run.ts",
     "test:e2e:live": "tsx e2e/run.ts --config playwright.live.config.ts",
+    "test:e2e:execution-ab": "tsx e2e/run.ts --config playwright.execution-ab.config.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx --import ./scripts/_register-shim.mjs lib/db/migrate.ts",
     "db:migrate:brain": "tsx lib/db/migrate-brain.ts",
     "db:check": "tsx --import ./scripts/_register-shim.mjs lib/db/check.ts",
+    "execution:projection:rearm": "tsx --import ./scripts/_register-shim.mjs scripts/rearm-execution-projection.ts",
     "db:seed": "tsx --import ./scripts/_register-shim.mjs lib/db/seed.ts",
     "db:studio": "drizzle-kit studio",
     "db:erd": "tsx --import ./scripts/_register-shim.mjs scripts/generate-erd-dbml.ts",
+    "execution-data-plane:import-legacy": "tsx --import ./scripts/_register-shim.mjs scripts/import-legacy-execution-data-plane.ts",
     "install-flow": "tsx --import ./scripts/_register-shim.mjs scripts/install-flow.ts",
     "install-package": "tsx --import ./scripts/_register-shim.mjs scripts/install-package.ts",
     "run-flow": "tsx --import ./scripts/_register-shim.mjs scripts/run-flow.ts",
@@ -89,7 +93,7 @@
     "server-only": "^0.0.1",
     "shiki": "4.2.0",
     "tar": "^7.5.16",
-    "undici": "^8.4.1",
+    "undici": "8.4.1",
     "yaml": "^2.9.0",
     "zod": "^3.25.76"
   },
@@ -134,5 +138,8 @@
     "tsx": "^4.22.3",
     "typescript": "5.6.3",
     "vitest": "^2.1.9"
+  },
+  "engines": {
+    "node": ">=24.15.0 <25"
   }
 }

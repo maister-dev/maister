@@ -2,6 +2,7 @@ import type {
   PromptStopReason,
   SupervisorEvent,
 } from "@/lib/supervisor-client";
+import type { CommandEnvelope } from "@/lib/execution-host";
 
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -111,18 +112,83 @@ beforeAll(async () => {
   fake = createFakeExecutionHost();
   Object.assign(fake.transport, {
     createSession: async (env: {
+      command?: { id: string };
       payload: Record<string, unknown>;
-      fence: { runId: string };
-    }) => supMock.createSession({ ...env.payload, runId: env.fence.runId }),
+      fence: {
+        runId: string;
+        assignmentId: string;
+        assignmentEpoch: number;
+      };
+    }) => {
+      const result = await supMock.createSession({
+        ...env.payload,
+        runId: env.fence.runId,
+      });
+
+      fake.sessions.set(result.sessionId, {
+        sessionId: result.sessionId,
+        runId: env.fence.runId,
+        stepId: String(env.payload.stepId ?? "sync"),
+        sessionName: String(env.payload.sessionName ?? "sync-1"),
+        acpSessionId: result.acpSessionId,
+        executionWorkspaceId: String(env.payload.executionWorkspaceId),
+        assignmentId: env.fence.assignmentId,
+        assignmentEpoch: env.fence.assignmentEpoch,
+        createdByCommandId: "supervisor-spy",
+        status: "live",
+      });
+      // This override replaces the fake's own createSession, so it owes the
+      // event plane the same `session.created` that method publishes. Without
+      // it no incarnation is projected and an OWNED resolver prompt cannot be
+      // admitted.
+      await fake.publishCanonical(
+        env as unknown as CommandEnvelope<unknown>,
+        result.sessionId,
+        {
+          type: "session.created",
+          createdByCommandId: env.command?.id ?? "supervisor-spy",
+          sessionId: result.sessionId,
+          monotonicId: fake.monotonic(),
+          sessionName: String(env.payload.sessionName ?? "sync-1"),
+          acpSessionId: result.acpSessionId,
+        },
+      );
+
+      return result;
+    },
     sendPrompt: async (
       sessionId: string,
-      env: { payload: unknown },
+      env: CommandEnvelope<unknown>,
       opts?: unknown,
-    ) => supMock.sendPrompt(sessionId, env.payload, opts),
+    ) => {
+      const result = await supMock.sendPrompt(sessionId, env.payload, opts);
+      const completedAt = new Date().toISOString();
+
+      // This suite adapts the old supervisor spy beneath the Stage B fake
+      // transport. Mirror the real host's durable terminal receipt so prompt
+      // completion requires receipt/event agreement instead of a synchronous
+      // response alone.
+      fake.receipts.set(env.command.id, {
+        commandId: env.command.id,
+        runId: env.fence.runId,
+        kind: env.command.kind,
+        assignmentEpoch: env.fence.assignmentEpoch,
+        phase: "completed",
+        httpStatus: 200,
+        body: result,
+        receivedAt: completedAt,
+        completedAt,
+        eventId: null,
+        inflight: false,
+      });
+
+      return result;
+    },
     streamSession: (sessionId: string, opts?: unknown) =>
       supMock.streamSession(sessionId, opts),
     deleteSession: async (sessionId: string) => {
       await supMock.deleteSession(sessionId);
+      fake.sessions.delete(sessionId);
 
       return { outcome: "terminated" as const };
     },
@@ -152,6 +218,7 @@ beforeEach(async () => {
     "run_sessions",
     "hitl_requests",
     "workspaces",
+    "execution_commands",
     "runs",
     "tasks",
     "flows",
@@ -165,7 +232,7 @@ beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), `sync-resolver-${randomUUID()}-`));
   vi.clearAllMocks();
   supMock.createSession.mockImplementation(async (input: any) => ({
-    sessionId: `sess-${input.runId}`,
+    sessionId: input.runId,
     pid: 4242,
     acpSessionId: `acp-${input.runId}`,
   }));
@@ -655,7 +722,7 @@ describe("syncRunTarget — agent resolver (ADR-141 Task 10)", () => {
     expect(
       (await aheadBehindCounts(parent, "main", "sync/agent-a")).behind,
     ).toBe(0);
-    expect(supMock.deleteSession).toHaveBeenCalledWith(`sess-${runId}`);
+    expect(supMock.deleteSession).toHaveBeenCalledWith(runId);
     expect(schedulerSpy.promoteNextPending).toHaveBeenCalled();
     // ADR-166 (N3): the resolver ran as its own `sync_resolver` generation,
     // released when the run returned to Review, and its teardown was a fenced
@@ -845,7 +912,7 @@ describe("syncRunTarget — agent resolver (ADR-141 Task 10)", () => {
     expect((await readRun(runId)).status).toBe("Review");
     expect(await headSha(wt)).toBe(before);
     expect(await syncOperationInProgress(wt)).toBe(false);
-    expect(supMock.deleteSession).toHaveBeenCalledWith(`sess-${runId}`);
+    expect(supMock.deleteSession).toHaveBeenCalledWith(runId);
   });
 
   // ADR-166 E-EH-11: a resolver turn fenced by a newer driver generation is NOT
@@ -942,7 +1009,7 @@ describe("syncRunTarget — agent resolver (ADR-141 Task 10)", () => {
     expect((await readRun(runId)).status).toBe("Review");
     expect(await headSha(wt)).toBe(before);
     expect(await syncOperationInProgress(wt)).toBe(false);
-    expect(supMock.deleteSession).toHaveBeenCalledWith(`sess-${runId}`);
+    expect(supMock.deleteSession).toHaveBeenCalledWith(runId);
   });
 
   it("HITL round-trip: permission_request → NeedsInput + hitl row; respond flips Running + re-stamps agent_running_since", async () => {
@@ -964,7 +1031,7 @@ describe("syncRunTarget — agent resolver (ADR-141 Task 10)", () => {
       stream.iterate(opts?.signal),
     );
     supMock.sendPrompt.mockImplementation(async () => {
-      stream.emit(permissionEvent(`sess-${runId}`));
+      fake.pushEvent(runId, permissionEvent(runId));
       await gate.promise;
       await resolveConflictInWorktree(wt);
 
@@ -1007,8 +1074,8 @@ describe("syncRunTarget — agent resolver (ADR-141 Task 10)", () => {
     // bound to the run's assignment on the (fake) execution host.
     const { hosts } = await fakeExecutionHosts(db, { fake, runId });
 
-    fake.sessions.set(`sess-${runId}`, {
-      sessionId: `sess-${runId}`,
+    fake.sessions.set(runId, {
+      sessionId: runId,
       runId,
       stepId: "sync",
       acpSessionId: `acp-${runId}`,
@@ -1058,7 +1125,7 @@ describe("syncRunTarget — agent resolver (ADR-141 Task 10)", () => {
       stream.iterate(opts?.signal),
     );
     supMock.sendPrompt.mockImplementation(async (_sid: string) => {
-      stream.emit(permissionEvent(`sess-${runId}`));
+      fake.pushEvent(runId, permissionEvent(runId));
       stream.close();
 
       return { stopReason: "end_turn" as PromptStopReason };
@@ -1081,7 +1148,7 @@ describe("syncRunTarget — agent resolver (ADR-141 Task 10)", () => {
     ).toBe("agent_launched");
     await bg.settled();
 
-    expect(supMock.deleteSession).toHaveBeenCalledWith(`sess-${runId}`);
+    expect(supMock.deleteSession).toHaveBeenCalledWith(runId);
     // ADR-166 (N3): the fail-closed teardown is a fenced `session.delete` row.
     expect(await deleteCommandRows(runId)).toEqual([
       { kind: "session.delete", state: "succeeded", assignmentEpoch: 1 },

@@ -63,7 +63,10 @@ export async function POST(
     });
 
     if (!intent) {
-      throw new MaisterError("CRASH", "scheduled launch disappeared after dispatch");
+      throw new MaisterError(
+        "CRASH",
+        "scheduled launch disappeared after dispatch",
+      );
     }
     log.info(
       { projectId: project.id, scheduledLaunchId: launchId, actorId: user.id },

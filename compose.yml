@@ -1,3 +1,6 @@
+# A/B execution event/file quotas and projection worker settings are host-process
+# settings in supervisor/.env and the web EnvironmentFile. This Postgres-only
+# topology has no application environment blocks or compose.override.yml.
 name: ${COMPOSE_PROJECT_NAME:-maister}
 
 # Only Postgres is containerized. `web` and `supervisor` run on the host via

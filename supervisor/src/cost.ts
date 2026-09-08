@@ -2,10 +2,6 @@ import type { EventEmitter } from "node:events";
 import type { Logger } from "pino";
 import type { SessionEvent } from "./types";
 
-import { createWriteStream } from "node:fs";
-import { mkdir } from "node:fs/promises";
-import { dirname } from "node:path";
-
 import { SESSION_EVENT_CHANNEL } from "./registry";
 
 const MAX_TRAVERSAL_DEPTH = 8;
@@ -51,29 +47,24 @@ export type AttachCostOptions = {
   getContext?: () => CostAttributionContext;
   emitter: EventEmitter;
   logger: Logger;
-  // M8 T13: true when the session was spawned via `--resume <id>`.
-  // Stamped onto every appended cost.jsonl record. Default false.
+  // M8 T13: true when the session was resumed. Stamped onto every durable
+  // usage event. Default false.
   resumed?: boolean;
-  // ADR-166: absolute cost.jsonl path resolved from the adopted workspace.
-  costPath: string;
+  // Stage B canonical usage event hook. Its caller owns durable host-outbox
+  // persistence; no filesystem cost ledger is maintained.
+  onRecorded?: (record: CostRecord) => void;
 };
 
 export type CostHandle = {
-  costPath: string;
   detach: () => Promise<void>;
 };
 
 export async function attachCost(opts: AttachCostOptions): Promise<CostHandle> {
-  const { costPath } = opts;
-
-  await mkdir(dirname(costPath), { recursive: true });
-  const stream = createWriteStream(costPath, { flags: "a" });
-
   const resumed = Boolean(opts.resumed);
   const recorder = createTurnUsageRecorder((record) => {
     if (resumed) record.resumed = true;
 
-    stream.write(`${JSON.stringify(record)}\n`);
+    opts.onRecorded?.(record);
     opts.logger.debug(
       {
         sessionId: opts.sessionId,
@@ -109,13 +100,11 @@ export async function attachCost(opts: AttachCostOptions): Promise<CostHandle> {
   opts.emitter.on(SESSION_EVENT_CHANNEL, onEvent);
 
   return {
-    costPath,
     detach: async () => {
       opts.emitter.off(SESSION_EVENT_CHANNEL, onEvent);
       // Flush a streaming-only turn (one that never emitted a canonical
       // result.usage) before closing — otherwise its spend would be lost.
       recorder.flush();
-      await new Promise<void>((resolveP) => stream.end(() => resolveP()));
     },
   };
 }

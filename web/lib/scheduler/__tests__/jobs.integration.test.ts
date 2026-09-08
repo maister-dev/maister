@@ -565,6 +565,7 @@ describe("scheduler job SQL integration", () => {
   it("keeps a long system sweep claimed until its completion is durably fenced", async () => {
     const previousTimeout =
       process.env.MAISTER_SCHEDULER_ATTEMPT_TIMEOUT_SECONDS;
+
     process.env.MAISTER_SCHEDULER_ATTEMPT_TIMEOUT_SECONDS = "1";
     let releaseSweep = (): void => {
       throw new Error("system sweep release callback was not initialized");

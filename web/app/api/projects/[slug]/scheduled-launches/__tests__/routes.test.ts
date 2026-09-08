@@ -22,9 +22,8 @@ vi.mock("@/lib/authz", () => ({
   requireProjectAction: mocks.requireProjectAction,
 }));
 vi.mock("@/lib/api/project-route-helpers", async (importOriginal) => {
-  const actual = await importOriginal<
-    typeof import("@/lib/api/project-route-helpers")
-  >();
+  const actual =
+    await importOriginal<typeof import("@/lib/api/project-route-helpers")>();
 
   return { ...actual, resolveProject: mocks.resolveProject };
 });
@@ -60,7 +59,11 @@ function params(extra?: Record<string, string>): {
   params: Promise<{ slug: string; launchId: string }>;
 } {
   return {
-    params: Promise.resolve({ slug: "demo", launchId: "scheduled-1", ...extra }),
+    params: Promise.resolve({
+      slug: "demo",
+      launchId: "scheduled-1",
+      ...extra,
+    }),
   };
 }
 

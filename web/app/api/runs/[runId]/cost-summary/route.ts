@@ -54,7 +54,7 @@ function errorResponse(err: unknown, runId: string): NextResponse {
 // The live token-cost poll for the run inspector (mirrors change-summary): the
 // LiveRunInspector re-fetches this on each SSE tick so the inspector's token /
 // wall-clock facts grow during a live run instead of being frozen at the
-// server-rendered snapshot. getRunCostSummary reconciles cost.jsonl → rollup.
+// server-rendered snapshot. getRunCostSummary reconciles canonical usage events → rollup.
 export async function GET(
   _req: Request,
   { params }: RouteParams,

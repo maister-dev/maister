@@ -46,6 +46,29 @@ erDiagram
     AGENTS ||--o{ RUNS : "agent runs (SET NULL)"
     AGENT_SCHEDULES ||--o{ RUNS : "trigger provenance (SET NULL, ADR-139)"
     AGENTS ||--o{ PROJECT_TOKENS : "ephemeral agent tokens (CASCADE)"
+    RUNS ||--o{ AGENT_TURNS : "accepted input (CASCADE)"
+    EXECUTION_ASSIGNMENTS o|--o{ AGENT_TURNS : "claimed generation (RESTRICT)"
+    RUN_SESSIONS o|--o{ AGENT_TURNS : "logical session (RESTRICT)"
+    RUN_SESSION_INCARNATIONS o|--o{ AGENT_TURNS : "concrete prompt source (RESTRICT)"
+    EXECUTION_COMMANDS o|--o| AGENT_TURNS : "immutable prompt (RESTRICT)"
+
+    AGENT_TURNS {
+        text id PK
+        text run_id FK
+        integer ordinal "immutable run-local order"
+        text variant "initial|resume|rework|live_message|persistent_message"
+        text logical_key "immutable retry key"
+        text prompt "immutable original input"
+        text state "queued|claimed|dispatched|applied|superseded"
+        text execution_assignment_id FK
+        integer assignment_epoch
+        text run_session_id FK
+        text incarnation_id FK
+        text command_id FK
+        timestamptz created_at
+        timestamptz updated_at
+        timestamptz completed_at
+    }
 
     AGENTS {
         text id PK "package-qualified packageName:stem (ADR-106; was flowRefId:stem)"
@@ -118,6 +141,16 @@ Dropped from the prior scheduler-era shape (zero readers/writers existed): `agen
 (text), `scheduler_job_id` (per-schedule job bridge — replaced by the seeded
 singleton `agent_tick.dispatcher`), `desired_state` (`continuous` is the
 future Mγ stage).
+
+The `agent_turns` storage and production message admission are implemented.
+Messages retain FIFO order across capacity claims and persistent parks. Initial
+turns retain their input before owned creation; rework input commits with its
+new assignment and invalidation of the prior public result. Migration `0156`
+adds the `consensus_draft` variant so a consensus participant child owns its
+draft input, create and completion. Resume wiring remains
+Designed. Its accepted input,
+binding and state constraints are defined in the
+[schema reference](../database-schema.md#agent_turns-implemented).
 
 ## Sibling-table alters (same migration)
 

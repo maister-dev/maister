@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  extractToolIdentity,
-  mcpServerFromToolName,
-} from "../guardrail-hooks";
+import { extractToolIdentity, mcpServerFromToolName } from "../guardrail-hooks";
 
 // ADR-130: the capability_guard seam needs a tool NAME (and, for MCP calls, a
 // server namespace). Identity is single-sourced here and reused by both the

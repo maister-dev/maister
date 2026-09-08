@@ -70,7 +70,8 @@ optional claude-native backend delivered through a clean seam.
   number }` (`escalationThreshold` = N, web-resolved from
   `MAISTER_CAPABILITY_DENY_ESCALATION_THRESHOLD`, delivered on the profile so the
   supervisor stays config-free — the ADR-108 `repetition.max` pattern). Distinct
-  from the capability-materialization `capabilityProfilePath` (child-env only)
+  from the capability-materialization object IDs (the supervisor resolves them
+  to host-private child-env paths)
   and the platform-agent `capability_profile` frontmatter — the name collision
   is deliberately avoided.
 - **`capabilityDenyCount`** _(capability_guard — ADR-130)_ — a per-session counter
@@ -345,7 +346,8 @@ resumes through the same agent-permission-HITL path that already drives it.
   untouched and reclaim removes it with the file (no second write, no extra
   cleanup). The hook runs a SHIPPED repo-local guard script
   (`web/scripts/native-path-guard.mjs`) via `node` (resolved relative to the web
-  cwd, `MAISTER_HOOK_GUARD_SCRIPT`-overridable for split-host) — NOT written into
+  cwd, `MAISTER_HOOK_GUARD_SCRIPT`-overridable, though the adapter still executes
+  it from the same filesystem — ADR-023; split-host is Stage C) — NOT written into
   the worktree, so it needs no `WORKTREE_EXCLUDE_PATTERNS` entry or cleanup;
   `allowedPaths` ride the exec-form `args` (no shell). It covers **only
   `path_guard`**; `repetition` and `no_progress` stay supervisor-only (they need
@@ -749,4 +751,3 @@ three doc-only reconciliations folded back:
   `web/lib/flows/enforcement-evidence.ts` (`assertEnforcementEvidence`),
   `web/lib/flows/graph/runner-graph.ts` (derive→fold→persist `enforcementProfile`, thread to `createInput`, evidence gate) + `web/lib/flows/runner-agent.ts` (`enforcementProfile` in ctx),
   `web/lib/flows/enforcement.ts` (`ENFORCEABILITY_BY_AGENT` `tools`/`mcps`/`hooks` → `enforced`).
-

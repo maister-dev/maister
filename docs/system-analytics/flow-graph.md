@@ -461,9 +461,11 @@ appending it to the repo's git exclude file (resolved via `git rev-parse --git-p
 info/exclude`). That file lives in the **shared common git dir**, so the exclude is
 **repo-wide** (every worktree + the main checkout) and persists after worktree
 removal — benign because `.maister/` is MAIster's runtime dir and is never committed.
-So `run.json` never enters `git status` or the base→run diff. The
-run logs (`<stepId>.log`, `run.events.jsonl`, `cost.jsonl`) stay at `<runDir>`;
-only `run.json` lives in the worktree. Its shape (currently hardcoded "all"):
+So `run.json` never enters `git status` or the base→run diff. Execution-host log,
+transcript, and cost bytes remain private runtime objects addressed by opaque
+IDs; their canonical events and metadata live in Postgres. Repository-owned
+`run.json` remains in the worktree until Stage C. Its shape (currently hardcoded
+"all"):
 
 ```json
 {
@@ -1014,4 +1016,3 @@ before card creation.
   `web/lib/flows/graph/gates-exec.ts`, `web/lib/db/schema.ts`
   (`node_attempts`, `gate_results`).
 ```
-

@@ -4,8 +4,8 @@ import type * as acp from "@agentclientprotocol/sdk";
 
 import { EventEmitter } from "node:events";
 
-import { type EventsLogWriter } from "./events-log";
 import { pendingPermissions } from "./pending-permissions";
+import { type RuntimeEventPublisher } from "./runtime-event-publisher";
 import {
   SupervisorError,
   type SessionEvent,
@@ -30,22 +30,25 @@ export type RegistryEntry = {
   intentionalShutdown: boolean;
   intentionalReason?: IntentionalReason;
   eventBuffer: SessionEvent[];
+  eventBufferBytes: number;
   connection?: acp.ClientSideConnection;
   acpSessionId?: string;
-  eventsLog?: EventsLogWriter;
 };
 
 export type RegisterOptions = {
   connection?: acp.ClientSideConnection;
   acpSessionId?: string;
-  eventsLog?: EventsLogWriter;
+  runtimeEventPublisher?: RuntimeEventPublisher;
 };
 
 const MAX_EVENT_BUFFER = 1000;
+const MAX_EVENT_BUFFER_BYTES = 16 * 1024;
 
 export class SessionRegistry {
   private readonly entries = new Map<string, RegistryEntry>();
   private readonly logger: Logger;
+  private readonly canonicallyPersistedEvents = new WeakSet<object>();
+  private readonly publicEvents = new WeakMap<SessionEvent, SessionEvent>();
 
   constructor(logger: Logger) {
     this.logger = logger.child({ component: "registry" });
@@ -70,33 +73,57 @@ export class SessionRegistry {
       emitter,
       intentionalShutdown: false,
       eventBuffer: [],
+      eventBufferBytes: 0,
       connection: options.connection,
       acpSessionId: options.acpSessionId,
-      eventsLog: options.eventsLog,
     };
 
     this.entries.set(record.sessionId, entry);
     emitter.on(SESSION_EVENT_CHANNEL, (event: SessionEvent) => {
-      entry.eventBuffer.push(event);
-      if (entry.eventBuffer.length > MAX_EVENT_BUFFER) {
-        entry.eventBuffer.shift();
+      if (record.terminalPublished && event.type !== "session.command") {
+        throw new SupervisorError(
+          "ACP_PROTOCOL",
+          "session output arrived after terminal evidence",
+          {
+            details: { reason: "required_output_incomplete" },
+          },
+        );
       }
-      entry.eventsLog?.append(event);
-      if (event.type === "session.exited" || event.type === "session.crashed") {
-        pendingPermissions.purgeSession(record.sessionId);
-        if (entry.eventsLog) {
-          const closing = entry.eventsLog;
+      let publicEvent = event;
 
-          void closing.close().catch((err: unknown) => {
-            this.logger.warn(
-              {
-                sessionId: record.sessionId,
-                err: err instanceof Error ? err.message : String(err),
-              },
-              "events-log close failed",
-            );
-          });
-        }
+      if (!this.canonicallyPersistedEvents.delete(event)) {
+        options.runtimeEventPublisher?.publishSessionEvent(record, event);
+      }
+      const contentRef =
+        options.runtimeEventPublisher?.sessionContentReference(event);
+
+      if (contentRef)
+        publicEvent = {
+          type: "session.content",
+          eventType: event.type,
+          sessionId: event.sessionId,
+          monotonicId: event.monotonicId,
+          contentRef,
+        };
+      this.publicEvents.set(event, publicEvent);
+      const bytes = Buffer.byteLength(JSON.stringify(publicEvent));
+
+      while (
+        entry.eventBuffer.length > 0 &&
+        (entry.eventBuffer.length >= MAX_EVENT_BUFFER ||
+          entry.eventBufferBytes + bytes > MAX_EVENT_BUFFER_BYTES)
+      ) {
+        entry.eventBufferBytes -= Buffer.byteLength(
+          JSON.stringify(entry.eventBuffer.shift()),
+        );
+      }
+      if (bytes <= MAX_EVENT_BUFFER_BYTES) {
+        entry.eventBuffer.push(publicEvent);
+        entry.eventBufferBytes += bytes;
+      }
+      if (event.type === "session.exited" || event.type === "session.crashed") {
+        record.terminalPublished = true;
+        pendingPermissions.purgeSession(record.sessionId);
       }
     });
     this.logger.debug(
@@ -159,6 +186,16 @@ export class SessionRegistry {
     return removed;
   }
 
+  clear(reason: string): void {
+    const sessionIds = Array.from(this.entries.keys());
+
+    this.entries.clear();
+    for (const sessionId of sessionIds) {
+      pendingPermissions.purgeSession(sessionId);
+      this.logger.debug({ sessionId, reason }, "remove");
+    }
+  }
+
   size(): number {
     return this.entries.size;
   }
@@ -174,6 +211,17 @@ export class SessionRegistry {
 
     if (!entry) return false;
 
+    entry.emitter.emit(SESSION_EVENT_CHANNEL, event);
+
+    return true;
+  }
+
+  emitCanonicallyPersisted(sessionId: string, event: SessionEvent): boolean {
+    const entry = this.entries.get(sessionId);
+
+    if (!entry) return false;
+
+    this.canonicallyPersistedEvents.add(event);
     entry.emitter.emit(SESSION_EVENT_CHANNEL, event);
 
     return true;
@@ -198,10 +246,13 @@ export class SessionRegistry {
       );
     }
 
-    entry.emitter.on(SESSION_EVENT_CHANNEL, listener);
+    const publicListener = (event: SessionEvent): void =>
+      listener(this.publicEvents.get(event) ?? event);
+
+    entry.emitter.on(SESSION_EVENT_CHANNEL, publicListener);
 
     return () => {
-      entry.emitter.off(SESSION_EVENT_CHANNEL, listener);
+      entry.emitter.off(SESSION_EVENT_CHANNEL, publicListener);
     };
   }
 }

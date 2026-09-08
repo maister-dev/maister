@@ -5,8 +5,6 @@ import type { RunnerSnapshot } from "@/lib/db/schema";
 import type { AnyColumn, SQL } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
-import { randomUUID } from "node:crypto";
-
 import {
   and,
   desc,
@@ -21,8 +19,6 @@ import { runSessions } from "@/lib/db/schema";
 import * as schema from "@/lib/db/schema";
 
 type ReadDb = Pick<NodePgDatabase<typeof schema>, "select">;
-type WriteDb = Pick<NodePgDatabase<typeof schema>, "select" | "update">;
-type InsertDb = Pick<NodePgDatabase<typeof schema>, "insert">;
 
 // M42 (ADR-114): the per-session runner/resume state for one logical session.
 // After the contract migration drops the `runs.{runner_id,
@@ -30,6 +26,8 @@ type InsertDb = Pick<NodePgDatabase<typeof schema>, "insert">;
 // mirror, `run_sessions` is the SOLE source of truth — every reader that used
 // to read those run-level columns reads a session here instead.
 export interface ActiveRunSession {
+  id: string;
+  executionAssignmentId: string | null;
   sessionName: string;
   acpSessionId: string | null;
   // ADR-166: the supervisor's own session id (URL key of every host-bound
@@ -43,6 +41,8 @@ export interface ActiveRunSession {
 
 function toActiveRunSession(row: Record<string, unknown>): ActiveRunSession {
   return {
+    id: row.id as string,
+    executionAssignmentId: (row.executionAssignmentId ?? null) as string | null,
     sessionName: row.sessionName as string,
     acpSessionId: (row.acpSessionId ?? null) as string | null,
     hostSessionId: (row.hostSessionId ?? null) as string | null,
@@ -139,66 +139,6 @@ export async function loadRunSessions(
     .orderBy(desc(runSessions.updatedAt));
 
   return rows.map(toActiveRunSession);
-}
-
-// Persist a dispatch's resume handle onto a logical session's row (the sole
-// source of truth). The graph runner persists each node's logical session.
-export async function persistRunSessionAcpSessionId(
-  db: WriteDb,
-  runId: string,
-  sessionName: string,
-  acpSessionId: string,
-): Promise<void> {
-  await db
-    .update(runSessions)
-    .set({ acpSessionId, updatedAt: new Date() })
-    .where(
-      and(
-        eq(runSessions.runId, runId),
-        eq(runSessions.sessionName, sessionName),
-      ),
-    );
-}
-
-// ADR-166 E-EH-07: the `session.create` ack binds the logical session to the
-// host (`host_session_id` = the supervisor's URL key, distinct from the ACP
-// resume handle) and to the assignment that created it — in the SAME
-// transaction as the command ack. Upsert on (run_id, session_name): the row
-// normally pre-exists (the launch/scratch/agent paths insert it), but a
-// recovery fold after a crash must not depend on that.
-export async function persistRunSessionHostBinding(
-  db: InsertDb,
-  input: {
-    runId: string;
-    sessionName: string;
-    hostSessionId: string;
-    acpSessionId: string | null;
-    executionAssignmentId: string;
-  },
-): Promise<void> {
-  const now = new Date();
-
-  await db
-    .insert(runSessions)
-    .values({
-      id: randomUUID(),
-      runId: input.runId,
-      sessionName: input.sessionName,
-      hostSessionId: input.hostSessionId,
-      acpSessionId: input.acpSessionId,
-      executionAssignmentId: input.executionAssignmentId,
-      createdAt: now,
-      updatedAt: now,
-    })
-    .onConflictDoUpdate({
-      target: [runSessions.runId, runSessions.sessionName],
-      set: {
-        hostSessionId: input.hostSessionId,
-        acpSessionId: input.acpSessionId,
-        executionAssignmentId: input.executionAssignmentId,
-        updatedAt: now,
-      },
-    });
 }
 
 // Batch variant for list/sweep readers: the ACTIVE session per run id (same

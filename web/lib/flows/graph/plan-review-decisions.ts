@@ -97,24 +97,29 @@ export async function createPlanReviewDecisionRequests({
         decisionId: decision.id,
       })
       .onConflictDoNothing()
-      .returning({ id: hitlRequests.id, parentHitlRequestId: hitlRequests.parentHitlRequestId });
+      .returning({
+        id: hitlRequests.id,
+        parentHitlRequestId: hitlRequests.parentHitlRequestId,
+      });
     const persisted =
       inserted ??
-      (await db
-        .select({
-          id: hitlRequests.id,
-          parentHitlRequestId: hitlRequests.parentHitlRequestId,
-        })
-        .from(hitlRequests)
-        .where(
-          and(
-            eq(hitlRequests.runId, runId),
-            eq(hitlRequests.sourceArtifactId, sourceArtifactId),
-            eq(hitlRequests.decisionId, decision.id),
-            eq(hitlRequests.kind, "decision_request"),
-          ),
-        )
-        .limit(1))[0];
+      (
+        await db
+          .select({
+            id: hitlRequests.id,
+            parentHitlRequestId: hitlRequests.parentHitlRequestId,
+          })
+          .from(hitlRequests)
+          .where(
+            and(
+              eq(hitlRequests.runId, runId),
+              eq(hitlRequests.sourceArtifactId, sourceArtifactId),
+              eq(hitlRequests.decisionId, decision.id),
+              eq(hitlRequests.kind, "decision_request"),
+            ),
+          )
+          .limit(1)
+      )[0];
 
     if (!persisted || persisted.parentHitlRequestId !== parentHitlRequestId) {
       throw new MaisterError(
@@ -137,6 +142,7 @@ export async function createPlanReviewDecisionRequests({
 
   log.info(
     {
+      projectId,
       runId,
       parentHitlRequestId,
       sourceArtifactId,

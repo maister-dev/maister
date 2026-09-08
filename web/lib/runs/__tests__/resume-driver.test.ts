@@ -18,6 +18,18 @@ const cancelPermissionSpy = vi.fn();
 const deleteSessionSpy = vi.fn();
 
 vi.mock("@/lib/supervisor-client", () => ({}));
+vi.mock("@/lib/assignments/service", () => ({
+  completeHitlAssignmentFromCurrentActor: async () => {
+    throw new Error("pre-owner resume fixture entered owned result handoff");
+  },
+}));
+
+// These pre-owner fixtures do not model the durable Flow resume ledger.
+vi.mock("@/lib/flows/graph/permission-resume", () => ({
+  PERMISSION_RESUME_PROMPT:
+    "Resuming after operator response — please continue with the prior tool call.",
+  hasFlowPermissionResume: async () => false,
+}));
 
 // ADR-166: the resumed-session driver talks to the host through the client
 // bound to the run's assignment (prompt / input / delete) and the host-scoped
@@ -28,6 +40,8 @@ const fakeBoundClient = () => ({
     commandId: "cmd",
     completion: sendPromptSpy(sessionId, input),
   }),
+  waitForPrompt: (handle: { completion: Promise<unknown> }) =>
+    handle.completion,
   deliverInput: (
     sessionId: string,
     payload: {

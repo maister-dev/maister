@@ -39,7 +39,7 @@ export function assertScratchCanAcceptUserMessage(
     );
   }
 
-  if (!state.supervisorSessionId) {
+  if (!state.hostSessionId) {
     throw new MaisterError(
       "PRECONDITION",
       `scratch run ${state.runId} has no live supervisor session`,

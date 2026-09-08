@@ -13,6 +13,7 @@ import { isMaisterError, MaisterError } from "@/lib/errors";
 import { preserveWorktree } from "@/lib/gc/preserve";
 import { worktreesRoot } from "@/lib/instance-config";
 import { assertLocalPackageAssistantActor } from "@/lib/scratch-runs/service";
+import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import { cleanupLocalPackageAssistantMaterialization } from "@/lib/scratch-runs/local-package-materialization";
 import {
   createExecutionHosts,
@@ -100,7 +101,14 @@ async function loadScratchLifecycleRows(db: Db, runId: string) {
     );
   }
 
-  return { run, scratch, workspace: workspaceRows[0] ?? null };
+  const activeSession = await loadActiveRunSession(db, runId);
+
+  return {
+    run,
+    scratch,
+    workspace: workspaceRows[0] ?? null,
+    hostSessionId: activeSession?.hostSessionId ?? null,
+  };
 }
 
 async function deleteSupervisorSessionIfLive(
@@ -145,10 +153,8 @@ export async function POST(
     const sessionUser = await requireActiveSession();
 
     const db = getDb() as unknown as Db;
-    const { run, scratch, workspace } = await loadScratchLifecycleRows(
-      db,
-      runId,
-    );
+    const { run, scratch, workspace, hostSessionId } =
+      await loadScratchLifecycleRows(db, runId);
 
     // ADR-097: a project scratch run keeps its project-scoped gate; a
     // project-less local-package assistant run (project_id NULL) is private to
@@ -205,9 +211,9 @@ export async function POST(
     let supervisorStopped = false;
     let workspaceRemoved = false;
 
-    if (scratch.supervisorSessionId) {
+    if (hostSessionId) {
       supervisorStopped = await deleteSupervisorSessionIfLive(
-        scratch.supervisorSessionId,
+        hostSessionId,
         runId,
       );
     }
@@ -280,7 +286,6 @@ export async function POST(
         .update(scratchRuns)
         .set({
           dialogStatus: "Abandoned",
-          supervisorSessionId: null,
           updatedAt: now,
         })
         .where(eq(scratchRuns.runId, runId));

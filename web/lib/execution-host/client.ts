@@ -2,6 +2,7 @@ import type { Db } from "./db";
 import type { ExecutionAssignment, ExecutionHost } from "@/lib/db/schema";
 import type {
   CreateSessionResult,
+  PromptResult,
   SendPromptInput,
   SupervisorEvent,
   SupervisorDiagnosticsStatus,
@@ -17,14 +18,20 @@ import type {
   AdoptWorkspaceWire,
   CheckpointResult,
   CommandReceipt,
+  CommandRetirementAck,
+  CommandRetirementRequest,
   CreateSessionPayload,
   DeleteSessionOutcome,
   ExecutionHostTransport,
   HostHealth,
   InputDeliveryResult,
+  ReserveRuntimeObjectPayload,
+  RuntimeObjectMetadata,
   InputPayload,
   WorkspaceRecord,
 } from "./contracts";
+import type { SessionBindingDisposition } from "./session-binding";
+import type { PromptOwnerRegistry } from "./prompt-owners";
 import type { PromptHandle } from "./deliverer";
 import type {
   CommandEnvelope,
@@ -33,8 +40,12 @@ import type {
   HostSessionId,
   PlacementReason,
 } from "./types";
+import type { SessionCreateOwner } from "./create-intent";
 
+import { and, eq } from "drizzle-orm";
 import pino, { type Logger } from "pino";
+
+import { canonicalCommandJson } from "../../../runtime/command-json";
 
 import {
   ensureWorkspaceAdopted,
@@ -47,16 +58,40 @@ import {
   setAssignmentWorkspace,
 } from "./assignments";
 import { applyCreateAck } from "./create-ack";
-import { COMMAND_POLICY, deliverCommand, deliverPrompt } from "./deliverer";
-import { issueCommand, type IssuedCommand } from "./ledger";
+import { ensureSessionOutputIntents } from "./session-output-intents";
+import {
+  createOwnedSession,
+  type OwnedSessionOptions,
+} from "./owned-session-create";
+import { requeueDelivering } from "./commands";
+import {
+  COMMAND_POLICY,
+  deliverCommand,
+  startAsyncPrompt,
+  waitForPromptCompletion,
+} from "./deliverer";
+import {
+  issueCommand,
+  buildEnvelope,
+  issueOwnedPrompt,
+  type IssuedCommand,
+  type PromptOwnerAdmission,
+} from "./ledger";
 import { ensureAssignment } from "./placement";
 import { hostForAssignment } from "./resolver";
 import { commandSignals } from "./signals";
 import { defaultTransport } from "./default-transport";
+import { streamCanonicalSessionEvents } from "./events/session-stream";
 import { asExecutionWorkspaceId, asHostSessionId } from "./types";
 
 import { MaisterError } from "@/lib/errors";
 import { getDb } from "@/lib/db/client";
+import {
+  executionAssignments,
+  executionCommands,
+  executionRuntimeObjects,
+  runs,
+} from "@/lib/db/schema";
 
 const defaultLog = pino({
   name: "execution-host",
@@ -96,11 +131,33 @@ export interface BoundClient {
     payload: Omit<CreateSessionPayload, "executionWorkspaceId">,
     opts?: CreateSessionOptions,
   ): Promise<CreateSessionResult & { hostSessionId: HostSessionId }>;
+  createOwnedSession(
+    owner: SessionCreateOwner,
+    preparePayload: () => Promise<
+      Omit<CreateSessionPayload, "executionWorkspaceId">
+    >,
+    options?: OwnedSessionOptions,
+  ): Promise<
+    CreateSessionResult & {
+      hostSessionId: HostSessionId;
+      sessionFallback: boolean;
+    }
+  >;
+  // ADR-167 S2.12: every prompt carries a durable owner. There is no unowned
+  // branch left — a continuation that cannot name its owner must refuse rather
+  // than start a turn nothing can finish after a restart.
   prompt(
     sessionId: HostSessionId | string,
     input: SendPromptInput,
-    opts?: { signal?: AbortSignal },
+    opts: {
+      admitOwner: (tx: Db) => Promise<PromptOwnerAdmission>;
+      signal?: AbortSignal;
+    },
   ): Promise<PromptHandle>;
+  waitForPrompt(
+    handle: PromptHandle,
+    opts?: { signal?: AbortSignal; owners?: PromptOwnerRegistry },
+  ): Promise<PromptResult>;
   deliverInput(
     sessionId: HostSessionId | string,
     payload: InputPayload,
@@ -109,6 +166,17 @@ export interface BoundClient {
     tx: Db,
     sessionId: HostSessionId | string,
     payload: InputPayload,
+  ): Promise<PreparedInput>;
+  reattachPermissionInput(
+    tx: Db,
+    commandId: string,
+    sessionId: string,
+    payload: {
+      kind: "permission";
+      action: "select";
+      requestId: string;
+      optionId: string;
+    },
   ): Promise<PreparedInput>;
   // The host's session records for THIS run (any status); callers pick the
   // live one for the node they act on.
@@ -120,6 +188,19 @@ export interface BoundClient {
   deleteSession(
     sessionId: HostSessionId | string,
   ): Promise<{ outcome: DeleteSessionOutcome }>;
+  reserveRuntimeObject(
+    payload: ReserveRuntimeObjectPayload,
+  ): Promise<RuntimeObjectMetadata>;
+  uploadRuntimeObject(input: {
+    objectId: string;
+    generation: number;
+    bytes: Uint8Array;
+    sha256: string;
+  }): Promise<RuntimeObjectMetadata>;
+  deleteRuntimeObject(input: {
+    objectId: string;
+    generation: number;
+  }): Promise<void>;
 }
 
 // Host-scoped reads that carry no fence: health, the live session list, the
@@ -141,6 +222,13 @@ export interface HostAdminClient {
     opts?: { lastEventId?: number; signal?: AbortSignal },
   ): AsyncGenerator<SupervisorEvent, void, void>;
   getCommandReceipt(commandId: string): Promise<CommandReceipt | null>;
+  // D6: the host's half of retirement. Host-scoped and fenceless by design —
+  // the command's own epoch travels in the request as evidence, and the host
+  // re-derives eligibility from its receipt rather than trusting the caller.
+  retireCommand(
+    commandId: string,
+    request: CommandRetirementRequest,
+  ): Promise<CommandRetirementAck>;
   getWorkspace(
     executionWorkspaceId: ExecutionWorkspaceId | string,
   ): Promise<WorkspaceRecord | null>;
@@ -181,6 +269,7 @@ export type ExecutionHosts = {
 
 export type ExecutionHostsDeps = {
   db?: Db;
+  owners?: PromptOwnerRegistry;
   transport?: ExecutionHostTransport;
   logger?: Logger;
   now?: () => Date;
@@ -203,13 +292,18 @@ export function createExecutionHosts(
 
     type ImmediateOptions<TResult> = {
       targetSessionId?: string;
-      onAck?: (tx: Db, result: TResult) => Promise<void>;
+      onAck?: (
+        tx: Db,
+        result: TResult,
+      ) => Promise<void | SessionBindingDisposition>;
       resultSummary?: (result: TResult) => Record<string, unknown> | null;
     };
 
+    // S2.12: `session.prompt` is deliberately not issuable here — a prompt is
+    // minted only by `issueOwnedPrompt`, which requires its owner.
     function issue<TPayload>(
       issueDb: Db,
-      kind: CommandKind,
+      kind: Exclude<CommandKind, "session.prompt">,
       payload: TPayload,
       targetSessionId: string | null,
     ) {
@@ -246,7 +340,7 @@ export function createExecutionHosts(
     }
 
     async function immediate<TPayload, TResult>(
-      kind: CommandKind,
+      kind: Exclude<CommandKind, "session.prompt">,
       payload: TPayload,
       send: (envelope: CommandEnvelope<TPayload>) => Promise<TResult>,
       opts: ImmediateOptions<TResult> = {},
@@ -317,8 +411,10 @@ export function createExecutionHosts(
       async createSession(payload, opts) {
         const sessionName =
           opts?.sessionName ?? payload.sessionName ?? "default";
-        const attempt = (executionWorkspaceId: ExecutionWorkspaceId) =>
-          immediate<CreateSessionPayload, CreateSessionResult>(
+        const attempt = async (executionWorkspaceId: ExecutionWorkspaceId) => {
+          await ensureSessionOutputIntents(db, client, payload);
+
+          return immediate<CreateSessionPayload, CreateSessionResult>(
             "session.create",
             { ...payload, sessionName, executionWorkspaceId },
             (env) => transport.createSession(env, timeoutFor("session.create")),
@@ -338,6 +434,7 @@ export function createExecutionHosts(
               }),
             },
           );
+        };
         const withHostSessionId = (result: CreateSessionResult) => ({
           ...result,
           hostSessionId: asHostSessionId(result.sessionId),
@@ -368,34 +465,133 @@ export function createExecutionHosts(
           );
         }
       },
-      async prompt(sessionId, input, opts) {
-        const policy = COMMAND_POLICY["session.prompt"];
-        const { row, envelope } = await issueCommand(db, {
-          assignment: current,
-          host,
-          kind: "session.prompt",
-          payload: input,
-          maxAttempts: policy.maxAttempts,
-          driverless: policy.driverless,
-          targetSessionId: sessionId,
+      createOwnedSession(owner, preparePayload, options) {
+        return createOwnedSession({
+          db,
+          client,
+          transport,
+          owner,
+          preparePayload,
+          options,
           logger,
         });
+      },
+      async prompt(sessionId, input, opts) {
+        const policy = COMMAND_POLICY["session.prompt"];
+        const commandInput = {
+          assignment: current,
+          host,
+          payload: input,
+          maxAttempts: policy.maxAttempts,
+          targetSessionId: sessionId,
+          logger,
+        };
+        const { row, envelope } = await issueOwnedPrompt(db, {
+          ...commandInput,
+          admitOwner: opts.admitOwner,
+        });
 
-        return deliverPrompt({
+        return startAsyncPrompt({
           db,
           command: row,
           envelope,
-          send: (env) =>
-            transport.sendPrompt(
+          start: (env) =>
+            transport.startPrompt(
               sessionId,
               env as CommandEnvelope<SendPromptInput>,
-              { signal: opts?.signal, ...timeoutFor("session.prompt") },
+              timeoutFor("session.prompt"),
             ),
           lookupReceipt: (id) => transport.getCommandReceipt(id),
           logger,
           sleep: deps.sleep,
           now: deps.now,
         });
+      },
+      async waitForPrompt(handle, opts) {
+        const result = await waitForPromptCompletion({
+          db,
+          handle,
+          owners: opts?.owners ?? deps.owners,
+          signal: opts?.signal,
+          assignmentIsCurrent: async () => {
+            const rows = await db
+              .select({ id: executionAssignments.id })
+              .from(executionAssignments)
+              .where(
+                and(
+                  eq(executionAssignments.id, current.id),
+                  eq(executionAssignments.runId, current.runId),
+                  eq(executionAssignments.executionHostId, host.id),
+                  eq(executionAssignments.epoch, current.epoch),
+                  eq(executionAssignments.state, "active"),
+                ),
+              )
+              .limit(1);
+
+            return Boolean(rows[0]);
+          },
+          lookupReceipt: (commandId) => transport.getCommandReceipt(commandId),
+          logger,
+        });
+
+        if (result.runtimeObjects?.length) {
+          await db.transaction(async (tx) => {
+            for (const metadata of result.runtimeObjects ?? []) {
+              if (
+                metadata.state !== "available" ||
+                !Number.isSafeInteger(metadata.sizeBytes) ||
+                metadata.sizeBytes === null ||
+                metadata.sizeBytes < 0 ||
+                typeof metadata.sha256 !== "string" ||
+                !/^[a-f0-9]{64}$/.test(metadata.sha256) ||
+                !metadata.sealedAt
+              ) {
+                throw new MaisterError(
+                  "ACP_PROTOCOL",
+                  "prompt receipt contains invalid runtime output metadata",
+                );
+              }
+              const rows = await tx
+                .select()
+                .from(executionRuntimeObjects)
+                .where(eq(executionRuntimeObjects.id, metadata.objectId))
+                .for("update")
+                .limit(1);
+              const object = rows[0];
+
+              if (
+                !object ||
+                object.runId !== current.runId ||
+                object.executionHostId !== host.id ||
+                object.executionAssignmentId !== current.id ||
+                object.assignmentEpoch !== current.epoch ||
+                object.kind !== metadata.kind ||
+                object.logicalName !== metadata.logicalName ||
+                object.mimeType !== metadata.mimeType ||
+                object.generation !== metadata.generation ||
+                object.retentionClass !== metadata.retentionClass
+              ) {
+                throw new MaisterError(
+                  "CONFLICT",
+                  "prompt runtime output conflicts with its manager allocation",
+                  { details: { reason: "command_invariant_conflict" } },
+                );
+              }
+              await tx
+                .update(executionRuntimeObjects)
+                .set({
+                  state: "available",
+                  sizeBytes: BigInt(metadata.sizeBytes),
+                  sha256: metadata.sha256,
+                  sealedAt: new Date(metadata.sealedAt),
+                  lastError: null,
+                })
+                .where(eq(executionRuntimeObjects.id, metadata.objectId));
+            }
+          });
+        }
+
+        return result;
       },
       deliverInput(sessionId, payload) {
         return immediate<InputPayload, InputDeliveryResult>(
@@ -411,6 +607,104 @@ export function createExecutionHosts(
 
         return {
           commandId: issued.row.id,
+          payload,
+          deliver: (opts) =>
+            deliver<InputPayload, InputDeliveryResult>(
+              issued,
+              (env) =>
+                transport.deliverInput(
+                  sessionId,
+                  env,
+                  timeoutFor("session.input"),
+                ),
+              { targetSessionId: sessionId, onAck: opts?.onAck },
+            ),
+        };
+      },
+      async reattachPermissionInput(tx, commandId, sessionId, payload) {
+        const [original] = await tx
+          .select()
+          .from(executionCommands)
+          .where(eq(executionCommands.id, commandId))
+          .for("update");
+
+        if (
+          !original ||
+          original.kind !== "session.input" ||
+          original.runId !== current.runId ||
+          original.executionAssignmentId !== current.id ||
+          original.assignmentEpoch !== current.epoch ||
+          original.executionHostId !== host.id ||
+          original.targetSessionId !== sessionId ||
+          canonicalCommandJson(original.payload) !==
+            canonicalCommandJson(payload)
+        )
+          throw new MaisterError(
+            "CONFLICT",
+            "permission replay does not match its stored delivery",
+            { details: { reason: "permission_delivery_identity", commandId } },
+          );
+        if (original.state === "succeeded") {
+          if (original.result?.ok !== true)
+            throw new MaisterError(
+              "CONFLICT",
+              "permission receipt has no successful delivery result",
+            );
+
+          return {
+            commandId,
+            payload,
+            deliver: async (opts) => {
+              const result: InputDeliveryResult = { ok: true, replayed: true };
+
+              await db.transaction(async (ackTx) => {
+                await opts?.onAck?.(ackTx, result);
+              });
+
+              return result;
+            },
+          };
+        }
+        if (original.state !== "queued" && original.state !== "delivering")
+          throw new MaisterError(
+            "CONFLICT",
+            "permission delivery requires an explicit retry decision",
+            {
+              details: {
+                reason: "permission_delivery_terminal",
+                commandId,
+                state: original.state,
+              },
+            },
+          );
+        // A permission selection carries its complete persisted request. The
+        // host deduplicates the same ID even if the lost delivery did arrive.
+        const row =
+          original.state === "delivering"
+            ? (await requeueDelivering(tx, commandId, { logger })).row
+            : original;
+
+        if (!row)
+          throw new MaisterError(
+            "CONFLICT",
+            "permission delivery disappeared during reattachment",
+          );
+        const issued: IssuedCommand<InputPayload> = {
+          row,
+          envelope: buildEnvelope({
+            commandId,
+            kind: "session.input",
+            hostKey: host.hostKey,
+            assignmentId: current.id,
+            assignmentEpoch: current.epoch,
+            runId: current.runId,
+            payload,
+            issuedAt: original.createdAt,
+          }),
+        };
+
+        return {
+          commandId,
           payload,
           deliver: (opts) =>
             deliver<InputPayload, InputDeliveryResult>(
@@ -474,43 +768,300 @@ export function createExecutionHosts(
           { targetSessionId: sessionId },
         );
       },
+      async reserveRuntimeObject(payload) {
+        const expiresAt = payload.expiresAt
+          ? new Date(payload.expiresAt)
+          : null;
+        const issued = await db.transaction(async (tx) => {
+          const rows = await tx
+            .select()
+            .from(executionRuntimeObjects)
+            .where(
+              and(
+                eq(executionRuntimeObjects.id, payload.objectId),
+                eq(executionRuntimeObjects.runId, current.runId),
+              ),
+            )
+            .for("update")
+            .limit(1);
+          const existing = rows[0];
+
+          if (existing) {
+            const sameIntent =
+              existing.executionHostId === host.id &&
+              existing.executionAssignmentId === current.id &&
+              existing.assignmentEpoch === current.epoch &&
+              existing.kind === payload.kind &&
+              existing.logicalName === payload.logicalName &&
+              existing.mimeType === payload.mimeType &&
+              existing.generation === payload.generation &&
+              existing.retentionClass === payload.retentionClass &&
+              existing.expiresAt?.getTime() === expiresAt?.getTime() &&
+              (existing.state === "pending" ||
+                (existing.state === "available" &&
+                  existing.sizeBytes === BigInt(payload.sizeBytes) &&
+                  existing.sha256 === payload.sha256));
+
+            if (!sameIntent) {
+              throw new MaisterError(
+                "CONFLICT",
+                "runtime object ID is already bound to different metadata",
+                { details: { reason: "command_invariant_conflict" } },
+              );
+            }
+          } else {
+            await tx.insert(executionRuntimeObjects).values({
+              id: payload.objectId,
+              runId: current.runId,
+              executionHostId: host.id,
+              executionAssignmentId: current.id,
+              assignmentEpoch: current.epoch,
+              kind: payload.kind,
+              logicalName: payload.logicalName,
+              mimeType: payload.mimeType,
+              sizeBytes: null,
+              sha256: null,
+              generation: payload.generation,
+              retentionClass: payload.retentionClass,
+              state: "pending",
+              expiresAt,
+            });
+          }
+
+          return issue(tx, "runtime_object.reserve", payload, payload.objectId);
+        });
+
+        return deliver(
+          issued,
+          (env) =>
+            transport.reserveRuntimeObject(
+              env as CommandEnvelope<ReserveRuntimeObjectPayload>,
+              timeoutFor("runtime_object.reserve"),
+            ),
+          { targetSessionId: payload.objectId },
+        );
+      },
+      async uploadRuntimeObject(input) {
+        const payload = {
+          objectId: input.objectId,
+          generation: input.generation,
+          sizeBytes: input.bytes.byteLength,
+          sha256: input.sha256,
+        };
+        const issued = await issue(
+          db,
+          "runtime_object.upload",
+          payload,
+          input.objectId,
+        );
+
+        return deliver(
+          issued,
+          (env) =>
+            transport.uploadRuntimeObject({
+              objectId: input.objectId,
+              envelope: {
+                command: env.command,
+                fence: env.fence,
+                payload: {
+                  generation: input.generation,
+                  sizeBytes: input.bytes.byteLength,
+                  sha256: input.sha256,
+                },
+              },
+              bytes: input.bytes,
+            }),
+          {
+            targetSessionId: input.objectId,
+            onAck: async (tx, metadata) => {
+              const updated = await tx
+                .update(executionRuntimeObjects)
+                .set({
+                  sizeBytes: BigInt(
+                    metadata.sizeBytes ?? input.bytes.byteLength,
+                  ),
+                  sha256: metadata.sha256 ?? input.sha256,
+                  state: "available",
+                  sealedAt: metadata.sealedAt
+                    ? new Date(metadata.sealedAt)
+                    : (deps.now?.() ?? new Date()),
+                  lastError: null,
+                })
+                .where(
+                  and(
+                    eq(executionRuntimeObjects.id, input.objectId),
+                    eq(executionRuntimeObjects.runId, current.runId),
+                    eq(
+                      executionRuntimeObjects.executionAssignmentId,
+                      current.id,
+                    ),
+                    eq(executionRuntimeObjects.assignmentEpoch, current.epoch),
+                  ),
+                )
+                .returning({ id: executionRuntimeObjects.id });
+
+              if (!updated[0]) {
+                throw new MaisterError(
+                  "CONFLICT",
+                  "runtime object upload acknowledgement no longer matches its catalogue binding",
+                  { details: { reason: "command_invariant_conflict" } },
+                );
+              }
+            },
+          },
+        );
+      },
+      async deleteRuntimeObject(input) {
+        const issued = await db.transaction(async (tx) => {
+          const rows = await tx
+            .select()
+            .from(executionRuntimeObjects)
+            .where(eq(executionRuntimeObjects.id, input.objectId))
+            .for("update")
+            .limit(1);
+          const object = rows[0];
+
+          if (
+            !object ||
+            object.runId !== current.runId ||
+            object.executionHostId !== host.id ||
+            object.executionAssignmentId !== current.id ||
+            object.assignmentEpoch !== current.epoch ||
+            object.generation !== input.generation
+          ) {
+            throw new MaisterError(
+              "CONFLICT",
+              "runtime object deletion does not match its immutable assignment binding",
+              { details: { reason: "assignment_fenced" } },
+            );
+          }
+          if (
+            object.state !== "available" &&
+            object.state !== "deleting" &&
+            object.state !== "deleted"
+          ) {
+            throw new MaisterError(
+              "PRECONDITION",
+              `runtime object ${input.objectId} cannot be deleted from state ${object.state}`,
+              { details: { reason: "runtime_object_missing" } },
+            );
+          }
+          if (object.state !== "deleted") {
+            await tx
+              .update(executionRuntimeObjects)
+              .set({ state: "deleting", lastError: null })
+              .where(eq(executionRuntimeObjects.id, input.objectId));
+          }
+
+          return issue(
+            tx,
+            "runtime_object.delete",
+            { generation: input.generation },
+            input.objectId,
+          );
+        });
+
+        return deliver(
+          issued,
+          (env) =>
+            transport.deleteRuntimeObject(
+              input.objectId,
+              env as CommandEnvelope<{ generation: number }>,
+              timeoutFor("runtime_object.delete"),
+            ),
+          {
+            targetSessionId: input.objectId,
+            onAck: async (tx) => {
+              await tx
+                .update(executionRuntimeObjects)
+                .set({
+                  state: "deleted",
+                  deletedAt: deps.now?.() ?? new Date(),
+                  lastError: null,
+                })
+                .where(
+                  and(
+                    eq(executionRuntimeObjects.id, input.objectId),
+                    eq(executionRuntimeObjects.runId, current.runId),
+                    eq(
+                      executionRuntimeObjects.executionAssignmentId,
+                      current.id,
+                    ),
+                    eq(executionRuntimeObjects.assignmentEpoch, current.epoch),
+                  ),
+                );
+            },
+          },
+        );
+      },
     };
 
     return client;
   }
 
-  const admin: HostAdminClient = {
-    health(opts) {
-      return transport.health(opts);
-    },
-    diagnostics(opts) {
-      return transport.diagnostics(opts);
-    },
-    platformStatus(opts) {
-      return transport.platformStatus(opts);
-    },
-    resolveModelSuggestions(draft, opts) {
-      return transport.resolveModelSuggestions(draft, opts);
-    },
-    probeMcp(req) {
-      return transport.probeMcp(req);
-    },
-    listSessions() {
-      return transport.listSessions();
-    },
-    async *streamSession(sessionId, opts) {
-      for await (const event of transport.streamSession(sessionId, opts)) {
-        commandSignals.publish(event);
-        yield event;
-      }
-    },
-    getCommandReceipt(commandId) {
-      return transport.getCommandReceipt(commandId);
-    },
-    getWorkspace(executionWorkspaceId) {
-      return transport.getWorkspace(executionWorkspaceId);
-    },
-  };
+  function adminForRun(runId?: string): HostAdminClient {
+    return {
+      health(opts) {
+        return transport.health(opts);
+      },
+      diagnostics(opts) {
+        return transport.diagnostics(opts);
+      },
+      platformStatus(opts) {
+        return transport.platformStatus(opts);
+      },
+      resolveModelSuggestions(draft, opts) {
+        return transport.resolveModelSuggestions(draft, opts);
+      },
+      probeMcp(req) {
+        return transport.probeMcp(req);
+      },
+      listSessions() {
+        return transport.listSessions();
+      },
+      async *streamSession(sessionId, opts) {
+        if (runId) {
+          const modeRows = await dbOf()
+            .select({ executionDataPlaneMode: runs.executionDataPlaneMode })
+            .from(runs)
+            .where(eq(runs.id, runId))
+            .limit(1);
+
+          if (!modeRows[0]) {
+            throw new MaisterError(
+              "PRECONDITION",
+              `run ${runId} is missing while streaming an execution session`,
+              { details: { reason: "run_missing", runId } },
+            );
+          }
+          yield* streamCanonicalSessionEvents({
+            db: dbOf(),
+            runId,
+            hostSessionId: sessionId,
+            lastEventId: opts?.lastEventId,
+            signal: opts?.signal,
+          });
+
+          return;
+        }
+        for await (const event of transport.streamSession(sessionId, opts)) {
+          commandSignals.publishLegacy(event);
+          yield event;
+        }
+      },
+      getCommandReceipt(commandId) {
+        return transport.getCommandReceipt(commandId);
+      },
+      retireCommand(commandId, request) {
+        return transport.retireCommand(commandId, request);
+      },
+      getWorkspace(executionWorkspaceId) {
+        return transport.getWorkspace(executionWorkspaceId);
+      },
+    };
+  }
+
+  const admin = adminForRun();
 
   async function forAssignment(
     assignmentOrId: ExecutionAssignment | { id: string },
@@ -568,7 +1119,7 @@ export function createExecutionHosts(
         ? await forAssignment({ id: opts.assignmentId })
         : await forRun(runId, opts);
 
-      return { client, admin };
+      return { client, admin: adminForRun(runId) };
     },
     local() {
       return admin;

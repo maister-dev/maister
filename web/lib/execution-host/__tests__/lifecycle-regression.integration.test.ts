@@ -25,6 +25,12 @@ import { asc, eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import * as fullSchema from "@/lib/db/schema";
+import { canonicalProjectors } from "@/lib/execution-host/events/projection-runtime";
+import {
+  startProjectionWorker,
+  type ProjectionWorker,
+} from "@/lib/execution-host/events/projection-worker";
+import { stopRuntimeEventConsumers } from "@/lib/execution-host/events/consumer";
 import { MaisterError } from "@/lib/errors";
 import { releaseAssignmentForRun } from "@/lib/execution-host/assignments";
 import { createExecutionHosts } from "@/lib/execution-host/client";
@@ -36,7 +42,10 @@ import {
   releaseStaleAssignments,
 } from "@/lib/execution-host/recovery";
 import { resetRegistrarStateForTests } from "@/lib/execution-host/registrar";
-import { resetResolverForTests } from "@/lib/execution-host/resolver";
+import {
+  localHost,
+  resetResolverForTests,
+} from "@/lib/execution-host/resolver";
 import { createLocalDirectTransport } from "@/lib/execution-host/transports/local-direct";
 import { runFlow } from "@/lib/flows/runner";
 import { runSweepTick } from "@/lib/runs/keepalive-sweeper";
@@ -56,6 +65,7 @@ import {
 const schema = fullSchema as unknown as Record<string, any>;
 
 let testDatabase: StartedPostgresTestDb;
+let projectionWorker: ProjectionWorker;
 let db: Db;
 let sup: RealSupervisor;
 let restoreUrl: () => void = () => {};
@@ -126,6 +136,36 @@ async function diagnose(runId: string): Promise<string> {
       (await hitlRows(runId)).map((h) =>
         pick(h, ["id", "kind", "stepId", "respondedAt", "createdAt"]),
       ),
+    ),
+    await rows("assignments", async () =>
+      (
+        (await db
+          .select()
+          .from(schema.assignments)
+          .where(eq(schema.assignments.runId, runId))) as Array<
+          Record<string, any>
+        >
+      ).map((assignment) =>
+        pick(assignment, ["id", "hitlRequestId", "status", "cancelledAt"]),
+      ),
+    ),
+    await rows(
+      "assignment_events",
+      async () =>
+        (await db
+          .select({
+            assignmentId: schema.assignmentEvents.assignmentId,
+            eventKind: schema.assignmentEvents.eventKind,
+            payload: schema.assignmentEvents.payload,
+          })
+          .from(schema.assignmentEvents)
+          .innerJoin(
+            schema.assignments,
+            eq(schema.assignmentEvents.assignmentId, schema.assignments.id),
+          )
+          .where(eq(schema.assignments.runId, runId))) as Array<
+          Record<string, any>
+        >,
     ),
     await rows("run_sessions", async () =>
       pick(await sessionRow(runId), [
@@ -240,11 +280,13 @@ async function seedAgentRun(name: string, run: Record<string, unknown> = {}) {
     workspace: { worktreePath, parentRepoPath: repoPath },
     run,
   });
+  const placementHost = await localHost({ db });
 
   await db.transaction((tx) =>
     mintPlacement(tx as unknown as Db, {
       runId: seeded.runId,
       reason: "launch",
+      host: placementHost,
     }),
   );
 
@@ -269,10 +311,16 @@ beforeAll(async () => {
   // The responding actor's identity row references `users`.
   await db.insert(schema.users).values({ id: "u-1", email: "u-1@test.local" });
   hosts = createExecutionHosts({ db });
+  projectionWorker = startProjectionWorker({
+    db,
+    projectors: canonicalProjectors,
+  });
 }, 180_000);
 
 afterAll(async () => {
   restoreUrl();
+  await stopRuntimeEventConsumers();
+  await projectionWorker?.stop();
   await sup?.kill();
   await testDatabase?.stop();
 });
@@ -345,11 +393,20 @@ describe("Stage A lifecycle regression (real supervisor)", () => {
     // 3. The operator's answer on an idle run resumes it: epoch 2 (`resume`)
     //    is minted inside the claim, the workspace handle is copied forward (no
     //    second adopt), the create resumes the prior ACP session.
-    const res = await respondToHitl(
-      { runId, hitlRequestId: hitl.id, body: { optionId: "allow" } },
-      actor,
-      { db, executionHosts: hosts },
-    );
+    let res: Awaited<ReturnType<typeof respondToHitl>>;
+
+    try {
+      res = await respondToHitl(
+        { runId, hitlRequestId: hitl.id, body: { optionId: "allow" } },
+        actor,
+        { db, executionHosts: hosts },
+      );
+    } catch (error) {
+      throw new Error(
+        `${error instanceof Error ? error.message : String(error)}\n${await diagnose(runId)}`,
+        { cause: error },
+      );
+    }
 
     expect(res.status).toBe(202);
     assignments = await assignmentsOf(runId);
@@ -367,7 +424,19 @@ describe("Stage A lifecycle regression (real supervisor)", () => {
     expect(commands.filter((c) => c.kind === "workspace.adopt")).toHaveLength(
       1,
     );
-    const creates = commands.filter((c) => c.kind === "session.create");
+    // HTTP 202 commits the capacity claim; the leased Flow driver creates
+    // the resumed session asynchronously from the persisted authorization.
+    const creates = await waitFor(
+      async () => {
+        const rows = (await commandsOf(runId)).filter(
+          (c) => c.kind === "session.create",
+        );
+
+        return rows.length === 2 ? rows : null;
+      },
+      "the owned resumed create",
+      { runId },
+    );
 
     expect(creates).toHaveLength(2);
     expect(creates[1].assignmentEpoch).toBe(2);

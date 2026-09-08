@@ -8,9 +8,9 @@
     "local:blast-maister-state": "node scripts/blast-maister-local-state.mjs",
     "test:local-reset": "node --test scripts/blast-maister-local-state.test.mjs",
     "validate:docs": "node scripts/validate-docs-mermaid.mjs && node scripts/validate-docs-adr-anchors.mjs && node scripts/validate-docs-links.mjs && node scripts/validate-docs-indexes.mjs && pnpm --filter maister-web db:erd --check",
-    "validate:contracts": "node scripts/validate-contracts.mjs && pnpm validate:adapter-mirrors",
+    "validate:contracts": "node scripts/validate-contracts.mjs && node --test scripts/validate-contracts.test.mjs && pnpm validate:adapter-mirrors",
     "validate:adapter-mirrors": "node scripts/validate-adapter-mirrors.ts",
-    "validate:docs:all": "node scripts/validate-docs-mermaid.mjs --all && node scripts/validate-docs-adr-anchors.mjs --all && node scripts/validate-docs-links.mjs --all && node scripts/validate-docs-indexes.mjs && pnpm --filter maister-web db:erd --check",
+    "validate:docs:all": "node scripts/validate-docs-mermaid.mjs --all && node scripts/validate-docs-adr-anchors.mjs --all && node scripts/validate-docs-links.mjs --all && node scripts/validate-docs-indexes.mjs && node --test scripts/validate-docs-indexes.test.mjs && pnpm --filter maister-web db:erd --check",
     "validate:docs:adr": "node scripts/validate-docs-adr-anchors.mjs",
     "validate:docs:adr:all": "node scripts/validate-docs-adr-anchors.mjs --all",
     "validate:docs:links": "node scripts/validate-docs-links.mjs",
@@ -19,11 +19,19 @@
     "site:dev": "pnpm --filter @maister/site dev",
     "site:build": "pnpm --filter @maister/site build",
     "site-docs:dev": "pnpm --filter @maister/site-docs dev",
-    "site-docs:validate": "pnpm --filter @maister/site-docs validate"
+    "site-docs:validate": "pnpm --filter @maister/site-docs validate",
+    "runtime:check": "node scripts/check-runtime.mjs",
+    "test:runtime": "node --test scripts/runtime-contract.test.mjs",
+    "test:stage-ab-lane": "node --test scripts/run-stage-ab-tests.test.mjs"
   },
   "devDependencies": {
+    "@apidevtools/swagger-parser": "10.1.1",
+    "@asyncapi/parser": "3.4.0",
     "jsdom": "^25.0.1",
     "mermaid": "^11.4.1",
     "yaml": "^2.9.0"
+  },
+  "engines": {
+    "node": ">=24.15.0 <25"
   }
 }

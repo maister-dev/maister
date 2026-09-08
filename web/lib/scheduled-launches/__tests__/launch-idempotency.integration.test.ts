@@ -124,14 +124,17 @@ describe("claimScheduledLaunch", () => {
     );
 
     const fulfilled = claims.filter(
-      (claim): claim is PromiseFulfilledResult<Awaited<ReturnType<typeof claimScheduledLaunch>>> =>
-        claim.status === "fulfilled",
+      (
+        claim,
+      ): claim is PromiseFulfilledResult<
+        Awaited<ReturnType<typeof claimScheduledLaunch>>
+      > => claim.status === "fulfilled",
     );
 
     expect(fulfilled).toHaveLength(1);
-    expect(
-      claims.filter((claim) => claim.status === "rejected"),
-    ).toHaveLength(1);
+    expect(claims.filter((claim) => claim.status === "rejected")).toHaveLength(
+      1,
+    );
 
     const reservation = fulfilled[0]?.value.reservation;
 

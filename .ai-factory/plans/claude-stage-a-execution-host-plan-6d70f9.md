@@ -1,5 +1,10 @@
 # Implementation Plan: Stage A — Local Execution-Host Contract
 
+> Historical implementation record. Current A/B stabilization is tracked in
+> [stage-ab-stabilization.md](stage-ab-stabilization.md). Earlier completed boxes
+> do not discharge the open R01–R17 audit findings or current qualification.
+
+
 **Branch:** `claude/stage-a-execution-host-plan-6d70f9` (harness-created isolated
 worktree branch; used as-is — rename to `feature/stage-a-execution-host-contract`
 together with this file in one commit at the start of `/aif-implement` if the

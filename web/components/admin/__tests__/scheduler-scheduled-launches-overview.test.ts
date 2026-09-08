@@ -42,7 +42,10 @@ describe("SchedulerScheduledLaunchesOverview", () => {
 
   it("renders an explicit empty diagnostic state", () => {
     const html = renderToStaticMarkup(
-      createElement(SchedulerScheduledLaunchesOverview, { labels, launches: [] }),
+      createElement(SchedulerScheduledLaunchesOverview, {
+        labels,
+        launches: [],
+      }),
     );
 
     expect(html).toContain("No scheduled launches");

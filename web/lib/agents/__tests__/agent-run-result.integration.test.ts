@@ -166,6 +166,7 @@ beforeEach(async () => {
     "webhook_events",
     "run_results",
     "run_sessions",
+    "execution_commands",
     "runs",
     "projects",
   ]) {

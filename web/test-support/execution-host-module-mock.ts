@@ -52,6 +52,25 @@ function isGoneError(err: unknown): boolean {
 }
 
 export function executionHostModuleMock(spies: ExecutionHostSpies) {
+  const promptResults = new Map<string, Promise<unknown>>();
+  const runtimeObjects = new Map<
+    string,
+    {
+      objectId: string;
+      kind: string;
+      logicalName: string;
+      mimeType: string;
+      sizeBytes: number | null;
+      sha256: string | null;
+      generation: number;
+      retentionClass: string;
+      state: "pending" | "available" | "deleted";
+      createdAt: string;
+      sealedAt: string | null;
+      expiresAt: string | null;
+      deletedAt: string | null;
+    }
+  >();
   const boundClient = (runId: string) => ({
     assignment: { id: `assignment-${runId}`, runId, epoch: 1, state: "active" },
     host: { id: "host-1", hostKey: "eh_test" },
@@ -66,12 +85,26 @@ export function executionHostModuleMock(spies: ExecutionHostSpies) {
       return { ...result, hostSessionId: result.sessionId };
     },
     async prompt(sessionId: string, input: unknown, opts?: unknown) {
+      const commandId = `cmd-${runId}`;
+
+      promptResults.set(
+        commandId,
+        Promise.resolve(call(spies, "sendPrompt")(sessionId, input, opts)),
+      );
+
       return {
-        commandId: `cmd-${runId}`,
-        completion: Promise.resolve(
-          call(spies, "sendPrompt")(sessionId, input, opts),
-        ),
+        commandId,
       };
+    },
+    async waitForPrompt(handle: { commandId: string }) {
+      const result = promptResults.get(handle.commandId);
+
+      if (!result)
+        throw new Error(
+          `execution-host mock: unknown prompt ${handle.commandId}`,
+        );
+
+      return result;
     },
     async deliverInput(
       sessionId: string,
@@ -158,6 +191,73 @@ export function executionHostModuleMock(spies: ExecutionHostSpies) {
         throw err;
       }
     },
+    async reserveRuntimeObject(payload: {
+      objectId: string;
+      kind: string;
+      logicalName: string;
+      mimeType: string;
+      generation: number;
+      retentionClass: string;
+      expiresAt?: string | null;
+    }) {
+      const existing = runtimeObjects.get(payload.objectId);
+
+      if (existing) return existing;
+      const object = {
+        objectId: payload.objectId,
+        kind: payload.kind,
+        logicalName: payload.logicalName,
+        mimeType: payload.mimeType,
+        sizeBytes: null,
+        sha256: null,
+        generation: payload.generation,
+        retentionClass: payload.retentionClass,
+        state: "pending" as const,
+        createdAt: new Date(0).toISOString(),
+        sealedAt: null,
+        expiresAt: payload.expiresAt ?? null,
+        deletedAt: null,
+      };
+
+      runtimeObjects.set(payload.objectId, object);
+
+      return object;
+    },
+    async uploadRuntimeObject(input: {
+      objectId: string;
+      generation: number;
+      bytes: Uint8Array;
+      sha256: string;
+    }) {
+      const existing = runtimeObjects.get(input.objectId);
+
+      if (!existing || existing.generation !== input.generation) {
+        throw new Error(
+          `execution-host mock: unknown runtime object ${input.objectId}`,
+        );
+      }
+      const sealed = {
+        ...existing,
+        sizeBytes: input.bytes.byteLength,
+        sha256: input.sha256,
+        state: "available" as const,
+        sealedAt: new Date(0).toISOString(),
+      };
+
+      runtimeObjects.set(input.objectId, sealed);
+
+      return sealed;
+    },
+    async deleteRuntimeObject(input: { objectId: string; generation: number }) {
+      const existing = runtimeObjects.get(input.objectId);
+
+      if (!existing || existing.generation !== input.generation) return;
+      runtimeObjects.set(input.objectId, {
+        ...existing,
+        state: "deleted",
+        deletedAt: new Date(0).toISOString(),
+      });
+    },
     async sessionsForRun() {
       const records = (await call(spies, "listSessions")()) as Array<{
         runId: string;
@@ -206,7 +306,18 @@ export function executionHostModuleMock(spies: ExecutionHostSpies) {
         );
       }
 
-      return { id: "host-1", hostKey: "eh_test" };
+      return {
+        id: "host-1",
+        hostKey: "eh_test",
+        capabilities: {
+          dataPlane: {
+            version: "execution-host-data-plane.v1",
+            eventStream: true,
+            asyncPrompt: true,
+            runtimeObjects: true,
+          },
+        },
+      };
     },
     mintPlacement: async (_tx: unknown, input: { runId: string }) => ({
       id: `assignment-${input.runId}`,
@@ -221,6 +332,11 @@ export function executionHostModuleMock(spies: ExecutionHostSpies) {
       state: "active",
     }),
     releaseAssignmentForRun: async () => null,
+    publishCapabilityBundle: async () => ({
+      profileObjectId: "f7f4ea9b-598b-4f97-97b5-5ca52d46056e",
+      instructionsObjectId: "50ba2f75-bc42-4968-bbd0-1ac0a50ec840",
+    }),
+    executionDataPlaneModeForHost: () => "canonical_events_v1" as const,
     isFencedError: (err: unknown) =>
       (err as { details?: { reason?: string } } | null)?.details?.reason ===
       "assignment_fenced",
@@ -243,13 +359,33 @@ export function legacyScratchApiToExecution(api: {
   ) => Promise<unknown>;
   streamSession: (sessionId: string, opts?: unknown) => AsyncIterable<unknown>;
 }): ScratchExecution {
+  const promptResults = new Map<string, Promise<unknown>>();
+
   return {
     client: {
+      // S2.9: prompt admission waits for the durable incarnation of this
+      // host/assignment pair; the legacy shape names both so a fake db can
+      // answer that query.
+      host: { id: "legacy-host" },
+      assignment: { id: "legacy-assignment", runId: "run-1", epoch: 1 },
       async prompt(sessionId: string, input: unknown, opts?: unknown) {
+        const commandId = "cmd-legacy";
+
+        promptResults.set(commandId, api.sendPrompt(sessionId, input, opts));
+
         return {
-          commandId: "cmd-legacy",
-          completion: api.sendPrompt(sessionId, input, opts),
+          commandId,
         };
+      },
+      async waitForPrompt(handle: { commandId: string }) {
+        const result = promptResults.get(handle.commandId);
+
+        if (!result)
+          throw new Error(
+            `legacy scratch mock: unknown prompt ${handle.commandId}`,
+          );
+
+        return result;
       },
       async deliverInput(
         sessionId: string,

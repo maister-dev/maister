@@ -1,8 +1,9 @@
+import type { CommandReceiptV2 } from "../../../runtime/command-evidence";
 import type {
   CreateSessionInput,
   CreateSessionResult,
   ExecutionHostIdentity,
-  PromptResult,
+  PromptAccepted,
   SendPromptInput,
   SupervisorDiagnosticsStatus,
   SupervisorEvent,
@@ -11,6 +12,7 @@ import type {
   SupervisorModelCatalog,
   SupervisorModelCatalogDraft,
   SupervisorSessionRecord,
+  SupervisorRuntimeOutputBinding,
 } from "@/lib/supervisor-client";
 import type { PlatformStatus } from "@/types/platform-status";
 import type { ContextMountSnapshot } from "@/lib/context-mounts/types";
@@ -18,8 +20,12 @@ import type {
   CommandEnvelope,
   CommandKind,
   ExecutionWorkspaceId,
+  RuntimeObjectKind,
+  RuntimeObjectRetentionClass,
+  RuntimeObjectState,
   WorkspaceKind,
 } from "./types";
+import type { RuntimeEventEnvelope } from "./runtime-events";
 
 // ADR-166 D10: the typed boundary domain code addresses execution through.
 // `ExecutionHostTransport` is the replaceable wire (local-direct today); the
@@ -34,6 +40,18 @@ export type HostHealth =
       sessions: { live: number; exited: number; crashed: number };
     }
   | { kind: "unavailable"; reason: string; message: string };
+
+export type ExecutionHostDataPlaneCapabilities = {
+  dataPlaneVersion: "execution-host-data-plane.v1";
+  eventStream: boolean;
+  asyncPrompt: boolean;
+  runtimeObjects: boolean;
+  limits: {
+    maxEventBytes: 1_048_576;
+    maxObjectBytes: 26_214_400;
+    maxReplayBatch: 500;
+  };
+};
 
 export type AdoptWorkspaceWire = {
   runId: string;
@@ -60,6 +78,7 @@ export type WorkspaceRecord = {
 };
 
 export type CommandReceipt = {
+  evidenceV2?: CommandReceiptV2;
   commandId: string;
   runId: string;
   kind: CommandKind;
@@ -69,8 +88,27 @@ export type CommandReceipt = {
   body: Record<string, unknown>;
   receivedAt: string;
   completedAt: string | null;
+  eventId: string | null;
   // `accepted` + `inflight:false` = the host restarted mid-turn (turn_lost).
   inflight: boolean;
+};
+
+// D6 retirement proof. Every field is evidence the host re-derives against its
+// own receipt — never a client assertion that enough time has passed.
+export type CommandRetirementRequest = {
+  expectedRequestSha256: string | null;
+  expectedPhase: "completed" | "rejected";
+  assignmentEpoch: number;
+};
+
+export type CommandRetirementAck = {
+  commandId: string;
+  requestSha256: string | null;
+  phase: "completed" | "rejected";
+  retiredAt: string;
+  // False on a replay of an already-retired command. The ack is otherwise
+  // identical, so a lost ack costs one repeated call and nothing else.
+  compacted: boolean;
 };
 
 export type DeleteSessionOutcome = "terminated" | "gone";
@@ -100,7 +138,58 @@ export type CheckpointResult = {
   monotonicId: number;
 };
 
+export type RuntimeEventAckResult = {
+  streamId: string;
+  acknowledgedThrough: string;
+};
+
 export type EmptyPayload = Record<string, never>;
+
+export type RuntimeObjectMetadata = {
+  objectId: string;
+  kind: RuntimeObjectKind;
+  logicalName: string;
+  mimeType: string;
+  sizeBytes: number | null;
+  sha256: string | null;
+  generation: number;
+  retentionClass: RuntimeObjectRetentionClass;
+  state: RuntimeObjectState;
+  createdAt: string;
+  sealedAt: string | null;
+  expiresAt: string | null;
+  deletedAt: string | null;
+};
+
+export type ReserveRuntimeObjectPayload = {
+  objectId: string;
+  kind: RuntimeObjectKind;
+  logicalName: string;
+  mimeType: string;
+  sizeBytes: number;
+  sha256: string;
+  generation: number;
+  retentionClass: RuntimeObjectRetentionClass;
+  expiresAt?: string | null;
+};
+
+export type RuntimeObjectContent = {
+  bytes: Uint8Array;
+  contentRange: string | null;
+  contentDigest: string | null;
+};
+
+export type RuntimeObjectOutputBinding = SupervisorRuntimeOutputBinding;
+
+// Content remains host-owned while the manager proxies a bounded response. A
+// browser payload route must forward this stream instead of materializing an
+// arbitrary runtime object in web-process memory.
+export type RuntimeObjectContentStream = {
+  body: ReadableStream<Uint8Array>;
+  contentLength: number | null;
+  contentRange: string | null;
+  contentDigest: string | null;
+};
 
 // Per-call transport timeout, chosen by the caller from the per-kind policy
 // table (ADR-166 D5); `null` = no timeout (the long-lived prompt).
@@ -108,6 +197,11 @@ export type CommandCallOptions = { timeoutMs?: number | null };
 
 export interface ExecutionHostTransport {
   health(opts?: { timeoutMs?: number }): Promise<HostHealth>;
+  // Null means an older supervisor returned the sole bounded compatibility
+  // signal (404); malformed documents are a typed wire failure, never legacy.
+  capabilities(opts?: {
+    timeoutMs?: number;
+  }): Promise<ExecutionHostDataPlaneCapabilities | null>;
   // The host's adapter diagnostics (smoke evidence) — a read-only admin
   // surface like `health`, never fenced.
   diagnostics(opts?: {
@@ -127,8 +221,47 @@ export interface ExecutionHostTransport {
     sessionId: string,
     opts?: { lastEventId?: number; signal?: AbortSignal },
   ): AsyncGenerator<SupervisorEvent, void, void>;
+  streamRuntimeEvents(opts?: {
+    afterSequence?: string;
+    signal?: AbortSignal;
+  }): AsyncGenerator<RuntimeEventEnvelope, void, void>;
+  acknowledgeRuntimeEvents(input: {
+    streamId: string;
+    throughSequence: string;
+  }): Promise<RuntimeEventAckResult>;
   getCommandReceipt(commandId: string): Promise<CommandReceipt | null>;
+  retireCommand(
+    commandId: string,
+    request: CommandRetirementRequest,
+  ): Promise<CommandRetirementAck>;
   getWorkspace(executionWorkspaceId: string): Promise<WorkspaceRecord | null>;
+  getRuntimeObject(objectId: string): Promise<RuntimeObjectMetadata | null>;
+  getRuntimeObjectContent(
+    objectId: string,
+    opts?: { range?: { start: number; end?: number }; signal?: AbortSignal },
+  ): Promise<RuntimeObjectContent>;
+  openRuntimeObjectContent(
+    objectId: string,
+    opts?: { range?: { start: number; end?: number }; signal?: AbortSignal },
+  ): Promise<RuntimeObjectContentStream>;
+  reserveRuntimeObject(
+    envelope: CommandEnvelope<ReserveRuntimeObjectPayload>,
+    opts?: CommandCallOptions,
+  ): Promise<RuntimeObjectMetadata>;
+  uploadRuntimeObject(input: {
+    objectId: string;
+    envelope: CommandEnvelope<{
+      generation: number;
+      sizeBytes: number;
+      sha256: string;
+    }>;
+    bytes: Uint8Array;
+  }): Promise<RuntimeObjectMetadata>;
+  deleteRuntimeObject(
+    objectId: string,
+    envelope: CommandEnvelope<{ generation: number }>,
+    opts?: CommandCallOptions,
+  ): Promise<void>;
   adoptWorkspace(
     envelope: CommandEnvelope<AdoptWorkspaceWire>,
     opts?: CommandCallOptions,
@@ -142,11 +275,11 @@ export interface ExecutionHostTransport {
     envelope: CommandEnvelope<CreateSessionPayload>,
     opts?: CommandCallOptions,
   ): Promise<CreateSessionResult>;
-  sendPrompt(
+  startPrompt(
     sessionId: string,
     envelope: CommandEnvelope<SendPromptInput>,
-    opts?: CommandCallOptions & { signal?: AbortSignal },
-  ): Promise<PromptResult>;
+    opts?: CommandCallOptions,
+  ): Promise<PromptAccepted>;
   deliverInput(
     sessionId: string,
     envelope: CommandEnvelope<InputPayload>,

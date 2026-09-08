@@ -17,6 +17,7 @@ import {
   lt,
   notExists,
   notInArray,
+  or,
 } from "drizzle-orm";
 import pino from "pino";
 
@@ -30,7 +31,7 @@ import {
 import { getDb } from "@/lib/db/client";
 import { loadActiveRunSessionsByRunId } from "@/lib/runs/active-run-session";
 import * as schemaModule from "@/lib/db/schema";
-import { RUN_SYNC_TERMINAL_PHASES } from "@/lib/db/schema";
+import { RUN_SYNC_TERMINAL_PHASES, agentTurns } from "@/lib/db/schema";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { compileManifest } from "@/lib/flows/graph/compile";
@@ -71,6 +72,11 @@ import {
   type SupervisorSessionRecord,
 } from "@/lib/execution-host";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
+import { captureAgentPauseSource } from "@/lib/execution-host/agent-pause-source";
+import {
+  isAgentPermissionPause,
+  supersedeAgentPausePermissions,
+} from "@/lib/execution-host/agent-pause-permissions";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { hitlRequests, nodeAttempts, projects, runs, runSyncAttempts } =
@@ -828,6 +834,64 @@ async function fetchBudgetCandidates(db: Db): Promise<BudgetCandidate[]> {
   return rows;
 }
 
+function hasConfiguredBudgetMeter(candidate: BudgetCandidate): boolean {
+  const snapshotBudget = budgetFromSnapshot(candidate.executionPolicy);
+  const override = candidate.budgetState?.ceilingOverride;
+
+  return (["run", "task", "tree"] as const).some((scope) =>
+    (
+      [
+        "maxTokens",
+        "hardMaxTokens",
+        "consecutiveFailures",
+        "wallClockMinutes",
+      ] as const
+    ).some((meter) =>
+      isSetLimit(effectiveLimit(snapshotBudget, override, scope, meter)),
+    ),
+  );
+}
+
+async function budgetReconciliationRunIds(
+  db: Db,
+  candidates: readonly BudgetCandidate[],
+): Promise<string[]> {
+  const budgeted = candidates.filter(hasConfiguredBudgetMeter);
+  const runIds = new Set(budgeted.map((candidate) => candidate.id));
+  const taskIds = [
+    ...new Set(
+      budgeted
+        .map((candidate) => candidate.taskId)
+        .filter((taskId): taskId is string => taskId !== null),
+    ),
+  ];
+  const rootRunIds = budgeted
+    .filter((candidate) => candidate.parentRunId === null)
+    .map((candidate) => candidate.id);
+
+  if (taskIds.length > 0) {
+    const taskRuns = await db
+      .select({ id: runs.id })
+      .from(runs)
+      .where(inArray(runs.taskId, taskIds));
+
+    for (const run of taskRuns) runIds.add(run.id);
+  }
+
+  if (rootRunIds.length > 0) {
+    const treeRuns = await db
+      .select({ id: runs.id })
+      .from(runs)
+      .where(
+        or(inArray(runs.id, rootRunIds), inArray(runs.rootRunId, rootRunIds)),
+      );
+
+    for (const run of treeRuns) runIds.add(run.id);
+  }
+
+  return [...runIds];
+}
+
 // Resolve the project slug for a candidate (lazy — only the escalate path needs
 // it, for the needs-input.json directory). Returns null for a project-less run.
 async function resolveProjectSlug(
@@ -1411,7 +1475,10 @@ async function boundLiveSession(
 } | null> {
   try {
     const client = await hosts.forRun(candidate.id, { teardown: true });
-    const live = await liveSessionFor(client, candidate.currentStepId);
+    const live = await liveSessionFor(
+      client,
+      candidate.runKind === "agent" ? "agent" : candidate.currentStepId,
+    );
 
     return { client, live };
   } catch (err) {
@@ -1453,6 +1520,30 @@ async function actBudgetEscalate(
 
   if (!bound) return false;
   const { client, live } = bound;
+  const ownedSource = live
+    ? await db.transaction((tx: Db) =>
+        captureAgentPauseSource(tx, {
+          runId: candidate.id,
+          assignmentId: client.assignment.id,
+          sessionId: live.sessionId,
+        }),
+      )
+    : null;
+
+  if (candidate.runKind === "agent" && !ownedSource) {
+    const [admitted] = await db
+      .select({ id: agentTurns.id })
+      .from(agentTurns)
+      .where(
+        and(
+          eq(agentTurns.runId, candidate.id),
+          eq(agentTurns.executionAssignmentId, client.assignment.id),
+        ),
+      )
+      .limit(1);
+
+    if (admitted) return false;
+  }
 
   if (live) {
     try {
@@ -1474,6 +1565,7 @@ async function actBudgetEscalate(
 
         return false;
       }
+      if (ownedSource) throw err;
       log.warn(
         {
           runId: candidate.id,
@@ -1520,6 +1612,13 @@ async function actBudgetEscalate(
 
   try {
     paused = await db.transaction(async (tx: Db) => {
+      const source = live
+        ? await captureAgentPauseSource(tx, {
+            runId: candidate.id,
+            assignmentId: client.assignment.id,
+            sessionId: live.sessionId,
+          })
+        : null;
       const upd = await tx
         .update(runs)
         .set({
@@ -1541,7 +1640,22 @@ async function actBudgetEscalate(
         // A) — CAS on the EXACT observed status. A parked WaitingOnChildren root
         // has no → NeedsInput resume route, so it must never be paused here even
         // defensively.
-        .where(and(eq(runs.id, candidate.id), eq(runs.status, "Running")))
+        .where(
+          and(
+            eq(runs.id, candidate.id),
+            eq(
+              runs.status,
+              source &&
+                (await isAgentPermissionPause(
+                  tx,
+                  candidate.id,
+                  source.agentPrompt.commandId,
+                ))
+                ? "NeedsInput"
+                : "Running",
+            ),
+          ),
+        )
         .returning({ id: runs.id, projectId: runs.projectId });
 
       if (upd.length === 0) return false;
@@ -1561,9 +1675,10 @@ async function actBudgetEscalate(
         runId: candidate.id,
         stepId,
         kind: "budget_breach",
-        schema,
+        schema: { ...schema, ...source },
         prompt,
       });
+      if (source) await supersedeAgentPausePermissions(tx, hitlRequestId);
 
       // Route the breach to a human + fire the escalation outbox events, all in
       // the SAME tx as the pause (ADR-086 exactly-once — a post-commit emit could
@@ -1769,7 +1884,6 @@ async function actBudgetTerminateRun(
       db,
       runId: candidate.id,
       err: new MaisterError("BUDGET_EXCEEDED", budgetBreachPrompt(verdict)),
-      clearSupervisorSession: true,
       terminal: "failed",
     });
     await promoteAfterTimeoutKill(db);
@@ -1969,7 +2083,6 @@ async function actBudgetTerminateTree(
       db,
       runId: candidate.id,
       err: new MaisterError("BUDGET_EXCEEDED", budgetBreachPrompt(verdict)),
-      clearSupervisorSession: true,
       terminal: "failed",
     });
     await promoteAfterTimeoutKill(db);
@@ -2131,6 +2244,26 @@ async function runBudgetPass(db: Db, hosts: ExecutionHosts): Promise<number> {
 
   if (candidates.length === 0) return 0;
 
+  const reconciliationRunIds = await budgetReconciliationRunIds(db, candidates);
+
+  await runWithConcurrency(
+    reconciliationRunIds,
+    PER_PASS_CONCURRENCY,
+    async (runId) => {
+      try {
+        await reconcileRunCostRollups(runId, { client: db });
+      } catch (err) {
+        log.warn(
+          {
+            runId,
+            err: err instanceof Error ? err.message : String(err),
+          },
+          "[budget] reconcile before read failed — evaluating on existing rollups",
+        );
+      }
+    },
+  );
+
   let acted = 0;
 
   await runWithConcurrency(
@@ -2140,39 +2273,9 @@ async function runBudgetPass(db: Db, hosts: ExecutionHosts): Promise<number> {
       const snapshotBudget = budgetFromSnapshot(candidate.executionPolicy);
       const override = candidate.budgetState?.ceilingOverride;
 
-      // Fail-OPEN fast path: no scope carries any positive meter → never touch.
-      const anySet = (["run", "task", "tree"] as const).some((scope) =>
-        (
-          [
-            "maxTokens",
-            "hardMaxTokens",
-            "consecutiveFailures",
-            "wallClockMinutes",
-          ] as const
-        ).some((meter) =>
-          isSetLimit(effectiveLimit(snapshotBudget, override, scope, meter)),
-        ),
-      );
-
-      if (!anySet) return;
-
-      // Force-reconcile the candidate run's rollups before reading (throttled to
-      // a stale source cursor would avoid disk I/O across a large tree; the
-      // correct-first version reconciles the candidate run each evaluation, a
-      // no-op `missing-cost-file` when nothing is on disk). Task/tree member runs
-      // are read from their existing rollups (reconciled by their own candidacy /
-      // the runner's write path) — see spec E11 throttle note.
-      try {
-        await reconcileRunCostRollups(candidate.id, { client: db });
-      } catch (err) {
-        log.warn(
-          {
-            runId: candidate.id,
-            err: err instanceof Error ? err.message : String(err),
-          },
-          "[budget] reconcile before read failed — evaluating on existing rollups",
-        );
-      }
+      // Fail-open fast path: no scope carries any positive meter, so this run
+      // neither contributes to the reconciliation set nor receives an action.
+      if (!hasConfiguredBudgetMeter(candidate)) return;
 
       const verdict = await evaluateBudgetForCandidate(
         db,

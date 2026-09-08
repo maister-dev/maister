@@ -1,4 +1,8 @@
+import type { SessionContentReference } from "./runtime-events";
+
 import { z } from "zod";
+
+import { COMMAND_KINDS } from "../../runtime/command-kinds";
 
 const EXECUTOR_AGENTS = [
   "claude",
@@ -42,15 +46,6 @@ const runnerEnvValueSchema = z
     "env ref value must be env:NAME",
   );
 
-const worktreePathSchema = z
-  .string()
-  .min(1)
-  .max(4096)
-  .refine(
-    (p) => p.startsWith("/") && !p.split("/").includes(".."),
-    "worktreePath must be an absolute path with no '..' segments",
-  );
-
 // Adoption paths (the workspace path, `repoPath`, and every context-mount
 // path) are shape-validated only here: the workspace registry owns the D7
 // rule tokens (`relative_path`, `parent_segment`, …) so a refusal always
@@ -60,6 +55,54 @@ const adoptPathSchema = z
   .min(1)
   .max(4096)
   .refine((p) => !p.includes("\0"), "path must not contain null byte");
+
+const RuntimeObjectOutputBindingSchema = z
+  .object({
+    objectId: z.string().uuid(),
+    kind: z.enum([
+      "session_log",
+      "raw_transcript",
+      "cost_diagnostic",
+      "checkpoint",
+      "attachment",
+      "capability_profile",
+      "agent_memory_snapshot",
+      "node_result",
+      "evidence",
+      "generated_artifact",
+      "plan_review",
+      "diagnostic",
+    ]),
+    logicalName: z
+      .string()
+      .min(1)
+      .max(255)
+      .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/, "logicalName must be a basename"),
+    mimeType: z.string().min(1).max(255),
+    generation: z.number().int().min(1),
+    retentionClass: z.enum(["run", "delivery", "ephemeral"]),
+    expiresAt: z.string().datetime({ offset: true }).nullable().optional(),
+    envName: z.enum([
+      "MAISTER_OUTPUT_FILE",
+      "MAISTER_PLAN_DOCUMENT_FILE",
+      "MAISTER_PLAN_REVIEW_FILE",
+    ]),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if ((value.retentionClass === "ephemeral") !== Boolean(value.expiresAt)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["expiresAt"],
+        message:
+          "expiresAt must be present exactly for ephemeral runtime objects",
+      });
+    }
+  });
+
+export type RuntimeObjectOutputBinding = z.infer<
+  typeof RuntimeObjectOutputBindingSchema
+>;
 
 export const RunnerProviderSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("anthropic") }).strict(),
@@ -122,13 +165,31 @@ const launchArgSchema = z
   .max(1024)
   .refine((v) => !v.includes("\0"), "launch arg must not contain null byte");
 
+const SERVER_DERIVED_RUNTIME_ENV_NAMES = new Set([
+  "MAISTER_CAPABILITY_PROFILE_PATH",
+  "MAISTER_CAPABILITY_INSTRUCTIONS_PATH",
+  "MAISTER_OUTPUT_FILE",
+  "MAISTER_PLAN_DOCUMENT_FILE",
+  "MAISTER_PLAN_REVIEW_FILE",
+]);
+
 export const AdapterLaunchSchema = z
   .object({
     env: z.record(z.string().min(1), z.string()).optional(),
     preArgs: z.array(launchArgSchema).max(32).optional(),
     postArgs: z.array(launchArgSchema).max(32).optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((value, ctx) => {
+    for (const name of Object.keys(value.env ?? {})) {
+      if (!SERVER_DERIVED_RUNTIME_ENV_NAMES.has(name)) continue;
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `${name} is server-derived from an opaque runtime object`,
+        path: ["env", name],
+      });
+    }
+  });
 
 // M27/T-C4: transport-tagged. stdio uses command/args/envKeys; sse/http use
 // url/headerKeys. Header/env VALUES are resolved supervisor-side from the NAME
@@ -192,7 +253,7 @@ export type SessionEnforcementProfile = z.infer<
 
 // ADR-157: ONE read-only sibling-repo context mount the web tier already
 // materialized for this session. A first-class request field (the
-// `capabilityProfilePath` precedent) — never an `executor.env` overload, which
+// opaque capability-input precedent) — never an `executor.env` overload, which
 // is the provider-secret channel. The supervisor derives
 // `MAISTER_CONTEXT_REPOS` + the prompt preamble from it and denies write-class
 // tool calls resolving under `path`; it never resolves a slug or a ref, and
@@ -247,6 +308,8 @@ export const LEGACY_SESSION_PATH_FIELDS = [
   "repoPath",
   "confineRoot",
   "contextMounts",
+  "capabilityProfilePath",
+  "capabilityInstructionsPath",
 ] as const;
 
 export function legacySessionPathField(payload: unknown): string | null {
@@ -276,8 +339,9 @@ export const StartSessionRequestSchema = z
       .regex(SAFE_PATH_SEGMENT, safeSegmentMessage("nodeAttemptId"))
       .optional(),
     // M42 (ADR-114): logical Flow session this ACP process serves. Stamped onto
-    // cost.jsonl + run.events.jsonl so a multi-session run attributes spend and
-    // events per session. Absent → "default" (a single-session run).
+    // canonical usage and session-event envelopes so a multi-session run
+    // attributes spend and events per session. Absent → "default" (a
+    // single-session run).
     sessionName: z
       .string()
       .min(1)
@@ -292,9 +356,9 @@ export const StartSessionRequestSchema = z
       .max(128)
       .regex(SAFE_PATH_SEGMENT, safeSegmentMessage("resumeSessionId"))
       .optional(),
-    // The one residual path in the request: it MUST resolve inside the
-    // handle's path (WorkspaceRegistry.resolveForSession → `outside_workspace`).
-    capabilityProfilePath: worktreePathSchema.optional(),
+    capabilityProfileObjectId: z.string().uuid().optional(),
+    capabilityInstructionsObjectId: z.string().uuid().optional(),
+    outputObjects: z.array(RuntimeObjectOutputBindingSchema).max(32).optional(),
     adapterLaunch: AdapterLaunchSchema.optional(),
     mcpServers: z.array(McpServerInputSchema).max(64).optional(),
     // M34 (ADR-090 L1): session-scoped read-only — the requestPermission
@@ -344,16 +408,7 @@ export const HOST_KEY_SCHEMA = z
   .string()
   .regex(/^[A-Za-z0-9_-]{8,64}$/, "hostKey must match ^[A-Za-z0-9_-]{8,64}$");
 
-export const COMMAND_KINDS = [
-  "workspace.adopt",
-  "workspace.release",
-  "session.create",
-  "session.prompt",
-  "session.input",
-  "session.cancel",
-  "session.checkpoint",
-  "session.delete",
-] as const;
+export { COMMAND_KINDS };
 
 export const CommandKindSchema = z.enum(COMMAND_KINDS);
 export type CommandKind = z.infer<typeof CommandKindSchema>;
@@ -379,13 +434,116 @@ export const CommandHeaderSchema = z
 
 export const CommandEnvelopeSchema = z
   .object({
+    requestVersion: z.literal(2).optional(),
+    target: z
+      .object({ hostSessionId: z.string().min(1).max(128) })
+      .strict()
+      .optional(),
     command: CommandHeaderSchema,
     fence: FenceSchema,
     payload: z.record(z.string(), z.unknown()),
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    if (
+      (value.requestVersion === 2) !== (value.target !== undefined) ||
+      (value.requestVersion === 2 && value.command.kind !== "session.prompt")
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "request v2 requires a prompt target",
+      });
+    }
+  });
 
 export type CommandEnvelope = z.infer<typeof CommandEnvelopeSchema>;
+
+export const RUNTIME_OBJECT_KINDS = [
+  "session_log",
+  "raw_transcript",
+  "cost_diagnostic",
+  "checkpoint",
+  "attachment",
+  "capability_profile",
+  "capability_instructions",
+  "agent_memory_snapshot",
+  "node_result",
+  "evidence",
+  "generated_artifact",
+  "plan_review",
+  "diagnostic",
+] as const;
+
+export const RuntimeObjectKindSchema = z.enum(RUNTIME_OBJECT_KINDS);
+export const RuntimeObjectRetentionClassSchema = z.enum([
+  "run",
+  "delivery",
+  "ephemeral",
+]);
+const runtimeObjectIdSchema = z.string().uuid();
+const runtimeObjectLogicalNameSchema = z
+  .string()
+  .min(1)
+  .max(255)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/, "logicalName must be a basename");
+const sha256Schema = z
+  .string()
+  .regex(/^[a-f0-9]{64}$/, "sha256 must be lowercase hex");
+
+// D6 retirement proof. Strict: an unexpected field means the manager and host
+// disagree about the protocol, which must refuse rather than retire.
+export const CommandRetirementProofSchema = z
+  .object({
+    expectedRequestSha256: sha256Schema.nullable(),
+    expectedPhase: z.enum(["completed", "rejected"]),
+    assignmentEpoch: z.number().int().min(0),
+  })
+  .strict();
+
+export const ReserveRuntimeObjectPayloadSchema = z
+  .object({
+    objectId: runtimeObjectIdSchema,
+    kind: RuntimeObjectKindSchema,
+    logicalName: runtimeObjectLogicalNameSchema,
+    mimeType: z.string().min(1).max(255),
+    sizeBytes: z.number().int().min(0).max(26_214_400),
+    sha256: sha256Schema,
+    generation: z.number().int().min(1),
+    retentionClass: RuntimeObjectRetentionClassSchema,
+    expiresAt: z.string().datetime({ offset: true }).nullable().optional(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if ((value.retentionClass === "ephemeral") !== Boolean(value.expiresAt)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["expiresAt"],
+        message:
+          "expiresAt must be present exactly for ephemeral runtime objects",
+      });
+    }
+  });
+
+export type ReserveRuntimeObjectPayload = z.infer<
+  typeof ReserveRuntimeObjectPayloadSchema
+>;
+
+export const RuntimeObjectUploadHeadersSchema = z
+  .object({
+    commandId: z.string().uuid(),
+    commandIssuedAt: z.string().datetime({ offset: true }),
+    assignmentId: z.string().uuid(),
+    assignmentEpoch: z.coerce.number().int().min(1),
+    generation: z.coerce.number().int().min(1),
+    sizeBytes: z.coerce.number().int().min(0).max(26_214_400),
+    sha256: sha256Schema,
+    contentDigest: z.string().regex(/^sha-256=:[A-Za-z0-9+/]+={0,2}:$/),
+  })
+  .strict();
+
+export const DeleteRuntimeObjectPayloadSchema = z
+  .object({ generation: z.number().int().min(1) })
+  .strict();
 
 // A body is enveloped iff it carries a `command` header; anything else is
 // refused by name (`missing_envelope`).
@@ -413,6 +571,27 @@ export const REASON_TOKENS = [
   "workspace_rejected",
   "legacy_field",
   "missing_envelope",
+  "invalid_event_sequence",
+  "replay_floor_lost",
+  "stream_identity_conflict",
+  "ack_not_contiguous",
+  "ack_beyond_emitted",
+  "unsupported_event_schema",
+  "event_redaction_failed",
+  "event_payload_oversize",
+  "event_outbox_backpressure",
+  "runtime_storage_unavailable",
+  "runtime_storage_pressure",
+  "command_invariant_conflict",
+  "command_in_progress",
+  "runtime_object_delete_failed",
+  "runtime_object_missing",
+  "runtime_object_range_invalid",
+  "runtime_object_integrity_mismatch",
+  "runtime_object_too_large",
+  "runtime_output_buffer_capacity",
+  "runtime_output_frame_too_large",
+  "required_output_incomplete",
 ] as const;
 
 export type ReasonToken = (typeof REASON_TOKENS)[number];
@@ -434,6 +613,22 @@ export type WorkspaceRule = (typeof WORKSPACE_RULES)[number];
 
 export type SupervisorErrorDetails = {
   reason?: ReasonToken;
+  outputFailure?:
+    | "producer_retained_limit"
+    | "producer_chunk_limit"
+    | "producer_frame_limit"
+    | "producer_spool_incomplete"
+    | "producer_frame_incomplete"
+    | "producer_output_storage"
+    | "producer_json_complexity"
+    | "producer_frame_invalid"
+    | "producer_permission_limit"
+    | "producer_permission_invalid"
+    | "producer_permission_failed"
+    | "producer_response_failed"
+    | "producer_update_invalid"
+    | "producer_method_unsupported"
+    | "producer_output_incomplete";
   rule?: WorkspaceRule;
   // `legacy_field`: the refused pre-ADR-166 path field, by name.
   field?: string;
@@ -518,6 +713,7 @@ export const CommandReceiptSchema = z
     body: z.record(z.string(), z.unknown()),
     receivedAt: z.string().datetime({ offset: true }),
     completedAt: z.string().datetime({ offset: true }).nullable().optional(),
+    eventId: z.string().uuid().nullable(),
     // `accepted` + `inflight:false` = the host restarted mid-turn (turn_lost).
     inflight: z.boolean(),
   })
@@ -570,6 +766,18 @@ const PromptContentBlockSchema = z.union([
       resource: z.object({ uri: z.string().min(1) }).passthrough(),
     })
     .passthrough(),
+  // This is a supervisor-private indirection, not an ACP content block. It
+  // lets the manager supply an opaque object ID while the host derives the
+  // actual confined file URI from its own object registry.
+  z
+    .object({
+      type: z.literal("runtime_object"),
+      objectId: z.string().uuid(),
+      name: z.string().min(1).max(255),
+      mimeType: z.string().min(1).max(255).optional(),
+      description: z.string().max(4_000).optional(),
+    })
+    .strict(),
 ]);
 
 export const SendPromptRequestSchema = z
@@ -778,6 +986,16 @@ export type SessionRecord = {
   assignmentId: string;
   assignmentEpoch: number;
   createdByCommandId: string;
+  activePromptCommandId?: string;
+  outputDrained?: Promise<void>;
+  outputEventReservationId?: string;
+  stopOutputForTeardown?: () => void;
+  outputTeardownStarted?: boolean;
+  outputPaused?: boolean;
+  outputTerminal?: Promise<void>;
+  terminalPublished?: boolean;
+  outputFailure?: SupervisorErrorBody;
+  abortOutput?: (error: SupervisorError) => void;
   // ADR-166: set when a command with a HIGHER assignment epoch evicted this
   // session; its pending prompt answers 409 FENCED instead of a stop reason.
   fencedByEpoch?: number;
@@ -837,6 +1055,7 @@ export type SessionRecord = {
   // via hooksConfig — read-only is the mount's whole point) and the prompt
   // preamble. Absent/empty → both are inert.
   contextMounts?: ContextMount[];
+  runtimeOutputObjectIds?: string[];
   // ADR-157: the mount preamble is rendered onto the FIRST prompt of this
   // session only. A resume rebuilds this record, so a respawn re-grounds.
   contextMountPreambleSent?: boolean;
@@ -909,6 +1128,13 @@ export type PermissionOptionDescriptor = {
 };
 
 export type SessionEvent =
+  | {
+      type: "session.content";
+      sessionId: string;
+      monotonicId: number;
+      eventType: string;
+      contentRef: SessionContentReference;
+    }
   | {
       type: "session.line";
       sessionId: string;

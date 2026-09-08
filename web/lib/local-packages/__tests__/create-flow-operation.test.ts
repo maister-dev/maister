@@ -37,13 +37,17 @@ describe("local-package creation journal", () => {
       originalManifest: "schemaVersion: 1\nname: pkg\nflows: []\n",
     });
 
-    await expect(readCreationJournal(workingDir, operationId)).resolves.toEqual({
-      flow: FLOW,
-      originalManifest: "schemaVersion: 1\nname: pkg\nflows: []\n",
-    });
+    await expect(readCreationJournal(workingDir, operationId)).resolves.toEqual(
+      {
+        flow: FLOW,
+        originalManifest: "schemaVersion: 1\nname: pkg\nflows: []\n",
+      },
+    );
 
     await removeCreationJournal(workingDir, operationId);
-    await expect(readCreationJournal(workingDir, operationId)).resolves.toBeNull();
+    await expect(
+      readCreationJournal(workingDir, operationId),
+    ).resolves.toBeNull();
   });
 
   it("fails closed when a recovery journal is malformed", async () => {

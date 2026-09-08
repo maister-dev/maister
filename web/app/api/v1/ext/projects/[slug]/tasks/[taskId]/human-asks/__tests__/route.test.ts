@@ -137,10 +137,12 @@ describe("POST /api/v1/ext/projects/[slug]/tasks/[taskId]/human-asks", () => {
       expect.objectContaining({ recordSuccessAudit: expect.any(Function) }),
     );
 
-    const [, dependencies] = mocks.createOrActivateAgentQuestion.mock.calls[0] as [
+    const [, dependencies] = mocks.createOrActivateAgentQuestion.mock
+      .calls[0] as [
       unknown,
       { recordSuccessAudit: (tx: unknown, status: number) => Promise<void> },
     ];
+
     await dependencies.recordSuccessAudit({}, 201);
 
     expect(mocks.recordRequiredTokenAudit).toHaveBeenCalledWith(

@@ -50,23 +50,29 @@ async function scheduleFromLaunchDialog(input: {
   await taskCard.getByRole("button", { name: /^(Launch|Run again)$/ }).click();
 
   const dialog = input.page.getByRole("dialog");
+
   await expect(dialog).toBeVisible();
   await dialog.getByRole("button", { name: "Schedule run" }).click();
   await dialog
     .getByRole("textbox", { name: "Local date and time" })
     .fill("2030-01-02T03:04");
   await dialog.getByRole("textbox", { name: "IANA timezone" }).fill("UTC");
-  await expect(dialog.getByText("Resolves to 2030-01-02T03:04:00.000Z.")).toBeVisible();
+  await expect(
+    dialog.getByText("Resolves to 2030-01-02T03:04:00.000Z."),
+  ).toBeVisible();
 
   const createdResponse = input.page.waitForResponse(
     (response) =>
-      response.url().includes(
-        `/api/projects/${input.projectSlug}/scheduled-launches`,
-      ) && response.request().method() === "POST",
+      response
+        .url()
+        .includes(`/api/projects/${input.projectSlug}/scheduled-launches`) &&
+      response.request().method() === "POST",
   );
+
   await dialog.getByRole("button", { name: "Confirm schedule" }).click();
 
   const response = await createdResponse;
+
   expect(response.status()).toBe(201);
 
   const body = (await response.json()) as { intent: { id: string } };
@@ -98,6 +104,7 @@ test("Automations: schedule, inspect overdue recovery, cancel, and show a safe t
 
     return result.rows[0]!;
   });
+
   created.taskIds.push(taskId);
 
   await page.goto(`/projects/${fx.projectSlug}`);
@@ -106,9 +113,11 @@ test("Automations: schedule, inspect overdue recovery, cancel, and show a safe t
     projectSlug: fx.projectSlug,
     taskTitle,
   });
+
   created.scheduledLaunchIds.push(overdueIntentId);
 
   const overdueRunId = randomUUID();
+
   created.runIds.push(overdueRunId);
   await withE2EDb(async (pool) => {
     await pool.query(
@@ -128,14 +137,15 @@ test("Automations: schedule, inspect overdue recovery, cancel, and show a safe t
 
   await page.goto(`/projects/${fx.projectSlug}?tab=automations`);
   const scheduleName = `Schedule ${task.taskKey}-${task.number}`;
-  const overdueRow = page.getByRole("listitem").filter({ hasText: scheduleName });
+  const overdueRow = page
+    .getByRole("listitem")
+    .filter({ hasText: scheduleName });
 
   await expect(overdueRow).toContainText("Launched");
   await expect(overdueRow).toContainText("Started 2 minutes late");
-  await expect(overdueRow.getByRole("link", { name: "View Run" })).toHaveAttribute(
-    "href",
-    `/runs/${overdueRunId}`,
-  );
+  await expect(
+    overdueRow.getByRole("link", { name: "View Run" }),
+  ).toHaveAttribute("href", `/runs/${overdueRunId}`);
 
   await page.goto(`/projects/${fx.projectSlug}`);
   const cancellableIntentId = await scheduleFromLaunchDialog({
@@ -143,6 +153,7 @@ test("Automations: schedule, inspect overdue recovery, cancel, and show a safe t
     projectSlug: fx.projectSlug,
     taskTitle,
   });
+
   created.scheduledLaunchIds.push(cancellableIntentId);
 
   await page.goto(`/projects/${fx.projectSlug}?tab=automations`);
@@ -152,9 +163,12 @@ test("Automations: schedule, inspect overdue recovery, cancel, and show a safe t
     .filter({ hasText: "Scheduled" });
   const cancelResponse = page.waitForResponse(
     (response) =>
-      response.url().endsWith(`/scheduled-launches/${cancellableIntentId}/cancel`) &&
+      response
+        .url()
+        .endsWith(`/scheduled-launches/${cancellableIntentId}/cancel`) &&
       response.request().method() === "POST",
   );
+
   page.once("dialog", (dialog) => dialog.accept());
   await cancellableRow.getByRole("button", { name: "Cancel" }).click();
   expect((await cancelResponse).status()).toBe(200);
@@ -171,9 +185,11 @@ test("Automations: schedule, inspect overdue recovery, cancel, and show a safe t
     projectSlug: fx.projectSlug,
     taskTitle,
   });
+
   created.scheduledLaunchIds.push(refusedIntentId);
 
   const busyRunId = randomUUID();
+
   created.runIds.push(busyRunId);
   await withE2EDb(async (pool) => {
     await pool.query(
@@ -190,15 +206,21 @@ test("Automations: schedule, inspect overdue recovery, cancel, and show a safe t
     .filter({ hasText: "Scheduled" });
   const runNowResponse = page.waitForResponse(
     (response) =>
-      response.url().endsWith(`/scheduled-launches/${refusedIntentId}/run-now`) &&
+      response
+        .url()
+        .endsWith(`/scheduled-launches/${refusedIntentId}/run-now`) &&
       response.request().method() === "POST",
   );
+
   await refusedRow.getByRole("button", { name: "Run now" }).click();
   expect((await runNowResponse).status()).toBe(200);
   const failedRow = page
     .getByRole("listitem")
     .filter({ hasText: scheduleName })
     .filter({ hasText: "Failed" });
+
   await expect(failedRow).toHaveCount(1);
-  await expect(failedRow).toContainText("Action needs project or task attention");
+  await expect(failedRow).toContainText(
+    "Action needs project or task attention",
+  );
 });

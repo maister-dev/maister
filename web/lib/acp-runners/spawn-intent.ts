@@ -26,6 +26,28 @@ function nonEmptyRecord(
   return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 }
 
+const SERVER_DERIVED_RUNTIME_ENV_NAMES = new Set([
+  "MAISTER_CAPABILITY_PROFILE_PATH",
+  "MAISTER_CAPABILITY_INSTRUCTIONS_PATH",
+  "MAISTER_OUTPUT_FILE",
+  "MAISTER_PLAN_DOCUMENT_FILE",
+  "MAISTER_PLAN_REVIEW_FILE",
+]);
+
+function userAdapterEnvironment(
+  values: Record<string, string> | undefined,
+): Record<string, string> | undefined {
+  if (!values) return undefined;
+
+  return nonEmptyRecord(
+    Object.fromEntries(
+      Object.entries(values).filter(
+        ([name]) => !SERVER_DERIVED_RUNTIME_ENV_NAMES.has(name),
+      ),
+    ),
+  );
+}
+
 function providerFromSnapshot(
   snapshot: RunnerSnapshot,
 ): PlatformRunnerProvider {
@@ -71,6 +93,7 @@ export function mergeRunnerAdapterLaunch(
   base?: ScratchAdapterLaunch | SupervisorAdapterLaunchInput,
 ): SupervisorAdapterLaunchInput | undefined {
   const preArgs = [...(base?.preArgs ?? [])];
+  const env = userAdapterEnvironment(base?.env);
 
   if (
     snapshot.adapter === "claude" &&
@@ -80,7 +103,7 @@ export function mergeRunnerAdapterLaunch(
   }
 
   const merged: SupervisorAdapterLaunchInput = {
-    ...(base?.env ? { env: base.env } : {}),
+    ...(env ? { env } : {}),
     ...(preArgs.length > 0 ? { preArgs } : {}),
     ...(base?.postArgs ? { postArgs: base.postArgs } : {}),
   };

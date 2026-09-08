@@ -1,5 +1,7 @@
 [← Configuration](configuration.md) · [Back to README](../README.md)
 
+> A/B stabilization is in progress. The [runtime floor, resource budgets and host-process wiring](configuration.md#ab-runtime-and-deployment-qualification-designed) are Designed until their validation gates pass. The [qualification topology](system-analytics/test-infrastructure.md#ab-stabilization-test-lanes-designed) defines executable evidence; earlier aggregate pass counts do not qualify this release.
+
 # Supervisor Daemon
 
 The supervisor is a second Node process that owns the lifecycle of agent
@@ -7,9 +9,9 @@ processes. Implemented adapters are `claude-agent-acp` and `codex-acp`;
 ADR-084/ADR-085 add `gemini --acp`, `opencode acp`, and `mimo acp` as
 readiness-gated code-owned ACP adapter families. It speaks **HTTP + SSE** to
 the web tier and **ACP JSON-RPC over stdio** to its spawned adapter children.
-The current contract includes spawn, prompt delivery, structured ACP event
-parsing, permission HITL, checkpoint, resume, heartbeat promotion, and cost
-accounting.
+The current contract includes spawn, asynchronous prompt admission, structured
+ACP event parsing, permission HITL, checkpoint, resume, heartbeat promotion,
+and canonical cost facts.
 
 **ADR-136 non-expansion:** task-bound `agent_question` clarification is a web
 and Postgres handoff. V1 adds no ACP method, notification, input delivery, or
@@ -35,8 +37,8 @@ resume behavior to this supervisor contract.
                                                 └──────────────────────────────────────┘
                                                                            │ stdout JSONL
                                                                            ▼
-                              .maister/<slug>/runs/<id>/<step>.log  (append-only)
-                              .maister/<slug>/runs/<id>/cost.jsonl  (append-only)
+                              private <hostSessionId>.log (host diagnostics)
+                              state.sqlite outbox (durable host events)
 ```
 
 ## Why a separate process
@@ -44,12 +46,11 @@ resume behavior to this supervisor contract.
 Agent processes can run for tens of minutes. Holding them inside Next.js
 makes every HMR reload (dev) and every Next.js restart (prod) kill live
 runs. The supervisor isolates that failure mode. The two processes share
-the HTTP+SSE wire AND, today, the host filesystem (`MAISTER_RUNTIME_ROOT`,
-the worktrees root, the flows cache — ADR-023): the browser run stream tails
-`run.events.jsonl` locally and worktree/diff/promotion are web-side git
-operations, so a different host for the supervisor is NOT supported in the
-current target. The execution-host contract below (Implemented — ADR-166) is
-the seam later stages build on; it changes nothing about that topology.
+the HTTP+SSE wire. Stage B removes the runtime-data filesystem dependency:
+browser replay, transcripts, costs, artifacts, and prompt completion read
+manager-owned Postgres state. Repository/worktree/Git operations remain
+web-side under ADR-023, so a different supervisor host is still a Stage C/D
+boundary. The execution-host contract below is the seam later stages build on.
 
 The architectural decision and its trade-offs live in
 [`ARCHITECTURE.md`](../.ai-factory/ARCHITECTURE.md). The ACP spike findings
@@ -117,7 +118,7 @@ Request payload (`envelope.payload`):
 ```jsonc
 {
   "executionWorkspaceId": "ws_5f3a8a2b7e344f6d9d2c1d4e5f6a7b8c",
-  "stepId": "plan",                         // log file: <runId>/<stepId>.log
+  "stepId": "plan",                         // step attribution; log file: <runId>/<hostSessionId>.log
   "runner": {
     "version": 1,
     "runnerId": "claude-code-env-router",
@@ -137,17 +138,27 @@ Request payload (`envelope.payload`):
     "model": "claude-sonnet-4-6",
     "env": { "ANTHROPIC_BASE_URL": "...", "ANTHROPIC_AUTH_TOKEN": "..." }
   },
-  "capabilityProfilePath": "/repos/myapp/.maister/runs/run-abc/profile.json",
+  "capabilityProfileObjectId": "86456f19-ef72-46be-88bb-dc86c3ecf85b",
+  "capabilityInstructionsObjectId": "50ba2f75-bc42-4968-bbd0-1ac0a50ec840",
+  "outputObjects": [{
+    "objectId": "9742068b-0371-44bd-8108-e779461be15a",
+    "kind": "plan_review",
+    "logicalName": "plan-review.json",
+    "mimeType": "application/json",
+    "generation": 1,
+    "retentionClass": "run",
+    "envName": "MAISTER_PLAN_REVIEW_FILE"
+  }],
   "adapterLaunch": {
-    "env": { "MAISTER_CAPABILITY_PROFILE": "/repos/myapp/.maister/runs/run-abc/profile.json" },
-    "preArgs": ["--config", "/repos/myapp/.maister/runs/run-abc/adapter.json"],
+    "env": { "MAISTER_PROFILE_MODE": "strict" },
+    "preArgs": ["--dangerously-skip-permissions"],
     "postArgs": []
   },
   "resumeSessionId": "uuid-abc"             // optional, checkpoint-resume path (resumed via the ACP session/resume call, NOT a CLI flag)
 }
 ```
 
-(Note: prompts are sent separately via `POST /sessions/:id/prompt`
+(Note: prompts are admitted separately via `POST /sessions/:id/prompts`
 — the body field is gone. Context mounts — ADR-157, max 8 — travel on the
 `workspace.adopt` payload and are derived from the handle.)
 
@@ -180,12 +191,14 @@ diagnostic failures, and unsupported checkpoint strategies are refused before
 spawn when readiness has enough information. There is no fallback to
 Claude/Codex and no operator-entered arbitrary command runner.
 
-`capabilityProfilePath` and `adapterLaunch.env` are Implemented for scratch
-runs. The web tier owns capability policy, resolution, trust checks, and the V1
-materialization of `profile.json` plus `instructions.md`; the supervisor only
-receives server-derived absolute paths and constrained materializer outputs to
-pass to the adapter process. The request body must not allow callers to
-override the adapter binary, `cwd`, run id, project slug, or worktree path.
+`capabilityProfileObjectId`, `capabilityInstructionsObjectId`, `outputObjects`, and constrained
+`adapterLaunch.env` are implemented. The web tier owns capability policy,
+resolution, trust checks, and materialization, then uploads the profile and
+instruction document through the fenced runtime-object contract. The
+supervisor privately resolves both objects and maps predeclared output object
+IDs to allow-listed child environment variables. The request body cannot select
+a host path or override the adapter
+binary, `cwd`, run id, project slug, or worktree path.
 
 `adapterLaunch` supports only:
 
@@ -211,10 +224,10 @@ change. Each mount is validated at adoption like the workspace path itself
 [`POST /workspaces/adopt`](#post-workspacesadopt-implemented--adr-166)); an
 over-length array is a Zod `409 PRECONDITION`.
 
-It is a **first-class request field**, the same shape of thing as
-`capabilityProfilePath` — deliberately **not** an overload of `executor.env`,
-which is the provider-secret channel and stays that. From it the supervisor
-derives exactly one child environment variable:
+It is a **first-class workspace-adoption field**, deliberately not an overload
+of `executor.env`, which is the provider-secret channel and stays that. From
+the server-derived adopted handle the supervisor derives exactly one child
+environment variable:
 
 ```
 MAISTER_CONTEXT_REPOS=[{"slug":"api","path":"/abs/mount","ref":"main","commit":"<sha40>"}]
@@ -468,12 +481,11 @@ duplicate while the original is in flight (any kind) **joins** it; an
 `accepted` receipt with no in-flight promise (restart mid-turn) → `409
 PRECONDITION turn_lost`; a receipt write failure → `500 ACP_PROTOCOL` (the
 effect may have happened — the web reconcile catches an orphan session).
-Receipts prune at boot and hourly (7-day TTL). Prompt completion additionally
-emits the SSE `session.command` event (`phase: accepted`, then `phase:
-completed` with `status` + `result` / `error`), also appended to
-`run.events.jsonl`; a completion that lands after the session's terminal event
-is appended once the closed per-run writer has drained, so the file keeps its
-`monotonicId` order.
+Receipts prune at boot and hourly after their durable eligibility checks.
+Prompt admission and completion emit durable `session.command` events
+(`phase: accepted`, then `phase: completed` with `status` + `result` / `error`)
+to the host outbox. The manager assigns canonical run order during ingestion;
+no lifecycle consumer reads a per-run event file.
 
 ### `DELETE /sessions/:id`
 
@@ -611,9 +623,17 @@ against the new requestId; the original `hitl_requests` row's
 `respondedAt` is set with audit
 `{originalRequestId, reissuedRequestId, deliveredViaResume: true}`.
 
+An owned graph node can also resume without creating an ACP session: when an
+input was delivered but its web ACK was lost, the capacity claim can hand the
+verified original result to the next assignment. The original prompt ordinal
+is retained. Exact input receipt, full prompt output and the acknowledged
+checkpoint of the source session are required; the old owner remains fenced.
+See [owned graph permission recovery](system-analytics/hitl.md#owned-graph-permission-recovery)
+for the claim and audit boundaries.
+
 Each respawn costs ~$0.28 of `cache_creation_input_tokens` per the ACP
 spike findings — keep-alive is the cost lever, not just UX. Resumed sessions'
-`cost.jsonl` entries carry `resumed: true` for ops attribution.
+canonical `usage.recorded` events carry resume attribution for ops.
 
 ### `POST /sessions/:id/input`
 
@@ -688,33 +708,69 @@ never extends its TTL window). The web tier proxies this route through the admin
 [`api/supervisor.openapi.yaml`](api/supervisor.openapi.yaml);
 domain: [`system-analytics/model-catalog.md`](system-analytics/model-catalog.md).
 
-### Run-scoped durable event log: `<runId>/run.events.jsonl`
+### Durable event outbox (Implemented — ADR-167)
 
-Every `SessionEvent` (`session.line`, `session.update`,
-`session.permission_request`, `session.exited`, `session.crashed`, and —
-Implemented, ADR-166 — `session.command`)
-is appended to a single per-run JSONL file at
-`.maister/<projectSlug>/runs/<runId>/run.events.jsonl` alongside the
-existing per-step raw `<stepId>.log` and the in-memory ring buffer
-that backs `GET /sessions/:id/stream`. Multiple spawns for the same
-run append to the same file (slash-in-existing reuses one session
-across steps; new-session-per-step spawns are sequential). On spawn,
-`record.monotonicId` is seeded from the tail of the existing log so
-the per-run event sequence stays strictly increasing across sessions
-— this is what the web SSE bridge at `GET /api/runs/[runId]/stream`
-relies on for cross-session `Last-Event-ID` resume.
+The supervisor writes externally observable events to its private SQLite
+outbox before live publication. `GET /runtime-events` replays host-global
+events after an exclusive decimal cursor and `POST /runtime-events/ack`
+advances a stream-bound contiguous watermark. The in-memory per-session SSE
+Each replay page is at most 500 events and 1 MiB; a response closes at a page
+boundary while backlog remains, so reconnect continues from its last delivered
+cursor. Startup audits iterate individual envelopes and verify persisted quota
+counters against retained rows.
+The ring remains a local diagnostic surface only; it is neither browser replay nor
+run-state authority. The supervisor no longer writes `run.events.jsonl`.
 
 ### Execution-host state store _(Implemented — ADR-166)_
 
 The supervisor keeps a private `node:sqlite` database at
 `<MAISTER_EXECUTION_HOST_STATE_DIR>/state.sqlite` (default
 `<MAISTER_RUNTIME_ROOT>/.maister/execution-host/`; WAL,
-`synchronous=NORMAL`) with four tables: `host_identity` (the minted or
+`synchronous=FULL`) with durable tables including `host_identity` (the minted or
 pinned `hostKey`), `run_fences` (`run_id, assignment_id, epoch`), `workspaces`
 (adopted handles: `id, run_id, project_slug, kind, path, real_path, repo_path?,
 run_dir, context_mounts?, adopted_at, released_at?`, one ACTIVE row per
 `(run_id, real_path)` through the partial unique index `workspaces_active_uq`),
-and `command_receipts`. The file carries a `PRAGMA user_version` (currently 1)
+`command_receipts`, the durable host-global `runtime_event_streams` /
+`runtime_event_outbox`, and a private `runtime_objects` registry. Runtime
+object bytes live beside this store under `runtime-objects/`; only opaque IDs
+and checksummed metadata cross its API. SQLite version 7 adds `budget_partition`
+to retained events and transactional `runtime_event_budget` counters,
+`runtime_event_pressure` hysteresis, `runtime_event_wallets`, serialized
+`runtime_event_teardowns`, and temporary `runtime_event_frames` reservations.
+The additive migration charges every existing event to the regular partition
+without rewriting its envelope. Producer wallets persist across restart;
+parser reservations expire with their owning process. Startup repairs accepted
+producer commands and records lost sessions using their original reserved
+credits. Accepted receipts cannot expire before that repair. Full command and
+receipt retention eligibility remains S2.
+Version 8 stores new ACK timestamps as compact contiguous ranges; the stream
+watermark and partition counters commit with each range. Legacy per-row ACK
+timestamps remain readable without rewriting retained event bodies. Pruning
+deletes only the oldest eligible prefix, at most 100 rows and 1 MiB per
+transaction, and never bypasses replay grace.
+Runtime writes also pass the physical guard described in
+[configuration](configuration.md#a-b-stabilization-resource-budget-designed).
+A native SQLite/filesystem capacity or I/O failure stops live producers and
+latches `GET /health` to `503 EXECUTOR_UNAVAILABLE` with
+`runtime_storage_unavailable`. Existing receipts/events and unfinished captured
+files remain for repair. The host does not publish a successful terminal event
+when its commit failed. A fresh process must successfully open the repaired
+store before admissions resume.
+Version 9 adds `runtime_file_budget`, `runtime_file_wallets`, `runtime_files`
+and `runtime_frame_file_credits`. Create admission reserves capture/teardown
+and declared-output capacity in the receipt transaction. Logs, frame spools,
+producer references and uploads reserve before writing; available uploads
+reconcile their charge to actual bytes. A serialized writer token prevents
+concurrent uploads or deletion of an active upload from releasing its capacity.
+Startup inventories known files, interrupted object copies and logs from both
+active and released workspace handles, using bounded pages and directory
+buffers. Unknown files remain preserved and charged; a reservation overrun
+refuses startup. File pressure shares producer pause/wake and credited teardown
+with event pressure. ACK alone releases no file capacity. Size limits and the
+remaining immutable-output sealing work are described in the canonical
+[resource budget](configuration.md#a-b-stabilization-resource-budget-designed).
+The file carries a `PRAGMA user_version` (currently 10)
 that gates in-place migrations at open: a version-0 store (inline
 `UNIQUE (run_id, real_path)`, which blocked re-adoption after a release) is
 rebuilt under the partial index with every row kept; a fresh store starts at
@@ -724,11 +780,18 @@ is no in-memory fallback. Two fatal boot errors:
 differs from the stored key — remediation: unset the pin, or deliberately
 wipe the state dir) and `execution-host-state-unwritable`. The web tier
 never reads this directory. What survives a restart: the key, fences,
-receipts, handles. What does not: live sessions (unchanged). If the directory
+receipts, event replay/ACK watermark, object metadata, and handles. What does not: live sessions (unchanged). If the directory
 is lost, the host mints a new key (unless pinned) — the web registrar then
 retires the idle old row or refuses registration while the old row still owns
 non-terminal runs; fences restart at the first command; handles are
 re-adopted lazily. Cross-host ACP resume is out of scope.
+
+Version 10 adds nullable request-schema, host-key, accepted-sequence and terminal
+stream/sequence receipt bindings. New admissions hash the same JCS request v2
+value as the manager, including the URL-selected target. Legacy rows retain
+their original digest with null v2 metadata; reopen never fabricates missing
+request or sequence identity. The public receipt v2 response and immutable
+command-output manifest remain under implementation.
 
 ## Module layout
 
@@ -743,7 +806,7 @@ supervisor/
 │   ├── http-api.ts                # 6 routes + error handler (zod → 409, SupervisorError → status)
 │   ├── spawn.ts                   # child_process.spawn dispatch; line-buffered stdout
 │   ├── heartbeat.ts               # exit/error → session.exited/crashed + orphan watcher
-│   ├── cost.ts                    # lenient JSON-parse → cost.jsonl
+│   ├── cost.ts                    # lenient JSON-parse → usage.recorded event
 │   ├── registry.ts                # in-memory Map + per-session event ring buffer
 │   ├── host-state.ts              # (Implemented — ADR-166) node:sqlite state store: identity, fences, handles, receipts
 │   ├── execution-fence.ts         # (Implemented — ADR-166) envelope fence rules + lower-epoch eviction
@@ -783,13 +846,13 @@ behind `web/lib/execution-host/`) parses `{ code, message, details }`
 from the body and re-throws as `MaisterError({ code, details })`. The
 taxonomy of `MaisterError` lives in [Error Taxonomy](error-taxonomy.md).
 
-## Cost accounting (`cost.jsonl`)
+## Cost accounting (canonical `usage.recorded`)
 
 `cost.ts` observes the same stdout-line stream the SSE bridge uses,
 JSON-parses each line **leniently** (silently skips non-JSON), and looks
 for a `usage` object anywhere in the structure (top-level or nested,
-bounded depth 8). When found, it appends a record to
-`.maister/<projectSlug>/runs/<runId>/cost.jsonl`:
+bounded depth 8). When found, it publishes a redacted `usage.recorded` fact
+to the durable host outbox:
 
 ```jsonc
 {
@@ -802,6 +865,9 @@ bounded depth 8). When found, it appends a record to
   "cache_read_input_tokens": 0,
 }
 ```
+
+`usage.recorded` in the durable host outbox is the manager projection source
+for UI and cost totals. The supervisor does not write a cost JSONL file.
 
 `cache_creation_input_tokens` is the load-bearing field for ops:
 the ACP spike findings (summary in root `CLAUDE.md` §ACP Spike Findings) measured
@@ -827,7 +893,7 @@ docker compose; production overrides go in `.env`.
 | `MAISTER_WORKSPACE_ROOTS`          | `~/.maister/worktrees:~/.maister/local:<MAISTER_RUNTIME_ROOT>/.maister` | **(Implemented — ADR-166)** Colon-separated absolute dirs a `git_worktree` / `directory` adoption must live under. MUST mirror a moved web `MAISTER_WORKTREES_ROOT` / `MAISTER_LOCAL_PACKAGES_ROOT`. |
 | `MAISTER_HEARTBEAT_INTERVAL_MS`    | `5000`                                                                  | Orphan-child detection interval.                                                                                                                                                                     |
 | `MAISTER_KILL_GRACE_MS`            | `5000`                                                                  | SIGTERM → SIGKILL grace per child on DELETE and graceful shutdown.                                                                                                                                   |
-| `MAISTER_SHUTDOWN_GRACE_MS`        | `15000`                                                                 | Total wall-clock budget for graceful supervisor shutdown.                                                                                                                                            |
+| `MAISTER_SHUTDOWN_GRACE_MS`        | `15000`                                                                 | Grace before SIGKILL during supervisor shutdown; the total deadline adds MAISTER_KILL_GRACE_MS and 5000 ms for output/HTTP cleanup.                                                                                                                                            |
 | `MAISTER_KEEPALIVE_MINUTES`        | `30`                                                                    | NeedsInput keep-alive window (minutes). Bounds the pending-permission deferred timeout AND the web-side sweeper-driven NeedsInput → NeedsInputIdle transition. Bumped by every web activity ping.    |
 | `ANTHROPIC_BASE_URL`               | `https://api.anthropic.com`                                             | Process-wide default for Claude-compatible adapters. Platform runners should prefer typed provider config plus env refs.                                                                             |
 | `ANTHROPIC_AUTH_TOKEN`             | unset                                                                   | Required when `ANTHROPIC_BASE_URL` points at a third-party (z.ai GLM, OpenRouter, …).                                                                                                                |
@@ -841,8 +907,8 @@ docker compose; production overrides go in `.env`.
 Secrets MUST NEVER appear in:
 
 - SSE events visible to the browser
-- `cost.jsonl` (verified in the integration test with a sentinel token)
-- the step `.log` file (sentinel-test enforced)
+- canonical event payloads (verified in the integration test with a sentinel token)
+- the incarnation `.log` file (sentinel-test enforced)
 - the supervisor's own logs (env values are summarized as `hasEnv: true|false`, never echoed)
 
 **Env merge semantics for the spawned child:** platform runner launch uses typed
@@ -858,7 +924,8 @@ provider settings and `env:NAME` runner references into `executor.env`.
 1. `process.env` — the supervisor's own env at startup (base).
 2. `executor.env` — typed provider and runner env values resolved by the
    supervisor; this layer wins over ambient process values.
-3. request-derived env — `MAISTER_CAPABILITY_PROFILE_PATH` when present and
+3. request-derived env — `MAISTER_CAPABILITY_PROFILE_PATH` and
+   `MAISTER_CAPABILITY_INSTRUCTIONS_PATH` when present, plus
    `MAISTER_CONTEXT_REPOS` derived from the first-class `contextMounts[]`
    request field. **(Implemented — ADR-157)** Neither field is overloaded onto
    runner configuration.
@@ -920,7 +987,7 @@ unit spawn test.
 The supervisor speaks JSON-RPC via
 `@agentclientprotocol/sdk@0.22.1`'s `ClientSideConnection` for every
 session. `POST /sessions` creates the adapter process and ACP session;
-`POST /sessions/:id/prompt` sends user or flow prompts; structured ACP
+`POST /sessions/:id/prompts` admits user or flow prompts; structured ACP
 notifications are bridged over SSE; permission requests are held open
 until the web tier calls `POST /sessions/:id/input`.
 
@@ -957,7 +1024,7 @@ The response includes the negotiated ACP session id:
 { "sessionId": "...", "pid": 1234, "acpSessionId": "..." }
 ```
 
-**Prompt endpoint:** `POST /sessions/:id/prompt`
+**Prompt admission endpoint:** `POST /sessions/:id/prompts`
 
 ```json
 { "stepId": "plan", "prompt": "..." }
@@ -966,11 +1033,12 @@ The response includes the negotiated ACP session id:
 Body validated by `SendPromptRequestSchema` (`stepId` must match
 `^[A-Za-z0-9._-]+$`, `prompt ≤ 1 MB`). **(Designed — capability composer, FR-D5)**
 the body MAY also carry an optional `contentBlocks` array (ACP `text` +
-`resource_link`/`resource` blocks). When present the supervisor forwards them
-**verbatim** as the ACP `prompt` content array — it never re-templates or
-rewrites; capability-token normalization and worktree path-confinement of
-resource URIs are already done web-side. `prompt` stays the plain-text
-equivalent. Response:
+`resource_link`/`resource` blocks). A `runtime_object` block instead carries an
+opaque object ID: the supervisor verifies its run and assignment epoch, resolves
+the host-private file internally, and forwards only the resulting confined ACP
+resource link. The manager never receives that path. Other ACP blocks are
+forwarded unchanged after session-bound URI confinement. `prompt` stays the
+plain-text equivalent. Response:
 
 ```json
 { "stopReason": "end_turn", "meta": null }
@@ -1003,20 +1071,39 @@ The legacy `session.line` event type stays — `cost.ts` and any other
 raw-line consumer keep working unchanged. The supervisor tees stdout
 through a `PassThrough` so both consumers see every chunk.
 
+## Stage B durable data plane (Implemented — ADR-167)
+
+`GET /capabilities` is additive and keeps `/health` protocol v1 unchanged.
+It advertises `eventStream`, `asyncPrompt`, and `runtimeObjects`; admission
+requires the complete canonical set. `GET /runtime-events` replays host-global SQLite outbox events strictly after
+the decimal `Last-Event-ID`, and `POST /runtime-events/ack` confirms an
+absolute contiguous stream watermark. A socket is never lifecycle authority:
+the host writes its outbox before publishing and the manager ACKs only after a
+Postgres transaction commits.
+
+`POST /sessions/{id}/prompts` is the durable asynchronous prompt-admission
+route: its `202` confirms only the receipt and accepted event. The authoritative
+terminal outcome is the canonical event stream plus `GET /commands/{id}`. The
+singular long-lived prompt route was removed in B4.
+
+Runtime objects use opaque `ro_<id>` values through reserve/upload/metadata/
+single-range/read/delete contracts. Metadata may become canonical in Postgres;
+host-local content never crosses the boundary as a filesystem path. A future
+remote adapter preserves this contract but remote enrollment and a relay remain
+out of scope. See [`api/supervisor.openapi.yaml`](api/supervisor.openapi.yaml),
+[`api/async/execution-host-events.asyncapi.yaml`](api/async/execution-host-events.asyncapi.yaml),
+and the ADR-167 analytics documents.
+
 ## Limitations on POC
 
-- **Single host, shared filesystem, unauthenticated loopback (Stage A —
-  ADR-166).** Exactly one non-retired local execution host; the web tier and
-  the supervisor MUST share `MAISTER_RUNTIME_ROOT`, the worktrees root, and
-  the flows cache (the run stream tails `run.events.jsonl` locally;
-  worktree/diff/promotion are web-side git). The HTTP wire carries no host
+- **Single host, unauthenticated loopback.** Exactly one non-retired local
+  execution host; the web tier no longer mounts or reads host runtime data.
+  Worktree/diff/promotion are still web-side Git and remain Stage C. The HTTP wire carries no host
   auth (`0.0.0.0:7777` — keep it loopback-only); remote transport, relay,
   enrollment, multiple simultaneous hosts, placement, and cross-host ACP
   resume are later stages.
-- **`lastEventId` replay is bounded to the in-memory ring buffer** (1000
-  entries per session). Older terminal events after the 30 s post-exit
-  grace period are gone. The web tier's eventual log-file tail bridge
-  fills that gap.
+- **Per-session diagnostic SSE replay is bounded** (1000 entries). Canonical
+  browser/run replay instead comes from retained manager Postgres events.
 - **No Cursor / Aider executors** — the supervisor supports the code-owned ACP
   adapter families `claude`, `codex`, `gemini`, `opencode`, and `mimo`.
   Gemini, OpenCode, and MiMo remain gated by binary diagnostics and
@@ -1032,3 +1119,5 @@ through a `PassThrough` so both consumers see every chunk.
 - ACP Pivot Revision (2026-05-25, historical doc removed) — the multi-runner design that motivated the supervisor split
 - ACP Spike Findings — adapter package versions and cross-process resume cost; summary in root `CLAUDE.md` §ACP Spike Findings
 - [Architecture](../.ai-factory/ARCHITECTURE.md) — dependency rules; the supervisor↔web wire contract
+
+Supervisor boot requires Node >=24.15.0 <25. Runtime pressure and projection settings have their canonical defaults in [configuration](configuration.md#ab-stabilization-resource-budget-designed). SIGTERM/SIGINT stops admission and waits for child exit, pipe drain and durable terminal evidence before closing SQLite. Unconfirmed drain exits nonzero and leaves durable receipts for recovery.

@@ -571,10 +571,7 @@ async function promoteWorkspaceRun(
   // neither flag, so they are allowed. (`promoteScratchRun` is the other apply
   // site but needs no guard — launched-lineage rows are inserted only in
   // launchRun / evaluation recipe launch, so a scratch run can never be one.)
-  if (
-    isUnattendedPromotion(input) &&
-    (await isLaunchedLineageRun(db, runId))
-  ) {
+  if (isUnattendedPromotion(input) && (await isLaunchedLineageRun(db, runId))) {
     throw new MaisterError(
       "PRECONDITION",
       "launched-lineage run cannot auto-promote — decide the study and promote the winner explicitly",
@@ -2058,11 +2055,11 @@ export async function promoteRun(
       releaseRunContextMounts({ runId, db: d }),
     )
     .catch((err: unknown) => {
-    log.warn(
-      { runId, err: err instanceof Error ? err.message : String(err) },
-      "context mount release after promotion failed — left to the GC backstop",
-    );
-  });
+      log.warn(
+        { runId, err: err instanceof Error ? err.message : String(err) },
+        "context mount release after promotion failed — left to the GC backstop",
+      );
+    });
 
   return result;
 }

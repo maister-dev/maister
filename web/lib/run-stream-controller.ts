@@ -43,7 +43,7 @@ export function reconnectDelayMs(
 export function buildRunStreamUrl(
   origin: string,
   runId: string,
-  lastEventId: number | null,
+  lastEventId: string | number | null,
   replay: boolean,
 ): string {
   const url = new URL(`/api/runs/${encodeURIComponent(runId)}/stream`, origin);

@@ -9,6 +9,13 @@ import { getDb } from "@/lib/db/client";
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
+import { MaisterError } from "@/lib/errors";
+import {
+  hasFlowPermissionResume,
+  PERMISSION_RESUME_PROMPT,
+} from "@/lib/flows/graph/permission-resume";
+import { runFlow } from "@/lib/flows/runner";
+import { admitNodePrompt } from "@/lib/flows/graph/node-prompt-owner";
 import { markNodeSucceeded } from "@/lib/flows/graph/ledger";
 import { type SupervisorEvent } from "@/lib/execution-host";
 import {
@@ -61,8 +68,6 @@ const log = pino({
 //      crashResumedRun watchdog).
 
 const DEFAULT_RESUME_PROMPT_TIMEOUT_SECONDS = 60;
-const RESUME_CONTINUATION_PROMPT =
-  "Resuming after operator response — please continue with the prior tool call.";
 
 function resumePromptTimeoutSeconds(): number {
   const raw = process.env.MAISTER_RESUME_PROMPT_TIMEOUT_SECONDS;
@@ -79,7 +84,7 @@ function resumePromptTimeoutSeconds(): number {
 
 export type RunResumedSessionOptions = {
   runId: string;
-  supervisorSessionId: string;
+  supervisorSessionId: string | null;
   acpSessionId: string;
   stepId: string;
   db?: Db;
@@ -196,9 +201,12 @@ async function findOpenNodeAttempt(
   db: Db,
   runId: string,
   nodeId: string,
-): Promise<{ id: string } | null> {
+): Promise<{ id: string; actionPromptOrdinal: number } | null> {
   const rows = await db
-    .select({ id: nodeAttempts.id })
+    .select({
+      id: nodeAttempts.id,
+      actionPromptOrdinal: nodeAttempts.actionPromptOrdinal,
+    })
     .from(nodeAttempts)
     .where(
       and(
@@ -305,6 +313,24 @@ export async function runResumedSession(
 ): Promise<void> {
   const db = opts.db ?? getDb();
   const { runId, supervisorSessionId, acpSessionId, stepId } = opts;
+
+  if (await hasFlowPermissionResume(db, runId)) {
+    const currentAssignmentId = await activeAssignmentIdOf(db, runId);
+
+    if (opts.assignmentId && opts.assignmentId !== currentAssignmentId) return;
+    await runFlow(runId, { db, executionHosts: opts.executionHosts });
+
+    return;
+  }
+  if (!supervisorSessionId)
+    throw new MaisterError(
+      "PRECONDITION",
+      "Resumed session has no current Flow authorization",
+      {
+        details: { runId, assignmentId: opts.assignmentId },
+      },
+    );
+  const permissionSessionId: string = supervisorSessionId;
   const startedAt = Date.now();
   const watchdogMs = resumePromptTimeoutSeconds() * 1_000;
 
@@ -439,7 +465,7 @@ export async function runResumedSession(
           "runResumedSession: no stored intent — cancelling to keep agent moving",
         );
         try {
-          await client.deliverInput(supervisorSessionId, {
+          await client.deliverInput(permissionSessionId, {
             kind: "permission",
             action: "cancel",
             requestId: ev.requestId,
@@ -456,7 +482,7 @@ export async function runResumedSession(
       }
 
       try {
-        await client.deliverInput(supervisorSessionId, {
+        await client.deliverInput(permissionSessionId, {
           kind: "permission",
           action: "select",
           requestId: ev.requestId,
@@ -519,12 +545,33 @@ export async function runResumedSession(
   let promptError: Error | null = null;
 
   try {
-    const handle = await client.prompt(supervisorSessionId, {
-      stepId,
-      prompt: RESUME_CONTINUATION_PROMPT,
-    });
+    // S2.12: the idle-resume continuation is an ACTION prompt on the node
+    // attempt it is waking, so it carries the same `node` owner the graph
+    // dispatch uses. Without an open attempt there is no owner and therefore
+    // no prompt — the run stays parked for the graph's own recovery instead of
+    // starting a turn nothing could finish after a restart.
+    const resumedAttempt = await findOpenNodeAttempt(db, runId, stepId);
 
-    promptResult = await handle.completion;
+    if (!resumedAttempt)
+      throw new MaisterError(
+        "PRECONDITION",
+        "resumed continuation has no open node attempt to own it",
+        { details: { runId, stepId, reason: "unowned_resume_continuation" } },
+      );
+    const handle = await client.prompt(
+      supervisorSessionId,
+      { stepId, prompt: PERMISSION_RESUME_PROMPT },
+      {
+        admitOwner: (tx) =>
+          admitNodePrompt(tx, client, supervisorSessionId, {
+            variant: "node",
+            nodeAttemptId: resumedAttempt.id,
+            promptOrdinal: resumedAttempt.actionPromptOrdinal,
+          }),
+      },
+    );
+
+    promptResult = await client.waitForPrompt(handle);
     stopReason = promptResult.stopReason;
     log.info(
       {
@@ -729,6 +776,15 @@ export function scheduleResumedSessionDrive(
       // failures, not silent live-process bugs.
       try {
         const db = opts.db ?? getDb();
+
+        if (await hasFlowPermissionResume(db, opts.runId)) {
+          log.warn(
+            { runId: opts.runId, driveId },
+            "owned permission resume awaits graph recovery",
+          );
+
+          return;
+        }
         const cr = await crashResumedRun(
           opts.runId,
           `driver-uncaught:${msg.slice(0, 96)}`,

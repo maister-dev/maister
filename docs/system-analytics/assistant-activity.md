@@ -7,7 +7,7 @@ surface exposed through `GET /api/v1/ext/activity`,
 `GET /api/v1/ext/runs/{runId}/activity`, and the matching MCP tools. It
 reduces existing MAIster state into a client-safe semantic feed: persisted
 facts come from `domain_events`, per-run semantic actions come from the
-transcript projector over `run.events.jsonl` and `run_messages`, and
+canonical execution-event projector and `run_messages`, and
 "needs you" / liveness come from existing run + HITL read models. Boundary:
 DTOs, salience filtering, cursor semantics, liveness truth table, and project
 isolation for assistant clients. Out of scope: new runtime collection,

@@ -59,6 +59,7 @@ import {
 
 const schema = schemaModule as unknown as Record<string, any>;
 const {
+  executionCommands,
   flowRevisions,
   flows,
   nodeAttempts,
@@ -200,6 +201,9 @@ afterAll(async () => {
 beforeEach(async () => {
   await db.delete(nodeAttempts);
   await db.delete(workspaces);
+  // Command evidence protects its run from deletion (D6), so a fixture reset
+  // discharges it explicitly instead of relying on the FK cascade.
+  await db.delete(executionCommands);
   await db.delete(runs);
   await db.delete(tasks);
 });

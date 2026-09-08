@@ -37,14 +37,8 @@ export function PackagesList({
   const [trust, setTrust] = useState<TrustFilter>("all");
   // Create a fresh local package (same flow as /studio/local) and open the
   // editor — a create affordance directly on the central packages view.
-  const {
-    creating,
-    setCreating,
-    busy,
-    error,
-    setError,
-    create,
-  } = useNewLocalPackage();
+  const { creating, setCreating, busy, error, setError, create } =
+    useNewLocalPackage();
 
   useEffect(() => {
     if (canManage && searchParams.get("create") === "flow") {

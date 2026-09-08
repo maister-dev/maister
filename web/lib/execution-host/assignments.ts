@@ -30,6 +30,7 @@ export const TEARDOWN_COMMAND_KINDS = [
   "session.checkpoint",
   "session.delete",
   "session.cancel",
+  "runtime_object.delete",
   "workspace.release",
 ] as const satisfies readonly CommandKind[];
 
@@ -214,7 +215,11 @@ export async function mintAssignment(
 
   await tx
     .update(runs)
-    .set({ executionAssignmentId: id })
+    .set({
+      executionAssignmentId: id,
+      flowDriverToken: null,
+      flowDriverLeaseExpiresAt: null,
+    })
     .where(eq(runs.id, input.runId));
 
   logger.info(

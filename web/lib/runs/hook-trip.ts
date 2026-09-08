@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { HookTripHaltRule } from "./hook-trip-rule";
+
 import { randomUUID } from "node:crypto";
 import { unlink } from "node:fs/promises";
 import path from "node:path";
@@ -19,6 +21,11 @@ import { runtimeRoot as configuredRuntimeRoot } from "@/lib/instance-config";
 import { logExecPolicyAction } from "@/lib/runs/exec-policy-audit";
 import { onStuckFromSnapshot } from "@/lib/runs/execution-policy";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
+import { captureAgentPauseSource } from "@/lib/execution-host/agent-pause-source";
+import {
+  isAgentPermissionPause,
+  supersedeAgentPausePermissions,
+} from "@/lib/execution-host/agent-pause-permissions";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (mirrors keepalive-sweeper.ts).
 const { hitlRequests, nodeAttempts, projects, runs } =
@@ -38,14 +45,13 @@ const log = pino({
 export { haltRuleFromEvent } from "./hook-trip-rule";
 export type { HookTripHaltRule } from "./hook-trip-rule";
 
-import type { HookTripHaltRule } from "./hook-trip-rule";
-
 export type EscalateHookTripArgs = {
   db: Db;
   runId: string;
   // flow → the node id; agent → the constant "agent" (no node_attempts row).
   stepId: string;
   supervisorSessionId: string;
+  assignmentId?: string;
   rule: HookTripHaltRule;
   toolCall?: unknown;
   runKind: "flow" | "agent";
@@ -153,7 +159,24 @@ export async function escalateHookTrip(
 
     return { escalated: false };
   }
-  if (run.status !== "Running") {
+  const assignmentId = args.assignmentId;
+  const ownedSource = assignmentId
+    ? await db.transaction((tx: Db) =>
+        captureAgentPauseSource(tx, {
+          runId,
+          assignmentId,
+          sessionId: supervisorSessionId,
+        }),
+      )
+    : null;
+  const permissionPause =
+    ownedSource && run.status === "NeedsInput"
+      ? await db.transaction((tx: Db) =>
+          isAgentPermissionPause(tx, runId, ownedSource.agentPrompt.commandId),
+        )
+      : false;
+
+  if (run.status !== "Running" && !permissionPause) {
     log.debug(
       { runId, status: run.status },
       "escalateHookTrip: run not Running — skip",
@@ -172,6 +195,7 @@ export async function escalateHookTrip(
   try {
     await args.checkpointSession(supervisorSessionId);
   } catch (err) {
+    if (ownedSource) throw err;
     if (isMaisterError(err) && err.code === "EXECUTOR_UNAVAILABLE") {
       log.warn(
         { runId, err: err.message },
@@ -219,6 +243,13 @@ export async function escalateHookTrip(
 
   try {
     paused = await db.transaction(async (tx: Db) => {
+      const source = args.assignmentId
+        ? await captureAgentPauseSource(tx, {
+            runId,
+            assignmentId: args.assignmentId,
+            sessionId: supervisorSessionId,
+          })
+        : null;
       const upd = await tx
         .update(runs)
         .set(
@@ -226,7 +257,22 @@ export async function escalateHookTrip(
             ? { status: "NeedsInput", currentStepId: stepId }
             : { status: "NeedsInput" },
         )
-        .where(and(eq(runs.id, runId), eq(runs.status, "Running")))
+        .where(
+          and(
+            eq(runs.id, runId),
+            eq(
+              runs.status,
+              source &&
+                (await isAgentPermissionPause(
+                  tx,
+                  runId,
+                  source.agentPrompt.commandId,
+                ))
+                ? "NeedsInput"
+                : "Running",
+            ),
+          ),
+        )
         .returning({ id: runs.id });
 
       if (upd.length === 0) return false;
@@ -240,9 +286,10 @@ export async function escalateHookTrip(
         runId,
         stepId,
         kind: "hook_trip",
-        schema,
+        schema: { ...schema, ...source },
         prompt,
       });
+      if (source) await supersedeAgentPausePermissions(tx, hitlRequestId);
 
       // Project-less local-package runs never arm guardrails, but guard the
       // project-scoped emits/assignment defensively (mirrors the budget path).

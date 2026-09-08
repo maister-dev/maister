@@ -57,6 +57,17 @@ export type HostCapabilities = {
   protocolVersion: number;
   supervisorVersion: string;
   adapters: string[];
+  dataPlane?: {
+    version: "execution-host-data-plane.v1";
+    eventStream: boolean;
+    asyncPrompt: boolean;
+    runtimeObjects: boolean;
+    limits: {
+      maxEventBytes: number;
+      maxObjectBytes: number;
+      maxReplayBatch: number;
+    };
+  } | null;
 };
 
 export async function findActiveLocalHost(

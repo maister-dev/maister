@@ -17,7 +17,7 @@ type Db = NodePgDatabase<typeof schema>;
 
 // Mirrors the keepalive sweeper's per-tick ceiling + concurrency so the backstop
 // stays bounded on a single host. SETTLE_GRACE forces one extra re-reconcile
-// after ended_at so the supervisor's async final cost.jsonl flush is captured.
+// after ended_at so a late durable usage event is captured.
 const PER_TICK_LIMIT = 50;
 const RECONCILE_CONCURRENCY = 6;
 const SETTLE_GRACE_MS = 2 * 60_000;
@@ -60,20 +60,19 @@ async function runWithConcurrency<T>(
 // sweep owns everything the consumer cannot.
 //
 // Progress is tracked by the durable runs.cost_reconciled_at marker (stamped on
-// EVERY attempt — success, missing-cost, or error), NOT by run_cost_rollups row
+// EVERY attempt — success or error), NOT by run_cost_rollups row
 // state. This is what makes the backstop actually complete + non-starving:
-//   - a run with no cost.jsonl is attempted ONCE and then settled, instead of
+//   - a run with no durable usage events is attempted ONCE and then settled, instead of
 //     staying eligible every tick and monopolizing the bounded oldest-first scan
 //     ahead of newer runs;
 //   - a pre-0083 rollup (NULL marker, empty by_runner) is re-reconciled once to
 //     backfill its by_runner attribution.
 // A run stays a candidate while cost_reconciled_at is NULL or still within
 // ended_at + SETTLE_GRACE (the one extra re-reconcile that captures the
-// supervisor's async final cost.jsonl flush).
+// final durable usage event).
 export async function reconcileTerminalCostRollups(
   opts: {
     client?: Db;
-    runtimeRoot?: string;
     lookbackHours?: number;
     limit?: number;
     settleGraceMs?: number;
@@ -114,7 +113,6 @@ export async function reconcileTerminalCostRollups(
     try {
       const result = await reconcile(row.runId, {
         client,
-        runtimeRoot: opts.runtimeRoot,
       });
 
       if (result.status === "reconciled") reconciled += 1;
@@ -129,7 +127,7 @@ export async function reconcileTerminalCostRollups(
       );
     } finally {
       // Durable progress marker — stamped regardless of outcome so an
-      // unreconcilable run (missing cost.jsonl / permanent CONFIG) is settled
+      // unreconcilable run is settled
       // after one attempt and never monopolizes the bounded scan. A stamp
       // before ended_at + grace still re-selects (late-flush capture); after it,
       // the run settles.

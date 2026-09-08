@@ -4,10 +4,8 @@ import type { SessionRecord } from "../types";
 import { EventEmitter } from "node:events";
 import { join } from "node:path";
 
-import pino from "pino";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { openEventsLog } from "../events-log";
 import {
   pendingPermissions,
   type AcpPermissionOutcome,
@@ -22,8 +20,6 @@ import {
   postJson,
   type BootedHost,
 } from "./_fixtures/boot-host";
-
-const silentLogger = pino({ level: "silent" });
 
 function makeFakeChild(): ChildProcess {
   return new EventEmitter() as unknown as ChildProcess;
@@ -67,12 +63,8 @@ async function registerFakeSession(
     monotonicId: 0,
   };
   const emitter = new EventEmitter();
-  const eventsLog = await openEventsLog(
-    join(runtimeRoot, `${sessionId}.events.jsonl`),
-    { logger: silentLogger },
-  );
 
-  registry.register(record, makeFakeChild(), emitter, { eventsLog });
+  registry.register(record, makeFakeChild(), emitter);
 
   return { record, emitter };
 }
@@ -162,10 +154,12 @@ describe("POST /sessions/:id/input direct validation paths", () => {
 
   it("known session with unknown requestId returns 410 HITL_TIMEOUT (terminal — deferred expired)", async () => {
     booted = await bootBare();
-    await registerFakeSession(booted.registry, booted.runtimeRoot, "s-unknown");
+    const sessionId = "00000000-0000-4000-8000-000000000011";
+
+    await registerFakeSession(booted.registry, booted.runtimeRoot, sessionId);
     const res = await postJson(
-      `${booted.url}/sessions/s-unknown/input`,
-      command("session.input", "s-unknown", {
+      `${booted.url}/sessions/${sessionId}/input`,
+      command("session.input", sessionId, {
         kind: "permission",
         action: "select",
         requestId: "11111111-1111-1111-1111-111111111111",
@@ -201,10 +195,12 @@ describe("POST /sessions/:id/input direct validation paths", () => {
 
   it("action=cancel on unknown requestId returns 410 HITL_TIMEOUT", async () => {
     booted = await bootBare();
-    await registerFakeSession(booted.registry, booted.runtimeRoot, "s-canc");
+    const sessionId = "00000000-0000-4000-8000-000000000012";
+
+    await registerFakeSession(booted.registry, booted.runtimeRoot, sessionId);
     const res = await postJson(
-      `${booted.url}/sessions/s-canc/input`,
-      command("session.input", "s-canc", {
+      `${booted.url}/sessions/${sessionId}/input`,
+      command("session.input", sessionId, {
         kind: "permission",
         action: "cancel",
         requestId: "33333333-3333-3333-3333-333333333333",
@@ -247,18 +243,20 @@ describe("POST /sessions/:id/input permission round-trip", () => {
 
   it("uses uuid requestId end-to-end: select resolves with selected outcome", async () => {
     booted = await bootBare();
-    await registerFakeSession(booted.registry, booted.runtimeRoot, "s-uuid");
+    const sessionId = "00000000-0000-4000-8000-000000000013";
+
+    await registerFakeSession(booted.registry, booted.runtimeRoot, sessionId);
     const requestId = "44444444-4444-4444-4444-444444444444";
     const d = deferredCapture();
 
-    pendingPermissions.register("s-uuid", requestId, {
+    pendingPermissions.register(sessionId, requestId, {
       resolve: d.resolve,
       reject: d.reject,
     });
 
     const res = await postJson(
-      `${booted.url}/sessions/s-uuid/input`,
-      command("session.input", "s-uuid", {
+      `${booted.url}/sessions/${sessionId}/input`,
+      command("session.input", sessionId, {
         kind: "permission",
         action: "select",
         requestId,
@@ -274,18 +272,20 @@ describe("POST /sessions/:id/input permission round-trip", () => {
 
   it("action=cancel resolves the deferred with {outcome:cancelled}", async () => {
     booted = await bootBare();
-    await registerFakeSession(booted.registry, booted.runtimeRoot, "s-cancel");
+    const sessionId = "00000000-0000-4000-8000-000000000014";
+
+    await registerFakeSession(booted.registry, booted.runtimeRoot, sessionId);
     const requestId = "55555555-5555-5555-5555-555555555555";
     const d = deferredCapture();
 
-    pendingPermissions.register("s-cancel", requestId, {
+    pendingPermissions.register(sessionId, requestId, {
       resolve: d.resolve,
       reject: d.reject,
     });
 
     const res = await postJson(
-      `${booted.url}/sessions/s-cancel/input`,
-      command("session.input", "s-cancel", {
+      `${booted.url}/sessions/${sessionId}/input`,
+      command("session.input", sessionId, {
         kind: "permission",
         action: "cancel",
         requestId,
@@ -301,18 +301,20 @@ describe("POST /sessions/:id/input permission round-trip", () => {
 
   it("second select on the same requestId returns 404 after first resolves", async () => {
     booted = await bootBare();
-    await registerFakeSession(booted.registry, booted.runtimeRoot, "s-idem");
+    const sessionId = "00000000-0000-4000-8000-000000000015";
+
+    await registerFakeSession(booted.registry, booted.runtimeRoot, sessionId);
     const requestId = "66666666-6666-6666-6666-666666666666";
     const d = deferredCapture();
 
-    pendingPermissions.register("s-idem", requestId, {
+    pendingPermissions.register(sessionId, requestId, {
       resolve: d.resolve,
       reject: d.reject,
     });
 
     const first = await postJson(
-      `${booted.url}/sessions/s-idem/input`,
-      command("session.input", "s-idem", {
+      `${booted.url}/sessions/${sessionId}/input`,
+      command("session.input", sessionId, {
         kind: "permission",
         action: "select",
         requestId,
@@ -323,8 +325,8 @@ describe("POST /sessions/:id/input permission round-trip", () => {
     expect(first.status).toBe(200);
 
     const second = await postJson(
-      `${booted.url}/sessions/s-idem/input`,
-      command("session.input", "s-idem", {
+      `${booted.url}/sessions/${sessionId}/input`,
+      command("session.input", sessionId, {
         kind: "permission",
         action: "select",
         requestId,
@@ -337,25 +339,28 @@ describe("POST /sessions/:id/input permission round-trip", () => {
 
   it("cross-session isolation: select in session A leaves session B's deferred pending", async () => {
     booted = await bootBare();
-    await registerFakeSession(booted.registry, booted.runtimeRoot, "sA");
-    await registerFakeSession(booted.registry, booted.runtimeRoot, "sB");
+    const sessionA = "00000000-0000-4000-8000-000000000016";
+    const sessionB = "00000000-0000-4000-8000-000000000017";
+
+    await registerFakeSession(booted.registry, booted.runtimeRoot, sessionA);
+    await registerFakeSession(booted.registry, booted.runtimeRoot, sessionB);
     const reqIdA = "77777777-7777-7777-7777-777777777777";
     const reqIdB = "88888888-8888-8888-8888-888888888888";
     const dA = deferredCapture();
     const dB = deferredCapture();
 
-    pendingPermissions.register("sA", reqIdA, {
+    pendingPermissions.register(sessionA, reqIdA, {
       resolve: dA.resolve,
       reject: dA.reject,
     });
-    pendingPermissions.register("sB", reqIdB, {
+    pendingPermissions.register(sessionB, reqIdB, {
       resolve: dB.resolve,
       reject: dB.reject,
     });
 
     const res = await postJson(
-      `${booted.url}/sessions/sA/input`,
-      command("session.input", "sA", {
+      `${booted.url}/sessions/${sessionA}/input`,
+      command("session.input", sessionA, {
         kind: "permission",
         action: "select",
         requestId: reqIdA,
@@ -366,24 +371,27 @@ describe("POST /sessions/:id/input permission round-trip", () => {
     expect(res.status).toBe(200);
     expect(dA.resolved()).toEqual({ outcome: "selected", optionId: "allow" });
     expect(dB.resolved()).toBeNull();
-    expect(pendingPermissions.size("sB")).toBe(1);
+    expect(pendingPermissions.size(sessionB)).toBe(1);
   });
 
   it("posting a session A's requestId to session B returns 410 (ownership boundary — deferred not found in B's pending set)", async () => {
     booted = await bootBare();
-    await registerFakeSession(booted.registry, booted.runtimeRoot, "owner-A");
-    await registerFakeSession(booted.registry, booted.runtimeRoot, "owner-B");
+    const sessionA = "00000000-0000-4000-8000-000000000018";
+    const sessionB = "00000000-0000-4000-8000-000000000019";
+
+    await registerFakeSession(booted.registry, booted.runtimeRoot, sessionA);
+    await registerFakeSession(booted.registry, booted.runtimeRoot, sessionB);
     const reqIdA = "99999999-9999-9999-9999-999999999999";
     const dA = deferredCapture();
 
-    pendingPermissions.register("owner-A", reqIdA, {
+    pendingPermissions.register(sessionA, reqIdA, {
       resolve: dA.resolve,
       reject: dA.reject,
     });
 
     const res = await postJson(
-      `${booted.url}/sessions/owner-B/input`,
-      command("session.input", "owner-B", {
+      `${booted.url}/sessions/${sessionB}/input`,
+      command("session.input", sessionB, {
         kind: "permission",
         action: "select",
         requestId: reqIdA,

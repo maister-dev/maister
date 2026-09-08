@@ -38,8 +38,16 @@ function rollup(nodeAttempts: ObservatoryNodeAttemptInput[]) {
 describe("T-B11 ADR-161 — operator restarts are excluded from both counters", () => {
   it("reports correctionRate 0 for a run whose only churn was operator restarts", () => {
     const m = rollup([
-      attempt({ attempt: 1, status: "Reworked", decision: "operator_interrupt" }),
-      attempt({ attempt: 2, status: "Reworked", decision: "operator_interrupt" }),
+      attempt({
+        attempt: 1,
+        status: "Reworked",
+        decision: "operator_interrupt",
+      }),
+      attempt({
+        attempt: 2,
+        status: "Reworked",
+        decision: "operator_interrupt",
+      }),
       attempt({ attempt: 3, status: "Succeeded" }),
     ]);
 
@@ -52,7 +60,11 @@ describe("T-B11 ADR-161 — operator restarts are excluded from both counters", 
   it("counts only the genuine reworks in a mixed run", () => {
     const m = rollup([
       attempt({ attempt: 1, status: "Reworked", decision: "rework" }),
-      attempt({ attempt: 2, status: "Reworked", decision: "operator_interrupt" }),
+      attempt({
+        attempt: 2,
+        status: "Reworked",
+        decision: "operator_interrupt",
+      }),
       attempt({ attempt: 3, status: "Succeeded" }),
     ]);
 
@@ -78,8 +90,16 @@ describe("T-B11 ADR-161 — operator restarts are excluded from both counters", 
   // had been filtered, retryCount would still read 2 here.
   it("does not leave retryCount inflated when reworkCount is filtered", () => {
     const m = rollup([
-      attempt({ attempt: 1, status: "Reworked", decision: "operator_interrupt" }),
-      attempt({ attempt: 2, status: "Reworked", decision: "operator_interrupt" }),
+      attempt({
+        attempt: 1,
+        status: "Reworked",
+        decision: "operator_interrupt",
+      }),
+      attempt({
+        attempt: 2,
+        status: "Reworked",
+        decision: "operator_interrupt",
+      }),
       attempt({ attempt: 3, status: "Running" }),
     ]);
 

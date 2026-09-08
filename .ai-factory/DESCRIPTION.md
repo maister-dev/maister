@@ -85,17 +85,19 @@ For the full vision, product model, architecture, and roadmap see
   startup, GC of `Abandoned/Done` worktrees + checkpointed sessions older
   than 7d.
 - **ACP-driven agent execution**: `supervisor/` daemon (separate Node
-  process, loopback HTTP+SSE IPC on the SAME host — the shared filesystem is
-  REQUIRED (ADR-023) and the daemon is addressed as a registered execution
-  host (ADR-166); remote hosts are a later stage) owns ACP sessions.
+  process, loopback HTTP+SSE IPC on the supported single host) owns ACP
+  sessions and is addressed as a registered execution host. Repository and
+  worktree material remains local until Stage C; Stage B runtime events and
+  objects cross only durable, path-free contracts (ADR-166/167).
   One agent process per session. Spawned on Launch; permission HITL is
   resolved live. Checkpoint/idle resume is implemented.
 - **Hybrid HITL**: ACP `session/request_permission` for binary approve/deny
   - artifact `input-<nodeId>.json` for structured forms (JSON Schema) + graph
     human-review finishes with typed decisions and bounded rework targets.
-- **Live log streaming**: supervisor publishes ACP `session/update` →
-  per-step log file on disk + SSE stream → Next.js Route Handler bridge
-  (`/api/runs/[id]/stream`) with `lastEventId` reconnect.
+- **Live execution streaming**: supervisor commits redacted ACP events to a
+  private durable outbox; the manager ingests canonical Postgres events and
+  serves `/api/runs/[id]/stream` with `lastEventId` replay. Raw logs remain
+  host-owned runtime objects.
 - **Diff view + merge**: raw `git diff` rendered as `<pre>`,
   `git merge --no-ff` on the parent's `main_branch`.
   Conflicts abort and surface "Conflict — resolve manually" in UI.
@@ -139,9 +141,8 @@ CHECKPOINT`). UI branches on `code`, never on string matching.
 |                   | checkpoint+respawn via the ACP `session/resume` call implemented. |
 | Model routing     | Anthropic-compatible providers configured through runner fields   |
 |                   | and supervisor environment references.                            |
-| Web ↔ supervisor | Loopback HTTP + SSE on ONE host; shared filesystem REQUIRED       |
-|                   | (ADR-023); the supervisor is a registered execution host (ADR-166) |
-|                   | — remote hosts are a later stage                                  |
+| Web ↔ supervisor | Loopback HTTP + SSE on ONE host through the ADR-166/167 execution-host contracts; no web runtime-data mount |
+|                   | Repository/worktree placement remains local until Stage C; remote trust/relay remains Stage D             |
 | Flow plugins      | git repos pinned by tag; installed to                             |
 |                   | `~/.maister/flows/<id>@<tag>/` and symlinked per project          |
 | Git workspaces    | Thin wrapper around `git worktree add/remove/list`                |
@@ -170,10 +171,11 @@ MAIster is split into two Node processes:
   Drizzle DB access + SSE bridge to supervisor. No agent processes here.
 - **`supervisor/`** — separate Node daemon: owns ACP sessions, spawns one
   agent process (`claude`, `codex`) per active session, heartbeat
-  watchdog, checkpoint + respawn via the ACP `session/resume` call, token-count →
-  cost-on-disk. HTTP+SSE interface over loopback; runs on the SAME host as
-  `web/` (shared filesystem REQUIRED, ADR-023) and is addressed as a
-  registered execution host (ADR-166); a remote host is a later stage.
+  watchdog, checkpoint + respawn via the ACP `session/resume` call, canonical
+  usage events, durable event outbox, and private runtime objects. HTTP+SSE
+  runs over loopback in the supported single-host deployment. Repository and
+  worktree placement stays local until Stage C; the web tier does not mount
+  supervisor runtime data.
 
 Hard architectural commitments (post-ACP revision — see root `CLAUDE.md`
 §1-8 for the canonical statement):
@@ -184,10 +186,10 @@ Hard architectural commitments (post-ACP revision — see root `CLAUDE.md`
    activity; the checkpoint path moves `NeedsInput` to `NeedsInputIdle`
    and later respawns + resumes via the ACP `session/resume` call.
    No `fs.watch`, no `chokidar`, no polling for state transitions.
-2. **SSE pipe-to-disk**: every ACP `session/update` line streamed to per-
-   step log file via `fs.createWriteStream` _in parallel_ with SSE
-   emission, so neither tier OOMs on >10MB output. SSE read-side tails
-   the file for `lastEventId` reconnect.
+2. **Durable execution-host data plane**: the supervisor may stream raw output
+   to private files, but externally visible events commit to its SQLite outbox
+   before publication. The manager owns canonical Postgres replay and runtime
+   metadata; content is streamed by opaque object ID with bounded ranges.
 3. **Typed error taxonomy**: `MaisterError extends Error` with
    discriminated `code` (including new codes `EXECUTOR_UNAVAILABLE`,
    `FLOW_INSTALL`, `ACP_PROTOCOL`, `CHECKPOINT`). UI branches on `code`.

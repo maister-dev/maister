@@ -15,6 +15,7 @@ const runBrainDecaySweepMock = vi.hoisted(() => vi.fn());
 const runBrainReindexSweepMock = vi.hoisted(() => vi.fn());
 const sweepEvaluationEvidenceMock = vi.hoisted(() => vi.fn());
 const runPlainAgentDirectoryGcSweepMock = vi.hoisted(() => vi.fn());
+const ensureLocalExecutionDataPlaneMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/runs/keepalive-sweeper", () => ({
   runSweepTick: runSweepTickMock,
@@ -55,6 +56,7 @@ vi.mock("@/lib/runs/sync-recovery", () => ({
 // ADR-166: the execution-host reconcile pass needs the DB + the local host;
 // mocked like every other arm so `errors: []` stays a real guard.
 vi.mock("@/lib/execution-host", () => ({
+  ensureLocalExecutionDataPlane: ensureLocalExecutionDataPlaneMock,
   executionCommandReconcilePass: vi.fn(async () => ({
     commands: {
       scanned: 0,
@@ -155,6 +157,12 @@ describe("scheduler system sweeps", () => {
     runPlainAgentDirectoryGcSweepMock
       .mockReset()
       .mockResolvedValue({ scanned: 0, removed: 0, missing: 0, failed: 0 });
+    ensureLocalExecutionDataPlaneMock.mockReset().mockResolvedValue({
+      status: "registered",
+      host: { id: "11111111-1111-4111-8111-111111111111" },
+      action: "touch",
+      restarted: false,
+    });
   });
 
   it("runs every cleanup service once as part of the canonical system sweep", async () => {
@@ -173,6 +181,32 @@ describe("scheduler system sweeps", () => {
     expect(runPlainAgentDirectoryGcSweepMock).toHaveBeenCalledTimes(1);
     expect(runSweepTickMock).toHaveBeenCalledTimes(1);
     expect(runReconcileSweepMock).toHaveBeenCalledTimes(1);
+    expect(ensureLocalExecutionDataPlaneMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("reactivates canonical event ingestion and reports its host", async () => {
+    const { runSystemSweep } = await import("../system-sweeps");
+
+    const summary = await runSystemSweep();
+
+    expect(summary.executionEventPlane).toEqual({
+      status: "active",
+      executionHostId: "11111111-1111-4111-8111-111111111111",
+    });
+  });
+
+  it("surfaces an event-plane activation failure for scheduler retry", async () => {
+    ensureLocalExecutionDataPlaneMock.mockRejectedValueOnce(
+      new Error("supervisor offline"),
+    );
+    const { runSystemSweep } = await import("../system-sweeps");
+
+    const summary = await runSystemSweep();
+
+    expect(summary.executionEventPlane).toBeNull();
+    expect(summary.bundleErrors).toContain(
+      "execution event-plane activation failed: supervisor offline",
+    );
   });
 
   // ADR-157 (T32): the context-mount backstop is a REGISTERED member of the

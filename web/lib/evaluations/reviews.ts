@@ -87,7 +87,10 @@ function asAdjudicatedAggregate(
   if (typeof value.algorithm !== "string" || !value.algorithm.includes("@")) {
     return null;
   }
-  if (typeof value.quorum !== "number" || typeof value.quorumMet !== "boolean") {
+  if (
+    typeof value.quorum !== "number" ||
+    typeof value.quorumMet !== "boolean"
+  ) {
     return null;
   }
   if (
@@ -176,7 +179,11 @@ async function advanceAdjudicatedExecution(
 
   if (exec.status !== "review_required") {
     log.warn(
-      { reviewId: args.reviewId, executionId: args.executionId, status: exec.status },
+      {
+        reviewId: args.reviewId,
+        executionId: args.executionId,
+        status: exec.status,
+      },
       "review resolved on a non-review_required execution; FSM advance skipped",
     );
 
@@ -238,7 +245,8 @@ async function advanceAdjudicatedExecution(
       from: "review_required",
       to,
       expectedVersion: exec.version,
-      patch: to === "partial" ? { terminalReason: "quorum_not_met" } : undefined,
+      patch:
+        to === "partial" ? { terminalReason: "quorum_not_met" } : undefined,
       payload: { reviewId: args.reviewId, adjudicated: adjudicated !== null },
     },
     tx,

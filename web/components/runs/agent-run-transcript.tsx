@@ -1,6 +1,7 @@
 "use client";
 
 import type { ReactElement } from "react";
+import type { NodeTranscriptPanelLabels } from "@/components/runs/node-transcript-panel";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -9,7 +10,6 @@ import {
   type TranscriptLabels,
   type TranscriptMessage,
 } from "@/components/run-transcript/transcript-view";
-import type { NodeTranscriptPanelLabels } from "@/components/runs/node-transcript-panel";
 import { CHANGE_SUMMARY_REFRESH_DEBOUNCE_MS } from "@/lib/runs/live-inspector";
 import { useRunStream } from "@/lib/use-run-stream";
 
@@ -32,7 +32,7 @@ function buildTranscriptLabels(
 
 // Run-scoped transcript for a standalone agent run. The flow timeline is empty
 // for agents (no node attempts), so this renders the coalesced ACP conversation
-// (thinking + tool calls + messages) read whole-run from `run.events.jsonl` via
+// (thinking + tool calls + messages) read whole-run from canonical Postgres events via
 // the shared TranscriptView. A run-scoped clone of NodeTranscriptPanel — fetches
 // the transcript route WITHOUT `?node`.
 export function AgentRunTranscript({

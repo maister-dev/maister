@@ -68,6 +68,26 @@ vi.mock("@/lib/db/client", () => ({
   getDb: () => fakeDb,
 }));
 
+vi.mock("@/lib/runs/active-run-session", () => ({
+  loadActiveRunSession: vi.fn(async (_db: unknown, runId: string) => {
+    const run = dbState.tables.runs.find((row) => row.id === runId);
+
+    return run
+      ? {
+          id: `logical:${runId}`,
+          executionAssignmentId: null,
+          sessionName: "default",
+          acpSessionId: (run.acpSessionId ?? null) as string | null,
+          hostSessionId: (run.hostSessionId ?? null) as string | null,
+          runnerSnapshot: null,
+          capabilityAgent: null,
+          runnerId: null,
+          runnerResolutionTier: null,
+        }
+      : null;
+  }),
+}));
+
 vi.mock("@/lib/authz", () => ({
   requireActiveSession: vi.fn(async () => ({
     id: "user-1",
@@ -164,6 +184,7 @@ function seedScratchRun(
     createdByUserId: overrides.createdByUserId ?? null,
     status: overrides.runStatus ?? "Running",
     acpSessionId: "acp-1",
+    hostSessionId: overrides.supervisorSessionId ?? null,
     currentStepId: "scratch-dialog",
     endedAt: null,
   });
@@ -172,7 +193,6 @@ function seedScratchRun(
       runId,
       projectId,
       dialogStatus: overrides.dialogStatus ?? "Running",
-      supervisorSessionId: overrides.supervisorSessionId ?? null,
       updatedAt: null,
     });
   }
@@ -251,7 +271,6 @@ describe("POST /api/scratch-runs/[runId]/discard", () => {
     expect(dbState.tables.workspaces[0].removedAt).toBeNull();
     expect(dbState.tables.scratch_runs[0]).toMatchObject({
       dialogStatus: "Running",
-      supervisorSessionId: null,
     });
     expect(dbState.tables.runs[0]).toMatchObject({
       status: "Running",
@@ -432,7 +451,6 @@ describe("POST /api/scratch-runs/[runId]/discard", () => {
     });
     expect(dbState.tables.scratch_runs[0]).toMatchObject({
       dialogStatus: "Running",
-      supervisorSessionId: "sup-live",
     });
     expect(removeOwnedWorktree).not.toHaveBeenCalled();
     expect(cleanupLocalPackageAssistantMaterialization).not.toHaveBeenCalled();

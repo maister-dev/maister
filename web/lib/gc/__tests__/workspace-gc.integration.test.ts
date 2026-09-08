@@ -45,6 +45,7 @@ import {
 
 const schema = schemaModule as unknown as Record<string, any>;
 const {
+  executionCommands,
   evaluationParticipants,
   evaluationRecipes,
   evaluationStudies,
@@ -149,6 +150,9 @@ beforeEach(async () => {
   await db.delete(evaluationParticipants);
   await db.delete(evaluationRecipes);
   await db.delete(evaluationStudies);
+  // Command evidence protects its run from deletion (D6): discharge it
+  // explicitly instead of relying on the FK cascade.
+  await db.delete(executionCommands);
   await db.delete(runs);
   await db.delete(tasks);
 });

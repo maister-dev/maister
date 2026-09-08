@@ -10,7 +10,6 @@ import { join } from "node:path";
 import pino from "pino";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { openEventsLog } from "../events-log";
 import { EmptyPayloadSchema } from "../http-api";
 import {
   createPendingPermissions,
@@ -53,10 +52,6 @@ async function registerExitedSession(
   sessionId: string,
 ): Promise<void> {
   const emitter = new EventEmitter();
-  const eventsLog = await openEventsLog(
-    join(runtimeRoot, `${sessionId}.events.jsonl`),
-    { logger: silentLogger },
-  );
 
   registry.register(
     {
@@ -79,7 +74,6 @@ async function registerExitedSession(
     },
     makeFakeChild(),
     emitter,
-    { eventsLog },
   );
 }
 
@@ -164,10 +158,12 @@ describe("POST /sessions/:id/checkpoint — direct route coverage", () => {
 
   it("already-exited session returns 200 with alreadyCheckpointed: true (idempotency)", async () => {
     booted = await bootBare();
-    await registerExitedSession(booted.registry, booted.runtimeRoot, "s-done");
+    const sessionId = "00000000-0000-4000-8000-000000000003";
+
+    await registerExitedSession(booted.registry, booted.runtimeRoot, sessionId);
     const res = await postJson(
-      `${booted.url}/sessions/s-done/checkpoint`,
-      command("session.checkpoint", "s-done"),
+      `${booted.url}/sessions/${sessionId}/checkpoint`,
+      command("session.checkpoint", sessionId),
     );
 
     expect(res.status).toBe(200);
@@ -178,7 +174,8 @@ describe("POST /sessions/:id/checkpoint — direct route coverage", () => {
     };
 
     expect(body.alreadyCheckpointed).toBe(true);
-    expect(body.sessionId).toBe("s-done");
-    expect(body.monotonicId).toBe(42);
+    expect(body.sessionId).toBe(sessionId);
+    // The accepted checkpoint command itself is canonically emitted first.
+    expect(body.monotonicId).toBe(43);
   });
 });

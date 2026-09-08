@@ -77,10 +77,13 @@ describe("PlanReviewV1 contract", () => {
   });
 
   it("refuses a blocker set beyond the declared V1 bound", () => {
-    const decisions = Array.from({ length: PLAN_REVIEW_MAX_DECISIONS + 1 }, (_, index) => ({
-      ...validContract.decisions[0],
-      id: `decision-${index}`,
-    }));
+    const decisions = Array.from(
+      { length: PLAN_REVIEW_MAX_DECISIONS + 1 },
+      (_, index) => ({
+        ...validContract.decisions[0],
+        id: `decision-${index}`,
+      }),
+    );
 
     expect(() =>
       parsePlanReviewContract({ ...validContract, decisions }),

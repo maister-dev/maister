@@ -10,6 +10,10 @@ vi.mock("@/lib/worktree", () => ({
   DIFF_TRUNCATED_MARKER: "\n[diff-trunc]\n",
 }));
 
+vi.mock("@/lib/execution-host/runtime-objects", () => ({
+  readRuntimeObjectContent: vi.fn(),
+}));
+
 import {
   ARTIFACT_TRUNCATED_MARKER,
   artifactContentToTemplateText,
@@ -17,10 +21,12 @@ import {
   resolveArtifactContent,
 } from "@/lib/flows/graph/artifact-content";
 import { isMaisterError } from "@/lib/errors";
+import { readRuntimeObjectContent } from "@/lib/execution-host/runtime-objects";
 import { diffRange, logRange } from "@/lib/worktree";
 
 const mockedDiffRange = vi.mocked(diffRange);
 const mockedLogRange = vi.mocked(logRange);
+const mockedReadRuntimeObjectContent = vi.mocked(readRuntimeObjectContent);
 
 // A fake drizzle Db whose `.select().from().where()` resolves to `rows`.
 function fakeDb(rows: unknown[]) {
@@ -44,6 +50,7 @@ describe("resolveArtifactContent — RAW (no cap, no divergence)", () => {
   beforeEach(() => {
     mockedDiffRange.mockReset();
     mockedLogRange.mockReset();
+    mockedReadRuntimeObjectContent.mockReset();
   });
 
   it("inline → full text, even >256 KiB (proves no cap in the resolver)", async () => {
@@ -116,6 +123,35 @@ describe("resolveArtifactContent — RAW (no cap, no divergence)", () => {
     );
 
     expect(r).toEqual({ kind: "json", value: { answer: "yes" } });
+  });
+
+  it("execution-object → bounded manager-mediated content with no runtime path", async () => {
+    mockedReadRuntimeObjectContent.mockResolvedValue({
+      object: { id: "d0b23d15-a3de-49e8-a73f-5e9e96c847cb" },
+      content: {
+        bytes: new TextEncoder().encode("host-owned evidence"),
+        contentRange: "bytes 0-17/18",
+        contentDigest: "sha-256=:abc=:",
+      },
+    } as never);
+
+    const r = await resolveArtifactContent(
+      {
+        locator: {
+          kind: "execution-object",
+          objectId: "d0b23d15-a3de-49e8-a73f-5e9e96c847cb",
+        },
+      },
+      ctx({ maxBytes: 18 }),
+    );
+
+    expect(r).toEqual({ kind: "text", text: "host-owned evidence" });
+    expect(mockedReadRuntimeObjectContent).toHaveBeenCalledWith({
+      db: expect.anything(),
+      runId: "run1",
+      objectId: "d0b23d15-a3de-49e8-a73f-5e9e96c847cb",
+      range: { start: 0, end: 17 },
+    });
   });
 });
 

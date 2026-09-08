@@ -3,6 +3,7 @@ import type { ExecutionCommand, ExecutionHost } from "@/lib/db/schema";
 import type { CommandReceipt, ExecutionHostTransport } from "./contracts";
 import type { CommandEnvelope, CommandKind } from "./types";
 import type { LegacyRunsSummary } from "./legacy";
+import type { CommandRetirementSummary } from "./retirement";
 
 import { and, eq, inArray, lt } from "drizzle-orm";
 import pino, { type Logger } from "pino";
@@ -10,26 +11,39 @@ import pino, { type Logger } from "pino";
 import { setAssignmentWorkspace } from "./assignments";
 import {
   loadOpenCommands,
+  casTransition,
+  recordUnknownPromptAdmission,
   markFailed,
   markFenced,
   markSucceeded,
   OPEN_COMMANDS_PAGE_SIZE,
-  pruneTerminalCommands,
   requeueDelivering,
   type OpenCommandsCursor,
 } from "./commands";
 import { applyCreateAck } from "./create-ack";
-import { deliverCommand } from "./deliverer";
+import { deliverCommand, startAsyncPrompt } from "./deliverer";
+import {
+  COMMAND_REQUEST_SCHEMA,
+  promptEnvelopeFromCommand,
+} from "./command-request";
+import { classifyPromptTransportFailure } from "./prompt-transport";
+import { reconcilePromptCommand } from "./prompt-reconciliation";
 import { getHostById, STALE_ASSIGNMENT_RUN_STATUSES } from "./hosts";
 import { buildEnvelope } from "./ledger";
 import { defaultTransport } from "./default-transport";
 import { reportLegacyActiveRuns } from "./legacy";
 import {
-  DELIVERING_IN_FLIGHT_GRACE_MS,
-  EXECUTION_COMMAND_RETENTION_DAYS,
-} from "./types";
+  reportUnreconciledCommands,
+  retireEligibleCommands,
+} from "./retirement";
+import { reconcileStoredPromptEvidence } from "./prompt-evidence";
+import { DELIVERING_IN_FLIGHT_GRACE_MS } from "./types";
 
-import { executionAssignments, runs } from "@/lib/db/schema";
+import {
+  executionAssignments,
+  executionRuntimeObjects,
+  runs,
+} from "@/lib/db/schema";
 import { getDb } from "@/lib/db/client";
 
 const defaultLog = pino({
@@ -102,6 +116,12 @@ function driverlessSend(
           target,
           envelope as CommandEnvelope<Record<string, never>>,
         );
+    case "runtime_object.delete":
+      return (envelope) =>
+        transport.deleteRuntimeObject(
+          target,
+          envelope as CommandEnvelope<{ generation: number }>,
+        );
     default:
       return null;
   }
@@ -120,6 +140,12 @@ async function foldReceipt(
     await db.transaction(async (tx) => {
       const txDb = tx as unknown as Db;
 
+      if (row.kind === "session.create")
+        await tx
+          .select({ id: runs.id })
+          .from(runs)
+          .where(eq(runs.id, row.runId))
+          .for("update");
       await markSucceeded(txDb, row.id, null, receipt.body, { logger, now });
       if (row.kind === "session.create") {
         const payload = row.payload as {
@@ -132,7 +158,8 @@ async function foldReceipt(
         };
 
         if (typeof body.sessionId === "string") {
-          await applyCreateAck(txDb, {
+          const bindingDisposition = await applyCreateAck(txDb, {
+            commandId: row.id,
             runId: row.runId,
             sessionName:
               typeof payload.sessionName === "string"
@@ -151,6 +178,16 @@ async function foldReceipt(
                   : null,
             },
           });
+
+          logger.info(
+            {
+              commandId: row.id,
+              runId: row.runId,
+              assignmentId: row.executionAssignmentId,
+              bindingDisposition,
+            },
+            "create-receipt-binding-reconciled",
+          );
         }
       }
       if (row.kind === "workspace.adopt") {
@@ -164,6 +201,22 @@ async function foldReceipt(
             now,
           );
         }
+      }
+      if (row.kind === "runtime_object.delete" && row.targetSessionId) {
+        await tx
+          .update(executionRuntimeObjects)
+          .set({ state: "deleted", deletedAt: now, lastError: null })
+          .where(
+            and(
+              eq(executionRuntimeObjects.id, row.targetSessionId),
+              eq(executionRuntimeObjects.runId, row.runId),
+              eq(
+                executionRuntimeObjects.executionAssignmentId,
+                row.executionAssignmentId,
+              ),
+              eq(executionRuntimeObjects.assignmentEpoch, row.assignmentEpoch),
+            ),
+          );
       }
     });
     logger.info(
@@ -180,10 +233,32 @@ async function foldReceipt(
   }
 
   if (receipt.phase === "rejected") {
-    const body = receipt.body as { code?: unknown };
+    const body = receipt.body as {
+      code?: unknown;
+      message?: unknown;
+      reason?: unknown;
+      details?: unknown;
+    };
+    const details =
+      body.details &&
+      typeof body.details === "object" &&
+      !Array.isArray(body.details)
+        ? body.details
+        : null;
+    const reason =
+      typeof body.reason === "string"
+        ? body.reason
+        : details && "reason" in details && typeof details.reason === "string"
+          ? details.reason
+          : null;
     const fenced = body.code === "FENCED";
+    const error = {
+      code: typeof body.code === "string" ? body.code : "ACP_PROTOCOL",
+      ...(typeof body.message === "string" ? { message: body.message } : {}),
+      ...(reason ? { reason } : {}),
+    };
 
-    await (fenced ? markFenced : markFailed)(db, row.id, null, receipt.body, {
+    await (fenced ? markFenced : markFailed)(db, row.id, null, error, {
       logger,
       now,
     });
@@ -197,7 +272,7 @@ async function foldReceipt(
       "command-recovered-from-receipt",
     );
 
-    return "folded";
+    return reason === "turn_lost" ? "turnLost" : "folded";
   }
 
   if (receipt.inflight) return "skippedInFlight";
@@ -279,6 +354,21 @@ export async function recoverExecutionCommands(
     const host = await hostFor(row.executionHostId);
 
     if (!host) {
+      if (row.kind === "session.prompt" || row.createIntent) {
+        if (row.createIntent) {
+          summary.skippedInFlight += 1;
+
+          return;
+        }
+        await reconcileStoredPromptEvidence(
+          db,
+          row.id,
+          AbortSignal.timeout(30_000),
+        );
+        summary.skippedInFlight += 1;
+
+        return;
+      }
       await orphan(db, row, "ORPHANED", at, logger);
       summary.orphaned += 1;
 
@@ -294,16 +384,165 @@ export async function recoverExecutionCommands(
 
         return;
       }
+      const runtimeObjectId =
+        queued.kind === "runtime_object.delete" ? queued.targetSessionId : null;
+
       await deliverCommand({
         db,
         command: queued,
         envelope: envelopeFor(queued, host),
         send,
+        onAck: runtimeObjectId
+          ? async (tx) => {
+              await tx
+                .update(executionRuntimeObjects)
+                .set({ state: "deleted", deletedAt: at, lastError: null })
+                .where(
+                  and(
+                    eq(executionRuntimeObjects.id, runtimeObjectId),
+                    eq(executionRuntimeObjects.runId, queued.runId),
+                    eq(
+                      executionRuntimeObjects.executionAssignmentId,
+                      queued.executionAssignmentId,
+                    ),
+                    eq(
+                      executionRuntimeObjects.assignmentEpoch,
+                      queued.assignmentEpoch,
+                    ),
+                  ),
+                );
+            }
+          : undefined,
         logger,
         now,
       });
       summary.redelivered += 1;
     };
+
+    if (row.kind === "session.prompt") {
+      const evidence = await reconcilePromptCommand({
+        db,
+        commandId: row.id,
+        lookupReceipt: (id) => transport.getCommandReceipt(id),
+        now,
+        logger,
+      });
+
+      if (
+        evidence.disposition === "waiting" &&
+        evidence.command.state !== "accepted" &&
+        evidence.command.transportState !== "acknowledged" &&
+        (evidence.receiptRead === "unavailable" ||
+          (evidence.receiptRead === "missing" &&
+            evidence.command.attempts >= evidence.command.maxAttempts))
+      ) {
+        await recordUnknownPromptAdmission(
+          db,
+          row.id,
+          evidence.command.attempts,
+          evidence.command.nextAttemptAt ?? new Date(at.getTime() + 5_000),
+          evidence.command.attempts >= evidence.command.maxAttempts
+            ? "reconciliation_required"
+            : "unknown",
+          { logger, now: at },
+        );
+        summary.skippedInFlight += 1;
+
+        return;
+      }
+
+      // Only a reachable missing receipt permits replay, and only from the
+      // exact immutable v2 request while its original assignment is current.
+      const pending = evidence.command;
+
+      if (
+        evidence.disposition === "waiting" &&
+        evidence.receiptRead === "missing" &&
+        pending.requestSchema === COMMAND_REQUEST_SCHEMA &&
+        pending.transportState !== "reconciliation_required" &&
+        pending.transportState !== "acknowledged" &&
+        pending.attempts < pending.maxAttempts &&
+        pending.state !== "accepted"
+      ) {
+        const [assignment] = await db
+          .select({ id: executionAssignments.id })
+          .from(executionAssignments)
+          .innerJoin(
+            runs,
+            eq(runs.executionAssignmentId, executionAssignments.id),
+          )
+          .where(
+            and(
+              eq(executionAssignments.id, pending.executionAssignmentId),
+              eq(executionAssignments.state, "active"),
+              eq(executionAssignments.epoch, pending.assignmentEpoch),
+              eq(runs.id, pending.runId),
+            ),
+          )
+          .limit(1);
+
+        if (assignment) {
+          const envelope = promptEnvelopeFromCommand(pending, host.hostKey);
+          const queued =
+            pending.state === "delivering"
+              ? await casTransition(
+                  db,
+                  pending.id,
+                  ["delivering"],
+                  pending.attempts,
+                  { state: "queued", deliveringSince: null },
+                  { logger, now: at },
+                )
+              : { changed: true, row: pending };
+
+          if (queued.changed && queued.row) {
+            await startAsyncPrompt({
+              db,
+              command: queued.row,
+              envelope,
+              start: (original) =>
+                transport.startPrompt(
+                  envelope.target!.hostSessionId,
+                  original as typeof envelope,
+                ),
+              lookupReceipt: (id) => transport.getCommandReceipt(id),
+              logger,
+              now,
+            });
+            summary.redelivered += 1;
+
+            return;
+          }
+        }
+      }
+      if (evidence.disposition === "settled") {
+        const details = evidence.command.lastError?.details;
+
+        if (
+          details &&
+          typeof details === "object" &&
+          "reason" in details &&
+          details.reason === "turn_lost"
+        )
+          summary.turnLost += 1;
+        else summary.folded += 1;
+      } else summary.skippedInFlight += 1;
+
+      return;
+    }
+
+    if (row.createIntent) {
+      // Only the leased Flow driver may re-send the private create request.
+      // Generic recovery may settle a receipt, never orphan a retained intent
+      // or reconstruct its payload from the diagnostic projection.
+      const receipt = await transport.getCommandReceipt(row.id);
+
+      if (receipt)
+        summary[await foldReceipt(db, row, receipt, at, logger)] += 1;
+      else summary.skippedInFlight += 1;
+
+      return;
+    }
 
     if (row.state === "queued") {
       await redeliver(row);
@@ -349,7 +588,12 @@ export async function recoverExecutionCommands(
       try {
         await recoverRow(row);
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
+        const message =
+          row.kind === "session.prompt"
+            ? classifyPromptTransportFailure(err).causeCode
+            : err instanceof Error
+              ? err.message
+              : String(err);
 
         summary.errors.push(`${row.kind} ${row.id}: ${message}`);
         logger.error(
@@ -424,24 +668,11 @@ export async function releaseStaleAssignments(
   return released.length;
 }
 
-export async function pruneExecutionCommands(
-  opts: { db?: Db; now?: () => Date } = {},
-): Promise<number> {
-  const db = opts.db ?? getDb();
-  const now = (opts.now ?? (() => new Date()))();
-
-  return pruneTerminalCommands(
-    db,
-    new Date(
-      now.getTime() - EXECUTION_COMMAND_RETENTION_DAYS * 24 * 60 * 60 * 1000,
-    ),
-  );
-}
-
 export type ExecutionHostSweepSummary = {
   commands: ExecutionCommandRecoverySummary;
   assignmentsReleased: number;
-  commandsPruned: number;
+  commandRetirement: CommandRetirementSummary;
+  unreconciledCommands: number;
   // D9: pre-ADR-166 runs still executing without a placement, reported on
   // every pass until they leave the live statuses.
   legacy: LegacyRunsSummary;
@@ -461,10 +692,22 @@ export async function executionCommandReconcilePass(
     now: opts.now,
     logger: opts.logger,
   });
-  const commandsPruned = await pruneExecutionCommands({
-    db: opts.db,
-    now: opts.now,
+  const commandRetirement = await retireEligibleCommands({
+    ...(opts.db ? { db: opts.db } : {}),
+    ...(opts.now ? { now: opts.now() } : {}),
+    ...(opts.logger ? { logger: opts.logger } : {}),
+  });
+  const unreconciledCommands = await reportUnreconciledCommands({
+    ...(opts.db ? { db: opts.db } : {}),
+    ...(opts.now ? { now: opts.now() } : {}),
+    ...(opts.logger ? { logger: opts.logger } : {}),
   });
 
-  return { commands, assignmentsReleased, commandsPruned, legacy };
+  return {
+    commands,
+    assignmentsReleased,
+    commandRetirement,
+    unreconciledCommands,
+    legacy,
+  };
 }

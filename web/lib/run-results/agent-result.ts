@@ -1,3 +1,4 @@
+import type { RawNodeOutputPayload } from "@/lib/flows/graph/node-output";
 import type {
   RunResultContract,
   RunResultInvalidReason,
@@ -35,6 +36,17 @@ export function decideAgentResult(args: {
     // and reads as absent rather than as a truncated parse.
     args.maxBytes ?? nodeOutputMaxBytes(),
   );
+
+  return decideAgentResultFromOutput({ ...args, output: block });
+}
+
+/** Apply the same public contract to a fully consumed original output stream. */
+export function decideAgentResultFromOutput(args: {
+  contract: RunResultContract;
+  output: RawNodeOutputPayload;
+  maxBytes?: number;
+}): AgentResultDecision {
+  const block = args.output;
 
   if (block.kind === "absent") {
     // `required` excuses ABSENCE only — and an agent contract is always

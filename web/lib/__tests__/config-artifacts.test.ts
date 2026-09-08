@@ -381,16 +381,27 @@ describe("validateGraphManifest — artifact validation (M12 Phase 2)", () => {
       expect((caught as any).code).toBe("CONFIG");
     });
 
-    it("accepts valid relative path in produces", async () => {
+    it("accepts valid relative path for manager-executed check nodes", async () => {
       const path = await writeGraph("produces-path-valid.yaml", (m) => {
-        (m.nodes[0].output as any).produces[0].path = "outputs/diff.json";
+        (m.nodes[1].output as any).produces[0].path = "outputs/diff.json";
       });
 
       const manifest = await loadFlowManifest(path);
 
-      expect(manifest.nodes![0].output?.produces![0].path).toBe(
+      expect(manifest.nodes![1].output?.produces![0].path).toBe(
         "outputs/diff.json",
       );
+    });
+
+    it("rejects a path locator on an ACP-executed node", async () => {
+      const path = await writeGraph("produces-path-acp.yaml", (m) => {
+        (m.nodes[0].output as any).produces[0].path = "outputs/diff.json";
+      });
+
+      await expect(loadFlowManifest(path)).rejects.toMatchObject({
+        code: "CONFIG",
+        message: expect.stringMatching(/typed execution-host output/i),
+      });
     });
   });
 

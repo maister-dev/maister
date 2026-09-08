@@ -2225,7 +2225,6 @@ export async function recordDrop(args: RecordDropInput): Promise<void> {
           .update(scratchRuns)
           .set({
             dialogStatus: "Abandoned",
-            supervisorSessionId: null,
             updatedAt: args.removedAt,
           })
           .where(eq(scratchRuns.runId, args.runId))

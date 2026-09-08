@@ -13,6 +13,8 @@ export type {
   ExecutionHostTransport,
   HostHealth,
   InputDeliveryResult,
+  RuntimeObjectMetadata,
+  RuntimeObjectOutputBinding,
   InputPayload,
   WorkspaceRecord,
 } from "./contracts";
@@ -62,8 +64,14 @@ export type {
 } from "./client";
 export { createExecutionHosts, executionHosts } from "./client";
 export { getPlatformDiagnostics, getPlatformStatus } from "./platform-status";
-export type { PromptHandle } from "./deliverer";
-export { COMMAND_POLICY, isFencedError, isUnknownOutcome } from "./deliverer";
+export type { PromptHandle, PromptQueryResult } from "./deliverer";
+export {
+  COMMAND_POLICY,
+  isFencedError,
+  isUnknownOutcome,
+  queryPrompt,
+} from "./deliverer";
+export { rearmPromptAdmission } from "./commands";
 export { buildEnvelope, fencedLocallyError } from "./ledger";
 export {
   getActiveAssignment,
@@ -74,6 +82,11 @@ export {
   releaseAssignmentForRun,
 } from "./assignments";
 export { ensureAssignment, mintPlacement } from "./placement";
+export {
+  executionDataPlaneModeForHost,
+  selectExecutionDataPlaneMode,
+} from "./data-plane-capabilities";
+export type { ExecutionDataPlaneMode } from "./data-plane-capabilities";
 export type { LegacyRunsOptions, LegacyRunsSummary } from "./legacy";
 export {
   reportLegacyActiveRuns,
@@ -89,6 +102,7 @@ export type {
   RegistrationObservation,
   RegistrationResult,
 } from "./registrar";
+export { ensureLocalExecutionDataPlane } from "./event-plane";
 export { hostForAssignment, localHost } from "./resolver";
 export {
   defaultTransport,
@@ -104,15 +118,89 @@ export {
 export type { WorkspaceSpecInput } from "./adoption";
 export {
   executionCommandReconcilePass,
-  pruneExecutionCommands,
   recoverExecutionCommands,
   releaseStaleAssignments,
 } from "./recovery";
+export type {
+  CommandProtectedReason,
+  CommandRetirementSummary,
+} from "./retirement";
+export {
+  classifyCommandRetirement,
+  reportUnreconciledCommands,
+  retireEligibleCommands,
+} from "./retirement";
 export type {
   ExecutionCommandRecoverySummary,
   ExecutionHostSweepSummary,
 } from "./recovery";
 export { commandSignals } from "./signals";
+export {
+  createPromptOwnerRegistry,
+  definePromptOwnerAdapter,
+  PromptOwnerInvariantError,
+} from "./prompt-owners";
+export type {
+  PreparedPromptOwner,
+  PromptOwnerAdapter,
+  PromptOwnerDisposition,
+  PromptOwnerOutcome,
+  PromptOwnerRegistry,
+} from "./prompt-owners";
+export { startPromptOwnerWorker } from "./prompt-owner-recovery";
+export type { PromptOwnerWorker } from "./prompt-owner-recovery";
+export {
+  claimRuntimeEventStream,
+  consumeRuntimeEventStreamOnce,
+  recordConfirmedRuntimeEventAck,
+  resetRuntimeEventConsumersForTests,
+  startRuntimeEventConsumer,
+} from "./events/consumer";
+export type {
+  RuntimeEventConsumerSummary,
+  RuntimeEventStreamClaim,
+} from "./events/consumer";
+export { ingestRuntimeEvent } from "./events/ingest";
+export type {
+  RuntimeEventIngestDisposition,
+  RuntimeEventIngestResult,
+} from "./events/ingest";
+export {
+  ExecutionEventProjectionError,
+  projectExecutionEvents,
+} from "./events/projector";
+export type {
+  ExecutionEventProjector,
+  ExecutionEventProjectorSummary,
+} from "./events/projector";
+export {
+  projectCanonicalPromptCommands,
+  projectPendingCanonicalPromptCommands,
+} from "./events/prompt-projector";
+export {
+  projectCanonicalSessionLifecycle,
+  projectPendingCanonicalSessionLifecycle,
+} from "./events/lifecycle-projector";
+export {
+  projectCanonicalRuntimeObjects,
+  projectPendingCanonicalRuntimeObjects,
+} from "./events/runtime-object-projector";
+export {
+  RUNTIME_OBJECT_RETENTION_INTERVAL_MS,
+  startRuntimeObjectRetentionTimer,
+  stopRuntimeObjectRetentionTimer,
+  sweepExpiredRuntimeObjects,
+} from "./runtime-object-retention";
+export type { RuntimeObjectRetentionSummary } from "./runtime-object-retention";
+export {
+  deterministicRuntimeObjectId,
+  deterministicRuntimeOutputObjectId,
+  openRuntimeObjectContent,
+  publishRuntimeObject,
+  readRuntimeObjectContent,
+} from "./runtime-objects";
+export { publishCapabilityBundle } from "./capability-profile";
+export type { PublishedCapabilityBundle } from "./capability-profile";
 export {
   DRIVER_OWNED_RUN_STATUSES,
   findActiveLocalHost,
@@ -128,6 +216,7 @@ export type {
   ExecutionHostIdentity,
   PromptContentBlock,
   PromptResult,
+  PromptAccepted,
   PromptStopReason,
   SendPromptInput,
   SupervisorAdapterLaunchInput,

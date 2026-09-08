@@ -88,9 +88,7 @@ describe("smoke ACP adapter CLI helpers", () => {
       process.env.MAISTER_SMOKE_CHILD_TERM_PATH = originalSmokeChildTermPath;
     }
 
-    await Promise.all(
-      cleanupPidPaths.splice(0).map(killFixtureChild),
-    );
+    await Promise.all(cleanupPidPaths.splice(0).map(killFixtureChild));
 
     await Promise.all(
       cleanupDirs
@@ -150,32 +148,28 @@ describe("smoke ACP adapter CLI helpers", () => {
     expect(result.reason).toContain("stable tool identity");
   });
 
-  it(
-    "reaps a SIGTERM-ignoring adapter after an initialize timeout",
-    async () => {
-      const binaryPath = await fixtureBinary(hangingFixturePath);
-      const fixtureDir = dirname(binaryPath);
-      const pidPath = join(fixtureDir, "child.pid");
-      const termPath = join(fixtureDir, "child.term");
+  it("reaps a SIGTERM-ignoring adapter after an initialize timeout", async () => {
+    const binaryPath = await fixtureBinary(hangingFixturePath);
+    const fixtureDir = dirname(binaryPath);
+    const pidPath = join(fixtureDir, "child.pid");
+    const termPath = join(fixtureDir, "child.term");
 
-      cleanupDirs.push(fixtureDir);
-      cleanupPidPaths.push(pidPath);
-      process.env.MAISTER_ADAPTER_BINARY_OPENCODE = binaryPath;
-      process.env.MAISTER_SMOKE_CHILD_PID_PATH = pidPath;
-      process.env.MAISTER_SMOKE_CHILD_TERM_PATH = termPath;
+    cleanupDirs.push(fixtureDir);
+    cleanupPidPaths.push(pidPath);
+    process.env.MAISTER_ADAPTER_BINARY_OPENCODE = binaryPath;
+    process.env.MAISTER_SMOKE_CHILD_PID_PATH = pidPath;
+    process.env.MAISTER_SMOKE_CHILD_TERM_PATH = termPath;
 
-      const result = await smokeAdapter("opencode");
-      const pid = Number.parseInt(await readFile(pidPath, "utf8"), 10);
+    const result = await smokeAdapter("opencode");
+    const pid = Number.parseInt(await readFile(pidPath, "utf8"), 10);
 
-      expect(result).toMatchObject({
-        adapter: "opencode",
-        status: "error",
-        reason: "opencode initialize timed out",
-      });
-      await expect(readFile(termPath, "utf8")).resolves.toBe("received");
-      expect(Number.isSafeInteger(pid)).toBe(true);
-      expect(() => process.kill(pid, 0)).toThrow();
-    },
-    15_000,
-  );
+    expect(result).toMatchObject({
+      adapter: "opencode",
+      status: "error",
+      reason: "opencode initialize timed out",
+    });
+    await expect(readFile(termPath, "utf8")).resolves.toBe("received");
+    expect(Number.isSafeInteger(pid)).toBe(true);
+    expect(() => process.kill(pid, 0)).toThrow();
+  }, 15_000);
 });

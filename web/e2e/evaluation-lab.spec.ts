@@ -149,7 +149,12 @@ test("evaluation lab: study, observed participant, controlled batch, start affor
           prompt_digest, schema_digest, compat, activation)
        VALUES ($1, $2, 'quality', $3, $4, 'v1.0.0', 1, '{}'::jsonb, 'dd', 'dp',
                'ds', '{}'::jsonb, 'enabled')`,
-      [methodRevId, pkgInstallId, `eval-pkg-${suffix}:quality`, `eval-pkg-${suffix}`],
+      [
+        methodRevId,
+        pkgInstallId,
+        `eval-pkg-${suffix}:quality`,
+        `eval-pkg-${suffix}`,
+      ],
     );
     await pool.query(
       `INSERT INTO evaluation_judge_panels (id, name, role_bindings, policy, enabled)
@@ -167,7 +172,9 @@ test("evaluation lab: study, observed participant, controlled batch, start affor
   // ── Create the Study ──────────────────────────────────────────────────────
   const studyRes = await page.request.post(
     `/api/projects/${fx.projectSlug}/evaluations/studies`,
-    { data: { taskId, title: `Eval study ${suffix}`, purpose: "compare runs" } },
+    {
+      data: { taskId, title: `Eval study ${suffix}`, purpose: "compare runs" },
+    },
   );
 
   expect(studyRes.status()).toBe(201);
@@ -233,7 +240,9 @@ test("evaluation lab: study, observed participant, controlled batch, start affor
   ).toBeVisible();
   await expect(page.getByText(`Observed A ${suffix}`)).toBeVisible();
   await expect(page.getByText(`Observed B ${suffix}`)).toBeVisible();
-  await expect(page.getByText("Observed", { exact: true }).first()).toBeVisible();
+  await expect(
+    page.getByText("Observed", { exact: true }).first(),
+  ).toBeVisible();
 
   // The controlled-launch surface renders (canManage admin).
   await expect(
@@ -245,9 +254,7 @@ test("evaluation lab: study, observed participant, controlled batch, start affor
   await expect(
     page.getByRole("button", { name: "Start evaluation" }),
   ).toBeEnabled();
-  await expect(
-    page.locator("option", { hasText: profileName }),
-  ).toBeAttached();
+  await expect(page.locator("option", { hasText: profileName })).toBeAttached();
 
   // ── Record a human verdict (zero-citation inconclusive, acknowledged) ──────
   await page.getByLabel("Outcome").selectOption("inconclusive");

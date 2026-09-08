@@ -30,7 +30,9 @@ let root: string;
 beforeEach(async () => {
   // realpath so the macOS /var -> /private/var tmp symlink does not trip the
   // in-worktree path-safety checks (production worktrees are not symlinked).
-  root = await realpath(await mkdtemp(path.join(tmpdir(), "materialization-gc-")));
+  root = await realpath(
+    await mkdtemp(path.join(tmpdir(), "materialization-gc-")),
+  );
 });
 
 afterEach(async () => {
@@ -84,10 +86,7 @@ describe("agent materialization cleanup sweep", () => {
           new Map([
             ["terminal", { status: "Done", agentWorkspace: "none" }],
             ["review", { status: "Review", agentWorkspace: "worktree" }],
-            [
-              "crashed-none",
-              { status: "Crashed", agentWorkspace: "none" },
-            ],
+            ["crashed-none", { status: "Crashed", agentWorkspace: "none" }],
             [
               "crashed-repo-read",
               { status: "Crashed", agentWorkspace: "repo_read" },
@@ -150,8 +149,12 @@ describe("agent materialization cleanup sweep", () => {
         loadStatuses: async () => new Map(),
       }),
     ).resolves.toEqual({ scanned: 1, restored: 1, live: 0, failed: 0 });
-    await expect(stat(capabilityRoot)).rejects.toMatchObject({ code: "ENOENT" });
-    await expect(stat(path.join(root, SETTINGS_RELATIVE))).rejects.toMatchObject({
+    await expect(stat(capabilityRoot)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await expect(
+      stat(path.join(root, SETTINGS_RELATIVE)),
+    ).rejects.toMatchObject({
       code: "ENOENT",
     });
   });

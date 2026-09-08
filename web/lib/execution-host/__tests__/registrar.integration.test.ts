@@ -7,7 +7,15 @@ import type { RealSupervisor } from "@/test-support/real-supervisor";
 
 import { asc, eq } from "drizzle-orm";
 import pino, { type Logger } from "pino";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
 import * as fullSchema from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
@@ -24,6 +32,7 @@ import {
   localHost,
   resetResolverForTests,
 } from "@/lib/execution-host/resolver";
+import { resetRuntimeEventConsumersForTests } from "@/lib/execution-host/events/consumer";
 import { runReconcileSweep } from "@/lib/reconcile";
 import { seedProject, seedRun } from "@/test-support/execution-host-seed";
 import { createFakeExecutionHost } from "@/test-support/fake-execution-host";
@@ -128,11 +137,16 @@ beforeAll(async () => {
 }, 180_000);
 
 afterAll(async () => {
+  resetRuntimeEventConsumersForTests();
   restoreUrl();
   await sup?.kill();
   await sup2?.kill();
   await sup3?.kill();
   await testDatabase?.stop();
+});
+
+afterEach(() => {
+  resetRuntimeEventConsumersForTests();
 });
 
 describe("registrar (real supervisor)", () => {
@@ -486,6 +500,30 @@ describe("registrar (real supervisor)", () => {
     t += 30_001;
     await localHost(opts);
     expect(fake.callsOf("health")).toHaveLength(2);
+  });
+
+  it("G7: localHost() activates canonical event ingestion after a web-first startup", async () => {
+    resetResolverForTests();
+    resetRegistrarStateForTests();
+    const fake = createFakeExecutionHost();
+    const transport = {
+      ...fake.transport,
+      capabilities: async (
+        opts: Parameters<typeof fake.transport.capabilities>[0],
+      ) => {
+        const capabilities = await fake.transport.capabilities(opts);
+
+        if (!capabilities) throw new Error("fake capabilities are unavailable");
+
+        return { ...capabilities, eventStream: true };
+      },
+    };
+
+    await localHost({ db, transport, force: true });
+
+    await vi.waitFor(() =>
+      expect(fake.callsOf("streamRuntimeEvents").length).toBeGreaterThan(0),
+    );
   });
 
   it("G8: two concurrent registrations on an empty table → one row, both registered, the loser lands on touch through the 23505 retry", async () => {

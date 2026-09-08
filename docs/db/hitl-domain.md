@@ -237,6 +237,15 @@ erDiagram
 Exactly one supersession provenance is allowed. A history row persists after its
 source request or run is removed; question and answer bodies are never logged.
 
+### Agent checkpoint pause extension (Implemented)
+
+Source-bound agent permissions also use `superseded_at` and
+`superseded_by_hitl_request_id` when a hook/budget checkpoint cancels them.
+Migration `0155` verifies the exact original command and pause association;
+`responded_at` stays null and the cancelled source cannot be reactivated.
+The private JSONB handoff and runtime transitions are defined once in
+[the prompt lifecycle](../system-analytics/execution-prompt-lifecycle.md#agent-hook-and-budget-checkpoint-handoffs-implemented).
+
 ## Lifecycle
 
 ```

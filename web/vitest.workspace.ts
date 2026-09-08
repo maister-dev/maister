@@ -83,6 +83,7 @@ export default defineWorkspace([
       include: [
         "lib/**/*.integration.test.ts",
         "app/**/*.integration.test.ts",
+        "scripts/**/*.integration.test.ts",
         "test-support/**/*.integration.test.ts",
         "e2e/**/*.integration.test.ts",
       ],

@@ -1786,6 +1786,12 @@ function validateArtifacts(nodes: NodeDef[], flowYamlPath: string): void {
             `produces "${p.id}" path "${p.path}" must be a non-empty relative file path (no '..', no trailing slash) in ${flowYamlPath}`,
           );
         }
+        if (n.type !== "cli" && n.type !== "check") {
+          throw new MaisterError(
+            "CONFIG",
+            `produces "${p.id}" path is valid only for manager-executed cli/check nodes; ACP node "${n.id}" must use a typed execution-host output in ${flowYamlPath}`,
+          );
+        }
       }
 
       if (p.ref !== undefined && p.ref === "") {

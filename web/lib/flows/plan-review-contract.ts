@@ -85,7 +85,8 @@ export const planReviewContractSchema = z
     if (new Set(ids).size !== ids.length) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "Plan-review assumption and decision ids must be globally unique",
+        message:
+          "Plan-review assumption and decision ids must be globally unique",
       });
     }
   });

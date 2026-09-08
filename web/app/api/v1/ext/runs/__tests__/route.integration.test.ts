@@ -20,7 +20,10 @@ import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
-import { readySupervisorHealth } from "@/test-support/supervisor-health-fixture";
+import {
+  readyExecutionHostCapabilities,
+  readySupervisorHealth,
+} from "@/test-support/supervisor-health-fixture";
 
 const schema = schemaModule as unknown as Record<string, any>;
 const auditMockState = vi.hoisted(() => ({
@@ -53,10 +56,19 @@ vi.mock("@/lib/tokens/audit", async (importOriginal) => {
     ),
   };
 });
-vi.mock("@/lib/supervisor-client", () => ({
-  // ADR-166: the launch registers the local execution host from `/health`.
-  checkSupervisorHealth: vi.fn(async () => readySupervisorHealth()),
-}));
+vi.mock("@/lib/supervisor-client", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/lib/supervisor-client")>();
+
+  return {
+    ...actual,
+    // ADR-166: the launch registers the local execution host from `/health`.
+    checkSupervisorHealth: vi.fn(async () => readySupervisorHealth()),
+    getExecutionHostCapabilities: vi.fn(async () =>
+      readyExecutionHostCapabilities(),
+    ),
+  };
+});
 vi.mock("@/lib/worktree", () => ({
   addWorktree: vi.fn(async () => {}),
   removeWorktree: vi.fn(async () => {}),

@@ -574,6 +574,71 @@ Two host-side tokens carry a second detail field: `legacy_field` carries
 `details.field` (the offending legacy path field) and `workspace_rejected`
 carries `details.mount` when a `contextMounts[]` entry is the offender.
 
+### Stage B data-plane tokens (Implemented — ADR-167)
+
+Stage B remains within the closed `MaisterError` union. Supervisor protocol
+refusals use `PRECONDITION` (invalid input), `CONFLICT` (foreign/stale stream
+or epoch), `ACP_PROTOCOL` (integrity disagreement), or
+`EXECUTOR_UNAVAILABLE` (backpressure/unreachable host). The stable
+`details.reason` values include `invalid_event_sequence`, `replay_floor_lost`,
+`stream_identity_conflict`, `ack_not_contiguous`, `ack_beyond_emitted`,
+`event_sequence_invalid`, `event_identity_conflict`, `event_stream_mismatch`,
+`event_schema_invalid`, `stale_assignment_epoch`, `event_redaction_failed`,
+`event_payload_oversize`, `event_outbox_backpressure`,
+`data_plane_unsupported`, `command_invariant_conflict`,
+`runtime_object_not_found`, `runtime_object_missing`,
+`runtime_object_range_invalid`, `runtime_object_integrity_mismatch`,
+`runtime_object_too_large`, `runtime_object_delete_failed`, and
+`runtime_object_transport_unsupported`. Error details contain only safe IDs,
+sequence, byte count, limit, and remediation token — never event payload,
+prompt, object bytes, filesystem path, credentials, or environment values.
+
+Browser-facing runtime-object reads map these typed reasons without exposing a
+host identifier: unknown or cross-run objects are existence-hidden as `404`, a
+catalogued tombstone is `410`, an invalid or unsatisfiable single range is
+`416`, a checksum disagreement is `409`, and an unavailable execution-host
+transport is `503`. The response body stays the normal safe `MaisterError`
+shape; host paths, payload bytes, and transport diagnostics remain server logs
+only.
+
+## A/B stabilization reasons (Designed)
+
+The existing `MaisterError`/`SupervisorError` code families remain the public
+classification. These reason tokens are closed, localized discriminants when
+exposed to a user; original provider text and private request/receipt fields
+remain server-only. The [identifier/refusal contract](system-analytics/execution-hosts.md#identifier-classification-and-refusal-contract-designed)
+defines the authoritative row joins. A failed read never proves remote failure.
+
+| Observation / reason | Code / HTTP | Recovery and allowed diagnostic fields |
+| --- | --- | --- |
+| `transport_request_invalid` | `ACP_PROTOCOL` / 500 | Proven local construction failure: retain not-sent intent; fix construction, no remote-unknown retry. Runtime/library versions, byte count, safe cause code. |
+| `admission_unknown` | Recoverable transport state; bounded query returns pending | Keep original handle/request in `unknown` or `reconciliation_required`, reconcile canonical+receipt evidence after reconnect even beyond outbound retry budget. A transport read failure never writes command failure. Attempts/deadline/admission certainty and safe cause/status only. |
+| `event_outbox_backpressured` | `EXECUTOR_UNAVAILABLE` / 503 | Refuse fresh effects, preserve admitted producers and reserved teardown; resume below validated low watermarks. Row/byte/wallet counts. |
+| `runtime_output_frame_too_large`, `required_output_incomplete` | `ACP_PROTOCOL` / terminal prompt failure evidence | Preserve bounded diagnostic/output objects, stop only the affected producer, never report empty success. Observed/maximum byte counts and opaque object IDs. |
+| `runtime_output_buffer_capacity`                                                                      | `EXECUTOR_UNAVAILABLE` / 503                                           | Refuse a new producer before spawn when the host's bounded pipe/decoder pool has no capacity. Existing producers keep their reservations.                    |
+| `prompt_terminal_conflict`, `command_invariant_conflict` | `ACP_PROTOCOL` or existing `CONFLICT` mapping / 409 | Preserve both bounded evidence identities, quarantine the operation; never overwrite or replay ACP under a fresh ID. Digest/schema/command identities. |
+| `prompt_owner_invalid`, `prompt_owner_superseded` | `CONFLICT` / 409 for a caller; explicit nonapplying worker disposition | Recheck exact owner row/generation and current status. No current-domain mutation from stale evidence. Variant/generation/refusal code. |
+| `prompt_owner_invariant`, `prompt_owner_poisoned` | `CONFLICT` / 409 on the registered owner path | Preserve the successful/failed command evidence; block application after an invalid output/owner invariant or exhausted application retries. Only a bounded diagnostic code is recorded. |
+| `prompt_owner_claim_lost` | Internal `CONFLICT`; deferred worker result | Roll back the whole application transaction after a token/lease mismatch. Never alter a successor's marker or failure state. |
+| `prompt_output_host_unavailable` | `EXECUTOR_UNAVAILABLE` / 503 | Keep terminal output and pending owner application retained; retry after service recovery without consuming application-failure attempts. |
+| `projection_poisoned`, `owner_application_poisoned` | `ACP_PROTOCOL` / operational degraded state | Keep cursor/failed event or command, isolate other work; explicit generation-bound repair/rearm. Consumer/owner kind, attempts and safe cause. |
+| `protected_execution_evidence` | `CONFLICT` / 409 | Refuse parent deletion/retirement while accepted, unknown, unapplied, import or delivery holds exist. Hold category and counts. |
+| `runtime_object_missing` | `PRECONDITION` / 404 | Persist verified missing evidence and retain catalog/associations; no empty substitute. Object/generation. |
+| `runtime_object_deleted` | `PRECONDITION` / 410 | Preserve tombstone, identical deletion replay succeeds. Object/generation. |
+| `runtime_object_integrity_mismatch` | `PRECONDITION` / 422 | Persist verified corrupt state; no successful response with obsolete digest. Expected/observed size and hash agreement. |
+| `runtime_object_range_invalid` | `PRECONDITION` / 416 | Refuse malformed/multiple/out-of-bounds/oversized range; never send the full object instead. Bounded numeric range. |
+| `runtime_storage_pressure` | `EXECUTOR_UNAVAILABLE` / 503 | File capacity cannot fund fresh work. Preserve existing reservations; resume only after authorized cleanup or size reconciliation drops usage below low. Charged/written/reserved byte counts. |
+| `runtime_object_read_busy`, `runtime_storage_unavailable` | `EXECUTOR_UNAVAILABLE` / 503 | Bound verification concurrency; persistence failure cannot claim a durable missing/corrupt transition. Safe resource category/count. |
+| `legacy_import_source_changed`, `legacy_import_source_missing`, `legacy_import_association_ambiguous` | `PRECONDITION` / CLI failure or 409 | Preserve original manifest and sources; lane remains incomplete/failed until evidence-bound repair. Import/item/lane IDs, counts and digest equality. |
+| `legacy_import_not_enabled`, `legacy_import_generation_conflict` | `PRECONDITION` / 409 on maintenance socket | Refuse outside the locally enabled immutable manifest generation or after revocation. No TCP import surface or source paths. |
+
+All logs use existing configurable structured loggers: debug for bounded
+entry/exit/attempt detail, info for durable transitions, warn for retry/stale
+observations, error for poison or service failure. Never log raw paths, tokens,
+full prompts, environment values, object bodies, arbitrary exception bodies or
+private canonical request JSON. Metric labels use bounded reason/kind/status
+sets; command/run/object IDs belong in logs, not unbounded metric labels.
+
 ## Construction
 
 ```ts

@@ -21,6 +21,10 @@ describe("parseVerdict", () => {
     expect(parseVerdict('{"notVerdict": true}')).toBeNull();
   });
 
+  it("refuses a numeric confidence that JSONB cannot preserve", () => {
+    expect(parseVerdict('{"verdict":"pass","confidence":1e999}')).toBeNull();
+  });
+
   it("picks the last valid verdict block", () => {
     const out = '{"verdict":"pass"} then later {"verdict":"fail"}';
 

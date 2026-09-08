@@ -29,6 +29,7 @@ import {
 const log = pino({ name: "db:migrate" });
 const MIGRATIONS_FOLDER = "./lib/db/migrations";
 const MIGRATIONS_DIR = join(process.cwd(), "lib/db/migrations");
+const STAGE_B_DESTRUCTIVE_CUTOVER_MIGRATION = "0134_lovely_tarot";
 
 function canReadM43Telemetry(pending: readonly string[]): boolean {
   return pending[0] === M43_CUTOVER_MIGRATION;
@@ -69,6 +70,8 @@ async function main(): Promise<void> {
   const pool = new Pool({ connectionString: url });
   const db = drizzle(pool);
   let preM43MigrationRoot: string | null = null;
+  let preStageBMigrationRoot: string | null = null;
+  let m43TelemetryLogged = false;
 
   try {
     const pending = await findPendingMigrations(db);
@@ -109,14 +112,48 @@ async function main(): Promise<void> {
 
     const m43Telemetry = m43Pending ? await readM43CutoverTelemetry(db) : null;
 
+    if (
+      pending.includes(STAGE_B_DESTRUCTIVE_CUTOVER_MIGRATION) &&
+      pending[0] !== STAGE_B_DESTRUCTIVE_CUTOVER_MIGRATION
+    ) {
+      preStageBMigrationRoot = await createMigrationRootBefore(
+        MIGRATIONS_DIR,
+        STAGE_B_DESTRUCTIVE_CUTOVER_MIGRATION,
+      );
+      await migrate(db, { migrationsFolder: preStageBMigrationRoot });
+
+      if (m43Telemetry) {
+        logM43CutoverTelemetry(m43Telemetry);
+        m43TelemetryLogged = true;
+      }
+
+      const remaining = await findPendingMigrations(db);
+
+      if (remaining[0] !== STAGE_B_DESTRUCTIVE_CUTOVER_MIGRATION) {
+        throw new Error(
+          `cannot stage the Stage B data-plane cut-over: expected ${STAGE_B_DESTRUCTIVE_CUTOVER_MIGRATION} to be next, found ${remaining[0] ?? "no pending migration"}`,
+        );
+      }
+
+      log.info(
+        { nextMigration: STAGE_B_DESTRUCTIVE_CUTOVER_MIGRATION },
+        "Stage B additive data-plane migrations committed; validating destructive preservation cut-over",
+      );
+    }
+
     await migrate(db, { migrationsFolder: MIGRATIONS_FOLDER });
 
-    if (m43Telemetry) logM43CutoverTelemetry(m43Telemetry);
+    if (m43Telemetry && !m43TelemetryLogged) {
+      logM43CutoverTelemetry(m43Telemetry);
+    }
 
     log.info("migrations done");
   } finally {
     if (preM43MigrationRoot) {
       await rm(preM43MigrationRoot, { force: true, recursive: true });
+    }
+    if (preStageBMigrationRoot) {
+      await rm(preStageBMigrationRoot, { force: true, recursive: true });
     }
     await pool.end();
   }

@@ -22,7 +22,6 @@ import type { NodeAttempt } from "@/lib/db/schema";
 import type { ExecutionHosts } from "@/lib/execution-host";
 import type { FakeCall } from "@/test-support/fake-execution-host";
 
-import { readFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -187,8 +186,8 @@ async function getAttempts(runId: string): Promise<NodeAttempt[]> {
 
 // ADR-166: a fake execution host whose agent turn is a clean end-turn, plus a
 // spy that receives every `session.create` payload the runner sends (the
-// handle-form body still carries the capability material: mcpServers,
-// capabilityProfilePath, adapterLaunch, enforcementProfile).
+// handle-form body carries capability material through an opaque object ID,
+// plus mcpServers, adapterLaunch, and enforcementProfile.
 //
 // It ALSO snapshots profile.json off disk at spawn time. Terminal cleanup (T4.3)
 // removes the node's whole capability dir, so the file no longer exists once
@@ -204,15 +203,17 @@ async function makeSupervisorSpy(runId: string): Promise<{
   const createSpy = vi.fn();
   const { hosts, fake } = await fakeGraphHosts(db, runId);
 
-  fake.onCall("createSession", (call: FakeCall) => {
+  fake.onCall("createSession", async (call: FakeCall) => {
     const payload = call.envelope?.payload as
-      | { capabilityProfilePath?: string }
+      | { capabilityProfileObjectId?: string }
       | undefined;
 
-    if (payload?.capabilityProfilePath) {
-      spawnProfile = JSON.parse(
-        readFileSync(payload.capabilityProfilePath, "utf8"),
+    if (payload?.capabilityProfileObjectId) {
+      const content = await fake.transport.getRuntimeObjectContent(
+        payload.capabilityProfileObjectId,
       );
+
+      spawnProfile = JSON.parse(new TextDecoder().decode(content.bytes));
     }
     createSpy(payload);
   });

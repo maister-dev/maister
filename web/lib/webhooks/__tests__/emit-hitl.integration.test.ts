@@ -394,6 +394,7 @@ describe("scratch permission flow → run.needs_input + hitl.requested co-emit",
       sessionId: "sess-1",
       stepId: "scratch",
       prompt: "go",
+      owner: { variant: "initial" },
       db,
       execution: legacyScratchApiToExecution(fakePermissionApi() as never),
     });

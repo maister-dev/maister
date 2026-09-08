@@ -12,6 +12,7 @@ function messageAt(messages: MessageTree, key: string): string {
   const value = key.split(".").reduce<string | MessageTree>((current, part) => {
     if (typeof current === "string")
       throw new Error(`unexpected leaf: ${part}`);
+
     return (
       current[part] ??
       (() => {
@@ -22,6 +23,7 @@ function messageAt(messages: MessageTree, key: string): string {
 
   if (typeof value !== "string")
     throw new Error(`message is not a leaf: ${key}`);
+
   return value;
 }
 

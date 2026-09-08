@@ -104,7 +104,7 @@ export type ScratchRunState = {
   runId: string;
   runStatus: string;
   dialogStatus: ScratchDialogStatus;
-  supervisorSessionId: string | null;
+  hostSessionId: string | null;
 };
 
 export type PromptPolicy = {

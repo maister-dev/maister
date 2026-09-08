@@ -28,7 +28,10 @@ function creationJournalPath(workingDir: string, operationId: string): string {
   const parsed = operationIdSchema.safeParse(operationId);
 
   if (!parsed.success) {
-    throw new MaisterError("CONFIG", "invalid local package creation operation id");
+    throw new MaisterError(
+      "CONFIG",
+      "invalid local package creation operation id",
+    );
   }
 
   return path.join(workingDir, ".maister", "creation", `${parsed.data}.json`);

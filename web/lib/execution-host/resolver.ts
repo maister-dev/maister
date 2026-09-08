@@ -6,7 +6,7 @@ import type { RegistrationResult } from "./registrar";
 import pino, { type Logger } from "pino";
 
 import { getHostById } from "./hosts";
-import { ensureLocalExecutionHost } from "./registrar";
+import { ensureLocalExecutionDataPlane } from "./event-plane";
 import { HOST_IDENTITY_MISMATCH_REASON } from "./types";
 
 import { MaisterError } from "@/lib/errors";
@@ -36,6 +36,11 @@ globalThis.__maisterHostResolverState = state;
 
 export function resetResolverForTests(): void {
   state.memo = null;
+  state.inflight = null;
+}
+
+export function primeResolverForTests(host: ExecutionHost): void {
+  state.memo = { host, observedAt: Number.POSITIVE_INFINITY };
   state.inflight = null;
 }
 
@@ -93,7 +98,7 @@ export async function localHost(
   if (state.inflight) return state.inflight;
 
   state.inflight = (async () => {
-    const result = await ensureLocalExecutionHost({
+    const result = await ensureLocalExecutionDataPlane({
       db: opts.db,
       transport: opts.transport,
       now,

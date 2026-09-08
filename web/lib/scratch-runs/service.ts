@@ -20,28 +20,23 @@ import type {
   FlowAssistantIntent,
 } from "@/lib/studio/flow-assistant/protocol";
 
-import { randomUUID } from "node:crypto";
-import { rm } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 
 import { and, eq, inArray, sql } from "drizzle-orm";
 import pino from "pino";
 
+import { assertCurrentSessionBinding } from "@/lib/execution-host/session-binding";
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { ensureLocalPackageGitExclude } from "@/lib/local-packages/git";
-import {
-  assertHoldsLock,
-  assertUserHoldsLock,
-} from "@/lib/local-packages/lock";
+import { assertHoldsLock } from "@/lib/local-packages/lock";
+import { assertLocalPackageAssistantActor } from "@/lib/scratch-runs/authorization";
 import {
   defaultRunSessionValues,
   resolveRunner,
   type RunnerCatalogEntry,
 } from "@/lib/acp-runners/resolve";
-import {
-  loadActiveRunSession,
-  persistRunSessionAcpSessionId,
-} from "@/lib/runs/active-run-session";
+import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import {
   mergeRunnerAdapterLaunch,
   runnerExecutorInput,
@@ -66,24 +61,30 @@ import {
 } from "@/lib/studio/flow-assistant/context";
 import { normalizeFlowAssistantIntent } from "@/lib/studio/flow-assistant/protocol";
 import { postProcessFlowAssistantTurn } from "@/lib/studio/flow-assistant/turn";
-import { runtimeRoot, worktreesRoot } from "@/lib/instance-config";
+import { worktreesRoot } from "@/lib/instance-config";
 import {
   assertAssistantCapacityAvailable,
   assertAssistantCapacityAvailableInTransaction,
   assertScratchCapacityAvailable,
   assertScratchCapacityAvailableInTransaction,
 } from "@/lib/scheduler";
-import { atomicWriteBuffer } from "@/lib/atomic";
 import {
   metadataAttachmentRow,
+  safeUploadFileName,
+  scratchUploadLogicalName,
   scratchPromptContentBlocks,
   uploadedFileMetadata,
   validateScratchAttachments,
 } from "@/lib/scratch-runs/attachments";
 import {
+  deterministicRuntimeObjectId,
+  publishRuntimeObject,
+} from "@/lib/execution-host/runtime-objects";
+import {
   normalizeScratchPrompt,
   sendScratchPromptAndProjectEvents,
 } from "@/lib/scratch-runs/events";
+import { readScratchDialogStatus } from "@/lib/scratch-runs/turn-completion";
 import {
   decoratePromptForPlanMode,
   deriveScratchBranchName,
@@ -103,7 +104,6 @@ import {
 import { cleanupLocalPackageAssistantMaterialization } from "@/lib/scratch-runs/local-package-materialization";
 import {
   assertScratchCanAcceptUserMessage,
-  dialogStatusAfterPromptCompletion,
   dialogStatusAfterSupervisorStop,
   isTerminalScratchDialogStatus,
   runStatusForDialogStatus,
@@ -113,11 +113,13 @@ import {
   isFencedError,
   localHost,
   mintPlacement,
+  publishCapabilityBundle,
   releaseAssignmentForRun,
   type BoundClient,
   type ExecutionHosts,
   type HostAdminClient,
 } from "@/lib/execution-host";
+import { executionDataPlaneModeForHost } from "@/lib/execution-host/data-plane-capabilities";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 import {
@@ -424,50 +426,63 @@ function storedAttachmentValues(args: {
 }
 
 async function storeUploadedFiles(args: {
+  client: BoundClient;
   runId: string;
   messageId: string | null;
-  projectSlug: string;
   scope: string;
   files: readonly ScratchUploadedFileInput[];
 }): Promise<ReturnType<typeof uploadedFileMetadata>[]> {
   if (args.files.length === 0) return [];
 
-  const root = runtimeRoot();
   const safeNames = new Set<string>();
-  const attachments = args.files.map((file) =>
-    uploadedFileMetadata({
-      file,
-      projectSlug: args.projectSlug,
-      runId: args.runId,
-      scope: args.scope,
-      runtimeRoot: root,
-    }),
-  );
 
-  for (const attachment of attachments) {
-    if (!attachment.fileName) continue;
-    if (safeNames.has(attachment.fileName)) {
+  for (const file of args.files) {
+    const fileName = safeUploadFileName(file.fileName);
+
+    if (safeNames.has(fileName)) {
       throw new MaisterError(
         "PRECONDITION",
-        `duplicate upload filename: ${attachment.fileName}`,
+        `duplicate upload filename: ${fileName}`,
       );
     }
-    safeNames.add(attachment.fileName);
+    if (file.byteSize !== file.bytes.byteLength) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `uploaded file byte size does not match content: ${fileName}`,
+      );
+    }
+    safeNames.add(fileName);
   }
 
-  for (const [index, attachment] of attachments.entries()) {
-    if (!attachment.storagePath) continue;
-    const source = args.files[index];
+  const attachments: ReturnType<typeof uploadedFileMetadata>[] = [];
 
-    if (!source) {
-      throw new MaisterError(
-        "PRECONDITION",
-        `stored upload metadata missing source file: ${attachment.label}`,
-      );
-    }
+  for (const source of args.files) {
+    const fileName = safeUploadFileName(source.fileName);
+    const sha256 = createHash("sha256").update(source.bytes).digest("hex");
 
     try {
-      await atomicWriteBuffer(attachment.storagePath, source.bytes);
+      const published = await publishRuntimeObject({
+        client: args.client,
+        objectId: deterministicRuntimeObjectId({
+          runId: args.runId,
+          sourceKey: `scratch-upload:${args.scope}:${fileName}`,
+          sha256,
+        }),
+        kind: "attachment",
+        logicalName: scratchUploadLogicalName({
+          scope: args.scope,
+          fileName,
+        }),
+        mimeType: source.mimeType || "application/octet-stream",
+        retentionClass: "run",
+        bytes: source.bytes,
+      });
+      const attachment = uploadedFileMetadata({
+        file: source,
+        objectId: published.objectId,
+      });
+
+      attachments.push(attachment);
       log.info(
         {
           runId: args.runId,
@@ -475,22 +490,47 @@ async function storeUploadedFiles(args: {
           fileName: attachment.fileName,
           byteSize: attachment.byteSize,
           sha256: attachment.sha256,
+          objectId: published.objectId,
         },
-        "scratch upload stored",
+        "scratch upload published",
       );
     } catch (err) {
+      await Promise.all(
+        attachments.map(async (attachment) => {
+          try {
+            await args.client.deleteRuntimeObject({
+              objectId: attachment.value,
+              generation: 1,
+            });
+          } catch (cleanupError) {
+            log.warn(
+              {
+                runId: args.runId,
+                messageId: args.messageId,
+                objectId: attachment.value,
+                err:
+                  cleanupError instanceof Error
+                    ? cleanupError.message
+                    : String(cleanupError),
+              },
+              "scratch upload compensation failed",
+            );
+          }
+        }),
+      );
       log.error(
         {
           runId: args.runId,
           messageId: args.messageId,
-          path: attachment.storagePath,
+          fileName,
           err: err instanceof Error ? err.message : String(err),
         },
-        "scratch upload write failed",
+        "scratch upload publish failed",
       );
+      if (isMaisterError(err)) throw err;
       throw new MaisterError(
         "EXECUTOR_UNAVAILABLE",
-        `failed to store uploaded file ${attachment.fileName}`,
+        `failed to publish uploaded file ${fileName}`,
       );
     }
   }
@@ -516,7 +556,6 @@ export async function markScratchCrashed(args: {
   db?: Db;
   runId: string;
   err: unknown;
-  clearSupervisorSession?: boolean;
   // Cost-budget governance: a budget-kill is a DELIBERATE terminal, not a crash,
   // so it must be NON-recoverable (Recover gates on runs.status='Crashed'). With
   // `terminal:"failed"` the run goes terminal `Failed` (+ emits `run.failed`),
@@ -537,10 +576,6 @@ export async function markScratchCrashed(args: {
     errorMessage,
     updatedAt: endedAt,
   };
-
-  if (args.clearSupervisorSession) {
-    scratchUpdate.supervisorSessionId = null;
-  }
 
   await db.transaction(async (tx: Db) => {
     // CAS-before-write: only flip a still-live scratch run to Crashed. The
@@ -647,7 +682,7 @@ export async function markScratchPromptRetryable(args: {
     // the prompt was in flight — a late EXECUTOR_UNAVAILABLE must NOT resurrect
     // or clobber that newer state. lockRunRows serializes against those writers
     // and the guard is re-read under the lock (sibling pattern:
-    // completeScratchPromptTurn / markScratchCrashed).
+    // applyScratchPromptCompletion / markScratchCrashed).
     if (current !== "Starting" && current !== "Running") {
       log.warn(
         { runId: args.runId, dialogStatus: current ?? "(missing)", errorCode },
@@ -680,61 +715,6 @@ export async function markScratchPromptRetryable(args: {
       "scratch prompt failed after message persistence; dialog left retryable",
     );
   }
-}
-
-export async function completeScratchPromptTurn(args: {
-  db?: Db;
-  runId: string;
-}): Promise<ScratchDialogStatus> {
-  const db = args.db ?? getDb();
-
-  return db.transaction(async (tx: Db) => {
-    await lockRunRows(tx, args.runId);
-
-    const rows = await tx
-      .select()
-      .from(scratchRuns)
-      .where(eq(scratchRuns.runId, args.runId));
-    const scratch = rows[0];
-
-    if (!scratch) {
-      throw new MaisterError(
-        "PRECONDITION",
-        `scratch metadata not found: ${args.runId}`,
-      );
-    }
-
-    const nextStatus = dialogStatusAfterPromptCompletion(
-      scratch.dialogStatus as ScratchDialogStatus,
-    );
-
-    if (nextStatus === scratch.dialogStatus) {
-      log.info(
-        { runId: args.runId, dialogStatus: nextStatus },
-        "scratch prompt completion preserved event-derived status",
-      );
-
-      return nextStatus;
-    }
-
-    const now = new Date();
-
-    await tx
-      .update(scratchRuns)
-      .set({ dialogStatus: nextStatus, updatedAt: now })
-      .where(eq(scratchRuns.runId, args.runId));
-    await tx
-      .update(runs)
-      .set({ status: runStatusForDialogStatus(nextStatus) })
-      .where(eq(runs.id, args.runId));
-
-    log.info(
-      { runId: args.runId, previousStatus: scratch.dialogStatus, nextStatus },
-      "scratch prompt completion transitioned idle",
-    );
-
-    return nextStatus;
-  });
 }
 
 // Phase 6 (FR-F1/F2): the staged launch. Runs every precondition up to the
@@ -792,6 +772,7 @@ export async function* launchScratchRunStaged(
   // unavailable host refuses the launch before any row or worktree exists.
   const hosts = opts.executionHosts ?? createExecutionHosts({ db });
   const placementHost = await localHost({ db, transport: hosts.transport });
+  const executionDataPlaneMode = executionDataPlaneModeForHost(placementHost);
 
   await assertScratchCapacityAvailable({ db });
 
@@ -908,19 +889,13 @@ export async function* launchScratchRunStaged(
     });
 
     adapterHomeEnv = adapterHome.env;
-    uploadedAttachments = await storeUploadedFiles({
-      runId,
-      messageId,
-      projectSlug: project.slug,
-      scope: "launch",
-      files: uploadedFiles,
-    });
     launchAssignmentId = await db.transaction(async (tx: Db) => {
       await assertScratchCapacityAvailableInTransaction(tx);
 
       await tx.insert(runs).values({
         id: runId,
         runKind: "scratch",
+        executionDataPlaneMode,
         taskId: null,
         projectId: project.id,
         flowId: null,
@@ -1047,20 +1022,6 @@ export async function* launchScratchRunStaged(
         ),
       );
     }
-    if (uploadedAttachments.length > 0) {
-      const uploadDir = path.dirname(uploadedAttachments[0].storagePath ?? "");
-
-      await rm(uploadDir, { recursive: true, force: true }).catch((rmErr) =>
-        log.warn(
-          {
-            runId,
-            uploadDir,
-            rmErr: rmErr instanceof Error ? rmErr.message : String(rmErr),
-          },
-          "scratch compensating upload cleanup failed",
-        ),
-      );
-    }
     throw err;
   }
 
@@ -1072,13 +1033,41 @@ export async function* launchScratchRunStaged(
     const { client, admin } = await hosts.executionFor(runId, {
       assignmentId: launchAssignmentId,
     });
+
+    uploadedAttachments = await storeUploadedFiles({
+      client,
+      runId,
+      messageId,
+      scope: "launch",
+      files: uploadedFiles,
+    });
+    if (uploadedAttachments.length > 0) {
+      await db.insert(scratchAttachments).values(
+        storedAttachmentValues({
+          metadataAttachments: [],
+          uploadedAttachments,
+          runId,
+          messageId,
+        }),
+      );
+    }
+    const capabilityBundle = await publishCapabilityBundle({
+      client,
+      runId,
+      sourceId: "scratch-session",
+      profileLogicalName: "scratch-capability-profile.json",
+      profilePath: materialized.profilePath,
+      instructionsLogicalName: "scratch-capability-instructions.md",
+      instructionsPath: materialized.instructionsPath,
+    });
     const session = await client.createSession({
       stepId: scratchStepId(),
       executor: runnerExecutorInput(runnerResolution.runnerSnapshot),
       runner: runnerSupervisorInput({
         snapshot: runnerResolution.runnerSnapshot,
       }),
-      capabilityProfilePath: materialized.profilePath,
+      capabilityProfileObjectId: capabilityBundle.profileObjectId,
+      capabilityInstructionsObjectId: capabilityBundle.instructionsObjectId,
       adapterLaunch: mergeRunnerAdapterLaunch(runnerResolution.runnerSnapshot, {
         ...materialized.adapterLaunch,
         env: {
@@ -1094,16 +1083,16 @@ export async function* launchScratchRunStaged(
         ? "Running"
         : "WaitingForUser";
 
-      await persistRunSessionAcpSessionId(
-        tx,
+      await assertCurrentSessionBinding(tx, {
         runId,
-        "default",
-        session.acpSessionId,
-      );
+        sessionName: "default",
+        assignmentId: client.assignment.id,
+        hostSessionId: session.sessionId,
+        acpSessionId: session.acpSessionId,
+      });
       await tx
         .update(scratchRuns)
         .set({
-          supervisorSessionId: session.sessionId,
           dialogStatus,
           updatedAt: new Date(),
         })
@@ -1165,8 +1154,9 @@ export async function* launchScratchRunStaged(
         ...uploadedAttachments,
       ]),
       execution: { client, admin },
+      owner: { variant: "initial" },
     });
-    const dialogStatus = await completeScratchPromptTurn({ db, runId });
+    const dialogStatus = await readScratchDialogStatus(db, runId);
 
     log.info(
       {
@@ -1279,27 +1269,7 @@ export async function launchScratchRun(
 // READ it, and only that user WHILE holding a live working-dir lock may DRIVE it
 // (send a message / recover). This closes the cross-user vector where any active
 // user with a run id injects prompts into another editor's locked working dir.
-export async function assertLocalPackageAssistantActor(
-  run: { createdByUserId: string | null; localPackageId: string | null },
-  userId: string,
-  opts: { requireLock: boolean },
-  db?: Db,
-): Promise<void> {
-  if (run.createdByUserId !== userId) {
-    throw new MaisterError(
-      "UNAUTHORIZED",
-      "this assistant run belongs to another user",
-    );
-  }
-  if (!opts.requireLock) return;
-  if (!run.localPackageId) {
-    throw new MaisterError(
-      "PRECONDITION",
-      "assistant run has no local package to lock",
-    );
-  }
-  await assertUserHoldsLock(run.localPackageId, userId, db);
-}
+export { assertLocalPackageAssistantActor };
 
 export type LocalPackageAssistantLaunchInput = {
   localPackageId: string;
@@ -1514,6 +1484,7 @@ export async function* launchLocalPackageAssistantStaged(
 
   const hosts = opts.executionHosts ?? createExecutionHosts({ db });
   const placementHost = await localHost({ db, transport: hosts.transport });
+  const executionDataPlaneMode = executionDataPlaneModeForHost(placementHost);
 
   await assertAssistantCapacityAvailable({ db });
 
@@ -1600,6 +1571,7 @@ export async function* launchLocalPackageAssistantStaged(
       await tx.insert(runs).values({
         id: runId,
         runKind: "scratch",
+        executionDataPlaneMode,
         taskId: null,
         projectId: null,
         localPackageId: pkg.id,
@@ -1694,6 +1666,15 @@ export async function* launchLocalPackageAssistantStaged(
     const { client, admin } = await hosts.executionFor(runId, {
       assignmentId: launchAssignmentId,
     });
+    const capabilityBundle = await publishCapabilityBundle({
+      client,
+      runId,
+      sourceId: "scratch-session",
+      profileLogicalName: "scratch-capability-profile.json",
+      profilePath: materialized.profilePath,
+      instructionsLogicalName: "scratch-capability-instructions.md",
+      instructionsPath: materialized.instructionsPath,
+    });
     const session = await client.createSession({
       readOnlySession: true,
       stepId: scratchStepId(),
@@ -1701,7 +1682,8 @@ export async function* launchLocalPackageAssistantStaged(
       runner: runnerSupervisorInput({
         snapshot: runnerResolution.runnerSnapshot,
       }),
-      capabilityProfilePath: materialized.profilePath,
+      capabilityProfileObjectId: capabilityBundle.profileObjectId,
+      capabilityInstructionsObjectId: capabilityBundle.instructionsObjectId,
       adapterLaunch: mergeRunnerAdapterLaunch(runnerResolution.runnerSnapshot, {
         ...materialized.adapterLaunch,
         env: {
@@ -1719,16 +1701,16 @@ export async function* launchLocalPackageAssistantStaged(
         ? "Running"
         : "WaitingForUser";
 
-      await persistRunSessionAcpSessionId(
-        tx,
+      await assertCurrentSessionBinding(tx, {
         runId,
-        "default",
-        session.acpSessionId,
-      );
+        sessionName: "default",
+        assignmentId: client.assignment.id,
+        hostSessionId: session.sessionId,
+        acpSessionId: session.acpSessionId,
+      });
       await tx
         .update(scratchRuns)
         .set({
-          supervisorSessionId: session.sessionId,
           dialogStatus,
           updatedAt: new Date(),
         })
@@ -1763,18 +1745,31 @@ export async function* launchLocalPackageAssistantStaged(
       { runId },
     );
 
+    // S2.9: one server-minted action id identifies the turn's postprocess in
+    // the durable action journal, and the launch turn carries it into its own
+    // prompt owner so a crash recovers the dialog turn and the pending package
+    // action independently.
+    const postprocessActionId = randomUUID();
     const promptResult = await sendScratchPromptAndProjectEvents({
       runId,
       sessionId: session.sessionId,
       stepId: scratchStepId(),
       prompt: launchPrompt,
       execution: { client, admin },
+      owner: {
+        variant: "package_initial",
+        localPackageId: pkg.id,
+        postprocessActionId,
+        lockGeneration: args.body.sessionId,
+      },
     });
-    const dialogStatus = await completeScratchPromptTurn({ db, runId });
+    const dialogStatus = await readScratchDialogStatus(db, runId);
     const actionResult = await postProcessFlowAssistantTurn({
       db,
       localPackage: pkg,
       runId,
+      actionId: postprocessActionId,
+      lockGeneration: args.body.sessionId,
       assertCanApply: () => assertHoldsLock(pkg.id, args.body.sessionId, db),
     });
 
@@ -1828,7 +1823,6 @@ export async function* launchLocalPackageAssistantStaged(
       db,
       runId,
       err,
-      clearSupervisorSession: true,
     }).catch((markErr) =>
       log.error(
         {
@@ -1988,6 +1982,7 @@ async function appendScratchUserMessage(args: {
   runId: string;
   body: ScratchMessageInput;
   uploadedFiles: readonly ScratchUploadedFileInput[];
+  executionHosts?: ExecutionHosts;
 }) {
   const runRows = await args.db
     .select()
@@ -2019,126 +2014,133 @@ async function appendScratchUserMessage(args: {
     );
   }
 
-  return args.db.transaction(async (tx: Db) => {
-    await lockRunRows(tx, args.runId);
+  const execution = await scratchExecution(
+    args.db,
+    args.runId,
+    args.executionHosts,
+  );
+  const messageId = randomUUID();
+  const uploadedAttachments = await storeUploadedFiles({
+    client: execution.client,
+    runId: args.runId,
+    messageId,
+    scope: messageId,
+    files: args.uploadedFiles,
+  });
 
-    const {
-      run: lockedRun,
-      scratch,
-      workspace,
-    } = await loadScratchRows(tx, args.runId);
+  try {
+    return await args.db.transaction(async (tx: Db) => {
+      await lockRunRows(tx, args.runId);
 
-    assertScratchCanAcceptUserMessage({
-      runId: args.runId,
-      runStatus: lockedRun.status,
-      dialogStatus: scratch.dialogStatus,
-      supervisorSessionId: scratch.supervisorSessionId,
+      const {
+        run: lockedRun,
+        scratch,
+        workspace,
+      } = await loadScratchRows(tx, args.runId);
+      const activeSession = await loadActiveRunSession(tx, args.runId);
+
+      assertScratchCanAcceptUserMessage({
+        runId: args.runId,
+        runStatus: lockedRun.status,
+        dialogStatus: scratch.dialogStatus,
+        // Stage B: the logical-session pointer is the sole live delivery
+        // authority. The deprecated scratch mirror must not select an ACP
+        // session, including during the destructive-migration preflight.
+        hostSessionId: activeSession?.hostSessionId ?? null,
+      });
+
+      const sequenceRows: Array<{ sequence: number }> = await tx
+        .select({ sequence: scratchMessages.sequence })
+        .from(scratchMessages)
+        .where(eq(scratchMessages.runId, args.runId));
+      const sequence = nextScratchMessageSequence(
+        sequenceRows.map((row) => row.sequence),
+      );
+      const message = userScratchMessageDraft({
+        sequence,
+        content: args.body.content,
+      });
+      const now = new Date();
+      const attachments = validateScratchAttachments(args.body.attachments, {
+        projectRepoPath: workspace.parentRepoPath,
+        worktreePath: workspace.worktreePath,
+      });
+
+      await tx.insert(scratchMessages).values({
+        id: messageId,
+        runId: args.runId,
+        sequence: message.sequence,
+        role: message.role,
+        content: message.content,
+        supervisorEventId: message.supervisorEventId ?? null,
+        createdAt: now,
+      });
+      const metadataAttachments = attachments.map(metadataAttachmentRow);
+      const storedAttachments = storedAttachmentValues({
+        metadataAttachments,
+        uploadedAttachments,
+        runId: args.runId,
+        messageId,
+      });
+
+      if (storedAttachments.length > 0) {
+        await tx.insert(scratchAttachments).values(storedAttachments);
+      }
+      await tx
+        .update(scratchRuns)
+        .set({
+          dialogStatus: "Running",
+          lastUserMessageAt: now,
+          updatedAt: now,
+          errorCode: null,
+          errorMessage: null,
+          errorMetadata: null,
+        })
+        .where(eq(scratchRuns.runId, args.runId));
+      await tx
+        .update(runs)
+        .set({ status: "Running", currentStepId: scratchStepId() })
+        .where(eq(runs.id, args.runId));
+
+      return {
+        messageId,
+        sequence,
+        hostSessionId: activeSession?.hostSessionId as string,
+        capabilityAgent: activeSession?.capabilityAgent ?? null,
+        // ADR-097: project-less ⇒ a local-package assistant run; its turn-failure
+        // path explicitly releases the supervisor deferred (see caller).
+        isLocalPackageAssistant: !run.projectId,
+        uploadedAttachments,
+        metadataAttachments,
+        execution,
+      };
     });
-
-    const sequenceRows: Array<{ sequence: number }> = await tx
-      .select({ sequence: scratchMessages.sequence })
-      .from(scratchMessages)
-      .where(eq(scratchMessages.runId, args.runId));
-    const sequence = nextScratchMessageSequence(
-      sequenceRows.map((row) => row.sequence),
-    );
-    const message = userScratchMessageDraft({
-      sequence,
-      content: args.body.content,
-    });
-    const messageId = randomUUID();
-    const now = new Date();
-    const attachments = validateScratchAttachments(args.body.attachments, {
-      projectRepoPath: workspace.parentRepoPath,
-      worktreePath: workspace.worktreePath,
-    });
-    const uploadedAttachments =
-      args.uploadedFiles.length > 0
-        ? await (async () => {
-            // ADR-097: a project-less local-package assistant run has no
-            // project — the runtime/cost subtree is keyed by the local package
-            // slug instead (mirrors the launch's createSession projectSlug).
-            const slug = lockedRun.projectId
-              ? (
-                  await tx
-                    .select()
-                    .from(projects)
-                    .where(eq(projects.id, lockedRun.projectId))
-                )[0]?.slug
-              : (
-                  await tx
-                    .select()
-                    .from(localPackages)
-                    .where(eq(localPackages.id, lockedRun.localPackageId))
-                )[0]?.slug;
-
-            if (!slug) {
-              throw new MaisterError(
-                "PRECONDITION",
-                `owner slug not found for scratch run: ${args.runId}`,
-              );
-            }
-
-            return storeUploadedFiles({
+  } catch (error) {
+    await Promise.all(
+      uploadedAttachments.map(async (attachment) => {
+        try {
+          await execution.client.deleteRuntimeObject({
+            objectId: attachment.value,
+            generation: 1,
+          });
+        } catch (cleanupError) {
+          log.warn(
+            {
               runId: args.runId,
               messageId,
-              projectSlug: slug,
-              scope: messageId,
-              files: args.uploadedFiles,
-            });
-          })()
-        : [];
-
-    await tx.insert(scratchMessages).values({
-      id: messageId,
-      runId: args.runId,
-      sequence: message.sequence,
-      role: message.role,
-      content: message.content,
-      supervisorEventId: message.supervisorEventId ?? null,
-      createdAt: now,
-    });
-    const metadataAttachments = attachments.map(metadataAttachmentRow);
-    const storedAttachments = storedAttachmentValues({
-      metadataAttachments,
-      uploadedAttachments,
-      runId: args.runId,
-      messageId,
-    });
-
-    if (storedAttachments.length > 0) {
-      await tx.insert(scratchAttachments).values(storedAttachments);
-    }
-    await tx
-      .update(scratchRuns)
-      .set({
-        dialogStatus: "Running",
-        lastUserMessageAt: now,
-        updatedAt: now,
-        errorCode: null,
-        errorMessage: null,
-        errorMetadata: null,
-      })
-      .where(eq(scratchRuns.runId, args.runId));
-    await tx
-      .update(runs)
-      .set({ status: "Running", currentStepId: scratchStepId() })
-      .where(eq(runs.id, args.runId));
-
-    const activeSession = await loadActiveRunSession(tx, args.runId);
-
-    return {
-      messageId,
-      sequence,
-      supervisorSessionId: scratch.supervisorSessionId as string,
-      capabilityAgent: activeSession?.capabilityAgent ?? null,
-      // ADR-097: project-less ⇒ a local-package assistant run; its turn-failure
-      // path explicitly releases the supervisor deferred (see caller).
-      isLocalPackageAssistant: !run.projectId,
-      uploadedAttachments,
-      metadataAttachments,
-    };
-  });
+              objectId: attachment.value,
+              err:
+                cleanupError instanceof Error
+                  ? cleanupError.message
+                  : String(cleanupError),
+            },
+            "scratch message upload compensation failed",
+          );
+        }
+      }),
+    );
+    throw error;
+  }
 }
 
 export async function sendScratchUserMessage(args: {
@@ -2153,6 +2155,7 @@ export async function sendScratchUserMessage(args: {
     runId: args.runId,
     body: args.body,
     uploadedFiles: args.uploadedFiles ?? [],
+    executionHosts: args.executionHosts,
   });
 
   try {
@@ -2163,19 +2166,21 @@ export async function sendScratchUserMessage(args: {
     );
     const promptResult = await sendScratchPromptAndProjectEvents({
       runId: args.runId,
-      sessionId: appended.supervisorSessionId,
+      sessionId: appended.hostSessionId,
       stepId: scratchStepId(),
       prompt: messagePrompt,
       contentBlocks: scratchPromptContentBlocks(messagePrompt, [
         ...appended.metadataAttachments,
         ...appended.uploadedAttachments,
       ]),
-      execution: await scratchExecution(db, args.runId, args.executionHosts),
+      execution: appended.execution,
+      owner: {
+        variant: "message",
+        messageId: appended.messageId,
+        sequence: appended.sequence,
+      },
     });
-    const dialogStatus = await completeScratchPromptTurn({
-      db,
-      runId: args.runId,
-    });
+    const dialogStatus = await readScratchDialogStatus(db, args.runId);
 
     return messageResponse({
       messageId: appended.messageId,
@@ -2212,7 +2217,7 @@ export async function sendScratchUserMessage(args: {
     // prior behavior (supervisor purge on the natural session exit).
     if (appended.isLocalPackageAssistant) {
       await deleteScratchSupervisorSessionIfLive(
-        appended.supervisorSessionId,
+        appended.hostSessionId,
         args.runId,
       ).catch((delErr) =>
         log.error(
@@ -2228,7 +2233,6 @@ export async function sendScratchUserMessage(args: {
       db,
       runId: args.runId,
       err,
-      clearSupervisorSession: appended.isLocalPackageAssistant,
     }).catch((markErr) =>
       log.error(
         {
@@ -2285,21 +2289,29 @@ export async function sendLocalPackageAssistantMessage(args: {
       appended.capabilityAgent,
       { runId: args.runId },
     );
+    const postprocessActionId = randomUUID();
     const promptResult = await sendScratchPromptAndProjectEvents({
       runId: args.runId,
-      sessionId: appended.supervisorSessionId,
+      sessionId: appended.hostSessionId,
       stepId: scratchStepId(),
       prompt: messagePrompt,
       execution: await scratchExecution(db, args.runId, args.executionHosts),
+      owner: {
+        variant: "package_message",
+        messageId: appended.messageId,
+        sequence: appended.sequence,
+        localPackageId: pkg.id,
+        postprocessActionId,
+        lockGeneration: args.body.sessionId,
+      },
     });
-    const dialogStatus = await completeScratchPromptTurn({
-      db,
-      runId: args.runId,
-    });
+    const dialogStatus = await readScratchDialogStatus(db, args.runId);
     const actionResult = await postProcessFlowAssistantTurn({
       db,
       localPackage: pkg,
       runId: args.runId,
+      actionId: postprocessActionId,
+      lockGeneration: args.body.sessionId,
       assertCanApply: () => assertHoldsLock(pkg.id, args.body.sessionId, db),
     });
 
@@ -2345,7 +2357,7 @@ export async function sendLocalPackageAssistantMessage(args: {
     }
 
     await deleteScratchSupervisorSessionIfLive(
-      appended.supervisorSessionId,
+      appended.hostSessionId,
       args.runId,
     ).catch((delErr) =>
       log.error(
@@ -2360,7 +2372,6 @@ export async function sendLocalPackageAssistantMessage(args: {
       db,
       runId: args.runId,
       err,
-      clearSupervisorSession: true,
     }).catch((markErr) =>
       log.error(
         {
@@ -2439,7 +2450,7 @@ export type InterruptScratchRunResult = {
 // session live — the Stop control in the composer. It does NOT mutate the
 // dialog status: the still-in-flight sendScratchUserMessage / launch turn owns
 // the transition (the supervisor resolves the blocked prompt with the
-// `cancelled` stop reason, which completeScratchPromptTurn maps Running →
+// `cancelled` stop reason, which applyScratchPromptCompletion maps Running →
 // WaitingForUser). A terminal run is a no-op; a session without a live turn
 // acks cancelled:false from the supervisor. Works for both project scratch runs
 // and project-less local-package assistant runs (both run_kind='scratch').
@@ -2472,17 +2483,17 @@ export async function interruptScratchRun(
     );
   }
 
-  if (
-    isTerminalScratchDialogStatus(scratch.dialogStatus) ||
-    !scratch.supervisorSessionId
-  ) {
+  const activeSession = await loadActiveRunSession(db, runId);
+  const hostSessionId = activeSession?.hostSessionId ?? null;
+
+  if (isTerminalScratchDialogStatus(scratch.dialogStatus) || !hostSessionId) {
     return { runId, cancelled: false, dialogStatus: scratch.dialogStatus };
   }
 
   const client = await (
     opts.executionHosts ?? createExecutionHosts({ db })
   ).forRun(runId);
-  const { cancelled } = await client.cancelPrompt(scratch.supervisorSessionId);
+  const { cancelled } = await client.cancelPrompt(hostSessionId);
 
   log.info({ runId, cancelled }, "scratch run interrupt requested");
 
@@ -2542,9 +2553,11 @@ export async function stopScratchWorkbench(
   const now = new Date();
   let supervisorStopped = false;
 
-  if (scratch.supervisorSessionId) {
+  const activeSession = await loadActiveRunSession(db, runId);
+
+  if (activeSession?.hostSessionId) {
     supervisorStopped = await deleteScratchSupervisorSessionIfLive(
-      scratch.supervisorSessionId,
+      activeSession.hostSessionId,
       runId,
       opts.executionHosts,
     );
@@ -2555,7 +2568,6 @@ export async function stopScratchWorkbench(
       .update(scratchRuns)
       .set({
         dialogStatus: nextDialogStatus,
-        supervisorSessionId: null,
         updatedAt: now,
       })
       .where(eq(scratchRuns.runId, runId));

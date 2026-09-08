@@ -70,7 +70,7 @@ describe("strict envelope contract", () => {
     const { sessionId } = await createSession(h, { runId });
     const base = `${h.url}/sessions/${sessionId}`;
     const attempts: Array<[string, unknown, "POST" | "DELETE"]> = [
-      [`${base}/prompt`, { stepId: "step-1", prompt: "hello" }, "POST"],
+      [`${base}/prompts`, { stepId: "step-1", prompt: "hello" }, "POST"],
       [`${base}/cancel`, {}, "POST"],
       [`${base}/checkpoint`, {}, "POST"],
       [
@@ -109,6 +109,8 @@ describe("strict envelope contract", () => {
       repoPath: "/tmp/repo",
       confineRoot: "/tmp/confine",
       contextMounts: [],
+      capabilityProfilePath: "/tmp/profile.json",
+      capabilityInstructionsPath: "/tmp/instructions.md",
     };
 
     for (const field of LEGACY_SESSION_PATH_FIELDS) {

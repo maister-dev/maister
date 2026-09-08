@@ -128,7 +128,10 @@ vi.mock("@/lib/runs/active-run-session", async (importOriginal) => ({
     return run
       ? {
           sessionName: "default",
+          id: `logical:${runId}`,
+          executionAssignmentId: null,
           acpSessionId: (run.acpSessionId ?? null) as string | null,
+          hostSessionId: (run.hostSessionId ?? null) as string | null,
           runnerSnapshot: (run.runnerSnapshot ?? null) as never,
           capabilityAgent: (run.capabilityAgent ?? null) as string | null,
           runnerId: (run.runnerId ?? null) as string | null,
@@ -138,11 +141,30 @@ vi.mock("@/lib/runs/active-run-session", async (importOriginal) => ({
         }
       : null;
   }),
-  persistRunSessionAcpSessionId: vi.fn(
-    async (_db: unknown, runId: string, _name: string, acp: string) => {
-      const run = dbState.tables.runs.find((r) => r.id === runId);
+}));
 
-      if (run) run.acpSessionId = acp;
+// The fixture stores its logical binding on the run. The create ACK below
+// updates it; post-create writes must assert the exact acknowledged binding.
+vi.mock("@/lib/execution-host/session-binding", () => ({
+  assertCurrentSessionBinding: vi.fn(
+    async (
+      _db: unknown,
+      input: {
+        runId: string;
+        sessionName: string;
+        assignmentId: string;
+        hostSessionId: string;
+        acpSessionId: string;
+      },
+    ) => {
+      const run = dbState.tables.runs.find((r) => r.id === input.runId);
+
+      expect(input.sessionName).toBe("default");
+      expect(run).toMatchObject({
+        executionAssignmentId: input.assignmentId,
+        hostSessionId: input.hostSessionId,
+        acpSessionId: input.acpSessionId,
+      });
     },
   ),
 }));
@@ -193,8 +215,30 @@ vi.mock("@/lib/execution-host", async () => {
   // its admin surface until the module mock exports it itself.
   const hosts = {
     ...mock.executionHosts,
+    forRun: async (runId: string) => {
+      const client = await mock.executionHosts.forRun(runId);
+
+      return {
+        ...client,
+        createSession: async (payload: unknown) => {
+          const result = await client.createSession(payload);
+          const run = dbState.tables.runs.find((r) => r.id === runId);
+
+          if (!run) throw new Error("create ACK fixture has no run");
+          if (!("acpSessionId" in result))
+            throw new Error("create ACK fixture has no ACP handle");
+          Object.assign(run, {
+            executionAssignmentId: client.assignment.id,
+            hostSessionId: result.sessionId,
+            acpSessionId: result.acpSessionId,
+          });
+
+          return result;
+        },
+      };
+    },
     executionFor: async (runId: string) => ({
-      client: await mock.executionHosts.forRun(runId),
+      client: await hosts.forRun(runId),
       admin: mock.executionHosts.local(),
     }),
   };
@@ -255,6 +299,9 @@ function seedScratchRun(
     acpSessionId: Object.hasOwn(overrides, "acpSessionId")
       ? overrides.acpSessionId
       : "acp-old",
+    hostSessionId: Object.hasOwn(overrides, "supervisorSessionId")
+      ? overrides.supervisorSessionId
+      : "sup-old",
     currentStepId: null,
   });
   if ((overrides.runKind ?? "scratch") === "scratch") {
@@ -318,6 +365,7 @@ function seedAssistantRun(
     },
     status: "Crashed",
     acpSessionId: "acp-old",
+    hostSessionId: "sup-old",
     currentStepId: null,
   });
   dbState.tables.scratch_runs.push({
@@ -380,8 +428,14 @@ beforeEach(() => {
   vi.mocked(listSessions).mockClear();
   vi.mocked(listSessions).mockResolvedValue([]);
   vi.mocked(sendScratchPromptAndProjectEvents).mockClear();
-  vi.mocked(sendScratchPromptAndProjectEvents).mockResolvedValue({
-    stopReason: "end_turn",
+  // S2.9: the dialog returns to WaitingForUser inside the owned prompt's
+  // application (part of sendScratchPromptAndProjectEvents), not in the route.
+  vi.mocked(sendScratchPromptAndProjectEvents).mockImplementation(async () => {
+    for (const row of dbState.tables.scratch_runs) {
+      row.dialogStatus = "WaitingForUser";
+    }
+
+    return { stopReason: "end_turn" };
   });
   releaseAssignmentForRunSpy.mockClear();
 });
@@ -430,8 +484,7 @@ describe("POST /api/scratch-runs/[runId]/recover", () => {
           router: undefined,
         },
         resumeSessionId: "acp-old",
-        capabilityProfilePath:
-          "/worktrees/demo/run-recover/.maister/profile.json",
+        capabilityProfileObjectId: "f7f4ea9b-598b-4f97-97b5-5ca52d46056e",
         adapterLaunch: { postArgs: ["--profile"] },
         runner: {
           version: 1,
@@ -459,7 +512,7 @@ describe("POST /api/scratch-runs/[runId]/recover", () => {
     });
     expect(dbState.tables.scratch_runs[0]).toMatchObject({
       dialogStatus: "WaitingForUser",
-      supervisorSessionId: "sup-new",
+      supervisorSessionId: "sup-old",
     });
   });
 

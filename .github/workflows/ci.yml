@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       # This lane must prove build/unit safety without a Docker daemon. Database
-      # suites are intentionally confined to the labelled integration job.
+      # suites run in the separate integration and mandatory A/B jobs.
       DOCKER_HOST: tcp://127.0.0.1:1
     steps:
       - name: Checkout
@@ -29,7 +29,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 24.19.0
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
 
@@ -73,7 +73,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 24.19.0
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
 
@@ -82,3 +82,55 @@ jobs:
 
       - name: Integration tests (web)
         run: pnpm --filter maister-web test:integration
+
+  execution-data-plane:
+    name: A/B real integration (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [24.15.0, 24.19.0]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.3.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm runtime:check
+      - run: pnpm test:runtime
+      - run: pnpm --filter @maister/supervisor test:integration:ab
+      - run: pnpm --filter maister-web test:integration:ab
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: execution-data-plane-node-${{ matrix.node }}
+          path: /tmp/maister-ab-*/vitest.json
+          if-no-files-found: error
+
+  execution-image:
+    name: Production image transport and shutdown
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.3.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.19.0
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: docker build --target production --tag maister-ab:ci .
+      - name: Binary HTTP against the real supervisor in the image
+        run: docker run --rm --workdir /app/web --entrypoint node maister-ab:ci node_modules/vitest/vitest.mjs run lib/__tests__/supervisor-client-binary.integration.test.ts --project=integration
+      - name: Production HTTP and SIGTERM against real PostgreSQL
+        working-directory: web
+        run: pnpm exec tsx --import ./scripts/_register-shim.mjs scripts/smoke-production-image.ts maister-ab:ci

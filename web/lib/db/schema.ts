@@ -1,3 +1,4 @@
+import type { GatePermissionResume } from "@/lib/flows/graph/gate-permission-resume";
 import type {
   DeliveryPolicy,
   StoredDeliveryPolicy,
@@ -31,6 +32,13 @@ import type {
   EvaluationRecipeDefinition,
   EvaluationRunIdentitySnapshot,
 } from "@/lib/evaluations/types";
+import type { PromptOwnerReference } from "@/lib/execution-host/prompt-owner-contract";
+import type { CommandApplicationError } from "@/lib/execution-host/types";
+import type { CommandReceipt } from "@/lib/execution-host/contracts";
+import type { SessionCreateIntent } from "@/lib/execution-host/create-intent";
+import type { FlowActionCompletion } from "@/lib/flows/graph/action-completion";
+import type { FlowFinishContinuation } from "@/lib/flows/graph/finish-continuation";
+import type { FlowActionResume } from "@/lib/flows/graph/action-resume";
 
 import { sql } from "drizzle-orm";
 import {
@@ -54,14 +62,20 @@ import {
 
 import { ADAPTER_IDS, type AdapterId } from "@/lib/acp-runners/adapter-support";
 import { DOMAIN_EVENT_KINDS } from "@/lib/domain-events/taxonomy";
+import { PROMPT_OWNER_SHAPES } from "@/lib/execution-host/prompt-owner-contract";
 import {
   ASSIGNMENT_STATES,
   COMMAND_KINDS,
   COMMAND_STATES,
+  COMMAND_APPLICATION_STATES,
+  COMMAND_TRANSPORT_STATES,
   EXECUTION_HOST_KINDS,
   EXECUTION_HOST_READINESS,
   OPEN_COMMAND_STATES,
   PLACEMENT_REASONS,
+  RUNTIME_OBJECT_KINDS,
+  RUNTIME_OBJECT_RETENTION_CLASSES,
+  RUNTIME_OBJECT_STATES,
   TERMINAL_COMMAND_STATES,
 } from "@/lib/execution-host/types";
 
@@ -1826,6 +1840,20 @@ export const runs = pgTable(
     })
       .notNull()
       .default("Pending"),
+    // ADR-167: immutable at admission. B4 rejects unimported legacy rows
+    // before migrations make the canonical contract the only legal mode.
+    executionDataPlaneMode: text("execution_data_plane_mode", {
+      enum: ["canonical_events_v1"],
+    })
+      .notNull()
+      .default("canonical_events_v1"),
+    // Allocated under the run-row lock when a contiguous canonical event is
+    // accepted. Stored as bigint, never serialized through JavaScript number.
+    nextExecutionEventSequence: bigint("next_execution_event_sequence", {
+      mode: "bigint",
+    })
+      .notNull()
+      .default(sql`0`),
     currentStepId: text("current_step_id"),
     flowVersion: text("flow_version").notNull(),
     flowRevision: text("flow_revision").notNull().default("unknown"),
@@ -1854,6 +1882,13 @@ export const runs = pgTable(
       .defaultNow(),
     endedAt: timestamp("ended_at", { withTimezone: true, mode: "date" }),
     resumeStartedAt: timestamp("resume_started_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    // Flow traversal coordination, separate from execution-host assignment and
+    // prompt application. Every continuation write checks this renewable token.
+    flowDriverToken: text("flow_driver_token"),
+    flowDriverLeaseExpiresAt: timestamp("flow_driver_lease_expires_at", {
       withTimezone: true,
       mode: "date",
     }),
@@ -1947,7 +1982,7 @@ export const runs = pgTable(
     // backstop — the last time it ATTEMPTED a cost reconcile for this run
     // (stamped on EVERY outcome: reconciled / missing-cost / error). Decouples
     // the sweep candidate set from rollup row state so (a) a run with no
-    // cost.jsonl is attempted once and settled instead of monopolizing the
+    // durable usage events is attempted once and settled instead of monopolizing the
     // bounded oldest-first scan forever, and (b) a pre-0083 rollup with empty
     // by_runner (NULL marker) is re-reconciled once to backfill it. NULL = never
     // attempted by the sweep.
@@ -2001,6 +2036,13 @@ export const runs = pgTable(
       t.projectId,
       t.status,
     ),
+    flowDriverClaim: check(
+      "runs_flow_driver_claim_check",
+      sql`(${t.flowDriverToken} IS NULL AND ${t.flowDriverLeaseExpiresAt} IS NULL) OR (${t.runKind} = 'flow' AND ${t.flowDriverToken} IS NOT NULL AND ${t.flowDriverLeaseExpiresAt} IS NOT NULL)`,
+    ),
+    idxFlowDriverLease: index("runs_flow_driver_lease_idx")
+      .on(t.flowDriverLeaseExpiresAt, t.id)
+      .where(sql`${t.flowDriverToken} IS NOT NULL`),
     idxProjectStatusKind: index("runs_project_status_kind_idx").on(
       t.projectId,
       t.status,
@@ -2207,6 +2249,59 @@ export const executionCommands = pgTable(
       .$type<Record<string, unknown>>()
       .notNull()
       .default({}),
+    // Private pre-prompt replay source, independent of prompt-owner fields.
+    createIntent: jsonb("create_intent").$type<SessionCreateIntent>(),
+    // ADR-167 prompt continuation identity. The digest is over canonical
+    // unredacted request bytes; payload remains the existing redacted view.
+    ownerKind: text("owner_kind", {
+      enum: [
+        "flow_node_attempt",
+        "scratch_message",
+        "gate_chat",
+        "agent_turn",
+        "sync_resolution",
+      ],
+    }),
+    ownerRef: jsonb("owner_ref").$type<PromptOwnerReference>(),
+    logicalOperationKey: text("logical_operation_key"),
+    requestSchema: text("request_schema"),
+    requestSha256: text("request_sha256"),
+    // Private immutable replay source. Never select into browser DTOs or logs.
+    requestCanonicalJson: text("request_canonical_json"),
+    receiptEvidence: jsonb("receipt_evidence").$type<CommandReceipt>(),
+    terminalEventId: text("terminal_event_id").references(
+      (): AnyPgColumn => executionEvents.id,
+      { onDelete: "restrict" },
+    ),
+    terminalEvidenceSha256: text("terminal_evidence_sha256"),
+    transportState: text("transport_state", { enum: COMMAND_TRANSPORT_STATES })
+      .notNull()
+      .default("not_sent"),
+    applicationState: text("application_state", {
+      enum: COMMAND_APPLICATION_STATES,
+    })
+      .notNull()
+      .default("pending"),
+    applicationClaimOwner: text("application_claim_owner"),
+    applicationClaimExpiresAt: timestamp("application_claim_expires_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    applicationAttempts: integer("application_attempts").notNull().default(0),
+    applicationNextRetryAt: timestamp("application_next_retry_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    applicationError:
+      jsonb("application_error").$type<CommandApplicationError>(),
+    completionAppliedAt: timestamp("completion_applied_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    // D6 tombstone marker. Set only after the host durably acknowledged the
+    // same retirement, so a NULL here always means the row is still protected
+    // evidence — including for the run-deletion guard.
+    retiredAt: timestamp("retired_at", { withTimezone: true, mode: "date" }),
     state: text("state", { enum: COMMAND_STATES }).notNull().default("queued"),
     attempts: integer("attempts").notNull().default(0),
     maxAttempts: integer("max_attempts").notNull(),
@@ -2243,9 +2338,96 @@ export const executionCommands = pgTable(
       t.runId,
       t.createdAt,
     ),
+    // The D6 retirement scan's keyset order. Partial on the un-retired
+    // terminal rows so a growing tombstone table never slows the scan.
+    idxRetirement: index("execution_commands_retirement_idx")
+      .on(t.completedAt, t.id)
+      .where(
+        sql`${t.retiredAt} IS NULL AND ${inLiteralList(t.state, TERMINAL_COMMAND_STATES)}`,
+      ),
+    uniqCreateOperation: uniqueIndex("execution_commands_create_operation_uq")
+      .on(
+        t.runId,
+        t.executionAssignmentId,
+        sql`(${t.createIntent}->>'operationKey')`,
+        sql`(${t.createIntent}->>'generation')`,
+      )
+      .where(sql`${t.createIntent} IS NOT NULL`),
+    createIntentCheck: check(
+      "execution_commands_create_intent_check",
+      sql`${t.createIntent} IS NULL OR (${t.kind} = 'session.create'
+        AND jsonb_typeof(${t.createIntent}) = 'object' AND ${t.createIntent}->'version' = '1'::jsonb
+        AND jsonb_typeof(${t.createIntent}->'owner') = 'object'
+        AND ${t.createIntent}->'owner'->>'variant' IN ('node', 'gate_ai', 'gate_skill', 'agent')
+        AND (${t.createIntent} - ARRAY['version','owner','operationKey','generation','supersedesCommandId','sessionFallback','requestCanonicalJson','requestSha256']) = '{}'::jsonb
+        AND jsonb_typeof(${t.createIntent}->'sessionFallback') = 'boolean'
+        AND CASE WHEN ${t.createIntent}->'owner'->>'variant' = 'agent' THEN
+          ((${t.createIntent}->'owner') - ARRAY['variant','turnId','promptOrdinal']) = '{}'::jsonb
+          AND jsonb_typeof(${t.createIntent}->'owner'->'turnId') = 'string'
+          AND length(${t.createIntent}->'owner'->>'turnId') BETWEEN 1 AND 128
+          AND (${t.createIntent}->'owner'->>'promptOrdinal') ~ '^(0|[1-9][0-9]*)$'
+          AND ${t.createIntent}->>'operationKey' = 'agent-create:' || (${t.createIntent}->'owner'->>'turnId') || ':' || (${t.createIntent}->'owner'->>'promptOrdinal')
+        ELSE jsonb_typeof(${t.createIntent}->'owner'->'nodeAttemptId') = 'string'
+        AND CASE WHEN ${t.createIntent}->'owner'->>'variant' = 'node' THEN
+          ((${t.createIntent}->'owner') - ARRAY['variant','nodeAttemptId','promptOrdinal']) = '{}'::jsonb
+          AND (${t.createIntent}->'owner'->>'promptOrdinal') ~ '^(0|[1-9][0-9]*)$'
+          AND ${t.createIntent}->>'operationKey' = 'flow-create:node:' || (${t.createIntent}->'owner'->>'nodeAttemptId') || ':' || (${t.createIntent}->'owner'->>'promptOrdinal')
+        ELSE ((${t.createIntent}->'owner') - ARRAY['variant','nodeAttemptId','gateId','evaluationId']) = '{}'::jsonb
+          AND jsonb_typeof(${t.createIntent}->'owner'->'gateId') = 'string'
+          AND jsonb_typeof(${t.createIntent}->'owner'->'evaluationId') = 'string'
+          AND ${t.createIntent}->>'operationKey' = 'flow-create:' || (${t.createIntent}->'owner'->>'variant') || ':' || (${t.createIntent}->'owner'->>'evaluationId') END END
+        AND length(${t.createIntent}->>'operationKey') BETWEEN 1 AND 256
+        AND (${t.createIntent}->>'generation') ~ '^(0|[1-9][0-9]*)$'
+        AND (${t.createIntent}->>'generation')::numeric <= 2147483647
+        AND ((${t.createIntent}->'generation' = '0'::jsonb AND ${t.createIntent}->'supersedesCommandId' = 'null'::jsonb)
+          OR (${t.createIntent}->>'generation')::numeric > 0 AND jsonb_typeof(${t.createIntent}->'supersedesCommandId') = 'string')
+        AND ${t.createIntent}->>'requestSha256' = encode(sha256(convert_to(${t.createIntent}->>'requestCanonicalJson', 'UTF8')), 'hex')
+        AND (${t.createIntent}->>'requestCanonicalJson')::jsonb->'command'->>'id' = ${t.id}
+        AND (${t.createIntent}->>'requestCanonicalJson')::jsonb->'command'->>'kind' = ${t.kind}
+        AND (${t.createIntent}->>'requestCanonicalJson')::jsonb->'fence'->>'runId' = ${t.runId}
+        AND (${t.createIntent}->>'requestCanonicalJson')::jsonb->'fence'->>'assignmentId' = ${t.executionAssignmentId}
+        AND (${t.createIntent}->>'requestCanonicalJson')::jsonb->'fence'->'assignmentEpoch' = to_jsonb(${t.assignmentEpoch})
+        AND CASE WHEN ${t.createIntent}->'owner'->>'variant' = 'agent' THEN
+          NOT ((${t.createIntent}->>'requestCanonicalJson')::jsonb->'payload' ? 'nodeAttemptId')
+        ELSE (${t.createIntent}->>'requestCanonicalJson')::jsonb->'payload'->>'nodeAttemptId' = ${t.createIntent}->'owner'->>'nodeAttemptId' END
+      ) IS TRUE`,
+    ),
+    terminalEvidenceCheck: check(
+      "execution_commands_terminal_evidence_check",
+      sql`${t.terminalEvidenceSha256} IS NULL OR (${t.terminalEvidenceSha256} ~ '^[a-f0-9]{64}$' AND ${t.terminalEventId} IS NOT NULL AND ${t.receiptEvidence} IS NOT NULL)`,
+    ),
+    receiptEvidenceCheck: check(
+      "execution_commands_receipt_evidence_check",
+      sql`${t.receiptEvidence} IS NULL OR (jsonb_typeof(${t.receiptEvidence}) = 'object' AND ${t.receiptEvidence}->>'commandId' = ${t.id} AND ${t.receiptEvidence}->>'runId' = ${t.runId} AND ${t.receiptEvidence}->>'kind' = ${t.kind} AND ${t.receiptEvidence}->>'assignmentEpoch' = ${t.assignmentEpoch}::text AND ${t.receiptEvidence}->>'phase' IN ('completed', 'rejected')) IS TRUE`,
+    ),
+    idxTerminalEvent: index("execution_commands_terminal_event_idx")
+      .on(t.terminalEventId)
+      .where(sql`${t.terminalEventId} IS NOT NULL`),
     idxAssignment: index("execution_commands_assignment_idx").on(
       t.executionAssignmentId,
     ),
+    idxReconciliation: index("execution_commands_reconciliation_idx")
+      .on(t.transportState, t.nextAttemptAt, t.id)
+      .where(
+        sql`${t.requestSchema} = 'maister.command.request.v2' AND ${t.transportState} IN ('unknown', 'reconciliation_required')`,
+      ),
+    idxApplication: index("execution_commands_application_idx")
+      .on(
+        t.applicationState,
+        t.applicationNextRetryAt,
+        t.applicationClaimExpiresAt,
+        t.id,
+      )
+      .where(
+        sql`${t.requestSchema} = 'maister.command.request.v2' AND ${t.kind} = 'session.prompt' AND ${t.applicationState} IN ('pending', 'applying')`,
+      ),
+    uniqPromptLogicalOperation: uniqueIndex(
+      "execution_commands_prompt_logical_operation_uq",
+    )
+      .on(t.runId, t.logicalOperationKey)
+      .where(
+        sql`${t.kind} = 'session.prompt' AND ${t.logicalOperationKey} IS NOT NULL`,
+      ),
     kindCheck: check(
       "execution_commands_kind_check",
       inLiteralList(t.kind, COMMAND_KINDS),
@@ -2257,6 +2439,77 @@ export const executionCommands = pgTable(
     terminalShapeCheck: check(
       "execution_commands_terminal_shape_check",
       sql`(${inLiteralList(t.state, TERMINAL_COMMAND_STATES)}) = (${t.completedAt} IS NOT NULL)`,
+    ),
+    // S2.12 activation. NOT VALID in the migration: it binds every NEW prompt
+    // row and every update (the old-writer rejection) while leaving pre-v2
+    // history exactly as written, which is what "preserve, never reconstruct"
+    // requires.
+    promptOwnerRequiredCheck: check(
+      "execution_commands_prompt_owner_required",
+      sql`${t.kind} <> 'session.prompt' OR ${t.ownerKind} IS NOT NULL`,
+    ),
+    ownerShapeCheck: check(
+      "execution_commands_owner_shape_check",
+      sql`(${t.ownerKind} IS NULL AND ${t.ownerRef} IS NULL AND ${t.logicalOperationKey} IS NULL AND ${t.requestSchema} IS NULL AND ${t.requestSha256} IS NULL) OR (${t.ownerKind} IN ('flow_node_attempt', 'scratch_message', 'gate_chat', 'agent_turn', 'sync_resolution') AND jsonb_typeof(${t.ownerRef}) = 'object' AND ${t.logicalOperationKey} IS NOT NULL AND ${t.requestSchema} IS NOT NULL AND ${t.requestSha256} ~ '^[a-f0-9]{64}$')`,
+    ),
+    requestShapeCheck: check(
+      "execution_commands_request_v2_check",
+      sql`(((${t.requestSchema} IS DISTINCT FROM 'maister.command.request.v2') AND ${t.requestCanonicalJson} IS NULL) OR
+        (${t.requestSchema} = 'maister.command.request.v2' AND ${t.kind} = 'session.prompt'
+        AND ${t.requestCanonicalJson} IS NOT NULL AND ${t.targetSessionId} IS NOT NULL
+        AND ${t.ownerKind} IS NOT NULL AND ${t.ownerRef} IS NOT NULL
+        AND length(${t.logicalOperationKey}) BETWEEN 1 AND 256
+        AND ${t.requestSha256} = encode(sha256(convert_to(${t.requestCanonicalJson}, 'UTF8')), 'hex')
+        AND (${t.requestCanonicalJson}::jsonb->'requestVersion') = '2'::jsonb
+        AND (${t.requestCanonicalJson}::jsonb->'command'->>'id') = ${t.id}
+        AND (${t.requestCanonicalJson}::jsonb->'command'->>'kind') = ${t.kind}
+        AND (${t.requestCanonicalJson}::jsonb->'fence'->>'runId') = ${t.runId}
+        AND (${t.requestCanonicalJson}::jsonb->'fence'->>'assignmentId') = ${t.executionAssignmentId}
+        AND (${t.requestCanonicalJson}::jsonb->'fence'->'assignmentEpoch') = to_jsonb(${t.assignmentEpoch})
+        AND (${t.requestCanonicalJson}::jsonb->'target'->>'hostSessionId') = ${t.targetSessionId}
+        AND (${t.ownerRef}->>'runId') = ${t.runId}
+        AND (${t.ownerRef}->>'assignmentId') = ${t.executionAssignmentId}
+        AND (${t.ownerRef}->'assignmentEpoch') = to_jsonb(${t.assignmentEpoch})
+        AND (${t.ownerRef}->'version') = '1'::jsonb
+        AND (${sql.join(
+          PROMPT_OWNER_SHAPES.map(({ kind, variant, keys }) => {
+            const allowed = sql.raw(
+              `ARRAY[${keys.map((key) => `'${key}'`).join(",")}]::text[]`,
+            );
+            const fields = keys.map((key) => {
+              const name = sql.raw(`'${key}'`);
+
+              return [
+                "version",
+                "assignmentEpoch",
+                "promptOrdinal",
+                "round",
+              ].includes(key)
+                ? sql`CASE WHEN jsonb_typeof(${t.ownerRef}->${name}) = 'number' THEN (${t.ownerRef}->>${name})::numeric BETWEEN 0 AND 9007199254740991 AND (${t.ownerRef}->>${name}) ~ '^[0-9]+$' ELSE false END`
+                : sql`jsonb_typeof(${t.ownerRef}->${name}) = 'string' AND length(${t.ownerRef}->>${name}) BETWEEN 1 AND 128`;
+            });
+
+            return sql`(${t.ownerKind} = ${sql.raw(`'${kind}'`)} AND ${t.ownerRef}->>'variant' = ${sql.raw(`'${variant}'`)} AND ${t.ownerRef} ?& ${allowed} AND ${t.ownerRef} - ${allowed} = '{}'::jsonb AND ${sql.join(fields, sql` AND `)}${variant === "resolver" ? sql` AND ${t.ownerRef}->>'expectedPhase' = 'agent_running'` : sql``})`;
+          }),
+          sql` OR `,
+        )}))) IS TRUE`,
+    ),
+    transportStateCheck: check(
+      "execution_commands_transport_state_check",
+      inLiteralList(t.transportState, COMMAND_TRANSPORT_STATES),
+    ),
+    applicationStateCheck: check(
+      "execution_commands_application_state_check",
+      inLiteralList(t.applicationState, COMMAND_APPLICATION_STATES),
+    ),
+    applicationShapeCheck: check(
+      "execution_commands_application_shape_check",
+      sql`
+      (${t.applicationState} = 'applied') = (${t.completionAppliedAt} IS NOT NULL)
+      AND (${t.applicationState} = 'applying') = (${t.applicationClaimOwner} IS NOT NULL AND ${t.applicationClaimExpiresAt} IS NOT NULL)
+      AND (${t.applicationClaimOwner} IS NULL) = (${t.applicationClaimExpiresAt} IS NULL)
+      AND ${t.applicationAttempts} >= 0
+      AND (${t.applicationState} != 'poisoned' OR ${t.applicationNextRetryAt} IS NULL)`,
     ),
   }),
 );
@@ -3593,6 +3846,504 @@ export const runSessions = pgTable(
 
 export type RunSession = typeof runSessions.$inferSelect;
 
+// Accepted agent input outlives its submitting process and capacity wait.
+// Transcript rows remain the canonical ACP projection, not dispatch authority.
+export const agentTurns = pgTable(
+  "agent_turns",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    runId: text("run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "cascade" }),
+    ordinal: integer("ordinal").notNull(),
+    variant: text("variant", {
+      enum: [
+        "initial",
+        "resume",
+        "rework",
+        "live_message",
+        "persistent_message",
+        "consensus_draft",
+      ],
+    }).notNull(),
+    logicalKey: text("logical_key").notNull(),
+    prompt: text("prompt").notNull(),
+    state: text("state", {
+      enum: ["queued", "claimed", "dispatched", "applied", "superseded"],
+    })
+      .notNull()
+      .default("queued"),
+    executionAssignmentId: text("execution_assignment_id").references(
+      () => executionAssignments.id,
+      { onDelete: "restrict" },
+    ),
+    assignmentEpoch: integer("assignment_epoch"),
+    runSessionId: text("run_session_id").references(() => runSessions.id, {
+      onDelete: "restrict",
+    }),
+    incarnationId: text("incarnation_id").references(
+      () => runSessionIncarnations.id,
+      { onDelete: "restrict" },
+    ),
+    commandId: text("command_id").references(() => executionCommands.id, {
+      onDelete: "restrict",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    completedAt: timestamp("completed_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+  },
+  (t) => ({
+    ordinalUnique: unique("agent_turns_run_ordinal_uq").on(t.runId, t.ordinal),
+    logicalKeyUnique: unique("agent_turns_run_logical_key_uq").on(
+      t.runId,
+      t.logicalKey,
+    ),
+    commandUnique: unique("agent_turns_command_uq").on(t.commandId),
+    activeUnique: uniqueIndex("agent_turns_active_run_uq")
+      .on(t.runId)
+      .where(sql`${t.state} IN ('claimed', 'dispatched')`),
+    dueIndex: index("agent_turns_due_idx")
+      .on(t.state, t.createdAt, t.runId)
+      .where(sql`${t.state} IN ('queued', 'claimed', 'dispatched')`),
+    sourceCheck: check(
+      "agent_turns_source_check",
+      sql`${t.ordinal} >= 0
+      AND ${t.variant} IN ('initial', 'resume', 'rework', 'live_message', 'persistent_message', 'consensus_draft')
+      AND length(${t.logicalKey}) BETWEEN 1 AND 256 AND length(${t.prompt}) BETWEEN 1 AND 1000000`,
+    ),
+    stateCheck: check(
+      "agent_turns_state_check",
+      sql`${t.state} IN ('queued', 'claimed', 'dispatched', 'applied', 'superseded')
+      AND ((${t.completedAt} IS NOT NULL) = (${t.state} IN ('applied', 'superseded')))
+      AND ((num_nonnulls(${t.executionAssignmentId}, ${t.assignmentEpoch}, ${t.runSessionId}) = 0)
+        OR (num_nonnulls(${t.executionAssignmentId}, ${t.assignmentEpoch}, ${t.runSessionId}) = 3 AND ${t.assignmentEpoch} > 0))
+      AND num_nonnulls(${t.incarnationId}, ${t.commandId}) IN (0, 2)
+      AND (${t.commandId} IS NULL OR ${t.executionAssignmentId} IS NOT NULL)
+      AND (${t.state} = 'superseded'
+        OR (${t.state} = 'queued' AND ${t.executionAssignmentId} IS NULL AND ${t.commandId} IS NULL)
+        OR (${t.state} = 'claimed' AND ${t.executionAssignmentId} IS NOT NULL AND ${t.commandId} IS NULL)
+        OR (${t.state} IN ('dispatched', 'applied') AND ${t.executionAssignmentId} IS NOT NULL AND ${t.commandId} IS NOT NULL))`,
+    ),
+  }),
+);
+
+export type AgentTurn = typeof agentTurns.$inferSelect;
+
+// ADR-167 canonical execution event plane. These tables deliberately do not
+// reuse domain_events: host stream order and acknowledgement retention are a
+// separate protocol concern.
+export const executionEventStreams = pgTable(
+  "execution_event_streams",
+  {
+    id: text("id").primaryKey(),
+    executionHostId: text("execution_host_id")
+      .notNull()
+      .references(() => executionHosts.id, { onDelete: "restrict" }),
+    streamId: text("stream_id").notNull(),
+    state: text("state", { enum: ["observed", "active", "closed", "lost"] })
+      .notNull()
+      .default("observed"),
+    lastReceivedSequence: bigint("last_received_sequence", { mode: "bigint" }),
+    lastContiguousSequence: bigint("last_contiguous_sequence", {
+      mode: "bigint",
+    }),
+    lastAckConfirmedSequence: bigint("last_ack_confirmed_sequence", {
+      mode: "bigint",
+    }),
+    replayFloorSequence: bigint("replay_floor_sequence", { mode: "bigint" }),
+    lastBootId: text("last_boot_id"),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true, mode: "date" }),
+    firstGapSequence: bigint("first_gap_sequence", { mode: "bigint" }),
+    gapDetectedAt: timestamp("gap_detected_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    gapStatus: text("gap_status", { enum: ["open", "unrecoverable"] }),
+    lastError: jsonb("last_error").$type<Record<string, unknown>>(),
+    nextRetryAt: timestamp("next_retry_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    claimOwner: text("claim_owner"),
+    claimExpiresAt: timestamp("claim_expires_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    closedAt: timestamp("closed_at", { withTimezone: true, mode: "date" }),
+  },
+  (t) => ({
+    uniqHostStream: unique("execution_event_streams_host_stream_uq").on(
+      t.executionHostId,
+      t.streamId,
+    ),
+    uniqActiveHost: uniqueIndex("execution_event_streams_active_host_uq")
+      .on(t.executionHostId)
+      .where(sql`${t.state} = 'active'`),
+    idxRetry: index("execution_event_streams_retry_idx").on(
+      t.nextRetryAt,
+      t.claimExpiresAt,
+    ),
+  }),
+);
+
+export const runSessionIncarnations = pgTable(
+  "run_session_incarnations",
+  {
+    id: text("id").primaryKey(),
+    runSessionId: text("run_session_id")
+      .notNull()
+      .references(() => runSessions.id, { onDelete: "cascade" }),
+    runId: text("run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "cascade" }),
+    executionAssignmentId: text("execution_assignment_id").references(
+      () => executionAssignments.id,
+      { onDelete: "set null" },
+    ),
+    assignmentEpoch: integer("assignment_epoch"),
+    executionHostId: text("execution_host_id")
+      .notNull()
+      .references(() => executionHosts.id, { onDelete: "restrict" }),
+    hostSessionId: text("host_session_id").notNull(),
+    hostBootId: text("host_boot_id"),
+    acpSessionId: text("acp_session_id"),
+    state: text("state", {
+      enum: [
+        "created",
+        "active",
+        "checkpointed",
+        "exited",
+        "crashed",
+        "lost",
+        "deleted",
+      ],
+    }).notNull(),
+    origin: text("origin", { enum: ["native", "legacy_backfill"] }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    activatedAt: timestamp("activated_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    endedAt: timestamp("ended_at", { withTimezone: true, mode: "date" }),
+    terminalReason: jsonb("terminal_reason").$type<Record<string, unknown>>(),
+  },
+  (t) => ({
+    uniqHostSession: unique("run_session_incarnations_host_session_uq").on(
+      t.executionHostId,
+      t.hostSessionId,
+    ),
+    uniqActiveRunSession: uniqueIndex(
+      "run_session_incarnations_active_run_session_uq",
+    )
+      .on(t.runSessionId)
+      .where(sql`${t.state} IN ('created', 'active', 'checkpointed')`),
+  }),
+);
+
+export const executionEvents = pgTable(
+  "execution_events",
+  {
+    id: text("id").primaryKey(),
+    source: text("source", {
+      enum: ["host", "manager", "legacy_import"],
+    }).notNull(),
+    sourceKey: text("source_key"),
+    runId: text("run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "cascade" }),
+    executionHostId: text("execution_host_id").references(
+      () => executionHosts.id,
+      { onDelete: "restrict" },
+    ),
+    eventStreamId: text("event_stream_id").references(
+      () => executionEventStreams.id,
+      { onDelete: "restrict" },
+    ),
+    hostSequence: bigint("host_sequence", { mode: "bigint" }),
+    executionAssignmentId: text("execution_assignment_id").references(
+      () => executionAssignments.id,
+      { onDelete: "set null" },
+    ),
+    assignmentEpoch: integer("assignment_epoch"),
+    runSessionIncarnationId: text("run_session_incarnation_id").references(
+      () => runSessionIncarnations.id,
+      { onDelete: "set null" },
+    ),
+    hostBootId: text("host_boot_id"),
+    hostSessionId: text("host_session_id"),
+    envelopeVersion: integer("envelope_version"),
+    eventType: text("event_type").notNull(),
+    payloadSchema: text("payload_schema").notNull(),
+    payload: jsonb("payload").$type<Record<string, unknown>>(),
+    payloadSha256: text("payload_sha256"),
+    payloadBytes: integer("payload_bytes"),
+    occurredAt: timestamp("occurred_at", {
+      withTimezone: true,
+      mode: "date",
+    }).notNull(),
+    receivedAt: timestamp("received_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    runSequence: bigint("run_sequence", { mode: "bigint" }),
+    ingestDisposition: text("ingest_disposition", {
+      enum: ["pending_gap", "accepted", "stale_epoch", "quarantined"],
+    }).notNull(),
+    ingestError: jsonb("ingest_error").$type<Record<string, unknown>>(),
+  },
+  (t) => ({
+    uniqHostPosition: uniqueIndex("execution_events_host_position_uq")
+      .on(t.eventStreamId, t.hostSequence)
+      .where(sql`${t.eventStreamId} IS NOT NULL`),
+    uniqSourceKey: uniqueIndex("execution_events_source_run_key_uq")
+      .on(t.source, t.runId, t.sourceKey)
+      .where(sql`${t.sourceKey} IS NOT NULL`),
+    uniqRunSequence: uniqueIndex("execution_events_run_sequence_uq")
+      .on(t.runId, t.runSequence)
+      .where(sql`${t.runSequence} IS NOT NULL`),
+    idxRunSequence: index("execution_events_run_sequence_idx").on(
+      t.runId,
+      t.runSequence,
+    ),
+    sourceShapeCheck: check(
+      "execution_events_source_shape_check",
+      sql`(${t.source} = 'host' AND ${t.eventStreamId} IS NOT NULL AND ${t.hostSequence} IS NOT NULL) OR (${t.source} IN ('manager', 'legacy_import') AND ${t.sourceKey} IS NOT NULL AND ${t.eventStreamId} IS NULL AND ${t.hostSequence} IS NULL)`,
+    ),
+    protocolBoundsCheck: check(
+      "execution_events_protocol_bounds_check",
+      sql`(${t.hostSequence} IS NULL OR ${t.hostSequence} >= 0) AND (${t.runSequence} IS NULL OR ${t.runSequence} >= 0) AND (${t.assignmentEpoch} IS NULL OR ${t.assignmentEpoch} >= 1) AND (${t.payloadBytes} IS NULL OR ${t.payloadBytes} BETWEEN 0 AND 1048576) AND (${t.source} <> 'host' OR (${t.executionHostId} IS NOT NULL AND ${t.hostBootId} IS NOT NULL AND ${t.envelopeVersion} = 1))`,
+    ),
+  }),
+);
+
+// ADR-167 D8: manager-owned metadata for host-owned runtime bytes. The private
+// host path exists only in supervisor SQLite; the web tier addresses content by
+// this opaque ID and derives the host/run binding from this catalog.
+export const executionRuntimeObjects = pgTable(
+  "execution_runtime_objects",
+  {
+    id: text("id").primaryKey(),
+    runId: text("run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "cascade" }),
+    executionHostId: text("execution_host_id")
+      .notNull()
+      .references(() => executionHosts.id, { onDelete: "restrict" }),
+    executionAssignmentId: text("execution_assignment_id").references(
+      () => executionAssignments.id,
+      { onDelete: "set null" },
+    ),
+    assignmentEpoch: integer("assignment_epoch"),
+    runSessionIncarnationId: text("run_session_incarnation_id").references(
+      () => runSessionIncarnations.id,
+      { onDelete: "set null" },
+    ),
+    kind: text("kind", { enum: RUNTIME_OBJECT_KINDS }).notNull(),
+    logicalName: text("logical_name").notNull(),
+    mimeType: text("mime_type").notNull(),
+    sizeBytes: bigint("size_bytes", { mode: "bigint" }),
+    sha256: text("sha256"),
+    generation: integer("generation").notNull(),
+    retentionClass: text("retention_class", {
+      enum: RUNTIME_OBJECT_RETENTION_CLASSES,
+    }).notNull(),
+    state: text("state", { enum: RUNTIME_OBJECT_STATES }).notNull(),
+    sourceEventId: text("source_event_id").references(
+      () => executionEvents.id,
+      { onDelete: "set null" },
+    ),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    sealedAt: timestamp("sealed_at", { withTimezone: true, mode: "date" }),
+    expiresAt: timestamp("expires_at", { withTimezone: true, mode: "date" }),
+    deletedAt: timestamp("deleted_at", { withTimezone: true, mode: "date" }),
+    lastError: jsonb("last_error").$type<Record<string, unknown>>(),
+  },
+  (t) => ({
+    uniqSourceEvent: uniqueIndex("execution_runtime_objects_source_event_uq")
+      .on(t.sourceEventId)
+      .where(sql`${t.sourceEventId} IS NOT NULL`),
+    idxRunState: index("execution_runtime_objects_run_state_idx").on(
+      t.runId,
+      t.state,
+    ),
+    idxExpiry: index("execution_runtime_objects_expiry_idx")
+      .on(t.expiresAt)
+      .where(sql`${t.expiresAt} IS NOT NULL`),
+    sizeCheck: check(
+      "execution_runtime_objects_size_check",
+      sql`${t.sizeBytes} IS NULL OR ${t.sizeBytes} >= 0`,
+    ),
+    generationCheck: check(
+      "execution_runtime_objects_generation_check",
+      sql`${t.generation} >= 1`,
+    ),
+    logicalNameCheck: check(
+      "execution_runtime_objects_logical_name_check",
+      sql`char_length(${t.logicalName}) BETWEEN 1 AND 255 AND ${t.logicalName} NOT IN ('.', '..') AND ${t.logicalName} !~ '[\\\\/]'`,
+    ),
+    metadataStateCheck: check(
+      "execution_runtime_objects_metadata_state_check",
+      sql`(${t.state} IN ('available', 'deleting', 'missing', 'deleted', 'expired', 'corrupt')) = (${t.sizeBytes} IS NOT NULL AND ${t.sha256} ~ '^[a-f0-9]{64}$' AND ${t.sealedAt} IS NOT NULL)`,
+    ),
+    ephemeralExpiryCheck: check(
+      "execution_runtime_objects_ephemeral_expiry_check",
+      sql`(${t.retentionClass} = 'ephemeral') = (${t.expiresAt} IS NOT NULL)`,
+    ),
+  }),
+);
+
+export const executionEventConsumers = pgTable(
+  "execution_event_consumers",
+  {
+    consumerName: text("consumer_name").notNull(),
+    runId: text("run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "cascade" }),
+    lastRunSequence: bigint("last_run_sequence", { mode: "bigint" }),
+    state: text("state", { enum: ["ready", "retrying", "poisoned"] })
+      .notNull()
+      .default("ready"),
+    attempts: integer("attempts").notNull().default(0),
+    nextRetryAt: timestamp("next_retry_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    poisonEventId: text("poison_event_id").references(
+      () => executionEvents.id,
+      { onDelete: "set null" },
+    ),
+    lastError: jsonb("last_error").$type<Record<string, unknown>>(),
+    claimOwner: text("claim_owner"),
+    claimExpiresAt: timestamp("claim_expires_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    lastServedAt: timestamp("last_served_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    primary: primaryKey({ columns: [t.consumerName, t.runId] }),
+    idxRetry: index("execution_event_consumers_retry_idx").on(
+      t.nextRetryAt,
+      t.claimExpiresAt,
+    ),
+    idxService: index("execution_event_consumers_service_idx")
+      .on(t.lastServedAt.asc().nullsFirst(), t.runId, t.consumerName)
+      .where(sql`${t.state} <> 'poisoned'`),
+  }),
+);
+
+export const executionProjectionBackfills = pgTable(
+  "execution_projection_backfills",
+  {
+    consumerName: text("consumer_name").primaryKey(),
+    afterRunId: text("after_run_id"),
+    completedAt: timestamp("completed_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+);
+
+export const executionDataPlaneImports = pgTable(
+  "execution_data_plane_imports",
+  {
+    runId: text("run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "cascade" }),
+    sourceKind: text("source_kind", {
+      enum: [
+        "events",
+        "transcript",
+        "cost",
+        "runtime_objects",
+        "scratch_session",
+      ],
+    }).notNull(),
+    state: text("state", { enum: ["pending", "complete", "missing", "failed"] })
+      .notNull()
+      .default("pending"),
+    sourceFingerprint: text("source_fingerprint"),
+    lastSourcePosition: text("last_source_position"),
+    importedCount: integer("imported_count").notNull().default(0),
+    lastError: jsonb("last_error").$type<Record<string, unknown>>(),
+    startedAt: timestamp("started_at", { withTimezone: true, mode: "date" }),
+    completedAt: timestamp("completed_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    attempts: integer("attempts").notNull().default(0),
+  },
+  (t) => ({ primary: primaryKey({ columns: [t.runId, t.sourceKind] }) }),
+);
+
+export const executionEventIngestFailures = pgTable(
+  "execution_event_ingest_failures",
+  {
+    id: text("id").primaryKey(),
+    executionHostId: text("execution_host_id")
+      .notNull()
+      .references(() => executionHosts.id, { onDelete: "restrict" }),
+    streamId: text("stream_id"),
+    eventIdText: text("event_id_text"),
+    sequenceText: text("sequence_text"),
+    reason: text("reason").notNull(),
+    details: jsonb("details").$type<Record<string, unknown>>(),
+    encodedBytes: integer("encoded_bytes").notNull().default(0),
+    occurrences: integer("occurrences").notNull().default(1),
+    firstSeenAt: timestamp("first_seen_at", {
+      withTimezone: true,
+      mode: "date",
+    })
+      .notNull()
+      .defaultNow(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    uniqFailure: unique("execution_event_ingest_failures_identity_uq").on(
+      t.executionHostId,
+      t.streamId,
+      t.eventIdText,
+      t.sequenceText,
+      t.reason,
+    ),
+  }),
+);
+
+export type ExecutionEvent = typeof executionEvents.$inferSelect;
+export type ExecutionEventStream = typeof executionEventStreams.$inferSelect;
+export type RunSessionIncarnation = typeof runSessionIncarnations.$inferSelect;
+export type ExecutionRuntimeObject =
+  typeof executionRuntimeObjects.$inferSelect;
+
 export const runCostRollups = pgTable(
   "run_cost_rollups",
   {
@@ -3621,6 +4372,10 @@ export const runCostRollups = pgTable(
       .notNull()
       .default(0),
     byModel: jsonb("by_model")
+      .$type<Record<string, Record<string, number>>>()
+      .notNull()
+      .default({}),
+    bySession: jsonb("by_session")
       .$type<Record<string, Record<string, number>>>()
       .notNull()
       .default({}),
@@ -4224,7 +4979,6 @@ export const scratchRuns = pgTable(
     })
       .notNull()
       .default("Starting"),
-    supervisorSessionId: text("supervisor_session_id"),
     createdByUserId: text("created_by_user_id")
       .notNull()
       .references(() => users.id),
@@ -4288,15 +5042,41 @@ export const runMessages = pgTable(
     }).notNull(),
     content: text("content").notNull(),
     supervisorEventId: text("supervisor_event_id"),
+    projectionToolKey: text("projection_tool_key"),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
       .notNull()
       .defaultNow(),
   },
   (t) => ({
+    idxProjectionTool: index("run_messages_projection_tool_idx")
+      .on(t.runId, t.nodeAttemptId, t.projectionToolKey, t.sequence.desc())
+      .where(sql`${t.projectionToolKey} IS NOT NULL`),
     uniqRunNodeAttemptSequence: unique(
       "run_messages_run_node_attempt_sequence_uq",
     )
       .on(t.runId, t.nodeAttemptId, t.sequence)
+      .nullsNotDistinct(),
+  }),
+);
+
+export const runTranscriptStates = pgTable(
+  "run_transcript_states",
+  {
+    id: text("id").primaryKey(),
+    runId: text("run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "cascade" }),
+    nodeAttemptId: text("node_attempt_id").references(() => nodeAttempts.id, {
+      onDelete: "cascade",
+    }),
+    nextSequence: integer("next_sequence").notNull().default(0),
+    openTextSequence: integer("open_text_sequence"),
+    openThoughtSequence: integer("open_thought_sequence"),
+    usageSequence: integer("usage_sequence"),
+  },
+  (t) => ({
+    uniqScope: unique("run_transcript_states_run_attempt_uq")
+      .on(t.runId, t.nodeAttemptId)
       .nullsNotDistinct(),
   }),
 );
@@ -4461,6 +5241,12 @@ export const nodeAttempts = pgTable(
     // retry_policy after a retryable failure (vs user/rework initiated).
     autoRetry: boolean("auto_retry").notNull().default(false),
     stdout: text("stdout"),
+    actionCompletion: jsonb("action_completion").$type<FlowActionCompletion>(),
+    actionPromptOrdinal: integer("action_prompt_ordinal").notNull().default(0),
+    actionResume: jsonb("action_resume").$type<FlowActionResume>(),
+    finishContinuation: jsonb(
+      "finish_continuation",
+    ).$type<FlowFinishContinuation>(),
     // The final Mustache-resolved prompt sent to an ai_coding/judge node,
     // captured at dispatch (migration 0053). Null for cli/check/human nodes and
     // for attempts created before the column shipped.
@@ -4524,6 +5310,22 @@ export const nodeAttempts = pgTable(
       t.runId,
       t.nodeId,
       t.attempt,
+    ),
+    actionPromptOrdinalCheck: check(
+      "node_attempts_action_prompt_ordinal_check",
+      sql`${t.actionPromptOrdinal} >= 0`,
+    ),
+    actionCompletionCheck: check(
+      "node_attempts_action_completion_check",
+      sql`${t.actionCompletion} IS NULL OR (jsonb_typeof(${t.actionCompletion}) = 'object' AND ${t.actionCompletion}->'version' = '1'::jsonb AND ${t.actionCompletion}->'promptOrdinal' = to_jsonb(${t.actionPromptOrdinal}) AND jsonb_typeof(${t.actionCompletion}->'result') = 'object' AND jsonb_typeof(${t.actionCompletion}->'result'->'ok') = 'boolean' AND jsonb_typeof(${t.actionCompletion}->'originalOutput') = 'object') IS TRUE`,
+    ),
+    finishContinuationCheck: check(
+      "node_attempts_finish_continuation_check",
+      sql`${t.finishContinuation} IS NULL OR (jsonb_typeof(${t.finishContinuation}) = 'object' AND ${t.finishContinuation}->'version' = '1'::jsonb AND jsonb_typeof(${t.finishContinuation}->'targetNodeId') IN ('string', 'null') AND jsonb_typeof(${t.finishContinuation}->'injectedVars') = 'object' AND (${t.finishContinuation}->'sessionPolicy' = 'null'::jsonb OR ${t.finishContinuation}->>'sessionPolicy' IN ('resume', 'new_session')) AND jsonb_typeof(${t.finishContinuation}->'autoRetry') = 'boolean') IS TRUE`,
+    ),
+    actionResumeCheck: check(
+      "node_attempts_action_resume_check",
+      sql`${t.actionResume} IS NULL OR (jsonb_typeof(${t.actionResume}) = 'object' AND ${t.actionResume}->'version' = '1'::jsonb AND ((${t.actionResume}->>'kind' = 'orchestrator' AND (NOT (${t.actionResume} ? 'permissionResult') OR (jsonb_typeof(${t.actionResume}->'permissionResult') = 'object' AND ${t.actionResume}->'permissionResult'->'version' = '1'::jsonb AND ${t.actionResume}->'permissionResult'->>'kind' = 'permission_result' AND ${t.actionPromptOrdinal} > 0 AND ${t.actionResume}->'permissionResult'->'promptOrdinal' = to_jsonb(${t.actionPromptOrdinal} - 1) AND ${t.actionResume}->'permissionResult'->>'sourceCommandId' = ${t.actionResume}->>'sourceCommandId' AND ${t.actionResume}->'permissionResult'->>'sourceAssignmentId' = ${t.actionResume}->>'sourceAssignmentId' AND ${t.actionResume}->'permissionResult'->>'resumeSessionId' = ${t.actionResume}->>'resumeSessionId' AND jsonb_typeof(${t.actionResume}->'permissionResult'->'assignmentId') = 'string' AND jsonb_typeof(${t.actionResume}->'permissionResult'->'hitlRequestId') = 'string' AND jsonb_typeof(${t.actionResume}->'permissionResult'->'sourceRequestId') = 'string' AND jsonb_typeof(${t.actionResume}->'permissionResult'->'optionId') = 'string' AND jsonb_typeof(${t.actionResume}->'permissionResult'->'inputCommandId') = 'string' AND jsonb_typeof(${t.actionResume}->'permissionResult'->'checkpointCommandId') = 'string' AND jsonb_typeof(${t.actionResume}->'permissionResult'->'sourceIncarnationId') = 'string'))) OR ((${t.actionResume}->>'kind' = 'permission' OR (${t.actionResume}->>'kind' = 'permission_continue' AND ${t.actionPromptOrdinal} > 0 AND jsonb_typeof(${t.actionResume}->'checkpointCommandId') = 'string' AND jsonb_typeof(${t.actionResume}->'inputCommandId') = 'string' AND jsonb_typeof(${t.actionResume}->'sourceIncarnationId') = 'string') OR (${t.actionResume}->>'kind' = 'permission_result' AND ${t.actionCompletion}->>'commandId' = ${t.actionResume}->>'sourceCommandId' AND jsonb_typeof(${t.actionResume}->'checkpointCommandId') = 'string' AND jsonb_typeof(${t.actionResume}->'inputCommandId') = 'string' AND jsonb_typeof(${t.actionResume}->'sourceIncarnationId') = 'string')) AND jsonb_typeof(${t.actionResume}->'hitlRequestId') = 'string' AND jsonb_typeof(${t.actionResume}->'sourceRequestId') = 'string' AND jsonb_typeof(${t.actionResume}->'optionId') = 'string')) AND jsonb_typeof(${t.actionResume}->'sourceCommandId') = 'string' AND jsonb_typeof(${t.actionResume}->'sourceAssignmentId') = 'string' AND ${t.actionResume}->>'assignmentId' = ${t.executionAssignmentId} AND ${t.actionResume}->'promptOrdinal' = to_jsonb(${t.actionPromptOrdinal}) AND jsonb_typeof(${t.actionResume}->'resumeSessionId') = 'string') IS TRUE`,
     ),
     idxRun: index("node_attempts_run_idx").on(t.runId),
     idxAssignment: index("node_attempts_assignment_idx").on(
@@ -4646,6 +5448,8 @@ export const gateResults = pgTable(
     })
       .notNull()
       .default("pending"),
+    promptOrdinal: integer("prompt_ordinal").notNull().default(0),
+    permissionResume: jsonb("permission_resume").$type<GatePermissionResume>(),
     verdict: jsonb("verdict").$type<GateVerdict>(),
     inputArtifactRefs: jsonb("input_artifact_refs").$type<string[]>(),
     outputArtifactRef: text("output_artifact_ref"),
@@ -4657,6 +5461,14 @@ export const gateResults = pgTable(
     endedAt: timestamp("ended_at", { withTimezone: true, mode: "date" }),
   },
   (t) => ({
+    promptOrdinalCheck: check(
+      "gate_results_prompt_ordinal_check",
+      sql`${t.promptOrdinal} >= 0`,
+    ),
+    permissionResumeCheck: check(
+      "gate_results_permission_resume_check",
+      sql`(${t.permissionResume} IS NULL AND ${t.promptOrdinal} = 0) OR (jsonb_typeof(${t.permissionResume}) = 'object' AND ${t.permissionResume}->'version' = '1'::jsonb AND ${t.kind} IN ('ai_judgment', 'skill_check') AND (((${t.permissionResume}->>'kind' = 'permission' OR (${t.permissionResume}->>'kind' = 'permission_continue' AND jsonb_typeof(${t.permissionResume}->'inputCommandId') = 'string' AND jsonb_typeof(${t.permissionResume}->'checkpointCommandId') = 'string')) AND ${t.promptOrdinal} > 0) OR (${t.permissionResume}->>'kind' = 'permission_result' AND ${t.promptOrdinal} >= 0 AND jsonb_typeof(${t.permissionResume}->'inputCommandId') = 'string' AND jsonb_typeof(${t.permissionResume}->'checkpointCommandId') = 'string' AND ${t.permissionResume}->>'verdictSha256' ~ '^[a-f0-9]{64}$')) AND ${t.permissionResume}->'promptOrdinal' = to_jsonb(${t.promptOrdinal}) AND ${t.permissionResume}->>'parentActionSha256' ~ '^[a-f0-9]{64}$' AND jsonb_typeof(${t.permissionResume}->'sourceCommandId') = 'string' AND jsonb_typeof(${t.permissionResume}->'sourceAssignmentId') = 'string' AND jsonb_typeof(${t.permissionResume}->'sourceIncarnationId') = 'string' AND jsonb_typeof(${t.permissionResume}->'assignmentId') = 'string' AND jsonb_typeof(${t.permissionResume}->'resumeSessionId') = 'string' AND jsonb_typeof(${t.permissionResume}->'hitlRequestId') = 'string' AND jsonb_typeof(${t.permissionResume}->'sourceRequestId') = 'string' AND jsonb_typeof(${t.permissionResume}->'optionId') = 'string') IS TRUE`,
+    ),
     idxRun: index("gate_results_run_idx").on(t.runId),
     idxNodeAttempt: index("gate_results_node_attempt_idx").on(t.nodeAttemptId),
   }),
@@ -4668,6 +5480,7 @@ export type ArtifactLocator =
   | { kind: "git-range"; baseCommit: string; headRef: string }
   | { kind: "git-log"; baseRef: string; headRef: string }
   | { kind: "file"; path: string }
+  | { kind: "execution-object"; objectId: string }
   | { kind: "gate-verdict"; gateResultId: string }
   | { kind: "hitl-response"; hitlRequestId: string }
   | {
@@ -4917,36 +5730,6 @@ export const consensusRoundVerdicts = pgTable(
     idxRun: index("consensus_round_verdicts_run_idx").on(t.runId),
     idxNodeAttempt: index("consensus_round_verdicts_node_attempt_idx").on(
       t.nodeAttemptId,
-    ),
-  }),
-);
-
-// M12 (ADR-022/ADR-038): per-run projector resume cursor. The projector
-// advances this in the same transaction as its upserts (crash-safe replay).
-export const artifactProjectionCursors = pgTable(
-  "artifact_projection_cursors",
-  {
-    id: text("id").primaryKey(),
-    runId: text("run_id")
-      .notNull()
-      .references(() => runs.id, { onDelete: "cascade" }),
-    // Events-log scope (per Phase-0 freeze correction: "run" scope, cursor PK = runId)
-    scope: text("scope").notNull(),
-    eventsLogPath: text("events_log_path").notNull(),
-    lastMonotonicId: integer("last_monotonic_id").notNull().default(0),
-    status: text("status", {
-      enum: ["idle", "running", "caught_up", "failed"],
-    })
-      .notNull()
-      .default("idle"),
-    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
-      .notNull()
-      .defaultNow(),
-  },
-  (t) => ({
-    uniqRunScope: unique("artifact_projection_cursors_run_scope_uq").on(
-      t.runId,
-      t.scope,
     ),
   }),
 );
@@ -5243,6 +6026,13 @@ export const hitlRequests = pgTable(
             )
           )
         )
+      ) OR (
+        ${t.kind} = 'permission'
+        AND ${t.supersededAt} IS NOT NULL
+        AND ${t.supersededByHitlRequestId} IS NOT NULL
+        AND ${t.supersededByRunId} IS NULL
+        AND ${t.respondedAt} IS NULL
+        AND coalesce(${t.schema}->'agentPrompt'->>'version', '') = '1'
       )`,
     ),
     agentQuestionActivationStateCheck: check(
@@ -5878,6 +6668,58 @@ export type LocalPackageCreationState = {
   startedAt: string;
 };
 
+// S2.9 (ADR-167 D2): a local-package assistant turn extracts at most one
+// action, and extracting it SANITIZES the assistant message. The parsed action
+// therefore becomes durable intent in that same transaction, so a process that
+// dies before the package apply recovers the action instead of losing it, and a
+// re-entry can never apply an already settled one twice.
+export const flowAssistantActions = pgTable(
+  "flow_assistant_actions",
+  {
+    id: text("id").primaryKey(),
+    runId: text("run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "cascade" }),
+    localPackageId: text("local_package_id")
+      .notNull()
+      .references(() => localPackages.id, { onDelete: "cascade" }),
+    // The edit-lock session that authorized this action; a takeover changes it
+    // and a pending action is then settled `skipped`, never applied.
+    lockGeneration: text("lock_generation").notNull(),
+    messageId: text("message_id")
+      .notNull()
+      .references(() => runMessages.id, { onDelete: "restrict" }),
+    action: jsonb("action").$type<Record<string, unknown>>().notNull(),
+    state: text("state", {
+      enum: ["pending", "applied", "rejected", "skipped"],
+    })
+      .notNull()
+      .default("pending"),
+    result: jsonb("result").$type<Record<string, unknown>>(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    completedAt: timestamp("completed_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+  },
+  (t) => ({
+    messageUnique: unique("flow_assistant_actions_message_uq").on(t.messageId),
+    dueIndex: index("flow_assistant_actions_due_idx")
+      .on(t.createdAt, t.runId)
+      .where(sql`${t.state} = 'pending'`),
+    stateCheck: check(
+      "flow_assistant_actions_state_check",
+      sql`${t.state} IN ('pending', 'applied', 'rejected', 'skipped')
+      AND ((${t.completedAt} IS NOT NULL) = (${t.state} <> 'pending'))
+      AND length(${t.lockGeneration}) BETWEEN 1 AND 128`,
+    ),
+  }),
+);
+
+export type FlowAssistantActionRow = typeof flowAssistantActions.$inferSelect;
+
 export type User = typeof users.$inferSelect;
 export type LocalPackage = typeof localPackages.$inferSelect;
 export type AccountStatus = User["accountStatus"];
@@ -5933,10 +6775,6 @@ export type ArtifactProducer = ArtifactInstance["producer"];
 export type ConsensusRoundVerdict = typeof consensusRoundVerdicts.$inferSelect;
 export type ConsensusRoundVerdictInsert =
   typeof consensusRoundVerdicts.$inferInsert;
-export type ArtifactProjectionCursor =
-  typeof artifactProjectionCursors.$inferSelect;
-export type ArtifactProjectionCursorInsert =
-  typeof artifactProjectionCursors.$inferInsert;
 export type Assignment = typeof assignments.$inferSelect;
 export type AssignmentStatus = Assignment["status"];
 export type AssignmentEvent = typeof assignmentEvents.$inferSelect;

@@ -7,6 +7,7 @@ import type {
 import type {
   ArtifactInstance,
   MaterializationPlan,
+  NodeAttempt,
   Run as RunRow,
   ScratchAdapterLaunch,
 } from "@/lib/db/schema";
@@ -22,9 +23,10 @@ import type { FlowContext, StepResult } from "../types";
 import type { AgentExecution } from "../runner-agent";
 import type { CompiledNode } from "./compile";
 import type { Db, LoadedRun, RunFlowOptions } from "./runner-core";
+import type { FlowDriverClaim } from "./driver-claim";
 
 import { randomUUID } from "node:crypto";
-import { access, readFile, stat, unlink } from "node:fs/promises";
+import { readFile, stat, unlink } from "node:fs/promises";
 import path from "node:path";
 
 import {
@@ -35,6 +37,7 @@ import {
   isNotNull,
   isNull,
   notInArray,
+  or,
 } from "drizzle-orm";
 import pino from "pino";
 
@@ -62,6 +65,13 @@ import {
   type BrainAmbientEntry,
 } from "./run-context";
 import { runNodeGates } from "./gates-exec";
+import { FlowPromptContinuationPending } from "./prompt-owner";
+import { isFlowDriverClaimLost } from "./driver-claim";
+import { persistLocalActionCompletion } from "./action-completion";
+import { persistFinishContinuation } from "./finish-continuation";
+import { closeAppliedFlowPromptSession } from "./prompt-session-cleanup";
+import { loadGatePermissionContinuation } from "./gate-permission-resume";
+import { hasOpenGatePrompt, hasOpenNodePrompt } from "./prompt-permission";
 import { validateNodeStructuredOutput } from "./node-output";
 import {
   appendNodeAttempt,
@@ -106,8 +116,8 @@ import {
 } from "./artifact-store";
 import {
   capturePlanReviewArtifacts,
-  planReviewStagingPaths,
-  type PlanReviewStagingPaths,
+  planReviewOutputBindings,
+  type PlanReviewOutputBindings,
 } from "./plan-review-artifact";
 import { createPlanReviewDecisionRequests } from "./plan-review-decisions";
 import { recordDefaultArtifacts } from "./default-artifacts";
@@ -119,6 +129,7 @@ import {
   type RestrictionPathSet,
 } from "./mutation-check";
 
+import { staleSessionBinding } from "@/lib/execution-host/session-binding";
 import { loadPendingOperatorCorrection } from "@/lib/runs/node-interrupt";
 import { isReviewSchema } from "@/lib/flows/hitl-validate";
 import {
@@ -186,7 +197,7 @@ import {
   releaseAssignmentForRun,
 } from "@/lib/execution-host";
 import { deliverRunIfAutoReady } from "@/lib/runs/auto-delivery";
-import { appendRunStreamEvent } from "@/lib/runs/run-stream-event";
+import { appendManagerRunStreamEvent } from "@/lib/runs/run-stream-event";
 import { SETTLED_RUN_STATUSES } from "@/lib/runs/run-status-sets";
 import {
   checksFromSnapshot,
@@ -228,6 +239,7 @@ import {
   type MaisterErrorCode,
 } from "@/lib/errors";
 import * as schemaModule from "@/lib/db/schema";
+import { nodeAttempts } from "@/lib/db/schema";
 import { getDb } from "@/lib/db/client";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { emitDelegatedReviewIfChild } from "@/lib/runs/delegated-review-emit";
@@ -272,12 +284,13 @@ function runDir(
 }
 
 // A non-agent gate (human / form / review / infra_recovery) parks the run at
-// NeedsInput with no live supervisor session, so nothing appends to
-// `run.events.jsonl` and open run-detail tabs get no SSE tick to surface the
+// NeedsInput with no live supervisor session, so no host event is emitted and
+// open run-detail tabs need a manager-owned SSE tick to surface the
 // freshly-rendered review panel. Append one durable transition event so the SSE
 // tail fires after the commit. Best-effort: a failed append never blocks the
 // run (the next user reload still renders the gate from the DB).
 async function emitNeedsInputStreamEvent(
+  db: Db,
   runtimeRoot: string,
   projectSlug: string,
   runId: string,
@@ -285,10 +298,11 @@ async function emitNeedsInputStreamEvent(
   reason: string,
 ): Promise<void> {
   try {
-    await appendRunStreamEvent(
-      path.join(runDir(runtimeRoot, projectSlug, runId), "run.events.jsonl"),
-      { type: "run.needs_input", data: { nodeId, reason } },
-    );
+    await appendManagerRunStreamEvent(db, {
+      runId,
+      sourceKey: `run-needs-input:${nodeId}:${reason}`,
+      event: { type: "run.needs_input", data: { nodeId, reason } },
+    });
   } catch (err) {
     log.warn(
       { runId, nodeId, err: (err as Error).message },
@@ -405,32 +419,9 @@ async function runOrchestratorStep(
   return agentResult;
 }
 
-// M37 (ADR-098) T5.1: park an orchestrator's ACP session and free its slot.
-// Called from the needsInput park branch AFTER the run is flipped to
-// WaitingOnChildren. Two side-effects, both best-effort and idempotent:
-//   1. SIGTERM the live supervisor session (looked up by acpSessionId via
-//      listSessions, exactly as the keepalive sweeper Pass-1 does) so a still-
-//      live coordinator process does not keep running while parked. In practice
-//      runAgentStep's runNewSession already DELETEd the one-shot session in its
-//      finally, so listSessions usually finds nothing here — the checkpoint is a
-//      defensive backstop for any session (e.g. a lingering slash session) still
-//      alive at park time. acp_session_id is the resume handle and is untouched.
-//   2. releaseSlotOnIdle → promoteNextPending: WaitingOnChildren does NOT count
-//      against the cap (scheduler.countLiveRuns), so the parked coordinator's
-//      agent/flow-pool slot is freed and any queued Pending run is promoted —
-//      otherwise a parked coordinator would starve the pool.
-//
-// CRASH WINDOW: the status flip to WaitingOnChildren (+ ledger NeedsInput mark)
-// already committed in the caller's transaction BEFORE this runs. If the process
-// dies between that commit and the checkpoint/slot-release here, the run is
-// durably WaitingOnChildren with acp_session_id retained — resumable. A lingering
-// supervisor session (if any) is GC'd by the supervisor's own grace timer; the
-// freed slot is reclaimed on the next promoteNextPending (any later terminal
-// transition). The reconcile/sweeper backstop for "WaitingOnChildren with no
-// live checkpoint" is Phase-7 (T7.1) — Pass-1 already EXCLUDES WaitingOnChildren
-// so it is never mis-idled here.
-async function parkCoordinatorSession(
-  db: Db,
+// Confirm the source session checkpoint before any park artifacts or state
+// changes. A fenced reply yields immediately; it cannot publish a stale park.
+async function checkpointCoordinatorSession(
   runId: string,
   execution: AgentExecution,
   hostSessionId: string | null,
@@ -473,19 +464,6 @@ async function parkCoordinatorSession(
         "coordinator park — checkpoint best-effort failed (run stays resumable)",
       );
     }
-  }
-
-  try {
-    await releaseSlotOnIdle({ runId, db });
-  } catch (err) {
-    log2.warn(
-      {
-        runId,
-        coordinatorType,
-        err: err instanceof Error ? err.message : String(err),
-      },
-      "coordinator park — releaseSlotOnIdle failed (non-fatal)",
-    );
   }
 }
 
@@ -637,6 +615,7 @@ async function escalateAutoRetryExhaustion(args: {
   }
 
   await emitNeedsInputStreamEvent(
+    db,
     runtimeRoot,
     loaded.projectSlug,
     runId,
@@ -1478,8 +1457,11 @@ async function executeNodeAction(
     runtimeRoot: string;
     worktreePath: string;
     execution?: AgentExecution;
+    flowDriverClaim?: FlowDriverClaim;
+    signal?: AbortSignal;
     bindExecution?: () => Promise<AgentExecution>;
     capabilityProfilePath?: string;
+    capabilityInstructionsPath?: string;
     adapterLaunch?: ScratchAdapterLaunch;
     mcpServers?: AgentMcpServer[];
     profileDigest?: string;
@@ -1498,7 +1480,7 @@ async function executeNodeAction(
     sessionName?: string;
     sessionExecutor?: LoadedRun["executor"];
     sessionRunner?: LoadedRun["runner"];
-    planReviewStagingPaths?: PlanReviewStagingPaths;
+    planReviewOutputBindings?: PlanReviewOutputBindings;
     db: Db;
   },
 ): Promise<NodeResult> {
@@ -1533,6 +1515,9 @@ async function executeNodeAction(
           // ADR-154: node actions get MAISTER_FLOW_DIR (packaged-script
           // execution); gates/probes deliberately do not.
           flowInstallPath: loaded.flowInstallPath,
+          ...(ctx.flowDriverClaim && ctx.signal
+            ? { driver: { claim: ctx.flowDriverClaim, signal: ctx.signal } }
+            : {}),
         },
       );
     case "ai_coding":
@@ -1543,6 +1528,26 @@ async function executeNodeAction(
     // the maister MCP facade via the run-bound token appended at the
     // materialization seam.
     case "orchestrator": {
+      const [actionAttempt]: Array<
+        Pick<NodeAttempt, "actionPromptOrdinal" | "actionResume">
+      > = await ctx.db
+        .select({
+          actionPromptOrdinal: nodeAttempts.actionPromptOrdinal,
+          actionResume: nodeAttempts.actionResume,
+        })
+        .from(nodeAttempts)
+        .where(
+          and(
+            eq(nodeAttempts.id, ctx.nodeAttemptId),
+            eq(nodeAttempts.runId, loaded.run.id),
+          ),
+        );
+
+      if (!actionAttempt)
+        throw new MaisterError(
+          "PRECONDITION",
+          "Flow prompt requires its persisted node attempt",
+        );
       // ADR-108 (M40): resolve the node's guardrail rule set once (two-tier
       // against the run's execution preset) so it can be both logged and
       // threaded to the supervisor session. The resolver stays pure; the DEBUG
@@ -1656,6 +1661,19 @@ async function executeNodeAction(
             // and event-consumer seams must never fall back to env getDb(),
             // which would query a different connection.
             db: ctx.db,
+            flowDriverClaim: ctx.flowDriverClaim,
+            signal: ctx.signal,
+            promptOwner: {
+              nodeAttemptId: ctx.nodeAttemptId,
+              promptOrdinal: actionAttempt.actionPromptOrdinal,
+              ...(actionAttempt.actionResume?.kind === "permission" ||
+              actionAttempt.actionResume?.kind === "permission_continue"
+                ? {
+                    variant: "permission_resume" as const,
+                    hitlRequestId: actionAttempt.actionResume.hitlRequestId,
+                  }
+                : { variant: "node" as const }),
+            },
             // M34 (ADR-089): catalog-agent binding (ai_coding only).
             agentBinding:
               def.type === "ai_coding" &&
@@ -1684,26 +1702,20 @@ async function executeNodeAction(
               id: sessionExecutor.id,
               agent: sessionExecutor.agent,
               model: sessionExecutor.model,
-              env: {
-                ...(sessionExecutor.env ?? {}),
-                ...(ctx.planReviewStagingPaths
-                  ? {
-                      MAISTER_PLAN_DOCUMENT_FILE:
-                        ctx.planReviewStagingPaths.planDocumentStagingPath,
-                      MAISTER_PLAN_REVIEW_FILE:
-                        ctx.planReviewStagingPaths.planReviewStagingPath,
-                    }
-                  : {}),
-              },
+              env: sessionExecutor.env ?? undefined,
             },
             runner: runnerSupervisorInput({ snapshot: sessionRunner }),
             capabilityProfilePath: ctx.capabilityProfilePath,
+            capabilityInstructionsPath: ctx.capabilityInstructionsPath,
             adapterLaunch: mergeRunnerAdapterLaunch(
               sessionRunner,
               ctx.adapterLaunch,
             ),
             mcpServers: ctx.mcpServers,
             profileDigest: ctx.profileDigest,
+            outputObjects: ctx.planReviewOutputBindings
+              ? Object.values(ctx.planReviewOutputBindings)
+              : undefined,
             // ADR-130: derived capability-enforcement set for the capability_guard
             // interceptor (absent → inert).
             enforcementProfile: ctx.enforcementProfile,
@@ -1955,6 +1967,7 @@ async function materializeNodeCapabilities(
 ): Promise<
   | {
       capabilityProfilePath: string;
+      capabilityInstructionsPath: string;
       adapterLaunch: ScratchAdapterLaunch;
       mcpServers: AgentMcpServer[];
       plan: MaterializationPlan;
@@ -2138,6 +2151,7 @@ async function materializeNodeCapabilities(
 
   return {
     capabilityProfilePath: m.profilePath,
+    capabilityInstructionsPath: m.instructionsPath,
     adapterLaunch: m.adapterLaunch,
     mcpServers,
     plan,
@@ -2156,11 +2170,16 @@ async function materializeNodeCapabilities(
 // pause, slash-session cleanup, and promoteNextPending. Gate execution
 // (Phase 4) and decision validation + rework staleness (Phase 5) attach at the
 // marked call sites.
+type RunGraphOptions = RunFlowOptions & {
+  driver?: { rootDb: Db; claim: FlowDriverClaim; signal: AbortSignal };
+};
+
 export async function runGraph(
   loaded: LoadedRun,
-  opts: RunFlowOptions = {},
+  opts: RunGraphOptions = {},
 ): Promise<void> {
   const db: Db = opts.db ?? getDb();
+  const rootDb: Db = opts.driver?.rootDb ?? db;
   const runtimeRoot = resolveFlowRuntimeRoot(opts.runtimeRoot);
   const runId = loaded.run.id;
   const log2 = log.child({ runId });
@@ -2169,7 +2188,7 @@ export async function runGraph(
   // watcher). Best-effort — a projection failure must never break the runner.
   const safeProject = async () => {
     try {
-      await projectRunEvents(runId, { db });
+      await projectRunEvents(runId, { db: rootDb });
     } catch (err) {
       log2.warn(
         { runId, err: (err as Error).message },
@@ -2199,7 +2218,7 @@ export async function runGraph(
   const ensureExecution = async (): Promise<AgentExecution> => {
     if (!execution) {
       execution = await bindExecution(
-        opts.executionHosts ?? createExecutionHosts({ db }),
+        opts.executionHosts ?? createExecutionHosts({ db: rootDb }),
         runId,
         // The generation the placement claim minted, read off the run row this
         // traversal loaded; NULL = a never-placed legacy run.
@@ -2222,8 +2241,19 @@ export async function runGraph(
     loaded.manifest.compat?.engine_min ?? "0.0.0",
     "1.2.0",
   );
+  const isInFlightNodePermissionContinuation =
+    Boolean(opts.driver) &&
+    loaded.run.status === "NeedsInput" &&
+    (await hasOpenNodePrompt(db, runId));
+  const isInFlightPermissionContinuation =
+    isInFlightNodePermissionContinuation ||
+    (Boolean(opts.driver) &&
+      loaded.run.status === "NeedsInput" &&
+      (await hasOpenGatePrompt(db, runId)));
   const isNeedsInputResume =
-    loaded.run.status === "NeedsInput" && loaded.run.currentStepId !== null;
+    !isInFlightPermissionContinuation &&
+    loaded.run.status === "NeedsInput" &&
+    loaded.run.currentStepId !== null;
   const isExternallyCompletedResume =
     isNeedsInputResume &&
     opts.completedResume?.targetStepId === loaded.run.currentStepId;
@@ -2283,12 +2313,39 @@ export async function runGraph(
     loaded.run.currentStepId !== null &&
     (await hasPendingTakeoverResume(runId, loaded.run.currentStepId, db));
 
+  // A won durable claim replaces the old in-memory "has attempts" ownership
+  // assumption. Explicit operator/child resume modes still keep their own
+  // authorization and limits; ordinary recovery only continues the open visit.
+  const priorAttempts = opts.driver
+    ? await getNodeAttemptsForRun(runId, db)
+    : [];
+  const gateParentAttempt = priorAttempts.findLast(
+    (attempt) => attempt.nodeId === loaded.run.currentStepId,
+  );
+  const gatePermissionContinuation =
+    opts.driver && gateParentAttempt
+      ? await loadGatePermissionContinuation(db, {
+          runId,
+          assignmentId: opts.driver.claim.assignmentId,
+          nodeAttemptId: gateParentAttempt.id,
+        })
+      : null;
+  const isDurableContinuation =
+    Boolean(opts.driver) &&
+    !isNeedsInputResume &&
+    !isTakeoverResume &&
+    !isCrashResume &&
+    !isOrchestratorResume &&
+    !isConsensusResume &&
+    priorAttempts.length > 0;
+
   const isResume =
     isNeedsInputResume ||
     isTakeoverResume ||
     isCrashResume ||
     isOrchestratorResume ||
-    isConsensusResume;
+    isConsensusResume ||
+    isDurableContinuation;
   const resumeNodeId = isResume ? (loaded.run.currentStepId as string) : null;
 
   // For a takeover resume, the claim winner appends the fresh re-entry attempt
@@ -2509,7 +2566,17 @@ export async function runGraph(
   // On a rework jump, the reviewer's comments are injected into the rework
   // target's next-attempt context under the node's `commentsVar`; consumed by
   // the immediately-following node, then cleared.
-  let pendingInjectedVars: Record<string, unknown> | undefined;
+  const latestFinish = isDurableContinuation
+    ? [...priorAttempts].reverse().find((attempt) => attempt.finishContinuation)
+        ?.finishContinuation
+    : null;
+  const restoredFinish =
+    latestFinish?.targetNodeId === loaded.run.currentStepId
+      ? latestFinish
+      : null;
+  let pendingInjectedVars: Record<string, unknown> | undefined = restoredFinish
+    ? { ...restoredFinish.injectedVars }
+    : undefined;
 
   // Seeded once per run so any `{{ <commentsVar> }}` reference is renderable on
   // a node's initial (non-rework) visit too; pendingInjectedVars overlays the
@@ -2535,15 +2602,27 @@ export async function runGraph(
   let pendingCompletedResumeNodeId: string | null = isExternallyCompletedResume
     ? resumeNodeId
     : null;
-  let currentNodeId: string | null = resumeNodeId ?? graph.entry;
+  let pendingDurableResumeNodeId: string | null = isDurableContinuation
+    ? resumeNodeId
+    : null;
+  let currentNodeId: string | null = isDurableContinuation
+    ? loaded.run.currentStepId
+    : (resumeNodeId ?? graph.entry);
   // M30 (ADR-080): set when a failed attempt schedules an auto-retry — the
   // next iteration of the SAME node appends its attempt with auto_retry=true.
-  let pendingAutoRetryNodeId: string | null = null;
+  let pendingAutoRetryNodeId: string | null = restoredFinish?.autoRetry
+    ? restoredFinish.targetNodeId
+    : null;
   // M30 (ADR-081): set by the rework block — the next visit of the TARGET
   // node carries the resolved session policy (resume threads the prior
   // attempt's acp_session_id into the dispatch).
   let pendingSessionPolicy: { nodeId: string; policy: SessionPolicy } | null =
-    null;
+    restoredFinish?.sessionPolicy && restoredFinish.targetNodeId
+      ? {
+          nodeId: restoredFinish.targetNodeId,
+          policy: restoredFinish.sessionPolicy,
+        }
+      : null;
 
   // M30 (ADR-080): auto-retry decision for a failed ai_coding/cli attempt:
   //  - "retry"    → the caller `continue`s on the SAME node (fresh new-session
@@ -2740,13 +2819,6 @@ export async function runGraph(
 
       const totalExecutions = attempts.length;
 
-      if (totalExecutions >= HARD_NODE_EXECUTION_CEILING) {
-        throw new MaisterError(
-          "CONFIG",
-          `graph exceeded hard node-execution ceiling (${HARD_NODE_EXECUTION_CEILING}) for run ${runId}`,
-        );
-      }
-
       // Count persisted attempts for this node; the initial run is attempt 1,
       // so maxLoops reworks → maxLoops + 1 total attempts allowed.
       const nodeAttemptCount = attempts.filter(
@@ -2770,8 +2842,10 @@ export async function runGraph(
       }
 
       const reusesCompletedAttempt =
-        pendingCompletedResumeNodeId === node.id &&
-        lastForNode?.status === "Succeeded";
+        lastForNode?.status === "Succeeded" &&
+        (pendingCompletedResumeNodeId === node.id ||
+          (pendingDurableResumeNodeId === node.id &&
+            gatePermissionContinuation !== null));
 
       // Consume the marker before continuing. A later rework visit to this
       // node is a real fresh execution, never another completion handoff.
@@ -2786,7 +2860,33 @@ export async function runGraph(
       const resumingThisNode =
         isResume &&
         node.id === resumeNodeId &&
-        (lastForNode?.status === "NeedsInput" || reusesCompletedAttempt);
+        (lastForNode?.status === "NeedsInput" ||
+          reusesCompletedAttempt ||
+          (pendingDurableResumeNodeId === node.id &&
+            (lastForNode?.status === "Running" ||
+              lastForNode?.status === "Pending" ||
+              (lastForNode?.status === "Failed" &&
+                lastForNode.actionCompletion !== null &&
+                lastForNode.finishContinuation === null))));
+
+      if (pendingDurableResumeNodeId === node.id)
+        pendingDurableResumeNodeId = null;
+
+      if (
+        isDurableContinuation &&
+        resumingThisNode &&
+        opts.driver &&
+        lastForNode?.executionAssignmentId !== opts.driver.claim.assignmentId
+      )
+        throw staleSessionBinding(
+          runId,
+          lastForNode?.executionAssignmentId ?? opts.driver.claim.assignmentId,
+        );
+
+      const completedAction =
+        resumingThisNode && !isInFlightNodePermissionContinuation
+          ? lastForNode?.actionCompletion
+          : null;
 
       // A reuse iteration re-enters the CURRENT visit: its attempt row already
       // exists (NeedsInput or completed-action resume) or was appended by the
@@ -2794,6 +2894,17 @@ export async function runGraph(
       const reusesCurrentAttempt =
         (claimedTakeoverAttemptId !== null && node.id === resumeNodeId) ||
         resumingThisNode;
+
+      // An admitted visit already contributes to the persisted ceiling.
+      if (
+        !reusesCurrentAttempt &&
+        totalExecutions >= HARD_NODE_EXECUTION_CEILING
+      ) {
+        throw new MaisterError(
+          "CONFIG",
+          `graph exceeded hard node-execution ceiling (${HARD_NODE_EXECUTION_CEILING}) for run ${runId}`,
+        );
+      }
 
       // rework.maxLoops bounds STARTING a fresh visit of a rework-capable node
       // (initial visit + maxLoops reworks = maxLoops + 1 total). The bound must
@@ -2867,11 +2978,22 @@ export async function runGraph(
       } else if (resumingThisNode && lastForNode) {
         nodeAttemptId = lastForNode.id;
         nodeAttemptNumber = lastForNode.attempt;
+        pendingAutoRetryNodeId = null;
+        pendingSessionPolicy = null;
+        attemptCheckpointRef = lastForNode.checkpointRef;
         // M37 (ADR-098) T5.2: on an orchestrator wake, restore the coordinator's
         // context — thread the retained acp_session_id as the resume handle so
         // runAgentStep respawns via session/resume (a gone/unresumable session
         // degrades OBSERVABLY to a fresh one + sessionFallback).
-        if (isOrchestratorResume && node.id === resumeNodeId) {
+        if (
+          lastForNode.actionResume &&
+          lastForNode.actionResume.assignmentId ===
+            opts.driver?.claim.assignmentId &&
+          lastForNode.actionResume.promptOrdinal ===
+            lastForNode.actionPromptOrdinal
+        ) {
+          attemptResumeSessionId = lastForNode.actionResume.resumeSessionId;
+        } else if (isOrchestratorResume && node.id === resumeNodeId) {
           // M42 (ADR-114): the orchestrator resumes its OWN logical session's
           // handle (the default session for an unnamed node).
           attemptResumeSessionId = nodeSession?.acpSessionId ?? undefined;
@@ -2899,17 +3021,28 @@ export async function runGraph(
           }
         }
 
-        const appended = await appendNodeAttempt({
-          runId,
-          nodeId: node.id,
-          nodeType: node.nodeType,
-          // M30 (ADR-080): the prior iteration scheduled this re-entry.
-          autoRetry: pendingAutoRetryNodeId === node.id,
-          sessionPolicy: appendSessionPolicy,
-          executionAssignmentId: isAgentNodeType(node.nodeType)
-            ? (execution?.client.assignment.id ?? null)
-            : null,
-          db,
+        const appended = await db.transaction(async (tx: Db) => {
+          const row = await appendNodeAttempt({
+            runId,
+            nodeId: node.id,
+            nodeType: node.nodeType,
+            // M30 (ADR-080): the prior iteration scheduled this re-entry.
+            autoRetry: pendingAutoRetryNodeId === node.id,
+            sessionPolicy: appendSessionPolicy,
+            executionAssignmentId:
+              opts.driver || isAgentNodeType(node.nodeType)
+                ? (execution?.client.assignment.id ?? null)
+                : null,
+            db: tx,
+          });
+
+          if (opts.driver)
+            await tx
+              .update(runs)
+              .set({ currentStepId: node.id })
+              .where(eq(runs.id, runId));
+
+          return row;
         });
 
         if (pendingAutoRetryNodeId === node.id) pendingAutoRetryNodeId = null;
@@ -3154,6 +3287,7 @@ export async function runGraph(
       let materialized:
         | {
             capabilityProfilePath: string;
+            capabilityInstructionsPath: string;
             adapterLaunch: ScratchAdapterLaunch;
             mcpServers: AgentMcpServer[];
             plan: MaterializationPlan;
@@ -3262,17 +3396,44 @@ export async function runGraph(
         graph,
         node.id,
       );
-      const planReviewPaths = planReviewCaptureTarget
-        ? planReviewStagingPaths({
-            runtimeRoot,
-            projectSlug: loaded.projectSlug,
+      const planReviewBindings = planReviewCaptureTarget
+        ? planReviewOutputBindings({
             runId,
             nodeAttemptId,
+            assignmentId:
+              reusesCompletedAttempt && lastForNode?.executionAssignmentId
+                ? lastForNode.executionAssignmentId
+                : (await ensureExecution()).client.assignment.id,
           })
         : undefined;
       let result: NodeResult;
 
-      if (reusesCompletedAttempt && lastForNode) {
+      if (completedAction) {
+        const inheritedGateAction =
+          gatePermissionContinuation !== null &&
+          nodeAttemptId === gateParentAttempt?.id;
+
+        if (completedAction.commandId && !inheritedGateAction)
+          await closeAppliedFlowPromptSession(
+            db,
+            (await ensureExecution()).client,
+            completedAction.commandId,
+          );
+        result = {
+          ...completedAction.result,
+          originalOutput: completedAction.originalOutput,
+        };
+        if (node.nodeType === "orchestrator" && !inheritedGateAction)
+          result = await runOrchestratorStep(result, db, runId, log2);
+        log2.info(
+          {
+            nodeId: node.id,
+            nodeAttemptId,
+            commandId: completedAction.commandId,
+          },
+          "node-action-completion-reused",
+        );
+      } else if (reusesCompletedAttempt && lastForNode) {
         result = {
           ok: true,
           stdout: lastForNode.stdout ?? "",
@@ -3293,8 +3454,12 @@ export async function runGraph(
               runtimeRoot,
               worktreePath,
               execution: execution ?? undefined,
+              flowDriverClaim: opts.driver?.claim,
+              signal: opts.driver?.signal,
               bindExecution: ensureExecution,
               capabilityProfilePath: materialized?.capabilityProfilePath,
+              capabilityInstructionsPath:
+                materialized?.capabilityInstructionsPath,
               adapterLaunch: materialized?.adapterLaunch,
               mcpServers: materialized?.mcpServers,
               profileDigest: materialized?.plan.profileDigest,
@@ -3306,7 +3471,7 @@ export async function runGraph(
               sessionName: nodeSessionName,
               sessionExecutor: nodeExecutor,
               sessionRunner: nodeRunnerSnapshot,
-              planReviewStagingPaths: planReviewPaths,
+              planReviewOutputBindings: planReviewBindings,
               db,
             });
           } finally {
@@ -3332,6 +3497,11 @@ export async function runGraph(
             return;
           }
         } catch (err) {
+          if (
+            err instanceof FlowPromptContinuationPending ||
+            isFlowDriverClaimLost(err)
+          )
+            throw err;
           if (isFencedError(err)) {
             log2.warn(
               {
@@ -3353,7 +3523,7 @@ export async function runGraph(
               });
 
           log2.error(
-            { nodeId: node.id, code: e.code },
+            { nodeId: node.id, code: e.code, err: e.message },
             "node action threw — Failed",
           );
           await markNodeFailed(nodeAttemptId, { errorCode: e.code }, db);
@@ -3364,6 +3534,16 @@ export async function runGraph(
           });
 
           if (threwRetry === "retry") {
+            if (opts.driver)
+              await db.transaction(async (tx: Db) => {
+                await persistFinishContinuation(tx, runId, nodeAttemptId, {
+                  version: 1,
+                  targetNodeId: node.id,
+                  injectedVars: {},
+                  sessionPolicy: "new_session",
+                  autoRetry: true,
+                });
+              });
             pendingAutoRetryNodeId = node.id;
             continue;
           }
@@ -3386,9 +3566,28 @@ export async function runGraph(
         }
       }
 
+      // Local actions preceding an owned gate also need a durable boundary:
+      // losing the gate's caller must not re-run an already finished command.
+      if (
+        opts.driver &&
+        !completedAction &&
+        (node.nodeType === "cli" || node.nodeType === "check")
+      ) {
+        result = await persistLocalActionCompletion({
+          db,
+          runId,
+          nodeAttemptId,
+          node,
+          result,
+          runtimeRoot,
+          projectSlug: loaded.projectSlug,
+          attempt: nodeAttemptNumber,
+        });
+      }
+
       // M42 (ADR-114) / ADR-166 E-EH-07: the per-session resume handle lives on
       // the node's run_sessions row, written by the `session.create` ACK
-      // transaction (`persistRunSessionHostBinding`) — never by a late
+      // transaction (`applyCreateAck`) — never by a late
       // post-prompt update. Only the in-memory mirror is refreshed here.
       if (result.acpSessionId && nodeSession) {
         nodeSession.acpSessionId = result.acpSessionId;
@@ -3406,51 +3605,9 @@ export async function runGraph(
           ? "WaitingOnChildren"
           : "NeedsInput";
 
-        // Ledger mark + status flip + run.needs_input outbox row are one
-        // logical transition — they commit atomically or not at all.
-        await db.transaction(async (tx: Db) => {
-          await markNodeNeedsInput(nodeAttemptId, tx);
-          const flipped = await tx
-            .update(runs)
-            .set({ status: parkStatus, currentStepId: node.id })
-            .where(eq(runs.id, runId))
-            .returning({ projectId: runs.projectId });
-
-          if (flipped.length > 0 && !isCoordinatorNode) {
-            await emitWebhookEvent({
-              db: tx,
-              type: "run.needs_input",
-              projectId: flipped[0].projectId,
-              runId,
-              data: {
-                reason: node.nodeType as "human" | "form",
-                nodeId: node.id,
-              },
-            });
-          }
-        });
-        if (!isCoordinatorNode) {
-          await emitNeedsInputStreamEvent(
-            runtimeRoot,
-            loaded.projectSlug,
-            runId,
-            node.id,
-            node.nodeType,
-          );
-        }
-        // M37 (ADR-098) T5.1: an orchestrator park checkpoints its (usually
-        // already-exited) supervisor session and releases its scheduler slot —
-        // WaitingOnChildren is not cap-counted, so the parked coordinator must
-        // not keep a slot. A human/form NeedsInput keeps its slot (an operator
-        // is actively expected), so only the orchestrator parks the slot.
-        // Like the run-bound facade token, the node's capability materialization
-        // is INTENTIONALLY left on disk across the park (every NeedsInput pause
-        // does the same) so the resumed coordinator reuses it; run-level GC
-        // reclaims it at termination.
         if (isCoordinatorNode) {
           try {
-            await parkCoordinatorSession(
-              db,
+            await checkpointCoordinatorSession(
               runId,
               await ensureExecution(),
               nodeSession?.hostSessionId ?? null,
@@ -3474,7 +3631,7 @@ export async function runGraph(
             return;
           }
         }
-        // M12 (T3.3): record defaults at pause so log/guards/diff exist for
+        // M12 (T3.3): record defaults at pause so HITL/diff evidence exists for
         // the paused node even when it hasn't finished yet.
         await recordDefaultArtifacts(
           {
@@ -3482,9 +3639,7 @@ export async function runGraph(
             nodeAttemptId,
             nodeId: node.id,
             attempt: nodeAttemptNumber,
-            projectSlug: loaded.projectSlug,
             workspace: loaded.workspace,
-            runtimeRoot,
           },
           db,
         ).catch((err) => {
@@ -3493,6 +3648,65 @@ export async function runGraph(
             "recordDefaultArtifacts (NeedsInput) failed (non-fatal)",
           );
         });
+
+        // Ledger mark + status flip + run.needs_input outbox row are one
+        // logical transition — they commit atomically or not at all.
+        await db.transaction(async (tx: Db) => {
+          await markNodeNeedsInput(nodeAttemptId, tx);
+          const flipped = await tx
+            .update(runs)
+            .set({ status: parkStatus, currentStepId: node.id })
+            .where(eq(runs.id, runId))
+            .returning({ projectId: runs.projectId });
+
+          if (flipped.length > 0 && isCoordinatorNode)
+            await releaseAssignmentForRun(tx, runId, "waiting_on_children");
+          if (flipped.length > 0 && !isCoordinatorNode) {
+            await emitWebhookEvent({
+              db: tx,
+              type: "run.needs_input",
+              projectId: flipped[0].projectId,
+              runId,
+              data: {
+                reason: node.nodeType as "human" | "form",
+                nodeId: node.id,
+              },
+            });
+          }
+        });
+        if (!isCoordinatorNode) {
+          await emitNeedsInputStreamEvent(
+            db,
+            runtimeRoot,
+            loaded.projectSlug,
+            runId,
+            node.id,
+            node.nodeType,
+          );
+        }
+        // M37 (ADR-098) T5.1: an orchestrator park checkpoints its (usually
+        // already-exited) supervisor session and releases its scheduler slot —
+        // WaitingOnChildren is not cap-counted, so the parked coordinator must
+        // not keep a slot. A human/form NeedsInput keeps its slot (an operator
+        // is actively expected), so only the orchestrator parks the slot.
+        // Like the run-bound facade token, the node's capability materialization
+        // is INTENTIONALLY left on disk across the park (every NeedsInput pause
+        // does the same) so the resumed coordinator reuses it; run-level GC
+        // reclaims it at termination.
+        if (isCoordinatorNode) {
+          await releaseSlotOnIdle({ runId, db: rootDb }).catch(
+            (error: unknown) => {
+              log2.warn(
+                {
+                  runId,
+                  nodeId: node.id,
+                  code: isMaisterError(error) ? error.code : "UNKNOWN",
+                },
+                "coordinator park — slot promotion failed",
+              );
+            },
+          );
+        }
         needsInput = true;
         log2.info({ nodeId: node.id }, "node requested NeedsInput");
         break;
@@ -3543,6 +3757,16 @@ export async function runGraph(
         });
 
         if (failRetry === "retry") {
+          if (opts.driver)
+            await db.transaction(async (tx: Db) => {
+              await persistFinishContinuation(tx, runId, nodeAttemptId, {
+                version: 1,
+                targetNodeId: node.id,
+                injectedVars: {},
+                sessionPolicy: "new_session",
+                autoRetry: true,
+              });
+            });
           pendingAutoRetryNodeId = node.id;
           continue;
         }
@@ -3621,6 +3845,7 @@ export async function runGraph(
           // as the human-review and auto-retry apply paths.
           const onMismatchPolicy: WorkspacePolicy =
             node.rework.workspacePolicies[0] ?? "keep";
+          const mismatchRework = node.rework;
 
           if (onMismatchPolicy !== "keep") {
             const targetAttempt = await latestAttemptForNode(
@@ -3688,41 +3913,52 @@ export async function runGraph(
             }
           }
 
-          await markNodeReworked(
-            nodeAttemptId,
-            { decision: onMismatch, workspacePolicy: onMismatchPolicy },
-            db,
-          );
+          await db.transaction(async (tx: Db) => {
+            await markNodeReworked(
+              nodeAttemptId,
+              { decision: onMismatch, workspacePolicy: onMismatchPolicy },
+              tx,
+            );
 
-          const targetDef = graph.nodes.get(reworkTarget)?.source.node as
-            | { session_policy?: SessionPolicy }
-            | undefined;
-          const resolved = resolveSessionPolicy({
-            reworkPolicy: node.rework.session_policy,
-            nodePolicy: targetDef?.session_policy,
-            flowDefault: (
-              loaded.manifest as {
-                defaults?: { session_policy?: SessionPolicy };
-              }
-            ).defaults?.session_policy,
+            const targetDef = graph.nodes.get(reworkTarget)?.source.node as
+              | { session_policy?: SessionPolicy }
+              | undefined;
+            const resolved = resolveSessionPolicy({
+              reworkPolicy: mismatchRework.session_policy,
+              nodePolicy: targetDef?.session_policy,
+              flowDefault: (
+                loaded.manifest as {
+                  defaults?: { session_policy?: SessionPolicy };
+                }
+              ).defaults?.session_policy,
+            });
+
+            pendingSessionPolicy = {
+              nodeId: reworkTarget,
+              policy: resolved.policy,
+            };
+
+            const downstream = downstreamOf(graph, reworkTarget);
+
+            if (downstream.length > 0) {
+              await markDownstreamStale(runId, downstream, tx);
+            }
+
+            const commentsVar = mismatchRework.commentsVar;
+
+            if (commentsVar) {
+              pendingInjectedVars = { [commentsVar]: structuredOutput.reason };
+            }
+
+            if (opts.driver)
+              await persistFinishContinuation(tx, runId, nodeAttemptId, {
+                version: 1,
+                targetNodeId: reworkTarget,
+                injectedVars: pendingInjectedVars ?? {},
+                sessionPolicy: resolved.policy,
+                autoRetry: false,
+              });
           });
-
-          pendingSessionPolicy = {
-            nodeId: reworkTarget,
-            policy: resolved.policy,
-          };
-
-          const downstream = downstreamOf(graph, reworkTarget);
-
-          if (downstream.length > 0) {
-            await markDownstreamStale(runId, downstream, db);
-          }
-
-          const commentsVar = node.rework.commentsVar;
-
-          if (commentsVar) {
-            pendingInjectedVars = { [commentsVar]: structuredOutput.reason };
-          }
 
           log2.debug(
             {
@@ -3770,6 +4006,8 @@ export async function runGraph(
             worktreePath,
             execution: execution ?? undefined,
             bindExecution: ensureExecution,
+            flowDriverClaim: opts.driver?.claim,
+            signal: opts.driver?.signal,
             // M29 (ADR-074): the node's resolved restriction path sets for
             // must_not_touch — undefined for capability-less nodes.
             restrictionPaths: materialized?.restrictionPaths,
@@ -3813,10 +4051,12 @@ export async function runGraph(
 
       const planReviewCapturedArtifactIds = new Set<string>();
 
-      if (planReviewCaptureTarget && planReviewPaths) {
+      if (planReviewCaptureTarget && planReviewBindings) {
         try {
           const captured = await capturePlanReviewArtifacts({
-            paths: planReviewPaths,
+            db,
+            runId,
+            bindings: planReviewBindings,
             maxBytes: nodeOutputMaxBytes(),
           });
           const definitions = new Map(
@@ -3850,8 +4090,8 @@ export async function runGraph(
               kind: "plan",
               producer: "runner",
               locator: {
-                kind: "file",
-                path: captured.planDocument.relativePath,
+                kind: "execution-object",
+                objectId: captured.planDocument.objectId,
               },
               hash: captured.planDocument.hash,
               sizeBytes: captured.planDocument.bytes,
@@ -3873,8 +4113,8 @@ export async function runGraph(
               kind: "plan",
               producer: "runner",
               locator: {
-                kind: "file",
-                path: captured.planReview.relativePath,
+                kind: "execution-object",
+                objectId: captured.planReview.objectId,
               },
               hash: captured.planReview.hash,
               sizeBytes: captured.planReview.bytes,
@@ -4106,23 +4346,11 @@ export async function runGraph(
           } else {
             // F1 catch-all: any other declared kind with no `path` and not
             // diff/commit_set (lint_report, ai_judgment, human_note,
-            // test_report, …). Source the node's captured stdout. Prefer a
-            // file locator to <nodeId>.log when that file exists (run-dir
-            // confined → payload-serveable); otherwise an inline locator with
-            // the stdout text. Record ONLY when there is real content — an
-            // empty no-content output is left to the §3.6 backstop.
-            const logPath = path.join(nodeRunDir, `${node.id}.log`);
-            let logExists = false;
-
-            try {
-              await access(logPath);
-              logExists = true;
-            } catch {
-              logExists = false;
-            }
-
+            // test_report, …). The canonical event consumer already captures
+            // the host transcript; persist the bounded projection inline and
+            // never probe an execution host's run directory.
             const stdoutText = result.stdout ?? "";
-            const hasContent = logExists || stdoutText.trim().length > 0;
+            const hasContent = stdoutText.trim().length > 0;
 
             if (hasContent) {
               const newId = `run:${nodeAttemptId}:${produces.id}`;
@@ -4137,14 +4365,12 @@ export async function runGraph(
                   artifactDefId: produces.id,
                   kind: produces.kind,
                   producer: "runner",
-                  locator: logExists
-                    ? { kind: "file", path: `${node.id}.log` }
-                    : {
-                        kind: "inline",
-                        // Cap inline payload to match the ledger's 1 MB stdout
-                        // cap (runner-cli buffers up to 4 MB) — bound the row.
-                        text: stdoutText.slice(0, 1024 * 1024),
-                      },
+                  locator: {
+                    kind: "inline",
+                    // Cap inline payload to match the ledger's 1 MB stdout
+                    // cap (runner-cli buffers up to 4 MB) — bound the row.
+                    text: stdoutText.slice(0, 1024 * 1024),
+                  },
                   validity: "current",
                   requiredFor: produces.requiredFor,
                   visibility: produces.visibility ?? "internal",
@@ -4161,7 +4387,7 @@ export async function runGraph(
 
       // F1 §3.6 backstop: every declared output MUST have a current artifact by
       // node finish, else the node fails. Catches kinds the producers above
-      // could not source (empty stdout, no <nodeId>.log) so a `requiredFor`
+      // could not source (for example, empty canonical stdout) so a `requiredFor`
       // output is never silently skipped while the run reaches Review.
       if (artifactEnforcementActive && node.output?.produces) {
         let missingId: string | undefined;
@@ -4208,9 +4434,7 @@ export async function runGraph(
           nodeAttemptId,
           nodeId: node.id,
           attempt: nodeAttemptNumber,
-          projectSlug: loaded.projectSlug,
           workspace: loaded.workspace,
-          runtimeRoot,
         },
         db,
       ).catch((err) => {
@@ -4386,20 +4610,30 @@ export async function runGraph(
             }
           }
 
-          await closeSucceededAttemptWithResult({
-            db,
-            runId: loaded.run.id,
-            nodeId: node.id,
-            nodeAttemptId,
-            patch: {
-              stdout: result.stdout,
-              vars: result.vars as Record<string, unknown>,
-              exitCode: result.exitCode,
-              decision: onExhaustion,
-              acpSessionId: result.acpSessionId,
-            },
-            resultContract: loaded.run.resultContract ?? null,
-            structuredOutput,
+          await db.transaction(async (tx: Db) => {
+            await closeSucceededAttemptWithResult({
+              db: tx,
+              runId: loaded.run.id,
+              nodeId: node.id,
+              nodeAttemptId,
+              patch: {
+                stdout: result.stdout,
+                vars: result.vars as Record<string, unknown>,
+                exitCode: result.exitCode,
+                decision: onExhaustion,
+                acpSessionId: result.acpSessionId,
+              },
+              resultContract: loaded.run.resultContract ?? null,
+              structuredOutput,
+            });
+            if (opts.driver)
+              await persistFinishContinuation(tx, runId, nodeAttemptId, {
+                version: 1,
+                targetNodeId: next,
+                injectedVars: {},
+                sessionPolicy: null,
+                autoRetry: false,
+              });
           });
           if (materialized) {
             await cleanupNodeMaterialization({
@@ -4505,6 +4739,7 @@ export async function runGraph(
             }
           });
           await emitNeedsInputStreamEvent(
+            db,
             runtimeRoot,
             loaded.projectSlug,
             runId,
@@ -4523,6 +4758,7 @@ export async function runGraph(
         // (non-rework) transition — its `success`/approve edge — recording the
         // warning on the attempt rather than jumping back or failing.
         const reworkTargets = node.rework.allowedTargets;
+        const reworkMaxLoops = node.rework.maxLoops;
         const forwardOutcome =
           "success" in node.transitions
             ? "success"
@@ -4530,23 +4766,36 @@ export async function runGraph(
                 (o) => !reworkTargets.includes(node.transitions[o]),
               );
 
-        await closeSucceededAttemptWithResult({
-          db,
-          runId: loaded.run.id,
-          nodeId: node.id,
-          nodeAttemptId,
-          patch: {
-            stdout: result.stdout,
-            vars: {
-              ...(result.vars as Record<string, unknown>),
-              execPolicyWarning: `shipped past rework cap (${node.rework.maxLoops}) without resolving the review`,
+        await db.transaction(async (tx: Db) => {
+          await closeSucceededAttemptWithResult({
+            db: tx,
+            runId: loaded.run.id,
+            nodeId: node.id,
+            nodeAttemptId,
+            patch: {
+              stdout: result.stdout,
+              vars: {
+                ...(result.vars as Record<string, unknown>),
+                execPolicyWarning: `shipped past rework cap (${reworkMaxLoops}) without resolving the review`,
+              },
+              exitCode: result.exitCode,
+              decision: forwardOutcome,
+              acpSessionId: result.acpSessionId,
             },
-            exitCode: result.exitCode,
-            decision: forwardOutcome,
-            acpSessionId: result.acpSessionId,
-          },
-          resultContract: loaded.run.resultContract ?? null,
-          structuredOutput,
+            resultContract: loaded.run.resultContract ?? null,
+            structuredOutput,
+          });
+          if (opts.driver)
+            await persistFinishContinuation(tx, runId, nodeAttemptId, {
+              version: 1,
+              targetNodeId:
+                forwardOutcome === undefined
+                  ? null
+                  : resolveTransition(node, forwardOutcome),
+              injectedVars: {},
+              sessionPolicy: null,
+              autoRetry: false,
+            });
         });
         if (materialized) {
           await cleanupNodeMaterialization({
@@ -4725,113 +4974,73 @@ export async function runGraph(
               );
             }
           }
-        });
 
-        // Inject the reviewer's comments into the rework target's next-attempt
-        // context under the node's commentsVar (Phase 5.4). The reviewer submits
-        // them in `comments` (or the commentsVar key) of the response. ADR-072:
-        // the run's OPEN review-comment threads compose into the payload here,
-        // at consumption — the respond route's stored response and the input
-        // artifact stay pristine user-submitted values. This block runs AFTER
-        // markDownstreamStale: this review node is itself downstream of the
-        // rework target, so recording the evidence row earlier would let the
-        // same rework's staling immediately flip it stale.
-        const planReview = planReviewSettingsForNode(node);
-        const vars = result.vars as Record<string, unknown>;
+          // Inject the reviewer's comments into the rework target's next-attempt
+          // context under the node's commentsVar (Phase 5.4). The reviewer submits
+          // them in `comments` (or the commentsVar key) of the response. ADR-072:
+          // the run's OPEN review-comment threads compose into the payload here,
+          // at consumption — the respond route's stored response and the input
+          // artifact stay pristine user-submitted values. This block runs AFTER
+          // markDownstreamStale: this review node is itself downstream of the
+          // rework target, so recording the evidence row earlier would let the
+          // same rework's staling immediately flip it stale.
+          const planReview = planReviewSettingsForNode(node);
+          const vars = result.vars as Record<string, unknown>;
 
-        if (planReview) {
-          const comments = vars[planReview.comments_var];
-          const answers = vars[planReview.answers_var];
-          const serializedAnswers =
-            answers === undefined
-              ? undefined
-              : typeof answers === "string"
-                ? answers
-                : JSON.stringify(answers);
-          const injectedComments =
-            typeof comments === "string" ? comments : undefined;
+          if (planReview) {
+            const comments = vars[planReview.comments_var];
+            const answers = vars[planReview.answers_var];
+            const serializedAnswers =
+              answers === undefined
+                ? undefined
+                : typeof answers === "string"
+                  ? answers
+                  : JSON.stringify(answers);
+            const injectedComments =
+              typeof comments === "string" ? comments : undefined;
 
-          if (
-            injectedComments !== undefined ||
-            serializedAnswers !== undefined
-          ) {
-            pendingInjectedVars = {
-              ...(injectedComments !== undefined
-                ? { [planReview.comments_var]: injectedComments }
-                : {}),
-              ...(serializedAnswers !== undefined
-                ? { [planReview.answers_var]: serializedAnswers }
-                : {}),
-            };
-          }
+            if (
+              injectedComments !== undefined ||
+              serializedAnswers !== undefined
+            ) {
+              pendingInjectedVars = {
+                ...(injectedComments !== undefined
+                  ? { [planReview.comments_var]: injectedComments }
+                  : {}),
+                ...(serializedAnswers !== undefined
+                  ? { [planReview.answers_var]: serializedAnswers }
+                  : {}),
+              };
+            }
 
-          if (injectedComments !== undefined) {
-            await recordComposedCommentsEvidence(
-              {
-                runId,
-                nodeId: node.id,
-                nodeAttemptId,
-                attempt: nodeAttemptNumber,
-                composed: injectedComments,
-                threadIds: [],
-              },
-              db,
-              log2,
-            );
-          }
-        } else {
-          const hitl = await findLatestRespondedHitl(runId, node.id, db);
-
-          if (hitl && isReviewSchema(hitl.schema)) {
-            const feedback = await buildReviewFeedbackPacket({
-              db,
-              runId,
-              hitlRequestId: hitl.id,
-              response: result.vars,
-            });
-
-            pendingInjectedVars = {
-              [feedback.target.commentsVar]: feedback.payload,
-            };
-
-            await recordComposedCommentsEvidence(
-              {
-                runId,
-                nodeId: node.id,
-                nodeAttemptId,
-                attempt: nodeAttemptNumber,
-                composed: feedback.payload,
-                feedbackFingerprint: feedback.fingerprint,
-                hitlRequestId: hitl.id,
-                threadIds: feedback.openThreadIds,
-              },
-              db,
-              log2,
-            );
-
-            log2.info(
-              {
-                runId,
-                hitlRequestId: hitl.id,
-                nodeId: node.id,
-                targetNodeId: feedback.target.nodeId,
-                commentsVar: feedback.target.commentsVar,
-                openThreadCount: feedback.openThreadIds.length,
-                resolvedThreadCount: feedback.resolvedThreadCount,
-                gateChatMessageCount: feedback.gateChatMessageCount,
-                feedbackFingerprint: feedback.fingerprint,
-              },
-              "review feedback packet delivered to rework target",
-            );
+            if (injectedComments !== undefined) {
+              await recordComposedCommentsEvidence(
+                {
+                  runId,
+                  nodeId: node.id,
+                  nodeAttemptId,
+                  attempt: nodeAttemptNumber,
+                  composed: injectedComments,
+                  threadIds: [],
+                },
+                tx,
+                log2,
+              );
+            }
           } else {
-            const commentsVar =
-              node.rework?.commentsVar ?? node.finishHuman?.commentsVar;
-            const comments = commentsVar
-              ? (vars[commentsVar] ?? vars.comments)
-              : undefined;
+            const hitl = await findLatestRespondedHitl(runId, node.id, tx);
 
-            if (commentsVar && typeof comments === "string") {
-              pendingInjectedVars = { [commentsVar]: comments };
+            if (hitl && isReviewSchema(hitl.schema)) {
+              const feedback = await buildReviewFeedbackPacket({
+                db: tx,
+                runId,
+                hitlRequestId: hitl.id,
+                response: result.vars,
+              });
+
+              pendingInjectedVars = {
+                [feedback.target.commentsVar]: feedback.payload,
+              };
 
               await recordComposedCommentsEvidence(
                 {
@@ -4839,33 +5048,92 @@ export async function runGraph(
                   nodeId: node.id,
                   nodeAttemptId,
                   attempt: nodeAttemptNumber,
-                  composed: comments,
-                  threadIds: [],
+                  composed: feedback.payload,
+                  feedbackFingerprint: feedback.fingerprint,
+                  hitlRequestId: hitl.id,
+                  threadIds: feedback.openThreadIds,
                 },
-                db,
+                tx,
                 log2,
               );
+
+              log2.info(
+                {
+                  runId,
+                  hitlRequestId: hitl.id,
+                  nodeId: node.id,
+                  targetNodeId: feedback.target.nodeId,
+                  commentsVar: feedback.target.commentsVar,
+                  openThreadCount: feedback.openThreadIds.length,
+                  resolvedThreadCount: feedback.resolvedThreadCount,
+                  gateChatMessageCount: feedback.gateChatMessageCount,
+                  feedbackFingerprint: feedback.fingerprint,
+                },
+                "review feedback packet delivered to rework target",
+              );
+            } else {
+              const commentsVar =
+                node.rework?.commentsVar ?? node.finishHuman?.commentsVar;
+              const comments = commentsVar
+                ? (vars[commentsVar] ?? vars.comments)
+                : undefined;
+
+              if (commentsVar && typeof comments === "string") {
+                pendingInjectedVars = { [commentsVar]: comments };
+
+                await recordComposedCommentsEvidence(
+                  {
+                    runId,
+                    nodeId: node.id,
+                    nodeAttemptId,
+                    attempt: nodeAttemptNumber,
+                    composed: comments,
+                    threadIds: [],
+                  },
+                  tx,
+                  log2,
+                );
+              }
             }
           }
-        }
+          if (opts.driver)
+            await persistFinishContinuation(tx, runId, nodeAttemptId, {
+              version: 1,
+              targetNodeId: target ?? null,
+              injectedVars: pendingInjectedVars ?? {},
+              sessionPolicy: pendingSessionPolicy?.policy ?? null,
+              autoRetry: false,
+            });
+        });
       } else {
         // ADR-162 (C-9): the contract identity rides the SAME closing UPDATE as
         // the vars it validated. ADR-165 (D9) widens that transaction to carry
         // the public result too, when this node is one of its producers.
-        await closeSucceededAttemptWithResult({
-          db,
-          runId: loaded.run.id,
-          nodeId: node.id,
-          nodeAttemptId,
-          patch: {
-            stdout: result.stdout,
-            vars: result.vars,
-            exitCode: result.exitCode,
-            decision: outcome === "success" ? undefined : outcome,
-            acpSessionId: result.acpSessionId,
-          },
-          resultContract: loaded.run.resultContract ?? null,
-          structuredOutput,
+        await db.transaction(async (tx: Db) => {
+          await closeSucceededAttemptWithResult({
+            db: tx,
+            runId: loaded.run.id,
+            nodeId: node.id,
+            nodeAttemptId,
+            patch: {
+              stdout: result.stdout,
+              vars: result.vars,
+              exitCode: result.exitCode,
+              decision: outcome === "success" ? undefined : outcome,
+              acpSessionId: result.acpSessionId,
+            },
+            resultContract: loaded.run.resultContract ?? null,
+            structuredOutput,
+          });
+          if (opts.driver)
+            await persistFinishContinuation(tx, runId, nodeAttemptId, {
+              version: 1,
+              targetNodeId:
+                outcome === undefined ? null : resolveTransition(node, outcome),
+              injectedVars: {},
+              sessionPolicy: null,
+              autoRetry: false,
+            });
         });
 
         if (materialized) {
@@ -4919,6 +5187,18 @@ export async function runGraph(
       );
     }
   } catch (err) {
+    if (
+      err instanceof FlowPromptContinuationPending ||
+      isFencedError(err) ||
+      isFlowDriverClaimLost(err)
+    ) {
+      log2.warn(
+        isMaisterError(err) ? { code: err.code, details: err.details } : {},
+        "driver-yielded awaiting durable prompt continuation",
+      );
+
+      return;
+    }
     const e = isMaisterError(err)
       ? err
       : new MaisterError("CRASH", asError(err).message, {
@@ -4940,24 +5220,34 @@ export async function runGraph(
   if (checkpointed) {
     log2.info({}, "runGraph paused on STEP_CHECKPOINTED — slot freed");
     await safeProject();
-    await promoteAfterExit(db, opts, log2);
+    await promoteAfterExit(rootDb, { ...opts, db: rootDb }, log2);
 
     return;
   }
 
   const endedAt = new Date();
+  // A resumed permission stays NeedsInput until input delivery. Definitive
+  // create/prompt failure must still close that exact leased generation.
+  const failureStatus = or(
+    eq(runs.status, "Running"),
+    isInFlightPermissionContinuation && opts.driver
+      ? and(
+          eq(runs.status, "NeedsInput"),
+          eq(runs.executionAssignmentId, opts.driver.claim.assignmentId),
+          eq(runs.currentStepId, resumeNodeId ?? ""),
+        )
+      : undefined,
+  );
 
-  // CAS on `status="Running"`: by this point the NeedsInput / checkpoint paths
-  // returned early, so the run is still `Running` UNLESS a concurrent abandon /
-  // takeover / reconcile-crash moved it off-status. Guard the terminal write so
-  // that operator action wins instead of being clobbered back to Failed/Review
-  // (#ledger-clobber / #split-brain).
+  // Ordinary completion requires Running; failed owned permissions also admit
+  // the exact NeedsInput generation above. Concurrent abandon, takeover,
+  // checkpoint or reconciliation retains its state.
   if (failed && runErrorCode === "CRASH") {
     await db.transaction(async (tx: Db) => {
       const rows = await tx
         .update(runs)
         .set({ status: "Crashed", endedAt, currentStepId: null })
-        .where(and(eq(runs.id, runId), eq(runs.status, "Running")))
+        .where(and(eq(runs.id, runId), failureStatus))
         .returning({
           projectId: runs.projectId,
           taskId: runs.taskId,
@@ -4994,7 +5284,7 @@ export async function runGraph(
       }
     });
     await systemCloseActiveAssignmentsForRun({
-      db,
+      db: rootDb,
       runId,
       reason: "graph flow crashed",
     });
@@ -5004,7 +5294,7 @@ export async function runGraph(
       const rows = await tx
         .update(runs)
         .set({ status: "Failed", endedAt, currentStepId: null })
-        .where(and(eq(runs.id, runId), eq(runs.status, "Running")))
+        .where(and(eq(runs.id, runId), failureStatus))
         .returning({
           projectId: runs.projectId,
           taskId: runs.taskId,
@@ -5041,7 +5331,7 @@ export async function runGraph(
       }
     });
     await systemCloseActiveAssignmentsForRun({
-      db,
+      db: rootDb,
       runId,
       reason: "graph flow failed",
     });
@@ -5131,7 +5421,7 @@ export async function runGraph(
         });
       });
       await systemCloseActiveAssignmentsForRun({
-        db,
+        db: rootDb,
         runId,
         reason: "graph flow completed without its required public result",
       });
@@ -5151,7 +5441,7 @@ export async function runGraph(
         await emitResultOnlyDone(tx, { runId, row });
       });
       await systemCloseActiveAssignmentsForRun({
-        db,
+        db: rootDb,
         runId,
         reason: "graph flow completed by result-only completion",
       });
@@ -5199,7 +5489,7 @@ export async function runGraph(
         }
       });
       log2.info({}, "runGraph ended Review");
-      await deliverRunIfAutoReady(runId, db);
+      await deliverRunIfAutoReady(runId, rootDb);
     }
   }
 
@@ -5208,7 +5498,7 @@ export async function runGraph(
   // rework can re-open a session that still expects its mounts); the promote and
   // abandon chokes release from their own paths, and the GC backstop reaps every
   // remaining case by path shape.
-  await releaseRunContextMounts({ runId, db }).catch((err) => {
+  await releaseRunContextMounts({ runId, db: rootDb }).catch((err) => {
     log2.warn(
       { err: (err as Error).message },
       "context mount release after runGraph exit failed — left to the GC backstop",
@@ -5221,11 +5511,11 @@ export async function runGraph(
   // died — its token is no longer needed. Best-effort; the 48h TTL backs up any
   // crash path that bypasses this hook (e.g. process kill before this line).
   if (orchestratorTokenIssued) {
-    await revokeOrchestratorRunTokensForRun(runId, db).catch(() => {});
+    await revokeOrchestratorRunTokensForRun(runId, rootDb).catch(() => {});
   }
 
   await safeProject();
-  await promoteAfterExit(db, opts, log2);
+  await promoteAfterExit(rootDb, { ...opts, db: rootDb }, log2);
 }
 
 async function promoteAfterExit(

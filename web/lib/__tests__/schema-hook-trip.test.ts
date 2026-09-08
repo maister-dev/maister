@@ -13,14 +13,14 @@ describe("hook_trip enum (ADR-108, migration 0066)", () => {
       "form",
       "human",
       "agent_question",
-    "infra_recovery",
-    "budget_breach",
-    "hook_trip",
-    // ADR-161: the operator node interrupt. TS-only — neither
-    // `hitl_requests.kind` nor `assignments.action_kind` carries a DB CHECK,
-    // so this value needed no migration.
-    "node_interrupt",
-    "decision_request",
+      "infra_recovery",
+      "budget_breach",
+      "hook_trip",
+      // ADR-161: the operator node interrupt. TS-only — neither
+      // `hitl_requests.kind` nor `assignments.action_kind` carries a DB CHECK,
+      // so this value needed no migration.
+      "node_interrupt",
+      "decision_request",
     ]);
   });
 

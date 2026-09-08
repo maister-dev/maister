@@ -125,6 +125,7 @@ beforeEach(async () => {
     "project_tokens",
     "run_sessions",
     "workspaces",
+    "execution_commands",
     "runs",
     "projects",
   ]) {

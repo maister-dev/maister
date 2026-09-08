@@ -33,6 +33,7 @@ import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
+import { executionCommands } from "@/lib/db/schema";
 
 const schema = schemaModule as unknown as Record<string, any>;
 const { flowRevisions, flows, projects, runs, tasks, users } = schema;
@@ -112,6 +113,9 @@ beforeEach(async () => {
   // Detach any flow enablement pointer before clearing revisions so the FK
   // does not block the delete between tests.
   await db.update(flows).set({ enabledRevisionId: null });
+  // Command evidence protects its run from deletion (D6): discharge it
+  // explicitly instead of relying on the FK cascade.
+  await db.delete(executionCommands);
   await db.delete(runs);
   await db.delete(tasks);
   await db.delete(flowRevisions);

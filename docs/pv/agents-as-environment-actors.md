@@ -184,7 +184,8 @@ next_run_at?, desired_state?, enabled`.
   `POST /api/agents/[id]/launch` (manual), `.../start|stop` (continuous),
   `.../schedule`; `POST /api/agents/tick` (clock target, auth'd);
   `POST /api/agents/[id]/event` (webhook ingress).
-- **Reuse:** SSE (`run.events.jsonl` + `/api/runs/[id]/stream`); a
+- **Reuse:** canonical manager SSE (`execution_events` +
+  `/api/runs/[id]/stream`); a
   `materializeAgent` step in run-prep; Mustache context + an `agent` namespace
   for traces.
 

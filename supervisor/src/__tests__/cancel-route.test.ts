@@ -7,10 +7,8 @@ import type { ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { join } from "node:path";
 
-import pino from "pino";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { openEventsLog } from "../events-log";
 import { pendingPermissions } from "../pending-permissions";
 import { SessionRegistry } from "../registry";
 
@@ -22,8 +20,6 @@ import {
   postJson,
   type BootedHost,
 } from "./_fixtures/boot-host";
-
-const silentLogger = pino({ level: "silent" });
 
 function makeFakeChild(): ChildProcess {
   return new EventEmitter() as unknown as ChildProcess;
@@ -54,10 +50,29 @@ async function registerSession(
   },
 ): Promise<void> {
   const emitter = new EventEmitter();
-  const eventsLog = await openEventsLog(
-    join(runtimeRoot, `${sessionId}.events.jsonl`),
-    { logger: silentLogger },
-  );
+  const createdByCommandId = "2c3d4e5f-6a7b-4c8d-9e0f-1a2b3c4d5e6f";
+  const assignmentId = "6a7b8c9d-0e1f-4a2b-8c3d-4e5f6a7b8c9d";
+
+  if (opts.status === "live") {
+    booted!.hostState.reserveProducerReceipt(
+      {
+        commandId: createdByCommandId,
+        runId: `run-${sessionId}`,
+        kind: "session.create",
+        assignmentId,
+        epoch: 1,
+        hostSessionId: sessionId,
+        requestDigest: null,
+        eventId: null,
+        phase: "accepted",
+        httpStatus: 202,
+        body: {},
+        receivedAt: new Date().toISOString(),
+        completedAt: null,
+      },
+      0,
+    );
+  }
 
   registry.register(
     {
@@ -73,15 +88,14 @@ async function registerSession(
       logPath: join(runtimeRoot, "log"),
       worktreePath: join(runtimeRoot, "wt"),
       executionWorkspaceId: "ws_5f3a8a2b7e344f6d9d2c1d4e5f6a7b8c",
-      assignmentId: "6a7b8c9d-0e1f-4a2b-8c3d-4e5f6a7b8c9d",
+      assignmentId,
       assignmentEpoch: 1,
-      createdByCommandId: "2c3d4e5f-6a7b-4c8d-9e0f-1a2b3c4d5e6f",
+      createdByCommandId,
       monotonicId: 1,
     },
     makeFakeChild(),
     emitter,
     {
-      eventsLog,
       connection: opts.connection as never,
       acpSessionId: opts.acpSessionId,
     },
@@ -118,13 +132,15 @@ describe("POST /sessions/:id/cancel", () => {
 
   it("acks cancelled:false for a session with no live turn", async () => {
     booted = await bootBare();
-    await registerSession(booted.registry, booted.runtimeRoot, "s-exited", {
+    const sessionId = "00000000-0000-4000-8000-000000000001";
+
+    await registerSession(booted.registry, booted.runtimeRoot, sessionId, {
       status: "exited",
     });
 
     const res = await postJson(
-      `${booted.url}/sessions/s-exited/cancel`,
-      command("session.cancel", "s-exited"),
+      `${booted.url}/sessions/${sessionId}/cancel`,
+      command("session.cancel", sessionId),
     );
 
     expect(res.status).toBe(200);
@@ -137,7 +153,9 @@ describe("POST /sessions/:id/cancel", () => {
     booted = await bootBare();
     const cancel = vi.fn().mockResolvedValue(undefined);
 
-    await registerSession(booted.registry, booted.runtimeRoot, "s-live", {
+    const sessionId = "00000000-0000-4000-8000-000000000002";
+
+    await registerSession(booted.registry, booted.runtimeRoot, sessionId, {
       status: "live",
       connection: { cancel },
       acpSessionId: "acp-1",
@@ -146,7 +164,7 @@ describe("POST /sessions/:id/cancel", () => {
     let cancelledReason: string | null = null;
 
     pendingPermissions.register(
-      "s-live",
+      sessionId,
       "00000000-0000-0000-0000-000000000001",
       {
         resolve: (outcome) => {
@@ -157,8 +175,8 @@ describe("POST /sessions/:id/cancel", () => {
     );
 
     const res = await postJson(
-      `${booted.url}/sessions/s-live/cancel`,
-      command("session.cancel", "s-live"),
+      `${booted.url}/sessions/${sessionId}/cancel`,
+      command("session.cancel", sessionId),
     );
 
     expect(res.status).toBe(200);
@@ -167,6 +185,6 @@ describe("POST /sessions/:id/cancel", () => {
     });
     expect(cancel).toHaveBeenCalledWith({ sessionId: "acp-1" });
     expect(cancelledReason).toBe("cancelled");
-    expect(booted.registry.get("s-live")?.record.cancelRequested).toBe(true);
+    expect(booted.registry.get(sessionId)?.record.cancelRequested).toBe(true);
   });
 });

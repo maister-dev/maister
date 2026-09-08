@@ -3251,13 +3251,18 @@ export async function fastForwardWorktreeToRef(
   const target = validate(gitRefSchema, ref, "ref");
   const command = `git -C ${wt} merge --ff-only ${target}`;
 
-  const localSha = (await runGit(wt, ["rev-parse", "--verify", "HEAD"])).stdout.trim();
+  const localSha = (
+    await runGit(wt, ["rev-parse", "--verify", "HEAD"])
+  ).stdout.trim();
   const remoteSha = (
     await runGit(wt, ["rev-parse", "--verify", `${target}^{commit}`])
   ).stdout.trim();
 
   if (localSha === remoteSha) {
-    log.debug({ worktree: wt, ref: target, sha: localSha }, "ffWorktree up-to-date");
+    log.debug(
+      { worktree: wt, ref: target, sha: localSha },
+      "ffWorktree up-to-date",
+    );
 
     return { kind: "up_to_date", sha: localSha };
   }
@@ -3270,11 +3275,26 @@ export async function fastForwardWorktreeToRef(
     );
 
     log.warn(
-      { worktree: wt, ref: target, command, localSha, remoteSha, aheadBy, behindBy },
+      {
+        worktree: wt,
+        ref: target,
+        command,
+        localSha,
+        remoteSha,
+        aheadBy,
+        behindBy,
+      },
       "ffWorktree refused — not a fast-forward",
     );
 
-    return { kind: "diverged", command, localSha, remoteSha, aheadBy, behindBy };
+    return {
+      kind: "diverged",
+      command,
+      localSha,
+      remoteSha,
+      aheadBy,
+      behindBy,
+    };
   }
 
   try {
@@ -3309,7 +3329,10 @@ async function revListLeftRightCounts(
     "--count",
     `${left}...${right}`,
   ]);
-  const [a, b] = stdout.trim().split(/\s+/).map((n) => Number.parseInt(n, 10));
+  const [a, b] = stdout
+    .trim()
+    .split(/\s+/)
+    .map((n) => Number.parseInt(n, 10));
 
   return [Number.isFinite(a) ? a : 0, Number.isFinite(b) ? b : 0];
 }

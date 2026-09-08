@@ -83,6 +83,7 @@ afterEach(async () => {
   await pool.query(`DELETE FROM "hitl_requests"`);
   await pool.query(`DELETE FROM "runs"`);
   await pool.query(`DELETE FROM "projects"`);
+  await pool.query(`DELETE FROM "execution_hosts"`);
 });
 
 async function seedProject(): Promise<void> {
@@ -132,12 +133,22 @@ async function seedRunningAgent(): Promise<string> {
   return runId;
 }
 
-// ADR-166: the consumer's execution seam is a DB-less fake host whose stream
-// yields `events`; checkpoints land on the fake's recorded calls.
-function fakeApi(
+// Keep the scripted stream, but persist its real assignment fence so the
+// consumer's source check exercises the same generation as its checkpoint.
+async function fakeApi(
+  runId: string,
   events: SupervisorEvent[],
-): FakeAgentExecution & { checkpointCalls: () => string[] } {
-  const execution = fakeAgentExecution({ events });
+): Promise<FakeAgentExecution & { checkpointCalls: () => string[] }> {
+  const execution = fakeAgentExecution({ runId, events });
+
+  await db.insert(schemaModule.executionHosts).values(execution.client.host);
+  await db
+    .insert(schemaModule.executionAssignments)
+    .values(execution.client.assignment);
+  await db
+    .update(schemaModule.runs)
+    .set({ executionAssignmentId: execution.client.assignment.id })
+    .where(eq(schemaModule.runs.id, runId));
 
   return {
     ...execution,
@@ -193,7 +204,10 @@ describe("consumeAgentSession — session.hook_trip", () => {
   it("halt: checkpoint + escalate → NeedsInput + hook_trip HITL", async () => {
     await seedProject();
     const runId = await seedRunningAgent();
-    const api = fakeApi([hookTrip("halt", "repetition"), exitedCheckpoint()]);
+    const api = await fakeApi(runId, [
+      hookTrip("halt", "repetition"),
+      exitedCheckpoint(),
+    ]);
 
     await consumeAgentSession({
       db,
@@ -218,7 +232,7 @@ describe("consumeAgentSession — session.hook_trip", () => {
   it("halt + checkpoint EXECUTOR_UNAVAILABLE: stranded → Crashed, no HITL", async () => {
     await seedProject();
     const runId = await seedRunningAgent();
-    const api = fakeApi([hookTrip("halt", "repetition")]);
+    const api = await fakeApi(runId, [hookTrip("halt", "repetition")]);
 
     api.fake.failOnce(
       "checkpointSession",
@@ -243,7 +257,7 @@ describe("consumeAgentSession — session.hook_trip", () => {
   it("deny: record-only — no escalate, run stays Running, no HITL", async () => {
     await seedProject();
     const runId = await seedRunningAgent();
-    const api = fakeApi([hookTrip("deny", "path_guard")]);
+    const api = await fakeApi(runId, [hookTrip("deny", "path_guard")]);
 
     await consumeAgentSession({
       db,

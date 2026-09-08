@@ -194,7 +194,8 @@ sequenceDiagram
 
     Note over Web,Child: claude — settings.local.json channel (supervisor verifies only)
     Web->>Web: mapProfileToAgentArtifacts → settingsLocal {permissions, model, availableModels}
-    Web->>Sup: POST /sessions {capabilityProfilePath}
+    Web->>Sup: upload profile and instructions, then POST opaque IDs
+    Sup->>Sup: validate kinds and resolve host-private paths
     Sup->>Child: spawn, adapter reads settings.json model at startup
     Child-->>Sup: models {currentModelId} (session/new or session/resume)
     opt currentModelId reported and != runner.model

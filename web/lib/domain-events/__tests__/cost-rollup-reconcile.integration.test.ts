@@ -9,9 +9,6 @@
 
 import type { DomainEventRow } from "@/lib/db/schema";
 
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
 import { randomUUID } from "node:crypto";
 
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
@@ -34,7 +31,6 @@ const PROJECT_SLUG = "consumer-cost-app";
 let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase;
 let projectId: string;
-let runtimeRoot: string;
 
 beforeAll(async () => {
   testDatabase = await startMainPostgresTestDb({
@@ -52,8 +48,6 @@ beforeAll(async () => {
     repoPath: "/repos/consumer-cost-app",
     maisterYamlPath: "/repos/consumer-cost-app/maister.yaml",
   });
-
-  runtimeRoot = await mkdtemp(path.join(tmpdir(), "cost-consumer-"));
 }, 180_000);
 
 afterAll(async () => {
@@ -107,23 +101,27 @@ async function seedSession(runId: string, slug = "claude"): Promise<void> {
   });
 }
 
-async function writeCostJsonl(
+async function recordCanonicalUsage(
   runId: string,
-  ownerSlug: string,
   input: number,
 ): Promise<void> {
-  const dir = path.join(runtimeRoot, ".maister", ownerSlug, "runs", runId);
-
-  await mkdir(dir, { recursive: true });
-  await writeFile(
-    path.join(dir, "cost.jsonl"),
-    JSON.stringify({
+  await db.insert(schema.executionEvents).values({
+    id: randomUUID(),
+    source: "manager",
+    sourceKey: `cost-consumer:${runId}:0`,
+    runId,
+    eventType: "usage.recorded",
+    payloadSchema: "maister.usage.recorded.v1",
+    payload: {
       sessionName: "default",
       model: "claude-sonnet-4-6",
-      input_tokens: input,
-    }),
-    "utf8",
-  );
+      inputTokens: input,
+    },
+    occurredAt: new Date(),
+    receivedAt: new Date(),
+    runSequence: BigInt(0),
+    ingestDisposition: "accepted",
+  });
 }
 
 function evt(kind: string, runId: string | null, id = 1): DomainEventRow {
@@ -161,9 +159,9 @@ describe("cost-rollup-reconcile consumer", () => {
     const runId = await seedRun({ runKind: "scratch" });
 
     await seedSession(runId);
-    await writeCostJsonl(runId, PROJECT_SLUG, 42);
+    await recordCanonicalUsage(runId, 42);
 
-    const consumer = buildCostRollupReconcileConsumer({ db, runtimeRoot });
+    const consumer = buildCostRollupReconcileConsumer({ db });
 
     await consumer.handle([evt("run.failed", runId)]);
 
@@ -179,13 +177,12 @@ describe("cost-rollup-reconcile consumer", () => {
 
     for (const r of [runA, runB, runC]) {
       await seedSession(r);
-      await writeCostJsonl(r, PROJECT_SLUG, 5);
+      await recordCanonicalUsage(r, 5);
     }
 
     const calls: string[] = [];
     const consumer = buildCostRollupReconcileConsumer({
       db,
-      runtimeRoot,
       reconcile: (
         runId: string,
         opts: Parameters<typeof reconcileRunCostRollups>[1],
@@ -211,9 +208,9 @@ describe("cost-rollup-reconcile consumer", () => {
     const runId = await seedRun({});
 
     await seedSession(runId);
-    await writeCostJsonl(runId, PROJECT_SLUG, 9);
+    await recordCanonicalUsage(runId, 9);
 
-    const consumer = buildCostRollupReconcileConsumer({ db, runtimeRoot });
+    const consumer = buildCostRollupReconcileConsumer({ db });
 
     await consumer.handle([evt("run.done", runId)]);
     const first = await rollupRow(runId);
@@ -231,13 +228,13 @@ describe("cost-rollup-reconcile consumer", () => {
     expect(all).toHaveLength(1);
   });
 
-  it("writes no row and does not throw when cost.jsonl is missing", async () => {
+  it("writes no row and does not throw when no usage event exists", async () => {
     const runId = await seedRun({});
 
     await seedSession(runId);
-    // No cost.jsonl written.
+    // No canonical usage event exists.
 
-    const consumer = buildCostRollupReconcileConsumer({ db, runtimeRoot });
+    const consumer = buildCostRollupReconcileConsumer({ db });
 
     await expect(
       consumer.handle([evt("run.failed", runId)]),
@@ -246,16 +243,15 @@ describe("cost-rollup-reconcile consumer", () => {
   });
 
   it("is poison-safe: an always-failing run never stalls the dispatch cursor", async () => {
-    // A project-less + package-less run → resolveRunCostSourceSlug throws CONFIG
-    // permanently. The healthy run alongside it MUST still reconcile, and the
-    // cursor MUST advance so a later healthy event is delivered.
+    // A malformed reconciliation must not stop a healthy run alongside it; the
+    // cursor must advance so a later healthy event is delivered.
     const poisonRun = await seedRun({ projectId: null, localPackageId: null });
     const healthy1 = await seedRun({});
 
     await seedSession(healthy1);
-    await writeCostJsonl(healthy1, PROJECT_SLUG, 11);
+    await recordCanonicalUsage(healthy1, 11);
 
-    const consumer = buildCostRollupReconcileConsumer({ db, runtimeRoot });
+    const consumer = buildCostRollupReconcileConsumer({ db });
 
     // Prime the "now" cursor at 0 against the empty table so the events below
     // are delivered (a startFrom:"now" consumer otherwise seeds past any backlog
@@ -288,7 +284,7 @@ describe("cost-rollup-reconcile consumer", () => {
     const healthy2 = await seedRun({});
 
     await seedSession(healthy2);
-    await writeCostJsonl(healthy2, PROJECT_SLUG, 22);
+    await recordCanonicalUsage(healthy2, 22);
     await db.insert(schema.domainEvents).values({
       kind: "run.crashed",
       projectId,
@@ -302,7 +298,7 @@ describe("cost-rollup-reconcile consumer", () => {
     expect((await rollupRow(healthy2))?.inputTokens).toBe(22);
   });
 
-  it("handles a project-less local-package run via its localPackage slug", async () => {
+  it("reconciles a project-less local-package run without deriving a filesystem slug", async () => {
     const lpId = randomUUID();
     const lpSlug = "lp-cost";
 
@@ -319,9 +315,9 @@ describe("cost-rollup-reconcile consumer", () => {
     });
 
     await seedSession(runId);
-    await writeCostJsonl(runId, lpSlug, 7);
+    await recordCanonicalUsage(runId, 7);
 
-    const consumer = buildCostRollupReconcileConsumer({ db, runtimeRoot });
+    const consumer = buildCostRollupReconcileConsumer({ db });
 
     await consumer.handle([evt("run.failed", runId)]);
 
