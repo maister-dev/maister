@@ -42,13 +42,26 @@ function markSearchableContent(source, filePath) {
   return source.replace(contentPattern, "$1 data-pagefind-body$2");
 }
 
+function addMetrikaNoscript(source, filePath) {
+  const bodyPattern = /<body\b[^>]*>/;
+  if (!bodyPattern.test(source)) {
+    throw new Error(`Unable to add the Metrika tracking pixel in ${filePath}`);
+  }
+
+  return source.replace(
+    bodyPattern,
+    '$&<noscript><div><img src="https://mc.yandex.ru/watch/112387867" width="1" height="1" style="position:absolute;left:-9999px" alt="" /></div></noscript>',
+  );
+}
+
 const htmlFiles = await findHtmlFiles(exportDirectory);
 
 await Promise.all(
   htmlFiles.map(async (filePath) => {
     const source = await readFile(filePath, "utf8");
     const localizedSource = setDocumentLocale(source, localeForFile(filePath), filePath);
-    await writeFile(filePath, markSearchableContent(localizedSource, filePath), "utf8");
+    const searchableSource = markSearchableContent(localizedSource, filePath);
+    await writeFile(filePath, addMetrikaNoscript(searchableSource, filePath), "utf8");
   }),
 );
 
