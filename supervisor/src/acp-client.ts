@@ -50,6 +50,7 @@ import {
 
 export type CreateAcpConnectionArgs = {
   stdin: NodeWritable;
+  /** Object-mode captureAcpFrames output: one complete ACP frame per value. */
   stdoutSource: NodeReadable;
   sessionId: string;
   worktreePath: string;

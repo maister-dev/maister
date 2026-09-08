@@ -68,8 +68,9 @@ describe("spawnSession", () => {
     await new Promise<void>((resolvePromise) =>
       child.once("exit", resolvePromise),
     );
-    await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 25));
+    await record.outputDrained;
 
+    expect(record.outputFailure).toBeUndefined();
     expect(events.map((event) => event.monotonicId)).toEqual([1, 2, 3]);
     expect(record.monotonicId).toBe(3);
   });
@@ -81,7 +82,7 @@ describe("spawnSession", () => {
       runId: "run-no-events-file",
       stepId: "step-1",
     });
-    const { child, acpStdoutTap } = await spawnSession({
+    const { child, record, acpStdoutTap } = await spawnSession({
       sessionId: "session-no-events-file",
       request: request(),
       createdBy: CREATED_BY,
@@ -95,6 +96,8 @@ describe("spawnSession", () => {
     await new Promise<void>((resolvePromise) =>
       child.once("exit", resolvePromise),
     );
+    await record.outputDrained;
+    expect(record.outputFailure).toBeUndefined();
 
     await expect(
       import("node:fs/promises").then(({ access }) =>

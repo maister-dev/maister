@@ -476,6 +476,8 @@ function parseFrame(frame: Uint8Array): AnyMessage {
  * Pull-driven SDK seam. Incoming callbacks are dispatched here so the SDK's
  * eager async receive loop cannot retain arbitrary pending request payloads or
  * print raw messages on validation errors. Only bounded responses reach it.
+ * The source must be object-mode and yield one complete newline-terminated
+ * frame per value, as produced by captureAcpFrames.
  */
 export function boundedAcpStream(input: {
   source: NodeReadable;
@@ -483,6 +485,8 @@ export function boundedAcpStream(input: {
   client: BoundedAcpClient;
   onFailure: (error: SupervisorError) => void;
 }): Stream {
+  if (input.source.readableObjectMode !== true)
+    throw incomplete("producer_frame_invalid");
   const iterator = input.source[Symbol.asyncIterator]();
   let pendingPermissions = 0;
   let stopped = false;
