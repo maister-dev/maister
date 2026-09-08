@@ -226,7 +226,7 @@ the delayed callback. It checks that both old command evidence and the new
 session/ACP binding survive. Prompt-owner state application has its separate
 generation checks in the following contract.
 
-## Prompt owner and recovery windows (Designed)
+## Prompt owner and recovery windows (Implemented)
 
 ### Registered owner application engine (Implemented)
 
@@ -470,8 +470,9 @@ Qualification covers outer rollback with real managed files, refusal of a
 transaction connection, changed contract provenance and concurrent finalizers,
 alongside the existing result, dirty-workspace, shared-tree and persistent-park
 suites (39/39). The first-turn adapter below additionally rechecks the exact
-turn, assignment and session before application. Other agent variants and
-global worker activation remain Designed below.
+turn, assignment and session before application. Every other agent variant is implemented below, and the owner is now mandatory
+at both the client boundary and the `execution_commands_prompt_owner_required`
+ledger constraint (S2.12, migration `0159`).
 
 ### Initial agent turn (Implemented)
 
@@ -790,13 +791,12 @@ the same transaction that sanitizes its message, keyed uniquely by that message,
 and carries the edit-lock generation that authorized it. Applying settles the
 row forward exactly once under a CAS out of `pending`, and the result message is
 written only by the settling caller. A pending action whose lock generation no
-longer matches is settled `skipped` and never edits the package. The assistant
-turn's own prompt ownership is still Designed: its suite mocks the supervisor
-transport wholesale, so no canonical lifecycle event projects the incarnation an
-owned prompt must admit against, and qualifying it needs a real event plane in
-that suite rather than a wiring change.
+longer matches is settled `skipped` and never edits the package. The assistant turn carries its own
+prompt owner (S2.9). Qualifying it required a real event plane in that suite
+rather than a wiring change: the fake host now publishes the canonical
+`session.created` event whose incarnation an owned prompt admits against.
 
-### Remaining domain adapters (Designed)
+### Domain owner adapters (Implemented)
 
 Persist the reference before remote dispatch in the same transaction as the owner admission. Use discriminated subvariants under the existing owner families where possible; widen the checked family only if necessary. Resolve references from authoritative rows. A Flow owner always references existing `node_attempts`, `gate_results` or consensus ledger rows; never create another Flow attempt ledger.
 
@@ -816,7 +816,7 @@ Recovery priority: reconcile existing command evidence → apply owned terminal 
 
 Both live waiters and restart workers call the same owner application path. Commit a durable successor continuation/readiness predicate with the owner transaction and marker; recovery must service it even after the originating command is already applied. A post-commit microtask is only a hint. DB mutation and `completion_applied_at` commit together; further external effects use a durable owner sub-operation with their own completion marker and claim. Failed application retries do not replay ACP. Lease expiry alone is not evidence of a failed command.
 
-## Exhaustive owner eligibility (Designed)
+## Exhaustive owner eligibility (Implemented)
 
 The rows below cover every current `RunStatus`; each cell is evaluated after
 exact owner/command/session/assignment matching under the owning row lock.
@@ -874,7 +874,7 @@ crashes. Every P/H pair additionally tests released original evidence and a
 superseding successor separately. The union's exact persisted reference fields
 are defined in the [database contract](../database-schema.md#ab-stabilization-persistence-contract-designed).
 
-## Command retirement and bounded retry policy (Designed)
+## Command retirement and bounded retry policy (Implemented)
 
 Add an idempotent host-admin retirement-eligibility operation through ExecutionHosts, keyed by command ID plus request/outcome digest and eligibility generation. It conveys proof metadata, not a client assertion that time elapsed. Manager derives eligibility under command/owner/run locks; host checks its receipt phase, terminal event's ACK watermark and stored request/outcome identity. Record the host acknowledgment durably before either side removes recoverable evidence.
 
@@ -884,7 +884,7 @@ After eligibility, compact to a small tombstone containing identity/digests/outc
 
 Guard run/assignment deletion and inbound FK cascades as part of this protocol: `execution_commands.run_id` and assignment references currently cascade. Refuse hard deletion with a typed protected-evidence conflict while protected commands/objects/import proofs exist. Parent deletion can proceed only after the ordinary retirement protocol has discharged every hold; adding an archive identity is outside this correction. Do not permit cascading around retirement eligibility. Add a real run-delete versus terminal-unapplied-command race. Host failure or eligibility ACK loss leaves manager recovery evidence intact. Retry the same eligibility operation. A late agreeing success after owner supersession can settle historical evidence and become eligible later; it does not apply to the successor. A missing receipt for a still-retained command is explicit reconciliation work, not an endless wait without diagnostics and not a fabricated terminal failure.
 
-## Remote-effect / database failure tables (Designed)
+## Remote-effect / database failure tables (Implemented for command and prompt transitions; the object seal/tombstone rows land with S3)
 
 These tables are normative for every changed distributed transition. Network work is outside Postgres transactions. Every operation has an intent before dispatch and an application marker after evidence, with a CAS that checks both owner status and exact generation. Do not describe this as atomic two-database commit.
 
@@ -924,17 +924,17 @@ Deferred inventory must cover ACP permission promises, prompt wait subscriptions
 ## Expectations
 
 - **PRM-01:** `session.prompt` is accepted only after the host durably records its Stage A receipt and accepted event.
-- **PRM-02 (Designed correction):** Retry reuses command ID, logical operation key, and canonical request digest so ACP is never invoked twice.
+- **PRM-02 (Implemented):** Retry reuses command ID, logical operation key, and canonical request digest so ACP is never invoked twice.
 - **PRM-03:** Progress and terminal events—not HTTP lifetime or a receipt alone—are lifecycle authority; the queryable receipt is agreeing evidence for reconciliation.
-- **PRM-04 (Designed correction):** Every prompt command has one typed server-derived owner and idempotent terminal application across web restart.
+- **PRM-04 (Implemented):** Every prompt command has one typed server-derived owner and idempotent terminal application across web restart.
 - **PRM-05:** A host restart finding an accepted command without a live turn terminalizes it as `turn_lost` without replaying prompt text.
-- **PRM-06 (Designed correction):** Receipt and terminal event must agree on command, assignment, epoch, and outcome before owner mutation.
-- **PRM-07 (Designed correction):** Session exit, crash, and cancellation terminalize accepted prompts before or atomically with terminal session evidence.
-- **PRM-08 (Designed correction):** HITL pause, decision, checkpoint, and resume are durable/fenced and resume uses a new command and required incarnation.
-- **PRM-09 (Designed correction):** Cancellation reuses the command ledger and has one terminal prompt outcome despite retry or ACK loss.
+- **PRM-06 (Implemented):** Receipt and terminal event must agree on command, assignment, epoch, and outcome before owner mutation.
+- **PRM-07 (Implemented):** Session exit, crash, and cancellation terminalize accepted prompts before or atomically with terminal session evidence.
+- **PRM-08 (Implemented):** HITL pause, decision, checkpoint, and resume are durable/fenced and resume uses a new command and required incarnation.
+- **PRM-09 (Implemented):** Cancellation reuses the command ledger and has one terminal prompt outcome despite retry or ACK loss.
 - **PRM-10:** Fencing happens before ACP and records a durable fenced receipt/audit event without owner mutation.
-- **PRM-11 (Designed correction):** `{commandId}` remains queryable through Postgres after web or supervisor process restart.
-- **PRM-12 (Designed correction):** Prompt receipt pruning waits for terminal ACK, owner application, terminal run, and replay grace.
+- **PRM-11 (Implemented):** `{commandId}` remains queryable through Postgres after web or supervisor process restart.
+- **PRM-12 (Implemented):** Prompt receipt pruning waits for terminal ACK, owner application, terminal run, and replay grace.
 
 ## Edge cases
 

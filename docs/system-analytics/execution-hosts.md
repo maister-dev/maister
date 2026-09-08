@@ -1,6 +1,10 @@
 # Execution hosts domain
 
-> **Status: Implemented foundations; Designed stabilization** (AB-01–17 below). Decision:
+> **Status: Implemented foundations; stabilization in progress** (AB-01–17 below).
+> AB-01–04 qualified in S1 and AB-05–08/10 in S2 (prompt owners, single terminal
+> reconciliation, recoverable unknown admission, fenced create-derived writes and
+> state-aware command/receipt retirement); AB-09/11–17 remain Designed and land
+> with S3–S5. Decision:
 > [ADR-166](../decisions.md#adr-166-local-execution-host-contract--durable-host-identity-epoch-fenced-assignments-command-ledger-opaque-adopted-workspaces).
 > Working plan:
 > [`../../.ai-factory/plans/claude-stage-a-execution-host-plan-6d70f9.md`](../../.ai-factory/plans/claude-stage-a-execution-host-plan-6d70f9.md).
@@ -588,8 +592,10 @@ contains the exact source anchors and dependency-ordered task list.
 
 E owns events/projection, C commands/owners, O objects, M migration, Q
 qualification/transport and D specifications/integration. These are maintainer
-responsibilities. AT identifiers below are required future scenarios, not claims
-that a runner has collected or passed them. Existing IT/CT labels remain
+responsibilities. AT identifiers below are required scenarios. AT-05–08 and AT-10
+have been collected and pass at the S2 gate (supervisor 88/88, web 359/359);
+the rest remain future scenarios, not claims that a runner has collected or
+passed them. Existing IT/CT labels remain
 specification aliases until mapped to an executable file and case.
 
 | Requirement | Enforcing correction | Owner; dependency | Primary discriminating acceptance | Status |
@@ -612,7 +618,7 @@ specification aliases until mapped to an executable file and case.
 | **R16 / AB-16** Operation-scoped boundary and real lifecycle proof (CUT-09/11/12) | AST/callsite inventory plus isolated real-process qualification; static guard is supplementary. | Q; S0 topology, S1–S4 final behavior | **AT-16**, inject prohibited operation into already allowed mixed file to fail guard; production web cannot read host root, yet lifecycle/history/object scenarios succeed through real HTTP/SSE. | Designed |
 | **R17 / AB-17** Binary HTTP runtime compatibility (OBJ-05/06) | Use explicit pinned Undici stack/dispatcher for binary transfer with its matching types; validate local request before dispatch and classify local errors separately. Explicit supported Node floor and CI/image parity. | Q; S0; deliver early S1 | **AT-17**, existing V7b and streamed/chunked reserve/upload/read on Node 24.15, 24.19 and selected default image; minimum runtime and real host must pass. Node 24.19 alone is insufficient. | Designed |
 
-## Identifier classification and refusal contract (Designed)
+## Identifier classification and refusal contract (Implemented for the command, prompt and retirement routes; the runtime-object and import rows land with S3/S4)
 
 Classification vocabulary: **URL-selected** = `url-param`; **principal-derived** = `auth-context`; **server-derived** = `server-state`; **body-supplied** = `body-controlled`. Internal header fields are body-supplied for trust analysis. A valid UUID/regex never proves a cross-resource relationship.
 

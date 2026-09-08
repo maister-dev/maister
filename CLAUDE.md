@@ -151,6 +151,12 @@ fence `{hostKey, assignmentId, assignmentEpoch, runId}`, is persisted
 driver MUST yield without writing run state. Placement re-entries mint the
 epoch inside their existing CAS claim. `POST /workspaces/adopt` is the only
 path-bearing route; session routes take the opaque `executionWorkspaceId`.
+Every `session.prompt` additionally carries a durable owner (ADR-167 S2.12):
+the unowned issue path refuses a prompt at compile time and
+`execution_commands_prompt_owner_required` refuses the row, so a prompt no
+restart could finish is never sent. Command evidence is reclaimed only by the
+two-sided retirement handshake (S2.11) — never by age — and deleting a run or
+assignment around it is refused by `execution_commands_protected_evidence`.
 → `docs/system-analytics/execution-hosts.md`.
 
 ### 2. Durable execution-host event and runtime-data plane
