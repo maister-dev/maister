@@ -29,10 +29,10 @@ export interface RunnersReadinessRailViewProps {
 }
 
 function readinessDotClass(status: RailRunnerDTO["readinessStatus"]): string {
-  if (status === "Ready") return "bg-accent-4";
-  if (status === "NotReady") return "bg-amber";
+  if (status === "Ready") return "bg-good";
+  if (status === "NotReady") return "bg-attention";
 
-  return "bg-mute-2";
+  return "bg-mute";
 }
 
 // One configured runner. `enabled` + `readiness` are icon/colour indicators
@@ -172,7 +172,7 @@ function RunnerChip({
       <span
         className={clsx(
           "h-[5px] w-[5px] rounded-full",
-          adapter.state === "green" ? "bg-accent-4" : "bg-amber",
+          adapter.state === "green" ? "bg-good" : "bg-attention",
         )}
       />
       {adapter.adapter}
