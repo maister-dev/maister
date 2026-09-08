@@ -9,7 +9,6 @@ project:
   name: maister
   main_branch: master
   branch_prefix: maister/
-  default_runner: claude-code
 packages:
   - id: aif
     source: https://github.com/maister-dev/maister-plugins
