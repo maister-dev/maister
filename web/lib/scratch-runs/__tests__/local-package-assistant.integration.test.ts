@@ -13,6 +13,7 @@
 //     project-scoped on a terminal transition (markScratchCrashed no-ops the
 //     domain/webhook outbox for a null project).
 
+import type { CommandEnvelope } from "@/lib/execution-host/types";
 import type { WorktreeInfo } from "@/lib/worktree";
 
 import { randomUUID } from "node:crypto";
@@ -160,6 +161,22 @@ beforeAll(async () => {
         createdByCommandId: envelope.command.id,
         status: "live",
       });
+      // This override replaces the fake's own createSession, so it owes the
+      // event plane the same `session.created` that method publishes. Without
+      // it no incarnation is ever projected and an OWNED prompt on this run
+      // can never be admitted.
+      await fake.publishCanonical(
+        envelope as unknown as CommandEnvelope<unknown>,
+        result.sessionId,
+        {
+          type: "session.created",
+          createdByCommandId: envelope.command.id,
+          sessionId: result.sessionId,
+          monotonicId: fake.monotonic(),
+          sessionName: envelope.payload.sessionName ?? "default",
+          acpSessionId: result.acpSessionId,
+        },
+      );
 
       return result;
     },

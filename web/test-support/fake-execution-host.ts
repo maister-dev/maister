@@ -82,7 +82,7 @@ import {
 // The production transport has no synchronous prompt operation after B4. This
 // fake-only helper remains so older scripted-turn tests can model a terminal
 // ACP turn without exposing that wire capability to domain code.
-type FakeCanonicalEvent =
+export type FakeCanonicalEvent =
   | SupervisorEvent
   | {
       type: "session.created";
@@ -191,6 +191,14 @@ export type FakeExecutionHost = {
       eventId: string;
     }) => Promise<void>,
   ): void;
+  /** Publish a canonical host event exactly as the fake's own transport does.
+   * A suite that REPLACES a transport method still owes the event plane the
+   * lifecycle events that method would have produced. */
+  publishCanonical(
+    envelope: CommandEnvelope<unknown>,
+    sessionId: string,
+    event: FakeCanonicalEvent,
+  ): Promise<void>;
   waitForCanonicalEvents(): Promise<void>;
   publishPromptReceipt(receipt: CommandReceipt): void;
   sealPromptJson(runId: string, value: unknown): ImmutableObjectReference;
@@ -475,7 +483,7 @@ export function createFakeExecutionHost(
 
     const eventId = randomUUID();
 
-    canonicalEventTail = canonicalEventTail.then(async () => {
+    const published = canonicalEventTail.then(async () => {
       // The real host commits the terminal receipt and its event pointer before
       // exposing the event. A manager projector may read the receipt in the sink.
       if (event.type === "session.command" && event.phase === "completed") {
@@ -492,7 +500,15 @@ export function createFakeExecutionHost(
       });
     });
 
-    return canonicalEventTail;
+    // The chain exists to preserve ORDER. A single rejected link must not
+    // poison every later publish, so the tail swallows outcomes and only the
+    // caller that published THIS event sees its failure.
+    canonicalEventTail = published.then(
+      () => undefined,
+      () => undefined,
+    );
+
+    return published;
   };
 
   const record = async (
@@ -1847,6 +1863,7 @@ export function createFakeExecutionHost(
     setPromptBehavior(behavior) {
       promptBehavior = behavior;
     },
+    publishCanonical,
     setCanonicalEventSink(sink) {
       canonicalEventSink = sink;
     },
@@ -2211,6 +2228,12 @@ export async function fakeExecutionHosts(
             error: event.error ?? null,
           };
         }
+        const receiptPhase = !terminal
+          ? ("accepted" as const)
+          : terminal.status === "succeeded"
+            ? ("completed" as const)
+            : ("rejected" as const);
+
         payloadSchema = "maister.session.command.v2";
         payload = {
           sourceMonotonicId: event.monotonicId,
@@ -2220,7 +2243,11 @@ export async function fakeExecutionHosts(
             : {}),
           commandId: envelope.command.id,
           kind: "session.prompt",
-          phase: event.phase,
+          // Receipt semantics, not the wire event's phase: the evidence parser
+          // validates this field as the receipt phase, so a failed or fenced
+          // terminal is `rejected` even though the host reports the event as a
+          // completed command carrying a non-succeeded status.
+          phase: receiptPhase,
           sourceCommandId: envelope.command.id,
           requestSchema: request.requestSchema,
           requestSha256: request.requestSha256,
@@ -2235,11 +2262,7 @@ export async function fakeExecutionHosts(
             hostSessionId: sessionId,
             requestSchema: request.requestSchema,
             requestSha256: request.requestSha256,
-            phase: !terminal
-              ? "accepted"
-              : terminal.status === "succeeded"
-                ? "completed"
-                : "rejected",
+            phase: receiptPhase,
             httpStatus: !terminal
               ? 202
               : terminal.status === "succeeded"

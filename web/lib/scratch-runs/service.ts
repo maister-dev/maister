@@ -84,10 +84,7 @@ import {
   normalizeScratchPrompt,
   sendScratchPromptAndProjectEvents,
 } from "@/lib/scratch-runs/events";
-import {
-  applyScratchPromptCompletion,
-  readScratchDialogStatus,
-} from "@/lib/scratch-runs/turn-completion";
+import { readScratchDialogStatus } from "@/lib/scratch-runs/turn-completion";
 import {
   decoratePromptForPlanMode,
   deriveScratchBranchName,
@@ -685,7 +682,7 @@ export async function markScratchPromptRetryable(args: {
     // the prompt was in flight — a late EXECUTOR_UNAVAILABLE must NOT resurrect
     // or clobber that newer state. lockRunRows serializes against those writers
     // and the guard is re-read under the lock (sibling pattern:
-    // completeScratchPromptTurn / markScratchCrashed).
+    // applyScratchPromptCompletion / markScratchCrashed).
     if (current !== "Starting" && current !== "Running") {
       log.warn(
         { runId: args.runId, dialogStatus: current ?? "(missing)", errorCode },
@@ -718,17 +715,6 @@ export async function markScratchPromptRetryable(args: {
       "scratch prompt failed after message persistence; dialog left retryable",
     );
   }
-}
-
-export async function completeScratchPromptTurn(args: {
-  db?: Db;
-  runId: string;
-}): Promise<ScratchDialogStatus> {
-  const db = args.db ?? getDb();
-
-  return db.transaction((tx: Db) =>
-    applyScratchPromptCompletion(tx, args.runId),
-  );
 }
 
 // Phase 6 (FR-F1/F2): the staged launch. Runs every precondition up to the
@@ -1760,8 +1746,9 @@ export async function* launchLocalPackageAssistantStaged(
     );
 
     // S2.9: one server-minted action id identifies the turn's postprocess in
-    // the durable action journal. The assistant turn's own prompt ownership
-    // needs a real event plane in its suite and stays a separate increment.
+    // the durable action journal, and the launch turn carries it into its own
+    // prompt owner so a crash recovers the dialog turn and the pending package
+    // action independently.
     const postprocessActionId = randomUUID();
     const promptResult = await sendScratchPromptAndProjectEvents({
       runId,
@@ -1769,8 +1756,14 @@ export async function* launchLocalPackageAssistantStaged(
       stepId: scratchStepId(),
       prompt: launchPrompt,
       execution: { client, admin },
+      owner: {
+        variant: "package_initial",
+        localPackageId: pkg.id,
+        postprocessActionId,
+        lockGeneration: args.body.sessionId,
+      },
     });
-    const dialogStatus = await completeScratchPromptTurn({ db, runId });
+    const dialogStatus = await readScratchDialogStatus(db, runId);
     const actionResult = await postProcessFlowAssistantTurn({
       db,
       localPackage: pkg,
@@ -2303,11 +2296,16 @@ export async function sendLocalPackageAssistantMessage(args: {
       stepId: scratchStepId(),
       prompt: messagePrompt,
       execution: await scratchExecution(db, args.runId, args.executionHosts),
+      owner: {
+        variant: "package_message",
+        messageId: appended.messageId,
+        sequence: appended.sequence,
+        localPackageId: pkg.id,
+        postprocessActionId,
+        lockGeneration: args.body.sessionId,
+      },
     });
-    const dialogStatus = await completeScratchPromptTurn({
-      db,
-      runId: args.runId,
-    });
+    const dialogStatus = await readScratchDialogStatus(db, args.runId);
     const actionResult = await postProcessFlowAssistantTurn({
       db,
       localPackage: pkg,
@@ -2452,7 +2450,7 @@ export type InterruptScratchRunResult = {
 // session live — the Stop control in the composer. It does NOT mutate the
 // dialog status: the still-in-flight sendScratchUserMessage / launch turn owns
 // the transition (the supervisor resolves the blocked prompt with the
-// `cancelled` stop reason, which completeScratchPromptTurn maps Running →
+// `cancelled` stop reason, which applyScratchPromptCompletion maps Running →
 // WaitingForUser). A terminal run is a no-op; a session without a live turn
 // acks cancelled:false from the supervisor. Works for both project scratch runs
 // and project-less local-package assistant runs (both run_kind='scratch').

@@ -297,15 +297,23 @@ export async function waitForScratchPrompt(
     );
   } catch (cause) {
     const [command] = await db
-      .select({ applicationState: executionCommands.applicationState })
+      .select({
+        state: executionCommands.state,
+        applicationState: executionCommands.applicationState,
+      })
       .from(executionCommands)
       .where(eq(executionCommands.id, commandId));
 
+    // A settled owner means the DOMAIN transition is durable; it does not turn
+    // a failed turn into a successful one. Only a successful command may be
+    // swallowed here — a definitive failure still owes the caller its rejection.
     if (
-      command?.applicationState === "applied" ||
-      command?.applicationState === "superseded"
+      command?.state === "succeeded" &&
+      (command.applicationState === "applied" ||
+        command.applicationState === "superseded")
     )
       return;
+    if (command?.state === "failed" || command?.state === "fenced") throw cause;
     throw new ScratchPromptContinuationPending(commandId, cause);
   }
 }
