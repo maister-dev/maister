@@ -182,7 +182,7 @@ there is no `gc_state` enum column.
 
 ### Startup reconcile (Implemented)
 
-Runs once on Node boot from `web/instrumentation.ts`, AFTER the two
+Runs once on Node boot from `web/instrumentation-node.ts`, AFTER the two
 existing recovery sweeps (`runResumeRecoverySweep`,
 `runTakeoverReturnRecoverySweep`) and BEFORE the keep-alive sweeper.
 

@@ -224,7 +224,7 @@ sequenceDiagram
     autonumber
     participant SUP as Supervisor (main.ts)
     participant ST as Host state store (sqlite)
-    participant WEB as Web instrumentation.ts
+    participant WEB as Web instrumentation-node.ts
     participant PG as Postgres
     SUP->>ST: openHostState(stateDir, pin?)
     alt no stored key

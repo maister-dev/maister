@@ -971,7 +971,7 @@ boolean | enum | array`; unknown type refused with `CONFIG` at Flow
   HITL intents (`hitl_requests.response IS NOT NULL AND respondedAt
 IS NULL` joined to `runs.status='NeedsInput'`) are recovered on web
   boot via `web/lib/runs/resume-recovery.ts:runResumeRecoverySweep`.
-  The sweep runs in `web/instrumentation.ts` BEFORE the keep-alive
+  The sweep runs in `web/instrumentation-node.ts` BEFORE the keep-alive
   sweeper and either re-schedules `scheduleResumedSessionDrive`
   against a live supervisor session OR atomically rolls the run back
   to `NeedsInputIdle` (status-guarded; intent preserved). Supervisor

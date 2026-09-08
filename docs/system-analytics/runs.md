@@ -1223,7 +1223,7 @@ effectively locked until some other run terminates.
 
 ### Resume-recovery sweep (boot-time, Codex review fix #2)
 
-`web/instrumentation.ts` runs `runResumeRecoverySweep()` once on Node
+`web/instrumentation-node.ts` runs `runResumeRecoverySweep()` once on Node
 runtime boot, BEFORE the keep-alive sweeper. The sweep catches HITL
 intents stranded across a web-process restart between the `/respond`
 202 (`state: "resume-in-progress"`) response and the in-process

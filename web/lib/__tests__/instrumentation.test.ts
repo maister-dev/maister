@@ -1,3 +1,7 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
+import ts from "typescript";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const getDb = vi.hoisted(() => vi.fn());
@@ -92,5 +96,67 @@ describe("instrumentation DB boot boundary", () => {
     expect(startSchedulerTimer).toHaveBeenCalledOnce();
     expect(startKeepaliveSweeper).not.toHaveBeenCalled();
     expect(startReconcileSweeper).not.toHaveBeenCalled();
+  });
+
+  it("does nothing on the edge runtime", async () => {
+    process.env.NEXT_RUNTIME = "edge";
+
+    await register();
+
+    expect(getDb).not.toHaveBeenCalled();
+    expect(startSchedulerTimer).not.toHaveBeenCalled();
+  });
+});
+
+const NODEJS_GUARD = 'process.env.NEXT_RUNTIME === "nodejs"';
+
+function unguardedModuleLoads(sourceText: string): string[] {
+  const file = ts.createSourceFile(
+    "instrumentation.ts",
+    sourceText,
+    ts.ScriptTarget.Latest,
+    true,
+  );
+  const found: string[] = [];
+  const visit = (node: ts.Node, guarded: boolean): void => {
+    if (
+      ts.isIfStatement(node) &&
+      node.expression.getText(file) === NODEJS_GUARD
+    ) {
+      visit(node.thenStatement, true);
+      if (node.elseStatement) visit(node.elseStatement, guarded);
+
+      return;
+    }
+    const loadsModule =
+      (ts.isImportDeclaration(node) && !node.importClause?.isTypeOnly) ||
+      (ts.isExportDeclaration(node) && node.moduleSpecifier !== undefined) ||
+      (ts.isCallExpression(node) &&
+        node.expression.kind === ts.SyntaxKind.ImportKeyword);
+
+    if (loadsModule && !guarded) found.push(node.getText(file));
+    ts.forEachChild(node, (child: ts.Node) => visit(child, guarded));
+  };
+
+  visit(file, false);
+
+  return found;
+}
+
+describe("instrumentation edge-runtime bundle boundary", () => {
+  // Next compiles instrumentation.ts for the Edge runtime at every boot and
+  // resolves every module load it can see in the file — an early `return` in
+  // register() hides nothing from the bundler. Only the body of the
+  // `NEXT_RUNTIME === "nodejs"` branch is dropped from the Edge build, so
+  // every import must sit inside it; otherwise the whole server graph (pg,
+  // fs, child_process) lands in the Edge bundle and each page compile prints
+  // hundreds of "node module in edge runtime" warnings.
+  it("keeps every module load inside the nodejs runtime guard", () => {
+    const source = readFileSync(
+      fileURLToPath(new URL("../../instrumentation.ts", import.meta.url)),
+      "utf8",
+    );
+
+    expect(unguardedModuleLoads(source)).toEqual([]);
   });
 });
