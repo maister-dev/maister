@@ -183,21 +183,33 @@ function waitReadable(source: NodeReadable): Promise<void> {
 }
 
 async function* boundedChunks(source: NodeReadable): AsyncGenerator<Buffer> {
-  for (;;) {
-    if (source.readableLength > 0) {
-      const chunk: unknown = source.read(
-        Math.min(source.readableLength, 65_536),
-      );
+  // Node resumes child stdio on exit. Keep readable mode active while disk
+  // writes and decoding suspend this generator, or that resume discards bytes.
+  const preserveReadableMode = (): void => {};
 
-      if (!Buffer.isBuffer(chunk)) throw incomplete("producer_chunk_limit");
-      yield chunk;
-    } else if (source.errored) {
-      throw source.errored;
-    } else if (source.readableEnded || source.destroyed) {
-      return;
-    } else {
-      await waitReadable(source);
+  source.on("readable", preserveReadableMode);
+  try {
+    for (;;) {
+      if (source.readableLength > 0) {
+        const chunk: unknown = source.read(
+          Math.min(source.readableLength, 65_536),
+        );
+
+        if (!Buffer.isBuffer(chunk)) throw incomplete("producer_chunk_limit");
+        yield chunk;
+      } else if (source.errored) {
+        throw source.errored;
+      } else if (source.readableEnded || source.destroyed) {
+        return;
+      } else {
+        // With a persistent readable listener, request the next read (including
+        // the final EOF) explicitly after consuming the buffered bytes.
+        source.read(0);
+        await waitReadable(source);
+      }
     }
+  } finally {
+    source.off("readable", preserveReadableMode);
   }
 }
 

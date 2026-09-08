@@ -213,6 +213,7 @@ export async function completePrompt(
   host: BootedHost,
   sessionId: string,
   body: CommandEnvelope,
+  timeoutMs = 5_000,
 ): Promise<{
   status: number;
   body: Record<string, unknown>;
@@ -227,11 +228,27 @@ export async function completePrompt(
     return admitted;
   }
 
-  await waitFor(() => {
-    const receipt = host.hostState.getReceipt(body.command.id);
+  try {
+    await waitFor(() => {
+      const receipt = host.hostState.getReceipt(body.command.id);
 
-    return receipt?.phase === "completed" || receipt?.phase === "rejected";
-  });
+      return receipt?.phase === "completed" || receipt?.phase === "rejected";
+    }, timeoutMs);
+  } catch (cause) {
+    const record = host.registry.get(sessionId)?.record;
+
+    throw new Error(
+      `prompt ${body.command.id} receipt did not terminalize within ${timeoutMs}ms: ${JSON.stringify(
+        {
+          sessionId,
+          phase: host.hostState.getReceipt(body.command.id)?.phase,
+          outputPaused: record?.outputPaused,
+          outputFailure: record?.outputFailure,
+        },
+      )}`,
+      { cause },
+    );
+  }
   const receipt = host.hostState.getReceipt(body.command.id);
 
   if (!receipt) {

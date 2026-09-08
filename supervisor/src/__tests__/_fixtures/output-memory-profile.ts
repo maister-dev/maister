@@ -36,6 +36,10 @@ await new Promise<void>((resolve, reject) =>
 );
 const host = await bootHost({ fixtureArgs: ["--hang", "--lines", "0"] });
 const originalCapture = RuntimeObjectRegistry.prototype.captureSessionContent;
+// Full GCs at every capture serialize profiler work across twenty producers.
+// This qualifies retained bytes, not a five-second latency SLA; the subprocess
+// still has its existing 120-second overall deadline.
+const PROMPT_RECEIPT_TIMEOUT_MS = 60_000;
 let baseline = process.memoryUsage();
 let peakBytes = 0;
 let maxReservedBytes = 0;
@@ -68,6 +72,7 @@ try {
       stepId: "warm",
       prompt: 'fixture-output:{"bytes":65537}',
     }),
+    PROMPT_RECEIPT_TIMEOUT_MS,
   );
   collect();
   baseline = process.memoryUsage();
@@ -106,6 +111,7 @@ try {
             stepId: `wave-${wave}`,
             prompt: 'fixture-output:{"frameBytes":1048576,"escaped":true}',
           }),
+          PROMPT_RECEIPT_TIMEOUT_MS,
         ),
       ),
     );
@@ -122,6 +128,7 @@ try {
       stepId: "gate-chat-memory",
       prompt: 'fixture-output:{"bytes":65537}',
     }),
+    PROMPT_RECEIPT_TIMEOUT_MS,
   );
 
   assert.equal(chat.status, 200, JSON.stringify(chat.body));
@@ -141,6 +148,7 @@ try {
       stepId: "gate-chat-capacity",
       prompt: 'fixture-output:{"frameBytes":1048576}',
     }),
+    PROMPT_RECEIPT_TIMEOUT_MS,
   );
 
   assert.equal(refusedChat.status, 500);
@@ -155,6 +163,7 @@ try {
       stepId: "sibling",
       prompt: "still live",
     }),
+    PROMPT_RECEIPT_TIMEOUT_MS,
   );
 
   assert.equal(sibling.status, 200);

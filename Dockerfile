@@ -49,7 +49,7 @@ COPY web/ ./web/
 COPY supervisor/ ./supervisor/
 COPY runtime/ ./runtime/
 COPY scripts/ ./scripts/
-RUN pnpm --filter maister-web build
+RUN NODE_OPTIONS=--max-old-space-size=4096 pnpm --filter maister-web build
 
 # ---------- development: hot reload via pnpm dev / supervisor dev ----------
 FROM base AS development

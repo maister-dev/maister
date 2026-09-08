@@ -1,12 +1,19 @@
 import { spawn } from "node:child_process";
 import { EventEmitter, once } from "node:events";
-import { readFile, writeFile } from "node:fs/promises";
+import { createWriteStream } from "node:fs";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setImmediate as nextTurn } from "node:timers/promises";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { waitForChildExit } from "../execution-fence";
-import { SupervisorDiagnosticsResponseSchema } from "../types";
+import { captureAcpFrames } from "../bounded-acp-stream";
+import {
+  SupervisorDiagnosticsResponseSchema,
+  type SupervisorError,
+} from "../types";
 import { stopRegisteredSessions } from "../shutdown";
 
 import {
@@ -157,6 +164,48 @@ afterEach(async () => {
 });
 
 describe("supervisor lifecycle integration", () => {
+  it("preserves unread stdout when a child exits while its first frame is being consumed", async () => {
+    const root = await mkdtemp(join(tmpdir(), "maister-exit-drain-"));
+    const logPath = join(root, "stdout.log");
+    const child = spawn(process.execPath, [
+      "--input-type=module",
+      "-e",
+      'process.stdout.write("first\\n"); process.stdin.once("data", () => process.stdout.write("last\\n", () => process.exit(0)));',
+    ]);
+    const exited = once(child, "exit");
+    const lines: string[] = [];
+    const failures: SupervisorError[] = [];
+    const captured = captureAcpFrames({
+      source: child.stdout,
+      directory: root,
+      log: createWriteStream(logPath),
+      onLine: (line) => lines.push(line),
+      onFailure: (error) => failures.push(error),
+      onDrained: () => {},
+    });
+    const iterator = captured[Symbol.asyncIterator]();
+
+    try {
+      expect((await iterator.next()).done).toBe(false);
+      // The last bytes are flushed by the real child while the consumer holds
+      // the first frame. Node resumes child stdio on exit even in this gap.
+      child.stdin.end("exit\n");
+      await exited;
+      await nextTurn();
+      expect((await iterator.next()).done).toBe(false);
+      expect((await iterator.next()).done).toBe(true);
+      expect(failures).toEqual([]);
+      expect(lines).toEqual(["first", "last"]);
+      expect(await readFile(logPath, "utf8")).toBe("first\nlast\n");
+    } finally {
+      if (child.exitCode === null && child.signalCode === null)
+        child.kill("SIGKILL");
+      await exited;
+      await iterator.return?.();
+      await cleanupRuntimeRoot(root);
+    }
+  });
+
   it("shutdown escalates a TERM-resistant child and awaits durable terminal output", async () => {
     const host = await bootFor(["--exit-delay-ms", "60000"]);
     const sessionId = await createSession(host);

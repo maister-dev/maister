@@ -1,10 +1,18 @@
 import type { ChildProcessByStdio } from "node:child_process";
 import type { Readable, Writable } from "node:stream";
-import type { RunnerLaunch, SessionEvent, SessionRecord } from "../types";
+import type {
+  RunnerLaunch,
+  SessionEvent,
+  SessionRecord,
+  SupervisorError,
+} from "../types";
 
 import { spawn } from "node:child_process";
-import { EventEmitter } from "node:events";
-import { dirname, resolve } from "node:path";
+import { EventEmitter, once } from "node:events";
+import { createWriteStream, mkdtempSync } from "node:fs";
+import { rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import pino from "pino";
@@ -12,6 +20,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { createAcpConnection, sendPromptOnConnection } from "../acp-client";
 import { listAdapterRuntimes } from "../adapter-registry";
+import { captureAcpFrames } from "../bounded-acp-stream";
 import { modelCatalogCache } from "../model-catalog/cache";
 import { createPendingPermissions } from "../pending-permissions";
 import { SESSION_EVENT_CHANNEL } from "../registry";
@@ -24,16 +33,43 @@ const logger = pino({ level: "silent" });
 
 type FixtureChild = ChildProcessByStdio<Writable, Readable, null>;
 
-const children: FixtureChild[] = [];
+const fixtures: Array<{
+  child: FixtureChild;
+  root: string;
+  drained: Promise<void>;
+  failures: SupervisorError[];
+}> = [];
 
-function spawnFixture(args: readonly string[] = []): FixtureChild {
+function spawnFixture(args: readonly string[] = []): {
+  stdin: Writable;
+  stdout: Readable;
+} {
+  const root = mkdtempSync(join(tmpdir(), "maister-acp-compat-"));
   const child = spawn(process.execPath, [FIXTURE_PATH, ...args], {
     stdio: ["pipe", "pipe", "ignore"],
   });
+  let resolveDrained: () => void = () => {};
+  const drained = new Promise<void>((resolveP) => {
+    resolveDrained = resolveP;
+  });
+  const failures: SupervisorError[] = [];
+  // The ACP client consumes complete frames from the production framer, not
+  // arbitrary pipe chunks that can contain several SDK notifications/results.
+  const stdout = captureAcpFrames({
+    source: child.stdout,
+    directory: root,
+    log: createWriteStream(join(root, "stdout.log")),
+    onLine: () => {},
+    onFailure: (error) => {
+      failures.push(error);
+      child.kill("SIGKILL");
+    },
+    onDrained: resolveDrained,
+  });
 
-  children.push(child);
+  fixtures.push({ child, root, drained, failures });
 
-  return child;
+  return { stdin: child.stdin, stdout };
 }
 
 function recordFor(adapter: SessionRecord["adapter"]): SessionRecord {
@@ -144,11 +180,22 @@ async function expectPromptPermission(args: {
   await expect(prompt).resolves.toMatchObject({ stopReason: "end_turn" });
 }
 
-afterEach(() => {
-  for (const child of children.splice(0)) {
-    child.kill("SIGKILL");
+afterEach(async () => {
+  const failures: SupervisorError[] = [];
+
+  for (const fixture of fixtures.splice(0)) {
+    if (fixture.child.exitCode === null && fixture.child.signalCode === null) {
+      const exited = once(fixture.child, "exit");
+
+      fixture.child.kill("SIGKILL");
+      await exited;
+    }
+    await fixture.drained;
+    await rm(fixture.root, { recursive: true, force: true });
+    failures.push(...fixture.failures);
   }
   modelCatalogCache.clear();
+  expect(failures).toEqual([]);
 });
 
 describe("adapter compatibility fixtures", () => {

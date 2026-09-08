@@ -380,10 +380,15 @@ describe("AT-02 aggregate runtime file capacity", () => {
         writtenBytes: objectBytes.length + logBytes.length,
         pressured: true,
       });
-      expect(readFileSync(join(objectDir, "interrupted.partial"))).toEqual(
-        objectBytes,
-      );
-      expect(readFileSync(join(runDir, "old-session.log"))).toEqual(logBytes);
+      // Native byte comparison avoids enumerating millions of Buffer indices.
+      expect(
+        readFileSync(join(objectDir, "interrupted.partial")).equals(
+          objectBytes,
+        ),
+      ).toBe(true);
+      expect(
+        readFileSync(join(runDir, "old-session.log")).equals(logBytes),
+      ).toBe(true);
       state.close();
       state = openHostState({ stateDir, limits: LIMITS });
       expect(state.runtimeFileBudget().chargedBytes).toBe(16 * 1024 * 1024);

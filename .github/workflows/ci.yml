@@ -40,6 +40,8 @@ jobs:
         run: pnpm --filter maister-web lint
 
       - name: Typecheck (web)
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
         run: pnpm --filter maister-web typecheck
 
       - name: Unit tests (web)
@@ -86,7 +88,9 @@ jobs:
   execution-data-plane:
     name: A/B real integration (Node ${{ matrix.node }})
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # At one worker on 2–4-core runners, measured healthy web suites take
+    # over 40m; setup and supervisor qualification need additional time.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:

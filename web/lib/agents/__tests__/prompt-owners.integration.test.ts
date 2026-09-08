@@ -40,6 +40,7 @@ import { reworkChildRun } from "@/lib/agents/launch";
 import { claimAgentResumeSlot, respondToHitl } from "@/lib/services/hitl";
 import { markCheckpointed } from "@/lib/runs/state-transitions";
 import { runSweepTick } from "@/lib/runs/keepalive-sweeper";
+import { getCommandReceipt } from "@/lib/supervisor-client";
 import { queryRunTokens } from "@/lib/runs/cost-rollups";
 import { startPromptOwnerWorker } from "@/lib/execution-host/prompt-owner-recovery";
 import { RUNTIME_EVENT_CLAIM_LEASE_MS } from "@/lib/execution-host/events/consumer";
@@ -466,6 +467,51 @@ async function killAtTerminalWrite(
   );
 }
 
+async function interruptAcceptedPrompt(
+  runId: string,
+  driver: ReturnType<typeof startFixture>,
+): Promise<void> {
+  const resumedCommands = () =>
+    db
+      .select({
+        id: executionCommands.id,
+        state: executionCommands.state,
+        transportState: executionCommands.transportState,
+      })
+      .from(agentTurns)
+      .innerJoin(
+        executionCommands,
+        eq(executionCommands.id, agentTurns.commandId),
+      )
+      .where(
+        and(
+          eq(agentTurns.runId, runId),
+          eq(agentTurns.variant, "resume"),
+          eq(agentTurns.state, "dispatched"),
+        ),
+      );
+
+  // Turn admission precedes HTTP delivery. Wait for the host ACK so
+  // this crash exercises terminal recovery, not an unsent command.
+  await expect
+    .poll(resumedCommands, {
+      timeout: 45_000 + KILLED_CLAIM_WAIT_MS,
+      interval: 25,
+    })
+    .toMatchObject([{ state: "accepted", transportState: "acknowledged" }]);
+  const [resumedCommand] = await resumedCommands();
+
+  driver.child.kill("SIGKILL");
+  await driver.exited;
+  // The fixture delays terminal output; prove the kill happened while
+  // the acknowledged prompt was still running on the real supervisor.
+  expect(await getCommandReceipt(resumedCommand.id)).toMatchObject({
+    receiptVersion: 2,
+    phase: "accepted",
+    terminal: null,
+  });
+}
+
 async function interruptAgentStatusWrite(
   runId: string,
   statuses: string[],
@@ -702,28 +748,7 @@ describe("Agent owned prompts through the production launcher", () => {
             start,
           );
         } else {
-          const responder = start();
-
-          await expect
-            .poll(
-              async () =>
-                (
-                  await db
-                    .select()
-                    .from(agentTurns)
-                    .where(
-                      and(
-                        eq(agentTurns.runId, runId),
-                        eq(agentTurns.variant, "resume"),
-                        eq(agentTurns.state, "dispatched"),
-                      ),
-                    )
-                ).length,
-              { timeout: 45_000 + KILLED_CLAIM_WAIT_MS, interval: 25 },
-            )
-            .toBe(1);
-          responder.child.kill("SIGKILL");
-          await responder.exited;
+          await interruptAcceptedPrompt(runId, start());
         }
       } else {
         expect(
@@ -918,28 +943,7 @@ describe("Agent owned prompts through the production launcher", () => {
             start,
           );
         } else {
-          const responder = start();
-
-          await expect
-            .poll(
-              async () =>
-                (
-                  await db
-                    .select()
-                    .from(agentTurns)
-                    .where(
-                      and(
-                        eq(agentTurns.runId, runId),
-                        eq(agentTurns.variant, "resume"),
-                        eq(agentTurns.state, "dispatched"),
-                      ),
-                    )
-                ).length,
-              { timeout: 45_000 + KILLED_CLAIM_WAIT_MS, interval: 25 },
-            )
-            .toBe(1);
-          responder.child.kill("SIGKILL");
-          await responder.exited;
+          await interruptAcceptedPrompt(runId, start());
         }
       } else {
         expect(
