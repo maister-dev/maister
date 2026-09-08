@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { laneConcurrency, laneSuites, vitestArgs } from "./run-stage-ab-tests.mjs";
+import { laneConcurrency, lanePackages, laneSuites, vitestArgs } from "./run-stage-ab-tests.mjs";
 
 // Each lane suite owns a stack of host processes (vitest worker, PostgreSQL
 // container, real supervisor, one forked driver child), so the pool is derived
@@ -31,8 +31,17 @@ test("the runner passes the pool bound to vitest with the existing lane flags", 
   ]);
 });
 
-test("both lanes still declare their owning suites", () => {
-  assert.ok(laneSuites.web.length > 0 && laneSuites.supervisor.length > 0);
-  for (const files of Object.values(laneSuites))
+test("every lane still declares its owning suites and package", () => {
+  assert.ok(laneSuites.web.length > 0 && laneSuites.supervisor.length > 0 && laneSuites.isolation.length > 0);
+  for (const [slice, files] of Object.entries(laneSuites)) {
+    assert.ok(Object.hasOwn(lanePackages, slice), `${slice} names its package`);
     for (const file of files) assert.match(file, /\.integration\.test\.ts$/u);
+  }
+});
+
+// The isolation suite builds the production web and owns two process trees,
+// so it never shares the host with a sibling worker.
+test("the isolation slice runs serially on any host", () => {
+  for (const parallelism of [1, 4, 16, 64]) assert.equal(laneConcurrency(parallelism, "isolation"), 1);
+  assert.equal(laneConcurrency(16, "web"), 4);
 });

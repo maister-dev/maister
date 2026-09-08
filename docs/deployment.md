@@ -113,9 +113,22 @@ when you intentionally want MAIster to supply an explicit compatible-provider,
 gateway, model-discovery, or sidecar override (the supervisor spawns the
 adapters, so its env is what they inherit).
 
-`MAISTER_RUNTIME_ROOT` MUST equal the checkout dir (`/opt/maister`) for both
-services — supervisor and web resolve `.maister/` from it, so a mismatch breaks
-the run event stream.
+`MAISTER_RUNTIME_ROOT` no longer has to be the same directory for both
+services: since the Stage B cut-over the run event stream, costs, prompt
+completion and runtime-object metadata are Postgres-owned, and the web never
+reads a host runtime path (enforced by the operation-scoped filesystem guard in
+`web/lib/execution-host/__tests__/runtime-data-boundary-inventory.test.ts`).
+The supported single-host layout in this guide keeps `/opt/maister` for both
+because the two units run as the same `maister` user; the AT-16 qualification
+(`web/test-support/__tests__/execution-ab-isolation.integration.test.ts`)
+runs them on disjoint private roots with only the worktrees root shared and the
+web denied the supervisor's root at the kernel. What must stay true when the
+roots differ: the supervisor identity must still read the web's runtime root
+where read-only context mounts are materialized (ADR-157) and write the
+shared worktrees root; `MAISTER_WORKSPACE_ROOTS` must list every root the web
+creates worktrees or local packages under. A separate-user deployment with a
+`0700` supervisor root has not been qualified on Linux yet (S5.3); until it
+is, treat the shared-user layout as the supported one.
 
 **Execution-host state (Implemented — [ADR-166](decisions.md#adr-166-local-execution-host-contract--durable-host-identity-epoch-fenced-assignments-command-ledger-opaque-adopted-workspaces)).**
 The supervisor keeps a private `node:sqlite` state store under

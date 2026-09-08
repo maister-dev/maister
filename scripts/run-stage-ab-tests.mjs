@@ -37,7 +37,15 @@ export const laneSuites = {
     ...["ingest", "event-claim-lock", "projection-worker"]
       .map((name) => `lib/execution-host/events/__tests__/${name}.integration.test.ts`),
   ],
+  // AT-16: one real production web (fresh `next build`, `server.ts`) under a
+  // kernel isolation driver against a real supervisor — runs alone because
+  // the build and both process trees own the host.
+  isolation: ["test-support/__tests__/execution-ab-isolation.integration.test.ts"],
 };
+// The package directory each slice runs in.
+export const lanePackages = { supervisor: "supervisor", web: "web", isolation: "web" };
+// Slices whose suites own the whole host run one at a time regardless of parallelism.
+const SERIAL_SLICES = new Set(["isolation"]);
 
 // A lane suite owns a stack of host processes — its vitest worker, a PostgreSQL
 // container, a real supervisor and at least one forked driver child — so the
@@ -47,8 +55,8 @@ export const laneSuites = {
 const SUITE_HOST_PROCESSES = 4;
 const LANE_MAX_CONCURRENCY = 4;
 
-export function laneConcurrency(parallelism) {
-  if (!(parallelism > 0)) return 1;
+export function laneConcurrency(parallelism, slice = "web") {
+  if (SERIAL_SLICES.has(slice) || !(parallelism > 0)) return 1;
 
   return Math.max(1, Math.min(LANE_MAX_CONCURRENCY, Math.floor(parallelism / SUITE_HOST_PROCESSES)));
 }
@@ -65,14 +73,14 @@ async function main() {
   assertSupportedNode(process.versions.node);
   const slice = process.argv[2];
 
-  assert(Object.hasOwn(laneSuites, slice ?? ""), "usage: run-stage-ab-tests.mjs web|supervisor");
+  assert(Object.hasOwn(laneSuites, slice ?? ""), "usage: run-stage-ab-tests.mjs web|supervisor|isolation");
   const files = laneSuites[slice];
-  const cwd = fileURLToPath(new URL(`../${slice}/`, import.meta.url));
+  const cwd = fileURLToPath(new URL(`../${lanePackages[slice]}/`, import.meta.url));
 
   await Promise.all(files.map((file) => access(join(cwd, file))));
   const directory = await mkdtemp(join(tmpdir(), `maister-ab-${slice}-`));
   const reportPath = join(directory, "vitest.json");
-  const concurrency = laneConcurrency(availableParallelism());
+  const concurrency = laneConcurrency(availableParallelism(), slice);
   const child = spawn(process.execPath, vitestArgs({ files, reportPath, concurrency }), { cwd, stdio: "inherit" });
   const status = await new Promise((resolve, reject) => {
     child.once("error", reject);
