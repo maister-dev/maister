@@ -26,6 +26,7 @@ import path from "node:path";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import pino from "pino";
 
+import { assertRuntimeObjectsReferenceable } from "@/lib/execution-host/runtime-object-holds";
 import { assertCurrentSessionBinding } from "@/lib/execution-host/session-binding";
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { ensureLocalPackageGitExclude } from "@/lib/local-packages/git";
@@ -423,6 +424,14 @@ function storedAttachmentValues(args: {
       storagePath: attachment.storagePath,
     }),
   );
+}
+
+function uploadedObjectIds(
+  attachments: ReturnType<typeof storedAttachmentValues>,
+): string[] {
+  return attachments
+    .filter((attachment) => attachment.kind === "uploaded_file")
+    .map((attachment) => attachment.value);
 }
 
 async function storeUploadedFiles(args: {
@@ -967,6 +976,10 @@ export async function* launchScratchRunStaged(
       });
 
       if (storedAttachments.length > 0) {
+        await assertRuntimeObjectsReferenceable(
+          tx as Db,
+          uploadedObjectIds(storedAttachments),
+        );
         await tx.insert(scratchAttachments).values(storedAttachments);
       }
       await tx.insert(scratchCapabilityProfiles).values({
@@ -1042,14 +1055,20 @@ export async function* launchScratchRunStaged(
       files: uploadedFiles,
     });
     if (uploadedAttachments.length > 0) {
-      await db.insert(scratchAttachments).values(
-        storedAttachmentValues({
-          metadataAttachments: [],
-          uploadedAttachments,
-          runId,
-          messageId,
-        }),
-      );
+      const storedAttachments = storedAttachmentValues({
+        metadataAttachments: [],
+        uploadedAttachments,
+        runId,
+        messageId,
+      });
+
+      await db.transaction(async (tx: Db) => {
+        await assertRuntimeObjectsReferenceable(
+          tx as Db,
+          uploadedObjectIds(storedAttachments),
+        );
+        await tx.insert(scratchAttachments).values(storedAttachments);
+      });
     }
     const capabilityBundle = await publishCapabilityBundle({
       client,
@@ -2084,6 +2103,10 @@ async function appendScratchUserMessage(args: {
       });
 
       if (storedAttachments.length > 0) {
+        await assertRuntimeObjectsReferenceable(
+          tx as Db,
+          uploadedObjectIds(storedAttachments),
+        );
         await tx.insert(scratchAttachments).values(storedAttachments);
       }
       await tx

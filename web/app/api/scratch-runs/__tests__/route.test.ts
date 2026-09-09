@@ -84,6 +84,12 @@ function rowsForTable(table: unknown): Record<string, unknown>[] {
   if (tableName === "scratch_runs") {
     return [{ runId: "run-1", dialogStatus: state.dialogStatus }];
   }
+  if (tableName === "execution_runtime_objects") {
+    return [...(hostCatalogue.objects?.values() ?? [])].map((object) => ({
+      id: object.objectId,
+      state: object.state,
+    }));
+  }
 
   return [];
 }
@@ -214,12 +220,20 @@ vi.mock("@/lib/supervisor-client", () => ({
 // ADR-166: the service talks to the host through the execution-host client;
 // route every host-bound call to this suite's supervisor-client mocks so the
 // wire-level assertions stay as they are.
+// S3.6: the reference lock reads the object catalogue; the fake db answers
+// from the host mock's registry captured here (hoisted above the mocks).
+const hostCatalogue = vi.hoisted(() => ({
+  objects: null as Map<string, { objectId: string; state: string }> | null,
+}));
+
 vi.mock("@/lib/execution-host", async () => {
   const sup = await import("@/lib/supervisor-client");
   const { executionHostModuleMock } = await import(
     "@/test-support/execution-host-module-mock"
   );
   const mock = executionHostModuleMock(sup as never);
+
+  hostCatalogue.objects = mock.runtimeObjects;
   // The driver binding (`executionFor`) composes the mock's bound client with
   // its admin surface until the module mock exports it itself.
   const hosts = {

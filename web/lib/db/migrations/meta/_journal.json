@@ -1100,6 +1100,13 @@
       "when": 1788891547981,
       "tag": "0160_runtime_object_declarations",
       "breakpoints": true
+    },
+    {
+      "idx": 161,
+      "version": "7",
+      "when": 1788968037855,
+      "tag": "0161_runtime_object_retention",
+      "breakpoints": true
     }
   ]
 }

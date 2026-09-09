@@ -1,6 +1,6 @@
 # Execution runtime objects
 
-**Status:** Implemented host registry, reserve/upload/delete routes, manager catalog and **safe content delivery (AB-12, S3.4)**; **Implemented native intent/seal reconciliation (AB-09, S3.1)**; **Implemented host seal/read verification (AB-13)**; **Implemented manager message-integrity (AB-15, S3.3)**; **Implemented crash-gap recovery (S3.5)**; **Designed** fair retention corrections (AB-14). Bytes remain host-owned and manager locators remain opaque.
+**Status:** Implemented host registry, reserve/upload/delete routes, manager catalog and **safe content delivery (AB-12, S3.4)**; **Implemented native intent/seal reconciliation (AB-09, S3.1)**; **Implemented host seal/read verification (AB-13)**; **Implemented manager message-integrity (AB-15, S3.3)**; **Implemented crash-gap recovery (S3.5)**; **Implemented fair retention with delivery and reference holds (AB-14, S3.6)**. Bytes remain host-owned and manager locators remain opaque.
 
 
 ## Purpose
@@ -40,11 +40,25 @@ stateDiagram-v2
 ```
 
 `expires_at` is deletion eligibility, not a persisted terminal state. The
-manager's 60-second sweep leaves a referenced object or an object owned by a
-live/checkpointed session `available`; otherwise it commits `deleting` with the
-fenced delete command. The matching ACK or canonical state event establishes
+manager's 60-second sweep walks due objects in `(created_at, id)` keyset order
+from a durable marker (`execution_runtime_object_retention_progress`), so
+protected rows at the front never starve later eligible ones; a held object
+keeps its reason in `retention_hold`, and a sweep that examines fewer rows than
+its page wraps to the start. Due means: an expired `ephemeral` object; a `run`
+or `delivery` object of a `Done`/`Abandoned` run past the workspace GC deadline
+(`scheduled_removal_at`, else `ended_at + MAISTER_GC_AGE_DAYS`); or a `deleting`
+row whose claim has no open command. Holds are evaluated inside the deletion
+claim under the object row lock: required verifier evidence and artifact or
+attachment references, a live/checkpointed session, an open command naming the
+object, and — for `delivery` objects — unconfirmed delivery (local merge commit,
+merged PR or a collected result-only result; `Done` or an open PR alone is
+never confirmation). Every new reference to an object is recorded under the same
+row lock and refuses a `deleting`/terminal row, so a reference cannot appear
+after a destructive claim. Otherwise the sweep commits `deleting` with the fenced
+delete command. The matching ACK or canonical state event establishes
 `deleted`. A terminal delete refusal retains the unavailable intent and error;
-it does not restore availability.
+it does not restore availability; a lost delete stays claimed and recovery
+redelivers it (S3.5).
 
 ## Process flows
 
@@ -193,6 +207,21 @@ Content-Digest, Repr-Digest and ETag. Postgres/real-supervisor lifecycle cases,
 real-HTTP binary transport cases and the Chromium content lane independently
 hash full and nonzero-range bytes; they also check refusal and resource cleanup.
 
+## Fair retention (Implemented — S3.6)
+
+Migration `0161_runtime_object_retention` adds the singleton
+`execution_runtime_object_retention_progress` marker, the nullable
+`execution_runtime_objects.retention_hold` reason and the partial
+`(created_at, id)` scan index over available/deleting rows. The sweep summary
+reports scanned, protected (with referenced/active-session breakdown), deferred,
+deleted and failed rows plus the marker age; per-object holds log only object,
+generation, class and reason. `runtime-object-retention.integration.test.ts`
+covers a page of protected rows ahead of an eligible one, cursor persistence and
+wrap-around, the reference-versus-delete race under the row lock, refusal of a
+reference to a claimed object, `Done` with an open PR versus a merged PR and
+required evidence, and a lost delete retrying through recovery without a second
+claim.
+
 ## Crash-gap recovery (Implemented — S3.5)
 
 A host crash between a durable object effect and its receipt/event write, or
@@ -241,7 +270,7 @@ poisons, and an accepted-but-effectless delete is redelivered to completion.
 - **OBJ-09:** Events/messages/cost/catalog metadata remain manager-owned while raw diagnostics and large host content remain host-owned.
 - **OBJ-10:** Structured result transport remains separate from verifier evidence payload storage and required evidence fails explicitly.
 - **OBJ-11 (Designed correction):** Delete commits a durable host tombstone before unlink and repeated delete is idempotent.
-- **OBJ-12 (Designed correction):** Manager metadata outlives missing/deleted bytes and deletion follows existing run/artifact delivery retention.
+- **OBJ-12:** Manager metadata outlives missing/deleted bytes and deletion follows existing run/artifact delivery retention.
 
 ## Edge cases
 

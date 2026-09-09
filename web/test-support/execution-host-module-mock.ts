@@ -284,6 +284,9 @@ export function executionHostModuleMock(spies: ExecutionHostSpies) {
   return {
     createExecutionHosts: () => hosts,
     executionHosts: hosts,
+    // S3.6: a fake db serves `execution_runtime_objects` from this registry so
+    // the reference lock sees the objects the mocked host sealed.
+    runtimeObjects,
     // Honors a suite's `checkSupervisorHealth` stub so an "unavailable"
     // supervisor still refuses at the placement gate (EXECUTOR_UNAVAILABLE).
     localHost: async () => {

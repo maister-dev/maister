@@ -4163,7 +4163,9 @@ explicitly held for repair. They cannot be backfilled from redacted payloads.
 | `execution_runtime_objects.declared_size_bytes` | `bigint`, null (`0160`, Implemented) | Immutable expected size paired with the declaration hash; independent of the sealed tuple, which may be present on pending ACK-only evidence. |
 | `execution_runtime_objects.declared_sha256` | `text`, null (`0160`, Implemented) | Immutable expected lowercase 64-hex hash. Backfill uses only the original exact reserve request, never a later request or an established seal. |
 | `execution_runtime_objects.origin` | `jsonb`, required for new allocations | Closed native-command versus historical-import union; import has `importId`, `manifestHash`, `itemId`; no fabricated active assignment. |
-| `execution_runtime_objects.last_examined_at` | `timestamptz`, null | Fair retention selection advances for protected and failing candidates too. |
+| `execution_runtime_objects.retention_hold` | `jsonb`, null (`0161`, Implemented) | Last reason the fair retention sweep kept the object (`referenced_artifact`, `referenced_attachment`, `required_evidence`, `live_session`, `open_command`, `delivery_unconfirmed`, `delete_pending`) with its timestamp; actionable, never an error or a path. |
+| `execution_runtime_objects_retention_scan_idx` | Partial btree `(created_at, id)` where state in `available`/`deleting` (`0161`) | Keyset order for the fair sweep so protected rows at the front cannot starve later eligible ones. |
+| `execution_runtime_object_retention_progress` | Singleton row `default`: nullable `cursor_created_at`/`cursor_id` pair (both null or both set), `updated_at` (`0161`, Implemented) | Durable last-examined keyset marker of the retention sweep; it advances past protected rows too and wraps to null when a page comes back short. Realizes the D5 marker in place of the earlier designed per-row `last_examined_at`. |
 | `execution_runtime_objects.delete_command_id` | `text`, null | Stable delete intent identity while deleting; no new key on lost ACK. |
 
 Retain `(run_id, logical_operation_key)` uniqueness for prompts. Namespace the

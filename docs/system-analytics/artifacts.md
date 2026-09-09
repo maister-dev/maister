@@ -432,6 +432,7 @@ sequenceDiagram
 - **Payload file deleted (GC / manual) while row `current`** → payload route
   returns 410 `gone` (typed reason); index row stays for audit, `validity`
   unchanged.
+- **`execution-object` locator versus runtime-object retention (Implemented — S3.6)** → the locator is a retention hold: the runtime-object sweep never deletes a referenced object, and a `requiredFor` reference holds it past every deadline; the reference itself is recorded under the object's row lock and refuses a `deleting`/terminal object with `PRECONDITION` `runtime_object_missing` ([fair retention](execution-runtime-objects.md#fair-retention-implemented--s36)).
 
 ## Log lines emitted
 

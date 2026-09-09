@@ -35,6 +35,13 @@ a pending row may hold a matching ACK seal, while availability still requires a
 canonical event. See the [native object reconciliation contract](../system-analytics/execution-runtime-objects.md#native-intent-and-seal-reconciliation-implemented--s31)
 for first-intent backfill and historical binding rules.
 
+Migration `0161_runtime_object_retention` adds the singleton
+`execution_runtime_object_retention_progress` keyset marker, the nullable
+`execution_runtime_objects.retention_hold` reason and the partial
+`(created_at, id)` scan index over available/deleting rows, so the fair
+retention sweep advances past protected objects and records why each was kept.
+See the [fair retention contract](../system-analytics/execution-runtime-objects.md#fair-retention-implemented--s36).
+
 ```mermaid
 erDiagram
     EXECUTION_HOSTS ||--o{ EXECUTION_ASSIGNMENTS : "placed on (RESTRICT)"

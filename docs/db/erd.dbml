@@ -1131,6 +1131,13 @@ table execution_projection_backfills {
   updated_at "timestamp with time zone" [not null, default: `now()`]
 }
 
+table execution_runtime_object_retention_progress {
+  id text [pk, not null]
+  cursor_created_at "timestamp with time zone"
+  cursor_id text
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+}
+
 table execution_runtime_objects {
   id text [pk, not null]
   run_id text [not null]
@@ -1154,11 +1161,13 @@ table execution_runtime_objects {
   expires_at "timestamp with time zone"
   deleted_at "timestamp with time zone"
   last_error jsonb
+  retention_hold jsonb
 
   indexes {
     source_event_id [name: 'execution_runtime_objects_source_event_uq', unique]
     (run_id, state) [name: 'execution_runtime_objects_run_state_idx']
     expires_at [name: 'execution_runtime_objects_expiry_idx']
+    (created_at, id) [name: 'execution_runtime_objects_retention_scan_idx']
 
 
 

@@ -75,6 +75,7 @@ import {
   PLACEMENT_REASONS,
   RUNTIME_OBJECT_KINDS,
   RUNTIME_OBJECT_RETENTION_CLASSES,
+  type RuntimeObjectRetentionHold,
   RUNTIME_OBJECT_STATES,
   TERMINAL_COMMAND_STATES,
 } from "@/lib/execution-host/types";
@@ -4174,6 +4175,9 @@ export const executionRuntimeObjects = pgTable(
     expiresAt: timestamp("expires_at", { withTimezone: true, mode: "date" }),
     deletedAt: timestamp("deleted_at", { withTimezone: true, mode: "date" }),
     lastError: jsonb("last_error").$type<Record<string, unknown>>(),
+    // S3.6 (D5): the last reason the retention sweep kept this object — an
+    // actionable hold, never an error. Cleared by nothing; overwritten per sweep.
+    retentionHold: jsonb("retention_hold").$type<RuntimeObjectRetentionHold>(),
   },
   (t) => ({
     uniqSourceEvent: uniqueIndex("execution_runtime_objects_source_event_uq")
@@ -4186,6 +4190,11 @@ export const executionRuntimeObjects = pgTable(
     idxExpiry: index("execution_runtime_objects_expiry_idx")
       .on(t.expiresAt)
       .where(sql`${t.expiresAt} IS NOT NULL`),
+    // S3.6 (D5): the fair sweep walks candidates in (created_at, id) keyset
+    // order so protected rows at the front cannot starve later eligible ones.
+    idxRetentionScan: index("execution_runtime_objects_retention_scan_idx")
+      .on(t.createdAt, t.id)
+      .where(sql`${t.state} IN ('available', 'deleting')`),
     sizeCheck: check(
       "execution_runtime_objects_size_check",
       sql`${t.sizeBytes} IS NULL OR ${t.sizeBytes} >= 0`,
@@ -4212,6 +4221,32 @@ export const executionRuntimeObjects = pgTable(
     ),
   }),
 );
+
+// S3.6 (D5): one durable keyset marker for the fair runtime-object retention
+// sweep. It advances past protected rows too, so every later eligible object is
+// reached; a sweep that examines fewer rows than its page wraps to the start.
+export const executionRuntimeObjectRetentionProgress = pgTable(
+  "execution_runtime_object_retention_progress",
+  {
+    id: text("id").primaryKey(),
+    cursorCreatedAt: timestamp("cursor_created_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    cursorId: text("cursor_id"),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    cursorCheck: check(
+      "execution_runtime_object_retention_progress_cursor_check",
+      sql`(${t.cursorCreatedAt} IS NULL AND ${t.cursorId} IS NULL) OR (${t.cursorCreatedAt} IS NOT NULL AND ${t.cursorId} IS NOT NULL)`,
+    ),
+  }),
+);
+export type ExecutionRuntimeObjectRetentionProgress =
+  typeof executionRuntimeObjectRetentionProgress.$inferSelect;
 
 export const executionEventConsumers = pgTable(
   "execution_event_consumers",

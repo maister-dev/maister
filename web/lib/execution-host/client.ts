@@ -1,4 +1,5 @@
 import type { Db } from "./db";
+import type { ExecutionRuntimeObject } from "@/lib/db/schema";
 import type { ExecutionAssignment, ExecutionHost } from "@/lib/db/schema";
 import type {
   CreateSessionResult,
@@ -125,6 +126,12 @@ export type PreparedInput = {
 // ADR-166 D3/D4: every host-bound command of a run goes through the client
 // bound to the run's ACTIVE assignment. Each method is a thin wrapper over
 // ONE `issue → deliver` path; kind differences live in `COMMAND_POLICY`.
+/** Evaluated under the catalogue row lock inside the deletion claim; a throw
+ * leaves the object untouched (S3.6 retention holds). */
+export type RuntimeObjectDeleteOptions = {
+  guard?: (tx: Db, object: ExecutionRuntimeObject) => Promise<void>;
+};
+
 export interface BoundClient {
   readonly assignment: ExecutionAssignment;
   readonly host: ExecutionHost;
@@ -203,10 +210,10 @@ export interface BoundClient {
     bytes: Uint8Array;
     sha256: string;
   }): Promise<RuntimeObjectMetadata>;
-  deleteRuntimeObject(input: {
-    objectId: string;
-    generation: number;
-  }): Promise<void>;
+  deleteRuntimeObject(
+    input: { objectId: string; generation: number },
+    opts?: RuntimeObjectDeleteOptions,
+  ): Promise<void>;
 }
 
 // Host-scoped reads that carry no fence: health, the live session list, the
@@ -915,7 +922,7 @@ export function createExecutionHosts(
 
         return metadata;
       },
-      async deleteRuntimeObject(input) {
+      async deleteRuntimeObject(input, opts) {
         const issued = await db.transaction(async (tx) => {
           const rows = await tx
             .select()
@@ -950,6 +957,7 @@ export function createExecutionHosts(
               { details: { reason: "runtime_object_missing" } },
             );
           }
+          await opts?.guard?.(tx as Db, object);
           await reduceRuntimeObjectEvidence(
             tx,
             objectBinding(input.objectId, input.generation),

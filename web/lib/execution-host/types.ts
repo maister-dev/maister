@@ -62,6 +62,23 @@ export const RUNTIME_OBJECT_RETENTION_CLASSES = [
 export type RuntimeObjectRetentionClass =
   (typeof RUNTIME_OBJECT_RETENTION_CLASSES)[number];
 
+export const RUNTIME_OBJECT_HOLD_REASONS = [
+  "referenced_artifact",
+  "referenced_attachment",
+  "required_evidence",
+  "live_session",
+  "open_command",
+  "delivery_unconfirmed",
+  "delete_pending",
+] as const;
+export type RuntimeObjectHoldReason =
+  (typeof RUNTIME_OBJECT_HOLD_REASONS)[number];
+/** Why the retention sweep kept an object: actionable, never a path or a body. */
+export type RuntimeObjectRetentionHold = {
+  reason: RuntimeObjectHoldReason;
+  at: string;
+};
+
 export const RUNTIME_OBJECT_STATES = [
   "pending",
   "available",

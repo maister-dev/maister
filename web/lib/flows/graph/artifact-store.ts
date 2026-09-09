@@ -10,6 +10,7 @@ import type {
 import { and, desc, eq, inArray, ne } from "drizzle-orm";
 import pino from "pino";
 
+import { assertRuntimeObjectsReferenceable } from "@/lib/execution-host/runtime-object-holds";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 
@@ -106,6 +107,27 @@ export async function recordArtifact(
     id,
   };
 
+  // D5 (S3.6): a reference to a host object is taken under that object's row
+  // lock so it cannot appear after the retention sweep claimed a deletion.
+  if (row.locator.kind === "execution-object") {
+    const objectId = row.locator.objectId;
+
+    return d.transaction(async (tx: Db) => {
+      await assertRuntimeObjectsReferenceable(tx, [objectId]);
+
+      return insertArtifactRow(tx, row);
+    });
+  }
+
+  return insertArtifactRow(d, row);
+}
+
+async function insertArtifactRow(
+  d: Db,
+  row: ArtifactInstanceInsert & { id: string },
+): Promise<{ id: string }> {
+  const { id } = row;
+
   await d
     .insert(artifactInstances)
     .values(row)
@@ -124,11 +146,11 @@ export async function recordArtifact(
 
   log.info(
     {
-      runId: args.runId,
-      nodeId: args.nodeId,
-      kind: args.kind,
+      runId: row.runId,
+      nodeId: row.nodeId,
+      kind: row.kind,
       id,
-      producer: args.producer,
+      producer: row.producer,
     },
     "artifact recorded",
   );

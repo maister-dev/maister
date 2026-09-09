@@ -587,7 +587,7 @@ or epoch), `ACP_PROTOCOL` (integrity disagreement), or
 `event_payload_oversize`, `event_outbox_backpressure`,
 `data_plane_unsupported`, `command_invariant_conflict`,
 `runtime_object_not_found`, `runtime_object_missing`,
-`runtime_object_range_invalid`, `runtime_object_integrity_mismatch`,
+`runtime_object_range_invalid`, `runtime_object_integrity_mismatch`, `runtime_object_retained` (manager-internal),
 `runtime_object_too_large`, `runtime_object_delete_failed`, and
 `runtime_object_transport_unsupported`. Error details contain only safe IDs,
 sequence, byte count, limit, and remediation token — never event payload,
@@ -627,6 +627,7 @@ defines the authoritative row joins. A failed read never proves remote failure.
 | `runtime_object_deleted` | `PRECONDITION` / 410 | Preserve tombstone, identical deletion replay succeeds. Object/generation. |
 | `runtime_object_integrity_mismatch` | `PRECONDITION` / 422 | Persist verified corrupt state; no successful response with obsolete digest. Expected/observed size and hash agreement. |
 | `runtime_object_range_invalid` | `PRECONDITION` / 416 | Refuse malformed/multiple/out-of-bounds/oversized range; never send the full object instead. Bounded numeric range. |
+| `runtime_object_retained` | `PRECONDITION` / never on the wire | The retention sweep's deletion guard found a hold under the object row lock (`details.hold` = `retention_hold.reason`: referenced artifact/attachment, required evidence, live session, open command, unconfirmed delivery, pending delete); the sweep records the reason on the row and moves on without claiming. |
 | `runtime_storage_pressure` | `EXECUTOR_UNAVAILABLE` / 503 | File capacity cannot fund fresh work. Preserve existing reservations; resume only after authorized cleanup or size reconciliation drops usage below low. Charged/written/reserved byte counts. |
 | `runtime_object_read_busy`, `runtime_storage_unavailable` | `EXECUTOR_UNAVAILABLE` / 503 | Bound verification concurrency; persistence failure cannot claim a durable missing/corrupt transition. Safe resource category/count. |
 | `legacy_import_source_changed`, `legacy_import_source_missing`, `legacy_import_association_ambiguous` | `PRECONDITION` / CLI failure or 409 | Preserve original manifest and sources; lane remains incomplete/failed until evidence-bound repair. Import/item/lane IDs, counts and digest equality. |
