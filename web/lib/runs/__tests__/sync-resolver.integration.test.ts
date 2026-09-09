@@ -241,7 +241,14 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await rm(root, { recursive: true, force: true });
+  // A git child can still be writing pack objects when the case returns; the
+  // retry is Node's remedy for that ENOTEMPTY/EBUSY window.
+  await rm(root, {
+    recursive: true,
+    force: true,
+    maxRetries: 10,
+    retryDelay: 100,
+  });
   vi.unstubAllEnvs();
 });
 
@@ -261,6 +268,15 @@ async function git(
 async function identity(repo: string): Promise<void> {
   await git(repo, ["config", "user.email", "test@example.test"]);
   await git(repo, ["config", "user.name", "Test User"]);
+  await noBackgroundMaintenance(repo);
+}
+
+// Git's auto maintenance detaches a child that outlives the command that
+// spawned it; the temp root is removed right after the case, so none may run.
+async function noBackgroundMaintenance(repo: string): Promise<void> {
+  await git(repo, ["config", "gc.auto", "0"]);
+  await git(repo, ["config", "gc.autoDetach", "false"]);
+  await git(repo, ["config", "maintenance.auto", "false"]);
 }
 
 async function headSha(cwd: string, rev = "HEAD"): Promise<string> {
@@ -276,6 +292,7 @@ async function initRepoWithRemote(): Promise<{
   const parent = join(root, `parent-${randomUUID()}`);
 
   await git(root, ["init", "--bare", "-b", "main", remote]);
+  await noBackgroundMaintenance(remote);
   await git(root, ["clone", remote, parent]);
   await identity(parent);
   await writeFile(join(parent, "base.txt"), "base\n");
@@ -608,13 +625,21 @@ function backgrounded(): {
   schedule: (task: () => Promise<void>) => void;
   settled: () => Promise<void>;
 } {
-  let done: Promise<void> = Promise.resolve();
+  const tasks: Promise<void>[] = [];
 
   return {
     schedule: (task) => {
-      done = task();
+      tasks.push(task());
     },
-    settled: () => done,
+    // Every scheduled task, not only the last one: a task may schedule more.
+    settled: async () => {
+      for (let seen = 0; seen < tasks.length; ) {
+        const pending = tasks.slice(seen);
+
+        seen = tasks.length;
+        await Promise.all(pending);
+      }
+    },
   };
 }
 
