@@ -6,7 +6,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 
-import { readApiError } from "@/lib/api-error";
+import { apiErrorText, readApiErrorBody } from "@/lib/api-error";
 
 // Forks an installed package into a fresh local package, then opens the editor —
 // the agreed fork → edit-in-project → PR-upstream flow (installed packages stay
@@ -30,11 +30,13 @@ export function ForkToEditButton({
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [serverMessage, setServerMessage] = useState<string | null>(null);
   const [existingId, setExistingId] = useState<string | null>(null);
 
   async function fork(forceNew: boolean): Promise<void> {
     setBusy(true);
     setError(null);
+    setServerMessage(null);
 
     try {
       const res = await fetch(
@@ -49,7 +51,13 @@ export function ForkToEditButton({
       );
 
       if (!res.ok) {
-        setError(await readApiError(res, tApiErrors));
+        // `apiErrors.<code>` is one generic line per code; the actual refusal
+        // reason (a stale working dir, a name still being created) is only in
+        // the server message, so keep it reachable under the alert.
+        const body = await readApiErrorBody(res);
+
+        setError(apiErrorText(body, tApiErrors));
+        setServerMessage(body?.message ?? null);
 
         return;
       }
@@ -119,6 +127,16 @@ export function ForkToEditButton({
         <span className="font-mono text-[10.5px] text-danger" role="alert">
           {error}
         </span>
+      ) : null}
+      {error && serverMessage ? (
+        <details className="text-[10.5px] text-ink-2">
+          <summary className="cursor-pointer">
+            {tApiErrors("serverResponse")}
+          </summary>
+          <pre className="mt-1 overflow-x-auto whitespace-pre-wrap rounded-md border border-line bg-paper p-2 font-mono">
+            {serverMessage}
+          </pre>
+        </details>
       ) : null}
     </span>
   );

@@ -3903,7 +3903,8 @@
     "EXECUTOR_UNAVAILABLE": "Executor unavailable",
     "CRASH": "Internal error",
     "NOT_FOUND": "Not found",
-    "requestFailed": "Request failed. Try again."
+    "requestFailed": "Request failed. Try again.",
+    "serverResponse": "Show server response"
   },
   "webhooks": {
     "empty": "No webhook subscriptions configured.",

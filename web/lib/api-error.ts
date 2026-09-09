@@ -20,14 +20,13 @@ type Translate = (
   values?: Record<string, string | number>,
 ) => string;
 
-export async function readApiError(
-  res: Response,
-  t: Translate,
-): Promise<string> {
-  const body = (await res.json().catch(() => null)) as {
-    code?: string;
-    message?: string;
-  } | null;
+export type ApiErrorBody = { code?: string; message?: string } | null;
+
+export async function readApiErrorBody(res: Response): Promise<ApiErrorBody> {
+  return (await res.json().catch(() => null)) as ApiErrorBody;
+}
+
+export function apiErrorText(body: ApiErrorBody, t: Translate): string {
   const code = body?.code;
 
   if (code && (API_ERROR_CODES as readonly string[]).includes(code)) {
@@ -35,4 +34,11 @@ export async function readApiError(
   }
 
   return t("requestFailed");
+}
+
+export async function readApiError(
+  res: Response,
+  t: Translate,
+): Promise<string> {
+  return apiErrorText(await readApiErrorBody(res), t);
 }
