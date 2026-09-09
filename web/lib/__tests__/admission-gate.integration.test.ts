@@ -33,6 +33,7 @@ let container: StartedPostgresTestDb["container"];
 let testDatabase: StartedPostgresTestDb;
 let pool: Pool;
 let db: NodePgDatabase;
+let hostId: string;
 let seq = 0;
 
 beforeAll(async () => {
@@ -44,7 +45,7 @@ beforeAll(async () => {
   pool = testDatabase.pool;
   db = testDatabase.db;
   // ADR-166: the resume claims mint on the local host — a fake host backs every implicit resolution.
-  await fakeExecutionHosts(db);
+  ({ hostId } = await fakeExecutionHosts(db));
   // The scheduler advisory lock (pg_advisory_xact_lock) only engages when DB_URL
   // is a postgres URL — point it at the container so the gate's count-then-claim is
   // serialized exactly as in prod (the INV-1 burst test depends on it).
@@ -239,6 +240,24 @@ async function seedIdleRun(
     startedAt: new Date(),
     resumeRequestedAt,
   });
+  if (runKind === "agent") {
+    const assignmentId = randomUUID();
+
+    await db.insert(fullSchema.executionAssignments).values({
+      id: assignmentId,
+      runId,
+      executionHostId: hostId,
+      epoch: 1,
+      state: "released",
+      placementReason: "launch",
+      endedAt: new Date(),
+      releasedReason: "checkpointed",
+    });
+    await db
+      .update(fullSchema.runs)
+      .set({ executionAssignmentId: assignmentId })
+      .where(eq(fullSchema.runs.id, runId));
+  }
 
   return runId;
 }

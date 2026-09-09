@@ -218,7 +218,7 @@ export async function sweepExpiredRuntimeObjects(
         summary.failed += 1;
         await db
           .update(executionRuntimeObjects)
-          .set({ state: "available", lastError: safeError(error) })
+          .set({ lastError: safeError(error) })
           .where(
             and(
               eq(executionRuntimeObjects.id, candidate.id),

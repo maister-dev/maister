@@ -160,6 +160,8 @@ beforeEach(async () => {
   fake.calls.length = 0;
   promoteLocalMergeSpy.mockClear();
 
+  await pool.query(`DELETE FROM "agent_turns"`);
+  await pool.query(`DELETE FROM "execution_commands"`);
   await pool.query(`DELETE FROM "domain_events"`);
   await pool.query(`DELETE FROM "workspaces"`);
   await pool.query(`DELETE FROM "runs"`);

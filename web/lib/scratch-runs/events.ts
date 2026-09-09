@@ -764,7 +764,12 @@ export async function sendScratchPromptAndProjectEvents(args: {
 
     // The create ACK projects the incarnation asynchronously; an owned prompt
     // must admit against the live binding, exactly like Flow and agent turns.
-    await waitForPromptIncarnation(db, execution.client, args.sessionId);
+    await waitForPromptIncarnation(
+      db,
+      execution.client,
+      args.sessionId,
+      args.signal,
+    );
     const handle = await execution.client.prompt(
       args.sessionId,
       {

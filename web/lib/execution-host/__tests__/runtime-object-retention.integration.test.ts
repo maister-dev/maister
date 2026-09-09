@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import * as fullSchema from "@/lib/db/schema";
 import { publishRuntimeObject } from "@/lib/execution-host/runtime-objects";
+import { MaisterError } from "@/lib/errors";
 import { sweepExpiredRuntimeObjects } from "@/lib/execution-host/runtime-object-retention";
 import { seedProjectRow, seedRun } from "@/test-support/execution-host-seed";
 import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
@@ -31,6 +32,43 @@ afterAll(async () => {
 });
 
 describe("runtime object retention", () => {
+  it("keeps a durable delete intent unavailable after a terminal host refusal", async () => {
+    const project = await seedProjectRow(testDatabase.db);
+    const runId = await seedRun(testDatabase.db, {
+      projectId: project.id,
+      status: "Review",
+    });
+    const { hosts, fake } = await fakeExecutionHosts(db, { runId });
+    const client = await hosts.forRun(runId, { reason: "launch" });
+    const objectId = randomUUID();
+
+    await publishRuntimeObject({
+      client,
+      objectId,
+      kind: "generated_artifact",
+      logicalName: "refused.txt",
+      mimeType: "text/plain",
+      retentionClass: "ephemeral",
+      expiresAt: "2026-09-04T11:59:00.000Z",
+      bytes: new TextEncoder().encode("retained fixture"),
+    });
+    fake.transport.deleteRuntimeObject = async () => {
+      throw new MaisterError("PRECONDITION", "fixture delete refusal");
+    };
+    const summary = await sweepExpiredRuntimeObjects({
+      db,
+      hosts,
+      now: new Date("2026-09-04T12:00:00.000Z"),
+    });
+    const result = await testDatabase.pool.query<{ state: string }>(
+      "select state from execution_runtime_objects where id = $1",
+      [objectId],
+    );
+
+    expect(summary.failed).toBe(1);
+    expect(result.rows).toEqual([{ state: "deleting" }]);
+  });
+
   it("deletes only expired, unreferenced ephemeral objects through their original assignment", async () => {
     const project = await seedProjectRow(testDatabase.db);
     const runId = await seedRun(testDatabase.db, {

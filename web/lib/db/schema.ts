@@ -4154,6 +4154,8 @@ export const executionRuntimeObjects = pgTable(
     kind: text("kind", { enum: RUNTIME_OBJECT_KINDS }).notNull(),
     logicalName: text("logical_name").notNull(),
     mimeType: text("mime_type").notNull(),
+    declaredSizeBytes: bigint("declared_size_bytes", { mode: "bigint" }),
+    declaredSha256: text("declared_sha256"),
     sizeBytes: bigint("size_bytes", { mode: "bigint" }),
     sha256: text("sha256"),
     generation: integer("generation").notNull(),
@@ -4198,7 +4200,11 @@ export const executionRuntimeObjects = pgTable(
     ),
     metadataStateCheck: check(
       "execution_runtime_objects_metadata_state_check",
-      sql`(${t.state} IN ('available', 'deleting', 'missing', 'deleted', 'expired', 'corrupt')) = (${t.sizeBytes} IS NOT NULL AND ${t.sha256} ~ '^[a-f0-9]{64}$' AND ${t.sealedAt} IS NOT NULL)`,
+      sql`(${t.state} = 'pending' AND ${t.sizeBytes} IS NULL AND ${t.sha256} IS NULL AND ${t.sealedAt} IS NULL) OR (${t.state} IN ('pending', 'available', 'deleting', 'missing', 'deleted', 'expired', 'corrupt') AND ${t.sizeBytes} IS NOT NULL AND ${t.sha256} IS NOT NULL AND ${t.sha256} ~ '^[a-f0-9]{64}$' AND ${t.sealedAt} IS NOT NULL)`,
+    ),
+    declarationCheck: check(
+      "execution_runtime_objects_declaration_check",
+      sql`(${t.declaredSizeBytes} IS NULL AND ${t.declaredSha256} IS NULL) OR (${t.declaredSizeBytes} IS NOT NULL AND ${t.declaredSizeBytes} >= 0 AND ${t.declaredSha256} IS NOT NULL AND ${t.declaredSha256} ~ '^[a-f0-9]{64}$')`,
     ),
     ephemeralExpiryCheck: check(
       "execution_runtime_objects_ephemeral_expiry_check",

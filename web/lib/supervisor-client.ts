@@ -1283,7 +1283,7 @@ const RuntimeObjectWireMetadataSchema = z
   })
   .strict();
 
-function parseRuntimeObjectWireMetadata(
+export function parseRuntimeObjectWireMetadata(
   value: unknown,
 ): RuntimeObjectWireMetadata {
   const parsed = RuntimeObjectWireMetadataSchema.safeParse(value);

@@ -94,6 +94,8 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+  await pool.query(`DELETE FROM "agent_turns"`);
+  await pool.query(`DELETE FROM "execution_commands"`);
   await pool.query(`DELETE FROM "runs"`);
   await pool.query(`DELETE FROM "agent_project_links"`);
   await pool.query(`DELETE FROM "agents"`);

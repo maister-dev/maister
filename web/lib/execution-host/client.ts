@@ -80,6 +80,12 @@ import {
 import { ensureAssignment } from "./placement";
 import { hostForAssignment } from "./resolver";
 import { commandSignals } from "./signals";
+import {
+  reduceRuntimeObjectEvidence,
+  runtimeObjectBindingMatches,
+  type RuntimeObjectBinding,
+} from "./runtime-object-evidence";
+import { runEventWakeBus } from "./events/run-wake";
 import { defaultTransport } from "./default-transport";
 import { streamCanonicalSessionEvents } from "./events/session-stream";
 import { asExecutionWorkspaceId, asHostSessionId } from "./types";
@@ -289,6 +295,20 @@ export function createExecutionHosts(
   ): BoundClient {
     let current = assignment;
     const db = dbOf();
+
+    function objectBinding(
+      objectId: string,
+      generation: number,
+    ): RuntimeObjectBinding {
+      return {
+        objectId,
+        generation,
+        runId: current.runId,
+        executionHostId: host.id,
+        executionAssignmentId: current.id,
+        assignmentEpoch: current.epoch,
+      };
+    }
 
     type ImmediateOptions<TResult> = {
       targetSessionId?: string;
@@ -537,58 +557,18 @@ export function createExecutionHosts(
         if (result.runtimeObjects?.length) {
           await db.transaction(async (tx) => {
             for (const metadata of result.runtimeObjects ?? []) {
-              if (
-                metadata.state !== "available" ||
-                !Number.isSafeInteger(metadata.sizeBytes) ||
-                metadata.sizeBytes === null ||
-                metadata.sizeBytes < 0 ||
-                typeof metadata.sha256 !== "string" ||
-                !/^[a-f0-9]{64}$/.test(metadata.sha256) ||
-                !metadata.sealedAt
-              ) {
-                throw new MaisterError(
-                  "ACP_PROTOCOL",
-                  "prompt receipt contains invalid runtime output metadata",
-                );
-              }
-              const rows = await tx
-                .select()
-                .from(executionRuntimeObjects)
-                .where(eq(executionRuntimeObjects.id, metadata.objectId))
-                .for("update")
-                .limit(1);
-              const object = rows[0];
-
-              if (
-                !object ||
-                object.runId !== current.runId ||
-                object.executionHostId !== host.id ||
-                object.executionAssignmentId !== current.id ||
-                object.assignmentEpoch !== current.epoch ||
-                object.kind !== metadata.kind ||
-                object.logicalName !== metadata.logicalName ||
-                object.mimeType !== metadata.mimeType ||
-                object.generation !== metadata.generation ||
-                object.retentionClass !== metadata.retentionClass
-              ) {
-                throw new MaisterError(
-                  "CONFLICT",
-                  "prompt runtime output conflicts with its manager allocation",
-                  { details: { reason: "command_invariant_conflict" } },
-                );
-              }
-              await tx
-                .update(executionRuntimeObjects)
-                .set({
-                  state: "available",
-                  sizeBytes: BigInt(metadata.sizeBytes),
-                  sha256: metadata.sha256,
-                  sealedAt: new Date(metadata.sealedAt),
-                  lastError: null,
-                })
-                .where(eq(executionRuntimeObjects.id, metadata.objectId));
+              await reduceRuntimeObjectEvidence(
+                tx,
+                objectBinding(metadata.objectId, metadata.generation),
+                {
+                  kind: "seal",
+                  source: "ack",
+                  metadata,
+                },
+              );
             }
           });
+          runEventWakeBus.wake(current.runId);
         }
 
         return result;
@@ -772,25 +752,55 @@ export function createExecutionHosts(
         const expiresAt = payload.expiresAt
           ? new Date(payload.expiresAt)
           : null;
+
+        if (
+          !Number.isSafeInteger(payload.sizeBytes) ||
+          payload.sizeBytes < 0 ||
+          !Number.isSafeInteger(payload.generation) ||
+          payload.generation < 1 ||
+          !/^[a-f0-9]{64}$/.test(payload.sha256) ||
+          (expiresAt !== null && !Number.isFinite(expiresAt.getTime()))
+        )
+          throw new MaisterError(
+            "PRECONDITION",
+            "runtime object declaration is invalid",
+          );
         const issued = await db.transaction(async (tx) => {
+          await tx
+            .insert(executionRuntimeObjects)
+            .values({
+              id: payload.objectId,
+              runId: current.runId,
+              executionHostId: host.id,
+              executionAssignmentId: current.id,
+              assignmentEpoch: current.epoch,
+              kind: payload.kind,
+              logicalName: payload.logicalName,
+              mimeType: payload.mimeType,
+              declaredSizeBytes: BigInt(payload.sizeBytes),
+              declaredSha256: payload.sha256,
+              generation: payload.generation,
+              retentionClass: payload.retentionClass,
+              state: "pending",
+              expiresAt,
+            })
+            .onConflictDoNothing({ target: executionRuntimeObjects.id });
           const rows = await tx
             .select()
             .from(executionRuntimeObjects)
-            .where(
-              and(
-                eq(executionRuntimeObjects.id, payload.objectId),
-                eq(executionRuntimeObjects.runId, current.runId),
-              ),
-            )
+            .where(eq(executionRuntimeObjects.id, payload.objectId))
             .for("update")
             .limit(1);
           const existing = rows[0];
 
           if (existing) {
             const sameIntent =
-              existing.executionHostId === host.id &&
-              existing.executionAssignmentId === current.id &&
-              existing.assignmentEpoch === current.epoch &&
+              runtimeObjectBindingMatches(
+                existing,
+                objectBinding(payload.objectId, payload.generation),
+              ) &&
+              existing.declaredSizeBytes === BigInt(payload.sizeBytes) &&
+              existing.declaredSha256 === payload.sha256 &&
               existing.kind === payload.kind &&
               existing.logicalName === payload.logicalName &&
               existing.mimeType === payload.mimeType &&
@@ -803,6 +813,14 @@ export function createExecutionHosts(
                   existing.sha256 === payload.sha256));
 
             if (!sameIntent) {
+              logger.warn(
+                {
+                  ...objectBinding(payload.objectId, payload.generation),
+                  evidenceSource: "reserve",
+                  conflictReason: "declaration_or_identity_conflict",
+                },
+                "runtime-object-intent-refused",
+              );
               throw new MaisterError(
                 "CONFLICT",
                 "runtime object ID is already bound to different metadata",
@@ -810,36 +828,42 @@ export function createExecutionHosts(
               );
             }
           } else {
-            await tx.insert(executionRuntimeObjects).values({
-              id: payload.objectId,
-              runId: current.runId,
-              executionHostId: host.id,
-              executionAssignmentId: current.id,
-              assignmentEpoch: current.epoch,
-              kind: payload.kind,
-              logicalName: payload.logicalName,
-              mimeType: payload.mimeType,
-              sizeBytes: null,
-              sha256: null,
-              generation: payload.generation,
-              retentionClass: payload.retentionClass,
-              state: "pending",
-              expiresAt,
-            });
+            throw new MaisterError(
+              "CONFLICT",
+              "runtime object intent disappeared during reservation",
+            );
           }
 
           return issue(tx, "runtime_object.reserve", payload, payload.objectId);
         });
 
-        return deliver(
+        const metadata = await deliver(
           issued,
           (env) =>
             transport.reserveRuntimeObject(
               env as CommandEnvelope<ReserveRuntimeObjectPayload>,
               timeoutFor("runtime_object.reserve"),
             ),
-          { targetSessionId: payload.objectId },
+          {
+            targetSessionId: payload.objectId,
+            onAck: async (tx, metadata) => {
+              if (metadata.state === "available")
+                await reduceRuntimeObjectEvidence(
+                  tx,
+                  objectBinding(payload.objectId, payload.generation),
+                  {
+                    kind: "seal",
+                    source: "ack",
+                    metadata,
+                  },
+                );
+            },
+          },
         );
+
+        runEventWakeBus.wake(current.runId);
+
+        return metadata;
       },
       async uploadRuntimeObject(input) {
         const payload = {
@@ -855,7 +879,7 @@ export function createExecutionHosts(
           input.objectId,
         );
 
-        return deliver(
+        const metadata = await deliver(
           issued,
           (env) =>
             transport.uploadRuntimeObject({
@@ -874,42 +898,22 @@ export function createExecutionHosts(
           {
             targetSessionId: input.objectId,
             onAck: async (tx, metadata) => {
-              const updated = await tx
-                .update(executionRuntimeObjects)
-                .set({
-                  sizeBytes: BigInt(
-                    metadata.sizeBytes ?? input.bytes.byteLength,
-                  ),
-                  sha256: metadata.sha256 ?? input.sha256,
-                  state: "available",
-                  sealedAt: metadata.sealedAt
-                    ? new Date(metadata.sealedAt)
-                    : (deps.now?.() ?? new Date()),
-                  lastError: null,
-                })
-                .where(
-                  and(
-                    eq(executionRuntimeObjects.id, input.objectId),
-                    eq(executionRuntimeObjects.runId, current.runId),
-                    eq(
-                      executionRuntimeObjects.executionAssignmentId,
-                      current.id,
-                    ),
-                    eq(executionRuntimeObjects.assignmentEpoch, current.epoch),
-                  ),
-                )
-                .returning({ id: executionRuntimeObjects.id });
-
-              if (!updated[0]) {
-                throw new MaisterError(
-                  "CONFLICT",
-                  "runtime object upload acknowledgement no longer matches its catalogue binding",
-                  { details: { reason: "command_invariant_conflict" } },
-                );
-              }
+              await reduceRuntimeObjectEvidence(
+                tx,
+                objectBinding(input.objectId, input.generation),
+                {
+                  kind: "seal",
+                  source: "ack",
+                  metadata,
+                },
+              );
             },
           },
         );
+
+        runEventWakeBus.wake(current.runId);
+
+        return metadata;
       },
       async deleteRuntimeObject(input) {
         const issued = await db.transaction(async (tx) => {
@@ -946,12 +950,16 @@ export function createExecutionHosts(
               { details: { reason: "runtime_object_missing" } },
             );
           }
-          if (object.state !== "deleted") {
-            await tx
-              .update(executionRuntimeObjects)
-              .set({ state: "deleting", lastError: null })
-              .where(eq(executionRuntimeObjects.id, input.objectId));
-          }
+          await reduceRuntimeObjectEvidence(
+            tx,
+            objectBinding(input.objectId, input.generation),
+            {
+              kind: "state",
+              source: "delete_intent",
+              state: "deleting",
+              deletedAt: null,
+            },
+          );
 
           return issue(
             tx,
@@ -972,24 +980,16 @@ export function createExecutionHosts(
           {
             targetSessionId: input.objectId,
             onAck: async (tx) => {
-              await tx
-                .update(executionRuntimeObjects)
-                .set({
+              await reduceRuntimeObjectEvidence(
+                tx,
+                objectBinding(input.objectId, input.generation),
+                {
+                  kind: "state",
+                  source: "delete_ack",
                   state: "deleted",
                   deletedAt: deps.now?.() ?? new Date(),
-                  lastError: null,
-                })
-                .where(
-                  and(
-                    eq(executionRuntimeObjects.id, input.objectId),
-                    eq(executionRuntimeObjects.runId, current.runId),
-                    eq(
-                      executionRuntimeObjects.executionAssignmentId,
-                      current.id,
-                    ),
-                    eq(executionRuntimeObjects.assignmentEpoch, current.epoch),
-                  ),
-                );
+                },
+              );
             },
           },
         );

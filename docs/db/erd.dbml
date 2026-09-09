@@ -1141,6 +1141,8 @@ table execution_runtime_objects {
   kind text [not null]
   logical_name text [not null]
   mime_type text [not null]
+  declared_size_bytes bigint
+  declared_sha256 text
   size_bytes bigint
   sha256 text
   generation integer [not null]
@@ -1157,6 +1159,7 @@ table execution_runtime_objects {
     source_event_id [name: 'execution_runtime_objects_source_event_uq', unique]
     (run_id, state) [name: 'execution_runtime_objects_run_state_idx']
     expires_at [name: 'execution_runtime_objects_expiry_idx']
+
 
 
 

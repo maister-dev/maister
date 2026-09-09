@@ -4,8 +4,12 @@ import { eq, sql } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { sendScratchPromptAndProjectEvents } from "@/lib/scratch-runs/events";
-import { legacyScratchApiToExecution } from "@/test-support/execution-host-module-mock";
+import {
+  sendScratchPromptAndProjectEvents,
+  type ScratchExecution,
+} from "@/lib/scratch-runs/events";
+import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
+import { seedWorkspace } from "@/test-support/execution-host-seed";
 // FIXME(any): drizzle-orm dual peer-dep variants — runtime works, cast silences
 // the type-only clash (matches emit-run-status.integration.test.ts).
 import * as fullSchema from "@/lib/db/schema";
@@ -131,57 +135,72 @@ async function statusOf(runId: string): Promise<string> {
   return (rows[0] as { status: string }).status;
 }
 
-// A fake supervisor api whose stream yields exactly one terminal event, then
-// ends. `sendScratchPromptAndProjectEvents` aborts + awaits the consumer in its
-// finally, so the terminal projection commits before the call resolves.
-function fakeApi(
+// The terminal follows real prompt admission and a projected incarnation.
+// The transport is scripted; the command ledger and projections use Postgres.
+async function terminalExecution(
+  runId: string,
+  projectId: string,
   terminal:
     | { type: "session.crashed" }
     | {
         type: "session.exited";
         reason: "intentional";
       },
-) {
-  return {
-    cancelPermission: async () => undefined,
-    sendPrompt: async () => ({ stopReason: "end_turn" as const }),
+): Promise<{ execution: ScratchExecution; sessionId: string }> {
+  await seedWorkspace(db, {
+    runId,
+    projectId,
+    worktreePath: `/tmp/scratch-emit/${runId}`,
+    parentRepoPath: `/tmp/scratch-emit/${projectId}`,
+  });
+  const { hosts, fake } = await fakeExecutionHosts(db, { runId });
+  const execution = await hosts.executionFor(runId);
+  const session = await execution.client.createSession({
+    stepId: "scratch",
+    executor: { agent: "claude", model: "mock" },
+  });
 
-    streamSession: async function* () {
-      if (terminal.type === "session.crashed") {
-        yield {
-          type: "session.crashed" as const,
-          sessionId: "sess-1",
-          monotonicId: 1,
-          exitCode: null,
-          signal: "SIGKILL",
-        };
-      } else {
-        yield {
-          type: "session.exited" as const,
-          sessionId: "sess-1",
-          monotonicId: 1,
-          exitCode: 0,
-          reason: "intentional" as const,
-        };
-      }
-    },
-  };
+  fake.setPromptBehavior(async ({ sessionId }) => {
+    fake.pushEvent(
+      sessionId,
+      terminal.type === "session.crashed"
+        ? {
+            type: "session.crashed" as const,
+            sessionId,
+            monotonicId: 1,
+            exitCode: null,
+            signal: "SIGKILL",
+          }
+        : {
+            type: "session.exited" as const,
+            sessionId,
+            monotonicId: 1,
+            exitCode: 0,
+            reason: "intentional" as const,
+          },
+    );
+
+    return { stopReason: "end_turn", meta: null };
+  });
+
+  return { execution, sessionId: session.hostSessionId };
 }
 
 describe("live scratch terminal → run.crashed", () => {
   it("winner: session.crashed captures exactly one run.crashed event (errorCode string)", async () => {
     const { projectId, runId } = await seedScratchRun();
+    const { execution, sessionId } = await terminalExecution(runId, projectId, {
+      type: "session.crashed",
+    });
 
     await sendScratchPromptAndProjectEvents({
       runId,
-      sessionId: "sess-1",
+      sessionId,
       stepId: "scratch",
       prompt: "go",
       owner: { variant: "initial" },
       db,
-      execution: legacyScratchApiToExecution(
-        fakeApi({ type: "session.crashed" }) as never,
-      ),
+      execution,
     });
 
     expect(await statusOf(runId)).toBe("Crashed");
@@ -203,17 +222,19 @@ describe("live scratch terminal → run.crashed", () => {
 describe("live scratch terminal → run.review", () => {
   it("winner: session.exited(intentional) captures exactly one run.review event (source=runner)", async () => {
     const { projectId, runId } = await seedScratchRun();
+    const { execution, sessionId } = await terminalExecution(runId, projectId, {
+      type: "session.exited",
+      reason: "intentional",
+    });
 
     await sendScratchPromptAndProjectEvents({
       runId,
-      sessionId: "sess-1",
+      sessionId,
       stepId: "scratch",
       prompt: "go",
       owner: { variant: "initial" },
       db,
-      execution: legacyScratchApiToExecution(
-        fakeApi({ type: "session.exited", reason: "intentional" }) as never,
-      ),
+      execution,
     });
 
     expect(await statusOf(runId)).toBe("Review");

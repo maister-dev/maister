@@ -8,11 +8,15 @@ import { createHash, randomUUID } from "node:crypto";
 import { and, asc, eq, gte, sql } from "drizzle-orm";
 import { ZodError } from "zod";
 
+import { hasNativeOutputCommand } from "../runtime-object-intent";
+
 import { seedCanonicalProjectionConsumers } from "./projection-consumers";
 import { runEventWakeBus } from "./run-wake";
 
 import {
   RuntimeEventEnvelopeSchema,
+  SessionContentReferenceSchema,
+  StdoutSegmentMetadataSchema,
   type RuntimeEventEnvelope,
 } from "@/lib/execution-host/runtime-events";
 import { MaisterError } from "@/lib/errors";
@@ -23,6 +27,7 @@ import {
   executionEventStreams,
   executionHosts,
   executionCommands,
+  executionRuntimeObjects,
   runs,
 } from "@/lib/db/schema";
 
@@ -275,7 +280,7 @@ async function resolveAssignment(
     id: assignment.id,
     accepted:
       assignment.state === "active" ||
-      (await isBoundCommandEvent(tx, {
+      (await isBoundHistoricalEvent(tx, {
         runId: input.envelope.runId,
         executionHostId: input.executionHostId,
         assignmentId: input.envelope.assignmentId,
@@ -308,7 +313,7 @@ function commandEventIdentity(
 // kind, run, host, assignment, and epoch all match the durable manager intent.
 // It can then settle that historical command, but it cannot address current
 // run/session state through a superseded fence.
-async function isBoundCommandEvent(
+async function isBoundHistoricalEvent(
   tx: Db,
   input: {
     runId: string;
@@ -320,6 +325,60 @@ async function isBoundCommandEvent(
     payload: Record<string, unknown> | null;
   },
 ): Promise<boolean> {
+  const reference = SessionContentReferenceSchema.safeParse(
+    input.payload?.contentRef,
+  );
+  const segment = StdoutSegmentMetadataSchema.safeParse(
+    input.payload?.stdoutSegment,
+  );
+  const outputCommandId =
+    reference.success &&
+    input.eventType.startsWith("session.") &&
+    reference.data.hostSessionId === input.hostSessionId
+      ? reference.data.commandId
+      : segment.success && input.eventType === "runtime_object.available"
+        ? segment.data.commandId
+        : null;
+
+  if (outputCommandId && input.hostSessionId)
+    return hasNativeOutputCommand(tx, {
+      runId: input.runId,
+      executionHostId: input.executionHostId,
+      executionAssignmentId: input.assignmentId,
+      assignmentEpoch: input.assignmentEpoch,
+      commandId: outputCommandId,
+      hostSessionId: input.hostSessionId,
+    });
+  if (
+    input.eventType === "runtime_object.available" ||
+    input.eventType === "runtime_object.state"
+  ) {
+    const objectId = input.payload?.objectId;
+    const generation = input.payload?.generation;
+
+    if (
+      typeof objectId !== "string" ||
+      typeof generation !== "number" ||
+      !Number.isSafeInteger(generation)
+    )
+      return false;
+    const [intent] = await tx
+      .select({ id: executionRuntimeObjects.id })
+      .from(executionRuntimeObjects)
+      .where(
+        and(
+          eq(executionRuntimeObjects.id, objectId),
+          eq(executionRuntimeObjects.generation, generation),
+          eq(executionRuntimeObjects.runId, input.runId),
+          eq(executionRuntimeObjects.executionHostId, input.executionHostId),
+          eq(executionRuntimeObjects.executionAssignmentId, input.assignmentId),
+          eq(executionRuntimeObjects.assignmentEpoch, input.assignmentEpoch),
+        ),
+      )
+      .limit(1);
+
+    return Boolean(intent);
+  }
   const identity = commandEventIdentity(input.eventType, input.payload);
 
   if (!identity) return false;
@@ -506,7 +565,7 @@ async function resolveStoredAssignment(
   if (!rows[0]) return false;
   if (rows[0].state === "active") return true;
 
-  return isBoundCommandEvent(tx, {
+  return isBoundHistoricalEvent(tx, {
     runId: event.runId,
     executionHostId,
     assignmentId: event.executionAssignmentId,

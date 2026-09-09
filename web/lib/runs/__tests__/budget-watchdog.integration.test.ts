@@ -211,6 +211,8 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+  // Reset prior-case evidence in this disposable database before deleting its run.
+  await db.delete(schema.executionCommands);
   await db.delete(schema.assignments);
   await db.delete(schema.hitlRequests);
   await db.delete(schema.scratchRuns);

@@ -32,7 +32,7 @@ export const laneSuites = {
     "lib/runs/__tests__/sync-resolver.integration.test.ts",
     "lib/runs/__tests__/sync-recovery.integration.test.ts",
     "lib/runs/__tests__/resume-recovery.integration.test.ts",
-    ...["commands", "immutable-commands", "command-recovery", "deliverer", "lifecycle-regression", "bounded-output", "runtime-object-retention", "command-retirement", "prompt-owner-activation"]
+    ...["commands", "immutable-commands", "command-recovery", "deliverer", "lifecycle-regression", "bounded-output", "runtime-object-retention", "runtime-object-lifecycle", "runtime-object-declarations-migration", "command-retirement", "prompt-owner-activation"]
       .map((name) => `lib/execution-host/__tests__/${name}.integration.test.ts`),
     ...["ingest", "event-claim-lock", "projection-worker"]
       .map((name) => `lib/execution-host/events/__tests__/${name}.integration.test.ts`),

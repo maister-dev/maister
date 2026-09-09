@@ -83,6 +83,24 @@ import {
 // fake-only helper remains so older scripted-turn tests can model a terminal
 // ACP turn without exposing that wire capability to domain code.
 export type FakeCanonicalEvent =
+  | ({
+      type: "runtime_object.available";
+      sessionId: string;
+      monotonicId: number;
+    } & Pick<
+      RuntimeObjectMetadata,
+      | "objectId"
+      | "kind"
+      | "logicalName"
+      | "mimeType"
+      | "sizeBytes"
+      | "sha256"
+      | "generation"
+      | "retentionClass"
+      | "state"
+      | "sealedAt"
+      | "expiresAt"
+    >)
   | SupervisorEvent
   | {
       type: "session.created";
@@ -521,6 +539,27 @@ export function createFakeExecutionHost(
 
     return published;
   };
+
+  const publishObjectAvailable = (
+    envelope: CommandEnvelope<unknown>,
+    metadata: RuntimeObjectMetadata,
+  ): Promise<void> =>
+    publishCanonical(envelope, "", {
+      type: "runtime_object.available",
+      sessionId: "",
+      monotonicId: monotonicId++,
+      objectId: metadata.objectId,
+      kind: metadata.kind,
+      logicalName: metadata.logicalName,
+      mimeType: metadata.mimeType,
+      sizeBytes: metadata.sizeBytes,
+      sha256: metadata.sha256,
+      generation: metadata.generation,
+      retentionClass: metadata.retentionClass,
+      state: metadata.state,
+      sealedAt: metadata.sealedAt,
+      expiresAt: metadata.expiresAt,
+    });
 
   const record = async (
     method: TransportMethod,
@@ -1214,6 +1253,8 @@ export function createFakeExecutionHost(
             bytes: input.bytes,
           });
 
+          await publishObjectAvailable(input.envelope, metadata);
+
           return { status: 200, body: metadata };
         },
       });
@@ -1613,6 +1654,9 @@ export function createFakeExecutionHost(
 
             return metadata;
           });
+
+          for (const metadata of sealedRuntimeObjects)
+            await publishObjectAvailable(envelope, metadata);
 
           return {
             status: 200,
@@ -2045,6 +2089,9 @@ export async function fakeExecutionHosts(
   const { ingestRuntimeEvent } = await import(
     "@/lib/execution-host/events/ingest"
   );
+  const { projectCanonicalRuntimeObjects } = await import(
+    "@/lib/execution-host/events/runtime-object-projector"
+  );
   const { projectCanonicalPromptCommands } = await import(
     "@/lib/execution-host/events/prompt-projector"
   );
@@ -2200,20 +2247,23 @@ export async function fakeExecutionHosts(
       );
       const session = fake.sessions.get(sessionId);
       const wireV2 = envelope.requestVersion === 2;
-      let payload: Record<string, unknown> = wireV2
-        ? {
-            sourceMonotonicId: event.monotonicId,
-            sourceCommandId: envelope.command.id,
-            sessionName: session?.sessionName ?? "default",
-            ...(session?.nodeAttemptId
-              ? { nodeAttemptId: session.nodeAttemptId }
-              : {}),
-            ...eventPayload,
-          }
-        : redactRuntimeEventPayload({
-            sourceMonotonicId: event.monotonicId,
-            ...eventPayload,
-          });
+      let payload: Record<string, unknown> =
+        event.type === "runtime_object.available"
+          ? eventPayload
+          : wireV2
+            ? {
+                sourceMonotonicId: event.monotonicId,
+                sourceCommandId: envelope.command.id,
+                sessionName: session?.sessionName ?? "default",
+                ...(session?.nodeAttemptId
+                  ? { nodeAttemptId: session.nodeAttemptId }
+                  : {}),
+                ...eventPayload,
+              }
+            : redactRuntimeEventPayload({
+                sourceMonotonicId: event.monotonicId,
+                ...eventPayload,
+              });
       const currentSequence = canonicalStreamState.nextSequence;
 
       canonicalStreamState.nextSequence += 1n;
@@ -2342,13 +2392,19 @@ export async function fakeExecutionHosts(
           runId: envelope.fence.runId,
           assignmentId: envelope.fence.assignmentId,
           assignmentEpoch: envelope.fence.assignmentEpoch,
-          hostSessionId: sessionId,
+          hostSessionId:
+            event.type === "runtime_object.available" ? null : sessionId,
           eventType,
           occurredAt: new Date().toISOString(),
           payloadSchema,
           payload,
         },
       });
+      if (event.type === "runtime_object.available")
+        await projectCanonicalRuntimeObjects({
+          db,
+          runId: envelope.fence.runId,
+        });
       await Promise.all([
         projectCanonicalPromptCommands({
           db,

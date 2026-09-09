@@ -8,6 +8,7 @@ import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import {
   afterAll,
+  afterEach,
   beforeAll,
   beforeEach,
   describe,
@@ -60,6 +61,11 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await testDatabase?.stop();
+});
+
+afterEach(async () => {
+  await pool.query(`DELETE FROM "execution_commands"`);
+  await pool.query(`DELETE FROM "runs"`);
 });
 
 const CLI_MANIFEST = {

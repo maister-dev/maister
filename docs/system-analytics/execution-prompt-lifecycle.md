@@ -32,6 +32,14 @@ A replacement retains its predecessor command and increments the create
 generation without advancing the Flow prompt ordinal. Global continuation
 worker activation remains part of the S2.12 deployment gate.
 
+Prompt admission waits for the exact active incarnation after a create ACK.
+Its wait budget includes the host-stream claim lease followed by the configured
+lifecycle projection lease: after a manager dies, stream takeover must finish
+before its retained created event can be projected. Agent, Flow and scratch
+callers propagate their cancellation signal through this wait. Timeout remains
+a typed `prompt_incarnation_pending` refusal; it never permits a prompt against
+an unprojected or different session.
+
 ## Domain entities
 
 - `execution_commands` remains the single command ledger and gains a typed

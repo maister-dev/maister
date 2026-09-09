@@ -19,6 +19,7 @@ import { listCommandsForRun } from "@/lib/execution-host/commands";
 import { resetRegistrarStateForTests } from "@/lib/execution-host/registrar";
 import { resetResolverForTests } from "@/lib/execution-host/resolver";
 import { runFlow } from "@/lib/flows/runner";
+import { runSweepTick } from "@/lib/runs/keepalive-sweeper";
 import { launchRun } from "@/lib/services/runs";
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import { fakeGraphHosts } from "@/test-support/fake-execution-host";
@@ -400,14 +401,20 @@ describe("flow launch + graph driver (ADR-166 T4.1)", () => {
     expect(fake.callsOf("deleteSession")).toHaveLength(0);
   }, 60_000);
 
-  it("P4: a checkpoint mid-permission still yields STEP_CHECKPOINTED (regression)", async () => {
+  it("P4: a keepalive checkpoint mid-permission parks the run without completing its node", async () => {
     const seeded = await seedGraphRun(db, agentFlow);
     const { hosts, fake } = await fakeGraphHosts(db, seeded.runId);
 
-    fake.setStreamEvents([
-      {
+    let finishTurn!: () => void;
+    const turn = new Promise<void>((resolve) => {
+      finishTurn = resolve;
+    });
+
+    fake.setStreamEvents([]);
+    fake.setPromptBehavior(async ({ sessionId }) => {
+      fake.pushEvent(sessionId, {
         type: "session.permission_request",
-        sessionId: "fake",
+        sessionId,
         monotonicId: 1,
         requestId: randomUUID(),
         options: [
@@ -415,21 +422,54 @@ describe("flow launch + graph driver (ADR-166 T4.1)", () => {
           { optionId: "deny", kind: "reject_once", name: "Deny" },
         ],
         toolCall: { toolCallId: "tc-1", title: "Edit", kind: "execute" },
-      },
-      {
-        type: "session.exited",
-        sessionId: "fake",
-        monotonicId: 2,
-        exitCode: 0,
-        reason: "checkpoint",
-      },
-    ] as never);
+      });
+      await turn;
 
-    await runFlow(seeded.runId, {
+      return { stopReason: "end_turn", meta: null };
+    });
+
+    const traversal = runFlow(seeded.runId, {
       db: db as never,
       runtimeRoot: seeded.runtimeRoot,
       executionHosts: hosts,
     });
+
+    try {
+      await expect
+        .poll(
+          async () =>
+            (
+              await db
+                .select()
+                .from(schemaModule.hitlRequests)
+                .where(eq(schemaModule.hitlRequests.runId, seeded.runId))
+            ).length,
+          { timeout: 10_000 },
+        )
+        .toBe(1);
+      const [session] = await db
+        .select({ id: schemaModule.runSessions.hostSessionId })
+        .from(schemaModule.runSessions)
+        .where(eq(schemaModule.runSessions.runId, seeded.runId));
+
+      expect(session.id).toBeTruthy();
+      await db
+        .update(schemaModule.runs)
+        .set({ keepaliveUntil: new Date(0) })
+        .where(eq(schemaModule.runs.id, seeded.runId));
+      const sweep = await runSweepTick({
+        db: db as never,
+        executionHosts: hosts,
+      });
+
+      expect(sweep.idledCount).toBe(1);
+      expect(fake.callsOf("checkpointSession")).toHaveLength(1);
+      expect(fake.callsOf("checkpointSession")[0].args[0]).toBe(session.id);
+      await traversal;
+    } finally {
+      finishTurn();
+      await traversal;
+    }
 
     expect(await runStatus(seeded.runId)).toBe("NeedsInputIdle");
     const [attempt] = await attemptsFor(seeded.runId);

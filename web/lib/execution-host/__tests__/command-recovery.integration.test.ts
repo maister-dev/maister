@@ -538,6 +538,20 @@ describe("execution-command recovery (real supervisor)", () => {
       retentionClass: "run",
       bytes,
     });
+    // Upload ACK persists the seal; content opens only after canonical projection.
+    await expect
+      .poll(
+        async () => {
+          const [object] = await db
+            .select({ state: fullSchema.executionRuntimeObjects.state })
+            .from(fullSchema.executionRuntimeObjects)
+            .where(eq(fullSchema.executionRuntimeObjects.id, objectId));
+
+          return object?.state;
+        },
+        { timeout: 10_000 },
+      )
+      .toBe("available");
     const full = await readRuntimeObjectContent({ db, runId, objectId });
     const partial = await readRuntimeObjectContent({
       db,

@@ -432,8 +432,7 @@ describe("dirty-watchdog terminal choke point (ADR-090 L3)", () => {
           path.join(
             worktreePath,
             AGENT_MATERIALIZATION_ROOT_RELATIVE,
-            "execution_commands",
-    "runs",
+            "runs",
             `${runId}.json`,
           ),
           "utf8",
@@ -535,8 +534,7 @@ describe("dirty-watchdog terminal choke point (ADR-090 L3)", () => {
     const runRecord = path.join(
       repoPath,
       AGENT_MATERIALIZATION_ROOT_RELATIVE,
-      "execution_commands",
-    "runs",
+      "runs",
       `${runId}.json`,
     );
 

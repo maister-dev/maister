@@ -62,6 +62,8 @@ describe("Event ingestion and assignment claim locks", () => {
   it("concurrent object projection validates one committed catalogue row", async () => {
     const targetRunId = randomUUID();
     const targetAssignmentId = randomUUID();
+    const targetCommandId = randomUUID();
+    const targetSessionId = randomUUID();
     const objectId = `obj_${randomUUID().replaceAll("-", "")}`;
     const key = Math.floor(Math.random() * 2_000_000_000) + 1;
     const trigger = `object_projection_${randomUUID().replaceAll("-", "")}`;
@@ -78,18 +80,32 @@ describe("Event ingestion and assignment claim locks", () => {
        VALUES ($1, $2, $3, 1, 'active', 'launch')`,
       [targetAssignmentId, targetRunId, hostId],
     );
+    await testDatabase.pool.query(
+      `INSERT INTO execution_commands
+       (id, run_id, execution_assignment_id, execution_host_id, assignment_epoch,
+        kind, payload, state, max_attempts)
+       VALUES ($1, $2, $3, $4, 1, 'session.create', '{}', 'accepted', 3)`,
+      [targetCommandId, targetRunId, targetAssignmentId, hostId],
+    );
     const eventId = randomUUID();
     const payload = {
       objectId,
-      kind: "diagnostic",
-      logicalName: "permission-context.json",
-      mimeType: "application/json",
+      kind: "raw_transcript",
+      logicalName: "stdout-overflow.ndjson",
+      mimeType: "application/x-ndjson",
       sha256: "a".repeat(64),
       sizeBytes: 2,
       generation: 1,
       retentionClass: "run",
       state: "available",
       expiresAt: null,
+      stdoutSegment: {
+        commandId: targetCommandId,
+        firstLogByteOffset: 0,
+        capturedBytes: 2,
+        completeFrames: 1,
+        trailingFrameBytes: 0,
+      },
     };
 
     await ingestRuntimeEvent({
@@ -100,7 +116,7 @@ describe("Event ingestion and assignment claim locks", () => {
         runId: targetRunId,
         assignmentId: targetAssignmentId,
         streamId,
-        hostSessionId: randomUUID(),
+        hostSessionId: targetSessionId,
         eventType: "runtime_object.available",
         payloadSchema: "maister.runtime-object.available.v1",
         payload,

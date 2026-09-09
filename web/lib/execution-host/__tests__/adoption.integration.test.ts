@@ -336,7 +336,8 @@ describe("workspace adoption (real supervisor)", () => {
     expect(adopts.map((a) => a.state)).toEqual(["succeeded", "succeeded"]);
     expect(creates.map((c) => c.state).sort()).toEqual(["failed", "succeeded"]);
     expect(creates.find((c) => c.state === "failed")?.lastError).toMatchObject({
-      reason: "unknown_workspace",
+      code: "PRECONDITION",
+      details: { reason: "unknown_workspace" },
     });
     const after = (await getAssignmentById(db, assignment.id))!
       .executionWorkspaceId;
@@ -423,7 +424,8 @@ describe("workspace adoption (real supervisor)", () => {
       expect(adopts.map((a) => a.state)).toEqual(["succeeded", "succeeded"]);
       expect(creates.map((c) => c.state)).toEqual(["failed", "succeeded"]);
       expect(creates[0].lastError).toMatchObject({
-        reason: "workspace_released",
+        code: "PRECONDITION",
+        details: { reason: "workspace_released" },
       });
       const after = (await getAssignmentById(db, assignment.id))!
         .executionWorkspaceId!;

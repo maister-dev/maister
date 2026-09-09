@@ -2,9 +2,17 @@ import "server-only";
 
 import type { Db } from "@/lib/execution-host/db";
 
-import { and, desc, eq } from "drizzle-orm";
-
-import { SessionContentReferenceSchema } from "../runtime-events";
+import {
+  SessionContentReferenceSchema,
+  StdoutSegmentMetadataSchema,
+} from "../runtime-events";
+import {
+  reduceRuntimeObjectEvidence,
+  RuntimeObjectEvidenceError,
+  type RuntimeObjectSeal,
+  type RuntimeObjectBinding,
+} from "../runtime-object-evidence";
+import { hasNativeOutputCommand } from "../runtime-object-intent";
 
 import { CANONICAL_PROJECTION_CONSUMERS } from "./projection-consumers";
 import {
@@ -15,8 +23,6 @@ import {
 } from "./projector";
 
 import {
-  executionAssignments,
-  executionCommands,
   executionRuntimeObjects,
   runs,
   type ExecutionEvent,
@@ -80,52 +86,34 @@ function timestampField(
   return parsed;
 }
 
-async function hasCurrentFence(
-  tx: Db,
+function bindingForEvent(
   event: ExecutionEvent,
-): Promise<boolean> {
+  objectId: string,
+  generation: number,
+): RuntimeObjectBinding {
   if (
     event.source !== "host" ||
+    event.ingestDisposition !== "accepted" ||
     !event.executionHostId ||
     !event.executionAssignmentId ||
     event.assignmentEpoch === null
   ) {
     throw permanent(
-      "runtime object event is missing its host assignment fence",
+      "runtime object evidence requires its accepted host assignment fence",
     );
   }
-  const run = await tx
-    .select({ executionDataPlaneMode: runs.executionDataPlaneMode })
-    .from(runs)
-    .where(eq(runs.id, event.runId))
-    .limit(1);
 
-  if (!run[0]) throw permanent("runtime object event references a missing run");
-  const assignment = await tx
-    .select({ id: executionAssignments.id })
-    .from(executionAssignments)
-    .where(
-      and(
-        eq(executionAssignments.id, event.executionAssignmentId),
-        eq(executionAssignments.runId, event.runId),
-        eq(executionAssignments.executionHostId, event.executionHostId),
-        eq(executionAssignments.epoch, event.assignmentEpoch),
-        eq(executionAssignments.state, "active"),
-      ),
-    )
-    .limit(1);
-
-  return Boolean(assignment[0]);
+  return {
+    objectId,
+    generation,
+    runId: event.runId,
+    executionHostId: event.executionHostId,
+    executionAssignmentId: event.executionAssignmentId,
+    assignmentEpoch: event.assignmentEpoch,
+  };
 }
 
-async function projectAvailable(tx: Db, event: ExecutionEvent): Promise<void> {
-  if (
-    !event.executionHostId ||
-    !event.executionAssignmentId ||
-    event.assignmentEpoch === null
-  ) {
-    throw permanent("runtime object available event is missing its fence");
-  }
+function sealForEvent(event: ExecutionEvent): RuntimeObjectSeal {
   const objectId = stringField(event.payload, "objectId");
   const kind = stringField(event.payload, "kind");
   const logicalName = stringField(event.payload, "logicalName");
@@ -163,138 +151,69 @@ async function projectAvailable(tx: Db, event: ExecutionEvent): Promise<void> {
   if ((retentionClass === "ephemeral") !== Boolean(expiresAt)) {
     throw permanent("runtime object retention and expiry disagree");
   }
-  // Two consumers may hydrate the same content before either catalogues it.
-  // The insert serializes absence; a losing writer must validate the committed
-  // row below, including all immutable metadata, before accepting the replay.
-  const inserted = await tx
+
+  return {
+    objectId,
+    kind: kind as RuntimeObjectSeal["kind"],
+    logicalName,
+    mimeType,
+    sizeBytes,
+    sha256: checksum,
+    generation,
+    retentionClass: retentionClass as RuntimeObjectSeal["retentionClass"],
+    state: "available",
+    sealedAt: sealedAt.toISOString(),
+    expiresAt: expiresAt?.toISOString() ?? null,
+  };
+}
+
+async function projectAvailable(tx: Db, event: ExecutionEvent): Promise<void> {
+  const metadata = sealForEvent(event);
+
+  await reduceRuntimeObjectEvidence(
+    tx,
+    bindingForEvent(event, metadata.objectId, metadata.generation),
+    {
+      kind: "seal",
+      source: "event",
+      eventId: event.id,
+      metadata,
+    },
+  );
+}
+
+// Bounded session output is allocated by the exact source command, rather
+// than a separate reserve call. Its accepted reference carries the allocation.
+async function catalogueContentIntent(
+  tx: Db,
+  event: ExecutionEvent,
+): Promise<void> {
+  const metadata = sealForEvent(event);
+  const binding = bindingForEvent(
+    event,
+    metadata.objectId,
+    metadata.generation,
+  );
+
+  await tx
     .insert(executionRuntimeObjects)
     .values({
-      id: objectId,
-      runId: event.runId,
-      executionHostId: event.executionHostId,
-      executionAssignmentId: event.executionAssignmentId,
-      assignmentEpoch: event.assignmentEpoch,
-      kind: kind as (typeof RUNTIME_OBJECT_KINDS)[number],
-      logicalName,
-      mimeType,
-      sizeBytes: BigInt(sizeBytes),
-      sha256: checksum,
-      generation,
+      id: binding.objectId,
+      runId: binding.runId,
+      executionHostId: binding.executionHostId,
+      executionAssignmentId: binding.executionAssignmentId,
+      assignmentEpoch: binding.assignmentEpoch,
+      kind: metadata.kind as (typeof RUNTIME_OBJECT_KINDS)[number],
+      logicalName: metadata.logicalName,
+      mimeType: metadata.mimeType,
+      generation: metadata.generation,
       retentionClass:
-        retentionClass as (typeof RUNTIME_OBJECT_RETENTION_CLASSES)[number],
-      state: "available",
-      sourceEventId: event.id,
+        metadata.retentionClass as (typeof RUNTIME_OBJECT_RETENTION_CLASSES)[number],
+      state: "pending",
       createdAt: event.occurredAt,
-      sealedAt,
-      expiresAt,
+      expiresAt: metadata.expiresAt ? new Date(metadata.expiresAt) : null,
     })
-    .onConflictDoNothing({ target: executionRuntimeObjects.id })
-    .returning({ id: executionRuntimeObjects.id });
-
-  if (inserted.length > 0) return;
-  const rows = await tx
-    .select()
-    .from(executionRuntimeObjects)
-    .where(eq(executionRuntimeObjects.id, objectId))
-    .for("update")
-    .limit(1);
-  const existing = rows[0];
-
-  if (existing) {
-    const sameBinding =
-      existing.runId === event.runId &&
-      existing.executionHostId === event.executionHostId &&
-      existing.executionAssignmentId === event.executionAssignmentId &&
-      existing.assignmentEpoch === event.assignmentEpoch &&
-      existing.kind === kind &&
-      existing.logicalName === logicalName &&
-      existing.mimeType === mimeType &&
-      existing.generation === generation &&
-      existing.retentionClass === retentionClass &&
-      existing.expiresAt?.getTime() === expiresAt?.getTime();
-    const exactReplay =
-      sameBinding &&
-      existing.state === "available" &&
-      existing.sizeBytes === BigInt(sizeBytes) &&
-      existing.sha256 === checksum &&
-      existing.sourceEventId === event.id &&
-      existing.sealedAt?.getTime() === sealedAt.getTime() &&
-      existing.deletedAt === null &&
-      existing.lastError === null;
-
-    if (exactReplay) return;
-
-    const receiptReconciled =
-      sameBinding &&
-      existing.state === "available" &&
-      existing.sizeBytes === BigInt(sizeBytes) &&
-      existing.sha256 === checksum &&
-      existing.sourceEventId === null &&
-      existing.deletedAt === null &&
-      existing.lastError === null;
-
-    if (receiptReconciled) {
-      await tx
-        .update(executionRuntimeObjects)
-        .set({ sourceEventId: event.id })
-        .where(eq(executionRuntimeObjects.id, objectId));
-
-      return;
-    }
-
-    const reserveRows = await tx
-      .select({ payload: executionCommands.payload })
-      .from(executionCommands)
-      .where(
-        and(
-          eq(executionCommands.runId, event.runId),
-          eq(executionCommands.executionHostId, event.executionHostId),
-          eq(
-            executionCommands.executionAssignmentId,
-            event.executionAssignmentId,
-          ),
-          eq(executionCommands.assignmentEpoch, event.assignmentEpoch),
-          eq(executionCommands.kind, "runtime_object.reserve"),
-          eq(executionCommands.targetSessionId, objectId),
-        ),
-      )
-      .orderBy(desc(executionCommands.createdAt))
-      .limit(1);
-    const reservePayload = reserveRows[0]?.payload;
-    const reserveDeclarationMatches =
-      reservePayload === undefined ||
-      (reservePayload.sizeBytes === sizeBytes &&
-        reservePayload.sha256 === checksum);
-    const matchesPendingIntent =
-      sameBinding &&
-      existing.state === "pending" &&
-      existing.sizeBytes === null &&
-      existing.sha256 === null &&
-      existing.sealedAt === null &&
-      reserveDeclarationMatches;
-
-    if (!matchesPendingIntent) {
-      throw permanent(
-        "runtime object available event conflicts with immutable metadata",
-      );
-    }
-
-    await tx
-      .update(executionRuntimeObjects)
-      .set({
-        sizeBytes: BigInt(sizeBytes),
-        sha256: checksum,
-        state: "available",
-        sourceEventId: event.id,
-        sealedAt,
-        deletedAt: null,
-        lastError: null,
-      })
-      .where(eq(executionRuntimeObjects.id, objectId));
-
-    return;
-  }
-  throw permanent("runtime object catalogue row disappeared during projection");
+    .onConflictDoNothing({ target: executionRuntimeObjects.id });
 }
 
 async function assertContentCommandFence(
@@ -311,37 +230,16 @@ async function assertContentCommandFence(
   ) {
     throw permanent("session content requires accepted host evidence");
   }
-  const [command] = await tx
-    .select({
-      kind: executionCommands.kind,
-      targetSessionId: executionCommands.targetSessionId,
-    })
-    .from(executionCommands)
-    .innerJoin(
-      executionAssignments,
-      eq(executionAssignments.id, executionCommands.executionAssignmentId),
-    )
-    .where(
-      and(
-        eq(executionCommands.id, commandId),
-        eq(executionCommands.runId, event.runId),
-        eq(
-          executionCommands.executionAssignmentId,
-          event.executionAssignmentId,
-        ),
-        eq(executionCommands.executionHostId, event.executionHostId),
-        eq(executionCommands.assignmentEpoch, event.assignmentEpoch),
-        eq(executionAssignments.runId, event.runId),
-        eq(executionAssignments.executionHostId, event.executionHostId),
-        eq(executionAssignments.epoch, event.assignmentEpoch),
-      ),
-    )
-    .limit(1);
-
   if (
-    !command ||
-    (command.kind !== "session.create" &&
-      command.targetSessionId !== event.hostSessionId)
+    !event.hostSessionId ||
+    !(await hasNativeOutputCommand(tx, {
+      runId: event.runId,
+      executionHostId: event.executionHostId,
+      executionAssignmentId: event.executionAssignmentId,
+      assignmentEpoch: event.assignmentEpoch,
+      commandId,
+      hostSessionId: event.hostSessionId,
+    }))
   ) {
     throw permanent(
       "session content has no matching source command and assignment",
@@ -364,47 +262,25 @@ async function projectState(tx: Db, event: ExecutionEvent): Promise<void> {
   if (!states.has(state) || generation < 1) {
     throw permanent("runtime object state event is invalid");
   }
-  // A reservation has no manager catalogue row yet. Its content event is the
-  // first durable metadata record, so pending is intentionally audit-only.
-  if (state === "pending") return;
-  const existing = await tx
-    .select()
-    .from(executionRuntimeObjects)
-    .where(eq(executionRuntimeObjects.id, objectId))
-    .for("update")
-    .limit(1);
-  const object = existing[0];
-
-  if (
-    !object ||
-    object.runId !== event.runId ||
-    object.executionHostId !== event.executionHostId ||
-    object.executionAssignmentId !== event.executionAssignmentId ||
-    object.assignmentEpoch !== event.assignmentEpoch ||
-    object.generation !== generation
-  ) {
-    throw permanent(
-      "runtime object state event has no matching catalogue object",
-    );
-  }
-  const deletedAtRaw = event.payload?.deletedAt;
   const deletedAt =
-    deletedAtRaw === null || deletedAtRaw === undefined
-      ? object.deletedAt
+    event.payload?.deletedAt === null || event.payload?.deletedAt === undefined
+      ? null
       : timestampField(event.payload, "deletedAt");
 
-  await tx
-    .update(executionRuntimeObjects)
-    .set({
+  await reduceRuntimeObjectEvidence(
+    tx,
+    bindingForEvent(event, objectId, generation),
+    {
+      kind: "state",
+      source: "event",
+      eventId: event.id,
       state: state as (typeof RUNTIME_OBJECT_STATES)[number],
-      sourceEventId: event.id,
-      deletedAt: state === "deleted" ? deletedAt : object.deletedAt,
-      lastError: null,
-    })
-    .where(eq(executionRuntimeObjects.id, objectId));
+      deletedAt,
+    },
+  );
 }
 
-export async function projectRuntimeObject(
+async function applyRuntimeObjectEvent(
   tx: Db,
   event: ExecutionEvent,
 ): Promise<void> {
@@ -424,7 +300,10 @@ export async function projectRuntimeObject(
     // Historical catalogue evidence does not acquire current domain authority.
     // Accepted output remains reconstructible after its assignment is released.
     await assertContentCommandFence(tx, event, reference.data.commandId);
-    await projectAvailable(tx, { ...event, payload: reference.data });
+    const contentEvent = { ...event, payload: reference.data };
+
+    await catalogueContentIntent(tx, contentEvent);
+    await projectAvailable(tx, contentEvent);
 
     return;
   }
@@ -435,10 +314,45 @@ export async function projectRuntimeObject(
     return;
   }
   if (event.eventType === "runtime_object.available") {
-    if (!(await hasCurrentFence(tx, event))) return;
+    if (event.payload?.stdoutSegment !== undefined) {
+      const segment = StdoutSegmentMetadataSchema.safeParse(
+        event.payload.stdoutSegment,
+      );
+
+      if (
+        !segment.success ||
+        !event.hostSessionId ||
+        event.payload.kind !== "raw_transcript" ||
+        event.payload.logicalName !== "stdout-overflow.ndjson" ||
+        event.payload.mimeType !== "application/x-ndjson" ||
+        segment.data.capturedBytes !== event.payload.sizeBytes
+      )
+        throw permanent("stdout segment allocation is invalid");
+      await assertContentCommandFence(tx, event, segment.data.commandId);
+      await catalogueContentIntent(tx, event);
+    }
     await projectAvailable(tx, event);
   } else {
     await projectState(tx, event);
+  }
+}
+
+export async function projectRuntimeObject(
+  tx: Db,
+  event: ExecutionEvent,
+): Promise<void> {
+  try {
+    await applyRuntimeObjectEvent(tx, event);
+  } catch (error) {
+    if (error instanceof RuntimeObjectEvidenceError)
+      throw permanent(
+        error.reason === "identity_conflict" ||
+          error.reason === "declaration_conflict" ||
+          error.reason === "seal_conflict"
+          ? "runtime object available event conflicts with immutable metadata"
+          : `runtime object evidence refused: ${error.reason}`,
+      );
+    throw error;
   }
 }
 

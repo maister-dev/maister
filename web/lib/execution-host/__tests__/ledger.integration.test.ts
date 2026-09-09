@@ -420,6 +420,7 @@ describe("ledger + deliverer (fake transport)", () => {
           db,
           client,
           created.hostSessionId,
+          { attempt: 2 },
         ),
       },
     );
@@ -484,6 +485,7 @@ describe("ledger + deliverer (fake transport)", () => {
           db,
           client,
           created.hostSessionId,
+          { attempt: 2 },
         ),
       },
     );
@@ -521,6 +523,7 @@ describe("ledger + deliverer (fake transport)", () => {
           db,
           client,
           created.hostSessionId,
+          { attempt: 3 },
         ),
       },
     );
@@ -554,6 +557,7 @@ describe("ledger + deliverer (fake transport)", () => {
           db,
           client,
           created.hostSessionId,
+          { attempt: 4 },
         ),
       },
     );

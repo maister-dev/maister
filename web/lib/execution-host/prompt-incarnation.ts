@@ -6,6 +6,8 @@ import type { BoundClient } from "./client";
 import { and, eq } from "drizzle-orm";
 
 import { runEventWakeBus } from "./events/run-wake";
+import { RUNTIME_EVENT_CLAIM_LEASE_MS } from "./events/consumer";
+import { projectionLimitsFromEnv } from "./events/projection-limits";
 import { staleSessionBinding } from "./session-binding";
 
 import { runSessionIncarnations } from "@/lib/db/schema";
@@ -18,10 +20,17 @@ export async function waitForPromptIncarnation(
   db: Db,
   client: BoundClient,
   hostSessionId: string,
+  signal?: AbortSignal,
 ): Promise<void> {
-  const deadline = performance.now() + 30_000;
+  // After process death, stream takeover precedes lifecycle projection. A
+  // deadline equal to the stream lease expires before takeover can finish.
+  const deadline =
+    performance.now() +
+    RUNTIME_EVENT_CLAIM_LEASE_MS +
+    projectionLimitsFromEnv().leaseMs;
 
   while (performance.now() < deadline) {
+    signal?.throwIfAborted();
     const [incarnation] = await db
       .select({ state: runSessionIncarnations.state })
       .from(runSessionIncarnations)
@@ -37,12 +46,14 @@ export async function waitForPromptIncarnation(
       )
       .limit(1);
 
+    signal?.throwIfAborted();
     if (incarnation?.state === "active") return;
     if (incarnation)
       throw staleSessionBinding(client.assignment.runId, client.assignment.id);
     await runEventWakeBus.wait(
       client.assignment.runId,
       Math.min(250, deadline - performance.now()),
+      signal,
     );
   }
   throw new MaisterError(

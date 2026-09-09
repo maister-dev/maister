@@ -1,6 +1,6 @@
 # Execution runtime objects
 
-**Status:** Implemented host registry, reserve/upload/delete routes, manager catalog and **safe content delivery (AB-12, S3.4)**; **Designed** lifecycle convergence, read integrity and fair retention corrections (AB-09/13–15). Bytes remain host-owned and manager locators remain opaque.
+**Status:** Implemented host registry, reserve/upload/delete routes, manager catalog and **safe content delivery (AB-12, S3.4)**; **Implemented native intent/seal reconciliation (AB-09, S3.1)**; **Designed** crash-gap recovery, read integrity and fair retention corrections (AB-13–15). Bytes remain host-owned and manager locators remain opaque.
 
 
 ## Purpose
@@ -31,7 +31,7 @@ artifact association.
 ```mermaid
 stateDiagram-v2
   [*] --> pending: reserve command
-  pending --> available: hash/size verify then atomic rename
+  pending --> available: matching canonical availability
   available --> deleting: fenced delete command
   deleting --> deleted: durable host tombstone then unlink
   available --> missing: verified absent
@@ -41,9 +41,10 @@ stateDiagram-v2
 
 `expires_at` is deletion eligibility, not a persisted terminal state. The
 manager's 60-second sweep leaves a referenced object or an object owned by a
-live/checkpointed session `available`; otherwise it issues the fenced delete
-command and the canonical state event moves the object through `deleting` to
-`deleted`.
+live/checkpointed session `available`; otherwise it commits `deleting` with the
+fenced delete command. The matching ACK or canonical state event establishes
+`deleted`. A terminal delete refusal retains the unavailable intent and error;
+it does not restore availability.
 
 ## Process flows
 
@@ -59,6 +60,41 @@ sequenceDiagram
   M->>M: project canonical available metadata into catalogue
   Note over A,H: Host-owned producer registration is B3.5
 ```
+
+## Native intent and seal reconciliation (Implemented — S3.1)
+
+`runtime-object-evidence.ts` applies upload/reserve ACKs, prompt-output receipts,
+recovered object receipts, canonical availability and deletion evidence under
+the same catalog object lock.
+An ACK establishes matching size, SHA-256 and seal time while keeping `pending`;
+only accepted canonical availability makes that object available. Commit wakes
+projection, and a lost wake is covered by durable replay. Later evidence must
+match both immutable identity and the established seal, even after deletion;
+it cannot restore deleting, deleted, missing or corrupt bytes to availability.
+
+Migration `0160_runtime_object_declarations` adds paired nullable
+`declared_size_bytes` / `declared_sha256`. Reserve records them with the original
+intent before host dispatch; a changed retry fails in the manager before another
+command is issued. Backfill uses only the first exact recorded reserve request,
+including its expiry. Tied earliest timestamps do not prove the original request.
+A compacted/missing or ambiguous original request, or a producer allocation, leaves declarations
+unknown; neither a later request nor sealed metadata invents an original promise.
+The host's reserve/upload checks independently enforce the expected bytes.
+
+Released and superseded assignments retain only their exact catalog object's
+historical evidence. Session content references and overflow segments additionally
+prove the original committed command and session. This exception never changes a
+successor assignment or creates an object from an unsolicited event: missing or
+conflicting intent produces a permanent projection failure for operator repair.
+The historical-import origin and crash-gap repair remain the S4/S3.5 contracts below.
+
+The real Postgres/supervisor suite `runtime-object-lifecycle.integration.test.ts`
+executes both ACK/event orders, lost ACK with the same command, receipt recovery,
+invalid/changed declarations, foreign ID refusal, released/superseded ownership,
+seal conflicts, unsolicited objects and delete/availability replay.
+`runtime-object-retention.integration.test.ts` also checks that a terminal delete
+refusal preserves `deleting`. `runtime-object-declarations-migration.integration.test.ts`
+executes the 0159→0160 backfill without changing established seals.
 
 ## Runtime-object lifecycle, security and integrity (Designed)
 
@@ -97,7 +133,7 @@ GC advances a keyset/last-examined marker even for protected rows. New reference
 - **OBJ-01:** Manager contracts/catalogs expose opaque object IDs and typed metadata, never a host filesystem path.
 - **OBJ-02:** The web authorizes URL-selected resources then derives host/run/assignment/epoch/object association from Postgres.
 - **OBJ-03:** Reserve, upload, and delete reuse Stage A commands, receipts, retry state, and fences without a second ledger.
-- **OBJ-04 (Designed correction):** A sealed object has immutable binding, generation, MIME, size, and SHA-256, and differing retries conflict.
+- **OBJ-04 (Implemented metadata immutability; read verification remains Designed):** A sealed object has immutable binding, generation, MIME, size, and SHA-256, and differing retries conflict.
 - **OBJ-05 (Designed correction):** Upload bytes use private temporary files, verify declared integrity, and atomically rename before available evidence.
 - **OBJ-06 (Designed correction):** Reads return a manager-authorized streaming response with one byte range and a SHA-256 Content-Digest; the web tier forwards host bytes without buffering the full object, while invalid ranges return typed errors.
 - **OBJ-07 (Designed correction):** Unknown/cross-boundary, tombstoned, corrupt, and oversized objects have distinct typed outcomes; expiry is an internal deletion eligibility check.
@@ -111,7 +147,7 @@ GC advances a keyset/last-examined marker even for protected rows. New reference
 
 - **EDGE-OBJ-01:** A client-selected foreign binding is not found before project authorization, while host-private path traversal is impossible because no path is accepted (`IT-OBJ-02-PATH`).
 - **EDGE-OBJ-02:** Multi-range, malformed, or out-of-content range returns `PRECONDITION {reason: runtime_object_range_invalid}` with no full-body fallback (`IT-OBJ-06`).
-- **EDGE-OBJ-03:** A retry with different size, hash, MIME, or generation preserves the original and returns `PRECONDITION {reason: command_invariant_conflict}` (`IT-OBJ-04-CONFLICT`).
+- **EDGE-OBJ-03:** A retry with different size, hash, MIME, or generation preserves the original and returns manager `CONFLICT {reason: command_invariant_conflict}` or host `PRECONDITION {reason: command_invariant_conflict}` (`IT-OBJ-04-CONFLICT`).
 - An interrupted upload discards private temporary bytes and retries from zero with its original command ID; a sealed registry row can synthesize the missing receipt/event after restart.
 
 ## Linked artifacts

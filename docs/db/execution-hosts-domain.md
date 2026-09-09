@@ -29,6 +29,12 @@ run FK: deleting its last examined run must not restart the scan. Consumer
 leases, domain application and retry/rearm behavior are defined in the
 [event-plane worker contract](../system-analytics/execution-event-plane.md#durable-bounded-projection-and-reconciliation-workers).
 
+Migration `0160_runtime_object_declarations` adds paired immutable expected
+size/hash to the `0133` runtime-object catalog. The sealed tuple remains separate:
+a pending row may hold a matching ACK seal, while availability still requires a
+canonical event. See the [native object reconciliation contract](../system-analytics/execution-runtime-objects.md#native-intent-and-seal-reconciliation-implemented--s31)
+for first-intent backfill and historical binding rules.
+
 ```mermaid
 erDiagram
     EXECUTION_HOSTS ||--o{ EXECUTION_ASSIGNMENTS : "placed on (RESTRICT)"

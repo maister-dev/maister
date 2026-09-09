@@ -102,6 +102,7 @@ beforeEach(async () => {
   await git(repoPath, ["commit", "-m", "initial"]);
   await mkdir(worktreesRoot, { recursive: true });
   listSessionsMock.mockReset().mockResolvedValue([]);
+  await db.delete(schema.executionCommands);
   await db.delete(schema.workspaceReconciliationFindings);
   await db.delete(schema.workspaces);
   await db.delete(schema.runs);

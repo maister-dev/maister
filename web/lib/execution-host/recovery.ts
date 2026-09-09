@@ -38,12 +38,14 @@ import {
 } from "./retirement";
 import { reconcileStoredPromptEvidence } from "./prompt-evidence";
 import { DELIVERING_IN_FLIGHT_GRACE_MS } from "./types";
-
 import {
-  executionAssignments,
-  executionRuntimeObjects,
-  runs,
-} from "@/lib/db/schema";
+  reduceRuntimeObjectEvidence,
+  RuntimeObjectEvidenceError,
+} from "./runtime-object-evidence";
+import { runEventWakeBus } from "./events/run-wake";
+
+import { parseRuntimeObjectWireMetadata } from "@/lib/supervisor-client";
+import { executionAssignments, runs } from "@/lib/db/schema";
 import { getDb } from "@/lib/db/client";
 
 const defaultLog = pino({
@@ -127,6 +129,55 @@ function driverlessSend(
   }
 }
 
+async function applyRuntimeObjectReceipt(
+  tx: Db,
+  row: ExecutionCommand,
+  body: unknown,
+  now: Date,
+): Promise<void> {
+  if (
+    row.kind !== "runtime_object.reserve" &&
+    row.kind !== "runtime_object.upload" &&
+    row.kind !== "runtime_object.delete"
+  )
+    return;
+  const generation = row.payload.generation;
+
+  if (
+    !row.targetSessionId ||
+    typeof generation !== "number" ||
+    !Number.isSafeInteger(generation) ||
+    generation < 1
+  )
+    throw new RuntimeObjectEvidenceError("identity_conflict");
+  const binding = {
+    objectId: row.targetSessionId,
+    runId: row.runId,
+    executionHostId: row.executionHostId,
+    executionAssignmentId: row.executionAssignmentId,
+    assignmentEpoch: row.assignmentEpoch,
+    generation,
+  };
+
+  if (row.kind === "runtime_object.delete") {
+    await reduceRuntimeObjectEvidence(tx, binding, {
+      kind: "state",
+      source: "delete_ack",
+      state: "deleted",
+      deletedAt: now,
+    });
+  } else {
+    const metadata = parseRuntimeObjectWireMetadata(body);
+
+    if (row.kind === "runtime_object.upload" || metadata.state === "available")
+      await reduceRuntimeObjectEvidence(tx, binding, {
+        kind: "seal",
+        source: "ack",
+        metadata,
+      });
+  }
+}
+
 // ADR-166 D5 W2/W4: fold a host receipt into the ledger together with the
 // result-derived domain writes the lost ack tx would have made.
 async function foldReceipt(
@@ -202,23 +253,9 @@ async function foldReceipt(
           );
         }
       }
-      if (row.kind === "runtime_object.delete" && row.targetSessionId) {
-        await tx
-          .update(executionRuntimeObjects)
-          .set({ state: "deleted", deletedAt: now, lastError: null })
-          .where(
-            and(
-              eq(executionRuntimeObjects.id, row.targetSessionId),
-              eq(executionRuntimeObjects.runId, row.runId),
-              eq(
-                executionRuntimeObjects.executionAssignmentId,
-                row.executionAssignmentId,
-              ),
-              eq(executionRuntimeObjects.assignmentEpoch, row.assignmentEpoch),
-            ),
-          );
-      }
+      await applyRuntimeObjectReceipt(txDb, row, receipt.body, now);
     });
+    runEventWakeBus.wake(row.runId);
     logger.info(
       {
         commandId: row.id,
@@ -393,29 +430,12 @@ export async function recoverExecutionCommands(
         envelope: envelopeFor(queued, host),
         send,
         onAck: runtimeObjectId
-          ? async (tx) => {
-              await tx
-                .update(executionRuntimeObjects)
-                .set({ state: "deleted", deletedAt: at, lastError: null })
-                .where(
-                  and(
-                    eq(executionRuntimeObjects.id, runtimeObjectId),
-                    eq(executionRuntimeObjects.runId, queued.runId),
-                    eq(
-                      executionRuntimeObjects.executionAssignmentId,
-                      queued.executionAssignmentId,
-                    ),
-                    eq(
-                      executionRuntimeObjects.assignmentEpoch,
-                      queued.assignmentEpoch,
-                    ),
-                  ),
-                );
-            }
+          ? (tx, result) => applyRuntimeObjectReceipt(tx, queued, result, at)
           : undefined,
         logger,
         now,
       });
+      if (runtimeObjectId) runEventWakeBus.wake(queued.runId);
       summary.redelivered += 1;
     };
 

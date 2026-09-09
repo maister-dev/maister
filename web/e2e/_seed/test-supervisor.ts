@@ -44,6 +44,14 @@ import {
 } from "node:http";
 import path from "node:path";
 
+import {
+  parseCommandReceiptV2,
+  type CommandReceiptV2,
+  type CommandTerminalEvidenceV2,
+  type ImmutableObjectReference,
+} from "../../../runtime/command-evidence";
+import { canonicalCommandJson } from "../../../runtime/command-json";
+
 import { E2E_EXECUTION_HOST_SLUG } from "./fixtures";
 import {
   STUB_BOOT_ID,
@@ -99,7 +107,9 @@ type StageBEnvelope = {
   hostSessionId: string | null;
   eventType: StageBEventType;
   occurredAt: string;
-  payloadSchema: (typeof EVENT_PAYLOAD_SCHEMAS)[StageBEventType];
+  payloadSchema:
+    | (typeof EVENT_PAYLOAD_SCHEMAS)[StageBEventType]
+    | "maister.session.command.v2";
   payload: Record<string, unknown>;
 };
 
@@ -175,6 +185,7 @@ type SessionRecord = {
   mcpServers: AgentMcpServer[];
   sessionName: string;
   nodeAttemptId?: string;
+  activePromptCommandId?: string;
   // Set once the agent's turn is decided complete (on sendPrompt). The stream
   // handler flushes it as a `session.exited` frame the moment it is connected;
   // queuing here decouples the prompt POST from the stream GET race.
@@ -395,6 +406,53 @@ export async function startTestSupervisor(
     }
   >();
 
+  const promptEvidence = new Map<
+    string,
+    {
+      fence: Pick<
+        CommandReceiptV2,
+        "hostKey" | "runId" | "assignmentId" | "assignmentEpoch"
+      >;
+      hostSessionId: string;
+      requestSha256: string;
+      receivedAt: string;
+      acceptedSequence: string | null;
+      receipt: CommandReceiptV2 | null;
+    }
+  >();
+
+  const sealPromptJson = (
+    binding: { runId: string; assignmentId: string; assignmentEpoch: number },
+    value: Record<string, unknown>,
+  ): ImmutableObjectReference => {
+    const bytes = new TextEncoder().encode(JSON.stringify(value));
+    const objectId = randomUUID();
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    const now = new Date().toISOString();
+
+    runtimeObjects.set(objectId, {
+      ...binding,
+      bytes,
+      metadata: {
+        objectId,
+        generation: 1,
+        sizeBytes: bytes.byteLength,
+        sha256,
+        kind: "raw_transcript",
+        logicalName: "command-output.json",
+        mimeType: "application/json",
+        retentionClass: "run",
+        state: "available",
+        createdAt: now,
+        sealedAt: now,
+        expiresAt: null,
+        deletedAt: null,
+      },
+    });
+
+    return { objectId, generation: 1, sizeBytes: bytes.byteLength, sha256 };
+  };
+
   const nextId = (): number => {
     monotonic += 1;
 
@@ -434,6 +492,122 @@ export async function startTestSupervisor(
       payloadSchema: EVENT_PAYLOAD_SCHEMAS[input.eventType],
       payload: input.payload,
     };
+
+    const commandId = input.payload.commandId;
+    const prompt =
+      typeof commandId === "string" ? promptEvidence.get(commandId) : undefined;
+
+    if (
+      input.eventType === "session.command" &&
+      prompt &&
+      typeof commandId === "string"
+    ) {
+      if (input.payload.phase === "accepted")
+        prompt.acceptedSequence = envelope.sequence;
+      if (prompt.acceptedSequence === null)
+        throw new Error("test prompt lacks accepted position");
+      let terminal: CommandTerminalEvidenceV2 | null = null;
+
+      if (input.payload.phase === "completed") {
+        const status = input.payload.status;
+
+        if (
+          status !== "succeeded" &&
+          status !== "failed" &&
+          status !== "fenced"
+        )
+          throw new Error("test prompt has invalid terminal status");
+        let result: Record<string, unknown> | null = null;
+
+        if (status === "succeeded") {
+          const responseBody = input.payload.result;
+
+          if (
+            !responseBody ||
+            typeof responseBody !== "object" ||
+            Array.isArray(responseBody)
+          )
+            throw new Error("test prompt has invalid response");
+          const response = sealPromptJson(prompt.fence, {
+            schema: "maister.command-response.v2",
+            commandId,
+            hostSessionId: prompt.hostSessionId,
+            requestSha256: prompt.requestSha256,
+            response: responseBody,
+          });
+          const output = sealPromptJson(prompt.fence, {
+            schema: "maister.command-output.v2",
+            commandId,
+            ...prompt.fence,
+            hostSessionId: prompt.hostSessionId,
+            requestSha256: prompt.requestSha256,
+            streamId: envelope.streamId,
+            acceptedSequence: prompt.acceptedSequence,
+            terminalSequence: envelope.sequence,
+            response,
+          });
+
+          result = {
+            stopReason: (responseBody as Record<string, unknown>).stopReason,
+            output: {
+              ...output,
+              commandId,
+              hostSessionId: prompt.hostSessionId,
+              acceptedSequence: prompt.acceptedSequence,
+              terminalSequence: envelope.sequence,
+            },
+          };
+        }
+        terminal = {
+          outcomeVersion: 2,
+          status,
+          eventId: envelope.eventId,
+          streamId: envelope.streamId,
+          sequence: envelope.sequence,
+          result,
+          error:
+            status === "succeeded"
+              ? null
+              : (input.payload.error as CommandTerminalEvidenceV2["error"]),
+        };
+      }
+      const phase =
+        terminal === null
+          ? "accepted"
+          : terminal.status === "succeeded"
+            ? "completed"
+            : "rejected";
+
+      prompt.receipt = parseCommandReceiptV2({
+        receiptVersion: 2,
+        commandId,
+        kind: "session.prompt",
+        ...prompt.fence,
+        hostSessionId: prompt.hostSessionId,
+        requestSchema: "maister.command.request.v2",
+        requestSha256: prompt.requestSha256,
+        phase,
+        httpStatus:
+          terminal === null ? 202 : terminal.status === "succeeded" ? 200 : 409,
+        receivedAt: prompt.receivedAt,
+        terminal,
+      });
+      envelope.payloadSchema = "maister.session.command.v2";
+      envelope.payload = {
+        sourceMonotonicId: input.payload.sourceMonotonicId,
+        sessionName: input.payload.sessionName,
+        ...(input.payload.nodeAttemptId
+          ? { nodeAttemptId: input.payload.nodeAttemptId }
+          : {}),
+        commandId,
+        sourceCommandId: commandId,
+        kind: "session.prompt",
+        phase,
+        requestSchema: "maister.command.request.v2",
+        requestSha256: prompt.requestSha256,
+        terminal,
+      };
+    }
 
     runtimeOutbox.push(envelope);
     for (const response of runtimeSubscribers) {
@@ -479,6 +653,9 @@ export async function startTestSupervisor(
         ...(typeof event.monotonicId === "number"
           ? { sourceMonotonicId: event.monotonicId }
           : {}),
+        ...(rec.activePromptCommandId
+          ? { sourceCommandId: rec.activePromptCommandId }
+          : {}),
         sessionName: rec.sessionName,
         ...(rec.nodeAttemptId ? { nodeAttemptId: rec.nodeAttemptId } : {}),
         ...payload,
@@ -489,7 +666,7 @@ export async function startTestSupervisor(
   // Flush queued text, then a queued clean exit, onto a connected stream
   // (idempotent). Text always precedes the exit: the consumers read the
   // completing turn's accumulated text at the exit frame.
-  const flushExit = (rec: SessionRecord): void => {
+  const flushText = (rec: SessionRecord): void => {
     for (const text of rec.pendingText.splice(0)) {
       emitOrQueue(rec, {
         type: "session.update",
@@ -501,6 +678,10 @@ export async function startTestSupervisor(
         },
       });
     }
+  };
+
+  const flushExit = (rec: SessionRecord): void => {
+    flushText(rec);
     if (!rec.exitPending) return;
     rec.exitPending = false;
     emitOrQueue(rec, {
@@ -1406,6 +1587,13 @@ export async function startTestSupervisor(
     const commandMatch = url.match(/^\/commands\/([0-9a-f-]+)$/);
 
     if (method === "GET" && commandMatch) {
+      const evidence = promptEvidence.get(commandMatch[1])?.receipt;
+
+      if (evidence) {
+        sendJson(200, evidence);
+
+        return;
+      }
       const promptReceipt = promptReceipts.get(commandMatch[1]);
 
       if (promptReceipt) {
@@ -1704,6 +1892,7 @@ export async function startTestSupervisor(
         stubRecord(env, 201, out);
         publishSessionEvent(rec, {
           type: "session.created",
+          createdByCommandId: rec.createdByCommandId,
           sessionId,
           monotonicId: nextId(),
           adapter: String(
@@ -1762,6 +1951,25 @@ export async function startTestSupervisor(
 
         const receivedAt = new Date().toISOString();
 
+        if (
+          rawBody &&
+          typeof rawBody === "object" &&
+          "requestVersion" in rawBody &&
+          rawBody.requestVersion === 2
+        ) {
+          promptEvidence.set(env.command.id, {
+            fence: env.fence,
+            hostSessionId: rec.sessionId,
+            requestSha256: createHash("sha256")
+              .update(canonicalCommandJson(rawBody))
+              .digest("hex"),
+            receivedAt,
+            acceptedSequence: null,
+            receipt: null,
+          });
+          rec.activePromptCommandId = env.command.id;
+        }
+
         promptReceipts.set(env.command.id, {
           runId: rec.runId,
           assignmentEpoch: env.fence.assignmentEpoch,
@@ -1783,6 +1991,7 @@ export async function startTestSupervisor(
         sendJson(202, { commandId: env.command.id, state: "accepted" });
 
         const complete = (out: Record<string, unknown>): void => {
+          flushText(rec);
           const terminal = emitOrQueue(rec, {
             type: "session.command",
             sessionId: rec.sessionId,

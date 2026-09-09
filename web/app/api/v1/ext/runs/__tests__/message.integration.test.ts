@@ -126,7 +126,10 @@ beforeEach(async () => {
   createSessionSpy.mockClear();
   fake.calls.length = 0;
   fake.sessions.clear();
+  fake.setPromptBehavior(async () => ({ stopReason: "end_turn", meta: null }));
 
+  await pool.query(`DELETE FROM "agent_turns"`);
+  await pool.query(`DELETE FROM "execution_commands"`);
   await pool.query(`DELETE FROM "runs"`);
   await pool.query(`DELETE FROM "task_relations"`);
   await pool.query(`DELETE FROM "tasks"`);
@@ -352,17 +355,16 @@ function promptsSent(): Array<[string, unknown]> {
     .map((call) => [call.args[0] as string, call.envelope?.payload]);
 }
 
-function seedLive(sessionId: string, runId: string, acpSessionId: string) {
-  fake.sessions.set(sessionId, {
-    sessionId,
-    runId,
+async function seedLive(runId: string, acpSessionId: string): Promise<string> {
+  const installed = await fakeExecutionHosts(db, { fake, runId });
+  const client = await installed.hosts.forRun(runId);
+  const session = await client.createSession({
     stepId: "agent",
-    acpSessionId,
-    executionWorkspaceId: "ws-live",
-    assignmentEpoch: 1,
-    createdByCommandId: "seed",
-    status: "live",
+    executor: { agent: "claude", model: "mock" },
+    resumeSessionId: acpSessionId,
   });
+
+  return session.hostSessionId;
 }
 
 function jsonReq(
@@ -385,7 +387,7 @@ const MSG_URL = "http://localhost/api/v1/ext/runs/message";
 const DEL_URL = "http://localhost/api/v1/ext/runs/delegate";
 
 describe("POST /api/v1/ext/runs/message (M37 Phase 8)", () => {
-  it("(2) re-messages a parked child by key → respawn with resumeSessionId, status Running", async () => {
+  it("(2) re-messages a parked child by key → Running during the resumed turn, acknowledgment with park", async () => {
     const orchestrator = await seedAgent("orchestrator");
     const worker = await seedAgent("reviewer-agent");
     const { runId: rootRunId, secret } =
@@ -398,7 +400,17 @@ describe("POST /api/v1/ext/runs/message (M37 Phase 8)", () => {
       acpSessionId: "acp-reviewer-1",
     });
 
-    const res = await messagePost(
+    let completeTurn!: () => void;
+    const turn = new Promise<void>((resolve) => {
+      completeTurn = resolve;
+    });
+
+    fake.setPromptBehavior(async () => {
+      await turn;
+
+      return { stopReason: "end_turn", meta: null };
+    });
+    const response = messagePost(
       jsonReq(MSG_URL, secret, {
         addressableKey: "reviewer",
         prompt: "re-review the latest diff",
@@ -406,43 +418,57 @@ describe("POST /api/v1/ext/runs/message (M37 Phase 8)", () => {
       {},
     );
 
-    expect(res.status).toBe(200);
-    const json = (await res.json()) as { childRunId: string; status: string };
+    try {
+      await expect.poll(() => promptsSent().length).toBe(1);
+      // The child holds its resumed slot until this admitted turn completes.
+      const row = await pool.query(
+        `SELECT "status" FROM "runs" WHERE "id" = $1`,
+        [childRunId],
+      );
 
-    expect(json.childRunId).toBe(childRunId);
-    expect(json.status).toBe("Running");
+      expect(row.rows[0].status).toBe("Running");
 
-    // The child was claimed NeedsInputIdle → Running.
-    const row = await pool.query(
-      `SELECT "status" FROM "runs" WHERE "id" = $1`,
-      [childRunId],
-    );
+      // Respawn fired with the retained acp handle as resumeSessionId — a
+      // handle-form create fenced by the child's assignment.
+      const creates = fake.callsOf("createSession");
 
-    expect(row.rows[0].status).toBe("Running");
-
-    // Respawn fired with the retained acp handle as resumeSessionId — a
-    // handle-form create fenced by the child's assignment.
-    const creates = fake.callsOf("createSession");
-
-    expect(creates).toHaveLength(1);
-    expect(creates[0].envelope?.payload).toMatchObject({
-      resumeSessionId: "acp-reviewer-1",
-    });
-    expect(creates[0].envelope?.fence).toMatchObject({
-      runId: childRunId,
-      assignmentEpoch: 1,
-    });
-    // ADR-166 (N2): the idle re-message is a NEW driver generation minted as
-    // `resume` inside the claim.
-    const assignments = await pool.query(
-      `SELECT "epoch", "state", "placement_reason" FROM "execution_assignments"
+      expect(creates).toHaveLength(1);
+      expect(creates[0].envelope?.payload).toMatchObject({
+        resumeSessionId: "acp-reviewer-1",
+      });
+      expect(creates[0].envelope?.fence).toMatchObject({
+        runId: childRunId,
+        assignmentEpoch: 1,
+      });
+      // ADR-166 (N2): the idle re-message is a NEW driver generation minted as
+      // `resume` inside the claim.
+      const assignments = await pool.query(
+        `SELECT "epoch", "state", "placement_reason" FROM "execution_assignments"
         WHERE "run_id" = $1 ORDER BY "epoch"`,
+        [childRunId],
+      );
+
+      expect(assignments.rows).toEqual([
+        { epoch: 1, state: "active", placement_reason: "resume" },
+      ]);
+    } finally {
+      completeTurn();
+      await response;
+    }
+    const res = await response;
+    const turns = await pool.query<{ id: string }>(
+      `SELECT id FROM agent_turns WHERE run_id = $1`,
       [childRunId],
     );
 
-    expect(assignments.rows).toEqual([
-      { epoch: 1, state: "active", placement_reason: "resume" },
-    ]);
+    expect(turns.rows).toHaveLength(1);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      childRunId,
+      messageId: turns.rows[0].id,
+      messageState: "applied",
+      status: "NeedsInputIdle",
+    });
   });
 
   it("(2b) a key in ANOTHER tree → PRECONDITION, no delivery", async () => {
@@ -586,23 +612,35 @@ describe("POST /api/v1/ext/runs/message (M37 Phase 8)", () => {
       acpSessionId: "acp-live-child",
     });
 
-    seedLive("sup-live", childRunId, "acp-live-child");
+    const sessionId = await seedLive(childRunId, "acp-live-child");
 
     const result = await sendAgentMessage(childRunId, "keep going", {
       db,
       executionHosts: hosts,
     });
 
-    expect(result).toEqual({ childRunId, status: "Running" });
+    const turns = await pool.query<{ id: string }>(
+      `SELECT id FROM agent_turns WHERE run_id = $1`,
+      [childRunId],
+    );
+
+    expect(turns.rows).toHaveLength(1);
+    expect(result).toEqual({
+      childRunId,
+      messageId: turns.rows[0].id,
+      messageState: "applied",
+      status: "NeedsInputIdle",
+    });
+    expect(fake.callsOf("createSession")).toHaveLength(1);
     expect(promptsSent()).toHaveLength(1);
-    expect(promptsSent()[0][0]).toBe("sup-live");
+    expect(promptsSent()[0][0]).toBe(sessionId);
     expect(promptsSent()[0][1]).toEqual({
       stepId: "agent",
       prompt: "keep going",
     });
   });
 
-  it("a Running child with NO acp handle yet → PRECONDITION (no delivery)", async () => {
+  it("queues input for a Running child with no ACP handle without premature delivery", async () => {
     const orchestrator = await seedAgent("orchestrator");
     const worker = await seedAgent("reviewer-agent");
     const { runId: rootRunId } = await seedOrchestratorRun(orchestrator);
@@ -614,13 +652,26 @@ describe("POST /api/v1/ext/runs/message (M37 Phase 8)", () => {
       acpSessionId: null,
     });
 
-    await expect(
-      sendAgentMessage(childRunId, "x", { db, executionHosts: hosts }),
-    ).rejects.toMatchObject({ code: "PRECONDITION" });
+    const result = await sendAgentMessage(childRunId, "x", {
+      db,
+      executionHosts: hosts,
+    });
+    const turns = await pool.query<{ id: string; state: string }>(
+      `SELECT id, state FROM agent_turns WHERE run_id = $1`,
+      [childRunId],
+    );
+
+    expect(turns.rows).toEqual([{ id: result.messageId, state: "queued" }]);
+    expect(result).toEqual({
+      childRunId,
+      messageId: turns.rows[0].id,
+      messageState: "queued",
+      status: "Running",
+    });
     expect(promptsSent()).toEqual([]);
   });
 
-  it("a Running child whose session is no longer live → PRECONDITION (no delivery)", async () => {
+  it("queues input for an unbound retained ACP handle without inventing a live session", async () => {
     const orchestrator = await seedAgent("orchestrator");
     const worker = await seedAgent("reviewer-agent");
     const { runId: rootRunId } = await seedOrchestratorRun(orchestrator);
@@ -633,9 +684,22 @@ describe("POST /api/v1/ext/runs/message (M37 Phase 8)", () => {
     });
 
     // No session matches acp-gone → no live supervisor session.
-    await expect(
-      sendAgentMessage(childRunId, "x", { db, executionHosts: hosts }),
-    ).rejects.toMatchObject({ code: "PRECONDITION" });
+    const result = await sendAgentMessage(childRunId, "x", {
+      db,
+      executionHosts: hosts,
+    });
+    const turns = await pool.query<{ id: string; state: string }>(
+      `SELECT id, state FROM agent_turns WHERE run_id = $1`,
+      [childRunId],
+    );
+
+    expect(turns.rows).toEqual([{ id: result.messageId, state: "queued" }]);
+    expect(result).toEqual({
+      childRunId,
+      messageId: turns.rows[0].id,
+      messageState: "queued",
+      status: "Running",
+    });
     expect(promptsSent()).toEqual([]);
   });
 });

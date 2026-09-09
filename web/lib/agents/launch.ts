@@ -44,6 +44,7 @@ import {
   agentReadOnlyWorkdirPath,
   agentWorkdirPath,
   sharedAgentWorktreePath,
+  sharedAgentWorktreesDirectory,
 } from "./workspace-paths";
 
 import { waitForPromptIncarnation } from "@/lib/execution-host/prompt-incarnation";
@@ -77,6 +78,7 @@ import {
 } from "@/lib/agents/effective";
 import { resolveFacadeLaunch } from "@/lib/agents/facade-launch";
 import { readAgentMemory } from "@/lib/agents/memory-store";
+import { withAgentMaterializationLock } from "@/lib/agents/materialization-manifest";
 import { prepareContextMounts } from "@/lib/context-mounts/launch";
 import { atomicWriteText } from "@/lib/atomic";
 import { runDirPath } from "@/lib/flows/graph/mutation-check";
@@ -913,10 +915,9 @@ async function launchAgentDrivenFlowRun(
  * purpose — it has a better expectation, the allocator's row, and keeping it
  * preserves a real mismatch check.)
  *
- * Falls back to `fallbackRunId` when the tree carries no readable provenance —
- * the narrow window where `git worktree add` has registered the path but the
- * winner has not written provenance yet. `ensureWorktreeProvenance` installs on
- * ENOENT, so the fallback is the pre-existing behaviour, never a new throw.
+ * Shared launches hold the worktree allocation mutex while adopting an
+ * orphan. Missing provenance can therefore be installed for `fallbackRunId`
+ * without racing another live shared allocator's installation.
  */
 async function adoptExistingTreeOwner(
   worktreePath: string,
@@ -1099,405 +1100,429 @@ export async function launchAgentRun(
   const placementHost = await localHost({ db: _db as unknown as ExecutionDb });
   const executionDataPlaneMode = executionDataPlaneModeForHost(placementHost);
 
-  let worktreePath: string | null = null;
-  let branch: string | null = null;
-  let baseCommit: string | null = null;
-  // ADR-106: the resolved worktree base (instance → recommended → project main);
-  // forks the worktree and is the promote target on the workspaces row. Stays
-  // project main for non-worktree modes (unused there).
-  let resolvedBranchBase = ctx.project.mainBranch;
-  // M37 Phase 10 (ADR-099): a shared-mode child whose tree a sibling already
-  // allocated reuses that tree — it gets NO workspaces row of its own (the
-  // worktree_path column is UNIQUE; the allocating sibling owns the record).
-  // startAgentSession recomputes the shared cwd from workspace_mode + rootRunId.
-  let reuseSharedTree = false;
-  // F3 (ADR-102): true ONLY when THIS launch actually ran addWorktree (an
-  // allocator). The teardown on a deduped/failed insert must remove only a dir we
-  // created — never a reused tree (sibling-owned) NOR an orphan dir we merely
-  // claimed (a crashed prior launch's work).
-  let allocatedWorktree = false;
   const isShared = input.workspaceMode === "shared" && input.rootRunId != null;
+  // Hold the shared worktree directory's mutex through provenance, row commit
+  // and failure compensation. Keep its files outside the project checkout;
+  // Git still runs before the PostgreSQL transaction.
+  const allocateAndPersist = async (): Promise<boolean> => {
+    let worktreePath: string | null = null;
+    let branch: string | null = null;
+    let baseCommit: string | null = null;
+    // ADR-106: the resolved worktree base (instance → recommended → project main);
+    // forks the worktree and is the promote target on the workspaces row. Stays
+    // project main for non-worktree modes (unused there).
+    let resolvedBranchBase = ctx.project.mainBranch;
+    // M37 Phase 10 (ADR-099): a shared-mode child whose tree a sibling already
+    // allocated reuses that tree — it gets NO workspaces row of its own (the
+    // worktree_path column is UNIQUE; the allocating sibling owns the record).
+    // startAgentSession recomputes the shared cwd from workspace_mode + rootRunId.
+    let reuseSharedTree = false;
+    // F3 (ADR-102): true ONLY when THIS launch actually ran addWorktree (an
+    // allocator). The teardown on a deduped/failed insert must remove only a dir we
+    // created — never a reused tree (sibling-owned) NOR an orphan dir we merely
+    // claimed (a crashed prior launch's work).
+    let allocatedWorktree = false;
 
-  if (workspace === "worktree") {
-    // ADR-106: resolve the worktree base — instance link override → agent
-    // recommended → project main — and validate a DECLARED (non-fallback) base
-    // against the project's branches BEFORE any git side-effect, so an unknown
-    // ref is a clean PRECONDITION rather than a raw git failure.
-    const declaredBranchBase =
-      ctx.link.branchBase ??
-      ctx.effective.parsed.recommended?.branch_base ??
-      null;
+    if (workspace === "worktree") {
+      // ADR-106: resolve the worktree base — instance link override → agent
+      // recommended → project main — and validate a DECLARED (non-fallback) base
+      // against the project's branches BEFORE any git side-effect, so an unknown
+      // ref is a clean PRECONDITION rather than a raw git failure.
+      const declaredBranchBase =
+        ctx.link.branchBase ??
+        ctx.effective.parsed.recommended?.branch_base ??
+        null;
 
-    resolvedBranchBase = declaredBranchBase ?? ctx.project.mainBranch;
+      resolvedBranchBase = declaredBranchBase ?? ctx.project.mainBranch;
 
-    if (declaredBranchBase) {
-      const knownBranches = new Set(await listBranches(ctx.project.repoPath));
+      if (declaredBranchBase) {
+        const knownBranches = new Set(await listBranches(ctx.project.repoPath));
 
-      if (!knownBranches.has(declaredBranchBase)) {
-        throw new MaisterError(
-          "PRECONDITION",
-          `branch base "${declaredBranchBase}" does not exist in ${ctx.project.slug}`,
-        );
-      }
-    }
-
-    if (isShared) {
-      const rootRunId = input.rootRunId as string;
-      let provenanceRunId: string = runId;
-
-      branch = `${ctx.project.branchPrefix ?? "maister/"}agents/${rootRunId}`;
-      worktreePath = sharedAgentWorktreePath(ctx.project.slug, rootRunId);
-
-      // F3 (ADR-102): the allocator-vs-reuser decision is DB-truth, NOT a bare
-      // filesystem observation. A crash between addWorktree (git, outside the tx)
-      // and the workspaces insert leaves an ORPHAN path on disk with no row;
-      // trusting listWorktrees there made every later sibling "reuse" the path and
-      // skip the insert, so the tree NEVER got a row (unresolvable for promote/diff/
-      // GC). The `workspaces` row is the source of truth.
-      const treeRow = await findSharedTreeWorkspace(_db, rootRunId);
-
-      if (treeRow) {
-        // A row exists ⇒ a sibling genuinely allocated the tree. Reuse the dir,
-        // own no row.
-        reuseSharedTree = true;
-        provenanceRunId = treeRow.runId;
-      } else {
-        // No row ⇒ THIS child owns the tree's row. Branch on whether the dir is
-        // already present.
-        const existing = await listWorktrees(ctx.project.repoPath);
-
-        if (existing.some((w) => w.path === worktreePath)) {
-          // ORPHAN-CLAIM: the path exists from a crashed prior allocation with no
-          // surviving row. Reuse the dir (do NOT addWorktree — it would fail on the
-          // existing path/branch) and claim the row below. The true base is lost;
-          // promote/diff tolerate base_commit=null.
-          baseCommit = null;
-          provenanceRunId = await adoptExistingTreeOwner(
-            worktreePath,
-            provenanceRunId,
+        if (!knownBranches.has(declaredBranchBase)) {
+          throw new MaisterError(
+            "PRECONDITION",
+            `branch base "${declaredBranchBase}" does not exist in ${ctx.project.slug}`,
           );
-          log.warn(
-            { rootRunId, worktreePath },
-            "shared tree orphan path claimed — no prior workspaces row",
-          );
-        } else {
-          // ALLOCATOR: create the worktree.
-          baseCommit = await resolveBaseCommit({
-            projectRepoPath: ctx.project.repoPath,
-            baseRef: resolvedBranchBase,
-          });
-
-          try {
-            await addWorktree({
-              projectRepoPath: ctx.project.repoPath,
-              worktreePath,
-              branch,
-              startPoint: resolvedBranchBase,
-              provenance: {
-                version: 2,
-                runId,
-                parentRepoPath: ctx.project.repoPath,
-                projectId: ctx.project.id,
-                branch,
-                workspaceKind: "agent",
-                createdAt: new Date().toISOString(),
-              },
-            });
-            allocatedWorktree = true;
-          } catch (err) {
-            // M37 (ADR-100): a concurrent shared-mode sibling can allocate the tree
-            // between the listWorktrees check and this add (TOCTOU). Re-check the
-            // registry: if the path now exists, the sibling won the race — reuse the
-            // dir and claim-as-orphan (base lost), letting the insert's
-            // onConflictDoNothing arbitrate the single row. Otherwise it is a genuine
-            // git failure → surface as a typed CONFLICT, never a raw 500.
-            const after = await listWorktrees(ctx.project.repoPath);
-
-            if (after.some((w) => w.path === worktreePath)) {
-              baseCommit = null;
-              provenanceRunId = await adoptExistingTreeOwner(
-                worktreePath,
-                provenanceRunId,
-              );
-            } else {
-              throw new MaisterError(
-                "CONFLICT",
-                `shared worktree allocation failed for tree ${rootRunId}: ${
-                  err instanceof Error ? err.message : String(err)
-                }`,
-              );
-            }
-          }
         }
       }
 
-      // Same leak class as the chain-depth gate above, and the ONE step here
-      // that cannot be hoisted before the allocation — it verifies provenance ON
-      // the created tree. Its PRECONDITION/CONFLICT throws sit before the
-      // insert's compensating cleanup, so an allocator that fails here would
-      // strand a tree with no `runs`/`workspaces` row. The `allocatedWorktree`
-      // guard keeps F3 intact: a reused (sibling-owned) or orphan-claimed dir is
-      // never removed.
-      try {
-        await ensureWorktreeProvenance({
-          worktreePath,
-          metadata: { runId: provenanceRunId },
+      if (isShared) {
+        const rootRunId = input.rootRunId as string;
+        let provenanceRunId: string = runId;
+
+        branch = `${ctx.project.branchPrefix ?? "maister/"}agents/${rootRunId}`;
+        worktreePath = sharedAgentWorktreePath(ctx.project.slug, rootRunId);
+
+        // F3 (ADR-102): the allocator-vs-reuser decision is DB-truth, NOT a bare
+        // filesystem observation. A crash between addWorktree (git, outside the tx)
+        // and the workspaces insert leaves an ORPHAN path on disk with no row;
+        // trusting listWorktrees there made every later sibling "reuse" the path and
+        // skip the insert, so the tree NEVER got a row (unresolvable for promote/diff/
+        // GC). The `workspaces` row is the source of truth.
+        const treeRow = await findSharedTreeWorkspace(_db, rootRunId);
+
+        if (treeRow) {
+          // A row exists ⇒ a sibling genuinely allocated the tree. Reuse the dir,
+          // own no row.
+          reuseSharedTree = true;
+          provenanceRunId = treeRow.runId;
+        } else {
+          // No row ⇒ THIS child owns the tree's row. Branch on whether the dir is
+          // already present.
+          const existing = await listWorktrees(ctx.project.repoPath);
+
+          if (existing.some((w) => w.path === worktreePath)) {
+            // ORPHAN-CLAIM: the path exists from a crashed prior allocation with no
+            // surviving row. Reuse the dir (do NOT addWorktree — it would fail on the
+            // existing path/branch) and claim the row below. The true base is lost;
+            // promote/diff tolerate base_commit=null.
+            baseCommit = null;
+            provenanceRunId = await adoptExistingTreeOwner(
+              worktreePath,
+              provenanceRunId,
+            );
+            log.warn(
+              { rootRunId, worktreePath },
+              "shared tree orphan path claimed — no prior workspaces row",
+            );
+          } else {
+            // ALLOCATOR: create the worktree.
+            baseCommit = await resolveBaseCommit({
+              projectRepoPath: ctx.project.repoPath,
+              baseRef: resolvedBranchBase,
+            });
+
+            try {
+              await addWorktree({
+                projectRepoPath: ctx.project.repoPath,
+                worktreePath,
+                branch,
+                startPoint: resolvedBranchBase,
+                provenance: {
+                  version: 2,
+                  runId,
+                  parentRepoPath: ctx.project.repoPath,
+                  projectId: ctx.project.id,
+                  branch,
+                  workspaceKind: "agent",
+                  createdAt: new Date().toISOString(),
+                },
+              });
+              allocatedWorktree = true;
+            } catch (err) {
+              // M37 (ADR-100): a concurrent shared-mode sibling can allocate the tree
+              // between the listWorktrees check and this add (TOCTOU). Re-check the
+              // registry: if the path now exists, the sibling won the race — reuse the
+              // dir and claim-as-orphan (base lost), letting the insert's
+              // onConflictDoNothing arbitrate the single row. Otherwise it is a genuine
+              // git failure → surface as a typed CONFLICT, never a raw 500.
+              const after = await listWorktrees(ctx.project.repoPath);
+
+              if (after.some((w) => w.path === worktreePath)) {
+                baseCommit = null;
+                provenanceRunId = await adoptExistingTreeOwner(
+                  worktreePath,
+                  provenanceRunId,
+                );
+              } else {
+                throw new MaisterError(
+                  "CONFLICT",
+                  `shared worktree allocation failed for tree ${rootRunId}: ${
+                    err instanceof Error ? err.message : String(err)
+                  }`,
+                );
+              }
+            }
+          }
+        }
+
+        // Same leak class as the chain-depth gate above, and the ONE step here
+        // that cannot be hoisted before the allocation — it verifies provenance ON
+        // the created tree. Its PRECONDITION/CONFLICT throws sit before the
+        // insert's compensating cleanup, so an allocator that fails here would
+        // strand a tree with no `runs`/`workspaces` row. The `allocatedWorktree`
+        // guard keeps F3 intact: a reused (sibling-owned) or orphan-claimed dir is
+        // never removed.
+        try {
+          await ensureWorktreeProvenance({
+            worktreePath,
+            metadata: { runId: provenanceRunId },
+          });
+        } catch (err) {
+          if (allocatedWorktree) {
+            await removeWorktree({
+              projectRepoPath: ctx.project.repoPath,
+              worktreePath,
+            }).catch(() => undefined);
+          }
+          throw err;
+        }
+
+        // M37 (ADR-102): record the allocator-vs-reuser decision for the shared
+        // tree. The allocator/claimer owns the single `workspaces` row (UNIQUE
+        // worktree_path, inserted with onConflictDoNothing); a reuser child gets none
+        // and the tree is resolved by root_run_id at promote.
+        log.info(
+          {
+            rootRunId: input.rootRunId,
+            worktreePath,
+            branch,
+            decision: reuseSharedTree ? "reuse" : "allocate",
+          },
+          reuseSharedTree
+            ? "shared worktree tree reused by sibling (no workspaces row of its own)"
+            : "shared worktree tree allocated (this child owns the workspaces row)",
+        );
+      } else {
+        branch = agentWorktreeBranchName({
+          prefix: ctx.project.branchPrefix ?? "maister/",
+          agentId: input.agentId,
+          runId,
         });
-      } catch (err) {
-        if (allocatedWorktree) {
+        worktreePath = agentWorkdirPath(ctx.project.slug, runId);
+        baseCommit = await resolveBaseCommit({
+          projectRepoPath: ctx.project.repoPath,
+          baseRef: resolvedBranchBase,
+        });
+        await addWorktree({
+          projectRepoPath: ctx.project.repoPath,
+          worktreePath,
+          branch,
+          startPoint: resolvedBranchBase,
+          provenance: {
+            version: 2,
+            runId,
+            parentRepoPath: ctx.project.repoPath,
+            projectId: ctx.project.id,
+            branch,
+            workspaceKind: "agent",
+            createdAt: new Date().toISOString(),
+          },
+        });
+        allocatedWorktree = true;
+      }
+    }
+
+    // M39 Phase 5 (ADR-106): resolve the effective runner policy (autoApply →
+    // B1/B2 axes, onBudgetBreach → the budget-terminal axis) in the Q3 order
+    // instance-override → agent recommended → project execution-policy default
+    // (then the supervised floor), and snapshot it onto the run so the budget
+    // watchdog + HITL boundary read the snapshot (never a post-launch projection).
+    // The project base is load-bearing: it carries the budget axis the agent
+    // recommendation never declares, so a project token ceiling actually binds an
+    // agent run.
+    const executionPolicy = applyDefaultBudgetForUnattended(
+      resolveAgentExecutionPolicy({
+        instanceOverride: ctx.link
+          .executionPolicyOverride as AgentExecutionPolicyRecommendation | null,
+        recommended: ctx.effective.parsed.recommended?.executionPolicy ?? null,
+        base: resolveExecutionPolicy({
+          projectDefault: ctx.project
+            .executionPolicyDefault as ExecutionPolicy | null,
+        }),
+      }),
+    );
+
+    // ADR-111 (D5): resolve the effective agent config ONCE here and snapshot it
+    // onto the run row. buildAgentPrompt reads THIS snapshot at spawn — never
+    // re-resolving from the (mutable) definition/link. null when the agent
+    // declares no config (the column stays null).
+    const resolvedConfig = resolveAgentConfig(
+      ctx.effective.parsed.config,
+      (ctx.link.config as Record<string, unknown> | null) ?? null,
+    );
+    const agentConfig =
+      Object.keys(resolvedConfig).length > 0 ? resolvedConfig : null;
+
+    log.debug(
+      {
+        runId,
+        agentId: input.agentId,
+        configKeys: agentConfig ? Object.keys(agentConfig) : [],
+      },
+      "[ADR-111] resolved agent config snapshot",
+    );
+
+    const runRow = {
+      id: runId,
+      runKind: "agent" as const,
+      executionDataPlaneMode,
+      agentChainDepth: chain.depth,
+      agentId: input.agentId,
+      executionPolicy,
+      agentConfig,
+      triggerSource: input.trigger.source,
+      triggerEventId: input.trigger.eventId ?? null,
+      triggerPayload: input.trigger.payload ?? null,
+      agentScheduleId: input.agentScheduleId ?? null,
+      agentWorkspace: workspace,
+      taskId: input.taskId ?? null,
+      projectId: input.projectId,
+      flowId: null,
+      // M42 (ADR-114): runner identity lives on `run_sessions` (inserted below).
+      status: "Pending" as const,
+      currentStepId: "agent",
+      flowVersion: "agent",
+      flowRevision: "manual",
+      // M37 (ADR-098): run-tree linkage. delegation_snapshot records the CHILD's
+      // launch-time effective agent-def (skill-context rule 207 — id + pinned
+      // revision only; the resolved runner stays in runner_snapshot above). Set
+      // only for a delegated child (parentRunId present).
+      parentRunId: input.parentRunId ?? null,
+      rootRunId: input.rootRunId ?? null,
+      launchMode: input.launchMode ?? null,
+      delegationSnapshot: input.parentRunId
+        ? {
+            agentDefinitionId: input.agentId,
+            revisionId: ctx.effective.packageInstallId,
+          }
+        : null,
+      // ADR-165: the launch-time public-result contract, written in the SAME
+      // insert as the run it binds. NULL when the delegation named no profile.
+      resultContract: input.resultContract ?? null,
+      // M37 Phase 8 (ADR-099): persistent swarm-member flags.
+      persistent: input.persistent ?? false,
+      addressableKey: input.addressableKey ?? null,
+      // M37 Phase 10 (ADR-099): worktree allocation mode — read by the scheduler
+      // serialization guard and by startAgentSession's shared-cwd resolution.
+      workspaceMode: input.workspaceMode ?? null,
+      // ADR-122 (T5.3): persist the launch-time ambient-brain decision (recorded
+      // for parity; standalone agent runs recall via the explicit MCP tools).
+      brainContext: input.brainContext ?? null,
+    };
+
+    assertRunKindInvariant({
+      id: runId,
+      runKind: "agent",
+      taskId: runRow.taskId,
+      flowId: null,
+      flowRevisionId: null,
+      flowVersion: runRow.flowVersion,
+      flowRevision: runRow.flowRevision,
+      agentId: input.agentId,
+    });
+
+    try {
+      const inserted = await _db.transaction(async (tx: Db) => {
+        // ADR-163: a DELEGATED child's depth + shared fan-out bound is decided
+        // here, in the same transaction as the run INSERT and under the
+        // per-orchestrator advisory lock, so the count includes every committed
+        // sibling of BOTH kinds and two concurrent delegations cannot both land.
+        // This one call guards every edge that reaches this launcher — the ext
+        // delegate route, run_plan's source launch, and the as-plan auto-launcher
+        // — because all of them arrive through this single insert. No-op for a
+        // top-level run (no parentRunId).
+        if (input.parentRunId) {
+          await admitDelegatedChild(tx, { parentRunId: input.parentRunId });
+        }
+
+        // Claim-first: the INSERT itself is the at-least-once dedup claim. The
+        // persistent addressable_key uniqueness is enforced by the pre-insert
+        // check above (the deterministic path); the partial index is the
+        // last-line backstop against a duplicate ROW (a true insert race just
+        // dedups here — no duplicate is ever written).
+        const rows = await tx
+          .insert(runs)
+          .values(runRow)
+          .onConflictDoNothing()
+          .returning({ id: runs.id });
+
+        if (rows.length === 0) return false;
+
+        // M42 (ADR-114): a standalone agent run is a single-`default`-session run.
+        await tx.insert(runSessions).values({
+          id: randomUUID(),
+          ...defaultRunSessionValues(runId, resolution),
+        });
+        // ADR-166 D3: every new run is placed on the local host at launch (epoch
+        // 1, `launch`); the driver binds to this assignment when it spawns.
+        await mintPlacement(tx as unknown as ExecutionDb, {
+          runId,
+          reason: "launch",
+          host: placementHost,
+        });
+
+        // A reused shared tree already has a workspaces row owned by its allocator
+        // (worktree_path is UNIQUE), so a reusing sibling inserts none. F3
+        // (ADR-102): the allocator/orphan-claimer insert is onConflictDoNothing on
+        // worktree_path so two concurrent allocators/claimers don't 23505 — one
+        // inserts, the other no-ops (its run still launches; the tree keeps exactly
+        // one row).
+        if (
+          workspace === "worktree" &&
+          worktreePath &&
+          branch &&
+          !reuseSharedTree
+        ) {
+          await tx
+            .insert(workspaces)
+            .values({
+              id: randomUUID(),
+              runId,
+              projectId: input.projectId,
+              branch,
+              worktreePath,
+              parentRepoPath: ctx.project.repoPath,
+              baseBranch: resolvedBranchBase,
+              baseCommit,
+              targetBranch: resolvedBranchBase,
+            })
+            .onConflictDoNothing({ target: workspaces.worktreePath });
+        }
+
+        if (input.taskId) {
+          await cancelOpenAgentQuestionsForTaskInTransaction(tx, {
+            taskId: input.taskId,
+            supersedingRunId: runId,
+          });
+        }
+
+        return true;
+      });
+
+      if (!inserted) {
+        // Only tear down a worktree THIS launch created — never a shared tree a
+        // sibling owns, nor an orphan dir we merely claimed (F3).
+        if (worktreePath && allocatedWorktree) {
           await removeWorktree({
             projectRepoPath: ctx.project.repoPath,
             worktreePath,
           }).catch(() => undefined);
         }
-        throw err;
+
+        return false;
       }
-
-      // M37 (ADR-102): record the allocator-vs-reuser decision for the shared
-      // tree. The allocator/claimer owns the single `workspaces` row (UNIQUE
-      // worktree_path, inserted with onConflictDoNothing); a reuser child gets none
-      // and the tree is resolved by root_run_id at promote.
-      log.info(
-        {
-          rootRunId: input.rootRunId,
-          worktreePath,
-          branch,
-          decision: reuseSharedTree ? "reuse" : "allocate",
-        },
-        reuseSharedTree
-          ? "shared worktree tree reused by sibling (no workspaces row of its own)"
-          : "shared worktree tree allocated (this child owns the workspaces row)",
-      );
-    } else {
-      branch = agentWorktreeBranchName({
-        prefix: ctx.project.branchPrefix ?? "maister/",
-        agentId: input.agentId,
-        runId,
-      });
-      worktreePath = agentWorkdirPath(ctx.project.slug, runId);
-      baseCommit = await resolveBaseCommit({
-        projectRepoPath: ctx.project.repoPath,
-        baseRef: resolvedBranchBase,
-      });
-      await addWorktree({
-        projectRepoPath: ctx.project.repoPath,
-        worktreePath,
-        branch,
-        startPoint: resolvedBranchBase,
-        provenance: {
-          version: 2,
-          runId,
-          parentRepoPath: ctx.project.repoPath,
-          projectId: ctx.project.id,
-          branch,
-          workspaceKind: "agent",
-          createdAt: new Date().toISOString(),
-        },
-      });
-      allocatedWorktree = true;
-    }
-  }
-
-  // M39 Phase 5 (ADR-106): resolve the effective runner policy (autoApply →
-  // B1/B2 axes, onBudgetBreach → the budget-terminal axis) in the Q3 order
-  // instance-override → agent recommended → project execution-policy default
-  // (then the supervised floor), and snapshot it onto the run so the budget
-  // watchdog + HITL boundary read the snapshot (never a post-launch projection).
-  // The project base is load-bearing: it carries the budget axis the agent
-  // recommendation never declares, so a project token ceiling actually binds an
-  // agent run.
-  const executionPolicy = applyDefaultBudgetForUnattended(
-    resolveAgentExecutionPolicy({
-      instanceOverride: ctx.link
-        .executionPolicyOverride as AgentExecutionPolicyRecommendation | null,
-      recommended: ctx.effective.parsed.recommended?.executionPolicy ?? null,
-      base: resolveExecutionPolicy({
-        projectDefault: ctx.project
-          .executionPolicyDefault as ExecutionPolicy | null,
-      }),
-    }),
-  );
-
-  // ADR-111 (D5): resolve the effective agent config ONCE here and snapshot it
-  // onto the run row. buildAgentPrompt reads THIS snapshot at spawn — never
-  // re-resolving from the (mutable) definition/link. null when the agent
-  // declares no config (the column stays null).
-  const resolvedConfig = resolveAgentConfig(
-    ctx.effective.parsed.config,
-    (ctx.link.config as Record<string, unknown> | null) ?? null,
-  );
-  const agentConfig =
-    Object.keys(resolvedConfig).length > 0 ? resolvedConfig : null;
-
-  log.debug(
-    {
-      runId,
-      agentId: input.agentId,
-      configKeys: agentConfig ? Object.keys(agentConfig) : [],
-    },
-    "[ADR-111] resolved agent config snapshot",
-  );
-
-  const runRow = {
-    id: runId,
-    runKind: "agent" as const,
-    executionDataPlaneMode,
-    agentChainDepth: chain.depth,
-    agentId: input.agentId,
-    executionPolicy,
-    agentConfig,
-    triggerSource: input.trigger.source,
-    triggerEventId: input.trigger.eventId ?? null,
-    triggerPayload: input.trigger.payload ?? null,
-    agentScheduleId: input.agentScheduleId ?? null,
-    agentWorkspace: workspace,
-    taskId: input.taskId ?? null,
-    projectId: input.projectId,
-    flowId: null,
-    // M42 (ADR-114): runner identity lives on `run_sessions` (inserted below).
-    status: "Pending" as const,
-    currentStepId: "agent",
-    flowVersion: "agent",
-    flowRevision: "manual",
-    // M37 (ADR-098): run-tree linkage. delegation_snapshot records the CHILD's
-    // launch-time effective agent-def (skill-context rule 207 — id + pinned
-    // revision only; the resolved runner stays in runner_snapshot above). Set
-    // only for a delegated child (parentRunId present).
-    parentRunId: input.parentRunId ?? null,
-    rootRunId: input.rootRunId ?? null,
-    launchMode: input.launchMode ?? null,
-    delegationSnapshot: input.parentRunId
-      ? {
-          agentDefinitionId: input.agentId,
-          revisionId: ctx.effective.packageInstallId,
-        }
-      : null,
-    // ADR-165: the launch-time public-result contract, written in the SAME
-    // insert as the run it binds. NULL when the delegation named no profile.
-    resultContract: input.resultContract ?? null,
-    // M37 Phase 8 (ADR-099): persistent swarm-member flags.
-    persistent: input.persistent ?? false,
-    addressableKey: input.addressableKey ?? null,
-    // M37 Phase 10 (ADR-099): worktree allocation mode — read by the scheduler
-    // serialization guard and by startAgentSession's shared-cwd resolution.
-    workspaceMode: input.workspaceMode ?? null,
-    // ADR-122 (T5.3): persist the launch-time ambient-brain decision (recorded
-    // for parity; standalone agent runs recall via the explicit MCP tools).
-    brainContext: input.brainContext ?? null,
-  };
-
-  assertRunKindInvariant({
-    id: runId,
-    runKind: "agent",
-    taskId: runRow.taskId,
-    flowId: null,
-    flowRevisionId: null,
-    flowVersion: runRow.flowVersion,
-    flowRevision: runRow.flowRevision,
-    agentId: input.agentId,
-  });
-
-  try {
-    const inserted = await _db.transaction(async (tx: Db) => {
-      // ADR-163: a DELEGATED child's depth + shared fan-out bound is decided
-      // here, in the same transaction as the run INSERT and under the
-      // per-orchestrator advisory lock, so the count includes every committed
-      // sibling of BOTH kinds and two concurrent delegations cannot both land.
-      // This one call guards every edge that reaches this launcher — the ext
-      // delegate route, run_plan's source launch, and the as-plan auto-launcher
-      // — because all of them arrive through this single insert. No-op for a
-      // top-level run (no parentRunId).
-      if (input.parentRunId) {
-        await admitDelegatedChild(tx, { parentRunId: input.parentRunId });
-      }
-
-      // Claim-first: the INSERT itself is the at-least-once dedup claim. The
-      // persistent addressable_key uniqueness is enforced by the pre-insert
-      // check above (the deterministic path); the partial index is the
-      // last-line backstop against a duplicate ROW (a true insert race just
-      // dedups here — no duplicate is ever written).
-      const rows = await tx
-        .insert(runs)
-        .values(runRow)
-        .onConflictDoNothing()
-        .returning({ id: runs.id });
-
-      if (rows.length === 0) return false;
-
-      // M42 (ADR-114): a standalone agent run is a single-`default`-session run.
-      await tx.insert(runSessions).values({
-        id: randomUUID(),
-        ...defaultRunSessionValues(runId, resolution),
-      });
-      // ADR-166 D3: every new run is placed on the local host at launch (epoch
-      // 1, `launch`); the driver binds to this assignment when it spawns.
-      await mintPlacement(tx as unknown as ExecutionDb, {
-        runId,
-        reason: "launch",
-        host: placementHost,
-      });
-
-      // A reused shared tree already has a workspaces row owned by its allocator
-      // (worktree_path is UNIQUE), so a reusing sibling inserts none. F3
-      // (ADR-102): the allocator/orphan-claimer insert is onConflictDoNothing on
-      // worktree_path so two concurrent allocators/claimers don't 23505 — one
-      // inserts, the other no-ops (its run still launches; the tree keeps exactly
-      // one row).
-      if (
-        workspace === "worktree" &&
-        worktreePath &&
-        branch &&
-        !reuseSharedTree
-      ) {
-        await tx
-          .insert(workspaces)
-          .values({
-            id: randomUUID(),
-            runId,
-            projectId: input.projectId,
-            branch,
-            worktreePath,
-            parentRepoPath: ctx.project.repoPath,
-            baseBranch: resolvedBranchBase,
-            baseCommit,
-            targetBranch: resolvedBranchBase,
-          })
-          .onConflictDoNothing({ target: workspaces.worktreePath });
-      }
-
-      if (input.taskId) {
-        await cancelOpenAgentQuestionsForTaskInTransaction(tx, {
-          taskId: input.taskId,
-          supersedingRunId: runId,
-        });
-      }
-
-      return true;
-    });
-
-    if (!inserted) {
-      // Only tear down a worktree THIS launch created — never a shared tree a
-      // sibling owns, nor an orphan dir we merely claimed (F3).
+    } catch (err) {
       if (worktreePath && allocatedWorktree) {
         await removeWorktree({
           projectRepoPath: ctx.project.repoPath,
           worktreePath,
         }).catch(() => undefined);
       }
+      throw err;
+    }
 
-      return {
-        deduped: true,
-        triggerEventId: input.trigger.eventId ?? -1,
-      };
-    }
-  } catch (err) {
-    if (worktreePath && allocatedWorktree) {
-      await removeWorktree({
-        projectRepoPath: ctx.project.repoPath,
-        worktreePath,
-      }).catch(() => undefined);
-    }
-    throw err;
+    return true;
+  };
+  let inserted: boolean;
+
+  if (workspace === "worktree" && isShared) {
+    const allocationDirectory = sharedAgentWorktreesDirectory(ctx.project.slug);
+
+    await mkdir(allocationDirectory, { recursive: true });
+    inserted = await withAgentMaterializationLock(
+      allocationDirectory,
+      allocateAndPersist,
+    );
+  } else {
+    inserted = await allocateAndPersist();
+  }
+
+  if (!inserted) {
+    return {
+      deduped: true,
+      triggerEventId: input.trigger.eventId ?? -1,
+    };
   }
 
   if (workspace === "none") {
@@ -2650,7 +2675,7 @@ async function dispatchStoredAgentTurn(
   const draft = turn.variant === "consensus_draft";
 
   observeOwnedAgentSession(db, execution, turn, sessionId, signal);
-  await waitForPromptIncarnation(db, execution.client, sessionId);
+  await waitForPromptIncarnation(db, execution.client, sessionId, signal);
   const handle = await execution.client.prompt(
     sessionId,
     { stepId: "agent", prompt: turn.prompt },

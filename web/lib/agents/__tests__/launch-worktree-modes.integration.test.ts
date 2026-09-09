@@ -351,11 +351,9 @@ describe("M37 Phase 10 — worktree allocation modes via launchAgentRun", () => 
     expect(trees.filter((w) => w.path === sharedPath)).toHaveLength(1);
   });
 
-  // C4 (real two-racer): two shared-mode children allocating CONCURRENTLY can
-  // both pass the listWorktrees check before either addWorktree completes (the
-  // TOCTOU /aif-review flagged). The idempotent allocation (catch → re-check →
-  // reuse, else typed CONFLICT) must converge to exactly ONE tree + ONE
-  // workspaces row, and NEVER surface a raw git error as a 500.
+  // C4: concurrent shared launches serialize allocation through the worktree
+  // mutex, including provenance and the allocator-row commit. They converge to
+  // one tree and one matching owner; bounded contention stays a typed CONFLICT.
   it("(C4) two CONCURRENT shared-mode allocations converge to one tree (no raw 500)", async () => {
     const ids = await seedPackageWithAgents([
       { stem: "coordinator", workspace: "worktree" },
@@ -387,8 +385,16 @@ describe("M37 Phase 10 — worktree allocation modes via launchAgentRun", () => 
       }
     }
 
-    // Exactly one workspaces row + one git worktree for the shared path.
-    expect(await workspaceRows(sharedPath)).toHaveLength(1);
+    // The single row and immutable provenance must name the same allocator.
+    const rows = await workspaceRows(sharedPath);
+
+    expect(rows).toHaveLength(1);
+    const { readWorktreeProvenanceMetadata } = await import(
+      "@/lib/worktree-provenance"
+    );
+    const provenance = await readWorktreeProvenanceMetadata(sharedPath);
+
+    expect(provenance.runId).toBe(rows[0].run_id);
     const { listWorktrees } = await import("@/lib/worktree");
     const trees = await listWorktrees(repoPath);
 
@@ -780,5 +786,46 @@ describe("M39 (ADR-106) — branch_base resolution drives the agent worktree", (
     expect(
       (await pool.query(`SELECT count(*)::int AS n FROM "runs"`)).rows[0].n,
     ).toBe(0);
+  });
+
+  it("a refused shared branch_base leaves the parent checkout clean", async () => {
+    const ids = await seedPackageWithAgents([
+      { stem: "coordinator", workspace: "worktree" },
+      {
+        stem: "badbase",
+        workspace: "worktree",
+        recommendedYaml: "  branch_base: nonexistent",
+      },
+    ]);
+    const root = await insertRoot();
+
+    await expect(
+      launchAgentRun({
+        agentId: ids.badbase,
+        projectId,
+        parentRunId: root,
+        rootRunId: root,
+        workspaceMode: "shared",
+        trigger: { source: "manual" },
+        db,
+      }),
+    ).rejects.toMatchObject({ code: "PRECONDITION" });
+
+    expect((await pool.query(`SELECT id FROM "runs"`)).rows).toEqual([
+      { id: root },
+    ]);
+    expect(
+      await workspaceRows(sharedAgentWorktreePath(projectSlug, root)),
+    ).toEqual([]);
+    const { stdout } = await exec("git", [
+      "-C",
+      repoPath,
+      "-c",
+      `core.excludesFile=${os.devNull}`,
+      "status",
+      "--porcelain",
+    ]);
+
+    expect(stdout).toBe("");
   });
 });

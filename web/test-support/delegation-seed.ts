@@ -54,6 +54,7 @@ export async function initGitRepo(): Promise<string> {
 }
 
 const TABLES_IN_DELETE_ORDER = [
+  "execution_commands",
   "domain_events",
   "run_sessions",
   "workspaces",

@@ -1460,7 +1460,12 @@ async function runNewSession(
       const hostSessionId = session.hostSessionId;
       const promptOwner = ctx.promptOwner;
 
-      await waitForPromptIncarnation(ctx.db ?? getDb(), client, hostSessionId);
+      await waitForPromptIncarnation(
+        ctx.db ?? getDb(),
+        client,
+        hostSessionId,
+        ctx.signal,
+      );
       const handle = await client.prompt(
         hostSessionId,
         {

@@ -20,6 +20,7 @@ export async function seedNodePromptOwner(
   hostSessionId: string,
   opts: {
     stepId?: string;
+    attempt?: number;
     promptOrdinal?: number;
     startedAt?: Date;
   } = {},
@@ -48,7 +49,7 @@ export async function seedNodePromptOwner(
       runId,
       nodeId,
       nodeType: "ai_coding",
-      attempt: 1,
+      attempt: opts.attempt ?? 1,
       status: "Running",
       executionAssignmentId: client.assignment.id,
       actionPromptOrdinal: promptOrdinal,

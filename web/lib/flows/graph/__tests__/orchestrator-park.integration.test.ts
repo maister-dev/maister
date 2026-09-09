@@ -119,6 +119,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  await pool.query(`DELETE FROM "execution_commands"`);
   await pool.query(`DELETE FROM "runs"`);
   await pool.query(`DELETE FROM "tasks"`);
 });

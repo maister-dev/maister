@@ -11,7 +11,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 // the type-only clash (matches emit-run-status.integration.test.ts).
 import * as fullSchema from "@/lib/db/schema";
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
-import { legacyScratchApiToExecution } from "@/test-support/execution-host-module-mock";
+import { seedWorkspace } from "@/test-support/execution-host-seed";
 import {
   createFakeExecutionHost,
   fakeExecutionHosts,
@@ -238,6 +238,8 @@ describe("respondToHitl (permission) → hitl.responded", () => {
       kind: "permission",
     });
 
+    await fakeExecutionHosts(db, { fake, runId });
+
     // The pause's live session on the host — the response is delivered to it.
     fake.sessions.set("sup-1", {
       sessionId: "sup-1",
@@ -357,31 +359,6 @@ async function seedScratchRun(): Promise<{
   return { projectId, runId };
 }
 
-// Fake supervisor api: stream yields ONLY one permission_request (drives
-// persistPermissionRequest → hitl insert + run→NeedsInput in one tx), then the
-// generator returns so the consumer loop completes naturally — NeedsInput is the
-// terminal observed status (a trailing session.exited would re-project the run
-// to Review and mask the co-emit). sendScratchPromptAndProjectEvents aborts +
-// awaits the consumer in its finally, so the write commits before the call
-// resolves.
-function fakePermissionApi() {
-  return {
-    cancelPermission: async () => undefined,
-    sendPrompt: async () => ({ stopReason: "end_turn" as const }),
-
-    streamSession: async function* () {
-      yield {
-        type: "session.permission_request" as const,
-        sessionId: "sess-1",
-        monotonicId: 1,
-        requestId: "req-scratch-1",
-        options: [{ optionId: "allow" }, { optionId: "deny" }],
-        toolCall: { title: "Write file" },
-      };
-    },
-  };
-}
-
 // ===========================================================================
 // C. run.needs_input ∧ hitl.requested (co-emit, atomic)
 // ===========================================================================
@@ -389,14 +366,40 @@ describe("scratch permission flow → run.needs_input + hitl.requested co-emit",
   it("winner: a permission_request captures BOTH run.needs_input AND hitl.requested atomically", async () => {
     const { projectId, runId } = await seedScratchRun();
 
+    await seedWorkspace(db, {
+      runId,
+      projectId,
+      worktreePath: `/tmp/scratch-hitl/${runId}`,
+      parentRepoPath: `/tmp/scratch-hitl/${projectId}`,
+    });
+    const { hosts } = await fakeExecutionHosts(db, { fake, runId });
+    const execution = await hosts.executionFor(runId);
+    const session = await execution.client.createSession({
+      stepId: "scratch",
+      executor: { agent: "claude", model: "mock" },
+    });
+
+    fake.setPromptBehavior(async ({ sessionId }) => {
+      fake.pushEvent(sessionId, {
+        type: "session.permission_request",
+        sessionId,
+        monotonicId: 1,
+        requestId: "req-scratch-1",
+        options: [{ optionId: "allow" }, { optionId: "deny" }],
+        toolCall: { title: "Write file" },
+      });
+
+      return { stopReason: "end_turn", meta: null };
+    });
+
     await sendScratchPromptAndProjectEvents({
       runId,
-      sessionId: "sess-1",
+      sessionId: session.hostSessionId,
       stepId: "scratch",
       prompt: "go",
       owner: { variant: "initial" },
       db,
-      execution: legacyScratchApiToExecution(fakePermissionApi() as never),
+      execution,
     });
 
     expect(await statusOf(runId)).toBe("NeedsInput");

@@ -161,6 +161,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+  await db.delete(schema.executionCommands);
   await db.delete(schema.nodeAttempts);
   await db.delete(schema.runs);
   await db.delete(schema.tasks);
