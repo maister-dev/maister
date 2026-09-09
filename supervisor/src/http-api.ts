@@ -67,6 +67,7 @@ import { contentBlockUriViolation } from "./prompt-confinement";
 import { resolvePromptRuntimeObjects } from "./prompt-runtime-objects";
 import { SESSION_EVENT_CHANNEL } from "./registry";
 import { RuntimeEventPublisher } from "./runtime-event-publisher";
+import { completeRecoveredRuntimeObjectReceipts } from "./runtime-object-recovery";
 import {
   MAX_RUNTIME_OBJECT_BYTES,
   RuntimeObjectRegistry,
@@ -553,6 +554,26 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     undefined,
     runtimeObjects,
   );
+  // Durable object intents settle before any route exists: tombstones finish,
+  // interrupted spools go, and sealed/deleted rows complete their receipts.
+  const objectRecovery = runtimeObjects.recoverAfterRestart();
+  const recoveredObjectReceipts = completeRecoveredRuntimeObjectReceipts({
+    state: hostState,
+    objects: runtimeObjects,
+    runtimeEvents,
+    logger,
+  });
+
+  if (
+    objectRecovery.deletionsFinished > 0 ||
+    objectRecovery.partialsDiscarded > 0 ||
+    recoveredObjectReceipts > 0
+  ) {
+    logger.info(
+      { ...objectRecovery, recoveredObjectReceipts },
+      "supervisor-startup-recovered-runtime-objects",
+    );
+  }
   const workspaces = new WorkspaceRegistry({
     state: hostState,
     roots: opts.workspaceRoots,

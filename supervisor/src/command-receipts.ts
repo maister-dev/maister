@@ -61,6 +61,14 @@ type ExecuteCommandArgs = {
 
 export const REPLAYED_HEADER = "x-maister-command-replayed";
 
+// D5: reserve and delete are idempotent over the durable object row, so an
+// accepted receipt with no live request is an interrupted effect to re-run
+// against that row, never a lost ACP turn.
+const RESTARTABLE_OBJECT_KINDS = new Set<string>([
+  "runtime_object.reserve",
+  "runtime_object.delete",
+]);
+
 export class CommandReceipts {
   private readonly inflight = new Map<string, Promise<CommandOutcome>>();
   private readonly logger: Logger;
@@ -146,6 +154,17 @@ export class CommandReceipts {
       );
 
       return { ...(await joined), replayed: true };
+    }
+
+    if (existing && RESTARTABLE_OBJECT_KINDS.has(envelope.command.kind)) {
+      const promise = this.runFresh(args, existing.receivedAt);
+
+      this.inflight.set(commandId, promise);
+      try {
+        return { ...(await promise), replayed: false };
+      } finally {
+        this.inflight.delete(commandId);
+      }
     }
 
     if (existing) {

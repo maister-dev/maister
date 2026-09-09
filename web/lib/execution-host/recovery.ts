@@ -591,6 +591,21 @@ export async function recoverExecutionCommands(
 
       return;
     }
+    if (
+      row.kind === "runtime_object.delete" &&
+      row.state === "delivering" &&
+      receipt.phase === "accepted" &&
+      !receipt.inflight
+    ) {
+      // D5: the host re-runs an accepted delete against its durable object
+      // row, so the exact same request is redelivered instead of losing the
+      // turn and stranding the catalogue's delete intent.
+      const requeued = await requeueDelivering(db, row.id, { logger, now: at });
+
+      if (requeued.changed && requeued.row) await redeliver(requeued.row);
+
+      return;
+    }
     summary[await foldReceipt(db, row, receipt, at, logger)] += 1;
   };
 

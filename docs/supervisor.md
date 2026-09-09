@@ -479,8 +479,14 @@ receipt-guarded execution (a duplicate prompt id replays after the session
 exited; a duplicate create id replays after its handle was released); a
 duplicate while the original is in flight (any kind) **joins** it; an
 `accepted` receipt with no in-flight promise (restart mid-turn) → `409
-PRECONDITION turn_lost`; a receipt write failure → `500 ACP_PROTOCOL` (the
-effect may have happened — the web reconcile catches an orphan session).
+PRECONDITION turn_lost`, except `runtime_object.reserve` / `runtime_object.delete`,
+which re-run against the durable object row (uploads restart from byte zero); a
+receipt write failure → `500 ACP_PROTOCOL` (the
+effect may have happened — the web reconcile catches an orphan session). At
+boot, before any route exists, the host finishes `deleting` tombstones, discards
+interrupted upload spools and completes accepted upload/delete receipts whose
+object row already sealed or deleted, emitting the matching canonical event
+(`supervisor-startup-recovered-runtime-objects`).
 Receipts prune at boot and hourly after their durable eligibility checks.
 Prompt admission and completion emit durable `session.command` events
 (`phase: accepted`, then `phase: completed` with `status` + `result` / `error`)

@@ -1,6 +1,6 @@
 # Execution runtime objects
 
-**Status:** Implemented host registry, reserve/upload/delete routes, manager catalog and **safe content delivery (AB-12, S3.4)**; **Implemented native intent/seal reconciliation (AB-09, S3.1)**; **Implemented host seal/read verification (AB-13)**; **Implemented manager message-integrity (AB-15, S3.3)**; **Designed** crash-gap recovery and fair retention corrections (AB-14). Bytes remain host-owned and manager locators remain opaque.
+**Status:** Implemented host registry, reserve/upload/delete routes, manager catalog and **safe content delivery (AB-12, S3.4)**; **Implemented native intent/seal reconciliation (AB-09, S3.1)**; **Implemented host seal/read verification (AB-13)**; **Implemented manager message-integrity (AB-15, S3.3)**; **Implemented crash-gap recovery (S3.5)**; **Designed** fair retention corrections (AB-14). Bytes remain host-owned and manager locators remain opaque.
 
 
 ## Purpose
@@ -86,7 +86,8 @@ historical evidence. Session content references and overflow segments additional
 prove the original committed command and session. This exception never changes a
 successor assignment or creates an object from an unsolicited event: missing or
 conflicting intent produces a permanent projection failure for operator repair.
-The historical-import origin and crash-gap repair remain the S4/S3.5 contracts below.
+The historical-import origin remains the S4 contract below; crash-gap repair is
+described under [Crash-gap recovery](#crash-gap-recovery-implemented--s35).
 
 The real Postgres/supervisor suite `runtime-object-lifecycle.integration.test.ts`
 executes both ACK/event orders, lost ACK with the same command, receipt recovery,
@@ -191,6 +192,41 @@ content proxy routes retain the shared attachment policy and forward the verifie
 Content-Digest, Repr-Digest and ETag. Postgres/real-supervisor lifecycle cases,
 real-HTTP binary transport cases and the Chromium content lane independently
 hash full and nonzero-range bytes; they also check refusal and resource cleanup.
+
+## Crash-gap recovery (Implemented — S3.5)
+
+A host crash between a durable object effect and its receipt/event write, or
+between an accepted command and its effect, settles from durable state and
+never invents availability. Before the host registers a route, startup repair
+runs in order: every `deleting` row finishes its unlink, moves to `deleted` and
+releases its file charge; every `pending` non-producer object loses its
+interrupted `.partial` spool and its written-byte charge returns to zero so the
+retried upload starts from byte zero; every accepted `runtime_object.upload`
+or `runtime_object.delete` receipt whose object row already sealed or deleted
+under the same run/assignment/epoch completes with the metadata the normal
+route would have returned, together with the matching `runtime_object.available`
+or terminal `runtime_object.state` outbox event (`supervisor-startup-recovered-runtime-objects`).
+A receipt whose row never sealed or never tombstoned stays `accepted` with its
+disposition logged; outbox pressure defers a settlement to the next boot.
+
+`runtime_object.reserve` and `runtime_object.delete` are restartable over the
+durable object row, like uploads: an accepted receipt with no live request is
+re-run against that row, not refused as `turn_lost`. Manager recovery therefore
+redelivers a `delivering` delete whose host receipt is `accepted` without an
+in-flight turn instead of failing it and stranding the catalogue's `deleting`
+intent. A reserve receipt carries no object target, so a reserve interrupted
+before its receipt completes fails as `turn_lost` and heals through the caller's
+idempotent re-reserve with a new command id; the catalogue row keeps its
+declarations. A late canonical availability for a deleted object is historical
+evidence: the reducer leaves the tombstone and the consumer is not poisoned.
+
+Host cases (`runtime-objects.integration.test.ts`): a receipt write lost after the
+seal, a crash after the tombstone commit, and a stale partial spool on the retried
+upload, each across a same-root restart. Manager cases
+(`runtime-object-lifecycle.integration.test.ts`, real supervisor restart): upload
+and delete acknowledgements lost across the restart converge through receipt
+recovery and the durable outbox, a late availability neither resurrects nor
+poisons, and an accepted-but-effectless delete is redelivered to completion.
 
 ## Expectations
 

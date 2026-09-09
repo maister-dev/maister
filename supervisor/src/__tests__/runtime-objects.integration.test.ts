@@ -1142,3 +1142,258 @@ describe("runtime object transport", () => {
     expect(JSON.stringify(outbox)).not.toContain("runtime-objects/");
   });
 });
+
+describe("runtime object crash-gap recovery", () => {
+  const payload = Buffer.from('{"ok":true}', "utf8");
+  const checksum = createHash("sha256").update(payload).digest("hex");
+
+  async function reservedHost() {
+    const host = await bootHost({ runtimeRoot: await tempRoot() });
+
+    booted.push(host);
+    const fence = {
+      hostKey: host.hostState.hostKey,
+      assignmentId: randomUUID(),
+      assignmentEpoch: 1,
+      runId: `run-${randomUUID().slice(0, 8)}`,
+    };
+    const objectId = randomUUID();
+    const reserved = await postJson(
+      `${host.url}/runtime-objects`,
+      envelope("runtime_object.reserve", fence, {
+        objectId,
+        kind: "evidence",
+        logicalName: "verification.json",
+        mimeType: "application/json",
+        sizeBytes: payload.byteLength,
+        sha256: checksum,
+        generation: 1,
+        retentionClass: "run",
+      }),
+    );
+
+    expect(reserved.status).toBe(201);
+
+    return { host, fence, objectId };
+  }
+
+  function uploadHeaders(
+    fence: { assignmentId: string },
+    commandId: string,
+  ): Record<string, string> {
+    return {
+      "content-type": "application/octet-stream",
+      "content-length": String(payload.byteLength),
+      "content-digest": `sha-256=:${Buffer.from(checksum, "hex").toString("base64")}:`,
+      "x-maister-command-id": commandId,
+      "x-maister-command-issued-at": new Date(0).toISOString(),
+      "x-maister-assignment-id": fence.assignmentId,
+      "x-maister-assignment-epoch": "1",
+      "x-maister-object-generation": "1",
+      "x-maister-sha256": checksum,
+    };
+  }
+
+  function upload(
+    host: BootedHost,
+    objectId: string,
+    headers: Record<string, string>,
+  ): Promise<Response> {
+    return fetch(`${host.url}/runtime-objects/${objectId}/content`, {
+      method: "PUT",
+      headers,
+      body: payload,
+    });
+  }
+
+  async function restart(host: BootedHost): Promise<BootedHost> {
+    await host.stop();
+    booted.splice(booted.indexOf(host), 1);
+    const restarted = await bootHost({
+      runtimeRoot: host.runtimeRoot,
+      stateDir: host.stateDir,
+    });
+
+    booted.push(restarted);
+
+    return restarted;
+  }
+
+  function exists(path: string): Promise<boolean> {
+    return filesystem.stat(path).then(
+      () => true,
+      () => false,
+    );
+  }
+
+  function objectEvents(host: BootedHost, objectId: string) {
+    return host.hostState
+      .runtimeEventsAfter(host.hostState.getRuntimeEventStreamId(), null)
+      .filter(
+        (event) =>
+          (event.envelope.payload as { objectId?: unknown }).objectId ===
+          objectId,
+      );
+  }
+
+  it("completes a sealed upload's receipt and availability event after a restart that lost the receipt write", async () => {
+    const { host, fence, objectId } = await reservedHost();
+    const commandId = randomUUID();
+    const headers = uploadHeaders(fence, commandId);
+    const original = host.hostState.putReceiptWithRuntimeEvent.bind(
+      host.hostState,
+    );
+    const crash = vi
+      .spyOn(host.hostState, "putReceiptWithRuntimeEvent")
+      .mockImplementation((row, event, admission) => {
+        if (row.commandId === commandId && row.phase === "completed")
+          throw new Error("simulated crash before the completed receipt");
+
+        return original(row, event, admission);
+      });
+    const interrupted = await upload(host, objectId, headers);
+
+    crash.mockRestore();
+    await interrupted.text();
+    expect(interrupted.ok).toBe(false);
+    expect(host.hostState.getRuntimeObject(objectId)).toMatchObject({
+      state: "available",
+      sha256: checksum,
+    });
+    expect(host.hostState.getReceipt(commandId)?.phase).toBe("accepted");
+
+    const restarted = await restart(host);
+    const receipt = restarted.hostState.getReceipt(commandId);
+    const available = objectEvents(restarted, objectId).filter(
+      (event) => event.envelope.eventType === "runtime_object.available",
+    );
+
+    expect(receipt).toMatchObject({
+      phase: "completed",
+      httpStatus: 200,
+      body: { objectId, state: "available", sha256: checksum },
+    });
+    expect(available).toHaveLength(1);
+    expect(receipt?.eventId).toBe(available[0].eventId);
+    const replay = await upload(restarted, objectId, headers);
+
+    expect(replay.status).toBe(200);
+    expect(replay.headers.get("x-maister-command-replayed")).toBe("true");
+    expect(await replay.json()).toMatchObject({ objectId, state: "available" });
+    const content = await fetch(
+      `${restarted.url}/runtime-objects/${objectId}/content`,
+    );
+
+    expect(content.status).toBe(200);
+    expect(Buffer.from(await content.arrayBuffer())).toEqual(payload);
+  });
+
+  it("finishes an interrupted deletion and completes its receipt after a restart", async () => {
+    const { host, fence, objectId } = await reservedHost();
+    const sealed = await upload(
+      host,
+      objectId,
+      uploadHeaders(fence, randomUUID()),
+    );
+
+    expect(sealed.status).toBe(200);
+    await sealed.text();
+    const privatePath = host.hostState.getRuntimeObject(objectId)!.privatePath;
+    const commandId = randomUUID();
+    const deletion = envelope(
+      "runtime_object.delete",
+      fence,
+      { generation: 1 },
+      commandId,
+    );
+    const original = host.hostState.updateRuntimeObject.bind(host.hostState);
+    const crash = vi
+      .spyOn(host.hostState, "updateRuntimeObject")
+      .mockImplementation((id, patch) => {
+        const row = original(id, patch);
+
+        if (id === objectId && patch.state === "deleting")
+          throw new Error("simulated crash after the tombstone commit");
+
+        return row;
+      });
+    const interrupted = await postJson(
+      `${host.url}/runtime-objects/${objectId}`,
+      deletion,
+      "DELETE",
+    );
+
+    crash.mockRestore();
+    expect(interrupted.status).toBeGreaterThanOrEqual(500);
+    expect(host.hostState.getRuntimeObject(objectId)?.state).toBe("deleting");
+    expect(await exists(privatePath)).toBe(true);
+    expect(host.hostState.getReceipt(commandId)?.phase).toBe("accepted");
+
+    const restarted = await restart(host);
+    const deleted = objectEvents(restarted, objectId).filter(
+      (event) =>
+        event.envelope.eventType === "runtime_object.state" &&
+        (event.envelope.payload as { state?: unknown }).state === "deleted",
+    );
+
+    expect(await exists(privatePath)).toBe(false);
+    expect(restarted.hostState.getRuntimeObject(objectId)).toMatchObject({
+      state: "deleted",
+      sha256: checksum,
+    });
+    expect(
+      restarted.hostState.getRuntimeObject(objectId)?.deletedAt,
+    ).not.toBeNull();
+    expect(restarted.hostState.getReceipt(commandId)).toMatchObject({
+      phase: "completed",
+      httpStatus: 204,
+    });
+    expect(deleted).toHaveLength(1);
+    expect(
+      restarted.hostState.getRuntimeFile(`object:${objectId}`),
+    ).toMatchObject({ capacityBytes: 0, writtenBytes: 0, sealed: true });
+    const replay = await postJson(
+      `${restarted.url}/runtime-objects/${objectId}`,
+      deletion,
+      "DELETE",
+    );
+
+    expect(replay.status).toBe(204);
+    expect(replay.headers.get("x-maister-command-replayed")).toBe("true");
+  });
+
+  it("retries an interrupted upload from zero after a restart without tripping on its stale partial file", async () => {
+    const { host, fence, objectId } = await reservedHost();
+    const row = host.hostState.getRuntimeObject(objectId)!;
+    const partial = `${row.privatePath}.1.partial`;
+
+    await writeFile(partial, payload.subarray(0, 5), { mode: 0o600 });
+    host.hostState.recordRuntimeFileBytes(`object:${objectId}`, 5);
+
+    const restarted = await restart(host);
+    const retried = await upload(
+      restarted,
+      objectId,
+      uploadHeaders(fence, randomUUID()),
+    );
+
+    expect(retried.status).toBe(200);
+    expect(await retried.json()).toMatchObject({
+      objectId,
+      state: "available",
+    });
+    expect(await exists(partial)).toBe(false);
+    expect(restarted.hostState.getRuntimeObject(objectId)).toMatchObject({
+      state: "available",
+      sha256: checksum,
+    });
+    expect(
+      restarted.hostState.getRuntimeFile(`object:${objectId}`),
+    ).toMatchObject({ writtenBytes: payload.byteLength, sealed: true });
+    const content = await fetch(
+      `${restarted.url}/runtime-objects/${objectId}/content`,
+    );
+
+    expect(Buffer.from(await content.arrayBuffer())).toEqual(payload);
+  });
+});

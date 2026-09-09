@@ -149,8 +149,19 @@ export async function bootHost(
       );
       const failed = terminals.find((result) => result.status === "rejected");
       const storageAvailable = hostState.runtimeStorageAvailable();
+      // Production parity (main.ts): a keep-alive socket whose streamed
+      // response finished a tick ago is not yet idle when close() sweeps, and
+      // the client honours the 72 s keep-alive hint, so force it after a grace.
+      const forceClose = setTimeout(
+        () => app.server.closeAllConnections(),
+        1_000,
+      );
 
-      await app.close();
+      try {
+        await app.close();
+      } finally {
+        clearTimeout(forceClose);
+      }
       registry.clear("test-shutdown");
       if (ownsHostState) hostState.close();
       if (failed?.status === "rejected" && storageAvailable)

@@ -16,10 +16,12 @@ import {
   closeSync,
   fsyncSync,
   fstatSync,
+  lstatSync,
   mkdirSync,
   openSync,
   renameSync,
   readSync,
+  rmSync,
   writeSync,
   unlinkSync,
 } from "node:fs";
@@ -131,6 +133,59 @@ export class RuntimeObjectRegistry {
     private readonly now: () => Date = () => new Date(),
     private readonly logger?: Logger,
   ) {}
+
+  /** Finish tombstoned deletions and discard interrupted upload spools before
+   * the host accepts traffic. A crash between a durable intent and its file
+   * effect must neither strand charged bytes nor block the retried command;
+   * producer paths stay untouched because their owners are prompt receipts. */
+  recoverAfterRestart(): {
+    deletionsFinished: number;
+    partialsDiscarded: number;
+  } {
+    let deletionsFinished = 0;
+    let partialsDiscarded = 0;
+
+    for (const object of this.objectsInState("deleting")) {
+      const file = this.state.getRuntimeFile(`object:${object.id}`);
+
+      rmSync(object.privatePath, { force: true });
+      if (file?.temporaryPath) rmSync(file.temporaryPath, { force: true });
+      this.state.updateRuntimeObject(object.id, {
+        state: "deleted",
+        sizeBytes: object.sizeBytes,
+        sha256: object.sha256,
+        sealedAt: object.sealedAt,
+        deletedAt: this.now().toISOString(),
+        lastError: null,
+      });
+      this.state.releaseRuntimeFile(`object:${object.id}`);
+      deletionsFinished += 1;
+    }
+    for (const object of this.objectsInState("pending")) {
+      const partial = `${object.privatePath}.${object.generation}.partial`;
+
+      if (object.producerPath !== null || !entryExists(partial)) continue;
+      rmSync(partial, { force: true });
+      this.state.recordRuntimeFileBytes(`object:${object.id}`, 0);
+      partialsDiscarded += 1;
+    }
+
+    return { deletionsFinished, partialsDiscarded };
+  }
+
+  private *objectsInState(
+    state: HostRuntimeObjectRow["state"],
+  ): Generator<HostRuntimeObjectRow> {
+    let afterId = "";
+
+    for (;;) {
+      const page = this.state.runtimeObjectsByState(state, afterId, 100);
+
+      if (page.length === 0) return;
+      yield* page;
+      afterId = page[page.length - 1].id;
+    }
+  }
 
   /** Publishes a bounded producer segment before its synchronous SQLite event. */
   captureSessionContent(input: {
@@ -1073,6 +1128,17 @@ export class RuntimeObjectRegistry {
       if (file && !file.sealed && this.state.runtimeStorageAvailable())
         this.state.releaseRuntimeFileWriter(`object:${object.id}`, writerToken);
     }
+  }
+}
+
+function entryExists(path: string): boolean {
+  try {
+    lstatSync(path);
+
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
   }
 }
 

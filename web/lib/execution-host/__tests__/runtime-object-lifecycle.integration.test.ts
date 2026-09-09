@@ -8,6 +8,8 @@ import type { RealSupervisor } from "@/test-support/real-supervisor";
 
 import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp } from "node:fs/promises";
+import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
 import { and, eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -29,6 +31,7 @@ import {
   resetRegistrarStateForTests,
 } from "../registrar";
 import { primeResolverForTests, resetResolverForTests } from "../resolver";
+import { reduceRuntimeObjectEvidence } from "../runtime-object-evidence";
 import { readRuntimeObjectContent } from "../runtime-objects";
 
 import {
@@ -599,5 +602,235 @@ describe("runtime object intent and seal reconciliation through a real host", ()
     expect(summary.poisoned).toBe(true);
     expect(await catalogue(objectId)).toBeUndefined();
     expect((await catalogue(reservation.objectId)).state).toBe("pending");
+  });
+});
+
+describe("runtime object crash-gap recovery through a real host restart", () => {
+  function binding(input: {
+    runId: string;
+    assignment: { id: string; epoch: number };
+    objectId: string;
+    generation: number;
+  }) {
+    return {
+      objectId: input.objectId,
+      runId: input.runId,
+      executionHostId: host.id,
+      executionAssignmentId: input.assignment.id,
+      assignmentEpoch: input.assignment.epoch,
+      generation: input.generation,
+    };
+  }
+
+  async function seededDelete(input: {
+    runId: string;
+    assignment: { id: string; epoch: number };
+    objectId: string;
+    generation: number;
+  }) {
+    const command = await insertCommand(db, {
+      runId: input.runId,
+      assignmentId: input.assignment.id,
+      hostId: host.id,
+      assignmentEpoch: input.assignment.epoch,
+      kind: "runtime_object.delete",
+      targetSessionId: input.objectId,
+      payload: { generation: input.generation },
+      maxAttempts: 3,
+      driverless: true,
+    });
+
+    await db.transaction((tx) =>
+      reduceRuntimeObjectEvidence(tx, binding(input), {
+        kind: "state",
+        source: "delete_intent",
+        state: "deleting",
+        deletedAt: null,
+      }),
+    );
+    await claimDelivering(db, command.id, 0);
+
+    return {
+      command,
+      envelope: buildEnvelope({
+        commandId: command.id,
+        kind: "runtime_object.delete",
+        runId: input.runId,
+        hostKey: host.hostKey,
+        assignmentId: input.assignment.id,
+        assignmentEpoch: input.assignment.epoch,
+        payload: { generation: input.generation },
+      }),
+    };
+  }
+
+  it("recovers an upload whose acknowledgement was lost across a host restart", async () => {
+    const { runId, assignment, input } = await fixture();
+    const payload = {
+      generation: input.generation,
+      sizeBytes: input.bytes.byteLength,
+      sha256: input.sha256,
+    };
+    const command = await insertCommand(db, {
+      runId,
+      assignmentId: assignment.id,
+      hostId: host.id,
+      assignmentEpoch: assignment.epoch,
+      kind: "runtime_object.upload",
+      targetSessionId: input.objectId,
+      payload,
+      maxAttempts: 3,
+      driverless: false,
+    });
+
+    await claimDelivering(db, command.id, 0);
+    const metadata = await transport.uploadRuntimeObject({
+      objectId: input.objectId,
+      bytes: input.bytes,
+      envelope: buildEnvelope({
+        commandId: command.id,
+        kind: "runtime_object.upload",
+        runId,
+        hostKey: host.hostKey,
+        assignmentId: assignment.id,
+        assignmentEpoch: assignment.epoch,
+        payload,
+      }),
+    });
+
+    supervisor = await supervisor.restart();
+    const summary = await recoverExecutionCommands({
+      db,
+      transport,
+      graceMs: 0,
+    });
+
+    expect(summary.errors).toEqual([]);
+    expect(await getCommand(db, command.id)).toMatchObject({
+      state: "succeeded",
+    });
+    expect(await catalogue(input.objectId)).toMatchObject({
+      state: "pending",
+      sha256: input.sha256,
+      sealedAt: new Date(metadata.sealedAt!),
+    });
+    await deliverAvailable(input.objectId);
+    expect((await catalogue(input.objectId)).state).toBe("available");
+    const { content } = await readRuntimeObjectContent({
+      db,
+      runId,
+      objectId: input.objectId,
+    });
+
+    expect(content.bytes).toEqual(input.bytes);
+  });
+
+  it("recovers a delete whose acknowledgement was lost across a host restart without resurrecting the object", async () => {
+    const { client, runId, assignment, input } = await fixture();
+
+    await client.uploadRuntimeObject(input);
+    await deliverAvailable(input.objectId);
+    const [available] = await db
+      .select()
+      .from(executionEvents)
+      .where(
+        and(
+          eq(executionEvents.runId, runId),
+          eq(executionEvents.eventType, "runtime_object.available"),
+        ),
+      );
+    const { command, envelope } = await seededDelete({
+      runId,
+      assignment,
+      objectId: input.objectId,
+      generation: input.generation,
+    });
+
+    await transport.deleteRuntimeObject(input.objectId, envelope);
+    supervisor = await supervisor.restart();
+    const summary = await recoverExecutionCommands({
+      db,
+      transport,
+      graceMs: 0,
+    });
+
+    expect(summary.errors).toEqual([]);
+    expect(await getCommand(db, command.id)).toMatchObject({
+      state: "succeeded",
+    });
+    const tombstone = await catalogue(input.objectId);
+
+    expect(tombstone.state).toBe("deleted");
+    expect(tombstone.deletedAt).not.toBeNull();
+    // A late canonical availability for the exact old intent is historical
+    // evidence: it neither resurrects the tombstone nor poisons the consumer.
+    await db.transaction((tx) => projectRuntimeObject(tx, available));
+    expect(await catalogue(input.objectId)).toEqual(tombstone);
+    const projection = await projectCanonicalRuntimeObjects({ db, runId });
+
+    expect(projection.poisoned).toBe(false);
+    expect(await catalogue(input.objectId)).toMatchObject({
+      state: "deleted",
+    });
+  });
+
+  it("redelivers a delete the host accepted but never tombstoned instead of losing the turn", async () => {
+    const { client, runId, assignment, input } = await fixture();
+
+    await client.uploadRuntimeObject(input);
+    await deliverAvailable(input.objectId);
+    const { command } = await seededDelete({
+      runId,
+      assignment,
+      objectId: input.objectId,
+      generation: input.generation,
+    });
+
+    // The host accepted the command and then died before its tombstone: the
+    // only durable trace is an accepted receipt naming the object.
+    await supervisor.kill();
+    const state = new DatabaseSync(join(supervisor.stateDir, "state.sqlite"));
+
+    try {
+      state
+        .prepare(
+          `INSERT INTO command_receipts
+             (command_id, run_id, kind, assignment_id, epoch, host_session_id, request_digest, request_schema, request_version, host_key, phase, http_status, body_json, received_at, completed_at)
+           VALUES (?, ?, 'runtime_object.delete', ?, ?, ?, NULL, NULL, 1, NULL, 'accepted', 202, '{}', ?, NULL)`,
+        )
+        .run(
+          command.id,
+          runId,
+          assignment.id,
+          assignment.epoch,
+          input.objectId,
+          new Date().toISOString(),
+        );
+    } finally {
+      state.close();
+    }
+    supervisor = await supervisor.restart();
+    const summary = await recoverExecutionCommands({
+      db,
+      transport,
+      graceMs: 0,
+    });
+
+    expect(summary.errors).toEqual([]);
+    expect(await getCommand(db, command.id)).toMatchObject({
+      state: "succeeded",
+    });
+    expect(await catalogue(input.objectId)).toMatchObject({
+      state: "deleted",
+    });
+    expect(await transport.getCommandReceipt(command.id)).toMatchObject({
+      phase: "completed",
+    });
+    const hostRow = await fetch(
+      `${supervisor.url}/runtime-objects/${input.objectId}`,
+    );
+
+    expect(hostRow.status).toBe(200);
+    expect(await hostRow.json()).toMatchObject({ state: "deleted" });
   });
 });

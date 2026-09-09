@@ -381,6 +381,8 @@ sequenceDiagram
             REC->>LED: one tx: succeeded (or failed / fenced) + the result-derived domain writes (host_session_id, acp_session_id, handle)
         else 404 — the host never saw it
             REC->>LED: delivering → queued (requeueDelivering), then the W1 rules
+        else runtime_object.delete accepted with no in-flight turn
+            REC->>LED: delivering → queued, then redeliver — the host re-runs it against its object row
         end
     end
     loop each accepted row (W4: crashed mid-prompt)

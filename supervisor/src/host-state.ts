@@ -323,6 +323,17 @@ export type HostState = {
   insertWorkspace(row: WorkspaceRow): void;
   releaseWorkspace(id: string, releasedAt: string): boolean;
   getRuntimeObject(id: string): HostRuntimeObjectRow | null;
+  runtimeObjectsByState(
+    state: HostRuntimeObjectRow["state"],
+    afterId: string,
+    limit: number,
+  ): HostRuntimeObjectRow[];
+  // Accepted upload/delete receipts name their object, so a restart can settle
+  // them from the durable object row (reserve receipts carry no target).
+  acceptedRuntimeObjectReceipts(
+    afterCommandId: string,
+    limit: number,
+  ): CommandReceiptRow[];
   insertRuntimeObject(row: HostRuntimeObjectRow): void;
   reserveRuntimeObject(
     row: HostRuntimeObjectRow,
@@ -1027,56 +1038,23 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
     getReceipt(commandId) {
       const row = db
         .prepare(
-          `SELECT command_id, run_id, kind, assignment_id, epoch, host_session_id, request_digest, request_schema, request_version, host_key, accepted_sequence, terminal_stream_id, terminal_sequence, event_id, phase, http_status, body_json, received_at, completed_at
-           FROM command_receipts WHERE command_id = ?`,
+          `SELECT ${RECEIPT_COLUMNS} FROM command_receipts WHERE command_id = ?`,
         )
-        .get(commandId) as
-        | {
-            command_id: string;
-            run_id: string;
-            kind: string;
-            assignment_id: string | null;
-            epoch: number;
-            host_session_id: string | null;
-            request_digest: string | null;
-            request_schema: string | null;
-            request_version: 1 | 2;
-            host_key: string | null;
-            accepted_sequence: string | null;
-            terminal_stream_id: string | null;
-            terminal_sequence: string | null;
-            event_id: string | null;
-            phase: ReceiptPhase;
-            http_status: number;
-            body_json: string;
-            received_at: string;
-            completed_at: string | null;
-          }
-        | undefined;
+        .get(commandId) as CommandReceiptDbRow | undefined;
 
-      if (!row) return null;
-
-      return {
-        commandId: row.command_id,
-        runId: row.run_id,
-        kind: row.kind,
-        assignmentId: row.assignment_id,
-        epoch: Number(row.epoch),
-        hostSessionId: row.host_session_id,
-        requestDigest: row.request_digest,
-        requestSchema: row.request_schema,
-        requestVersion: row.request_version,
-        hostKey: row.host_key,
-        acceptedSequence: row.accepted_sequence,
-        terminalStreamId: row.terminal_stream_id,
-        terminalSequence: row.terminal_sequence,
-        eventId: row.event_id,
-        phase: row.phase,
-        httpStatus: Number(row.http_status),
-        body: JSON.parse(row.body_json) as unknown,
-        receivedAt: row.received_at,
-        completedAt: row.completed_at,
-      };
+      return row ? toCommandReceiptRow(row) : null;
+    },
+    acceptedRuntimeObjectReceipts(afterCommandId, limit) {
+      return (
+        db
+          .prepare(
+            `SELECT ${RECEIPT_COLUMNS} FROM command_receipts
+             WHERE phase = 'accepted' AND host_session_id IS NOT NULL
+               AND kind IN ('runtime_object.upload', 'runtime_object.delete')
+               AND command_id > ? ORDER BY command_id LIMIT ?`,
+          )
+          .all(afterCommandId, limit) as CommandReceiptDbRow[]
+      ).map(toCommandReceiptRow);
     },
     putReceipt(row, admission) {
       return storage.write(() => {
@@ -1472,6 +1450,15 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
         .get(id);
 
       return row ? toHostRuntimeObjectRow(row) : null;
+    },
+    runtimeObjectsByState(state, afterId, limit) {
+      return (
+        db
+          .prepare(
+            "SELECT * FROM runtime_objects WHERE state = ? AND id > ? ORDER BY id LIMIT ?",
+          )
+          .all(state, afterId, limit) as Record<string, unknown>[]
+      ).map(toHostRuntimeObjectRow);
     },
     reserveRuntimeObject(row, capacityBytes, funding) {
       return withRuntimeFileWrite(() => {
@@ -2210,6 +2197,55 @@ function appendRuntimeEventInTransaction(
     occurredAt: envelope.occurredAt,
     acknowledgedAt: null,
     createdAt,
+  };
+}
+
+const RECEIPT_COLUMNS =
+  "command_id, run_id, kind, assignment_id, epoch, host_session_id, request_digest, request_schema, request_version, host_key, accepted_sequence, terminal_stream_id, terminal_sequence, event_id, phase, http_status, body_json, received_at, completed_at";
+
+type CommandReceiptDbRow = {
+  command_id: string;
+  run_id: string;
+  kind: string;
+  assignment_id: string | null;
+  epoch: number;
+  host_session_id: string | null;
+  request_digest: string | null;
+  request_schema: string | null;
+  request_version: 1 | 2;
+  host_key: string | null;
+  accepted_sequence: string | null;
+  terminal_stream_id: string | null;
+  terminal_sequence: string | null;
+  event_id: string | null;
+  phase: ReceiptPhase;
+  http_status: number;
+  body_json: string;
+  received_at: string;
+  completed_at: string | null;
+};
+
+function toCommandReceiptRow(row: CommandReceiptDbRow): CommandReceiptRow {
+  return {
+    commandId: row.command_id,
+    runId: row.run_id,
+    kind: row.kind,
+    assignmentId: row.assignment_id,
+    epoch: Number(row.epoch),
+    hostSessionId: row.host_session_id,
+    requestDigest: row.request_digest,
+    requestSchema: row.request_schema,
+    requestVersion: row.request_version,
+    hostKey: row.host_key,
+    acceptedSequence: row.accepted_sequence,
+    terminalStreamId: row.terminal_stream_id,
+    terminalSequence: row.terminal_sequence,
+    eventId: row.event_id,
+    phase: row.phase,
+    httpStatus: Number(row.http_status),
+    body: JSON.parse(row.body_json) as unknown,
+    receivedAt: row.received_at,
+    completedAt: row.completed_at,
   };
 }
 
