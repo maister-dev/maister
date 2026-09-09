@@ -11,6 +11,8 @@ import { ingestRuntimeEvent } from "@/lib/execution-host/events/ingest";
 import {
   claimRuntimeEventStream,
   consumeRuntimeEventStreamOnce,
+  startRuntimeEventConsumer,
+  stopRuntimeEventConsumers,
 } from "@/lib/execution-host/events/consumer";
 import { mintAssignment } from "@/lib/execution-host/assignments";
 import { projectRuntimeObject } from "@/lib/execution-host/events/runtime-object-projector";
@@ -158,6 +160,67 @@ describe("Event ingestion and assignment claim locks", () => {
       await releaseBarrier();
       await completion;
       barrier.release();
+      await db
+        .delete(executionEventStreams)
+        .where(eq(executionEventStreams.id, streamRowId));
+    }
+  });
+
+  it("releases a stopped consumer's stream claim so a successor claims immediately", async () => {
+    const targetStreamId = randomUUID();
+    const streamRowId = randomUUID();
+    let openedStreams = 0;
+    // The host closes the stream (a restart) at the moment the consumer is
+    // stopped: the pass ends without an error, which is the path that used
+    // to keep the lease.
+    const transport: ExecutionHostTransport = {
+      ...createFakeExecutionHost().transport,
+      async *streamRuntimeEvents(opts) {
+        openedStreams += 1;
+        await new Promise<void>((resolve) => {
+          if (opts?.signal?.aborted) return resolve();
+          opts?.signal?.addEventListener("abort", () => resolve(), {
+            once: true,
+          });
+        });
+      },
+    };
+
+    await db.insert(executionEventStreams).values({
+      id: streamRowId,
+      executionHostId: hostId,
+      streamId: targetStreamId,
+      state: "active",
+    });
+    try {
+      startRuntimeEventConsumer({ db, executionHostId: hostId, transport });
+      await expect
+        .poll(
+          async () => {
+            const [row] = await db
+              .select({ owner: executionEventStreams.claimOwner })
+              .from(executionEventStreams)
+              .where(eq(executionEventStreams.id, streamRowId));
+
+            return row?.owner ?? null;
+          },
+          { timeout: 10_000, interval: 25 },
+        )
+        .toMatch(/^web-event-consumer:/);
+      await stopRuntimeEventConsumers();
+      const successor = await claimRuntimeEventStream({
+        db,
+        executionHostId: hostId,
+        owner: "successor-consumer",
+        now: new Date(Date.now() + 1),
+      });
+
+      expect({ openedStreams, successor }).toMatchObject({
+        openedStreams: 1,
+        successor: { streamRowId, streamId: targetStreamId },
+      });
+    } finally {
+      await stopRuntimeEventConsumers();
       await db
         .delete(executionEventStreams)
         .where(eq(executionEventStreams.id, streamRowId));

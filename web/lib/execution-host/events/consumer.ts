@@ -6,7 +6,7 @@ import type { Db } from "@/lib/execution-host/db";
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 
-import { and, eq, isNull, lt, or } from "drizzle-orm";
+import { and, eq, gt, isNull, lt, or } from "drizzle-orm";
 import pino, { type Logger } from "pino";
 
 import { ingestRuntimeEvent } from "./ingest";
@@ -130,6 +130,26 @@ export async function claimRuntimeEventStream(input: {
       acknowledgedThrough: stream.lastAckConfirmedSequence?.toString(),
     };
   });
+}
+
+// A stopped consumer must not keep its lease: the successor (another process
+// after a restart) would otherwise replay from the floor for CLAIM_LEASE_MS.
+async function releaseRuntimeEventStreamClaim(input: {
+  db: Db;
+  executionHostId: string;
+  owner: string;
+  now: Date;
+}): Promise<void> {
+  await input.db
+    .update(executionEventStreams)
+    .set({ claimExpiresAt: input.now })
+    .where(
+      and(
+        eq(executionEventStreams.executionHostId, input.executionHostId),
+        eq(executionEventStreams.claimOwner, input.owner),
+        gt(executionEventStreams.claimExpiresAt, input.now),
+      ),
+    );
 }
 
 export async function recordConfirmedRuntimeEventAck(input: {
@@ -446,6 +466,25 @@ export function startRuntimeEventConsumer(input: {
           if (!controller.signal.aborted) throw error;
         }
       }
+    }
+    // Only the failure path released the claim; a pass that ended without an
+    // error (the host closed the stream) left the lease to its expiry.
+    try {
+      await releaseRuntimeEventStreamClaim({
+        db: input.db,
+        executionHostId: input.executionHostId,
+        owner,
+        now: new Date(),
+      });
+    } catch (error) {
+      logger.warn(
+        {
+          hostId: input.executionHostId,
+          reason:
+            error instanceof MaisterError ? error.code : "release_failure",
+        },
+        "runtime-event-consumer-claim-release-failed",
+      );
     }
   })().finally(() => {
     if (consumers.get(input.executionHostId)?.controller === controller) {
