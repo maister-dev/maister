@@ -1380,9 +1380,13 @@ add twice their reserved event bytes plus 16 KiB per row. Physical pressure
 requires another 8 MiB before resuming. Configuration must fit the event
 partitions plus this control/write headroom. These allowances are conservative
 admission guards. An uncheckpointed WAL at the 64-MiB target also pauses fresh
-admission while reserved terminal work remains writable; worst-case concurrent
-object/spool and full deployment
-qualification remain open. A passive checkpoint attempts WAL truncation only
+admission while reserved terminal work remains writable; the read-side bounds (one response of at most 8 MiB, two concurrent verification
+scans, a 16 MiB response spool) are fixed in code and logged at boot beside the
+validated limits (`runtime-config-accepted.readBounds`), and every runtime-limit
+key is mirrored on each operator env surface (`.env.example`,
+`supervisor/.env.sample`, `deploy/maister.env.example`) by the supervisor unit
+guard `runtime-limit-parity.test.ts` (S3.7); full deployment qualification
+remains open until S5. A passive checkpoint attempts WAL truncation only
 after all frames are checkpointed; a pinned reader cannot justify deleting
 history. New receipt bodies are capped at 2 MiB, receipt pruning handles one
 row per transaction, and event pruning handles at most 100 rows/1 MiB before

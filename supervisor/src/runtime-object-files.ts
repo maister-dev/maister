@@ -12,6 +12,11 @@ import { HostRuntimeEventError } from "./host-runtime-errors";
 import { SupervisorError } from "./types";
 
 export { MAX_OBJECT_RESPONSE_BYTES };
+// D5 read bounds: two verification scans may hold a response spool at once, so
+// retained response bytes never exceed twice the per-response bound.
+export const MAX_ACTIVE_OBJECT_READS = 2;
+export const MAX_OBJECT_RESPONSE_SPOOL_BYTES =
+  MAX_ACTIVE_OBJECT_READS * MAX_OBJECT_RESPONSE_BYTES;
 const BUFFER_BYTES = 64 * 1024;
 
 export type SealedFileIdentity = { sealedDevice: string; sealedInode: string };

@@ -43,7 +43,10 @@ export const DEFAULT_RUNTIME_LIMITS: RuntimeLimits = Object.freeze({
   runtimeMinFreeBytes: 1024 * 1024 * 1024,
 });
 
-const ENV_KEYS: Readonly<Record<keyof RuntimeLimits, string>> = {
+// Exported so deployment-parity checks derive the operator surface from code.
+export const RUNTIME_LIMIT_ENV_KEYS: Readonly<
+  Record<keyof RuntimeLimits, string>
+> = {
   eventLowBytes: "MAISTER_EVENT_OUTBOX_LOW_BYTES",
   eventSoftBytes: "MAISTER_EVENT_OUTBOX_SOFT_BYTES",
   eventHardBytes: "MAISTER_EVENT_OUTBOX_HARD_BYTES",
@@ -130,13 +133,15 @@ export function runtimeLimitsFromEnv(
 ): RuntimeLimits {
   const overrides: Partial<Record<keyof RuntimeLimits, number>> = {};
 
-  for (const key of Object.keys(ENV_KEYS) as Array<keyof RuntimeLimits>) {
-    const value = env[ENV_KEYS[key]];
+  for (const key of Object.keys(RUNTIME_LIMIT_ENV_KEYS) as Array<
+    keyof RuntimeLimits
+  >) {
+    const value = env[RUNTIME_LIMIT_ENV_KEYS[key]];
 
     if (value === undefined) continue;
     if (!/^[1-9][0-9]{0,15}$/.test(value)) {
       throw new RuntimeLimitsError(
-        `${ENV_KEYS[key]} must contain a positive safe integer`,
+        `${RUNTIME_LIMIT_ENV_KEYS[key]} must contain a positive safe integer`,
       );
     }
     overrides[key] = Number(value);

@@ -37,6 +37,7 @@ import {
 import { resolve } from "node:path";
 
 import {
+  MAX_ACTIVE_OBJECT_READS,
   RuntimeObjectIntegrityError,
   objectByteRange,
   objectIntegrityError,
@@ -820,7 +821,10 @@ export class RuntimeObjectRegistry {
       throw objectIntegrityError();
     const range = objectByteRange(object.sizeBytes, rangeHeader);
 
-    if (this.activeReads >= 2 || this.upgrading.has(objectId))
+    if (
+      this.activeReads >= MAX_ACTIVE_OBJECT_READS ||
+      this.upgrading.has(objectId)
+    )
       throw new HostRuntimeEventError(
         "command_in_progress",
         "runtime object verification is busy; retry the read",

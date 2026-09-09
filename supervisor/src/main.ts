@@ -22,6 +22,11 @@ import { pendingPermissions } from "./pending-permissions";
 import { SessionRegistry } from "./registry";
 import { stopRegisteredSessions } from "./shutdown";
 import { runtimeLimitsFromEnv } from "./runtime-limits";
+import {
+  MAX_ACTIVE_OBJECT_READS,
+  MAX_OBJECT_RESPONSE_BYTES,
+  MAX_OBJECT_RESPONSE_SPOOL_BYTES,
+} from "./runtime-object-files";
 import { runtimeRoot } from "./runtime-root";
 import { resolveWorkspaceRoots } from "./workspace-roots";
 
@@ -146,6 +151,11 @@ export async function start(): Promise<void> {
         .update(JSON.stringify(hostState.limits))
         .digest("hex"),
       limits: hostState.limits,
+      readBounds: {
+        responseMaxBytes: MAX_OBJECT_RESPONSE_BYTES,
+        activeResponses: MAX_ACTIVE_OBJECT_READS,
+        spoolMaxBytes: MAX_OBJECT_RESPONSE_SPOOL_BYTES,
+      },
     },
     "runtime-config-accepted",
   );

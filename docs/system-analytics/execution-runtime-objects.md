@@ -199,6 +199,12 @@ slot. A busy manager returns typed `command_in_progress`; local storage failure
 returns `runtime_storage_unavailable`. A peer integrity failure refuses the read
 without inventing a durable host corruption event or changing the catalogue.
 
+Internal consumers of command output and session content
+(`prompt-output.ts`, `events/session-content.ts`) take an independent safe
+path: they bound the object to 2 MiB, compare the catalogue metadata with the
+immutable reference, refuse ranges and length mismatches, and hash every
+received byte against the reference before decoding.
+
 The filesystem inventory classifies these specific operations as
 `manager-response-spool`: they copy received HTTP bytes into manager-owned temp
 storage and accept no host path or caller-selected filesystem location. Both
