@@ -281,12 +281,20 @@ export async function openRuntimeObjectContent(input: {
     );
   }
   if (loaded.object.state !== "available" || !loaded.object.sha256) {
+    // OBJ-07: a tombstone, verified corruption and missing bytes are distinct
+    // typed outcomes decided from the catalogue, without consulting the host.
+    const state = loaded.object.state;
+    const reason =
+      state === "deleted" || state === "deleting"
+        ? "runtime_object_deleted"
+        : state === "corrupt"
+          ? "runtime_object_integrity_mismatch"
+          : "runtime_object_missing";
+
     throw new MaisterError(
       "PRECONDITION",
-      "runtime object content is not available",
-      {
-        details: { reason: "runtime_object_missing", runId: input.runId },
-      },
+      `runtime object content is not available (${state})`,
+      { details: { reason, runId: input.runId } },
     );
   }
   const transport = input.transportForHost

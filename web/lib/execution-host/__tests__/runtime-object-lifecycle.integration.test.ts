@@ -553,6 +553,35 @@ describe("runtime object intent and seal reconciliation through a real host", ()
     },
   );
 
+  it.each([
+    ["deleted", "runtime_object_deleted"],
+    ["corrupt", "runtime_object_integrity_mismatch"],
+    ["missing", "runtime_object_missing"],
+  ] as const)(
+    "reads a catalogued %s object as a typed %s refusal",
+    async (state, reason) => {
+      const { client, runId, input } = await fixture();
+
+      await client.uploadRuntimeObject(input);
+      await deliverAvailable(input.objectId);
+      // The catalogue state is the manager's own evidence; the host is not
+      // consulted for a read the catalogue already refuses.
+      await db
+        .update(executionRuntimeObjects)
+        .set({
+          state,
+          ...(state === "deleted" ? { deletedAt: new Date() } : {}),
+        })
+        .where(eq(executionRuntimeObjects.id, input.objectId));
+      await expect(
+        readRuntimeObjectContent({ db, runId, objectId: input.objectId }),
+      ).rejects.toMatchObject({
+        code: "PRECONDITION",
+        details: { reason },
+      });
+    },
+  );
+
   it("quarantines an unsolicited host object without allocating manager identity", async () => {
     const { runId, assignment, reservation, input } = await fixture();
     const objectId = randomUUID();

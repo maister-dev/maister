@@ -6113,8 +6113,10 @@ paths:
         "404":
           description: |
             Artifact not found under this run, not visible to the caller's
-            projects, or its `locator` resolves to a path outside the run
-            directory (path-confinement violation — never served).
+            projects, its `locator` resolves to a path outside the run
+            directory (path-confinement violation — never served), or its
+            execution object's host bytes are missing while the catalogue
+            row is retained (`runtime_object_missing`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -6127,7 +6129,8 @@ paths:
         "410":
           description: |
             The index row still exists but its backing payload file was
-            deleted (`gone`).
+            deleted (`gone`), or its execution object holds a tombstone
+            (`runtime_object_deleted`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -6139,6 +6142,11 @@ paths:
                     message: Artifact payload is gone (file deleted).
         "416":
           description: The execution-object Range header is malformed or unsatisfiable.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "422":
+          description: The execution object's representation or verified bytes failed their integrity check (`runtime_object_integrity_mismatch`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -6217,8 +6225,8 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
-        "409": { description: Runtime-object representation or actual response bytes fail integrity verification. }
-        "410": { description: Catalogue metadata remains but host bytes are gone. }
+        "410": { description: The catalogue holds a tombstone (`runtime_object_deleted`) whose metadata remains while the bytes are gone. }
+        "422": { description: Runtime-object representation or actual response bytes fail integrity verification (`runtime_object_integrity_mismatch`). Missing host bytes are 404 (`runtime_object_missing`) with the catalogue retained. }
         "416": { description: Range is malformed or unsatisfiable. }
         "503": { description: The selected execution host transport is unavailable. }
 

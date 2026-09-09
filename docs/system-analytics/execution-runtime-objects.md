@@ -271,7 +271,7 @@ poisons, and an accepted-but-effectless delete is redelivered to completion.
 - **OBJ-04:** A sealed object has immutable binding, generation, MIME, size, and SHA-256, and differing retries conflict.
 - **OBJ-05:** Upload bytes use private temporary files, verify declared integrity, and atomically rename before available evidence.
 - **OBJ-06:** Reads return a manager-authorized stream only after catalogue identity and actual response-byte verification. Content-Digest hashes the selected bytes; Repr-Digest and the generation/hash ETag identify the complete object. Invalid ranges return typed errors without a full-body substitute.
-- **OBJ-07 (Designed correction):** Unknown/cross-boundary, tombstoned, corrupt, and oversized objects have distinct typed outcomes; expiry is an internal deletion eligibility check.
+- **OBJ-07:** Unknown/cross-boundary, tombstoned, corrupt, and oversized objects have distinct typed outcomes (`runtime_object_missing` 404, `runtime_object_deleted` 410, `runtime_object_integrity_mismatch` 422, `runtime_object_range_invalid` 416 on both manager content routes — S3.8); expiry is an internal deletion eligibility check.
 - **OBJ-08:** Object content, host paths, prompts, and secrets are prohibited from logs and event payloads.
 - **OBJ-09:** Events/messages/cost/catalog metadata remain manager-owned while raw diagnostics and large host content remain host-owned.
 - **OBJ-10:** Structured result transport remains separate from verifier evidence payload storage and required evidence fails explicitly.

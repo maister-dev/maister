@@ -96,16 +96,24 @@ function errorResponse(err: unknown, runId: string): NextResponse {
         { status: 416 },
       );
     }
+    // Error taxonomy: missing host bytes 404, tombstone 410, failed
+    // integrity 422 — the same distinct outcomes as the content route.
     if (reason === "runtime_object_missing") {
+      return NextResponse.json(
+        { code: "PRECONDITION", message: "Artifact payload is missing." },
+        { status: 404 },
+      );
+    }
+    if (reason === "runtime_object_deleted") {
       return gone();
     }
     if (reason === "runtime_object_integrity_mismatch") {
       return NextResponse.json(
         {
-          code: "CONFLICT",
+          code: "PRECONDITION",
           message: "Artifact payload failed its integrity check.",
         },
-        { status: 409 },
+        { status: 422 },
       );
     }
   }

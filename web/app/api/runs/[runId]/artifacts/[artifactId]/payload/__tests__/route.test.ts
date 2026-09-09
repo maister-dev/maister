@@ -342,6 +342,38 @@ describe("GET /api/runs/[runId]/artifacts/[artifactId]/payload", () => {
     expect(await res.json()).toEqual(response);
   });
 
+  // Error taxonomy (S3.8): the payload route maps execution-object refusals
+  // to the same distinct outcomes as the content route.
+  it.each([
+    ["runtime_object_missing", 404, "Artifact payload is missing."],
+    ["runtime_object_deleted", 410, "Artifact payload is gone (file deleted)."],
+    [
+      "runtime_object_integrity_mismatch",
+      422,
+      "Artifact payload failed its integrity check.",
+    ],
+  ] as const)(
+    "execution-object locator refused with %s → %s",
+    async (reason, status, message) => {
+      const objectId = "d0b23d15-a3de-49e8-a73f-5e9e96c847cb";
+
+      vi.mocked(openRuntimeObjectContent).mockRejectedValueOnce(
+        new MaisterError("PRECONDITION", "runtime object refused", {
+          details: { reason },
+        }),
+      );
+      seedArtifact({
+        id: `art-object-${reason}`,
+        locator: { kind: "execution-object", objectId },
+      });
+
+      const res = await invokeGet(`art-object-${reason}`);
+
+      expect(res.status).toBe(status);
+      expect(await res.json()).toEqual({ code: "PRECONDITION", message });
+    },
+  );
+
   it("execution-object locator → 200 uses the manager-authorized opaque content contract", async () => {
     const objectId = "d0b23d15-a3de-49e8-a73f-5e9e96c847cb";
     const body = new TextEncoder().encode("host-owned artifact");

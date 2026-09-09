@@ -226,10 +226,29 @@ describe("GET /api/runs/[runId]/runtime-objects/[objectId]/content", () => {
     expect(openRuntimeObjectContent).not.toHaveBeenCalled();
   });
 
-  it("returns gone when catalogued bytes disappeared from the host", async () => {
+  // Error taxonomy (S3.8): missing bytes are 404 with the catalogue retained,
+  // a tombstone is 410, and a failed integrity check is 422 — distinct typed
+  // outcomes (OBJ-07), never one collapsed "gone".
+  it("returns not found when catalogued bytes are missing on the host", async () => {
     vi.mocked(openRuntimeObjectContent).mockRejectedValueOnce(
       new MaisterError("PRECONDITION", "runtime object is unavailable", {
         details: { reason: "runtime_object_missing" },
+      }),
+    );
+
+    const response = await invoke();
+
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({
+      code: "PRECONDITION",
+      message: "Runtime object content is missing.",
+    });
+  });
+
+  it("returns gone for a tombstoned object", async () => {
+    vi.mocked(openRuntimeObjectContent).mockRejectedValueOnce(
+      new MaisterError("PRECONDITION", "runtime object was deleted", {
+        details: { reason: "runtime_object_deleted" },
       }),
     );
 
@@ -239,6 +258,22 @@ describe("GET /api/runs/[runId]/runtime-objects/[objectId]/content", () => {
     expect(await response.json()).toEqual({
       code: "PRECONDITION",
       message: "Runtime object content is gone.",
+    });
+  });
+
+  it("returns unprocessable when the verified bytes fail their integrity check", async () => {
+    vi.mocked(openRuntimeObjectContent).mockRejectedValueOnce(
+      new MaisterError("PRECONDITION", "runtime object bytes differ", {
+        details: { reason: "runtime_object_integrity_mismatch" },
+      }),
+    );
+
+    const response = await invoke();
+
+    expect(response.status).toBe(422);
+    expect(await response.json()).toEqual({
+      code: "PRECONDITION",
+      message: "Runtime object content failed its integrity check.",
     });
   });
 });

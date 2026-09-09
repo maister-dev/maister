@@ -44,7 +44,15 @@ function errorResponse(
         { status: 416 },
       );
     }
+    // Error taxonomy: missing bytes 404 (catalogue retained), tombstone 410,
+    // failed integrity 422 — distinct typed outcomes (OBJ-07).
     if (reason === "runtime_object_missing") {
+      return NextResponse.json(
+        { code: "PRECONDITION", message: "Runtime object content is missing." },
+        { status: 404 },
+      );
+    }
+    if (reason === "runtime_object_deleted") {
       return NextResponse.json(
         { code: "PRECONDITION", message: "Runtime object content is gone." },
         { status: 410 },
@@ -53,10 +61,10 @@ function errorResponse(
     if (reason === "runtime_object_integrity_mismatch") {
       return NextResponse.json(
         {
-          code: "CONFLICT",
+          code: "PRECONDITION",
           message: "Runtime object content failed its integrity check.",
         },
-        { status: 409 },
+        { status: 422 },
       );
     }
     if (error.code === "EXECUTOR_UNAVAILABLE") {

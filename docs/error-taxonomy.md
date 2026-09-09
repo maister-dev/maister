@@ -589,7 +589,7 @@ or epoch), `ACP_PROTOCOL` (integrity disagreement), or
 `runtime_object_not_found`, `runtime_object_missing`,
 `runtime_object_range_invalid`, `runtime_object_integrity_mismatch`, `runtime_object_retained` (manager-internal),
 `runtime_object_too_large`, `runtime_object_delete_failed`, and
-`runtime_object_transport_unsupported`. Error details contain only safe IDs,
+`runtime_object_transport_unsupported`. The manager content and artifact payload routes map these exactly (S3.8): `runtime_object_missing` 404, `runtime_object_deleted` 410, `runtime_object_integrity_mismatch` 422, `runtime_object_range_invalid` 416, host unavailable 503. Error details contain only safe IDs,
 sequence, byte count, limit, and remediation token — never event payload,
 prompt, object bytes, filesystem path, credentials, or environment values.
 
