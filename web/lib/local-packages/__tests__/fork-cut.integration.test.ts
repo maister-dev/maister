@@ -1,5 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -20,6 +27,7 @@ import {
   parsePackageManifest,
   validatePackageManifestYaml,
 } from "@/lib/local-packages/manifest";
+import { localPackageWorkingDir } from "@/lib/local-packages/paths";
 import {
   ensureDefaultLocalPackage,
   exportWorkingDir,
@@ -241,6 +249,31 @@ describe("fork to local (integration)", () => {
     expect(pkg).not.toBeNull();
     expect(pkg!.name).toBe("srcpkg (custom)");
     expect(pkg!.sourceInstallId).toBe(sourceInstallId);
+  });
+
+  // The user-facing shape of the DB/disk skew: a fresh DB over a persisted
+  // ~/.maister/local (reinstall, a second install sharing HOME) still holds a
+  // stale `<ref>-local` dir, and "Rework" answered CONFLICT for the package.
+  it("forks past a stale `<ref>-local` working dir the DB does not know about", async () => {
+    const staleDir = localPackageWorkingDir("stale-local");
+
+    await mkdir(staleDir, { recursive: true });
+    await writeFile(join(staleDir, "marker"), "stale fork");
+
+    const { localPackageId } = await forkPackageToLocal({
+      sourceInstallId,
+      sourceRef: "stale",
+      createdBy: userId,
+      forceNew: true,
+      db,
+    });
+    const pkg = await getLocalPackage(localPackageId, db);
+
+    expect(pkg?.name).toBe("stale-local");
+    expect(pkg?.slug).toBe("stale-local-2");
+    await expect(readFile(join(staleDir, "marker"), "utf8")).resolves.toBe(
+      "stale fork",
+    );
   });
 
   it("element fork to a NEW local package copies just that element, no source lineage", async () => {

@@ -2,6 +2,7 @@ import type { LocalPackage, LocalPackageCreationState } from "@/lib/db/schema";
 
 import { createHash, randomUUID } from "node:crypto";
 import {
+  mkdir,
   mkdtemp,
   readFile,
   rename,
@@ -534,6 +535,29 @@ describe("local-packages substrate (integration)", () => {
 
     expect(dup.slug).toBe("my-flow-pack-2");
     await deleteLocalPackage(dup.id, db);
+  });
+
+  // A fresh DB over a persisted ~/.maister (reinstall, or two installs sharing
+  // HOME) leaves working dirs the table does not know about. Allocation must
+  // step past them: claimLocalPackageWorkingDir refuses an existing path, so a
+  // DB-only check turned every create/fork of that name into CONFLICT.
+  it("allocates a unique slug past a working dir the DB does not know about", async () => {
+    const orphanDir = localPackageWorkingDir("orphaned-pack");
+
+    await mkdir(orphanDir, { recursive: true });
+    await writeFile(join(orphanDir, "marker"), "left behind");
+
+    const created = await createLocalPackage({
+      name: "Orphaned Pack",
+      createdBy: userId,
+      db,
+    });
+
+    expect(created.slug).toBe("orphaned-pack-2");
+    await expect(readFile(join(orphanDir, "marker"), "utf8")).resolves.toBe(
+      "left behind",
+    );
+    await deleteLocalPackage(created.id, db);
   });
 
   it("session lock: acquire, hold, same-user takeover, read-only for other users, lazy stale-takeover", async () => {

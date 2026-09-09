@@ -799,7 +799,13 @@ tab surfaces one shared **Import** button wired to the existing
 
 - A `local_packages` row MUST have a UNIQUE `slug`; its `working_dir` MUST
   resolve under `localPackagesRoot()` and MUST NEVER appear in any client
-  response.
+  response. Slug allocation (`uniqueSlugForName`) MUST treat every existing
+  directory under `localPackagesRoot()` as taken, not only the slugs in the
+  table: a fresh database over a persisted `~/.maister` (a reinstall, a second
+  install sharing `HOME`) leaves working dirs the table does not know about, and
+  the working-dir claim refuses an existing path instead of reusing it — a
+  DB-only check turned every fork/create of that name into `CONFLICT`
+  (2026-09-09).
 - Every file read/write/delete/move MUST resolve the artifact path within the
   row's `working_dir` (realpath containment; reject `..`, absolute paths,
   symlink escape, and any `.git/` path) → `MaisterError("PRECONDITION")` on

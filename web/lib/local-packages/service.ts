@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { Dirent } from "node:fs";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type { LocalPackage, LocalPackageCreationState } from "@/lib/db/schema";
 
@@ -59,6 +60,7 @@ import { loadFlowManifest } from "@/lib/config";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import { localPackagesRoot } from "@/lib/instance-config";
 import {
   buildStarterFlowManifest,
   type CreateFlowInput,
@@ -128,12 +130,29 @@ export async function uniqueSlugForName(
   const existing = await resolveDb(db).select({ slug: lp.slug }).from(lp);
   const taken = new Set(existing.map((r) => r.slug));
 
+  // Directories the table does not know about count as taken too: a fresh DB
+  // over a persisted ~/.maister (a reinstall, a second install sharing HOME)
+  // keeps old working dirs, and claimLocalPackageWorkingDir refuses an existing
+  // path — allocating its name would fail every create/fork of it with CONFLICT.
+  for (const entry of await listLocalPackageRootEntries()) {
+    if (entry.isDirectory()) taken.add(entry.name);
+  }
+
   if (!taken.has(base)) return base;
   for (let i = 2; i < 1000; i++) {
     if (!taken.has(`${base}-${i}`)) return `${base}-${i}`;
   }
 
   return `${base}-${randomUUID().slice(0, 8)}`;
+}
+
+async function listLocalPackageRootEntries(): Promise<Dirent[]> {
+  try {
+    return await readdir(localPackagesRoot(), { withFileTypes: true });
+  } catch (err) {
+    if (isEnoent(err)) return [];
+    throw err;
+  }
 }
 
 // Claim filesystem ownership before any package artifact is written. A database
