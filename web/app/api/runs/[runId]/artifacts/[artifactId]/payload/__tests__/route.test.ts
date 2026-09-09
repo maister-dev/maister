@@ -363,6 +363,8 @@ describe("GET /api/runs/[runId]/artifacts/[artifactId]/payload", () => {
         contentLength: body.byteLength,
         contentRange: `bytes 0-${body.byteLength - 1}/${body.byteLength}`,
         contentDigest: "sha-256=:abc=:",
+        reprDigest: "sha-256=:representation=:",
+        etag: '"1-abc"',
       },
     } as never);
     seedArtifact({
@@ -388,13 +390,14 @@ describe("GET /api/runs/[runId]/artifacts/[artifactId]/payload", () => {
     expect(res.headers.get("content-range")).toBe(
       `bytes 0-${body.byteLength - 1}/${body.byteLength}`,
     );
-    expect(res.headers.get("etag")).toBe('"abc"');
+    expect(res.headers.get("etag")).toBe('"1-abc"');
     expect(await res.text()).toBe("host-owned artifact");
     expect(openRuntimeObjectContent).toHaveBeenCalledWith({
       db: fakeDb,
       runId: RUN_ID,
       objectId,
       range: undefined,
+      signal: expect.any(AbortSignal),
     });
   });
 
@@ -467,6 +470,8 @@ describe("GET /api/runs/[runId]/artifacts/[artifactId]/payload", () => {
         contentLength: body.byteLength,
         contentRange: "bytes 4-8/10",
         contentDigest: "sha-256=:abc=:",
+        reprDigest: "sha-256=:representation=:",
+        etag: '"1-abc"',
       },
     } as never);
     seedArtifact({
@@ -485,6 +490,7 @@ describe("GET /api/runs/[runId]/artifacts/[artifactId]/payload", () => {
       runId: RUN_ID,
       objectId,
       range: { start: 4, end: 8 },
+      signal: expect.any(AbortSignal),
     });
   });
 

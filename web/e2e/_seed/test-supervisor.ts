@@ -51,6 +51,7 @@ import {
   type ImmutableObjectReference,
 } from "../../../runtime/command-evidence";
 import { canonicalCommandJson } from "../../../runtime/command-json";
+import { objectDigest, objectEtag } from "../../../runtime/object-integrity";
 
 import { E2E_EXECUTION_HOST_SLUG } from "./fixtures";
 import {
@@ -1406,12 +1407,16 @@ export async function startTestSupervisor(
 
         return;
       }
-      const digest = `sha-256=:${Buffer.from(checksum, "hex").toString("base64")}:`;
-
+      // AB-15 (S3.3): Content-Digest hashes the bytes actually sent, Repr-Digest
+      // the whole sealed object, and the strong ETag binds generation and hash.
       res.writeHead(match ? 206 : 200, {
         "content-type": object.metadata.mimeType,
         "content-length": String(bytes.length),
-        "content-digest": digest,
+        "content-digest": objectDigest(
+          createHash("sha256").update(bytes).digest("hex"),
+        ),
+        "repr-digest": objectDigest(checksum),
+        etag: objectEtag(object.metadata.generation, checksum),
         "accept-ranges": "bytes",
         ...(match
           ? { "content-range": `bytes ${start}-${end}/${object.bytes.length}` }

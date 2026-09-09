@@ -106,6 +106,7 @@ export async function GET(
       runId,
       objectId,
       range,
+      signal: request.signal,
     });
     // AB-12 (D5): the catalogued MIME is caller-supplied metadata, never a
     // response type. Bytes leave as an opaque, non-sniffable, sandboxed,
@@ -116,7 +117,6 @@ export async function GET(
         mediaClass: "opaque",
       }),
       "accept-ranges": "bytes",
-      etag: `\"${object.sha256}\"`,
     });
 
     if (content.contentLength !== null) {
@@ -124,6 +124,8 @@ export async function GET(
     }
     if (content.contentDigest)
       headers.set("content-digest", content.contentDigest);
+    if (content.reprDigest) headers.set("repr-digest", content.reprDigest);
+    if (content.etag) headers.set("etag", content.etag);
     if (content.contentRange)
       headers.set("content-range", content.contentRange);
 

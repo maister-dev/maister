@@ -177,6 +177,8 @@ export type RuntimeObjectContent = {
   bytes: Uint8Array;
   contentRange: string | null;
   contentDigest: string | null;
+  reprDigest: string | null;
+  etag: string | null;
 };
 
 export type RuntimeObjectOutputBinding = SupervisorRuntimeOutputBinding;
@@ -189,6 +191,8 @@ export type RuntimeObjectContentStream = {
   contentLength: number | null;
   contentRange: string | null;
   contentDigest: string | null;
+  reprDigest: string | null;
+  etag: string | null;
 };
 
 // Per-call transport timeout, chosen by the caller from the per-kind policy

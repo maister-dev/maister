@@ -120,12 +120,38 @@ async function expectExactDownload(
   expectedName: string,
 ): Promise<void> {
   const response = await request.get(url);
+  const bytes = new Uint8Array(await response.body());
+  const representation = sha256(upload(fileName).bytes);
+  const digest = `sha-256=:${Buffer.from(sha256(bytes), "hex").toString("base64")}:`;
 
   expect(response.status()).toBe(200);
   expectSafeDownloadHeaders(response.headers(), expectedName);
-  expect(sha256(new Uint8Array(await response.body()))).toBe(
-    sha256(upload(fileName).bytes),
-  );
+  expect(sha256(bytes)).toBe(representation);
+  expect(response.headers()["content-digest"]).toBe(digest);
+  expect(response.headers()["repr-digest"]).toBe(digest);
+  expect(response.headers()["etag"]).toBe(`"1-${representation}"`);
+  expect(response.headers()["content-encoding"]).toBeUndefined();
+
+  const partial = await request.get(url, { headers: { range: "bytes=2-4" } });
+  const slice = new Uint8Array(await partial.body());
+  const sliceDigest = `sha-256=:${Buffer.from(sha256(slice), "hex").toString("base64")}:`;
+
+  expect(partial.status()).toBe(206);
+  expectSafeDownloadHeaders(partial.headers(), expectedName);
+  expect(slice).toEqual(upload(fileName).bytes.subarray(2, 5));
+  expect(partial.headers()["content-range"]).toBe(`bytes 2-4/${bytes.length}`);
+  expect(partial.headers()["content-digest"]).toBe(sliceDigest);
+  expect(sliceDigest).not.toBe(digest);
+  expect(partial.headers()["repr-digest"]).toBe(digest);
+  expect(partial.headers()["etag"]).toBe(`"1-${representation}"`);
+  expect(partial.headers()["content-encoding"]).toBeUndefined();
+
+  for (const range of ["bytes=0-1,3-4", `bytes=${bytes.length}-`, "bytes=-3"]) {
+    const refused = await request.get(url, { headers: { range } });
+
+    expect(refused.status()).toBe(416);
+    expect(refused.headers()["content-digest"]).toBeUndefined();
+  }
 }
 
 // A navigation that turns into a download rejects `page.goto` ("Download is

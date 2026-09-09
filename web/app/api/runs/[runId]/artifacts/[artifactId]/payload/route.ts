@@ -170,6 +170,7 @@ export async function GET(
         db: db as unknown as ExecutionHostDb,
         runId,
         objectId: locator.objectId,
+        signal: req.signal,
         range: parseSingleByteRange(req.headers.get("range"), {
           syntax: "artifact payload Range must be one bounded byte range",
           bounds: "artifact payload Range is invalid",
@@ -181,7 +182,6 @@ export async function GET(
           mediaClass: "opaque",
         }),
         "accept-ranges": "bytes",
-        etag: `\"${object.sha256}\"`,
       });
 
       log.debug(
@@ -196,6 +196,8 @@ export async function GET(
       if (content.contentDigest) {
         headers.set("content-digest", content.contentDigest);
       }
+      if (content.reprDigest) headers.set("repr-digest", content.reprDigest);
+      if (content.etag) headers.set("etag", content.etag);
       if (content.contentRange) {
         headers.set("content-range", content.contentRange);
       }

@@ -30,6 +30,8 @@ external ingestion beyond the external operations API, capability enforcement
 its bytes remain host-owned and path-free at the manager boundary. The host
 [verifies the sealed descriptor](execution-runtime-objects.md#host-descriptor-verification-implemented)
 before content delivery and publishes durable missing/corrupt evidence on failure.
+The manager [verifies received bytes and representation identity](execution-runtime-objects.md#manager-response-verification)
+before the payload route exposes the full or ranged response.
 Git-range,
 worktree, inline, gate-verdict, HITL, and manager-owned evaluation evidence
 keep their current ownership and are not silently converted into runtime

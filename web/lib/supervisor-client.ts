@@ -8,6 +8,10 @@ import type { AgentMcpServer } from "@/lib/capabilities/agent-map";
 import type { ContextMountSnapshot } from "@/lib/context-mounts/types";
 import type { SessionEnforcementProfile } from "@/lib/flows/enforcement-profile";
 import type { HooksConfig } from "@/lib/flows/hooks-config";
+import type {
+  RuntimeObjectContent,
+  RuntimeObjectContentStream,
+} from "@/lib/execution-host/contracts";
 
 import { createHash } from "node:crypto";
 
@@ -25,7 +29,16 @@ import {
   parseCommandReceiptV2,
   type CommandReceiptV2,
 } from "../../runtime/command-evidence";
+import {
+  MAX_OBJECT_RESPONSE_BYTES,
+  parseObjectContentLength,
+} from "../../runtime/object-integrity";
 
+import {
+  assertRuntimeObjectResponseIdentity,
+  runtimeObjectResponseIntegrityError,
+  verifyRuntimeObjectResponse,
+} from "@/lib/execution-host/runtime-object-response";
 import { ADAPTER_IDS, type AdapterId } from "@/lib/acp-runners/adapter-support";
 import { contextMountsToWire } from "@/lib/context-mounts/types";
 import { MaisterError, type MaisterErrorCode } from "@/lib/errors";
@@ -1624,36 +1637,32 @@ export async function uploadRuntimeObject(input: {
 export async function getRuntimeObjectContent(
   objectId: string,
   opts: { range?: { start: number; end?: number }; signal?: AbortSignal } = {},
-): Promise<{
-  bytes: Uint8Array;
-  contentRange: string | null;
-  contentDigest: string | null;
-}> {
-  const opened = await openRuntimeObjectContent(objectId, opts);
+): Promise<RuntimeObjectContent> {
+  const opened = await verifyRuntimeObjectResponse(
+    await openRuntimeObjectContent(objectId, opts),
+    opts,
+  );
 
   return {
     bytes: new Uint8Array(await new Response(opened.body).arrayBuffer()),
     contentRange: opened.contentRange,
     contentDigest: opened.contentDigest,
+    reprDigest: opened.reprDigest,
+    etag: opened.etag,
   };
 }
 
 export async function openRuntimeObjectContent(
   objectId: string,
   opts: { range?: { start: number; end?: number }; signal?: AbortSignal } = {},
-): Promise<{
-  body: ReadableStream<Uint8Array>;
-  contentLength: number | null;
-  contentRange: string | null;
-  contentDigest: string | null;
-}> {
+): Promise<RuntimeObjectContentStream> {
   const range = opts.range
     ? `bytes=${opts.range.start}-${opts.range.end ?? ""}`
     : undefined;
   const { response, finish } = await runtimeObjectBinaryResponse({
     path: `/runtime-objects/${encodeURIComponent(objectId)}/content`,
     method: "GET",
-    headers: range ? { range } : undefined,
+    headers: { "accept-encoding": "identity", ...(range ? { range } : {}) },
     timeoutMs: ADMIN_READ_TIMEOUT_MS,
     ctx: "getRuntimeObjectContent",
     signal: opts.signal,
@@ -1678,64 +1687,108 @@ export async function openRuntimeObjectContent(
     );
   }
   const contentLength = response.headers.get("content-length");
-  const parsedContentLength =
-    contentLength === null ? null : Number(contentLength);
-
-  if (
-    parsedContentLength !== null &&
-    (!Number.isSafeInteger(parsedContentLength) || parsedContentLength < 0)
-  ) {
-    await response.body.cancel();
-    finish();
-    throw new MaisterError(
-      "ACP_PROTOCOL",
-      "runtime object content response has an invalid content length",
-      { details: { reason: "runtime_object_integrity_mismatch" } },
-    );
-  }
-
-  const reader = response.body.getReader();
-  const body = new ReadableStream<Uint8Array>({
-    async pull(stream) {
-      try {
-        const chunk = await reader.read();
-
-        if (chunk.done) {
-          finish();
-          reader.releaseLock();
-          stream.close();
-        } else if (chunk.value instanceof Uint8Array) {
-          stream.enqueue(chunk.value);
-        } else {
-          throw new MaisterError(
-            "ACP_PROTOCOL",
-            "runtime object body is not binary",
-          );
-        }
-      } catch (error) {
-        finish();
-        stream.error(
-          error instanceof MaisterError
-            ? error
-            : networkErrorToMaister(error, "getRuntimeObjectContent"),
-        );
-      }
-    },
-    async cancel(reason: unknown) {
-      try {
-        await reader.cancel(reason);
-      } finally {
-        finish();
-        reader.releaseLock();
-      }
-    },
-  });
-
-  return {
-    body,
+  const parsedContentLength = parseObjectContentLength(contentLength);
+  const headers = {
     contentLength: parsedContentLength,
     contentRange: response.headers.get("content-range"),
     contentDigest: response.headers.get("content-digest"),
+    reprDigest: response.headers.get("repr-digest"),
+    etag: response.headers.get("etag"),
+  };
+
+  try {
+    if (
+      response.status !== (range ? 206 : 200) ||
+      (contentLength !== null && parsedContentLength === null) ||
+      ![null, "identity"].includes(response.headers.get("content-encoding"))
+    ) {
+      throw runtimeObjectResponseIntegrityError();
+    }
+    assertRuntimeObjectResponseIdentity(headers, opts.range);
+  } catch (error) {
+    try {
+      await response.body.cancel();
+    } catch {
+      logger.warn(
+        { reason: "network" },
+        "runtime object peer cancellation failed",
+      );
+    } finally {
+      finish();
+    }
+    throw error;
+  }
+
+  const reader = response.body.getReader();
+  let receivedBytes = 0;
+  const body = new ReadableStream<Uint8Array>(
+    {
+      async pull(stream) {
+        try {
+          const chunk = await reader.read();
+
+          if (chunk.done) {
+            if (
+              parsedContentLength !== null &&
+              receivedBytes !== parsedContentLength
+            ) {
+              throw runtimeObjectResponseIntegrityError();
+            }
+            finish();
+            reader.releaseLock();
+            stream.close();
+          } else if (chunk.value instanceof Uint8Array) {
+            receivedBytes += chunk.value.byteLength;
+            if (
+              receivedBytes > MAX_OBJECT_RESPONSE_BYTES ||
+              (parsedContentLength !== null &&
+                receivedBytes > parsedContentLength)
+            ) {
+              throw runtimeObjectResponseIntegrityError();
+            }
+            stream.enqueue(chunk.value);
+          } else {
+            throw new MaisterError(
+              "ACP_PROTOCOL",
+              "runtime object body is not binary",
+            );
+          }
+        } catch (error) {
+          try {
+            await reader.cancel();
+          } catch {
+            logger.warn(
+              { reason: "network" },
+              "runtime object peer cancellation failed",
+            );
+          } finally {
+            finish();
+            reader.releaseLock();
+          }
+          stream.error(
+            error instanceof MaisterError
+              ? error
+              : networkErrorToMaister(error, "getRuntimeObjectContent"),
+          );
+        }
+      },
+      async cancel(reason: unknown) {
+        try {
+          await reader.cancel(reason);
+        } catch (error) {
+          throw networkErrorToMaister(error, "getRuntimeObjectContent");
+        } finally {
+          finish();
+          reader.releaseLock();
+        }
+      },
+    },
+    { highWaterMark: 0 },
+  );
+
+  return {
+    body,
+    ...headers,
   };
 }
 

@@ -1,6 +1,6 @@
 # Execution runtime objects
 
-**Status:** Implemented host registry, reserve/upload/delete routes, manager catalog and **safe content delivery (AB-12, S3.4)**; **Implemented native intent/seal reconciliation (AB-09, S3.1)**; **Implemented host seal/read verification (AB-13)**; **Designed** manager message-integrity (AB-15), crash-gap recovery and fair retention corrections (AB-14). Bytes remain host-owned and manager locators remain opaque.
+**Status:** Implemented host registry, reserve/upload/delete routes, manager catalog and **safe content delivery (AB-12, S3.4)**; **Implemented native intent/seal reconciliation (AB-09, S3.1)**; **Implemented host seal/read verification (AB-13)**; **Implemented manager message-integrity (AB-15, S3.3)**; **Designed** crash-gap recovery and fair retention corrections (AB-14). Bytes remain host-owned and manager locators remain opaque.
 
 
 ## Purpose
@@ -122,7 +122,7 @@ On ENOENT return a typed missing outcome; on nonregular/symlink/identity/digest 
 
 **Download policy (Implemented — AB-12, S3.4):** untrusted arbitrary object content is `application/octet-stream`, `Content-Disposition: attachment` with sanitized ASCII filename and RFC 8187 encoded filename, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox; default-src 'none'`, `Cache-Control: private, no-store`. One shared policy module (`runtime/safe-download.ts`) is applied to 200/206 on the host content route (`GET /runtime-objects/{id}/content`), the manager proxy (`GET /api/runs/{runId}/runtime-objects/{objectId}/content`) and the artifact payload route for `execution-object` locators; server-derived text/JSON artifact payloads keep their passive type but travel under the same disposition, nosniff, CSP and cache headers. The catalogued MIME (caller-supplied at upload) is metadata only and is never reflected into a response type; the attachment filename is the manager's `logicalName`, sanitized. Both routes that expose an execution object's bytes require the same `readRepoFiles` grant (the payload route previously served them under `readBoard`); diff/log/git/inline artifact payloads stay board evidence at `readBoard`. Never inline HTML, SVG, XML, script, PDF or supplied MIME. The evidence-graph payload preview fetches and renders escaped text, so it is unaffected. Proven by AT-12: `web/e2e/execution-ab-content.spec.ts` (real Chromium against a real supervisor — an uploaded HTML/SVG document with an authenticated side effect is downloaded, never executed; anonymous/non-member/foreign access refused) plus the route unit tests and the host integration case. Fixing this exposed a seam defect: the host's prompt path resolved uploaded attachments without `expectedKind`, so every prompt carrying an upload had been refused since the Stage B lifecycle commit; `resolvePromptRuntimeObjects` now names the prompt-reference kind (`attachment`) explicitly.
 
-**Digest contract:** for 200 the body digest and representation digest agree when bytes are identical; for 206 Content-Digest covers the transferred slice, Repr-Digest the full verified object; a strong ETag binds generation/hash. No compression/transcoding on this route. Invalid/multiple/out-of-range requests return 416 with typed range error, without full-body fallback. See [RFC 9530 §2–3 and Appendix B.3](https://www.rfc-editor.org/rfc/rfc9530.html#appendix-B.3). Tests hash returned bytes independently; header equality is only a metadata check.
+**Digest contract (Implemented — AB-15, S3.3):** for 200 the body digest and representation digest agree when bytes are identical; for 206 Content-Digest covers the transferred slice, Repr-Digest the full verified object; a strong ETag binds generation/hash. No compression/transcoding on this route. Invalid/multiple/out-of-range requests return 416 with typed range error, without full-body fallback. See [RFC 9530 §2–3 and Appendix B.3](https://www.rfc-editor.org/rfc/rfc9530.html#appendix-B.3). Tests hash returned bytes independently; header equality is only a metadata check.
 
 **Retention:** expired is eligibility, not deletion authority. Preserve live/checkpointed session input/output, unresolved command requests/results, unapplied owners, pending import proofs, required verifier evidence, artifact/result references, and delivery holds. Use the existing confirmed local-delivery or PR-merge policy and persisted delivery snapshot/confirmation; `Done` or an open/closed-unmerged PR alone is insufficient. Result-only delivery requires its actual acknowledgment policy, not a fabricated merge. When no authoritative delivery confirmation exists, retain with an actionable protected reason. Optional operational diagnostics can follow their explicitly weaker policy; do not reuse it for required evidence.
 
@@ -164,6 +164,34 @@ including post-seal mutations, producer descriptor and filename reuse, interrupt
 seal, a mutation during scanning, an eight-MiB range with corruption outside the
 slice, response-slot/cancellation cleanup, outbox rollback and a version-12 upgrade.
 
+## Manager response verification
+
+**Status: Implemented (S3.3, AB-15).** Qualified on the complete package lanes: real host object cases, Postgres/real-supervisor catalogue cases, real binary HTTP transport cases and the Chromium content lane hash returned bytes independently.
+
+`runtime/object-integrity.ts` defines the shared strict SHA-256 digest, strong
+`"<generation>-<lowercase SHA-256>"` ETag and single-range grammar. The binary
+transport requests identity encoding and refuses compression, unexpected 200/206
+status, duplicate or malformed digest fields, weak/invalid ETags and inconsistent
+length/range metadata. Chunked bodies remain bounded by their actual byte count.
+
+The manager compares Repr-Digest, ETag, total size and the exact requested range
+with its Postgres catalogue. `runtime-object-response.ts` hashes received bytes
+into a private 0600 temporary descriptor before exposing success. Its pathname
+is unlinked before the scan; the returned stream reads that same descriptor in
+64 KiB blocks. Two active responses cap retained spool bytes at 16 MiB. EOF,
+cancellation, request abort and failure close the descriptor and release the
+slot. A busy manager returns typed `command_in_progress`; local storage failure
+returns `runtime_storage_unavailable`. A peer integrity failure refuses the read
+without inventing a durable host corruption event or changing the catalogue.
+
+The filesystem inventory classifies these specific operations as
+`manager-response-spool`: they copy received HTTP bytes into manager-owned temp
+storage and accept no host path or caller-selected filesystem location. Both
+content proxy routes retain the shared attachment policy and forward the verified
+Content-Digest, Repr-Digest and ETag. Postgres/real-supervisor lifecycle cases,
+real-HTTP binary transport cases and the Chromium content lane independently
+hash full and nonzero-range bytes; they also check refusal and resource cleanup.
+
 ## Expectations
 
 - **OBJ-01:** Manager contracts/catalogs expose opaque object IDs and typed metadata, never a host filesystem path.
@@ -171,7 +199,7 @@ slice, response-slot/cancellation cleanup, outbox rollback and a version-12 upgr
 - **OBJ-03:** Reserve, upload, and delete reuse Stage A commands, receipts, retry state, and fences without a second ledger.
 - **OBJ-04:** A sealed object has immutable binding, generation, MIME, size, and SHA-256, and differing retries conflict.
 - **OBJ-05:** Upload bytes use private temporary files, verify declared integrity, and atomically rename before available evidence.
-- **OBJ-06 (Designed correction):** Reads return a manager-authorized streaming response with one byte range and a SHA-256 Content-Digest; the web tier forwards host bytes without buffering the full object, while invalid ranges return typed errors.
+- **OBJ-06:** Reads return a manager-authorized stream only after catalogue identity and actual response-byte verification. Content-Digest hashes the selected bytes; Repr-Digest and the generation/hash ETag identify the complete object. Invalid ranges return typed errors without a full-body substitute.
 - **OBJ-07 (Designed correction):** Unknown/cross-boundary, tombstoned, corrupt, and oversized objects have distinct typed outcomes; expiry is an internal deletion eligibility check.
 - **OBJ-08:** Object content, host paths, prompts, and secrets are prohibited from logs and event payloads.
 - **OBJ-09:** Events/messages/cost/catalog metadata remain manager-owned while raw diagnostics and large host content remain host-owned.

@@ -6,10 +6,12 @@ import { constants } from "node:fs";
 import { open, rename, unlink } from "node:fs/promises";
 import { dirname } from "node:path";
 
+import { MAX_OBJECT_RESPONSE_BYTES } from "../../runtime/object-integrity";
+
 import { HostRuntimeEventError } from "./host-runtime-errors";
 import { SupervisorError } from "./types";
 
-export const MAX_OBJECT_RESPONSE_BYTES = 8 * 1024 * 1024;
+export { MAX_OBJECT_RESPONSE_BYTES };
 const BUFFER_BYTES = 64 * 1024;
 
 export type SealedFileIdentity = { sealedDevice: string; sealedInode: string };

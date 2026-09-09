@@ -252,6 +252,15 @@ export async function consumeRuntimeEventStreamOnce(input: {
   const maxEvents = input.maxEvents ?? Number.POSITIVE_INFINITY;
 
   try {
+    // An abort received while the claim transaction waited is not replayed
+    // when its listener is attached. Refuse before opening another stream.
+    if (input.signal?.aborted) {
+      throw new MaisterError(
+        "EXECUTOR_UNAVAILABLE",
+        "runtime event consumer was cancelled",
+        { details: { reason: "aborted" } },
+      );
+    }
     if (
       claim?.afterSequence !== undefined &&
       claim.acknowledgedThrough !== claim.afterSequence

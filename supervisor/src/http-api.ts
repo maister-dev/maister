@@ -20,6 +20,7 @@ import { delimiter, dirname, join } from "node:path";
 import { z, ZodError, type ZodType, type ZodTypeDef } from "zod";
 
 import { safeDownloadHeaders } from "../../runtime/safe-download";
+import { objectDigest, objectEtag } from "../../runtime/object-integrity";
 
 import { createAcpConnection, sendPromptOnConnection } from "./acp-client";
 import { retainedOutputBudget } from "./bounded-acp-stream";
@@ -1609,11 +1610,12 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
         )
         .header("Accept-Ranges", "bytes")
         .header("Content-Length", String(range.length))
-        .header("ETag", `"${content.metadata.sha256}"`)
         .header(
-          "Content-Digest",
-          `sha-256=:${Buffer.from(content.metadata.sha256 ?? "", "hex").toString("base64")}:`,
-        );
+          "ETag",
+          objectEtag(content.metadata.generation, content.metadata.sha256!),
+        )
+        .header("Content-Digest", objectDigest(content.sha256))
+        .header("Repr-Digest", objectDigest(content.metadata.sha256!));
       if (range.partial)
         reply.header(
           "Content-Range",

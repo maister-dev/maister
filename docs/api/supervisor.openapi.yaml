@@ -286,7 +286,11 @@ paths:
         `filename` / RFC 8187 `filename*` from the logical name,
         `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox;
         default-src 'none'`, `Cache-Control: private, no-store`, plus
-        `Content-Digest`, `ETag` and `Accept-Ranges`.
+        `Content-Digest`, `Repr-Digest`, `ETag` and `Accept-Ranges`.
+        (Implemented — S3.3) Content-Digest is one canonical SHA-256 digest of the actual response
+        bytes; Repr-Digest covers the full verified representation. The strong
+        ETag is `"<generation>-<lowercase SHA-256>"`. A 206 hashes only its selected
+        bytes in Content-Digest. No content encoding or full-body range fallback.
         (S3.2) Before success, the host verifies the complete sealed representation
         through its no-follow descriptor, then serves the exact private response
         spool. At most two active responses retain 8 MiB each. Missing/corrupt

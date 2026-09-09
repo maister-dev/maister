@@ -45,6 +45,9 @@ manager-owned policy resolution and host-private materialization — the supervi
 spawn. The manager uploads the non-secret profile as a runtime object and sends
 their opaque `capabilityProfileObjectId` and
 `capabilityInstructionsObjectId`; it never sends a host filesystem path.
+Manager retrieval of these objects follows the shared
+[response verification contract](execution-runtime-objects.md#manager-response-verification);
+host-private adapter materialization retains its existing ownership.
 `adapterLaunch` remains a typed launch description. Out of scope and
 deferred to **Phase 2**: a capability marketplace, sandboxing of untrusted import
 sources, cross-project capability promotion, codex enforced mapping

@@ -14,6 +14,7 @@ import {
   reserveRuntimeObject,
 } from "@/lib/supervisor-client";
 import { startRealSupervisor } from "@/test-support/real-supervisor";
+import { verifyRuntimeObjectResponse } from "@/lib/execution-host/runtime-object-response";
 
 function envelope<T>(
   kind: string,
@@ -121,6 +122,177 @@ describe("runtime-object binary HTTP transport (AT-17)", () => {
     }
   });
 
+  it.each([
+    "body",
+    "duplicate digest",
+    "malformed digest",
+    "range fallback",
+    "weak etag",
+    "representation",
+    "compression",
+    "oversized length",
+    "unsolicited range",
+  ] as const)(
+    "refuses unverified response %s over real HTTP",
+    async (fault) => {
+      const bytes = new TextEncoder().encode("verified bytes");
+      const sha256 = createHash("sha256").update(bytes).digest("hex");
+      const digest = `sha-256=:${Buffer.from(sha256, "hex").toString("base64")}:`;
+
+      await serve((_request, response) => {
+        response.writeHead(fault === "unsolicited range" ? 206 : 200, {
+          "content-type": "application/octet-stream",
+          "content-length": String(
+            fault === "oversized length" ? 8 * 1024 * 1024 + 1 : bytes.length,
+          ),
+          "content-digest":
+            fault === "duplicate digest"
+              ? `${digest}, ${digest}`
+              : fault === "malformed digest"
+                ? "sha-256=:YQ==:"
+                : digest,
+          "repr-digest":
+            fault === "representation"
+              ? `sha-256=:${Buffer.alloc(32).toString("base64")}:`
+              : digest,
+          etag: `${fault === "weak etag" ? "W/" : ""}"1-${sha256}"`,
+          ...(fault === "compression" ? { "content-encoding": "gzip" } : {}),
+        });
+        response.end(
+          fault === "body" ? Buffer.alloc(bytes.length, 120) : bytes,
+        );
+      });
+      await expect(
+        getRuntimeObjectContent(
+          randomUUID(),
+          fault === "range fallback" ? { range: { start: 2, end: 4 } } : {},
+        ),
+      ).rejects.toMatchObject({
+        code: "ACP_PROTOCOL",
+        details: { reason: "runtime_object_integrity_mismatch" },
+      });
+    },
+  );
+
+  it("bounds anonymous response spools and releases slots on cancellation and complete reads", async () => {
+    const bytes = new TextEncoder().encode("bounded response");
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    const digest = `sha-256=:${Buffer.from(sha256, "hex").toString("base64")}:`;
+
+    await serve((_request, response) => {
+      response.writeHead(200, {
+        "content-length": bytes.length,
+        "content-digest": digest,
+        "repr-digest": digest,
+        etag: `"1-${sha256}"`,
+      });
+      response.end(bytes);
+    });
+    for (let cycle = 0; cycle < 3; cycle += 1) {
+      const first = await verifyRuntimeObjectResponse(
+        await openRuntimeObjectContent(randomUUID()),
+      );
+      const second = await verifyRuntimeObjectResponse(
+        await openRuntimeObjectContent(randomUUID()),
+      );
+
+      try {
+        await expect(
+          verifyRuntimeObjectResponse(
+            await openRuntimeObjectContent(randomUUID()),
+          ),
+        ).rejects.toMatchObject({
+          code: "EXECUTOR_UNAVAILABLE",
+          details: { reason: "command_in_progress" },
+        });
+        await first.body.cancel();
+        expect((await getRuntimeObjectContent(randomUUID())).bytes).toEqual(
+          bytes,
+        );
+        expect(
+          new Uint8Array(await new Response(second.body).arrayBuffer()),
+        ).toEqual(bytes);
+      } finally {
+        await first.body.cancel();
+        if (!second.body.locked) await second.body.cancel();
+      }
+    }
+  });
+
+  it("cancels a stalled verification scan and frees its descriptor and peer connection", async () => {
+    const abort = new AbortController();
+    const seen = Promise.withResolvers<void>();
+    const closed = Promise.withResolvers<void>();
+    const bytes = new Uint8Array([1, 2, 3]);
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    const digest = `sha-256=:${Buffer.from(sha256, "hex").toString("base64")}:`;
+    let requests = 0;
+
+    await serve((_request, response) => {
+      requests += 1;
+      response.once("close", () => closed.resolve());
+      response.writeHead(200, {
+        "content-digest": digest,
+        "repr-digest": digest,
+        etag: `"1-${sha256}"`,
+      });
+      response.write(bytes);
+      if (requests > 1) response.end();
+    });
+    const opened = await openRuntimeObjectContent(randomUUID());
+    const body = opened.body.pipeThrough(
+      new TransformStream<Uint8Array, Uint8Array>({
+        transform(chunk, controller) {
+          controller.enqueue(chunk);
+          seen.resolve();
+        },
+      }),
+    );
+    const pending = verifyRuntimeObjectResponse(
+      { ...opened, body },
+      { signal: abort.signal },
+    );
+    const refused = expect(pending).rejects.toMatchObject({
+      code: "EXECUTOR_UNAVAILABLE",
+      details: { reason: "aborted" },
+    });
+
+    await seen.promise;
+    abort.abort();
+    await refused;
+    await closed.promise;
+    const first = await verifyRuntimeObjectResponse(
+      await openRuntimeObjectContent(randomUUID()),
+    );
+    const second = await verifyRuntimeObjectResponse(
+      await openRuntimeObjectContent(randomUUID()),
+    );
+
+    await first.body.cancel();
+    await second.body.cancel();
+  });
+
+  it("refuses an oversized chunked body without trusting an absent content length", async () => {
+    const sha256 = createHash("sha256").digest("hex");
+    const digest = `sha-256=:${Buffer.from(sha256, "hex").toString("base64")}:`;
+
+    await serve((_request, response) => {
+      response.writeHead(200, {
+        "content-digest": digest,
+        "repr-digest": digest,
+        etag: `"1-${sha256}"`,
+      });
+      const chunk = new Uint8Array(1024 * 1024);
+
+      for (let index = 0; index < 9; index += 1) response.write(chunk);
+      response.end();
+    });
+    await expect(getRuntimeObjectContent(randomUUID())).rejects.toMatchObject({
+      code: "ACP_PROTOCOL",
+      details: { reason: "runtime_object_integrity_mismatch" },
+    });
+  });
+
   it.each(["length", "digest", "header"] as const)(
     "refuses invalid %s before sending any request",
     async (invalid) => {
@@ -170,8 +342,18 @@ describe("runtime-object binary HTTP transport (AT-17)", () => {
   );
 
   it("reads actual chunked bytes without a content-length header", async () => {
+    const sha256 = createHash("sha256")
+      .update(new Uint8Array([0, 255, 195, 169, 10]))
+      .digest("hex");
+    const digest = `sha-256=:${Buffer.from(sha256, "hex").toString("base64")}:`;
+
     await serve((_request, response) => {
-      response.writeHead(200, { "content-type": "application/octet-stream" });
+      response.writeHead(200, {
+        "content-type": "application/octet-stream",
+        "content-digest": digest,
+        "repr-digest": digest,
+        etag: `"1-${sha256}"`,
+      });
       response.write(Buffer.from([0, 255, 195]));
       response.end(Buffer.from([169, 10]));
     });
@@ -179,6 +361,27 @@ describe("runtime-object binary HTTP transport (AT-17)", () => {
     const result = await getRuntimeObjectContent(randomUUID());
 
     expect(result.bytes).toEqual(new Uint8Array([0, 255, 195, 169, 10]));
+  });
+
+  it("keeps a truncated peer response typed when cancelling an errored stream", async () => {
+    const bytes = new TextEncoder().encode("complete response");
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    const digest = `sha-256=:${Buffer.from(sha256, "hex").toString("base64")}:`;
+
+    await serve((_request, response) => {
+      response.writeHead(200, {
+        "content-length": bytes.length,
+        "content-digest": digest,
+        "repr-digest": digest,
+        etag: `"1-${sha256}"`,
+        connection: "close",
+      });
+      response.end(bytes.subarray(0, 3));
+    });
+    await expect(getRuntimeObjectContent(randomUUID())).rejects.toMatchObject({
+      code: "EXECUTOR_UNAVAILABLE",
+      details: { reason: "network" },
+    });
   });
 
   it("keeps the upload deadline active after response headers", async () => {
@@ -227,10 +430,19 @@ describe("runtime-object binary HTTP transport (AT-17)", () => {
 
   it("cancels the peer stream when the caller cancels its read", async () => {
     const closed = Promise.withResolvers<void>();
+    const sha256 = createHash("sha256")
+      .update(new Uint8Array([1, 2, 3]))
+      .digest("hex");
+    const digest = `sha-256=:${Buffer.from(sha256, "hex").toString("base64")}:`;
 
     await serve((_request, response) => {
       response.once("close", () => closed.resolve());
-      response.writeHead(200, { "content-type": "application/octet-stream" });
+      response.writeHead(200, {
+        "content-type": "application/octet-stream",
+        "content-digest": digest,
+        "repr-digest": digest,
+        etag: `"1-${sha256}"`,
+      });
       response.write(Buffer.from([1, 2, 3]));
     });
     const opened = await openRuntimeObjectContent(randomUUID());

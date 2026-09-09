@@ -38,6 +38,7 @@ import type {
 import { createHash, randomUUID } from "node:crypto";
 
 import { canonicalCommandJson } from "../../runtime/command-json";
+import { objectDigest, objectEtag } from "../../runtime/object-integrity";
 
 import {
   isMaisterError,
@@ -1153,13 +1154,21 @@ export function createFakeExecutionHost(
         });
       }
 
+      const bytes = object.bytes.slice(start, end + 1);
+
       return {
-        bytes: object.bytes.slice(start, end + 1),
+        bytes,
         contentRange: opts?.range
           ? `bytes ${start}-${end}/${object.bytes.byteLength}`
           : null,
-        contentDigest: object.metadata.sha256
-          ? `sha-256=:${Buffer.from(object.metadata.sha256, "hex").toString("base64")}:`
+        contentDigest: objectDigest(
+          createHash("sha256").update(bytes).digest("hex"),
+        ),
+        reprDigest: object.metadata.sha256
+          ? objectDigest(object.metadata.sha256)
+          : null,
+        etag: object.metadata.sha256
+          ? objectEtag(object.metadata.generation, object.metadata.sha256)
           : null,
       };
     },
@@ -1176,6 +1185,8 @@ export function createFakeExecutionHost(
         contentLength: content.bytes.byteLength,
         contentRange: content.contentRange,
         contentDigest: content.contentDigest,
+        reprDigest: content.reprDigest,
+        etag: content.etag,
       };
     },
     reserveRuntimeObject(envelope, opts) {

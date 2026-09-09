@@ -16,6 +16,7 @@ import type { FilesystemOperation } from "@/test-support/filesystem-ownership";
 // unclassified callsite as the tuple to add here. Classes:
 //   manager-flow-state   flow/config/run-input state the manager owns
 //   manager-evidence     the Evaluation Lab evidence store
+//   manager-response-spool anonymous bounded copies of received HTTP bytes
 //   repository-worktree  git, worktree, package and capability materialization
 //                        on the shared checkout, retained until Stage C
 //   migration-tooling    Drizzle migration files (operator CLI + boot check)
@@ -25,6 +26,7 @@ import type { FilesystemOperation } from "@/test-support/filesystem-ownership";
 export type FilesystemOwnershipClass =
   | "manager-flow-state"
   | "manager-evidence"
+  | "manager-response-spool"
   | "repository-worktree"
   | "migration-tooling"
   | "operator-import"
@@ -91,6 +93,18 @@ function wrappers(
 
 export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
   [
+    ...classified(
+      "lib/execution-host/runtime-object-response.ts",
+      "manager-response-spool",
+      "D5 bounded HTTP response verification in manager-owned anonymous temporary files; no host locator or caller-selected path",
+      [
+        ["release", "node:fs/promises.rm", "remove"],
+        ["verifyRuntimeObjectResponse", "node:fs/promises.mkdtemp", "write"],
+        ["verifyRuntimeObjectResponse", "node:fs/promises.open", "open"],
+        ["verifyRuntimeObjectResponse", "node:fs/promises.unlink", "remove"],
+        ["verifyRuntimeObjectResponse", "node:fs/promises.rm", "remove"],
+      ],
+    ),
     ...classified(
       "app/(app)/projects/[slug]/packages/[flowRefId]/page.tsx",
       "manager-flow-state",
@@ -1096,6 +1110,7 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "repository-worktree",
       "worktree, repository, package and capability materialization on the shared checkout — Stage C repository cut",
       [
+        ["listLocalPackageRootEntries", "node:fs/promises.readdir", "list"],
         ["claimLocalPackageWorkingDir", "node:fs/promises.mkdir", "write"],
         ["removeOwnedLocalPackageWorkingDir", "node:fs/promises.rm", "remove"],
         ["claimInitialCreationStagingDir", "node:fs/promises.mkdir", "write"],
@@ -1787,6 +1802,11 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
 
 export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
   ...wrappers(
+    "lib/execution-host/runtime-object-response.ts",
+    "manager-response-spool",
+    [["verifyRuntimeObjectResponse", false]],
+  ),
+  ...wrappers(
     "app/api/admin/agents/[agentId]/route.ts",
     "repository-worktree",
     [["GET", false]],
@@ -2064,6 +2084,7 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
     ["recoverLocalPackageCreation", false],
     ["registerFlowElementInManifest", false],
     ["removeOwnedLocalPackageWorkingDir", false],
+    ["uniqueSlugForName", false],
     ["writeWorkingDirFile", false],
   ]),
   ...wrappers("lib/local-packages/sync-merge.ts", "repository-worktree", [

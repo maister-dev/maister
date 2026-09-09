@@ -75,6 +75,8 @@ beforeEach(() => {
       contentLength: 5,
       contentRange: "bytes 1-5/8",
       contentDigest: "sha-256=:abc=:",
+      reprDigest: "sha-256=:representation=:",
+      etag: '"1-abc"',
     },
   } as never);
 });
@@ -86,7 +88,7 @@ describe("GET /api/runs/[runId]/runtime-objects/[objectId]/content", () => {
     expect(response.status).toBe(206);
     expect(response.headers.get("content-range")).toBe("bytes 1-5/8");
     expect(response.headers.get("content-digest")).toBe("sha-256=:abc=:");
-    expect(response.headers.get("etag")).toBe('"abc"');
+    expect(response.headers.get("etag")).toBe('"1-abc"');
     // AT-12 (D5): supplied MIME is never inline; the bytes are an opaque
     // attachment under nosniff + a sandboxing CSP, and never cached.
     expect(response.headers.get("content-type")).toBe(
@@ -110,6 +112,7 @@ describe("GET /api/runs/[runId]/runtime-objects/[objectId]/content", () => {
       runId: RUN_ID,
       objectId: OBJECT_ID,
       range: { start: 1, end: 5 },
+      signal: expect.any(AbortSignal),
     });
   });
 
@@ -136,6 +139,8 @@ describe("GET /api/runs/[runId]/runtime-objects/[objectId]/content", () => {
         contentLength: 6,
         contentRange: null,
         contentDigest: "sha-256=:abc=:",
+        reprDigest: "sha-256=:representation=:",
+        etag: '"1-abc"',
       },
     } as never);
 

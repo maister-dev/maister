@@ -15,7 +15,14 @@ import { randomUUID, createHash } from "node:crypto";
 
 import { and, eq } from "drizzle-orm";
 
+import {
+  objectDigest,
+  objectEtag,
+  parseObjectContentRange,
+} from "../../../runtime/object-integrity";
+
 import { defaultTransport } from "./default-transport";
+import { verifyRuntimeObjectResponse } from "./runtime-object-response";
 
 import { executionHosts, executionRuntimeObjects, runs } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
@@ -71,10 +78,10 @@ export function assertRuntimeObjectContentHeaders(input: {
     return;
   }
 
-  const match = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(input.contentRange ?? "");
-  const start = match ? Number(match[1]) : NaN;
-  const end = match ? Number(match[2]) : NaN;
-  const responseTotal = match ? Number(match[3]) : NaN;
+  const parsed = parseObjectContentRange(input.contentRange);
+  const start = parsed?.start ?? NaN;
+  const end = parsed?.end ?? NaN;
+  const responseTotal = parsed?.total ?? NaN;
   const expectedEnd = input.range.end ?? total - 1;
 
   if (
@@ -232,6 +239,7 @@ export async function readRuntimeObjectContent(input: {
   runId: string;
   objectId: string;
   range?: { start: number; end?: number };
+  signal?: AbortSignal;
   transportForHost?: RuntimeObjectTransportResolver;
 }): Promise<{ object: ExecutionRuntimeObject; content: RuntimeObjectContent }> {
   const opened = await openRuntimeObjectContent(input);
@@ -244,6 +252,8 @@ export async function readRuntimeObjectContent(input: {
       ),
       contentRange: opened.content.contentRange,
       contentDigest: opened.content.contentDigest,
+      reprDigest: opened.content.reprDigest,
+      etag: opened.content.etag,
     },
   };
 }
@@ -253,6 +263,7 @@ export async function openRuntimeObjectContent(input: {
   runId: string;
   objectId: string;
   range?: { start: number; end?: number };
+  signal?: AbortSignal;
   transportForHost?: RuntimeObjectTransportResolver;
 }): Promise<{
   object: ExecutionRuntimeObject;
@@ -283,30 +294,57 @@ export async function openRuntimeObjectContent(input: {
     : defaultRuntimeObjectTransport(loaded.executionHost);
   const content = await transport.openRuntimeObjectContent(input.objectId, {
     range: input.range,
-  });
-  const expectedDigest = `sha-256=:${Buffer.from(loaded.object.sha256, "hex").toString("base64")}:`;
-
-  if (content.contentDigest !== expectedDigest) {
-    throw integrityError(
-      input.runId,
-      "runtime object content digest differs from its manager catalogue",
-    );
-  }
-  if (loaded.object.sizeBytes === null) {
-    throw integrityError(
-      input.runId,
-      "available runtime object has no manager catalogue size",
-    );
-  }
-  assertRuntimeObjectContentHeaders({
-    runId: input.runId,
-    sizeBytes: loaded.object.sizeBytes,
-    range: input.range,
-    contentLength: content.contentLength,
-    contentRange: content.contentRange,
+    signal: input.signal,
   });
 
-  return { object: loaded.object, content };
+  try {
+    if (
+      content.reprDigest !== objectDigest(loaded.object.sha256) ||
+      content.etag !==
+        objectEtag(loaded.object.generation, loaded.object.sha256)
+    ) {
+      throw integrityError(
+        input.runId,
+        "runtime object representation differs from its manager catalogue",
+      );
+    }
+    if (loaded.object.sizeBytes === null) {
+      throw integrityError(
+        input.runId,
+        "available runtime object has no manager catalogue size",
+      );
+    }
+    assertRuntimeObjectContentHeaders({
+      runId: input.runId,
+      sizeBytes: loaded.object.sizeBytes,
+      range: input.range,
+      contentLength: content.contentLength,
+      contentRange: content.contentRange,
+    });
+  } catch (error) {
+    await content.body.cancel();
+    throw error;
+  }
+
+  try {
+    const verified = await verifyRuntimeObjectResponse(content, {
+      range: input.range,
+      signal: input.signal,
+    });
+
+    return { object: loaded.object, content: verified };
+  } catch (error) {
+    if (
+      error instanceof MaisterError &&
+      error.details?.reason === "runtime_object_integrity_mismatch"
+    ) {
+      throw integrityError(
+        input.runId,
+        "runtime object response bytes failed integrity verification",
+      );
+    }
+    throw error;
+  }
 }
 
 function defaultRuntimeObjectTransport(

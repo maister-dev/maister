@@ -167,6 +167,13 @@ actual lease expiry, a terminal event after position 200, first-batch failure,
 stale failure recording, cumulative/blocked-query deadlines, connection loss,
 gap promotion across runs, paged backfill and cursor-bound rearm. Production image/systemd shutdown stops admission, drains or rolls back owned work, preserves unconfirmed claims and closes database pools. S1 is qualified locally with the evidence tracked in the implementation plan; durable prompt-owner reconciliation below belongs to S2.
 
+The runtime-event stream consumer checks cancellation again after its PostgreSQL
+claim completes: attaching an abort listener does not replay cancellation received
+while waiting for that claim. A cancelled consumer refuses to open SSE with typed
+`EXECUTOR_UNAVAILABLE` / `aborted` and expires only its own claim through the
+existing failure recorder. A real row-lock barrier test verifies both refusal and
+immediate acquisition by a successor without waiting for lease expiry.
+
 The worker uses `execution_event_consumers`, indexed `last_served_at` ordering and a unique token for each claim. Register prompt, lifecycle, runtime-object, transcript, artifact and cost projection responsibilities explicitly: wire every current canonical consumer into its owning worker or document and test its equivalent autonomous existing job. Do not assume fixing the three one-shot wrappers proves all read models.
 
 The transcript v2 consumer replays existing canonical history into the same

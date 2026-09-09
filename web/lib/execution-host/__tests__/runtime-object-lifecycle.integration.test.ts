@@ -29,6 +29,7 @@ import {
   resetRegistrarStateForTests,
 } from "../registrar";
 import { primeResolverForTests, resetResolverForTests } from "../resolver";
+import { readRuntimeObjectContent } from "../runtime-objects";
 
 import {
   executionAssignments,
@@ -161,6 +162,126 @@ async function deliverAvailable(objectId: string): Promise<void> {
 }
 
 describe("runtime object intent and seal reconciliation through a real host", () => {
+  it.each([undefined, { start: 2, end: 4 }])(
+    "verifies actual response bytes against the catalogue for range %j",
+    async (range) => {
+      const { client, runId, input } = await fixture();
+
+      await client.uploadRuntimeObject(input);
+      await deliverAvailable(input.objectId);
+      const { content } = await readRuntimeObjectContent({
+        db,
+        runId,
+        objectId: input.objectId,
+        range,
+      });
+      const expected = range
+        ? input.bytes.subarray(range.start, range.end + 1)
+        : input.bytes;
+
+      expect(content.bytes).toEqual(expected);
+      expect(content).toMatchObject({
+        contentDigest: `sha-256=:${createHash("sha256").update(expected).digest("base64")}:`,
+        reprDigest: `sha-256=:${createHash("sha256").update(input.bytes).digest("base64")}:`,
+        etag: `"1-${input.sha256}"`,
+      });
+    },
+  );
+
+  it.each(["generation", "representation"] as const)(
+    "refuses a conflicting peer %s and cancels the unconsumed body",
+    async (fault) => {
+      const { client, runId, input } = await fixture();
+      let cancelled = false;
+
+      await client.uploadRuntimeObject(input);
+      await deliverAvailable(input.objectId);
+      await expect(
+        readRuntimeObjectContent({
+          db,
+          runId,
+          objectId: input.objectId,
+          transportForHost: async () => ({
+            ...transport,
+            async openRuntimeObjectContent(objectId, opts) {
+              const opened = await transport.openRuntimeObjectContent(
+                objectId,
+                opts,
+              );
+
+              return {
+                ...opened,
+                ...(fault === "generation"
+                  ? { etag: `"2-${input.sha256}"` }
+                  : {
+                      reprDigest: `sha-256=:${Buffer.alloc(32).toString("base64")}:`,
+                    }),
+                body: new ReadableStream<Uint8Array>(
+                  {
+                    async cancel() {
+                      cancelled = true;
+                      await opened.body.cancel();
+                    },
+                  },
+                  { highWaterMark: 0 },
+                ),
+              };
+            },
+          }),
+        }),
+      ).rejects.toMatchObject({
+        code: "CONFLICT",
+        details: { reason: "runtime_object_integrity_mismatch", runId },
+      });
+      expect(cancelled).toBe(true);
+      expect(await catalogue(input.objectId)).toMatchObject({
+        state: "available",
+        sha256: input.sha256,
+      });
+    },
+  );
+
+  it("refuses changed peer bytes before exposing a successful catalogue read", async () => {
+    const { client, runId, input } = await fixture();
+
+    await client.uploadRuntimeObject(input);
+    await deliverAvailable(input.objectId);
+    await expect(
+      readRuntimeObjectContent({
+        db,
+        runId,
+        objectId: input.objectId,
+        transportForHost: async () => ({
+          ...transport,
+          async openRuntimeObjectContent(objectId, opts) {
+            const content = await transport.openRuntimeObjectContent(
+              objectId,
+              opts,
+            );
+            const changed = new Uint8Array(
+              await new Response(content.body).arrayBuffer(),
+            );
+
+            changed[0] ^= 1;
+
+            return {
+              ...content,
+              body: new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.enqueue(changed);
+                  controller.close();
+                },
+              }),
+            };
+          },
+        }),
+      }),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "runtime_object_integrity_mismatch", runId },
+    });
+  });
+
   it("persists ACK evidence without availability until the canonical event arrives", async () => {
     const { client, input } = await fixture();
     const metadata = await client.uploadRuntimeObject(input);

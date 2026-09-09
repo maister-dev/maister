@@ -1,4 +1,6 @@
 import type { Db } from "@/lib/execution-host/db";
+import type { ExecutionHostTransport } from "@/lib/execution-host/contracts";
+import type { RuntimeEventConsumerSummary } from "@/lib/execution-host/events/consumer";
 
 import { randomUUID } from "node:crypto";
 
@@ -6,9 +8,18 @@ import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { ingestRuntimeEvent } from "@/lib/execution-host/events/ingest";
+import {
+  claimRuntimeEventStream,
+  consumeRuntimeEventStreamOnce,
+} from "@/lib/execution-host/events/consumer";
 import { mintAssignment } from "@/lib/execution-host/assignments";
 import { projectRuntimeObject } from "@/lib/execution-host/events/runtime-object-projector";
-import { executionEvents, executionRuntimeObjects } from "@/lib/db/schema";
+import {
+  executionEvents,
+  executionEventStreams,
+  executionRuntimeObjects,
+} from "@/lib/db/schema";
+import { createFakeExecutionHost } from "@/test-support/fake-execution-host";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -59,6 +70,100 @@ function event(
 }
 
 describe("Event ingestion and assignment claim locks", () => {
+  it("honours cancellation received while acquiring a stream claim and releases that claim", async () => {
+    const targetStreamId = randomUUID();
+    const streamRowId = randomUUID();
+    const now = new Date("2026-09-09T00:00:00.000Z");
+    const controller = new AbortController();
+    let openedStreams = 0;
+    const transport: ExecutionHostTransport = {
+      ...createFakeExecutionHost().transport,
+      async *streamRuntimeEvents() {
+        openedStreams += 1;
+      },
+    };
+
+    await db.insert(executionEventStreams).values({
+      id: streamRowId,
+      executionHostId: hostId,
+      streamId: targetStreamId,
+      state: "active",
+    });
+    const barrier = await testDatabase.pool.connect();
+    let completion:
+      | Promise<PromiseSettledResult<RuntimeEventConsumerSummary>[]>
+      | undefined;
+    let releasePromise: Promise<void> | undefined;
+    const releaseBarrier = (): Promise<void> =>
+      (releasePromise ??= barrier.query("COMMIT").then(() => undefined));
+
+    await barrier.query("BEGIN");
+    try {
+      await barrier.query(
+        "SELECT id FROM execution_event_streams WHERE id = $1 FOR UPDATE",
+        [streamRowId],
+      );
+      const blocker = await barrier.query<{ pid: number }>(
+        "SELECT pg_backend_pid() AS pid",
+      );
+
+      completion = Promise.allSettled([
+        consumeRuntimeEventStreamOnce({
+          db,
+          executionHostId: hostId,
+          transport,
+          owner: "cancelled-consumer",
+          signal: controller.signal,
+          now: () => now,
+        }),
+      ]);
+      await expect
+        .poll(
+          async () => {
+            const waiting = await testDatabase.pool.query<{ count: number }>(
+              "SELECT count(*)::int AS count FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))",
+              [blocker.rows[0].pid],
+            );
+
+            return waiting.rows[0].count;
+          },
+          { timeout: 10_000, interval: 25 },
+        )
+        .toBe(1);
+      controller.abort();
+      await releaseBarrier();
+      const result = await completion;
+      const successor = await claimRuntimeEventStream({
+        db,
+        executionHostId: hostId,
+        owner: "successor-consumer",
+        now: new Date(now.getTime() + 1),
+      });
+
+      expect({ result, openedStreams, successor }).toMatchObject({
+        result: [
+          {
+            status: "rejected",
+            reason: {
+              code: "EXECUTOR_UNAVAILABLE",
+              details: { reason: "aborted" },
+            },
+          },
+        ],
+        openedStreams: 0,
+        successor: { streamRowId, streamId: targetStreamId },
+      });
+    } finally {
+      controller.abort();
+      await releaseBarrier();
+      await completion;
+      barrier.release();
+      await db
+        .delete(executionEventStreams)
+        .where(eq(executionEventStreams.id, streamRowId));
+    }
+  });
+
   it("concurrent object projection validates one committed catalogue row", async () => {
     const targetRunId = randomUUID();
     const targetAssignmentId = randomUUID();

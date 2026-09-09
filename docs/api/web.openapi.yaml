@@ -6180,7 +6180,15 @@ paths:
         the authenticated creator. The host is selected from the catalogue, never
         a URL or request-body value. A full response is bounded to 8 MiB; larger
         objects require one valid inclusive byte range. Response headers include
-        `Content-Digest`.
+        `Content-Digest`, `Repr-Digest` and a strong generation/hash `ETag`.
+        (Implemented — AB-15) Before success, the manager checks representation
+        identity and exact range/size against its catalogue, then hashes actual
+        response bytes into an anonymous private spool (8 MiB per response,
+        two active responses). Content-Digest covers the selected response bytes;
+        Repr-Digest covers the full representation. Encoded bodies, malformed or
+        duplicate digests, and full-body range fallback are refused. Both content
+        routes propagate cancellation and release temporary descriptors on EOF,
+        cancellation or failure.
 
         (Implemented — AB-12) The bytes are untrusted and are delivered under the
         shared safe-download policy: `Content-Type: application/octet-stream`
@@ -6209,6 +6217,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: Runtime-object representation or actual response bytes fail integrity verification. }
         "410": { description: Catalogue metadata remains but host bytes are gone. }
         "416": { description: Range is malformed or unsatisfiable. }
         "503": { description: The selected execution host transport is unavailable. }

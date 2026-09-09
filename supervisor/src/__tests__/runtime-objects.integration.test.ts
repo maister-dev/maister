@@ -1034,7 +1034,7 @@ describe("runtime object transport", () => {
     const ranged = await fetch(
       `${host.url}/runtime-objects/${objectId}/content`,
       {
-        headers: { range: "bytes=0-1" },
+        headers: { range: "bytes=2-4" },
       },
     );
     const suffixRange = await fetch(
@@ -1108,11 +1108,20 @@ describe("runtime object transport", () => {
     }
     expect(ranged.status).toBe(206);
     expect(ranged.headers.get("content-range")).toBe(
-      `bytes 0-1/${payload.byteLength}`,
+      `bytes 2-4/${payload.byteLength}`,
     );
-    expect(ranged.headers.get("content-digest")).toBe(digest);
-    expect(ranged.headers.get("etag")).toBe(`"${checksum}"`);
-    expect(Buffer.from(await ranged.arrayBuffer()).toString("utf8")).toBe('{"');
+    const rangeBytes = Buffer.from(await ranged.arrayBuffer());
+    const sliceDigest = `sha-256=:${createHash("sha256").update(rangeBytes).digest("base64")}:`;
+
+    expect(rangeBytes).toEqual(payload.subarray(2, 5));
+    expect(ranged.headers.get("content-digest")).toBe(sliceDigest);
+    expect(sliceDigest).not.toBe(digest);
+    expect(ranged.headers.get("repr-digest")).toBe(digest);
+    expect(ranged.headers.get("etag")).toBe(`"1-${checksum}"`);
+    expect(full.headers.get("content-digest")).toBe(
+      `sha-256=:${createHash("sha256").update(fullBody).digest("base64")}:`,
+    );
+    expect(full.headers.get("repr-digest")).toBe(digest);
     expect(suffixRange.status).toBe(416);
     expect(await suffixRange.json()).toMatchObject({
       code: "PRECONDITION",
