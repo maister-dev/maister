@@ -4202,8 +4202,13 @@ nonnegative, paired-null and terminal-marker constraints are generated from
 Drizzle. Run/assignment deletes must refuse protected evidence before existing
 FK cascades; they cannot bypass retirement. The host stores its own receipt,
 terminal-wallet and import progress in private SQLite, never in a second Flow
-ledger. Pre-0134 import progress uses existing 0131 lane fields and the private
-host manifest; forward columns are not prerequisites for that stage.
+ledger. Host SQLite schema 13 adds private nullable `producer_path`,
+`sealed_device` and `sealed_inode` strings to `runtime_objects`; version-12 records establish these
+through a verified copy, while new seals record both before availability.
+Missing/corrupt transitions share one SQLite transaction with their outbox event.
+These fields do not enter the manager catalog or the generated Postgres ERD.
+Pre-0134 import progress uses existing 0131 lane fields and the private host
+manifest; forward columns are not prerequisites for that stage.
 
 ## Workflow
 

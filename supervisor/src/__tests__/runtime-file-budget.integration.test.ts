@@ -177,6 +177,14 @@ describe("AT-02 aggregate runtime file capacity", () => {
       expect(
         host.hostState.runtimeFileBudget().chargedBytes,
       ).toBeGreaterThanOrEqual(2 * (8 + 3 * 50) * 1024 * 1024);
+      for (const session of sessions)
+        for (const objectId of session.objectIds)
+          expect(
+            host.hostState.getRuntimeFile(`object:${objectId}`),
+          ).toMatchObject({
+            capacityBytes: 2 * sizeBytes,
+            sealed: false,
+          });
       const completed = await Promise.all(
         sessions.map((s) =>
           completePrompt(
@@ -203,7 +211,8 @@ describe("AT-02 aggregate runtime file capacity", () => {
             host.hostState.getRuntimeFile(`object:${objectId}`),
           ).toMatchObject({
             capacityBytes: 2 * sizeBytes,
-            writtenBytes: sizeBytes,
+            writtenBytes: 2 * sizeBytes,
+            sealed: true,
           });
         }
       expect(host.hostState.runtimeStorageAvailable()).toBe(true);

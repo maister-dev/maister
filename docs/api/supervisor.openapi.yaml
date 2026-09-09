@@ -287,9 +287,16 @@ paths:
         `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox;
         default-src 'none'`, `Cache-Control: private, no-store`, plus
         `Content-Digest`, `ETag` and `Accept-Ranges`.
+        (S3.2) Before success, the host verifies the complete sealed representation
+        through its no-follow descriptor, then serves the exact private response
+        spool. At most two active responses retain 8 MiB each. Missing/corrupt
+        state commits with its canonical event before refusal; failed persistence
+        returns storage-unavailable without claiming a durable state change.
       responses:
         "200": { description: Full bytes only for an object no larger than 8 MiB. }
         "206": { description: One byte range with `Content-Range`. }
+        "409": { description: "Typed runtime_object_missing, runtime_object_integrity_mismatch, or retryable command_in_progress." }
+        "503": { description: "Runtime storage unavailable or response-spool capacity pressure." }
         "416": { description: "Invalid, unsatisfiable, or multi-range request." }
   /health:
     get:

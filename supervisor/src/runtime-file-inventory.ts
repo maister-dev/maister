@@ -12,11 +12,22 @@ import {
   runtimeFileBudgetSnapshot,
 } from "./runtime-file-budget";
 
-function retainedBytes(file: string): number {
+function retainedBytes(db: DatabaseSync, file: string): number {
   try {
     const metadata = lstatSync(file);
 
-    if (!metadata.isFile() || !Number.isSafeInteger(metadata.size))
+    const knownCorruptLink =
+      metadata.isSymbolicLink() &&
+      db
+        .prepare(
+          "SELECT 1 FROM runtime_objects WHERE private_path = ? AND state = 'corrupt'",
+        )
+        .get(file) !== undefined;
+
+    if (
+      (!metadata.isFile() && !knownCorruptLink) ||
+      !Number.isSafeInteger(metadata.size)
+    )
       throw new HostRuntimeEventError(
         "runtime_storage_unavailable",
         "retained runtime content is not a measurable regular file",
@@ -56,10 +67,17 @@ export function inventoryRuntimeFiles(input: {
     if (page.length === 0) break;
     for (const file of page) {
       const bytes =
-        retainedBytes(file.private_path) +
-        (file.temporary_path ? retainedBytes(file.temporary_path) : 0);
+        retainedBytes(db, file.private_path) +
+        (file.temporary_path ? retainedBytes(db, file.temporary_path) : 0);
 
-      if (bytes > file.capacity_bytes)
+      const knownCorrupt =
+        db
+          .prepare(
+            "SELECT 1 FROM runtime_objects WHERE private_path = ? AND state = 'corrupt'",
+          )
+          .get(file.private_path) !== undefined;
+
+      if (bytes > file.capacity_bytes && !knownCorrupt)
         throw new HostRuntimeEventError(
           "runtime_storage_unavailable",
           "retained runtime bytes exceed their durable file reservation; preserve the files and repair storage",
@@ -68,9 +86,9 @@ export function inventoryRuntimeFiles(input: {
         write(() =>
           db
             .prepare(
-              "UPDATE runtime_files SET written_bytes = ? WHERE file_id = ?",
+              "UPDATE runtime_files SET capacity_bytes = MAX(capacity_bytes, ?), written_bytes = ? WHERE file_id = ?",
             )
-            .run(bytes, file.file_id),
+            .run(bytes, bytes, file.file_id),
         );
     }
     afterFile = page.at(-1)!.file_id;
@@ -107,7 +125,7 @@ export function inventoryRuntimeFiles(input: {
           discover(privatePath, depth + 1);
           continue;
         }
-        const bytes = retainedBytes(privatePath);
+        const bytes = retainedBytes(db, privatePath);
         const known = db
           .prepare(
             "SELECT 1 FROM runtime_files WHERE private_path = ? OR temporary_path = ?",

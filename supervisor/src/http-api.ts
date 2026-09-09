@@ -13,7 +13,7 @@ import type { WorkspaceResolution } from "./workspace-registry";
 
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { constants as fsConstants, createReadStream } from "node:fs";
+import { constants as fsConstants } from "node:fs";
 import { access } from "node:fs/promises";
 import { delimiter, dirname, join } from "node:path";
 
@@ -543,6 +543,8 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
   const runtimeObjects = new RuntimeObjectRegistry(
     hostState,
     join(hostState.stateDirReal ?? runtimeRoot, "runtime-objects"),
+    undefined,
+    logger,
   );
   const runtimeEvents = new RuntimeEventPublisher(
     hostState,
@@ -1586,43 +1588,18 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
         },
       );
     }
-    const content = await runtimeObjects.read(objectId.data);
-    const total = content.metadata.sizeBytes;
+    const abort = new AbortController();
+    const cancel = (): void => abort.abort();
 
-    if (total === null) throw new Error("available runtime object has no size");
-    const maxRangeBytes = 8 * 1024 * 1024;
-    const range = req.headers.range;
-
-    if (range && Array.isArray(range)) {
-      throw new SupervisorError(
-        "PRECONDITION",
-        "runtime object range is invalid",
-        {
-          details: { reason: "runtime_object_range_invalid" },
-        },
+    reply.raw.once("close", cancel);
+    try {
+      const content = await runtimeObjects.read(
+        objectId.data,
+        req.headers.range,
+        abort.signal,
       );
-    }
-    const match = range?.match(/^bytes=(\d+)-(\d*)$/);
+      const { range } = content;
 
-    if (range && !match) {
-      throw new SupervisorError(
-        "PRECONDITION",
-        "runtime object range is invalid",
-        {
-          details: { reason: "runtime_object_range_invalid" },
-        },
-      );
-    }
-    if (!match) {
-      if (total > maxRangeBytes) {
-        throw new SupervisorError(
-          "PRECONDITION",
-          "a runtime object larger than 8 MiB requires an explicit byte range",
-          { details: { reason: "runtime_object_range_invalid" } },
-        );
-      }
-      // AB-12 (D5): never the reserved MIME — the bytes are untrusted and leave
-      // the host as an opaque attachment; the manager proxy repeats the policy.
       reply
         .headers(
           safeDownloadHeaders({
@@ -1631,54 +1608,23 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
           }),
         )
         .header("Accept-Ranges", "bytes")
-        .header("Content-Length", String(total))
-        .header("ETag", `\"${content.metadata.sha256}\"`)
+        .header("Content-Length", String(range.length))
+        .header("ETag", `"${content.metadata.sha256}"`)
         .header(
           "Content-Digest",
           `sha-256=:${Buffer.from(content.metadata.sha256 ?? "", "hex").toString("base64")}:`,
         );
+      if (range.partial)
+        reply.header(
+          "Content-Range",
+          `bytes ${range.start}-${range.end}/${content.metadata.sizeBytes}`,
+        );
+      if (abort.signal.aborted) content.stream.destroy();
 
-      return reply.status(200).send(createReadStream(content.path));
+      return reply.status(range.partial ? 206 : 200).send(content.stream);
+    } finally {
+      reply.raw.removeListener("close", cancel);
     }
-    const start = Number(match[1]);
-    const requestedEnd = match[2] ? Number(match[2]) : total - 1;
-    const requestedLength = requestedEnd - start + 1;
-
-    if (
-      !Number.isSafeInteger(start) ||
-      !Number.isSafeInteger(requestedEnd) ||
-      start >= total ||
-      requestedEnd < start ||
-      requestedEnd >= total ||
-      requestedLength > maxRangeBytes
-    ) {
-      throw new SupervisorError(
-        "PRECONDITION",
-        "runtime object range is invalid",
-        {
-          details: { reason: "runtime_object_range_invalid" },
-        },
-      );
-    }
-    reply
-      .headers(
-        safeDownloadHeaders({
-          fileName: content.metadata.logicalName,
-          mediaClass: "opaque",
-        }),
-      )
-      .header("Accept-Ranges", "bytes")
-      .header("Content-Length", String(requestedLength))
-      .header("ETag", `\"${content.metadata.sha256}\"`)
-      .header(
-        "Content-Digest",
-        `sha-256=:${Buffer.from(content.metadata.sha256 ?? "", "hex").toString("base64")}:`,
-      );
-
-    return reply
-      .header("Content-Range", `bytes ${start}-${requestedEnd}/${total}`)
-      .status(206)
-      .send(createReadStream(content.path, { start, end: requestedEnd }));
   });
 
   app.delete("/runtime-objects/:id", async (req, reply) => {

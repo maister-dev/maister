@@ -544,6 +544,9 @@ describe("Stage B durable host event outbox", () => {
         ALTER TABLE command_receipts DROP COLUMN terminal_stream_id;
         ALTER TABLE command_receipts DROP COLUMN terminal_sequence;
         ALTER TABLE command_receipts DROP COLUMN retired_at;
+        ALTER TABLE runtime_objects DROP COLUMN producer_path;
+        ALTER TABLE runtime_objects DROP COLUMN sealed_device;
+        ALTER TABLE runtime_objects DROP COLUMN sealed_inode;
         ALTER TABLE runtime_event_outbox DROP COLUMN budget_partition; PRAGMA user_version = 6;`);
       db.close();
       const upgraded = openHostState({ stateDir });

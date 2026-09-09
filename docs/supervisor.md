@@ -770,7 +770,13 @@ refuses startup. File pressure shares producer pause/wake and credited teardown
 with event pressure. ACK alone releases no file capacity. Size limits and the
 remaining immutable-output sealing work are described in the canonical
 [resource budget](configuration.md#a-b-stabilization-resource-budget-designed).
-The file carries a `PRAGMA user_version` (currently 10)
+Version 13 adds host-private `runtime_objects.producer_path`, `sealed_device` and
+`sealed_inode`.
+The [object read contract](system-analytics/execution-runtime-objects.md#host-descriptor-verification-implemented)
+requires a distinct producer seal, a full descriptor hash and a bounded response
+spool before successful content delivery; missing/corrupt state commits with its
+outbox event. Existing version-12 seals acquire identity through verified copying.
+The file carries a `PRAGMA user_version` (currently 13)
 that gates in-place migrations at open: a version-0 store (inline
 `UNIQUE (run_id, real_path)`, which blocked re-adoption after a release) is
 rebuilt under the partial index with every row kept; a fresh store starts at

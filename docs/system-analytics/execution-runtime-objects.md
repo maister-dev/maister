@@ -1,6 +1,6 @@
 # Execution runtime objects
 
-**Status:** Implemented host registry, reserve/upload/delete routes, manager catalog and **safe content delivery (AB-12, S3.4)**; **Implemented native intent/seal reconciliation (AB-09, S3.1)**; **Designed** crash-gap recovery, read integrity and fair retention corrections (AB-13–15). Bytes remain host-owned and manager locators remain opaque.
+**Status:** Implemented host registry, reserve/upload/delete routes, manager catalog and **safe content delivery (AB-12, S3.4)**; **Implemented native intent/seal reconciliation (AB-09, S3.1)**; **Implemented host seal/read verification (AB-13)**; **Designed** manager message-integrity (AB-15), crash-gap recovery and fair retention corrections (AB-14). Bytes remain host-owned and manager locators remain opaque.
 
 
 ## Purpose
@@ -128,13 +128,49 @@ On ENOENT return a typed missing outcome; on nonregular/symlink/identity/digest 
 
 GC advances a keyset/last-examined marker even for protected rows. New reference creation and delete eligibility use the same object/generation lock so a reference cannot appear after destructive claim. Recheck eligibility/fence before remote effect; store deleting command identity and retry state before dispatch. Fairness applies to deleting/missing/corrupt cleanup queues too. Catalog/tombstones outlive missing/deleted payloads.
 
+## Host descriptor verification (Implemented)
+
+The host stores `sealed_device` and `sealed_inode` as private decimal strings in
+SQLite schema 13, alongside the optional private `producer_path`. Uploads flush and close their exclusive temporary file before
+rename and directory fsync. Producer output is copied to a distinct inode before
+its seal is published; a retained producer descriptor cannot change the sealed
+copy. Its producer path is separate from the sealed path, so reopening the
+producer filename cannot mutate the sealed representation either. Both retained
+files remain charged until object deletion. Captured ACP segments also record
+the identity of their distinct inode.
+A version-12 object acquires identity only after a bounded copy verifies its
+existing sealed size and SHA-256; the temporary copy has its own file reservation.
+Object ID, generation and catalog metadata remain unchanged.
+
+The content route permits two active reads through verification and response
+completion, each retaining at most 8 MiB, for at most 16 MiB of response spools. Each scan uses a
+64 KiB buffer and checks the entire source even for a short range. It opens with
+`O_NOFOLLOW | O_NONBLOCK`, validates a regular file and the stored device/inode,
+and checks size, SHA-256, mtime and ctime before sending success headers. The
+response streams its already-open, unlinked 0600 spool; cancellation and stream
+close release the descriptor and temporary accounting row. A saturated reader
+returns typed `command_in_progress`; malformed or oversized ranges return 416.
+
+Missing/corrupt state and its canonical outbox event commit together before the
+HTTP 409. A failed persistence transaction leaves the prior object state intact
+and latches storage degradation with HTTP 503 `runtime_storage_unavailable`.
+No manager projector is needed for this refusal. Restart preserves the failure
+and its event. Inventory measures a known corrupt symlink itself without following
+it, retains and charges the entry, and still refuses a total-capacity overrun.
+Unknown nonregular files remain an explicit storage failure.
+
+`runtime-objects.integration.test.ts` executes 18 real HTTP/SQLite/file cases,
+including post-seal mutations, producer descriptor and filename reuse, interrupted
+seal, a mutation during scanning, an eight-MiB range with corruption outside the
+slice, response-slot/cancellation cleanup, outbox rollback and a version-12 upgrade.
+
 ## Expectations
 
 - **OBJ-01:** Manager contracts/catalogs expose opaque object IDs and typed metadata, never a host filesystem path.
 - **OBJ-02:** The web authorizes URL-selected resources then derives host/run/assignment/epoch/object association from Postgres.
 - **OBJ-03:** Reserve, upload, and delete reuse Stage A commands, receipts, retry state, and fences without a second ledger.
-- **OBJ-04 (Implemented metadata immutability; read verification remains Designed):** A sealed object has immutable binding, generation, MIME, size, and SHA-256, and differing retries conflict.
-- **OBJ-05 (Designed correction):** Upload bytes use private temporary files, verify declared integrity, and atomically rename before available evidence.
+- **OBJ-04:** A sealed object has immutable binding, generation, MIME, size, and SHA-256, and differing retries conflict.
+- **OBJ-05:** Upload bytes use private temporary files, verify declared integrity, and atomically rename before available evidence.
 - **OBJ-06 (Designed correction):** Reads return a manager-authorized streaming response with one byte range and a SHA-256 Content-Digest; the web tier forwards host bytes without buffering the full object, while invalid ranges return typed errors.
 - **OBJ-07 (Designed correction):** Unknown/cross-boundary, tombstoned, corrupt, and oversized objects have distinct typed outcomes; expiry is an internal deletion eligibility check.
 - **OBJ-08:** Object content, host paths, prompts, and secrets are prohibited from logs and event payloads.

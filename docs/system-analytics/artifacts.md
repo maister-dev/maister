@@ -27,7 +27,10 @@ external ingestion beyond the external operations API, capability enforcement
 
 **Stage B runtime-object boundary (Implemented):** a host-produced payload uses the opaque
 `execution-object` locator described by [execution-runtime-objects.md](execution-runtime-objects.md);
-its bytes remain host-owned and path-free at the manager boundary. Git-range,
+its bytes remain host-owned and path-free at the manager boundary. The host
+[verifies the sealed descriptor](execution-runtime-objects.md#host-descriptor-verification-implemented)
+before content delivery and publishes durable missing/corrupt evidence on failure.
+Git-range,
 worktree, inline, gate-verdict, HITL, and manager-owned evaluation evidence
 keep their current ownership and are not silently converted into runtime
 objects.

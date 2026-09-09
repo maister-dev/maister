@@ -8,11 +8,14 @@ import type {
   ReserveRuntimeObjectPayload,
   RuntimeObjectOutputBinding,
 } from "./types";
+import type { Logger } from "pino";
 
+import { once } from "node:events";
 import { createHash, randomUUID } from "node:crypto";
 import {
   closeSync,
   fsyncSync,
+  fstatSync,
   mkdirSync,
   openSync,
   renameSync,
@@ -31,6 +34,16 @@ import {
 } from "node:fs/promises";
 import { resolve } from "node:path";
 
+import {
+  RuntimeObjectIntegrityError,
+  objectByteRange,
+  objectIntegrityError,
+  sealObjectFile,
+  sealedFileIdentity,
+  syncObjectDirectory,
+  verifyObjectResponse,
+  type VerifiedObjectResponse,
+} from "./runtime-object-files";
 import { HostRuntimeEventError } from "./host-runtime-errors";
 import { SupervisorError } from "./types";
 import { encodeSessionContent } from "./session-content-json";
@@ -110,10 +123,13 @@ function requireObject(
 }
 
 export class RuntimeObjectRegistry {
+  private activeReads = 0;
+  private readonly upgrading = new Set<string>();
   constructor(
     private readonly state: HostState,
     private readonly root: string,
     private readonly now: () => Date = () => new Date(),
+    private readonly logger?: Logger,
   ) {}
 
   /** Publishes a bounded producer segment before its synchronous SQLite event. */
@@ -246,6 +262,7 @@ export class RuntimeObjectRegistry {
     const timestamp = this.now().toISOString();
     const hash = createHash("sha256");
     let sizeBytes = 0;
+    let identity: ReturnType<typeof sealedFileIdentity>;
 
     mkdirSync(this.root, { recursive: true, mode: 0o700 });
     this.state.reserveRuntimeFile(
@@ -297,6 +314,7 @@ export class RuntimeObjectRegistry {
         sizeBytes += chunk.byteLength;
       }
       fsyncSync(descriptor);
+      identity = sealedFileIdentity(fstatSync(descriptor, { bigint: true }));
     } catch (error) {
       this.state.reportRuntimeStorageFailure(error);
       if (this.state.runtimeStorageAvailable()) {
@@ -330,6 +348,8 @@ export class RuntimeObjectRegistry {
       retentionClass: "run",
       state: "available",
       privatePath,
+      ...identity,
+      producerPath: null,
       createdAt: timestamp,
       sealedAt: timestamp,
       expiresAt: null,
@@ -396,6 +416,9 @@ export class RuntimeObjectRegistry {
           input.payload.objectId,
           input.payload.generation,
         ),
+        producerPath: null,
+        sealedDevice: null,
+        sealedInode: null,
         createdAt,
         sealedAt: null,
         expiresAt: input.payload.expiresAt ?? null,
@@ -439,7 +462,10 @@ export class RuntimeObjectRegistry {
         );
       }
 
-      return { metadata: publicMetadata(existing), path: existing.privatePath };
+      return {
+        metadata: publicMetadata(existing),
+        path: existing.producerPath ?? existing.privatePath,
+      };
     }
 
     await mkdir(this.root, { recursive: true });
@@ -466,6 +492,9 @@ export class RuntimeObjectRegistry {
         retentionClass: input.binding.retentionClass,
         state: "pending",
         privatePath,
+        producerPath: `${privatePath}.producer`,
+        sealedDevice: null,
+        sealedInode: null,
         createdAt,
         sealedAt: null,
         expiresAt: input.binding.expiresAt ?? null,
@@ -480,7 +509,7 @@ export class RuntimeObjectRegistry {
       metadata: publicMetadata(
         requireObject(this.state, input.binding.objectId),
       ),
-      path: privatePath,
+      path: `${privatePath}.producer`,
     };
   }
 
@@ -506,68 +535,37 @@ export class RuntimeObjectRegistry {
       );
     }
 
-    let metadata: Awaited<ReturnType<typeof lstat>>;
+    const writerToken = randomUUID();
 
+    this.state.claimRuntimeFileWriter(`object:${object.id}`, writerToken);
     try {
-      metadata = await lstat(object.privatePath);
+      const seal = await sealObjectFile({
+        path: object.producerPath ?? object.privatePath,
+        destinationPath: object.privatePath,
+        temporaryPath: `${object.privatePath}.${object.generation}.partial`,
+        maxBytes: MAX_RUNTIME_OBJECT_BYTES,
+      });
+      const sealed = this.state.updateRuntimeObject(object.id, {
+        ...seal,
+        state: "available",
+        sealedAt: this.now().toISOString(),
+        deletedAt: null,
+        lastError: null,
+      });
+
+      this.state.sealRuntimeFile(
+        `object:${object.id}`,
+        object.producerPath ? 2 * seal.sizeBytes : seal.sizeBytes,
+      );
+
+      return publicMetadata(sealed);
     } catch (error) {
-      throw new SupervisorError(
-        "PRECONDITION",
-        `required runtime output ${object.logicalName} was not produced`,
-        { cause: error, details: { reason: "runtime_object_missing" } },
-      );
-    }
-    if (metadata.isFile())
-      this.state.recordRuntimeFileBytes(`object:${object.id}`, metadata.size);
-    if (!metadata.isFile() || metadata.size > MAX_RUNTIME_OBJECT_BYTES) {
-      throw new SupervisorError(
-        "PRECONDITION",
-        `runtime output ${object.logicalName} is not a bounded regular file`,
-        {
-          details: {
-            reason:
-              metadata.size > MAX_RUNTIME_OBJECT_BYTES
-                ? "runtime_object_too_large"
-                : "runtime_object_missing",
-          },
-        },
-      );
-    }
-
-    const digest = createHash("sha256");
-    const handle = await open(object.privatePath, "r");
-    const buffer = Buffer.allocUnsafe(64 * 1024);
-    let sizeBytes = 0;
-
-    try {
-      for (;;) {
-        const result = await handle.read(buffer, 0, buffer.byteLength, null);
-
-        if (result.bytesRead === 0) break;
-        sizeBytes += result.bytesRead;
-        if (sizeBytes > MAX_RUNTIME_OBJECT_BYTES) {
-          throw new SupervisorError(
-            "PRECONDITION",
-            `runtime output ${object.logicalName} exceeds the byte limit`,
-            { details: { reason: "runtime_object_too_large" } },
-          );
-        }
-        digest.update(buffer.subarray(0, result.bytesRead));
-      }
+      this.state.reportRuntimeStorageFailure(error);
+      throw error;
     } finally {
-      await handle.close();
+      if (this.state.runtimeStorageAvailable())
+        this.state.releaseRuntimeFileWriter(`object:${object.id}`, writerToken);
     }
-
-    const sealed = this.state.updateRuntimeObject(object.id, {
-      state: "available",
-      sizeBytes,
-      sha256: digest.digest("hex"),
-      sealedAt: this.now().toISOString(),
-      deletedAt: null,
-      lastError: null,
-    });
-
-    return publicMetadata(sealed);
   }
 
   async discardPendingOutputs(input: {
@@ -585,6 +583,7 @@ export class RuntimeObjectRegistry {
         continue;
       }
       await rm(object.privatePath, { force: true });
+      if (object.producerPath) await rm(object.producerPath, { force: true });
       this.state.releaseRuntimeFile(`object:${objectId}`);
       this.state.deleteRuntimeObject(objectId);
     }
@@ -653,6 +652,7 @@ export class RuntimeObjectRegistry {
     }
     await mkdir(this.root, { recursive: true });
     const temporary = `${object.privatePath}.${input.generation}.partial`;
+    let identity: ReturnType<typeof sealedFileIdentity>;
     const digest = createHash("sha256");
     let receivedBytes = 0;
 
@@ -661,7 +661,7 @@ export class RuntimeObjectRegistry {
     this.state.claimRuntimeFileWriter(`object:${object.id}`, writerToken);
     try {
       try {
-        const handle = await open(temporary, "w", 0o600);
+        const handle = await open(temporary, "wx", 0o600);
 
         try {
           for await (const chunk of input.chunks) {
@@ -700,6 +700,8 @@ export class RuntimeObjectRegistry {
               receivedBytes,
             );
           }
+          await handle.sync();
+          identity = sealedFileIdentity(await handle.stat({ bigint: true }));
         } finally {
           await handle.close();
         }
@@ -716,10 +718,11 @@ export class RuntimeObjectRegistry {
           );
         }
         await rename(temporary, object.privatePath);
+        await syncObjectDirectory(object.privatePath);
         const written = await stat(object.privatePath);
 
         if (written.size !== input.sizeBytes) {
-          throw new Error("runtime object size changed during sealing");
+          throw objectIntegrityError();
         }
       } catch (error) {
         this.state.reportRuntimeStorageFailure(error);
@@ -730,6 +733,7 @@ export class RuntimeObjectRegistry {
         throw error;
       }
       const sealed = this.state.updateRuntimeObject(object.id, {
+        ...identity,
         state: "available",
         sizeBytes: input.sizeBytes,
         sha256: input.sha256,
@@ -749,10 +753,181 @@ export class RuntimeObjectRegistry {
 
   async read(
     objectId: string,
-  ): Promise<{ metadata: RuntimeObjectPublicMetadata; path: string }> {
-    const object = requireObject(this.state, objectId);
+    rangeHeader?: string,
+    signal?: AbortSignal,
+  ): Promise<
+    VerifiedObjectResponse & { metadata: RuntimeObjectPublicMetadata }
+  > {
+    let object = requireObject(this.state, objectId);
 
-    if (object.state !== "available") {
+    this.requireAvailable(object);
+    if (object.sizeBytes === null || object.sha256 === null)
+      throw objectIntegrityError();
+    const range = objectByteRange(object.sizeBytes, rangeHeader);
+
+    if (this.activeReads >= 2 || this.upgrading.has(objectId))
+      throw new HostRuntimeEventError(
+        "command_in_progress",
+        "runtime object verification is busy; retry the read",
+      );
+    this.activeReads += 1;
+    const fileId = `spool:${randomUUID()}`;
+    const spoolPath = resolve(this.root, `${randomUUID()}.response`);
+    let reserved = false;
+    const release = (): void => {
+      this.activeReads -= 1;
+      if (reserved) this.state.releaseRuntimeSpool(fileId);
+    };
+
+    try {
+      this.state.reserveRuntimeFile(
+        {
+          fileId,
+          privatePath: spoolPath,
+          temporaryPath: null,
+          kind: "spool",
+          walletId: null,
+          capacityBytes: range.length,
+          writtenBytes: 0,
+          sealed: false,
+        },
+        { kind: "regular" },
+      );
+      reserved = true;
+      // Version 12 had no durable inode identity. Establish it only from a
+      // verified copy of the existing sealed representation, never from stat alone.
+      if (object.sealedDevice === null || object.sealedInode === null) {
+        this.upgrading.add(objectId);
+        const upgradeId = `spool:${randomUUID()}`;
+        const temporaryPath = resolve(this.root, `${randomUUID()}.upgrade`);
+        let upgradeReserved = false;
+
+        try {
+          this.state.reserveRuntimeFile(
+            {
+              fileId: upgradeId,
+              privatePath: temporaryPath,
+              temporaryPath: null,
+              kind: "spool",
+              walletId: null,
+              capacityBytes: object.sizeBytes,
+              writtenBytes: 0,
+              sealed: false,
+            },
+            { kind: "regular" },
+          );
+          upgradeReserved = true;
+          const seal = await sealObjectFile({
+            path: object.privatePath,
+            destinationPath: object.privatePath,
+            temporaryPath,
+            maxBytes: MAX_RUNTIME_OBJECT_BYTES,
+            expected: { sizeBytes: object.sizeBytes, sha256: object.sha256 },
+          });
+
+          object = this.state.updateRuntimeObject(objectId, {
+            ...object,
+            ...seal,
+          });
+        } finally {
+          this.upgrading.delete(objectId);
+          if (upgradeReserved) this.state.releaseRuntimeSpool(upgradeId);
+        }
+      }
+      if (
+        object.sealedDevice === null ||
+        object.sealedInode === null ||
+        object.sizeBytes === null ||
+        object.sha256 === null
+      )
+        throw objectIntegrityError();
+      const response = await verifyObjectResponse({
+        path: object.privatePath,
+        spoolPath,
+        identity: {
+          sealedDevice: object.sealedDevice,
+          sealedInode: object.sealedInode,
+        },
+        sizeBytes: object.sizeBytes,
+        sha256: object.sha256,
+        range,
+        signal,
+      });
+
+      try {
+        this.state.recordRuntimeFileBytes(fileId, range.length);
+      } catch (error) {
+        const closed = once(response.stream, "close");
+
+        response.stream.destroy();
+        await closed;
+        throw error;
+      }
+      response.stream.once("close", () => {
+        try {
+          release();
+        } catch (error) {
+          this.state.reportRuntimeStorageFailure(
+            new HostRuntimeEventError(
+              "runtime_storage_unavailable",
+              "runtime response spool cleanup failed",
+              { cause: error },
+            ),
+          );
+        }
+      });
+      this.logger?.debug(
+        {
+          objectId,
+          generation: object.generation,
+          expectedBytes: object.sizeBytes,
+          observedBytes: object.sizeBytes,
+          responseBytes: range.length,
+          hashAgreement: true,
+        },
+        "runtime-object-read-verified",
+      );
+
+      return { ...response, metadata: publicMetadata(object) };
+    } catch (error) {
+      release();
+      if (
+        error instanceof SupervisorError &&
+        (error.details?.reason === "runtime_object_missing" ||
+          error.details?.reason === "runtime_object_integrity_mismatch")
+      ) {
+        this.logger?.warn(
+          {
+            objectId,
+            generation: object.generation,
+            expectedBytes: object.sizeBytes,
+            observedBytes:
+              error instanceof RuntimeObjectIntegrityError
+                ? error.observedBytes
+                : null,
+            hashAgreement:
+              error instanceof RuntimeObjectIntegrityError
+                ? error.hashAgreement
+                : null,
+            reason: error.details.reason,
+          },
+          "runtime-object-verification-failed",
+        );
+        this.state.failRuntimeObject(
+          objectId,
+          error.details.reason === "runtime_object_missing"
+            ? "missing"
+            : "corrupt",
+        );
+      }
+      this.state.reportRuntimeStorageFailure(error);
+      throw error;
+    }
+  }
+
+  private requireAvailable(object: HostRuntimeObjectRow): void {
+    if (object.state === "corrupt") throw objectIntegrityError();
+    if (object.state !== "available")
       throw new SupervisorError(
         "PRECONDITION",
         "runtime object content is unavailable",
@@ -760,9 +935,6 @@ export class RuntimeObjectRegistry {
           details: { reason: "runtime_object_missing" },
         },
       );
-    }
-
-    return { metadata: publicMetadata(object), path: object.privatePath };
   }
 
   // Prompt references never disclose this path to a caller. The execution host

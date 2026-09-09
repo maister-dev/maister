@@ -112,7 +112,7 @@ export type ReceiptRetirementOutcome =
     };
 export const EXECUTION_HOST_PROTOCOL_VERSION = 1;
 // `PRAGMA user_version` of the state file; bumped with every migration below.
-export const HOST_STATE_SCHEMA_VERSION = 12;
+export const HOST_STATE_SCHEMA_VERSION = 13;
 const MAX_HOST_EVENT_SEQUENCE = (1n << 63n) - 1n;
 const HOST_EVENT_SEQUENCE_SORT_WIDTH = 20;
 
@@ -231,6 +231,9 @@ export type HostRuntimeObjectRow = {
     | "expired"
     | "corrupt";
   privatePath: string;
+  producerPath: string | null;
+  sealedDevice: string | null;
+  sealedInode: string | null;
   createdAt: string;
   sealedAt: string | null;
   expiresAt: string | null;
@@ -281,6 +284,7 @@ export type HostState = {
   recordRuntimeFileBytes(fileId: string, writtenBytes: number): void;
   sealRuntimeFile(fileId: string, writtenBytes: number): void;
   releaseRuntimeFile(fileId: string): void;
+  releaseRuntimeSpool(fileId: string): void;
   runtimeStorageAvailable(): boolean;
   reportRuntimeStorageFailure(error: unknown): void;
   subscribeRuntimeStorageFailure(listener: () => void): () => void;
@@ -331,7 +335,12 @@ export type HostState = {
     patch: Pick<
       HostRuntimeObjectRow,
       "state" | "sizeBytes" | "sha256" | "sealedAt" | "deletedAt" | "lastError"
-    >,
+    > &
+      Partial<Pick<HostRuntimeObjectRow, "sealedDevice" | "sealedInode">>,
+  ): HostRuntimeObjectRow;
+  failRuntimeObject(
+    id: string,
+    state: "missing" | "corrupt",
   ): HostRuntimeObjectRow;
   appendRuntimeEvent(input: AppendRuntimeEventInput): HostRuntimeEventRow;
   putReceiptWithRuntimeEvent(
@@ -458,6 +467,9 @@ CREATE TABLE IF NOT EXISTS runtime_objects (
   retention_class TEXT NOT NULL,
   state TEXT NOT NULL,
   private_path TEXT NOT NULL,
+  producer_path TEXT,
+  sealed_device TEXT,
+  sealed_inode TEXT,
   created_at TEXT NOT NULL,
   sealed_at TEXT,
   expires_at TEXT,
@@ -670,6 +682,15 @@ PRAGMA user_version = 12;
 COMMIT;
 `;
 
+const MIGRATE_V12_TO_V13 = `
+BEGIN IMMEDIATE;
+ALTER TABLE runtime_objects ADD COLUMN producer_path TEXT;
+ALTER TABLE runtime_objects ADD COLUMN sealed_device TEXT;
+ALTER TABLE runtime_objects ADD COLUMN sealed_inode TEXT;
+PRAGMA user_version = 13;
+COMMIT;
+`;
+
 function applySchema(db: DatabaseSync): void {
   const fresh =
     db
@@ -707,6 +728,7 @@ function applySchema(db: DatabaseSync): void {
   if (Number(user_version) < 10) db.exec(MIGRATE_V9_TO_V10);
   if (Number(user_version) < 11) db.exec(MIGRATE_V10_TO_V11);
   if (Number(user_version) < 12) db.exec(MIGRATE_V11_TO_V12);
+  if (Number(user_version) < 13) db.exec(MIGRATE_V12_TO_V13);
 }
 
 export function openHostState(opts: OpenHostStateOptions = {}): HostState {
@@ -947,6 +969,21 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
     },
     releaseRuntimeFile(fileId) {
       return withRuntimeFileWrite(() => releaseRuntimeFile(db, limits, fileId));
+    },
+    releaseRuntimeSpool(fileId) {
+      return withRuntimeFileWrite(() => {
+        const file = getRuntimeFile(db, fileId);
+
+        if (!file || file.kind !== "spool")
+          throw new HostRuntimeEventError(
+            "command_invariant_conflict",
+            "runtime response spool reservation is missing",
+          );
+        releaseRuntimeFile(db, limits, fileId);
+        db.prepare(
+          "DELETE FROM runtime_files WHERE file_id = ? AND kind = 'spool' AND capacity_bytes = 0",
+        ).run(fileId);
+      });
     },
     runtimeStorageAvailable: storage.available,
     reportRuntimeStorageFailure: storage.reportFailure,
@@ -1444,7 +1481,9 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
           {
             fileId: `object:${row.id}`,
             privatePath: row.privatePath,
-            temporaryPath: `${row.privatePath}.${row.generation}.partial`,
+            temporaryPath:
+              row.producerPath ??
+              `${row.privatePath}.${row.generation}.partial`,
             kind: "object",
             walletId: funding.kind === "regular" ? null : funding.walletId,
             capacityBytes,
@@ -1463,8 +1502,8 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
            (id, run_id, assignment_id, assignment_epoch, host_session_id, kind,
             logical_name, mime_type, size_bytes, sha256, generation,
             retention_class, state, private_path, created_at, sealed_at,
-            expires_at, deleted_at, last_error_json)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            expires_at, deleted_at, last_error_json, producer_path, sealed_device, sealed_inode)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).run(
           row.id,
           row.runId,
@@ -1485,6 +1524,9 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
           row.expiresAt,
           row.deletedAt,
           row.lastError ? JSON.stringify(row.lastError) : null,
+          row.producerPath,
+          row.sealedDevice,
+          row.sealedInode,
         );
       });
     },
@@ -1503,11 +1545,15 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
           .prepare("SELECT * FROM runtime_objects WHERE id = ?")
           .get(id);
 
-        if (!existing) throw new Error(`runtime object ${id} is missing`);
+        if (!existing)
+          throw new HostRuntimeEventError(
+            "stream_corrupt",
+            "runtime object update has no intent",
+          );
         db.prepare(
           `UPDATE runtime_objects
          SET state = ?, size_bytes = ?, sha256 = ?, sealed_at = ?,
-             deleted_at = ?, last_error_json = ?
+             deleted_at = ?, last_error_json = ?, sealed_device = ?, sealed_inode = ?
          WHERE id = ?`,
         ).run(
           patch.state,
@@ -1516,6 +1562,12 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
           patch.sealedAt,
           patch.deletedAt,
           patch.lastError ? JSON.stringify(patch.lastError) : null,
+          patch.sealedDevice === undefined
+            ? existing.sealed_device
+            : patch.sealedDevice,
+          patch.sealedInode === undefined
+            ? existing.sealed_inode
+            : patch.sealedInode,
           id,
         );
         const updated = db
@@ -1523,10 +1575,88 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
           .get(id);
 
         if (!updated)
-          throw new Error(`runtime object ${id} vanished during update`);
+          throw new HostRuntimeEventError(
+            "stream_corrupt",
+            "runtime object vanished during update",
+          );
 
         return toHostRuntimeObjectRow(updated);
       });
+    },
+    failRuntimeObject(id, nextState) {
+      try {
+        return storage.write(() => {
+          db.exec("BEGIN IMMEDIATE");
+          try {
+            const object = state.getRuntimeObject(id);
+
+            if (!object)
+              throw new HostRuntimeEventError(
+                "stream_corrupt",
+                "runtime object failure has no intent",
+              );
+            if (object.state !== "available") {
+              db.exec("COMMIT");
+
+              return object;
+            }
+            const reason =
+              nextState === "missing"
+                ? "runtime_object_missing"
+                : "runtime_object_integrity_mismatch";
+            const updated = state.updateRuntimeObject(id, {
+              ...object,
+              state: nextState,
+              lastError: { reason },
+            });
+            const event = appendRuntimeEventInTransaction(db, {
+              limits,
+              hostKey,
+              bootId,
+              now,
+              input: {
+                terminal: true,
+                draft: {
+                  runId: object.runId,
+                  assignmentId: object.assignmentId,
+                  assignmentEpoch: object.assignmentEpoch,
+                  hostSessionId: null,
+                  eventType: "runtime_object.state",
+                  occurredAt: now().toISOString(),
+                  payload: {
+                    objectId: id,
+                    generation: object.generation,
+                    state: nextState,
+                    deletedAt: object.deletedAt,
+                  },
+                },
+              },
+            });
+
+            db.exec("COMMIT");
+            notifyCapacity();
+            notifyRuntimeEventListeners(event);
+            log?.warn(
+              { objectId: id, generation: object.generation, reason },
+              "runtime-object-read-failed",
+            );
+
+            return updated;
+          } catch (error) {
+            if (db.isTransaction) db.exec("ROLLBACK");
+            throw error;
+          }
+        });
+      } catch (error) {
+        const failure = new HostRuntimeEventError(
+          "runtime_storage_unavailable",
+          "runtime object failure evidence could not be persisted",
+          { cause: error },
+        );
+
+        storage.reportFailure(failure);
+        throw failure;
+      }
     },
     appendRuntimeEvent(input) {
       return storage.write(() => {
@@ -2409,6 +2539,9 @@ function toHostRuntimeObjectRow(
     retentionClass: String(row.retention_class),
     state: String(row.state) as HostRuntimeObjectRow["state"],
     privatePath: String(row.private_path),
+    producerPath: row.producer_path == null ? null : String(row.producer_path),
+    sealedDevice: row.sealed_device == null ? null : String(row.sealed_device),
+    sealedInode: row.sealed_inode == null ? null : String(row.sealed_inode),
     createdAt: String(row.created_at),
     sealedAt: row.sealed_at === null ? null : String(row.sealed_at),
     expiresAt: row.expires_at === null ? null : String(row.expires_at),
