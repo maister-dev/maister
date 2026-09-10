@@ -1749,10 +1749,52 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
         ["auditLegacyRuntimeObjects", "node:fs/promises.readdir", "list"],
         ["auditLegacyRuntimeObjects", "node:fs/promises.lstat", "stat"],
         ["readRequiredFile", "node:fs/promises.readFile", "read"],
+        ["inventoryLegacyRuns", "node:fs/promises.mkdir", "write"],
+        [
+          "inventoryLegacyRuns",
+          "scripts/legacy-import/inventory.ts#inventoryLegacyRun",
+          "wrapper",
+        ],
+        [
+          "inventoryLegacyRuns",
+          "scripts/legacy-import/manifest-store.ts#openImportManifestStore",
+          "wrapper",
+        ],
       ],
       {
         authority:
           "operator CLI: pnpm execution-data-plane:import-legacy, under maintenance with the web drained",
+        lifetime:
+          "until S4.8 revokes import authority after the guarded cutover",
+      },
+    ),
+    ...classified(
+      "scripts/legacy-import/inventory.ts",
+      "operator-import",
+      "Stage A history inventory: pages the frozen legacy run directory once to classify and fingerprint every source, no-follow",
+      [
+        ["walkRunDirectory", "node:fs/promises.readdir", "list"],
+        ["walkRunDirectory", "node:fs/promises.lstat", "stat"],
+        ["hashFile", "node:fs.createReadStream", "read"],
+      ],
+      {
+        authority:
+          "operator CLI: pnpm execution-data-plane:import-legacy inventory, under maintenance with the web drained",
+        lifetime:
+          "until S4.8 revokes import authority after the guarded cutover",
+      },
+    ),
+    ...classified(
+      "scripts/legacy-import/manifest-store.ts",
+      "operator-import",
+      "Host-private import manifest: a maintenance database beside the operator import authority, holding the only copy of the raw source map",
+      [
+        ["openImportManifestStore", "node:sqlite.DatabaseSync", "sqlite"],
+        ["openImportManifestStore", "node:fs.chmodSync", "write"],
+      ],
+      {
+        authority:
+          "operator CLI: pnpm execution-data-plane:import-legacy inventory, under maintenance with the web drained",
         lifetime:
           "until S4.8 revokes import authority after the guarded cutover",
       },
@@ -2245,6 +2287,12 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
     ["squashRunBranch", false],
     ["statusPorcelain", false],
     ["syncOperationInProgress", false],
+  ]),
+  ...wrappers("scripts/legacy-import/inventory.ts", "operator-import", [
+    ["inventoryLegacyRun", true],
+  ]),
+  ...wrappers("scripts/legacy-import/manifest-store.ts", "operator-import", [
+    ["openImportManifestStore", true],
   ]),
 ];
 

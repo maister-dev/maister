@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { lstat, readFile, readdir } from "node:fs/promises";
+import { lstat, mkdir, readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 
 import pino from "pino";
@@ -10,10 +10,18 @@ import {
   classifyDataPlaneStage,
   type DataPlaneStage,
 } from "@/lib/db/migration-stages";
+
 import { redactRuntimeEventPayload } from "@/lib/execution-host/runtime-events";
 import { CANONICAL_PROJECTION_CONSUMERS } from "@/lib/execution-host/events/projection-consumers";
 
+import {
+  inventoryLegacyRun,
+  type LegacyAssociation,
+} from "./legacy-import/inventory";
+import { openImportManifestStore } from "./legacy-import/manifest-store";
+
 type ImportSourceKind = "events" | "transcript" | "cost" | "runtime_objects";
+type LegacyLaneKind = ImportSourceKind | "scratch_session";
 type LegacyRun = {
   id: string;
   ownerSlug: string | null;
@@ -30,6 +38,7 @@ type SourceLine = {
 
 const log = pino({ name: "execution-data-plane:import-legacy" });
 const MAX_LEGACY_LINE_BYTES = 1_048_576;
+const DEFAULT_INVENTORY_BATCH = 100;
 const LEGACY_EVENT_SCHEMAS: Readonly<Record<string, string>> = {
   "session.created": "maister.session.created.v1",
   "session.line": "maister.session.line.v1",
@@ -387,8 +396,8 @@ async function readRequiredFile(
 async function upsertImportState(input: {
   client: Client;
   runId: string;
-  sourceKind: ImportSourceKind;
-  state: "complete" | "missing" | "failed";
+  sourceKind: LegacyLaneKind;
+  state: "pending" | "complete" | "missing" | "failed";
   fingerprint: string | null;
   lastSourcePosition: string | null;
   importedCount: number;
@@ -844,54 +853,421 @@ function resolveImportId(argv: readonly string[]): string {
   return value;
 }
 
+const INVENTORY_FLAGS = new Set(["--import-id", "--manifest-dir", "--batch-size"]);
+
+function parseInventoryArguments(argv: readonly string[]): {
+  manifestDir: string;
+  batchSize: number;
+} {
+  const values = new Map<string, string>();
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+
+    if (!arg.startsWith("--")) continue;
+
+    const equals = arg.indexOf("=");
+    const name = equals < 0 ? arg : arg.slice(0, equals);
+    const inline = equals < 0 ? null : arg.slice(equals + 1);
+
+    if (!INVENTORY_FLAGS.has(name)) {
+      throw new Error(
+        `unknown inventory flag ${name}; expected one of ${[...INVENTORY_FLAGS].join(", ")}`,
+      );
+    }
+    const next = argv[index + 1];
+    const value = inline ?? (next && !next.startsWith("--") ? next : "");
+
+    if (!value) throw new Error(`${name} requires a value`);
+    values.set(name, value);
+  }
+
+  const manifestDir = values.get("--manifest-dir") ?? "";
+
+  if (!manifestDir) {
+    throw new Error("--manifest-dir is required: the operator owns the manifest");
+  }
+
+  const rawBatchSize = values.get("--batch-size");
+  const batchSize = rawBatchSize ? Number(rawBatchSize) : DEFAULT_INVENTORY_BATCH;
+
+  if (!Number.isInteger(batchSize) || batchSize < 1) {
+    throw new Error("--batch-size must be a positive integer");
+  }
+
+  return { manifestDir: path.resolve(manifestDir), batchSize };
+}
+
+function rowFingerprint(row: Record<string, unknown>): string {
+  return sha256(
+    JSON.stringify(
+      Object.keys(row)
+        .sort()
+        .map((key) => [key, row[key] ?? null]),
+    ),
+  );
+}
+
+// Locators recorded at Stage A are rooted under the legacy run directory. A
+// payload that resolves outside it is never silently adopted: the scan will not
+// have seen it, so the lane blocks with `missing_association_payload`.
+function associationRelativePath(
+  runDirectory: string,
+  locatorPath: string,
+): string {
+  const absolute = path.isAbsolute(locatorPath)
+    ? locatorPath
+    : path.join(runDirectory, locatorPath);
+
+  return path.relative(runDirectory, absolute).split(path.sep).join("/");
+}
+
+async function collectRunAssociations(input: {
+  client: Client;
+  runId: string;
+  runDirectory: string;
+}): Promise<{
+  associations: LegacyAssociation[];
+  locators: Map<string, string>;
+}> {
+  const artifacts = await input.client.query<Record<string, unknown>>(
+    `SELECT id, kind, producer, validity, required_for AS "requiredFor",
+        node_attempt_id AS "nodeAttemptId", locator
+     FROM artifact_instances
+     WHERE run_id = $1 AND locator->>'kind' = 'file' ORDER BY id`,
+    [input.runId],
+  );
+  const attachments = await input.client.query<Record<string, unknown>>(
+    `SELECT id, message_id AS "messageId", kind, file_name AS "fileName",
+        mime_type AS "mimeType", byte_size AS "byteSize", sha256,
+        storage_path AS "storagePath"
+     FROM scratch_attachments
+     WHERE run_id = $1 AND storage_path IS NOT NULL ORDER BY id`,
+    [input.runId],
+  );
+  const associations: LegacyAssociation[] = [];
+  const locators = new Map<string, string>();
+
+  for (const row of artifacts.rows) {
+    const locator = row.locator as { kind: string; path?: string };
+    const locatorPath = locator.path ?? "";
+
+    associations.push({
+      associationKind: "artifact",
+      id: String(row.id),
+      relativePath: associationRelativePath(input.runDirectory, locatorPath),
+      rowFingerprint: rowFingerprint(row),
+    });
+    locators.set(`artifact:${String(row.id)}`, JSON.stringify(locator));
+  }
+
+  for (const row of attachments.rows) {
+    associations.push({
+      associationKind: "attachment",
+      id: String(row.id),
+      relativePath: associationRelativePath(
+        input.runDirectory,
+        String(row.storagePath),
+      ),
+      rowFingerprint: rowFingerprint(row),
+    });
+    locators.set(`attachment:${String(row.id)}`, String(row.storagePath));
+  }
+
+  return { associations, locators };
+}
+
+// D9 step 4. One operation: account for every source and association, register
+// the immutable manifest, and commit `pending` lanes carrying the manifest
+// digest. It copies nothing and completes nothing.
+async function inventoryLegacyRuns(input: {
+  client: Client;
+  root: string;
+  importId: string;
+  stage: DataPlaneStage;
+  manifestDir: string;
+  batchSize: number;
+}): Promise<{ runCount: number; laneCount: number; unresolvedCount: number }> {
+  await mkdir(input.manifestDir, { recursive: true, mode: 0o700 });
+  const store = openImportManifestStore({
+    file: path.join(input.manifestDir, `import-${input.importId}.sqlite`),
+    importId: input.importId,
+  });
+  const runs = await input.client.query<LegacyRun>(
+    `SELECT r.id, coalesce(p.slug, lp.slug) AS "ownerSlug",
+        r.started_at::text AS "stableOccurredAt"
+     FROM runs r
+     LEFT JOIN projects p ON p.id = r.project_id
+     LEFT JOIN local_packages lp ON lp.id = r.local_package_id
+     WHERE r.execution_data_plane_mode = 'legacy_file_v1'
+     ORDER BY r.id`,
+  );
+  let laneCount = 0;
+  let unresolvedCount = 0;
+
+  try {
+    for (const run of runs.rows) {
+      const refuse = (reason: string, detail: Record<string, unknown>): void => {
+        unresolvedCount += 1;
+        log.error(
+          {
+            event: "legacy_execution_data_inventory_refused",
+            importId: input.importId,
+            runId: run.id,
+            reason,
+            ...detail,
+          },
+          "legacy execution-data inventory refused",
+        );
+      };
+
+      if (!run.ownerSlug) {
+        refuse("owner_missing", {});
+        continue;
+      }
+
+      const priorLanes = await input.client.query<{
+        kind: LegacyLaneKind;
+        state: string;
+        fingerprint: string | null;
+      }>(
+        `SELECT source_kind AS kind, state, source_fingerprint AS fingerprint
+         FROM execution_data_plane_imports WHERE run_id = $1`,
+        [run.id],
+      );
+      const completed = priorLanes.rows.filter((lane) => lane.state === "complete");
+
+      if (completed.length > 0) {
+        refuse("lane_already_complete", {
+          lanes: completed.map((lane) => lane.kind),
+        });
+        continue;
+      }
+
+      const runDirectory = runtimeRunDirectory({
+        root: input.root,
+        ownerSlug: run.ownerSlug,
+        runId: run.id,
+      });
+      const { associations, locators } = await collectRunAssociations({
+        client: input.client,
+        runId: run.id,
+        runDirectory,
+      });
+      const sourcePaths = new Map<string, string>();
+      const inventory = await inventoryLegacyRun({
+        runDirectory,
+        runId: run.id,
+        frozenSourceId: input.importId,
+        associations,
+        pageSize: input.batchSize,
+        onSource: (source) =>
+          sourcePaths.set(source.relativePathDigest, source.relativePath),
+      });
+      // Only this phase's own `pending` output is comparable: a failed attempt
+      // recorded by the row importer carries a fingerprint with different
+      // semantics, and 0131's backfill carries none.
+      const drifted = priorLanes.rows.find(
+        (lane) =>
+          lane.state === "pending" &&
+          lane.fingerprint !== null &&
+          lane.fingerprint !== inventory.lanes[lane.kind]?.manifestDigest,
+      );
+
+      // D9: a changed source INVALIDATES the frozen manifest — it never
+      // silently replaces it with the new bytes under the same key.
+      if (drifted) {
+        refuse("source_fingerprint_changed", {
+          lane: drifted.kind,
+          frozenDigest: drifted.fingerprint,
+          scannedDigest: inventory.lanes[drifted.kind].manifestDigest,
+        });
+        continue;
+      }
+
+      store.recordRun({
+        inventory,
+        sourcePaths,
+        associationLocators: locators,
+      });
+
+      for (const block of inventory.blocks) {
+        log.error(
+          {
+            event: "legacy_execution_data_inventory_blocked",
+            importId: input.importId,
+            runId: run.id,
+            lane: block.lane,
+            reason: block.reason,
+            sourceId: block.relativePathDigest,
+          },
+          "legacy execution-data inventory blocked",
+        );
+      }
+
+      if (!inventory.complete) {
+        unresolvedCount += 1;
+        continue;
+      }
+
+      for (const lane of Object.values(inventory.lanes)) {
+        await upsertImportState({
+          client: input.client,
+          runId: run.id,
+          sourceKind: lane.lane,
+          state: "pending",
+          fingerprint: lane.manifestDigest,
+          lastSourcePosition: `v1:phase=inventory:manifest=${lane.manifestDigest}:items=${lane.expectedItems}`,
+          importedCount: 0,
+          error: null,
+        });
+        laneCount += 1;
+        log.info(
+          {
+            event: "legacy_execution_data_lane_inventoried",
+            importId: input.importId,
+            runId: run.id,
+            lane: lane.lane,
+            manifestDigest: lane.manifestDigest,
+            inspectedScope: lane.inspectedScope,
+            expectedItems: lane.expectedItems,
+            totalBytes: lane.totalBytes,
+          },
+          "legacy execution-data lane inventoried",
+        );
+      }
+    }
+  } finally {
+    store.close();
+  }
+
+  return { runCount: runs.rows.length, laneCount, unresolvedCount };
+}
+
+async function runInventoryCommand(input: {
+  client: Client;
+  importId: string;
+  root: string;
+  argv: readonly string[];
+}): Promise<void> {
+  const { manifestDir, batchSize } = parseInventoryArguments(input.argv);
+  const stage = await assertImportWindow(input.client, input.importId);
+
+  await assertNoActiveLegacyWork(input.client, input.importId, stage);
+  log.info(
+    {
+      event: "legacy_execution_data_inventory_started",
+      importId: input.importId,
+      stage,
+      batchSize,
+    },
+    "legacy execution-data inventory started",
+  );
+  const summary = await inventoryLegacyRuns({
+    client: input.client,
+    root: input.root,
+    importId: input.importId,
+    stage,
+    manifestDir,
+    batchSize,
+  });
+
+  log.info(
+    {
+      event: "legacy_execution_data_inventory_finished",
+      importId: input.importId,
+      stage,
+      ...summary,
+    },
+    "legacy execution-data inventory finished",
+  );
+
+  if (summary.unresolvedCount > 0) {
+    throw new Error(
+      `legacy inventory left ${summary.unresolvedCount} run(s) unresolved`,
+    );
+  }
+}
+
+async function assertImportWindow(
+  client: Client,
+  importId: string,
+): Promise<DataPlaneStage> {
+  const stage = await readDataPlaneStage(client);
+  const importWindow = assessLegacyImportWindow(stage);
+
+  if (!importWindow.admitted) {
+    log.error(
+      {
+        event: "legacy_execution_data_import_refused",
+        importId,
+        stage,
+        reason: importWindow.reason,
+        remediation: importWindow.remediation,
+      },
+      "legacy execution-data import refused",
+    );
+
+    throw new Error(
+      `legacy import refused (${importWindow.reason}): ${importWindow.remediation}`,
+    );
+  }
+
+  return stage;
+}
+
+async function assertNoActiveLegacyWork(
+  client: Client,
+  importId: string,
+  stage: DataPlaneStage,
+): Promise<void> {
+  const active = await client.query<{ id: string; status: string }>(
+    `SELECT id, status FROM runs
+     WHERE execution_data_plane_mode = 'legacy_file_v1'
+       AND status NOT IN ('Done', 'Failed', 'Crashed', 'Abandoned')
+     ORDER BY id LIMIT 1`,
+  );
+
+  if (!active.rows[0]) return;
+
+  log.error(
+    {
+      event: "legacy_execution_data_import_refused",
+      importId,
+      stage,
+      reason: "active_legacy_work",
+      runId: active.rows[0].id,
+    },
+    "legacy execution-data import refused",
+  );
+
+  throw new Error(
+    `legacy import requires every legacy run to be terminal; run ${active.rows[0].id} is ${active.rows[0].status}`,
+  );
+}
+
 async function main(): Promise<void> {
-  const importId = resolveImportId(process.argv.slice(2));
+  const argv = process.argv.slice(2);
+  const command = argv[0] && !argv[0].startsWith("--") ? argv[0] : null;
+
+  if (command !== null && command !== "inventory") {
+    throw new Error(`unknown command ${command}; expected "inventory"`);
+  }
+
+  const importId = resolveImportId(argv);
   const client = new Client({ connectionString: requiredEnv("DB_URL") });
   const root = requiredEnv("MAISTER_LEGACY_RUNTIME_ROOT");
   await client.connect();
   try {
-    const stage = await readDataPlaneStage(client);
-    const importWindow = assessLegacyImportWindow(stage);
+    if (command === "inventory") {
+      await runInventoryCommand({ client, importId, root, argv });
 
-    if (!importWindow.admitted) {
-      log.error(
-        {
-          event: "legacy_execution_data_import_refused",
-          importId,
-          stage,
-          reason: importWindow.reason,
-          remediation: importWindow.remediation,
-        },
-        "legacy execution-data import refused",
-      );
-
-      throw new Error(
-        `legacy import refused (${importWindow.reason}): ${importWindow.remediation}`,
-      );
+      return;
     }
 
-    const active = await client.query<{ id: string; status: string }>(
-      `SELECT id, status FROM runs
-       WHERE execution_data_plane_mode = 'legacy_file_v1'
-         AND status NOT IN ('Done', 'Failed', 'Crashed', 'Abandoned')
-       ORDER BY id LIMIT 1`,
-    );
-    if (active.rows[0]) {
-      log.error(
-        {
-          event: "legacy_execution_data_import_refused",
-          importId,
-          stage,
-          reason: "active_legacy_work",
-          runId: active.rows[0].id,
-        },
-        "legacy execution-data import refused",
-      );
+    const stage = await assertImportWindow(client, importId);
 
-      throw new Error(
-        `legacy import requires every legacy run to be terminal; run ${active.rows[0].id} is ${active.rows[0].status}`,
-      );
-    }
+    await assertNoActiveLegacyWork(client, importId, stage);
     log.info(
       { event: "legacy_execution_data_import_started", importId, stage },
       "legacy execution-data import started",
