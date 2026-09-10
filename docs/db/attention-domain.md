@@ -8,9 +8,10 @@ See [`../system-analytics/attention.md`](../system-analytics/attention.md) and
 for behavior, and [`../database-schema.md`](../database-schema.md) for the exact
 DDL, constraint names and index names.
 
-> **Status: Designed.** Migration `0162` adds `user_activity_cursors`; `0163`
-> adds `push_subscriptions` and `notification_subscriptions`; `0164` widens the
-> ADR-077 tables (drawn in [`webhooks.md`](webhooks.md), not here).
+> **Status: Partly implemented.** Migration `0162` (`user_activity_cursors`)
+> **shipped** in M51 Phase 4. Still designed: `0163` adds `push_subscriptions`
+> and `notification_subscriptions`; `0164` widens the ADR-077 tables (drawn in
+> [`webhooks.md`](webhooks.md), not here).
 
 ```mermaid
 erDiagram

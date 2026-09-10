@@ -821,7 +821,14 @@
     "changes": "Changes",
     "changesSummary": "{files} files · +{additions} −{deletions}",
     "moreGates": "+{count} more",
-    "staleEvidence": "{count} stale"
+    "staleEvidence": "{count} stale",
+    "decisions": {
+      "promotableTitle": "Ready to promote · $count",
+      "crashedTitle": "Crashed — recover or discard · $count",
+      "flaggedTitle": "Held — flagged by triage · $count",
+      "review": "Review and promote",
+      "openTask": "Open the task"
+    }
   },
   "mcps": {
     "eyebrow": "Platform · admin",
@@ -2878,6 +2885,7 @@
         "hitlRead": "Read run HITL",
         "hitlRespond": "Respond to run HITL",
         "hitlInboxRead": "Read personal HITL inbox",
+        "decisionsRead": "Read your decision queue",
         "hitlRespondHuman": "Respond to human HITL",
         "commentsRead": "Read comments",
         "commentsCreate": "Create comments",
@@ -3402,6 +3410,7 @@
     "scopeHitlRequest": "Request agent clarification",
     "scopeHitlRespond": "Respond to HITL",
     "scopeHitlInboxRead": "Read personal HITL inbox",
+    "scopeDecisionsRead": "Read your decision queue",
     "scopeHitlRespondHuman": "Respond to human HITL",
     "scopeCommentsRead": "Read comments",
     "scopeCommentsCreate": "Create comments",

@@ -6,9 +6,10 @@ import { test, expect } from "@playwright/test";
 import { loadFixtures } from "./_seed/fixtures";
 
 // Inbox card redesign: the full-bleed, project-grouped /inbox surface rendering
-// the unified 3-tier HitlCard, plus the canonical "Needs you" badge fan-out.
-// Relies on the shared seed having at least one pending cross-project HITL
-// (the board / m17 fixtures seed NeedsInput runs), so needsYou > 0.
+// the unified 3-tier HitlCard, plus the canonical `decisions` badge fan-out
+// (ADR-168). Relies on the shared seed having at least one pending
+// cross-project HITL (the board / m17 fixtures seed NeedsInput runs), so
+// `decisions` > 0.
 
 // The lazy expanded tier is asserted against a mocked inbox-context response so
 // the gates/message/progress/diff render is deterministic regardless of the
@@ -180,7 +181,7 @@ test.describe("Inbox card redesign", () => {
     await page.goto("/");
 
     const railBadge = page.getByTestId("inbox-nav-badge");
-    const summaryCount = page.getByTestId("needs-you-count");
+    const summaryCount = page.getByTestId("decisions-count");
 
     await expect(railBadge).toBeVisible();
     await expect(summaryCount).toBeVisible();

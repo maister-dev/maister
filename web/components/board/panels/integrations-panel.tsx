@@ -81,6 +81,7 @@ export interface TokenLabels {
   scopeHitlRequest: string;
   scopeHitlRespond: string;
   scopeHitlInboxRead: string;
+  scopeDecisionsRead: string;
   scopeHitlRespondHuman: string;
   scopeCommentsRead: string;
   scopeCommentsCreate: string;
@@ -152,6 +153,8 @@ function scopeLabel(labels: TokenLabels, scope: string): string {
       return labels.scopeHitlRespond;
     case "hitl:inbox:read":
       return labels.scopeHitlInboxRead;
+    case "decisions:read":
+      return labels.scopeDecisionsRead;
     case "hitl:respond:human":
       return labels.scopeHitlRespondHuman;
     case "comments:read":
@@ -406,6 +409,7 @@ export async function IntegrationsPanel({
     scopeHitlRequest: t("scopeHitlRequest"),
     scopeHitlRespond: t("scopeHitlRespond"),
     scopeHitlInboxRead: t("scopeHitlInboxRead"),
+    scopeDecisionsRead: t("scopeDecisionsRead"),
     scopeHitlRespondHuman: t("scopeHitlRespondHuman"),
     scopeCommentsRead: t("scopeCommentsRead"),
     scopeCommentsCreate: t("scopeCommentsCreate"),

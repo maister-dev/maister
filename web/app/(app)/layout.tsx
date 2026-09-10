@@ -10,7 +10,7 @@ import { TopNav } from "@/components/chrome/top-nav";
 import { summarizeAdapterReadiness } from "@/lib/acp-runners/readiness-summary";
 import { loadRunnerReadinessRows } from "@/lib/acp-runners/runner-readiness-rows";
 import { getSessionUser } from "@/lib/authz";
-import { getNeedsYouCount } from "@/lib/queries/needs-you";
+import { getDecisionsCount } from "@/lib/queries/decisions";
 import { getRailWorkspaceGroups } from "@/lib/queries/portfolio";
 import {
   getPlatformDiagnostics,
@@ -48,13 +48,13 @@ export default async function AppLayout({
     platformStatus,
     diagnostics,
     runnerRows,
-    needsYou,
+    decisions,
   ] = await Promise.all([
     sessionUser ? getRailWorkspaceGroups(sessionUser.id, sessionUser.role) : [],
     getPlatformStatus(),
     getPlatformDiagnostics(),
     loadRunnerReadinessRows(),
-    sessionUser ? getNeedsYouCount(sessionUser.id, sessionUser.role) : 0,
+    sessionUser ? getDecisionsCount(sessionUser.id, sessionUser.role) : 0,
   ]);
 
   const runnersReadiness = summarizeAdapterReadiness({
@@ -83,7 +83,7 @@ export default async function AppLayout({
     <div className="flex min-h-screen flex-col bg-paper-warm pb-9">
       <TopNav
         crumb={<NavCrumb />}
-        inboxCount={needsYou}
+        inboxCount={decisions}
         sections={railSections}
         user={navUser}
       />
@@ -94,7 +94,7 @@ export default async function AppLayout({
         data-density="comfy"
       >
         <LeftRail
-          inboxCount={needsYou}
+          inboxCount={decisions}
           platformStatus={platformStatus}
           runnersReadiness={runnersReadiness}
           sections={railSections}

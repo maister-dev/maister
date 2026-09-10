@@ -797,7 +797,7 @@ fails). `STG-01..10` and `EDGE-STG-01..03` are now `Implemented` in the matrix.
 
 ### Phase 4 — Decision queue, counters, ext parity · `ATN-01..08`
 
-**T4.1 [ ] — `getDecisionsQueue` / `getDecisionsCount`.** *RED*: `IT-ATN-01` asserting
+**T4.1 [x] — `getDecisionsQueue` / `getDecisionsCount`.** *RED*: `IT-ATN-01` asserting
 `count === list.length` across a fixture holding all four kinds, and `IT-ATN-04`
 asserting a relation-blocked task appears in neither counter. *GREEN*:
 `web/lib/queries/decisions.ts` unioning T2.3/T2.4 with `getCrossProjectHitlInbox`,
@@ -805,14 +805,14 @@ ordered per D5. **Count and list come from one query** — a count that can disa
 with its list is exactly the bug the one-number rule exists to prevent.
 *Tests*: `UT-ATN-07` covers ordering as a pure comparator, not through the query.
 
-**T4.2 [ ] — `getUpdatesCount`.** *RED*: `IT-ATN-02` — a task with one comment
+**T4.2 [x] — `getUpdatesCount`.** *RED*: `IT-ATN-02` — a task with one comment
 mentioning the user yields `updates === 1`, **not** 2; and `IT-ATN-03` — a user with
 no cursor row counts only the bounded 24 h window. *GREEN*:
 `web/lib/queries/updates.ts` implementing D4's `MINUS` via
 `inbox_items.source_ref->>'activityId'`. `EDGE-ATN-02` (membership change) gets one
 test pinning the documented behaviour.
 
-**T4.3 [ ] — Retire `needsYou`.** Every consumer from `grep -rn "needsYou"`:
+**T4.3 [x] — Retire `needsYou`.** Every consumer from `grep -rn "needsYou"`:
 **delete** `web/lib/queries/needs-you.ts` (not a deprecated alias — a second way to
 compute a canonical number is the drift this milestone removes) ·
 `web/app/(app)/layout.tsx:51,86,97` (Inbox → `decisions`, Activity → `updates`,
@@ -827,7 +827,7 @@ wired T5.7) · `web/app/(app)/page.tsx:25-30,47,77,94-100` ·
 `CT-ATN-06` pins the ext pulse's unchanged shape; a grep assertion proves no
 `needsYou` identifier survives outside the two exempt paths.
 
-**T4.4 [ ] — `/inbox` sections.** Three sections on the existing `HitlCard` shell
+**T4.4 [x] — `/inbox` sections.** Three sections on the existing `HitlCard` shell
 (`web/components/inbox/hitl-card.tsx`): *Ready to promote*, *Crashed — recover or
 discard*, *Held — flagged*. Inline actions route to the **existing** promote /
 recover / discard endpoints; no new mutation path.
@@ -836,7 +836,7 @@ four populations on the page the chip finally varies, so it distinguishes
 `WaitingOnHuman` from `Review`, `Crashed` and `Held` at a glance. The empty state appears only when
 `decisions === 0` across all four sections.
 
-**T4.5 [ ] — `GET /api/v1/ext/decisions`.** *RED*: `IT-ATN-08` asserting a
+**T4.5 [x] — `GET /api/v1/ext/decisions`.** *RED*: `IT-ATN-08` asserting a
 `decision_request` row is absent from the response, plus a **positive grant** (a
 global personal token with `decisions:read` receives its own items) and the
 negatives (project token 403, agent token 403, project-scoped user token 403, `*`
@@ -851,6 +851,43 @@ Respond paths unchanged: `respondToHitl` (`web/lib/services/hitl.ts:5953`) keeps
 human-only enforcement. *Contract*: `CT-ATN-06`-style assertion that the response
 matches the T0.10 OpenAPI example exactly — no extra keys.
 
+*Execution notes (2026-09-10)*:
+
+**A plan-ordering defect, fixed by pulling T5.1 forward.** `getUpdatesCount` (T4.2)
+reads `user_activity_cursors`, and that table's migration was scheduled in Phase 5.
+Migration **0162** was therefore generated here, as a triple plus `schema.ts`
+(`db:generate` reports "No schema changes"; `db:erd --check` green at 121 tables).
+T5.1 is marked done above rather than left to be re-done.
+
+**Two ADR reference slips in this phase's task text**, corrected against the ADR,
+which is normative: the `MINUS` is ADR-168 **D2** (not D4) and the queue's ordering
+is **D6** (not D5; D5 is the relation-blocked exclusion).
+
+**A spec defect I introduced in Phase 0, fixed openly rather than faked.** `ATN-06`
+required `decisionsCount`/`updatesCount` "beside" the ext pulse's `needsYouCount`.
+That is impossible: `needsYouCount` is a telemetry field on a **project-scoped**
+pulse, and a project token has no owner, so there is no reader whose cross-project
+counters could be computed there. Recorded as an ADR-168 `**Amendments:**` entry,
+`ATN-06` narrowed to the half that is true, and `CT-ATN-06` now pins the freeze.
+The additive surface is `GET /api/v1/ext/decisions`, which does have a reader.
+
+**Two contract amendments**, both driven by real nullability: `ExtDecisionItem.taskKey`
+is nullable (a scratch-run HITL is a real decision with no owning task) and
+`.createdAt` is nullable (a source row may carry no timestamp). Dropping such
+entries, or fabricating a timestamp, would each be worse than an explicit null.
+
+**One listed consumer deliberately not re-pointed.** `portfolio.ts`'s per-project
+`pendingHitlCount` chip stays HITL-only. It never flowed through `getNeedsYouCount`,
+so D9 does not reach it; re-pointing it would need `getPortfolio` to import the
+decision queue, which imports `getCrossProjectHitlInbox` **from `portfolio.ts`** — a
+circular import — and Phase 6 relocates that surface anyway. Its label ("Needs you ·
+N") remains accurate for the narrower number it shows.
+
+**`decisions` is React-`cache`d** (`getDecisionsQueue`), the same mechanism
+`getPlatformStatus` uses for the chrome: the layout badge, the home headline, the
+inbox page and the project page are one computation per render, which is what makes
+`ATN-05` true rather than merely intended.
+
 > **Checkpoint 5** — `feat(inbox): complete decision queue and two canonical counters (ADR-168, ATN-01..08)`
 
 ---
@@ -862,7 +899,7 @@ Phase 5 ships **read models and the stream**. The Now tiles and the digest
 Phase 6 — a component with no render site cannot be e2e-tested, and shipping one
 would violate the project's own "a key is done only when something consumes it".
 
-**T5.1 [ ] — Migration 0162 `user_activity_cursors`.** DDL exactly as specified in
+**T5.1 [x] (done in Phase 4 — T4.2 depends on it) — Migration 0162 `user_activity_cursors`.** DDL exactly as specified in
 T0.10: `user_id text PK REFERENCES users(id) ON DELETE CASCADE`, `seen_through
 timestamptz NOT NULL`, `updated_at timestamptz NOT NULL DEFAULT now()`. New table
 over live data — no backfill and no abort-guard needed; an absent row means "never
@@ -1100,7 +1137,16 @@ fix it, or re-classify it as intentionally-red with a dated note naming what wou
 it green. Three of them already self-label `RED: today returns true`, so they are
 assertions of a known gap rather than breakage — that gap needs an owner, not a
 deletion. The merge criterion is that no red is *unexplained*, and that none of them is
-M51's. Re-measure on the rebased tree, since the baseline moves with master.
+ M51's. Re-measure on the rebased tree, since the baseline moves with master.
+
+*Observation (2026-09-10, Checkpoint 5)*: the full integration suite ran **460 files /
+3950 tests, all green** — the eight quarantined failures included — and the three files
+pass in isolation as well. This is recorded, not celebrated: Phase 4 changed nothing in
+readiness, hook-trip or runner, so there is no mechanism to point at, and the Checkpoint
+2 baseline was measured against a reverted tree and was reproducibly red. Two green runs
+are not yet evidence of a fix. **T8.6 stays open** until the same result holds on the
+rebased tree; if it does, the correct outcome is "was environmental", written down with
+what changed, rather than a silent close.
 
 **T8.5 [ ] — Backlog, PRODUCT_VIEW, and adjacent-defect notes.**
 `.ai-factory/ROADMAP.md` backlog §A1 (the human-facing digest now exists; the

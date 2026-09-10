@@ -31,6 +31,7 @@ import clsx from "clsx";
 
 import { AssignmentActions } from "@/components/board/assignment-actions";
 import { RunHitlResponse } from "@/components/board/run-hitl-response";
+import { WorkStageChip } from "@/components/work/work-stage-chip";
 
 const AVATAR: Record<HitlItem["agent"], string> = {
   claude: "bg-amber",
@@ -159,6 +160,7 @@ export function HitlCard({
   const t = useTranslations("inbox");
   const tb = useTranslations("board");
   const tcrit = useTranslations("run");
+  const tStage = useTranslations("workStage");
   const router = useRouter();
   const [expanded, setExpanded] = useState(false);
   const [context, setContext] = useState<InboxCardContext | null>(null);
@@ -245,6 +247,30 @@ export function HitlCard({
           </span>
 
           <span className="mt-1 flex flex-wrap items-center gap-2 text-mute">
+            {/* ADR-169: the same stage vocabulary the /work table and the three
+                decision sections use. On THIS page it varies — WaitingOnHuman
+                beside Review, Crashed and Held — which is what makes the four
+                populations comparable at a glance. */}
+            <WorkStageChip
+              blocked={false}
+              labels={{
+                Triage: tStage("Triage"),
+                Held: tStage("Held"),
+                Ready: tStage("Ready"),
+                Queued: tStage("Queued"),
+                Executing: tStage("Executing"),
+                WaitingOnHuman: tStage("WaitingOnHuman"),
+                Review: tStage("Review"),
+                Crashed: tStage("Crashed"),
+                Promoted: tStage("Promoted"),
+                Abandoned: tStage("Abandoned"),
+                blocked: tStage("blocked"),
+                promotedResult: tStage("promotedResult"),
+              }}
+              progress={null}
+              promotedKind={null}
+              stage="WaitingOnHuman"
+            />
             <Chip className="border-line bg-ivory text-ink-2">
               {StageIcon ? <StageIcon className="h-3 w-3" /> : null}
               {item.stage.label}

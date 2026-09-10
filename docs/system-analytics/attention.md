@@ -104,7 +104,7 @@ sequenceDiagram
 - **ATN-03:** With no `user_activity_cursors` row, `updates` MUST count a bounded 24-hour window, never all history.
 - **ATN-04:** A task blocked by a relation MUST count in neither `decisions` nor `updates`.
 - **ATN-05:** Every surface MUST render one layout-level `decisions` value; no surface may recompute its own.
-- **ATN-06:** The external pulse's `needsYouCount` MUST keep its HITL-only semantics unchanged; `decisionsCount` and `updatesCount` are additive fields beside it.
+- **ATN-06:** The external pulse's `needsYouCount` MUST keep its HITL-only semantics unchanged; the reader's own counters are served by `GET /api/v1/ext/decisions` instead, because a project-scoped pulse has no reader to compute them for (ADR-168 amendment).
 - **ATN-07:** The decision queue MUST order by HITL criticality then age, with non-HITL kinds ranked `crashed` above `promotable` above `flagged`, and MUST NEVER consult `tasks.priority`.
 - **ATN-08:** A `decision_request` HITL row MUST NOT appear on any external surface.
 - **ATN-09:** The activity feed MUST NEVER expose a worktree path, a diff body, or a raw ACP frame.

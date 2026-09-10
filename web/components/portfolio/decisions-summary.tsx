@@ -11,7 +11,7 @@ const CRITICALITY_DOT: Record<string, string> = {
   low: "bg-mute-2",
 };
 
-export interface NeedsYouSummaryProps {
+export interface DecisionsSummaryProps {
   count: number;
   items: CrossProjectHitlItem[];
   href: string;
@@ -22,25 +22,25 @@ export interface NeedsYouSummaryProps {
 }
 
 // Compact home replacement for the full HITL + social inbox blocks (WI-1): the
-// canonical "Needs you" count, a peek at the top items, and a link to the
-// dedicated /inbox working surface. Inline respond lives on /inbox, not here.
-export function NeedsYouSummary({
+// canonical `decisions` count (ADR-168), a peek at the top items, and a link to
+// the dedicated /inbox working surface. Inline respond lives on /inbox.
+export function DecisionsSummary({
   count,
   items,
   href,
   labels,
-}: NeedsYouSummaryProps): ReactElement {
+}: DecisionsSummaryProps): ReactElement {
   return (
     <section
       aria-label={labels.title}
       className="mb-6 rounded-[14px] border border-amber-line bg-amber-soft px-5 py-4"
-      data-testid="needs-you-summary"
+      data-testid="decisions-summary"
     >
       <div className="flex items-center justify-between gap-3">
         <div className="inline-flex items-center gap-2.5 font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-amber">
           <span
             className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-amber px-1.5 font-mono text-[11px] font-bold text-white"
-            data-testid="needs-you-count"
+            data-testid="decisions-count"
           >
             {count}
           </span>

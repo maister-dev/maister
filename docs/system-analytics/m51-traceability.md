@@ -38,20 +38,20 @@ what stops this matrix decaying into the historical aliases the Stage B matrix b
 | EDGE-STG-01 | latest-run selection in the read model | T3.1, T3.4 | IT-EDGE-STG-01 | Implemented |
 | EDGE-STG-02 | workspaceRemoved branch | T1.1 | UT-EDGE-STG-02 | Implemented |
 | EDGE-STG-03 | no-run triage branch | T1.1 | UT-EDGE-STG-03 | Implemented |
-| ATN-01 | getDecisionsQueue single-query contract | T2.3, T2.4, T4.1, T4.4 | IT-ATN-01 | Planned |
-| ATN-02 | inbox_items source_ref activityId join | T4.2 | IT-ATN-02 | Planned |
-| ATN-03 | bounded 24h fallback window | T4.2, T5.1 | IT-ATN-03 | Planned |
-| ATN-04 | blocking-relation exclusion | T4.1 | IT-ATN-04 | Planned |
-| ATN-05 | layout-level counter fan-out | T4.3, T4.4, T5.7 | IT-ATN-05 | Planned |
-| ATN-06 | ext pulse response shape | T4.3 | CT-ATN-06 | Planned |
-| ATN-07 | decision-queue comparator | T4.1 | UT-ATN-07 | Planned |
-| ATN-08 | ext decisions OpenAPI, ADR-137 omission | T4.5 | IT-ATN-08 | Planned |
+| ATN-01 | getDecisionsQueue single-query contract | T2.3, T2.4, T4.1, T4.4 | IT-ATN-01 | Implemented |
+| ATN-02 | inbox_items source_ref activityId join | T4.2 | IT-ATN-02 | Implemented |
+| ATN-03 | bounded 24h fallback window | T4.2, T5.1 | IT-ATN-03 | Implemented |
+| ATN-04 | blocking-relation exclusion | T4.1 | IT-ATN-04 | Implemented |
+| ATN-05 | layout-level counter fan-out | T4.3, T4.4, T5.7 | IT-ATN-05 plus UT-ATN-05 | Implemented |
+| ATN-06 | ext pulse telemetry shape | T4.3, T4.5 | CT-ATN-06 | Implemented |
+| ATN-07 | decision-queue comparator | T4.1 | UT-ATN-07 | Implemented |
+| ATN-08 | ext decisions OpenAPI, ADR-137 omission | T4.5 | IT-ATN-08 | Implemented |
 | ATN-09 | activity-feed DTO projection | T2.4, T5.2 | IT-ATN-09 | Planned |
 | ATN-10 | user_activity_cursors GREATEST upsert | T5.1, T5.3, T5.8 | IT-ATN-10 plus E2E-ATN-10 | Planned |
 | ATN-11 | attention-stream AsyncAPI | T5.5, T5.6 | IT-ATN-11 | Planned |
 | ATN-12 | digest read model determinism | T5.4 | UT-ATN-12 | Planned |
 | EDGE-ATN-01 | absent cursor row | T5.8 | IT-EDGE-ATN-01 | Planned |
-| EDGE-ATN-02 | current-visibility filter, no rewind | T4.2 | IT-EDGE-ATN-02 | Planned |
+| EDGE-ATN-02 | current-visibility filter, no rewind | T4.2 | IT-EDGE-ATN-02 | Implemented |
 | EDGE-ATN-03 | cursor POST clamp and PRECONDITION | T5.3 | IT-EDGE-ATN-03 | Planned |
 | EDGE-ATN-04 | lastEventId replay contract | T5.5 | IT-EDGE-ATN-04 | Planned |
 | NAV-01 | ADR-171 D1, screens desk.md | T6.3 | E2E-NAV-01 | Planned |

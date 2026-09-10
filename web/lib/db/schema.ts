@@ -7585,3 +7585,22 @@ export const domainEventConsumers = pgTable("domain_event_consumers", {
 export type DomainEventConsumerRow = typeof domainEventConsumers.$inferSelect;
 export type DomainEventConsumerInsert =
   typeof domainEventConsumers.$inferInsert;
+
+// M51 (ADR-168 D3): one read cursor per user, global rather than per project.
+// An ABSENT row means "never looked" — deliberately not seeded with a constant
+// default, which would look populated while permanently excluding every
+// pre-migration user from the fallback window.
+export const userActivityCursors = pgTable("user_activity_cursors", {
+  userId: text("user_id")
+    .primaryKey()
+    .references(() => users.id, { onDelete: "cascade" }),
+  seenThrough: timestamp("seen_through", {
+    withTimezone: true,
+    mode: "date",
+  }).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+    .notNull()
+    .defaultNow(),
+});
+export type UserActivityCursorRow = typeof userActivityCursors.$inferSelect;
+export type UserActivityCursorInsert = typeof userActivityCursors.$inferInsert;

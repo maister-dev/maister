@@ -5224,7 +5224,11 @@ components:
         projectSlug: { type: string }
         taskKey:
           type: string
-          description: Platform-unique task key, e.g. `DEMO-14`.
+          nullable: true
+          description: |
+            Platform-unique task key, e.g. `DEMO-14`. Null for a scratch-run
+            HITL, which is a real decision with no owning task — dropping those
+            entries instead would make the queue quietly incomplete.
         runId:
           type: string
           format: uuid
@@ -5247,7 +5251,15 @@ components:
           type: string
           enum: [respond, promote, recover, discard, review]
           description: The single action that clears this entry.
-        createdAt: { type: string, format: date-time }
+        createdAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: |
+            When the entry started waiting. Null when the source row carries no
+            timestamp to report; a fabricated one would be worse than an
+            explicit absence, and the queue's own ordering already sorts an
+            unknown age last within its rank.
 
     ExtNotificationSubscription:
       type: object

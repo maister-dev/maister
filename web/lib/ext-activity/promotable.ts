@@ -81,7 +81,7 @@ type CandidateRow = {
   reviewEnteredAt: Date | null;
 };
 
-interface ClassifiedPromotable extends PromotionReadyItem {
+export interface ClassifiedPromotable extends PromotionReadyItem {
   // The owning project, needed only by the cross-project queue. Deliberately
   // absent from `PromotionReadyItem`, whose shape is a frozen ext contract.
   projectId: string;

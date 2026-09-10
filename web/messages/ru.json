@@ -821,7 +821,14 @@
     "changes": "Изменения",
     "changesSummary": "{files} файлов · +{additions} −{deletions}",
     "moreGates": "ещё +{count}",
-    "staleEvidence": "{count} устар."
+    "staleEvidence": "{count} устар.",
+    "decisions": {
+      "promotableTitle": "Готово к продвижению · $count",
+      "crashedTitle": "Упало — восстановить или отбросить · $count",
+      "flaggedTitle": "Удержано — помечено триажем · $count",
+      "review": "Проверить и продвинуть",
+      "openTask": "Открыть задачу"
+    }
   },
   "mcps": {
     "eyebrow": "Платформа · админ",
@@ -2878,6 +2885,7 @@
         "hitlRead": "Чтение HITL прогона",
         "hitlRespond": "Ответы на HITL прогона",
         "hitlInboxRead": "Чтение личного HITL-инбокса",
+        "decisionsRead": "Чтение вашей очереди решений",
         "hitlRespondHuman": "Ответы на human HITL",
         "commentsRead": "Чтение комментариев",
         "commentsCreate": "Создание комментариев",
@@ -3402,6 +3410,7 @@
     "scopeHitlRequest": "Запросить уточнение агента",
     "scopeHitlRespond": "Ответы HITL",
     "scopeHitlInboxRead": "Чтение личного HITL-инбокса",
+    "scopeDecisionsRead": "Чтение вашей очереди решений",
     "scopeHitlRespondHuman": "Ответы на human HITL",
     "scopeCommentsRead": "Чтение комментариев",
     "scopeCommentsCreate": "Создание комментариев",

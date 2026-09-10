@@ -6,13 +6,13 @@ import Link from "next/link";
 import { LiveTicker } from "@/components/chrome/live-ticker";
 import { DensityToggle } from "@/components/portfolio/density-toggle";
 import { EmptyState } from "@/components/portfolio/empty-state";
-import { NeedsYouSummary } from "@/components/portfolio/needs-you-summary";
+import { DecisionsSummary } from "@/components/portfolio/decisions-summary";
 import { NewProjectTile } from "@/components/portfolio/new-project-tile";
 import { OnboardingChecklist } from "@/components/portfolio/onboarding-checklist";
 import { ProjectCard } from "@/components/portfolio/project-card";
 import { ConfigPersistBanner } from "@/components/projects/config-persist-banner";
 import { requireSession } from "@/lib/authz";
-import { getUnreadInboxCount } from "@/lib/queries/inbox";
+import { getDecisionsCount } from "@/lib/queries/decisions";
 import {
   getCrossProjectHitlInbox,
   getPortfolio,
@@ -22,12 +22,13 @@ export default async function PortfolioPage(): Promise<ReactElement> {
   const user = await requireSession();
   const t = await getTranslations("portfolio");
 
-  const [portfolio, inbox, unreadInbox] = await Promise.all([
+  // ADR-168 D8/ATN-05: the ONE canonical number. React-`cache`d, so the layout's
+  // badge and this headline are the same computation, not two that can disagree.
+  const [portfolio, inbox, decisions] = await Promise.all([
     getPortfolio(user.id, user.role),
     getCrossProjectHitlInbox(user.id, user.role),
-    getUnreadInboxCount(user.id, user.role),
+    getDecisionsCount(user.id, user.role),
   ]);
-  const needsYou = inbox.count + unreadInbox;
   const isEmpty = portfolio.projects.length === 0;
 
   return (
@@ -44,7 +45,7 @@ export default async function PortfolioPage(): Promise<ReactElement> {
             {t("subheading", {
               projects: portfolio.projects.length,
               workspaces: portfolio.totalActiveWorkspaces,
-              needs: needsYou,
+              needs: decisions,
             })}
           </div>
         </div>
@@ -74,7 +75,7 @@ export default async function PortfolioPage(): Promise<ReactElement> {
             {t.rich("ticker", {
               projects: portfolio.projects.length,
               workspaces: portfolio.totalActiveWorkspaces,
-              needs: needsYou,
+              needs: decisions,
               b: (chunks) => (
                 <b className="font-semibold text-ink-2">{chunks}</b>
               ),
@@ -91,13 +92,13 @@ export default async function PortfolioPage(): Promise<ReactElement> {
             progress={portfolio.onboarding}
           />
 
-          {needsYou > 0 ? (
-            <NeedsYouSummary
-              count={needsYou}
+          {decisions > 0 ? (
+            <DecisionsSummary
+              count={decisions}
               href="/inbox"
               items={inbox.items.slice(0, 3)}
               labels={{
-                title: t("inboxTitle", { count: needsYou }),
+                title: t("inboxTitle", { count: decisions }),
                 seeAll: t("seeAll"),
               }}
             />

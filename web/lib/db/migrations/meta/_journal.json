@@ -1120,6 +1120,8 @@
       "version": "7",
       "when": 1789131089434,
       "tag": "0163_token_lifecycle_events",
+      "when": 1789055320953,
+      "tag": "0163_user_activity_cursors",
       "breakpoints": true
     }
   ]

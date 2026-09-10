@@ -50,11 +50,16 @@ header (eyebrow, title, and the canonical `decisions` count — ADR-168), then:
    **grouped by project** (a `project · N waiting` header per group); each group's
    cards render in a responsive grid that flows to **two columns on wide** screens
    and one otherwise, preserving the criticality-then-age order within a project.
-2. **Ready to promote** — mechanically promotable runs; the inline action routes
-   to the existing promote endpoint.
-3. **Crashed — recover or discard** — `Crashed` runs owing a decision; the inline
-   actions route to the existing recover / discard endpoints.
-4. **Held — flagged** — tasks a triage verdict flagged.
+2. **Ready to promote** — mechanically promotable runs. The action opens the
+   run's review surface rather than calling `POST /api/runs/{id}/promote` from
+   here: promotion is guarded against target drift by a **reviewed target
+   commit**, which only the review surface holds. Promoting without it would
+   bypass that guard, so the card links to the surface that owns the action.
+3. **Crashed — recover or discard** — `Crashed` runs owing a decision. The
+   inline actions are the existing `RunRecoverActions` control, unchanged,
+   posting to the existing recover / discard endpoints.
+4. **Held — flagged** — tasks a triage verdict flagged; the action opens the
+   task, where triage lives.
 5. **Mentions & comments** — the reused `InboxPanel` (unread `comment_added` /
    `task_mentioned`, with mark-read and read-all), unchanged.
 
@@ -63,7 +68,14 @@ carries the **neutral** tone (ADR-168 D7). Sections 2–4 reuse the `HitlCard` s
 and add **no new mutation path**.
 
 The empty state appears only when `decisions === 0` across all four decision
-sections.
+sections **and** section 5 is also empty. Gating it on `decisions` alone would
+hide unread mentions behind an "all clear" message — `updates` is a separate
+population precisely so that one cannot mask the other.
+
+Every card in sections 1–4 wears a [`WorkStageChip`](../system-analytics/work-stages.md)
+(`WaitingOnHuman` · `Review` · `Crashed` · `Held`). This is the page where the
+chip earns its place: with four populations side by side it varies, which is
+what makes them comparable at a glance.
 
 ### The HITL card
 

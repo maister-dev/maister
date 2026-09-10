@@ -13,6 +13,12 @@ export const TOKEN_SCOPES = [
   "hitl:request",
   "hitl:respond",
   "hitl:inbox:read",
+  // M51 (ADR-168): the reader's own cross-project decision queue. Deliberately
+  // absent from AGENT_TOKEN_SCOPES and CROSS_PROJECT_AGENT_SCOPES — an agent
+  // must not read a human's decision queue, and a `*` grant DOES satisfy it
+  // (it is not an EXACT_ONLY scope; the exact-only list guards responding, not
+  // reading).
+  "decisions:read",
   "hitl:respond:human",
   "comments:read",
   "comments:create",
