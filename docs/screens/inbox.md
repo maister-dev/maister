@@ -35,8 +35,8 @@ by `readBoard` on the run's project.
 
 ## Navigation
 
-- **Entry:** the rail **Inbox** nav item; the home **"Needs you → See all"**
-  summary card ([`chrome/left-rail.md`](chrome/left-rail.md)).
+- **Entry:** the rail **Inbox** nav item; the Desk's **Decisions** region
+  ([`desk.md`](desk.md), [`chrome/left-rail.md`](chrome/left-rail.md)).
 - **Within:** **expand a card in place** to load decision context; respond to a
   HITL item inline (no navigation); mark a mention read / read-all.
 - **Exit:** **View run** links through to the run / task on the project board.
@@ -44,16 +44,26 @@ by `readBoard` on the run's project.
 ## Layout & regions
 
 Full-bleed page (no centered max-width — `main` gutter provides air). A page
-header (eyebrow, title, and the canonical `needsYou` count), then:
+header (eyebrow, title, and the canonical `decisions` count — ADR-168), then:
 
 1. **Needs your action** — `HitlInboxList`: pending HITL across visible projects,
    **grouped by project** (a `project · N waiting` header per group); each group's
    cards render in a responsive grid that flows to **two columns on wide** screens
    and one otherwise, preserving the criticality-then-age order within a project.
-2. **Mentions & comments** — the reused `InboxPanel` (unread `comment_added` /
+2. **Ready to promote** — mechanically promotable runs; the inline action routes
+   to the existing promote endpoint.
+3. **Crashed — recover or discard** — `Crashed` runs owing a decision; the inline
+   actions route to the existing recover / discard endpoints.
+4. **Held — flagged** — tasks a triage verdict flagged.
+5. **Mentions & comments** — the reused `InboxPanel` (unread `comment_added` /
    `task_mentioned`, with mark-read and read-all), unchanged.
 
-When `needsYou === 0` the page shows a single empty state instead of the blocks.
+Sections 1–4 are the four kinds summed by `decisions`; section 5 is `updates` and
+carries the **neutral** tone (ADR-168 D7). Sections 2–4 reuse the `HitlCard` shell
+and add **no new mutation path**.
+
+The empty state appears only when `decisions === 0` across all four decision
+sections.
 
 ### The HITL card
 
@@ -104,8 +114,8 @@ neutral); the prior block-level amber "alarm" chrome is removed.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Empty: needsYou is 0
-    [*] --> HasWork: needsYou greater than 0
+    [*] --> Empty: decisions is 0
+    [*] --> HasWork: decisions greater than 0
     HasWork --> Expanded: expand a card (lazy context loads)
     Expanded --> HasWork: collapse
     HasWork --> HasWork: respond to HITL or mark a mention read
@@ -129,9 +139,10 @@ and activation-unavailable states.
   alongside the existing project / branch / flow / criticality / assignment
   fields.
 - `getInboxItems(userId, role)` → unread mentions/comments.
-- `getUnreadInboxCount(userId, role)` → unread count; `needsYou = HITL count +
-unread` (the canonical fan-out — see
-  [`../system-analytics/social-board.md`](../system-analytics/social-board.md)).
+- `getUnreadInboxCount(userId, role)` → unread count, one input to `updates`.
+- `getDecisionsCount` / `getDecisionsQueue` → the canonical `decisions` value and
+  the list it labels, from one query (see
+  [`../system-analytics/attention.md`](../system-analytics/attention.md)).
 - `GET /api/runs/{runId}/inbox-context` — the lazy per-card
   expand payload `{ lastAgentMessage, gates[], diff, progress }` plus
   `budgetProgress`, `availableOptions`, and `claimStage` for budget-breach
@@ -167,7 +178,7 @@ resolution. EN + RU parity is required.
 - The response body is allow-list driven by stored HITL payload data; arbitrary
   draft ids, runner refs, participant ids, or child run ids from the browser are
   ignored or rejected server-side.
-- Clearing the last consensus HITL updates `needsYou` through the existing inbox
+- Clearing the last consensus HITL updates `decisions` through the existing inbox
   count path.
 
 ## Budget-breach acceptance criteria
@@ -200,7 +211,9 @@ open a review workspace. The Inbox never presents a second approve/rework form.
   [`../system-analytics/consensus.md`](../system-analytics/consensus.md)
   (consensus no-agreement HITL decisions),
   [`../system-analytics/social-board.md`](../system-analytics/social-board.md)
-  (canonical `needsYou`, inbox fanout),
+  (inbox fanout),
+  [`../system-analytics/attention.md`](../system-analytics/attention.md)
+  (the canonical `decisions` and `updates` counters),
   [`../system-analytics/run-continuation.md`](../system-analytics/run-continuation.md)
   (the node-interrupt option matrix and its shared loader).
 - ADRs: [ADR-057](../decisions.md#adr-057) (HITL hybrid surface),

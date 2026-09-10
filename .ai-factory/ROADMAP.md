@@ -637,7 +637,7 @@
   transport/history remains. See ADR-138 and
   `.ai-factory/plans/feature-flow-review-workspace.md`.
 
-- [ ] **M45. Core-package process qualification on private projects** — prove
+- [x] **M45. Core-package process qualification on private projects** — prove
   repeatability, not merely installability, for the processes distributed in
   core packages. Qualify at least three representative processes across at
   least three internal/private repositories with three consecutive runs per
@@ -647,6 +647,16 @@
   expected artifacts/gates, and recovery guidance. Add an end-to-end preflight
   / Run Doctor so a failed prerequisite is actionable before launch. Telemetry
   MUST NOT persist private source, prompts, diffs, secrets, or artifact bodies.
+
+  **Closed 2026-09-10 by owner decision, WITHOUT the stated qualification run
+  set.** The acceptance bar above — three representative processes across at
+  least three internal/private repositories, three consecutive runs per
+  process/project profile, plus the recorded metrics and an end-to-end
+  preflight / Run Doctor — is **not** evidenced in this repository: no
+  qualification record exists and no preflight/Run Doctor surface ships. The
+  milestone is closed as descoped so M51 can open, not because the bar was met.
+  Anything from it that is still wanted must be re-opened as new scope carrying
+  its own acceptance evidence.
 
   **Project Automations support (Implemented, ADR-139).** A project member may
   create a recoverable one-time task launch for a qualified task and inspect it
@@ -749,6 +759,37 @@
   (see `.ai-factory/plans/claude-flow-runs-continuation-controls-527f4c.md`,
   `.ai-factory/specs/run-continuation-controls.spec.md`)
 
+- [ ] **M51. See everything** — a read-only visibility layer for teams: one
+  screen that answers *what is blocked on me, what moved, and what is in
+  flight*, across every project a reader can see. **(A) Derived work stages**
+  (ADR-169): a pure, total `deriveWorkStage` classifier and a cross-project
+  `/work` table whose query count is independent of its row count; `blocked` is
+  an attribute, never a stage, and no `WorkStage` value is ever persisted.
+  **(B) Two canonical attention counters** (ADR-168): `decisions` — respondable
+  HITL plus promotable, crashed and triage-flagged work, from ONE query whose
+  count cannot disagree with its list — and `updates` — unread inbox items plus
+  activity newer than a per-user cursor, MINUS the overlap keyed on
+  `inbox_items.source_ref->>'activityId'`, so a mention counts once. `needsYou`
+  is deleted, not deprecated; the ext pulse's `needsYouCount` semantics are
+  frozen. A badge means "your participation is required", so only `decisions`
+  wears the attention tone. **(C) Activity, cursor and digest** (ADR-170): a
+  cross-project feed carrying no worktree path, diff body or raw ACP frame; a
+  monotonic `GREATEST` cursor upsert; a deterministic digest; and ONE
+  user-scoped attention SSE stream — a server-side poll of durable read models,
+  never a state-transition trigger. **(D) The Desk** (ADR-171): `/` renders the
+  Desk, the portfolio moves to `/projects`, the rail is re-cut, and a non-admin
+  lands on `/work`. **(E) Notifications** (ADR-172): per-user subscriptions and
+  web push over the **widened** ADR-077 engine — no second outbox, paid for by
+  enumerating every reader of the newly nullable `webhook_events` columns and by
+  making subscription scope two independent axes. Migrations `0162`–`0164`.
+  Specifications are Phase 0 and carry machine-enforced requirement IDs
+  (`STG`/`ATN`/`NAV`/`NTF`) with a bidirectional coverage gate. Explicit
+  non-goals: PO intake, initiatives, a task-statement schema, delivery reports,
+  an effects ledger, Structured Ask, snooze/delegate/claim, a Telegram bot,
+  agent narration, USD cost, and any change to the run or task state machines.
+  (see `.ai-factory/plans/feature-m51-see-everything.md`,
+  `docs/system-analytics/m51-traceability.md`)
+
 ## Completed
 
 | Milestone                                                                    | Date       |
@@ -801,6 +842,7 @@
 | M47. Controlled Evaluation Expansion                                         | 2026-07-18 |
 | M48. Advanced Evaluation (remainder → Backlog)                               | 2026-07-21 |
 | M49. Multi-repo cross-project enablement (merged 2026-08-12)                 | 2026-08-05 |
+| M45. Core-package process qualification — closed as descoped by owner decision; qualification run set NOT performed | 2026-09-10 |
 
 ## Backlog (untriaged deferred work)
 

@@ -29,8 +29,11 @@ account actions (change password, sign out); admin destinations live in the
 
 ## Layout & regions
 
-Left: logo + a breadcrumb (`~/projects` and the active crumb). Below `md`, the
-logo group also contains the mobile rail trigger. Right: language
+Left: logo + a **Desk | Projects** switch + a breadcrumb (`~/projects` and the
+active crumb). The switch is the explicit control for the two meanings `/`
+used to carry: **Desk** targets `/`, **Projects** targets `/projects`
+(ADR-171 D3). The logo itself means "home" and keeps targeting `/`.
+Below `md`, the logo group also contains the mobile rail trigger. Right: language
 switch, theme switch, and the user menu. The theme switch uses packaged
 Heroicons: a sun for light mode and a moon for dark mode. After WI-3 the
 breadcrumb no longer carries a supervisor status dot — supervisor status is

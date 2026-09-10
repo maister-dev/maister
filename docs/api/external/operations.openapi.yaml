@@ -2852,6 +2852,209 @@ paths:
         "403":
           $ref: "#/components/responses/HitlForbidden"
 
+  /api/v1/ext/decisions:
+    get:
+      tags: [hitl]
+      summary: (Designed ADR-168) List everything blocked on the token owner
+      description: |
+        Scope `decisions:read`. Returns the owner's cross-project **decision
+        queue** — the four kinds summed by the canonical `decisions` counter:
+        respondable HITL, mechanically promotable runs, `Crashed` runs owing
+        recover/discard, and triage-flagged tasks. `count` always equals
+        `items.length`; both come from one query, so the number can never
+        disagree with the list it labels (ADR-168 D8).
+
+        Like `GET /api/v1/ext/hitl` this route is only for global personal user
+        tokens (`token_kind=user`, `project_id IS NULL`). Project tokens,
+        project-scoped user tokens, and agent tokens return 403 because they do
+        not carry a user-wide project set. `decisions:read` is deliberately
+        **absent** from the agent scope sets — an agent must not read a human's
+        decision queue.
+
+        A `decision_request` HITL row is NEVER surfaced here, matching
+        `GET /api/v1/ext/hitl` (ADR-137).
+
+        Ordering is HITL criticality then age; non-HITL kinds rank `crashed`
+        above `promotable` above `flagged`. `tasks.priority` is never consulted.
+
+        Identifier labels:
+
+        | Identifier | Source | Trust |
+        | --- | --- | --- |
+        | token owner | auth-context | verified bearer token row |
+        | visible projects | server-state | owner membership/global-admin query |
+
+        `*` may satisfy this read scope. The route writes a `token_audit_log`
+        row with `scope_used='decisions:read'`, `project_id=NULL`,
+        `endpoint='GET /api/v1/ext/decisions'`, and the returned HTTP status.
+        The audit/log path must not record plaintext token, token hash,
+        Authorization header, or held scope list.
+      operationId: extListDecisions
+      security:
+        - projectToken: []
+      responses:
+        "200":
+          description: Cross-project decision queue for the token owner.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, count]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/ExtDecisionItem" }
+                  count:
+                    type: integer
+                    minimum: 0
+                    description: Number of queued decisions (equals `items.length`).
+              examples:
+                default:
+                  value:
+                    count: 2
+                    items:
+                      - kind: "hitl"
+                        projectId: "3f2504e0-4f89-41d3-9a0c-0305e82c3301"
+                        projectSlug: "demo"
+                        taskKey: "DEMO-14"
+                        runId: "6ba7b810-9dad-41d1-80b4-00c04fd430c8"
+                        hitlRequestId: "7c9e6679-7425-40de-944b-e07fc1f90ae7"
+                        title: "Review deployment plan"
+                        criticality: "high"
+                        nextAction: "respond"
+                        createdAt: "2026-09-10T12:00:00.000Z"
+                      - kind: "crashed"
+                        projectId: "3f2504e0-4f89-41d3-9a0c-0305e82c3301"
+                        projectSlug: "demo"
+                        taskKey: "DEMO-9"
+                        runId: "1c4a9f22-5f0e-4c31-9f4a-2c7d1b6e8a03"
+                        hitlRequestId: null
+                        title: "Backfill the pricing table"
+                        criticality: null
+                        nextAction: "recover"
+                        createdAt: "2026-09-10T08:41:00.000Z"
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/HitlForbidden"
+
+  /api/v1/ext/notification-subscriptions:
+    get:
+      tags: [hitl]
+      summary: (Designed ADR-172) List the token owner's notification subscriptions
+      description: |
+        Scope `notifications:subscriptions`. Lists the subscriptions **owned by
+        the token owner**. The owner is taken from `auth-context` only and is
+        never read from the request; there is no parameter naming a user.
+      operationId: extListNotificationSubscriptions
+      security:
+        - projectToken: []
+      responses:
+        "200":
+          description: The owner's notification subscriptions.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, count]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      { $ref: "#/components/schemas/ExtNotificationSubscription" }
+                  count:
+                    type: integer
+                    minimum: 0
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/HitlForbidden"
+    post:
+      tags: [hitl]
+      summary: (Designed ADR-172) Create a notification subscription
+      description: |
+        Scope `notifications:subscriptions`. Creates a subscription owned by the
+        token owner. A body field naming an owner is rejected, not honoured
+        (ADR-172 D9). Triggers are restricted to `decisions` deltas and digests
+        — a per-event subscription is refused `CONFIG`.
+      operationId: extCreateNotificationSubscription
+      security:
+        - projectToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              { $ref: "#/components/schemas/ExtNotificationSubscriptionInput" }
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema:
+                { $ref: "#/components/schemas/ExtNotificationSubscription" }
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/HitlForbidden"
+
+  /api/v1/ext/notification-subscriptions/{subscriptionId}:
+    parameters:
+      - name: subscriptionId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: |
+          Subscription id. A subscription owned by another user answers 404,
+          never 403 — the API does not confirm the existence of another
+          owner's rows (ADR-172 D9).
+    patch:
+      tags: [hitl]
+      summary: (Designed ADR-172) Update a notification subscription
+      description: Scope `notifications:subscriptions`. Owner-scoped; see the path parameter.
+      operationId: extUpdateNotificationSubscription
+      security:
+        - projectToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              { $ref: "#/components/schemas/ExtNotificationSubscriptionInput" }
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema:
+                { $ref: "#/components/schemas/ExtNotificationSubscription" }
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/HitlForbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [hitl]
+      summary: (Designed ADR-172) Delete a notification subscription
+      description: Scope `notifications:subscriptions`. Owner-scoped; see the path parameter.
+      operationId: extDeleteNotificationSubscription
+      security:
+        - projectToken: []
+      responses:
+        "204":
+          description: Deleted.
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/HitlForbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /api/v1/ext/runs/{runId}/hitl:
     get:
       tags: [hitl]
@@ -4989,6 +5192,118 @@ components:
           type: string
           format: uuid
           description: ID of the `test_report` artifact created for this report.
+
+    ExtDecisionItem:
+      type: object
+      description: |
+        (Designed ADR-168) One entry in the owner's cross-project decision
+        queue. Every field is an explicit DTO projection: this item NEVER
+        includes `acp_session_id`, a supervisor session id, an absolute worktree
+        path, a diff body, token material, or an internal cost handle.
+      required:
+        [
+          kind,
+          projectId,
+          projectSlug,
+          taskKey,
+          runId,
+          hitlRequestId,
+          title,
+          criticality,
+          nextAction,
+          createdAt,
+        ]
+      properties:
+        kind:
+          type: string
+          enum: [hitl, promotable, crashed, flagged]
+          description: |
+            Which of the four `decisions` populations this entry came from.
+            `decision_request` HITL rows are never surfaced (ADR-137).
+        projectId: { type: string, format: uuid }
+        projectSlug: { type: string }
+        taskKey:
+          type: string
+          description: Platform-unique task key, e.g. `DEMO-14`.
+        runId:
+          type: string
+          format: uuid
+          nullable: true
+          description: Null for `flagged` entries, which have no run yet.
+        hitlRequestId:
+          type: string
+          format: uuid
+          nullable: true
+          description: Present only when `kind` is `hitl`.
+        title: { type: string }
+        criticality:
+          type: string
+          enum: [low, medium, high, critical]
+          nullable: true
+          description: |
+            HITL criticality. Null for non-HITL kinds, which carry the fixed
+            rank crashed > promotable > flagged instead. Never `tasks.priority`.
+        nextAction:
+          type: string
+          enum: [respond, promote, recover, discard, review]
+          description: The single action that clears this entry.
+        createdAt: { type: string, format: date-time }
+
+    ExtNotificationSubscription:
+      type: object
+      description: |
+        (Designed ADR-172) A notification subscription owned by the token owner.
+        Signing material is stored as an `env:NAME` reference and is NEVER
+        returned here, in any form.
+      required: [id, eventTypes, transport, enabled, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        eventTypes:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            type: string
+            enum:
+              [
+                attention.decision_opened,
+                attention.decision_closed,
+                attention.decisions_changed,
+                attention.digest,
+              ]
+        transport:
+          type: string
+          enum: [web_push, webhook]
+        enabled: { type: boolean }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    ExtNotificationSubscriptionInput:
+      type: object
+      description: |
+        (Designed ADR-172) Create/update body. There is deliberately no owner
+        field: the owner comes from `auth-context` only. A body naming an owner
+        is refused rather than honoured.
+      additionalProperties: false
+      required: [eventTypes, transport]
+      properties:
+        eventTypes:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            type: string
+            enum:
+              [
+                attention.decision_opened,
+                attention.decision_closed,
+                attention.decisions_changed,
+                attention.digest,
+              ]
+        transport:
+          type: string
+          enum: [web_push, webhook]
+        enabled: { type: boolean, default: true }
 
     ExtHitlInboxItem:
       type: object

@@ -8,6 +8,20 @@ for behavior, the delivery FSM, and the event taxonomy, and
 > **Status: Implemented.** Migration `0040_outbound_webhooks.sql` (additive,
 > forward-only, no down-migration) adds all four tables and the
 > `platform_runtime_settings.webhooks_enabled` column.
+>
+> **Widening (Designed — [ADR-172](../decisions.md#adr-172), migration `0164`).**
+> `webhook_events.project_id` and `.run_id` become nullable and
+> `webhook_subscriptions.owner_user_id` is added, so a per-user `attention.*`
+> event — which has neither a project nor a run — rides this same outbox
+> instead of a second one. The widening drops nothing.
+>
+> Scope becomes **two independent axes**. The shipped match expression
+> `sub.project_id IS NULL OR sub.project_id = event.project_id` treats a NULL
+> subscription project as "platform-wide, matches everything"; once the *event*
+> project can also be NULL that first disjunct would make every platform-wide
+> subscription match every user event. A platform-wide subscription MUST NOT
+> match a user-scoped event, and a user subscription MUST NOT match a
+> project-scoped one — both directions are contractual (`NTF-03`).
 
 The diagram below also notes that `platform_runtime_settings` gains a
 `webhooks_enabled boolean NOT NULL DEFAULT true` global kill-switch column
@@ -25,6 +39,7 @@ erDiagram
     WEBHOOK_SUBSCRIPTIONS {
         text id PK "server crypto.randomUUID()"
         text project_id FK "NULL -> projects(id); NULL = platform scope"
+        text owner_user_id FK "NULL -> users(id) ON DELETE CASCADE; NON-NULL = user scope (0164, Designed)"
         text name "display name"
         text url "http/https only; boundary-validated"
         text method "POST|PUT DEFAULT POST"
@@ -39,8 +54,8 @@ erDiagram
 
     WEBHOOK_EVENTS {
         text id PK "server crypto.randomUUID()"
-        text project_id FK "NOT NULL -> projects(id)"
-        text run_id FK "NOT NULL -> runs(id)"
+        text project_id FK "-> projects(id); NULL for user-scoped attention.* events (0164, Designed)"
+        text run_id FK "-> runs(id); NULL for user-scoped attention.* events (0164, Designed)"
         text type "taxonomy type string"
         jsonb data "per-type minimal facts; written at emit"
         jsonb payload "NULL until fanout; full frozen envelope built at FANOUT"

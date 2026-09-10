@@ -15,6 +15,7 @@ const OPENAPI_FILES = [
 ];
 
 const ASYNCAPI_FILES = [
+  "docs/api/async/attention-stream.asyncapi.yaml",
   "docs/api/async/outbound-webhooks.asyncapi.yaml",
   "docs/api/async/supervisor-sse.asyncapi.yaml",
   "docs/api/async/execution-host-events.asyncapi.yaml",
@@ -327,6 +328,58 @@ function validateExecutionHostEventContract(doc, file) {
   assertRequired(ack, "throughSequence", `${file}: RuntimeEventAck`);
 }
 
+function validateAttentionStreamContract(doc, file) {
+  if (file !== "docs/api/async/attention-stream.asyncapi.yaml") return;
+
+  const tick = schemaFor(doc, "AttentionTickEvent", file);
+  for (const key of [
+    "type",
+    "id",
+    "occurredAt",
+    "decisions",
+    "updates",
+    "changed",
+    "projectIds",
+  ]) {
+    assertRequired(tick, key, `${file}: AttentionTickEvent`);
+  }
+  if (tick.additionalProperties !== false) {
+    throw new Error(`${file}: AttentionTickEvent must close its spine`);
+  }
+  // The frame id is the exclusive replay cursor, so it is a canonical decimal
+  // string like every other cursor on the wire — never a number.
+  if (
+    tick.properties?.id?.type !== "string" ||
+    !tick.properties?.id?.pattern?.startsWith("^(0|")
+  ) {
+    throw new Error(`${file}: AttentionTickEvent.id must be a canonical decimal string`);
+  }
+  // Both counters are counts. A negative one would mean the subtraction in
+  // ADR-168 D2 underflowed rather than that nothing is waiting.
+  for (const key of ["decisions", "updates"]) {
+    const counter = tick.properties?.[key];
+    if (counter?.type !== "integer" || counter?.minimum !== 0) {
+      throw new Error(`${file}: AttentionTickEvent.${key} must be a non-negative integer`);
+    }
+  }
+  assertEnumIncludes(
+    tick.properties?.changed?.items,
+    ["decisions", "work", "activity"],
+    `${file}: AttentionTickEvent.changed`,
+  );
+  if (tick.properties?.projectIds?.type !== "array") {
+    throw new Error(
+      `${file}: AttentionTickEvent.projectIds must be an array — the per-frame ` +
+        `visibility filter is asserted against it`,
+    );
+  }
+  // Synthetic frames carry no SSE id and must never advance a replay cursor.
+  const heartbeat = schemaFor(doc, "AttentionHeartbeatEvent", file);
+  if (heartbeat.properties && "id" in heartbeat.properties) {
+    throw new Error(`${file}: AttentionHeartbeatEvent must not carry a frame id`);
+  }
+}
+
 async function validateOpenApiMetaSchema(file) {
   try {
     await SwaggerParser.validate(file);
@@ -378,6 +431,7 @@ export async function validateAsyncApi(file, { log = true } = {}) {
   assertObject(doc, "channels", file);
   visitRefs(doc, doc);
   validateExecutionHostEventContract(doc, file);
+  validateAttentionStreamContract(doc, file);
   if (log) console.log(`validate-contracts: ${basename(file)} ok`);
 }
 

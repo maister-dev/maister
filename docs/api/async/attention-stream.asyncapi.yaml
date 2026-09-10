@@ -1,0 +1,178 @@
+asyncapi: 2.6.0
+info:
+  title: MAIster Web — user-scoped attention stream
+  version: "1.0.0"
+  description: |
+    Browser-safe attention notifications delivered by
+    `GET /api/attention/stream` (ADR-170).
+
+    One `EventSource` per reader, addressed by the **session user** rather than
+    by a run, a project or a filter. The server polls durable read models and
+    pushes a tick when they move; the client refetches the affected region. The
+    stream is a read path that happens to push: it never writes run state, never
+    resolves a HITL deferred and never advances a read cursor.
+
+    Frames are **ticks, not a log**. A tick carries the two canonical counters as
+    of now (`decisions`, `updates` — ADR-168) plus which regions and which
+    visible projects moved. Clients follow the `retain: false` idiom and must not
+    accumulate frames in state.
+
+    Every frame is filtered through the reader's **current** visible projects; a
+    project outside that set never appears in `projectIds` and never causes a
+    frame. Worktree paths, diff bodies, prompts, credentials and raw ACP frames
+    are never forwarded.
+
+    `attention.heartbeat` and `attention.stream_timeout` are synthetic web-tier
+    messages. They carry no SSE `id` and never advance a replay cursor.
+  contact:
+    name: MAIster maintainers
+    url: https://github.com/your-org/mAIster
+  license:
+    name: MIT
+defaultContentType: application/json
+servers:
+  local:
+    url: http://localhost:3000
+    protocol: http
+    description: Local Next.js server.
+channels:
+  /api/attention/stream:
+    bindings:
+      http:
+        type: response
+        method: GET
+    subscribe:
+      operationId: subscribeAttention
+      summary: Follow user-scoped attention ticks
+      description: |
+        Authentication is principal-derived from the active session; there is no
+        path or query parameter naming the reader. An unauthenticated request is
+        refused `401` before streaming begins.
+
+        Replay is exclusive of `Last-Event-ID`, with a `lastEventId` query
+        fallback for clients that cannot set the header. A negative,
+        non-numeric or overlong cursor is clamped to a full replay rather than
+        refused, and the tail is replayed from durable rows — there is no
+        in-memory replay buffer, so a server restart costs a reader only a
+        reconnect.
+
+        A quiet stream emits `attention.heartbeat`; a stream that stays quiet
+        past the module-level cap is closed with `attention.stream_timeout`
+        rather than held open. Poll interval, heartbeat period and quiet cap are
+        module constants, deliberately not environment variables (ADR-170 D5).
+      message:
+        oneOf:
+          - $ref: "#/components/messages/AttentionTick"
+          - $ref: "#/components/messages/AttentionHeartbeat"
+          - $ref: "#/components/messages/AttentionStreamTimeout"
+components:
+  messages:
+    AttentionTick:
+      name: attention.tick
+      title: Counters as of now, plus what moved
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/AttentionTickEvent"
+    AttentionHeartbeat:
+      name: attention.heartbeat
+      title: Synthetic quiet-window keepalive
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/AttentionHeartbeatEvent"
+    AttentionStreamTimeout:
+      name: attention.stream_timeout
+      title: Synthetic quiet-cap close
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/AttentionStreamTimeoutEvent"
+  schemas:
+    AttentionTickEvent:
+      type: object
+      additionalProperties: false
+      required:
+        - type
+        - id
+        - occurredAt
+        - decisions
+        - updates
+        - changed
+        - projectIds
+      properties:
+        type:
+          type: string
+          enum:
+            - attention.tick
+        id:
+          description: Monotonic SSE frame id; the exclusive replay cursor.
+          type: string
+          pattern: "^(0|[1-9][0-9]{0,18})$"
+        occurredAt:
+          type: string
+          format: date-time
+        decisions:
+          description: Work blocked on this reader, as of this frame (ADR-168).
+          type: integer
+          minimum: 0
+        updates:
+          description: Unseen activity for this reader, as of this frame (ADR-168).
+          type: integer
+          minimum: 0
+        changed:
+          description: Which regions the reader should refetch.
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            enum:
+              - decisions
+              - work
+              - activity
+        projectIds:
+          description: >-
+            Visible projects whose state moved. Always a subset of the reader's
+            current visibility; never contains a project the reader cannot see.
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+      example:
+        type: attention.tick
+        id: "412"
+        occurredAt: "2026-09-10T09:14:22.117Z"
+        decisions: 3
+        updates: 11
+        changed:
+          - decisions
+          - work
+        projectIds:
+          - 8f2c1d4a-0b73-4e29-9c51-6a7e5f0d3b18
+    AttentionHeartbeatEvent:
+      type: object
+      additionalProperties: false
+      required:
+        - type
+      properties:
+        type:
+          type: string
+          enum:
+            - attention.heartbeat
+      example:
+        type: attention.heartbeat
+    AttentionStreamTimeoutEvent:
+      type: object
+      additionalProperties: false
+      required:
+        - type
+        - reason
+      properties:
+        type:
+          type: string
+          enum:
+            - attention.stream_timeout
+        reason:
+          type: string
+          enum:
+            - quiet_cap
+      example:
+        type: attention.stream_timeout
+        reason: quiet_cap

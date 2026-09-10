@@ -47,9 +47,17 @@ See [`../README.md`](../README.md) for the global IA map.
 
 Expanded mode, top to bottom:
 
-1. **Section nav** — Projects, Inbox (badge), Flow Studio, Observatory, then the admin block
-   (Agents, MCPs, Users, Scheduler, Settings). The Inbox badge shows the
-   canonical `needsYou` count (WI-1; see [`../inbox.md`](../inbox.md)). Section
+1. **Section nav** — Home, Projects, Work, Activity, Inbox (badge), Activity
+   (badge), Flow Studio, Observatory, then the admin block
+   (Agents, MCPs, Users, Scheduler, Settings). **Two badges, two tones**
+   (ADR-168 D7): the Inbox badge shows `decisions` in the **attention** tone
+   (amber, `data-testid="inbox-nav-badge"`) and means "N things are blocked on
+   you"; the Activity badge shows `updates` in a **neutral** tone
+   (`data-testid="activity-nav-badge"`) and means "N things happened you have
+   not seen". Nothing non-actionable may wear the attention tone. Both values
+   are computed once in `web/app/(app)/layout.tsx` and passed down — neither
+   badge recomputes its own number (`ATN-05`). See
+   [`../inbox.md`](../inbox.md) and [`../activity.md`](../activity.md). Section
    icons come from `@heroicons/react`; Settings uses the gear icon and the
    collapsed/expanded states share the same route-derived active marker.
 2. **Active workspaces** — per-project groups of live runs. The block's surface
@@ -159,7 +167,11 @@ labels), `gc` (TTL badges).
   readiness recompute.
 - Behavior: [`../../system-analytics/acp-runners.md`](../../system-analytics/acp-runners.md),
   [`../../system-analytics/social-board.md`](../../system-analytics/social-board.md)
-  (Needs-you badge).
+  (inbox fanout),
+  [`../../system-analytics/attention.md`](../../system-analytics/attention.md)
+  (both badge counters and their tones),
+  [`../../system-analytics/home-navigation.md`](../../system-analytics/home-navigation.md)
+  (the rail re-cut and the total route classifier).
 - Source: `web/components/chrome/left-rail.tsx`,
   `web/components/chrome/left-rail-nav.tsx`,
   `web/components/chrome/runners-readiness-rail.tsx`,

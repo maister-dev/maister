@@ -522,53 +522,57 @@ scope** in a real browser context, not just the header.
 
 ## Phases and tasks
 
+> **Progress convention.** A task id carries `[x]` once its own *Verify* step has
+> run green; `[ ]` means not started or not yet verified. The marker sits on the
+> task itself — there is no second checklist to drift.
+
 ### Phase 0 — Specifications (no application code)
 
-**T0.1 — Reserve the ADR numbers.** `### ADR-168` … `### ADR-172` stubs in
+**T0.1 [x] — Reserve the ADR numbers.** `### ADR-168` … `### ADR-172` stubs in
 `docs/decisions.md` + five `docs/decisions/adr-1NN.md` records. Re-verify the base
 first: `git show master:docs/decisions.md | grep -o '^### ADR-[0-9]*' | tail -1`.
 *Verify*: `node scripts/validate-docs-adr-anchors.mjs --all` (bijection + status equality).
 
-**T0.2 — ADR-169: work-stage vocabulary.** D2's four-way collision, D3's full
+**T0.2 [x] — ADR-169: work-stage vocabulary.** D2's four-way collision, D3's full
 11-status table, `Intake`/`Delivered` as future members with owning milestones,
 `blocked` as an attribute, the no-persisted-column rule. Owns `STG-01..07`.
 
-**T0.3 — ADR-168: two canonical counters.** D4 in full including the worked
+**T0.3 [x] — ADR-168: two canonical counters.** D4 in full including the worked
 double-count example and the no-cursor fallback; D5's ordering; D11's badge rule
 and i18n mechanics; the `needsYouCount` freeze; the `needsYou` retirement list.
 Restate `social-board.md`'s one-number expectation for **both** counters. Owns
 `ATN-01..08`.
 
-**T0.4 — ADR-170: attention SSE stream.** Deviation 2 in full: why no aggregate
+**T0.4 [x] — ADR-170: attention SSE stream.** Deviation 2 in full: why no aggregate
 stream existed, why the study route's shape is not polling-for-transitions (quote
 its header comment), the frame schema, `lastEventId` replay, heartbeat/quiet
 bounds, per-user RBAC. Owns `ATN-11`.
 
-**T0.5 — ADR-171: Desk home IA.** `/` → Desk; portfolio → `/projects` unchanged;
+**T0.5 [x] — ADR-171: Desk home IA.** `/` → Desk; portfolio → `/projects` unchanged;
 rail = Home / Projects / Work / Activity / Inbox / Flow Studio / Observatory +
 admin; `/work` as the non-admin member default (**a clause of this decision**, so
 `/` never forks by role twice). Record what `/` did before and every inbound link
 that moves. Owns `NAV-01..06`.
 
-**T0.6 — ADR-172: notifications.** D12's widening and fan-out; the
+**T0.6 [x] — ADR-172: notifications.** D12's widening and fan-out; the
 `attention.decision_opened | decision_closed | decisions_changed | digest`
 taxonomy; `web_push | webhook` delivery axis; per-user ownership; ext parity; the
 brief §6 anti-pattern this respects. State the fatigue bound: deltas and digests
 only. Owns `NTF-01..10`.
 
-**T0.7 — `work-stages.md` + `attention.md`.** R5's seven sections **in order**;
+**T0.7 [x] — `work-stages.md` + `attention.md`.** R5's seven sections **in order**;
 `stateDiagram-v2` of D3; **Expectations carry `STG-`/`ATN-` ids** and stay ≤ 12
 per doc; **Edge cases carry `EDGE-` ids**; every bullet names its enforcement
 mechanism — a MUST with no mechanism is rewritten or given one. R6 status tags.
 
-**T0.8 — `home-navigation.md` + `notifications.md`.** Same structure, owning
+**T0.8 [x] — `home-navigation.md` + `notifications.md`.** Same structure, owning
 `NAV-` and `NTF-`. `home-navigation.md` is new relative to the first draft (see
 "Requirement IDs"). Index rows in `docs/system-analytics/README.md`.
 *Note (do not fix)*: `social-board.md` already carries **24** Expectations bullets,
 over R5a's cap — the validator applies the cap only to registered document sets, so
 it is green. Pre-existing; filed in T8.5.
 
-**T0.9 — Screens docs, `desk.md` first.** Per brief §7 the Desk layout is settled
+**T0.9 [x] — Screens docs, `desk.md` first.** Per brief §7 the Desk layout is settled
 on the mockup and **`docs/screens/desk.md` is the contract, written before its
 components**: JTBD, regions in mockup order (composer → Now tiles → Decisions →
 Work in flight → Activity → digest in the header), three states (busy / quiet /
@@ -579,7 +583,7 @@ hard-gated, scanned recursively. Update `inbox.md` (new sections + both counters
 replacing its five verbatim `needsYou` claims), `chrome/left-rail.md` (both badges,
 D11), `chrome/top-nav.md` (the Desk | Projects switch).
 
-**T0.10 — API specs, and register the new one.** Every D9 spec row. The ext
+**T0.10 [x] — API specs, and register the new one.** Every D9 spec row. The ext
 decisions + subscription ops modelled on `extListHitlInbox` (global-personal-token
 403, the ADR-137 `decision_request` omission); the new attention-stream AsyncAPI;
 `attention.*` types added to the outbound-webhooks AsyncAPI; the three tables into
@@ -593,7 +597,7 @@ assertion function beside `validateM43WebContract` /
 *Verify*: `pnpm validate:contracts` fails when the new spec is malformed — prove it
 by temporarily breaking the file (RED), then fixing it (GREEN).
 
-**T0.11 — Extend `validate-docs-indexes.mjs` to enforce M51's requirement IDs.**
+**T0.11 [x] — Extend `validate-docs-indexes.mjs` to enforce M51's requirement IDs.**
 Today `validateStageBAnalytics` hardcodes four documents
 (`STAGE_B_DOCUMENTS`) and four prefixes (`EVT|PRM|OBJ|CUT`, `:67`/`:73`).
 **Generalize it (DRY) into `validateAnalyticsGroup({documents, prefixes,
@@ -605,7 +609,7 @@ once for M51's four docs, prefixes `STG|ATN|NAV|NTF`, traceability
 *Verify*: `node --test scripts/validate-docs-indexes.test.mjs`; Stage B's existing
 failures/passes are unchanged (a regression case pins this).
 
-**T0.12 — `m51-traceability.md` + the coverage gate.** The five-column matrix for
+**T0.12 [x] — `m51-traceability.md` + the coverage gate.** The five-column matrix for
 every `STG`/`ATN`/`NAV`/`NTF`/`EDGE-*` id, with `Contract/schema`,
 `Enforcement/task`, `Primary test` (a real `UT-`/`IT-`/`CT-`/`E2E-` name) and
 `Status` (`Planned` until its phase turns it green). Index row in
@@ -613,7 +617,7 @@ every `STG`/`ATN`/`NAV`/`NTF`/`EDGE-*` id, with `Contract/schema`,
 grep proving every requirement has ≥ 1 task and every task names ≥ 1 requirement.
 *Verify*: the validator reports no "missing traceability row with primary test".
 
-**T0.13 — Open M51, close M45 (`.ai-factory/ROADMAP.md`).** One
+**T0.13 [x] — Open M51, close M45 (`.ai-factory/ROADMAP.md`).** One
 `- [ ] **M51. See everything**` entry — **no a/b sub-slices**. **M50 is taken**;
 verify with `grep -o '\*\*M[0-9]\+\.' .ai-factory/ROADMAP.md | grep -o '[0-9]\+' | sort -n | tail -1`
 before writing, exactly as ADR numbers are checked. Mark M45 `- [x]` with a
@@ -621,7 +625,7 @@ before writing, exactly as ADR numbers are checked. Mark M45 `- [x]` with a
 owner decision 2026-09-10 without the stated qualification run set".
 *Verify*: exactly one unchecked milestone remains, and it is M51.
 
-**T0.14 — Phase 0 exit gate.** `pnpm validate:docs` **and** `pnpm validate:contracts`
+**T0.14 [x] — Phase 0 exit gate.** `pnpm validate:docs` **and** `pnpm validate:contracts`
 green; the M51 requirement group is enforced (T0.11) and fully traced (T0.12).
 Anything a later task needs that the specs do not state is a spec bug fixed **here**.
 
@@ -631,7 +635,7 @@ Anything a later task needs that the specs do not state is a spec bug fixed **he
 
 ### Phase 1 — The stage classifier · `STG-01..07`, `STG-10`
 
-**T1.1 — `deriveWorkStage`.** *RED*: write
+**T1.1 [ ] — `deriveWorkStage`.** *RED*: write
 `web/lib/work/__tests__/stage.test.ts` (`UT-STG-01..06`) against a not-yet-existing
 `web/lib/work/stage.ts`; the cross-product test must fail on a **missing mapping
 assertion**, not a module-not-found — so stub the module with a `throw` first.
@@ -650,7 +654,7 @@ defined `WorkStage` for every cell — exhaustiveness, not sampling. `UT-STG-03`
 test each, no overlap with the cross-product's generic assertion.
 `EDGE-STG-01..03` get one test each.
 
-**T1.2 — i18n + chip · `STG-10`.** *RED*:
+**T1.2 [ ] — i18n + chip · `STG-10`.** *RED*:
 `web/lib/__tests__/i18n-work-stage-keys.test.ts` (`UT-STG-10`) asserting every
 member has EN and RU keys **with distinct copy** (a byte-identical EN/RU pair is a
 latent bug). *GREEN*: `workStage` namespace in both catalogs +
@@ -665,7 +669,7 @@ card and on the board flight card — a key with no render site is not done.
 
 ### Phase 2 — Cross-project read-model spine · `STG-08..09`
 
-**T2.1 — `getVisibleProjectIds`.** *RED*:
+**T2.1 [ ] — `getVisibleProjectIds`.** *RED*:
 `web/lib/queries/__tests__/visible-projects.integration.test.ts` (`IT-STG-09`) — a
 **positive grant** (a member sees exactly their own projects, rows non-empty) plus a
 negative (a foreign project absent). Deny-only tests cannot distinguish "correctly
@@ -674,13 +678,13 @@ refused" from "broken". *GREEN*: `web/lib/queries/visible-projects.ts`; re-point
 fifth copies never get written). *REFACTOR*: the three migrated call sites keep
 their existing tests green — name them in the task and re-run.
 
-**T2.2 — Batched token totals.** *RED*: an equivalence test — for a seeded set the
+**T2.2 [ ] — Batched token totals.** *RED*: an equivalence test — for a seeded set the
 batched map equals `queryTaskTokens` per id, and `[]` issues no query. *GREEN*:
 `queryTokensByTaskIds(taskIds): Promise<Map<string, number>>` beside
 `queryTaskTokens` in `web/lib/runs/cost-rollups.ts`, sharing `baseTokenSumExpr` and
 `foldTokenRows` so per-task and batched totals cannot disagree (DRY).
 
-**T2.3 — Cross-project promotable.** *RED*: a two-project fixture asserting exactly
+**T2.3 [ ] — Cross-project promotable.** *RED*: a two-project fixture asserting exactly
 **one** `computeReadinessByRun` invocation (spy). *GREEN*: split
 `web/lib/ext-activity/promotable.ts` into candidate-loader + classifier so
 `listPromotableForProjects(projectIds)` runs one bulk readiness pass;
@@ -692,7 +696,7 @@ deliberately more aggressive than `promoteRun`'s own checks — dropping either 
 recommend promoting a run an operator has held. The `workspaces.run_id` de-dup (no
 UNIQUE on that column) must also survive; both get a regression case.
 
-**T2.4 — Crashed and Held queries.** *RED*: a **redaction proof at the mapping
+**T2.4 [ ] — Crashed and Held queries.** *RED*: a **redaction proof at the mapping
 function** — feed the mapper a row that actually contains `acpSessionId` and assert
 the output's exact key set and that its JSON has no session id. A test fed an
 already-safe DTO literal is vacuous. *GREEN*:
@@ -706,7 +710,7 @@ already-safe DTO literal is vacuous. *GREEN*:
 
 ### Phase 3 — `/work` · `STG-08..09`
 
-**T3.1 — `getWorkTable`.** *RED*: `IT-STG-08` asserting the total query count is
+**T3.1 [ ] — `getWorkTable`.** *RED*: `IT-STG-08` asserting the total query count is
 **constant** as the fixture grows from 1 project/2 tasks to 3 projects/12 tasks —
 the anti-N+1 guarantee as a test, not a comment. *GREEN*:
 `web/lib/queries/work-table.ts` — `getVisibleProjectIds` → one batched
@@ -716,7 +720,7 @@ task+latest-run query (the board's batching, not its per-project scope) → one
 `deriveWorkStage`. Includes pre-flight stages (`Triage`, `Held`, `Ready`).
 *Logging*: one `debug` per call — row count, project count, elapsed ms.
 
-**T3.2 — Route and table.** `web/app/(app)/work/page.tsx` + a client table.
+**T3.2 [ ] — Route and table.** `web/app/(app)/work/page.tsx` + a client table.
 Full-width per the data-management pattern (drop `mx-auto max-w-*`, `min-w-*` +
 `overflow-x-auto`, responsive `md:`), **view-only** rows, URL-synchronized filters
 via a plain `<form action="/work">` in the `/runs` idiom. Columns: `KEY-N` · title ·
@@ -725,7 +729,7 @@ age) · blockers (KEY-N chips) · tokens · last activity · next action. Groupi
 project / stage / mine; saved views per Deviation 4. Token counts via
 `Intl.NumberFormat(locale)`; count strings use `$count`.
 
-**T3.3 — Rail entry + i18n.** All four rail files or the nav highlights the wrong
+**T3.3 [ ] — Rail entry + i18n.** All four rail files or the nav highlights the wrong
 item: `RAIL_SECTION_IDS` (`left-rail-route.ts:1`), `railSectionForPathname` (`:27`),
 `buildLeftRailSections` (`left-rail-sections.ts:15`), `sectionIcons`
 (`left-rail-nav.tsx:44`). New `work` namespace EN + RU; **do not reuse
@@ -733,7 +737,7 @@ item: `RAIL_SECTION_IDS` (`left-rail-route.ts:1`), `railSectionForPathname` (`:2
 (`web/components/board/project-tabs.tsx`). *Verify (`unit`)*: a page-contract test
 in the `observatory/__tests__/page-contract.test.ts` shape.
 
-**T3.4 — e2e `E2E-STG-09`.** `web/e2e/work-table.spec.ts` + a `byKey.work` fixture
+**T3.4 [ ] — e2e `E2E-STG-09`.** `web/e2e/work-table.spec.ts` + a `byKey.work` fixture
 in `e2e/_seed/seed-e2e.ts` + a type in `e2e/_seed/fixtures.ts` + the basename in
 `AUTHED_SPEC` (`web/playwright.config.ts:30`) — **without that entry the spec
 silently never runs**. Admin sees two projects' rows; a member only their own;
@@ -745,7 +749,7 @@ filter and group round-trip through the URL; a saved view restores.
 
 ### Phase 4 — Decision queue, counters, ext parity · `ATN-01..08`
 
-**T4.1 — `getDecisionsQueue` / `getDecisionsCount`.** *RED*: `IT-ATN-01` asserting
+**T4.1 [ ] — `getDecisionsQueue` / `getDecisionsCount`.** *RED*: `IT-ATN-01` asserting
 `count === list.length` across a fixture holding all four kinds, and `IT-ATN-04`
 asserting a relation-blocked task appears in neither counter. *GREEN*:
 `web/lib/queries/decisions.ts` unioning T2.3/T2.4 with `getCrossProjectHitlInbox`,
@@ -753,14 +757,14 @@ ordered per D5. **Count and list come from one query** — a count that can disa
 with its list is exactly the bug the one-number rule exists to prevent.
 *Tests*: `UT-ATN-07` covers ordering as a pure comparator, not through the query.
 
-**T4.2 — `getUpdatesCount`.** *RED*: `IT-ATN-02` — a task with one comment
+**T4.2 [ ] — `getUpdatesCount`.** *RED*: `IT-ATN-02` — a task with one comment
 mentioning the user yields `updates === 1`, **not** 2; and `IT-ATN-03` — a user with
 no cursor row counts only the bounded 24 h window. *GREEN*:
 `web/lib/queries/updates.ts` implementing D4's `MINUS` via
 `inbox_items.source_ref->>'activityId'`. `EDGE-ATN-02` (membership change) gets one
 test pinning the documented behaviour.
 
-**T4.3 — Retire `needsYou`.** Every consumer from `grep -rn "needsYou"`:
+**T4.3 [ ] — Retire `needsYou`.** Every consumer from `grep -rn "needsYou"`:
 **delete** `web/lib/queries/needs-you.ts` (not a deprecated alias — a second way to
 compute a canonical number is the drift this milestone removes) ·
 `web/app/(app)/layout.tsx:51,86,97` (Inbox → `decisions`, Activity → `updates`,
@@ -775,13 +779,13 @@ wired T5.7) · `web/app/(app)/page.tsx:25-30,47,77,94-100` ·
 `CT-ATN-06` pins the ext pulse's unchanged shape; a grep assertion proves no
 `needsYou` identifier survives outside the two exempt paths.
 
-**T4.4 — `/inbox` sections.** Three sections on the existing `HitlCard` shell
+**T4.4 [ ] — `/inbox` sections.** Three sections on the existing `HitlCard` shell
 (`web/components/inbox/hitl-card.tsx`): *Ready to promote*, *Crashed — recover or
 discard*, *Held — flagged*. Inline actions route to the **existing** promote /
 recover / discard endpoints; no new mutation path. The empty state appears only when
 `decisions === 0` across all four sections.
 
-**T4.5 — `GET /api/v1/ext/decisions`.** *RED*: `IT-ATN-08` asserting a
+**T4.5 [ ] — `GET /api/v1/ext/decisions`.** *RED*: `IT-ATN-08` asserting a
 `decision_request` row is absent from the response, plus a **positive grant** (a
 global personal token with `decisions:read` receives its own items) and the
 negatives (project token 403, agent token 403, project-scoped user token 403, `*`
@@ -807,7 +811,7 @@ Phase 5 ships **read models and the stream**. The Now tiles and the digest
 Phase 6 — a component with no render site cannot be e2e-tested, and shipping one
 would violate the project's own "a key is done only when something consumes it".
 
-**T5.1 — Migration 0162 `user_activity_cursors`.** DDL exactly as specified in
+**T5.1 [ ] — Migration 0162 `user_activity_cursors`.** DDL exactly as specified in
 T0.10: `user_id text PK REFERENCES users(id) ON DELETE CASCADE`, `seen_through
 timestamptz NOT NULL`, `updated_at timestamptz NOT NULL DEFAULT now()`. New table
 over live data — no backfill and no abort-guard needed; an absent row means "never
@@ -819,7 +823,7 @@ db:generate` reporting **"No schema changes"**.
 *Verify*: `db:migrate` on a clean DB; **`pnpm --filter maister-web db:erd --check`
 green** after regenerating `docs/db/erd.dbml`.
 
-**T5.2 — Cross-project activity feed · `ATN-09`.** *RED*: `IT-ATN-09`, a redaction
+**T5.2 [ ] — Cross-project activity feed · `ATN-09`.** *RED*: `IT-ATN-09`, a redaction
 test asserting no field of any feed row matches a worktree-path or diff-hunk shape,
 fed rows that actually contain them. *GREEN*:
 `web/lib/queries/activity-feed.ts` — a union over `task_activity` (13 kinds),
@@ -830,7 +834,7 @@ outcomes** (not payloads), scoped by `getVisibleProjectIds`.
 come from the `domain_events` side — which is why the union exists rather than a new
 activity kind (that needs the `setRunStatus` choke point, out of scope).
 
-**T5.3 — `/activity`, cursor, unread divider · `ATN-10`.** *RED*: `IT-ATN-10` —
+**T5.3 [ ] — `/activity`, cursor, unread divider · `ATN-10`.** *RED*: `IT-ATN-10` —
 a stale or out-of-order cursor POST cannot move `seen_through` backwards; and a
 future `seenThrough` is refused `PRECONDITION` (D7). *GREEN*:
 `web/app/(app)/activity/page.tsx` with project / actor-type / kind / mine filters
@@ -838,7 +842,7 @@ future `seenThrough` is refused `PRECONDITION` (D7). *GREEN*:
 performing the monotonic `GREATEST` upsert. Rail section + `activityFeed` namespace
 (**not** `nav.activity`), extending the same four rail files as T3.3.
 
-**T5.4 — Now-tile and digest read models · `ATN-12`.** *RED*: `UT-ATN-12` — the
+**T5.4 [ ] — Now-tile and digest read models · `ATN-12`.** *RED*: `UT-ATN-12` — the
 digest is byte-identical given a fixed clock and row set; a token total renders
 RU-grouped under the `ru` locale (`Intl.NumberFormat`). *GREEN*:
 `web/lib/queries/digest.ts` and `getNowTileCounts` — pure/read-only, since the
@@ -847,7 +851,7 @@ spent, each with a link target. **Queries only — no components** (see the phas
 note). No agent, no narration, no USD. Determinism is what later makes this a safe
 notification payload (T7.7).
 
-**T5.5 — Attention SSE stream · `ATN-11`.** *RED*: `IT-ATN-11` — a user receives no
+**T5.5 [ ] — Attention SSE stream · `ATN-11`.** *RED*: `IT-ATN-11` — a user receives no
 frame referencing a project outside `getVisibleProjectIds`; `lastEventId` replays
 the tail without duplicating (`EDGE-ATN-04`); an aborted request closes the stream.
 *GREEN*: `web/app/api/attention/stream/route.ts` on the study route's shape —
@@ -860,11 +864,11 @@ stream **never mutates persisted run state**.
 *REFACTOR*: if the poll body duplicates the study route's frame formatting, extract
 the shared SSE framing helper rather than copying it (DRY).
 
-**T5.6 — Wire `/work` and `/activity` to the stream.** Replace load-time-only
+**T5.6 [ ] — Wire `/work` and `/activity` to the stream.** Replace load-time-only
 freshness with an SSE-triggered refetch; no timers. Surfaces show the accessible
 liveness pill + reconnect affordance (`<RunStreamLiveness>`'s pattern).
 
-**T5.7 — Both rail badges · `ATN-05`, D11.** Inbox → `decisions` (amber, existing
+**T5.7 [ ] — Both rail badges · `ATN-05`, D11.** Inbox → `decisions` (amber, existing
 `data-testid="inbox-nav-badge"`); Activity → `updates` (**neutral**,
 `data-testid="activity-nav-badge"`), in the collapsed (`<CollapsedRailBadge>`) and
 expanded variants and the mobile drawer. `web/app/(app)/layout.tsx` computes both
@@ -873,7 +877,7 @@ use `$count`.
 *Verify (`unit`)*: distinct tones from one layout-level fetch; the neutral badge
 carries no attention styling class.
 
-**T5.8 — e2e `E2E-ATN-10`.** `web/e2e/activity-feed.spec.ts` (+ fixture +
+**T5.8 [ ] — e2e `E2E-ATN-10`.** `web/e2e/activity-feed.spec.ts` (+ fixture +
 `AUTHED_SPEC` entry): the unread divider appears and a cursor POST clears it, and
 the **badge-independence** case — answering the last decision clears the amber badge
 while the neutral one is untouched. That is the only end-to-end proof the two
@@ -888,7 +892,7 @@ counters are separate populations rather than one number rendered twice.
 
 Everything the Desk renders now exists. This phase composes it **once**.
 
-**T6.1 — Move the portfolio to `/projects` · `NAV-03`.**
+**T6.1 [ ] — Move the portfolio to `/projects` · `NAV-03`.**
 `web/app/(app)/page.tsx` → `web/app/(app)/projects/page.tsx`, behaviour unchanged.
 The segment already exists with `[slug]/` and `new/` but **has no `page.tsx`**, so
 `/projects` currently 404s — this fills it rather than displacing anything. Its
@@ -896,7 +900,7 @@ The segment already exists with `[slug]/` and `new/` but **has no `page.tsx`**, 
 *Verify (`E2E-NAV-03`)*: `/projects` renders exactly what `/` rendered before,
 onboarding checklist and empty state included.
 
-**T6.2 — Audit every inbound `/` link · `NAV-05`.** *RED*: `UT-NAV-05`, a table test
+**T6.2 [ ] — Audit every inbound `/` link · `NAV-05`.** *RED*: `UT-NAV-05`, a table test
 over every `href="/"`, `redirect("/")` and `router.push("/")` call site asserting
 its intended destination. There are **four** `href="/"` sites today
 (`(auth)/layout.tsx:29`, `feedback/error-fallback.tsx:52`, `chrome/top-nav.tsx:47`,
@@ -904,7 +908,7 @@ plus one test assertion); all three real ones mean "home" and stay on `/`. Serve
 actions and e2e specs are swept in the same task — a post-registration redirect
 means the *portfolio*, and getting that backwards is silent.
 
-**T6.3 — The Desk page · `NAV-01`.** `web/app/(app)/page.tsx` laid out per
+**T6.3 [ ] — The Desk page · `NAV-01`.** `web/app/(app)/page.tsx` laid out per
 `docs/screens/desk.md` (T0.9) and the mockup: composer (the existing scratch
 launcher — **Idea mode is a later milestone** and is not stubbed) → Now tiles →
 Decisions with inline actions → Work in flight (full width on desktop) → Activity
@@ -913,14 +917,14 @@ Mounts `<NowTiles>` (`web/components/attention/now-tiles.tsx`) and the digest
 sentence over T5.4's read models; reuses the decision-queue sections and the work
 table's row component — **the Desk composes, it does not re-implement** (DRY).
 
-**T6.4 — Desk states · `EDGE-NAV-01..02`.** Busy, quiet, empty. Empty reuses the
+**T6.4 [ ] — Desk states · `EDGE-NAV-01..02`.** Busy, quiet, empty. Empty reuses the
 first-run onboarding checklist and the empty-state card inside the Desk frame; the
 composer is absent until a project exists. Narrow stacks Decisions → Work →
 Activity.
 *Verify (`E2E-NAV-01`)*: all three states at desktop 1440 and narrow 390, plus the
 tile-vs-badge equality moved here from Phase 5.
 
-**T6.5 — Rail re-cut + Desk | Projects switch · `NAV-04`.** *RED*: `UT-NAV-04`, a
+**T6.5 [ ] — Rail re-cut + Desk | Projects switch · `NAV-04`.** *RED*: `UT-NAV-04`, a
 table test over every route prefix asserting the section it highlights — including
 the four that currently collapse onto `projects`: `railSectionForPathname` maps `/`,
 `/projects`, `/runs` and `/scratch-runs` to `"projects"`
@@ -929,7 +933,7 @@ becomes Home / Projects / Work / Activity / Inbox / Flow Studio / Observatory +
 admin across the same four files as T3.3, plus `nav.*` i18n EN + RU and the
 Desk | Projects control per `chrome/top-nav.md`.
 
-**T6.6 — `/work` as the member default · `NAV-02`, `NAV-06`.** Non-admin members land
+**T6.6 [ ] — `/work` as the member default · `NAV-02`, `NAV-06`.** Non-admin members land
 on `/work`; admins land on the Desk — one routing clause of ADR-171, applied here so
 `/` never forks by role twice. *Verify*: `E2E-NAV-02` (a member and an admin land on
 different routes from the same sign-in flow) and `IT-NAV-06` (nav hiding is not the
@@ -942,13 +946,13 @@ regardless of what the rail renders).
 
 ### Phase 7 — Web push and notification subscriptions · `NTF-01..10`
 
-**T7.1 — Migration 0163: `push_subscriptions` + `notification_subscriptions`.**
+**T7.1 [ ] — Migration 0163: `push_subscriptions` + `notification_subscriptions`.**
 DDL exactly as T0.10 specifies, including constraint names. Per-user rows; secrets
 as `env:` refs only (`NTF-06`), matching `webhook_subscriptions.signing_secret_ref`.
 Same migration-triple + `db:generate` "No schema changes" discipline as T5.1.
 *Verify*: `db:erd --check` green.
 
-**T7.2 — Migration 0164: widen the ADR-077 tables (cross-cutting, own number).**
+**T7.2 [ ] — Migration 0164: widen the ADR-077 tables (cross-cutting, own number).**
 *RED*: `EDGE-NTF-03` — existing project/run-scoped webhooks still fan out and
 deliver unchanged; this is the regression that matters. *GREEN*:
 `webhook_events.run_id` and `.project_id` → nullable;
@@ -956,12 +960,12 @@ deliver unchanged; this is the regression that matters. *GREEN*:
 widens, never drops.
 *Verify*: `db:erd --check` green.
 
-**T7.3 — Service worker at `/sw.js` (D13).** Route handler with
+**T7.3 [ ] — Service worker at `/sw.js` (D13).** Route handler with
 `Service-Worker-Allowed: /` and `Content-Type: text/javascript`.
 *Verify*: the **registered scope** is `/` in a real browser context, asserted in the
 Playwright spec — not merely the response header.
 
-**T7.4 — Fan out the nullable widening · `NTF-02`, `NTF-03`.** *RED*: `IT-NTF-02`, a
+**T7.4 [ ] — Fan out the nullable widening · `NTF-02`, `NTF-03`.** *RED*: `IT-NTF-02`, a
 per-reader table with one case each feeding a user-scoped (project-less, run-less)
 event to `emitWebhookEvent`, `match.ts` `subscriptionMatches`, `replay.ts`,
 `send.ts`, `ping.ts`, the deliveries UI, and the drainer's fanout/drain/prune passes
@@ -970,13 +974,13 @@ never sees a NULL row is the defect shape. `IT-NTF-03` covers **both directions*
 platform-wide subscription must not match a user event, and a user subscription must
 not match a project event.
 
-**T7.5 — The `attention.*` domain-event consumer · `NTF-08`, `EDGE-NTF-01`.**
+**T7.5 [ ] — The `attention.*` domain-event consumer · `NTF-08`, `EDGE-NTF-01`.**
 *RED*: `EDGE-NTF-01` — at-least-once redelivery converges to one notification.
 *GREEN*: one entry in `web/lib/domain-events/consumers.ts:63` plus a cursor row — no
 new clock (ADR-086's own promise). Idempotent `handle`. Emits
 `attention.decision_opened | decision_closed | decisions_changed | digest`.
 
-**T7.6 — The sender (two-phase commit, D10) · `NTF-04`, `NTF-05`.** *RED*:
+**T7.6 [ ] — The sender (two-phase commit, D10) · `NTF-04`, `NTF-05`.** *RED*:
 `IT-NTF-04` — a send failure leaves the row retryable with `delivered_at` still
 null; a success stamps it. `IT-NTF-05`/`EDGE-NTF-02` — a `410 Gone` deletes the
 subscription. *GREEN*: persist intent **before** the send, stamp `delivered_at`
@@ -985,18 +989,18 @@ subscription) naming per row the HTTP result, whether the row stays retryable or
 goes terminal, and what mutates on retry. Reuses the existing HMAC, backoff curve
 and delivery log (DRY — no second engine).
 
-**T7.7 — Triggers · `NTF-08`.** Fire on a `decisions` delta and on the digest.
+**T7.7 [ ] — Triggers · `NTF-08`.** Fire on a `decisions` delta and on the digest.
 **Never a per-event stream by default** (brief §6 fatigue bound, restated in
 ADR-172). The digest payload is T5.4's deterministic sentence.
 
-**T7.8 — Opt-in UI + ext subscription ops · `NTF-07`, `NTF-09`.** *RED*:
+**T7.8 [ ] — Opt-in UI + ext subscription ops · `NTF-07`, `NTF-09`.** *RED*:
 `IT-NTF-07` — a **positive grant** plus a cross-owner negative: token A cannot read,
 modify or delete owner B's subscriptions. `UT-NTF-09` — `decisions:read` and
 `notifications:subscriptions` are absent from `AGENT_TOKEN_SCOPES` and
 `CROSS_PROJECT_AGENT_SCOPES`. *GREEN*: per-user opt-in on `/account`; ext CRUD under
 `/api/v1/ext`. The owner comes from `auth-context`, **never the body** (D7). EN + RU.
 
-**T7.9 — Deployment wiring (D8) · `NTF-10`.** The three VAPID vars into
+**T7.9 [ ] — Deployment wiring (D8) · `NTF-10`.** The three VAPID vars into
 `.env.example` **and** the `web` service `environment:` block of `compose.yml`,
 `compose.production.yml`, `compose.public.yml`, **and** the canonical env table in
 `docs/configuration.md`. `web-push` in `web/package.json` with `pnpm-lock.yaml`
@@ -1004,7 +1008,7 @@ committed in the same change.
 *Verify (`IT-NTF-10`)*: a boot with the vars unset degrades to "push unavailable"
 with a clear log line — it does not crash the web process.
 
-**T7.10 — e2e (mocked push).** Opt-in flow, a delivered notification, revocation.
+**T7.10 [ ] — e2e (mocked push).** Opt-in flow, a delivered notification, revocation.
 
 > **Checkpoint 8** — `feat(notifications): web push and user subscriptions over the widened ADR-077 engine (ADR-172, NTF-01..10)`
 
@@ -1012,18 +1016,18 @@ with a clear log line — it does not crash the web process.
 
 ### Phase 8 — As-built reconciliation
 
-**T8.1 — Re-derive the contract list from the diff.** Walk D9 against
+**T8.1 [ ] — Re-derive the contract list from the diff.** Walk D9 against
 `git diff master...HEAD` and confirm each surface's spec moved with it. Assert D10
 by diff: the only two-phase commit is T7.6's sender; no new deferred; no new
 multi-store transition.
 
-**T8.2 — `pnpm validate:docs` + `validate:docs:all` + `pnpm validate:contracts`.**
+**T8.2 [ ] — `pnpm validate:docs` + `validate:docs:all` + `pnpm validate:contracts`.**
 All green. For the record: `validate:docs` is **not** wired into
 `.github/workflows/ci.yml`, and the Stop hook `docs/CLAUDE.md` describes lives in a
 `.claude/settings.json` that does not exist in this repo — so these gates are
 local-only and must actually be run, not assumed.
 
-**T8.3 — Renumber pass (mandatory).** Its own focused session, **after** rebasing
+**T8.3 [ ] — Renumber pass (mandatory).** Its own focused session, **after** rebasing
 onto master. Re-derive the next free ADR from `git show master:docs/decisions.md`
 and the next free migration idx from master's `_journal.json`; renumber if a
 parallel branch landed first; grep prose forms (`pre-ADR-168`, `since 0162`) and
@@ -1031,14 +1035,14 @@ prefer number-agnostic phrasing. Re-run `validate-docs-adr-anchors.mjs --all`.
 Re-check **M51** too — a milestone that landed meanwhile takes the number the same
 way an ADR does.
 
-**T8.4 — Close the traceability matrix.** Flip every `Status` cell from `Planned` to
+**T8.4 [ ] — Close the traceability matrix.** Flip every `Status` cell from `Planned` to
 its verified state, and **grep every `Primary test` cell against the suite**, failing
 if a name does not resolve to a real test. The existing Stage B matrix decayed into
 "historical scenario aliases, not executed test names"; this task is what stops M51's
 matrix going the same way. Confirm the bidirectional gate (T0.12) still holds after
 whatever the phases actually changed.
 
-**T8.5 — Backlog, PRODUCT_VIEW, and adjacent-defect notes.**
+**T8.5 [ ] — Backlog, PRODUCT_VIEW, and adjacent-defect notes.**
 `.ai-factory/ROADMAP.md` backlog §A1 (the human-facing digest now exists; the
 ADR-123 standup-digest agent stays reserved for a v1 narration).
 **`docs/PRODUCT_VIEW.md`: write into §Phase 2 item 5 "Observability and attention
