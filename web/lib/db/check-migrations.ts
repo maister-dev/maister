@@ -43,11 +43,21 @@ function readJournalTags(dir: string): string[] {
 export function findMainMigrationJournalEntry(
   tag: string,
 ): JournalEntry | null {
+  return readMainMigrationJournal().find((entry) => entry.tag === tag) ?? null;
+}
+
+export function readMainMigrationJournal(): JournalEntry[] {
   const journal = JSON.parse(
     readFileSync(join(MAIN_MIGRATIONS_DIR, "meta/_journal.json"), "utf8"),
   ) as { entries: JournalEntry[] };
 
-  return journal.entries.find((entry) => entry.tag === tag) ?? null;
+  return journal.entries;
+}
+
+// The ledger hash drizzle records for a main-lineage migration, so operator
+// tooling can report exactly which committed migration bytes a stage applies.
+export function mainMigrationHash(tag: string): string {
+  return migrationHash(MAIN_MIGRATIONS_DIR, tag);
 }
 
 function migrationHash(dir: string, tag: string): string {

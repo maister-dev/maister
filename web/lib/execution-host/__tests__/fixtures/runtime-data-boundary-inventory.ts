@@ -527,7 +527,7 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "Drizzle migration ledger and journal files under web/lib/db; read by the operator migration CLI and verified (never applied) at boot",
       [
         ["readJournalTags", "node:fs.readFileSync", "read"],
-        ["findMainMigrationJournalEntry", "node:fs.readFileSync", "read"],
+        ["readMainMigrationJournal", "node:fs.readFileSync", "read"],
         ["migrationHash", "node:fs.readFileSync", "read"],
         ["findPendingBrainMigrations", "node:fs.existsSync", "stat"],
       ],
@@ -543,12 +543,12 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "migration-tooling",
       "Drizzle migration ledger and journal files under web/lib/db; read by the operator migration CLI and verified (never applied) at boot",
       [
-        ["createMigrationRootBefore", "node:fs/promises.readFile", "read"],
-        ["createMigrationRootBefore", "node:fs/promises.mkdtemp", "write"],
-        ["createMigrationRootBefore", "node:fs/promises.mkdir", "write"],
-        ["createMigrationRootBefore", "node:fs/promises.copyFile", "write"],
-        ["createMigrationRootBefore", "node:fs/promises.writeFile", "write"],
-        ["createMigrationRootBefore", "node:fs/promises.rm", "remove"],
+        ["createFilteredMigrationRoot", "node:fs/promises.readFile", "read"],
+        ["createFilteredMigrationRoot", "node:fs/promises.mkdtemp", "write"],
+        ["createFilteredMigrationRoot", "node:fs/promises.mkdir", "write"],
+        ["createFilteredMigrationRoot", "node:fs/promises.copyFile", "write"],
+        ["createFilteredMigrationRoot", "node:fs/promises.writeFile", "write"],
+        ["createFilteredMigrationRoot", "node:fs/promises.rm", "remove"],
       ],
       {
         authority:
@@ -561,7 +561,10 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "lib/db/migrate.ts",
       "migration-tooling",
       "Drizzle migration ledger and journal files under web/lib/db; read by the operator migration CLI and verified (never applied) at boot",
-      [["main", "node:fs/promises.rm", "remove"]],
+      [
+        ["main", "node:fs/promises.rm", "remove"],
+        ["applyExecutionAbStage", "node:fs/promises.rm", "remove"],
+      ],
       {
         authority:
           "operator CLI: pnpm db:migrate / db:check (and the boot-time ledger check, which only reads)",
@@ -1915,9 +1918,12 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
     ["findMainMigrationJournalEntry", false],
     ["findPendingBrainMigrations", false],
     ["findPendingMigrations", false],
+    ["mainMigrationHash", false],
+    ["readMainMigrationJournal", false],
   ]),
   ...wrappers("lib/db/m43-cutover-migration-root.ts", "migration-tooling", [
     ["createMigrationRootBefore", false],
+    ["createMigrationRootThrough", false],
   ]),
   ...wrappers("lib/evaluations/evidence/store.ts", "manager-evidence", [
     ["readEvidenceBlob", false],

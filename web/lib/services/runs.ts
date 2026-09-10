@@ -94,6 +94,7 @@ import { resolveAgentExecutionPolicy } from "@/lib/agents/execution-policy";
 import { logExecPolicyAction } from "@/lib/runs/exec-policy-audit";
 import { actorForUserId, recordTaskActivity } from "@/lib/social/activity";
 import { getOpenRelationBlockers } from "@/lib/social/relations";
+import { assertUpgradeMaintenanceAllows } from "@/lib/maintenance/upgrade-fence";
 import { tryStartRun } from "@/lib/scheduler";
 import { localHost, mintPlacement } from "@/lib/execution-host";
 import { executionDataPlaneModeForHost } from "@/lib/execution-host/data-plane-capabilities";
@@ -557,6 +558,9 @@ export async function* launchRunStaged(
   { runId: string; status: string; queuePosition?: number },
   void
 > {
+  // D9 step 2: refuse before any worktree, run row or session exists, so a
+  // fenced installation adds nothing to the sources the importer inventories.
+  assertUpgradeMaintenanceAllows("run_admission");
   // FIXME(any): narrow this injected database seam to the operations used here.
   const _db = (db ?? getDb()) as unknown as {
     select: any;

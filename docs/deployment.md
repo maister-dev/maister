@@ -161,6 +161,15 @@ execution-data-plane:import-legacy` with the explicit legacy root, then apply
 migrations `0135` and `0136`. The migration fails before destructive changes
 unless every legacy run has all preservation lanes proven.
 
+The staged upgrade path for an existing Stage A installation is different: set
+`MAISTER_UPGRADE_MAINTENANCE=1` on every web process first so the installation
+admits no run, starts no agent turn, claims no scheduler job and runs no
+destructive sweep, drain the active work, then run `db:migrate --stage
+execution-ab-additive`, the legacy importer, `--stage
+execution-ab-associations` and `--stage execution-ab-finalize` in that order.
+Each stage refuses with a remediation code rather than applying a partial
+chain. See [execution data cutover](system-analytics/execution-data-cutover.md).
+
 Apply migrations and seed the first admin:
 
 ```bash

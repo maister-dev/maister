@@ -1,10 +1,15 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { lstat, readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 
 import pino from "pino";
 import { Client } from "pg";
 
+import {
+  assessLegacyImportWindow,
+  classifyDataPlaneStage,
+  type DataPlaneStage,
+} from "@/lib/db/migration-stages";
 import { redactRuntimeEventPayload } from "@/lib/execution-host/runtime-events";
 import { CANONICAL_PROJECTION_CONSUMERS } from "@/lib/execution-host/events/projection-consumers";
 
@@ -790,11 +795,81 @@ async function importRun(input: {
   }
 }
 
+// D9 step 4/8: the importer runs on a half-staged database, where the migration
+// ledger is least trustworthy. Read the stage from the schema the database
+// actually carries — 0134 drops the scratch mirror column, 0135 drops the
+// artifact projection cursors — so a partially applied ledger cannot admit an
+// import into the wrong window.
+async function readDataPlaneStage(client: Client): Promise<DataPlaneStage> {
+  const tables = await client.query<{ name: string }>(
+    `SELECT table_name AS name FROM information_schema.tables
+     WHERE table_schema = 'public'
+       AND table_name IN ('execution_data_plane_imports', 'artifact_projection_cursors')`,
+  );
+  const mirror = await client.query(
+    `SELECT 1 FROM information_schema.columns
+     WHERE table_schema = 'public'
+       AND table_name = 'scratch_runs'
+       AND column_name = 'supervisor_session_id'`,
+  );
+  const names = tables.rows.map((row) => row.name);
+
+  return classifyDataPlaneStage({
+    importLanes: names.includes("execution_data_plane_imports"),
+    artifactProjectionCursors: names.includes("artifact_projection_cursors"),
+    scratchMirror: mirror.rows.length > 0,
+  });
+}
+
+// The operator correlates one invocation's log lines and its resumable state by
+// this opaque ID; a supplied one continues an earlier attempt's records.
+function resolveImportId(argv: readonly string[]): string {
+  const index = argv.findIndex(
+    (arg) => arg === "--import-id" || arg.startsWith("--import-id="),
+  );
+
+  if (index < 0) return randomUUID();
+
+  const arg = argv[index];
+  const value = arg.startsWith("--import-id=")
+    ? arg.slice("--import-id=".length)
+    : (argv[index + 1] ?? "");
+
+  if (!/^[A-Za-z0-9._:-]{1,64}$/.test(value)) {
+    throw new Error(
+      "--import-id must be 1-64 characters of [A-Za-z0-9._:-]",
+    );
+  }
+
+  return value;
+}
+
 async function main(): Promise<void> {
+  const importId = resolveImportId(process.argv.slice(2));
   const client = new Client({ connectionString: requiredEnv("DB_URL") });
   const root = requiredEnv("MAISTER_LEGACY_RUNTIME_ROOT");
   await client.connect();
   try {
+    const stage = await readDataPlaneStage(client);
+    const importWindow = assessLegacyImportWindow(stage);
+
+    if (!importWindow.admitted) {
+      log.error(
+        {
+          event: "legacy_execution_data_import_refused",
+          importId,
+          stage,
+          reason: importWindow.reason,
+          remediation: importWindow.remediation,
+        },
+        "legacy execution-data import refused",
+      );
+
+      throw new Error(
+        `legacy import refused (${importWindow.reason}): ${importWindow.remediation}`,
+      );
+    }
+
     const active = await client.query<{ id: string; status: string }>(
       `SELECT id, status FROM runs
        WHERE execution_data_plane_mode = 'legacy_file_v1'
@@ -802,10 +877,25 @@ async function main(): Promise<void> {
        ORDER BY id LIMIT 1`,
     );
     if (active.rows[0]) {
+      log.error(
+        {
+          event: "legacy_execution_data_import_refused",
+          importId,
+          stage,
+          reason: "active_legacy_work",
+          runId: active.rows[0].id,
+        },
+        "legacy execution-data import refused",
+      );
+
       throw new Error(
         `legacy import requires every legacy run to be terminal; run ${active.rows[0].id} is ${active.rows[0].status}`,
       );
     }
+    log.info(
+      { event: "legacy_execution_data_import_started", importId, stage },
+      "legacy execution-data import started",
+    );
     const runs = await client.query<LegacyRun>(
       `SELECT r.id, coalesce(p.slug, lp.slug) AS "ownerSlug",
           r.started_at::text AS "stableOccurredAt"
@@ -819,7 +909,7 @@ async function main(): Promise<void> {
     for (const run of runs.rows) {
       try {
         const summary = await importRun({ client, run, root });
-        log.info({ event: "legacy_execution_data_imported", ...summary });
+        log.info({ event: "legacy_execution_data_imported", importId, ...summary });
       } catch (error) {
         await recordImportFailure(client, run.id, error);
         const failure = error instanceof LegacyImportError ? error : null;
@@ -827,6 +917,7 @@ async function main(): Promise<void> {
         log.error(
           {
             event: "legacy_execution_data_import_failed",
+            importId,
             runId: run.id,
             sourceKind: failure?.sourceKind ?? null,
             reason: failure?.reason ?? "unexpected_import_failure",
@@ -836,6 +927,16 @@ async function main(): Promise<void> {
         );
       }
     }
+    log.info(
+      {
+        event: "legacy_execution_data_import_finished",
+        importId,
+        stage,
+        runCount: runs.rows.length,
+        unresolvedCount: failures.length,
+      },
+      "legacy execution-data import finished",
+    );
     if (failures.length > 0) {
       throw new Error(`legacy data import failed for ${failures.join(", ")}`);
     }

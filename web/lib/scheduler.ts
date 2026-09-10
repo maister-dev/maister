@@ -21,6 +21,10 @@ import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import {
+  assertUpgradeMaintenanceAllows,
+  upgradeMaintenanceEngaged,
+} from "@/lib/maintenance/upgrade-fence";
+import {
   claimAgentIdleResumeInTransaction,
   markResumed,
 } from "@/lib/runs/state-transitions";
@@ -275,6 +279,7 @@ export async function assertScratchCapacityAvailable(
 export async function assertScratchCapacityAvailableInTransaction(
   tx: Db,
 ): Promise<ScratchCapacityDecision> {
+  assertUpgradeMaintenanceAllows("run_admission");
   const cap = capFromEnv();
 
   await takeSchedulerLock(tx);
@@ -328,6 +333,7 @@ export async function assertAssistantCapacityAvailable(
 export async function assertAssistantCapacityAvailableInTransaction(
   tx: Db,
 ): Promise<ScratchCapacityDecision> {
+  assertUpgradeMaintenanceAllows("run_admission");
   const cap = assistantCapFromEnv();
 
   await takeSchedulerLock(tx);
@@ -386,7 +392,17 @@ export async function tryStartRun(
       .from(runs)
       .where(eq(runs.id, runId));
     const pool = poolForRunKind(targetRows[0]?.runKind ?? "flow");
-    const cap = capForPool(pool);
+    // D9 step 2: a fenced installation admits nothing new — the run keeps its
+    // real queue position and starts once the operator lifts the fence.
+    const fenced = upgradeMaintenanceEngaged();
+    const cap = fenced ? 0 : capForPool(pool);
+
+    if (fenced) {
+      log.info(
+        { runId, pool, reason: "upgrade_maintenance_fence" },
+        "tryStartRun → queued by the upgrade maintenance fence",
+      );
+    }
 
     // M37 Phase 10 (ADR-099): a shared-mode child must NOT flip to Running while
     // a writer sibling in its run-tree is active — one active writer per shared
@@ -545,6 +561,15 @@ export async function promoteNextPending(
   const db = opts.db ?? getDb();
 
   const pool: SchedulerPool = opts.pool ?? "flow";
+
+  if (upgradeMaintenanceEngaged()) {
+    log.info(
+      { pool, reason: "upgrade_maintenance_fence" },
+      "promoteNextPending → no promotion while the upgrade maintenance fence is engaged",
+    );
+
+    return { promotedRunId: null };
+  }
   const cap = capForPool(pool);
 
   // M19 Phase 3: lazy dispatch defaults so the queued-resume loop closes for

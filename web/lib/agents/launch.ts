@@ -125,6 +125,7 @@ import {
   markReworkFromReview,
   type StateTransitionResult,
 } from "@/lib/runs/state-transitions";
+import { assertUpgradeMaintenanceAllows } from "@/lib/maintenance/upgrade-fence";
 import {
   tryStartRun,
   takeSchedulerLock,
@@ -933,6 +934,9 @@ async function adoptExistingTreeOwner(
 export async function launchAgentRun(
   input: LaunchAgentRunInput,
 ): Promise<LaunchAgentRunResult> {
+  // D9 step 2: refuse before the trigger claims a run row or a worktree.
+  assertUpgradeMaintenanceAllows("run_admission");
+
   const _db = input.db ?? getDb();
   const ctx = await loadAgentContext(_db, input);
 

@@ -3,6 +3,7 @@ import "server-only";
 import pino from "pino";
 
 import { isMaisterError } from "@/lib/errors";
+import { upgradeMaintenanceEngaged } from "@/lib/maintenance/upgrade-fence";
 import {
   claimDueJobs,
   DEFAULT_SYSTEM_SWEEP_JOB_ID,
@@ -78,6 +79,26 @@ class SystemSweepFailedError extends Error {
 export async function runSchedulerTick(
   input: RunSchedulerTickInput = {},
 ): Promise<SchedulerTickSummary> {
+  // D9 step 2: the clock is the entry point for cron launches, agent ticks and
+  // the destructive sweep, so a fenced installation claims no job at all. The
+  // poller keeps returning a summary — a throw on every tick would bury the
+  // operator's own drain output in noise.
+  if (upgradeMaintenanceEngaged()) {
+    log.info(
+      { jobKind: input.jobKind, reason: "upgrade_maintenance_fence" },
+      "scheduler tick fenced by upgrade maintenance",
+    );
+
+    return {
+      attemptedCount: 0,
+      claimedCount: 0,
+      succeededCount: 0,
+      failedCount: 0,
+      skippedCount: 0,
+      attempts: [],
+    };
+  }
+
   const now = new Date();
 
   await ensureDefaultSchedulerJobs({ now });
