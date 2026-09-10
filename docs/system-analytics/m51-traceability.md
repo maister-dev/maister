@@ -35,7 +35,7 @@ what stops this matrix decaying into the historical aliases the Stage B matrix b
 | STG-08 | getWorkTable batched read model | T2.2, T3.1 | IT-STG-08 | Planned |
 | STG-09 | getVisibleProjectIds | T2.1, T3.2, T3.4 | IT-STG-09 plus E2E-STG-09 | Planned |
 | STG-10 | workStage i18n namespace, EN and RU | T1.2, T3.2 | UT-STG-10 | Planned |
-| EDGE-STG-01 | latest-run selection in the read model | T1.1, T3.4 | UT-EDGE-STG-01 | Planned |
+| EDGE-STG-01 | latest-run selection in the read model | T3.1, T3.4 | IT-EDGE-STG-01 | Planned |
 | EDGE-STG-02 | workspaceRemoved branch | T1.1 | UT-EDGE-STG-02 | Planned |
 | EDGE-STG-03 | no-run triage branch | T1.1 | UT-EDGE-STG-03 | Planned |
 | ATN-01 | getDecisionsQueue single-query contract | T2.3, T2.4, T4.1, T4.4 | IT-ATN-01 | Planned |

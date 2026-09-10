@@ -635,7 +635,7 @@ Anything a later task needs that the specs do not state is a spec bug fixed **he
 
 ### Phase 1 — The stage classifier · `STG-01..07`, `STG-10`
 
-**T1.1 [ ] — `deriveWorkStage`.** *RED*: write
+**T1.1 [x] — `deriveWorkStage`.** *RED*: write
 `web/lib/work/__tests__/stage.test.ts` (`UT-STG-01..06`) against a not-yet-existing
 `web/lib/work/stage.ts`; the cross-product test must fail on a **missing mapping
 assertion**, not a module-not-found — so stub the module with a `throw` first.
@@ -654,14 +654,38 @@ defined `WorkStage` for every cell — exhaustiveness, not sampling. `UT-STG-03`
 test each, no overlap with the cross-product's generic assertion.
 `EDGE-STG-01..03` get one test each.
 
-**T1.2 [ ] — i18n + chip · `STG-10`.** *RED*:
+**T1.2 [x] — i18n + chip · `STG-10`.** *RED*:
 `web/lib/__tests__/i18n-work-stage-keys.test.ts` (`UT-STG-10`) asserting every
 member has EN and RU keys **with distinct copy** (a byte-identical EN/RU pair is a
 latent bug). *GREEN*: `workStage` namespace in both catalogs +
 `<WorkStageChip>` in `web/components/work/work-stage-chip.tsx`, icon-first with
-`aria-label` when icon-only, mounted **beside** the node `StageChip` on the inbox
-card and on the board flight card — a key with no render site is not done.
+`aria-label` when icon-only, mounted **beside** the node `StageChip` on the board flight
+card — a key with no render site is not done.
+*Deviation (execution, 2026-09-10)*: the **inbox-card mount moves to T4.4**. Every
+pending HITL item is by definition `NeedsInput | NeedsInputIdle | HumanWorking`,
+all of which map to `WaitingOnHuman`, so on today's HITL-only `/inbox` the chip
+would be a constant — noise, not information. T4.4 adds the *Ready to promote*,
+*Crashed* and *Held* sections, at which point the chip varies across all four
+populations and starts earning its place. The i18n keys are consumed by the board
+mount, so `STG-10` is satisfied here.
 *REFACTOR*: one label lookup, no per-call-site switch.
+
+**Pre-existing integration red, quarantined at Phase 1 (2026-09-10).** The phase-exit
+rule says a pre-existing red surfaced by a phase is quarantined with a reason and a
+tracked follow-up. Measured, not assumed: the four Phase 1 production/i18n edits were
+reverted, the failing files re-run at that baseline, and the changes restored.
+
+| File | Failing | Verdict |
+| --- | --- | --- |
+| `lib/flows/graph/__tests__/evidence-readiness-all-blocking-kinds.integration.test.ts` | 4 | **Pre-existing** — identical at baseline. Three cases label themselves `RED: today returns true`, i.e. committed as known-red |
+| `lib/services/__tests__/hitl-hook-trip.integration.test.ts` | 3 | **Pre-existing** — identical at baseline |
+| `lib/flows/__tests__/runner.integration.test.ts` | 1 | **Pre-existing** — identical at baseline |
+| `app/api/runs/[runId]/takeover/__tests__/takeover-resume.integration.test.ts` | 1 | **Flaky under full-suite load** (an ~11 s async resume/respawn case). Passes 2/2 isolated at baseline AND with the Phase 1 changes applied |
+
+**Phase 1 caused none of them.** No failing file imports `lib/queries/board`,
+`lib/work/stage`, `components/board/**` or the message catalogs, and
+`lib/queries/board` has only six importers, none on these paths. Unit suite is fully
+green (746 files / 7574 tests). Follow-up is **T8.6**.
 
 > **Checkpoint 2** — `feat(work): derive a canonical work stage (ADR-169, STG-01..07)`
 
@@ -782,7 +806,10 @@ wired T5.7) · `web/app/(app)/page.tsx:25-30,47,77,94-100` ·
 **T4.4 [ ] — `/inbox` sections.** Three sections on the existing `HitlCard` shell
 (`web/components/inbox/hitl-card.tsx`): *Ready to promote*, *Crashed — recover or
 discard*, *Held — flagged*. Inline actions route to the **existing** promote /
-recover / discard endpoints; no new mutation path. The empty state appears only when
+recover / discard endpoints; no new mutation path.
+Also **mount `<WorkStageChip>` on the inbox card here** (moved from T1.2): with
+four populations on the page the chip finally varies, so it distinguishes
+`WaitingOnHuman` from `Review`, `Crashed` and `Held` at a glance. The empty state appears only when
 `decisions === 0` across all four sections.
 
 **T4.5 [ ] — `GET /api/v1/ext/decisions`.** *RED*: `IT-ATN-08` asserting a
@@ -1041,6 +1068,15 @@ if a name does not resolve to a real test. The existing Stage B matrix decayed i
 "historical scenario aliases, not executed test names"; this task is what stops M51's
 matrix going the same way. Confirm the bidirectional gate (T0.12) still holds after
 whatever the phases actually changed.
+
+**T8.6 [ ] — Resolve or re-classify the quarantined integration reds.** The eight
+pre-existing failures recorded at Checkpoint 2 (`evidence-readiness-all-blocking-kinds`
+4, `hitl-hook-trip` 3, `runner` 1) plus the `takeover-resume` full-suite flake. For each:
+fix it, or re-classify it as intentionally-red with a dated note naming what would make
+it green. Three of them already self-label `RED: today returns true`, so they are
+assertions of a known gap rather than breakage — that gap needs an owner, not a
+deletion. The merge criterion is that no red is *unexplained*, and that none of them is
+M51's. Re-measure on the rebased tree, since the baseline moves with master.
 
 **T8.5 [ ] — Backlog, PRODUCT_VIEW, and adjacent-defect notes.**
 `.ai-factory/ROADMAP.md` backlog §A1 (the human-facing digest now exists; the

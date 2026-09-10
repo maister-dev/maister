@@ -4611,5 +4611,19 @@
     "EXECUTOR_UNAVAILABLE": "A required dependency is unavailable. Try again later.",
     "CRASH": "Internal error. Try again.",
     "generic": "Request failed. Try again."
+  },
+  "workStage": {
+    "Triage": "Triage",
+    "Held": "Held",
+    "Ready": "Ready",
+    "Queued": "Queued",
+    "Executing": "Executing",
+    "WaitingOnHuman": "Waiting on a human",
+    "Review": "Review",
+    "Crashed": "Crashed",
+    "Promoted": "Promoted",
+    "Abandoned": "Abandoned",
+    "blocked": "Blocked",
+    "promotedResult": "Result published"
   }
 }
