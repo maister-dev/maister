@@ -47,6 +47,17 @@ function envInt(name: string, fallback: number): number {
   return parsed;
 }
 
+// docs/configuration.md fixes the split: `debug` while developing, `info` in
+// production. Reading the level without that split left a production supervisor
+// at debug unless the operator set LOG_LEVEL by hand.
+export function resolveLogLevel(env: NodeJS.ProcessEnv): pino.Level {
+  const explicit = env.LOG_LEVEL?.trim();
+
+  if (explicit) return explicit as pino.Level;
+
+  return env.NODE_ENV === "production" ? "info" : "debug";
+}
+
 export function buildRegisterRoutesOptions(deps: {
   app: FastifyInstance;
   registry: SessionRegistry;
@@ -123,7 +134,7 @@ export async function start(): Promise<void> {
   const killGraceMs = envInt("MAISTER_KILL_GRACE_MS", DEFAULT_KILL_GRACE_MS);
   const heartbeatIntervalMs = envInt("MAISTER_HEARTBEAT_INTERVAL_MS", 5_000);
   const root = runtimeRoot();
-  const logLevel = (process.env.LOG_LEVEL ?? "debug") as pino.Level;
+  const logLevel = resolveLogLevel(process.env);
 
   const loggerConfig = {
     level: logLevel,

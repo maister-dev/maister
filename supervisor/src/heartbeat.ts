@@ -131,7 +131,9 @@ export function startHeartbeatWatcher(
   const tick = () => {
     const live = registry.size();
 
-    logger.debug({ liveSessions: live }, "heartbeat-tick");
+    // An idle supervisor has nothing to report; logging every interval buries
+    // the operator's own output without adding a diagnostic.
+    if (live > 0) logger.debug({ liveSessions: live }, "heartbeat-tick");
 
     registry.forEach((entry) => {
       if (entry.record.status !== "live") return;
