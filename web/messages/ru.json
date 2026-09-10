@@ -153,7 +153,10 @@
     "closeNavigation": "Закрыть навигацию",
     "collapseRail": "Свернуть панель",
     "expandRail": "Развернуть панель",
-    "work": "Работа"
+    "work": "Работа",
+    "activityFeed": "Активность",
+    "badgeDecisions": "ждут вас: $count",
+    "badgeUpdates": "не просмотрено: $count"
   },
   "studio": {
     "title": "Студия",
@@ -4708,5 +4711,75 @@
     "openTask": "Открыть задачу",
     "openRun": "Открыть запуск",
     "openProject": "Открыть доску проекта"
+  },
+  "activityFeed": {
+    "eyebrow": "внимание",
+    "title": "Активность",
+    "sub": "Всё, что произошло в ваших проектах, новое сверху. Здесь ничего не ждёт вашего ответа.",
+    "rowCount": "событий: $count",
+    "latestOnly": "Показаны последние $count — сузьте фильтры, чтобы увидеть более раннее.",
+    "filters": {
+      "project": "Проект",
+      "allProjects": "Все проекты",
+      "actor": "Актор",
+      "allActors": "Любой",
+      "kind": "Событие",
+      "allKinds": "Все события",
+      "mine": "Только мои задачи",
+      "apply": "Применить"
+    },
+    "actor": {
+      "user": "Люди",
+      "agent": "Агенты",
+      "system": "Система"
+    },
+    "divider": "Ваш прошлый визит",
+    "caughtUp": "Всё просмотрено.",
+    "neverLooked": "Первый визит — позиция чтения ещё не сохранена.",
+    "markRead": "Отметить всё прочитанным",
+    "markReadFailed": "Не удалось сохранить позицию чтения. Попробуйте ещё раз.",
+    "empty": {
+      "noProjects": "Вы пока не состоите ни в одном проекте, догонять нечего.",
+      "noRows": "Ничего не подходит под эти фильтры."
+    },
+    "openTask": "Открыть задачу",
+    "openRun": "Открыть ран",
+    "openProject": "Открыть проект",
+    "webhookAttempts": "попыток: $count",
+    "kinds": {
+      "task_created": "задача создана",
+      "comment_added": "комментарий",
+      "task_mentioned": "упоминание",
+      "relation_added": "связь добавлена",
+      "relation_removed": "связь удалена",
+      "run_launched": "запуск",
+      "triage_set": "триаж выставлен",
+      "triage_requeued": "отправлено в триаж",
+      "agent_quarantined": "агент в карантине",
+      "experiment_concluded": "эксперимент завершён",
+      "run_pr_merged": "PR влит",
+      "evaluation_decided": "оценка вынесена",
+      "agent_summon_suppressed": "вызов пропущен",
+      "task_clarification_answered": "уточнение отвечено",
+      "run_done": "ран завершён",
+      "run_failed": "ран завершился с ошибкой",
+      "run_crashed": "сбой рана",
+      "run_abandoned": "ран отменён",
+      "run_review": "ран на ревью",
+      "run_escalated": "ран эскалирован",
+      "run_rework_claimed": "взят на доработку",
+      "run_rework_returned": "возвращён во флоу",
+      "gate_failed": "гейт не пройден",
+      "webhook_delivered": "вебхук доставлен",
+      "webhook_dead": "вебхук не доставлен"
+    }
+  },
+  "digest": {
+    "promoted": "продвинуто: $count",
+    "crashed": "сбоев: $count",
+    "decisions": "новых решений: $count",
+    "events": "новых событий: $count",
+    "tokens": "токенов: $count",
+    "empty": "С прошлого визита ничего не произошло."
   }
 }

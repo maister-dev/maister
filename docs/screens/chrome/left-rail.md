@@ -47,16 +47,23 @@ See [`../README.md`](../README.md) for the global IA map.
 
 Expanded mode, top to bottom:
 
-1. **Section nav** — Home, Projects, Work, Activity, Inbox (badge), Activity
-   (badge), Flow Studio, Observatory, then the admin block
+1. **Section nav** — Projects, Work, Inbox (badge), Activity (badge),
+   Flow Studio, Observatory, then the admin block
    (Agents, MCPs, Users, Scheduler, Settings). **Two badges, two tones**
    (ADR-168 D7): the Inbox badge shows `decisions` in the **attention** tone
    (amber, `data-testid="inbox-nav-badge"`) and means "N things are blocked on
    you"; the Activity badge shows `updates` in a **neutral** tone
    (`data-testid="activity-nav-badge"`) and means "N things happened you have
    not seen". Nothing non-actionable may wear the attention tone. Both values
-   are computed once in `web/app/(app)/layout.tsx` and passed down — neither
-   badge recomputes its own number (`ATN-05`). See
+   are computed once in `web/app/(app)/layout.tsx` and passed down as one
+   `RailBadges` map — neither badge recomputes its own number (`ATN-05`), and
+   the TONE travels with the value rather than being inferred from the section
+   id, so nothing non-actionable can acquire the attention tone by being moved.
+   The badge element itself is a bare digit (`aria-hidden`); its meaning is a
+   sibling `sr-only` phrase in the expanded variant and part of the link's
+   `aria-label` in the collapsed one, where an `aria-label` would otherwise
+   replace the contents. Collapsed badges carry
+   `data-testid="<section>-nav-badge-collapsed"`. See
    [`../inbox.md`](../inbox.md) and [`../activity.md`](../activity.md). Section
    icons come from `@heroicons/react`; Settings uses the gear icon and the
    collapsed/expanded states share the same route-derived active marker.

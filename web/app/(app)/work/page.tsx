@@ -4,6 +4,7 @@ import type { ReactElement } from "react";
 
 import { getLocale, getTranslations } from "next-intl/server";
 
+import { AttentionLiveRefresh } from "@/components/attention/attention-live-refresh";
 import { WorkTable } from "@/components/work/work-table";
 import { requireActiveSession } from "@/lib/authz";
 import { getWorkTable } from "@/lib/queries/work-table";
@@ -27,10 +28,11 @@ export default async function WorkPage({
   searchParams: SearchParams;
 }): Promise<ReactElement> {
   const user = await requireActiveSession();
-  const [params, t, tStage, locale] = await Promise.all([
+  const [params, t, tStage, tRun, locale] = await Promise.all([
     searchParams,
     getTranslations("work"),
     getTranslations("workStage"),
+    getTranslations("run"),
     getLocale(),
   ]);
   const filters = normalizeWorkTableFilters(params);
@@ -135,8 +137,18 @@ export default async function WorkPage({
   return (
     <div className="flex w-full flex-col gap-6">
       <header className="flex flex-col gap-2">
-        <div className="font-mono text-[11px] font-semibold uppercase tracking-[0.14em] text-mute">
-          {t("eyebrow")}
+        <div className="flex items-center gap-3">
+          <div className="font-mono text-[11px] font-semibold uppercase tracking-[0.14em] text-mute">
+            {t("eyebrow")}
+          </div>
+          <AttentionLiveRefresh
+            labels={{
+              disconnected: tRun("streamDisconnected"),
+              live: tRun("streamLive"),
+              reconnect: tRun("streamReconnect"),
+              reconnecting: tRun("streamReconnecting"),
+            }}
+          />
         </div>
         <div>
           <h1 className="m-0 text-[30px] font-semibold tracking-[-0.03em] text-ink">

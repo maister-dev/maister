@@ -2,6 +2,7 @@ import type { LeftRailNavSection } from "@/components/chrome/left-rail-nav";
 import type { GlobalRole } from "@/lib/db/schema";
 
 type RailNavigationLabelKey =
+  | "activityFeed"
   | "agents"
   | "inbox"
   | "mcps"
@@ -21,6 +22,14 @@ export function buildLeftRailSections(
     { id: "projects", label: label("projects"), href: "/", ready: true },
     { id: "work", label: label("work"), href: "/work", ready: true },
     { id: "inbox", label: label("inbox"), href: "/inbox", ready: true },
+    {
+      id: "activity",
+      // `nav.activity` is already the project board's Activity TAB label;
+      // this is the cross-project feed, so it gets its own key.
+      label: label("activityFeed"),
+      href: "/activity",
+      ready: true,
+    },
     { id: "studio", label: label("studio"), href: "/studio", ready: true },
     {
       id: "observatory",

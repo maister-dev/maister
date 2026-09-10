@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  ATTENTION_EVENT_KINDS,
   AUTO_PROMOTABLE_REVIEW_CAUSES,
   DOMAIN_EVENT_KINDS,
   isAutoPromotableReviewCause,
@@ -9,6 +10,7 @@ import {
   isRunTerminalEventKind,
   RUN_REVIEW_CAUSES,
   RUN_SETTLED_EVENT_KINDS,
+  TASK_ACTIVITY_TWINNED_EVENT_KINDS,
 } from "@/lib/domain-events/taxonomy";
 
 // ADR-163 (Codex review F1): a `run.review` says WHY the child entered Review.
@@ -99,5 +101,50 @@ describe("domain-event taxonomy", () => {
     expect(isDomainEventKind("gate.decided")).toBe(false);
     expect(isDomainEventKind("")).toBe(false);
     expect(isDomainEventKind("task.created ")).toBe(false);
+  });
+});
+
+// UT-ATN-09 (M51, ADR-168) — the attention plane reads `domain_events` through
+// a classification, not through a hand-picked prefix. Three kinds are written
+// in the same transaction as a `task_activity` row carrying the same fact;
+// counting those in `updates` scores one task creation twice and rendering them
+// in the feed prints the line twice. The two lists must therefore PARTITION the
+// taxonomy: a new kind that lands in neither fails here rather than silently
+// defaulting to "counted" or to "invisible".
+describe("UT-ATN-09 attention/twinned partition of the taxonomy", () => {
+  it("partitions every taxonomy kind exactly once", () => {
+    const union = [
+      ...TASK_ACTIVITY_TWINNED_EVENT_KINDS,
+      ...ATTENTION_EVENT_KINDS,
+    ];
+
+    expect(union.length).toBe(DOMAIN_EVENT_KINDS.length);
+    expect([...union].sort()).toEqual([...DOMAIN_EVENT_KINDS].sort());
+    expect(new Set(union).size).toBe(union.length);
+  });
+
+  it("classifies the three twinned kinds as twinned, not as attention", () => {
+    for (const kind of [
+      "task.created",
+      "task.comment_added",
+      "task.triage_requeued",
+    ]) {
+      expect([...TASK_ACTIVITY_TWINNED_EVENT_KINDS]).toContain(kind);
+      expect([...ATTENTION_EVENT_KINDS]).not.toContain(kind);
+    }
+  });
+
+  // The one `task.*` kind with no `task_activity` twin. Dropping it because it
+  // starts with `task.` would make answering an agent's question invisible
+  // everywhere — which is why this is a classification, not a prefix match.
+  it("keeps task.clarification_answered on the attention side", () => {
+    expect([...ATTENTION_EVENT_KINDS]).toContain("task.clarification_answered");
+  });
+
+  it("keeps every run and gate kind on the attention side", () => {
+    for (const kind of DOMAIN_EVENT_KINDS) {
+      if (!kind.startsWith("run.") && kind !== "gate.failed") continue;
+      expect([...ATTENTION_EVENT_KINDS]).toContain(kind);
+    }
   });
 });

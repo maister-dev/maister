@@ -1,5 +1,8 @@
 import type { ReactElement, ReactNode } from "react";
-import type { LeftRailNavSection } from "@/components/chrome/left-rail-nav";
+import type {
+  LeftRailNavSection,
+  RailBadges,
+} from "@/components/chrome/left-rail-nav";
 
 import { getTranslations } from "next-intl/server";
 import Link from "next/link";
@@ -14,7 +17,7 @@ export interface TopNavProps {
   crumb?: ReactNode;
   user?: NavUser;
   logoSize?: number;
-  inboxCount?: number;
+  badges?: RailBadges;
   sections?: readonly LeftRailNavSection[];
 }
 
@@ -22,7 +25,7 @@ export async function TopNav({
   crumb,
   user,
   logoSize = 22,
-  inboxCount = 0,
+  badges,
   sections = [],
 }: TopNavProps): Promise<ReactElement> {
   const t = await getTranslations("nav");
@@ -37,9 +40,9 @@ export async function TopNav({
           {sections.length > 0 ? (
             <MobileRailDrawer
               ariaLabel={t("sectionsLabel")}
+              badges={badges}
               closeLabel={t("closeNavigation")}
               comingSoon={t("comingSoon")}
-              inboxCount={inboxCount}
               openLabel={t("openNavigation")}
               sections={sections}
             />

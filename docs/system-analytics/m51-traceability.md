@@ -46,14 +46,14 @@ what stops this matrix decaying into the historical aliases the Stage B matrix b
 | ATN-06 | ext pulse telemetry shape | T4.3, T4.5 | CT-ATN-06 | Implemented |
 | ATN-07 | decision-queue comparator | T4.1 | UT-ATN-07 | Implemented |
 | ATN-08 | ext decisions OpenAPI, ADR-137 omission | T4.5 | IT-ATN-08 | Implemented |
-| ATN-09 | activity-feed DTO projection | T2.4, T5.2 | IT-ATN-09 | Planned |
-| ATN-10 | user_activity_cursors GREATEST upsert | T5.1, T5.3, T5.8 | IT-ATN-10 plus E2E-ATN-10 | Planned |
-| ATN-11 | attention-stream AsyncAPI | T5.5, T5.6 | IT-ATN-11 | Planned |
-| ATN-12 | digest read model determinism | T5.4 | UT-ATN-12 | Planned |
-| EDGE-ATN-01 | absent cursor row | T5.8 | IT-EDGE-ATN-01 | Planned |
+| ATN-09 | activity-feed DTO projection | T2.4, T5.2 | IT-ATN-09 plus UT-ATN-09 | Implemented |
+| ATN-10 | user_activity_cursors GREATEST upsert | T5.1, T5.3, T5.8 | IT-ATN-10 plus E2E-ATN-10 | Implemented |
+| ATN-11 | attention-stream AsyncAPI | T5.5, T5.6 | IT-ATN-11 | Implemented |
+| ATN-12 | digest read model determinism | T5.4 | UT-ATN-12 | Implemented |
+| EDGE-ATN-01 | absent cursor row | T5.3, T5.8 | UT-EDGE-ATN-01 plus IT-ATN-03 | Implemented |
 | EDGE-ATN-02 | current-visibility filter, no rewind | T4.2 | IT-EDGE-ATN-02 | Implemented |
-| EDGE-ATN-03 | cursor POST clamp and PRECONDITION | T5.3 | IT-EDGE-ATN-03 | Planned |
-| EDGE-ATN-04 | lastEventId replay contract | T5.5 | IT-EDGE-ATN-04 | Planned |
+| EDGE-ATN-03 | cursor POST clamp and PRECONDITION | T5.3 | IT-EDGE-ATN-03 | Implemented |
+| EDGE-ATN-04 | lastEventId replay contract | T5.5 | IT-EDGE-ATN-04 | Implemented |
 | NAV-01 | ADR-171 D1, screens desk.md | T6.3 | E2E-NAV-01 | Planned |
 | NAV-02 | ADR-171 D5 landing clause | T6.6 | E2E-NAV-02 | Planned |
 | NAV-03 | ADR-171 D2 relocation | T6.1 | E2E-NAV-03 | Planned |

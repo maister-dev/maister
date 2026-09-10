@@ -1,6 +1,9 @@
 "use client";
 
-import type { LeftRailNavSection } from "@/components/chrome/left-rail-nav";
+import type {
+  LeftRailNavSection,
+  RailBadges,
+} from "@/components/chrome/left-rail-nav";
 import type { ReactElement } from "react";
 
 import { Bars3Icon, XMarkIcon } from "@heroicons/react/24/outline";
@@ -14,14 +17,14 @@ export function MobileRailDrawer({
   ariaLabel,
   closeLabel,
   comingSoon,
-  inboxCount,
+  badges,
   openLabel,
   sections,
 }: {
   ariaLabel: string;
   closeLabel: string;
   comingSoon: string;
-  inboxCount: number;
+  badges?: RailBadges;
   openLabel: string;
   sections: readonly LeftRailNavSection[];
 }): ReactElement {
@@ -78,8 +81,8 @@ export function MobileRailDrawer({
             </div>
             <LeftRailNav
               ariaLabel={ariaLabel}
+              badges={badges}
               comingSoon={comingSoon}
-              inboxCount={inboxCount}
               sections={sections}
               variant="expanded"
             />

@@ -249,6 +249,28 @@ describe("ATN-04 / ATN-11 scope", () => {
     expect(await getUpdatesCount(fx.member, "member", NOW)).toBe(1);
   });
 
+  // The second overlap, one table over from ATN-02's: creating a task writes
+  // `task_created` AND `task.created` in ONE transaction, so summing the two
+  // tables scores a single creation twice. `ATTENTION_EVENT_KINDS` is the
+  // complement that keeps the count — and the activity feed — honest.
+  it("counts a task creation once, not once per table", async () => {
+    const activityId = await addActivity(
+      fx.task,
+      fx.project,
+      HOURS_AGO_2,
+      "task_created",
+    );
+
+    await pool.query(
+      `insert into domain_events (kind, project_id, task_id, actor_type, actor_id, payload, occurred_at)
+       values ('task.created', $1, $2, 'user', $3, '{}'::jsonb, $4)`,
+      [fx.project, fx.task, fx.other, HOURS_AGO_2],
+    );
+
+    expect(activityId).toBeTruthy();
+    expect(await getUpdatesCount(fx.member, "member", NOW)).toBe(1);
+  });
+
   it("counts a run domain event beside task activity", async () => {
     await addActivity(fx.task, fx.project, HOURS_AGO_2);
     await pool.query(

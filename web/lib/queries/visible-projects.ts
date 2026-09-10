@@ -9,8 +9,12 @@ import "server-only";
  * five more cross-project read models — so the fourth and fifth copies are the
  * ones that never get written.
  *
- * Returns ids only. Callers that need columns select them themselves, which
- * keeps their projections (and their ORDER BY) where they belong.
+ * `getVisibleProjectIds` returns ids only — callers that need more columns
+ * select them themselves, which keeps their projections (and their ORDER BY)
+ * where they belong. `getVisibleProjects` is the same ONE query for the two
+ * surfaces that need to name the projects as well (a filter dropdown, a
+ * slug-to-id lookup); duplicating the admin-versus-membership branch to build a
+ * dropdown is exactly what this module exists to prevent.
  *
  * `client` is injectable because the observatory read models thread an explicit
  * handle through every query; resolving `getDb()` here instead would bypass the
@@ -34,31 +38,48 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-export async function getVisibleProjectIds(
+export interface VisibleProject {
+  id: string;
+  slug: string;
+  name: string;
+}
+
+export async function getVisibleProjects(
   userId: string,
   globalRole: GlobalRole,
   client: VisibleProjectsClient = getDb(),
-): Promise<string[]> {
+): Promise<VisibleProject[]> {
+  const columns = { id: projects.id, slug: projects.slug, name: projects.name };
   const rows =
     globalRole === "admin"
       ? await client
-          .select({ id: projects.id })
+          .select(columns)
           .from(projects)
           .where(isNull(projects.archivedAt))
       : await client
-          .select({ id: projects.id })
+          .select(columns)
           .from(projects)
           .innerJoin(projectMembers, eq(projectMembers.projectId, projects.id))
           .where(
             and(eq(projectMembers.userId, userId), isNull(projects.archivedAt)),
           );
 
-  const ids = (rows as Array<{ id: string }>).map((row) => row.id);
+  const visible = rows as VisibleProject[];
 
   log.debug(
-    { userId, globalRole, visibleCount: ids.length },
+    { userId, globalRole, visibleCount: visible.length },
     "resolved visible projects",
   );
 
-  return ids;
+  return visible;
+}
+
+export async function getVisibleProjectIds(
+  userId: string,
+  globalRole: GlobalRole,
+  client: VisibleProjectsClient = getDb(),
+): Promise<string[]> {
+  const visible = await getVisibleProjects(userId, globalRole, client);
+
+  return visible.map((project) => project.id);
 }

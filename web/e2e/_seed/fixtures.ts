@@ -241,6 +241,20 @@ export type E2EWorkTableFixture = {
   member: E2EUserFixture;
 };
 
+export type E2EActivityFeedFixture = {
+  projectSlug: string;
+  projectName: string;
+  member: E2EUserFixture;
+  // The task the seeded activity rows hang off — the same one on both sides of
+  // the divider, so a spec asserts on POSITION, not on which task moved.
+  unreadKeyRefs: string[];
+  seenKeyRefs: string[];
+  // The reader's ONE decision: a flagged Backlog task, no run required.
+  flaggedKeyRef: string;
+  decisions: number;
+  unread: number;
+};
+
 export type E2EFixtures = {
   adminEmail: string;
   adminPassword: string;
@@ -286,6 +300,7 @@ export type E2EFixtures = {
     humanAsk: E2EHumanAskFixture;
     capabilityEnforcement: E2ECapabilityEnforcementFixture;
     workTable: E2EWorkTableFixture;
+    activityFeed: E2EActivityFeedFixture;
   };
 };
 

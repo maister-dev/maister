@@ -104,3 +104,41 @@ export function isAutoPromotableReviewCause(
     (AUTO_PROMOTABLE_REVIEW_CAUSES as readonly string[]).includes(value)
   );
 }
+
+// M51 (ADR-168): the taxonomy split the attention plane reads by. Three kinds
+// are written in the SAME transaction as a `task_activity` row carrying the
+// same fact — `task.created` (`lib/services/tasks.ts`), `task.comment_added`
+// (`lib/social/comments.ts`) and `task.triage_requeued`
+// (`lib/services/triage.ts`). Counting those in `updates` makes one task
+// creation score two, and rendering them in the feed prints the same line
+// twice, so the attention plane reads the complement instead.
+//
+// `task.clarification_answered` has NO twin — answering an agent's question is
+// visible nowhere else — which is why this is a classification and not simply
+// "the run.* axis".
+export const TASK_ACTIVITY_TWINNED_EVENT_KINDS = [
+  "task.created",
+  "task.comment_added",
+  "task.triage_requeued",
+] as const satisfies readonly DomainEventKind[];
+
+export type TaskActivityTwinnedEventKind =
+  (typeof TASK_ACTIVITY_TWINNED_EVENT_KINDS)[number];
+
+// Spelled out rather than derived so a NEW taxonomy kind lands in neither list
+// and `UT-ATN-09` fails — either default (silently counted, silently invisible)
+// would be a bug nobody notices.
+export const ATTENTION_EVENT_KINDS = [
+  "task.clarification_answered",
+  "run.done",
+  "run.failed",
+  "run.crashed",
+  "run.abandoned",
+  "run.review",
+  "run.escalated",
+  "run.rework_claimed",
+  "run.rework_returned",
+  "gate.failed",
+] as const satisfies readonly DomainEventKind[];
+
+export type AttentionEventKind = (typeof ATTENTION_EVENT_KINDS)[number];

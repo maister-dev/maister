@@ -160,11 +160,13 @@ function isCriticality(value: string | null): value is DecisionCriticality {
 }
 
 /**
- * React-`cache`d so every server component of ONE render reads the same answer
- * (ATN-05) — the same mechanism `getPlatformStatus` uses for the chrome. The
- * layout, the home page and the inbox page each call it; the work happens once.
+ * The uncached queue. Callers that live INSIDE one render want
+ * `getDecisionsQueue`; callers that run for the lifetime of a request and must
+ * see the database move — the attention stream's poll loop — want this one,
+ * because a request-scoped memo would freeze their counter at the value it had
+ * when the connection opened (ADR-170 D2).
  */
-export const getDecisionsQueue = cache(async function getDecisionsQueue(
+export async function computeDecisionsQueue(
   userId: string,
   globalRole: GlobalRole,
   scope: DecisionsScope = {},
@@ -300,7 +302,14 @@ export const getDecisionsQueue = cache(async function getDecisionsQueue(
   );
 
   return { items, count: items.length };
-});
+}
+
+/**
+ * React-`cache`d so every server component of ONE render reads the same answer
+ * (ATN-05) — the same mechanism `getPlatformStatus` uses for the chrome. The
+ * layout, the home page and the inbox page each call it; the work happens once.
+ */
+export const getDecisionsQueue = cache(computeDecisionsQueue);
 
 /**
  * The canonical `decisions` number. Deliberately the length of the same list

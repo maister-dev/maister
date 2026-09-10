@@ -25,8 +25,14 @@ the stream by [ADR-170](../decisions.md#adr-170-user-scoped-attention-sse-stream
   See the [ERD](../db/erd.dbml).
 - **`inbox_items`** (persisted) — per-recipient rows whose
   `source_ref->>'activityId'` is the join key that de-duplicates `updates`.
-- **`task_activity`**, **`domain_events`** (persisted) — the two sources the
-  activity feed unions.
+- **`task_activity`**, **`domain_events`**, **`webhook_deliveries`**
+  (persisted) — the three sources the activity feed unions. `domain_events` is
+  read through **`ATTENTION_EVENT_KINDS`**: the taxonomy minus the three kinds
+  emitted in the SAME transaction as a `task_activity` row carrying the same
+  fact (`task.created`, `task.comment_added`, `task.triage_requeued`). Both the
+  counter and the feed read that one list, so a fact counted is a fact shown.
+  Webhooks contribute settled DELIVERY OUTCOMES only — never a payload, an error
+  body or a target URL.
 - **Decision-queue item** — a projected DTO carrying kind, criticality, age and
   a next action. Never a database row.
 - **Digest** — a deterministic sentence over a bounded window: promoted,
@@ -69,6 +75,9 @@ flowchart TD
     Q --> QC["decisions = list length"]
     V --> U["unread inbox_items"]
     V --> A["activity newer than cursor"]
+    V --> W["settled webhook deliveries"]
+    A --> F["activity feed at /activity"]
+    W --> F
     U --> M["subtract overlap on source_ref activityId"]
     A --> M
     M --> UC["updates"]
@@ -100,7 +109,7 @@ sequenceDiagram
 ## Expectations
 
 - **ATN-01:** `decisions` MUST come from one query covering respondable HITL, promotable runs, `Crashed` runs and triage-flagged tasks, and its count MUST equal the length of the list it labels.
-- **ATN-02:** `updates` MUST subtract the inbox/activity overlap using `inbox_items.source_ref->>'activityId'`, so one mention counts exactly once.
+- **ATN-02:** `updates` MUST subtract the inbox/activity overlap using `inbox_items.source_ref->>'activityId'`, so one mention counts exactly once. The same rule binds one table over: a `domain_events` kind with a `task_activity` twin MUST NOT be counted, which is what `ATTENTION_EVENT_KINDS` enforces.
 - **ATN-03:** With no `user_activity_cursors` row, `updates` MUST count a bounded 24-hour window, never all history.
 - **ATN-04:** A task blocked by a relation MUST count in neither `decisions` nor `updates`.
 - **ATN-05:** Every surface MUST render one layout-level `decisions` value; no surface may recompute its own.

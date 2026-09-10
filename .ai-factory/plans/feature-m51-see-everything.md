@@ -899,7 +899,7 @@ Phase 5 ships **read models and the stream**. The Now tiles and the digest
 Phase 6 — a component with no render site cannot be e2e-tested, and shipping one
 would violate the project's own "a key is done only when something consumes it".
 
-**T5.1 [x] (done in Phase 4 — T4.2 depends on it) — Migration 0162 `user_activity_cursors`.** DDL exactly as specified in
+**T5.1 [x] — Migration 0162 `user_activity_cursors`, done in Phase 4 because T4.2 depends on it.** DDL exactly as specified in
 T0.10: `user_id text PK REFERENCES users(id) ON DELETE CASCADE`, `seen_through
 timestamptz NOT NULL`, `updated_at timestamptz NOT NULL DEFAULT now()`. New table
 over live data — no backfill and no abort-guard needed; an absent row means "never
@@ -911,7 +911,7 @@ db:generate` reporting **"No schema changes"**.
 *Verify*: `db:migrate` on a clean DB; **`pnpm --filter maister-web db:erd --check`
 green** after regenerating `docs/db/erd.dbml`.
 
-**T5.2 [ ] — Cross-project activity feed · `ATN-09`.** *RED*: `IT-ATN-09`, a redaction
+**T5.2 [x] — Cross-project activity feed · `ATN-09`.** *RED*: `IT-ATN-09`, a redaction
 test asserting no field of any feed row matches a worktree-path or diff-hunk shape,
 fed rows that actually contain them. *GREEN*:
 `web/lib/queries/activity-feed.ts` — a union over `task_activity` (13 kinds),
@@ -922,7 +922,7 @@ outcomes** (not payloads), scoped by `getVisibleProjectIds`.
 come from the `domain_events` side — which is why the union exists rather than a new
 activity kind (that needs the `setRunStatus` choke point, out of scope).
 
-**T5.3 [ ] — `/activity`, cursor, unread divider · `ATN-10`.** *RED*: `IT-ATN-10` —
+**T5.3 [x] — `/activity`, cursor, unread divider · `ATN-10`.** *RED*: `IT-ATN-10` —
 a stale or out-of-order cursor POST cannot move `seen_through` backwards; and a
 future `seenThrough` is refused `PRECONDITION` (D7). *GREEN*:
 `web/app/(app)/activity/page.tsx` with project / actor-type / kind / mine filters
@@ -930,7 +930,7 @@ future `seenThrough` is refused `PRECONDITION` (D7). *GREEN*:
 performing the monotonic `GREATEST` upsert. Rail section + `activityFeed` namespace
 (**not** `nav.activity`), extending the same four rail files as T3.3.
 
-**T5.4 [ ] — Now-tile and digest read models · `ATN-12`.** *RED*: `UT-ATN-12` — the
+**T5.4 [x] — Now-tile and digest read models · `ATN-12`.** *RED*: `UT-ATN-12` — the
 digest is byte-identical given a fixed clock and row set; a token total renders
 RU-grouped under the `ru` locale (`Intl.NumberFormat`). *GREEN*:
 `web/lib/queries/digest.ts` and `getNowTileCounts` — pure/read-only, since the
@@ -939,7 +939,7 @@ spent, each with a link target. **Queries only — no components** (see the phas
 note). No agent, no narration, no USD. Determinism is what later makes this a safe
 notification payload (T7.7).
 
-**T5.5 [ ] — Attention SSE stream · `ATN-11`.** *RED*: `IT-ATN-11` — a user receives no
+**T5.5 [x] — Attention SSE stream · `ATN-11`.** *RED*: `IT-ATN-11` — a user receives no
 frame referencing a project outside `getVisibleProjectIds`; `lastEventId` replays
 the tail without duplicating (`EDGE-ATN-04`); an aborted request closes the stream.
 *GREEN*: `web/app/api/attention/stream/route.ts` on the study route's shape —
@@ -952,11 +952,11 @@ stream **never mutates persisted run state**.
 *REFACTOR*: if the poll body duplicates the study route's frame formatting, extract
 the shared SSE framing helper rather than copying it (DRY).
 
-**T5.6 [ ] — Wire `/work` and `/activity` to the stream.** Replace load-time-only
+**T5.6 [x] — Wire `/work` and `/activity` to the stream.** Replace load-time-only
 freshness with an SSE-triggered refetch; no timers. Surfaces show the accessible
 liveness pill + reconnect affordance (`<RunStreamLiveness>`'s pattern).
 
-**T5.7 [ ] — Both rail badges · `ATN-05`, D11.** Inbox → `decisions` (amber, existing
+**T5.7 [x] — Both rail badges · `ATN-05`, D11.** Inbox → `decisions` (amber, existing
 `data-testid="inbox-nav-badge"`); Activity → `updates` (**neutral**,
 `data-testid="activity-nav-badge"`), in the collapsed (`<CollapsedRailBadge>`) and
 expanded variants and the mobile drawer. `web/app/(app)/layout.tsx` computes both
@@ -965,12 +965,89 @@ use `$count`.
 *Verify (`unit`)*: distinct tones from one layout-level fetch; the neutral badge
 carries no attention styling class.
 
-**T5.8 [ ] — e2e `E2E-ATN-10`.** `web/e2e/activity-feed.spec.ts` (+ fixture +
+**T5.8 [x] — e2e `E2E-ATN-10`.** `web/e2e/activity-feed.spec.ts` (+ fixture +
 `AUTHED_SPEC` entry): the unread divider appears and a cursor POST clears it, and
 the **badge-independence** case — answering the last decision clears the amber badge
 while the neutral one is untouched. That is the only end-to-end proof the two
 counters are separate populations rather than one number rendered twice.
 *(The tile-vs-badge assertion moves to Phase 6, where a page renders a tile.)*
+
+*Execution notes (2026-09-10, Phase 5):*
+
+- **`ATTENTION_EVENT_KINDS` is new, and it fixed a live bug.** T5.2 says the feed
+  unions `domain_events` `run.*` + `gate.failed`. Building it surfaced that
+  `getUpdatesCount` (Phase 4) counted the WHOLE taxonomy, and three kinds —
+  `task.created`, `task.comment_added`, `task.triage_requeued` — are emitted in the
+  SAME transaction as a `task_activity` row carrying the same fact. One task
+  creation scored **2**; proven by reverting the fix and watching the new
+  `IT-ATN-02` case fail with `expected 2 to be 1`. The taxonomy now carries an
+  explicit partition (`ATTENTION_EVENT_KINDS` / `TASK_ACTIVITY_TWINNED_EVENT_KINDS`,
+  `UT-ATN-09`) that both the counter and the feed read.
+  **Deviation from the task text:** the attention side keeps
+  `task.clarification_answered` as well — it is the one `task.*` kind with no
+  `task_activity` twin, so a `run.*`-plus-`gate.failed` prefix match would have made
+  answering an agent's question invisible everywhere. Recorded as an ADR-168
+  amendment.
+- **T5.2 scope note.** The feed does NOT apply ATN-04's relation-blocked exclusion.
+  ATN-04 constrains the two COUNTERS; the feed is a log of facts, and hiding a
+  blocked task's comments would be a second, unrequested rule. Stated in
+  [`screens/activity.md`](../../docs/screens/activity.md).
+- **`getVisibleProjects` added beside `getVisibleProjectIds`** so `/activity` can
+  offer a project dropdown and resolve a slug without a second copy of the
+  admin-versus-membership branch. `getVisibleProjectIds` now maps it; one query
+  either way.
+- **T5.3 `mine` semantics.** "Mine" = activity on tasks the reader SUBSCRIBES to
+  (`task_subscribers`), not activity the reader caused — the actor-type filter
+  already covers the latter, and a feed of one's own actions is the one slice
+  nobody needs to catch up on.
+- **The microsecond trap, twice.** A `timestamptz` carries microseconds; a JS
+  `Date` floors to milliseconds. (a) The stream's watermark re-reported the same
+  rows on every poll until it started travelling as TEXT — caught by
+  `IT-EDGE-ATN-04` failing with 4 change frames instead of 1. (b) "Mark all as
+  read" sends one millisecond PAST the newest rendered row, or that row stays
+  unread forever.
+- **T5.5 conformance.** The first cut of the stream emitted `{reason, projectIds,
+  decisions, updates, at}`; the declared contract
+  (`docs/api/async/attention-stream.asyncapi.yaml`, written in Phase 0) closes its
+  spine with `additionalProperties: false` and requires
+  `{type, id, occurredAt, decisions, updates, changed, projectIds}`. Rewritten to
+  match, including the JSON `attention.heartbeat` frame and
+  `attention.stream_timeout {reason: "quiet_cap"}`. The integration test now
+  asserts the exact key set. **Same class of miss as T4.5's ext route — check the
+  contract BEFORE writing the emitter.**
+- **`computeDecisionsQueue` split out of `getDecisionsQueue`.** The stream's poll
+  loop runs for the life of ONE request, so a React-`cache`d read would have frozen
+  its `decisions` counter at the value it had when the connection opened. The
+  cached export is unchanged for render-scoped callers (ATN-05).
+- **Shared SSE framing extracted** to `web/lib/sse/frame.ts` per ADR-170's own
+  consequence note; `formatSseFrame` re-points at it (367 evaluation tests green
+  after).
+- **T5.4 addition.** The task names only `UT-ATN-12`. A digest whose five numbers
+  are never exercised against a database is a sentence about nothing, so
+  `digest.integration.test.ts` covers the window boundaries, the 24 h fallback and
+  visibility. `queryTokensSpentSince` attributes spend by `runs.started_at` —
+  windowing on the rollup would charge a long-lived run's entire history to
+  whatever window it last wrote in.
+- **T5.8 deviation.** The badge-independence case clears the NEUTRAL badge (the
+  cursor advance) and asserts the amber one is untouched, rather than the reverse.
+  No session-authenticated route clears a `flagged` or `crashed` decision without
+  touching a worktree or a supervisor session — the ext triage op needs a project
+  token. The property proved is the same one: a mutation that empties one
+  population leaves the other exactly where it was, and the two carry different
+  numbers and different tones in the same render. Both halves are asserted around
+  ONE click, in one test, because the seeded reader is shared and the cursor write
+  is irreversible.
+- **Integration lane.** 464 files / 4006 tests green. The first full run had two
+  failures — `lib/flows/graph/__tests__/permission-resume.integration.test.ts`
+  ("Matcher did not succeed in 30000ms") and one other — and a clean re-run plus
+  that file in isolation both passed, so the failure SET is empty. Same
+  starved-driver pattern `web/CLAUDE.md` already documents for
+  `dirty-resolution-race`.
+- **Latent gate defect fixed.** `validate:m51-coverage` had been failing since
+  Phase 4: T5.1's heading carried a parenthetical between `[x]` and the em dash,
+  which the plan-task regex (`scripts/validate-m51-coverage.mjs:101`) does not
+  match, so ATN-03 and ATN-10 looked like they named an undefined task. Heading
+  reshaped; the gate is green.
 
 > **Checkpoint 6** — `feat(attention): activity stream, read cursor and digest read models (A1/A2/A5, ATN-09..12)`
 

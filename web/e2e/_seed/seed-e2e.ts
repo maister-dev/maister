@@ -7779,6 +7779,140 @@ async function seedWorkTableFixture(
   };
 }
 
+const ACTIVITY_SLUG = "e2e-activity";
+const ACTIVITY_NAME = "MAIster E2E Activity";
+const ACTIVITY_MEMBER_EMAIL = "e2e-activity-member@maister.local";
+const ACTIVITY_MEMBER_PASSWORD = "ActivityMember!2345";
+
+type ActivityFeedFixtureRecord = {
+  projectSlug: string;
+  projectName: string;
+  member: UserFixture;
+  unreadKeyRefs: string[];
+  seenKeyRefs: string[];
+  flaggedKeyRef: string;
+  decisions: number;
+  unread: number;
+};
+
+/**
+ * `E2E-ATN-10` needs a reader whose two counters are BOTH small and BOTH known,
+ * which the shared admin can never be — it sees every seeded project. So this
+ * fixture owns one project, one member, one flagged task (`decisions` = 1) and
+ * four activity rows straddling a read cursor (`updates` = 2).
+ */
+async function seedActivityFeedFixture(
+  pool: Pool,
+  adminId: string,
+): Promise<ActivityFeedFixtureRecord> {
+  await pool.query(`DELETE FROM projects WHERE slug = $1`, [ACTIVITY_SLUG]);
+  await pool.query(`DELETE FROM users WHERE email = $1`, [
+    ACTIVITY_MEMBER_EMAIL,
+  ]);
+
+  const member = await insertUser(pool, {
+    email: ACTIVITY_MEMBER_EMAIL,
+    password: ACTIVITY_MEMBER_PASSWORD,
+    name: "E2E Activity Member",
+    role: "member",
+    accountStatus: "active",
+    mustChangePassword: false,
+  });
+
+  const projectId = randomUUID();
+  const flowId = randomUUID();
+  const repoPath = `/tmp/maister-e2e/${projectId}`;
+  const taskKey = "ACT";
+
+  await pool.query(
+    `INSERT INTO projects (id, slug, name, repo_path, maister_yaml_path, task_key)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [
+      projectId,
+      ACTIVITY_SLUG,
+      ACTIVITY_NAME,
+      repoPath,
+      `${repoPath}/maister.yaml`,
+      taskKey,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO flows (id, project_id, flow_ref_id, source, version, installed_path, manifest, schema_version)
+     VALUES ($1, $2, 'aif', $3, 'v0.0.1', $4, $5, 1)`,
+    [
+      flowId,
+      projectId,
+      "github.com/maister/maister-flow-aif",
+      `/tmp/maister-e2e/flows/aif-activity@v0.0.1`,
+      JSON.stringify({ schemaVersion: 1, name: "aif", nodes: [] }),
+    ],
+  );
+  for (const [userId, role] of [
+    [adminId, "admin"],
+    [member.id, "member"],
+  ] as const) {
+    await pool.query(
+      `INSERT INTO project_members (id, project_id, user_id, role)
+       VALUES ($1, $2, $3, $4)`,
+      [randomUUID(), projectId, userId, role],
+    );
+  }
+
+  async function seedTask(
+    title: string,
+    triageStatus: "triaged" | "flagged",
+  ): Promise<{ id: string; keyRef: string }> {
+    const id = randomUUID();
+    const { rows } = await pool.query<{ number: number }>(
+      `INSERT INTO tasks (id, project_id, number, title, prompt, flow_id, status, stage, triage_status)
+       VALUES ($1, $2, (SELECT COALESCE(MAX(number), 0) + 1 FROM tasks WHERE project_id = $2), $3, 'activity fixture', $4, 'Backlog', 'Backlog', $5)
+       RETURNING number`,
+      [id, projectId, title, flowId, triageStatus],
+    );
+
+    return { id, keyRef: `${taskKey}-${rows[0].number}` };
+  }
+
+  const carrier = await seedTask("Activity carrier task", "triaged");
+  const flagged = await seedTask("Activity flagged task", "flagged");
+
+  // The cursor sits between the two pairs, so the feed has a divider with a
+  // non-empty half on either side of it.
+  const cursorAt = "now() - interval '6 hours'";
+  const offsets = [
+    { hours: 10, seen: true },
+    { hours: 8, seen: true },
+    { hours: 4, seen: false },
+    { hours: 2, seen: false },
+  ];
+
+  for (const offset of offsets) {
+    await pool.query(
+      `INSERT INTO task_activity (id, task_id, project_id, actor_type, actor_id, event_kind, payload, created_at)
+       VALUES ($1, $2, $3, 'user', $4, 'comment_added', '{}'::jsonb, now() - ($5 || ' hours')::interval)`,
+      [randomUUID(), carrier.id, projectId, adminId, String(offset.hours)],
+    );
+  }
+
+  await pool.query(
+    `INSERT INTO user_activity_cursors (user_id, seen_through)
+     VALUES ($1, ${cursorAt})
+     ON CONFLICT (user_id) DO UPDATE SET seen_through = ${cursorAt}`,
+    [member.id],
+  );
+
+  return {
+    projectSlug: ACTIVITY_SLUG,
+    projectName: ACTIVITY_NAME,
+    member,
+    unreadKeyRefs: [carrier.keyRef],
+    seenKeyRefs: [carrier.keyRef],
+    flaggedKeyRef: flagged.keyRef,
+    decisions: 1,
+    unread: 2,
+  };
+}
+
 async function seedM38DecideFixture(
   pool: Pool,
   adminId: string,
@@ -8248,6 +8382,7 @@ You answer when summoned by an @mention.
     const executionHost = await seedExecutionHostFixture(pool, admin.id);
     const m38 = await seedM38DecideFixture(pool, admin.id);
     const workTable = await seedWorkTableFixture(pool, admin.id);
+    const activityFeed = await seedActivityFeedFixture(pool, admin.id);
     const m40 = await seedM40Fixture(pool, admin.id);
     const capabilityEnforcement = await seedCapabilityEnforcementFixture(
       pool,
@@ -8319,6 +8454,7 @@ You answer when summoned by an @mention.
         m40,
         capabilityEnforcement,
         workTable,
+        activityFeed,
       },
     };
     const outDir = path.resolve("e2e/.auth");

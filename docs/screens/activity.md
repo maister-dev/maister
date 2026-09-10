@@ -1,6 +1,6 @@
 # Activity
 
-**Route:** `/activity` · **Status:** Designed (ADR-168) · **Source:** `web/app/(app)/activity/page.tsx`
+**Route:** `/activity` · **Status:** Implemented (ADR-168, ADR-170) · **Source:** `web/app/(app)/activity/page.tsx`
 
 The cross-project activity feed, with a per-user read cursor and an unread
 divider. Answers "what happened that I have not seen" — nothing here waits on
@@ -47,6 +47,43 @@ type, kind, and "mine" — are URL-synchronized.
 The feed carries **no worktree path, no diff body and no raw ACP frame**
 (`ATN-09`); every row is an explicit DTO projection.
 
+As built (`web/lib/queries/activity-feed.ts`, `getCrossProjectActivityFeed`):
+
+- **Three sources, one bounded read.** `task_activity` (all 13 kinds),
+  `domain_events` restricted to `ATTENTION_EVENT_KINDS`, and settled
+  `webhook_deliveries` (`delivered` / `dead` — `pending` is the drainer's
+  business). Each source is fetched newest-first and capped, then merged in
+  memory; the statement count is independent of the row count.
+- **`ATTENTION_EVENT_KINDS`** (`web/lib/domain-events/taxonomy.ts`) is the
+  taxonomy minus the three kinds written in the SAME transaction as a
+  `task_activity` row carrying the same fact (`task.created`,
+  `task.comment_added`, `task.triage_requeued`). Rendering both would print one
+  fact twice, and counting both made `updates` score one task creation as two.
+  `task.clarification_answered` has no twin and stays on the attention side.
+  The two lists must PARTITION the taxonomy — `UT-ATN-09` fails if a new kind
+  lands in neither.
+- **No `payload` column is ever selected.** The three scalars the feed needs out
+  of one (`gateId`, `hitlRequestId`, and `run_launched`'s `runId`) are extracted
+  as `->>` expressions in SQL, so a path or a hunk sitting in a payload has no
+  route into the process. The webhook row carries subscription name, attempt
+  count, HTTP status and error KIND — never `last_error_message`, never the
+  response snippet, never the target URL.
+- **`mine`** means activity on tasks the reader SUBSCRIBES to
+  (`task_subscribers`), not activity the reader caused — "what I did" is already
+  reachable through the actor-type filter and is the one slice nobody needs to
+  catch up on. It excludes the taskless webhook source entirely.
+- **A project filter naming a project the reader cannot see** resolves to no id
+  and drops the feed to empty, rather than refusing and revealing that the
+  project exists.
+- **No paging.** One bounded page (100, capped at 200) with a `hasMore` flag;
+  the surface says "showing the latest N" rather than inventing a cursor
+  contract nothing asks for.
+
+Freshness comes from the attention stream (ADR-170): `AttentionLiveRefresh`
+holds one `EventSource`, and a pushed tick becomes `router.refresh()`. There is
+no client timer. The accessible liveness pill and its reconnect affordance are
+`<RunStreamLiveness>`, shared with the run and evaluation surfaces.
+
 The rail's Activity badge shows `updates` in a **neutral** tone: it says
 "N things happened you have not seen", never "N things need you". Only the Inbox
 badge wears the attention tone.
@@ -69,9 +106,15 @@ stateDiagram-v2
 
 - Feed, counters and cursor semantics — see
   [`system-analytics/attention.md`](../system-analytics/attention.md).
-- `POST /api/activity/cursor` — monotonic upsert; a future timestamp is refused
-  `PRECONDITION` (`ATN-10`).
-- Liveness — `GET /api/attention/stream`.
+- `POST /api/activity/cursor` — monotonic `GREATEST` upsert on the SESSION's own
+  cursor (no user id in the body); a future timestamp is refused `PRECONDITION`
+  → HTTP 409 (`ATN-10`, `EDGE-ATN-03`). The response returns the STORED cursor,
+  so a stale request can see that it was absorbed rather than applied.
+  "Mark all as read" sends one millisecond PAST the newest rendered row: a
+  `timestamptz` carries microseconds that a JS `Date` has already floored away,
+  so a cursor set to the row's own millisecond would leave that row unread
+  forever.
+- Liveness — `GET /api/attention/stream` (ADR-170).
 
 ## i18n
 

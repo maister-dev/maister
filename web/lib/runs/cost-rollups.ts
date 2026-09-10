@@ -6,6 +6,7 @@ import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import {
   and,
   eq,
+  gte,
   inArray,
   or,
   sql,
@@ -649,6 +650,44 @@ export async function queryTokensByTaskIds(
   );
 
   return totals;
+}
+
+/**
+ * Total spend across a set of projects for runs STARTED in a window (M51 T5.4).
+ *
+ * Attribution is by `runs.started_at`, deliberately: a rollup row carries one
+ * running total and an `updated_at`, so windowing on the rollup would charge a
+ * long-lived run's ENTIRE history to whatever window it last wrote in — a
+ * four-digit "spent since your last visit" for a run that started last week.
+ * Start-time attribution can only under-report an in-flight run, which is the
+ * honest direction for a catch-up digest.
+ *
+ * Shares `baseTokenSumExpr` with the per-run and per-task totals so a digest and
+ * a task row cannot report different spend for the same run.
+ */
+export async function queryTokensSpentSince(
+  projectIds: readonly string[],
+  since: Date,
+  opts: { client?: DbClient } = {},
+): Promise<number> {
+  if (projectIds.length === 0) return 0;
+
+  const client = opts.client ?? db();
+  const [row] = (await client
+    .select({ total: baseTokenSumExpr })
+    .from(runCostRollups)
+    .innerJoin(runs, eq(runs.id, runCostRollups.runId))
+    .where(
+      and(inArray(runs.projectId, [...projectIds]), gte(runs.startedAt, since)),
+    )) as Array<{ total: number | string | null }>;
+  const total = asTokenNumber(row?.total ?? 0);
+
+  log.debug(
+    { projectCount: projectIds.length, since, scope: "window", total },
+    "budget token totals",
+  );
+
+  return total;
 }
 
 /**

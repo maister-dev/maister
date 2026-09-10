@@ -17,6 +17,11 @@ import "server-only";
  * for its recipient, so summing the two populations double-counts the most
  * common event in the system. That is why this is a join and not two cheap
  * counts.
+ *
+ * The same trap exists one table over: three `domain_events` kinds are emitted
+ * in the SAME transaction as a `task_activity` row carrying the same fact, so
+ * the event side reads `ATTENTION_EVENT_KINDS` — the complement — and the
+ * activity feed renders exactly that population.
  */
 
 import type { GlobalRole } from "@/lib/db/schema";
@@ -25,12 +30,14 @@ import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { and, eq, gt, inArray, isNull, sql } from "drizzle-orm";
 import pino from "pino";
 
+import { ATTENTION_EVENT_KINDS } from "@/lib/domain-events/taxonomy";
+import { getActivityCursor } from "@/lib/queries/activity-cursor";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import { getVisibleProjectIds } from "@/lib/queries/visible-projects";
 import { getOpenRelationBlockers } from "@/lib/social/relations";
 
-const { domainEvents, inboxItems, taskActivity, userActivityCursors } = schema;
+const { domainEvents, inboxItems, taskActivity } = schema;
 
 const log = pino({
   name: "queries-updates",
@@ -57,13 +64,8 @@ export async function getUpdatesCount(
 
   if (projectIds.length === 0) return 0;
 
-  const [cursorRow] = await client
-    .select({ seenThrough: userActivityCursors.seenThrough })
-    .from(userActivityCursors)
-    .where(eq(userActivityCursors.userId, userId));
-  const since =
-    cursorRow?.seenThrough ??
-    new Date(now.getTime() - UPDATES_NO_CURSOR_WINDOW_MS);
+  const cursor = await getActivityCursor(userId, client);
+  const since = cursor ?? new Date(now.getTime() - UPDATES_NO_CURSOR_WINDOW_MS);
 
   const [unreadRows, activityRows, eventRows] = await Promise.all([
     client
@@ -96,6 +98,7 @@ export async function getUpdatesCount(
       .where(
         and(
           inArray(domainEvents.projectId, projectIds),
+          inArray(domainEvents.kind, [...ATTENTION_EVENT_KINDS]),
           gt(domainEvents.occurredAt, since),
         ),
       ),
@@ -127,7 +130,7 @@ export async function getUpdatesCount(
     {
       userId,
       projectCount: projectIds.length,
-      hasCursor: cursorRow !== undefined,
+      hasCursor: cursor !== null,
       unread: unread.length,
       activity: activityRows.length,
       overlap: activityRows.length - unrepresentedActivity.length,

@@ -153,7 +153,10 @@
     "closeNavigation": "Close navigation",
     "collapseRail": "Collapse sidebar",
     "expandRail": "Expand sidebar",
-    "work": "Work"
+    "work": "Work",
+    "activityFeed": "Activity",
+    "badgeDecisions": "$count blocked on you",
+    "badgeUpdates": "$count unseen"
   },
   "studio": {
     "title": "Studio",
@@ -4708,5 +4711,75 @@
     "openTask": "Open the task",
     "openRun": "Open the run",
     "openProject": "Open the project board"
+  },
+  "activityFeed": {
+    "eyebrow": "attention",
+    "title": "Activity",
+    "sub": "Everything that happened across your projects, newest first. Nothing here is waiting on you.",
+    "rowCount": "$count events",
+    "latestOnly": "Showing the latest $count — narrow the filters to see further back.",
+    "filters": {
+      "project": "Project",
+      "allProjects": "All projects",
+      "actor": "Actor",
+      "allActors": "Anyone",
+      "kind": "Event",
+      "allKinds": "All events",
+      "mine": "Only tasks I follow",
+      "apply": "Apply"
+    },
+    "actor": {
+      "user": "People",
+      "agent": "Agents",
+      "system": "System"
+    },
+    "divider": "Your last visit",
+    "caughtUp": "You are caught up.",
+    "neverLooked": "First visit — no read position yet.",
+    "markRead": "Mark all as read",
+    "markReadFailed": "Could not save your read position. Try again.",
+    "empty": {
+      "noProjects": "You belong to no project yet, so there is nothing to catch up on.",
+      "noRows": "Nothing matches these filters."
+    },
+    "openTask": "Open task",
+    "openRun": "Open run",
+    "openProject": "Open project",
+    "webhookAttempts": "$count attempts",
+    "kinds": {
+      "task_created": "task created",
+      "comment_added": "comment",
+      "task_mentioned": "mentioned",
+      "relation_added": "relation added",
+      "relation_removed": "relation removed",
+      "run_launched": "run launched",
+      "triage_set": "triage set",
+      "triage_requeued": "sent to triage",
+      "agent_quarantined": "agent quarantined",
+      "experiment_concluded": "experiment concluded",
+      "run_pr_merged": "PR merged",
+      "evaluation_decided": "evaluation decided",
+      "agent_summon_suppressed": "summon suppressed",
+      "task_clarification_answered": "clarification answered",
+      "run_done": "run finished",
+      "run_failed": "run failed",
+      "run_crashed": "run crashed",
+      "run_abandoned": "run abandoned",
+      "run_review": "run reached review",
+      "run_escalated": "run escalated",
+      "run_rework_claimed": "taken back for rework",
+      "run_rework_returned": "returned to the flow",
+      "gate_failed": "gate failed",
+      "webhook_delivered": "webhook delivered",
+      "webhook_dead": "webhook failed"
+    }
+  },
+  "digest": {
+    "promoted": "$count promoted",
+    "crashed": "$count crashed",
+    "decisions": "$count new decisions",
+    "events": "$count new events",
+    "tokens": "$count tokens",
+    "empty": "Nothing happened since your last visit."
   }
 }
