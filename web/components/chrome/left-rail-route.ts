@@ -1,5 +1,6 @@
 export const RAIL_SECTION_IDS = [
   "projects",
+  "work",
   "inbox",
   "studio",
   "observatory",
@@ -38,6 +39,7 @@ export function railSectionForPathname(
     return "projects";
   }
 
+  if (isPathPrefix(path, "/work")) return "work";
   if (isPathPrefix(path, "/inbox")) return "inbox";
   if (isPathPrefix(path, "/studio") || isPathPrefix(path, "/flows")) {
     return "studio";

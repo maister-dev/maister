@@ -31,7 +31,7 @@ function ns(cat: Catalog): Record<string, unknown> {
 const enNs = ns(en as unknown as Catalog);
 const ruNs = ns(ru as unknown as Catalog);
 
-describe("i18n — every WorkStage member has an EN label", () => {
+describe("UT-STG-10 i18n — every WorkStage member has an EN label", () => {
   for (const key of REQUIRED_KEYS) {
     it(`en.workStage.${key} is a non-empty string`, () => {
       expect(typeof enNs[key]).toBe("string");
@@ -40,7 +40,7 @@ describe("i18n — every WorkStage member has an EN label", () => {
   }
 });
 
-describe("i18n — every WorkStage member has an RU label", () => {
+describe("UT-STG-10 i18n — every WorkStage member has an RU label", () => {
   for (const key of REQUIRED_KEYS) {
     it(`ru.workStage.${key} is a non-empty string`, () => {
       expect(typeof ruNs[key]).toBe("string");
@@ -49,7 +49,7 @@ describe("i18n — every WorkStage member has an RU label", () => {
   }
 });
 
-describe("i18n — workStage EN and RU are translated, not duplicated", () => {
+describe("UT-STG-10 i18n — workStage EN and RU are translated, not duplicated", () => {
   for (const key of REQUIRED_KEYS) {
     it(`workStage.${key} differs between EN and RU`, () => {
       expect(ruNs[key]).not.toBe(enNs[key]);

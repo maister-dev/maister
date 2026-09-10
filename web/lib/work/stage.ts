@@ -41,6 +41,8 @@ export interface DeriveWorkStageInput {
   taskStage: Task["stage"];
   triageStatus: Task["triageStatus"];
   runStatus: RunStatusValue | null;
+  // Part of the input signature ADR-169 D1 fixes normatively, though no branch
+  // reads it today: the run-status axis already separates the kinds that differ.
   runKind: Run["runKind"] | null;
   promotionState: string | null;
   workspaceRemoved: boolean;

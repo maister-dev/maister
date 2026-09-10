@@ -224,6 +224,23 @@ export type E2EM22Fixture = {
   viewerPassword: string;
 };
 
+// T3.4 (`E2E-STG-09`): two projects sharing the cross-project /work table, and
+// a member who belongs to exactly one of them — so the spec can assert both a
+// grant and a denial in the same run.
+export type E2EWorkTableFixture = {
+  alphaSlug: string;
+  alphaName: string;
+  betaSlug: string;
+  betaName: string;
+  // A `Ready` task (never launched) in the project the member belongs to.
+  alphaKeyRef: string;
+  // An `Executing` task in the same project — the stage filter needs two.
+  alphaExecutingKeyRef: string;
+  // A task in the project the member must NOT see.
+  betaKeyRef: string;
+  member: E2EUserFixture;
+};
+
 export type E2EFixtures = {
   adminEmail: string;
   adminPassword: string;
@@ -268,6 +285,7 @@ export type E2EFixtures = {
     budgetFork: E2EBudgetForkFixture;
     humanAsk: E2EHumanAskFixture;
     capabilityEnforcement: E2ECapabilityEnforcementFixture;
+    workTable: E2EWorkTableFixture;
   };
 };
 

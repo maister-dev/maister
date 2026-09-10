@@ -741,7 +741,7 @@ unowned — one is shared by two phases, which the traceability matrix already r
 
 ### Phase 3 — `/work` · `STG-08..09`
 
-**T3.1 [ ] — `getWorkTable`.** *RED*: `IT-STG-08` asserting the total query count is
+**T3.1 [x] — `getWorkTable`.** *RED*: `IT-STG-08` asserting the total query count is
 **constant** as the fixture grows from 1 project/2 tasks to 3 projects/12 tasks —
 the anti-N+1 guarantee as a test, not a comment. *GREEN*:
 `web/lib/queries/work-table.ts` — `getVisibleProjectIds` → one batched
@@ -751,7 +751,7 @@ task+latest-run query (the board's batching, not its per-project scope) → one
 `deriveWorkStage`. Includes pre-flight stages (`Triage`, `Held`, `Ready`).
 *Logging*: one `debug` per call — row count, project count, elapsed ms.
 
-**T3.2 [ ] — Route and table.** `web/app/(app)/work/page.tsx` + a client table.
+**T3.2 [x] — Route and table.** `web/app/(app)/work/page.tsx` + a client table.
 Full-width per the data-management pattern (drop `mx-auto max-w-*`, `min-w-*` +
 `overflow-x-auto`, responsive `md:`), **view-only** rows, URL-synchronized filters
 via a plain `<form action="/work">` in the `/runs` idiom. Columns: `KEY-N` · title ·
@@ -760,7 +760,7 @@ age) · blockers (KEY-N chips) · tokens · last activity · next action. Groupi
 project / stage / mine; saved views per Deviation 4. Token counts via
 `Intl.NumberFormat(locale)`; count strings use `$count`.
 
-**T3.3 [ ] — Rail entry + i18n.** All four rail files or the nav highlights the wrong
+**T3.3 [x] — Rail entry + i18n.** All four rail files or the nav highlights the wrong
 item: `RAIL_SECTION_IDS` (`left-rail-route.ts:1`), `railSectionForPathname` (`:27`),
 `buildLeftRailSections` (`left-rail-sections.ts:15`), `sectionIcons`
 (`left-rail-nav.tsx:44`). New `work` namespace EN + RU; **do not reuse
@@ -768,11 +768,28 @@ item: `RAIL_SECTION_IDS` (`left-rail-route.ts:1`), `railSectionForPathname` (`:2
 (`web/components/board/project-tabs.tsx`). *Verify (`unit`)*: a page-contract test
 in the `observatory/__tests__/page-contract.test.ts` shape.
 
-**T3.4 [ ] — e2e `E2E-STG-09`.** `web/e2e/work-table.spec.ts` + a `byKey.work` fixture
+**T3.4 [x] — e2e `E2E-STG-09`.** `web/e2e/work-table.spec.ts` + a `byKey.work` fixture
 in `e2e/_seed/seed-e2e.ts` + a type in `e2e/_seed/fixtures.ts` + the basename in
 `AUTHED_SPEC` (`web/playwright.config.ts:30`) — **without that entry the spec
 silently never runs**. Admin sees two projects' rows; a member only their own;
 filter and group round-trip through the URL; a saved view restores.
+
+*Execution notes (2026-09-10)*: three deviations, all recorded rather than silent.
+(a) The e2e fixture key is `byKey.workTable`, not `byKey.work` — `work` reads as a
+single project fixture and this one is two projects plus a member. (b) `getWorkTable`
+takes **no** filter arguments: filtering and grouping are pure functions over the
+loaded table (`web/lib/work/work-table-view.ts`), which is what makes the `STG-08`
+statement count flat under every filter combination, and makes the documented
+"a filter naming an invisible project is dropped, not refused" behaviour automatic.
+(c) The waiting-on column answers with a person (`you` / a named assignee /
+`anyone`), not a role — the flow DSL has no role concept to read one from. The screen
+doc records all three as built.
+
+Phase 3 also closed two holes left by earlier phases: `IT-STG-07` (no `work_stage`
+column anywhere in the migrated schema, with a positive control proving the probe can
+see columns at all) and `IT-EDGE-STG-01` (a task with three runs classifies from the
+newest STARTED run, inserted newest-first so a "first row" or "last row" read model
+fails). `STG-01..10` and `EDGE-STG-01..03` are now `Implemented` in the matrix.
 
 > **Checkpoint 4** — `feat(work): cross-project work table at /work (E1, STG-08..10)`
 

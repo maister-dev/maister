@@ -8,7 +8,7 @@ describe("buildLeftRailSections", () => {
   it("projects every member-permitted section, including Observatory", () => {
     expect(
       buildLeftRailSections(label, "member").map((section) => section.id),
-    ).toEqual(["projects", "inbox", "studio", "observatory"]);
+    ).toEqual(["projects", "work", "inbox", "studio", "observatory"]);
   });
 
   it("adds only the existing admin-permitted destinations for an admin", () => {
@@ -16,6 +16,7 @@ describe("buildLeftRailSections", () => {
       buildLeftRailSections(label, "admin").map((section) => section.id),
     ).toEqual([
       "projects",
+      "work",
       "inbox",
       "studio",
       "observatory",

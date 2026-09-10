@@ -25,19 +25,19 @@ what stops this matrix decaying into the historical aliases the Stage B matrix b
 
 | Requirement | Contract/schema | Enforcement/task | Primary test | Status |
 | --- | --- | --- | --- | --- |
-| STG-01 | exhaustive satisfies map over RUN_STATUS_VALUES | T1.1 | UT-STG-01 | Planned |
-| STG-02 | pure-module rule, no server-only import | T1.1 | UT-STG-02 | Planned |
-| STG-03 | ADR-169 D2 mapping table | T1.1 | UT-STG-03 | Planned |
-| STG-04 | ADR-169 D2 mapping table | T1.1 | UT-STG-04 | Planned |
-| STG-05 | deriveWorkStage return shape | T1.1 | UT-STG-05 | Planned |
-| STG-06 | WorkStage member list | T1.1 | UT-STG-06 | Planned |
-| STG-07 | DB schema, no work_stage column | T1.1 | IT-STG-07 | Planned |
-| STG-08 | getWorkTable batched read model | T2.2, T3.1 | IT-STG-08 | Planned |
-| STG-09 | getVisibleProjectIds | T2.1, T3.2, T3.4 | IT-STG-09 plus E2E-STG-09 | Planned |
-| STG-10 | workStage i18n namespace, EN and RU | T1.2, T3.2 | UT-STG-10 | Planned |
-| EDGE-STG-01 | latest-run selection in the read model | T3.1, T3.4 | IT-EDGE-STG-01 | Planned |
-| EDGE-STG-02 | workspaceRemoved branch | T1.1 | UT-EDGE-STG-02 | Planned |
-| EDGE-STG-03 | no-run triage branch | T1.1 | UT-EDGE-STG-03 | Planned |
+| STG-01 | exhaustive satisfies map over RUN_STATUS_VALUES | T1.1 | UT-STG-01 | Implemented |
+| STG-02 | pure-module rule, no server-only import | T1.1 | UT-STG-02 | Implemented |
+| STG-03 | ADR-169 D2 mapping table | T1.1 | UT-STG-03 | Implemented |
+| STG-04 | ADR-169 D2 mapping table | T1.1 | UT-STG-04 | Implemented |
+| STG-05 | deriveWorkStage return shape | T1.1 | UT-STG-05 | Implemented |
+| STG-06 | WorkStage member list | T1.1 | UT-STG-06 | Implemented |
+| STG-07 | DB schema, no work_stage column | T1.1, T3.1 | IT-STG-07 | Implemented |
+| STG-08 | getWorkTable batched read model | T2.2, T3.1 | IT-STG-08 | Implemented |
+| STG-09 | getVisibleProjectIds | T2.1, T3.2, T3.4 | IT-STG-09 plus E2E-STG-09 | Implemented |
+| STG-10 | workStage i18n namespace, EN and RU | T1.2, T3.2 | UT-STG-10 | Implemented |
+| EDGE-STG-01 | latest-run selection in the read model | T3.1, T3.4 | IT-EDGE-STG-01 | Implemented |
+| EDGE-STG-02 | workspaceRemoved branch | T1.1 | UT-EDGE-STG-02 | Implemented |
+| EDGE-STG-03 | no-run triage branch | T1.1 | UT-EDGE-STG-03 | Implemented |
 | ATN-01 | getDecisionsQueue single-query contract | T2.3, T2.4, T4.1, T4.4 | IT-ATN-01 | Planned |
 | ATN-02 | inbox_items source_ref activityId join | T4.2 | IT-ATN-02 | Planned |
 | ATN-03 | bounded 24h fallback window | T4.2, T5.1 | IT-ATN-03 | Planned |

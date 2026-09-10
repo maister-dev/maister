@@ -11,6 +11,7 @@ import {
   InboxIcon,
   PuzzlePieceIcon,
   Squares2X2Icon,
+  TableCellsIcon,
   UsersIcon,
   WrenchScrewdriverIcon,
 } from "@heroicons/react/24/outline";
@@ -43,6 +44,7 @@ type HeroIcon = ComponentType<SVGProps<SVGSVGElement>>;
 
 const sectionIcons: Record<RailSectionId, HeroIcon> = {
   projects: Squares2X2Icon,
+  work: TableCellsIcon,
   inbox: InboxIcon,
   studio: WrenchScrewdriverIcon,
   observatory: ChartBarIcon,

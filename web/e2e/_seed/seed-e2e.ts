@@ -7612,6 +7612,173 @@ type M38DecideFixtureRecord = {
 // M38 decide/on_mismatch shape on BOTH the flow_revisions row (the launch
 // precondition + runtime read it) and the flows row (loadRun/board read it),
 // and writes the output schema doc into the flow's install dir.
+// T3.4 (`E2E-STG-09`): two projects whose tasks share the /work table, and one
+// member who belongs to exactly ONE of them. A single-project fixture cannot
+// tell a working scope from a broken one — the member must be able to see
+// something AND be denied something in the same run.
+const WORK_ALPHA_SLUG = "e2e-work-alpha";
+const WORK_BETA_SLUG = "e2e-work-beta";
+const WORK_MEMBER_EMAIL = "e2e-work-member@maister.local";
+const WORK_MEMBER_PASSWORD = "WorkMember!2345";
+
+type WorkTableFixtureRecord = {
+  alphaSlug: string;
+  alphaName: string;
+  betaSlug: string;
+  betaName: string;
+  alphaKeyRef: string;
+  alphaExecutingKeyRef: string;
+  betaKeyRef: string;
+  member: UserFixture;
+};
+
+async function seedWorkTableFixture(
+  pool: Pool,
+  adminId: string,
+): Promise<WorkTableFixtureRecord> {
+  await pool.query(`DELETE FROM projects WHERE slug IN ($1, $2)`, [
+    WORK_ALPHA_SLUG,
+    WORK_BETA_SLUG,
+  ]);
+  await pool.query(`DELETE FROM users WHERE email = $1`, [WORK_MEMBER_EMAIL]);
+
+  const member = await insertUser(pool, {
+    email: WORK_MEMBER_EMAIL,
+    password: WORK_MEMBER_PASSWORD,
+    name: "E2E Work Member",
+    role: "member",
+    accountStatus: "active",
+    mustChangePassword: false,
+  });
+
+  async function seedProject(
+    slug: string,
+    name: string,
+    taskKey: string,
+  ): Promise<{ projectId: string; flowId: string }> {
+    const projectId = randomUUID();
+    const flowId = randomUUID();
+    const repoPath = `/tmp/maister-e2e/${projectId}`;
+
+    await pool.query(
+      `INSERT INTO projects (id, slug, name, repo_path, maister_yaml_path, task_key)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [projectId, slug, name, repoPath, `${repoPath}/maister.yaml`, taskKey],
+    );
+    await pool.query(
+      `INSERT INTO flows (id, project_id, flow_ref_id, source, version, installed_path, manifest, schema_version)
+       VALUES ($1, $2, 'aif', $3, 'v0.0.1', $4, $5, 1)`,
+      [
+        flowId,
+        projectId,
+        "github.com/maister/maister-flow-aif",
+        `/tmp/maister-e2e/flows/aif-work@v0.0.1`,
+        JSON.stringify({ schemaVersion: 1, name: "aif", nodes: [] }),
+      ],
+    );
+    await pool.query(
+      `INSERT INTO project_members (id, project_id, user_id, role)
+       VALUES ($1, $2, $3, 'admin')`,
+      [randomUUID(), projectId, adminId],
+    );
+
+    return { projectId, flowId };
+  }
+
+  async function seedTask(
+    project: { projectId: string; flowId: string },
+    title: string,
+    withRun: boolean,
+  ): Promise<number> {
+    const taskId = randomUUID();
+    const { rows } = await pool.query<{ number: number }>(
+      `INSERT INTO tasks (id, project_id, number, title, prompt, flow_id, status, stage, triage_status)
+       VALUES ($1, $2, (SELECT COALESCE(MAX(number), 0) + 1 FROM tasks WHERE project_id = $2), $3, $4, $5, $6, 'Backlog', 'triaged')
+       RETURNING number`,
+      [
+        taskId,
+        project.projectId,
+        title,
+        "work table fixture",
+        project.flowId,
+        withRun ? "InFlight" : "Backlog",
+      ],
+    );
+    const number = rows[0].number;
+
+    if (withRun) {
+      const runId = randomUUID();
+
+      await pool.query(
+        `INSERT INTO runs (id, task_id, project_id, flow_id, status, current_step_id, flow_version, started_at)
+         VALUES ($1, $2, $3, $4, 'Running', 'plan', 'v0.0.1', now())`,
+        [runId, taskId, project.projectId, project.flowId],
+      );
+      // The left rail renders active workspaces on EVERY page and refuses a run
+      // whose snapshot carries no capability agent, so a workspace-bearing run
+      // must have its session even though /work never reads one.
+      await seedDefaultRunSession(pool, {
+        capabilityAgent: "claude",
+        runId,
+        runnerId: PLATFORM_DEFAULT_RUNNER_ID,
+        runnerSnapshot: e2eClaudeRunnerSnapshot(PLATFORM_DEFAULT_RUNNER_ID),
+      });
+      await pool.query(
+        `INSERT INTO workspaces (id, project_id, run_id, branch, worktree_path, parent_repo_path)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [
+          randomUUID(),
+          project.projectId,
+          runId,
+          `maister/work-${number}-${runId.slice(0, 8)}`,
+          `/tmp/maister-e2e/wt-${runId}`,
+          `/tmp/maister-e2e/${project.projectId}`,
+        ],
+      );
+    }
+
+    return number;
+  }
+
+  const alphaKey = "WKA";
+  const betaKey = "WKB";
+  const alpha = await seedProject(
+    WORK_ALPHA_SLUG,
+    "MAIster E2E Work Alpha",
+    alphaKey,
+  );
+  const beta = await seedProject(
+    WORK_BETA_SLUG,
+    "MAIster E2E Work Beta",
+    betaKey,
+  );
+
+  await pool.query(
+    `INSERT INTO project_members (id, project_id, user_id, role)
+     VALUES ($1, $2, $3, 'member')`,
+    [randomUUID(), alpha.projectId, member.id],
+  );
+
+  const alphaReady = await seedTask(alpha, "Work alpha ready task", false);
+  const alphaExecuting = await seedTask(
+    alpha,
+    "Work alpha executing task",
+    true,
+  );
+  const betaReady = await seedTask(beta, "Work beta ready task", false);
+
+  return {
+    alphaSlug: WORK_ALPHA_SLUG,
+    alphaName: "MAIster E2E Work Alpha",
+    betaSlug: WORK_BETA_SLUG,
+    betaName: "MAIster E2E Work Beta",
+    alphaKeyRef: `${alphaKey}-${alphaReady}`,
+    alphaExecutingKeyRef: `${alphaKey}-${alphaExecuting}`,
+    betaKeyRef: `${betaKey}-${betaReady}`,
+    member,
+  };
+}
+
 async function seedM38DecideFixture(
   pool: Pool,
   adminId: string,
@@ -8080,6 +8247,7 @@ You answer when summoned by an @mention.
     const rah = await seedRahE2EFixture(pool, admin.id);
     const executionHost = await seedExecutionHostFixture(pool, admin.id);
     const m38 = await seedM38DecideFixture(pool, admin.id);
+    const workTable = await seedWorkTableFixture(pool, admin.id);
     const m40 = await seedM40Fixture(pool, admin.id);
     const capabilityEnforcement = await seedCapabilityEnforcementFixture(
       pool,
@@ -8150,6 +8318,7 @@ You answer when summoned by an @mention.
         m38,
         m40,
         capabilityEnforcement,
+        workTable,
       },
     };
     const outDir = path.resolve("e2e/.auth");

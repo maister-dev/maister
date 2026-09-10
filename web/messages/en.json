@@ -152,7 +152,8 @@
     "openNavigation": "Open navigation",
     "closeNavigation": "Close navigation",
     "collapseRail": "Collapse sidebar",
-    "expandRail": "Expand sidebar"
+    "expandRail": "Expand sidebar",
+    "work": "Work"
   },
   "studio": {
     "title": "Studio",
@@ -4625,5 +4626,78 @@
     "Abandoned": "Abandoned",
     "blocked": "Blocked",
     "promotedResult": "Result published"
+  },
+  "work": {
+    "eyebrow": "Everything in flight",
+    "title": "Work",
+    "sub": "Every task you can see, across every project, in one comparable list.",
+    "rowCount": "$count rows",
+    "filters": {
+      "project": "Project",
+      "allProjects": "All projects",
+      "stage": "Stage",
+      "allStages": "All stages",
+      "group": "Group by",
+      "apply": "Apply",
+      "reset": "Reset"
+    },
+    "group": {
+      "none": "Nothing",
+      "project": "Project",
+      "stage": "Stage",
+      "mine": "Waiting on me",
+      "mineHeading": "Waiting on you",
+      "othersHeading": "Everything else"
+    },
+    "columns": {
+      "key": "Task",
+      "title": "Title",
+      "project": "Project",
+      "stage": "Stage",
+      "run": "Run",
+      "readiness": "Readiness",
+      "waitingOn": "Waiting on",
+      "blockers": "Blocked by",
+      "tokens": "Tokens",
+      "lastActivity": "Last activity",
+      "nextAction": "Next"
+    },
+    "waitingOn": {
+      "you": "You",
+      "anyone": "Anyone",
+      "since": "for $age"
+    },
+    "readiness": {
+      "ready": "Ready",
+      "blocked": "Blocked",
+      "stale": "Stale",
+      "failed": "Failed",
+      "waiting": "Waiting",
+      "overridden": "Overridden"
+    },
+    "nextAction": {
+      "triage": "Triage it",
+      "release": "Release the hold",
+      "launch": "Launch a run",
+      "respond": "Respond",
+      "review": "Review",
+      "recover": "Recover or discard",
+      "watch": "Nothing — it is running",
+      "none": "Nothing"
+    },
+    "empty": {
+      "noProjects": "You do not belong to any project yet.",
+      "noRows": "Nothing matches these filters."
+    },
+    "savedViews": {
+      "label": "Saved views",
+      "save": "Save this view",
+      "namePlaceholder": "Name this view",
+      "remove": "Remove this view",
+      "empty": "No saved views yet."
+    },
+    "openTask": "Open the task",
+    "openRun": "Open the run",
+    "openProject": "Open the project board"
   }
 }
