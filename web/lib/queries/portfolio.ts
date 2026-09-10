@@ -26,6 +26,7 @@ import {
 
 import { hasReadyPlatformRunner } from "@/lib/acp-runners/ready-runner";
 import { getDb } from "@/lib/db/client";
+import { getVisibleProjectIds } from "@/lib/queries/visible-projects";
 import { MaisterError } from "@/lib/errors";
 import { isProjectFlowLaunchable } from "@/lib/flows/project-flow-launchability";
 import { deriveTtlInfo } from "@/lib/gc/ttl";
@@ -293,31 +294,14 @@ export async function getPortfolio(
   const now = new Date();
   const client = db();
 
+  const visibleProjectIds = await getVisibleProjectIds(userId, globalRole);
   const visibleProjects =
-    globalRole === "admin"
-      ? await client
+    visibleProjectIds.length === 0
+      ? []
+      : await client
           .select()
           .from(projects)
-          .where(isNull(projects.archivedAt))
-          .orderBy(projects.createdAt)
-      : await client
-          .select({
-            id: projects.id,
-            slug: projects.slug,
-            name: projects.name,
-            repoPath: projects.repoPath,
-            mainBranch: projects.mainBranch,
-            branchPrefix: projects.branchPrefix,
-            maisterYamlPath: projects.maisterYamlPath,
-            defaultRunnerId: projects.defaultRunnerId,
-            createdAt: projects.createdAt,
-            archivedAt: projects.archivedAt,
-          })
-          .from(projects)
-          .innerJoin(projectMembers, eq(projectMembers.projectId, projects.id))
-          .where(
-            and(eq(projectMembers.userId, userId), isNull(projects.archivedAt)),
-          )
+          .where(inArray(projects.id, visibleProjectIds))
           .orderBy(projects.createdAt);
 
   if (visibleProjects.length === 0) {
@@ -1153,17 +1137,10 @@ export async function getCrossProjectHitlInbox(
   const now = new Date();
   const client = db();
 
-  // Resolve visible projects exactly like getPortfolio.
+  const visibleIds = await getVisibleProjectIds(userId, globalRole);
   const visibleProjects =
-    globalRole === "admin"
-      ? await client
-          .select({
-            id: projects.id,
-            slug: projects.slug,
-            name: projects.name,
-          })
-          .from(projects)
-          .where(isNull(projects.archivedAt))
+    visibleIds.length === 0
+      ? []
       : await client
           .select({
             id: projects.id,
@@ -1171,10 +1148,7 @@ export async function getCrossProjectHitlInbox(
             name: projects.name,
           })
           .from(projects)
-          .innerJoin(projectMembers, eq(projectMembers.projectId, projects.id))
-          .where(
-            and(eq(projectMembers.userId, userId), isNull(projects.archivedAt)),
-          );
+          .where(inArray(projects.id, visibleIds));
 
   if (visibleProjects.length === 0) {
     return { items: [], count: 0 };

@@ -3,7 +3,15 @@ import "server-only";
 import type { RunnerSnapshot } from "@/lib/db/schema";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
-import { and, eq, or, sql, type SQL, type SQLWrapper } from "drizzle-orm";
+import {
+  and,
+  eq,
+  inArray,
+  or,
+  sql,
+  type SQL,
+  type SQLWrapper,
+} from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
@@ -595,6 +603,52 @@ export async function queryTaskTokens(
   log.debug({ taskId, scope: "task", total }, "budget token total");
 
   return total;
+}
+
+/**
+ * Per-task token totals for MANY tasks in ONE query (T2.2).
+ *
+ * `queryTaskTokens` takes a single id, so the cross-project work table calling
+ * it per row would be exactly the N+1 that table is forbidden to have. This
+ * shares `baseTokenSumExpr` with it rather than restating the sum, so a batched
+ * total and a per-task total cannot drift apart — two surfaces reporting
+ * different spend for one task is unfalsifiable in production.
+ *
+ * Tasks with no cost rollup are simply absent from the map; callers read them
+ * as 0 via `?? 0`, which is what `coalesce(...)` already returns per task.
+ */
+export async function queryTokensByTaskIds(
+  taskIds: readonly string[],
+  opts: { client?: DbClient } = {},
+): Promise<Map<string, number>> {
+  // Short-circuit BEFORE resolving a client: `inArray(x, [])` is a Drizzle
+  // footgun, and an empty request should cost nothing at all.
+  if (taskIds.length === 0) return new Map();
+
+  const client = opts.client ?? db();
+  const rows = (await client
+    .select({ taskId: runs.taskId, total: baseTokenSumExpr })
+    .from(runCostRollups)
+    .innerJoin(runs, eq(runs.id, runCostRollups.runId))
+    .where(inArray(runs.taskId, [...taskIds]))
+    .groupBy(runs.taskId)) as Array<{
+    taskId: string | null;
+    total: number | string | null;
+  }>;
+
+  const totals = new Map<string, number>();
+
+  for (const row of rows) {
+    if (row.taskId === null) continue;
+    totals.set(row.taskId, asTokenNumber(row.total));
+  }
+
+  log.debug(
+    { requested: taskIds.length, resolved: totals.size, scope: "task-batch" },
+    "budget token totals",
+  );
+
+  return totals;
 }
 
 /**

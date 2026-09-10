@@ -693,7 +693,7 @@ green (746 files / 7574 tests). Follow-up is **T8.6**.
 
 ### Phase 2 — Cross-project read-model spine · `STG-08..09`
 
-**T2.1 [ ] — `getVisibleProjectIds`.** *RED*:
+**T2.1 [x] — `getVisibleProjectIds`.** *RED*:
 `web/lib/queries/__tests__/visible-projects.integration.test.ts` (`IT-STG-09`) — a
 **positive grant** (a member sees exactly their own projects, rows non-empty) plus a
 negative (a foreign project absent). Deny-only tests cannot distinguish "correctly
@@ -702,13 +702,13 @@ refused" from "broken". *GREEN*: `web/lib/queries/visible-projects.ts`; re-point
 fifth copies never get written). *REFACTOR*: the three migrated call sites keep
 their existing tests green — name them in the task and re-run.
 
-**T2.2 [ ] — Batched token totals.** *RED*: an equivalence test — for a seeded set the
+**T2.2 [x] — Batched token totals.** *RED*: an equivalence test — for a seeded set the
 batched map equals `queryTaskTokens` per id, and `[]` issues no query. *GREEN*:
 `queryTokensByTaskIds(taskIds): Promise<Map<string, number>>` beside
 `queryTaskTokens` in `web/lib/runs/cost-rollups.ts`, sharing `baseTokenSumExpr` and
 `foldTokenRows` so per-task and batched totals cannot disagree (DRY).
 
-**T2.3 [ ] — Cross-project promotable.** *RED*: a two-project fixture asserting exactly
+**T2.3 [x] — Cross-project promotable.** *RED*: a two-project fixture asserting exactly
 **one** `computeReadinessByRun` invocation (spy). *GREEN*: split
 `web/lib/ext-activity/promotable.ts` into candidate-loader + classifier so
 `listPromotableForProjects(projectIds)` runs one bulk readiness pass;
@@ -720,13 +720,20 @@ deliberately more aggressive than `promoteRun`'s own checks — dropping either 
 recommend promoting a run an operator has held. The `workspaces.run_id` de-dup (no
 UNIQUE on that column) must also survive; both get a regression case.
 
-**T2.4 [ ] — Crashed and Held queries.** *RED*: a **redaction proof at the mapping
+**T2.4 [x] — Crashed and Held queries.** *RED*: a **redaction proof at the mapping
 function** — feed the mapper a row that actually contains `acpSessionId` and assert
 the output's exact key set and that its JSON has no session id. A test fed an
 already-safe DTO literal is vacuous. *GREEN*:
 `listCrashedForProjects(projectIds)` projecting `crashActionFor`
 (`web/lib/board.ts:171`); `listFlaggedForProjects(projectIds)` for
 `triage_status='flagged'`. Both `recover` and `discard` covered.
+
+*Requirement ownership (execution note, 2026-09-10)*: the Phase 2 heading claims
+`STG-08..09`, but neither can be *green* until `/work` exists — `STG-08` is a query-count
+guarantee about `/work` and `STG-09` is a scoping guarantee about `/work`. Phase 2 builds
+the spine they rest on (`getVisibleProjectIds` is already proven by `IT-STG-09`'s nine
+cases); both flip to green in Phase 3, which owns the same two ids. No requirement is
+unowned — one is shared by two phases, which the traceability matrix already records.
 
 > **Checkpoint 3** — `refactor(queries): one visible-projects helper and batched cross-project read models`
 
