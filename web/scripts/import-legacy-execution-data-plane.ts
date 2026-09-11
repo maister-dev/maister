@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { lstat, mkdir, readFile, readdir } from "node:fs/promises";
+import { lstat, mkdir, open, readFile, readdir, stat } from "node:fs/promises";
 import path from "node:path";
 
 import pino from "pino";
@@ -13,6 +13,15 @@ import {
 
 import { redactRuntimeEventPayload } from "@/lib/execution-host/runtime-events";
 import { CANONICAL_PROJECTION_CONSUMERS } from "@/lib/execution-host/events/projection-consumers";
+// eslint-disable-next-line no-restricted-imports -- S4.3: the operator CLI is
+// the one caller the maintenance-import fence exists for.
+import {
+  createImportMaintenanceClient,
+  IMPORT_CHUNK_BYTES,
+  readOperatorImportManifest,
+  type ImportMaintenanceClient,
+  type OperatorImportItem,
+} from "@/lib/execution-host/import-maintenance";
 
 import {
   inventoryLegacyRun,
@@ -854,11 +863,14 @@ function resolveImportId(argv: readonly string[]): string {
 }
 
 const INVENTORY_FLAGS = new Set(["--import-id", "--manifest-dir", "--batch-size"]);
+const COPY_FLAGS = new Set(["--import-id", "--manifest-dir", "--generation"]);
+const ASSOCIATE_FLAGS = COPY_FLAGS;
 
-function parseInventoryArguments(argv: readonly string[]): {
-  manifestDir: string;
-  batchSize: number;
-} {
+function parseFlags(
+  argv: readonly string[],
+  allowed: ReadonlySet<string>,
+  mode: string,
+): Map<string, string> {
   const values = new Map<string, string>();
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -870,9 +882,9 @@ function parseInventoryArguments(argv: readonly string[]): {
     const name = equals < 0 ? arg : arg.slice(0, equals);
     const inline = equals < 0 ? null : arg.slice(equals + 1);
 
-    if (!INVENTORY_FLAGS.has(name)) {
+    if (!allowed.has(name)) {
       throw new Error(
-        `unknown inventory flag ${name}; expected one of ${[...INVENTORY_FLAGS].join(", ")}`,
+        `unknown ${mode} flag ${name}; expected one of ${[...allowed].join(", ")}`,
       );
     }
     const next = argv[index + 1];
@@ -882,12 +894,24 @@ function parseInventoryArguments(argv: readonly string[]): {
     values.set(name, value);
   }
 
+  return values;
+}
+
+function requireManifestDir(values: ReadonlyMap<string, string>): string {
   const manifestDir = values.get("--manifest-dir") ?? "";
 
   if (!manifestDir) {
     throw new Error("--manifest-dir is required: the operator owns the manifest");
   }
 
+  return path.resolve(manifestDir);
+}
+
+function parseInventoryArguments(argv: readonly string[]): {
+  manifestDir: string;
+  batchSize: number;
+} {
+  const values = parseFlags(argv, INVENTORY_FLAGS, "inventory");
   const rawBatchSize = values.get("--batch-size");
   const batchSize = rawBatchSize ? Number(rawBatchSize) : DEFAULT_INVENTORY_BATCH;
 
@@ -895,7 +919,26 @@ function parseInventoryArguments(argv: readonly string[]): {
     throw new Error("--batch-size must be a positive integer");
   }
 
-  return { manifestDir: path.resolve(manifestDir), batchSize };
+  return { manifestDir: requireManifestDir(values), batchSize };
+}
+
+function parseCopyArguments(argv: readonly string[]): {
+  manifestDir: string;
+  generation: number;
+} {
+  const values = parseFlags(argv, COPY_FLAGS, "copy");
+  const generation = Number(values.get("--generation"));
+
+  // The supervisor mints this when it enables admission and logs it as
+  // `import_admission_enabled`. Naming it here is what makes a stale invocation
+  // left over from an earlier enablement refuse instead of write.
+  if (!Number.isInteger(generation) || generation < 1) {
+    throw new Error(
+      "--generation is required: the generation the supervisor logged when it enabled this import",
+    );
+  }
+
+  return { manifestDir: requireManifestDir(values), generation };
 }
 
 function rowFingerprint(row: Record<string, unknown>): string {
@@ -937,8 +980,11 @@ async function collectRunAssociations(input: {
      WHERE run_id = $1 AND locator->>'kind' = 'file' ORDER BY id`,
     [input.runId],
   );
+  // `value` is in the projection because S4.4 OVERWRITES it: every column the
+  // association phase rewrites must be inside the frozen fingerprint, or a
+  // concurrent edit to it would be destroyed instead of refused.
   const attachments = await input.client.query<Record<string, unknown>>(
-    `SELECT id, message_id AS "messageId", kind, file_name AS "fileName",
+    `SELECT id, message_id AS "messageId", kind, value, file_name AS "fileName",
         mime_type AS "mimeType", byte_size AS "byteSize", sha256,
         storage_path AS "storagePath"
      FROM scratch_attachments
@@ -1144,6 +1190,803 @@ async function inventoryLegacyRuns(input: {
   return { runCount: runs.rows.length, laneCount, unresolvedCount };
 }
 
+// The copy phase spans all five lanes, including `scratch_session`, which the
+// row importer's four-kind `sourceKind` cannot name. Its refusals therefore
+// carry the same `details.reason` shape the maintenance client raises, and one
+// reader handles both.
+class ImportCopyError extends Error {
+  readonly details: { reason: string };
+
+  constructor(message: string, reason: string) {
+    super(message);
+    this.name = "ImportCopyError";
+    this.details = { reason };
+  }
+}
+
+// The typed reason is what the operator's failure line reports, never the
+// message text.
+function typedRefusalReason(error: unknown): string | null {
+  const details = asRecord(asRecord(error).details);
+
+  return typeof details.reason === "string" ? details.reason : null;
+}
+
+// D9 step 5. The operator copies the frozen manifest's bytes to the host over
+// its maintenance socket and seals each one into an ordinary runtime object.
+// Nothing here completes a lane — that is D9 step 7's verification — and nothing
+// here writes to, moves or removes a source: every source is opened read-only.
+async function copyManifestItem(input: {
+  client: ImportMaintenanceClient;
+  item: OperatorImportItem;
+  absolutePath: string;
+  receivedBytes: number;
+  importId: string;
+}): Promise<{ objectId: string; resentBytes: number }> {
+  const observed = await stat(input.absolutePath);
+
+  // A source that moved since the inventory invalidates the frozen manifest. It
+  // is refused BEFORE any byte is sent rather than discovered at seal, and the
+  // manifest is left exactly as the inventory froze it.
+  if (!observed.isFile() || observed.size !== input.item.sizeBytes) {
+    throw new ImportCopyError(
+      "legacy source no longer matches the frozen manifest",
+      "source_fingerprint_changed",
+    );
+  }
+  if (input.receivedBytes % IMPORT_CHUNK_BYTES !== 0) {
+    throw new ImportCopyError(
+      "host resume offset does not fall on this protocol's chunk boundary",
+      "import_offset_mismatch",
+    );
+  }
+
+  const handle = await open(input.absolutePath, "r");
+  let offset = input.receivedBytes;
+  let resentBytes = 0;
+
+  try {
+    while (offset < input.item.sizeBytes) {
+      const length = Math.min(IMPORT_CHUNK_BYTES, input.item.sizeBytes - offset);
+      const buffer = new Uint8Array(length);
+      let filled = 0;
+
+      // A short read is not an ended file: only a read that returns nothing is
+      // end of source, and misreporting one as the other would blame the
+      // operator's bytes for the reader's behaviour.
+      while (filled < length) {
+        const { bytesRead } = await handle.read(
+          buffer,
+          filled,
+          length - filled,
+          offset + filled,
+        );
+
+        if (bytesRead === 0) {
+          throw new ImportCopyError(
+            "legacy source ended before the frozen manifest's declared size",
+            "source_fingerprint_changed",
+          );
+        }
+        filled += bytesRead;
+      }
+
+      const ack = await input.client.putChunk({
+        itemId: input.item.itemId,
+        chunkIndex: offset / IMPORT_CHUNK_BYTES,
+        offset,
+        bytes: buffer,
+      });
+
+      if (ack.outcome === "duplicate") resentBytes += length;
+      log.debug(
+        {
+          event: "legacy_execution_data_chunk_sent",
+          importId: input.importId,
+          itemId: input.item.itemId,
+          chunkIndex: offset / IMPORT_CHUNK_BYTES,
+          offset,
+          bytes: length,
+          outcome: ack.outcome,
+          receivedBytes: ack.receivedBytes,
+        },
+        "legacy execution-data chunk sent",
+      );
+      offset += length;
+    }
+  } finally {
+    await handle.close();
+  }
+
+  const receipt = await input.client.seal(input.item.itemId);
+
+  return { objectId: receipt.objectId, resentBytes };
+}
+
+async function runCopyCommand(input: {
+  client: Client;
+  importId: string;
+  root: string;
+  argv: readonly string[];
+}): Promise<void> {
+  const { manifestDir, generation } = parseCopyArguments(input.argv);
+  const stage = await assertImportWindow(input.client, input.importId);
+
+  await assertNoActiveLegacyWork(input.client, input.importId, stage);
+
+  const manifest = readOperatorImportManifest({
+    directory: manifestDir,
+    importId: input.importId,
+  });
+  const maintenance = createImportMaintenanceClient({
+    // The listener owns this layout; the operator directory the supervisor was
+    // given and the manifest directory are the same directory by construction.
+    socketPath: path.join(manifestDir, "admission", "import.sock"),
+    importId: input.importId,
+    generation,
+    manifestDigest: manifest.digest,
+  });
+  const progress = await maintenance.progress();
+  const byItem = new Map(progress.items.map((item) => [item.itemId, item]));
+  const owners = await runOwnerSlugs(
+    input.client,
+    [...new Set(manifest.items.map((item) => item.runId))],
+  );
+
+  log.info(
+    {
+      event: "legacy_execution_data_copy_started",
+      importId: input.importId,
+      stage,
+      generation,
+      items: manifest.items.length,
+      alreadySealed: progress.totals.sealed,
+      expectedBytes: progress.totals.expectedBytes,
+    },
+    "legacy execution-data copy started",
+  );
+
+  let sealed = 0;
+  let skipped = 0;
+  let resentBytes = 0;
+  const failures: string[] = [];
+
+  for (const item of manifest.items) {
+    const hostItem = byItem.get(item.itemId);
+
+    if (!hostItem) {
+      failures.push(`${item.itemId}:import_item_unknown`);
+      continue;
+    }
+    if (hostItem.state === "sealed") {
+      skipped += 1;
+      continue;
+    }
+
+    const ownerSlug = owners.get(item.runId);
+
+    if (!ownerSlug) {
+      failures.push(`${item.itemId}:owner_slug_missing`);
+      continue;
+    }
+
+    try {
+      const runDirectory = runtimeRunDirectory({
+        root: input.root,
+        ownerSlug,
+        runId: item.runId,
+      });
+      const absolutePath = path.resolve(runDirectory, item.relativePath);
+
+      if (!absolutePath.startsWith(`${runDirectory}${path.sep}`)) {
+        throw new ImportCopyError(
+          "manifest source resolves outside its own run directory",
+          "source_outside_root",
+        );
+      }
+
+      const outcome = await copyManifestItem({
+        client: maintenance,
+        item,
+        absolutePath,
+        receivedBytes: hostItem.receivedBytes,
+        importId: input.importId,
+      });
+
+      sealed += 1;
+      resentBytes += outcome.resentBytes;
+      log.info(
+        {
+          event: "legacy_execution_data_item_sealed",
+          importId: input.importId,
+          itemId: item.itemId,
+          runId: item.runId,
+          lane: item.lane,
+          objectId: outcome.objectId,
+          bytes: item.sizeBytes,
+          resentBytes: outcome.resentBytes,
+        },
+        "legacy execution-data item sealed",
+      );
+    } catch (error) {
+      const reason = typedRefusalReason(error) ?? "unexpected_copy_failure";
+
+      failures.push(`${item.itemId}:${reason}`);
+      log.error(
+        {
+          event: "legacy_execution_data_item_failed",
+          importId: input.importId,
+          itemId: item.itemId,
+          runId: item.runId,
+          lane: item.lane,
+          reason,
+        },
+        "legacy execution-data item failed",
+      );
+    }
+  }
+
+  log.info(
+    {
+      event: "legacy_execution_data_copy_finished",
+      importId: input.importId,
+      stage,
+      generation,
+      sealed,
+      skipped,
+      resentBytes,
+      unresolvedCount: failures.length,
+    },
+    "legacy execution-data copy finished",
+  );
+
+  if (failures.length > 0) {
+    throw new Error(`legacy data copy failed for ${failures.join(", ")}`);
+  }
+}
+
+async function runOwnerSlugs(
+  client: Client,
+  runIds: readonly string[],
+): Promise<Map<string, string>> {
+  if (runIds.length === 0) return new Map();
+
+  const rows = await client.query<{ id: string; ownerSlug: string | null }>(
+    `SELECT r.id, coalesce(p.slug, lp.slug) AS "ownerSlug"
+     FROM runs r
+     LEFT JOIN projects p ON p.id = r.project_id
+     LEFT JOIN local_packages lp ON lp.id = r.local_package_id
+     WHERE r.id = ANY($1::text[])`,
+    [runIds],
+  );
+
+  return new Map(
+    rows.rows
+      .filter((row): row is { id: string; ownerSlug: string } =>
+        Boolean(row.ownerSlug),
+      )
+      .map((row) => [row.id, row.ownerSlug]),
+  );
+}
+
+// D9 step 6. Bytes first, rows second: an association is repointed only after
+// the host proves it holds that item's bytes, inside one bounded transaction per
+// row, and only against the exact fingerprint the inventory froze. Nothing here
+// completes a lane — that is D9 step 9's verification.
+type AssociationTarget = {
+  itemId: string;
+  runId: string;
+  kind: "artifact" | "attachment";
+  rowId: string;
+  rowFingerprint: string;
+  objectId: string;
+};
+
+function parseAssociationKey(
+  key: string,
+): { kind: "artifact" | "attachment"; rowId: string } | null {
+  const separator = key.indexOf(":");
+
+  if (separator < 0) return null;
+
+  const kind = key.slice(0, separator);
+  const rowId = key.slice(separator + 1);
+
+  if (kind !== "artifact" && kind !== "attachment") return null;
+  if (!rowId) return null;
+
+  return { kind, rowId };
+}
+
+async function readAssociationRow(
+  client: Client,
+  target: AssociationTarget,
+): Promise<Record<string, unknown> | null> {
+  // The same projection the inventory fingerprinted. Reading anything else
+  // would compare a different row to a frozen digest.
+  const query =
+    target.kind === "artifact"
+      ? `SELECT id, kind, producer, validity, required_for AS "requiredFor",
+            node_attempt_id AS "nodeAttemptId", locator
+         FROM artifact_instances WHERE id = $1 FOR UPDATE`
+      : `SELECT id, message_id AS "messageId", kind, value,
+            file_name AS "fileName", mime_type AS "mimeType",
+            byte_size AS "byteSize", sha256, storage_path AS "storagePath"
+         FROM scratch_attachments WHERE id = $1 FOR UPDATE`;
+  const rows = await client.query<Record<string, unknown>>(query, [
+    target.rowId,
+  ]);
+
+  return rows.rows[0] ?? null;
+}
+
+function alreadyAssociated(
+  target: AssociationTarget,
+  row: Record<string, unknown>,
+): boolean {
+  if (target.kind === "artifact") {
+    const locator = asRecord(row.locator);
+
+    return (
+      locator.kind === "execution-object" && locator.objectId === target.objectId
+    );
+  }
+
+  return row.storagePath === null && row.value === target.objectId;
+}
+
+async function repointAssociation(input: {
+  client: Client;
+  target: AssociationTarget;
+  importId: string;
+}): Promise<"repointed" | "already"> {
+  const { client, target } = input;
+
+  await client.query("BEGIN");
+  try {
+    const row = await readAssociationRow(client, target);
+
+    if (!row) {
+      throw new ImportCopyError(
+        "association row is gone",
+        "association_row_missing",
+      );
+    }
+    if (alreadyAssociated(target, row)) {
+      await client.query("COMMIT");
+
+      return "already";
+    }
+
+    // Exact old-row CAS: the frozen fingerprint covers every field the
+    // inventory read, so a concurrent edit to validity, kind, attempt or
+    // message scope refuses here instead of being overwritten.
+    if (rowFingerprint(row) !== target.rowFingerprint) {
+      throw new ImportCopyError(
+        "association row changed since the inventory froze it",
+        "association_row_changed",
+      );
+    }
+
+    if (target.kind === "artifact") {
+      await client.query(
+        `UPDATE artifact_instances
+         SET locator = jsonb_build_object('kind', 'execution-object',
+                                          'objectId', $2::text)
+         WHERE id = $1`,
+        [target.rowId, target.objectId],
+      );
+    } else {
+      // A canonical uploaded file carries the opaque object id in `value` and
+      // no storage path at all; every descriptive column stays as it was.
+      await client.query(
+        `UPDATE scratch_attachments
+         SET value = $2::text, storage_path = NULL
+         WHERE id = $1`,
+        [target.rowId, target.objectId],
+      );
+    }
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  }
+
+  return "repointed";
+}
+
+// D9 step 7. `scratch_runs.supervisor_session_id` is an unconstrained legacy
+// mirror. 0134 preserves it only when the run has EXACTLY one assignment; a real
+// multi-assignment history makes it refuse outright. This resolves that case
+// from evidence and never by guessing, then clears only the mirror it proved.
+//
+// `(execution_host_id, host_session_id)` is unique on `run_session_incarnations`,
+// so a host session can never name two assignments — the ambiguity this refuses
+// is the opposite one: several assignments and no surviving evidence at all.
+type ScratchMirror = {
+  runId: string;
+  hostSessionId: string;
+  assignmentCount: number;
+};
+
+async function readScratchMirrors(client: Client): Promise<ScratchMirror[]> {
+  const rows = await client.query<{
+    runId: string;
+    hostSessionId: string;
+    assignmentCount: string;
+  }>(
+    `SELECT sr.run_id AS "runId",
+        sr.supervisor_session_id AS "hostSessionId",
+        (SELECT count(*) FROM execution_assignments ea WHERE ea.run_id = sr.run_id)::text
+          AS "assignmentCount"
+     FROM scratch_runs sr
+     JOIN runs r ON r.id = sr.run_id
+     WHERE sr.supervisor_session_id IS NOT NULL
+       AND r.execution_data_plane_mode = 'legacy_file_v1'
+     ORDER BY sr.run_id`,
+  );
+
+  return rows.rows.map((row) => ({
+    runId: row.runId,
+    hostSessionId: row.hostSessionId,
+    assignmentCount: Number(row.assignmentCount),
+  }));
+}
+
+async function bindMirrorAssignment(
+  client: Client,
+  mirror: ScratchMirror,
+): Promise<{ assignmentId: string; hostId: string; epoch: number }> {
+  const rows = await client.query<{
+    assignmentId: string;
+    hostId: string;
+    epoch: number;
+  }>(
+    `SELECT DISTINCT ea.id AS "assignmentId",
+        ea.execution_host_id AS "hostId", ea.epoch
+     FROM execution_assignments ea
+     WHERE ea.run_id = $1
+       AND (
+         EXISTS (
+           SELECT 1 FROM run_session_incarnations rsi
+           WHERE rsi.run_id = $1
+             AND rsi.execution_assignment_id = ea.id
+             AND rsi.host_session_id = $2
+         )
+         OR EXISTS (
+           SELECT 1 FROM execution_events ee
+           WHERE ee.run_id = $1
+             AND ee.execution_assignment_id = ea.id
+             AND ee.host_session_id = $2
+         )
+       )`,
+    [mirror.runId, mirror.hostSessionId],
+  );
+
+  if (rows.rows.length !== 1) {
+    throw new ImportCopyError(
+      "no unique assignment owns this legacy scratch session",
+      "scratch_mirror_ambiguous",
+    );
+  }
+
+  return rows.rows[0];
+}
+
+async function preserveScratchMirror(input: {
+  client: Client;
+  mirror: ScratchMirror;
+  importId: string;
+}): Promise<void> {
+  const { client, mirror } = input;
+
+  await client.query("BEGIN");
+  try {
+    // Bound inside the transaction: the evidence that picks the assignment and
+    // the write that acts on it must see the same snapshot.
+    const binding = await bindMirrorAssignment(client, mirror);
+    // A different canonical host pointer is a data conflict, not a
+    // last-write-wins update — the same rule 0134 applies.
+    const conflict = await client.query(
+      `SELECT 1 FROM run_sessions
+       WHERE run_id = $1 AND session_name = 'default'
+         AND host_session_id IS NOT NULL AND host_session_id <> $2`,
+      [mirror.runId, mirror.hostSessionId],
+    );
+
+    if (conflict.rowCount) {
+      throw new ImportCopyError(
+        "canonical default session already names a different host session",
+        "scratch_mirror_conflict",
+      );
+    }
+
+    await client.query(
+      `INSERT INTO run_sessions
+        (id, run_id, session_name, execution_assignment_id, host_session_id,
+         created_at, updated_at)
+       VALUES ('legacy-scratch-session:' || $1, $1, 'default', $2, $3,
+               now(), now())
+       ON CONFLICT (run_id, session_name) DO UPDATE SET
+         execution_assignment_id = excluded.execution_assignment_id,
+         host_session_id = excluded.host_session_id,
+         updated_at = now()`,
+      [mirror.runId, binding.assignmentId, mirror.hostSessionId],
+    );
+    await client.query(
+      `INSERT INTO run_session_incarnations
+        (id, run_session_id, run_id, execution_assignment_id, assignment_epoch,
+         execution_host_id, host_session_id, state, origin, created_at,
+         activated_at, terminal_reason)
+       SELECT 'legacy-scratch-incarnation:' || $1, rs.id, $1, $2, $5, $3, $4,
+           'exited', 'legacy_backfill', now(), now(),
+           jsonb_build_object('source', 'scratch_runs.supervisor_session_id')
+       FROM run_sessions rs
+       WHERE rs.run_id = $1 AND rs.session_name = 'default'
+       ON CONFLICT (execution_host_id, host_session_id) DO NOTHING`,
+      [
+        mirror.runId,
+        binding.assignmentId,
+        binding.hostId,
+        mirror.hostSessionId,
+        binding.epoch,
+      ],
+    );
+
+    // Round-trip proof BEFORE the clear: the canonical rows must read back as
+    // exactly this run's session before the legacy value may leave the row.
+    const verified = await client.query(
+      `SELECT 1
+       FROM run_sessions rs
+       JOIN run_session_incarnations rsi
+         ON rsi.execution_host_id = $3 AND rsi.host_session_id = $2
+       WHERE rs.run_id = $1 AND rs.session_name = 'default'
+         AND rs.host_session_id = $2
+         AND rsi.run_id = $1`,
+      [mirror.runId, mirror.hostSessionId, binding.hostId],
+    );
+
+    if (!verified.rowCount) {
+      throw new ImportCopyError(
+        "canonical scratch session did not read back",
+        "scratch_mirror_unproven",
+      );
+    }
+
+    // CAS on the exact legacy value: a mirror that changed under the operator
+    // is left alone rather than cleared on stale evidence.
+    const cleared = await client.query(
+      `UPDATE scratch_runs SET supervisor_session_id = NULL
+       WHERE run_id = $1 AND supervisor_session_id = $2`,
+      [mirror.runId, mirror.hostSessionId],
+    );
+
+    if (!cleared.rowCount) {
+      throw new ImportCopyError(
+        "legacy scratch mirror changed under the import",
+        "scratch_mirror_changed",
+      );
+    }
+    await client.query("COMMIT");
+    log.info(
+      {
+        event: "legacy_execution_data_mirror_preserved",
+        importId: input.importId,
+        runId: mirror.runId,
+        assignmentId: binding.assignmentId,
+        assignmentEpoch: binding.epoch,
+        assignmentCount: mirror.assignmentCount,
+        // The raw legacy session id never reaches the log.
+        mirrorDigest: sha256(mirror.hostSessionId),
+      },
+      "legacy execution-data scratch mirror preserved",
+    );
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  }
+}
+
+async function preserveScratchMirrors(input: {
+  client: Client;
+  importId: string;
+  stage: DataPlaneStage;
+}): Promise<{ preserved: number; deferred: number; failures: string[] }> {
+  // `additive` is the only stage that still carries the legacy column; 0134
+  // drops it. Re-running this phase afterwards is an ordinary operator act, so
+  // it skips the half that no longer has anything to preserve rather than
+  // failing on a column that is gone.
+  if (input.stage !== "additive") {
+    return { preserved: 0, deferred: 0, failures: [] };
+  }
+
+  const mirrors = await readScratchMirrors(input.client);
+  const failures: string[] = [];
+  let preserved = 0;
+  let deferred = 0;
+
+  for (const mirror of mirrors) {
+    // Exactly one assignment is 0134's own provable case; leave it there rather
+    // than duplicating a destructive migration's work.
+    if (mirror.assignmentCount === 1) {
+      deferred += 1;
+      continue;
+    }
+    try {
+      await preserveScratchMirror({
+        client: input.client,
+        mirror,
+        importId: input.importId,
+      });
+      preserved += 1;
+    } catch (error) {
+      const reason = typedRefusalReason(error) ?? "unexpected_mirror_failure";
+
+      failures.push(`${mirror.runId}:${reason}`);
+      log.error(
+        {
+          event: "legacy_execution_data_mirror_refused",
+          importId: input.importId,
+          runId: mirror.runId,
+          assignmentCount: mirror.assignmentCount,
+          reason,
+        },
+        "legacy execution-data scratch mirror refused",
+      );
+    }
+  }
+
+  return { preserved, deferred, failures };
+}
+
+async function runAssociateCommand(input: {
+  client: Client;
+  importId: string;
+  argv: readonly string[];
+}): Promise<void> {
+  const values = parseFlags(input.argv, ASSOCIATE_FLAGS, "associate");
+  const manifestDir = requireManifestDir(values);
+  const generation = Number(values.get("--generation"));
+
+  if (!Number.isInteger(generation) || generation < 1) {
+    throw new Error(
+      "--generation is required: the generation the supervisor logged when it enabled this import",
+    );
+  }
+
+  const stage = await assertImportWindow(input.client, input.importId);
+
+  await assertNoActiveLegacyWork(input.client, input.importId, stage);
+
+  const manifest = readOperatorImportManifest({
+    directory: manifestDir,
+    importId: input.importId,
+  });
+  const maintenance = createImportMaintenanceClient({
+    socketPath: path.join(manifestDir, "admission", "import.sock"),
+    importId: input.importId,
+    generation,
+    manifestDigest: manifest.digest,
+  });
+  const progress = await maintenance.progress();
+  const sealed = new Map(
+    progress.items
+      .filter((item) => item.state === "sealed" && item.sealedObjectId)
+      .map((item) => [item.itemId, item.sealedObjectId as string]),
+  );
+  const targets: AssociationTarget[] = [];
+  const failures: string[] = [];
+
+  for (const item of manifest.items) {
+    const association = parseAssociationKey(item.associationKey);
+
+    if (!association) continue;
+    if (!item.rowFingerprint) {
+      failures.push(`${item.itemId}:association_fingerprint_missing`);
+      continue;
+    }
+
+    const objectId = sealed.get(item.itemId);
+
+    // The row is repointed at bytes the host PROVED it holds, never at an
+    // object id the operator hoped for.
+    if (!objectId) {
+      failures.push(`${item.itemId}:association_bytes_unverified`);
+      continue;
+    }
+    targets.push({
+      itemId: item.itemId,
+      runId: item.runId,
+      kind: association.kind,
+      rowId: association.rowId,
+      rowFingerprint: item.rowFingerprint,
+      objectId,
+    });
+  }
+
+  log.info(
+    {
+      event: "legacy_execution_data_associate_started",
+      importId: input.importId,
+      stage,
+      generation,
+      associations: targets.length,
+      unverified: failures.length,
+    },
+    "legacy execution-data associate started",
+  );
+
+  let repointed = 0;
+  let alreadyCount = 0;
+
+  for (const target of targets) {
+    try {
+      const outcome = await repointAssociation({
+        client: input.client,
+        target,
+        importId: input.importId,
+      });
+
+      if (outcome === "repointed") repointed += 1;
+      else alreadyCount += 1;
+      log.info(
+        {
+          event: "legacy_execution_data_association_repointed",
+          importId: input.importId,
+          itemId: target.itemId,
+          runId: target.runId,
+          associationKind: target.kind,
+          objectId: target.objectId,
+          outcome,
+        },
+        "legacy execution-data association repointed",
+      );
+    } catch (error) {
+      const reason =
+        typedRefusalReason(error) ?? "unexpected_association_failure";
+
+      failures.push(`${target.itemId}:${reason}`);
+      log.error(
+        {
+          event: "legacy_execution_data_association_failed",
+          importId: input.importId,
+          itemId: target.itemId,
+          runId: target.runId,
+          associationKind: target.kind,
+          reason,
+        },
+        "legacy execution-data association failed",
+      );
+    }
+  }
+
+  const mirrors = await preserveScratchMirrors({
+    client: input.client,
+    importId: input.importId,
+    stage,
+  });
+
+  failures.push(...mirrors.failures);
+  log.info(
+    {
+      event: "legacy_execution_data_associate_finished",
+      importId: input.importId,
+      stage,
+      generation,
+      repointed,
+      alreadyAssociated: alreadyCount,
+      mirrorsPreserved: mirrors.preserved,
+      mirrorsDeferredTo0134: mirrors.deferred,
+      unresolvedCount: failures.length,
+    },
+    "legacy execution-data associate finished",
+  );
+
+  if (failures.length > 0) {
+    throw new Error(`legacy data association failed for ${failures.join(", ")}`);
+  }
+}
+
 async function runInventoryCommand(input: {
   client: Client;
   importId: string;
@@ -1250,8 +2093,12 @@ async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   const command = argv[0] && !argv[0].startsWith("--") ? argv[0] : null;
 
-  if (command !== null && command !== "inventory") {
-    throw new Error(`unknown command ${command}; expected "inventory"`);
+  const SUBCOMMANDS = ["inventory", "copy", "associate"] as const;
+
+  if (command !== null && !SUBCOMMANDS.includes(command as never)) {
+    throw new Error(
+      `unknown command ${command}; expected one of ${SUBCOMMANDS.join(", ")}`,
+    );
   }
 
   const importId = resolveImportId(argv);
@@ -1261,6 +2108,16 @@ async function main(): Promise<void> {
   try {
     if (command === "inventory") {
       await runInventoryCommand({ client, importId, root, argv });
+
+      return;
+    }
+    if (command === "copy") {
+      await runCopyCommand({ client, importId, root, argv });
+
+      return;
+    }
+    if (command === "associate") {
+      await runAssociateCommand({ client, importId, argv });
 
       return;
     }

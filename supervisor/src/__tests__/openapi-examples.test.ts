@@ -12,6 +12,7 @@ import {
   AdoptWorkspaceRequestSchema,
   CommandEnvelopeSchema,
   CommandReceiptSchema,
+  REASON_TOKENS,
   SessionCommandEventSchema,
   StartSessionRequestSchema,
 } from "../types";
@@ -97,6 +98,18 @@ describe("supervisor OpenAPI 0.8.0 examples ↔ Zod", () => {
     for (const { payload } of examples) {
       expect(SessionCommandEventSchema.safeParse(payload).success).toBe(true);
     }
+  });
+
+  // S4.3: the enum IS the published discriminator — callers are told to branch
+  // on `details.reason` and never on message text. Two earlier increments added
+  // tokens to the code without the document and nothing noticed, so the mirror
+  // is asserted whole rather than for the newest tokens alone.
+  it("publishes every refusal reason the host can emit", () => {
+    const documented = new Set<string>(
+      openapi.components.schemas.ReasonToken.enum as string[],
+    );
+
+    expect(REASON_TOKENS.filter((token) => !documented.has(token))).toEqual([]);
   });
 
   it("a deliberately broken fixture fails (harness proof)", () => {

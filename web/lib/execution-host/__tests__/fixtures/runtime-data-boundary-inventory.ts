@@ -1760,6 +1760,18 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
           "scripts/legacy-import/manifest-store.ts#openImportManifestStore",
           "wrapper",
         ],
+        ["copyManifestItem", "node:fs/promises.stat", "stat"],
+        ["copyManifestItem", "node:fs/promises.open", "open"],
+        [
+          "runCopyCommand",
+          "lib/execution-host/import-maintenance.ts#readOperatorImportManifest",
+          "wrapper",
+        ],
+        [
+          "runAssociateCommand",
+          "lib/execution-host/import-maintenance.ts#readOperatorImportManifest",
+          "wrapper",
+        ],
       ],
       {
         authority:
@@ -1780,6 +1792,21 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       {
         authority:
           "operator CLI: pnpm execution-data-plane:import-legacy inventory, under maintenance with the web drained",
+        lifetime:
+          "until S4.8 revokes import authority after the guarded cutover",
+      },
+    ),
+    ...classified(
+      "lib/execution-host/import-maintenance.ts",
+      "operator-import",
+      "Operator import transport: reads the frozen manifest read-only to derive the digest the host was enabled for; the bytes themselves travel over the maintenance socket, never a path",
+      [
+        ["readOperatorImportManifest", "node:fs.existsSync", "stat"],
+        ["readOperatorImportManifest", "node:sqlite.DatabaseSync", "sqlite"],
+      ],
+      {
+        authority:
+          "operator CLI: pnpm execution-data-plane:import-legacy copy, under maintenance with the web drained",
         lifetime:
           "until S4.8 revokes import authority after the guarded cutover",
       },
@@ -1976,6 +2003,9 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
   ...wrappers("lib/execution-host/adoption.ts", "repository-worktree", [
     ["ensureWorkspaceAdopted", false],
     ["loadWorkspaceSpecInput", false],
+  ]),
+  ...wrappers("lib/execution-host/import-maintenance.ts", "operator-import", [
+    ["readOperatorImportManifest", true],
   ]),
   ...wrappers(
     "lib/execution-host/capability-profile.ts",

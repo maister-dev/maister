@@ -11,7 +11,7 @@ declare module "node:sqlite" {
     all(...params: unknown[]): Array<Record<string, unknown>>;
   }
   export class DatabaseSync {
-    constructor(filename: string);
+    constructor(filename: string, options?: { readOnly?: boolean });
     readonly isTransaction: boolean;
     exec(sql: string): void;
     prepare(sql: string): StatementSync;

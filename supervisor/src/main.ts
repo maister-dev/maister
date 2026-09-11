@@ -2,6 +2,7 @@ import type { HostState } from "./host-state";
 import type { RegisterRoutesOptions } from "./http-api";
 
 import { createHash } from "node:crypto";
+import { join } from "node:path";
 
 import Fastify, { type FastifyInstance } from "fastify";
 import pino, { type Logger } from "pino";
@@ -9,6 +10,16 @@ import pino, { type Logger } from "pino";
 import { assertSupportedNode } from "../../runtime/node-version";
 
 import { startHeartbeatWatcher } from "./heartbeat";
+import {
+  ImportAdmissionRegistry,
+  resolveImportAdmissionConfig,
+} from "./import-admin";
+import { startImportListener, type ImportListener } from "./import-listener";
+import { loadOperatorManifest } from "./import-manifest";
+import {
+  openImportProgressLedger,
+  type ImportProgressLedger,
+} from "./import-progress";
 import {
   HostKeyConflictError,
   HostStateUnwritableError,
@@ -193,6 +204,57 @@ export async function start(): Promise<void> {
     logger,
     intervalMs: heartbeatIntervalMs,
   });
+  // D9 / S4.3: historical import admission is an out-of-band operator act read
+  // once at boot. Nothing on the TCP listener can turn it on, shutdown disables
+  // it, and a restart mints the next generation over the same durable ledger.
+  const importConfig = resolveImportAdmissionConfig(process.env);
+  let importListener: ImportListener | undefined;
+  let importLedger: ImportProgressLedger | undefined;
+
+  if (importConfig) {
+    const manifest = loadOperatorManifest(importConfig);
+
+    importLedger = openImportProgressLedger({
+      file: join(
+        importConfig.directory,
+        `import-progress-${importConfig.importId}.sqlite`,
+      ),
+      importId: importConfig.importId,
+      manifestDigest: manifest.digest,
+    });
+    for (const item of manifest.items) {
+      importLedger.registerItem(item);
+    }
+
+    const { generation } = importLedger.enableGeneration();
+    const admission = new ImportAdmissionRegistry();
+
+    admission.enable({
+      importId: importConfig.importId,
+      generation,
+      manifestDigest: manifest.digest,
+    });
+    importListener = await startImportListener({
+      directory: importConfig.directory,
+      importId: importConfig.importId,
+      manifestDigest: manifest.digest,
+      admission,
+      ledger: importLedger,
+      hostState,
+      runtimeRoot: root,
+      logger,
+    });
+    logger.warn(
+      {
+        event: "import_admission_enabled",
+        importId: importConfig.importId,
+        generation,
+        manifestDigest: manifest.digest,
+        items: manifest.items.length,
+      },
+      "historical import admission enabled",
+    );
+  }
 
   await app.listen({ port, host: "0.0.0.0" });
   logger.info({ port, host: "0.0.0.0" }, "supervisor-listening");
@@ -211,6 +273,8 @@ export async function start(): Promise<void> {
     );
     stopHeartbeat();
     stopRuntimeEventPruner();
+    await importListener?.close();
+    importLedger?.close();
 
     const deadline = setTimeout(
       () => {

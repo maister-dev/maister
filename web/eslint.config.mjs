@@ -186,6 +186,11 @@ export default defineConfig([
               message:
                 "ADR-166: domain code addresses execution through @/lib/execution-host (BoundClient / HostAdminClient); the supervisor wire is fenced to lib/execution-host/**.",
             },
+            {
+              name: "@/lib/execution-host/import-maintenance",
+              message:
+                "S4.3: the historical-import maintenance protocol is an operator-only surface on a Unix socket. Only the import CLI under scripts/ may speak it; it is deliberately absent from createExecutionHosts().",
+            },
           ],
         },
       ],

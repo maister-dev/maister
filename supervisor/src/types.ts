@@ -592,6 +592,20 @@ export const REASON_TOKENS = [
   "runtime_output_buffer_capacity",
   "runtime_output_frame_too_large",
   "required_output_incomplete",
+  // S4.3 (D9): the operator-only historical import path. Admission is enabled
+  // out of band at boot and revoked for good; nothing here is reachable from an
+  // ordinary session or an active assignment.
+  "import_admission_disabled",
+  "import_admission_revoked",
+  "import_generation_stale",
+  "import_manifest_mismatch",
+  "import_item_unknown",
+  "import_item_sealed",
+  "import_item_incomplete",
+  "import_offset_mismatch",
+  "import_chunk_conflict",
+  "import_seal_conflict",
+  "import_chunk_too_large",
 ] as const;
 
 export type ReasonToken = (typeof REASON_TOKENS)[number];
