@@ -51,6 +51,20 @@ describe("package compatibility resolver", () => {
     expect(loadFlowManifestMock).toHaveBeenCalledTimes(1);
   });
 
+  // `install.manifest` is a jsonb column: the cast to PackageInstallManifest
+  // asserts a shape the database does not guarantee. A row whose manifest lacks
+  // `spec` used to throw past the optional head — inside the catch too, so the
+  // handler meant to convert this into a reason threw and the Studio overview
+  // page answered 500 rather than degrading.
+  it("degrades instead of throwing when a stored manifest has no spec", async () => {
+    const resolveCompatibility = createPackageCompatibilityResolver();
+
+    await expect(
+      resolveCompatibility({ ...INSTALL, manifest: { inventory: {} } }),
+    ).resolves.toEqual({ compatible: true, incompatibilityReason: null });
+    expect(loadFlowManifestMock).not.toHaveBeenCalled();
+  });
+
   it("keeps absolute manifest paths in structured logs, not client DTOs", async () => {
     loadFlowManifestMock.mockRejectedValueOnce(
       new Error(

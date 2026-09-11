@@ -160,10 +160,17 @@ export function packageCompatibilityReasonFromError(
 async function assessPackageCompatibility(
   install: PackageCompatibilityInstall,
 ): Promise<PackageCompatibility> {
+  // `install.manifest` is a jsonb column, so this cast asserts a shape the
+  // database does not guarantee: a row whose manifest lacks `spec` arrives as a
+  // DEFINED object, and `manifest?.spec.flows` then throws past the optional
+  // head. That is why the chains below guard every hop, not just the first —
+  // the catch here used to repeat the unsafe form, so the handler that converts
+  // a bad manifest into a compatibility reason threw too and took the Studio
+  // overview page down with a 500 instead of degrading.
   const manifest = install.manifest as PackageInstallManifest | undefined;
 
   try {
-    for (const flow of manifest?.spec.flows ?? []) {
+    for (const flow of manifest?.spec?.flows ?? []) {
       const flowManifest = await loadFlowManifest(
         join(install.installedPath, flow.path, "flow.yaml"),
         {
@@ -194,7 +201,7 @@ async function assessPackageCompatibility(
       {
         packageInstallId: install.id,
         packageName: install.name,
-        flowIds: manifest?.spec.flows.map((flow) => flow.id) ?? [],
+        flowIds: manifest?.spec?.flows?.map((flow) => flow.id) ?? [],
         err: err instanceof Error ? err.message : String(err),
       },
       "package flow manifest compatibility check failed",
@@ -374,7 +381,7 @@ export async function getProjectPackageAttachments(
         ...(compatibilityByInstallId.get(target.installId) ??
           UNKNOWN_PACKAGE_COMPATIBILITY),
       })),
-      flows: manifest?.spec.flows.map((f) => f.id) ?? [],
+      flows: manifest?.spec?.flows?.map((f) => f.id) ?? [],
     };
   });
 }
@@ -401,7 +408,7 @@ export async function getAvailablePackageInstalls(): Promise<
         versionLabel: install.versionLabel,
         resolvedRevision: install.resolvedRevision,
         trustStatus: install.trustStatus,
-        flows: manifest?.spec.flows.map((f) => f.id) ?? [],
+        flows: manifest?.spec?.flows?.map((f) => f.id) ?? [],
         sourceLocalPackageId: install.sourceLocalPackageId ?? null,
         ...compatibility,
       };
@@ -470,11 +477,11 @@ export async function getStudioPackageInstalls(
         trustStatus: install.trustStatus,
         ...compatibility,
         counts: {
-          flows: manifest?.spec.flows.length ?? 0,
-          skills: manifest?.inventory.skills.length ?? 0,
-          platformAgents: manifest?.inventory.platformAgents?.length ?? 0,
-          subagents: manifest?.inventory.agents.length ?? 0,
-          mcps: manifest?.spec.mcps.length ?? 0,
+          flows: manifest?.spec?.flows?.length ?? 0,
+          skills: manifest?.inventory?.skills?.length ?? 0,
+          platformAgents: manifest?.inventory?.platformAgents?.length ?? 0,
+          subagents: manifest?.inventory?.agents?.length ?? 0,
+          mcps: manifest?.spec?.mcps?.length ?? 0,
           // Rules live inside capability bundles and are not inventoried in the
           // manifest (only skills/agents are); a real count needs Phase C disk reads.
           rules: 0,
@@ -573,7 +580,7 @@ export async function getStudioPackageFlowGraphs(
   const manifest = install.manifest as PackageInstallManifest | undefined;
   const graphs: StudioFlowGraph[] = [];
 
-  for (const flow of manifest?.spec.flows ?? []) {
+  for (const flow of manifest?.spec?.flows ?? []) {
     try {
       const real = await resolveConfinedFlowYaml(
         install.installedPath,
