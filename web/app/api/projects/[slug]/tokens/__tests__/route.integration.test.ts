@@ -41,6 +41,7 @@ afterAll(async () => {
 let POST: typeof import("@/app/api/projects/[slug]/tokens/route").POST;
 let GET: typeof import("@/app/api/projects/[slug]/tokens/route").GET;
 let DELETE_handler: typeof import("@/app/api/projects/[slug]/tokens/[tokenId]/route").DELETE;
+let PATCH_handler: typeof import("@/app/api/projects/[slug]/tokens/[tokenId]/route").PATCH;
 
 beforeAll(async () => {
   const routeModule = await import("@/app/api/projects/[slug]/tokens/route");
@@ -51,7 +52,19 @@ beforeAll(async () => {
   POST = routeModule.POST;
   GET = routeModule.GET;
   DELETE_handler = tokenIdRouteModule.DELETE;
+  PATCH_handler = tokenIdRouteModule.PATCH;
 });
+
+function patchRequest(slug: string, tokenId: string, body: unknown) {
+  return new NextRequest(
+    `http://localhost/api/projects/${slug}/tokens/${tokenId}`,
+    {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
+}
 
 async function seedProject(slug: string) {
   const projectId = randomUUID();
@@ -324,6 +337,121 @@ describe("DELETE /api/projects/[slug]/tokens/[tokenId]", () => {
     });
 
     expect(res.status).toBe(403);
+
+    clearSession();
+  });
+});
+
+// ADR-168. Route tests assert the HTTP contract only — status, body shape, and
+// the authorization gate. The semantics behind them (diffing, the ledger, the
+// CAS, the managed-token predicate) are owned at the service layer in
+// lib/tokens/__tests__/update.integration.test.ts and are NOT re-asserted here.
+describe("PATCH /api/projects/[slug]/tokens/[tokenId]", () => {
+  it("I15: an admin widens a project token and the scope is present afterwards", async () => {
+    const slug = `tok-patch-${randomUUID().slice(0, 8)}`;
+    const { adminId } = await seedProject(slug);
+
+    asAdminSession(adminId);
+
+    const created = await (
+      await POST(makeRequest({ name: "CI", scopes: ["tasks:read"] }), {
+        params: Promise.resolve({ slug }),
+      })
+    ).json();
+
+    const res = await PATCH_handler(
+      patchRequest(slug, created.id, {
+        scopes: ["tasks:read", "flows:read", "runners:read"],
+      }),
+      { params: Promise.resolve({ slug, tokenId: created.id }) },
+    );
+
+    expect(res.status).toBe(200);
+
+    const body = await res.json();
+
+    expect(body.scopes).toContain("flows:read");
+    expect(body.scopes).toContain("runners:read");
+    expect(body).not.toHaveProperty("token");
+
+    clearSession();
+  });
+
+  it("I17: a non-admin project member is refused 403", async () => {
+    const slug = `tok-patch-member-${randomUUID().slice(0, 8)}`;
+    const { adminId, memberId } = await seedProject(slug);
+
+    asAdminSession(adminId);
+
+    const created = await (
+      await POST(makeRequest({ name: "CI", scopes: ["tasks:read"] }), {
+        params: Promise.resolve({ slug }),
+      })
+    ).json();
+
+    asMemberSession(memberId);
+
+    const res = await PATCH_handler(
+      patchRequest(slug, created.id, { scopes: ["runs:read"] }),
+      { params: Promise.resolve({ slug, tokenId: created.id }) },
+    );
+
+    expect(res.status).toBe(403);
+
+    clearSession();
+  });
+
+  it("I22: a body with no field present is refused 422", async () => {
+    const slug = `tok-patch-empty-${randomUUID().slice(0, 8)}`;
+    const { adminId } = await seedProject(slug);
+
+    asAdminSession(adminId);
+
+    const created = await (
+      await POST(makeRequest({ name: "CI" }), {
+        params: Promise.resolve({ slug }),
+      })
+    ).json();
+
+    const res = await PATCH_handler(patchRequest(slug, created.id, {}), {
+      params: Promise.resolve({ slug, tokenId: created.id }),
+    });
+
+    expect(res.status).toBe(422);
+    expect((await res.json()).code).toBe("CONFIG");
+
+    clearSession();
+  });
+
+  it("I11: a reserved run-bound name is refused 422 on PATCH and on POST", async () => {
+    const slug = `tok-reserved-${randomUUID().slice(0, 8)}`;
+    const { adminId } = await seedProject(slug);
+
+    asAdminSession(adminId);
+
+    const created = await (
+      await POST(makeRequest({ name: "CI" }), {
+        params: Promise.resolve({ slug }),
+      })
+    ).json();
+
+    const patched = await PATCH_handler(
+      patchRequest(slug, created.id, {
+        name: `orchestrator-run:${randomUUID()}`,
+      }),
+      { params: Promise.resolve({ slug, tokenId: created.id }) },
+    );
+
+    expect(patched.status).toBe(422);
+    expect((await patched.json()).code).toBe("CONFIG");
+
+    const posted = await POST(
+      makeRequest({ name: `agent-run:${randomUUID()}` }),
+      { params: Promise.resolve({ slug }) },
+    );
+
+    expect(posted.status).toBe(422);
+    expect((await posted.json()).code).toBe("CONFIG");
 
     clearSession();
   });

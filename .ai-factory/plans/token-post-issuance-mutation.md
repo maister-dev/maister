@@ -598,9 +598,9 @@ Same, beside its `DELETE`. Preserves its own POST's `humanHitl` contract (D14) �
 `hitl:respond:human` inside `scopes` is refused here as it is on POST.
 
 Acceptance (T3.2 + T3.3):
-- [ ] I15, I16, I17, I22 green, including both **positive** grant tests (D9).
-- [ ] Responses match T0.3's OpenAPI exactly — status codes and body shape.
-- [ ] No new error code introduced; `docs/error-taxonomy.md` needs no change
+- [x] I15, I16, I17, I22 green, including both **positive** grant tests (D9).
+- [x] Responses match T0.3's OpenAPI exactly — status codes and body shape.
+- [x] No new error code introduced; `docs/error-taxonomy.md` needs no change
       (confirmed, not assumed, in T6.3).
 
 ### Phase 4 — Required-scope disclosure (TDD)
