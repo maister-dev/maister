@@ -156,7 +156,12 @@
     "work": "Работа",
     "activityFeed": "Активность",
     "badgeDecisions": "ждут вас: $count",
-    "badgeUpdates": "не просмотрено: $count"
+    "badgeUpdates": "не просмотрено: $count",
+    "home": "Главная",
+    "crumbDesk": "рабочий стол",
+    "switchDesk": "Стол",
+    "switchProjects": "Проекты",
+    "switchLabel": "Главный экран"
   },
   "studio": {
     "title": "Студия",
@@ -4780,6 +4785,27 @@
     "decisions": "новых решений: $count",
     "events": "новых событий: $count",
     "tokens": "токенов: $count",
-    "empty": "С прошлого визита ничего не произошло."
+    "empty": "С прошлого визита ничего не произошло.",
+    "ariaLabel": "С вашего последнего визита"
+  },
+  "desk": {
+    "title": "Рабочий стол",
+    "eyebrow": "Главная",
+    "sub": "Что ждёт вас, что изменилось и что выполняется — по всем доступным проектам.",
+    "composer": "Запустить черновой прогон…",
+    "composerTitle": "Запустить черновой прогон",
+    "nowLabel": "Сейчас",
+    "decisionsTitle": "Решения",
+    "decisionsCount": "$count ждут вас",
+    "decisionsEmpty": "Ничего не ждёт вашего решения.",
+    "decisionsAll": "Открыть входящие",
+    "workTitle": "В работе",
+    "workCount": "$count в работе",
+    "workEmpty": "Ничего не выполняется.",
+    "workAll": "Открыть таблицу работ",
+    "activityTitle": "События",
+    "activityEmpty": "Событий пока нет.",
+    "activityAll": "Открыть ленту событий",
+    "emptyLead": "Проектов пока нет — подключите первый, и рабочий стол наполнится сам."
   }
 }

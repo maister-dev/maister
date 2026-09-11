@@ -12,9 +12,10 @@ import {
 import { railSectionForPathname } from "@/components/chrome/left-rail-route";
 
 const sections: LeftRailNavSection[] = [
-  { id: "projects", label: "Projects", href: "/", ready: true },
-  { id: "inbox", label: "Inbox", href: "/inbox", ready: true },
+  { id: "home", label: "Home", href: "/", ready: true },
+  { id: "projects", label: "Projects", href: "/projects", ready: true },
   { id: "activity", label: "Activity", href: "/activity", ready: true },
+  { id: "inbox", label: "Inbox", href: "/inbox", ready: true },
   { id: "studio", label: "Studio", href: "/studio", ready: true },
   { id: "mcps", label: "MCPs", href: "/mcps", ready: true },
   { id: "users", label: "Users", href: "/admin/users", ready: true },
@@ -73,7 +74,9 @@ function linkTag(html: string, id: RailSectionId): string {
 
 describe("LeftRail navigation", () => {
   it("maps app routes to their rail section", () => {
-    expect(railSectionForPathname("/")).toBe("projects");
+    // `UT-NAV-04` owns the full prefix table; this keeps the rail's own view of
+    // it honest.
+    expect(railSectionForPathname("/")).toBe("home");
     expect(railSectionForPathname("/projects/acme/tasks/7")).toBe("projects");
     expect(railSectionForPathname("/runs/run-1")).toBe("projects");
     expect(railSectionForPathname("/inbox")).toBe("inbox");
@@ -90,6 +93,14 @@ describe("LeftRail navigation", () => {
     const html = renderActive("settings");
 
     expect(linkTag(html, "settings")).toContain('aria-current="page"');
+    expect(linkTag(html, "projects")).not.toContain('aria-current="page"');
+    expect(linkTag(html, "home")).not.toContain('aria-current="page"');
+  });
+
+  it("marks Home active on the Desk without also marking Projects", () => {
+    const html = renderActive("home");
+
+    expect(linkTag(html, "home")).toContain('aria-current="page"');
     expect(linkTag(html, "projects")).not.toContain('aria-current="page"');
   });
 

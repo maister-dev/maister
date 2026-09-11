@@ -1,9 +1,7 @@
 "use client";
 
-import type { WorkStageLabels } from "@/components/work/work-stage-chip";
-import type { WorkTableRow } from "@/lib/queries/work-table";
+import type { WorkRowsLabels } from "@/components/work/work-rows-table";
 import type {
-  WorkGroupBy,
   WorkTableFilters,
   WorkTableGroup,
 } from "@/lib/work/work-table-view";
@@ -12,14 +10,11 @@ import type { ReactElement } from "react";
 import { BookmarkIcon, TrashIcon } from "@heroicons/react/24/outline";
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import clsx from "clsx";
 
-import { WorkStageChip } from "@/components/work/work-stage-chip";
+import { WorkRowsTable } from "@/components/work/work-rows-table";
 import { WORK_STAGES } from "@/lib/work/stage";
 import {
   WORK_GROUP_BYS,
-  workAge,
-  workNextAction,
   workTableFiltersToQuery,
 } from "@/lib/work/work-table-view";
 
@@ -28,38 +23,18 @@ export interface WorkTableProjectOption {
   name: string;
 }
 
-export interface WorkTableLabels {
+/** The full `/work` surface: the shared row labels plus this page's chrome. */
+export interface WorkTableLabels extends WorkRowsLabels {
   rowCount: string;
   filters: Record<
     "project" | "allProjects" | "stage" | "allStages" | "group" | "apply",
     string
   >;
-  group: Record<WorkGroupBy | "mineHeading" | "othersHeading", string>;
-  columns: Record<
-    | "key"
-    | "title"
-    | "project"
-    | "stage"
-    | "run"
-    | "readiness"
-    | "waitingOn"
-    | "blockers"
-    | "tokens"
-    | "lastActivity"
-    | "nextAction",
-    string
-  >;
-  waitingOn: Record<"you" | "anyone" | "since", string>;
-  readiness: Record<string, string>;
-  nextAction: Record<string, string>;
-  stage: WorkStageLabels;
   empty: Record<"noProjects" | "noRows", string>;
   savedViews: Record<
     "label" | "save" | "namePlaceholder" | "remove" | "empty",
     string
   >;
-  openTask: string;
-  openRun: string;
 }
 
 export interface WorkTableProps {
@@ -79,19 +54,6 @@ interface SavedView {
 }
 
 const SAVED_VIEWS_KEY = "maister.work.savedViews";
-
-const READINESS_TONE: Record<string, string> = {
-  ready: "text-good",
-  blocked: "text-danger",
-  failed: "text-danger",
-  stale: "text-amber",
-  waiting: "text-mute",
-  overridden: "text-ink-2",
-};
-
-const CELL = "px-3 py-2 align-middle";
-const HEAD =
-  "px-3 py-2 text-left font-mono text-[10.5px] font-semibold uppercase tracking-[0.12em] text-mute";
 
 function readSavedViews(): SavedView[] {
   try {
@@ -131,10 +93,6 @@ export function WorkTable({
   const [savedViews, setSavedViews] = useState<SavedView[]>([]);
   const [draftName, setDraftName] = useState("");
   const numberFormat = new Intl.NumberFormat(locale);
-  const dateFormat = new Intl.DateTimeFormat(locale, {
-    dateStyle: "short",
-    timeStyle: "short",
-  });
 
   // localStorage is read after mount so the server and the first client render
   // agree; saved views are a per-browser convenience, never filter state.
@@ -280,187 +238,15 @@ export function WorkTable({
           {hasProjects ? labels.empty.noRows : labels.empty.noProjects}
         </p>
       ) : (
-        <div className="overflow-x-auto rounded-[14px] border border-line bg-paper">
-          <table className="w-full min-w-[1180px] border-collapse text-[12.5px]">
-            <thead className="border-b border-line bg-ivory">
-              <tr>
-                <th className={HEAD}>{labels.columns.key}</th>
-                <th className={HEAD}>{labels.columns.title}</th>
-                <th className={HEAD}>{labels.columns.project}</th>
-                <th className={HEAD}>{labels.columns.stage}</th>
-                <th className={HEAD}>{labels.columns.run}</th>
-                <th className={HEAD}>{labels.columns.readiness}</th>
-                <th className={HEAD}>{labels.columns.waitingOn}</th>
-                <th className={HEAD}>{labels.columns.blockers}</th>
-                <th className={clsx(HEAD, "text-right")}>
-                  {labels.columns.tokens}
-                </th>
-                <th className={HEAD}>{labels.columns.lastActivity}</th>
-                <th className={HEAD}>{labels.columns.nextAction}</th>
-              </tr>
-            </thead>
-            {groups.map((group) => (
-              <tbody key={group.id} data-group={group.id}>
-                {filters.groupBy === "none" ? null : (
-                  <tr className="border-b border-line bg-ivory/60">
-                    <th
-                      className="px-3 py-1.5 text-left font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-2"
-                      colSpan={11}
-                    >
-                      {groupHeading(group, labels)}
-                    </th>
-                  </tr>
-                )}
-                {group.rows.map((row) => (
-                  <WorkTableRowView
-                    key={row.taskId}
-                    dateFormat={dateFormat}
-                    labels={labels}
-                    now={now}
-                    numberFormat={numberFormat}
-                    row={row}
-                  />
-                ))}
-              </tbody>
-            ))}
-          </table>
-        </div>
+        <WorkRowsTable
+          groupBy={filters.groupBy}
+          groups={groups}
+          labels={labels}
+          locale={locale}
+          now={now}
+        />
       )}
     </div>
-  );
-}
-
-function groupHeading(group: WorkTableGroup, labels: WorkTableLabels): string {
-  if (group.kind === "mine") return labels.group.mineHeading;
-  if (group.kind === "others") return labels.group.othersHeading;
-  if (group.kind === "stage") {
-    return labels.stage[group.label as keyof WorkStageLabels] ?? group.label;
-  }
-
-  return group.label;
-}
-
-function WorkTableRowView({
-  row,
-  labels,
-  numberFormat,
-  dateFormat,
-  now,
-}: {
-  row: WorkTableRow;
-  labels: WorkTableLabels;
-  numberFormat: Intl.NumberFormat;
-  dateFormat: Intl.DateTimeFormat;
-  now: Date;
-}): ReactElement {
-  const taskHref = `/projects/${row.projectSlug}/tasks/${row.number}`;
-  const nextAction = workNextAction(row.stage);
-
-  return (
-    <tr className="border-b border-line last:border-b-0" data-testid="work-row">
-      <td className={CELL}>
-        <Link
-          className="font-mono text-[12px] font-semibold text-ink no-underline"
-          href={taskHref}
-          title={labels.openTask}
-        >
-          {row.keyRef}
-        </Link>
-      </td>
-      <td className={clsx(CELL, "max-w-[320px] truncate text-ink")}>
-        {row.title}
-      </td>
-      <td className={CELL}>
-        <Link
-          className="text-ink-2 no-underline"
-          href={`/projects/${row.projectSlug}`}
-        >
-          {row.projectName}
-        </Link>
-      </td>
-      <td className={CELL}>
-        <WorkStageChip
-          blocked={row.blocked}
-          labels={labels.stage}
-          progress={row.progress}
-          promotedKind={row.promotedKind}
-          stage={row.stage}
-        />
-      </td>
-      <td className={CELL}>
-        {row.runId === null ? (
-          <span className="text-mute">—</span>
-        ) : (
-          <Link
-            className="font-mono text-[11px] text-ink-2 no-underline"
-            href={`/runs/${row.runId}`}
-            title={labels.openRun}
-          >
-            {row.runStatus}
-          </Link>
-        )}
-      </td>
-      <td className={CELL}>
-        {row.readiness === null ? (
-          <span className="text-mute">—</span>
-        ) : (
-          <span
-            className={clsx(
-              "font-mono text-[11px]",
-              READINESS_TONE[row.readiness] ?? "text-ink-2",
-            )}
-          >
-            {labels.readiness[row.readiness] ?? row.readiness}
-          </span>
-        )}
-      </td>
-      <td className={CELL}>
-        {row.waitingOn === null ? (
-          <span className="text-mute">—</span>
-        ) : (
-          <span className="text-ink-2">
-            {row.waitingOn.kind === "you"
-              ? labels.waitingOn.you
-              : (row.waitingOn.name ?? labels.waitingOn.anyone)}{" "}
-            <span className="text-mute">
-              {labels.waitingOn.since.replace(
-                "$age",
-                workAge(row.waitingOn.since, now),
-              )}
-            </span>
-          </span>
-        )}
-      </td>
-      <td className={CELL}>
-        {row.blockers.length === 0 ? (
-          <span className="text-mute">—</span>
-        ) : (
-          <span className="flex flex-wrap gap-1">
-            {row.blockers.map((blocker) => (
-              <span
-                key={blocker.taskId}
-                className="rounded-full border border-line bg-ivory px-1.5 py-0.5 font-mono text-[10.5px] text-mute"
-              >
-                {blocker.keyRef}
-              </span>
-            ))}
-          </span>
-        )}
-      </td>
-      <td
-        className={clsx(CELL, "text-right font-mono text-[11.5px] text-ink-2")}
-      >
-        {numberFormat.format(row.tokens)}
-      </td>
-      <td className={clsx(CELL, "whitespace-nowrap text-mute")}>
-        <span suppressHydrationWarning>
-          {dateFormat.format(row.lastActivityAt)}
-        </span>
-      </td>
-      <td className={clsx(CELL, "whitespace-nowrap text-ink-2")}>
-        {labels.nextAction[nextAction] ?? nextAction}
-      </td>
-    </tr>
   );
 }
 

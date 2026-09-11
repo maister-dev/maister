@@ -156,7 +156,12 @@
     "work": "Work",
     "activityFeed": "Activity",
     "badgeDecisions": "$count blocked on you",
-    "badgeUpdates": "$count unseen"
+    "badgeUpdates": "$count unseen",
+    "home": "Home",
+    "crumbDesk": "desk",
+    "switchDesk": "Desk",
+    "switchProjects": "Projects",
+    "switchLabel": "Home surface"
   },
   "studio": {
     "title": "Studio",
@@ -4780,6 +4785,27 @@
     "decisions": "$count new decisions",
     "events": "$count new events",
     "tokens": "$count tokens",
-    "empty": "Nothing happened since your last visit."
+    "empty": "Nothing happened since your last visit.",
+    "ariaLabel": "Since your last visit"
+  },
+  "desk": {
+    "title": "Desk",
+    "eyebrow": "Home",
+    "sub": "What needs you, what moved, and what is running — across every project you can see.",
+    "composer": "Start a scratch run…",
+    "composerTitle": "Start a scratch run",
+    "nowLabel": "Now",
+    "decisionsTitle": "Decisions",
+    "decisionsCount": "$count blocked on you",
+    "decisionsEmpty": "Nothing is blocked on you.",
+    "decisionsAll": "Open the inbox",
+    "workTitle": "Work in flight",
+    "workCount": "$count in flight",
+    "workEmpty": "Nothing is running.",
+    "workAll": "Open the work table",
+    "activityTitle": "Activity",
+    "activityEmpty": "Nothing has happened yet.",
+    "activityAll": "Open the activity feed",
+    "emptyLead": "No projects yet — connect one and the Desk fills itself in."
   }
 }

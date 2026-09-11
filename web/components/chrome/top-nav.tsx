@@ -7,6 +7,7 @@ import type {
 import { getTranslations } from "next-intl/server";
 import Link from "next/link";
 
+import { HomeSwitch } from "@/components/chrome/home-switch";
 import { Logo } from "@/components/logo";
 import { LangSwitch } from "@/components/chrome/lang-switch";
 import { MobileRailDrawer } from "@/components/chrome/mobile-rail-drawer";
@@ -47,10 +48,19 @@ export async function TopNav({
               sections={sections}
             />
           ) : null}
+          {/* The logo means HOME and keeps targeting `/` (ADR-171 D3). */}
           <Link className="cursor-pointer" href="/">
             <Logo size={logoSize} />
           </Link>
-          <span className="ml-[18px] inline-flex items-center gap-1.5 border-l border-line pl-[18px] font-mono text-[11.5px] tracking-[0.04em] text-mute">
+          {/* The explicit control for the two meanings `/` used to carry: Desk
+              is `/`, Projects is `/projects` (ADR-171 D3). It is a switch, not
+              a breadcrumb — the crumb below still says where you are. */}
+          <HomeSwitch
+            deskLabel={t("switchDesk")}
+            label={t("switchLabel")}
+            projectsLabel={t("switchProjects")}
+          />
+          <span className="hidden md:inline-flex ml-[18px] items-center gap-1.5 border-l border-line pl-[18px] font-mono text-[11.5px] tracking-[0.04em] text-mute">
             <span>{t("crumbProjects")}</span>
             {crumb}
           </span>

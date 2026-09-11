@@ -175,10 +175,12 @@ test.describe("Inbox card redesign", () => {
     await expect(card.getByText("lint")).toBeVisible();
   });
 
-  test("the rail badge and the home summary show the same canonical count", async ({
+  test("the rail badge and the portfolio summary show the same canonical count", async ({
     page,
   }) => {
-    await page.goto("/");
+    // The summary card moved to `/projects` with the portfolio (ADR-171 D2);
+    // the Desk's own tile-versus-badge case lives in `e2e/desk.spec.ts`.
+    await page.goto("/projects");
 
     const railBadge = page.getByTestId("inbox-nav-badge");
     const summaryCount = page.getByTestId("decisions-count");

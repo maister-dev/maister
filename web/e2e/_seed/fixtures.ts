@@ -255,6 +255,12 @@ export type E2EActivityFeedFixture = {
   unread: number;
 };
 
+// T6.4 (`E2E-EDGE-NAV-01`): a member of no project at all, so the Desk's empty
+// state is reachable on a database that always has projects.
+export type E2EDeskFixture = {
+  nobody: E2EUserFixture;
+};
+
 export type E2EFixtures = {
   adminEmail: string;
   adminPassword: string;
@@ -301,6 +307,7 @@ export type E2EFixtures = {
     capabilityEnforcement: E2ECapabilityEnforcementFixture;
     workTable: E2EWorkTableFixture;
     activityFeed: E2EActivityFeedFixture;
+    desk: E2EDeskFixture;
   };
 };
 

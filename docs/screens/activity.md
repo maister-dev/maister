@@ -121,6 +121,14 @@ stateDiagram-v2
 `activityFeed` namespace (EN + RU). Deliberately **not** `nav.activity`, which is
 already the project board's Activity *tab* label.
 
+### Shared with the Desk
+
+The feed's ROWS live in `web/components/activity/activity-row-list.tsx`
+(`ActivityRowList`) and their labels in
+`web/lib/activity/activity-row-labels.ts`, both shared with the Desk
+(ADR-171 D1). The filters, the row count and — importantly — the "mark all as
+read" control stay here: the read cursor is written from ONE place.
+
 ## Linked artifacts
 
 - [ADR-168](../decisions.md#adr-168) · [ADR-170](../decisions.md#adr-170)

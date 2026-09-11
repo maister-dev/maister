@@ -8,6 +8,7 @@ import {
   ClockIcon,
   Cog6ToothIcon,
   CpuChipIcon,
+  HomeIcon,
   InboxIcon,
   PuzzlePieceIcon,
   SignalIcon,
@@ -62,6 +63,7 @@ const navIconActive = "h-3.5 w-3.5 shrink-0 text-ink";
 type HeroIcon = ComponentType<SVGProps<SVGSVGElement>>;
 
 const sectionIcons: Record<RailSectionId, HeroIcon> = {
+  home: HomeIcon,
   projects: Squares2X2Icon,
   work: TableCellsIcon,
   inbox: InboxIcon,
@@ -235,10 +237,28 @@ export function LeftRailNavView(props: LeftRailNavProps): ReactElement {
   return (
     <nav
       aria-label={props.ariaLabel}
+      /*
+       * The nav is CAPPED and scrolls, rather than `shrink-0`.
+       *
+       * The rail is a fixed-height flex column (`h-[calc(100vh-64px-36px)]`),
+       * and an admin's section list is twelve entries since `/` became the Desk
+       * (ADR-171 D4). A `shrink-0` nav that tall starves everything below it —
+       * active workspaces, runners readiness, the launcher. Measured at a
+       * 720px-tall viewport: the nav took 422 of the 576px available and the
+       * active-workspaces section resolved to ZERO height, at which point its
+       * rows render but stop being hit-testable, because a zero-height scroll
+       * parent swallows pointer events.
+       *
+       * This predates the twelfth section — at eleven the same section measured
+       * 3px, which only looked fine because three pixels are still clickable.
+       * The cap is what makes the blocks below the nav real estate rather than
+       * leftovers; ADR-171 notes the rail is near the point of needing grouping,
+       * and this is deliberately not that.
+       */
       className={
         props.variant === "collapsed"
-          ? "flex shrink-0 flex-col items-center gap-1 border-b border-line pb-2"
-          : "flex shrink-0 flex-col gap-px border-b border-line pb-3 pt-1.5"
+          ? "flex max-h-[45%] min-h-0 flex-col items-center gap-1 overflow-y-auto border-b border-line pb-2"
+          : "flex max-h-[45%] min-h-0 flex-col gap-px overflow-y-auto border-b border-line pb-3 pt-1.5"
       }
     >
       <LeftRailNavBody {...props} />

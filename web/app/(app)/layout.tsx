@@ -5,6 +5,7 @@ import { getTranslations } from "next-intl/server";
 import { redirect } from "next/navigation";
 
 import { LeftRail } from "@/components/chrome/left-rail";
+import { NavCrumb } from "@/components/chrome/nav-crumb";
 import { buildLeftRailSections } from "@/components/chrome/left-rail-sections";
 import { StatusBar } from "@/components/chrome/status-bar";
 import { TopNav } from "@/components/chrome/top-nav";
@@ -102,7 +103,14 @@ export default async function AppLayout({
     <div className="flex min-h-screen flex-col bg-paper-warm pb-9">
       <TopNav
         badges={railBadges}
-        crumb={<NavCrumb />}
+        crumb={
+          <NavCrumb
+            fallback={tNav("crumbDesk")}
+            labels={Object.fromEntries(
+              railSections.map((section) => [section.id, section.label]),
+            )}
+          />
+        }
         sections={railSections}
         user={navUser}
       />
@@ -125,14 +133,5 @@ export default async function AppLayout({
 
       <StatusBar platformStatus={platformStatus} />
     </div>
-  );
-}
-
-function NavCrumb(): ReactElement {
-  return (
-    <>
-      <span className="text-line">/</span>
-      <b className="font-semibold text-ink">portfolio</b>
-    </>
   );
 }

@@ -54,14 +54,14 @@ what stops this matrix decaying into the historical aliases the Stage B matrix b
 | EDGE-ATN-02 | current-visibility filter, no rewind | T4.2 | IT-EDGE-ATN-02 | Implemented |
 | EDGE-ATN-03 | cursor POST clamp and PRECONDITION | T5.3 | IT-EDGE-ATN-03 | Implemented |
 | EDGE-ATN-04 | lastEventId replay contract | T5.5 | IT-EDGE-ATN-04 | Implemented |
-| NAV-01 | ADR-171 D1, screens desk.md | T6.3 | E2E-NAV-01 | Planned |
-| NAV-02 | ADR-171 D5 landing clause | T6.6 | E2E-NAV-02 | Planned |
-| NAV-03 | ADR-171 D2 relocation | T6.1 | E2E-NAV-03 | Planned |
-| NAV-04 | railSectionForPathname totality | T3.3, T6.5 | UT-NAV-04 | Planned |
-| NAV-05 | ADR-171 D3 inbound-link table | T6.2 | UT-NAV-05 | Planned |
-| NAV-06 | server-side route authorization | T6.6 | IT-NAV-06 | Planned |
-| EDGE-NAV-01 | Desk empty state | T6.4 | E2E-EDGE-NAV-01 | Planned |
-| EDGE-NAV-02 | narrow stacking order | T6.4 | E2E-EDGE-NAV-02 | Planned |
+| NAV-01 | ADR-171 D1, screens desk.md | T6.3 | E2E-NAV-01 | Implemented |
+| NAV-02 | ADR-171 D5 landing clause | T6.6 | E2E-NAV-02 | Implemented |
+| NAV-03 | ADR-171 D2 relocation | T6.1 | E2E-NAV-03 | Implemented |
+| NAV-04 | railSectionForPathname totality | T3.3, T6.5 | UT-NAV-04 | Implemented |
+| NAV-05 | ADR-171 D3 inbound-link table | T6.2 | UT-NAV-05 | Implemented |
+| NAV-06 | server-side route authorization | T6.6 | IT-NAV-06 | Implemented |
+| EDGE-NAV-01 | Desk empty state | T6.4 | E2E-EDGE-NAV-01 | Implemented |
+| EDGE-NAV-02 | narrow stacking order | T6.4 | E2E-EDGE-NAV-02 | Implemented |
 | NTF-01 | ADR-077 outbox reuse, no second outbox | T7.2, T7.5 | IT-NTF-01 | Planned |
 | NTF-02 | nullable webhook_events columns, migration 0164 | T7.4 | IT-NTF-02 | Planned |
 | NTF-03 | two-axis subscriptionMatches | T7.4 | IT-NTF-03 | Planned |
@@ -76,16 +76,20 @@ what stops this matrix decaying into the historical aliases the Stage B matrix b
 | EDGE-NTF-02 | 410 Gone terminal path | T7.6 | IT-EDGE-NTF-02 | Planned |
 | EDGE-NTF-03 | existing project webhooks unaffected | T7.2 | IT-EDGE-NTF-03 | Planned |
 
-## Acceptance tests beside a primary
+## Second-level tests beside a primary
 
-Only two requirements carry an end-to-end test **in addition** to their primary. An
-acceptance test proves the wiring; the primary proves the logic. Three levels for one
-requirement is over-testing.
+A handful of requirements carry a second test **in addition** to their primary,
+always because the second one asserts something the first structurally cannot
+see. Three levels for one requirement is over-testing; two on different axes is
+not.
 
-| Requirement | Primary, the logic | Acceptance, the wiring |
+| Requirement | Primary | Second level, and what it adds |
 | --- | --- | --- |
-| STG-09 | `IT-STG-09` in the read model | `E2E-STG-09` through `/work` |
-| ATN-10 | `IT-ATN-10` cursor monotonicity | `E2E-ATN-10` the unread divider |
+| STG-09 | `IT-STG-09` in the read model | `E2E-STG-09` through `/work` — the wiring |
+| ATN-10 | `IT-ATN-10` cursor monotonicity | `E2E-ATN-10` the unread divider — the wiring |
+| NAV-01 | `E2E-NAV-01` the Desk renders | `UT-NAV-01` it COMPOSES — every region goes through the owning surface's component, and the narrow stacking order is fixed in the source. Invisible to a browser assertion |
+| NAV-02 | `E2E-NAV-02` two sign-ins land apart | `UT-NAV-02` the fork is `role !== "admin"`, so a **viewer** is covered by the same branch as a member |
+| NAV-03 | `E2E-NAV-03` the seeded portfolio at `/projects` | `UT-NAV-03` the empty-state and onboarding branches moved too — unreachable in a browser, because the shared e2e database always has projects |
 
 ## Linked artifacts
 

@@ -5,6 +5,7 @@ import { z } from "zod";
 
 import { signIn } from "@/auth";
 import { isMaisterError } from "@/lib/errors";
+import { resolveLandingRoute } from "@/lib/navigation/landing";
 import { registerPendingUser, verifyCredentialAccount } from "@/lib/users";
 
 const log = pino({
@@ -80,7 +81,7 @@ export async function authenticate(
   _prev: AuthState,
   formData: FormData,
 ): Promise<AuthState> {
-  const redirectTo = (formData.get("redirectTo") as string) || "/";
+  const requestedRedirect = (formData.get("redirectTo") as string) || "/";
   const email = String(formData.get("email") ?? "");
   const password = String(formData.get("password") ?? "");
 
@@ -90,6 +91,14 @@ export async function authenticate(
     if (!credentialResult.ok) {
       return { error: credentialResult.reason };
     }
+
+    // `NAV-02` (ADR-171 D5): a non-admin lands on `/work`, an admin on the Desk.
+    // Resolved HERE, from the verified row, because this is the one moment the
+    // role is known and no destination has been chosen yet.
+    const redirectTo = resolveLandingRoute(
+      requestedRedirect,
+      credentialResult.user.role,
+    );
 
     await signIn("credentials", {
       email,

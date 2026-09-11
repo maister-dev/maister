@@ -1057,7 +1057,7 @@ counters are separate populations rather than one number rendered twice.
 
 Everything the Desk renders now exists. This phase composes it **once**.
 
-**T6.1 [ ] — Move the portfolio to `/projects` · `NAV-03`.**
+**T6.1 [x] — Move the portfolio to `/projects` · `NAV-03`.**
 `web/app/(app)/page.tsx` → `web/app/(app)/projects/page.tsx`, behaviour unchanged.
 The segment already exists with `[slug]/` and `new/` but **has no `page.tsx`**, so
 `/projects` currently 404s — this fills it rather than displacing anything. Its
@@ -1065,7 +1065,7 @@ The segment already exists with `[slug]/` and `new/` but **has no `page.tsx`**, 
 *Verify (`E2E-NAV-03`)*: `/projects` renders exactly what `/` rendered before,
 onboarding checklist and empty state included.
 
-**T6.2 [ ] — Audit every inbound `/` link · `NAV-05`.** *RED*: `UT-NAV-05`, a table test
+**T6.2 [x] — Audit every inbound `/` link · `NAV-05`.** *RED*: `UT-NAV-05`, a table test
 over every `href="/"`, `redirect("/")` and `router.push("/")` call site asserting
 its intended destination. There are **four** `href="/"` sites today
 (`(auth)/layout.tsx:29`, `feedback/error-fallback.tsx:52`, `chrome/top-nav.tsx:47`,
@@ -1073,7 +1073,7 @@ plus one test assertion); all three real ones mean "home" and stay on `/`. Serve
 actions and e2e specs are swept in the same task — a post-registration redirect
 means the *portfolio*, and getting that backwards is silent.
 
-**T6.3 [ ] — The Desk page · `NAV-01`.** `web/app/(app)/page.tsx` laid out per
+**T6.3 [x] — The Desk page · `NAV-01`.** `web/app/(app)/page.tsx` laid out per
 `docs/screens/desk.md` (T0.9) and the mockup: composer (the existing scratch
 launcher — **Idea mode is a later milestone** and is not stubbed) → Now tiles →
 Decisions with inline actions → Work in flight (full width on desktop) → Activity
@@ -1082,14 +1082,14 @@ Mounts `<NowTiles>` (`web/components/attention/now-tiles.tsx`) and the digest
 sentence over T5.4's read models; reuses the decision-queue sections and the work
 table's row component — **the Desk composes, it does not re-implement** (DRY).
 
-**T6.4 [ ] — Desk states · `EDGE-NAV-01..02`.** Busy, quiet, empty. Empty reuses the
+**T6.4 [x] — Desk states · `EDGE-NAV-01..02`.** Busy, quiet, empty. Empty reuses the
 first-run onboarding checklist and the empty-state card inside the Desk frame; the
 composer is absent until a project exists. Narrow stacks Decisions → Work →
 Activity.
 *Verify (`E2E-NAV-01`)*: all three states at desktop 1440 and narrow 390, plus the
 tile-vs-badge equality moved here from Phase 5.
 
-**T6.5 [ ] — Rail re-cut + Desk | Projects switch · `NAV-04`.** *RED*: `UT-NAV-04`, a
+**T6.5 [x] — Rail re-cut + Desk | Projects switch · `NAV-04`.** *RED*: `UT-NAV-04`, a
 table test over every route prefix asserting the section it highlights — including
 the four that currently collapse onto `projects`: `railSectionForPathname` maps `/`,
 `/projects`, `/runs` and `/scratch-runs` to `"projects"`
@@ -1098,12 +1098,119 @@ becomes Home / Projects / Work / Activity / Inbox / Flow Studio / Observatory +
 admin across the same four files as T3.3, plus `nav.*` i18n EN + RU and the
 Desk | Projects control per `chrome/top-nav.md`.
 
-**T6.6 [ ] — `/work` as the member default · `NAV-02`, `NAV-06`.** Non-admin members land
+**T6.6 [x] — `/work` as the member default · `NAV-02`, `NAV-06`.** Non-admin members land
 on `/work`; admins land on the Desk — one routing clause of ADR-171, applied here so
 `/` never forks by role twice. *Verify*: `E2E-NAV-02` (a member and an admin land on
 different routes from the same sign-in flow) and `IT-NAV-06` (nav hiding is not the
 authorization boundary — a member requesting an admin route is refused server-side
 regardless of what the rail renders).
+
+*Execution notes (2026-09-11, Phase 6):*
+
+- **The row components were extracted, not copied.** T6.3 says "reuses the
+  decision-queue sections and the work table's row component". `DecisionSections`
+  and `HitlInboxList` were already exported; the work rows and the activity rows
+  were not, so `WorkRowsTable` was split out of `work-table.tsx` and
+  `ActivityRowList` out of `activity-feed.tsx`, plus one label builder each
+  (`lib/work/work-row-labels.ts`, `lib/activity/activity-row-labels.ts`) so the
+  label objects are not duplicated either. `WorkTableLabels extends
+  WorkRowsLabels` and `ActivityFeedLabels extends ActivityRowLabels`, which makes
+  a new column a compile error at BOTH call sites instead of a blank header at
+  one. `/work` and `/activity` were re-pointed at the builders in the same pass.
+- **"Tile-vs-badge equality" was not implementable as written — deviation.** T6.4
+  inherits that assertion from Phase 5. It cannot hold: T5.4 defines the Now
+  `decisions` tile as decisions that are NEW since the reader's cursor, and says
+  so in a code comment ("the Inbox badge already carries the total"). Shipped as
+  the equality `ATN-05` actually claims — the Desk's **Decisions region** count
+  against the rail badge — plus `tile <= badge`, with the reasoning in
+  [`screens/desk.md`](../../docs/screens/desk.md) and an ADR-171 amendment.
+  Asserting `tile == badge` would have been asserting a bug.
+- **Region counts render as a bare digit.** Same trap the rail badge hit in
+  Phase 5: a testid whose text is "3 blocked on you" cannot be compared with
+  `Number(...)`. The phrase is an `sr-only` sibling.
+- **`WORK_IN_FLIGHT_STAGES` is new, and it is a partition.** The Desk's Work
+  region needs "what is running", which no module named. Added as one third of a
+  spelled-out three-way partition of `WORK_STAGES` (`UT-STG-11`) rather than as a
+  subset, for exactly the reason the Phase 5 taxonomy split exists: a new stage
+  must fail rather than silently land in or out of the region.
+- **The Desk composer is a new `ScratchLaunchPopover` variant, not a second
+  launcher.** Mounting `variant="primary"` a second time would have registered
+  the global Cmd/Ctrl+K listener twice and opened two dialogs; the existing
+  `if (variant !== "primary") return undefined` guard means the new `composer`
+  variant contributes no listener.
+- **`UT-NAV-04`'s first cut asserted the wrong thing.** It demanded every
+  `app/(app)` segment classify to a NON-NULL section, and failed on `/account`
+  and `/admin` — both correct as `null`. "Total" means every prefix has a
+  DECIDED answer, so the gate now asserts every served segment appears in the
+  classifier's declared table. It also found `/flows` undeclared.
+- **`UT-NAV-05` found one call site beyond ADR-171 D3's seven.** `web/proxy.ts`
+  navigates with `new URL("/", nextUrl)`, which none of the three JSX/router
+  idioms match. The gate's pattern now covers it; intent is "home", unchanged.
+- **Two real layout bugs, both caught by `E2E-EDGE-NAV-02` and invisible to the
+  unit gate as first written.** (1) Work rendered BELOW Activity at 390px,
+  because the desktop arrangement had been achieved by source order; fixed with
+  explicit `xl:` grid coordinates and the unit gate tightened to assert source
+  ORDER rather than mere presence. (2) The Desk's content area scrolled sideways,
+  because a grid item defaults to `min-width: auto` and sized itself to the
+  1180px table's min-content width — `min-w-0` on the wrapper restores the
+  table's own `overflow-x-auto`.
+- **Adjacent defect, NOT fixed: the shared header overflows narrow viewports on
+  every route.** Measured at 390px on this tree: `/work` 471px, `/inbox` 479px,
+  `/projects` 479px. It predates M51. `E2E-EDGE-NAV-02` is therefore scoped to
+  `<main>` with a comment saying why, `EDGE-NAV-02` in
+  [`home-navigation.md`](../../docs/system-analytics/home-navigation.md) records
+  it, and the Desk | Projects switch was made `md`-and-up so this phase does not
+  make it worse.
+- **One assertion I added was wrong, and the suite caught it.** T6.1's e2e asserted
+  `portfolio-onboarding` visible on `/projects`. `OnboardingChecklist` returns
+  `null` once all three first-run steps are complete, and whether this shared
+  database has launched a task depends on which specs ran first — so the
+  assertion passed in one run and failed in the next. Removed; `UT-NAV-03` proves
+  the moved page still mounts the component, and `E2E-EDGE-NAV-01` renders it for
+  the project-less member whose onboarding genuinely is incomplete.
+- **The rail ran out of vertical room, and the cause was older than this phase.**
+  Adding `home` made the admin rail twelve sections, and four e2e specs started
+  failing with `rail-content intercepts pointer events`. Measured in a browser at
+  the e2e viewport (720px tall, 576px of rail content): the section nav took
+  **422px** and the active-workspaces section resolved to **ZERO** height, at
+  which point its rows still render but stop being hit-testable — a zero-height
+  scroll parent swallows pointer events. Removing `home` again and re-measuring
+  gave the same section **3px**: the block has been collapsed for an admin all
+  along, and three pixels were merely still clickable. Fixed by capping the nav
+  (`max-h-[45%] min-h-0 overflow-y-auto`, replacing `shrink-0`), which gives the
+  blocks below it 133px instead of 0. ADR-171's own consequence note predicted
+  this pressure and declines to introduce grouping; this is not grouping.
+- **Three e2e specs stay red, and the baseline proves they are not M51's.**
+  `active-workspaces.spec.ts:169`, `studio.spec.ts:8` and
+  `m27-workbench-lifecycle.spec.ts:42`. Verified by WIP-committing Phase 6,
+  restoring `web/` to `229bfba9` (the Phase 5 head), running the same three specs
+  — **identical failures, same three specs, same modes** (6.3s / 6.8s / 30s) — and
+  restoring. Causes, for the record: `active-workspaces` asserts
+  `data-testid="rail-stop"`, which exists NOWHERE in the source and which
+  `components/chrome/__tests__/active-workspace-row.test.ts` positively asserts is
+  absent ("Stop lives inside the menu now") — a stale spec; `studio` crashes
+  server-side in `assessPackageCompatibility` (`lib/queries/packages.ts:197`,
+  reading `.flows` of undefined); `m27` times out waiting for
+  `POST /api/runs/<id>/archive` after three prior git operations in the same test.
+  None is in a Phase 6 code path. They belong to the 34 pre-existing e2e failures
+  `web/CLAUDE.md` records, and to T8.6's ledger.
+- **The header crumb said "portfolio" unconditionally**, which became false on the
+  Desk. Replaced with `NavCrumb`, reading the same `railSectionForPathname` the
+  rail and the new switch read.
+- **T6.3/T6.4/T6.6 each gained a test the task did not name**: `UT-NAV-01` (the
+  Desk composes, and its narrow order is fixed in the source), `UT-NAV-03` (the
+  relocation kept the empty-state and onboarding branches — unreachable in a
+  browser, because the shared e2e database always has projects) and `UT-NAV-02`
+  (the fork is `role !== "admin"`, so a **viewer** is covered). The matrix's
+  `Primary test` cells still name the declared primaries; the additions are
+  listed in its second-level table.
+- **Viewer divergence, deliberate.** The Desk passes
+  `canAct={user.role !== "viewer"}` to `HitlInboxList` per its own role table;
+  `/inbox` still passes `canAct` unconditionally. That is the inbox's behaviour
+  and was left alone.
+- **`/` was absent between T6.1 and T6.3**, which left `needs-you-retired.test.ts`
+  red (it reads `app/(app)/page.tsx` by path). Expected, and green once the Desk
+  landed.
 
 > **Checkpoint 7** — `feat(desk): the Desk becomes home and the portfolio moves to /projects (ADR-171, NAV-01..06)`
 

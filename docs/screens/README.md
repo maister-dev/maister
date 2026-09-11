@@ -123,9 +123,16 @@ flowchart TD
     Shell --- Status["chrome/status-bar — supervisor status, single source"]
     Rail --> Launch["chrome/launch-dialog — scratch/launch popover, Cmd/Ctrl+K"]
 
-    Rail --> Portfolio["Portfolio /"]
+    Rail --> Desk["desk / — Home, composes decisions, work, activity"]
+    Rail --> Portfolio["Portfolio /projects"]
+    Rail --> Work["work /work — cross-project work table"]
+    Rail --> Activity["activity /activity — cross-project feed"]
     Rail --> Inbox["Inbox /inbox — needs-you HITL plus mentions"]
     Rail --> FlowStudio["Flow Studio /studio"]
+    Desk --> Work
+    Desk --> Activity
+    Desk --> Inbox
+    Desk --> Portfolio
     Rail --> Observatory["Observatory /observatory"]
     Rail --> Agents["Agents /agents — admin"]
     Rail --> Mcps["MCPs /mcps — admin"]
@@ -168,9 +175,9 @@ flowchart TD
 | [`chrome/status-bar.md`](chrome/status-bar.md) | Footer status bar (supervisor, single source) | shell | Implemented (WI-3) |
 | [`chrome/top-nav.md`](chrome/top-nav.md) | Top nav (breadcrumb, locale, theme, user) | shell | Implemented (WI-3) |
 | [`chrome/launch-dialog.md`](chrome/launch-dialog.md) | Launch dialog (scratch/launch popover + Cmd/Ctrl+K) | shell | Implemented (WI-4/WI-5) |
-| [`desk.md`](desk.md) | Desk (home: digest, composer, Now tiles, decisions, work, activity) | `/` | Designed (ADR-171) |
-| [`work.md`](work.md) | Cross-project work table | `/work` | Designed (ADR-169) |
-| [`activity.md`](activity.md) | Cross-project activity feed + read cursor | `/activity` | Designed (ADR-168) |
+| [`desk.md`](desk.md) | Desk (home: digest, composer, Now tiles, decisions, work, activity) | `/` | Implemented (ADR-171) |
+| [`work.md`](work.md) | Cross-project work table | `/work` | Implemented (ADR-169) |
+| [`activity.md`](activity.md) | Cross-project activity feed + read cursor | `/activity` | Implemented (ADR-168, ADR-170) |
 | [`inbox.md`](inbox.md) | Unified inbox | `/inbox` | Implemented (WI-1) |
 | [`account.md`](account.md) | Account settings (profile, password, personal API tokens) | `/account` | Implemented profile/password; personal API tokens Designed |
 | [`mcps.md`](mcps.md) | Platform MCP catalog (admin) | `/mcps` | Implemented (WI-2) |

@@ -6,6 +6,7 @@ import { getLocale, getTranslations } from "next-intl/server";
 
 import { AttentionLiveRefresh } from "@/components/attention/attention-live-refresh";
 import { WorkTable } from "@/components/work/work-table";
+import { buildWorkRowsLabels } from "@/lib/work/work-row-labels";
 import { requireActiveSession } from "@/lib/authz";
 import { getWorkTable } from "@/lib/queries/work-table";
 import {
@@ -52,6 +53,9 @@ export default async function WorkPage({
   ].sort((a, b) => a.name.localeCompare(b.name));
 
   const labels: WorkTableLabels = {
+    // Row labels come from the shared builder the Desk also calls, so a new
+    // column cannot reach one surface and miss the other.
+    ...buildWorkRowsLabels(t, tStage),
     rowCount: t("rowCount"),
     filters: {
       project: t("filters.project"),
@@ -60,64 +64,6 @@ export default async function WorkPage({
       allStages: t("filters.allStages"),
       group: t("filters.group"),
       apply: t("filters.apply"),
-    },
-    group: {
-      none: t("group.none"),
-      project: t("group.project"),
-      stage: t("group.stage"),
-      mine: t("group.mine"),
-      mineHeading: t("group.mineHeading"),
-      othersHeading: t("group.othersHeading"),
-    },
-    columns: {
-      key: t("columns.key"),
-      title: t("columns.title"),
-      project: t("columns.project"),
-      stage: t("columns.stage"),
-      run: t("columns.run"),
-      readiness: t("columns.readiness"),
-      waitingOn: t("columns.waitingOn"),
-      blockers: t("columns.blockers"),
-      tokens: t("columns.tokens"),
-      lastActivity: t("columns.lastActivity"),
-      nextAction: t("columns.nextAction"),
-    },
-    waitingOn: {
-      you: t("waitingOn.you"),
-      anyone: t("waitingOn.anyone"),
-      since: t("waitingOn.since"),
-    },
-    readiness: {
-      ready: t("readiness.ready"),
-      blocked: t("readiness.blocked"),
-      stale: t("readiness.stale"),
-      failed: t("readiness.failed"),
-      waiting: t("readiness.waiting"),
-      overridden: t("readiness.overridden"),
-    },
-    nextAction: {
-      triage: t("nextAction.triage"),
-      release: t("nextAction.release"),
-      launch: t("nextAction.launch"),
-      respond: t("nextAction.respond"),
-      review: t("nextAction.review"),
-      recover: t("nextAction.recover"),
-      watch: t("nextAction.watch"),
-      none: t("nextAction.none"),
-    },
-    stage: {
-      Triage: tStage("Triage"),
-      Held: tStage("Held"),
-      Ready: tStage("Ready"),
-      Queued: tStage("Queued"),
-      Executing: tStage("Executing"),
-      WaitingOnHuman: tStage("WaitingOnHuman"),
-      Review: tStage("Review"),
-      Crashed: tStage("Crashed"),
-      Promoted: tStage("Promoted"),
-      Abandoned: tStage("Abandoned"),
-      blocked: tStage("blocked"),
-      promotedResult: tStage("promotedResult"),
     },
     empty: {
       noProjects: t("empty.noProjects"),
@@ -130,8 +76,6 @@ export default async function WorkPage({
       remove: t("savedViews.remove"),
       empty: t("savedViews.empty"),
     },
-    openTask: t("openTask"),
-    openRun: t("openRun"),
   };
 
   return (

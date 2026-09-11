@@ -103,6 +103,19 @@ stateDiagram-v2
 render through `Intl.NumberFormat(locale)`; count-bearing client templates use
 `$count`.
 
+### Shared with the Desk
+
+The table's ROWS live in `web/components/work/work-rows-table.tsx`
+(`WorkRowsTable`) and its row labels in `web/lib/work/work-row-labels.ts`, both
+shared with the Desk (ADR-171 D1). This surface keeps the filter form, the saved
+views and the row count; the Desk renders rows only. `WorkTableLabels extends
+WorkRowsLabels`, so a new column is a compile error on both surfaces rather than
+a blank header on one.
+
+`WORK_IN_FLIGHT_STAGES` (`lib/work/stage.ts`) names the stages the Desk calls
+"work in flight"; it is one third of a spelled-out partition of `WORK_STAGES`
+checked by `UT-STG-11`.
+
 ## Linked artifacts
 
 - [ADR-169](../decisions.md#adr-169) · [ADR-171](../decisions.md#adr-171) · [ADR-170](../decisions.md#adr-170)

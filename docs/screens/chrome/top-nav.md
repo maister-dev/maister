@@ -19,7 +19,7 @@ account actions (change password, sign out); admin destinations live in the
 
 ## Navigation
 
-- **Logo** → `/` (portfolio).
+- **Logo** → `/` (the Desk — "home"; ADR-171 D3).
 - **Breadcrumb** → `~/projects` plus the per-screen crumb.
 - **User menu** → change password, sign out.
 - **Locale / theme** toggles act in place (cookie / class), no navigation.
@@ -30,9 +30,18 @@ account actions (change password, sign out); admin destinations live in the
 ## Layout & regions
 
 Left: logo + a **Desk | Projects** switch + a breadcrumb (`~/projects` and the
-active crumb). The switch is the explicit control for the two meanings `/`
-used to carry: **Desk** targets `/`, **Projects** targets `/projects`
-(ADR-171 D3). The logo itself means "home" and keeps targeting `/`.
+active crumb). The switch (Implemented — `web/components/chrome/home-switch.tsx`)
+is the explicit control for the two meanings `/` used to carry: **Desk** targets
+`/`, **Projects** targets `/projects` (ADR-171 D3). The logo itself means "home"
+and keeps targeting `/`. Both the switch and the breadcrumb are hidden below
+`md`, where the mobile rail drawer already reaches every destination and the
+header has no room for them.
+
+The switch marks its active option from `railSectionForPathname`, the same
+classifier the rail highlights from — a second "am I on the portfolio" check is
+how the header and the rail start disagreeing. The crumb
+(`web/components/chrome/nav-crumb.tsx`) reads it too; it named "portfolio"
+unconditionally before, which was false on the Desk.
 Below `md`, the logo group also contains the mobile rail trigger. Right: language
 switch, theme switch, and the user menu. The theme switch uses packaged
 Heroicons: a sun for light mode and a moon for dark mode. After WI-3 the
@@ -51,7 +60,9 @@ the session resolved in the layout.
 
 ## i18n
 
-`nav` namespace (`crumbProjects`); the user menu and switches own their strings.
+`nav` namespace (`crumbProjects`, `switchDesk`, `switchProjects`, `switchLabel`,
+`crumbDesk`, plus the section labels the crumb reuses); the user menu and
+locale/theme switches own their strings.
 
 ## Linked artifacts
 
@@ -61,4 +72,7 @@ the session resolved in the layout.
   `web/components/chrome/theme-switch.tsx`,
   `web/components/chrome/user-menu.tsx`,
   `web/components/chrome/platform-status.tsx` (`PlatformStatusDot`, still used by
-  the login side panel).
+  the login side panel), `web/components/chrome/home-switch.tsx`,
+  `web/components/chrome/nav-crumb.tsx`.
+- IA: [`../../system-analytics/home-navigation.md`](../../system-analytics/home-navigation.md)
+  (`NAV-04`, `NAV-05`).

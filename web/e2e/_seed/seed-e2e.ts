@@ -7779,6 +7779,36 @@ async function seedWorkTableFixture(
   };
 }
 
+const DESK_NOBODY_EMAIL = "e2e-desk-nobody@maister.local";
+const DESK_NOBODY_PASSWORD = "DeskNobody!2345";
+
+type DeskFixtureRecord = {
+  /** A member of NO project — the only reader whose Desk is genuinely empty. */
+  nobody: UserFixture;
+};
+
+/**
+ * `E2E-EDGE-NAV-01` needs the Desk's empty state, and the shared e2e database
+ * always has projects. A member with zero project memberships is the one reader
+ * for whom `getVisibleProjectIds` returns nothing, so the Desk renders its
+ * first-run frame — no seeded project required, and nothing for another spec to
+ * collide with.
+ */
+async function seedDeskFixture(pool: Pool): Promise<DeskFixtureRecord> {
+  await pool.query(`DELETE FROM users WHERE email = $1`, [DESK_NOBODY_EMAIL]);
+
+  const nobody = await insertUser(pool, {
+    email: DESK_NOBODY_EMAIL,
+    password: DESK_NOBODY_PASSWORD,
+    name: "E2E Desk Nobody",
+    role: "member",
+    accountStatus: "active",
+    mustChangePassword: false,
+  });
+
+  return { nobody };
+}
+
 const ACTIVITY_SLUG = "e2e-activity";
 const ACTIVITY_NAME = "MAIster E2E Activity";
 const ACTIVITY_MEMBER_EMAIL = "e2e-activity-member@maister.local";
@@ -8383,6 +8413,7 @@ You answer when summoned by an @mention.
     const m38 = await seedM38DecideFixture(pool, admin.id);
     const workTable = await seedWorkTableFixture(pool, admin.id);
     const activityFeed = await seedActivityFeedFixture(pool, admin.id);
+    const desk = await seedDeskFixture(pool);
     const m40 = await seedM40Fixture(pool, admin.id);
     const capabilityEnforcement = await seedCapabilityEnforcementFixture(
       pool,
@@ -8455,6 +8486,7 @@ You answer when summoned by an @mention.
         capabilityEnforcement,
         workTable,
         activityFeed,
+        desk,
       },
     };
     const outDir = path.resolve("e2e/.auth");

@@ -123,7 +123,11 @@ describe("CT-ATN-06 the external pulse's needsYou semantics do not change", () =
 describe("UT-ATN-05 every migrated surface reads the one canonical counter", () => {
   const SURFACES = [
     "app/(app)/layout.tsx",
+    // `/` is the Desk and `/projects` the relocated portfolio (ADR-171 D1/D2).
+    // Both render a decisions number, so both stay on this list — dropping the
+    // moved page would retire the check along with the route.
     "app/(app)/page.tsx",
+    "app/(app)/projects/page.tsx",
     "app/(app)/inbox/page.tsx",
     "app/(app)/projects/[slug]/page.tsx",
   ];

@@ -13,10 +13,10 @@ import {
   getCrossProjectActivityFeed,
 } from "@/lib/queries/activity-feed";
 import {
-  activityKindKey,
   normalizeActivityFilters,
   splitAtCursor,
 } from "@/lib/activity/activity-view";
+import { buildActivityRowLabels } from "@/lib/activity/activity-row-labels";
 import { getActivityCursor } from "@/lib/queries/activity-cursor";
 import { getVisibleProjects } from "@/lib/queries/visible-projects";
 import { requireActiveSession } from "@/lib/authz";
@@ -75,6 +75,8 @@ export default async function ActivityPage({
       : new Date(rows[0].occurredAt.getTime() + 1).toISOString();
 
   const labels: ActivityFeedLabels = {
+    // Row labels come from the shared builder the Desk also calls (ADR-171 D1).
+    ...buildActivityRowLabels(t, ACTIVITY_FEED_KINDS),
     rowCount: t("rowCount"),
     latestOnly: t("latestOnly"),
     filters: {
@@ -87,15 +89,6 @@ export default async function ActivityPage({
       mine: t("filters.mine"),
       apply: t("filters.apply"),
     },
-    // Keyed by the RAW kind for the client; the catalogs key on the
-    // underscored form because next-intl reads a dot as a namespace separator.
-    kinds: Object.fromEntries(
-      ACTIVITY_FEED_KINDS.map((kind) => [
-        kind,
-        t(`kinds.${activityKindKey(kind)}`),
-      ]),
-    ),
-    divider: t("divider"),
     caughtUp: t("caughtUp"),
     neverLooked: t("neverLooked"),
     markRead: t("markRead"),
@@ -104,10 +97,6 @@ export default async function ActivityPage({
       noProjects: t("empty.noProjects"),
       noRows: t("empty.noRows"),
     },
-    openTask: t("openTask"),
-    openRun: t("openRun"),
-    openProject: t("openProject"),
-    webhookAttempts: t("webhookAttempts"),
   };
 
   return (
@@ -148,7 +137,7 @@ export default async function ActivityPage({
         hasProjects={projects.length > 0}
         kindOptions={ACTIVITY_FEED_KINDS.map((kind) => ({
           value: kind,
-          label: t(`kinds.${activityKindKey(kind)}`),
+          label: labels.kinds[kind],
         }))}
         labels={labels}
         limit={ACTIVITY_FEED_DEFAULT_LIMIT}

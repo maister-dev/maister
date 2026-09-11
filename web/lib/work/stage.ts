@@ -121,3 +121,37 @@ export function deriveWorkStage(input: DeriveWorkStageInput): WorkStageResult {
       stage === "Promoted" ? promotedKindOf(input.promotionState) : null,
   };
 }
+
+/**
+ * The three-way partition of `WORK_STAGES` the Desk reads (ADR-171 D1).
+ *
+ * "Work in flight" is a launched run that has not settled: the stages between
+ * `Queued` and `Crashed`. `Triage`/`Held`/`Ready` are work that has not
+ * started; `Promoted`/`Abandoned` are work that is over.
+ *
+ * The lists are spelled out rather than derived by subtraction so an
+ * ELEVENTH stage lands in none of them and `UT-STG-11` fails. Either default
+ * — silently in flight, or silently invisible — is a bug nobody notices.
+ */
+export const WORK_BACKLOG_STAGES = [
+  "Triage",
+  "Held",
+  "Ready",
+] as const satisfies readonly WorkStage[];
+
+export const WORK_IN_FLIGHT_STAGES = [
+  "Queued",
+  "Executing",
+  "WaitingOnHuman",
+  "Review",
+  "Crashed",
+] as const satisfies readonly WorkStage[];
+
+export const WORK_SETTLED_STAGES = [
+  "Promoted",
+  "Abandoned",
+] as const satisfies readonly WorkStage[];
+
+export function isWorkInFlight(stage: WorkStage): boolean {
+  return (WORK_IN_FLIGHT_STAGES as readonly WorkStage[]).includes(stage);
+}

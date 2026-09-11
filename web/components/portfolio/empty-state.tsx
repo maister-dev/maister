@@ -13,7 +13,10 @@ export async function EmptyState({
   const tips = [t("esTip1"), t("esTip2"), t("esTip3")];
 
   return (
-    <section className="flex flex-col items-center justify-center rounded-2xl border-[1.5px] border-dashed border-line bg-[repeating-linear-gradient(45deg,transparent_0_14px,color-mix(in_oklab,var(--line)_28%,transparent)_14px_15px)] px-6 pb-12 pt-20 text-center">
+    <section
+      className="flex flex-col items-center justify-center rounded-2xl border-[1.5px] border-dashed border-line bg-[repeating-linear-gradient(45deg,transparent_0_14px,color-mix(in_oklab,var(--line)_28%,transparent)_14px_15px)] px-6 pb-12 pt-20 text-center"
+      data-testid="portfolio-empty-state"
+    >
       <div className="mb-6 inline-flex h-[72px] w-[72px] items-center justify-center rounded-[20px] border border-amber-line bg-paper text-amber shadow-[0_20px_40px_-20px_var(--amber)]">
         <svg
           aria-hidden="true"
