@@ -190,7 +190,7 @@ async function runPrunePass(db: Db): Promise<number> {
 // one tx per pass so an event's freeze and its delivery rows commit atomically.
 // ---------------------------------------------------------------------------
 
-// ADR-172 D2 reader: `project_id` and `run_id` are nullable since `0164`. The
+// ADR-172 D2 reader: `project_id` and `run_id` are nullable since the ADR-172 widening. The
 // LEFT JOINs already tolerated a missing row; the TYPES now say so, which is
 // what stops a later edit from assuming a project is always there.
 type EventRow = {

@@ -7908,6 +7908,145 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "public.execution_event_skips": {
+      "name": "execution_event_skips",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "event_stream_id": {
+          "name": "event_stream_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "execution_host_id": {
+          "name": "execution_host_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "host_sequence": {
+          "name": "host_sequence",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "event_id": {
+          "name": "event_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "run_id": {
+          "name": "run_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "event_type": {
+          "name": "event_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "occurred_at": {
+          "name": "occurred_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "execution_event_skips_stream_scan_idx": {
+          "name": "execution_event_skips_stream_scan_idx",
+          "columns": [
+            {
+              "expression": "event_stream_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "host_sequence",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "execution_event_skips_event_stream_id_execution_event_streams_id_fk": {
+          "name": "execution_event_skips_event_stream_id_execution_event_streams_id_fk",
+          "tableFrom": "execution_event_skips",
+          "tableTo": "execution_event_streams",
+          "columnsFrom": [
+            "event_stream_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "execution_event_skips_execution_host_id_execution_hosts_id_fk": {
+          "name": "execution_event_skips_execution_host_id_execution_hosts_id_fk",
+          "tableFrom": "execution_event_skips",
+          "tableTo": "execution_hosts",
+          "columnsFrom": [
+            "execution_host_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "execution_event_skips_stream_sequence_unique": {
+          "name": "execution_event_skips_stream_sequence_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "event_stream_id",
+            "host_sequence"
+          ]
+        },
+        "execution_event_skips_event_unique": {
+          "name": "execution_event_skips_event_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "event_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.execution_event_streams": {
       "name": "execution_event_streams",
       "schema": "",

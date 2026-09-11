@@ -13,7 +13,7 @@
 //
 // Exit 2 on failure so a Stop hook can block.
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -80,7 +80,8 @@ function matrixRows() {
   if (!existsSync(matrixPath)) return null;
   const rows = new Map();
   const src = readFileSync(matrixPath, "utf8");
-  const rowRe = /^\|\s*((?:EDGE-)?(?:STG|ATN|NAV|NTF)-\d{2})\s*\|([^|]*)\|([^|]*)\|([^|]*)\|([^|]*)\|\s*$/gm;
+  const rowRe =
+    /^\|\s*((?:EDGE-)?(?:STG|ATN|NAV|NTF)-\d{2})\s*\|([^|]*)\|([^|]*)\|([^|]*)\|([^|]*)\|\s*$/gm;
 
   for (const m of src.matchAll(rowRe)) {
     rows.set(m[1], {
@@ -91,6 +92,43 @@ function matrixRows() {
     });
   }
   return rows;
+}
+
+// T8.4: a matrix whose `Primary test` cells name things that do not exist is
+// worse than no matrix — the Stage B one decayed into historical scenario
+// aliases exactly that way. Collect the test ids the SUITE actually carries so
+// every cited one can be resolved against it.
+// Tier-agnostic on purpose: the suite uses UT / IT / E2E / CT today and their
+// `-EDGE` variants, and a tier this pattern did not anticipate must be caught
+// rather than silently skipped — `CT-ATN-06` escaped an enumerated version.
+const TEST_ID_RE = /[A-Z][A-Z0-9]*(?:-EDGE)?-(?:STG|ATN|NAV|NTF)-\d{2}/g;
+
+// A test id mentioned in a header COMMENT is not a test — an enumerated earlier
+// version of this gate stayed green when a `describe` was renamed away, because
+// a comment elsewhere still carried the id. So scan only the TITLES of
+// `describe` / `it` / `test`, which is what "resolves to a real test" means.
+const TEST_TITLE_RE =
+  /\b(?:describe|it|test)(?:\.\w+)?\s*\(\s*(["'`])((?:\\.|(?!\1)[\s\S])*?)\1/g;
+
+function suiteTestIds() {
+  const found = new Set();
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === "node_modules" || entry.name === ".next") continue;
+      const full = join(dir, entry.name);
+
+      if (entry.isDirectory()) walk(full);
+      else if (/\.(test|spec)\.tsx?$/.test(entry.name)) {
+        const src = readFileSync(full, "utf8");
+
+        for (const title of src.matchAll(TEST_TITLE_RE)) {
+          for (const id of title[2].matchAll(TEST_ID_RE)) found.add(id[0]);
+        }
+      }
+    }
+  };
+  walk(join(repoRoot, "web"));
+  return found;
 }
 
 function planTaskIds() {
@@ -110,9 +148,12 @@ if (rows === null) {
   failures.push("docs/system-analytics/m51-traceability.md: missing matrix");
 }
 
+const suiteIds = suiteTestIds();
 const tasks = planTaskIds();
 if (tasks === null) {
-  failures.push(`${planPath}: missing plan file — the backward direction is unprovable`);
+  failures.push(
+    `${planPath}: missing plan file — the backward direction is unprovable`,
+  );
 }
 
 if (rows !== null) {
@@ -120,7 +161,9 @@ if (rows !== null) {
   for (const id of ids) {
     const row = rows.get(id);
     if (!row) {
-      failures.push(`${id}: declared in a requirement document but absent from the matrix`);
+      failures.push(
+        `${id}: declared in a requirement document but absent from the matrix`,
+      );
       continue;
     }
     if (row.tasks.length === 0) {
@@ -129,13 +172,23 @@ if (rows !== null) {
     if (row.primaryTest.length === 0) {
       failures.push(`${id}: matrix row names no primary test`);
     }
+    for (const cited of row.primaryTest.match(TEST_ID_RE) ?? []) {
+      if (!suiteIds.has(cited)) {
+        failures.push(
+          `${id}: primary test ${cited} resolves to no test in web/ — rename the ` +
+            `test to carry the id, or cite the id the suite actually has`,
+        );
+      }
+    }
   }
 
   // A matrix row for an id no document declares is equally an orphan.
   const declared = new Set(ids);
   for (const id of rows.keys()) {
     if (!declared.has(id)) {
-      failures.push(`${id}: matrix row for an id no requirement document declares`);
+      failures.push(
+        `${id}: matrix row for an id no requirement document declares`,
+      );
     }
   }
 
@@ -144,7 +197,9 @@ if (rows !== null) {
     const named = new Set([...rows.values()].flatMap((row) => row.tasks));
     for (const task of tasks) {
       if (IMPLEMENTATION_PHASES.test(task) && !named.has(task)) {
-        failures.push(`${task}: implementation task named by no requirement row`);
+        failures.push(
+          `${task}: implementation task named by no requirement row`,
+        );
       }
     }
     // A matrix cell naming a task the plan does not define is a stale reference.
@@ -152,7 +207,9 @@ if (rows !== null) {
     for (const [id, row] of rows) {
       for (const task of row.tasks) {
         if (!defined.has(task)) {
-          failures.push(`${id}: names task ${task}, which the plan does not define`);
+          failures.push(
+            `${id}: names task ${task}, which the plan does not define`,
+          );
         }
       }
     }
@@ -160,7 +217,9 @@ if (rows !== null) {
 }
 
 if (failures.length > 0) {
-  console.error(`validate-m51-coverage: ${failures.length} coverage failure(s):`);
+  console.error(
+    `validate-m51-coverage: ${failures.length} coverage failure(s):`,
+  );
   for (const f of failures) console.error(`  ${f}`);
   process.exit(2);
 }
@@ -168,5 +227,6 @@ if (failures.length > 0) {
 console.log(
   `validate-m51-coverage: ${ids.length} requirement id(s) across ${DOCUMENTS.length} document(s); ` +
     `${rows.size} matrix row(s); ${tasks.filter((t) => IMPLEMENTATION_PHASES.test(t)).length} ` +
-    `implementation task(s) — bidirectional coverage holds`,
+    `implementation task(s); ${suiteIds.size} test id(s) in the suite — ` +
+    `bidirectional coverage holds and every primary test resolves`,
 );

@@ -7036,19 +7036,9 @@ export type TokenLifecycleEventInsert =
 // Outbound webhooks (ADR-077). Transactional-outbox capture + singleton-drainer
 // fanout/delivery. Secrets are NEVER stored: signing_secret_ref and header values
 // are `env:NAME` references resolved server-side, never plaintext.
-export type WebhookEventType =
-  | "run.started"
-  | "run.needs_input"
-  | "hitl.requested"
-  | "hitl.responded"
-  | "run.review"
-  | "run.promoted"
-  | "run.done"
-  | "run.failed"
-  | "run.crashed"
-  | "run.abandoned"
-  | "gate.decided"
-  | "ping";
+// The event-type union lives in `lib/webhooks/taxonomy.ts`, which is the single
+// source of truth every emitter and the drainer import. A second copy here went
+// 10 entries stale before anyone noticed, so it is deliberately not restored.
 export type WebhookErrorKind = "timeout" | "network" | "http" | "config";
 
 export const webhookSubscriptions = pgTable(
@@ -7059,7 +7049,7 @@ export const webhookSubscriptions = pgTable(
       onDelete: "cascade",
     }),
     /**
-     * ADR-172 (migration `0164`): the SECOND, independent scope axis. `NULL`
+     * ADR-172: the SECOND, independent scope axis. `NULL`
      * means "not owned by a person" — a project or platform subscription. A
      * non-null owner makes the row user-scoped, and a user-scoped subscription
      * never matches a project event (see `subscriptionMatches`).
@@ -7103,7 +7093,7 @@ export const webhookEvents = pgTable(
   {
     id: text("id").primaryKey(),
     /**
-     * NULLABLE since ADR-172 (migration `0164`): a user-scoped `attention.*`
+     * NULLABLE since the ADR-172 widening: a user-scoped `attention.*`
      * event has no project and no run. Every reader of these two columns is
      * enumerated in ADR-172 D2 and covered by `IT-NTF-02` — a reader that
      * structurally cannot see a NULL row is the defect shape.
@@ -7141,7 +7131,7 @@ export const webhookDeliveries = pgTable(
       .notNull()
       .references(() => webhookEvents.id, { onDelete: "cascade" }),
     /**
-     * NULLABLE since ADR-172 (migration `0164`): a `web_push` delivery targets a
+     * NULLABLE since the ADR-172 widening: a `web_push` delivery targets a
      * browser endpoint, not an HTTP subscription. Exactly one of
      * `subscription_id` / `push_subscription_id` is set, enforced by
      * `webhook_deliveries_one_target`.
@@ -7665,7 +7655,7 @@ export const NOTIFICATION_TRANSPORTS = ["web_push", "webhook"] as const;
 export type NotificationTransport = (typeof NOTIFICATION_TRANSPORTS)[number];
 
 /**
- * A browser push endpoint (migration `0163`). `endpoint`, `p256dh` and `auth`
+ * A browser push endpoint (ADR-172). `endpoint`, `p256dh` and `auth`
  * are stored OPAQUE: never parsed for routing, never used to derive a host,
  * never logged. A reader may hold several (one per browser), so delivery fans
  * out per owner.
@@ -7701,7 +7691,7 @@ export type PushSubscriptionRow = typeof pushSubscriptions.$inferSelect;
 export type PushSubscriptionInsert = typeof pushSubscriptions.$inferInsert;
 
 /**
- * Per-user delivery INTENT (migration `0163`): which `attention.*` types, over
+ * Per-user delivery INTENT (ADR-172): which `attention.*` types, over
  * which transport. One intent per owner per transport, so two rows cannot
  * disagree.
  *

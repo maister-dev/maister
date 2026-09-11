@@ -225,7 +225,7 @@ describe("UT-STG-06 unreachable members are not in the vocabulary", () => {
   });
 });
 
-describe("EDGE-STG-02 a removed workspace returns a parked run to a relaunchable lane", () => {
+describe("UT-EDGE-STG-02 a removed workspace returns a parked run to a relaunchable lane", () => {
   it("reroutes Review and Crashed to Ready", () => {
     for (const runStatus of ["Review", "Crashed"] as const) {
       expect(
@@ -251,7 +251,7 @@ describe("EDGE-STG-02 a removed workspace returns a parked run to a relaunchable
   });
 });
 
-describe("EDGE-STG-03 a task with no run classifies from triage alone", () => {
+describe("UT-EDGE-STG-03 a task with no run classifies from triage alone", () => {
   it("maps the three triage states", () => {
     const cases: Array<[DeriveWorkStageInput["triageStatus"], WorkStage]> = [
       [null, "Triage"],

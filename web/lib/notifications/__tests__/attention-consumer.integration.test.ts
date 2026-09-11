@@ -1,5 +1,5 @@
 /**
- * `IT-NTF-08` / `EDGE-NTF-01` — the consumer against a real outbox.
+ * `IT-NTF-08` / `IT-EDGE-NTF-01` — the consumer against a real outbox.
  *
  * The unit test owns the delta ARITHMETIC; this owns the part that only a
  * database can show: that the previous value is read back out of the consumer's
@@ -169,7 +169,7 @@ describe("IT-NTF-08 the consumer emits on deltas only", () => {
   });
 });
 
-describe("EDGE-NTF-01 at-least-once redelivery converges", () => {
+describe("IT-EDGE-NTF-01 at-least-once redelivery converges", () => {
   it("emits nothing the second time the same window arrives", async () => {
     const projectId = await seedProject();
     const userId = await seedMember(projectId);

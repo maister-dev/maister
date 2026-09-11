@@ -1859,3 +1859,20 @@ properties/lastAction` sets `nullable: true` beside an `allOf` with no sibling
   if it cannot, add a graph-driver registry like `sync-driver-registry` and
   gate the classification on it. Not fixed here — it is a code fix on an
   unrelated path (R9).
+- **`social-board.md` Expectations exceeds the R5a cap (filed 2026-09-11, M51
+  T8.5).** Its **Expectations** section carries 24 bullets against R5a's
+  "≤ 12 bullets. If a domain needs more, the boundary is wrong". The boundary is
+  the real question — the social board covers task identity, relations, comments,
+  mentions, activity and the inbox — so this is a split decision, not a trim.
+  Resolve when that domain is next reworked; M51 only read the doc (R9).
+- **33 of 162 migrations have no Drizzle snapshot (filed 2026-09-11, M51 T8.3).**
+  Noticed because `0162_event_skip_ledger` arrived on `master` with its `.sql`
+  and `_journal.json` entry but no `meta/0162_snapshot.json` — then found to be
+  the NORM, not an anomaly: 33 entries lack one (`0022`–`0035` and others).
+  `migration-journal-integrity.test.ts` asserts a matching snapshot for the
+  **newest** entry only, which is why the pattern persists. M51 deliberately did
+  NOT hand-write the missing snapshot — reconstructing one invents history and
+  would single out `0162` from its 32 peers — and instead carries
+  `execution_event_skips` in its own three snapshots so the chain head still
+  matches `schema.ts` and `db:generate` stays clean. Widening the test to every
+  entry needs those 33 generated first, which is its own piece of work (R9).

@@ -1,5 +1,5 @@
 /**
- * `IT-NTF-04` / `IT-NTF-05` / `EDGE-NTF-02` — the push sender's two-phase commit
+ * `IT-NTF-04` / `IT-NTF-05` / `IT-EDGE-NTF-02` — the push sender's two-phase commit
  * and its failure table (ADR-172 D7).
  *
  * The push wire is stubbed at `web-push`, not at HTTP: `webpush.sendNotification`
@@ -286,7 +286,7 @@ describe("IT-NTF-04 the push sender's two-phase commit", () => {
   });
 });
 
-describe("IT-NTF-05 / EDGE-NTF-02 an expired endpoint", () => {
+describe("IT-NTF-05 / IT-EDGE-NTF-02 an expired endpoint", () => {
   it("deletes the subscription on 410 rather than retrying it", async () => {
     const reader = await seedReader();
 

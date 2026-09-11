@@ -1,4 +1,4 @@
-// IT-ATN-02 / IT-ATN-03 / EDGE-ATN-02 (ADR-168 D1, D2, D3, D4) — the `updates`
+// IT-ATN-02 / IT-ATN-03 / IT-EDGE-ATN-02 (ADR-168 D1, D2, D3, D4) — the `updates`
 // counter.
 //
 // `updates` is a JOIN, not a sum of two cheap counts. One mention writes BOTH a
@@ -289,7 +289,7 @@ describe("ATN-04 / ATN-11 scope", () => {
   });
 });
 
-describe("EDGE-ATN-02 membership change never rewinds the cursor", () => {
+describe("IT-EDGE-ATN-02 membership change never rewinds the cursor", () => {
   it("shows a newly added member that project's activity from joining forward", async () => {
     // Activity written BEFORE the member joined, and a cursor written after it.
     await addActivity(fx.foreignTask, fx.foreignProject, HOURS_AGO_2);

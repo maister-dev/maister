@@ -4,7 +4,7 @@
  * `IT-EDGE-NTF-03` is a REGRESSION guard, and the only honest way to run one is
  * green-before and green-after: it is written and run against the un-widened
  * tree first (proving it exercises the project-scoped path rather than passing
- * vacuously), then re-run after migration `0164` makes `webhook_events.project_id`
+ * vacuously), then re-run after the ADR-172 widening makes `webhook_events.project_id`
  * and `.run_id` nullable. A guard that was never green before the change cannot
  * tell a regression from a test that never worked.
  *
@@ -274,7 +274,7 @@ afterEach(async () => {
 
 // ===========================================================================
 // IT-EDGE-NTF-03 — the widening changes NOTHING for a row that fills the
-// columns. Green before `0164` and green after; that is the whole claim.
+// columns. Green before the widening and green after; that is the whole claim.
 // ===========================================================================
 
 describe("IT-EDGE-NTF-03 project-scoped webhooks are untouched by the widening", () => {

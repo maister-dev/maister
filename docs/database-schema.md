@@ -1279,13 +1279,13 @@ the acting pair) inside the same transaction as the triggering write.
 Indexed `(recipient_type, recipient_id, read_at, created_at DESC)` for the
 unread badge and inbox panel.
 
-## Attention and notification tables (Designed — ADR-168/ADR-172, migrations `0162`–`0164`)
+## Attention and notification tables (Implemented — ADR-168/ADR-172, migrations `0163`–`0165`)
 
 Three new tables plus one widening of the shipped ADR-077 tables. The DDL below
 is the **specification**: the migrations implement it rather than becoming it.
 Constraint and index names are normative.
 
-### `user_activity_cursors` (migration `0162`)
+### `user_activity_cursors` (migration `0163`)
 
 One row per user; an **absent** row means "never looked" and is the correct
 seed. No backfill and no constant default — a pre-seeded cursor would
@@ -1310,7 +1310,7 @@ ON CONFLICT (user_id) DO UPDATE
       updated_at   = now();
 ```
 
-### `push_subscriptions` (migration `0163`)
+### `push_subscriptions` (migration `0164`)
 
 A browser push endpoint. `endpoint`, `p256dh` and `auth` are stored **opaque**:
 never parsed for routing, never used to derive a host, never logged. A user may
@@ -1334,7 +1334,7 @@ CREATE INDEX push_subscriptions_owner_idx ON push_subscriptions (owner_user_id);
 The unique constraint makes re-registering the same endpoint idempotent. A push
 `410 Gone` **deletes** the row (`NTF-05`).
 
-### `notification_subscriptions` (migration `0163`)
+### `notification_subscriptions` (migration `0164`)
 
 Per-user delivery **intent**: which `attention.*` types, over which transport.
 One intent row per owner per transport; the sender fans out to that owner's
@@ -1363,9 +1363,9 @@ CREATE INDEX notification_subscriptions_owner_idx
 attention.decisions_changed | attention.digest` — the delta and digest triggers
 only, never a per-event stream (`NTF-08`).
 
-### Widening the ADR-077 tables (migration `0164`, cross-cutting)
+### Widening the ADR-077 tables (migration `0165`, cross-cutting)
 
-Its **own** migration number, never folded into `0163`: it changes live shipped
+Its **own** migration number, never folded into `0164`: it changes live shipped
 tables and must be reviewable and revertable on its own. It widens; it drops
 nothing.
 

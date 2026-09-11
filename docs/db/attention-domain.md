@@ -8,9 +8,9 @@ See [`../system-analytics/attention.md`](../system-analytics/attention.md) and
 for behavior, and [`../database-schema.md`](../database-schema.md) for the exact
 DDL, constraint names and index names.
 
-> **Status: Implemented.** Migration `0162` (`user_activity_cursors`) shipped in
-> M51 Phase 4; `0163` added `push_subscriptions` and
-> `notification_subscriptions`, and `0164` widened the ADR-077 tables (drawn in
+> **Status: Implemented.** Migration `0163` (`user_activity_cursors`) shipped in
+> M51 Phase 4; `0164` added `push_subscriptions` and
+> `notification_subscriptions`, and `0165` widened the ADR-077 tables (drawn in
 > [`webhooks.md`](webhooks.md), not here — it also gives `webhook_deliveries` a
 > `push_subscription_id` so one ledger carries both transports).
 

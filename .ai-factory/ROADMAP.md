@@ -781,7 +781,7 @@
   lands on `/work`. **(E) Notifications** (ADR-172): per-user subscriptions and
   web push over the **widened** ADR-077 engine — no second outbox, paid for by
   enumerating every reader of the newly nullable `webhook_events` columns and by
-  making subscription scope two independent axes. Migrations `0162`–`0164`.
+  making subscription scope two independent axes. Migrations `0163`–`0165`.
   Specifications are Phase 0 and carry machine-enforced requirement IDs
   (`STG`/`ATN`/`NAV`/`NTF`) with a bidirectional coverage gate. Explicit
   non-goals: PO intake, initiatives, a task-statement schema, delivery reports,
@@ -865,7 +865,12 @@
 - [ ] `version_binding: latest` resolution — `resolveEffectiveFlowRevision` is a passthrough today, both bindings resolve identically (`web/lib/flows/lifecycle.ts:230`; audit §A5).
 - [ ] `workspaceAccess` delivery to the supervisor seam on the FLOW path — agent path has L1/L2/L3, flow nodes ship `instructed`-only (`web/lib/flows/enforcement.ts:51`; audit §A6).
 - [ ] `risk_tier=destructive` agent gate decision — hard-refused "until ADR-041"; decide whether ADR-130 `capability_guard` satisfies the precondition (`web/lib/agents/launch.ts:390`; audit §A26).
-- [ ] Human-facing run-summary / attention digest — machine pulse exists, human surface absent (audit §A1; overlaps the unlanded Tact-0 standup-digest agent, reserved ADR-123).
+- [x] Human-facing run-summary / attention digest — **landed in M51**: the Desk's
+      Now tiles plus the deterministic digest sentence (ADR-168 counters, ADR-171
+      IA), delivered off-tab by ADR-172. The Tact-0 standup-digest agent stays
+      unlanded and ADR-123 stays reserved — M51's digest is a deterministic
+      sentence by construction, which is what makes it safe to send twice; a
+      narrated standup summary is a different artifact (audit §A1).
 - [ ] Webhook outbox consolidation onto `domain_events` — two parallel outboxes today (audit §A12).
 - [ ] Studio AI assistant hunk/patch operations (full-file only today; audit §A13) · flow-target run schedules (task-per-fire; §A14) · run-history pagination past the 10-cap (§A15) · Brain RU lexical config knob (§A16) · image/PlantUML/BPMN viewers in the workbench (§A19) · gate-agent HITL/checkpoint branch + `skill_check` capability scoping (§A24/25) · live checkpoint→`session/resume` CI lane (§A8) · gemini/opencode/mimo resume smoke flip (§A7).
 

@@ -1364,18 +1364,18 @@ with a clear log line — it does not crash the web process.
 
 ### Phase 8 — As-built reconciliation
 
-**T8.1 [ ] — Re-derive the contract list from the diff.** Walk D9 against
+**T8.1 [x] — Re-derive the contract list from the diff.** Walk D9 against
 `git diff master...HEAD` and confirm each surface's spec moved with it. Assert D10
 by diff: the only two-phase commit is T7.6's sender; no new deferred; no new
 multi-store transition.
 
-**T8.2 [ ] — `pnpm validate:docs` + `validate:docs:all` + `pnpm validate:contracts`.**
+**T8.2 [x] — `pnpm validate:docs` + `validate:docs:all` + `pnpm validate:contracts`.**
 All green. For the record: `validate:docs` is **not** wired into
 `.github/workflows/ci.yml`, and the Stop hook `docs/CLAUDE.md` describes lives in a
 `.claude/settings.json` that does not exist in this repo — so these gates are
 local-only and must actually be run, not assumed.
 
-**T8.3 [ ] — Renumber pass (mandatory).** Its own focused session, **after** rebasing
+**T8.3 [x] — Renumber pass (mandatory).** Its own focused session, **after** rebasing
 onto master. Re-derive the next free ADR from `git show master:docs/decisions.md`
 and the next free migration idx from master's `_journal.json`; renumber if a
 parallel branch landed first; grep prose forms (`pre-ADR-168`, `since 0162`) and
@@ -1383,14 +1383,14 @@ prefer number-agnostic phrasing. Re-run `validate-docs-adr-anchors.mjs --all`.
 Re-check **M51** too — a milestone that landed meanwhile takes the number the same
 way an ADR does.
 
-**T8.4 [ ] — Close the traceability matrix.** Flip every `Status` cell from `Planned` to
+**T8.4 [x] — Close the traceability matrix.** Flip every `Status` cell from `Planned` to
 its verified state, and **grep every `Primary test` cell against the suite**, failing
 if a name does not resolve to a real test. The existing Stage B matrix decayed into
 "historical scenario aliases, not executed test names"; this task is what stops M51's
 matrix going the same way. Confirm the bidirectional gate (T0.12) still holds after
 whatever the phases actually changed.
 
-**T8.6 [ ] — Resolve or re-classify the quarantined integration reds.** The eight
+**T8.6 [x] — Resolve or re-classify the quarantined integration reds.** The eight
 pre-existing failures recorded at Checkpoint 2 (`evidence-readiness-all-blocking-kinds`
 4, `hitl-hook-trip` 3, `runner` 1) plus the `takeover-resume` full-suite flake. For each:
 fix it, or re-classify it as intentionally-red with a dated note naming what would make
@@ -1408,7 +1408,7 @@ are not yet evidence of a fix. **T8.6 stays open** until the same result holds o
 rebased tree; if it does, the correct outcome is "was environmental", written down with
 what changed, rather than a silent close.
 
-**T8.5 [ ] — Backlog, PRODUCT_VIEW, and adjacent-defect notes.**
+**T8.5 [x] — Backlog, PRODUCT_VIEW, and adjacent-defect notes.**
 `.ai-factory/ROADMAP.md` backlog §A1 (the human-facing digest now exists; the
 ADR-123 standup-digest agent stays reserved for a v1 narration).
 **`docs/PRODUCT_VIEW.md`: write into §Phase 2 item 5 "Observability and attention
@@ -1427,6 +1427,97 @@ not the "16" claimed in `docs/decisions/adr-077.md`,
 `docs/system-analytics/outbound-webhooks.md:198` and
 `docs/api/async/outbound-webhooks.asyncapi.yaml:16-19` — and Phase 7 adds four
 `attention.*` types on top. Correct the count in all three places.
+
+*Execution notes (2026-09-11, Phase 8):*
+
+- **The rebase moved the migration numbers, and the renumber was not the hard
+  part.** `master` had advanced 7 commits and taken `0162` for
+  `event_skip_ledger`, so M51's three shifted to `0163` `user_activity_cursors`,
+  `0164` `push_subscriptions` + `notification_subscriptions`, `0165` the
+  widening. ADR-168..172 and **M51** itself were re-derived as free against every
+  local and remote ref, not just `master`, so no ADR or milestone renumber was
+  needed. Recorded as an ADR-172 amendment rather than an edit to D1, per R4.
+- **The renumber introduced a silent-skip defect that only one gate could see.**
+  Drizzle's incremental migrator compares each journal `when` against the
+  ledger's high-water `created_at`, so M51's three entries — authored BEFORE
+  master's `0162` — sat below the watermark and were **silently skipped** on any
+  database already past it. `db:generate` said "no changes", every
+  fresh-container integration test passed, and `next build` was clean; only
+  `lib/db/__tests__/migration-journal-integrity.test.ts` failed. Proven both ways
+  on a throwaway Postgres at the real watermark: with the pre-bump timestamps all
+  three migrations were skipped (`cursors=0 push=0 notif=0 widened=0`, exit 0, no
+  error), and with the bumped ones all three applied. This is exactly why T8.3
+  demanded its own pass after the rebase.
+- **`master` arrived with two defects of its own.** `0162_event_skip_ledger` has
+  no `meta/0162_snapshot.json` (the snapshot-integrity test checks the NEWEST
+  entry only, and M51's migrations immediately became newest), and
+  `execution_event_skips` landed in `schema.ts` without regenerating
+  `docs/db/erd.dbml`, so `db:erd --check` was **red at `master` HEAD**. M51
+  regenerated the ERD (124 tables) and absorbed the missing snapshot into its own
+  three, which is what makes `db:generate` clean; both are filed as
+  `docs/decisions.md` TODOs with the shared root cause — no docs gate runs in CI.
+- **T8.1 found one unspecified surface.** `/sw.js` is served by a route handler
+  and appeared in no spec. It is deliberately NOT in `web.openapi.yaml`, which
+  scopes itself to `app/api/`, so D13's hosting decision is now recorded as-built
+  in `notifications.md` instead. D10 was then asserted against the diff rather
+  than assumed: no deferred introduced (the only `new Promise` is a sleep), the
+  single server-side outbound call is `notifications/push-sender.ts`, the cursor
+  upsert is `greatest(...)`, and no added file writes to a second store.
+- **T8.4's matrix check earned its place twice.** Six `Primary test` cells cited
+  `UT-EDGE-STG-02`-shaped ids while the tests were named `EDGE-STG-02`; all six
+  scenarios WERE covered, so this was pure citation decay — the exact failure the
+  Stage B matrix already suffered. The resolution check is now part of
+  `validate-m51-coverage` rather than a one-time grep, and it caught its own
+  weakness: the first version passed when a `describe` was renamed away, because
+  a header COMMENT elsewhere still carried the id. It now reads `describe`/`it`
+  titles only, and was falsified three ways (comment-only mention, dropped tier
+  prefix, a cited id that never existed). `CT-ATN-06` had also escaped an
+  enumerated `UT|IT|E2E` pattern, so the id regex is tier-agnostic on purpose.
+- **T8.6: all eight quarantined reds were FIXED, not re-classified, and they were
+  one bug.** Those three files reached the REAL supervisor transport. Before
+  master's `f3dfb6d3` that silently fell through to the dev port and drove
+  whatever supervisor was listening on the developer's machine — so the suites
+  passed whenever `supervisor dev` happened to be up and failed when it was not,
+  which is the whole explanation for Checkpoint 2 measuring them red and
+  Checkpoint 5 measuring them green. Master turned that into an explicit refusal,
+  making them deterministic and therefore fixable: `fakeGraphHosts` at all seven
+  `runFlow` sites in `evidence-readiness-all-blocking-kinds` (7/7), a scripted
+  failing agent turn in `lib/flows/__tests__/runner.integration.test.ts` (5/5 —
+  both original assertions kept, since an unresolvable host now fails at ADR-166
+  assignment BEFORE the runner can record the terminal state the test asserts),
+  and `fakeExecutionHosts(db)` in `hitl-hook-trip`'s `beforeAll` (10/10). No
+  assertion was weakened. `takeover-resume` and the Phase 7 `recover.integration`
+  flake both passed on the rebased tree. The seam rule is now written into
+  `web/CLAUDE.md` §Suite baselines so the next such test is caught by review.
+- **One diagnosis in this phase was wrong and is corrected here.** A worker
+  sitting 13 minutes on `lib/agents/__tests__/prompt-owners.integration.test.ts`,
+  logging `sequence 0 / duplicate` every 2 s, was read as a wedged event stream
+  and the suite was killed at 466/471. It was not wedged: the pre-rebase log shows
+  that file passing in 903 s and its `lib/flows/graph` namesake in 1368 s, with
+  the same signature appearing 465 times in that successful run. The integration
+  lane simply costs ~25 minutes and is gated by those two files — also now
+  recorded in `web/CLAUDE.md` so the next reader does not repeat the mistake.
+- **Pre-existing defects fixed beyond the plan's list** (owner asked for them in
+  this session): the dead 12-entry `WebhookEventType` union in `schema.ts` is
+  deleted (it had zero importers and was 10 entries stale; `tsc` clean after),
+  both `improvement-roadmap.md` citations of a `PRODUCT_VIEW.md` §Phase 2.5 that
+  never existed now point at §Phase 2 item 5, and **`validate:docs:all` +
+  `validate:contracts` are wired into the Docker-free CI lane** — the root cause
+  that let master's ERD drift land at all. Two TODOs stay open on purpose:
+  `social-board.md`'s 24 Expectations bullets need a domain-boundary decision, not
+  a trim, and the 33 snapshot-less migrations need those snapshots generated
+  before the integrity test can be widened. The reconstructed `0162` snapshot was
+  built and then deliberately REVERTED: 33 other migrations lack one, so writing
+  a hand-made snapshot for this one invents history and singles it out.
+- **The webhook taxonomy count was wrong in prose and the table was short by
+  six.** `WEBHOOK_EVENT_TYPES` is 22; `outbound-webhooks.md` claimed "Exactly 16"
+  over a 16-row table. Four of the missing rows are M51's `attention.*`; two
+  (`run.rework_claimed`, `run.rework_returned`, ADR-161) were emitted from route
+  handlers rather than `web/lib/`, which is likely why they were skipped. All six
+  were added — a corrected count above an incomplete table is incoherent — and
+  ADR-077's growth annotation now names the types instead of a count, so it
+  cannot go stale again. The AsyncAPI spec already said 22; only two places
+  needed the fix, not the three the task predicted.
 
 > **Checkpoint 9** — `docs(m51): reconcile the specs with the shipped code and close the traceability matrix`
 

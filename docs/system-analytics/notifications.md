@@ -95,7 +95,7 @@ flowchart TD
   `delivered_at`, which is a `webhook_deliveries` column, and that table's
   `subscription_id` was `NOT NULL` to `webhook_subscriptions` — a push endpoint
   has no HTTP subscription and no HMAC secret, so there was nowhere to record a
-  push attempt. `0164` therefore also makes `subscription_id` nullable, adds
+  push attempt. `0165` therefore also makes `subscription_id` nullable, adds
   `push_subscription_id`, and enforces `webhook_deliveries_one_target`
   (`(subscription_id IS NULL) <> (push_subscription_id IS NULL)`). One outbox,
   one drainer, one retry curve, one ledger — and a `410` cascade-deletes the
@@ -126,6 +126,13 @@ flowchart TD
   block exists — per ADR-023 web runs on the host, and `compose.yml` /
   `compose.production.yml` define only `postgres`. This follows the
   `MAISTER_WEBHOOK_*` precedent, which those same docs mark "never `compose.yml`".
+- **The service worker is a route, not a static file.** `web/public/` does not
+  exist and the app runs behind a custom `server.ts`, so the worker is served by
+  a route handler at `/sw.js` with `Service-Worker-Allowed: /`,
+  `Content-Type: text/javascript` and `Cache-Control: no-store` — inside the Next
+  build and outside any bind mount. It is deliberately absent from
+  [`../api/web.openapi.yaml`](../api/web.openapi.yaml), which scopes itself to
+  `app/api/`: this is an origin-root asset claiming root scope, not an API.
 - **What the e2e can and cannot reach.** The service worker and its registered
   scope are asserted unstubbed in a real browser; the opt-in POST/DELETE round
   trip is real and session-authenticated. `pushManager.subscribe()` is NOT

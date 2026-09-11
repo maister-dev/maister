@@ -1,4 +1,4 @@
-// IT-ATN-10 / EDGE-ATN-03 (ADR-168 D3) — `POST /api/activity/cursor`.
+// IT-ATN-10 / IT-EDGE-ATN-03 (ADR-168 D3) — `POST /api/activity/cursor`.
 //
 // The cursor is the one piece of persisted state the attention plane owns, and
 // the only operation on it is an advance. Every case below is about what MUST
@@ -184,7 +184,7 @@ describe("IT-ATN-10 the cursor only ever moves forward", () => {
   });
 });
 
-describe("EDGE-ATN-03 a cursor cannot run ahead of the events it marks", () => {
+describe("IT-EDGE-ATN-03 a cursor cannot run ahead of the events it marks", () => {
   it("refuses a future timestamp with PRECONDITION and writes nothing", async () => {
     const future = new Date(Date.now() + 60 * 60 * 1000);
     const response = await POST(post({ seenThrough: future.toISOString() }));

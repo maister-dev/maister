@@ -22,7 +22,7 @@ const log = pino({
 type Db = any;
 
 /**
- * ADR-172 D2 reader #1. `projectId` and `runId` are OPTIONAL since `0164`: a
+ * ADR-172 D2 reader #1. `projectId` and `runId` are OPTIONAL since the ADR-172 widening: a
  * user-scoped `attention.*` fact has neither. They stay required-looking for
  * every existing caller because `emitWebhookEvent` is typed as a union —
  * omitting them is only legal on the user-scoped overload, so a run-scoped

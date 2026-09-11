@@ -392,7 +392,7 @@ export async function getCrossProjectActivityFeed(
   }
 
   for (const row of webhookRows) {
-    // ADR-172 D2 reader: `webhook_events.project_id` is nullable since `0164`,
+    // ADR-172 D2 reader: `webhook_events.project_id` is nullable since the ADR-172 widening,
     // and a NULL one is a USER-scoped `attention.*` delivery. It is deliberately
     // absent from this feed — the cross-project activity log answers "what
     // happened in the projects I can see", and somebody's personal notification
