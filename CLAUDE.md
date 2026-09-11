@@ -168,6 +168,17 @@ ingests them idempotently into Postgres and serves browser replay from
 manager-owned metadata. Web code must never tail `run.events.jsonl`, read a
 host runtime path, or use filesystem polling as a state-transition mechanism.
 
+**Nothing unfixable may hold the stream.** An ingest refusal blocks every later
+event, because the contiguity walk stops at the first missing sequence — so a
+refusal is only ever legitimate when a retry could one day succeed. An event
+naming a run this manager does not know never can (`execution_events.run_id` is
+a real FK; a run id is not created retroactively), so it is recorded in
+`execution_event_skips` and stepped over, auditably, rather than thrown. Any new
+ingest-time invariant must answer the same question before it throws: *could
+this event ever become ingestable?* If not, it belongs in the skip ledger.
+Reachable in normal operation — the FK cascades on delete.
+→ `docs/system-analytics/execution-event-plane.md`.
+
 ### 3. Typed error taxonomy (`lib/errors.ts`)
 
 `MaisterError extends Error` with discriminated `code`:
