@@ -1,8 +1,10 @@
 "use client";
 
 import type { TokenLabels } from "@/components/board/panels/integrations-panel";
+import type { TokenListItem } from "@/lib/tokens/list";
 import type { ReactElement, ReactNode } from "react";
 
+import { CheckIcon, PencilSquareIcon } from "@heroicons/react/24/outline";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
 import { useTranslations } from "next-intl";
@@ -337,7 +339,10 @@ function scopeText(labels: TokenLabels, scope: UserTokenScope): string {
   }
 }
 
-function toggleScope(scopes: TokenScope[], scope: TokenScope): TokenScope[] {
+export function toggleScope(
+  scopes: TokenScope[],
+  scope: TokenScope,
+): TokenScope[] {
   if (scope === "*") return ["*"];
 
   const current = scopes.filter((s) => s !== "*");
@@ -348,15 +353,66 @@ function toggleScope(scopes: TokenScope[], scope: TokenScope): TokenScope[] {
   return next.length > 0 ? next : ["*"];
 }
 
+// ADR-168 T5.3. Same toggle, ONE difference: an empty selection stays empty.
+// On the create form "no boxes ticked" defensibly means "default to full". On
+// the EDIT form it would silently grant `*` to the very token the user is
+// restricting — the exact opposite of the intent. Submit is disabled instead,
+// so the user picks a scope or revokes the token. Create-mode behaviour above
+// is deliberately untouched.
+export function toggleScopeForEdit(
+  scopes: TokenScope[],
+  scope: TokenScope,
+): TokenScope[] {
+  if (scope === "*") return scopes.includes("*") ? [] : ["*"];
+
+  const current = scopes.filter((s) => s !== "*");
+
+  return current.includes(scope)
+    ? current.filter((s) => s !== scope)
+    : [...current, scope];
+}
+
+// ADR-168 D3, mirrored client-side: lib/tokens/lifecycle.ts is server-only and
+// cannot be imported here (same constraint as JUDGE_TOKEN_SCOPES above). A
+// non-managed token is machine-minted and run-bound — `issueOrchestratorRunToken`
+// mints token_kind='project' named `orchestrator-run:<runId>`, and listTokens
+// filters on project_id alone, so those rows DO render in this table today.
+// This only withholds the affordance; the server refuses the PATCH regardless.
+const RESERVED_TOKEN_NAME_PATTERN = /^(orchestrator-run|agent-run):/i;
+
+export function isManagedTokenRow(token: {
+  kind: string;
+  name: string;
+}): boolean {
+  return (
+    token.kind !== "agent" && !RESERVED_TOKEN_NAME_PATTERN.test(token.name)
+  );
+}
+
+function toLocalInputValue(value: Date | null): string {
+  if (!value) return "";
+
+  const pad = (n: number): string => String(n).padStart(2, "0");
+
+  return (
+    `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}` +
+    `T${pad(value.getHours())}:${pad(value.getMinutes())}`
+  );
+}
+
 function ScopeField({
   labels,
   value,
+  mode,
   onChange,
 }: {
   labels: TokenLabels;
   value: TokenScope[];
+  mode?: "create" | "edit";
   onChange: (v: TokenScope[]) => void;
 }): ReactElement {
+  const toggle = mode === "edit" ? toggleScopeForEdit : toggleScope;
+
   return (
     <fieldset className="flex flex-col gap-2">
       <legend className="mb-1 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-mute">
@@ -371,7 +427,7 @@ function ScopeField({
             <input
               checked={value.includes(scope)}
               type="checkbox"
-              onChange={() => onChange(toggleScope(value, scope))}
+              onChange={() => onChange(toggle(value, scope))}
             />
             <span>{scopeText(labels, scope)}</span>
           </label>
@@ -553,6 +609,131 @@ export function CreateTokenModal({
               <ErrorRow error={error ? labels.errorGeneric : null} />
             </>
           )}
+        </AccessibleModal>
+      ) : null}
+    </>
+  );
+}
+
+export function EditTokenModal({
+  slug,
+  token,
+  labels,
+}: {
+  slug: string;
+  token: TokenListItem;
+  labels: TokenLabels;
+}): ReactElement {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [name, setName] = useState(token.name);
+  const [scopes, setScopes] = useState<TokenScope[]>(
+    token.scopes as TokenScope[],
+  );
+  const [expiresAt, setExpiresAt] = useState(
+    toLocalInputValue(token.expiresAt),
+  );
+  const { busy, error, setError, run } = useAction();
+
+  function close(): void {
+    setOpen(false);
+    setError(null);
+    setName(token.name);
+    setScopes(token.scopes as TokenScope[]);
+    setExpiresAt(toLocalInputValue(token.expiresAt));
+  }
+
+  async function submit(): Promise<void> {
+    const { ok } = await run(`/api/projects/${slug}/tokens/${token.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        name: name.trim(),
+        scopes,
+        expiresAt: expiresAt ? new Date(expiresAt).toISOString() : null,
+      }),
+    });
+
+    if (!ok) return;
+
+    setOpen(false);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+    router.refresh();
+  }
+
+  if (saved) {
+    return (
+      <span
+        aria-label={labels.editSaved}
+        className="inline-grid h-8 w-8 place-items-center text-emerald-600"
+        role="status"
+        title={labels.editSaved}
+      >
+        <CheckIcon aria-hidden="true" className="h-4 w-4" />
+      </span>
+    );
+  }
+
+  return (
+    <>
+      <button
+        aria-label={labels.edit}
+        className="grid h-8 w-8 place-items-center rounded-[8px] border border-line text-ink hover:border-mute disabled:opacity-50"
+        title={labels.edit}
+        type="button"
+        onClick={() => setOpen(true)}
+      >
+        <PencilSquareIcon aria-hidden="true" className="h-4 w-4" />
+      </button>
+      {open ? (
+        <AccessibleModal
+          cancel={labels.cancel}
+          footer={
+            <>
+              <button className={BTN_NEUTRAL} type="button" onClick={close}>
+                {labels.cancel}
+              </button>
+              <button
+                className={BTN_PRIMARY}
+                disabled={busy || name.trim() === "" || scopes.length === 0}
+                type="button"
+                onClick={() => void submit()}
+              >
+                {labels.save}
+              </button>
+            </>
+          }
+          title={labels.editTitle}
+          onClose={close}
+        >
+          <Field
+            label={labels.nameLabel}
+            placeholder={labels.namePlaceholder}
+            value={name}
+            onChange={setName}
+          />
+          <ScopeField
+            labels={labels}
+            mode="edit"
+            value={scopes}
+            onChange={setScopes}
+          />
+          {scopes.length === 0 ? (
+            <p
+              aria-live="polite"
+              className="m-0 font-mono text-[11px] text-amber"
+            >
+              {labels.scopesRequired}
+            </p>
+          ) : null}
+          <Field
+            label={labels.expiresLabel}
+            type="datetime-local"
+            value={expiresAt}
+            onChange={setExpiresAt}
+          />
+          <ErrorRow error={error} />
         </AccessibleModal>
       ) : null}
     </>

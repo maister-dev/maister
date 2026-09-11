@@ -2831,6 +2831,10 @@
         "scopes": "Scopes",
         "humanHitl": "Allow human HITL responses"
       },
+      "edit": {
+        "title": "Edit personal token",
+        "scopesRequired": "Pick at least one scope, or revoke the token instead."
+      },
       "actions": {
         "new": "New token",
         "create": "Create token",
@@ -2839,7 +2843,10 @@
         "copy": "Copy",
         "copied": "Copied",
         "close": "Close",
-        "done": "Done"
+        "done": "Done",
+        "edit": "Edit",
+        "save": "Save",
+        "saved": "Saved"
       },
       "human": {
         "enabled": "Allowed",
@@ -3359,6 +3366,11 @@
     "copied": "Copied",
     "revoke": "Revoke",
     "revokeConfirm": "Revoke this token?",
+    "edit": "Edit",
+    "editTitle": "Edit API token",
+    "editSaved": "Saved",
+    "save": "Save",
+    "scopesRequired": "Pick at least one scope, or revoke the token instead.",
     "colName": "Name",
     "colKind": "Kind",
     "colScopes": "Scopes",

@@ -623,9 +623,9 @@ Acceptance:
 from the row.
 
 Acceptance:
-- [ ] Icon button beside Revoke; green check glyph on success, never the word
+- [x] Icon button beside Revoke; green check glyph on success, never the word
       "Succeeded" (`web/CLAUDE.md` UI affordance conventions).
-- [ ] Edit is withheld for revoked tokens **and for non-managed tokens** (D3) —
+- [x] Edit is withheld for revoked tokens **and for non-managed tokens** (D3) —
       the `orchestrator-run:*` rows currently rendered by `listTokens` must not
       offer it.
 
@@ -642,10 +642,10 @@ Same in `web/components/account/personal-tokens-panel.tsx`, reusing its
 > intent.
 
 Acceptance:
-- [ ] In edit mode an empty selection stays empty; Submit is disabled with a
+- [x] In edit mode an empty selection stays empty; Submit is disabled with a
       message directing the user to pick a scope or revoke the token.
-- [ ] Create-mode behavior is **unchanged** (out of scope — surgical changes).
-- [ ] Component test covers the empty-selection branch in edit mode.
+- [x] Create-mode behavior is **unchanged** (out of scope — surgical changes).
+- [x] Component test covers the empty-selection branch in edit mode.
 
 **T5.4 — i18n EN + RU.**
 Every new key in **both** `web/messages/en.json` and `web/messages/ru.json`

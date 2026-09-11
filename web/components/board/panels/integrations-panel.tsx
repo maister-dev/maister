@@ -10,6 +10,8 @@ import {
 } from "@/components/board/panels/token-audit-table";
 import {
   CreateTokenModal,
+  EditTokenModal,
+  isManagedTokenRow,
   RevokeTokenButton,
 } from "@/components/board/token-actions";
 
@@ -51,6 +53,11 @@ export interface TokenLabels {
   copied: string;
   revoke: string;
   revokeConfirm: string;
+  edit: string;
+  editTitle: string;
+  editSaved: string;
+  save: string;
+  scopesRequired: string;
   colName: string;
   colKind: string;
   colScopes: string;
@@ -371,6 +378,11 @@ export async function IntegrationsPanel({
     copied: t("copied"),
     revoke: t("revoke"),
     revokeConfirm: t("revokeConfirm"),
+    edit: t("edit"),
+    editTitle: t("editTitle"),
+    editSaved: t("editSaved"),
+    save: t("save"),
+    scopesRequired: t("scopesRequired"),
     colName: t("colName"),
     colKind: t("colKind"),
     colScopes: t("colScopes"),
@@ -448,7 +460,12 @@ export async function IntegrationsPanel({
         isAdmin={isAdmin}
         labels={labels}
         renderRevoke={(token) => (
-          <RevokeTokenButton labels={labels} slug={slug} tokenId={token.id} />
+          <span className="inline-flex items-center justify-end gap-1.5">
+            {isManagedTokenRow(token) ? (
+              <EditTokenModal labels={labels} slug={slug} token={token} />
+            ) : null}
+            <RevokeTokenButton labels={labels} slug={slug} tokenId={token.id} />
+          </span>
         )}
         tokens={tokens}
       />
