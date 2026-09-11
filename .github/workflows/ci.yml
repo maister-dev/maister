@@ -36,6 +36,16 @@ jobs:
       - name: Install dependencies (monorepo root)
         run: pnpm install --frozen-lockfile
 
+      # These were local-only gates: `validate:docs` is not reachable from any
+      # hook this repo actually ships, so a schema change could land with a stale
+      # generated ERD — and did (`execution_event_skips` in `schema.ts` with no
+      # `docs/db/erd.dbml` row, found during M51's rebase). Docker-free: the ERD
+      # check reads the Drizzle schema, not a database.
+      - name: Validate docs (repo-wide) + API contracts
+        run: |
+          pnpm validate:docs:all
+          pnpm validate:contracts
+
       - name: Lint (web)
         run: pnpm --filter maister-web lint
 
