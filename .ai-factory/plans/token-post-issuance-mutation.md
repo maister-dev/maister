@@ -502,11 +502,11 @@ SET NULL · `actor_label` text NOT NULL · `before` jsonb NULL · `after` jsonb 
 Indexes: `(token_id, created_at)`, `(project_id, created_at)`.
 
 Acceptance:
-- [ ] Migration TRIPLE complete: `0163_*.sql` + `_journal.json` entry +
+- [x] Migration TRIPLE complete: `0163_*.sql` + `_journal.json` entry +
       `meta/0163_snapshot.json`. `_journal.json` is **generated, never hand-edited**.
-- [ ] Re-running `db:generate` reports **"No schema changes"** (the fourth leg).
-- [ ] `pnpm --filter maister-web db:migrate` applies cleanly on a fresh database.
-- [ ] Column and index names match T0.5 verbatim.
+- [x] Re-running `db:generate` reports **"No schema changes"** (the fourth leg).
+- [x] `pnpm --filter maister-web db:migrate` applies cleanly on a fresh database.
+- [x] Column and index names match T0.5 verbatim.
 
 ### Phase 2 — Core service (TDD)
 

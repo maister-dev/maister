@@ -2420,6 +2420,23 @@ table token_audit_log {
   }
 }
 
+table token_lifecycle_events {
+  id text [pk, not null]
+  token_id text [not null]
+  project_id text
+  event text [not null]
+  actor_user_id text
+  actor_label text [not null]
+  before jsonb
+  after jsonb
+  created_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (token_id, created_at) [name: 'token_lifecycle_token_created_idx']
+    (project_id, created_at) [name: 'token_lifecycle_project_created_idx']
+  }
+}
+
 table users {
   id text [pk, not null]
   name text
@@ -3300,6 +3317,12 @@ ref tasks_created_by_user_id_users_id_fk: tasks.created_by_user_id > users.id [d
 ref token_audit_log_token_id_project_tokens_id_fk: token_audit_log.token_id > project_tokens.id [delete: cascade, update: no action]
 
 ref token_audit_log_project_id_projects_id_fk: token_audit_log.project_id > projects.id [delete: set null, update: no action]
+
+ref token_lifecycle_events_token_id_project_tokens_id_fk: token_lifecycle_events.token_id > project_tokens.id [delete: cascade, update: no action]
+
+ref token_lifecycle_events_project_id_projects_id_fk: token_lifecycle_events.project_id > projects.id [delete: set null, update: no action]
+
+ref token_lifecycle_events_actor_user_id_users_id_fk: token_lifecycle_events.actor_user_id > users.id [delete: set null, update: no action]
 
 ref webhook_deliveries_event_id_webhook_events_id_fk: webhook_deliveries.event_id > webhook_events.id [delete: cascade, update: no action]
 
