@@ -1039,6 +1039,25 @@ table execution_event_ingest_failures {
   }
 }
 
+table execution_event_skips {
+  id text [pk, not null]
+  event_stream_id text [not null]
+  execution_host_id text [not null]
+  host_sequence bigint [not null]
+  event_id text [not null]
+  run_id text [not null]
+  event_type text [not null]
+  reason text [not null]
+  occurred_at "timestamp with time zone" [not null]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (event_stream_id, host_sequence) [name: 'execution_event_skips_stream_sequence_unique', unique]
+    event_id [name: 'execution_event_skips_event_unique', unique]
+    (event_stream_id, host_sequence) [name: 'execution_event_skips_stream_scan_idx']
+  }
+}
+
 table execution_event_streams {
   id text [pk, not null]
   execution_host_id text [not null]
@@ -2999,6 +3018,10 @@ ref execution_event_consumers_run_id_runs_id_fk: execution_event_consumers.run_i
 ref execution_event_consumers_poison_event_id_execution_events_id_fk: execution_event_consumers.poison_event_id > execution_events.id [delete: set null, update: no action]
 
 ref execution_event_ingest_failures_execution_host_id_execution_hosts_id_fk: execution_event_ingest_failures.execution_host_id > execution_hosts.id [delete: restrict, update: no action]
+
+ref execution_event_skips_event_stream_id_execution_event_streams_id_fk: execution_event_skips.event_stream_id > execution_event_streams.id [delete: cascade, update: no action]
+
+ref execution_event_skips_execution_host_id_execution_hosts_id_fk: execution_event_skips.execution_host_id > execution_hosts.id [delete: cascade, update: no action]
 
 ref execution_event_streams_execution_host_id_execution_hosts_id_fk: execution_event_streams.execution_host_id > execution_hosts.id [delete: restrict, update: no action]
 

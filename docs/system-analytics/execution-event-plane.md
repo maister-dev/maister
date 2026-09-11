@@ -21,6 +21,10 @@ files.
 - `execution_event_consumers` records one durable projector cursor per run.
 - `execution_event_ingest_failures` retains bounded malformed/quarantine
   metadata without retaining untrusted payload content.
+- `execution_event_skips` records a sequence this manager deliberately dropped:
+  stream, host sequence, event id, run id, event type, reason, occurred-at. Its
+  `run_id` is plain text, not a foreign key — the run it names does not exist
+  here, which is the whole reason the row exists.
 
 ## State machine
 
@@ -34,8 +38,34 @@ stateDiagram-v2
   pending_gap --> unrecoverable: host replay floor passed
   emitted --> quarantined: unsafe or unsupported envelope
   quarantined --> [*]
+  emitted --> skipped_unknown_run: run unknown to this manager
+  skipped_unknown_run --> [*]
   acknowledged --> pruned: ACK plus replay grace
 ```
+
+## An event for a run this manager does not own
+
+`execution_events.run_id` is a real foreign key, so an event naming a run this
+database has never seen cannot be stored — and it can never become storable,
+because a run id is never created retroactively. Refusing it therefore has no
+retry that could succeed.
+
+Refusing it used to abort the ingest transaction. The consumer recorded the
+failure, reconnected, and the replay handed back the same event, permanently.
+The cost was not the dropped event but everything behind it: the contiguity
+walk stops at the first missing sequence, so the stream never advanced past the
+offending position. Measured on a dev host, four foreign events held 689 later
+events of a LIVE run hostage and prompt admission stopped host-wide, while
+`execution_hosts.readiness` still reported `ready` and the affected nodes failed
+with the unrelated-looking `EXECUTOR_UNAVAILABLE`.
+
+Such an event is now recorded in `execution_event_skips` and the contiguity walk
+steps over that sequence. A redelivery resolves as a duplicate. The drop is
+logged at warn — an event for a run this manager does not own is never routine,
+and the ledger is what makes it answerable later.
+
+Reachable without any misconfiguration: `execution_events.run_id` cascades on
+delete, so deleting a run with events in flight lands in the same place.
 
 ## Process flows
 
