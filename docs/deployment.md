@@ -167,12 +167,27 @@ admits no run, starts no agent turn, claims no scheduler job and runs no
 destructive sweep, drain the active work, then run `db:migrate --stage
 execution-ab-additive`, `execution-data-plane:import-legacy inventory
 --import-id <id> --manifest-dir <dir>` to account for every historical source
-and association before a byte is copied, the legacy importer, `--stage
-execution-ab-associations` and `--stage execution-ab-finalize` in that order.
-Each stage refuses with a remediation code rather than applying a partial
-chain. The manifest directory is operator-owned and holds the only copy of the
-raw source map, so keep it outside the web process authority and remove it with
-the import authority. See [execution data cutover](system-analytics/execution-data-cutover.md).
+and association before a byte is copied, `execution-data-plane:import-legacy
+copy --import-id <id> --manifest-dir <dir> --generation <n>` to preserve those
+bytes on the host, `execution-data-plane:import-legacy associate` with the same
+flags to repoint every artifact locator and scratch attachment at the object its
+bytes became, the legacy importer, `--stage execution-ab-associations` and
+`--stage execution-ab-finalize` in that order. Each stage refuses with a
+remediation code rather than applying a partial chain.
+
+`copy` needs a supervisor booted in import mode: set `MAISTER_IMPORT_ADMISSION_DIR`
+to that same manifest directory and `MAISTER_IMPORT_ADMISSION_ID` to the import
+id, and take `--generation` from the `import_admission_enabled` line the
+supervisor logs at startup. Admission exists only while those two variables are
+set; a restart mints the next generation and refuses the previous one, so re-read
+the log after every restart rather than reusing a number. The listener is a Unix
+socket (`<dir>/admission/import.sock`, mode 0600 inside a 0700 directory) and is
+absent from the supervisor's TCP port — the web process must stay outside that
+directory's OS authority.
+
+The manifest directory is operator-owned and holds the only copy of the raw
+source map, so keep it outside the web process authority and remove it with the
+import authority. See [execution data cutover](system-analytics/execution-data-cutover.md).
 
 Apply migrations and seed the first admin:
 

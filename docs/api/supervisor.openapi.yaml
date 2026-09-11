@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: MAIster Supervisor HTTP API
-  version: "0.9.0"
+  version: "0.10.0"
   description: |
     HTTP + SSE surface exposed by `supervisor/` (the Node daemon that owns ACP
     sessions and spawns adapter binaries. Implemented adapters are
@@ -89,6 +89,18 @@ tags:
     description: |
       (Implemented — ADR-166) Execution-host contract: opaque workspace adoption
       and command receipts.
+  - name: maintenance-import
+    description: |
+      (Implemented — S4.3, D9) Operator-only historical import. These routes are
+      NOT served on the loopback TCP server declared under `servers`; they live
+      on a second Fastify instance bound to a Unix domain socket at
+      `<MAISTER_IMPORT_ADMISSION_DIR>/admission/import.sock` (socket mode 0600
+      inside a 0700 directory), started only when the operator names both
+      `MAISTER_IMPORT_ADMISSION_DIR` and `MAISTER_IMPORT_ADMISSION_ID` before
+      boot. The web tier has no client for them: every ordinary caller reaches
+      the host through `BoundClient`/`HostAdminClient` over TCP, and neither
+      composition can address this socket. Nothing here takes a filesystem path
+      or an active assignment.
 paths:
   /capabilities:
     get:
@@ -1396,6 +1408,187 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+  /imports/{importId}:
+    get:
+      tags: [maintenance-import]
+      summary: Read the operator import's own progress (Implemented — S4.3, D9)
+      description: |
+        **Unix socket only — not on the TCP server declared above.** Returns the
+        host's durable view of the enabled import: how many manifest items it
+        registered, how many it sealed, and the byte offset each one resumed
+        from. The operator CLI reads this first so a resumed invocation sends
+        only the bytes the host has not committed instead of replaying history.
+      x-transport: unix-socket
+      parameters:
+        - $ref: "#/components/parameters/ImportId"
+        - $ref: "#/components/parameters/ImportGeneration"
+        - $ref: "#/components/parameters/ImportManifest"
+      responses:
+        "200":
+          description: Bounded progress snapshot. Carries no path and no source identity.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ImportProgress" }
+        "409":
+          description: |
+            `import_admission_disabled` (nothing enabled, or a different import
+            id), `import_admission_revoked`, `import_generation_stale`, or
+            `import_manifest_mismatch`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+  /imports/{importId}/items/{itemId}/chunks/{chunkIndex}:
+    put:
+      tags: [maintenance-import]
+      summary: Commit one bounded chunk of a manifest item (Implemented — S4.3, D9)
+      description: |
+        **Unix socket only — not on the TCP server declared above.** The body is
+        raw bytes, at most `8 MiB`; a larger body is `import_chunk_too_large`.
+        The host hashes what it received and refuses `import_chunk_conflict`
+        before a byte lands if the digest disagrees with `X-MAIster-SHA256`.
+        `X-MAIster-Import-Offset` must equal the item's committed offset, so a
+        gap is `import_offset_mismatch` rather than a hole in the object.
+
+        Bytes are written positionally into the host's own spool, so a re-sent
+        chunk overwrites itself with identical content: the durable ledger — not
+        the file — decides whether this was a replay (`duplicate`) or a real
+        `import_chunk_conflict` (the same index carrying different bytes or a
+        different length). An acknowledgement lost in flight is therefore safe
+        to retry, and `GET /imports/{importId}` after a restart reports the same
+        offset the ledger committed.
+
+        The item must be one the operator's frozen manifest registered at boot;
+        anything else is `import_item_unknown`. A sealed item takes no further
+        bytes (`import_item_sealed`) — preserved history is never mutated.
+      x-transport: unix-socket
+      parameters:
+        - $ref: "#/components/parameters/ImportId"
+        - $ref: "#/components/parameters/ImportGeneration"
+        - $ref: "#/components/parameters/ImportManifest"
+        - name: itemId
+          in: path
+          required: true
+          description: |
+            The manifest item's identity — a 64-hex digest the operator derived
+            from the frozen source identity, never a name or a path.
+          schema: { type: string, pattern: "^[0-9a-f]{64}$" }
+        - name: chunkIndex
+          in: path
+          required: true
+          schema: { type: integer, minimum: 0 }
+        - name: X-MAIster-Import-Offset
+          in: header
+          required: true
+          description: Byte offset this chunk starts at; must equal the committed offset.
+          schema: { type: integer, minimum: 0 }
+        - name: X-MAIster-SHA256
+          in: header
+          required: true
+          description: SHA-256 of this chunk's bytes, verified before the write.
+          schema: { type: string, pattern: "^[0-9a-f]{64}$" }
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        "200":
+          description: Committed, or replayed unchanged.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ImportChunkAck" }
+        "409":
+          description: |
+            Admission refusals as on `GET /imports/{importId}`, plus
+            `import_item_unknown`, `import_item_sealed`,
+            `import_chunk_too_large`, `import_chunk_conflict` or
+            `import_offset_mismatch`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+  /imports/{importId}/items/{itemId}/seal:
+    post:
+      tags: [maintenance-import]
+      summary: Seal a complete item into an ordinary runtime object (Implemented — S4.3, D9)
+      description: |
+        **Unix socket only — not on the TCP server declared above.** Verifies the
+        spooled bytes against the size and digest the frozen manifest declared,
+        then seals them through the SAME `sealObjectFile` primitive the live
+        runtime-object path uses, so an imported object is read back by the
+        ordinary content route with no import-aware branch anywhere.
+
+        The row is written at `assignmentEpoch: 0` under the synthetic
+        `assignmentId: "import:<importId>"`. Real epochs start at 1, so an
+        imported row can never satisfy a live fence and the import cannot forge
+        an active assignment. `hostSessionId` is null and the kind is
+        `historical_import`.
+
+        Sealing is idempotent: a repeated seal of the same item returns the same
+        receipt, while a seal naming a different object is `import_seal_conflict`.
+        An item short of its declared size is `import_item_incomplete`. The
+        operator's source file is never opened for writing, moved, or removed by
+        this route — only the host's own spool copy is consumed.
+
+        A source larger than the ordinary whole-upload limit is admitted here:
+        the bound is the size the manifest itself declared, not the live
+        reservation ceiling.
+      x-transport: unix-socket
+      parameters:
+        - $ref: "#/components/parameters/ImportId"
+        - $ref: "#/components/parameters/ImportGeneration"
+        - $ref: "#/components/parameters/ImportManifest"
+        - name: itemId
+          in: path
+          required: true
+          schema: { type: string, pattern: "^[0-9a-f]{64}$" }
+      responses:
+        "200":
+          description: The sealed object's opaque identity and verified size/digest.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ImportSealReceipt" }
+        "409":
+          description: |
+            Admission refusals as above, plus `import_item_unknown`,
+            `import_item_incomplete` or `import_seal_conflict`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+  /imports/{importId}/admission:
+    delete:
+      tags: [maintenance-import]
+      summary: Close the import authority for good (Implemented — S4.3, D9)
+      description: |
+        **Unix socket only — not on the TCP server declared above.** Revokes the
+        enabled generation durably and closes admission. This is one-way: the
+        wire cannot reopen it, so a later request — including one carrying the
+        revoked generation — is `import_admission_revoked`. Re-enabling is an
+        out-of-band operator act that mints a NEW generation at boot.
+
+        Objects sealed before revocation stay readable through the ordinary
+        runtime-object routes; revocation withdraws the authority to write more
+        history, never the history already preserved.
+      x-transport: unix-socket
+      parameters:
+        - $ref: "#/components/parameters/ImportId"
+        - $ref: "#/components/parameters/ImportGeneration"
+        - $ref: "#/components/parameters/ImportManifest"
+      responses:
+        "200":
+          description: Admission closed.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [revoked]
+                properties:
+                  revoked: { type: boolean, enum: [true] }
+        "409":
+          description: Already revoked, never enabled, or a stale generation/digest.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
 components:
   parameters:
     RuntimeObjectId:
@@ -1434,6 +1627,40 @@ components:
         format: uuid
         minLength: 1
         maxLength: 128
+    ImportId:
+      name: importId
+      in: path
+      required: true
+      description: |
+        The operator's import authority id — the same opaque token
+        `MAISTER_IMPORT_ADMISSION_ID` named at boot. Not a run, a project or a
+        path.
+      schema:
+        type: string
+        pattern: "^[A-Za-z0-9._:-]{1,64}$"
+    ImportGeneration:
+      name: X-MAIster-Import-Generation
+      in: header
+      required: true
+      description: |
+        The generation minted when the operator enabled this import. A request
+        carrying any other value is `import_generation_stale`, so a stale
+        invocation left over from a previous enablement cannot write.
+      schema:
+        type: integer
+        minimum: 1
+    ImportManifest:
+      name: X-MAIster-Import-Manifest
+      in: header
+      required: true
+      description: |
+        Digest of the frozen operator manifest this import was enabled for.
+        Both sides derive it the same way from the inventoried lanes, so a
+        manifest that changed under the same id is `import_manifest_mismatch`
+        rather than a silent write under the old authority.
+      schema:
+        type: string
+        pattern: "^[0-9a-f]{64}$"
   headers:
     CommandReplayed:
       description: |
@@ -2562,10 +2789,106 @@ components:
         - runtime_object_missing
         - runtime_object_range_invalid
         - runtime_object_integrity_mismatch
+        - runtime_object_too_large
+        - runtime_object_delete_failed
+        - command_invariant_conflict
+        - command_in_progress
+        - import_admission_disabled
+        - import_admission_revoked
+        - import_generation_stale
+        - import_manifest_mismatch
+        - import_item_unknown
+        - import_item_sealed
+        - import_item_incomplete
+        - import_offset_mismatch
+        - import_chunk_conflict
+        - import_seal_conflict
+        - import_chunk_too_large
       description: |
         (Implemented — ADR-166) Machine-readable refusal discriminator carried in
         `SupervisorErrorBody.details.reason`. Tests assert the token, never
         the message text.
+    ImportProgress:
+      type: object
+      additionalProperties: false
+      description: |
+        (Implemented — S4.3) The host's durable view of one enabled import:
+        bounded totals for reporting and the per-item offsets a resumed
+        invocation resends from. Item identities are manifest digests, so
+        nothing here names a source file, a directory or a workspace.
+      required: [totals, items]
+      properties:
+        totals: { $ref: "#/components/schemas/ImportTotals" }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/ImportItemProgress" }
+      example:
+        totals: { items: 2, sealed: 1, receivedBytes: 12, expectedBytes: 16 }
+        items:
+          - itemId: "1111111111111111111111111111111111111111111111111111111111111111"
+            sizeBytes: 12
+            receivedBytes: 12
+            state: sealed
+            sealedObjectId: 0d1a0a7e-2f6a-4b0f-9a1f-1b2c3d4e5f60
+          - itemId: "2222222222222222222222222222222222222222222222222222222222222222"
+            sizeBytes: 4
+            receivedBytes: 0
+            state: pending
+            sealedObjectId: null
+    ImportTotals:
+      type: object
+      additionalProperties: false
+      description: |
+        (Implemented — S4.3) Aggregate counters. `items` is how many manifest
+        items the host registered — a sibling of, never a substitute for, the
+        per-item list.
+      required: [items, sealed, receivedBytes, expectedBytes]
+      properties:
+        items: { type: integer, minimum: 0 }
+        sealed: { type: integer, minimum: 0 }
+        receivedBytes: { type: integer, minimum: 0 }
+        expectedBytes: { type: integer, minimum: 0 }
+    ImportItemProgress:
+      type: object
+      additionalProperties: false
+      description: (Implemented — S4.3) One manifest item's resume position.
+      required: [itemId, sizeBytes, receivedBytes, state, sealedObjectId]
+      properties:
+        itemId: { type: string, pattern: "^[0-9a-f]{64}$" }
+        sizeBytes: { type: integer, minimum: 0 }
+        receivedBytes: { type: integer, minimum: 0 }
+        state: { type: string, enum: [pending, receiving, sealed] }
+        sealedObjectId: { type: string, format: uuid, nullable: true }
+    ImportChunkAck:
+      type: object
+      additionalProperties: false
+      description: |
+        (Implemented — S4.3) `duplicate` means the ledger already held this
+        exact chunk and the offset did not move — the signal a client uses to
+        recover from a lost acknowledgement without double-counting bytes.
+      required: [outcome, receivedBytes]
+      properties:
+        outcome: { type: string, enum: [committed, duplicate] }
+        receivedBytes: { type: integer, minimum: 0 }
+      example:
+        outcome: committed
+        receivedBytes: 8388608
+    ImportSealReceipt:
+      type: object
+      additionalProperties: false
+      description: |
+        (Implemented — S4.3) The ordinary runtime object the preserved bytes
+        became. `objectId` is read back through
+        `GET /runtime-objects/{objectId}/content` like any other object.
+      required: [objectId, sizeBytes, sha256]
+      properties:
+        objectId: { type: string, format: uuid }
+        sizeBytes: { type: integer, minimum: 0 }
+        sha256: { type: string, pattern: "^[0-9a-f]{64}$" }
+      example:
+        objectId: 0d1a0a7e-2f6a-4b0f-9a1f-1b2c3d4e5f60
+        sizeBytes: 12
+        sha256: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     WorkspaceRule:
       type: string
       enum:
