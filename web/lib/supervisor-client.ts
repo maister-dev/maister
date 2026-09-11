@@ -523,7 +523,26 @@ export type SupervisorEvent =
     };
 
 function baseUrl(): string {
-  return process.env.MAISTER_SUPERVISOR_URL ?? DEFAULT_BASE_URL;
+  const configured = process.env.MAISTER_SUPERVISOR_URL;
+
+  if (configured) return configured;
+
+  // A test that reaches the real transport without naming a host used to fall
+  // through to the well-known dev port and drive whatever supervisor happened
+  // to be listening there. That host then emitted runtime events carrying run
+  // ids only the test's own database knows, and the developer's manager wedged
+  // its event stream on them (ingest refuses an unknown run, and the refusal is
+  // permanent, so every later event stays locked behind it). Fail loudly here
+  // instead: under a test runner the default is not a host, it is a mistake.
+  if (process.env.VITEST || process.env.NODE_ENV === "test") {
+    throw new MaisterError(
+      "CONFIG",
+      "MAISTER_SUPERVISOR_URL must be set explicitly under a test runner — " +
+        "the default host would be a live supervisor on the developer's machine",
+    );
+  }
+
+  return DEFAULT_BASE_URL;
 }
 
 const KNOWN_SUPERVISOR_CODES: ReadonlySet<MaisterErrorCode> = new Set([

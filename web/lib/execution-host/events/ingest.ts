@@ -23,6 +23,7 @@ import { MaisterError } from "@/lib/errors";
 import {
   executionAssignments,
   executionEventIngestFailures,
+  executionEventSkips,
   executionEvents,
   executionEventStreams,
   executionHosts,
@@ -35,7 +36,8 @@ export type RuntimeEventIngestDisposition =
   | "duplicate"
   | "pending_gap"
   | "accepted"
-  | "stale_epoch";
+  | "stale_epoch"
+  | "skipped_unknown_run";
 
 export type RuntimeEventIngestResult = {
   disposition: RuntimeEventIngestDisposition;
@@ -46,6 +48,7 @@ export type RuntimeEventIngestResult = {
   acceptedCount: number;
   staleEpochCount: number;
   pendingGapCount: number;
+  skippedCount: number;
 };
 
 type IngestedEventRow = {
@@ -450,11 +453,13 @@ async function promoteContiguousPrefix(
   contiguousThrough: bigint | null;
   acceptedCount: number;
   staleEpochCount: number;
+  skippedCount: number;
 }> {
   let expected = (input.stream.lastContiguousSequence ?? -1n) + 1n;
   let contiguousThrough = input.stream.lastContiguousSequence;
   let acceptedCount = 0;
   let staleEpochCount = 0;
+  let skippedCount = 0;
   const rows = (await tx
     .select({
       id: executionEvents.id,
@@ -484,9 +489,35 @@ async function promoteContiguousPrefix(
       ),
     )
     .orderBy(asc(executionEvents.hostSequence))) as IngestedEventRow[];
+  // Sequences this manager deliberately dropped (see executionEventSkips).
+  // Without them the walk below would stop at the hole they leave and the
+  // stream would never advance again.
+  const skippedSequences = new Set(
+    (
+      await tx
+        .select({ hostSequence: executionEventSkips.hostSequence })
+        .from(executionEventSkips)
+        .where(
+          and(
+            eq(executionEventSkips.eventStreamId, input.stream.id),
+            gte(executionEventSkips.hostSequence, expected),
+          ),
+        )
+    ).map((row) => row.hostSequence),
+  );
+  let cursor = 0;
 
-  for (const event of rows) {
-    if (event.hostSequence !== expected) break;
+  for (;;) {
+    if (skippedSequences.has(expected)) {
+      contiguousThrough = expected;
+      expected += 1n;
+      skippedCount += 1;
+      continue;
+    }
+    const event = rows[cursor];
+
+    if (!event || event.hostSequence !== expected) break;
+    cursor += 1;
     if (event.ingestDisposition !== "pending_gap") {
       throw new MaisterError(
         "CONFLICT",
@@ -539,7 +570,7 @@ async function promoteContiguousPrefix(
     })
     .where(eq(executionEventStreams.id, input.stream.id));
 
-  return { contiguousThrough, acceptedCount, staleEpochCount };
+  return { contiguousThrough, acceptedCount, staleEpochCount, skippedCount };
 }
 
 async function resolveStoredAssignment(
@@ -584,6 +615,14 @@ async function existingDuplicate(
     executionHostId: string;
   },
 ): Promise<boolean> {
+  const skipRows = await tx
+    .select({ id: executionEventSkips.id })
+    .from(executionEventSkips)
+    .where(eq(executionEventSkips.eventId, input.envelope.eventId))
+    .limit(1);
+
+  if (skipRows[0]) return true;
+
   const eventRows = await tx
     .select({
       id: executionEvents.id,
@@ -725,6 +764,7 @@ export async function ingestRuntimeEvent(input: {
           acceptedCount: 0,
           staleEpochCount: 0,
           pendingGapCount: 0,
+          skippedCount: 0,
         };
       }
 
@@ -739,10 +779,60 @@ export async function ingestRuntimeEvent(input: {
         .limit(1);
 
       if (!knownRun[0]) {
-        throw new MaisterError(
-          "PRECONDITION",
-          "runtime event references an unknown run",
-        );
+        // This event can never become ingestable: execution_events.run_id is a
+        // real foreign key and a run id is never created retroactively. Throwing
+        // here aborted the transaction, the consumer recorded the failure and
+        // reconnected, and the replay handed back the same event — so the stream
+        // stalled forever and every later event of a LIVE run stayed locked
+        // behind it. Record the drop and let the contiguity walk step over it.
+        await tx
+          .insert(executionEventSkips)
+          .values({
+            id: randomUUID(),
+            eventStreamId: stream.id,
+            executionHostId: input.executionHostId,
+            hostSequence: decimalSequence(envelope.sequence),
+            eventId: envelope.eventId,
+            runId: envelope.runId,
+            eventType: envelope.eventType,
+            reason: "unknown_run",
+            occurredAt: new Date(envelope.occurredAt),
+          })
+          .onConflictDoNothing();
+
+        const lastReceivedOnSkip = stream.lastReceivedSequence ?? -1n;
+        const skipSequence = decimalSequence(envelope.sequence);
+
+        await tx
+          .update(executionEventStreams)
+          .set({
+            lastReceivedSequence:
+              skipSequence > lastReceivedOnSkip
+                ? skipSequence
+                : lastReceivedOnSkip,
+            lastBootId: envelope.hostBootId,
+            lastSeenAt: now,
+          })
+          .where(eq(executionEventStreams.id, stream.id));
+
+        const promotedAfterSkip = await promoteContiguousPrefix(tx, {
+          executionHostId: input.executionHostId,
+          stream,
+          now,
+        });
+
+        return {
+          disposition: "skipped_unknown_run" as const,
+          eventId: envelope.eventId,
+          streamId: envelope.streamId,
+          sequence: envelope.sequence,
+          contiguousThrough:
+            promotedAfterSkip.contiguousThrough?.toString() ?? null,
+          acceptedCount: promotedAfterSkip.acceptedCount,
+          staleEpochCount: promotedAfterSkip.staleEpochCount,
+          pendingGapCount: 0,
+          skippedCount: promotedAfterSkip.skippedCount,
+        } satisfies RuntimeEventIngestResult;
       }
       const assignment = await resolveAssignment(tx, {
         executionHostId: input.executionHostId,
@@ -824,6 +914,7 @@ export async function ingestRuntimeEvent(input: {
         acceptedCount: promoted.acceptedCount,
         staleEpochCount: promoted.staleEpochCount,
         pendingGapCount,
+        skippedCount: promoted.skippedCount,
       } satisfies RuntimeEventIngestResult;
     });
   } catch (error) {
@@ -853,6 +944,20 @@ export async function ingestRuntimeEvent(input: {
     throw error;
   }
 
+  if (result.disposition === "skipped_unknown_run") {
+    input.logger?.warn(
+      {
+        hostId: input.executionHostId,
+        streamId: result.streamId,
+        eventId: result.eventId,
+        sequence: result.sequence,
+        runId: envelope.runId,
+        eventType: envelope.eventType,
+        contiguousThrough: result.contiguousThrough,
+      },
+      "runtime-event-skipped-unknown-run",
+    );
+  }
   input.logger?.info(
     {
       hostId: input.executionHostId,

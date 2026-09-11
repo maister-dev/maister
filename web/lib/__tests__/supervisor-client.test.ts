@@ -253,6 +253,34 @@ describe("listSessions", () => {
   });
 });
 
+describe("supervisor base URL under a test runner", () => {
+  // Regression: three integration tests reached the real transport without
+  // naming a host, fell through to the well-known dev port, and drove a live
+  // supervisor on the developer's machine. That host then emitted runtime
+  // events carrying run ids only the test database knew, and the developer's
+  // manager wedged its event stream on them permanently. Under a test runner
+  // the implicit default must be a loud refusal, never a live host.
+  it("refuses the implicit default instead of reaching localhost:7777", async () => {
+    delete process.env.MAISTER_SUPERVISOR_URL;
+
+    await expect(checkSupervisorHealth()).rejects.toMatchObject({
+      code: "CONFIG",
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("still honours an explicitly configured host", async () => {
+    process.env.MAISTER_SUPERVISOR_URL = "http://127.0.0.1:59999";
+    fetchSpy.mockResolvedValueOnce(
+      new Response(JSON.stringify({ status: "ready" }), { status: 200 }),
+    );
+
+    await checkSupervisorHealth();
+
+    expect(String(fetchSpy.mock.calls[0]?.[0])).toContain("127.0.0.1:59999");
+  });
+});
+
 describe("checkSupervisorHealth", () => {
   const readyHealth = {
     status: "ready",

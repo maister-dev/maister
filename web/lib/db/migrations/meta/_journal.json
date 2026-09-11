@@ -1107,6 +1107,13 @@
       "when": 1788968037855,
       "tag": "0161_runtime_object_retention",
       "breakpoints": true
+    },
+    {
+      "idx": 162,
+      "version": "7",
+      "when": 1789119861942,
+      "tag": "0162_event_skip_ledger",
+      "breakpoints": true
     }
   ]
 }
