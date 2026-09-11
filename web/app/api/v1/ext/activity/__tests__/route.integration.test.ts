@@ -136,7 +136,7 @@ describe("GET /api/v1/ext/activity", () => {
     expect(res.status).toBe(403);
     await expect(res.json()).resolves.toMatchObject({
       code: "UNAUTHORIZED",
-      message: "insufficient scope",
+      details: { requiredScope: "runs:read" },
     });
     expect(routeMocks.getActivityPulse).not.toHaveBeenCalled();
   });

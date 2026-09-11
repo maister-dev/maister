@@ -112,7 +112,7 @@ describe("GET /api/v1/ext/runs/[runId]/activity", () => {
     expect(res.status).toBe(403);
     await expect(res.json()).resolves.toMatchObject({
       code: "UNAUTHORIZED",
-      message: "insufficient scope",
+      details: { requiredScope: "runs:read" },
     });
     expect(routeMocks.getRunActivityResponse).not.toHaveBeenCalled();
   });

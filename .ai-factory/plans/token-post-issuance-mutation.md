@@ -611,9 +611,9 @@ Acceptance (T3.2 + T3.3):
 adjacent invariant comment to draw the D10 line explicitly.
 
 Acceptance:
-- [ ] I18 green — body carries `requiredScope`; for a token holding a distinctive
+- [x] I18 green — body carries `requiredScope`; for a token holding a distinctive
       scope set, the serialized body contains none of its held scopes.
-- [ ] The comment names precisely what stays secret and what does not.
+- [x] The comment names precisely what stays secret and what does not.
 
 ### Phase 5 — UI + i18n
 

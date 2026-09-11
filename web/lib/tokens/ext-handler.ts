@@ -499,7 +499,16 @@ export async function handleExt(
       })
     : opts.scopeLabel;
 
-  // 3b. Scope enforcement. The 403 body MUST NOT leak which scopes the token holds.
+  // 3b. Scope enforcement. Two facts sit on deliberately opposite sides of one
+  // line (ADR-168 D5):
+  //   SECRET — which scopes THIS TOKEN HOLDS. The body must never reveal it,
+  //     neither directly nor by differing between two callers of this route.
+  //   PUBLIC — which scope THIS ROUTE REQUIRES. It is identical for every
+  //     caller, published in docs/api/external/operations.openapi.yaml, and
+  //     printed in this file. Naming it is what makes a misconfigured token
+  //     diagnosable; withholding it protected nothing and cost a Postgres
+  //     UPDATE to debug.
+  // Widening the first by one field is an erosion. Naming the second is not.
   if (opts.requireScope !== false && !tokenHasScope(actor.scopes, scopeLabel)) {
     await recordRequiredTokenAudit(
       {
@@ -517,7 +526,11 @@ export async function handleExt(
     bumpTokenLastUsedAsync(actor, d);
 
     return NextResponse.json(
-      { code: "UNAUTHORIZED", message: "insufficient scope" },
+      {
+        code: "UNAUTHORIZED",
+        message: `insufficient scope: this endpoint requires '${scopeLabel}'`,
+        details: { requiredScope: scopeLabel },
+      },
       { status: 403 },
     );
   }

@@ -408,8 +408,10 @@ describe("ext evaluator routes (ADR-145 D10-D12)", () => {
       const body = (await res.json()) as { code: string; message: string };
 
       expect(body.code, label).toBe("UNAUTHORIZED");
-      // The refusal must never reveal which scopes the token holds.
-      expect(body.message, label).toBe("insufficient scope");
+      // ADR-168: the refusal names the scope the ROUTE requires, and still must
+      // never reveal which scopes the token HOLDS.
+      expect(body.message, label).toContain("insufficient scope");
+      expect(JSON.stringify(body), label).not.toContain("tasks:read");
     }
   });
 
