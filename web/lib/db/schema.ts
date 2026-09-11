@@ -3999,6 +3999,49 @@ export const executionEventStreams = pgTable(
   }),
 );
 
+// A host event whose run this manager does not know can never become
+// ingestable: `execution_events.run_id` is a real FK, and a run id is never
+// created retroactively. Refusing such an event permanently wedged the whole
+// stream — the contiguity walk stops at the first missing sequence, so every
+// later event of a live run stayed locked behind it. This ledger lets the walk
+// step over the sequence while keeping an auditable record of exactly what was
+// dropped and why. `run_id` is deliberately plain text: the run it names does
+// not exist here, so it cannot carry a foreign key.
+export const executionEventSkips = pgTable(
+  "execution_event_skips",
+  {
+    id: text("id").primaryKey(),
+    eventStreamId: text("event_stream_id")
+      .notNull()
+      .references(() => executionEventStreams.id, { onDelete: "cascade" }),
+    executionHostId: text("execution_host_id")
+      .notNull()
+      .references(() => executionHosts.id, { onDelete: "cascade" }),
+    hostSequence: bigint("host_sequence", { mode: "bigint" }).notNull(),
+    eventId: text("event_id").notNull(),
+    runId: text("run_id").notNull(),
+    eventType: text("event_type").notNull(),
+    reason: text("reason", { enum: ["unknown_run"] }).notNull(),
+    occurredAt: timestamp("occurred_at", {
+      withTimezone: true,
+      mode: "date",
+    }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    uniqStreamSequence: unique(
+      "execution_event_skips_stream_sequence_unique",
+    ).on(t.eventStreamId, t.hostSequence),
+    uniqEvent: unique("execution_event_skips_event_unique").on(t.eventId),
+    idxScan: index("execution_event_skips_stream_scan_idx").on(
+      t.eventStreamId,
+      t.hostSequence,
+    ),
+  }),
+);
+
 export const runSessionIncarnations = pgTable(
   "run_session_incarnations",
   {

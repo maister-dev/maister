@@ -1312,4 +1312,76 @@ describe("runtime event ingestion", () => {
       blocker.release();
     }
   }, 10_000);
+
+  // Regression, and deliberately LAST: it consumes stream sequences and one
+  // canonical run sequence, which the ordered tests above depend on.
+  //
+  // A foreign run's event used to abort ingest with PRECONDITION. The consumer
+  // recorded the failure, reconnected, and the replay handed back the same
+  // event — permanently, because a run id is never created retroactively. Every
+  // later event of a LIVE run stayed locked behind it and prompt admission
+  // stopped host-wide.
+  it("steps over an event for a run it does not own instead of wedging the stream", async () => {
+    const db = testDatabase.db;
+    const foreignRunId = randomUUID();
+
+    const skipped = await ingestRuntimeEvent({
+      db,
+      executionHostId: hostId,
+      envelope: event("12", {
+        runId: foreignRunId,
+        assignmentId: randomUUID(),
+        eventType: "runtime_object.state",
+        payloadSchema: "maister.runtime-object.state.v1",
+        payload: {
+          objectId: randomUUID(),
+          generation: 1,
+          state: "pending",
+          deletedAt: null,
+        },
+      }),
+      now: new Date(),
+    });
+
+    expect(skipped.disposition).toBe("skipped_unknown_run");
+    expect(skipped.skippedCount).toBe(1);
+
+    const ledger = await db.execute(
+      sql`select run_id, reason from execution_event_skips where host_sequence = 12`,
+    );
+
+    expect(ledger.rows[0]).toMatchObject({
+      run_id: foreignRunId,
+      reason: "unknown_run",
+    });
+
+    // The live run's next event must still land, and contiguity must have
+    // advanced past the dropped sequence rather than stalling on the hole.
+    const accepted = await ingestRuntimeEvent({
+      db,
+      executionHostId: hostId,
+      envelope: event("13"),
+      now: new Date(),
+    });
+
+    expect(accepted.disposition).toBe("accepted");
+    expect(accepted.contiguousThrough).toBe("13");
+
+    // A redelivery of the dropped event is a duplicate, not a second drop.
+    const replay = await ingestRuntimeEvent({
+      db,
+      executionHostId: hostId,
+      envelope: {
+        ...(event("12") as Record<string, unknown>),
+        eventId: (
+          await db.execute(
+            sql`select event_id from execution_event_skips where host_sequence = 12`,
+          )
+        ).rows[0]?.event_id as string,
+      },
+      now: new Date(),
+    });
+
+    expect(replay.disposition).toBe("duplicate");
+  });
 });
