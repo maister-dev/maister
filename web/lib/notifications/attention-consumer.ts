@@ -104,6 +104,10 @@ async function lastPublishedCount(
   client: Db,
   ownerUserId: string,
 ): Promise<number | null> {
+  // `id DESC` is a total order over a random uuid, so the tiebreak is stable for
+  // a given set of rows but says nothing about which is newer. It never decides
+  // anything in practice: this consumer emits at most one event per reader per
+  // pass and passes are serialized, so two rows cannot share an `occurred_at`.
   const result = await client.execute(sql`
     SELECT (data->>'decisions')::int AS decisions
     FROM webhook_events
@@ -161,18 +165,24 @@ export function buildAttentionConsumer(
       // One pass per READER, not per event: three events that move the same
       // reader's count are one notification, which is the whole point of D6.
       const readers = new Map<string, "admin" | "member" | "viewer">();
+      // One lookup per distinct PROJECT, not per event: `readersOf` scans users
+      // and project_members, and a batch routinely carries many events from one
+      // project. The answer depends on nothing else in the event.
+      const projectIds = new Set(
+        events
+          .filter((event) => ATTENTION_KIND_SET.has(event.kind))
+          .map((event) => event.projectId),
+      );
 
-      for (const event of events) {
-        if (!ATTENTION_KIND_SET.has(event.kind)) continue;
-
+      for (const projectId of projectIds) {
         try {
-          for (const reader of await readersOf(client, event.projectId)) {
+          for (const reader of await readersOf(client, projectId)) {
             readers.set(reader.id, reader.role);
           }
         } catch (err) {
           log.warn(
             {
-              eventId: String(event.id),
+              projectId,
               err: err instanceof Error ? err.message : String(err),
             },
             "attention consumer could not resolve readers (poison-safe)",

@@ -809,7 +809,7 @@ paths:
   /api/activity/cursor:
     post:
       tags: [attention]
-      summary: (Designed ADR-168) Advance the caller's activity read cursor
+      summary: (Implemented, ADR-168) Advance the caller's activity read cursor
       description: |
         Writes `user_activity_cursors.seen_through` for the **session user**.
         The user is `auth-context`; `seenThrough` is body-controlled and clamped
@@ -846,10 +846,85 @@ paths:
         "400": { $ref: "#/components/responses/Precondition" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
 
+  /api/attention/stream:
+    get:
+      tags: [attention]
+      summary: (Implemented, ADR-170) SSE bridge — the reader's attention stream
+      description: |
+        Requires an active session (`requireActiveSession()`), which is the
+        FIRST await. The stream is addressed by the SESSION USER, never by a run
+        or a project: a reader of `/work` or `/activity` watches n runs across m
+        projects and that set changes while they watch. There is no parameter
+        naming a user.
+
+        A server-side poll of DURABLE read models pushed as SSE. It never writes
+        run state, never resolves a HITL deferred and never advances a read
+        cursor. Project visibility is RE-ESTABLISHED on every poll, so a project
+        that leaves the reader's reach mid-stream stops producing frames without
+        a reconnect.
+
+        Frames are TICKS, not a log: "these projects moved, and here are the two
+        canonical counters as of now". The client refetches; it never
+        accumulates frames. Three event names are emitted — `attention.tick`
+        (the only one carrying an SSE `id`), `attention.heartbeat`, and
+        `attention.stream_timeout`, which closes a stream that has been quiet
+        for five minutes. Frame schemas live in
+        `async/attention-stream.asyncapi.yaml`.
+
+        Use the standard SSE `Last-Event-ID` header (or the `?lastEventId=`
+        query-string fallback) to resume strictly after that frame. An absent,
+        malformed, zero or overlong id is NOT an error: for a tick stream the
+        "full replay" is the current state, which the server sends as one
+        snapshot frame whose `changed` array is empty.
+      operationId: streamAttention
+      parameters:
+        - name: Last-Event-ID
+          in: header
+          required: false
+          schema: { type: string, pattern: "^(0|[1-9][0-9]{0,18})$" }
+        - name: lastEventId
+          in: query
+          required: false
+          description: >-
+            Query-string fallback for `Last-Event-ID`, same canonical decimal
+            form. An unusable value yields a snapshot rather than an error.
+          schema: { type: string, pattern: "^(0|[1-9][0-9]{0,18})$" }
+      responses:
+        "200":
+          description: SSE stream.
+          headers:
+            Content-Type:
+              schema:
+                type: string
+                enum: [text/event-stream]
+            Cache-Control:
+              schema: { type: string, enum: [no-cache] }
+            X-Accel-Buffering:
+              schema:
+                type: string
+                enum: ["no"]
+                description: >-
+                  Suppresses proxy buffering; without it the reader sees nothing
+                  until the connection closes.
+        "401":
+          description: No valid session (`UNAUTHENTICATED`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "403":
+          description: |
+            Any other refusal from the session gate — the account must change
+            its password first (`PASSWORD_CHANGE_REQUIRED`), the account is not
+            active (`ACCOUNT_INACTIVE`), or the session is otherwise
+            unauthorized (`UNAUTHORIZED`). No stream is opened.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
   /api/push/subscribe:
     post:
       tags: [attention]
-      summary: (Designed ADR-172) Register a web-push endpoint for the caller
+      summary: (Implemented, ADR-172) Register a web-push endpoint for the caller
       description: |
         Stores a browser push endpoint owned by the **session user**. The owner
         is `auth-context` only and is never read from the body.

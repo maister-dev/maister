@@ -24,8 +24,12 @@ import { requireActiveUserById } from "@/lib/authz";
 
 const SCOPE = "notifications:subscriptions";
 
+// `NOT_FOUND` is the code every other ext 404 answers with (tasks, comments,
+// relations, triage, human-asks). It is not a `MaisterError` member — the ext
+// boundary spells its own 404 — so the value has to match its siblings by
+// convention, and a client switching on `code` sees one shape for one status.
 const NOT_FOUND = {
-  code: "CONFLICT",
+  code: "NOT_FOUND",
   message: "notification subscription not found",
 } as const;
 

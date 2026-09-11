@@ -22,12 +22,17 @@ const MAISTER_CRON_TOKEN =
 // below; the spec's in-process stub re-derives the HMAC from the SAME value to
 // verify each captured signature. Re-read by the spec via process.env.
 const WH_E2E_SECRET = process.env.WH_E2E_SECRET ?? "whsec_e2e_0123456789abcdef";
-// push-notifications.spec.ts: a THROWAWAY VAPID pair, generated for this suite
-// and valid nowhere else. Web push is optional (`NTF-10`) and unset is the
-// default self-hosted shape, which `UT-NTF-10` and the route's CONFIG branch
-// own; the e2e needs it SET so the real browser can complete
-// `pushManager.subscribe` and the full opt-in → ledger → revoke round trip is
-// actually exercised rather than asserted in the degraded state.
+// push-notifications.spec.ts: PLACEHOLDERS, not a key pair. Web push is optional
+// (`NTF-10`) and unset is the default self-hosted shape, which `UT-NTF-10` and
+// the route's CONFIG branch own; the e2e needs the three variables merely
+// PRESENT, because `isPushConfigured()` tests presence and never key validity
+// (`lib/notifications/vapid.ts`) — that is the whole reason the subscribe route
+// stops answering CONFIG. Nothing in the suite signs anything: the spec POSTs
+// synthetic `push.e2e.invalid` endpoints and `pushManager.subscribe()` is never
+// reached (headless Chromium has no push service). So these are shape-valid
+// base64url strings and deliberately NOT real key material — a committed
+// private key is a secret-scanner hit and a precedent for committing a real one.
+// Override via the environment to point a run at a genuine pair.
 const MAISTER_VAPID_PUBLIC_KEY =
   process.env.MAISTER_VAPID_PUBLIC_KEY ??
   "BnotARealVapidKey-e2ePlaceholderOnly-e2ePlaceholderOnly-e2ePlaceholderOnly0000000000000";

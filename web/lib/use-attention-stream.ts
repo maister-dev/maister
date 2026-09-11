@@ -15,6 +15,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { isSseCursor } from "@/lib/sse/frame";
 import {
   advanceRunStreamLifecycle,
   initialRunStreamLifecycle,
@@ -33,6 +34,15 @@ export interface AttentionTickFrame {
   projectIds: string[];
 }
 
+/**
+ * Deliberately NARROWER than the frame (ADR-170 D3 fixes the wire, not this).
+ *
+ * The frame also carries `decisions`, `updates` and `projectIds`. None is
+ * returned here, because the surfaces this hook serves are server-rendered and
+ * a tick becomes `router.refresh()` — which re-reads the counters server-side.
+ * Re-exposing them would be a second, client-side source for a number ADR-168
+ * D8 says has exactly one, and it would be the stale one between refreshes.
+ */
 export interface UseAttentionStreamResult {
   /** Monotonic count of frames received — the value a consumer effects on. */
   tick: number;
@@ -42,12 +52,7 @@ export interface UseAttentionStreamResult {
    * refetching on it.
    */
   changed: AttentionTickFrame["changed"];
-  decisions: number | null;
-  updates: number | null;
-  /** Projects named by the most recent frame; empty for a counters-only tick. */
-  projectIds: string[];
   liveness: RunStreamLifecycleKind;
-  lastEventId: string | null;
   reconnect: () => void;
 }
 
@@ -59,18 +64,11 @@ function streamUrl(origin: string, lastEventId: string | null): string {
   return url.toString();
 }
 
-export function useAttentionStream(options?: {
-  enabled?: boolean;
-}): UseAttentionStreamResult {
-  const enabled = options?.enabled ?? true;
+export function useAttentionStream(): UseAttentionStreamResult {
   const [tick, setTick] = useState(0);
   const [changed, setChanged] = useState<AttentionTickFrame["changed"]>([]);
-  const [decisions, setDecisions] = useState<number | null>(null);
-  const [updates, setUpdates] = useState<number | null>(null);
-  const [projectIds, setProjectIds] = useState<string[]>([]);
   const [liveness, setLiveness] =
     useState<RunStreamLifecycleKind>("connecting");
-  const [lastEventId, setLastEventId] = useState<string | null>(null);
   const sourceRef = useRef<EventSource | null>(null);
   const lastEventIdRef = useRef<string | null>(null);
   const lifecycleRef = useRef(initialRunStreamLifecycle);
@@ -95,11 +93,6 @@ export function useAttentionStream(options?: {
   }, []);
 
   useEffect(() => {
-    if (!enabled) {
-      setLiveness("closed");
-
-      return;
-    }
     if (lifecycleRef.current.kind === "closed") {
       lifecycleRef.current = initialRunStreamLifecycle;
     }
@@ -125,18 +118,13 @@ export function useAttentionStream(options?: {
           (event as MessageEvent<string>).data,
         ) as AttentionTickFrame;
 
-        setDecisions(frame.decisions);
-        setUpdates(frame.updates);
-        setProjectIds(frame.projectIds);
         setChanged(frame.changed);
         setTick((current) => current + 1);
 
         const id = (event as MessageEvent<string>).lastEventId;
 
-        if (/^[1-9][0-9]*$/.test(id)) {
-          lastEventIdRef.current = id;
-          setLastEventId(id);
-        }
+        // Same spelling the route parses and the AsyncAPI declares.
+        if (isSseCursor(id)) lastEventIdRef.current = id;
       } catch {
         /* a malformed frame is skipped, never thrown at the reader */
       }
@@ -178,16 +166,7 @@ export function useAttentionStream(options?: {
       source.close();
       if (sourceRef.current === source) sourceRef.current = null;
     };
-  }, [enabled, reconnectKey]);
+  }, [reconnectKey]);
 
-  return {
-    tick,
-    changed,
-    decisions,
-    updates,
-    projectIds,
-    liveness,
-    lastEventId,
-    reconnect,
-  };
+  return { tick, changed, liveness, reconnect };
 }

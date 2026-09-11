@@ -74,6 +74,7 @@ what stops this matrix decaying into the historical aliases the Stage B matrix b
 | NTF-10 | VAPID env table and boot degradation | T7.9 | UT-NTF-10 | Implemented |
 | EDGE-NTF-01 | idempotent consumer handle | T7.5 | IT-EDGE-NTF-01 | Implemented |
 | EDGE-NTF-02 | 410 Gone terminal path | T7.6 | IT-EDGE-NTF-02 | Implemented |
+| EDGE-NTF-04 | 429 retried, not settled dead | T7.6 | IT-EDGE-NTF-04 | Implemented |
 | EDGE-NTF-03 | existing project webhooks unaffected | T7.2 | IT-EDGE-NTF-03 | Implemented |
 
 ## Second-level tests beside a primary

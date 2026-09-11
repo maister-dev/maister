@@ -2,12 +2,15 @@
  * `E2E-NTF` — the push opt-in flow, a delivered notification, and revocation
  * (ADR-172).
  *
- * The PUSH SERVICE is mocked, not the browser: Chromium's real service worker
- * registers, the real `pushManager.subscribe` runs against a real VAPID key, and
- * the real `POST /api/push/subscribe` stores the endpoint. What is stubbed is the
- * one thing a test cannot have — a push service that will actually wake the
- * browser — so "a delivered notification" is asserted at the point the sender
- * reaches: the delivery ledger.
+ * Chromium's real service worker registers and the real
+ * `POST /api/push/subscribe` stores the endpoint. What a test cannot have is a
+ * push service, so the endpoint this suite registers is SYNTHETIC
+ * (`push.e2e.invalid`) and `pushManager.subscribe()` is never reached — see the
+ * note above the opt-in test. "A delivered notification" is therefore asserted
+ * where the sender actually reaches it, the delivery ledger, by
+ * `IT-NTF-04`/`IT-NTF-05`. The VAPID variables in `playwright.config.ts` are
+ * placeholders whose only job is to be PRESENT, so the subscribe route stops
+ * answering CONFIG.
  *
  * Chromium needs no permission prompt under Playwright: the context is granted
  * `notifications` up front, which is what a reader clicking "Allow" produces.

@@ -53,10 +53,18 @@ export interface PushPayload {
  * | ------------------------- | ---------- | ------------------------------- | -------- |
  * | 2xx                       | delivered  | `delivered_at` stamped          | —        |
  * | 404 / 410 (gone)          | expired    | endpoint DELETED with its rows  | never    |
+ * | 408 / 429                 | retryable  | `pending`, next_attempt_at set  | re-sent  |
  * | other 4xx                 | terminal   | `dead`, `delivered_at` null     | never    |
  * | 5xx                       | retryable  | `pending`, next_attempt_at set  | re-sent  |
  * | network / timeout         | retryable  | `pending`, next_attempt_at set  | re-sent  |
  * | VAPID unconfigured        | retryable  | `pending`, kind `config`        | re-sent once configured |
+ *
+ * `408` and `429` are the two 4xx a push service uses to say "later", so they
+ * are carved out of the terminal arm explicitly. Everything else in the 4xx
+ * range is the service rejecting the REQUEST — the same bytes will be rejected
+ * seven more times over the next day, so the delivery is settled `dead` and the
+ * caller passes `terminal` to the ledger, which is the one verdict
+ * `classifyResult` cannot reach from a status code alone.
  *
  * `expired` is its own outcome rather than a flavour of `terminal` because it
  * mutates a SECOND row: the endpoint is gone, so keeping the subscription would
@@ -81,6 +89,9 @@ export type PushOutcome =
 
 /** 404 and 410 both mean "this endpoint is permanently gone" to a push service. */
 const GONE_STATUSES = new Set([404, 410]);
+
+/** The 4xx that mean "later", not "no": request timeout and rate limiting. */
+const RETRYABLE_CLIENT_STATUSES = new Set([408, 429]);
 
 function timeoutMs(): number {
   const raw = process.env.MAISTER_WEBHOOK_TIMEOUT_MS;
@@ -158,7 +169,12 @@ export async function sendPush(
       return { outcome: "expired", httpStatus, durationMs };
     }
 
-    if (httpStatus !== undefined && httpStatus >= 400 && httpStatus <= 499) {
+    if (
+      httpStatus !== undefined &&
+      httpStatus >= 400 &&
+      httpStatus <= 499 &&
+      !RETRYABLE_CLIENT_STATUSES.has(httpStatus)
+    ) {
       return { outcome: "terminal", httpStatus, durationMs, detail };
     }
 

@@ -9,6 +9,7 @@ import { isMaisterError } from "@/lib/errors";
 import {
   classifyResult,
   DEFAULT_MAX_ATTEMPTS,
+  type DeliveryClassification,
   type WebhookErrorKind,
 } from "@/lib/webhooks/backoff";
 import { matchSubscriptions } from "@/lib/webhooks/match";
@@ -603,9 +604,7 @@ async function processPushDelivery(
   );
 
   if (sent.outcome === "expired") {
-    // Deleting the endpoint cascades this delivery row away, so the attempt is
-    // recorded BEFORE the delete — otherwise the audit trail vanishes with it.
-    await recordExpiredPush(db, claimed, attemptCount, sent);
+    await deleteExpiredPushEndpoint(db, claimed, sent);
 
     return "dead";
   }
@@ -616,11 +615,14 @@ async function processPushDelivery(
     maxAttempts,
     type: eventRow.type,
     errorKind: sent.outcome === "retryable" ? sent.errorKind : undefined,
-    httpStatus:
-      sent.outcome === "delivered" ? sent.httpStatus : sent.httpStatus,
+    httpStatus: sent.httpStatus,
     durationMs: sent.durationMs,
     errorDetail: sent.outcome === "delivered" ? null : (sent.detail ?? null),
     responseSnippet: null,
+    // `terminal` is the one outcome `classifyResult` cannot derive from the
+    // status: it would see a non-2xx, non-410 4xx below the attempt ceiling and
+    // schedule a retry. The sender already decided no retry can succeed.
+    terminal: sent.outcome === "terminal",
   });
 }
 
@@ -628,50 +630,22 @@ async function processPushDelivery(
  * `NTF-05` / `EDGE-NTF-02`: a `410 Gone` (or `404`) is terminal and removes the
  * endpoint. The reader's OTHER transports are untouched — only this browser is
  * gone — which is why the `notification_subscriptions` intent is left alone.
+ *
+ * The delete is the WHOLE operation. `webhook_deliveries.push_subscription_id`
+ * cascades from `push_subscriptions`, and `webhook_delivery_attempts.delivery_id`
+ * cascades from `webhook_deliveries`, so this row and every attempt on it go
+ * with the endpoint — which is what the ADR-172 amendment asks for. Stamping the
+ * delivery `dead` first, or recording a final attempt, would be two writes the
+ * same transaction deletes.
  */
-async function recordExpiredPush(
+async function deleteExpiredPushEndpoint(
   db: Db,
   claimed: ClaimedDeliveryRow,
-  attemptCount: number,
-  sent: { httpStatus: number; durationMs: number },
+  sent: { httpStatus: number },
 ): Promise<void> {
-  await db.transaction(async (tx: Db) => {
-    await tx.execute(sql`
-      INSERT INTO webhook_delivery_attempts (
-        id, delivery_id, attempt_no, requested_at, duration_ms,
-        http_status, error_kind, error_detail, response_snippet
-      )
-      VALUES (
-        gen_random_uuid()::text,
-        ${claimed.id},
-        COALESCE(
-          (SELECT max(attempt_no) FROM webhook_delivery_attempts
-           WHERE delivery_id = ${claimed.id}),
-          0
-        ) + 1,
-        now(),
-        ${sent.durationMs},
-        ${sent.httpStatus},
-        'http',
-        'push endpoint gone',
-        NULL
-      )
-    `);
-    await tx.execute(sql`
-      UPDATE webhook_deliveries
-      SET status = 'dead',
-          attempt_count = ${attemptCount},
-          last_http_status = ${sent.httpStatus},
-          last_error_kind = 'http',
-          last_error_message = 'push endpoint gone',
-          lease_expires_at = NULL,
-          updated_at = now()
-      WHERE id = ${claimed.id}
-    `);
-    await tx.execute(sql`
-      DELETE FROM push_subscriptions WHERE id = ${claimed.push_subscription_id}
-    `);
-  });
+  await db.execute(sql`
+    DELETE FROM push_subscriptions WHERE id = ${claimed.push_subscription_id}
+  `);
 
   log.info(
     {
@@ -799,6 +773,15 @@ type FinishInput = {
   durationMs: number;
   errorDetail: string | null;
   responseSnippet: string | null;
+  /**
+   * The caller already knows no retry can succeed, so the retry curve is not
+   * consulted. Only the push branch sets it: a push service answering `400`,
+   * `403` or `413` is rejecting the REQUEST, and re-sending the same bytes
+   * seven more times over a day changes nothing. `classifyResult` cannot reach
+   * that verdict on status alone, because `408` and `429` are 4xx and ARE
+   * retryable — the sender classifies, this only records.
+   */
+  terminal?: boolean;
 };
 
 async function finishDelivery(
@@ -807,13 +790,17 @@ async function finishDelivery(
 ): Promise<"delivered" | "dead" | "retry"> {
   const { claimed, attemptCount, maxAttempts, errorKind, httpStatus } = input;
 
-  const classification = classifyResult({
-    attemptCount,
-    maxAttempts,
-    httpStatus,
-    errorKind,
-    rng: Math.random,
-  });
+  const classification: DeliveryClassification = input.terminal
+    ? // `reason` is required by the union and read by nothing; "gone" is the
+      // nearer of its two members for a request the service will never accept.
+      { outcome: "dead", reason: "gone" }
+    : classifyResult({
+        attemptCount,
+        maxAttempts,
+        httpStatus,
+        errorKind,
+        rng: Math.random,
+      });
 
   const httpStatusValue = httpStatus ?? null;
   const errorKindValue = errorKind ?? null;

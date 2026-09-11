@@ -28,7 +28,7 @@ import { getUpdatesCount } from "@/lib/queries/updates";
 import { getVisibleProjectIds } from "@/lib/queries/visible-projects";
 import { isMaisterError } from "@/lib/errors";
 import { requireActiveSession } from "@/lib/authz";
-import { SSE_STREAM_HEADERS, sseFrame } from "@/lib/sse/frame";
+import { isSseCursor, SSE_STREAM_HEADERS, sseFrame } from "@/lib/sse/frame";
 
 const log = pino({
   name: "api-attention-stream",
@@ -82,15 +82,16 @@ interface ChangedProject {
  * already delivered repeats. A negative, non-numeric, zero or overlong id is NOT
  * an error: for a tick stream the "full replay" is the current state, which the
  * caller sends as one snapshot frame.
+ *
+ * The spelling comes from `lib/sse/frame.ts` — the client and the AsyncAPI
+ * `pattern` read the same one.
  */
-const CURSOR_PATTERN = /^(?:0|[1-9][0-9]{0,18})$/;
-
 function parseLastEventId(req: NextRequest): number | null {
   const raw =
     req.headers.get("last-event-id") ??
     new URL(req.url).searchParams.get("lastEventId");
 
-  if (!raw || !CURSOR_PATTERN.test(raw)) return null;
+  if (!raw || !isSseCursor(raw)) return null;
   const parsed = Number.parseInt(raw, 10);
 
   return parsed > 0 ? parsed : null;

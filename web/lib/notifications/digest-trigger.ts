@@ -137,9 +137,11 @@ export async function runDigestTrigger(
 
   for (const candidate of candidates) {
     try {
-      // The interval is read from the reader's own last emission, so this is
-      // idempotent across redeliveries and across two sweeps racing: the second
-      // one finds a fresh digest and skips.
+      // The interval is read from the reader's own last emission, so a repeated
+      // sweep finds the fresh digest and skips. Note what enforces that: the
+      // `system_sweep` job is a scheduler SINGLETON, so sweeps are serialized.
+      // There is no CAS here — two genuinely concurrent sweeps would both read
+      // the pre-emission watermark and both emit.
       if (
         candidate.last_digest_at !== null &&
         now.getTime() - new Date(candidate.last_digest_at).getTime() <

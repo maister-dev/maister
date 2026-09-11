@@ -2,6 +2,11 @@
 
 import type { ReactElement } from "react";
 
+import {
+  ArrowPathIcon,
+  BellAlertIcon,
+  BellSlashIcon,
+} from "@heroicons/react/24/outline";
 import { useEffect, useState } from "react";
 
 /**
@@ -201,22 +206,34 @@ export function NotificationsPanel({
         <div className="mt-4 flex flex-wrap items-center gap-3">
           {state === "on" ? (
             <button
-              className="inline-flex h-9 items-center rounded-[10px] border border-line bg-ivory px-4 text-[12.5px] font-semibold text-ink disabled:opacity-60"
+              className="inline-flex h-9 items-center gap-1.5 rounded-[10px] border border-danger/40 bg-ivory px-4 text-[12.5px] font-semibold text-danger disabled:opacity-60"
               data-testid="notifications-disable"
               disabled={state !== "on"}
               type="button"
               onClick={() => void disable()}
             >
+              {/* Turning notifications off is the destructive half of this
+                  pair, so it carries the muted-bell icon and the danger tone
+                  rather than reading as the same weight as opting in. */}
+              <BellSlashIcon aria-hidden="true" className="h-3.5 w-3.5" />
               {labels.disable}
             </button>
           ) : (
             <button
-              className="inline-flex h-9 items-center rounded-[10px] bg-amber px-4 text-[12.5px] font-semibold text-white disabled:opacity-60"
+              className="inline-flex h-9 items-center gap-1.5 rounded-[10px] bg-amber px-4 text-[12.5px] font-semibold text-white disabled:opacity-60"
               data-testid="notifications-enable"
               disabled={state === "busy" || state === "loading"}
               type="button"
               onClick={() => void enable()}
             >
+              {state === "busy" ? (
+                <ArrowPathIcon
+                  aria-hidden="true"
+                  className="h-3.5 w-3.5 animate-spin"
+                />
+              ) : (
+                <BellAlertIcon aria-hidden="true" className="h-3.5 w-3.5" />
+              )}
               {state === "busy" ? labels.enabling : labels.enable}
             </button>
           )}

@@ -37,12 +37,22 @@ export interface WorkProgress {
 }
 
 export interface DeriveWorkStageInput {
+  /**
+   * `taskStatus`, `taskStage` and `runKind` are part of the input signature
+   * ADR-169 D1 fixes normatively, and NO branch reads any of the three today —
+   * stated here so a reader does not go looking for the branch.
+   *
+   * They are not redundant by accident. The run axis dominates whenever a run
+   * exists (`stageOf` returns from `STAGE_BY_RUN_STATUS`), and the task axis
+   * answers only the no-run case, where `triageStatus` is the discriminant. A
+   * future divergence — a task abandoned under a live run, a `scratch` run that
+   * must not read as `Executing` — lands as a branch here rather than as a new
+   * parameter threaded through both call sites.
+   */
   taskStatus: Task["status"];
   taskStage: Task["stage"];
   triageStatus: Task["triageStatus"];
   runStatus: RunStatusValue | null;
-  // Part of the input signature ADR-169 D1 fixes normatively, though no branch
-  // reads it today: the run-status axis already separates the kinds that differ.
   runKind: Run["runKind"] | null;
   promotionState: string | null;
   workspaceRemoved: boolean;

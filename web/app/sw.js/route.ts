@@ -35,7 +35,15 @@ self.addEventListener("push", (event) => {
 
   const title = typeof payload.title === "string" ? payload.title : "MAIster";
   const body = typeof payload.body === "string" ? payload.body : "";
-  const url = typeof payload.url === "string" ? payload.url : "/";
+  // Same-origin, path-only. VAPID already restricts who can push here, so this
+  // is depth, not the gate — but a click handler that will navigate wherever a
+  // payload says is one compromised dependency away from being the gate.
+  const url =
+    typeof payload.url === "string" &&
+    payload.url.startsWith("/") &&
+    !payload.url.startsWith("//")
+      ? payload.url
+      : "/";
   // One tag per notification KIND, so a second digest replaces the first
   // instead of stacking. At-least-once delivery means the same fact can arrive
   // twice, and two identical banners is the shape readers mute.
@@ -54,17 +62,22 @@ self.addEventListener("push", (event) => {
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
 
+  const raw = (event.notification.data && event.notification.data.url) || "/";
   const target =
-    (event.notification.data && event.notification.data.url) || "/";
+    typeof raw === "string" && raw.startsWith("/") && !raw.startsWith("//")
+      ? raw
+      : "/";
+  const wanted = new URL(target, self.location.origin).href;
 
   event.waitUntil(
     self.clients
       .matchAll({ type: "window", includeUncontrolled: true })
       .then((windows) => {
         for (const client of windows) {
-          if (client.url.endsWith(target) && "focus" in client) {
-            return client.focus();
-          }
+          // Compare resolved URLs. An endsWith match was far too loose: a
+          // target of "/" matched every window whose url ends in a slash.
+          // (No backticks in here — this whole worker is a template literal.)
+          if (client.url === wanted && "focus" in client) return client.focus();
         }
 
         return self.clients.openWindow(target);

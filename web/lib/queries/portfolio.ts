@@ -1134,14 +1134,32 @@ function critRank(c: string | null): number {
   return c !== null ? (CRITICALITY_RANK[c] ?? -1) : -1;
 }
 
+/**
+ * `scope.projectId` narrows the inbox to ONE project, intersected with the
+ * reader's visibility and never widening it. `DecisionsScope` is an alias of
+ * this type, so the decision queue's four sources cannot disagree about what a
+ * scope is: the three list helpers beside this one already accept a project set
+ * as their first argument, and this one accepting none is what let a
+ * project-scoped `decisions` count report every other visible project's HITL
+ * (ADR-168 D8 promises the project page a SLICE of the canonical queue).
+ */
+export interface CrossProjectHitlScope {
+  projectId?: string;
+}
+
 export async function getCrossProjectHitlInbox(
   userId: string,
   globalRole: GlobalRole,
+  scope: CrossProjectHitlScope = {},
 ): Promise<CrossProjectHitlInbox> {
   const now = new Date();
   const client = db();
 
-  const visibleIds = await getVisibleProjectIds(userId, globalRole);
+  const allVisibleIds = await getVisibleProjectIds(userId, globalRole);
+  const visibleIds =
+    scope.projectId === undefined
+      ? allVisibleIds
+      : allVisibleIds.filter((id) => id === scope.projectId);
   const visibleProjects =
     visibleIds.length === 0
       ? []

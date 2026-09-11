@@ -59,6 +59,14 @@ const fx = {
   blockedRun: randomUUID(),
   blockerTask: randomUUID(),
   foreignTask: randomUUID(),
+  // A SECOND project the member can see, holding its own respondable HITL.
+  // Without it, scoping to `fx.project` is indistinguishable from not scoping
+  // at all, and the scope test passes whether or not the filter exists.
+  secondProject: randomUUID(),
+  secondFlow: randomUUID(),
+  secondHitlTask: randomUUID(),
+  secondHitlRun: randomUUID(),
+  secondHitlRequest: randomUUID(),
 };
 
 let taskNumber = 0;
@@ -169,10 +177,16 @@ beforeAll(async () => {
 
   await seedProject(fx.project, "dq-own", "DQO");
   await seedProject(fx.foreignProject, "dq-foreign", "DQF");
+  await seedProject(fx.secondProject, "dq-second", "DQS");
   await pool.query(
     `insert into project_members (id, project_id, user_id, role)
      values ($1, $2, $3, 'member')`,
     [randomUUID(), fx.project, fx.member],
+  );
+  await pool.query(
+    `insert into project_members (id, project_id, user_id, role)
+     values ($1, $2, $3, 'member')`,
+    [randomUUID(), fx.secondProject, fx.member],
   );
   await pool.query(
     `insert into project_members (id, project_id, user_id, role)
@@ -184,6 +198,7 @@ beforeAll(async () => {
     .values(testPlatformRunnerRow(fx.runner, "claude"));
   await seedFlow(fx.flow, fx.project);
   await seedFlow(fx.foreignFlow, fx.foreignProject);
+  await seedFlow(fx.secondFlow, fx.secondProject);
 
   // (1) respondable HITL
   await seedTask(fx.hitlTask, fx.project, fx.flow, {
@@ -202,6 +217,30 @@ beforeAll(async () => {
     prompt: "may I write the file?",
     criticality: "high",
     createdAt: new Date("2026-09-09T08:00:00.000Z"),
+  });
+
+  // (1b) the SAME population, in the member's OTHER visible project. The
+  // scope test's discriminant: it belongs to the unscoped queue and must be
+  // absent from a queue scoped to `fx.project`.
+  await seedTask(fx.secondHitlTask, fx.secondProject, fx.secondFlow, {
+    title: "awaiting an answer in the second project",
+    status: "InFlight",
+  });
+  await seedRun(
+    fx.secondHitlRun,
+    fx.secondProject,
+    fx.secondFlow,
+    fx.secondHitlTask,
+    "NeedsInput",
+  );
+  await db.insert(schema.hitlRequests).values({
+    id: fx.secondHitlRequest,
+    runId: fx.secondHitlRun,
+    stepId: "implement",
+    kind: "permission",
+    prompt: "may I write the other file?",
+    criticality: "high",
+    createdAt: new Date("2026-09-09T08:30:00.000Z"),
   });
 
   // (2) mechanically promotable
@@ -313,10 +352,33 @@ describe("IT-ATN-05 every surface reads the same number", () => {
       projectId: fx.project,
     });
 
+    // The discriminant. Every source must take the scope, not just the three
+    // that accept a project set as an argument: the member's OTHER visible
+    // project holds a respondable HITL, so a source that resolves its own
+    // visibility and ignores the scope makes these two numbers equal.
+    expect(all.items.map((item) => item.projectId)).toContain(fx.secondProject);
+    expect(scoped.items.map((item) => item.projectId)).not.toContain(
+      fx.secondProject,
+    );
+    expect(scoped.count).toBeLessThan(all.count);
+
     expect(scoped.count).toBe(
       all.items.filter((item) => item.projectId === fx.project).length,
     );
-    expect(scoped.count).toBe(all.count);
+  });
+
+  it("scopes every kind, not only the ones keyed on a project set", async () => {
+    const scoped = await getDecisionsQueue(fx.member, "member", {
+      projectId: fx.secondProject,
+    });
+
+    // Scoped to the project that holds ONLY a HITL: if the HITL arm were
+    // unscoped this would still carry the first project's promotable, crashed
+    // and flagged items.
+    expect(scoped.items.map((item) => item.projectId)).toEqual([
+      fx.secondProject,
+    ]);
+    expect(scoped.items.map((item) => item.kind)).toEqual(["hitl"]);
   });
 
   it("refuses to widen the scope to a project the reader cannot see", async () => {

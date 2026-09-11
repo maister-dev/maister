@@ -9,7 +9,8 @@ owns `WorkStage`, the pure classifier `deriveWorkStage`, and the batched read
 model behind `/work`. It does **not** own the Kanban board's seven
 `BoardColumn` values, the persisted `tasks.stage` column, or the inbox card's
 node `StageChip`; [ADR-169](../decisions.md#adr-169-derived-work-stage-vocabulary-distinct-from-the-board-columns)
-is the map between those four vocabularies. Nothing here is persisted.
+is the map between those four vocabularies. Nothing here is persisted. The
+domain is **Implemented**.
 
 ## Domain entities
 
@@ -104,6 +105,21 @@ flowchart LR
     F --> G
     G --> H["work table rows"]
 ```
+
+## As built
+
+- **Three of the nine classifier inputs are read by no branch.**
+  `taskStatus`, `taskStage` and `runKind` are part of the signature ADR-169 D1
+  fixes normatively, and none is consulted today: the run axis dominates
+  whenever a run exists, and the task axis answers only the no-run case, where
+  `triageStatus` is the discriminant. They are kept so a future divergence — a
+  task abandoned under a live run, a `scratch` run that must not read as
+  `Executing` — lands as a branch rather than as a new parameter threaded
+  through both call sites.
+- **`progress` is meaningful on one of the two call sites.** `/work` passes the
+  node spine's k/N; the board passes `null` and forwards only `stage`,
+  `blocked` and `promotedKind` to its cards, because the board renders node
+  progress through its own existing surface.
 
 ## Expectations
 

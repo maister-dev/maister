@@ -12,6 +12,7 @@ It owns no state machine of its own: it reads run, task, HITL and activity state
 and never writes any of it. The counters' definitions are locked by
 [ADR-168](../decisions.md#adr-168-two-canonical-attention-counters-decisions-and-updates);
 the stream by [ADR-170](../decisions.md#adr-170-user-scoped-attention-sse-stream).
+Both are **Implemented**.
 
 ## Domain entities
 
@@ -105,6 +106,33 @@ sequenceDiagram
     Client->>Stream: refetch trigger only, no state write
     Note over Stream: quiet cap closes an idle stream
 ```
+
+## As built
+
+- **Every source of the queue takes the scope, including the one that resolves
+  its own visibility.** Three of the four sources accept a project set as their
+  first argument; `getCrossProjectHitlInbox` resolves `getVisibleProjectIds`
+  itself and so takes a narrowing `scope` instead, intersected with visibility
+  and never widening it. Passing it nothing is what made the project page's
+  `decisions` count report every other visible project's HITL, so
+  `DecisionsScope` is now an alias of that source's own scope type — the two
+  cannot drift apart again (`IT-ATN-05`).
+- **The stream's frame is wider than any consumer.** `AttentionTickEvent`
+  carries both counters and the moved `projectIds` because ADR-170 D3 fixes that
+  shape, but the client hook returns only `tick`, `changed`, `liveness` and
+  `reconnect`: the surfaces it serves are server-rendered, a tick becomes
+  `router.refresh()`, and re-exposing the counters client-side would be a second
+  source for a number ADR-168 D8 says has exactly one.
+- **One cursor spelling, three readers.** The route that parses
+  `Last-Event-ID`, the client that decides whether a received id is usable, and
+  the AsyncAPI `pattern` all have to agree; the regex therefore lives in
+  `lib/sse/frame.ts`. The client's own copy used to reject `0`, which the route
+  accepts.
+- **The HTTP half of the stream is in the OpenAPI, the frames in the AsyncAPI.**
+  Both SSE precedents document the handshake — auth, resume parameters, close
+  semantics — as an OpenAPI path and the event schemas as an AsyncAPI channel.
+  No gate enumerates routes against paths, so the pairing is a convention a
+  reviewer has to hold.
 
 ## Expectations
 

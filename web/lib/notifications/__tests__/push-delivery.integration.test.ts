@@ -376,6 +376,81 @@ describe("IT-NTF-05 / IT-EDGE-NTF-02 an expired endpoint", () => {
   });
 });
 
+describe("IT-NTF-05 a 4xx the push service will never accept", () => {
+  it("settles dead on a 403 instead of spending the whole retry curve", async () => {
+    const reader = await seedReader();
+
+    sendNotification.mockRejectedValue(gone(403));
+
+    const eventId = await emitDigest(reader.userId);
+
+    await runWebhookDeliveryJob({ db });
+
+    const row = await pushRow(eventId);
+
+    // The discriminant against the 500 case above: same attempt number, same
+    // non-2xx status, opposite verdict. `classifyResult` cannot tell them
+    // apart from the status alone — it would schedule a retry for both — so a
+    // `pending` row here means the sender's `terminal` verdict was dropped.
+    expect(row?.status).toBe("dead");
+    expect(row?.delivered_at).toBeNull();
+    expect(row?.last_http_status).toBe(403);
+    expect(row?.attempt_count).toBe(1);
+    expect(await attemptCount(row!.id)).toBe(1);
+
+    // Terminal means terminal: a later drain must not pick it up again.
+    sendNotification.mockClear();
+    await runWebhookDeliveryJob({ db });
+    expect(sendNotification).not.toHaveBeenCalled();
+  });
+
+  it("keeps the endpoint — a rejected request is not a dead browser", async () => {
+    const reader = await seedReader();
+
+    sendNotification.mockRejectedValue(gone(413));
+    await emitDigest(reader.userId);
+    await runWebhookDeliveryJob({ db });
+
+    const remaining = await db.execute(sql`
+      SELECT 1 FROM push_subscriptions WHERE id = ${reader.pushId}
+    `);
+
+    expect(remaining.rows).toHaveLength(1);
+  });
+});
+
+describe("IT-EDGE-NTF-04 a 4xx that means later, not no", () => {
+  it("retries a 429 on the normal curve rather than settling it dead", async () => {
+    const reader = await seedReader();
+
+    sendNotification.mockRejectedValue(gone(429));
+
+    const eventId = await emitDigest(reader.userId);
+
+    await runWebhookDeliveryJob({ db });
+
+    const row = await pushRow(eventId);
+
+    expect(row?.status).toBe("pending");
+    expect(row?.last_http_status).toBe(429);
+    expect(new Date(row!.next_attempt_at).getTime()).toBeGreaterThan(
+      Date.now(),
+    );
+  });
+
+  it("retries a 408 too", async () => {
+    const reader = await seedReader();
+
+    sendNotification.mockRejectedValue(gone(408));
+
+    const eventId = await emitDigest(reader.userId);
+
+    await runWebhookDeliveryJob({ db });
+
+    expect((await pushRow(eventId))?.status).toBe("pending");
+  });
+});
+
 describe("NTF-08 the intent gates delivery", () => {
   it("sends nothing when the reader has no web_push intent", async () => {
     const reader = await seedReader([], false);

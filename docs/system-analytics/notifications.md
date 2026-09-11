@@ -91,6 +91,18 @@ flowchart TD
 
 ## As built
 
+- **A `410` deletes the endpoint and nothing else is written.** The delete IS
+  the operation: `webhook_deliveries.push_subscription_id` cascades from
+  `push_subscriptions` and `webhook_delivery_attempts.delivery_id` cascades from
+  `webhook_deliveries`, so the delivery row and every attempt on it go with the
+  endpoint. Stamping the delivery `dead` first, or recording a closing attempt,
+  would be writes the same transaction deletes.
+- **`terminal` is a verdict the retry curve cannot reach.** `classifyResult`
+  sees only a status, and a non-2xx, non-`410` 4xx below the attempt ceiling
+  looks retryable to it — so a `403` from a push service would be re-sent seven
+  more times across a day. The sender classifies instead and the ledger takes an
+  explicit `terminal` flag; `408` and `429` are carved out of that arm by name,
+  because they are the two 4xx that mean "later".
 - **`webhook_deliveries` is the push ledger too.** ADR-172 D7 stamps
   `delivered_at`, which is a `webhook_deliveries` column, and that table's
   `subscription_id` was `NOT NULL` to `webhook_subscriptions` — a push endpoint
@@ -146,7 +158,7 @@ flowchart TD
 - **NTF-02:** Every reader of `webhook_events.run_id` and `.project_id` MUST handle NULL, enumerated as a per-reader checklist with one case each.
 - **NTF-03:** A platform-wide subscription MUST NOT match a user-scoped event, and a user subscription MUST NOT match a project-scoped event. The admin platform SCOPE must likewise exclude user-owned subscriptions (`project_id IS NULL AND owner_user_id IS NULL`).
 - **NTF-04:** The sender MUST persist delivery intent before the send and stamp `delivered_at` only after it succeeds. Push intent is persisted at fanout, one `webhook_deliveries` row per registered endpoint.
-- **NTF-05:** A push `410 Gone` MUST delete the subscription; every other failure MUST follow the existing retry curve.
+- **NTF-05:** A push `410 Gone` (or `404`) MUST delete the subscription. A push rejected with any other 4xx except `408`/`429` MUST settle `dead` without retrying — the same request cannot succeed later. Every remaining failure, including `408`/`429`, MUST follow the existing retry curve.
 - **NTF-06:** Signing secrets MUST be stored as `env:NAME` references only, never as plaintext in a column, log or payload.
 - **NTF-07:** A personal token MUST be able to CRUD only its own owner's subscriptions; an unknown id MUST answer `404`, never `403`.
 - **NTF-08:** Notification triggers MUST be `decisions` deltas and digests only, and MUST NEVER be per-event by default.
@@ -157,6 +169,7 @@ flowchart TD
 
 - **EDGE-NTF-01:** At-least-once redelivery of the same domain event MUST converge to one notification; the consumer's `handle` is idempotent and a second dispatch produces no second send.
 - **EDGE-NTF-02:** An expired push subscription answers `410 Gone`; the row is deleted rather than retried, and the reader's remaining transports are unaffected.
+- **EDGE-NTF-04:** A push service answering `429 Too Many Requests` MUST be retried on the normal curve, not settled `dead` — it is the one 4xx that means "later" rather than "no", and collapsing the whole 4xx range into "terminal" would drop a notification under load.
 - **EDGE-NTF-03:** Existing project- and run-scoped webhooks MUST fan out, deliver, retry and prune exactly as before the widening — the nullable columns change no behaviour for rows that fill them.
 
 ## Linked artifacts

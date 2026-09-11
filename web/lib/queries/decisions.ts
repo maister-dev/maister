@@ -20,7 +20,10 @@ import type {
   CrashedDecisionItem,
   FlaggedDecisionItem,
 } from "@/lib/queries/decision-sources";
-import type { CrossProjectHitlItem } from "@/lib/queries/portfolio";
+import type {
+  CrossProjectHitlItem,
+  CrossProjectHitlScope,
+} from "@/lib/queries/portfolio";
 import type { WorkStage } from "@/lib/work/stage";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
@@ -92,10 +95,15 @@ export interface DecisionsQueue {
   count: number;
 }
 
-export interface DecisionsScope {
-  /** Narrows to one project, intersected with visibility — never widens it. */
-  projectId?: string;
-}
+/**
+ * Narrows to one project, intersected with visibility — never widens it.
+ *
+ * It EXTENDS the HITL source's scope rather than restating its field, so the
+ * two cannot drift: every source of this queue has to honour the same scope,
+ * and the one that resolves its own visibility set is the one that silently
+ * ignored it.
+ */
+export type DecisionsScope = CrossProjectHitlScope;
 
 const CRITICALITY_RANK = {
   low: 0,
@@ -187,7 +195,11 @@ export async function computeDecisionsQueue(
         .select({ id: projects.id, slug: projects.slug, name: projects.name })
         .from(projects)
         .where(inArray(projects.id, projectIds)),
-      getCrossProjectHitlInbox(userId, globalRole),
+      // The scope goes to ALL FOUR sources. This one resolves its own
+      // visibility set, so it takes the narrowing `scope` rather than
+      // `projectIds`; handing it nothing is what made a project-scoped count
+      // include every other visible project's HITL.
+      getCrossProjectHitlInbox(userId, globalRole, scope),
       listPromotableForProjects(projectIds, { db: client }),
       listCrashedForProjects(projectIds, { db: client }),
       listFlaggedForProjects(projectIds, { db: client }),
