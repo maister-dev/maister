@@ -2389,6 +2389,159 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /api/v1/ext/runs/{runId}/recover:
+    post:
+      tags: [runs]
+      summary: (ADR-034 — Implemented) Recover a Crashed run
+      description: |
+        (ADR-034 amendment — Implemented.) Scope `runs:recover`. The
+        token-authority twin of the internal `POST /api/runs/{runId}/recover`,
+        so automation driving a run over this surface is not stranded by a lost
+        adapter. Same classifier, same cap re-admission, same
+        durable-marker-before-side-effect ordering, and the SAME outcome → status
+        projection as the internal route.
+
+        An `ai_coding` node continues its prior ACP session
+        (`session/resume` on `acp_session_id`); a session-less node is
+        re-dispatched only when its manifest config declares `retry_safe: true`.
+
+        **Concurrency is safe to automate.** The `Crashed → Running|Pending`
+        claim is a status-guarded CAS, so a concurrent second call is `409` and
+        can never double-spawn, and a cap-full recover queues to `Pending`
+        rather than exceeding `MAISTER_MAX_CONCURRENT_RUNS`.
+
+        **Retry semantics.** Only `503` is retryable. `409` and `410` are
+        terminal classifications — this run cannot continue, and the caller
+        should `POST /api/v1/ext/runs/{runId}/discard` instead.
+
+        **Identifiers (trust contour).** The `projectId` is derived SERVER-SIDE
+        from the run row, existence-hidden `404` on mismatch. The body is empty
+        and the response NEVER carries `acpSessionId` or any session handle.
+
+        Writes a `token_audit_log` row with scope `runs:recover`.
+      operationId: extRecoverRun
+      security:
+        - projectToken: []
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            description: |
+              The Crashed run to recover. NOT declared `format: uuid` — as on
+              the sibling reopen route, the handler resolves the run by lookup
+              against `runs.id` (a `text` column), so an unknown or malformed id
+              is an existence-hidden 404, never a 422. Declaring uuid would
+              promise a validation the server does not perform.
+      responses:
+        "200":
+          description: |
+            Recovery started; the run is `Running` again. `resumed` continued the
+            prior agent session, `redispatched` re-ran a retry-safe
+            session-less node.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExtRecoverAccepted" }
+        "202":
+          description: |
+            The global concurrency cap was full, so the run was queued as
+            `Pending` with its session handle retained. No supervisor session was
+            created; the scheduler resumes it when a slot frees.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExtRecoverAccepted" }
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/HitlForbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: |
+            Terminal refusal, NOT retryable. `CONFLICT` — the run has no
+            resumable session and its node is not retry-safe (`discard-only`),
+            or the run was not `Crashed` because it is already terminal or a
+            concurrent recover won the CAS. `PRECONDITION` — the workspace was
+            removed, so archived history cannot be recovered. Discard the run.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExtErrorBody" }
+        "410":
+          description: |
+            Terminal refusal, NOT retryable. Code `CHECKPOINT` — the stored ACP
+            session is unresumable. Discard the run.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExtErrorBody" }
+        "503":
+          description: |
+            Code `EXECUTOR_UNAVAILABLE` — a transient supervisor/host failure
+            during resume. The ONLY retryable outcome; the reconciler resolves
+            the run within one grace window either way.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExtErrorBody" }
+
+  /api/v1/ext/runs/{runId}/discard:
+    post:
+      tags: [runs]
+      summary: (ADR-034 — Implemented) Discard a run and free its workspace
+      description: |
+        (ADR-034 amendment — Implemented.) Scope `runs:recover` — the SAME scope
+        as recover, because ADR-034 defined recover and discard as one RBAC pair
+        under the `recoverRun` project action. Recover's own `409`/`410`
+        refusals instruct the caller to discard, so gating the two separately
+        would let the API prescribe an action it then denies.
+
+        Ends the run `Abandoned` and removes its worktree, archiving the branch
+        first (ADR-035 preserve-then-prune) so no work is lost, and emits
+        `run.abandoned` to the webhook and domain-event planes. This is how an
+        unattended caller closes out an attempt recover refused, instead of
+        leaving a `Crashed` row holding a worktree until the 7-day GC sweep.
+        Discard is NOT required to launch the task again — a `Crashed` run is
+        already launchable.
+
+        Allowed from `Review | Crashed | Done | Abandoned | Failed`. A live run
+        is refused `409 PRECONDITION`; so is a run claimed by a human reviewer —
+        the token path pins the viewer to null, so the ADR-160 claim-owner
+        carve-out can never open for a token.
+
+        **Identifiers (trust contour).** The `projectId` is derived SERVER-SIDE
+        from the run row, existence-hidden `404` on mismatch. The body is empty.
+
+        Writes a `token_audit_log` row with scope `runs:recover`.
+      operationId: extDiscardRun
+      security:
+        - projectToken: []
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            description: |
+              The run to discard. NOT declared `format: uuid` — see the sibling
+              recover route.
+      responses:
+        "200":
+          description: |
+            Run discarded. Idempotent: replaying a discard whose workspace is
+            already removed returns the same body with `idempotent: true`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExtDiscardResult" }
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/HitlForbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
   /api/v1/ext/runs/{runId}/readiness:
     get:
       tags: [readiness]
@@ -3096,6 +3249,65 @@ components:
         message:
           type: string
           description: Human-readable error message.
+
+    ExtRecoverAccepted:
+      type: object
+      required: [ok, state, runStatus]
+      description: |
+        (ADR-034) Recovery was admitted. NEVER carries `acpSessionId` or any
+        other session handle.
+      properties:
+        ok:
+          type: boolean
+          enum: [true]
+        state:
+          type: string
+          enum: [resumed, redispatched, queued]
+        runStatus:
+          type: string
+          enum: [Running, Pending]
+          description: |
+            `Running` for `resumed`/`redispatched`; `Pending` for `queued`.
+
+    ExtDiscardResult:
+      type: object
+      required:
+        [
+          ok,
+          runId,
+          operation,
+          runStatus,
+          workspaceRemoved,
+          idempotent,
+          preservationOutcome,
+          archivedBranch,
+        ]
+      properties:
+        ok:
+          type: boolean
+          enum: [true]
+        runId:
+          type: string
+        operation:
+          type: string
+          enum: [discard]
+        runStatus:
+          type: string
+          description: |
+            The run's status after the removal — `Abandoned`, except a run that
+            was already `Done`, which keeps it.
+        workspaceRemoved:
+          type: boolean
+          enum: [true]
+        idempotent:
+          type: boolean
+          description: True when the workspace had already been removed.
+        preservationOutcome:
+          type: string
+          description: How the branch was preserved before the worktree was removed.
+        archivedBranch:
+          type: string
+          nullable: true
 
     ExtAgentMemoryState:
       type: object

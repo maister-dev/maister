@@ -3398,6 +3398,7 @@
     "scopeRunsCancel": "Отмена дочерних запусков",
     "scopeRunsPromote": "Продвижение дочерних запусков",
     "scopeRunsSync": "Синхронизация и переоткрытие прогонов",
+    "scopeRunsRecover": "Восстановление и отбрасывание прогонов",
     "scopeMemoryRead": "Чтение памяти проекта",
     "scopeMemoryWrite": "Запись в память проекта",
     "scopeAgentMemoryWrite": "Запись памяти агента",

@@ -154,6 +154,31 @@ surface exists.
   resolver. It is **manual-only**: NOT in `AGENT_TOKEN_SCOPES` and NOT in
   `ORCHESTRATOR_TOKEN_SCOPES` (`web/lib/agents/tokens.ts`). See
   [branch-sync.md](branch-sync.md) and ADR-141.
+- **New scope** (ADR-034 amendment — Implemented) — `runs:recover` authorizes
+  BOTH `POST /api/v1/ext/runs/{runId}/recover` and
+  `POST /api/v1/ext/runs/{runId}/discard`, and backs the MCP tools
+  `run_recover` / `run_discard`. ONE scope for the pair because ADR-034 defined
+  them under ONE project action; it MUST be mapped in `PROJECT_ACTION_BY_SCOPE`
+  to **`recoverRun`** (member-level), mirroring the internal routes — the
+  `?? "readBoard"` fallback would downgrade a write scope to the viewer action.
+  The routes take an empty body and the `runId` path param; the project comes
+  from the token and the run is existence-hidden `404` against it. Recovery is
+  **safe to automate**: the `Crashed → Running|Pending` claim is a
+  status-guarded CAS (a concurrent second call is `409`, never a double-spawn),
+  it re-admits through `MAISTER_MAX_CONCURRENT_RUNS` rather than bypassing it,
+  and `discard-only`/`unresumable` are terminal `409`/`410` classifications —
+  only `503 EXECUTOR_UNAVAILABLE` is retryable. Discard ships with recover
+  because those refusals instruct the caller to discard — which is how an
+  unattended caller ends an unrecoverable attempt (`Abandoned`, branch archived,
+  worktree released, `run.abandoned` emitted) instead of parking a `Crashed` row
+  until the 7-day GC. Relaunching never required it: `Crashed` is already
+  `launchable`. It is
+  **operator/CI-only**: NOT in `AGENT_TOKEN_SCOPES`, NOT in
+  `ORCHESTRATOR_TOKEN_SCOPES`, and NOT in `CROSS_PROJECT_AGENT_SCOPES` — like
+  every other `runs:*` scope. The `RecoverResult → HTTP` projection is shared
+  (`web/lib/runs/recover-http.ts`) so the internal and external surfaces cannot
+  answer one outcome differently. See
+  [reconciliation-gc.md](reconciliation-gc.md) and ADR-034.
 - **Memory scopes** (ADR-122/127/128) — `memory:read` covers recall and
   clusters; `memory:write` covers retain and propose. Both are in the
   `AGENT_TOKEN_SCOPES` fixed set. Scope alone never suffices: access is

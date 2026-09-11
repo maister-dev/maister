@@ -89,6 +89,7 @@ export interface TokenLabels {
   scopeRunsCancel: string;
   scopeRunsPromote: string;
   scopeRunsSync: string;
+  scopeRunsRecover: string;
   scopeMemoryRead: string;
   scopeMemoryWrite: string;
   scopeAgentMemoryWrite: string;
@@ -174,6 +175,8 @@ function scopeLabel(labels: TokenLabels, scope: string): string {
       return labels.scopeRunsPromote;
     case "runs:sync":
       return labels.scopeRunsSync;
+    case "runs:recover":
+      return labels.scopeRunsRecover;
     case "memory:read":
       return labels.scopeMemoryRead;
     case "memory:write":
@@ -406,6 +409,7 @@ export async function IntegrationsPanel({
     scopeRunsCancel: t("scopeRunsCancel"),
     scopeRunsPromote: t("scopeRunsPromote"),
     scopeRunsSync: t("scopeRunsSync"),
+    scopeRunsRecover: t("scopeRunsRecover"),
     scopeMemoryRead: t("scopeMemoryRead"),
     scopeMemoryWrite: t("scopeMemoryWrite"),
     scopeAgentMemoryWrite: t("scopeAgentMemoryWrite"),

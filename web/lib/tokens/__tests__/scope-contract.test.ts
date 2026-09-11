@@ -6,7 +6,11 @@ import { EVALUATION_JUDGE_TOKEN_SCOPES } from "@/lib/agents/tokens";
 import { PROJECT_ACTION_BY_SCOPE } from "@/lib/tokens/ext-handler";
 import { ORCHESTRATOR_TOKEN_SCOPES } from "@/lib/agents/tokens";
 import { PROJECT_ACTION_MIN } from "@/lib/authz";
-import { AGENT_TOKEN_SCOPES, TOKEN_SCOPES } from "@/types/token-scopes";
+import {
+  AGENT_TOKEN_SCOPES,
+  CROSS_PROJECT_AGENT_SCOPES,
+  TOKEN_SCOPES,
+} from "@/types/token-scopes";
 
 // T-C8b (ADR-152 D16): the agent-memory scope moves with FIVE sites, not four.
 // The fifth is mandatory because resolveProjectAction ends in `?? "readBoard"` —
@@ -72,6 +76,25 @@ describe("external token scope contract", () => {
     // ADR-141's manual-only stance reserves for a deliberate human click.
     expect(ORCHESTRATOR_TOKEN_SCOPES).not.toContain("runs:sync");
     expect(ORCHESTRATOR_TOKEN_SCOPES).not.toContain("runs:reopen");
+  });
+
+  it("maps runs:recover to recoverRun so ext == internal authz (never readBoard)", () => {
+    expect(TOKEN_SCOPES).toContain("runs:recover");
+    // ADR-034 gave recover AND discard the one `recoverRun` action; the
+    // `?? "readBoard"` fallback would silently downgrade this write scope to
+    // the viewer-level action.
+    expect(PROJECT_ACTION_BY_SCOPE["runs:recover"]).toBe("recoverRun");
+    expect(PROJECT_ACTION_BY_SCOPE["runs:recover"]).not.toBe("readBoard");
+    expect(PROJECT_ACTION_MIN).toHaveProperty("recoverRun");
+  });
+
+  it("keeps runs:recover out of every machine-actor grant set", () => {
+    // Recovering re-admits through the concurrency cap and discarding removes a
+    // worktree. Neither belongs to an ephemeral agent, and — like every other
+    // `runs:*` scope — never reaches across a project boundary.
+    expect(AGENT_TOKEN_SCOPES).not.toContain("runs:recover");
+    expect(ORCHESTRATOR_TOKEN_SCOPES).not.toContain("runs:recover");
+    expect(CROSS_PROJECT_AGENT_SCOPES).not.toContain("runs:recover");
   });
 
   // ADR-145 (Evaluation Lab) D10/D12: the attempt-bound evaluator judge scopes.

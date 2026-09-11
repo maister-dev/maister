@@ -238,7 +238,9 @@ flowchart TD
 
 ### Operator Recover — hybrid resume / re-dispatch (Implemented)
 
-Operator-driven Recover (`POST /api/runs/{runId}/recover`) classifies the
+Operator-driven Recover (`POST /api/runs/{runId}/recover`, and its
+token-authority twin `POST /api/v1/ext/runs/{runId}/recover` under scope
+`runs:recover` — ADR-034 amendment) classifies the
 `Crashed` run with `classifyRecover(run, nodeKind, retrySafe)` over the
 **recover target node** — `runs.resume_target_step_id` (the node id retained at
 crash time; `current_step_id` is nulled on crash), falling back to
@@ -272,6 +274,16 @@ attempt instead of no-op'ing on the already-owned graph guard. The claim is
 single-winner via a CAS-clear of the
 in-flight marker (`UPDATE runs SET resume_started_at = NULL WHERE id = ? AND
 resume_started_at IS NOT NULL`): the winner drives, the loser bails.
+
+What the reconciler may never do is resume a mid-turn agent **implicitly** —
+that is the rule the classification table above enforces, and it is unchanged by
+the external route. A caller POSTing either recover endpoint has made the
+decision explicitly; only the credential carrying it differs. Both entry points
+run the same classifier, the same Phase-1 CAS + cap re-admission, and the same
+`RecoverResult → HTTP` projection (`web/lib/runs/recover-http.ts`), so a second
+concurrent call is `409` and a cap-full recover queues rather than over-spawning
+— which is what makes the operation safe for an unattended caller. See
+[external-operations.md](external-operations.md).
 
 ### Cron GC route (Implemented; compatibility wrapper Implemented)
 
@@ -553,9 +565,9 @@ For each run at reconcile time, gather: `run.status`, `run.runKind`,
 | `Running` | worktree present, `liveSession` present | **RE-ATTACH** (`scheduleResumedSessionDrive`) or re-dispatch `runFlow` | live agent session with no attached runner (post web restart) — not crashed |
 | `Running` | worktree present, no `acpSessionId` match but a LIVE session exists for this `(runId, currentStepId)` | **SKIP** (reason `live-session-by-step`) | an agent node's prompt is in-flight — `acp_session_id` persists only AFTER it returns, so the active `run_sessions` row's is still null; the node is genuinely running and must NOT be crashed (the bug this guards) or re-attached (double-drive) |
 | `Running` | worktree present, no live session, current node is a **retry-safe gate eval** (`check`/`judge`/`guard`/`human`/`form`/null — read-only) | **RE-DISPATCH** `runFlow` (CAS-guarded) | safe re-run of a read-only evaluation; avoids the forbidden false-positive crash on a gate executing between sessions |
-| `Running` | worktree present, no live session, current node is **`cli`** (arbitrary side effects, NOT retry-safe) | **CRASH** (`crashRunningRun`, reason `cli-not-retry-safe`) | CAS prevents concurrent runners, NOT re-run idempotency (Codex F4); a half-run `cli` may have partial file/network side effects — never silently re-run. Recoverable via explicit human Recover **only** when the node config declares `retry_safe: true` (accepted-risk re-dispatch); otherwise discard-only. |
+| `Running` | worktree present, no live session, current node is **`cli`** (arbitrary side effects, NOT retry-safe) | **CRASH** (`crashRunningRun`, reason `cli-not-retry-safe`) | CAS prevents concurrent runners, NOT re-run idempotency (Codex F4); a half-run `cli` may have partial file/network side effects — never silently re-run. Recoverable via an explicit Recover call **only** when the node config declares `retry_safe: true` (accepted-risk re-dispatch); otherwise discard-only. |
 | `Running` | worktree present, no live session, current node is **agent**, **recently started** (`resume_started_at` OR latest `node_attempts.started_at` within `MAISTER_RECONCILE_GRACE_SECONDS`) | **SKIP** (grace window) | a launch/recover is still spinning its ACP session up — do NOT crash an in-flight session |
-| `Running` | worktree present, no live session, current node is **agent**, **past grace** | **CRASH** (`crashRunningRun`, reason `agent-session-gone`) | recoverability computed at UI render from `acpSessionId` presence; auto-resume of a mid-turn agent is unsafe → explicit human Recover |
+| `Running` | worktree present, no live session, current node is **agent**, **past grace** | **CRASH** (`crashRunningRun`, reason `agent-session-gone`) | recoverability computed at UI render from `acpSessionId` presence; auto-resume of a mid-turn agent is unsafe → an explicit Recover call (operator or token, never the reconciler itself) |
 | `Running`, `runKind='scratch'` | session gone, past grace | **CRASH** via `markScratchCrashed` (sets both `runs.status` and `scratchRuns.dialogStatus`) | scratch parity |
 ## Linked artifacts
 
@@ -569,7 +581,9 @@ For each run at reconcile time, gather: `run.status`, `run.runKind`,
   boundary).
 - API: [`../api/web.openapi.yaml`](../api/web.openapi.yaml)
   (`/api/runs/{runId}/recover`, `/api/runs/{runId}/discard`,
-  `/api/runs/{runId}/archive`, `/api/runs/{runId}/drop`, `/api/cron/gc`).
+  `/api/runs/{runId}/archive`, `/api/runs/{runId}/drop`, `/api/cron/gc`);
+  [`../api/external/operations.openapi.yaml`](../api/external/operations.openapi.yaml)
+  (`/api/v1/ext/runs/{runId}/recover`, `/api/v1/ext/runs/{runId}/discard`).
 - ERD: [`../db/runs-domain.md`](../db/runs-domain.md),
   [`../db/erd.md`](../db/erd.md) (`workspaces.scheduled_removal_at`,
   `archived_branch`, `archived_at`, `runs.resume_started_at` — migration

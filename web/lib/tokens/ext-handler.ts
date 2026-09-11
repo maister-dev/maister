@@ -99,6 +99,10 @@ export const PROJECT_ACTION_BY_SCOPE: Partial<Record<string, ProjectAction>> = {
   // ADR-141: sync + reopen are promote-class — a user token acting cross-project
   // must clear the SAME bar as internal promote, never the `readBoard` fallback.
   "runs:sync": "promoteRun",
+  // ADR-034 amendment: recover + discard are ONE scope over the ONE project
+  // action ADR-034 defined for them. Must be mapped — the `?? "readBoard"`
+  // fallback below would resolve this write scope to the VIEWER-level action.
+  "runs:recover": "recoverRun",
   "readiness:read": "readBoard",
   "gates:report": "launchRun",
   "hitl:read": "readBoard",
