@@ -11,6 +11,7 @@ import {
 } from "vitest";
 
 import * as schema from "@/lib/db/schema";
+import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -86,6 +87,11 @@ beforeAll(async () => {
     databaseName: "cron_gc_test",
   });
   db = testDatabase.db;
+  // The sweep bundle activates the execution event plane, which resolves a host.
+  // Without a registered fake that reaches the real transport — refused under a
+  // test runner — and the bundle reports a partial failure, so the route answers
+  // 207 instead of 200.
+  await fakeExecutionHosts(db);
   savedToken = process.env.MAISTER_CRON_TOKEN;
   ({ GET: cronGET, POST: cronPOST } = await import("../route"));
 }, 180_000);

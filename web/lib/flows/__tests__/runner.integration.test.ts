@@ -17,6 +17,7 @@ import {
 } from "@/lib/flows";
 import { runFlow } from "@/lib/flows/runner";
 import { tryStartRun } from "@/lib/scheduler";
+import { fakeGraphHosts } from "@/test-support/fake-execution-host";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -271,12 +272,17 @@ describe("runFlow integration — cli node end-to-end", () => {
 describe("runFlow integration — aif graph dispatch (M11a)", () => {
   it("migrated aif (nodes[]) dispatches to the graph runner and writes node_attempts", async () => {
     // aif is now a graph flow (plan -> implement -> checks -> judge -> review).
-    // runFlow must dispatch it to runGraph (NOT the linear path). With no
-    // supervisor configured here, the first ai_coding node (plan) cannot spawn
-    // and the run goes terminal — but the append-only node_attempts ledger
-    // proves we took the graph path. The full graph review -> rework -> approve
-    // loop is covered by runner-graph.integration.test.ts (cli nodes, no
-    // supervisor needed).
+    // runFlow must dispatch it to runGraph (NOT the linear path). The first
+    // ai_coding node (plan) cannot spawn, so the run goes terminal — but the
+    // append-only node_attempts ledger proves we took the graph path. The full
+    // graph review -> rework -> approve loop is covered by
+    // runner-graph.integration.test.ts (cli nodes, no supervisor needed).
+    //
+    // The unreachable host is deliberate and must be NAMED rather than left to
+    // the default: the supervisor client refuses an unnamed host under a test
+    // runner (it would otherwise drive whatever supervisor is listening on the
+    // developer's machine), and that refusal throws before the runner can record
+    // a terminal state — which is NOT the spawn failure this test is about.
     const { runId } = await seedRun({
       flowId: aifFlowId,
       taskPrompt: "fix the bug",
@@ -286,8 +292,18 @@ describe("runFlow integration — aif graph dispatch (M11a)", () => {
 
     expect(start.started).toBe(true);
 
+    const { hosts } = await fakeGraphHosts(db, runId, {
+      onPrompt: () => {
+        throw new Error("no agent in this test");
+      },
+    });
+
     try {
-      await runFlow(runId, { db, runtimeRoot: workspaceRoot });
+      await runFlow(runId, {
+        db,
+        runtimeRoot: workspaceRoot,
+        executionHosts: hosts,
+      });
     } catch {
       // a spawn failure may surface as a throw; tolerated — we assert on state.
     }

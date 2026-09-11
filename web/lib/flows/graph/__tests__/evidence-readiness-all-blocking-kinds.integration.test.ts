@@ -3,6 +3,14 @@
 // Validates that assertEvidenceReady now blocks on command_check, ai_judgment,
 // and skill_check gates (previously ignored). Ensures blocking gates of all
 // kinds on the live attempt are enforced, and advisory gates never block.
+//
+// The "(RED: today returns true)" titles below are from the pre-M15 TDD pass.
+// M15 shipped, so they assert a guarantee that HOLDS — they are not a known gap.
+// Every `runFlow` here injects a fake execution host: an `ai_judgment` or
+// `skill_check` gate needs an agent session, and a test that omits the host
+// reaches the real transport and drives whatever supervisor is listening on the
+// developer's machine (the failure mode master's supervisor-client guard now
+// refuses outright).
 
 import { eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
@@ -10,6 +18,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { assertEvidenceReady } from "@/lib/flows/graph/evidence-readiness";
 import { runFlow } from "@/lib/flows/runner";
+import { fakeGraphHosts } from "@/test-support/fake-execution-host";
 import { schema, seedGraphRun } from "@/test-support/graph-run-seed";
 import {
   startMainPostgresTestDb,
@@ -85,7 +94,13 @@ describe("T4.5: assertEvidenceReady (all blocking gate kinds) — integration", 
       ],
     });
 
-    await runFlow(seeded.runId, { db, runtimeRoot: seeded.runtimeRoot });
+    const { hosts } = await fakeGraphHosts(db, seeded.runId);
+
+    await runFlow(seeded.runId, {
+      db,
+      runtimeRoot: seeded.runtimeRoot,
+      executionHosts: hosts,
+    });
 
     // Manually set the command_check gate to failed (simulating executor result).
     // In reality, gates are set by the executor, but for this test we manipulate
@@ -137,7 +152,13 @@ describe("T4.5: assertEvidenceReady (all blocking gate kinds) — integration", 
       ],
     });
 
-    await runFlow(seeded.runId, { db, runtimeRoot: seeded.runtimeRoot });
+    const { hosts } = await fakeGraphHosts(db, seeded.runId);
+
+    await runFlow(seeded.runId, {
+      db,
+      runtimeRoot: seeded.runtimeRoot,
+      executionHosts: hosts,
+    });
 
     const attempts = await getNodeAttempts(seeded.runId);
     const assessAttempt = attempts.find((a) => a.nodeId === "assess");
@@ -185,7 +206,13 @@ describe("T4.5: assertEvidenceReady (all blocking gate kinds) — integration", 
       ],
     });
 
-    await runFlow(seeded.runId, { db, runtimeRoot: seeded.runtimeRoot });
+    const { hosts } = await fakeGraphHosts(db, seeded.runId);
+
+    await runFlow(seeded.runId, {
+      db,
+      runtimeRoot: seeded.runtimeRoot,
+      executionHosts: hosts,
+    });
 
     const attempts = await getNodeAttempts(seeded.runId);
     const qualityAttempt = attempts.find((a) => a.nodeId === "quality");
@@ -229,7 +256,13 @@ describe("T4.5: assertEvidenceReady (all blocking gate kinds) — integration", 
       ],
     });
 
-    await runFlow(seeded.runId, { db, runtimeRoot: seeded.runtimeRoot });
+    const { hosts } = await fakeGraphHosts(db, seeded.runId);
+
+    await runFlow(seeded.runId, {
+      db,
+      runtimeRoot: seeded.runtimeRoot,
+      executionHosts: hosts,
+    });
 
     const attempts = await getNodeAttempts(seeded.runId);
     const workAttempt = attempts.find((a) => a.nodeId === "work");
@@ -272,7 +305,13 @@ describe("T4.5: assertEvidenceReady (all blocking gate kinds) — integration", 
       ],
     });
 
-    await runFlow(seeded.runId, { db, runtimeRoot: seeded.runtimeRoot });
+    const { hosts } = await fakeGraphHosts(db, seeded.runId);
+
+    await runFlow(seeded.runId, {
+      db,
+      runtimeRoot: seeded.runtimeRoot,
+      executionHosts: hosts,
+    });
 
     const attempts = await getNodeAttempts(seeded.runId);
     const workAttempt = attempts.find((a) => a.nodeId === "work");
@@ -319,7 +358,13 @@ describe("T4.5: assertEvidenceReady (all blocking gate kinds) — integration", 
       ],
     });
 
-    await runFlow(seeded.runId, { db, runtimeRoot: seeded.runtimeRoot });
+    const { hosts } = await fakeGraphHosts(db, seeded.runId);
+
+    await runFlow(seeded.runId, {
+      db,
+      runtimeRoot: seeded.runtimeRoot,
+      executionHosts: hosts,
+    });
 
     const attempts = await getNodeAttempts(seeded.runId);
     const assessAttempt = attempts.find((a) => a.nodeId === "assess");
@@ -380,7 +425,13 @@ describe("T4.5: assertEvidenceReady (all blocking gate kinds) — integration", 
       ],
     });
 
-    await runFlow(seeded.runId, { db, runtimeRoot: seeded.runtimeRoot });
+    const { hosts } = await fakeGraphHosts(db, seeded.runId);
+
+    await runFlow(seeded.runId, {
+      db,
+      runtimeRoot: seeded.runtimeRoot,
+      executionHosts: hosts,
+    });
 
     const attempts = await getNodeAttempts(seeded.runId);
     const workAttempt = attempts.find((a) => a.nodeId === "work");

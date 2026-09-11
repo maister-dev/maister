@@ -329,7 +329,16 @@ async function seedReadyForReturn(): Promise<Seed> {
     checksAttemptId,
     passedGateId,
     cleanup: async () => {
-      await rm(wt.root, { recursive: true, force: true });
+      // `root` holds a git worktree, and a git child can still be writing pack
+      // objects when the case returns — the ENOTEMPTY/EBUSY window that made
+      // this spec flake under the full suite. Same remedy as the sync-resolver
+      // temp-repo hardening.
+      await rm(wt.root, {
+        recursive: true,
+        force: true,
+        maxRetries: 10,
+        retryDelay: 100,
+      });
     },
   };
 }
@@ -406,7 +415,12 @@ afterAll(async () => {
   } else {
     process.env.DB_URL = originalDbUrl;
   }
-  await rm(runtimeRoot, { recursive: true, force: true });
+  await rm(runtimeRoot, {
+    recursive: true,
+    force: true,
+    maxRetries: 10,
+    retryDelay: 100,
+  });
   await testDatabase?.stop();
 });
 
