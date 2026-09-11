@@ -9312,6 +9312,123 @@ paths:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
 
   /api/account/tokens/{tokenId}:
+    patch:
+      tags: [account]
+      summary: (ADR-168 Designed) Edit a personal API token
+      description: |
+        (ADR-168 — Designed.) Requires an active Auth.js session. Mutates a
+        managed personal token's `name`, `scopes`, and `expires_at` in place;
+        every changed field writes one `token_lifecycle_events` row in the same
+        transaction as the `project_tokens` UPDATE. NEVER returns or rotates the
+        secret, and NEVER changes `token_hash`, `prefix`, `project_id`,
+        `token_kind`, `owner_user_id`, `agent_id`, or `revoked_at`.
+
+        The update predicate includes `id = tokenId`,
+        `owner_user_id = session user`, `token_kind = 'user'`, and
+        `project_id IS NULL`; project tokens and other users' tokens are hidden
+        as 404. The UPDATE additionally carries `revoked_at IS NULL` as a CAS
+        predicate — a concurrent revoke yields `PRECONDITION`, never a silent
+        success.
+
+        Partial-update semantics: an absent field is unchanged. `expiresAt` is
+        the ONLY nullable field — `null` clears expiry. `name`, `scopes`, and
+        `humanHitl` reject `null`. A body with no field present is `CONFIG`.
+        `humanHitl` is recomputed from the STORED row when absent, so an
+        existing exact `hitl:respond:human` grant survives a `scopes`-only
+        patch; as on this surface's POST, `scopes` must not contain it.
+
+        Identifier labels:
+
+        | Identifier | Source | Trust |
+        | --- | --- | --- |
+        | tokenId | url-param | locator only; the WHERE re-asserts ownership |
+        | owner user id | auth-context | trusted after DB-authoritative session load |
+        | name | body-controlled | zod-validated; reserved prefixes refused |
+        | scopes | body-controlled | zod-validated against `TokenScope` |
+        | humanHitl | body-controlled | zod boolean |
+        | expiresAt | body-controlled | zod datetime, nullable |
+
+        Audit/logging: INFO names the token id, actor, and the changed field
+        NAMES; it must not log plaintext token, token hash, or held scope lists.
+
+        Source: `web/app/api/account/tokens/[tokenId]/route.ts`.
+      operationId: updateAccountToken
+      parameters:
+        - name: tokenId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PatchAccountTokenBody" }
+            examples:
+              widen-scopes:
+                summary: Add the scopes a token was issued without
+                value:
+                  scopes: ["tasks:read", "flows:read", "runners:read"]
+                  humanHitl: true
+              clear-expiry:
+                summary: Make a token non-expiring
+                value:
+                  expiresAt: null
+              reserved-name-refusal:
+                summary: Refused 422 — reserved run-bound prefix
+                value:
+                  name: "agent-run:run_123"
+      responses:
+        "200":
+          description: |
+            Token updated, or already matched the patch (no lifecycle row
+            written). Returns the token DTO; NEVER the secret.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccountTokenListItem" }
+              examples:
+                widened:
+                  value:
+                    id: "tok_123"
+                    name: "Personal agent"
+                    kind: "user"
+                    ownerUserId: "user_123"
+                    ownerLabel: "Alex"
+                    scopes:
+                      ["tasks:read", "flows:read", "runners:read", "hitl:respond:human"]
+                    humanHitl: true
+                    prefix: "mai_abcd1234"
+                    createdAt: "2026-06-23T12:00:00.000Z"
+                    lastUsedAt: "2026-09-10T08:11:00.000Z"
+                    expiresAt: null
+                    revokedAt: null
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: No matching personal token belongs to this owner.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "409":
+          description: |
+            `PRECONDITION` — the token is revoked, is not a managed token
+            (`token_kind='agent'`, or a name matching
+            `^(orchestrator-run|agent-run):`), or a concurrent revoke made the
+            CAS UPDATE match zero rows.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "422":
+          description: |
+            `CONFIG` — unknown scope, a `name` matching the reserved
+            `^(orchestrator-run|agent-run):` prefix, an empty body (no field
+            present), an empty resolved scope set, `hitl:respond:human` inside
+            `scopes`, or `null` sent for a non-nullable field.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
     delete:
       tags: [account]
       summary: (0063 Implemented) Revoke a personal API token
@@ -9454,6 +9571,139 @@ paths:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
 
   /api/projects/{slug}/tokens/{tokenId}:
+    patch:
+      tags: [projects]
+      summary: (ADR-168 Designed) Edit a project API token
+      description: |
+        (ADR-168 — Designed.) Requires project membership with the
+        `editSettings` action (`requireProjectAction("editSettings")`) — the
+        same gate that already governs minting this authority. Mutates a
+        managed token's `name`, `scopes`, and `expires_at` in place; every
+        changed field writes one `token_lifecycle_events` row in the same
+        transaction as the `project_tokens` UPDATE. NEVER returns or rotates
+        the secret, and NEVER changes `token_hash`, `prefix`, `project_id`,
+        `token_kind`, `owner_user_id`, `agent_id`, or `revoked_at`.
+
+        The update predicate re-asserts `project_id = <resolved slug project>`,
+        so a token belonging to another project is 404 (existence-hide), never
+        a mutation. The UPDATE additionally carries `revoked_at IS NULL` as a
+        CAS predicate.
+
+        Partial-update semantics: an absent field is unchanged. `expiresAt` is
+        the ONLY nullable field — `null` clears expiry. `name` and `scopes`
+        reject `null`. A body with no field present is `CONFIG`. This surface
+        has no `humanHitl` boolean: it mirrors its own POST, where
+        `hitl:respond:human` is an ordinary member of `scopes`.
+
+        Identifier labels:
+
+        | Identifier | Source | Trust |
+        | --- | --- | --- |
+        | slug | url-param | resolved to a project row, then `editSettings` |
+        | tokenId | url-param | locator only; the WHERE re-asserts `project_id` |
+        | actor user id | auth-context | trusted after DB-authoritative session load |
+        | name | body-controlled | zod-validated; reserved prefixes refused |
+        | scopes | body-controlled | zod-validated against `TokenScope` |
+        | expiresAt | body-controlled | zod datetime, nullable |
+
+        Audit/logging: INFO names the token id, actor, and the changed field
+        NAMES; it must not log plaintext token, token hash, or held scope lists.
+
+        Source: `web/app/api/projects/[slug]/tokens/[tokenId]/route.ts`.
+      operationId: updateProjectToken
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+        - name: tokenId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PatchProjectTokenBody" }
+            examples:
+              widen-scopes:
+                summary: Add the scopes a token was issued without
+                value:
+                  scopes:
+                    ["tasks:read", "flows:read", "runners:read", "hitl:respond:human"]
+              clear-expiry:
+                summary: Make a token non-expiring
+                value:
+                  expiresAt: null
+              reserved-name-refusal:
+                summary: Refused 422 — reserved run-bound prefix
+                value:
+                  name: "orchestrator-run:run_123"
+      responses:
+        "200":
+          description: |
+            Token updated, or already matched the patch (no lifecycle row
+            written). Returns the token DTO; NEVER the secret.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProjectTokenListItem" }
+              examples:
+                widened:
+                  value:
+                    id: "tok_123"
+                    name: "CI pipeline"
+                    kind: "project"
+                    ownerUserId: null
+                    ownerLabel: null
+                    scopes:
+                      ["tasks:read", "flows:read", "runners:read", "hitl:respond:human"]
+                    prefix: "mai_abcd1234"
+                    createdAt: "2026-06-23T12:00:00.000Z"
+                    lastUsedAt: "2026-09-10T08:11:00.000Z"
+                    expiresAt: null
+                    revokedAt: null
+        "401":
+          description: No valid session (`UNAUTHENTICATED`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "403":
+          description: |
+            Caller lacks `editSettings` for this project (`UNAUTHORIZED`), or
+            must change password first (`PASSWORD_CHANGE_REQUIRED`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "404":
+          description: |
+            Token not found, or its `project_id` does not match the slug's
+            project (existence-hide).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "409":
+          description: |
+            `PRECONDITION` — the token is revoked, is not a managed token
+            (`token_kind='agent'`, or a name matching
+            `^(orchestrator-run|agent-run):`), or a concurrent revoke made the
+            CAS UPDATE match zero rows.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "422":
+          description: |
+            `CONFIG` — unknown scope, a `name` matching the reserved
+            `^(orchestrator-run|agent-run):` prefix, an empty body (no field
+            present), an empty resolved scope set, or `null` sent for a
+            non-nullable field.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
     delete:
       tags: [projects]
       summary: (M16) Revoke a project API token
@@ -20517,6 +20767,96 @@ components:
           format: date-time
           nullable: true
           description: Optional expiry timestamp. Omit or send null for none.
+
+    PatchAccountTokenBody:
+      type: object
+      description: |
+        (ADR-168 Designed) Partial update of a managed personal token. Every
+        field is optional, but at least one MUST be present — an empty object
+        is refused `CONFIG` (422) rather than treated as a silent no-op.
+
+        Absent means unchanged. `expiresAt` is the ONLY nullable field: `null`
+        clears expiry so the token never expires. `name`, `scopes`, and
+        `humanHitl` are non-nullable — sending `null` is `CONFIG`.
+
+        `humanHitl` is recomputed from the stored row when absent, so an
+        existing exact `hitl:respond:human` grant survives a patch that sets
+        only `scopes`. Nothing here can change the secret, the owner, the kind,
+        the project binding, or `revoked_at`.
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+          description: |
+            Human-readable label, trimmed before validation. MUST NOT match
+            `^(orchestrator-run|agent-run):` (case-insensitive) — those names
+            are the run-binding subject derived by `parseBoundRunId`.
+        scopes:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/TokenScope"
+          description: |
+            Replacement route scopes. MUST NOT include `hitl:respond:human`;
+            use `humanHitl` for that exact human capability. An empty resolved
+            scope set is refused `CONFIG` — it is NEVER normalized to `["*"]`.
+        humanHitl:
+          type: boolean
+          description: |
+            `true` adds exact `hitl:respond:human` to the stored scopes,
+            `false` removes it. Absent leaves the stored grant untouched.
+        expiresAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: |
+            New expiry instant, or `null` to clear expiry. Absent leaves the
+            stored value untouched. Extending or clearing the expiry of an
+            already-expired token is allowed and makes it verifiable again.
+
+    PatchProjectTokenBody:
+      type: object
+      description: |
+        (ADR-168 Designed) Partial update of a managed project token. Every
+        field is optional, but at least one MUST be present — an empty object
+        is refused `CONFIG` (422) rather than treated as a silent no-op.
+
+        Absent means unchanged. `expiresAt` is the ONLY nullable field: `null`
+        clears expiry. `name` and `scopes` are non-nullable. Unlike the account
+        surface there is no `humanHitl` boolean — this route mirrors its own
+        POST, where `hitl:respond:human` is an ordinary member of `scopes`.
+
+        Nothing here can change the secret, the owner, the kind, the project
+        binding, or `revoked_at`.
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+          description: |
+            Human-readable label, trimmed before validation. MUST NOT match
+            `^(orchestrator-run|agent-run):` (case-insensitive) — those names
+            are the run-binding subject derived by `parseBoundRunId`.
+        scopes:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/TokenScope"
+          description: |
+            Replacement route scopes. An empty resolved scope set is refused
+            `CONFIG` — it is NEVER normalized to `["*"]`.
+        expiresAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: |
+            New expiry instant, or `null` to clear expiry. Absent leaves the
+            stored value untouched.
 
     AccountTokenListItem:
       type: object

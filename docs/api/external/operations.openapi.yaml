@@ -3198,7 +3198,11 @@ components:
 
           - **Missing scope** — the token lacks the route's required scope and
             does not hold `*`. The body NEVER reveals which scopes the token
-            holds.
+            HOLDS. Since ADR-168 it DOES name the scope the ROUTE REQUIRES, in
+            `details.requiredScope` and in the message: that is a published,
+            caller-independent fact about the endpoint, not a fact about any
+            token, and withholding it is what made a misconfigured token hard
+            to diagnose.
           - **Exact human scope** — `hitl:respond:human` is required for
             `human` responses; `*` alone is insufficient.
           - **Actor-kind gate (D7, respond only)** — a project token,
@@ -3249,6 +3253,20 @@ components:
         message:
           type: string
           description: Human-readable error message.
+        details:
+          type: object
+          description: |
+            (ADR-168) Optional machine-readable detail. Present on the
+            insufficient-scope 403, where it names the scope THIS ROUTE
+            requires — a published, caller-independent fact. It NEVER carries
+            anything about the scopes the presented token holds.
+          properties:
+            requiredScope:
+              type: string
+              description: |
+                The route's required scope label, e.g. `flows:read`. Identical
+                for every caller; also printed in this spec and in the route
+                source.
 
     ExtRecoverAccepted:
       type: object
