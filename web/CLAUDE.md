@@ -264,7 +264,12 @@ places with another. As of 2026-09-03 on `main` + ADR-165:
   flakes under parallel load and passes 4/4 in isolation.
 - **e2e** — **34 pre-existing failures**, plus one known-flaky spec below.
   Ports 3100/7788 and the `maister_e2e` database are shared across worktrees;
-  kill both ports before a run.
+  kill both ports before a run. Two of those 34 were closed on 2026-09-11 by the
+  `assessPackageCompatibility` null-safety fix — `studio.spec.ts` and
+  `studio-local-edit.spec.ts` were not flaky, they were hitting a server-side 500
+  on `/studio` whenever a stored package manifest lacked `spec`. Before filing an
+  e2e failure as environmental, read the `[WebServer]` lines in the run log: a
+  React server-component stack there is a product bug, not a test one.
 
 **Budget ~25 min for the integration lane and do not mistake it for a hang.** It
 is gated by two very slow files — `lib/flows/graph/__tests__/prompt-owners.integration.test.ts`
