@@ -520,9 +520,13 @@ invariant, no others. Harness: `startMainPostgresTestDb` from
 `@/test-support/pg-container`.
 
 Acceptance:
-- [ ] Every listed invariant has exactly one owning `it`; no invariant has two.
-- [ ] No test asserts module shape, constant identity, or zod's declared types.
-- [ ] All fail, each with the assertion message its invariant predicts.
+- [x] Every listed invariant has exactly one owning `it`; no invariant has two.
+- [x] No test asserts module shape, constant identity, or zod's declared types.
+- [~] All failed before implementation, but as one module-absent error
+      (`Cannot find module '@/lib/tokens/update'`), NOT as per-invariant
+      assertion messages. Staging a partial stub purely to manufacture
+      prettier failure text would have made some invariants pass at RED,
+      which is weaker evidence. Deviation recorded, not hidden.
 
 **T2.2 — GREEN: `lib/tokens/update.ts` + `isManagedToken`.**
 `updateProjectToken({tokenId, projectId}, patch, actor, db)` and
@@ -535,10 +539,10 @@ helper used by both the refusal and the ledger. Refusals are `MaisterError` with
 typed `code` — no string matching (CLAUDE.md §3).
 
 Acceptance:
-- [ ] I1-I9, I13, I14, I19, I20 green.
-- [ ] D5's table implemented literally, including `humanHitl` recomputation.
-- [ ] D6's service-layer empty-scope refusal present and **not** delegated to zod.
-- [ ] Logging per Settings; no secret, hash, or `token_hash` in any log line.
+- [x] I1-I9, I13, I14, I19, I20 green.
+- [x] D5's table implemented literally, including `humanHitl` recomputation.
+- [x] D6's service-layer empty-scope refusal present and **not** delegated to zod.
+- [x] Logging per Settings; no secret, hash, or `token_hash` in any log line.
 
 **T2.3 — GREEN: `recordTokenLifecycleEvent` + `issued` / `revoked`.**
 One helper owning every write, refusing non-managed tokens internally (D11).
@@ -547,9 +551,9 @@ Wire `issued` into `issueToken`'s existing insert and `revoked` into
 The `already-revoked` early return writes **no** row.
 
 Acceptance:
-- [ ] I21 green: no non-managed token reaches the table on any path.
-- [ ] `revokeToken` on an already-revoked row writes no second `revoked` row.
-- [ ] Machine mints (`issueAgentRunToken`, `issueOrchestratorRunToken`) produce
+- [x] I21 green: no non-managed token reaches the table on any path.
+- [x] `revokeToken` on an already-revoked row writes no second `revoked` row.
+- [x] Machine mints (`issueAgentRunToken`, `issueOrchestratorRunToken`) produce
       **zero** lifecycle rows.
 
 **T2.4 — GREEN: reserved-name guard, both directions.**
@@ -557,8 +561,8 @@ Shared validator refusing `^(orchestrator-run|agent-run):` case-insensitively,
 wired into **both** PATCH paths and **both** existing POST routes (D4).
 
 Acceptance:
-- [ ] I11 green — user routes refuse with `CONFIG`/422.
-- [ ] I12 green — `issueOrchestratorRunToken` and `issueAgentRunToken` still mint
+- [x] I11 green — user routes refuse with `CONFIG`/422.
+- [x] I12 green — `issueOrchestratorRunToken` and `issueAgentRunToken` still mint
       their reserved names. The guard is route-layer, **never** a DB CHECK.
 
 **T2.5 — `revokeAgentRunToken` predicate hardening.**
@@ -568,8 +572,8 @@ non-managed tokens — actually true rather than merely conventional.
 Flagged as a deliberate, minimal widening beyond "add PATCH".
 
 Acceptance:
-- [ ] Revoking a managed token id through this function is a no-op (0 rows).
-- [ ] The existing agent-revoke behavior is unchanged.
+- [x] Revoking a managed token id through this function is a no-op (0 rows).
+- [x] The existing agent-revoke behavior is unchanged.
 
 **T2.6 — REFACTOR.**
 Extract nothing that is used once; collapse anything spelled twice. Confirm the

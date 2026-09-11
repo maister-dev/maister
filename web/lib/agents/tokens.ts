@@ -188,7 +188,16 @@ export async function revokeAgentRunToken(
     .update(projectTokens)
     .set({ revoked_at: new Date() })
     .where(
-      and(eq(projectTokens.id, tokenId), isNull(projectTokens.revoked_at)),
+      and(
+        eq(projectTokens.id, tokenId),
+        // ADR-168: every other machine revoke here is already constrained to
+        // non-managed tokens by its name or kind predicate; this one matched by
+        // id alone. The kind predicate makes "machine revokes never touch a
+        // managed token" true rather than merely conventional — which is what
+        // lets the lifecycle ledger cover managed tokens only.
+        eq(projectTokens.token_kind, "agent"),
+        isNull(projectTokens.revoked_at),
+      ),
     );
 }
 
