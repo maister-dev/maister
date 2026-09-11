@@ -28,6 +28,5 @@ EXCEPTION
  WHEN duplicate_object THEN null;
 END $$;
 --> statement-breakpoint
-CREATE INDEX IF NOT EXISTS "token_lifecycle_token_created_idx" ON "token_lifecycle_events" USING btree ("token_id","created_at");
---> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "token_lifecycle_token_created_idx" ON "token_lifecycle_events" USING btree ("token_id","created_at");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "token_lifecycle_project_created_idx" ON "token_lifecycle_events" USING btree ("project_id","created_at");
