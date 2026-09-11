@@ -530,6 +530,28 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
       required: ["runId"],
     },
   },
+  run_recover: {
+    description:
+      "Recover a Crashed run. An agent node continues its prior ACP session; a session-less node is re-dispatched only when the flow declares it retry_safe. Returns { ok, state, runStatus } — state 'resumed'|'redispatched' means the run is Running again, 'queued' means the concurrency cap was full and the scheduler will resume it. Refusals are terminal, not retryable: 'discard-only' and 'unresumable' mean this run cannot continue, so call run_discard instead; 'conflict' means the run was not Crashed or another recover won the race. Only 'transient' (503) is worth retrying.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        runId: { type: "string", minLength: 1 },
+      },
+      required: ["runId"],
+    },
+  },
+  run_discard: {
+    description:
+      "Discard a finished or unrecoverable run — ends it Abandoned and frees its worktree, archiving the branch first so no work is lost. Use after run_recover refuses with 'discard-only' or 'unresumable', to close the attempt out instead of leaving a Crashed run holding a worktree. You do NOT need this to launch the task again — a Crashed run is already launchable. Refused while the run is live or claimed by a human. Returns { ok, runId, operation, runStatus, workspaceRemoved, idempotent, preservationOutcome, archivedBranch }.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        runId: { type: "string", minLength: 1 },
+      },
+      required: ["runId"],
+    },
+  },
   readiness_get: {
     description: "Get the readiness status of a run",
     inputSchema: {
@@ -1225,6 +1247,16 @@ function resolveRouting(
         path: `/api/v1/ext/runs/reopen`,
         body: { runId },
       };
+    }
+    case "run_recover": {
+      const { runId } = args as { runId: string };
+
+      return { method: "POST", path: `/api/v1/ext/runs/${runId}/recover` };
+    }
+    case "run_discard": {
+      const { runId } = args as { runId: string };
+
+      return { method: "POST", path: `/api/v1/ext/runs/${runId}/discard` };
     }
     case "readiness_get": {
       const { runId } = args as { runId: string };

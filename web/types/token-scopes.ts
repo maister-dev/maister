@@ -32,6 +32,13 @@ export const TOKEN_SCOPES = [
   // ADR-141: branch sync + reopen (promote-class ops). Maps to the `promoteRun`
   // project action, NOT the `readBoard` fallback (see PROJECT_ACTION_BY_SCOPE).
   "runs:sync",
+  // ADR-034 amendment: crashed-run Recover AND Discard. ONE scope for both,
+  // because ADR-034 designed them as a single RBAC pair under the `recoverRun`
+  // project action — two scopes onto one action are two mappings free to drift.
+  // Deliberately NOT in AGENT_TOKEN_SCOPES or CROSS_PROJECT_AGENT_SCOPES: no
+  // `runs:*` scope is, and an agent must neither spend another project's
+  // execution budget nor terminate its runs.
+  "runs:recover",
   // ADR-122 (Project Brain): recall / retain over the project-memory substrate.
   // Access is additionally gated by projects.brain_enabled and, for agent
   // tokens, the can_read_brain / can_write_brain link axes.

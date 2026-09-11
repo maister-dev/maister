@@ -1902,6 +1902,29 @@ export async function stopWorkbenchRunForToken(
   return stopRunByKind(runId, ctx, deps);
 }
 
+// ADR-034 amendment: the token-authority twin of `discardWorkbench`, for
+// `POST /api/v1/ext/runs/{runId}/discard`. Same removal path, same
+// `requireActionAllowed(ctx, "drop")` policy gate, same preserve-then-prune —
+// only the caller's identity differs.
+export async function discardWorkbenchForToken(
+  runId: string,
+  args: { projectId: string },
+  options?: WorkbenchLifecycleOptions,
+): Promise<DropWorkbenchResult> {
+  const deps = depsFromOptions(options);
+  const ctx = await deps.loadContext(runId);
+
+  // Token authority, no browser session: there is no viewer, so the ADR-160
+  // owner carve-out can never open for this path.
+  ctx.viewerUserId = null;
+
+  if (ctx.run.projectId !== args.projectId) {
+    throw new MaisterError("PRECONDITION", `run not found: ${runId}`);
+  }
+
+  return removeWorkbenchForCtx(runId, ctx, deps, "discard");
+}
+
 // POST /api/runs/{runId}/stop-archive — all workspace-backed run kinds. Stop
 // commits the parked status first; an archive failure leaves the run retryable.
 export async function stopThenArchive(

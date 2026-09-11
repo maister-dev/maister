@@ -1,7 +1,5 @@
 import "server-only";
 
-import type { RecoverResult } from "@/lib/runs/recover";
-
 import { eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
@@ -10,6 +8,7 @@ import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import { isMaisterError } from "@/lib/errors";
 import { resumeCrashedRun } from "@/lib/runs/recover";
+import { recoverHttpResponse } from "@/lib/runs/recover-http";
 import * as schemaModule from "@/lib/db/schema";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
@@ -63,81 +62,6 @@ function errorResponse(err: unknown, ctx: { runId: string }): NextResponse {
   );
 }
 
-// Map the RecoverResult state → HTTP. The DTO NEVER carries acpSessionId or any
-// session handle — only {ok, state, runStatus?}.
-function statusForState(state: RecoverResult["state"]): number {
-  switch (state) {
-    case "resumed":
-    case "redispatched":
-      return 200;
-    case "queued":
-      return 202;
-    case "discard-only":
-    case "conflict":
-    case "workspace-removed":
-      return 409;
-    case "unresumable":
-      return 410;
-    case "transient":
-      return 503;
-  }
-}
-
-function runStatusForState(state: RecoverResult["state"]): string | undefined {
-  switch (state) {
-    case "resumed":
-    case "redispatched":
-      return "Running";
-    case "queued":
-      return "Pending";
-    default:
-      return undefined;
-  }
-}
-
-type RecoverErrorState = Exclude<
-  RecoverResult["state"],
-  "resumed" | "redispatched" | "queued"
->;
-
-// Non-success states are typed MaisterError codes (ADR-008 closed union) so API
-// clients can branch on `code` per docs/error-taxonomy.md — not just the HTTP
-// status. The codes match the OpenAPI 409/410/503 entries (MaisterErrorBody).
-function errorBodyForState(state: RecoverErrorState): {
-  code: string;
-  message: string;
-} {
-  switch (state) {
-    case "discard-only":
-      return {
-        code: "CONFLICT",
-        message: "run has no resumable session — discard it instead",
-      };
-    case "conflict":
-      return {
-        code: "CONFLICT",
-        message:
-          "run is not in Crashed — already terminal or a concurrent recover won the CAS",
-      };
-    case "workspace-removed":
-      return {
-        code: "PRECONDITION",
-        message:
-          "run workspace was removed; archived history cannot be recovered",
-      };
-    case "unresumable":
-      return {
-        code: "CHECKPOINT",
-        message: "the stored acp session is unresumable — discard the run",
-      };
-    case "transient":
-      return {
-        code: "EXECUTOR_UNAVAILABLE",
-        message: "transient supervisor failure during resume — retryable",
-      };
-  }
-}
-
 type RouteParams = { params: Promise<{ runId: string }> };
 
 export async function POST(
@@ -175,27 +99,13 @@ export async function POST(
 
     log.info({ runId, state: r.state }, "recover handled");
 
-    if (
-      r.state === "resumed" ||
-      r.state === "redispatched" ||
-      r.state === "queued"
-    ) {
-      const runStatus = runStatusForState(r.state);
+    const { httpStatus, body } = recoverHttpResponse(r.state);
 
-      return NextResponse.json(
-        { ok: true, state: r.state, ...(runStatus ? { runStatus } : {}) },
-        { status: statusForState(r.state) },
-      );
+    if ("code" in body) {
+      log.warn({ runId, state: r.state, code: body.code }, "recover refused");
     }
 
-    const errorBody = errorBodyForState(r.state);
-
-    log.warn(
-      { runId, state: r.state, code: errorBody.code },
-      "recover refused",
-    );
-
-    return NextResponse.json(errorBody, { status: statusForState(r.state) });
+    return NextResponse.json(body, { status: httpStatus });
   } catch (err) {
     return errorResponse(err, { runId });
   }

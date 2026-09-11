@@ -326,6 +326,8 @@ function scopeText(labels: TokenLabels, scope: UserTokenScope): string {
       return labels.scopeRunsPromote;
     case "runs:sync":
       return labels.scopeRunsSync;
+    case "runs:recover":
+      return labels.scopeRunsRecover;
     case "memory:read":
       return labels.scopeMemoryRead;
     case "memory:write":
