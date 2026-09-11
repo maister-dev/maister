@@ -93,7 +93,7 @@ deleted. Deleting a `project_tokens` row cascades to its audit rows.
 fails closed for personal tokens whose owner is absent, inactive, or flagged for
 password change.
 
-`token_lifecycle_events` (Designed,
+`token_lifecycle_events` (Implemented,
 [ADR-168](../decisions.md#adr-168-post-issuance-mutation-of-api-tokens)) mirrors
 `token_audit_log`'s cascade exactly, so token and project deletion behave
 identically for both evidence tables. Its `actor_user_id` is `SET NULL` on user

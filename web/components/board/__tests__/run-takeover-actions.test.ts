@@ -28,8 +28,6 @@ describe("RunTakeoverActions", () => {
     );
 
     expect(html).toContain("&lt;maister_worktrees&gt;/myapp/run-1");
-    expect(html).not.toContain(
-      "/Users/developer/.maister/worktrees/myapp/run-1",
-    );
+    expect(html).not.toContain("/Users/developer/.maister/worktrees/myapp/run-1");
   });
 });

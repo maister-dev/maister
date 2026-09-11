@@ -25,7 +25,7 @@ whether it can answer human HITL gates.
 
 | Role | Can see | Can do |
 | --- | --- | --- |
-| Signed-in active user | Own profile, own password link, own personal API tokens | Edit display name, change password, create/list/revoke own personal tokens |
+| Signed-in active user | Own profile, own password link, own personal API tokens | Edit display name, change password, create/list/edit/revoke own personal tokens |
 | User with `must_change_password=true` | Redirected to `/change-password`; cannot use `/account` actions except password clearing flow | Clear forced password change |
 | Disabled or pending user | No account screen access | None |
 | Global admin | Same as signed-in user for their own account | Admin powers live in `/admin/users`, not here |
@@ -38,7 +38,8 @@ must scope every query by `owner_user_id = session.user.id` and
 
 - **Entry:** top-nav user menu -> Account.
 - **Within:** "Change password" opens `/account/password`; "New token" opens
-  the personal-token create modal; revoke opens a confirmation affordance.
+  the personal-token create modal; the per-row Edit affordance opens the edit
+  modal; revoke opens a confirmation affordance.
 - **Exit:** done/close returns to `/account`; left rail and breadcrumbs keep
   the normal shell navigation.
 
@@ -48,6 +49,7 @@ flowchart TD
     Account --> Password["/account/password"]
     Account --> CreateToken["New token modal"]
     CreateToken --> Reveal["Once-only token reveal"]
+    Account --> EditToken["Edit token modal"]
     Account --> Revoke["Revoke confirmation"]
 ```
 
@@ -67,6 +69,12 @@ flowchart TD
 - **Once-only reveal**: after create succeeds, the modal shows the plaintext
   token exactly once with copy/select controls and a warning that closing loses
   the secret.
+- **Edit token modal** (ADR-168): a per-row Edit affordance opens a prefilled
+  modal over name, expiry, the same scope checklist, and the human HITL toggle.
+  It never shows or rotates the secret. Unlike the create form, unticking the
+  last scope leaves the selection EMPTY and disables submit — it must never
+  fall back to the `*` wildcard on an edit. Edit is withheld from revoked rows
+  and from non-managed (run-bound) tokens. Success shows a green check glyph.
 - **Revoke confirmation**: row action asks for confirmation, then refreshes the
   table. First revoke and already-revoked both surface success.
 

@@ -139,7 +139,13 @@ The board is a horizontally scrollable set of columns:
 - **Integrations panel** in the project settings area is project-bound. Its API
   tokens table lists only tokens with `project_id` set to this project; global
   personal API tokens live on [`../account.md`](../account.md) and are not
-  created or listed here.
+  created or listed here. Each active row carries an Edit affordance beside
+  Revoke (ADR-168) opening a prefilled name / scopes / expiry modal; it is
+  withheld from non-managed run-bound tokens, which this table renders because
+  `listTokens` filters on `project_id` alone. Editing never shows or rotates
+  the secret, and unticking the last scope leaves the selection empty rather
+  than falling back to the `*` wildcard. See
+  [`../../system-analytics/token-lifecycle.md`](../../system-analytics/token-lifecycle.md).
 - **Packages tab** (`?tab=packages`) consolidates package management for the
   project — the standalone Flows tab is gone. It stacks three regions: the
   **attached-packages** config table (each package **name links to its Flow
@@ -230,10 +236,10 @@ to server-stored mode. The board never renders a stale question as answerable.
   latest run's workspace, and the Reopen affordance posts to
   `POST /api/runs/{runId}/reopen`.
 - Project Integrations tokens: `GET/POST /api/projects/{slug}/tokens` and
-  `DELETE /api/projects/{slug}/tokens/{tokenId}`. These routes remain scoped to
-  `project_id = current project`; personal global tokens use
+  `PATCH/DELETE /api/projects/{slug}/tokens/{tokenId}`. These routes remain
+  scoped to `project_id = current project`; personal global tokens use
   `GET/POST /api/account/tokens` and
-  `DELETE /api/account/tokens/{tokenId}`.
+  `PATCH/DELETE /api/account/tokens/{tokenId}`.
 
 - Agent mentions (Implemented, ADR-151): **no new endpoint**. The task-detail
   page already loads the project's agents and computes launchability inline,

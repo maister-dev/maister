@@ -1,6 +1,6 @@
 # Token lifecycle domain
 
-> **Status: Designed ([ADR-168](../decisions.md#adr-168-post-issuance-mutation-of-api-tokens)).**
+> **Status: Implemented ([ADR-168](../decisions.md#adr-168-post-issuance-mutation-of-api-tokens)).**
 > Issue → edit → revoke/expire for API tokens, the `token_lifecycle_events`
 > ledger, and who may change what. The `/api/v1/ext` surface those tokens
 > authenticate against — routes, per-call scope enforcement, `token_audit_log`,
@@ -44,7 +44,7 @@ design).
   lifecycle change: `issued | scopes_changed | renamed | expiry_changed |
   revoked`. Carries `before`/`after` JSON for the changed field, the acting
   user (`actor_user_id`, nullable) and a durable `actor_label`. Never carries
-  `token_hash`, `prefix`, or the plaintext secret. (Designed)
+  `token_hash`, `prefix`, or the plaintext secret. (Implemented)
 - **Managed token** — a durable, human-issued credential: the rows the token
   management UIs create and list. Editable; covered by the ledger.
 - **Non-managed token** — a machine-minted, run-bound credential revoked by its
@@ -81,18 +81,18 @@ stateDiagram-v2
 Transitions:
 - `[*] → active`: session-auth `POST /api/projects/{slug}/tokens` or
   `POST /api/account/tokens`. Writes an `issued` lifecycle row in the same
-  transaction as the `project_tokens` INSERT. (Designed)
+  transaction as the `project_tokens` INSERT. (Implemented)
 - `active → active`: `PATCH /api/projects/{slug}/tokens/{tokenId}` or
   `PATCH /api/account/tokens/{tokenId}`. One row per **changed** field; a patch
-  that changes nothing writes nothing. (Designed)
+  that changes nothing writes nothing. (Implemented)
 - `active → revoked`: the existing `DELETE` routes, now also writing a
   `revoked` lifecycle row. An already-revoked row writes no second row.
-  (Designed)
+  (Implemented)
 - `active → expired`: `expires_at` is compared at verify time; past expiry →
   401. No sweeper. (Implemented)
 - `expired → active`: a PATCH extending or clearing `expires_at`. The prior
   value is preserved in the ledger's `before`, so the revival is legible.
-  (Designed)
+  (Implemented)
 - `active → owner_blocked`: evaluated at verification time; no row mutation.
   (Implemented)
 
@@ -194,10 +194,12 @@ flowchart TD
   delegated to route validation, because `normalizeTokenScopes([])` returns
   `["*"]` and would silently grant full access (I10).
 - A `name` matching `^(orchestrator-run|agent-run):` (case-insensitive) MUST be
-  refused `MaisterError("CONFIG")` on both PATCH routes AND both POST routes,
-  and the guard MUST live at the route/service layer and NEVER as a table CHECK,
-  because `issueOrchestratorRunToken` and `issueAgentRunToken` legitimately
-  write those names (I11, I12).
+  refused `MaisterError("CONFIG")` on both PATCH routes AND both POST routes —
+  enforced in `lib/tokens/update.ts` and in `issueToken`, which is the only
+  human-issuance path both POST routes call — and the guard MUST live at the
+  route/service layer and NEVER as a table CHECK, because
+  `issueOrchestratorRunToken` and `issueAgentRunToken` insert directly and
+  legitimately write those names (I11, I12).
 - Every service query MUST re-assert the caller's scoping columns —
   `project_id` for the project path, `owner_user_id` + `token_kind='user'` +
   `project_id IS NULL` for the account path — so a token outside that scope is
@@ -252,6 +254,10 @@ flowchart TD
 - **Token issued before the lifecycle ledger existed** → no `issued` row, and
   none is synthesized. The trail starts at its migration; a fabricated
   provenance row would be worse than an absent one.
+- **Reserved name sent untrimmed** (`" orchestrator-run:<id>"`) → `CONFIG`
+  (422). The guard tests the trimmed name, because
+  `POST /api/projects/{slug}/tokens` validates `name` as `z.string().min(1)`
+  with no `.trim()`.
 
 ## Linked artifacts
 

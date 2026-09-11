@@ -68,7 +68,13 @@ export function isManagedToken(row: ManagedTokenRow): boolean {
  * constraint would break agent launches.
  */
 export function assertTokenNameAllowed(name: string): void {
-  if (RESERVED_TOKEN_NAME_PATTERN.test(name)) {
+  // Tested against the TRIMMED name: the project POST schema is
+  // `z.string().min(1)` with no `.trim()`, so " orchestrator-run:<id>" would
+  // otherwise slip past this anchored pattern. It is inert today only because
+  // `parseBoundRunId` is anchored identically — i.e. the forgery is blocked by
+  // a coincidence of two regexes rather than by this guard. Refuse it here so
+  // the guard stands on its own.
+  if (RESERVED_TOKEN_NAME_PATTERN.test(name.trim())) {
     throw new MaisterError(
       "CONFIG",
       "token name must not start with a reserved run-bound prefix " +

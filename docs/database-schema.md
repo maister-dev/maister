@@ -2947,7 +2947,7 @@ token itself is deleted.
 
 ## `token_lifecycle_events`
 
-**(Designed, migration `0163_token_lifecycle_events.sql`;
+**(Implemented, migration `0163_token_lifecycle_events.sql`;
 [ADR-168](decisions.md#adr-168-post-issuance-mutation-of-api-tokens).)**
 Append-only ledger of every **managed** token's lifecycle changes: issuance,
 each post-issuance field edit, and revocation. One row per **changed field** —

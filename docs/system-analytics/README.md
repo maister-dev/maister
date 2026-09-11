@@ -75,7 +75,7 @@ One row per file — this table is the **canonical index** of the folder
 | Task queue | [`task-queue.md`](task-queue.md) | Priority-ordered dependency-draining admission (ADR-121): criticality dictionary, unified admission funnel, cap-safe resume, cycle-safe relations, advisory confidence, operator pause. |
 | Tasks | [`tasks.md`](tasks.md) | Backlog/board lifecycle, task ↔ run 1:N. |
 | Test infrastructure | [`test-infrastructure.md`](test-infrastructure.md) | Test database infrastructure (ADR-135, Implemented): Testcontainers ownership, bare/main/Brain lineages, and E2E lifecycle. |
-| Token lifecycle | [`token-lifecycle.md`](token-lifecycle.md) | Token lifecycle (ADR-168, Designed): issue → edit → revoke/expire, the mutability matrix, the managed-token predicate, partial-update semantics, and the append-only `token_lifecycle_events` ledger. |
+| Token lifecycle | [`token-lifecycle.md`](token-lifecycle.md) | Token lifecycle (ADR-168, Implemented): issue → edit → revoke/expire, the mutability matrix, the managed-token predicate, partial-update semantics, and the append-only `token_lifecycle_events` ledger. |
 | Triage | [`triage.md`](triage.md) | Triager agent loop (ADR-111/112): verdict ops, Q&A over task comments, simple-intent tasks, auto-launch. |
 | Workbench lifecycle | [`workbench-lifecycle.md`](workbench-lifecycle.md) | Workbench lifecycle actions: stop, archive, drop, snapshot commit, export, handoff branch, and the sync lifecycle-claim interaction (ADR-141). |
 | Workbench | [`workbench.md`](workbench.md) | Workbench visibility: flow-graph view + live node-status coloring, git-tracked file-tree, base→run diff, authored layout in `flow.yaml` (ADR-064). |

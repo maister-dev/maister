@@ -734,8 +734,10 @@ a global personal token with exact `hitl:respond:human`; `*` is insufficient.
   (`project_tokens`, `token_audit_log` sections).
 - API (external surface): `docs/api/external/operations.openapi.yaml`.
 - API (token management): [`../api/web.openapi.yaml`](../api/web.openapi.yaml)
-  (`POST/GET/DELETE /api/projects/{slug}/tokens`,
-  `GET/POST/DELETE /api/account/tokens`).
+  (`POST/GET /api/projects/{slug}/tokens`,
+  `PATCH/DELETE /api/projects/{slug}/tokens/{tokenId}`,
+  `GET/POST /api/account/tokens`,
+  `PATCH/DELETE /api/account/tokens/{tokenId}`).
 - Error taxonomy: [`../error-taxonomy.md`](../error-taxonomy.md)
   (Token / external-API auth: 401/403/404/422).
 - Related domains: [`token-lifecycle.md`](token-lifecycle.md) (issue → edit →

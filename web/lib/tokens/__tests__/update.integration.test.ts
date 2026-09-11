@@ -368,6 +368,10 @@ describe("lib/tokens/update — integration (testcontainers)", () => {
       `orchestrator-run:${randomUUID()}`,
       `agent-run:${randomUUID()}`,
       `AGENT-RUN:${randomUUID()}`,
+      // Untrimmed: the project POST schema has no `.trim()`, so the guard must
+      // not depend on the caller having trimmed for it.
+      ` orchestrator-run:${randomUUID()}`,
+      `\tagent-run:${randomUUID()}`,
     ]) {
       const err = await updateProjectToken(
         { tokenId: issued.tokenId, projectId },
@@ -564,4 +568,3 @@ describe("lib/tokens/revoke — lifecycle ledger", () => {
     expect(revoked[0].actor_user_id).toBe(userId);
   });
 });
-

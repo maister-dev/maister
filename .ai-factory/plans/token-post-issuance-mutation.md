@@ -665,6 +665,27 @@ pnpm --filter maister-web test:integration` green, plus
 `pnpm --filter maister-web lint`. Any red suite is classified obsolete-vs-broken
 and resolved in this increment — never tolerated, never deleted silently.
 
+**T6.2 outcome (recorded).** Blast radius is deterministically green:
+64/64 token integration (service + both route suites), 343/344 ext integration,
+and the whole unit suite bar the items below. `vitest list` confirms each added
+file is matched by exactly one runner project.
+
+Red suites classified:
+- `test-support/__tests__/pg-container.test.ts` — **broken, fixed here.** Two
+  real defects: it parsed `stdout.at(-1)`, but pino's async write for the same
+  probe lands either side of the child's result line (failed ~1 run in 3); and
+  it granted the child 10s while the unit project's 5s default fired first.
+  Untouched by this plan otherwise; fixed because T6.2 forbids tolerating it.
+- `app/api/runs/[runId]/hitl/[hitlRequestId]/respond`, `app/api/scratch-runs/
+  [runId]/recover`, `app/api/v1/ext/runs/message` — **neither broken nor
+  obsolete: load-sensitive.** None is touched by this branch; each passes 2-3/3
+  in isolation and fails only inside a full lane while a CONCURRENT session on
+  this machine runs its own integration suite (34 Docker containers live, ~10
+  created per minute during the runs). Their budgets are 1000 ms matchers and
+  the 5 s vitest default. NOT resolved here: the fix is a timing-budget review
+  of those three suites, which is a separate change. The full unit + integration
+  lanes should be re-run on an idle machine before merge.
+
 **T6.3 — Docs truth pass.** Re-verify every Phase-0 artifact against the shipped
 code. Regenerate the ERD (`pnpm --filter maister-web db:erd`) and run
 `pnpm validate:docs`. Re-confirm the two assumptions this plan asserts rather

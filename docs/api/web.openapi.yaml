@@ -9314,9 +9314,9 @@ paths:
   /api/account/tokens/{tokenId}:
     patch:
       tags: [account]
-      summary: (ADR-168 Designed) Edit a personal API token
+      summary: (ADR-168 Implemented) Edit a personal API token
       description: |
-        (ADR-168 — Designed.) Requires an active Auth.js session. Mutates a
+        (ADR-168 — Implemented.) Requires an active Auth.js session. Mutates a
         managed personal token's `name`, `scopes`, and `expires_at` in place;
         every changed field writes one `token_lifecycle_events` row in the same
         transaction as the `project_tokens` UPDATE. NEVER returns or rotates the
@@ -9573,9 +9573,9 @@ paths:
   /api/projects/{slug}/tokens/{tokenId}:
     patch:
       tags: [projects]
-      summary: (ADR-168 Designed) Edit a project API token
+      summary: (ADR-168 Implemented) Edit a project API token
       description: |
-        (ADR-168 — Designed.) Requires project membership with the
+        (ADR-168 — Implemented.) Requires project membership with the
         `editSettings` action (`requireProjectAction("editSettings")`) — the
         same gate that already governs minting this authority. Mutates a
         managed token's `name`, `scopes`, and `expires_at` in place; every
@@ -20771,7 +20771,7 @@ components:
     PatchAccountTokenBody:
       type: object
       description: |
-        (ADR-168 Designed) Partial update of a managed personal token. Every
+        (ADR-168 Implemented) Partial update of a managed personal token. Every
         field is optional, but at least one MUST be present — an empty object
         is refused `CONFIG` (422) rather than treated as a silent no-op.
 
@@ -20820,7 +20820,7 @@ components:
     PatchProjectTokenBody:
       type: object
       description: |
-        (ADR-168 Designed) Partial update of a managed project token. Every
+        (ADR-168 Implemented) Partial update of a managed project token. Every
         field is optional, but at least one MUST be present — an empty object
         is refused `CONFIG` (422) rather than treated as a silent no-op.
 
