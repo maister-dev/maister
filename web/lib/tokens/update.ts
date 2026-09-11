@@ -12,11 +12,11 @@ import {
   recordTokenLifecycleEvent,
   type TokenLifecycleActor,
 } from "@/lib/tokens/lifecycle";
-import { type TokenListItem } from "@/lib/tokens/list";
+import { getTokenListItem, type TokenListItem } from "@/lib/tokens/list";
 import { normalizeTokenScopes, type TokenScope } from "@/lib/tokens/scopes";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { projectTokens, users } = schemaModule as unknown as Record<string, any>;
+const { projectTokens } = schemaModule as unknown as Record<string, any>;
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 type Db = any;
@@ -161,47 +161,6 @@ function beforeAfterFor(
   }
 }
 
-async function selectTokenListItem(
-  d: Db,
-  tokenId: string,
-): Promise<TokenListItem> {
-  const rows = await d
-    .select({
-      id: projectTokens.id,
-      name: projectTokens.name,
-      kind: projectTokens.token_kind,
-      ownerUserId: projectTokens.owner_user_id,
-      ownerName: users.name,
-      ownerEmail: users.email,
-      scopes: projectTokens.scopes,
-      prefix: projectTokens.prefix,
-      createdAt: projectTokens.created_at,
-      lastUsedAt: projectTokens.last_used_at,
-      expiresAt: projectTokens.expires_at,
-      revokedAt: projectTokens.revoked_at,
-    })
-    .from(projectTokens)
-    .leftJoin(users, eq(projectTokens.owner_user_id, users.id))
-    .where(eq(projectTokens.id, tokenId))
-    .limit(1);
-
-  const r = rows[0];
-
-  return {
-    id: r.id,
-    name: r.name,
-    kind: r.kind ?? "project",
-    ownerUserId: r.ownerUserId ?? null,
-    ownerLabel: r.ownerName ?? r.ownerEmail ?? null,
-    scopes: (r.scopes as string[]) ?? ["*"],
-    prefix: r.prefix,
-    createdAt: r.createdAt,
-    lastUsedAt: r.lastUsedAt ?? null,
-    expiresAt: r.expiresAt ?? null,
-    revokedAt: r.revokedAt ?? null,
-  };
-}
-
 async function updateToken(
   args: {
     tokenId: string;
@@ -273,7 +232,7 @@ async function updateToken(
   if (changed.length === 0) {
     return {
       outcome: "unchanged",
-      token: await selectTokenListItem(d, args.tokenId),
+      token: (await getTokenListItem(args.tokenId, d)) ?? undefined,
       changed: [],
     };
   }
@@ -320,7 +279,7 @@ async function updateToken(
 
   return {
     outcome: "updated",
-    token: await selectTokenListItem(d, args.tokenId),
+    token: (await getTokenListItem(args.tokenId, d)) ?? undefined,
     changed,
   };
 }

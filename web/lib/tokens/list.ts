@@ -27,6 +27,46 @@ export type TokenListItem = {
   revokedAt: Date | null;
 };
 
+// The one projection and the one row->DTO mapping behind every read of this
+// table. `token_hash` is absent by construction: it is not in the projection,
+// so no reader can leak it by forgetting to strip it.
+export const TOKEN_LIST_COLUMNS = {
+  id: projectTokens.id,
+  name: projectTokens.name,
+  kind: projectTokens.token_kind,
+  ownerUserId: projectTokens.owner_user_id,
+  ownerName: users.name,
+  ownerEmail: users.email,
+  scopes: projectTokens.scopes,
+  prefix: projectTokens.prefix,
+  createdAt: projectTokens.created_at,
+  lastUsedAt: projectTokens.last_used_at,
+  expiresAt: projectTokens.expires_at,
+  revokedAt: projectTokens.revoked_at,
+};
+
+// `fallbackKind` only covers a NULL `token_kind`, which the NOT NULL default
+// makes unreachable; it stays because each caller's rows have a known kind.
+// FIXME(any): dual drizzle-orm peer-dep variants.
+export function toTokenListItem(
+  r: any,
+  fallbackKind: TokenKind = "project",
+): TokenListItem {
+  return {
+    id: r.id,
+    name: r.name,
+    kind: r.kind ?? fallbackKind,
+    ownerUserId: r.ownerUserId ?? null,
+    ownerLabel: r.ownerName ?? r.ownerEmail ?? null,
+    scopes: (r.scopes as string[]) ?? ["*"],
+    prefix: r.prefix,
+    createdAt: r.createdAt,
+    lastUsedAt: r.lastUsedAt ?? null,
+    expiresAt: r.expiresAt ?? null,
+    revokedAt: r.revokedAt ?? null,
+  };
+}
+
 /**
  * List all tokens for a project. Ordered by created_at DESC.
  * NEVER selects or returns token_hash.
@@ -38,40 +78,30 @@ export async function listTokens(
   const d = db ?? getDb();
 
   const rows = await d
-    .select({
-      id: projectTokens.id,
-      name: projectTokens.name,
-      kind: projectTokens.token_kind,
-      ownerUserId: projectTokens.owner_user_id,
-      ownerName: users.name,
-      ownerEmail: users.email,
-      scopes: projectTokens.scopes,
-      prefix: projectTokens.prefix,
-      createdAt: projectTokens.created_at,
-      lastUsedAt: projectTokens.last_used_at,
-      expiresAt: projectTokens.expires_at,
-      revokedAt: projectTokens.revoked_at,
-    })
+    .select(TOKEN_LIST_COLUMNS)
     .from(projectTokens)
     .leftJoin(users, eq(projectTokens.owner_user_id, users.id))
     .where(eq(projectTokens.project_id, projectId))
     .orderBy(desc(projectTokens.created_at));
 
-  return rows.map(
-    (r: any): TokenListItem => ({
-      id: r.id,
-      name: r.name,
-      kind: r.kind ?? "project",
-      ownerUserId: r.ownerUserId ?? null,
-      ownerLabel: r.ownerName ?? r.ownerEmail ?? null,
-      scopes: (r.scopes as string[]) ?? ["*"],
-      prefix: r.prefix,
-      createdAt: r.createdAt,
-      lastUsedAt: r.lastUsedAt ?? null,
-      expiresAt: r.expiresAt ?? null,
-      revokedAt: r.revokedAt ?? null,
-    }),
-  );
+  return rows.map((r: any) => toTokenListItem(r, "project"));
+}
+
+/** Read ONE token as the same DTO the list surfaces return. */
+export async function getTokenListItem(
+  tokenId: string,
+  db?: Db,
+): Promise<TokenListItem | null> {
+  const d = db ?? getDb();
+
+  const rows = await d
+    .select(TOKEN_LIST_COLUMNS)
+    .from(projectTokens)
+    .leftJoin(users, eq(projectTokens.owner_user_id, users.id))
+    .where(eq(projectTokens.id, tokenId))
+    .limit(1);
+
+  return rows.length === 0 ? null : toTokenListItem(rows[0]);
 }
 
 /**
@@ -85,20 +115,7 @@ export async function listOwnerTokens(
   const d = db ?? getDb();
 
   const rows = await d
-    .select({
-      id: projectTokens.id,
-      name: projectTokens.name,
-      kind: projectTokens.token_kind,
-      ownerUserId: projectTokens.owner_user_id,
-      ownerName: users.name,
-      ownerEmail: users.email,
-      scopes: projectTokens.scopes,
-      prefix: projectTokens.prefix,
-      createdAt: projectTokens.created_at,
-      lastUsedAt: projectTokens.last_used_at,
-      expiresAt: projectTokens.expires_at,
-      revokedAt: projectTokens.revoked_at,
-    })
+    .select(TOKEN_LIST_COLUMNS)
     .from(projectTokens)
     .leftJoin(users, eq(projectTokens.owner_user_id, users.id))
     .where(
@@ -110,19 +127,5 @@ export async function listOwnerTokens(
     )
     .orderBy(desc(projectTokens.created_at));
 
-  return rows.map(
-    (r: any): TokenListItem => ({
-      id: r.id,
-      name: r.name,
-      kind: r.kind ?? "user",
-      ownerUserId: r.ownerUserId ?? null,
-      ownerLabel: r.ownerName ?? r.ownerEmail ?? null,
-      scopes: (r.scopes as string[]) ?? ["*"],
-      prefix: r.prefix,
-      createdAt: r.createdAt,
-      lastUsedAt: r.lastUsedAt ?? null,
-      expiresAt: r.expiresAt ?? null,
-      revokedAt: r.revokedAt ?? null,
-    }),
-  );
+  return rows.map((r: any) => toTokenListItem(r, "user"));
 }
