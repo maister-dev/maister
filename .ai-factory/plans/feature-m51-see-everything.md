@@ -1218,13 +1218,13 @@ regardless of what the rail renders).
 
 ### Phase 7 — Web push and notification subscriptions · `NTF-01..10`
 
-**T7.1 [ ] — Migration 0163: `push_subscriptions` + `notification_subscriptions`.**
+**T7.1 [x] — Migration 0163: `push_subscriptions` + `notification_subscriptions`.**
 DDL exactly as T0.10 specifies, including constraint names. Per-user rows; secrets
 as `env:` refs only (`NTF-06`), matching `webhook_subscriptions.signing_secret_ref`.
 Same migration-triple + `db:generate` "No schema changes" discipline as T5.1.
 *Verify*: `db:erd --check` green.
 
-**T7.2 [ ] — Migration 0164: widen the ADR-077 tables (cross-cutting, own number).**
+**T7.2 [x] — Migration 0164: widen the ADR-077 tables (cross-cutting, own number).**
 *RED*: `EDGE-NTF-03` — existing project/run-scoped webhooks still fan out and
 deliver unchanged; this is the regression that matters. *GREEN*:
 `webhook_events.run_id` and `.project_id` → nullable;
@@ -1232,12 +1232,12 @@ deliver unchanged; this is the regression that matters. *GREEN*:
 widens, never drops.
 *Verify*: `db:erd --check` green.
 
-**T7.3 [ ] — Service worker at `/sw.js` (D13).** Route handler with
+**T7.3 [x] — Service worker at `/sw.js` (D13).** Route handler with
 `Service-Worker-Allowed: /` and `Content-Type: text/javascript`.
 *Verify*: the **registered scope** is `/` in a real browser context, asserted in the
 Playwright spec — not merely the response header.
 
-**T7.4 [ ] — Fan out the nullable widening · `NTF-02`, `NTF-03`.** *RED*: `IT-NTF-02`, a
+**T7.4 [x] — Fan out the nullable widening · `NTF-02`, `NTF-03`.** *RED*: `IT-NTF-02`, a
 per-reader table with one case each feeding a user-scoped (project-less, run-less)
 event to `emitWebhookEvent`, `match.ts` `subscriptionMatches`, `replay.ts`,
 `send.ts`, `ping.ts`, the deliveries UI, and the drainer's fanout/drain/prune passes
@@ -1246,13 +1246,13 @@ never sees a NULL row is the defect shape. `IT-NTF-03` covers **both directions*
 platform-wide subscription must not match a user event, and a user subscription must
 not match a project event.
 
-**T7.5 [ ] — The `attention.*` domain-event consumer · `NTF-08`, `EDGE-NTF-01`.**
+**T7.5 [x] — The `attention.*` domain-event consumer · `NTF-08`, `EDGE-NTF-01`.**
 *RED*: `EDGE-NTF-01` — at-least-once redelivery converges to one notification.
 *GREEN*: one entry in `web/lib/domain-events/consumers.ts:63` plus a cursor row — no
 new clock (ADR-086's own promise). Idempotent `handle`. Emits
 `attention.decision_opened | decision_closed | decisions_changed | digest`.
 
-**T7.6 [ ] — The sender (two-phase commit, D10) · `NTF-04`, `NTF-05`.** *RED*:
+**T7.6 [x] — The sender (two-phase commit, D10) · `NTF-04`, `NTF-05`.** *RED*:
 `IT-NTF-04` — a send failure leaves the row retryable with `delivered_at` still
 null; a success stamps it. `IT-NTF-05`/`EDGE-NTF-02` — a `410 Gone` deletes the
 subscription. *GREEN*: persist intent **before** the send, stamp `delivered_at`
@@ -1261,18 +1261,18 @@ subscription) naming per row the HTTP result, whether the row stays retryable or
 goes terminal, and what mutates on retry. Reuses the existing HMAC, backoff curve
 and delivery log (DRY — no second engine).
 
-**T7.7 [ ] — Triggers · `NTF-08`.** Fire on a `decisions` delta and on the digest.
+**T7.7 [x] — Triggers · `NTF-08`.** Fire on a `decisions` delta and on the digest.
 **Never a per-event stream by default** (brief §6 fatigue bound, restated in
 ADR-172). The digest payload is T5.4's deterministic sentence.
 
-**T7.8 [ ] — Opt-in UI + ext subscription ops · `NTF-07`, `NTF-09`.** *RED*:
+**T7.8 [x] — Opt-in UI + ext subscription ops · `NTF-07`, `NTF-09`.** *RED*:
 `IT-NTF-07` — a **positive grant** plus a cross-owner negative: token A cannot read,
 modify or delete owner B's subscriptions. `UT-NTF-09` — `decisions:read` and
 `notifications:subscriptions` are absent from `AGENT_TOKEN_SCOPES` and
 `CROSS_PROJECT_AGENT_SCOPES`. *GREEN*: per-user opt-in on `/account`; ext CRUD under
 `/api/v1/ext`. The owner comes from `auth-context`, **never the body** (D7). EN + RU.
 
-**T7.9 [ ] — Deployment wiring (D8) · `NTF-10`.** The three VAPID vars into
+**T7.9 [x] — Deployment wiring (D8) · `NTF-10`.** The three VAPID vars into
 `.env.example` **and** the `web` service `environment:` block of `compose.yml`,
 `compose.production.yml`, `compose.public.yml`, **and** the canonical env table in
 `docs/configuration.md`. `web-push` in `web/package.json` with `pnpm-lock.yaml`
@@ -1280,7 +1280,83 @@ committed in the same change.
 *Verify (`IT-NTF-10`)*: a boot with the vars unset degrades to "push unavailable"
 with a clear log line — it does not crash the web process.
 
-**T7.10 [ ] — e2e (mocked push).** Opt-in flow, a delivered notification, revocation.
+**T7.10 [x] — e2e (mocked push).** Opt-in flow, a delivered notification, revocation.
+
+*Execution notes (2026-09-11, Phase 7):*
+
+- **0164 widens `webhook_deliveries` too, and it had to.** T7.1/T7.2 specify two
+  migrations; neither leaves anywhere to record a PUSH delivery attempt. ADR-172
+  D7 stamps `delivered_at`, a `webhook_deliveries` column, but that table's
+  `subscription_id` is `NOT NULL` to `webhook_subscriptions` and a push endpoint
+  has neither an HTTP subscription nor an HMAC secret (`signing_secret_ref` is
+  also `NOT NULL`). Resolved with the owner's agreement by widening `0164`
+  further: `subscription_id` nullable, `push_subscription_id` added (FK,
+  `ON DELETE CASCADE`), and `webhook_deliveries_one_target` CHECK
+  `(subscription_id IS NULL) <> (push_subscription_id IS NULL)`. One outbox, one
+  drainer, one retry curve, one ledger — D1 read literally — and the `410`
+  deletion cascades its attempts away. Recorded as an ADR-172 amendment.
+- **The D2 enumeration found a real leak, one layer ABOVE `subscriptionMatches`.**
+  `lib/webhooks/subscriptions.ts` expressed "platform-wide" as
+  `project_id IS NULL`. A user subscription also carries `project_id IS NULL`, so
+  the admin settings surface began **listing, reading, deleting and exposing the
+  deliveries of other people's personal subscriptions** — all four proven failing
+  before the fix (`IT-NTF-02`). "Platform" now means
+  `project_id IS NULL AND owner_user_id IS NULL` at every call site. This is the
+  highest-value thing the phase produced and it was not in any task text; D2's
+  "a reader that structurally cannot see a NULL row is the defect shape" is what
+  pointed at it.
+- **TypeScript found the first NULL-blind reader before any test did.** Making
+  `webhook_events.project_id` nullable broke `lib/queries/activity-feed.ts:395`
+  (Phase 5's own webhook branch). Handled explicitly: a user-scoped delivery is
+  NOT project activity, so it is absent from the cross-project feed, and the
+  WHERE clause already dropped it because `IN` never matches NULL.
+- **`emitWebhookEvent` is a two-arm union, not an optional-args widening.** The
+  user-scoped arm takes `ownerUserId` and writes NULL project/run; the
+  project-scoped arm still REQUIRES both ids, so no existing caller can silently
+  drop them. The owner rides in `data.ownerUserId` because ADR-172 rejected a
+  `user_id` column (D3's bug with an extra column).
+- **Two triggers, and the digest rides `system_sweep`.** A new
+  `scheduler_jobs.job_kind` would be a migration for a pass whose cadence is
+  bounded by the digest WINDOW, not by the tick. The delta trigger recomputes the
+  count and compares it against the last value IT published — so the consumer
+  needs no new table to be idempotent, and `EDGE-NTF-01` falsifies cleanly
+  (removing the comparison emits on every redelivery).
+- **A React-`cache` hazard in a background job.** `getNowTileCounts` defaults to
+  the cached `getDecisionsQueue`, which is right in a render (`ATN-05` wants ONE
+  computation behind the Desk's tiles and its Decisions region) and wrong in a
+  long-lived sweep, where the memo has no request to scope it. The digest trigger
+  injects `computeDecisionsQueue`. Same class of bug as T5.5's, caught before
+  shipping this time.
+- **Threading a test client through the read models was abandoned, deliberately.**
+  The digest window reaches `getCrossProjectHitlInbox` via
+  `computeDecisionsQueue`, and `portfolio.ts` reads the module-level handle. I
+  started adding `client` parameters, got three modules deep, and reverted: the
+  established integration pattern here is `vi.mock("@/lib/db/client")`, and
+  refactoring readers this phase does not own to suit one test is the wrong trade.
+  The `decisionsQueue` injection stayed, because it fixes a production hazard.
+- **T7.9 deviation (owner-approved).** The task asks for the three VAPID vars in
+  the `web` service `environment:` block of `compose.yml`,
+  `compose.production.yml` and `compose.public.yml`. **No such block exists** —
+  ADR-023 runs web on the host, so the first two define only `postgres` and the
+  third defines `site`/`docs`. Wired into `.env.example` + the canonical
+  `docs/configuration.md` table instead, exactly as `MAISTER_WEBHOOK_*` is, which
+  those docs already mark "never `compose.yml`".
+- **The e2e cannot subscribe for real, and says so.** `pushManager.subscribe()`
+  never resolves in headless Chromium (no push service) — the first cut timed out
+  at that line — and stubbing `navigator.serviceWorker` is impossible too, because
+  the property is not configurable and redefining it breaks hydration before the
+  panel renders. Shipped: the REAL service worker and its REAL registered scope
+  (`/`), plus the real session-authenticated POST/DELETE round trip and the
+  account page reading the stored endpoints back. An actually-delivered push is
+  proven at the ledger by `IT-NTF-04`/`IT-NTF-05`. The e2e config sets a
+  throwaway VAPID pair so the configured path is the one under test; `NTF-10`'s
+  degradation is owned by `UT-NTF-10`'s six cases.
+- **`notifications:subscriptions` broke an exhaustive switch at compile time** —
+  `components/board/token-actions.tsx`'s `scopeText`, whose comment promises
+  exactly that. Label added in EN + RU.
+- **`IT-EDGE-NTF-03` was run green BEFORE the widening and green after.** A
+  regression guard that was never green beforehand cannot tell a regression from a
+  test that never worked, so it was written against the un-widened tree first.
 
 > **Checkpoint 8** — `feat(notifications): web push and user subscriptions over the widened ADR-077 engine (ADR-172, NTF-01..10)`
 

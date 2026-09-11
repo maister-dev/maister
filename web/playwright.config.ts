@@ -22,13 +22,25 @@ const MAISTER_CRON_TOKEN =
 // below; the spec's in-process stub re-derives the HMAC from the SAME value to
 // verify each captured signature. Re-read by the spec via process.env.
 const WH_E2E_SECRET = process.env.WH_E2E_SECRET ?? "whsec_e2e_0123456789abcdef";
+// push-notifications.spec.ts: a THROWAWAY VAPID pair, generated for this suite
+// and valid nowhere else. Web push is optional (`NTF-10`) and unset is the
+// default self-hosted shape, which `UT-NTF-10` and the route's CONFIG branch
+// own; the e2e needs it SET so the real browser can complete
+// `pushManager.subscribe` and the full opt-in → ledger → revoke round trip is
+// actually exercised rather than asserted in the degraded state.
+const MAISTER_VAPID_PUBLIC_KEY =
+  process.env.MAISTER_VAPID_PUBLIC_KEY ??
+  "BnotARealVapidKey-e2ePlaceholderOnly-e2ePlaceholderOnly-e2ePlaceholderOnly0000000000000";
+const MAISTER_VAPID_PRIVATE_KEY =
+  process.env.MAISTER_VAPID_PRIVATE_KEY ??
+  "notARealVapidPrivateKey-e2ePlaceholder00000";
 const AUTH_FILE = "e2e/.auth/admin.json";
 const databaseUrl = resolvePostgresDbUrl();
 const worktreesRoot = resolveTestWorktreesRoot("e2e", process.env);
 
 process.env.MAISTER_WORKTREES_ROOT = worktreesRoot;
 const AUTHED_SPEC =
-  /.*(auto-promotion|active-workspaces|m11[abc]-.*|m12-evidence-graph|m13-assignments|m15-.*|m16-.*|m17-.*|m18-.*|m19-.*|m22-.*|m23-.*|m27-.*|m43-cutover-history|multi-run-cost-policy|run-task-context|portfolio-board|task-launch-gating|task-edit-fields-scroll|project-registration|project-onboarding|project-automations|admin-users|project-members|review-comments|review-diff-scopes|gate-chat|social-board|agent-mentions|scratch-launch|scratch-detail|scratch-composer|platform-acp-runners|model-suggestions|flows-authoring|flow-editor|run-schedules|flow-package-viewer|flow-studio-artifacts|outbound-webhooks|package-management|platform-agents-.*|evaluation-lab|orchestrator-loop|flow-target-delegation|m38-decide-routing|m40-guardrail-hooks|capability-enforcement|inbox|budget-breach-fork|mcp-hub|mcps|observatory-cost-breakdown|studio-local-edit|studio-package-viewer|studio-import|studio-diff|studio-ai-assistant|studio|forked-package-loop|plan-review-decisions|run-sync|pr-reopen|adr160-rework-claim|adr161-node-interrupt|recursive-harness|execution-host-contract|work-table|activity-feed|desk)\.spec\.ts$/;
+  /.*(auto-promotion|active-workspaces|m11[abc]-.*|m12-evidence-graph|m13-assignments|m15-.*|m16-.*|m17-.*|m18-.*|m19-.*|m22-.*|m23-.*|m27-.*|m43-cutover-history|multi-run-cost-policy|run-task-context|portfolio-board|task-launch-gating|task-edit-fields-scroll|project-registration|project-onboarding|project-automations|admin-users|project-members|review-comments|review-diff-scopes|gate-chat|social-board|agent-mentions|scratch-launch|scratch-detail|scratch-composer|platform-acp-runners|model-suggestions|flows-authoring|flow-editor|run-schedules|flow-package-viewer|flow-studio-artifacts|outbound-webhooks|package-management|platform-agents-.*|evaluation-lab|orchestrator-loop|flow-target-delegation|m38-decide-routing|m40-guardrail-hooks|capability-enforcement|inbox|budget-breach-fork|mcp-hub|mcps|observatory-cost-breakdown|studio-local-edit|studio-package-viewer|studio-import|studio-diff|studio-ai-assistant|studio|forked-package-loop|plan-review-decisions|run-sync|pr-reopen|adr160-rework-claim|adr161-node-interrupt|recursive-harness|execution-host-contract|work-table|activity-feed|desk|push-notifications)\.spec\.ts$/;
 
 export default defineConfig({
   testDir: "./e2e",
@@ -119,6 +131,10 @@ export default defineConfig({
       // and platform-agents-binding.spec.ts already tolerates `Running` as well
       // as `Pending` for its launched run.
       MAISTER_MAX_CONCURRENT_RUNS: "64",
+      // push-notifications.spec.ts (ADR-172). Throwaway keys; see above.
+      MAISTER_VAPID_PUBLIC_KEY,
+      MAISTER_VAPID_PRIVATE_KEY,
+      MAISTER_VAPID_SUBJECT: "mailto:e2e@maister.local",
     },
   },
 });

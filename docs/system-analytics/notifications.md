@@ -9,7 +9,8 @@ decision is waiting without keeping a tab open. It deliberately introduces **no
 second outbox, no second drainer and no second retry curve** — it widens the
 one that ships today, and pays for that by enumerating every reader of the
 columns it makes nullable. Locked by
-[ADR-172](../decisions.md#adr-172-user-notification-subscriptions-and-web-push-over-the-widened-outbound-webhook-engine).
+[ADR-172](../decisions.md#adr-172-user-notification-subscriptions-and-web-push-over-the-widened-outbound-webhook-engine),
+and **Implemented**.
 Project- and run-scoped webhook behaviour is owned by
 [`outbound-webhooks.md`](outbound-webhooks.md) and is unchanged.
 
@@ -88,12 +89,56 @@ flowchart TD
     E -- "user-scoped" --> NP["NEVER matches a platform-wide subscription"]
 ```
 
+## As built
+
+- **`webhook_deliveries` is the push ledger too.** ADR-172 D7 stamps
+  `delivered_at`, which is a `webhook_deliveries` column, and that table's
+  `subscription_id` was `NOT NULL` to `webhook_subscriptions` — a push endpoint
+  has no HTTP subscription and no HMAC secret, so there was nowhere to record a
+  push attempt. `0164` therefore also makes `subscription_id` nullable, adds
+  `push_subscription_id`, and enforces `webhook_deliveries_one_target`
+  (`(subscription_id IS NULL) <> (push_subscription_id IS NULL)`). One outbox,
+  one drainer, one retry curve, one ledger — and a `410` cascade-deletes the
+  attempts with the endpoint. Recorded as an ADR-172 amendment.
+- **The platform scope had to be narrowed, and this is the highest-value thing
+  the D2 enumeration found.** `subscriptions.ts` expressed "platform-wide" as
+  `project_id IS NULL`. A user subscription is also `project_id IS NULL`, so the
+  admin settings surface began listing, reading, deleting and exposing the
+  deliveries of other people's PERSONAL subscriptions. "Platform" now means
+  `project_id IS NULL AND owner_user_id IS NULL`, at all four call sites
+  (`IT-NTF-02`).
+- **The event's owner rides in `data.ownerUserId`.** ADR-172 rejected a `user_id`
+  column on `webhook_events` (D3's bug with an extra column), so `emitWebhookEvent`
+  is a two-arm union: the user-scoped arm takes `ownerUserId` and writes NULL
+  project/run, and the project-scoped arm still requires both ids, so no existing
+  caller can silently drop them.
+- **Two triggers, two hosts.** The delta trigger is the `attention-notifications`
+  domain-event consumer; the digest rides the existing `system_sweep` bundle
+  rather than a new `scheduler_jobs.job_kind`, which would be a migration for a
+  pass whose cadence is bounded by the digest WINDOW, not by the tick.
+- **The digest passes the UNCACHED decision queue.** `getNowTileCounts` defaults to
+  the React-`cache`d `getDecisionsQueue` — correct in a render, where the Desk's
+  tiles and its Decisions region must be one computation (`ATN-05`) — but a
+  long-lived sweep has no request to scope that memo, so the trigger injects
+  `computeDecisionsQueue`.
+- **VAPID lives in `.env.example` and the canonical env table only.** The plan
+  asked for the `web` service `environment:` block of three compose files; no such
+  block exists — per ADR-023 web runs on the host, and `compose.yml` /
+  `compose.production.yml` define only `postgres`. This follows the
+  `MAISTER_WEBHOOK_*` precedent, which those same docs mark "never `compose.yml`".
+- **What the e2e can and cannot reach.** The service worker and its registered
+  scope are asserted unstubbed in a real browser; the opt-in POST/DELETE round
+  trip is real and session-authenticated. `pushManager.subscribe()` is NOT
+  exercised — headless Chromium has no push service, so the call never resolves —
+  and an actually-delivered push is therefore proven at the ledger by
+  `IT-NTF-04`/`IT-NTF-05` rather than in a browser.
+
 ## Expectations
 
 - **NTF-01:** User-scoped events MUST ride the ADR-077 outbox; no second outbox, drainer or retry curve may be introduced.
 - **NTF-02:** Every reader of `webhook_events.run_id` and `.project_id` MUST handle NULL, enumerated as a per-reader checklist with one case each.
-- **NTF-03:** A platform-wide subscription MUST NOT match a user-scoped event, and a user subscription MUST NOT match a project-scoped event.
-- **NTF-04:** The sender MUST persist delivery intent before the send and stamp `delivered_at` only after it succeeds.
+- **NTF-03:** A platform-wide subscription MUST NOT match a user-scoped event, and a user subscription MUST NOT match a project-scoped event. The admin platform SCOPE must likewise exclude user-owned subscriptions (`project_id IS NULL AND owner_user_id IS NULL`).
+- **NTF-04:** The sender MUST persist delivery intent before the send and stamp `delivered_at` only after it succeeds. Push intent is persisted at fanout, one `webhook_deliveries` row per registered endpoint.
 - **NTF-05:** A push `410 Gone` MUST delete the subscription; every other failure MUST follow the existing retry curve.
 - **NTF-06:** Signing secrets MUST be stored as `env:NAME` references only, never as plaintext in a column, log or payload.
 - **NTF-07:** A personal token MUST be able to CRUD only its own owner's subscriptions; an unknown id MUST answer `404`, never `403`.

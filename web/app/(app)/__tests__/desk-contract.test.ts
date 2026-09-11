@@ -73,9 +73,10 @@ describe("UT-NAV-01 the Desk composes rather than re-implements", () => {
       DESK.indexOf(`testid="${id}"`),
     );
 
-    expect(order.every((at) => at > 0), DESK.slice(0, 0) || "all found").toBe(
-      true,
-    );
+    expect(
+      order.every((at) => at > 0),
+      DESK.slice(0, 0) || "all found",
+    ).toBe(true);
     expect(order).toEqual([...order].sort((a, b) => a - b));
   });
 

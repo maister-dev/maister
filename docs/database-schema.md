@@ -1370,13 +1370,28 @@ tables and must be reviewable and revertable on its own. It widens; it drops
 nothing.
 
 ```sql
-ALTER TABLE webhook_events    ALTER COLUMN project_id DROP NOT NULL;
-ALTER TABLE webhook_events    ALTER COLUMN run_id     DROP NOT NULL;
+ALTER TABLE webhook_events     ALTER COLUMN project_id      DROP NOT NULL;
+ALTER TABLE webhook_events     ALTER COLUMN run_id          DROP NOT NULL;
+ALTER TABLE webhook_deliveries ALTER COLUMN subscription_id DROP NOT NULL;
 ALTER TABLE webhook_subscriptions
   ADD COLUMN owner_user_id text REFERENCES users(id) ON DELETE CASCADE;
+ALTER TABLE webhook_deliveries
+  ADD COLUMN push_subscription_id text
+    REFERENCES push_subscriptions(id) ON DELETE CASCADE;
 CREATE INDEX webhook_subscriptions_owner_idx
   ON webhook_subscriptions (owner_user_id);
+CREATE UNIQUE INDEX webhook_deliveries_push_event_uq
+  ON webhook_deliveries (push_subscription_id, event_id);
+ALTER TABLE webhook_deliveries ADD CONSTRAINT webhook_deliveries_one_target
+  CHECK ((subscription_id IS NULL) <> (push_subscription_id IS NULL));
 ```
+
+`webhook_deliveries` widens because ADR-172 D7 stamps `delivered_at` — a column
+of THIS table — for a push delivery too, and a push endpoint has neither an HTTP
+subscription nor an HMAC secret. Exactly one target is set per row; the `410 Gone`
+that deletes an endpoint cascades its attempts away rather than leaving them
+dangling. Every pre-existing row has `subscription_id` set and
+`push_subscription_id` NULL, so the CHECK holds for live data.
 
 Scope becomes **two independent axes**, and the existing single-disjunct match
 expression is wrong once `webhook_events.project_id` can be NULL — see

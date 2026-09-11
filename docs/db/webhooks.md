@@ -9,13 +9,26 @@ for behavior, the delivery FSM, and the event taxonomy, and
 > forward-only, no down-migration) adds all four tables and the
 > `platform_runtime_settings.webhooks_enabled` column.
 >
-> **Widening (Designed — [ADR-172](../decisions.md#adr-172), migration `0164`).**
+> **Widening (Implemented — [ADR-172](../decisions.md#adr-172), migration `0164`).**
 > `webhook_events.project_id` and `.run_id` become nullable and
 > `webhook_subscriptions.owner_user_id` is added, so a per-user `attention.*`
 > event — which has neither a project nor a run — rides this same outbox
 > instead of a second one. The widening drops nothing.
 >
-> Scope becomes **two independent axes**. The shipped match expression
+> `webhook_deliveries` is widened too, for the same reason: a `web_push` delivery
+> targets a browser endpoint rather than an HTTP subscription, so
+> `subscription_id` becomes nullable, `push_subscription_id` is added (FK to
+> `push_subscriptions`, `ON DELETE CASCADE`), and
+> `webhook_deliveries_one_target` enforces
+> `(subscription_id IS NULL) <> (push_subscription_id IS NULL)`. One ledger, two
+> transports; a `410 Gone` deletes the endpoint and its attempts go with it.
+>
+> Scope becomes **two independent axes**, and the admin PLATFORM scope narrows
+> with it: "platform-wide" is `project_id IS NULL AND owner_user_id IS NULL`,
+> because a user subscription also carries a NULL project and would otherwise be
+> listed, read, deleted and exposed by the admin settings surface.
+>
+> Scope matching itself: the shipped match expression
 > `sub.project_id IS NULL OR sub.project_id = event.project_id` treats a NULL
 > subscription project as "platform-wide, matches everything"; once the *event*
 > project can also be NULL that first disjunct would make every platform-wide

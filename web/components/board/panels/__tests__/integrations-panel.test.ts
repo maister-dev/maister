@@ -97,6 +97,7 @@ const labels: TokenLabels = {
   scopeHitlRespond: "Respond to HITL",
   scopeHitlInboxRead: "Read personal HITL inbox",
   scopeDecisionsRead: "Read your decision queue",
+  scopeNotificationsSubscriptions: "Manage your notification subscriptions",
   scopeHitlRespondHuman: "Respond to human HITL",
   scopeCommentsRead: "Read comments",
   scopeCommentsCreate: "Create comments",

@@ -29,6 +29,7 @@ import { runWorkspaceReconciliationSweep } from "@/lib/gc/workspace-reconciler";
 import { assertUpgradeMaintenanceAllows } from "@/lib/maintenance/upgrade-fence";
 import { runReconcileSweep } from "@/lib/reconcile";
 import { reconcileTerminalCostRollups } from "@/lib/runs/cost-reconcile-sweep";
+import { runDigestTrigger } from "@/lib/notifications/digest-trigger";
 import { runSweepTick } from "@/lib/runs/keepalive-sweeper";
 import { runSyncRecoverySweep } from "@/lib/runs/sync-recovery";
 
@@ -62,6 +63,10 @@ export type SystemSweepSummary = GcCompatibilitySummary & {
     | { status: "refused"; executionHostId: string; reason: string }
     | { status: "unavailable"; executionHostId: string | null; reason: string }
     | null;
+  // ADR-172: the digest notification trigger. Rides this bundle rather than a
+  // new `scheduler_jobs.job_kind` (which would be a migration) because the
+  // DIGEST WINDOW, not the tick rate, bounds how often a reader hears from it.
+  digest: Awaited<ReturnType<typeof runDigestTrigger>> | null;
   workspace: WorkspaceGcSummary | null;
   workspaceReconciliation: WorkspaceReconciliationSummary | null;
   revision: RevisionGcSummary | null;
@@ -272,6 +277,7 @@ export async function runSystemSweep(): Promise<SystemSweepSummary> {
   let syncRecovery: SystemSweepSummary["syncRecovery"] = null;
   let cost: SystemSweepSummary["cost"] = null;
   let executionEventPlane: SystemSweepSummary["executionEventPlane"] = null;
+  let digest: SystemSweepSummary["digest"] = null;
 
   try {
     keepalive = await runSweepTick();
@@ -382,7 +388,22 @@ export async function runSystemSweep(): Promise<SystemSweepSummary> {
   errors.push(...gc.errors);
   bundleErrors.push(...gc.bundleErrors);
 
+  try {
+    digest = await runDigestTrigger();
+    // Per-reader failures are already absorbed inside the trigger and reported
+    // in its own `errors`; they are candidate failures, not bundle failures, so
+    // they must not consume the scheduler attempt's retry budget.
+    errors.push(...digest.errors);
+  } catch (err) {
+    const message = errorMessage(err);
+
+    errors.push(`digest trigger failed: ${message}`);
+    bundleErrors.push(`digest trigger failed: ${message}`);
+    log.error({ err: message }, "system_sweep digest trigger threw");
+  }
+
   const summary = {
+    digest,
     keepalive,
     reconcile,
     syncRecovery,

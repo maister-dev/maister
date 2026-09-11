@@ -82,11 +82,28 @@ export interface DigestUser {
 
 export type DigestLabels = Record<NowTileId | "empty", string>;
 
+/**
+ * `decisionsQueue` exists for ONE caller: the digest notification trigger, which
+ * runs inside a scheduler sweep rather than a request.
+ *
+ * The default `getDecisionsQueue` is React-`cache`d, which is exactly right in a
+ * render — the Desk's tiles and its Decisions region must be the SAME
+ * computation (`ATN-05`). In a long-lived background process that memo has no
+ * request to scope it, so the trigger passes the uncached `computeDecisionsQueue`
+ * instead; otherwise every reader in one sweep could be notified with the first
+ * reader's count.
+ */
+export interface NowTileOptions {
+  decisionsQueue?: typeof getDecisionsQueue;
+}
+
 export async function getNowTileCounts(
   user: DigestUser,
   now: Date = new Date(),
+  opts: NowTileOptions = {},
 ): Promise<DigestWindow> {
   const client = getDb() as NodePgDatabase<typeof schema>;
+  const decisionsQueue = opts.decisionsQueue ?? getDecisionsQueue;
   const projectIds = await getVisibleProjectIds(user.id, user.role, client);
   const cursor = await getActivityCursor(user.id, client);
   const since = cursor ?? new Date(now.getTime() - UPDATES_NO_CURSOR_WINDOW_MS);
@@ -125,7 +142,7 @@ export async function getNowTileCounts(
             gt(domainEvents.occurredAt, since),
           ),
         ),
-      getDecisionsQueue(user.id, user.role),
+      decisionsQueue(user.id, user.role),
       getUpdatesCount(user.id, user.role, now),
       queryTokensSpentSince(projectIds, since, { client }),
     ]);

@@ -85,6 +85,18 @@ vi.mock("@/lib/brain/reindex", () => ({
 vi.mock("@/lib/evaluations/evidence/gc", () => ({
   sweepEvaluationEvidence: sweepEvaluationEvidenceMock,
 }));
+// ADR-172: the digest notification trigger joined this bundle. Mocked like every
+// other participant — it is a database pass, and the unit test has no database.
+vi.mock("@/lib/notifications/digest-trigger", () => ({
+  runDigestTrigger: vi.fn(async () => ({
+    candidates: 0,
+    emitted: 0,
+    skippedTooSoon: 0,
+    skippedEmpty: 0,
+    errors: [],
+  })),
+}));
+
 vi.mock("@/lib/gc/plain-agent-directory-gc", () => ({
   runPlainAgentDirectoryGcSweep: runPlainAgentDirectoryGcSweepMock,
 }));

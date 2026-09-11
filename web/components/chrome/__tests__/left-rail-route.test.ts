@@ -72,7 +72,11 @@ function appSegments(): string[] {
 
     if (!statSync(full).isDirectory()) continue;
     // Route groups and private folders are not URL segments.
-    if (entry.startsWith("(") || entry.startsWith("_") || entry.startsWith("@")) {
+    if (
+      entry.startsWith("(") ||
+      entry.startsWith("_") ||
+      entry.startsWith("@")
+    ) {
       continue;
     }
     if (entry === "__tests__" || entry === "api") continue;

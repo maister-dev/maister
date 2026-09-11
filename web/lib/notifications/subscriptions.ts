@@ -1,0 +1,322 @@
+import "server-only";
+
+/**
+ * Per-user notification subscriptions and push endpoints (ADR-172 D9,
+ * `NTF-06`, `NTF-07`).
+ *
+ * EVERY function here takes the owner as its FIRST argument, resolved by the
+ * caller from `auth-context`. There is no function that accepts an owner from a
+ * request body, because D9's rule is only enforceable if the unsafe shape does
+ * not exist: an unknown id answers "not found" rather than "forbidden", so the
+ * API never confirms that another user's row exists.
+ */
+
+import type {
+  AttentionNotificationType,
+  NotificationSubscriptionRow,
+  NotificationTransport,
+} from "@/lib/db/schema";
+
+import { randomUUID } from "node:crypto";
+
+import { and, eq } from "drizzle-orm";
+import pino from "pino";
+
+import {
+  ATTENTION_NOTIFICATION_TYPES,
+  notificationSubscriptions,
+  NOTIFICATION_TRANSPORTS,
+  pushSubscriptions,
+} from "@/lib/db/schema";
+import { getDb } from "@/lib/db/client";
+import { MaisterError } from "@/lib/errors";
+
+// FIXME(any): dual drizzle-orm peer-dep variants, as elsewhere in lib/queries.
+type Db = any;
+
+const log = pino({
+  name: "notifications-subscriptions",
+  level: process.env.LOG_LEVEL ?? "info",
+});
+
+export interface NotificationSubscriptionDto {
+  id: string;
+  eventTypes: AttentionNotificationType[];
+  transport: NotificationTransport;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface NotificationSubscriptionInput {
+  eventTypes: AttentionNotificationType[];
+  transport: NotificationTransport;
+  enabled?: boolean;
+}
+
+const TYPE_SET: ReadonlySet<string> = new Set(ATTENTION_NOTIFICATION_TYPES);
+const TRANSPORT_SET: ReadonlySet<string> = new Set(NOTIFICATION_TRANSPORTS);
+
+function toDto(row: NotificationSubscriptionRow): NotificationSubscriptionDto {
+  return {
+    id: row.id,
+    eventTypes: row.eventTypes,
+    transport: row.transport,
+    enabled: row.enabled,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+/**
+ * `NTF-08` at the API edge. The four `attention.*` types are the only ones a
+ * subscription may name; anything else — including a real webhook event type
+ * like `run.done` — is refused `CONFIG`, because a per-event subscription is the
+ * fatigue anti-pattern the decision forbids rather than a configuration the
+ * product supports.
+ */
+export function validateSubscriptionInput(
+  input: unknown,
+): NotificationSubscriptionInput {
+  const body = (input ?? {}) as Record<string, unknown>;
+
+  if ("ownerUserId" in body || "owner" in body || "userId" in body) {
+    // D9: refused, not ignored. Silently dropping it would let a caller believe
+    // they had set an owner.
+    throw new MaisterError(
+      "CONFIG",
+      "owner comes from the authenticated context; remove it from the body",
+    );
+  }
+
+  const transport = body.transport;
+
+  if (typeof transport !== "string" || !TRANSPORT_SET.has(transport)) {
+    throw new MaisterError(
+      "CONFIG",
+      `transport must be one of ${NOTIFICATION_TRANSPORTS.join(" | ")}`,
+    );
+  }
+
+  const types = body.eventTypes;
+
+  if (!Array.isArray(types) || types.length === 0) {
+    throw new MaisterError("CONFIG", "eventTypes must be a non-empty array");
+  }
+
+  const unknown = types.filter(
+    (t) => typeof t !== "string" || !TYPE_SET.has(t),
+  );
+
+  if (unknown.length > 0) {
+    throw new MaisterError(
+      "CONFIG",
+      `eventTypes may only name ${ATTENTION_NOTIFICATION_TYPES.join(" | ")}`,
+    );
+  }
+
+  const enabled = body.enabled;
+
+  if (enabled !== undefined && typeof enabled !== "boolean") {
+    throw new MaisterError("CONFIG", "enabled must be a boolean");
+  }
+
+  return {
+    // De-duplicated and ordered by the canonical list, so two equivalent
+    // requests store byte-identical rows.
+    eventTypes: ATTENTION_NOTIFICATION_TYPES.filter((t) =>
+      (types as string[]).includes(t),
+    ) as AttentionNotificationType[],
+    transport: transport as NotificationTransport,
+    enabled,
+  };
+}
+
+export async function listNotificationSubscriptions(
+  ownerUserId: string,
+  db?: Db,
+): Promise<NotificationSubscriptionDto[]> {
+  const client: Db = db ?? getDb();
+  const rows = (await client
+    .select()
+    .from(notificationSubscriptions)
+    .where(eq(notificationSubscriptions.ownerUserId, ownerUserId))
+    .orderBy(
+      notificationSubscriptions.transport,
+    )) as NotificationSubscriptionRow[];
+
+  return rows.map(toDto);
+}
+
+/**
+ * Upsert on `(owner, transport)`: one intent per transport, so a second POST for
+ * the same transport REPLACES rather than conflicting. A reader toggling their
+ * preferences should not have to discover whether a row already exists.
+ */
+export async function upsertNotificationSubscription(
+  ownerUserId: string,
+  input: NotificationSubscriptionInput,
+  db?: Db,
+): Promise<NotificationSubscriptionDto> {
+  const client: Db = db ?? getDb();
+  const [row] = (await client
+    .insert(notificationSubscriptions)
+    .values({
+      id: randomUUID(),
+      ownerUserId,
+      transport: input.transport,
+      eventTypes: input.eventTypes,
+      enabled: input.enabled ?? true,
+    })
+    .onConflictDoUpdate({
+      target: [
+        notificationSubscriptions.ownerUserId,
+        notificationSubscriptions.transport,
+      ],
+      set: {
+        eventTypes: input.eventTypes,
+        enabled: input.enabled ?? true,
+        updatedAt: new Date(),
+      },
+    })
+    .returning()) as NotificationSubscriptionRow[];
+
+  log.info(
+    { ownerUserId, transport: input.transport, id: row.id },
+    "notification subscription upserted",
+  );
+
+  return toDto(row);
+}
+
+/** `NTF-07`: another owner's id is indistinguishable from a nonexistent one. */
+export async function updateNotificationSubscription(
+  ownerUserId: string,
+  id: string,
+  input: NotificationSubscriptionInput,
+  db?: Db,
+): Promise<NotificationSubscriptionDto | null> {
+  const client: Db = db ?? getDb();
+  const rows = (await client
+    .update(notificationSubscriptions)
+    .set({
+      eventTypes: input.eventTypes,
+      transport: input.transport,
+      enabled: input.enabled ?? true,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(notificationSubscriptions.id, id),
+        eq(notificationSubscriptions.ownerUserId, ownerUserId),
+      ),
+    )
+    .returning()) as NotificationSubscriptionRow[];
+
+  return rows[0] ? toDto(rows[0]) : null;
+}
+
+export async function deleteNotificationSubscription(
+  ownerUserId: string,
+  id: string,
+  db?: Db,
+): Promise<boolean> {
+  const client: Db = db ?? getDb();
+  const rows = (await client
+    .delete(notificationSubscriptions)
+    .where(
+      and(
+        eq(notificationSubscriptions.id, id),
+        eq(notificationSubscriptions.ownerUserId, ownerUserId),
+      ),
+    )
+    .returning({ id: notificationSubscriptions.id })) as Array<{ id: string }>;
+
+  return rows.length > 0;
+}
+
+export interface PushEndpointInput {
+  endpoint: string;
+  p256dh: string;
+  auth: string;
+  expirationTime?: number | null;
+}
+
+/**
+ * Registers a browser push endpoint. Idempotent on `(owner, endpoint)` — the
+ * same browser re-subscribing after a service-worker update must not accumulate
+ * rows, or one notification would arrive several times.
+ *
+ * `endpoint` and the keys are stored OPAQUE: never parsed for routing, never
+ * used to derive a host, never logged.
+ */
+export async function registerPushEndpoint(
+  ownerUserId: string,
+  input: PushEndpointInput,
+  db?: Db,
+): Promise<{ id: string }> {
+  const client: Db = db ?? getDb();
+  const [row] = (await client
+    .insert(pushSubscriptions)
+    .values({
+      id: randomUUID(),
+      ownerUserId,
+      endpoint: input.endpoint,
+      p256dh: input.p256dh,
+      auth: input.auth,
+      expirationTime: input.expirationTime ?? null,
+    })
+    .onConflictDoUpdate({
+      target: [pushSubscriptions.ownerUserId, pushSubscriptions.endpoint],
+      set: {
+        p256dh: input.p256dh,
+        auth: input.auth,
+        expirationTime: input.expirationTime ?? null,
+        updatedAt: new Date(),
+      },
+    })
+    .returning({ id: pushSubscriptions.id })) as Array<{ id: string }>;
+
+  // The endpoint is a bearer capability for pushing to that browser; only the
+  // row id is ever logged.
+  log.info(
+    { ownerUserId, pushSubscriptionId: row.id },
+    "push endpoint registered",
+  );
+
+  return row;
+}
+
+export async function deletePushEndpoint(
+  ownerUserId: string,
+  endpoint: string,
+  db?: Db,
+): Promise<boolean> {
+  const client: Db = db ?? getDb();
+  const rows = (await client
+    .delete(pushSubscriptions)
+    .where(
+      and(
+        eq(pushSubscriptions.ownerUserId, ownerUserId),
+        eq(pushSubscriptions.endpoint, endpoint),
+      ),
+    )
+    .returning({ id: pushSubscriptions.id })) as Array<{ id: string }>;
+
+  return rows.length > 0;
+}
+
+export async function countPushEndpoints(
+  ownerUserId: string,
+  db?: Db,
+): Promise<number> {
+  const client: Db = db ?? getDb();
+  const rows = (await client
+    .select({ id: pushSubscriptions.id })
+    .from(pushSubscriptions)
+    .where(eq(pushSubscriptions.ownerUserId, ownerUserId))) as Array<{
+    id: string;
+  }>;
+
+  return rows.length;
+}

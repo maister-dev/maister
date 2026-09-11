@@ -12,6 +12,8 @@ import {
   type WebhookErrorKind,
 } from "@/lib/webhooks/backoff";
 import { matchSubscriptions } from "@/lib/webhooks/match";
+import { pushPayloadFor } from "@/lib/notifications/payload";
+import { sendPush, type PushTarget } from "@/lib/notifications/push-sender";
 import {
   buildEnvelopePayload,
   finalizeEnvelope,
@@ -188,13 +190,16 @@ async function runPrunePass(db: Db): Promise<number> {
 // one tx per pass so an event's freeze and its delivery rows commit atomically.
 // ---------------------------------------------------------------------------
 
+// ADR-172 D2 reader: `project_id` and `run_id` are nullable since `0164`. The
+// LEFT JOINs already tolerated a missing row; the TYPES now say so, which is
+// what stops a later edit from assuming a project is always there.
 type EventRow = {
   id: string;
-  project_id: string;
+  project_id: string | null;
   type: string;
   data: Record<string, unknown>;
   occurred_at: Date | string;
-  run_id: string;
+  run_id: string | null;
   run_status: string | null;
   task_id: string | null;
   flow_id: string | null;
@@ -206,9 +211,26 @@ type EventRow = {
 type SubRow = {
   id: string;
   project_id: string | null;
+  /** ADR-172: the second scope axis. Non-null makes the row user-scoped. */
+  owner_user_id: string | null;
   enabled: boolean;
   event_types: string[];
 };
+
+/**
+ * The owner a user-scoped `attention.*` event belongs to, read back out of the
+ * event's `data`. A project-scoped event has none, and a malformed value is
+ * treated as none rather than as a match — failing closed here means a
+ * notification is not sent, which is strictly better than sending it to the
+ * wrong reader.
+ */
+export function ownerUserIdOf(
+  data: Record<string, unknown> | null | undefined,
+): string | null {
+  const value = data?.ownerUserId;
+
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
 
 async function runFanoutPass(db: Db, batch: number): Promise<number> {
   return db.transaction(async (tx: Db) => {
@@ -257,7 +279,7 @@ async function runFanoutPass(db: Db, batch: number): Promise<number> {
     if (events.length === 0) return 0;
 
     const subResult = await tx.execute(sql`
-      SELECT id, project_id, enabled, event_types
+      SELECT id, project_id, owner_user_id, enabled, event_types
       FROM webhook_subscriptions
       WHERE enabled = true
     `);
@@ -269,13 +291,14 @@ async function runFanoutPass(db: Db, batch: number): Promise<number> {
         eventId: event.id,
         type: isWebhookEventType(type) ? type : (type as WebhookEventType),
         occurredAt: new Date(event.occurred_at),
-        project: event.project_slug
-          ? {
-              id: event.project_id,
-              slug: event.project_slug,
-              name: event.project_name ?? "",
-            }
-          : null,
+        project:
+          event.project_id && event.project_slug
+            ? {
+                id: event.project_id,
+                slug: event.project_slug,
+                name: event.project_name ?? "",
+              }
+            : null,
         run: event.run_id
           ? {
               id: event.run_id,
@@ -295,10 +318,18 @@ async function runFanoutPass(db: Db, batch: number): Promise<number> {
       `);
 
       const matched = matchSubscriptions(
-        { type, projectId: event.project_id },
+        {
+          type,
+          projectId: event.project_id,
+          // The owner of a user-scoped event rides in `data` (ADR-172 rejected
+          // a `user_id` column on the event: one scope expression over two
+          // axes is D3's bug with an extra column).
+          ownerUserId: ownerUserIdOf(event.data),
+        },
         allSubs.map((s) => ({
           id: s.id,
           projectId: s.project_id,
+          ownerUserId: s.owner_user_id,
           enabled: s.enabled,
           eventTypes: s.event_types,
         })),
@@ -324,10 +355,63 @@ async function runFanoutPass(db: Db, batch: number): Promise<number> {
           ON CONFLICT (subscription_id, event_id) DO NOTHING
         `);
       }
+
+      await fanoutPushTargets(tx, event);
     }
 
     return events.length;
   });
+}
+
+/**
+ * The `web_push` half of fan-out (ADR-172). A user-scoped event whose owner holds
+ * an ENABLED `web_push` intent naming this type gets one delivery row per
+ * registered browser — "notify me on every browser I have" is why the intent
+ * carries no FK to a single endpoint.
+ *
+ * Same table, same retry curve, same drain pass as an HTTP subscription: the one
+ * engine ADR-172 insisted on. `ON CONFLICT DO NOTHING` over
+ * `(push_subscription_id, event_id)` is what makes an at-least-once redelivery
+ * converge to one notification (`EDGE-NTF-01`).
+ */
+async function fanoutPushTargets(tx: Db, event: EventRow): Promise<void> {
+  const ownerUserId = ownerUserIdOf(event.data);
+
+  if (!ownerUserId) return;
+
+  const targets = await tx.execute(sql`
+    SELECT ps.id
+    FROM push_subscriptions ps
+    WHERE ps.owner_user_id = ${ownerUserId}
+      AND EXISTS (
+        SELECT 1 FROM notification_subscriptions ns
+        WHERE ns.owner_user_id = ${ownerUserId}
+          AND ns.transport = 'web_push'
+          AND ns.enabled = true
+          AND ns.event_types ? ${event.type}
+      )
+  `);
+
+  for (const row of (targets.rows ?? []) as Array<{ id: string }>) {
+    await tx.execute(sql`
+      INSERT INTO webhook_deliveries (
+        id, event_id, push_subscription_id, status, attempt_count,
+        next_attempt_at, idempotency_key, created_at, updated_at
+      )
+      VALUES (
+        gen_random_uuid()::text,
+        ${event.id},
+        ${row.id},
+        'pending',
+        0,
+        now(),
+        ${idempotencyKey(row.id, event.id)},
+        now(),
+        now()
+      )
+      ON CONFLICT (push_subscription_id, event_id) DO NOTHING
+    `);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -347,8 +431,10 @@ async function runFanoutPass(db: Db, batch: number): Promise<number> {
 
 type ClaimedDeliveryRow = {
   id: string;
+  /** NULL for a `web_push` delivery — see `push_subscription_id`. */
+  subscription_id: string | null;
+  push_subscription_id: string | null;
   event_id: string;
-  subscription_id: string;
   attempt_count: number;
 };
 
@@ -370,7 +456,7 @@ async function runDrainPass(
 ): Promise<DrainCounts> {
   const claimed: ClaimedDeliveryRow[] = await db.transaction(async (tx: Db) => {
     const due = await tx.execute(sql`
-        SELECT id, event_id, subscription_id, attempt_count
+        SELECT id, event_id, subscription_id, push_subscription_id, attempt_count
         FROM webhook_deliveries
         WHERE status = 'pending'
           AND next_attempt_at <= now()
@@ -450,6 +536,155 @@ async function runDrainPass(
 async function processDelivery(
   db: Db,
   claimed: ClaimedDeliveryRow,
+  timeoutMs: number,
+  maxAttempts: number,
+): Promise<"delivered" | "dead" | "retry"> {
+  // ADR-172: one drain pass, two transports. The push branch is a different
+  // WIRE, not a different engine — it shares the claim, the lease, the retry
+  // curve, the attempt ledger and this function's return contract.
+  if (claimed.push_subscription_id !== null) {
+    return processPushDelivery(db, claimed, maxAttempts);
+  }
+
+  return processWebhookDelivery(
+    db,
+    // The CHECK constraint `webhook_deliveries_one_target` guarantees exactly one
+    // target is set, so reaching here means `subscription_id` is non-null.
+    claimed as ClaimedDeliveryRow & { subscription_id: string },
+    timeoutMs,
+    maxAttempts,
+  );
+}
+
+/**
+ * The `web_push` delivery (ADR-172 D7, `NTF-04`/`NTF-05`). The delivery row was
+ * persisted at fanout — intent BEFORE the send — and `delivered_at` is stamped
+ * by `finishDelivery` only after a 2xx.
+ *
+ * An expired endpoint is the one outcome that mutates a second row: the
+ * subscription is deleted, which cascades its delivery rows away, so no further
+ * notification re-fails on it forever.
+ */
+async function processPushDelivery(
+  db: Db,
+  claimed: ClaimedDeliveryRow,
+  maxAttempts: number,
+): Promise<"delivered" | "dead" | "retry"> {
+  const attemptCount = claimed.attempt_count + 1;
+  const targetResult = await db.execute(sql`
+    SELECT id, endpoint, p256dh, auth
+    FROM push_subscriptions
+    WHERE id = ${claimed.push_subscription_id}
+  `);
+  const target = (targetResult.rows ?? [])[0] as PushTarget | undefined;
+  const evResult = await db.execute(sql`
+    SELECT payload, type FROM webhook_events WHERE id = ${claimed.event_id}
+  `);
+  const eventRow = (evResult.rows ?? [])[0] as
+    | { payload: WebhookEnvelopePayload | null; type: string }
+    | undefined;
+
+  if (!target || !eventRow?.payload) {
+    return finishDelivery(db, {
+      claimed,
+      attemptCount,
+      maxAttempts,
+      errorKind: "config",
+      httpStatus: undefined,
+      durationMs: 0,
+      errorDetail: "push endpoint or frozen payload missing",
+      responseSnippet: null,
+    });
+  }
+
+  const sent = await sendPush(
+    target,
+    pushPayloadFor(eventRow.payload, eventRow.type),
+  );
+
+  if (sent.outcome === "expired") {
+    // Deleting the endpoint cascades this delivery row away, so the attempt is
+    // recorded BEFORE the delete — otherwise the audit trail vanishes with it.
+    await recordExpiredPush(db, claimed, attemptCount, sent);
+
+    return "dead";
+  }
+
+  return finishDelivery(db, {
+    claimed,
+    attemptCount,
+    maxAttempts,
+    type: eventRow.type,
+    errorKind: sent.outcome === "retryable" ? sent.errorKind : undefined,
+    httpStatus:
+      sent.outcome === "delivered" ? sent.httpStatus : sent.httpStatus,
+    durationMs: sent.durationMs,
+    errorDetail: sent.outcome === "delivered" ? null : (sent.detail ?? null),
+    responseSnippet: null,
+  });
+}
+
+/**
+ * `NTF-05` / `EDGE-NTF-02`: a `410 Gone` (or `404`) is terminal and removes the
+ * endpoint. The reader's OTHER transports are untouched — only this browser is
+ * gone — which is why the `notification_subscriptions` intent is left alone.
+ */
+async function recordExpiredPush(
+  db: Db,
+  claimed: ClaimedDeliveryRow,
+  attemptCount: number,
+  sent: { httpStatus: number; durationMs: number },
+): Promise<void> {
+  await db.transaction(async (tx: Db) => {
+    await tx.execute(sql`
+      INSERT INTO webhook_delivery_attempts (
+        id, delivery_id, attempt_no, requested_at, duration_ms,
+        http_status, error_kind, error_detail, response_snippet
+      )
+      VALUES (
+        gen_random_uuid()::text,
+        ${claimed.id},
+        COALESCE(
+          (SELECT max(attempt_no) FROM webhook_delivery_attempts
+           WHERE delivery_id = ${claimed.id}),
+          0
+        ) + 1,
+        now(),
+        ${sent.durationMs},
+        ${sent.httpStatus},
+        'http',
+        'push endpoint gone',
+        NULL
+      )
+    `);
+    await tx.execute(sql`
+      UPDATE webhook_deliveries
+      SET status = 'dead',
+          attempt_count = ${attemptCount},
+          last_http_status = ${sent.httpStatus},
+          last_error_kind = 'http',
+          last_error_message = 'push endpoint gone',
+          lease_expires_at = NULL,
+          updated_at = now()
+      WHERE id = ${claimed.id}
+    `);
+    await tx.execute(sql`
+      DELETE FROM push_subscriptions WHERE id = ${claimed.push_subscription_id}
+    `);
+  });
+
+  log.info(
+    {
+      deliveryId: claimed.id,
+      httpStatus: sent.httpStatus,
+    },
+    "[scheduler.webhook_delivery] push endpoint deleted (410/404 gone)",
+  );
+}
+
+async function processWebhookDelivery(
+  db: Db,
+  claimed: ClaimedDeliveryRow & { subscription_id: string },
   timeoutMs: number,
   maxAttempts: number,
 ): Promise<"delivered" | "dead" | "retry"> {

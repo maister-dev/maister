@@ -62,19 +62,19 @@ what stops this matrix decaying into the historical aliases the Stage B matrix b
 | NAV-06 | server-side route authorization | T6.6 | IT-NAV-06 | Implemented |
 | EDGE-NAV-01 | Desk empty state | T6.4 | E2E-EDGE-NAV-01 | Implemented |
 | EDGE-NAV-02 | narrow stacking order | T6.4 | E2E-EDGE-NAV-02 | Implemented |
-| NTF-01 | ADR-077 outbox reuse, no second outbox | T7.2, T7.5 | IT-NTF-01 | Planned |
-| NTF-02 | nullable webhook_events columns, migration 0164 | T7.4 | IT-NTF-02 | Planned |
-| NTF-03 | two-axis subscriptionMatches | T7.4 | IT-NTF-03 | Planned |
-| NTF-04 | delivery two-phase commit | T7.6 | IT-NTF-04 | Planned |
-| NTF-05 | push failure classification table | T7.3, T7.6, T7.10 | IT-NTF-05 | Planned |
-| NTF-06 | signing_secret_ref env reference, migration 0163 | T7.1 | IT-NTF-06 | Planned |
-| NTF-07 | owner from auth-context, ext subscription CRUD | T7.1, T7.8, T7.10 | IT-NTF-07 | Planned |
-| NTF-08 | attention consumer trigger bound | T7.5, T7.7 | IT-NTF-08 | Planned |
-| NTF-09 | token scope sets | T4.5, T7.8 | UT-NTF-09 | Planned |
-| NTF-10 | VAPID env table and boot degradation | T7.9 | IT-NTF-10 | Planned |
-| EDGE-NTF-01 | idempotent consumer handle | T7.5 | IT-EDGE-NTF-01 | Planned |
-| EDGE-NTF-02 | 410 Gone terminal path | T7.6 | IT-EDGE-NTF-02 | Planned |
-| EDGE-NTF-03 | existing project webhooks unaffected | T7.2 | IT-EDGE-NTF-03 | Planned |
+| NTF-01 | ADR-077 outbox reuse, no second outbox | T7.2, T7.5 | IT-NTF-02 | Implemented |
+| NTF-02 | nullable webhook_events columns, migration 0164 | T7.4 | IT-NTF-02 | Implemented |
+| NTF-03 | two-axis subscriptionMatches | T7.4 | IT-NTF-03 plus UT-NTF-03 | Implemented |
+| NTF-04 | delivery two-phase commit | T7.6 | IT-NTF-04 | Implemented |
+| NTF-05 | push failure classification table | T7.3, T7.6, T7.10 | IT-NTF-05 | Implemented |
+| NTF-06 | signing_secret_ref env reference, migration 0163 | T7.1 | IT-NTF-07 | Implemented |
+| NTF-07 | owner from auth-context, ext subscription CRUD | T7.1, T7.8, T7.10 | IT-NTF-07 | Implemented |
+| NTF-08 | attention consumer trigger bound | T7.5, T7.7 | IT-NTF-08 plus UT-NTF-08 | Implemented |
+| NTF-09 | token scope sets | T4.5, T7.8 | UT-NTF-09 | Implemented |
+| NTF-10 | VAPID env table and boot degradation | T7.9 | UT-NTF-10 | Implemented |
+| EDGE-NTF-01 | idempotent consumer handle | T7.5 | IT-EDGE-NTF-01 | Implemented |
+| EDGE-NTF-02 | 410 Gone terminal path | T7.6 | IT-EDGE-NTF-02 | Implemented |
+| EDGE-NTF-03 | existing project webhooks unaffected | T7.2 | IT-EDGE-NTF-03 | Implemented |
 
 ## Second-level tests beside a primary
 

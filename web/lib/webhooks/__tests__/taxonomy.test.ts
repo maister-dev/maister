@@ -41,6 +41,12 @@ const EXPECTED_TYPES = [
   "run.pr_conflicts",
   "gate.decided",
   "ping",
+  // ADR-172: the four user-scoped attention facts. Deltas and the digest only —
+  // a per-event type here would be `NTF-08`'s anti-pattern.
+  "attention.decision_opened",
+  "attention.decision_closed",
+  "attention.decisions_changed",
+  "attention.digest",
 ] as const;
 
 const PROJECT: WebhookProjectRef = {
@@ -64,8 +70,8 @@ describe("WEBHOOK_API_VERSION", () => {
 });
 
 describe("WEBHOOK_EVENT_TYPES", () => {
-  it("has exactly the 18 listed types in order", () => {
-    expect(WEBHOOK_EVENT_TYPES).toHaveLength(18);
+  it("has exactly the 22 listed types in order", () => {
+    expect(WEBHOOK_EVENT_TYPES).toHaveLength(22);
     expect([...WEBHOOK_EVENT_TYPES]).toEqual([...EXPECTED_TYPES]);
   });
 
@@ -75,7 +81,7 @@ describe("WEBHOOK_EVENT_TYPES", () => {
 });
 
 describe("isWebhookEventType", () => {
-  it("returns true for each of the 12 canonical types", () => {
+  it("returns true for each canonical type", () => {
     for (const type of EXPECTED_TYPES) {
       expect(isWebhookEventType(type)).toBe(true);
     }
@@ -267,9 +273,27 @@ describe("buildEnvelopePayload — per-type data shapes pass through unchanged",
       },
     },
     { type: "ping", data: { message: "MAIster webhook ping" } },
+    // ADR-172: `data` carries the owner and the counters, never a project or a
+    // run — those are the envelope's own null blocks.
+    {
+      type: "attention.decision_opened",
+      data: { ownerUserId: "u1", decisions: 3 },
+    },
+    {
+      type: "attention.decision_closed",
+      data: { ownerUserId: "u1", decisions: 2 },
+    },
+    {
+      type: "attention.decisions_changed",
+      data: { ownerUserId: "u1", decisions: 2, previous: 3 },
+    },
+    {
+      type: "attention.digest",
+      data: { ownerUserId: "u1", sentence: "2 promoted · 1 crashed" },
+    },
   ];
 
-  it("covers all 18 types in the table", () => {
+  it("covers all 22 types in the table", () => {
     expect(cases.map((c) => c.type)).toEqual([...EXPECTED_TYPES]);
   });
 

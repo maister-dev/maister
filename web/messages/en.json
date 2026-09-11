@@ -3419,6 +3419,7 @@
     "scopeHitlRespond": "Respond to HITL",
     "scopeHitlInboxRead": "Read personal HITL inbox",
     "scopeDecisionsRead": "Read your decision queue",
+    "scopeNotificationsSubscriptions": "Manage your notification subscriptions",
     "scopeHitlRespondHuman": "Respond to human HITL",
     "scopeCommentsRead": "Read comments",
     "scopeCommentsCreate": "Create comments",
@@ -4807,5 +4808,23 @@
     "activityEmpty": "Nothing has happened yet.",
     "activityAll": "Open the activity feed",
     "emptyLead": "No projects yet — connect one and the Desk fills itself in."
+  },
+  "notifications": {
+    "title": "Notifications",
+    "sub": "Get told when a decision starts waiting on you, without keeping a tab open.",
+    "unavailable": "Web push is not configured on this deployment. Ask an admin to set the VAPID keys.",
+    "unsupported": "This browser does not support web push.",
+    "denied": "Notifications are blocked in this browser. Allow them in the site settings and try again.",
+    "enable": "Enable push on this browser",
+    "enabling": "Enabling…",
+    "disable": "Disable push on this browser",
+    "enabled": "Push is on for this browser.",
+    "disabled": "Push is off for this browser.",
+    "failed": "Could not change the push setting. Try again.",
+    "triggersTitle": "When you get notified",
+    "triggerDecisions": "A decision starts or stops waiting on you",
+    "triggerDigest": "A catch-up digest, at most twice a day",
+    "triggersNote": "Deltas and digests only — never one notification per event.",
+    "otherBrowsers": "$count other browser(s) registered"
   }
 }
