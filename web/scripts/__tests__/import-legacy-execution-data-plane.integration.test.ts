@@ -79,10 +79,10 @@ afterAll(async () => {
   await rm(runtimeRoot, { recursive: true, force: true });
 });
 
-async function runImporter(): Promise<string> {
+async function runImporter(args: readonly string[] = []): Promise<string> {
   const result = await execFileAsync(
     tsxPath,
-    ["--import", "./scripts/_register-shim.mjs", scriptPath],
+    ["--import", "./scripts/_register-shim.mjs", scriptPath, ...args],
     {
     cwd: process.cwd(),
     env: {
@@ -94,6 +94,20 @@ async function runImporter(): Promise<string> {
   );
 
   return result.stdout;
+}
+
+async function runImporterExpectingRefusal(
+  args: readonly string[] = [],
+): Promise<string> {
+  try {
+    const stdout = await runImporter(args);
+
+    throw new Error(`importer succeeded unexpectedly: ${stdout}`);
+  } catch (error) {
+    const failure = error as Error & { stdout?: string; stderr?: string };
+
+    return `${failure.stdout ?? ""}\n${failure.stderr ?? failure.message}`;
+  }
 }
 
 describe("execution-data-plane:import-legacy", () => {
@@ -251,4 +265,54 @@ describe("execution-data-plane:import-legacy", () => {
       },
     ]);
   });
+
+  // S4.1: the importer reads its stage from the schema the database carries.
+  // These cases construct the two out-of-window stages directly -- dropping the
+  // additive lane table is exactly a database the additive stage never reached,
+  // and dropping the artifact projection cursors is exactly one 0135 finished.
+  it("stamps its lines with the import id, the staged window and the unresolved count", async () => {
+    // The fixture above leaves one permanently malformed run, so the operator's
+    // bounded unresolved count is a real number rather than a constant zero.
+    const output = await runImporterExpectingRefusal([
+      "--import-id",
+      "s41-window-probe",
+    ]);
+
+    expect(output).toContain('"importId":"s41-window-probe"');
+    expect(output).toContain('"stage":"additive"');
+    expect(output).toContain('"unresolvedCount":1');
+  }, 120_000);
+
+  it("refuses a database that never ran the additive stage", async () => {
+    await testDatabase.pool.query(
+      "alter table execution_data_plane_imports rename to execution_data_plane_imports_stashed",
+    );
+
+    try {
+      const output = await runImporterExpectingRefusal();
+
+      expect(output).toContain("additive_stage_missing");
+      expect(output).toContain("execution-ab-additive");
+    } finally {
+      await testDatabase.pool.query(
+        "alter table execution_data_plane_imports_stashed rename to execution_data_plane_imports",
+      );
+    }
+  }, 120_000);
+
+  it("refuses a database that already completed the canonical cut-over", async () => {
+    await testDatabase.pool.query(
+      "alter table artifact_projection_cursors rename to artifact_projection_cursors_stashed",
+    );
+
+    try {
+      const output = await runImporterExpectingRefusal();
+
+      expect(output).toContain("already_canonical");
+    } finally {
+      await testDatabase.pool.query(
+        "alter table artifact_projection_cursors_stashed rename to artifact_projection_cursors",
+      );
+    }
+  }, 120_000);
 });

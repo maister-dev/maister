@@ -3,6 +3,7 @@ import "@/lib/load-env";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 
+import { sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { Pool } from "pg";
@@ -11,16 +12,29 @@ import pino from "pino";
 import {
   findMainMigrationJournalEntry,
   findPendingMigrations,
+  mainMigrationHash,
   mainMigrationLedgerHighWater,
+  readMainMigrationJournal,
 } from "./check-migrations";
+import {
+  EXECUTION_AB_STAGES,
+  EXECUTION_AB_STAGE_NAMES,
+  isExecutionAbStage,
+  planExecutionAbStage,
+  type ExecutionAbStage,
+} from "./migration-stages";
 import {
   M43_CUTOVER_MIGRATION,
   readM43CutoverTelemetry,
   type M43CutoverTelemetry,
 } from "./m43-cutover-telemetry";
-import { createMigrationRootBefore } from "./m43-cutover-migration-root";
+import {
+  createMigrationRootBefore,
+  createMigrationRootThrough,
+} from "./m43-cutover-migration-root";
 import { maskDbUrl, resolvePostgresDbUrl } from "./postgres-url";
 
+import { UPGRADE_MAINTENANCE_ENV } from "@/lib/maintenance/upgrade-fence";
 import {
   GRAPH_ONLY_CUTOVER_REASON,
   GRAPH_ONLY_CUTOVER_SOURCE,
@@ -63,10 +77,169 @@ function logM43CutoverTelemetry(telemetry: M43CutoverTelemetry): void {
   }
 }
 
+type MigrationDb = Parameters<typeof findPendingMigrations>[0] &
+  Parameters<typeof migrate>[0];
+
+// D9 step 2: the destructive stages remove the compatibility state an active
+// legacy run still reads. Migration 0134 carries the same guard; refusing here
+// first reports the bounded count and the remediation instead of aborting a
+// half-applied chain on a raised exception.
+async function assertLegacyWorkDrained(
+  db: MigrationDb,
+  stage: ExecutionAbStage,
+): Promise<void> {
+  const active = await db.execute(
+    sql`SELECT id FROM runs
+        WHERE execution_data_plane_mode = 'legacy_file_v1'
+          AND status NOT IN ('Done', 'Failed', 'Crashed', 'Abandoned')
+        ORDER BY id`,
+  );
+
+  if (active.rows.length === 0) return;
+
+  const runIds = active.rows.slice(0, 5).map((row) => String(row.id));
+
+  log.error(
+    {
+      stage,
+      reason: "active_legacy_work",
+      unresolvedCount: active.rows.length,
+      runIds,
+      remediation: `drain or terminate every active legacy run before ${stage}; ${UPGRADE_MAINTENANCE_ENV}=1 keeps the installation from admitting new ones`,
+    },
+    "staged migration refused",
+  );
+
+  throw new Error(
+    `${stage} refused (active_legacy_work): ${active.rows.length} legacy run(s) are not terminal`,
+  );
+}
+
+function parseStageArgument(argv: readonly string[]): ExecutionAbStage | null {
+  const index = argv.findIndex(
+    (arg) => arg === "--stage" || arg.startsWith("--stage="),
+  );
+
+  if (index < 0) {
+    const unknown = argv.filter((arg) => arg.startsWith("-"));
+
+    if (unknown.length > 0) {
+      throw new Error(
+        `unknown migration argument ${unknown[0]}; the only supported flag is --stage <${EXECUTION_AB_STAGE_NAMES.join("|")}>`,
+      );
+    }
+
+    return null;
+  }
+
+  const arg = argv[index];
+  const value = arg.startsWith("--stage=")
+    ? arg.slice("--stage=".length)
+    : (argv[index + 1] ?? "");
+
+  if (!isExecutionAbStage(value)) {
+    throw new Error(
+      `unknown migration stage ${JSON.stringify(value)}; expected one of ${EXECUTION_AB_STAGE_NAMES.join(", ")}`,
+    );
+  }
+
+  return value;
+}
+
+// One stage does one operation: it applies exactly the migrations its boundary
+// covers, proves the withheld ones are still pending, and refuses instead of
+// guessing when the ledger disagrees with the journal.
+async function applyExecutionAbStage(
+  db: MigrationDb,
+  stage: ExecutionAbStage,
+): Promise<void> {
+  const plan = planExecutionAbStage({
+    stage,
+    journal: readMainMigrationJournal(),
+    pending: await findPendingMigrations(db),
+    ledgerHighWater: await mainMigrationLedgerHighWater(db),
+  });
+
+  if (plan.outcome === "refused") {
+    log.error(
+      {
+        stage,
+        reason: plan.reason,
+        blockedTags: plan.blockedTags,
+        remediation: plan.remediation,
+      },
+      "staged migration refused",
+    );
+
+    throw new Error(`${stage} refused (${plan.reason}): ${plan.remediation}`);
+  }
+
+  if (plan.outcome === "satisfied") {
+    log.info(
+      { stage, boundaryTag: plan.boundaryTag },
+      "staged migrations already committed",
+    );
+
+    return;
+  }
+
+  if (EXECUTION_AB_STAGES[stage].requiresDrainedLegacyWork) {
+    await assertLegacyWorkDrained(db, stage);
+  }
+
+  log.info(
+    {
+      stage,
+      boundaryTag: plan.boundaryTag,
+      plannedMigrations: plan.plannedTags.map((tag) => ({
+        tag,
+        hash: mainMigrationHash(tag),
+      })),
+      withheldTags: plan.withheldTags,
+    },
+    "applying staged migrations",
+  );
+
+  let stageRoot: string | null = null;
+
+  try {
+    stageRoot = plan.boundaryTag
+      ? await createMigrationRootThrough(MIGRATIONS_DIR, plan.boundaryTag)
+      : null;
+    await migrate(db, { migrationsFolder: stageRoot ?? MIGRATIONS_FOLDER });
+  } finally {
+    if (stageRoot) await rm(stageRoot, { force: true, recursive: true });
+  }
+
+  const remaining = await findPendingMigrations(db);
+  const unapplied = plan.plannedTags.filter((tag) => remaining.includes(tag));
+  const escaped = plan.withheldTags.filter((tag) => !remaining.includes(tag));
+
+  if (unapplied.length > 0 || escaped.length > 0) {
+    throw new Error(
+      `${stage} did not hold its boundary: unapplied=${JSON.stringify(unapplied)} escaped=${JSON.stringify(escaped)}`,
+    );
+  }
+
+  log.info(
+    {
+      stage,
+      appliedTags: plan.plannedTags,
+      withheldTags: plan.withheldTags,
+      unresolvedCount: remaining.length,
+    },
+    "staged migrations committed",
+  );
+}
+
 async function main(): Promise<void> {
+  const stage = parseStageArgument(process.argv.slice(2));
   const url = resolvePostgresDbUrl();
 
-  log.info({ driver: "postgres", url: maskDbUrl(url) }, "running migrations");
+  log.info(
+    { driver: "postgres", url: maskDbUrl(url), stage },
+    "running migrations",
+  );
   const pool = new Pool({ connectionString: url });
   const db = drizzle(pool);
   let preM43MigrationRoot: string | null = null;
@@ -111,6 +284,16 @@ async function main(): Promise<void> {
     }
 
     const m43Telemetry = m43Pending ? await readM43CutoverTelemetry(db) : null;
+
+    if (stage) {
+      await applyExecutionAbStage(db, stage);
+
+      if (m43Telemetry) logM43CutoverTelemetry(m43Telemetry);
+
+      log.info({ stage }, "migrations done");
+
+      return;
+    }
 
     if (
       pending.includes(STAGE_B_DESTRUCTIVE_CUTOVER_MIGRATION) &&

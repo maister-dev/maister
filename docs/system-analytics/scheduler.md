@@ -225,7 +225,9 @@ flowchart TD
     Cfg -- no --> R503[503 CONFIG]
     Cfg -- yes --> Tok{X-Maister-Cron-Token matches?}
     Tok -- no --> R401[401 UNAUTHENTICATED]
-    Tok -- yes --> Bootstrap[ensure system_sweep.default exists]
+    Tok -- yes --> Fence{MAISTER_UPGRADE_MAINTENANCE set?}
+    Fence -- yes --> R200F[200 empty tick summary, no job claimed]
+    Fence -- no --> Bootstrap[ensure system_sweep.default exists]
     Bootstrap --> Reap[reap expired Claimed/Running attempts]
     Reap --> Claim[atomic claim due jobs by fixed interval]
     Claim --> Budget{per-kind budget available?}
@@ -236,6 +238,13 @@ flowchart TD
     Resp -- no --> R200[200 tick summary]
     Resp -- yes --> R207[207 partial tick summary]
 ```
+
+The upgrade maintenance fence (S4.1) sits before the bootstrap: while
+`MAISTER_UPGRADE_MAINTENANCE` is set the tick claims no job and returns a
+zeroed summary, and the system sweep additionally refuses `PRECONDITION`
+`upgrade_maintenance_fence` if a caller reaches it directly, so a staged
+execution data-plane upgrade cannot have its inventoried sources unlinked
+underneath it. See [execution data cutover](execution-data-cutover.md).
 
 ### Catch-up without backfill
 

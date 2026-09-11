@@ -527,7 +527,7 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "Drizzle migration ledger and journal files under web/lib/db; read by the operator migration CLI and verified (never applied) at boot",
       [
         ["readJournalTags", "node:fs.readFileSync", "read"],
-        ["findMainMigrationJournalEntry", "node:fs.readFileSync", "read"],
+        ["readMainMigrationJournal", "node:fs.readFileSync", "read"],
         ["migrationHash", "node:fs.readFileSync", "read"],
         ["findPendingBrainMigrations", "node:fs.existsSync", "stat"],
       ],
@@ -543,12 +543,12 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "migration-tooling",
       "Drizzle migration ledger and journal files under web/lib/db; read by the operator migration CLI and verified (never applied) at boot",
       [
-        ["createMigrationRootBefore", "node:fs/promises.readFile", "read"],
-        ["createMigrationRootBefore", "node:fs/promises.mkdtemp", "write"],
-        ["createMigrationRootBefore", "node:fs/promises.mkdir", "write"],
-        ["createMigrationRootBefore", "node:fs/promises.copyFile", "write"],
-        ["createMigrationRootBefore", "node:fs/promises.writeFile", "write"],
-        ["createMigrationRootBefore", "node:fs/promises.rm", "remove"],
+        ["createFilteredMigrationRoot", "node:fs/promises.readFile", "read"],
+        ["createFilteredMigrationRoot", "node:fs/promises.mkdtemp", "write"],
+        ["createFilteredMigrationRoot", "node:fs/promises.mkdir", "write"],
+        ["createFilteredMigrationRoot", "node:fs/promises.copyFile", "write"],
+        ["createFilteredMigrationRoot", "node:fs/promises.writeFile", "write"],
+        ["createFilteredMigrationRoot", "node:fs/promises.rm", "remove"],
       ],
       {
         authority:
@@ -561,7 +561,10 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "lib/db/migrate.ts",
       "migration-tooling",
       "Drizzle migration ledger and journal files under web/lib/db; read by the operator migration CLI and verified (never applied) at boot",
-      [["main", "node:fs/promises.rm", "remove"]],
+      [
+        ["main", "node:fs/promises.rm", "remove"],
+        ["applyExecutionAbStage", "node:fs/promises.rm", "remove"],
+      ],
       {
         authority:
           "operator CLI: pnpm db:migrate / db:check (and the boot-time ledger check, which only reads)",
@@ -1746,10 +1749,52 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
         ["auditLegacyRuntimeObjects", "node:fs/promises.readdir", "list"],
         ["auditLegacyRuntimeObjects", "node:fs/promises.lstat", "stat"],
         ["readRequiredFile", "node:fs/promises.readFile", "read"],
+        ["inventoryLegacyRuns", "node:fs/promises.mkdir", "write"],
+        [
+          "inventoryLegacyRuns",
+          "scripts/legacy-import/inventory.ts#inventoryLegacyRun",
+          "wrapper",
+        ],
+        [
+          "inventoryLegacyRuns",
+          "scripts/legacy-import/manifest-store.ts#openImportManifestStore",
+          "wrapper",
+        ],
       ],
       {
         authority:
           "operator CLI: pnpm execution-data-plane:import-legacy, under maintenance with the web drained",
+        lifetime:
+          "until S4.8 revokes import authority after the guarded cutover",
+      },
+    ),
+    ...classified(
+      "scripts/legacy-import/inventory.ts",
+      "operator-import",
+      "Stage A history inventory: pages the frozen legacy run directory once to classify and fingerprint every source, no-follow",
+      [
+        ["walkRunDirectory", "node:fs/promises.readdir", "list"],
+        ["walkRunDirectory", "node:fs/promises.lstat", "stat"],
+        ["hashFile", "node:fs.createReadStream", "read"],
+      ],
+      {
+        authority:
+          "operator CLI: pnpm execution-data-plane:import-legacy inventory, under maintenance with the web drained",
+        lifetime:
+          "until S4.8 revokes import authority after the guarded cutover",
+      },
+    ),
+    ...classified(
+      "scripts/legacy-import/manifest-store.ts",
+      "operator-import",
+      "Host-private import manifest: a maintenance database beside the operator import authority, holding the only copy of the raw source map",
+      [
+        ["openImportManifestStore", "node:sqlite.DatabaseSync", "sqlite"],
+        ["openImportManifestStore", "node:fs.chmodSync", "write"],
+      ],
+      {
+        authority:
+          "operator CLI: pnpm execution-data-plane:import-legacy inventory, under maintenance with the web drained",
         lifetime:
           "until S4.8 revokes import authority after the guarded cutover",
       },
@@ -1915,9 +1960,12 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
     ["findMainMigrationJournalEntry", false],
     ["findPendingBrainMigrations", false],
     ["findPendingMigrations", false],
+    ["mainMigrationHash", false],
+    ["readMainMigrationJournal", false],
   ]),
   ...wrappers("lib/db/m43-cutover-migration-root.ts", "migration-tooling", [
     ["createMigrationRootBefore", false],
+    ["createMigrationRootThrough", false],
   ]),
   ...wrappers("lib/evaluations/evidence/store.ts", "manager-evidence", [
     ["readEvidenceBlob", false],
@@ -2239,6 +2287,12 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
     ["squashRunBranch", false],
     ["statusPorcelain", false],
     ["syncOperationInProgress", false],
+  ]),
+  ...wrappers("scripts/legacy-import/inventory.ts", "operator-import", [
+    ["inventoryLegacyRun", true],
+  ]),
+  ...wrappers("scripts/legacy-import/manifest-store.ts", "operator-import", [
+    ["openImportManifestStore", true],
   ]),
 ];
 

@@ -26,6 +26,7 @@ import { runWorkspaceGcSweep } from "@/lib/gc/workspace-gc";
 import { sweepEvaluationEvidence } from "@/lib/evaluations/evidence/gc";
 import { runPlainAgentDirectoryGcSweep } from "@/lib/gc/plain-agent-directory-gc";
 import { runWorkspaceReconciliationSweep } from "@/lib/gc/workspace-reconciler";
+import { assertUpgradeMaintenanceAllows } from "@/lib/maintenance/upgrade-fence";
 import { runReconcileSweep } from "@/lib/reconcile";
 import { reconcileTerminalCostRollups } from "@/lib/runs/cost-reconcile-sweep";
 import { runSweepTick } from "@/lib/runs/keepalive-sweeper";
@@ -259,6 +260,11 @@ async function runGcBundle(): Promise<GcBundleResult> {
 }
 
 export async function runSystemSweep(): Promise<SystemSweepSummary> {
+  // The sweep unlinks workspaces and runtime-object bytes that the importer is
+  // inventorying. It is only reachable through the fenced scheduler clock, so
+  // this is the boundary's own backstop against a direct caller.
+  assertUpgradeMaintenanceAllows("destructive_gc");
+
   const errors: string[] = [];
   const bundleErrors: string[] = [];
   let keepalive: SystemSweepSummary["keepalive"] = null;

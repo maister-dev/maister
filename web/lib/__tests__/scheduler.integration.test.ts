@@ -15,6 +15,7 @@ import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import {
   afterAll,
+  afterEach,
   beforeAll,
   beforeEach,
   describe,
@@ -35,6 +36,7 @@ import {
   releaseSlotOnIdle,
   tryStartRun,
 } from "@/lib/scheduler";
+import { UPGRADE_MAINTENANCE_ENV } from "@/lib/maintenance/upgrade-fence";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -373,5 +375,70 @@ describe("scheduler — assistant pool separation (Fix 3)", () => {
 
     // Cascades the three assistant runs.
     await pool.query(`DELETE FROM "local_packages" WHERE "id" = $1`, [lpId]);
+  }, 60_000);
+});
+
+// S4.1 (D9 step 2): the upgrade maintenance fence rides the SAME admission
+// boundary as the concurrency cap — a fenced installation admits no new run and
+// promotes no queued one, so an operator drain converges while the importer
+// inventories frozen sources.
+describe("scheduler — upgrade maintenance fence", () => {
+  const originalFence = process.env[UPGRADE_MAINTENANCE_ENV];
+
+  afterEach(() => {
+    if (originalFence === undefined)
+      delete process.env[UPGRADE_MAINTENANCE_ENV];
+    else process.env[UPGRADE_MAINTENANCE_ENV] = originalFence;
+  });
+
+  it("keeps a launch queued instead of starting it", async () => {
+    const runId = await seedRun("Pending");
+
+    process.env[UPGRADE_MAINTENANCE_ENV] = "1";
+    const result = await tryStartRun(runId, { db });
+
+    expect(result.started).toBe(false);
+    const row = await db.select().from(runs).where(eq(runs.id, runId));
+
+    expect(row[0].status).toBe("Pending");
+  }, 60_000);
+
+  it("promotes no queued run while the fence is engaged", async () => {
+    const pendingRunId = await seedRun("Pending");
+
+    process.env[UPGRADE_MAINTENANCE_ENV] = "1";
+    await promoteNextPending({ db });
+
+    const row = await db.select().from(runs).where(eq(runs.id, pendingRunId));
+
+    expect(row[0].status).toBe("Pending");
+
+    delete process.env[UPGRADE_MAINTENANCE_ENV];
+    await promoteNextPending({ db });
+
+    const promoted = await db
+      .select()
+      .from(runs)
+      .where(eq(runs.id, pendingRunId));
+
+    expect(promoted[0].status).toBe("Running");
+  }, 60_000);
+
+  it("refuses a scratch or assistant turn with the fence reason", async () => {
+    process.env[UPGRADE_MAINTENANCE_ENV] = "1";
+
+    await expect(assertScratchCapacityAvailable({ db })).rejects.toMatchObject({
+      code: "PRECONDITION",
+      details: {
+        reason: "upgrade_maintenance_fence",
+        operation: "run_admission",
+      },
+    });
+    await expect(
+      assertAssistantCapacityAvailable({ db }),
+    ).rejects.toMatchObject({
+      code: "PRECONDITION",
+      details: { reason: "upgrade_maintenance_fence" },
+    });
   }, 60_000);
 });

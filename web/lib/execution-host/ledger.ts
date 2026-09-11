@@ -28,6 +28,7 @@ import { readPromptRequest, storePromptRequest } from "./command-request";
 import { redactPayload } from "./redact";
 
 import { MaisterError } from "@/lib/errors";
+import { assertUpgradeMaintenanceAllows } from "@/lib/maintenance/upgrade-fence";
 import {
   executionAssignments,
   executionCommands,
@@ -237,6 +238,10 @@ export async function issueOwnedPrompt(
     logger?: Logger;
   },
 ): Promise<IssuedCommand<SendPromptInput>> {
+  // D9 step 2: a fenced installation starts no new agent turn — refuse before
+  // the owner is admitted so no durable prompt row, and no host effect, exists.
+  assertUpgradeMaintenanceAllows("prompt_turn");
+
   return db.transaction(async (tx) => {
     const admission = await input.admitOwner(tx);
     const parsed = PromptOwnerSchema.safeParse(admission.owner);
