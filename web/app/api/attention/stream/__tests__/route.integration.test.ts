@@ -276,6 +276,8 @@ beforeEach(async () => {
   session = { id: fx.member, role: "member" };
   await pool.query(`delete from task_activity`);
   await pool.query(`delete from user_activity_cursors`);
+  await pool.query(`delete from domain_events`);
+  await pool.query(`delete from node_attempts`);
 });
 
 describe("IT-ATN-11 the stream is user-scoped", () => {
@@ -547,4 +549,69 @@ describe("IT-ATN-15 revocation reaches an already-open stream", () => {
     expect(closed).toBeDefined();
     expect(closed?.data?.reason).toBe("access_revoked");
   }, 40_000);
+});
+
+// ---------------------------------------------------------------------------
+// IT-ATN-16 — invalidation is not the same question as counting.
+//
+// The changed-project scan borrowed `ATTENTION_EVENT_KINDS`, which is the
+// `updates` POPULATION and therefore excludes both decision-opening kinds by
+// design. A top-level run entering Review or NeedsInput moved nothing the scan
+// could see, and `node_attempts` was never scanned at all — so `/work` could
+// show `Executing` and a frozen progress bar while the connection reported
+// Live, refreshed only by unrelated activity or a reconnect.
+//
+// Both cases below deliberately write NOTHING to `task_activity`, `workspaces`
+// or `webhook_deliveries`: the row under test is the only thing that moved.
+// ---------------------------------------------------------------------------
+describe("IT-ATN-16 work invalidation covers run transitions and node progress", () => {
+  async function addEvent(kind: string, projectId: string): Promise<void> {
+    await pool.query(
+      `insert into domain_events (kind, project_id, run_id, payload, occurred_at)
+       values ($1, $2, $3, '{}'::jsonb, now() + interval '5 seconds')`,
+      [kind, projectId, projectId === fx.project ? fx.run : null],
+    );
+  }
+
+  for (const kind of ["run.needs_input", "run.review_opened"] as const) {
+    it(`names the project a ${kind} event moved`, async () => {
+      const controller = new AbortController();
+      const response = await GET(streamRequest(controller));
+
+      await addEvent(kind, fx.project);
+      await addEvent(kind, fx.foreignProject);
+
+      const changes = movedFrames(await collect(response, controller, 7000));
+      const named = new Set(
+        changes.flatMap((frame) => frame.data?.projectIds as string[]),
+      );
+
+      expect(changes.length).toBeGreaterThan(0);
+      expect(changes[0].data?.changed).toContain("work");
+      expect(named.has(fx.project)).toBe(true);
+      // Scoping is unchanged by the widening.
+      expect(named.has(fx.foreignProject)).toBe(false);
+    }, 30_000);
+  }
+
+  it("names the project whose in-flight run advanced a node", async () => {
+    const controller = new AbortController();
+    const response = await GET(streamRequest(controller));
+
+    // `fx.run` is `Review` — in `ACTIVE_RUN_STATUSES`, so its progress is still
+    // rendered on `/work` and still worth invalidating for.
+    await pool.query(
+      `insert into node_attempts (id, run_id, node_id, node_type, attempt, status, started_at)
+       values ($1, $2, 'implement', 'ai_coding', 1, 'Running', now() + interval '5 seconds')`,
+      [randomUUID(), fx.run],
+    );
+
+    const changes = movedFrames(await collect(response, controller, 7000));
+
+    expect(changes.length).toBeGreaterThan(0);
+    expect(changes[0].data?.changed).toContain("work");
+    expect(
+      new Set(changes.flatMap((frame) => frame.data?.projectIds as string[])),
+    ).toContain(fx.project);
+  }, 30_000);
 });

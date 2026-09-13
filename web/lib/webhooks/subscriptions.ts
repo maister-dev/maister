@@ -28,10 +28,19 @@ const log = pino({
 });
 
 // Platform scope = { projectId: null }. Project scope = { projectId: <uuid> }.
-// Every read/write is scoped so the same service backs both the platform-admin
-// routes (T11) and the project routes (T12) without leaking across the boundary.
+// Owner scope = { projectId: null, ownerUserId: <uuid> } — ADR-173's third axis.
+// Every read/write is scoped so the same service backs the platform-admin
+// routes (T11), the project routes (T12) and a person's own notification
+// target without leaking across any of those boundaries.
 export interface SubscriptionScope {
   projectId: string | null;
+  /**
+   * ADR-173: whose subscription this is. Non-null makes the row USER-scoped,
+   * which is the only shape `subscriptionMatches` pairs with a user-scoped
+   * `attention.*` event — a platform row never receives one. Platform scope is
+   * both columns NULL, which is why it cannot be spelled by `projectId` alone.
+   */
+  ownerUserId?: string | null;
 }
 
 // Wire DTO. Mixed casing is intentional and matches the OpenAPI
@@ -205,6 +214,14 @@ async function toDto(handle: Db, row: any): Promise<WebhookSubscriptionDto> {
  * bound to a project.
  */
 function scopeFilter(scope: SubscriptionScope) {
+  const owner = scope.ownerUserId ?? null;
+
+  // An owner scope stands on its own: a personal subscription always carries
+  // `project_id IS NULL`, so intersecting with the platform clause would make
+  // every owner query select nothing, and intersecting with a project clause is
+  // a shape that does not exist.
+  if (owner !== null) return eq(webhookSubscriptions.ownerUserId, owner);
+
   return scope.projectId === null
     ? and(
         isNull(webhookSubscriptions.projectId),
@@ -261,6 +278,7 @@ export async function createSubscription(
     .values({
       id,
       projectId: scope.projectId,
+      ownerUserId: scope.ownerUserId ?? null,
       name: input.name,
       url: input.url,
       method: input.method ?? "POST",
@@ -273,7 +291,7 @@ export async function createSubscription(
     .returning();
 
   log.debug(
-    { id, projectId: scope.projectId },
+    { id, projectId: scope.projectId, ownerUserId: scope.ownerUserId ?? null },
     "[webhooks.subscriptions] created",
   );
 

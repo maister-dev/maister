@@ -95,11 +95,19 @@ async function emitNeedsInput(
     .select({ projectId: runs.projectId, taskId: runs.taskId })
     .from(runs)
     .where(eq(runs.id, values.runId))) as Array<{
-    projectId: string;
+    projectId: string | null;
     taskId: string | null;
   }>;
 
   if (!run) return;
+
+  // ADR-097: a project-less local-package assistant run has NO project, and
+  // `domain_events.project_id` is NOT NULL. Emitting anyway aborts the
+  // transaction and takes the HITL row down with it — so the assistant could
+  // never get a permission answered at all. `scratch-runs/events.ts` already
+  // skips its project-scoped webhooks on this same condition; the event plane
+  // skips for the same reason, and the scratch dialog stays the live record.
+  if (run.projectId === null) return;
 
   await emitDomainEvent({
     db: tx,

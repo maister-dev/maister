@@ -30,11 +30,8 @@ import {
   NOW_TILE_IDS,
 } from "@/lib/queries/digest";
 import { getActivityCursor } from "@/lib/queries/activity-cursor";
-import {
-  getCrossProjectHitlInbox,
-  getPortfolio,
-} from "@/lib/queries/portfolio";
-import { getDecisionsQueue } from "@/lib/queries/decisions";
+import { getDecisionsQueue, hitlDecisionsOf } from "@/lib/queries/decisions";
+import { getPortfolio } from "@/lib/queries/portfolio";
 import { getWorkTable } from "@/lib/queries/work-table";
 import { groupWorkTableRows } from "@/lib/work/work-table-view";
 import { isWorkInFlight } from "@/lib/work/stage";
@@ -91,11 +88,10 @@ export default async function DeskPage(): Promise<ReactElement> {
   // ADR-169 D8/ATN-05: `getDecisionsQueue` is the ONE canonical queue, and it is
   // React-`cache`d — so the rail badge, `/inbox` and this page are the same
   // computation rather than three free to disagree.
-  const [portfolio, queue, hitl, table, feed, cursor, digestWindow] =
+  const [portfolio, queue, table, feed, cursor, digestWindow] =
     await Promise.all([
       getPortfolio(user.id, user.role),
       getDecisionsQueue(user.id, user.role),
-      getCrossProjectHitlInbox(user.id, user.role),
       getWorkTable({ id: user.id, role: user.role }),
       getCrossProjectActivityFeed({ id: user.id, role: user.role }),
       getActivityCursor(user.id),
@@ -103,6 +99,8 @@ export default async function DeskPage(): Promise<ReactElement> {
     ]);
 
   const now = new Date();
+  // ATN-01: the cards and the number above them are ONE population.
+  const hitlItems = hitlDecisionsOf(queue.items);
   const hasProjects = portfolio.projects.length > 0;
   const inFlight = table.rows.filter((row) => isWorkInFlight(row.stage));
   const workGroups = groupWorkTableRows(
@@ -215,11 +213,11 @@ export default async function DeskPage(): Promise<ReactElement> {
             <DeskEmpty text={t("decisionsEmpty")} />
           ) : (
             <div className="flex flex-col gap-6">
-              {hitl.count > 0 ? (
+              {hitlItems.length > 0 ? (
                 <HitlInboxList
                   canAct={user.role !== "viewer"}
                   currentUserId={user.id}
-                  items={hitl.items}
+                  items={hitlItems}
                 />
               ) : null}
               <DecisionSections

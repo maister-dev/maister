@@ -21,7 +21,8 @@ import { type NextRequest } from "next/server";
 import { sql } from "drizzle-orm";
 import pino from "pino";
 
-import { ATTENTION_EVENT_KINDS } from "@/lib/domain-events/taxonomy";
+import { ATTENTION_PLANE_EVENT_KINDS } from "@/lib/domain-events/taxonomy";
+import { ACTIVE_RUN_STATUSES } from "@/lib/queries/portfolio";
 import { computeDecisionsQueue } from "@/lib/queries/decisions";
 import { getDb } from "@/lib/db/client";
 import { getUpdatesCount } from "@/lib/queries/updates";
@@ -102,12 +103,29 @@ function delay(ms: number): Promise<void> {
 }
 
 /**
- * The four durable sources a cross-project surface renders from, scanned in ONE
+ * The five durable sources a cross-project surface renders from, scanned in ONE
  * statement. Array interpolations render as a parenthesised parameter list, so
  * they are spelled `in ${...}` — `= any(${...}::text[])` would try to cast a
- * record to an array and fail at runtime, inside the loop, as a logged warning. `domain_events` is restricted to `ATTENTION_EVENT_KINDS` for the
- * same reason the feed and the counter are: three of its kinds are twins of a
- * `task_activity` row already covered by the first branch.
+ * record to an array and fail at runtime, inside the loop, as a logged warning.
+ *
+ * `domain_events` is restricted to `ATTENTION_PLANE_EVENT_KINDS` — the UNION,
+ * not the feed's `ATTENTION_EVENT_KINDS`. This is an INVALIDATION scan, and the
+ * question it asks ("did anything this reader renders move?") is not the
+ * question the `updates` counter asks ("what happened that I have not seen?").
+ * Borrowing the counter's list dropped both decision-opening kinds, so a
+ * top-level run entering Review or NeedsInput moved nothing visible here; the
+ * three `task_activity`-twinned kinds it adds back are covered by the first
+ * branch anyway, and a doubled INVALIDATION is one wasted refetch rather than a
+ * doubled badge.
+ *
+ * `node_attempts` is the fifth branch because `/work` renders per-run node
+ * progress (`progressOfSpine`), and a node ending or the next one starting
+ * writes no activity row, no event and no promotion — so an Executing run's
+ * progress bar sat frozen while the connection said Live. It is joined through
+ * `runs` (the table carries no `project_id`) and bounded to IN-FLIGHT runs,
+ * whose number is capped by `MAISTER_MAX_CONCURRENT_RUNS`; scanning every
+ * attempt ever recorded at a 2 s cadence per open stream is not a trade this
+ * freshness is worth.
  *
  * The watermark travels as TEXT, not as a JS `Date`. A `timestamptz` carries
  * microseconds; round-tripping it through `Date` floors to milliseconds, and a
@@ -121,7 +139,8 @@ async function scanChangedProjects(
   since: string,
 ): Promise<ChangedProject[]> {
   const client = getDb();
-  const kinds = [...ATTENTION_EVENT_KINDS];
+  const kinds = [...ATTENTION_PLANE_EVENT_KINDS];
+  const inFlight = [...ACTIVE_RUN_STATUSES];
   const result = await client.execute(sql`
     select
       project_id,
@@ -146,6 +165,12 @@ async function scanChangedProjects(
         join webhook_events e on e.id = d.event_id
        where e.project_id in ${projectIds} and d.updated_at > ${since}::timestamptz
          and d.status in ('delivered', 'dead')
+      union all
+      select r.project_id, greatest(na.started_at, coalesce(na.ended_at, na.started_at))
+        from node_attempts na
+        join runs r on r.id = na.run_id
+       where r.project_id in ${projectIds} and r.status in ${inFlight}
+         and (na.started_at > ${since}::timestamptz or na.ended_at > ${since}::timestamptz)
     ) moved
     group by project_id
   `);

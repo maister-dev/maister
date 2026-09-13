@@ -12,6 +12,7 @@ import "server-only";
 import { NextRequest, NextResponse } from "next/server";
 
 import {
+  enableWebhookForOwner,
   listNotificationSubscriptions,
   upsertNotificationSubscription,
   validateSubscriptionInput,
@@ -109,7 +110,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
       try {
         const input = validateSubscriptionInput(body);
-        const created = await upsertNotificationSubscription(owner.id, input);
+        // A `webhook` intent must arrive with its delivery target, and the two
+        // are written in ONE transaction — an intent with no reachable target
+        // is a 201 that promises a notification nothing can send.
+        const created =
+          input.transport === "webhook"
+            ? await enableWebhookForOwner(owner.id, input)
+            : await upsertNotificationSubscription(owner.id, input);
 
         return NextResponse.json(created, { status: 201 });
       } catch (err) {

@@ -178,3 +178,25 @@ export const DECISION_OPENING_EVENT_KINDS = [
 
 export type DecisionOpeningEventKind =
   (typeof DECISION_OPENING_EVENT_KINDS)[number];
+
+/**
+ * Every kind the attention plane REACTS to — the union of the two lists above.
+ *
+ * Counting and invalidating are different questions, and conflating them is
+ * what made `/work` go stale: the stream's changed-project scan reused
+ * `ATTENTION_EVENT_KINDS`, which is the `updates` POPULATION and therefore
+ * deliberately excludes the decision openings. A top-level run entering Review
+ * then moved nothing the scan could see, and for a reader whose `decisions`
+ * count did not move with it — a project viewer, whose count is always zero —
+ * no tick was emitted at all while the connection still reported Live.
+ *
+ * Over-invalidating costs one refetch; under-invalidating costs a page that
+ * silently lies. So the scan reads the union and the counter keeps the split.
+ */
+export const ATTENTION_PLANE_EVENT_KINDS = [
+  ...ATTENTION_EVENT_KINDS,
+  ...DECISION_OPENING_EVENT_KINDS,
+] as const satisfies readonly DomainEventKind[];
+
+export type AttentionPlaneEventKind =
+  (typeof ATTENTION_PLANE_EVENT_KINDS)[number];

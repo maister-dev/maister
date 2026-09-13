@@ -146,7 +146,7 @@ sequenceDiagram
 - **ATN-08:** A `decision_request` HITL row MUST NOT appear on any external surface.
 - **ATN-09:** The activity feed MUST NEVER expose a worktree path, a diff body, or a raw ACP frame.
 - **ATN-10:** A cursor advance MUST be monotonic and idempotent; a stale or out-of-order request MUST NOT move `seen_through` backwards, and a future timestamp MUST be refused `PRECONDITION`.
-- **ATN-11:** The attention stream MUST emit no frame referencing a project outside the reader's visibility, MUST re-read the reader's ROLE and account status on every poll rather than trusting the connect-time session, and MUST NEVER mutate persisted run state.
+- **ATN-11:** The attention stream MUST emit no frame referencing a project outside the reader's visibility, MUST re-read the reader's ROLE and account status on every poll rather than trusting the connect-time session, MUST invalidate on every run transition and node-progress change rather than only on what `ATTENTION_EVENT_KINDS` counts, and MUST NEVER mutate persisted run state.
 - **ATN-12:** The digest MUST be deterministic — the same clock and the same rows MUST produce byte-identical output.
 
 ## Edge cases
@@ -156,6 +156,7 @@ sequenceDiagram
 - **EDGE-ATN-03:** A stale or out-of-order cursor POST is absorbed by the `GREATEST` upsert with no change; a `seen_through` later than `now()` is refused with `MaisterError("PRECONDITION")`.
 - **EDGE-ATN-04:** Reconnect with `Last-Event-ID` replays the tail from durable rows without duplicating already-delivered frames; an unparseable id is clamped to a full replay rather than an error.
 - **EDGE-ATN-05:** A project VIEWER MUST receive an empty decision queue for a project full of decisions: they can read the board and can perform none of the four actions the queue asks for, so an entry would be a badge over an action that answers 403. A global admin, who acts everywhere by role, MUST still receive them.
+- **EDGE-ATN-07:** A project VIEWER, whose `decisions` count is always zero, MUST still be told that `/work` moved. The counter poll cannot serve them — nothing they see moves a number — so the changed-project scan reads the UNION `ATTENTION_PLANE_EVENT_KINDS` plus `node_attempts` of in-flight runs; borrowing the `updates` taxonomy left their page stale while the connection reported Live.
 - **EDGE-ATN-06:** Revocation MUST reach a stream that is already open. Demoting a connected admin ends the see-every-project bypass on the next poll, and an account that stops being active closes the stream with `attention.stream_timeout` / `access_revoked` — neither is bounded by the quiet cap while events keep arriving.
 
 ## Linked artifacts

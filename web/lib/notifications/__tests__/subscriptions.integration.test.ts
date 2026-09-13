@@ -22,6 +22,7 @@ import * as fullSchema from "@/lib/db/schema";
 import {
   deleteNotificationSubscription,
   enablePushForOwner,
+  enableWebhookForOwner,
   listNotificationSubscriptions,
   registerPushEndpoint,
   countPushEndpoints,
@@ -52,7 +53,8 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.execute(sql`
-    TRUNCATE notification_subscriptions, push_subscriptions, users
+    TRUNCATE notification_subscriptions, push_subscriptions,
+             webhook_subscriptions, users
     RESTART IDENTITY CASCADE
   `);
 });
@@ -223,9 +225,16 @@ describe("NTF-08 the input validator refuses a per-event subscription", () => {
   });
 
   it("normalizes the type list so two equivalent requests store the same row", () => {
+    // The `webhook` transport now carries its destination — normalization is
+    // transport-independent, but an intent with no target is refused outright.
+    const webhook = {
+      url: "https://hooks.example.com/n",
+      signingSecretRef: "env:MAISTER_TEST_WEBHOOK_SECRET",
+    };
     const a = validateSubscriptionInput({
       eventTypes: ["attention.digest", "attention.decision_opened"],
       transport: "webhook",
+      webhook,
     });
     const b = validateSubscriptionInput({
       eventTypes: [
@@ -234,6 +243,7 @@ describe("NTF-08 the input validator refuses a per-event subscription", () => {
         "attention.digest",
       ],
       transport: "webhook",
+      webhook,
     });
 
     expect(a.eventTypes).toEqual(b.eventTypes);
@@ -425,5 +435,152 @@ describe("IT-NTF-13 enabling push creates the endpoint AND the intent", () => {
 
     expect(endpoints).toHaveLength(2);
     expect(intents).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// IT-NTF-16 — the OTHER transport had the same hole, one table over.
+//
+// `subscriptionMatches` pairs a user-scoped `attention.*` event ONLY with a
+// subscription carrying the matching `owner_user_id`. `createSubscription` was
+// the sole production writer of `webhook_subscriptions` and never set that
+// column, so `transport: 'webhook'` was an intent the engine accepted, answered
+// 201 for, and then could never deliver — the delivery suite hid it by
+// inserting an owned target by hand, exactly as the push suite hid `IT-NTF-13`.
+// ---------------------------------------------------------------------------
+describe("IT-NTF-16 enabling webhook creates the target AND the intent", () => {
+  const target = {
+    url: "https://hooks.example.com/decisions",
+    signingSecretRef: "env:MAISTER_TEST_WEBHOOK_SECRET",
+  };
+
+  function input(overrides: Record<string, unknown> = {}) {
+    return validateSubscriptionInput({
+      eventTypes: ["attention.decision_opened", "attention.decision_closed"],
+      transport: "webhook",
+      webhook: target,
+      ...overrides,
+    });
+  }
+
+  async function targets(ownerUserId: string) {
+    const r = await db.execute(sql`
+      SELECT id, url, event_types, enabled, project_id
+      FROM webhook_subscriptions WHERE owner_user_id = ${ownerUserId}
+    `);
+
+    return r.rows as unknown as Array<{
+      id: string;
+      url: string;
+      event_types: string[];
+      enabled: boolean;
+      project_id: string | null;
+    }>;
+  }
+
+  it("writes both halves, so a fresh opt-in is deliverable", async () => {
+    const owner = await seedUser();
+    const dto = await enableWebhookForOwner(owner, input(), db);
+    const written = await targets(owner);
+
+    expect(dto.transport).toBe("webhook");
+    // The half that was missing. Without it the intent matches nothing.
+    expect(written).toHaveLength(1);
+    expect(written[0].url).toBe(target.url);
+    // `project_id IS NULL` AND an owner: the user axis, not the platform one.
+    expect(written[0].project_id).toBeNull();
+  });
+
+  it("gives the target the SAME event types as the intent", async () => {
+    // The fanout matches on the TARGET's list, so a target carrying a different
+    // set would silently override what the reader asked for.
+    const owner = await seedUser();
+    const dto = await enableWebhookForOwner(owner, input(), db);
+    const written = await targets(owner);
+
+    expect([...written[0].event_types].sort()).toEqual(
+      [...dto.eventTypes].sort(),
+    );
+  });
+
+  it("keeps ONE target per owner, updated in place", async () => {
+    const owner = await seedUser();
+
+    await enableWebhookForOwner(owner, input(), db);
+    const first = await targets(owner);
+
+    await enableWebhookForOwner(
+      owner,
+      validateSubscriptionInput({
+        eventTypes: ["attention.digest"],
+        transport: "webhook",
+        webhook: { ...target, url: "https://hooks.example.com/moved" },
+      }),
+      db,
+    );
+    const second = await targets(owner);
+
+    expect(second).toHaveLength(1);
+    // The same row: its append-only delivery ledger survives a settings change.
+    expect(second[0].id).toBe(first[0].id);
+    expect(second[0].url).toBe("https://hooks.example.com/moved");
+    expect(second[0].event_types).toEqual(["attention.digest"]);
+  });
+
+  it("refuses the transport without a destination rather than accepting it", () => {
+    expect(() =>
+      validateSubscriptionInput({
+        eventTypes: ["attention.digest"],
+        transport: "webhook",
+      }),
+    ).toThrow(/webhook\.url/u);
+  });
+
+  it("refuses a destination the ADR-077 egress policy blocks", async () => {
+    const owner = await seedUser();
+
+    await expect(
+      enableWebhookForOwner(
+        owner,
+        validateSubscriptionInput({
+          eventTypes: ["attention.digest"],
+          transport: "webhook",
+          webhook: { ...target, url: "http://127.0.0.1:9000/hook" },
+        }),
+        db,
+      ),
+    ).rejects.toThrow();
+    // The refusal is atomic: no intent survives a target the engine refused.
+    const intents = await db.execute(sql`
+      SELECT id FROM notification_subscriptions WHERE owner_user_id = ${owner}
+    `);
+
+    expect(intents.rows).toHaveLength(0);
+  });
+
+  it("refuses a literal secret, keeping the env:NAME rule", async () => {
+    const owner = await seedUser();
+
+    await expect(
+      enableWebhookForOwner(
+        owner,
+        validateSubscriptionInput({
+          eventTypes: ["attention.digest"],
+          transport: "webhook",
+          webhook: { ...target, signingSecretRef: "s3cr3t-value" },
+        }),
+        db,
+      ),
+    ).rejects.toThrow(/env:NAME/u);
+  });
+
+  it("refuses a webhook target on the push transport rather than ignoring it", () => {
+    expect(() =>
+      validateSubscriptionInput({
+        eventTypes: ["attention.digest"],
+        transport: "web_push",
+        webhook: target,
+      }),
+    ).toThrow(/only meaningful/u);
   });
 });

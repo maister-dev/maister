@@ -324,6 +324,25 @@ export async function computeDecisionsQueue(
 }
 
 /**
+ * The HITL entries of the canonical queue, in queue order.
+ *
+ * Both decision surfaces render HITL cards beside `DecisionSections`, and both
+ * used to source them from `getCrossProjectHitlInbox` DIRECTLY — a query that
+ * narrows by visibility rather than actionability and drops no
+ * relation-blocked task. The cards it produced were therefore outside the
+ * `decisions` count printed above them, which is exactly the disagreement
+ * `ATN-01` forbids: a viewer saw HITL cards whose actions answer 403, and a
+ * blocked task's card was rendered while the badge refused to count it.
+ *
+ * The queue already carries the whole item, so the second query bought nothing.
+ */
+export function hitlDecisionsOf(
+  items: readonly DecisionItem[],
+): CrossProjectHitlItem[] {
+  return items.flatMap((item) => (item.kind === "hitl" ? [item.hitl] : []));
+}
+
+/**
  * React-`cache`d so every server component of ONE render reads the same answer
  * (ATN-05) — the same mechanism `getPlatformStatus` uses for the chrome. The
  * layout, the home page and the inbox page each call it; the work happens once.

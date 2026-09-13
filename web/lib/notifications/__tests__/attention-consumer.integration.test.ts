@@ -14,7 +14,10 @@ import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import * as fullSchema from "@/lib/db/schema";
-import { buildAttentionConsumer } from "@/lib/notifications/attention-consumer";
+import {
+  buildAttentionConsumer,
+  emitDecisionsDelta,
+} from "@/lib/notifications/attention-consumer";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -282,5 +285,73 @@ describe("IT-NTF-08 reader resolution", () => {
     });
 
     await expect(consumer.handle([event(projectId)])).resolves.toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// IT-NTF-17 — the dispatcher and the sweep backstop race, and must not both
+// publish.
+//
+// They run under SEPARATE scheduler leases, so nothing ordered them: both could
+// read `previous = 0, current = 1` and each publish its own
+// `attention.decision_opened` for ONE transition. The drainer's
+// `(subscription_id, event_id)` idempotency collapses a REDELIVERY of one
+// event, never two events with different ids — so the reader's phone buzzed
+// twice for one decision.
+//
+// Two real transactions over two pooled connections is the shape the bug needs:
+// remove the per-owner advisory lock and this emits two rows every time.
+// ---------------------------------------------------------------------------
+describe("IT-NTF-17 concurrent delta writers", () => {
+  // REPEATED, and that is not belt-and-braces. Measured against the unlocked
+  // code this race duplicates on ~9 attempts in 10 — so a single attempt is a
+  // guard that lets the bug through one run in ten, which is worse than none.
+  // Eight independent attempts put that at ~1e-8 while staying fast: the cost
+  // is eight seeded readers, not eight waits.
+  const ATTEMPTS = 8;
+
+  it("publishes ONE notification when both land on the same transition", async () => {
+    const projectId = await seedProject();
+    const decisionsFor = async (): Promise<number> => 1;
+
+    for (let attempt = 0; attempt < ATTEMPTS; attempt += 1) {
+      const userId = await seedMember(projectId);
+      const emitted = await Promise.all([
+        emitDecisionsDelta(db, userId, "member", decisionsFor),
+        emitDecisionsDelta(db, userId, "member", decisionsFor),
+      ]);
+
+      // One winner, one no-op — the loser read the winner's committed row as
+      // its baseline, which is why the lock is taken BEFORE the count.
+      expect(emitted.filter(Boolean), `attempt ${attempt}`).toHaveLength(1);
+
+      const rows = await emissions(userId);
+
+      expect(rows, `attempt ${attempt}`).toHaveLength(1);
+      expect(rows[0]).toMatchObject({
+        type: "attention.decision_opened",
+        decisions: 1,
+        previous: 0,
+      });
+    }
+  });
+
+  it("still serializes two readers independently rather than globally", async () => {
+    // The lock is per OWNER: two readers moving at once are unrelated facts, and
+    // one slow decision queue must not hold up the other's notification.
+    const projectId = await seedProject();
+    const [first, second] = await Promise.all([
+      seedMember(projectId),
+      seedMember(projectId),
+    ]);
+    const decisionsFor = async (): Promise<number> => 2;
+
+    await Promise.all([
+      emitDecisionsDelta(db, first, "member", decisionsFor),
+      emitDecisionsDelta(db, second, "member", decisionsFor),
+    ]);
+
+    expect(await emissions(first)).toHaveLength(1);
+    expect(await emissions(second)).toHaveLength(1);
   });
 });

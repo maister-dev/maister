@@ -83,13 +83,18 @@ describe("UT-NTF-12 consumer failure handling", () => {
     readers: Array<{ id: string; role: "admin" | "member" | "viewer" }>,
     decisionsFor: (userId: string) => Promise<number>,
   ) {
+    const handle = {
+      execute: async (q: unknown) =>
+        String(q).includes("webhook_events") ? { rows: [] } : { rows: readers },
+      // `emitDecisionsDelta` runs its read-compare-publish under a per-owner
+      // advisory lock, so the stub has to be able to open a transaction. It is
+      // the same handle: there is no isolation to simulate here, only the shape.
+      transaction: async <T>(fn: (tx: unknown) => Promise<T>): Promise<T> =>
+        fn(handle),
+    };
+
     return buildAttentionConsumer({
-      db: {
-        execute: async (q: unknown) =>
-          String(q).includes("webhook_events")
-            ? { rows: [] }
-            : { rows: readers },
-      },
+      db: handle,
       decisionsFor: async (userId) => decisionsFor(userId),
     });
   }

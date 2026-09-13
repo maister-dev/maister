@@ -53,6 +53,7 @@ what stops this matrix decaying into the historical aliases the Stage B matrix b
 | ATN-12 | digest read model determinism | T5.4 | UT-ATN-12 | Implemented |
 | EDGE-ATN-05 | viewer gets no unactionable decisions | T8.7 | IT-ATN-14 | Implemented |
 | EDGE-ATN-06 | revocation reaches an open stream | T8.7 | IT-ATN-15 | Implemented |
+| EDGE-ATN-07 | work invalidation covers transitions and node progress | T8.8 | IT-ATN-16 | Implemented |
 | EDGE-ATN-01 | absent cursor row | T5.3, T5.8 | UT-EDGE-ATN-01 plus IT-ATN-03 | Implemented |
 | EDGE-ATN-02 | current-visibility filter, no rewind | T4.2 | IT-EDGE-ATN-02 | Implemented |
 | EDGE-ATN-03 | cursor POST clamp and PRECONDITION | T5.3 | IT-EDGE-ATN-03 | Implemented |
@@ -76,12 +77,13 @@ what stops this matrix decaying into the historical aliases the Stage B matrix b
 | NTF-09 | token scope sets | T4.5, T7.8 | UT-NTF-09 | Implemented |
 | NTF-10 | VAPID env table and boot degradation | T7.9 | UT-NTF-10 | Implemented |
 | NTF-11 | push egress policy + pinned send | T8.7 | UT-NTF-11 | Implemented |
-| NTF-12 | opt-in creates endpoint and intent | T8.7 | IT-NTF-13 | Implemented |
+| NTF-12 | opt-in creates target and intent, both transports | T8.7 | IT-NTF-16 | Implemented |
 | EDGE-NTF-01 | idempotent consumer handle | T7.5 | IT-EDGE-NTF-01 | Implemented |
 | EDGE-NTF-02 | 410 Gone terminal path | T7.6 | IT-EDGE-NTF-02 | Implemented |
 | EDGE-NTF-04 | 429 retried, not settled dead | T7.6 | IT-EDGE-NTF-04 | Implemented |
 | EDGE-NTF-05 | consumer failure split by blast radius | T8.7 | UT-NTF-12 | Implemented |
 | EDGE-NTF-03 | existing project webhooks unaffected | T7.2 | IT-EDGE-NTF-03 | Implemented |
+| EDGE-NTF-06 | project-less HITL persists, emits nothing | T8.8 | IT-NTF-15 | Implemented |
 
 ## Second-level tests beside a primary
 

@@ -34,10 +34,7 @@ import type { DomainEventRow } from "@/lib/db/schema";
 import { sql } from "drizzle-orm";
 import pino from "pino";
 
-import {
-  ATTENTION_EVENT_KINDS,
-  DECISION_OPENING_EVENT_KINDS,
-} from "@/lib/domain-events/taxonomy";
+import { ATTENTION_PLANE_EVENT_KINDS } from "@/lib/domain-events/taxonomy";
 import { computeDecisionsQueue } from "@/lib/queries/decisions";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 import { getDb } from "@/lib/db/client";
@@ -57,10 +54,9 @@ const log = pino({
  * `ATTENTION_EVENT_KINDS` are the run-terminal and triage facts that can close
  * or open one as a side effect.
  */
-const ATTENTION_KIND_SET: ReadonlySet<string> = new Set<string>([
-  ...ATTENTION_EVENT_KINDS,
-  ...DECISION_OPENING_EVENT_KINDS,
-]);
+const ATTENTION_KIND_SET: ReadonlySet<string> = new Set<string>(
+  ATTENTION_PLANE_EVENT_KINDS,
+);
 
 export interface AttentionConsumerDeps {
   db?: Db;
@@ -234,6 +230,13 @@ export function buildAttentionConsumer(
 }
 
 /**
+ * Per-OWNER, never global: two readers' deltas are independent facts, and one
+ * lock over the whole pass would let a single slow decision queue hold up every
+ * other reader in the batch.
+ */
+const DECISION_DELTA_LOCK_NAMESPACE = 0x61746e_64;
+
+/**
  * One reader's delta, shared by the domain-event consumer and the
  * `system_sweep` backstop so there is exactly one definition of "the count
  * moved, tell them" (ADR-173 D5/D6).
@@ -242,6 +245,17 @@ export function buildAttentionConsumer(
  * compared against the last value PUBLISHED for this reader, so a redelivery,
  * a sweep landing on the heels of a consumer pass, and both running against the
  * same unchanged state all emit nothing.
+ *
+ * That last clause is only true if the read and the write are ATOMIC, and the
+ * two callers hold SEPARATE scheduler leases — so nothing stopped both from
+ * reading `previous = 0, current = 1` and each publishing its own
+ * `attention.decision_opened` for one transition. Two outbox rows with
+ * different ids are two notifications: the drainer's
+ * `(subscription_id, event_id)` idempotency collapses a redelivery of ONE
+ * event, never two distinct ones. So the whole read-compare-publish runs under
+ * a per-owner advisory lock, taken FIRST: with the lock held before the count
+ * is read, the loser of the race reads the winner's committed row as its
+ * baseline and emits nothing.
  */
 export async function emitDecisionsDelta(
   client: Db,
@@ -252,25 +266,31 @@ export async function emitDecisionsDelta(
     role: "admin" | "member" | "viewer",
   ) => Promise<number>,
 ): Promise<boolean> {
-  const current = await decisionsFor(userId, role);
-  const previous = await lastPublishedCount(client, userId);
+  return client.transaction(async (tx: Db) => {
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(${DECISION_DELTA_LOCK_NAMESPACE}::int, hashtext(${userId})::int)`,
+    );
 
-  // A reader this consumer has never published for is seeded at zero, so their
-  // first notification describes a real change rather than a backlog they
-  // already know about.
-  const baseline = previous ?? 0;
-  const type = deltaTypeFor(baseline, current);
+    const current = await decisionsFor(userId, role);
+    const previous = await lastPublishedCount(tx, userId);
 
-  if (type === null) return false;
+    // A reader this consumer has never published for is seeded at zero, so
+    // their first notification describes a real change rather than a backlog
+    // they already know about.
+    const baseline = previous ?? 0;
+    const type = deltaTypeFor(baseline, current);
 
-  await emitWebhookEvent({
-    db: client,
-    type,
-    ownerUserId: userId,
-    data: { decisions: current, previous: baseline },
+    if (type === null) return false;
+
+    await emitWebhookEvent({
+      db: tx,
+      type,
+      ownerUserId: userId,
+      data: { decisions: current, previous: baseline },
+    });
+
+    return true;
   });
-
-  return true;
 }
 
 export const attentionNotificationsConsumer = buildAttentionConsumer();

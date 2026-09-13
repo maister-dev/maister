@@ -28,6 +28,12 @@ import {
   NOTIFICATION_TRANSPORTS,
   pushSubscriptions,
 } from "@/lib/db/schema";
+import {
+  createSubscription,
+  listSubscriptions,
+  type SubscriptionScope,
+  updateSubscription,
+} from "@/lib/webhooks/subscriptions";
 import { getDb } from "@/lib/db/client";
 import { MaisterError } from "@/lib/errors";
 
@@ -52,7 +58,25 @@ export interface NotificationSubscriptionInput {
   eventTypes: AttentionNotificationType[];
   transport: NotificationTransport;
   enabled?: boolean;
+  /**
+   * Required when `transport` is `webhook` and meaningless otherwise: the
+   * destination the four `attention.*` events are POSTed to, and the `env:NAME`
+   * reference the body is signed with. A secret VALUE never appears here.
+   */
+  webhook?: WebhookTargetInput;
 }
+
+export interface WebhookTargetInput {
+  url: string;
+  signingSecretRef: string;
+}
+
+/**
+ * The name every personal target carries. A person does not name their own
+ * notification endpoint — there is exactly one, and the admin surfaces that
+ * would read a name never see a user-scoped row.
+ */
+const PERSONAL_TARGET_NAME = "Personal notifications";
 
 const TYPE_SET: ReadonlySet<string> = new Set(ATTENTION_NOTIFICATION_TYPES);
 const TRANSPORT_SET: ReadonlySet<string> = new Set(NOTIFICATION_TRANSPORTS);
@@ -129,7 +153,51 @@ export function validateSubscriptionInput(
     ) as AttentionNotificationType[],
     transport: transport as NotificationTransport,
     enabled,
+    webhook: parseWebhookTarget(transport, body.webhook),
   };
+}
+
+/**
+ * A `webhook` intent without a destination is an intent nothing can honour, so
+ * the destination is REQUIRED at the edge rather than discovered to be missing
+ * at fan-out. Only the shape is checked here: the URL's egress policy
+ * (ADR-077) and the `env:NAME` rule belong to the webhook service, which
+ * enforces them for every writer rather than for this one.
+ */
+function parseWebhookTarget(
+  transport: string,
+  raw: unknown,
+): WebhookTargetInput | undefined {
+  if (transport !== "webhook") {
+    if (raw !== undefined) {
+      throw new MaisterError(
+        "CONFIG",
+        "webhook is only meaningful for transport 'webhook'",
+      );
+    }
+
+    return undefined;
+  }
+
+  const target = (raw ?? {}) as Record<string, unknown>;
+
+  if (typeof target.url !== "string" || target.url.length === 0) {
+    throw new MaisterError(
+      "CONFIG",
+      "transport 'webhook' requires webhook.url",
+    );
+  }
+  if (
+    typeof target.signingSecretRef !== "string" ||
+    target.signingSecretRef.length === 0
+  ) {
+    throw new MaisterError(
+      "CONFIG",
+      "transport 'webhook' requires webhook.signingSecretRef",
+    );
+  }
+
+  return { url: target.url, signingSecretRef: target.signingSecretRef };
 }
 
 export async function listNotificationSubscriptions(
@@ -189,7 +257,13 @@ export async function upsertNotificationSubscription(
   return toDto(row);
 }
 
-/** `NTF-07`: another owner's id is indistinguishable from a nonexistent one. */
+/**
+ * `NTF-07`: another owner's id is indistinguishable from a nonexistent one.
+ *
+ * A patch that LANDS on `webhook` writes the delivery target in the same
+ * transaction, because an intent that survives an edit without one is the same
+ * undeliverable row the create path used to produce.
+ */
 export async function updateNotificationSubscription(
   ownerUserId: string,
   id: string,
@@ -197,23 +271,31 @@ export async function updateNotificationSubscription(
   db?: Db,
 ): Promise<NotificationSubscriptionDto | null> {
   const client: Db = db ?? getDb();
-  const rows = (await client
-    .update(notificationSubscriptions)
-    .set({
-      eventTypes: input.eventTypes,
-      transport: input.transport,
-      enabled: input.enabled ?? true,
-      updatedAt: new Date(),
-    })
-    .where(
-      and(
-        eq(notificationSubscriptions.id, id),
-        eq(notificationSubscriptions.ownerUserId, ownerUserId),
-      ),
-    )
-    .returning()) as NotificationSubscriptionRow[];
 
-  return rows[0] ? toDto(rows[0]) : null;
+  return client.transaction(async (tx: Db) => {
+    const rows = (await tx
+      .update(notificationSubscriptions)
+      .set({
+        eventTypes: input.eventTypes,
+        transport: input.transport,
+        enabled: input.enabled ?? true,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(notificationSubscriptions.id, id),
+          eq(notificationSubscriptions.ownerUserId, ownerUserId),
+        ),
+      )
+      .returning()) as NotificationSubscriptionRow[];
+
+    if (!rows[0]) return null;
+    if (input.transport === "webhook") {
+      await writeWebhookTarget(tx, ownerUserId, input);
+    }
+
+    return toDto(rows[0]);
+  });
 }
 
 export async function deleteNotificationSubscription(
@@ -325,6 +407,91 @@ export async function enablePushForOwner(
     );
 
     return registered;
+  });
+}
+
+/**
+ * The delivery TARGET a `webhook` intent names, written from the same input as
+ * the intent itself.
+ *
+ * The HTTP fan-out matches on `webhook_subscriptions.event_types`, not on the
+ * intent — so if the two were written separately they would be free to
+ * disagree, and the caller's selected types would be silently overridden by
+ * whatever the target happened to carry. One writer, one transaction, and the
+ * question "which types does this person actually receive?" has one answer.
+ *
+ * ONE personal target per owner, updated in place rather than replaced: the
+ * per-subscription delivery ledger is append-only audit, and a delete would
+ * cascade it away on every settings change.
+ */
+async function writeWebhookTarget(
+  tx: Db,
+  ownerUserId: string,
+  input: NotificationSubscriptionInput,
+): Promise<void> {
+  if (input.webhook === undefined) {
+    throw new MaisterError(
+      "CONFIG",
+      "transport 'webhook' requires a webhook target",
+    );
+  }
+
+  const scope: SubscriptionScope = { projectId: null, ownerUserId };
+  const [existing] = await listSubscriptions(scope, tx);
+  const enabled = input.enabled ?? true;
+
+  if (existing) {
+    await updateSubscription(
+      scope,
+      existing.id,
+      {
+        url: input.webhook.url,
+        signing_secret_ref: input.webhook.signingSecretRef,
+        event_types: [...input.eventTypes],
+        enabled,
+      },
+      tx,
+    );
+
+    return;
+  }
+
+  await createSubscription(
+    scope,
+    {
+      name: PERSONAL_TARGET_NAME,
+      url: input.webhook.url,
+      event_types: [...input.eventTypes],
+      signing_secret_ref: input.webhook.signingSecretRef,
+      enabled,
+    },
+    tx,
+  );
+}
+
+/**
+ * The HTTP half of ADR-173's `web_push | webhook` axis, and the exact mirror of
+ * `enablePushForOwner` above.
+ *
+ * A `webhook` intent names a transport whose target lives in
+ * `webhook_subscriptions`, and only a row carrying `owner_user_id` is ever
+ * paired with a user-scoped `attention.*` event (`subscriptionMatches`). No
+ * production path wrote that column, so an accepted `webhook` intent answered
+ * 201 and then delivered nothing, forever — an intent the engine could not
+ * honour. Target and intent are therefore created TOGETHER, in one transaction,
+ * for the same reason the push pair is.
+ */
+export async function enableWebhookForOwner(
+  ownerUserId: string,
+  input: NotificationSubscriptionInput,
+  db?: Db,
+): Promise<NotificationSubscriptionDto> {
+  const client: Db = db ?? getDb();
+
+  return client.transaction(async (tx: Db) => {
+    await writeWebhookTarget(tx, ownerUserId, input);
+
+    return upsertNotificationSubscription(ownerUserId, input, tx);
   });
 }
 

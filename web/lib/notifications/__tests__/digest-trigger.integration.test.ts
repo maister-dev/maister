@@ -226,6 +226,35 @@ async function seedRunForEvents(): Promise<{
   return { runId, projectId, taskId };
 }
 
+/**
+ * The ONE run shape with no project: an ADR-097 local-package assistant session.
+ * `runs.project_id` is NULL and `local_package_id` carries the launch snapshot
+ * instead.
+ */
+async function seedProjectlessAssistantRun(): Promise<string> {
+  const packageId = randomUUID();
+  const runId = randomUUID();
+  const slug = `pk-${packageId.slice(0, 8)}`;
+
+  await db.insert(schema.localPackages).values({
+    id: packageId,
+    slug,
+    name: slug,
+    workingDir: `/tmp/${slug}`,
+  });
+  await db.insert(schema.runs).values({
+    id: runId,
+    projectId: null,
+    localPackageId: packageId,
+    runKind: "scratch",
+    status: "Running",
+    flowVersion: "v1.0.0",
+    currentStepId: "assistant",
+  });
+
+  return runId;
+}
+
 async function seedCrashedDecision(): Promise<void> {
   const projectId = randomUUID();
   const slug = `bk-${projectId.slice(0, 8)}`;
@@ -515,6 +544,32 @@ describe("IT-NTF-15 decision-opening domain events", () => {
     );
 
     expect(await kinds(runId)).not.toContain("run.needs_input");
+  });
+
+  // EDGE-NTF-06. A project-less local-package assistant run (ADR-097) is the
+  // one run kind with `runs.project_id IS NULL`, and `domain_events.project_id`
+  // is NOT NULL. Emitting unconditionally aborted the whole transaction, so the
+  // HITL row rolled back and `scratch-runs/events.ts` cancelled the supervisor
+  // deferred — an assistant could never have a permission approved.
+  it("persists the HITL row of a project-less run and emits nothing", async () => {
+    const runId = await seedProjectlessAssistantRun();
+    const hitlRequestId = randomUUID();
+    const { createHitlRequest } = await import("@/lib/runs/hitl-create");
+
+    await createHitlRequest(db, {
+      id: hitlRequestId,
+      runId,
+      stepId: "assistant",
+      kind: "permission",
+      prompt: "may I write the file?",
+    });
+
+    const rows = await db.execute(sql`
+      SELECT id FROM hitl_requests WHERE id = ${hitlRequestId}
+    `);
+
+    expect(rows.rows).toHaveLength(1);
+    expect(await kinds(runId)).toEqual([]);
   });
 
   it("emits run.review_opened for a TOP-LEVEL run, not run.review", async () => {
