@@ -27,7 +27,7 @@ test("the runner passes the pool bound to vitest with the existing lane flags", 
 
   assert.deepEqual(args, [
     "node_modules/vitest/vitest.mjs", "run", "a.integration.test.ts", "--project=integration",
-    "--reporter=json", "--outputFile=/tmp/r.json", "--maxWorkers=3", "--minWorkers=1",
+    "--reporter=json", "--outputFile=/tmp/r.json", "--reporter=default", "--maxWorkers=3", "--minWorkers=1",
   ]);
 });
 

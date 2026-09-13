@@ -61,10 +61,14 @@ export function laneConcurrency(parallelism, slice = "web") {
   return Math.max(1, Math.min(LANE_MAX_CONCURRENCY, Math.floor(parallelism / SUITE_HOST_PROCESSES)));
 }
 
+// The json reporter drops `error.cause`, and a lane failure wrapped for context
+// (`new Error(msg, { cause })`) then reaches CI as the wrapper alone. Pair it
+// with the default reporter so the console keeps the `Caused by:` chain; only
+// json writes a file, so `--outputFile` stays unambiguous.
 export function vitestArgs({ files, reportPath, concurrency }) {
   return [
     "node_modules/vitest/vitest.mjs", "run", ...files, "--project=integration",
-    "--reporter=json", `--outputFile=${reportPath}`,
+    "--reporter=json", `--outputFile=${reportPath}`, "--reporter=default",
     `--maxWorkers=${concurrency}`, "--minWorkers=1",
   ];
 }
