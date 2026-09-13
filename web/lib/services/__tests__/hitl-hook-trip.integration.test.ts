@@ -30,6 +30,10 @@ import {
 import * as schemaModule from "@/lib/db/schema";
 import { respondToHitl, type HitlActor } from "@/lib/services/hitl";
 import {
+  readyExecutionHostCapabilities,
+  readySupervisorHealth,
+} from "@/test-support/supervisor-health-fixture";
+import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
@@ -42,6 +46,21 @@ let db: NodePgDatabase;
 let runtimeRoot: string;
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
+// The agent resume path registers the local execution host, which probes
+// supervisor health. Before ADR-167's guard that probe fell through to the
+// well-known dev port, so this suite was green only while a real supervisor
+// happened to be listening. The sibling hitl-budget-breach suite already mocks
+// this module for the same reason.
+vi.mock("@/lib/supervisor-client", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/lib/supervisor-client")>();
+
+  return {
+    ...actual,
+    checkSupervisorHealth: async () => readySupervisorHealth(),
+    getExecutionHostCapabilities: async () => readyExecutionHostCapabilities(),
+  };
+});
 vi.mock("@/lib/flows/runner", () => ({ runFlow: vi.fn(async () => {}) }));
 vi.mock("@/lib/agents/launch", () => ({
   startAgentSession: vi.fn(async () => {}),

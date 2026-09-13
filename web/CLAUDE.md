@@ -199,6 +199,36 @@ It is the only web Testcontainers constructor, owns pgvector image selection,
 main/Brain migration order, and pool-before-container teardown. Build/unit work
 must not require Docker; integration/E2E require it explicitly.
 
+### Supervisor contract in tests
+
+`baseUrl()` in `lib/supervisor-client.ts` THROWS `CONFIG` when
+`MAISTER_SUPERVISOR_URL` is unset under a test runner (ADR-167). It used to fall
+through to the dev port, so any suite reaching the real transport silently drove
+whatever supervisor was listening — and was green only while one happened to be.
+
+A suite reaches that transport whenever its graph carries **owned prompts**:
+`runFlow` only takes the execution-host branch when `hasOwnedPrompts` is true
+and the run is `Running`/`NeedsInput`, so a graph of `cli`/`check` nodes or
+`artifact_required` gates needs nothing, while one with `ai_coding` nodes or
+`ai_judgment`/`skill_check` gates needs a host. The agent resume path and the
+`system_sweep` event-plane activation reach it too.
+
+Such a suite MUST mock the health seam — it does not need a real supervisor:
+
+```ts
+vi.mock("@/lib/supervisor-client", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/supervisor-client")>()),
+  checkSupervisorHealth: async () => readySupervisorHealth(),
+  getExecutionHostCapabilities: async () => readyExecutionHostCapabilities(),
+}));
+```
+
+with the two helpers from `test-support/supervisor-health-fixture.ts`. Only a
+suite that genuinely exercises supervisor behaviour should reach for
+`test-support/real-supervisor.ts` instead. Setting `MAISTER_SUPERVISOR_URL`
+globally is NOT the fix: it would disarm the guard for every suite, which is the
+hijack it exists to prevent.
+
 ### Suite baselines and known-flaky specs
 
 Compare failure **SETS**, never counts — two runs can tie while one spec traded
