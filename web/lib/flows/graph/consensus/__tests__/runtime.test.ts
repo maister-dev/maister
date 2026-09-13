@@ -138,6 +138,17 @@ function verdict(
 function db(): unknown {
   const tx = {
     insert: vi.fn(() => ({ values: vi.fn(async () => undefined) })),
+    // A real transaction can read. `createHitlRequest` — the one writer of
+    // hitl_requests — reads the run back to resolve the project the
+    // `run.needs_input` event belongs to, so a tx stub with only `insert`
+    // models a transaction that does not exist.
+    select: vi.fn(() => ({
+      from: vi.fn(() => ({
+        where: vi.fn(async () => [
+          { projectId: "project-1", taskId: "task-1" },
+        ]),
+      })),
+    })),
   };
 
   return {
@@ -197,6 +208,17 @@ function runnerRow(
 function dbWithRunnerRows(rows: Record<string, unknown>[]): unknown {
   const tx = {
     insert: vi.fn(() => ({ values: vi.fn(async () => undefined) })),
+    // A real transaction can read. `createHitlRequest` — the one writer of
+    // hitl_requests — reads the run back to resolve the project the
+    // `run.needs_input` event belongs to, so a tx stub with only `insert`
+    // models a transaction that does not exist.
+    select: vi.fn(() => ({
+      from: vi.fn(() => ({
+        where: vi.fn(async () => [
+          { projectId: "project-1", taskId: "task-1" },
+        ]),
+      })),
+    })),
   };
   const queue = [...rows];
 

@@ -88,11 +88,16 @@ async function emitNeedsInput(
   // exists to avoid — so they are read back from the run the row points at.
   // HITL creation is rare (once per human decision), so the extra SELECT costs
   // nothing that matters.
+  // No `.limit(1)`: this is a primary-key lookup, so it returns at most one row
+  // regardless — and adding the call would oblige every db stub in every suite
+  // that reaches a HITL creation to grow a method it does not otherwise need.
   const [run] = (await tx
     .select({ projectId: runs.projectId, taskId: runs.taskId })
     .from(runs)
-    .where(eq(runs.id, values.runId))
-    .limit(1)) as Array<{ projectId: string; taskId: string | null }>;
+    .where(eq(runs.id, values.runId))) as Array<{
+    projectId: string;
+    taskId: string | null;
+  }>;
 
   if (!run) return;
 
