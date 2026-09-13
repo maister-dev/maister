@@ -166,20 +166,30 @@ function flowFrontmatterView(manifest: FlowYamlV1): PackageBomFlowFrontmatter {
 export function installedPackageSource(install: {
   id: string;
   installedPath: string;
-  manifest?: { spec: PackageBomSpec; inventory: PackageBomInventory };
+  // `spec` and `inventory` are OPTIONAL on purpose, and the optionality is the
+  // fix: `manifest` is a jsonb column, so a stored row that lacks either
+  // arrives as a DEFINED object and `manifest?.spec.flows` throws PAST the
+  // optional head. Declaring the inner shape as guaranteed is what let that
+  // form typecheck — and a 500 on the project board is what it cost. Same
+  // defect as `assessPackageCompatibility` (`lib/queries/packages.ts`), which
+  // documents the reasoning in full.
+  manifest?: {
+    spec?: Partial<PackageBomSpec>;
+    inventory?: Partial<PackageBomInventory>;
+  };
 }): PackageSource {
   const installedPath = install.installedPath;
 
   return {
     logLabel: install.id,
     spec: {
-      flows: install.manifest?.spec.flows ?? [],
-      mcps: install.manifest?.spec.mcps ?? [],
+      flows: install.manifest?.spec?.flows ?? [],
+      mcps: install.manifest?.spec?.mcps ?? [],
     },
     inventory: {
-      skills: install.manifest?.inventory.skills ?? [],
-      agents: install.manifest?.inventory.agents ?? [],
-      platformAgents: install.manifest?.inventory.platformAgents ?? [],
+      skills: install.manifest?.inventory?.skills ?? [],
+      agents: install.manifest?.inventory?.agents ?? [],
+      platformAgents: install.manifest?.inventory?.platformAgents ?? [],
     },
     listFiles: () => listInstalledPackageFiles({ installedPath }),
     readFile: (rel) => readInstalledPackageFile({ installedPath }, rel),

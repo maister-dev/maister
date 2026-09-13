@@ -455,7 +455,8 @@ export async function IntegrationsPanel({
     apply: t("audit.apply"),
     pagePrev: t("audit.pagePrev"),
     pageNext: t("audit.pageNext"),
-    pageLabel: t("audit.pageLabel"),
+    // RAW: `NumberedPagination` interpolates `{page}` itself.
+    pageLabel: t.raw("audit.pageLabel"),
     paginationLabel: t("audit.paginationLabel"),
   };
 

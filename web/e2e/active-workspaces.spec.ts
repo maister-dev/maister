@@ -166,7 +166,7 @@ test("a running rail row renders the colour-coded state dot", async ({
   await expect(row.locator('[data-status-tone="running"]')).toBeVisible();
 });
 
-test("hovering a live row reveals the inline Stop + ⋯ overflow and hides the timestamp", async ({
+test("hovering a live row reveals the ⋯ overflow and hides the timestamp", async ({
   page,
 }) => {
   await page.goto("/");
@@ -179,10 +179,14 @@ test("hovering a live row reveals the inline Stop + ⋯ overflow and hides the t
 
   await row.hover();
 
-  // Hover: the inline Stop (live) + the ⋯ overflow surface; time hides. There is
-  // no inline rename pencil any more — rename lives inside the ⋯ action-sheet.
-  await expect(row.getByTestId("rail-stop")).toBeVisible();
+  // Hover: the ⋯ overflow surfaces and the time hides. NOTHING is inline any
+  // more — `eb3712ae` dropped the inline Stop the same way the rename pencil
+  // went before it ("Stop now lives in the ⋯ action-sheet", which also gave
+  // agent runs a working Stop they never had inline). The rail variant renders
+  // the trigger and nothing else; the next test opens the sheet and drives
+  // Stop from there.
   await expect(row.getByTestId("rail-menu-trigger")).toBeVisible();
+  await expect(row.getByTestId("rail-stop")).toHaveCount(0);
   await expect(row.getByTestId("rename-pencil")).toHaveCount(0);
   await expect(row.getByTestId("row-time")).toBeHidden();
 });

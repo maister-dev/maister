@@ -514,7 +514,8 @@ export default async function ProjectBoardPage({
                 apply: tLog("apply"),
                 pagePrev: tLog("pagePrev"),
                 pageNext: tLog("pageNext"),
-                pageLabel: tLog("pageLabel"),
+                // RAW: `NumberedPagination` interpolates `{page}` itself.
+                pageLabel: tLog.raw("pageLabel"),
                 paginationLabel: tLog("paginationLabel"),
                 formerUser: tLog("formerUser"),
                 system: tLog("system"),
