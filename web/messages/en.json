@@ -2831,6 +2831,10 @@
         "scopes": "Scopes",
         "humanHitl": "Allow human HITL responses"
       },
+      "edit": {
+        "title": "Edit personal token",
+        "scopesRequired": "Pick at least one scope, or revoke the token instead."
+      },
       "actions": {
         "new": "New token",
         "create": "Create token",
@@ -2839,7 +2843,10 @@
         "copy": "Copy",
         "copied": "Copied",
         "close": "Close",
-        "done": "Done"
+        "done": "Done",
+        "edit": "Edit",
+        "save": "Save",
+        "saved": "Saved"
       },
       "human": {
         "enabled": "Allowed",
@@ -2881,7 +2888,14 @@
         "runsCollect": "Collect child runs",
         "runsCancel": "Cancel child runs",
         "runsPromote": "Promote child runs",
-        "runsSync": "Sync & reopen runs"
+        "runsSync": "Sync & reopen runs",
+        "hitlRequest": "Ask a human a question",
+        "flowsRead": "Read the project's flows",
+        "runnersRead": "Read the available runners",
+        "runsRecover": "Recover a crashed run",
+        "memoryRead": "Read project memory",
+        "memoryWrite": "Write project memory",
+        "agentMemoryWrite": "Write the agent's own memory"
       }
     },
     "role": {
@@ -3359,6 +3373,11 @@
     "copied": "Copied",
     "revoke": "Revoke",
     "revokeConfirm": "Revoke this token?",
+    "edit": "Edit",
+    "editTitle": "Edit API token",
+    "editSaved": "Saved",
+    "save": "Save",
+    "scopesRequired": "Pick at least one scope, or revoke the token instead.",
     "colName": "Name",
     "colKind": "Kind",
     "colScopes": "Scopes",

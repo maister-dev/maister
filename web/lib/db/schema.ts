@@ -6972,10 +6972,66 @@ export const tokenAuditLog = pgTable(
   }),
 );
 
+// ADR-168: append-only lifecycle trail for MANAGED tokens — issuance, each
+// post-issuance field edit, and revocation. One row per CHANGED field, written
+// in the same transaction as the project_tokens INSERT/UPDATE that caused it.
+// Non-managed tokens (token_kind='agent', and the run-bound `orchestrator-run:`
+// / `agent-run:` names minted by lib/agents/tokens.ts) are NEVER in this table;
+// recordTokenLifecycleEvent refuses them so no call site can forget the rule.
+// before/after carry ONLY the one changed field — never token_hash, prefix, or
+// the plaintext secret.
+export const tokenLifecycleEvents = pgTable(
+  "token_lifecycle_events",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    token_id: text("token_id")
+      .notNull()
+      .references(() => projectTokens.id, { onDelete: "cascade" }),
+    project_id: text("project_id").references(() => projects.id, {
+      onDelete: "set null",
+    }),
+    event: text("event", {
+      enum: [
+        "issued",
+        "scopes_changed",
+        "renamed",
+        "expiry_changed",
+        "revoked",
+      ],
+    }).notNull(),
+    actor_user_id: text("actor_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    // Survives actor_user_id being nulled by a user deletion, so a departed
+    // admin's edits stay attributable.
+    actor_label: text("actor_label").notNull(),
+    before: jsonb("before"),
+    after: jsonb("after"),
+    created_at: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    idxTokenCreated: index("token_lifecycle_token_created_idx").on(
+      t.token_id,
+      t.created_at,
+    ),
+    idxProjectCreated: index("token_lifecycle_project_created_idx").on(
+      t.project_id,
+      t.created_at,
+    ),
+  }),
+);
+
 export type ProjectToken = typeof projectTokens.$inferSelect;
 export type ProjectTokenInsert = typeof projectTokens.$inferInsert;
 export type TokenAuditLogRow = typeof tokenAuditLog.$inferSelect;
 export type TokenAuditLogInsert = typeof tokenAuditLog.$inferInsert;
+export type TokenLifecycleEventRow = typeof tokenLifecycleEvents.$inferSelect;
+export type TokenLifecycleEventInsert =
+  typeof tokenLifecycleEvents.$inferInsert;
 
 // Outbound webhooks (ADR-077). Transactional-outbox capture + singleton-drainer
 // fanout/delivery. Secrets are NEVER stored: signing_secret_ref and header values

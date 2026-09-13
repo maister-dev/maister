@@ -20,6 +20,9 @@ erDiagram
     USERS ||--o{ PROJECT_TOKENS : "created_by (SET NULL)"
     USERS ||--o{ PROJECT_TOKENS : "owner_user_id (SET NULL)"
     PROJECT_TOKENS ||--o{ TOKEN_AUDIT_LOG : "per-call audit"
+    PROJECT_TOKENS ||--o{ TOKEN_LIFECYCLE_EVENTS : "managed-token lifecycle trail"
+    PROJECTS o|--o{ TOKEN_LIFECYCLE_EVENTS : "optional project binding"
+    USERS o|--o{ TOKEN_LIFECYCLE_EVENTS : "actor_user_id (SET NULL)"
 
     PROJECT_TOKENS {
         text id PK "uuid"
@@ -50,19 +53,34 @@ erDiagram
         integer status_code "NOT NULL"
         timestamp created_at "NOT NULL default now(), INDEX"
     }
+
+    TOKEN_LIFECYCLE_EVENTS {
+        text id PK "uuid"
+        text token_id FK "NOT NULL -> project_tokens(id) ON DELETE CASCADE"
+        text project_id FK "NULL -> projects(id) ON DELETE SET NULL"
+        text event "NOT NULL — issued | scopes_changed | renamed | expiry_changed | revoked"
+        text actor_user_id FK "NULL -> users(id) ON DELETE SET NULL"
+        text actor_label "NOT NULL — durable attribution"
+        jsonb before "nullable — prior value of the one changed field; NULL on issued"
+        jsonb after "nullable — new value of the one changed field; NULL on revoked"
+        timestamp created_at "NOT NULL default now()"
+    }
 ```
 
 ## Cascade chain
 
 ```
 projects
-  ├── project_tokens     (nullable FK project_id, ON DELETE CASCADE)
-  │     └── token_audit_log  (FK token_id, ON DELETE CASCADE)
-  └── token_audit_log    (nullable FK project_id, ON DELETE SET NULL)
+  ├── project_tokens               (nullable FK project_id, ON DELETE CASCADE)
+  │     ├── token_audit_log        (FK token_id, ON DELETE CASCADE)
+  │     └── token_lifecycle_events (FK token_id, ON DELETE CASCADE)
+  ├── token_audit_log              (nullable FK project_id, ON DELETE SET NULL)
+  └── token_lifecycle_events       (nullable FK project_id, ON DELETE SET NULL)
 
 users
-  ├── project_tokens.created_by      (FK users.id, ON DELETE SET NULL)
-  └── project_tokens.owner_user_id   (FK users.id, ON DELETE SET NULL)
+  ├── project_tokens.created_by            (FK users.id, ON DELETE SET NULL)
+  ├── project_tokens.owner_user_id         (FK users.id, ON DELETE SET NULL)
+  └── token_lifecycle_events.actor_user_id (FK users.id, ON DELETE SET NULL)
 ```
 
 Deleting a project drops project-bound `project_tokens` and their
@@ -74,6 +92,13 @@ deleted. Deleting a `project_tokens` row cascades to its audit rows.
 `created_by` and `owner_user_id` are `SET NULL` on user deletion; verification
 fails closed for personal tokens whose owner is absent, inactive, or flagged for
 password change.
+
+`token_lifecycle_events` (Implemented,
+[ADR-168](../decisions.md#adr-168-post-issuance-mutation-of-api-tokens)) mirrors
+`token_audit_log`'s cascade exactly, so token and project deletion behave
+identically for both evidence tables. Its `actor_user_id` is `SET NULL` on user
+deletion while `actor_label` survives, so a deleted admin's edits stay
+attributable.
 
 ## Designed migration `0063`
 
@@ -105,6 +130,8 @@ Existing rows remain valid; no data backfill is required.
 | `project_tokens` | `project_tokens_owner_created_idx` | `(owner_user_id, created_at)` | List global personal tokens on the account page. |
 | `token_audit_log` | `token_audit_token_idx` | `(token_id)` | Per-token audit trail. |
 | `token_audit_log` | `token_audit_project_created_idx` | `(project_id, created_at)` | Chronological audit log per project; NULL rows come from global inbox or deleted targets. |
+| `token_lifecycle_events` | `token_lifecycle_token_created_idx` | `(token_id, created_at)` | Per-token lifecycle trail in change order. |
+| `token_lifecycle_events` | `token_lifecycle_project_created_idx` | `(project_id, created_at)` | Chronological lifecycle view per project. |
 
 ## Linked artifacts
 

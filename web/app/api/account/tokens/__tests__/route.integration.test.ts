@@ -30,6 +30,7 @@ vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
 let accountGet: any;
 let accountPost: any;
 let accountDelete: any;
+let accountPatch: any;
 let projectTokensGet: any;
 
 beforeAll(async () => {
@@ -50,6 +51,7 @@ beforeAll(async () => {
   accountGet = accountRoute.GET;
   accountPost = accountRoute.POST;
   accountDelete = accountTokenRoute.DELETE;
+  accountPatch = accountTokenRoute.PATCH;
   projectTokensGet = projectTokensRoute.GET;
 }, 180_000);
 
@@ -76,6 +78,14 @@ function accountRequest(method: string, body?: unknown): NextRequest {
 function deleteRequest(tokenId: string): NextRequest {
   return new NextRequest(`http://localhost/api/account/tokens/${tokenId}`, {
     method: "DELETE",
+  });
+}
+
+function patchRequest(tokenId: string, body: unknown): NextRequest {
+  return new NextRequest(`http://localhost/api/account/tokens/${tokenId}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
   });
 }
 
@@ -302,6 +312,87 @@ describe("account personal API token routes", () => {
     const passwordChangeRes = await accountGet(accountRequest("GET"));
 
     expect(passwordChangeRes.status).toBe(403);
+
+    clearSession();
+  });
+});
+
+// ADR-168. HTTP contract only — status, body shape, and the ownership gate.
+// Partial-update semantics and the ledger are owned at the service layer in
+// lib/tokens/__tests__/update.integration.test.ts.
+describe("PATCH /api/account/tokens/[tokenId]", () => {
+  it("I16: an owner widens their own personal token", async () => {
+    const userId = await seedUser();
+
+    asSession(userId);
+
+    const created = await (
+      await accountPost(
+        accountRequest("POST", { name: "Personal", scopes: ["tasks:read"] }),
+      )
+    ).json();
+
+    const res = await accountPatch(
+      patchRequest(created.id, {
+        scopes: ["tasks:read", "flows:read"],
+        humanHitl: true,
+      }),
+      { params: Promise.resolve({ tokenId: created.id }) },
+    );
+
+    expect(res.status).toBe(200);
+
+    const body = await res.json();
+
+    expect(body.scopes).toContain("flows:read");
+    expect(body.humanHitl).toBe(true);
+    expect(body).not.toHaveProperty("token");
+
+    clearSession();
+  });
+
+  it("I22: a body with no field present is refused 422", async () => {
+    const userId = await seedUser();
+
+    asSession(userId);
+
+    const created = await (
+      await accountPost(accountRequest("POST", { name: "Personal" }))
+    ).json();
+
+    const res = await accountPatch(patchRequest(created.id, {}), {
+      params: Promise.resolve({ tokenId: created.id }),
+    });
+
+    expect(res.status).toBe(422);
+    expect((await res.json()).code).toBe("CONFIG");
+
+    clearSession();
+  });
+
+  it("I11: a reserved run-bound name is refused 422 on PATCH and on POST", async () => {
+    const userId = await seedUser();
+
+    asSession(userId);
+
+    const created = await (
+      await accountPost(accountRequest("POST", { name: "Personal" }))
+    ).json();
+
+    const patched = await accountPatch(
+      patchRequest(created.id, { name: `agent-run:${randomUUID()}` }),
+      { params: Promise.resolve({ tokenId: created.id }) },
+    );
+
+    expect(patched.status).toBe(422);
+    expect((await patched.json()).code).toBe("CONFIG");
+
+    const posted = await accountPost(
+      accountRequest("POST", { name: `orchestrator-run:${randomUUID()}` }),
+    );
+
+    expect(posted.status).toBe(422);
+    expect((await posted.json()).code).toBe("CONFIG");
 
     clearSession();
   });

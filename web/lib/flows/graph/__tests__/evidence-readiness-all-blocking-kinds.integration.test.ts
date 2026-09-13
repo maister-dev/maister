@@ -6,7 +6,7 @@
 
 import { eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { assertEvidenceReady } from "@/lib/flows/graph/evidence-readiness";
 import { runFlow } from "@/lib/flows/runner";
@@ -15,9 +15,31 @@ import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
+import {
+  readyExecutionHostCapabilities,
+  readySupervisorHealth,
+} from "@/test-support/supervisor-health-fixture";
 
 let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase;
+
+// The `ai_judgment` and `skill_check` gates below make this graph carry OWNED
+// PROMPTS, so `runFlow` takes the execution-host branch and probes supervisor
+// health. Until ADR-167's guard landed, that probe fell through to the
+// well-known dev port and this suite was green only while a real supervisor
+// happened to be listening there — it was never self-contained. Mock the health
+// seam (the established `launch-paths` pattern) so the registrar can register a
+// fake local host; nothing here asserts supervisor behaviour.
+vi.mock("@/lib/supervisor-client", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/lib/supervisor-client")>();
+
+  return {
+    ...actual,
+    checkSupervisorHealth: async () => readySupervisorHealth(),
+    getExecutionHostCapabilities: async () => readyExecutionHostCapabilities(),
+  };
+});
 
 beforeAll(async () => {
   testDatabase = await startMainPostgresTestDb({

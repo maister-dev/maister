@@ -2945,6 +2945,64 @@ drops its audit rows; deleting a target project sets direct audit
 `project_id = NULL` while token-linked rows still disappear if the project-bound
 token itself is deleted.
 
+## `token_lifecycle_events`
+
+**(Implemented, migration `0163_token_lifecycle_events.sql`;
+[ADR-168](decisions.md#adr-168-post-issuance-mutation-of-api-tokens).)**
+Append-only ledger of every **managed** token's lifecycle changes: issuance,
+each post-issuance field edit, and revocation. One row per **changed field** —
+a PATCH touching `scopes` and `expires_at` writes two rows, and a PATCH that
+changes nothing writes none. Rows are written in the SAME `db.transaction` as
+the `project_tokens` INSERT/UPDATE that caused them.
+
+Non-managed tokens are NEVER in this table: `recordTokenLifecycleEvent` refuses
+`token_kind='agent'` rows and `token_kind='project'` rows whose `name` matches
+`^(orchestrator-run|agent-run):` (the run-bound credentials minted by
+`lib/agents/tokens.ts`). The refusal lives inside the one helper, so no call
+site can forget it. See
+[`system-analytics/token-lifecycle.md`](system-analytics/token-lifecycle.md).
+
+```ts
+{
+  id,                                       // uuid PK
+  tokenId,                                  // NOT NULL, FK -> project_tokens.id,
+                                            //   ON DELETE CASCADE
+  projectId?,                               // nullable FK -> projects.id,
+                                            //   ON DELETE SET NULL; denormalized
+                                            //   for project-scoped queries. NULL for
+                                            //   global personal tokens and for
+                                            //   deleted target projects
+  event,                                    // NOT NULL; allow-list enum:
+                                            //   issued | scopes_changed | renamed |
+                                            //   expiry_changed | revoked
+  actorUserId?,                             // nullable FK -> users.id,
+                                            //   ON DELETE SET NULL; the session user
+                                            //   who made the change
+  actorLabel,                               // NOT NULL; durable attribution that
+                                            //   survives actorUserId being nulled
+  before (jsonb),                           // nullable; the changed field's prior
+                                            //   value. NULL on 'issued'
+  after (jsonb),                            // nullable; the changed field's new
+                                            //   value. NULL on 'revoked'
+  createdAt                                 // NOT NULL DEFAULT now()
+}
+```
+
+`before` and `after` carry ONLY the one field the row is about — the scope
+array, the name string, or the expiry instant. They MUST NEVER contain
+`token_hash`, `prefix`, or the plaintext secret.
+
+History is **not** reconstructed: tokens issued before `0163` have no `issued`
+row and none is synthesized, because a fabricated provenance row cannot be told
+apart from a real one. The trail starts at the migration.
+
+Indexes: `token_lifecycle_token_created_idx` on `(token_id, created_at)` for a
+per-token trail, `token_lifecycle_project_created_idx` on
+`(project_id, created_at)` for a chronological per-project view. Cascade chain
+mirrors `token_audit_log` exactly: deleting a `project_tokens` row drops its
+lifecycle rows; deleting a project sets `project_id = NULL` on rows that
+survive.
+
 ## `hitl_requests`
 
 ```ts

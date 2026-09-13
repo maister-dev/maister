@@ -7,6 +7,10 @@ import pino from "pino";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import {
+  assertTokenNameAllowed,
+  recordTokenLifecycleEvent,
+} from "@/lib/tokens/lifecycle";
 import { generateToken } from "@/lib/tokens/secret";
 import { normalizeTokenScopes, type TokenScope } from "@/lib/tokens/scopes";
 
@@ -80,7 +84,13 @@ export async function issueToken(
     throw new MaisterError("CONFIG", "ownerUserId is required for user tokens");
   }
 
-  await d.insert(projectTokens).values({
+  // ADR-168 D4: this module is the ONLY human-issuance path (both token POST
+  // routes call it), so guarding here cannot be forgotten at a call site. The
+  // machine minters in lib/agents/tokens.ts insert directly and are untouched —
+  // they legitimately write exactly these reserved names.
+  assertTokenNameAllowed(input.name);
+
+  const row = {
     id,
     project_id: input.projectId,
     name: input.name,
@@ -92,6 +102,29 @@ export async function issueToken(
     created_by: input.createdByUserId ?? null,
     created_at: now,
     expires_at: input.expiresAt ?? null,
+  };
+
+  await d.transaction(async (tx: Db) => {
+    await tx.insert(projectTokens).values(row);
+
+    await recordTokenLifecycleEvent(
+      {
+        token: row,
+        event: "issued",
+        actor: {
+          userId: input.createdByUserId ?? null,
+          label: input.createdByUserId
+            ? `user:${input.createdByUserId}`
+            : "system",
+        },
+        after: {
+          name: input.name,
+          scopes,
+          expiresAt: input.expiresAt?.toISOString() ?? null,
+        },
+      },
+      tx,
+    );
   });
 
   log.info(

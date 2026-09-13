@@ -200,7 +200,7 @@ describe("T-C8a / REQ-C8 — the write path fails closed on every authorization 
     const res = await write({ content: "x", ifHash: null });
 
     expect(res.status).toBe(403);
-    expect(res.body.message).toBe("insufficient scope");
+    expect(res.body.message).toContain("insufficient scope");
   });
 
   it("422 CONFIG — content over the cap", async () => {

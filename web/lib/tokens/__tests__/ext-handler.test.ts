@@ -148,3 +148,54 @@ describe("handleExt mandatory token audit", () => {
     );
   });
 });
+
+// I18 (ADR-168 D5). The 403 body names the scope the ROUTE requires — a
+// published, caller-independent fact — while still revealing nothing about the
+// scopes the TOKEN holds. Both halves are one invariant: loosening the first
+// must not erode the second, so they are asserted against the same response.
+describe("handleExt insufficient-scope disclosure boundary", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.getDb.mockReturnValue({});
+    mocks.recordTokenAudit.mockResolvedValue(undefined);
+    mocks.bumpTokenLastUsed.mockResolvedValue(undefined);
+  });
+
+  it("I18: names the required scope and leaks none of the scopes the token holds", async () => {
+    // A distinctive held set: every entry is greppable in the serialized body.
+    const heldScopes = [
+      "tasks:read",
+      "comments:read",
+      "relations:read",
+      "memory:read",
+    ];
+
+    mocks.verifyToken.mockResolvedValue({ ...actor, scopes: heldScopes });
+
+    const { handleExt } = await import("@/lib/tokens/ext-handler");
+
+    const res = await handleExt(
+      request(),
+      {
+        scopeLabel: "flows:read",
+        endpoint: "GET /api/v1/ext/projects/[slug]/flows",
+        method: "GET",
+      },
+      async () => NextResponse.json({ flows: [] }, { status: 200 }),
+    );
+
+    expect(res.status).toBe(403);
+
+    const body = await res.json();
+
+    expect(body.code).toBe("UNAUTHORIZED");
+    expect(body.details?.requiredScope).toBe("flows:read");
+    expect(body.message).toContain("flows:read");
+
+    const serialized = JSON.stringify(body);
+
+    for (const held of heldScopes) {
+      expect(serialized).not.toContain(held);
+    }
+  });
+});

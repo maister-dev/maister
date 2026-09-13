@@ -133,6 +133,16 @@ export const CROSS_PROJECT_AGENT_SCOPES = [
   "relations:delete",
 ] as const satisfies readonly (typeof TOKEN_SCOPES)[number][];
 
+// Scopes the `*` wildcard deliberately does NOT imply: they are a separate
+// axis, granted only by naming them exactly. `normalizeTokenScopes` keeps them
+// alongside `*` for that reason, so any scope picker must treat the two axes as
+// independent — ticking `*` must not drop an exact grant, and vice versa.
+// Defined here rather than in the server-only scopes module so the UI reads the
+// same list instead of mirroring it.
+export const EXACT_ONLY_TOKEN_SCOPES: ReadonlySet<string> = new Set([
+  "hitl:respond:human",
+]);
+
 export const TOKEN_SCOPE_VALUES = [TOKEN_SCOPE_ALL, ...TOKEN_SCOPES] as const;
 
 export type TokenScope = (typeof TOKEN_SCOPE_VALUES)[number];

@@ -1,13 +1,12 @@
 import { MaisterError } from "@/lib/errors";
 import {
+  EXACT_ONLY_TOKEN_SCOPES,
   isTokenScope,
   TOKEN_SCOPE_ALL,
   type TokenScope,
 } from "@/types/token-scopes";
 
 export { TOKEN_SCOPE_VALUES, type TokenScope } from "@/types/token-scopes";
-
-const EXACT_ONLY_SCOPES = new Set<string>(["hitl:respond:human"]);
 
 export function normalizeTokenScopes(scopes?: readonly string[]): TokenScope[] {
   if (!scopes || scopes.length === 0) return [TOKEN_SCOPE_ALL];
@@ -33,7 +32,7 @@ export function normalizeTokenScopes(scopes?: readonly string[]): TokenScope[] {
 
   if (knownScopes.includes(TOKEN_SCOPE_ALL)) {
     const exactScopes = knownScopes.filter((scope) =>
-      EXACT_ONLY_SCOPES.has(scope),
+      EXACT_ONLY_TOKEN_SCOPES.has(scope),
     );
 
     return [TOKEN_SCOPE_ALL, ...exactScopes];
@@ -46,7 +45,7 @@ export function tokenHasScope(
   scopes: readonly string[],
   requiredScope: string,
 ): boolean {
-  if (EXACT_ONLY_SCOPES.has(requiredScope)) {
+  if (EXACT_ONLY_TOKEN_SCOPES.has(requiredScope)) {
     return scopes.includes(requiredScope);
   }
 

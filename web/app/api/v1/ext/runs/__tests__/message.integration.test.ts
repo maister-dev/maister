@@ -405,7 +405,20 @@ describe("POST /api/v1/ext/runs/message (M37 Phase 8)", () => {
       completeTurn = resolve;
     });
 
+    // The fake records a call BEFORE it runs the prompt behaviour
+    // (`runCommand` awaits `record()`, then `execute()`), so by the time this
+    // body runs the sendPrompt call is already in `fake.calls`. Signal from
+    // here instead of polling for the side effect: `expect.poll`'s default
+    // budget is 1 s, which is ample on an idle machine and too tight under
+    // contention. `beforeEach` reinstalls the default behaviour, so this
+    // deferred cannot leak into another test the way an `onCall` hook would.
+    let promptArrived!: () => void;
+    const promptRecorded = new Promise<void>((resolve) => {
+      promptArrived = resolve;
+    });
+
     fake.setPromptBehavior(async () => {
+      promptArrived();
       await turn;
 
       return { stopReason: "end_turn", meta: null };
@@ -419,7 +432,9 @@ describe("POST /api/v1/ext/runs/message (M37 Phase 8)", () => {
     );
 
     try {
-      await expect.poll(() => promptsSent().length).toBe(1);
+      await promptRecorded;
+
+      expect(promptsSent()).toHaveLength(1);
       // The child holds its resumed slot until this admitted turn completes.
       const row = await pool.query(
         `SELECT "status" FROM "runs" WHERE "id" = $1`,

@@ -15,12 +15,32 @@ import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
+import {
+  readyExecutionHostCapabilities,
+  readySupervisorHealth,
+} from "@/test-support/supervisor-health-fixture";
 
 let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase<typeof schema>;
 let savedToken: string | undefined;
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
+// The system sweep activates the execution event plane, which probes supervisor
+// health. Before ADR-167's guard that probe fell through to the well-known dev
+// port; now an unset MAISTER_SUPERVISOR_URL is a CONFIG throw, which the sweep
+// collects into `errors[]` and reports as 207 instead of 200. Mock the health
+// seam so the sweep sees a registrable local host — this suite asserts sweep
+// bookkeeping, not supervisor reachability.
+vi.mock("@/lib/supervisor-client", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/lib/supervisor-client")>();
+
+  return {
+    ...actual,
+    checkSupervisorHealth: async () => readySupervisorHealth(),
+    getExecutionHostCapabilities: async () => readyExecutionHostCapabilities(),
+  };
+});
 
 const workspaceSweepSpy = vi.fn(async () => ({
   scanned: 0,

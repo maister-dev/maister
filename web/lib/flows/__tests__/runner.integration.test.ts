@@ -21,6 +21,26 @@ import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
+import {
+  readyExecutionHostCapabilities,
+  readySupervisorHealth,
+} from "@/test-support/supervisor-health-fixture";
+
+// This graph carries owned prompts, so `runFlow` takes the execution-host
+// branch and probes supervisor health. Before ADR-167's guard that probe fell
+// through to the well-known dev port, leaving the suite green only while a real
+// supervisor happened to be listening. Mock the health seam so the registrar
+// can register a fake local host; nothing here asserts supervisor behaviour.
+vi.mock("@/lib/supervisor-client", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/lib/supervisor-client")>();
+
+  return {
+    ...actual,
+    checkSupervisorHealth: async () => readySupervisorHealth(),
+    getExecutionHostCapabilities: async () => readyExecutionHostCapabilities(),
+  };
+});
 
 const schema = schemaModule as unknown as Record<string, any>;
 const {

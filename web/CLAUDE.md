@@ -199,6 +199,60 @@ It is the only web Testcontainers constructor, owns pgvector image selection,
 main/Brain migration order, and pool-before-container teardown. Build/unit work
 must not require Docker; integration/E2E require it explicitly.
 
+### Supervisor contract in tests
+
+`baseUrl()` in `lib/supervisor-client.ts` THROWS `CONFIG` when
+`MAISTER_SUPERVISOR_URL` is unset under a test runner (ADR-167). It used to fall
+through to the dev port, so any suite reaching the real transport silently drove
+whatever supervisor was listening — and was green only while one happened to be.
+
+A suite reaches that transport whenever its graph carries **owned prompts**:
+`runFlow` only takes the execution-host branch when `hasOwnedPrompts` is true
+and the run is `Running`/`NeedsInput`, so a graph of `cli`/`check` nodes or
+`artifact_required` gates needs nothing, while one with `ai_coding` nodes or
+`ai_judgment`/`skill_check` gates needs a host. The agent resume path and the
+`system_sweep` event-plane activation reach it too.
+
+Such a suite MUST mock the health seam — it does not need a real supervisor:
+
+```ts
+vi.mock("@/lib/supervisor-client", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/supervisor-client")>()),
+  checkSupervisorHealth: async () => readySupervisorHealth(),
+  getExecutionHostCapabilities: async () => readyExecutionHostCapabilities(),
+}));
+```
+
+with the two helpers from `test-support/supervisor-health-fixture.ts`. Only a
+suite that genuinely exercises supervisor behaviour should reach for
+`test-support/real-supervisor.ts` instead. Setting `MAISTER_SUPERVISOR_URL`
+globally is NOT the fix: it would disarm the guard for every suite, which is the
+hijack it exists to prevent.
+
+### Route suites: load the route in a hook, not in a test
+
+`await import("../route")` pulls a large module graph — 700-800 ms for the HITL
+respond and scratch-recover routes. Done lazily inside a per-test helper, that
+cost lands on whichever case ran first, inside vitest's 5 s default. On a loaded
+machine it blows the budget, and the damage does not stop at one red case: a
+timed-out test's request keeps running, so its later calls hit module-level
+spies whose `mockImplementation` now belongs to the NEXT case. That is how the
+respond suite produced `["queued","queued","delivered","delivered"]` for an
+assertion expecting two entries — a false failure in a test that was itself
+correct.
+
+Load the module once in `beforeAll` (its own budget, outside every test) and
+have helpers read the cached handle. After the hoist neither suite has a case
+over 100 ms.
+
+Prefer awaiting the real condition over polling for a side effect. `expect.poll`
+defaults to a 1 s budget, which is ample idle and too tight under contention;
+where a fake already offers a hook on the awaited call, signal a deferred from
+it instead. Note that `fake-execution-host`'s `runCommand` records a call before
+running its behaviour, so a signal sent from `setPromptBehavior` fires with the
+call already in `fake.calls` — and unlike an `onCall` hook it cannot leak, since
+`beforeEach` reinstalls the default behaviour.
+
 ### Suite baselines and known-flaky specs
 
 Compare failure **SETS**, never counts — two runs can tie while one spec traded

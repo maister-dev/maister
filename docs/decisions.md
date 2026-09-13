@@ -209,6 +209,7 @@ validate:docs` enforces stub ↔ body equality and the file bijection.
 | [ADR-165](#adr-165-governed-recursive-agent-harness--public-run-results-result-profiles-effective-recursion-bounds-result-only-completion)                   | Governed recursive agent harness — public run results, result profiles, effective recursion bounds, result-only completion                     | Implemented                                                          | 2026-09-02 |
 | [ADR-166](#adr-166-local-execution-host-contract--durable-host-identity-epoch-fenced-assignments-command-ledger-opaque-adopted-workspaces) | Local execution-host contract — durable host identity, epoch-fenced assignments, command ledger, opaque adopted workspaces | Implemented | 2026-09-02 |
 | [ADR-167](#adr-167-durable-execution-host-event-and-runtime-data-plane) | Durable execution-host event and runtime-data plane | Implemented | 2026-09-04 |
+| [ADR-168](#adr-168-post-issuance-mutation-of-api-tokens) | Post-issuance mutation of API tokens | Implemented | 2026-09-11 |
 
 ---
 
@@ -1699,6 +1700,15 @@ Full record: [`decisions/adr-166.md`](decisions/adr-166.md)
 **Date:** 2026-09-04
 
 Full record: [`decisions/adr-167.md`](decisions/adr-167.md)
+
+---
+
+### ADR-168: Post-issuance mutation of API tokens
+
+**Status:** Implemented
+**Date:** 2026-09-11
+
+Full record: [`decisions/adr-168.md`](decisions/adr-168.md)
 
 ---
 

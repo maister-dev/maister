@@ -22,12 +22,37 @@ describe("shared Testcontainers database helper", () => {
         timeout: 10_000,
       },
     );
-    const result = JSON.parse(stdout.trim().split("\n").at(-1) ?? "{}") as {
+    // The child writes its result line, and pino's async stdout write for the
+    // same probe can land either side of it — so `.at(-1)` picked the log line
+    // roughly one run in three. Take the last line that is NOT a pino record
+    // (pino always carries `level`), which is order-independent.
+    const result = JSON.parse(
+      stdout
+        .trim()
+        .split("\n")
+        .reverse()
+        .find((line) => {
+          try {
+            const parsed: unknown = JSON.parse(line);
+
+            return (
+              typeof parsed === "object" &&
+              parsed !== null &&
+              !("level" in parsed)
+            );
+          } catch {
+            return false;
+          }
+        }) ?? "{}",
+    ) as {
       name?: string;
       message?: string;
     };
 
     expect(result.name).toBe("TestDatabaseDockerUnavailableError");
     expect(result.message).toContain(TEST_DATABASE_DOCKER_MESSAGE);
-  });
+    // The child is allowed 10s above, so the test must outlast it — the unit
+    // project's 5s default fired first whenever spawning `pnpm exec tsx` was
+    // slow, failing on a timeout budget the test itself had already granted.
+  }, 20_000);
 });
