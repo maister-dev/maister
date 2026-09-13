@@ -116,6 +116,11 @@ export default defineConfig([
           args: "after-used",
           ignoreRestSiblings: false,
           argsIgnorePattern: "^_.*?$",
+          // `ignoreRestSiblings` stays false so a genuinely dead sibling is
+          // still reported; the `_` prefix is the per-variable opt-in for the
+          // omit-via-rest idiom (`const { a: _a, ...without } = x`), matching
+          // how the same prefix already exempts arguments above.
+          varsIgnorePattern: "^_.*?$",
         },
       ],
 

@@ -1141,6 +1141,13 @@ describe("session.command events", () => {
       await createEnvelope(host, { runId }),
     );
     const sessionId = created.body.sessionId as string;
+    // `--lines 400` is the only fixture in the suite that drives a turn of this
+    // volume: 400 awaited ACP notifications, each durably appended before the
+    // prompt result lands. Every other completePrompt here terminalizes in
+    // under 30 ms, so the helper's 5 s default is ample for them — this one
+    // measures 1.2 s idle and 2.8 s under load, which a 2-core CI runner with
+    // parallel suites pushes past 5 s. Budget it against the turn's real cost;
+    // the suite's own vitest timeout (60 s) still catches a genuine hang.
     const prompt = await completePrompt(
       host,
       sessionId,
@@ -1148,6 +1155,7 @@ describe("session.command events", () => {
         stepId: "step-1",
         prompt: "hello",
       }),
+      30_000,
     );
 
     expect(prompt.status).toBe(200);
