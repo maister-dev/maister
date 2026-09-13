@@ -70,7 +70,12 @@ test("install → fork → import a folder → commit succeeds", async ({ page }
   await page.getByRole("button", { name: "Add package source" }).click();
   const dialog = page.getByRole("dialog");
 
-  await dialog.getByLabel("Git monorepo URL").fill(repo);
+  // `file://` is REQUIRED, not cosmetic: `validateUrl` (`lib/repo-source.ts`)
+  // admits only https/http/ssh/file plus scp-short `git@host:`, so a bare
+  // absolute path is refused "repoUrl scheme not allowed" at the dialog. The
+  // allow-list landed in `01c75594` (ADR-129 remediation) and these specs,
+  // written before it, kept filling the raw temp path.
+  await dialog.getByLabel("Git monorepo URL").fill(`file://${repo}`);
   await dialog.getByRole("button", { name: "Save", exact: true }).click();
   await expect(page.getByText(repo)).toBeVisible();
   await page
