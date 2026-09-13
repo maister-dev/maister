@@ -176,111 +176,134 @@ async function updateToken(
 ): Promise<TokenUpdateResult> {
   const d = db ?? getDb();
 
-  const rows = await d.select().from(projectTokens).where(args.scope).limit(1);
+  // [FIX:adr-168-stale-read] The diff, the write and the ledger rows must all
+  // see ONE version of the row. Reading outside the transaction let a
+  // name-only PATCH resolve `scopes` from a stale snapshot and then write all
+  // three columns — silently restoring scopes a concurrent edit had just
+  // narrowed, while the ledger recorded only `renamed`. ADR-168 D4 accepts
+  // last-write-wins on FIELD VALUES precisely because "both edits write ledger
+  // rows, so the sequence is reconstructible"; a reversal nobody recorded
+  // breaks that. FOR UPDATE makes the read-modify-write atomic, so an omitted
+  // field is preserved against the value the writer actually overwrites.
+  const result = await d.transaction(
+    async (tx: Db): Promise<TokenUpdateResult> => {
+      const rows = await tx
+        .select()
+        .from(projectTokens)
+        .where(args.scope)
+        .limit(1)
+        .for("update");
 
-  if (rows.length === 0) {
-    log.warn(
-      { tokenId: args.tokenId, surface: args.surface, reason: "not-found" },
-      "token update refused",
-    );
+      if (rows.length === 0) {
+        log.warn(
+          { tokenId: args.tokenId, surface: args.surface, reason: "not-found" },
+          "token update refused",
+        );
 
-    return { outcome: "not-found", changed: [] };
-  }
+        return { outcome: "not-found", changed: [] };
+      }
 
-  const stored = rows[0];
+      const stored = rows[0];
 
-  if (stored.revoked_at !== null && stored.revoked_at !== undefined) {
-    log.warn(
-      { tokenId: args.tokenId, reason: "revoked" },
-      "token update refused",
-    );
-    throw new MaisterError(
-      "PRECONDITION",
-      "a revoked token cannot be edited — revocation is terminal",
-    );
-  }
+      if (stored.revoked_at !== null && stored.revoked_at !== undefined) {
+        log.warn(
+          { tokenId: args.tokenId, reason: "revoked" },
+          "token update refused",
+        );
+        throw new MaisterError(
+          "PRECONDITION",
+          "a revoked token cannot be edited — revocation is terminal",
+        );
+      }
 
-  if (!isManagedToken(stored)) {
-    log.warn(
-      { tokenId: args.tokenId, reason: "not-managed" },
-      "token update refused",
-    );
-    throw new MaisterError(
-      "PRECONDITION",
-      "run-bound and agent tokens are managed by their own run lifecycle and cannot be edited",
-    );
-  }
+      if (!isManagedToken(stored)) {
+        log.warn(
+          { tokenId: args.tokenId, reason: "not-managed" },
+          "token update refused",
+        );
+        throw new MaisterError(
+          "PRECONDITION",
+          "run-bound and agent tokens are managed by their own run lifecycle and cannot be edited",
+        );
+      }
 
-  if (patch.name !== undefined) {
-    assertTokenNameAllowed(patch.name);
-  }
+      if (patch.name !== undefined) {
+        assertTokenNameAllowed(patch.name);
+      }
 
-  const storedFields: StoredTokenFields = {
-    name: stored.name,
-    scopes: (stored.scopes as string[]) ?? ["*"],
-    expires_at: stored.expires_at ?? null,
-  };
-  const effective = resolveEffectiveTokenFields(
-    storedFields,
-    patch,
-    args.surface,
-  );
-  const changed = diffFields(storedFields, effective);
-
-  log.debug({ tokenId: args.tokenId, changed }, "token update diff computed");
-
-  if (changed.length === 0) {
-    return {
-      outcome: "unchanged",
-      token: (await getTokenListItem(args.tokenId, d)) ?? undefined,
-      changed: [],
-    };
-  }
-
-  await d.transaction(async (tx: Db) => {
-    const updated = await tx
-      .update(projectTokens)
-      .set({
-        name: effective.name,
-        scopes: effective.scopes,
-        expires_at: effective.expiresAt,
-      })
-      // CAS on revoked_at: a revoke that lands between the SELECT and here
-      // matches zero rows, and that is a refusal, never a silent success.
-      .where(and(args.scope, isNull(projectTokens.revoked_at)))
-      .returning({ id: projectTokens.id });
-
-    if (updated.length === 0) {
-      throw new MaisterError(
-        "PRECONDITION",
-        "token was revoked concurrently; no fields were changed",
+      const storedFields: StoredTokenFields = {
+        name: stored.name,
+        scopes: (stored.scopes as string[]) ?? ["*"],
+        expires_at: stored.expires_at ?? null,
+      };
+      const effective = resolveEffectiveTokenFields(
+        storedFields,
+        patch,
+        args.surface,
       );
-    }
+      const changed = diffFields(storedFields, effective);
 
-    for (const field of changed) {
-      const { before, after } = beforeAfterFor(field, storedFields, effective);
-
-      await recordTokenLifecycleEvent(
-        { token: stored, event: field, actor, before, after },
-        tx,
+      log.debug(
+        { tokenId: args.tokenId, changed },
+        "token update diff computed",
       );
-    }
-  });
 
-  log.info(
-    {
-      tokenId: args.tokenId,
-      actorUserId: actor.userId,
-      surface: args.surface,
-      changed,
+      if (changed.length === 0) return { outcome: "unchanged", changed: [] };
+
+      const updated = await tx
+        .update(projectTokens)
+        .set({
+          name: effective.name,
+          scopes: effective.scopes,
+          expires_at: effective.expiresAt,
+        })
+        // The row is locked and its revoked_at was read under that lock, so
+        // this CAS is now a backstop rather than the primary guard — it keeps
+        // the write refusable if a later refactor drops the lock.
+        .where(and(args.scope, isNull(projectTokens.revoked_at)))
+        .returning({ id: projectTokens.id });
+
+      if (updated.length === 0) {
+        throw new MaisterError(
+          "PRECONDITION",
+          "token was revoked concurrently; no fields were changed",
+        );
+      }
+
+      for (const field of changed) {
+        const { before, after } = beforeAfterFor(
+          field,
+          storedFields,
+          effective,
+        );
+
+        await recordTokenLifecycleEvent(
+          { token: stored, event: field, actor, before, after },
+          tx,
+        );
+      }
+
+      return { outcome: "updated", changed };
     },
-    "api token updated",
   );
+
+  if (result.outcome === "not-found") return result;
+
+  if (result.outcome === "updated") {
+    log.info(
+      {
+        tokenId: args.tokenId,
+        actorUserId: actor.userId,
+        surface: args.surface,
+        changed: result.changed,
+      },
+      "api token updated",
+    );
+  }
 
   return {
-    outcome: "updated",
+    ...result,
     token: (await getTokenListItem(args.tokenId, d)) ?? undefined,
-    changed,
   };
 }
 

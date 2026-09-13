@@ -13,7 +13,7 @@ import {
   type TokenActor,
 } from "@/lib/tokens/verify";
 import { recordTokenAudit, bumpTokenLastUsed } from "@/lib/tokens/audit";
-import { revokeToken } from "@/lib/tokens/revoke";
+import { revokeToken, SYSTEM_REVOKE_ACTOR } from "@/lib/tokens/revoke";
 import { listTokens, type TokenListItem } from "@/lib/tokens/list";
 import { tokenHasScope } from "@/lib/tokens/scopes";
 import {
@@ -221,7 +221,11 @@ describe("lib/tokens — integration (testcontainers)", () => {
       );
 
       // Revoke the token
-      await revokeToken({ tokenId: issued.tokenId, projectId }, db);
+      await revokeToken(
+        { tokenId: issued.tokenId, projectId },
+        SYSTEM_REVOKE_ACTOR,
+        db,
+      );
 
       await expect(verifyToken(issued.secret, db)).rejects.toThrow(
         TokenAuthError,
@@ -253,7 +257,11 @@ describe("lib/tokens — integration (testcontainers)", () => {
         db,
       );
 
-      await revokeToken({ tokenId: issued.tokenId, projectId }, db);
+      await revokeToken(
+        { tokenId: issued.tokenId, projectId },
+        SYSTEM_REVOKE_ACTOR,
+        db,
+      );
 
       try {
         await verifyToken(issued.secret, db);
@@ -577,6 +585,7 @@ describe("lib/tokens — integration (testcontainers)", () => {
 
       const result = await revokeToken(
         { tokenId: issued.tokenId, projectId },
+        SYSTEM_REVOKE_ACTOR,
         db,
       );
 
@@ -593,9 +602,14 @@ describe("lib/tokens — integration (testcontainers)", () => {
         db,
       );
 
-      await revokeToken({ tokenId: issued.tokenId, projectId }, db);
+      await revokeToken(
+        { tokenId: issued.tokenId, projectId },
+        SYSTEM_REVOKE_ACTOR,
+        db,
+      );
       const secondResult = await revokeToken(
         { tokenId: issued.tokenId, projectId },
+        SYSTEM_REVOKE_ACTOR,
         db,
       );
 
@@ -607,6 +621,7 @@ describe("lib/tokens — integration (testcontainers)", () => {
 
       const result = await revokeToken(
         { tokenId: unknownTokenId, projectId },
+        SYSTEM_REVOKE_ACTOR,
         db,
       );
 
@@ -637,6 +652,7 @@ describe("lib/tokens — integration (testcontainers)", () => {
       // Try to revoke with a different projectId
       const result = await revokeToken(
         { tokenId: issued.tokenId, projectId: projectId2 },
+        SYSTEM_REVOKE_ACTOR,
         db,
       );
 

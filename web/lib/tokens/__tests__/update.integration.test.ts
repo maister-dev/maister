@@ -13,7 +13,7 @@ import {
   revokeOrchestratorRunTokensForRun,
 } from "@/lib/agents/tokens";
 import { issueToken } from "@/lib/tokens/issue";
-import { revokeToken } from "@/lib/tokens/revoke";
+import { revokeToken, SYSTEM_REVOKE_ACTOR } from "@/lib/tokens/revoke";
 import { type TokenScope } from "@/lib/tokens/scopes";
 import { updateOwnerToken, updateProjectToken } from "@/lib/tokens/update";
 import { TokenAuthError, verifyToken } from "@/lib/tokens/verify";
@@ -320,7 +320,11 @@ describe("lib/tokens/update — integration (testcontainers)", () => {
   it("I8: a revoked token is refused PRECONDITION", async () => {
     const issued = await managedProjectToken();
 
-    await revokeToken({ tokenId: issued.tokenId, projectId }, db);
+    await revokeToken(
+      { tokenId: issued.tokenId, projectId },
+      SYSTEM_REVOKE_ACTOR,
+      db,
+    );
 
     const err = await updateProjectToken(
       { tokenId: issued.tokenId, projectId },
@@ -557,8 +561,8 @@ describe("lib/tokens/revoke — lifecycle ledger", () => {
   it("writes exactly one revoked row however many times revoke is called", async () => {
     const issued = await managedProjectToken();
 
-    await revokeToken({ tokenId: issued.tokenId, projectId }, db, actor());
-    await revokeToken({ tokenId: issued.tokenId, projectId }, db, actor());
+    await revokeToken({ tokenId: issued.tokenId, projectId }, actor(), db);
+    await revokeToken({ tokenId: issued.tokenId, projectId }, actor(), db);
 
     const revoked = (await lifecycleRows(issued.tokenId)).filter(
       (r: any) => r.event === "revoked",
@@ -567,4 +571,62 @@ describe("lib/tokens/revoke — lifecycle ledger", () => {
     expect(revoked).toHaveLength(1);
     expect(revoked[0].actor_user_id).toBe(userId);
   });
+});
+
+// ADR-168 D4 accepts last-write-wins on FIELD VALUES, on the stated grounds
+// that "both edits produce lifecycle rows, so the sequence is reconstructible".
+// A reversal that writes NO ledger row breaks exactly that premise, so it is a
+// defect rather than the accepted residual. Found by adversarial review.
+describe("lib/tokens/update — concurrent edits", () => {
+  it("a rename racing a narrowing must not silently restore the wider scopes", async () => {
+    const issued = await managedProjectToken({
+      name: "Before",
+      scopes: ["tasks:read", "runs:launch", "runs:read"],
+    });
+
+    // A deterministic interleaving, not a race: a second connection holds the
+    // row while the service starts, so the ordering is forced rather than
+    // hoped for. Promise.all is NOT enough — both calls complete in whichever
+    // order the pool happens to give, and the bug hides.
+    const blocker = await testDatabase.pool.connect();
+
+    let renaming: Promise<unknown>;
+
+    try {
+      await blocker.query("BEGIN");
+      await blocker.query(
+        'SELECT 1 FROM "project_tokens" WHERE "id" = $1 FOR UPDATE',
+        [issued.tokenId],
+      );
+
+      // Starts while the row is locked. Reading under FOR UPDATE, it must wait
+      // here; reading outside the lock it would take the pre-narrowing snapshot.
+      renaming = updateProjectToken(
+        { tokenId: issued.tokenId, projectId },
+        { name: "After" },
+        actor(),
+        db,
+      );
+
+      // Give the service a chance to reach its read before the narrowing lands.
+      await new Promise((resolve) => setTimeout(resolve, 150));
+
+      await blocker.query(
+        `UPDATE "project_tokens" SET "scopes" = $1 WHERE "id" = $2`,
+        [JSON.stringify(["tasks:read"]), issued.tokenId],
+      );
+      await blocker.query("COMMIT");
+    } finally {
+      blocker.release();
+    }
+
+    await renaming;
+
+    const row = await tokenRow(issued.tokenId);
+
+    expect(row.name).toBe("After");
+    // The rename omitted `scopes`, so it must preserve what the other writer
+    // committed — never resurrect the pre-narrowing set.
+    expect(row.scopes).toEqual(["tasks:read"]);
+  }, 30_000);
 });

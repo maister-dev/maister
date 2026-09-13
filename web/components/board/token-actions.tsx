@@ -6,11 +6,16 @@ import type { ReactElement, ReactNode } from "react";
 
 import { CheckIcon, PencilSquareIcon } from "@heroicons/react/24/outline";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import { useTranslations } from "next-intl";
 
+import { useModalA11y } from "@/components/use-modal-a11y";
 import { readApiError } from "@/lib/api-error";
-import { TOKEN_SCOPE_VALUES, type TokenScope } from "@/types/token-scopes";
+import {
+  EXACT_ONLY_TOKEN_SCOPES,
+  TOKEN_SCOPE_VALUES,
+  type TokenScope,
+} from "@/types/token-scopes";
 
 // ADR-145 D10/D12: the four attempt-bound evaluator judge scopes are minted
 // ONLY on a judge attempt's ephemeral agent token (EVALUATION_JUDGE_TOKEN_SCOPES
@@ -111,63 +116,8 @@ function AccessibleModal({
   footer: ReactNode;
 }): ReactElement {
   const dialogRef = useRef<HTMLDivElement>(null);
-  const restoreFocusRef = useRef<HTMLElement | null>(null);
-  const onCloseRef = useRef(onClose);
 
-  onCloseRef.current = onClose;
-
-  useEffect(() => {
-    restoreFocusRef.current = document.activeElement as HTMLElement | null;
-
-    const focusable = (): HTMLElement[] =>
-      dialogRef.current
-        ? Array.from(
-            dialogRef.current.querySelectorAll<HTMLElement>(
-              'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])',
-            ),
-          )
-        : [];
-
-    focusable()[0]?.focus();
-
-    const previousOverflow = document.body.style.overflow;
-
-    document.body.style.overflow = "hidden";
-
-    function onKeyDown(event: KeyboardEvent): void {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        onCloseRef.current();
-
-        return;
-      }
-
-      if (event.key !== "Tab") return;
-
-      const items = focusable();
-
-      if (items.length === 0) return;
-
-      const first = items[0];
-      const last = items[items.length - 1];
-
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    }
-
-    document.addEventListener("keydown", onKeyDown);
-
-    return () => {
-      document.removeEventListener("keydown", onKeyDown);
-      document.body.style.overflow = previousOverflow;
-      restoreFocusRef.current?.focus();
-    };
-  }, []);
+  useModalA11y(dialogRef, onClose);
 
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
@@ -339,18 +289,59 @@ function scopeText(labels: TokenLabels, scope: UserTokenScope): string {
   }
 }
 
+// `*` and the exact-only scopes are INDEPENDENT axes — the server keeps
+// `["*", "hitl:respond:human"]` deliberately, because the wildcard does not
+// imply the human grant. Folding them into one list made the picker unable to
+// express that pair: ticking the human scope dropped `*`, ticking `*` dropped
+// the human scope, and unticking the human scope from the valid pair emptied
+// the selection. Split the selection, toggle within the right axis, recombine.
+function splitScopeAxes(scopes: TokenScope[]): {
+  broad: TokenScope[];
+  exact: TokenScope[];
+} {
+  return {
+    broad: scopes.filter((s) => !EXACT_ONLY_TOKEN_SCOPES.has(s)),
+    exact: scopes.filter((s) => EXACT_ONLY_TOKEN_SCOPES.has(s)),
+  };
+}
+
+function toggleTokenScope(
+  scopes: TokenScope[],
+  scope: TokenScope,
+  opts: { fallbackToWildcardWhenEmpty: boolean },
+): TokenScope[] {
+  const { broad, exact } = splitScopeAxes(scopes);
+  let nextBroad = broad;
+  let nextExact = exact;
+
+  if (EXACT_ONLY_TOKEN_SCOPES.has(scope)) {
+    nextExact = exact.includes(scope)
+      ? exact.filter((s) => s !== scope)
+      : [...exact, scope];
+  } else if (scope === "*") {
+    nextBroad = broad.includes("*") ? [] : ["*"];
+  } else {
+    const withoutAll = broad.filter((s) => s !== "*");
+
+    nextBroad = withoutAll.includes(scope)
+      ? withoutAll.filter((s) => s !== scope)
+      : [...withoutAll, scope];
+  }
+
+  const next = [...nextBroad, ...nextExact];
+
+  if (next.length === 0 && opts.fallbackToWildcardWhenEmpty) return ["*"];
+
+  return next;
+}
+
 export function toggleScope(
   scopes: TokenScope[],
   scope: TokenScope,
 ): TokenScope[] {
-  if (scope === "*") return ["*"];
-
-  const current = scopes.filter((s) => s !== "*");
-  const next = current.includes(scope)
-    ? current.filter((s) => s !== scope)
-    : [...current, scope];
-
-  return next.length > 0 ? next : ["*"];
+  return toggleTokenScope(scopes, scope, {
+    fallbackToWildcardWhenEmpty: true,
+  });
 }
 
 // ADR-168 T5.3. Same toggle, ONE difference: an empty selection stays empty.
@@ -363,13 +354,9 @@ export function toggleScopeForEdit(
   scopes: TokenScope[],
   scope: TokenScope,
 ): TokenScope[] {
-  if (scope === "*") return scopes.includes("*") ? [] : ["*"];
-
-  const current = scopes.filter((s) => s !== "*");
-
-  return current.includes(scope)
-    ? current.filter((s) => s !== scope)
-    : [...current, scope];
+  return toggleTokenScope(scopes, scope, {
+    fallbackToWildcardWhenEmpty: false,
+  });
 }
 
 // ADR-168 D3, mirrored client-side: lib/tokens/lifecycle.ts is server-only and

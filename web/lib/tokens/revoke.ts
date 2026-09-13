@@ -17,9 +17,15 @@ type Db = any;
 
 export type RevokeOutcome = "revoked" | "already-revoked" | "not-found";
 
-// ADR-168: who revoked, for the lifecycle ledger. Optional so the existing
-// call shape stays valid; an absent actor records the revoke as `system`.
-const SYSTEM_ACTOR: TokenLifecycleActor = { userId: null, label: "system" };
+// ADR-168: who revoked, for the lifecycle ledger. REQUIRED, not defaulted —
+// an optional actor let both DELETE routes keep their old call shape and
+// silently record every UI revocation as `system`, losing the one fact the
+// ledger exists to capture. A required parameter makes the compiler name every
+// call site instead of a grep having to find them.
+export const SYSTEM_REVOKE_ACTOR: TokenLifecycleActor = {
+  userId: null,
+  label: "system",
+};
 
 /**
  * Revoke a token by setting revoked_at = now().
@@ -27,8 +33,8 @@ const SYSTEM_ACTOR: TokenLifecycleActor = { userId: null, label: "system" };
  */
 export async function revokeToken(
   input: { tokenId: string; projectId: string },
+  actor: TokenLifecycleActor,
   db?: Db,
-  actor: TokenLifecycleActor = SYSTEM_ACTOR,
 ): Promise<{ outcome: RevokeOutcome }> {
   const d = db ?? getDb();
 
@@ -96,8 +102,8 @@ export async function revokeToken(
  */
 export async function revokeOwnerToken(
   input: { tokenId: string; ownerUserId: string },
+  actor: TokenLifecycleActor,
   db?: Db,
-  actor: TokenLifecycleActor = SYSTEM_ACTOR,
 ): Promise<{ outcome: RevokeOutcome }> {
   const d = db ?? getDb();
 

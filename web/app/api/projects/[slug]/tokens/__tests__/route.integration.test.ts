@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import { eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { NextRequest } from "next/server";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -452,6 +453,47 @@ describe("PATCH /api/projects/[slug]/tokens/[tokenId]", () => {
 
     expect(posted.status).toBe(422);
     expect((await posted.json()).code).toBe("CONFIG");
+
+    clearSession();
+  });
+});
+
+// The service-level revoke test supplies an actor explicitly, so it cannot see
+// whether the ROUTE passes one. It did not: the parameter was optional and both
+// DELETE routes kept their old call shape, recording every UI revocation as
+// `system`. Asserted here, at the seam where the session user actually exists.
+describe("DELETE /api/projects/[slug]/tokens/[tokenId] — revoke attribution", () => {
+  it("records the acting admin on the lifecycle row, not system", async () => {
+    const slug = `tok-revoke-actor-${randomUUID().slice(0, 8)}`;
+    const { adminId } = await seedProject(slug);
+
+    asAdminSession(adminId);
+
+    const created = await (
+      await POST(makeRequest({ name: "CI" }), {
+        params: Promise.resolve({ slug }),
+      })
+    ).json();
+
+    const res = await DELETE_handler(
+      new NextRequest(
+        `http://localhost/api/projects/${slug}/tokens/${created.id}`,
+        { method: "DELETE" },
+      ),
+      { params: Promise.resolve({ slug, tokenId: created.id }) },
+    );
+
+    expect(res.status).toBe(204);
+
+    const rows = await db
+      .select()
+      .from(schema.tokenLifecycleEvents)
+      .where(eq(schema.tokenLifecycleEvents.token_id, created.id));
+    const revoked = rows.filter((r: any) => r.event === "revoked");
+
+    expect(revoked).toHaveLength(1);
+    expect(revoked[0].actor_user_id).toBe(adminId);
+    expect(revoked[0].actor_label).toBe(`user:${adminId}`);
 
     clearSession();
   });

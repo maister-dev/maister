@@ -157,10 +157,10 @@ export async function DELETE(
 
   try {
     const user = await requireActiveSession();
-    const { outcome } = await revokeOwnerToken({
-      tokenId,
-      ownerUserId: user.id,
-    });
+    const { outcome } = await revokeOwnerToken(
+      { tokenId, ownerUserId: user.id },
+      { userId: user.id, label: `user:${user.id}` },
+    );
 
     if (outcome === "not-found") {
       return NextResponse.json(

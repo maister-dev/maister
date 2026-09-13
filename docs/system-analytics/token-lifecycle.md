@@ -181,12 +181,14 @@ flowchart TD
   `token_kind='agent'` row and every row whose `name` matches
   `^(orchestrator-run|agent-run):` as non-managed — enforced by one exported
   helper with two call sites (I6, I7, I21).
-- A PATCH MUST execute the `project_tokens` UPDATE and every implied
-  `token_lifecycle_events` INSERT in ONE `db.transaction`, so a failure
-  discards both (I4, I5).
+- A PATCH MUST read the row `FOR UPDATE` and execute the `project_tokens`
+  UPDATE and every implied `token_lifecycle_events` INSERT inside THAT one
+  `db.transaction`, so the diff, the write and the ledger all see one version
+  and a failure discards all of it (I4, I5, I23).
 - The UPDATE MUST carry `isNull(revoked_at)` as a CAS predicate and MUST raise
   `MaisterError("PRECONDITION")` on a zero-row result rather than reporting
-  success (I8).
+  success — a backstop behind the row lock, kept so the write stays refusable
+  if a later refactor drops it (I8).
 - A patch whose resolved fields all equal the stored values MUST write no
   `token_lifecycle_events` row and MUST report `unchanged` (I3).
 - An empty resolved scope set MUST be refused `MaisterError("CONFIG")` in
@@ -215,6 +217,9 @@ flowchart TD
 - `token_lifecycle_events` MUST be append-only — never updated, never deleted
   except by the `project_tokens` cascade — and MUST NEVER carry `token_hash`,
   `prefix`, or the plaintext secret in `before` or `after`.
+- Every session-driven write MUST name its actor: `revokeToken` /
+  `revokeOwnerToken` take the actor as a REQUIRED argument, so a route cannot
+  fall back to `system` by omission (I24).
 - A committed edit MUST be in force on the next `/api/v1/ext` request with no
   cache invalidation step, because `verifyToken` re-reads `project_tokens` by
   `prefix` on every call.
@@ -248,9 +253,12 @@ flowchart TD
 - **Expired token given a new expiry** → allowed; the token verifies again. The
   ledger's `before` records the lapsed instant, so the revival is auditable.
 - **Two admins edit the same token concurrently** → no `MaisterError`. Last
-  write wins on field values, deliberately: there is no `If-Match` and no
-  version column. Both edits write ledger rows, so the sequence is
-  reconstructible after the fact.
+  write wins on the fields each writer actually SET, deliberately: there is no
+  `If-Match` and no version column. An OMITTED field is not part of that — the
+  row is read `FOR UPDATE` inside the same transaction that writes it, so a
+  patch that names only `name` preserves whatever scopes the other writer
+  committed instead of restoring its own stale snapshot. Every change a writer
+  makes has a ledger row, which is what makes the sequence reconstructible.
 - **Token issued before the lifecycle ledger existed** → no `issued` row, and
   none is synthesized. The trail starts at its migration; a fabricated
   provenance row would be worse than an absent one.

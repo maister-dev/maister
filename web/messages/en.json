@@ -2888,7 +2888,14 @@
         "runsCollect": "Collect child runs",
         "runsCancel": "Cancel child runs",
         "runsPromote": "Promote child runs",
-        "runsSync": "Sync & reopen runs"
+        "runsSync": "Sync & reopen runs",
+        "hitlRequest": "Ask a human a question",
+        "flowsRead": "Read the project's flows",
+        "runnersRead": "Read the available runners",
+        "runsRecover": "Recover a crashed run",
+        "memoryRead": "Read project memory",
+        "memoryWrite": "Write project memory",
+        "agentMemoryWrite": "Write the agent's own memory"
       }
     },
     "role": {

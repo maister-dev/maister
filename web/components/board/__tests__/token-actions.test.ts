@@ -57,3 +57,45 @@ describe("isManagedTokenRow — which rows may offer Edit", () => {
     );
   });
 });
+
+// `*` and the exact-only human scope are independent axes on the server —
+// normalizeTokenScopes keeps ["*", "hitl:respond:human"] because the wildcard
+// does not imply the human grant. The picker must be able to express that pair
+// in BOTH directions; folding them into one list could not. Found by
+// adversarial review.
+describe("token scope toggles — wildcard and exact-only are independent", () => {
+  it("edit mode: granting human HITL keeps the wildcard, and vice versa", () => {
+    expect(toggleScopeForEdit(["*"], "hitl:respond:human")).toEqual([
+      "*",
+      "hitl:respond:human",
+    ]);
+    expect(toggleScopeForEdit(["hitl:respond:human"], "*")).toEqual([
+      "*",
+      "hitl:respond:human",
+    ]);
+  });
+
+  it("edit mode: dropping one axis leaves the other standing", () => {
+    expect(
+      toggleScopeForEdit(["*", "hitl:respond:human"], "hitl:respond:human"),
+    ).toEqual(["*"]);
+    expect(toggleScopeForEdit(["*", "hitl:respond:human"], "*")).toEqual([
+      "hitl:respond:human",
+    ]);
+  });
+
+  it("edit mode: a named scope coexists with the human grant", () => {
+    expect(
+      toggleScopeForEdit(["tasks:read", "hitl:respond:human"], "flows:read"),
+    ).toEqual(["tasks:read", "flows:read", "hitl:respond:human"]);
+  });
+
+  it("create mode gains the same independence, keeping its empty fallback", () => {
+    expect(toggleScope(["*"], "hitl:respond:human")).toEqual([
+      "*",
+      "hitl:respond:human",
+    ]);
+    // Unticking the last remaining grant still falls back to the wildcard.
+    expect(toggleScope(["tasks:read"], "tasks:read")).toEqual(["*"]);
+  });
+});

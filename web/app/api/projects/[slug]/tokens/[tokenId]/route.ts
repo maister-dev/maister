@@ -151,7 +151,7 @@ export async function DELETE(
   const { slug, tokenId } = await params;
 
   try {
-    await requireActiveSession();
+    const user = await requireActiveSession();
     const db = getDb() as unknown as { select: any };
 
     const projectRows = await db
@@ -166,7 +166,10 @@ export async function DELETE(
 
     await requireProjectAction(project.id, "editSettings");
 
-    const { outcome } = await revokeToken({ tokenId, projectId: project.id });
+    const { outcome } = await revokeToken(
+      { tokenId, projectId: project.id },
+      { userId: user.id, label: `user:${user.id}` },
+    );
 
     if (outcome === "not-found") {
       return NextResponse.json(

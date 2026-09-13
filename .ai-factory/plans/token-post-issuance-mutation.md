@@ -359,6 +359,13 @@ Rules binding every test task:
 | I20 | `expiresAt: null` clears expiry; `expiresAt` absent preserves it (D5) | same file | integration |
 | I21 | a non-managed token NEVER appears in `token_lifecycle_events`, on any path (D11) | same file | integration |
 | I22 | an empty body (no field present) is refused 422 (D5) | route suites | integration |
+| I23 | a rename racing a narrowing preserves the committed scopes (read `FOR UPDATE` inside the writing tx) | `lib/tokens/__tests__/update.integration.test.ts` | integration |
+| I24 | a revoke through the DELETE route attributes the acting user, not `system` | `app/api/projects/[slug]/tokens/__tests__/route.integration.test.ts` | integration |
+
+> **I23/I24 added 2026-09-13** after adversarial review. Both are defects the
+> original matrix could not have caught: I23 because D8 was read as licensing
+> the stale-snapshot restore, and I24 because the service test supplied the
+> actor the production route omitted.
 
 ### D14. Deliberate carry-overs (flagged, not silent)
 

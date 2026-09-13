@@ -6,12 +6,15 @@ import type { ReactElement } from "react";
 import { CheckIcon, PencilSquareIcon } from "@heroicons/react/24/outline";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 
+import { EXACT_ONLY_TOKEN_SCOPES, TOKEN_SCOPE_ALL } from "@/types/token-scopes";
 import {
   isManagedTokenRow,
   toggleScopeForEdit,
+  USER_TOKEN_SCOPE_VALUES,
 } from "@/components/board/token-actions";
+import { useModalA11y } from "@/components/use-modal-a11y";
 
 type PersonalTokenDto = {
   id: string;
@@ -31,35 +34,33 @@ export type PersonalTokensPanelProps = {
   tokens: PersonalTokenDto[];
 };
 
-type ScopeOption = {
-  value: Exclude<TokenScope, "hitl:respond:human">;
-  labelKey: string;
-};
+type ScopeOption = { value: TokenScope; labelKey: string };
 
-const SCOPE_OPTIONS: ScopeOption[] = [
-  { value: "*", labelKey: "scopeLabels.all" },
-  { value: "hitl:inbox:read", labelKey: "scopeLabels.hitlInboxRead" },
-  { value: "tasks:read", labelKey: "scopeLabels.tasksRead" },
-  { value: "tasks:create", labelKey: "scopeLabels.tasksCreate" },
-  { value: "tasks:update", labelKey: "scopeLabels.tasksUpdate" },
-  { value: "runs:read", labelKey: "scopeLabels.runsRead" },
-  { value: "runs:launch", labelKey: "scopeLabels.runsLaunch" },
-  { value: "readiness:read", labelKey: "scopeLabels.readinessRead" },
-  { value: "hitl:read", labelKey: "scopeLabels.hitlRead" },
-  { value: "hitl:respond", labelKey: "scopeLabels.hitlRespond" },
-  { value: "comments:read", labelKey: "scopeLabels.commentsRead" },
-  { value: "comments:create", labelKey: "scopeLabels.commentsCreate" },
-  { value: "tasks:triage", labelKey: "scopeLabels.tasksTriage" },
-  { value: "relations:read", labelKey: "scopeLabels.relationsRead" },
-  { value: "relations:create", labelKey: "scopeLabels.relationsCreate" },
-  { value: "relations:delete", labelKey: "scopeLabels.relationsDelete" },
-  { value: "agents:trigger", labelKey: "scopeLabels.agentsTrigger" },
-  { value: "runs:delegate", labelKey: "scopeLabels.runsDelegate" },
-  { value: "runs:collect", labelKey: "scopeLabels.runsCollect" },
-  { value: "runs:cancel", labelKey: "scopeLabels.runsCancel" },
-  { value: "runs:promote", labelKey: "scopeLabels.runsPromote" },
-  { value: "runs:sync", labelKey: "scopeLabels.runsSync" },
-];
+// `tasks:read` -> `scopeLabels.tasksRead`, `agent_memory:write` ->
+// `scopeLabels.agentMemoryWrite`. Derived rather than mapped by hand so a new
+// scope cannot be added to the vocabulary and silently skipped by the picker.
+function scopeLabelKey(scope: TokenScope): string {
+  if (scope === TOKEN_SCOPE_ALL) return "scopeLabels.all";
+
+  const camel = scope
+    .split(":")
+    .flatMap((part) => part.split("_"))
+    .map((part, i) => (i === 0 ? part : part[0].toUpperCase() + part.slice(1)))
+    .join("");
+
+  return `scopeLabels.${camel}`;
+}
+
+// The picker is the human-manageable vocabulary: every scope a person may grant
+// MINUS the machine-only evaluator set (already excluded by
+// USER_TOKEN_SCOPE_VALUES) and minus the exact-only human scope, which this
+// surface grants through its own checkbox. Previously a hand-maintained list of
+// 22, it had drifted 8 scopes behind — including `flows:read` and
+// `runners:read`, the very grants ADR-168 exists to let an operator add after
+// issuance.
+const SCOPE_OPTIONS: ScopeOption[] = USER_TOKEN_SCOPE_VALUES.filter(
+  (scope) => !EXACT_ONLY_TOKEN_SCOPES.has(scope),
+).map((value) => ({ value, labelKey: scopeLabelKey(value) }));
 
 function formatDate(value: string | null, emptyLabel: string): string {
   if (value === null) return emptyLabel;
@@ -83,7 +84,9 @@ function tokenStatus(
 
 function toggleScope(
   selected: TokenScope[],
-  scope: Exclude<TokenScope, "hitl:respond:human">,
+  // The picker never offers the exact-only human scope — it has its own
+  // checkbox — so this stays the broad vocabulary.
+  scope: TokenScope,
 ): TokenScope[] {
   if (scope === "*") return ["*"];
 
@@ -114,58 +117,7 @@ function scopeLabel(
   t: ReturnType<typeof useTranslations<"account.personalTokens">>,
   scope: string,
 ): string {
-  switch (scope) {
-    case "*":
-      return t("scopeLabels.all");
-    case "tasks:create":
-      return t("scopeLabels.tasksCreate");
-    case "tasks:read":
-      return t("scopeLabels.tasksRead");
-    case "tasks:update":
-      return t("scopeLabels.tasksUpdate");
-    case "tasks:triage":
-      return t("scopeLabels.tasksTriage");
-    case "runs:launch":
-      return t("scopeLabels.runsLaunch");
-    case "runs:read":
-      return t("scopeLabels.runsRead");
-    case "readiness:read":
-      return t("scopeLabels.readinessRead");
-    case "gates:report":
-      return t("scopeLabels.gatesReport");
-    case "hitl:read":
-      return t("scopeLabels.hitlRead");
-    case "hitl:respond":
-      return t("scopeLabels.hitlRespond");
-    case "hitl:inbox:read":
-      return t("scopeLabels.hitlInboxRead");
-    case "hitl:respond:human":
-      return t("scopeLabels.hitlRespondHuman");
-    case "comments:read":
-      return t("scopeLabels.commentsRead");
-    case "comments:create":
-      return t("scopeLabels.commentsCreate");
-    case "relations:read":
-      return t("scopeLabels.relationsRead");
-    case "relations:create":
-      return t("scopeLabels.relationsCreate");
-    case "relations:delete":
-      return t("scopeLabels.relationsDelete");
-    case "agents:trigger":
-      return t("scopeLabels.agentsTrigger");
-    case "runs:delegate":
-      return t("scopeLabels.runsDelegate");
-    case "runs:collect":
-      return t("scopeLabels.runsCollect");
-    case "runs:cancel":
-      return t("scopeLabels.runsCancel");
-    case "runs:promote":
-      return t("scopeLabels.runsPromote");
-    case "runs:sync":
-      return t("scopeLabels.runsSync");
-    default:
-      return scope;
-  }
+  return t(scopeLabelKey(scope as TokenScope));
 }
 
 function scopesText(
@@ -197,6 +149,13 @@ export function PersonalTokensPanel({
   const [editHumanHitl, setEditHumanHitl] = useState(false);
   const [editExpiresAt, setEditExpiresAt] = useState("");
   const [savedId, setSavedId] = useState<string | null>(null);
+  const createDialogRef = useRef<HTMLDivElement>(null);
+  const editDialogRef = useRef<HTMLDivElement>(null);
+
+  // Both dialogs carried aria-modal="true" and nothing else, so the row's
+  // destructive Revoke button stayed in the tab order behind them.
+  useModalA11y(createDialogRef, closeCreate, createOpen);
+  useModalA11y(editDialogRef, closeEdit, editing !== null);
 
   async function createToken(): Promise<void> {
     setBusy(true);
@@ -480,6 +439,7 @@ export function PersonalTokensPanel({
 
       {createOpen ? (
         <div
+          ref={createDialogRef}
           aria-modal="true"
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4"
           role="dialog"
@@ -604,6 +564,7 @@ export function PersonalTokensPanel({
 
       {editing !== null ? (
         <div
+          ref={editDialogRef}
           aria-modal="true"
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4"
           role="dialog"
