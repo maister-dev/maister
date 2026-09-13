@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { createReadStream } from "node:fs";
 import { lstat, mkdir, open, readFile, readdir, stat } from "node:fs/promises";
 import path from "node:path";
 
@@ -27,7 +28,19 @@ import {
   inventoryLegacyRun,
   type LegacyAssociation,
 } from "./legacy-import/inventory";
-import { openImportManifestStore } from "./legacy-import/manifest-store";
+import {
+  openImportManifestStore,
+  readImportManifestRows,
+  type ManifestProofItemRow,
+} from "./legacy-import/manifest-store";
+import {
+  IMPORT_PROOF_VERSION,
+  reduceRunProofs,
+  type ItemOutcome,
+  type ProofRefusal,
+  type RunProof,
+  type RunRefusal,
+} from "./legacy-import/proof";
 
 type ImportSourceKind = "events" | "transcript" | "cost" | "runtime_objects";
 type LegacyLaneKind = ImportSourceKind | "scratch_session";
@@ -2089,11 +2102,410 @@ async function assertNoActiveLegacyWork(
   );
 }
 
+const VERIFY_FLAGS = COPY_FLAGS;
+
+function requireProofArguments(
+  argv: readonly string[],
+  command: "verify" | "finalize-proof",
+): { manifestDir: string; generation: number } {
+  const values = parseFlags(argv, VERIFY_FLAGS, command);
+  const manifestDir = requireManifestDir(values);
+  const generation = Number(values.get("--generation"));
+
+  if (!Number.isInteger(generation) || generation < 1) {
+    throw new Error(
+      "--generation is required: the generation the supervisor logged when it enabled this import",
+    );
+  }
+
+  return { manifestDir, generation };
+}
+
+async function digestFile(
+  absolutePath: string,
+): Promise<{ sizeBytes: number; sha256: string } | null> {
+  const observed = await stat(absolutePath).catch(() => null);
+
+  if (!observed?.isFile()) return null;
+
+  const hash = createHash("sha256");
+  let sizeBytes = 0;
+
+  for await (const chunk of createReadStream(absolutePath, {
+    highWaterMark: IMPORT_CHUNK_BYTES,
+  }) as AsyncIterable<Uint8Array>) {
+    hash.update(chunk);
+    sizeBytes += chunk.byteLength;
+  }
+
+  return { sizeBytes, sha256: hash.digest("hex") };
+}
+
+// What the row points at TODAY, in the canonical shape S4.4 wrote. A row that
+// was never repointed answers null here exactly like one that drifted, and both
+// are refusals — the lane cannot be proved by a row that does not name the
+// object whose bytes the lane is made of.
+async function readAssociatedObjectId(
+  client: Client,
+  association: { kind: "artifact" | "attachment"; rowId: string },
+): Promise<string | null> {
+  const rows =
+    association.kind === "artifact"
+      ? await client.query<{ objectId: string | null }>(
+          `SELECT CASE WHEN locator->>'kind' = 'execution-object'
+                THEN locator->>'objectId' END AS "objectId"
+           FROM artifact_instances WHERE id::text = $1`,
+          [association.rowId],
+        )
+      : await client.query<{ objectId: string | null }>(
+          `SELECT CASE WHEN storage_path IS NULL THEN value END AS "objectId"
+           FROM scratch_attachments WHERE id::text = $1`,
+          [association.rowId],
+        );
+
+  return rows.rows[0]?.objectId ?? null;
+}
+
+async function verifyManifestItem(input: {
+  client: Client;
+  maintenance: ImportMaintenanceClient;
+  item: ManifestProofItemRow;
+  objectId: string;
+  ownerSlug: string | null;
+  root: string;
+}): Promise<ProofRefusal | null> {
+  // The host streams the SEALED object back. A seal-time digest proves what
+  // arrived; only a readback proves what the host can still hand over.
+  const readback = await input.maintenance.readbackDigest(input.item.itemId);
+
+  if (readback.sizeBytes !== input.item.sizeBytes) return "verify_bytes_missing";
+  if (readback.sha256 !== input.item.sha256) return "verify_hash_mismatch";
+  if (!input.ownerSlug) return "verify_source_changed";
+
+  const runDirectory = runtimeRunDirectory({
+    root: input.root,
+    ownerSlug: input.ownerSlug,
+    runId: input.item.runId,
+  });
+  const absolutePath = path.resolve(runDirectory, input.item.relativePath);
+
+  if (!absolutePath.startsWith(`${runDirectory}${path.sep}`))
+    return "verify_source_changed";
+
+  // D9 step 9 re-checks the freeze: a proof is worth nothing if the source it
+  // was compared against moved while the import was running.
+  const source = await digestFile(absolutePath);
+
+  if (
+    !source ||
+    source.sizeBytes !== input.item.sizeBytes ||
+    source.sha256 !== input.item.sha256
+  )
+    return "verify_source_changed";
+
+  const association = parseAssociationKey(input.item.associationKey);
+
+  if (!association) return null;
+
+  return (await readAssociatedObjectId(input.client, association)) ===
+    input.objectId
+    ? null
+    : "verify_association_drifted";
+}
+
+async function verifyScratchShape(input: {
+  client: Client;
+  stage: DataPlaneStage;
+  runIds: readonly string[];
+  items: readonly ManifestProofItemRow[];
+}): Promise<RunRefusal[]> {
+  // `additive` still carries the mirror 0134 has not dropped, so there is no
+  // post-migration shape to count yet. The check exists for the tree AFTER
+  // 0134, where a scratch attachment that quietly kept its legacy path is a
+  // hole the five-lane preflight would otherwise wave straight through.
+  if (input.stage === "additive") return [];
+
+  const refusals: RunRefusal[] = [];
+
+  for (const runId of input.runIds) {
+    const expected = input.items
+      .filter(
+        (item) =>
+          item.runId === runId &&
+          item.lane === "scratch_session" &&
+          item.associationKey.startsWith("attachment:"),
+      )
+      .map((item) => item.associationKey.slice("attachment:".length));
+
+    if (expected.length === 0) continue;
+
+    const canonical = await input.client.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM scratch_attachments
+       WHERE run_id = $1 AND id::text = ANY($2::text[])
+         AND storage_path IS NULL`,
+      [runId, expected],
+    );
+
+    if ((canonical.rows[0]?.n ?? 0) !== expected.length)
+      refusals.push({
+        runId,
+        lane: "scratch_session",
+        refusal: "verify_scratch_count_mismatch",
+      });
+  }
+
+  return refusals;
+}
+
+// D9 steps 8-9. Nothing before this proved preservation: `copy` proved a byte
+// arrived and `associate` proved a row was rewritten, but neither proves the
+// host can still hand back what the operator froze. Every sealed object is
+// streamed back and folded into a digest, every source is re-hashed against the
+// freeze, every rewritten row is read back — and one pure reducer decides.
+async function computeImportProof(input: {
+  client: Client;
+  importId: string;
+  root: string;
+  manifestDir: string;
+  generation: number;
+  stage: DataPlaneStage;
+}): Promise<RunProof[]> {
+  const manifest = readOperatorImportManifest({
+    directory: input.manifestDir,
+    importId: input.importId,
+  });
+  const frozen = readImportManifestRows({
+    file: path.join(input.manifestDir, `import-${input.importId}.sqlite`),
+    importId: input.importId,
+  });
+  const maintenance = createImportMaintenanceClient({
+    socketPath: path.join(input.manifestDir, "admission", "import.sock"),
+    importId: input.importId,
+    generation: input.generation,
+    manifestDigest: manifest.digest,
+  });
+  const progress = await maintenance.progress();
+  const sealed = new Map(
+    progress.items
+      .filter((item) => item.state === "sealed" && item.sealedObjectId)
+      .map((item) => [item.itemId, item.sealedObjectId as string]),
+  );
+  const runIds = [...new Set(frozen.lanes.map((lane) => lane.runId))].sort();
+  const owners = await runOwnerSlugs(input.client, runIds);
+  const items: ItemOutcome[] = [];
+
+  for (const item of frozen.items) {
+    const outcome: ItemOutcome = {
+      itemId: item.itemId,
+      runId: item.runId,
+      lane: item.lane,
+      sizeBytes: item.sizeBytes,
+      refusal: null,
+    };
+    // A manager-authoritative source never became an object: the manager owns
+    // that state already, and the lane accounts for it where it lives.
+    const objectId =
+      item.disposition === "copy" ? (sealed.get(item.itemId) ?? null) : null;
+
+    if (item.disposition !== "copy") {
+      items.push(outcome);
+      continue;
+    }
+    items.push(
+      objectId
+        ? {
+            ...outcome,
+            refusal: await verifyManifestItem({
+              client: input.client,
+              maintenance,
+              item,
+              objectId,
+              ownerSlug: owners.get(item.runId) ?? null,
+              root: input.root,
+            }),
+          }
+        : { ...outcome, refusal: "verify_item_unsealed" },
+    );
+  }
+
+  return reduceRunProofs({
+    runIds,
+    expectations: frozen.lanes,
+    items,
+    runRefusals: await verifyScratchShape({
+      client: input.client,
+      stage: input.stage,
+      runIds,
+      items: frozen.items,
+    }),
+  });
+}
+
+function logProof(input: {
+  event: string;
+  importId: string;
+  stage: DataPlaneStage;
+  proofs: readonly RunProof[];
+}): void {
+  log.info(
+    {
+      event: input.event,
+      importId: input.importId,
+      stage: input.stage,
+      proofVersion: IMPORT_PROOF_VERSION,
+      runCount: input.proofs.length,
+      unresolvedCount: input.proofs.filter((proof) => !proof.holds).length,
+      // Counts and bytes only. The proof is about preserved content and must
+      // never carry any of it, nor an operator source path.
+      lanes: input.proofs.flatMap((proof) =>
+        proof.lanes.map((lane) => ({
+          runId: proof.runId,
+          lane: lane.lane,
+          expectedItems: lane.expectedItems,
+          verifiedItems: lane.verifiedItems,
+          expectedBytes: lane.expectedBytes,
+          verifiedBytes: lane.verifiedBytes,
+        })),
+      ),
+    },
+    "legacy execution-data proof evaluated",
+  );
+}
+
+function refuseUnprovenRuns(proofs: readonly RunProof[]): void {
+  const failing = proofs.filter((proof) => !proof.holds);
+
+  if (failing.length === 0) return;
+
+  log.error(
+    {
+      event: "legacy_execution_data_proof_refused",
+      unresolvedCount: failing.length,
+      refusals: failing.flatMap((proof) => proof.refusals),
+    },
+    "legacy execution-data proof refused",
+  );
+
+  throw new Error(
+    `legacy import proof refused for ${failing
+      .map((proof) => `${proof.runId}:${proof.refusals.join(",")}`)
+      .join("; ")}`,
+  );
+}
+
+async function runVerifyCommand(input: {
+  client: Client;
+  importId: string;
+  root: string;
+  argv: readonly string[];
+}): Promise<void> {
+  const { manifestDir, generation } = requireProofArguments(
+    input.argv,
+    "verify",
+  );
+  const stage = await assertImportWindow(input.client, input.importId);
+
+  await assertNoActiveLegacyWork(input.client, input.importId, stage);
+
+  const proofs = await computeImportProof({
+    client: input.client,
+    importId: input.importId,
+    root: input.root,
+    manifestDir,
+    generation,
+    stage,
+  });
+
+  logProof({
+    event: "legacy_execution_data_verify_finished",
+    importId: input.importId,
+    stage,
+    proofs,
+  });
+  refuseUnprovenRuns(proofs);
+}
+
+async function runFinalizeProofCommand(input: {
+  client: Client;
+  importId: string;
+  root: string;
+  argv: readonly string[];
+}): Promise<void> {
+  const { manifestDir, generation } = requireProofArguments(
+    input.argv,
+    "finalize-proof",
+  );
+  const stage = await assertImportWindow(input.client, input.importId);
+
+  await assertNoActiveLegacyWork(input.client, input.importId, stage);
+
+  const proofs = await computeImportProof({
+    client: input.client,
+    importId: input.importId,
+    root: input.root,
+    manifestDir,
+    generation,
+    stage,
+  });
+
+  logProof({
+    event: "legacy_execution_data_finalize_evaluated",
+    importId: input.importId,
+    stage,
+    proofs,
+  });
+  // Nothing is written until every lane of every run holds. A `complete` record
+  // is the only thing unchanged 0135 reads, so writing one for a run whose
+  // proof failed would hand the cutover the exact false proof it exists to
+  // refuse.
+  refuseUnprovenRuns(proofs);
+
+  for (const proof of proofs) {
+    await input.client.query("BEGIN");
+    try {
+      // One transaction per run: no lane reaches `complete` without the
+      // verified count, byte position and lane fingerprint that justify it.
+      for (const lane of proof.lanes) {
+        await upsertImportState({
+          client: input.client,
+          runId: proof.runId,
+          sourceKind: lane.lane,
+          state: "complete",
+          fingerprint: lane.fingerprint,
+          lastSourcePosition: lane.position,
+          importedCount: lane.verifiedItems,
+          error: null,
+        });
+      }
+      await input.client.query("COMMIT");
+    } catch (error) {
+      await input.client.query("ROLLBACK");
+      throw error;
+    }
+  }
+  log.info(
+    {
+      event: "legacy_execution_data_proof_finalized",
+      importId: input.importId,
+      stage,
+      proofVersion: IMPORT_PROOF_VERSION,
+      runCount: proofs.length,
+    },
+    "legacy execution-data proof finalized",
+  );
+}
+
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   const command = argv[0] && !argv[0].startsWith("--") ? argv[0] : null;
 
-  const SUBCOMMANDS = ["inventory", "copy", "associate"] as const;
+  const SUBCOMMANDS = [
+    "inventory",
+    "copy",
+    "associate",
+    "verify",
+    "finalize-proof",
+  ] as const;
 
   if (command !== null && !SUBCOMMANDS.includes(command as never)) {
     throw new Error(
@@ -2118,6 +2530,16 @@ async function main(): Promise<void> {
     }
     if (command === "associate") {
       await runAssociateCommand({ client, importId, argv });
+
+      return;
+    }
+    if (command === "verify") {
+      await runVerifyCommand({ client, importId, root, argv });
+
+      return;
+    }
+    if (command === "finalize-proof") {
+      await runFinalizeProofCommand({ client, importId, root, argv });
 
       return;
     }

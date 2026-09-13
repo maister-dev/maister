@@ -1771,6 +1771,18 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
           "lib/execution-host/import-maintenance.ts#readOperatorImportManifest",
           "wrapper",
         ],
+        ["digestFile", "node:fs/promises.stat", "stat"],
+        ["digestFile", "node:fs.createReadStream", "read"],
+        [
+          "computeImportProof",
+          "lib/execution-host/import-maintenance.ts#readOperatorImportManifest",
+          "wrapper",
+        ],
+        [
+          "computeImportProof",
+          "scripts/legacy-import/manifest-store.ts#readImportManifestRows",
+          "wrapper",
+        ],
       ],
       {
         authority:
@@ -1817,6 +1829,7 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       [
         ["openImportManifestStore", "node:sqlite.DatabaseSync", "sqlite"],
         ["openImportManifestStore", "node:fs.chmodSync", "write"],
+        ["readImportManifestRows", "node:sqlite.DatabaseSync", "sqlite"],
       ],
       {
         authority:
@@ -2323,6 +2336,7 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
   ]),
   ...wrappers("scripts/legacy-import/manifest-store.ts", "operator-import", [
     ["openImportManifestStore", true],
+    ["readImportManifestRows", true],
   ]),
 ];
 

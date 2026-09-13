@@ -4,7 +4,8 @@ import type { ImportAdmissionRegistry } from "./import-admin";
 import type { ImportProgressLedger } from "./import-progress";
 
 import { createHash, randomUUID } from "node:crypto";
-import { chmod, mkdir, open, rm } from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import { chmod, mkdir, open, rm, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 import Fastify, { type FastifyInstance } from "fastify";
@@ -43,9 +44,11 @@ export type ImportSealReceipt = {
 
 type ImportListenerReason =
   | "import_item_unknown"
+  | "import_item_incomplete"
   | "import_chunk_conflict"
   | "import_chunk_too_large"
-  | "import_offset_mismatch";
+  | "import_offset_mismatch"
+  | "runtime_object_missing";
 
 function refuse(reason: ImportListenerReason, message?: string): never {
   throw new SupervisorError("PRECONDITION", message ?? reason, {
@@ -353,6 +356,34 @@ export async function startImportListener(input: {
       sizeBytes: sealed.sizeBytes,
       sha256: sealed.sha256,
     } satisfies ImportSealReceipt);
+  });
+
+  // S4.5 / D9 step 9: a lane is proved against the SEALED object — never the
+  // spool, and never the ledger's own record of it. This streams exactly the
+  // file the ordinary content route would serve, so the operator's hash is a
+  // statement about what the host can still hand back, not about what it once
+  // received.
+  app.get("/imports/:importId/items/:itemId/content", async (req, reply) => {
+    const params = req.params as { importId?: string; itemId?: string };
+
+    admit(params, req.headers);
+
+    const itemId = requireItemId(params.itemId);
+    const item = input.ledger.itemProgress(itemId);
+
+    if (!item) refuse("import_item_unknown");
+    if (item.state !== "sealed" || !item.sealedObjectId)
+      refuse("import_item_incomplete");
+
+    const objectPath = resolve(objectRoot, `${item.sealedObjectId}.1`);
+
+    if (!(await stat(objectPath).catch(() => null)))
+      refuse("runtime_object_missing");
+
+    return reply
+      .header("content-type", "application/octet-stream")
+      .header("x-maister-object-id", item.sealedObjectId)
+      .send(createReadStream(objectPath));
   });
 
   app.delete("/imports/:importId/admission", async (req, reply) => {

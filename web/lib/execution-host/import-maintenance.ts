@@ -74,8 +74,14 @@ export type ImportSealReceipt = {
   sha256: string;
 };
 
+export type ImportReadback = { sizeBytes: number; sha256: string };
+
 export type ImportMaintenanceClient = {
   progress(): Promise<ImportProgress>;
+  // S4.5: streams the sealed object back and folds it into a digest as it
+  // arrives. The whole point of the import protocol is that no history is ever
+  // held whole, and proving it must not be the one step that does.
+  readbackDigest(itemId: string): Promise<ImportReadback>;
   putChunk(input: {
     itemId: string;
     chunkIndex: number;
@@ -258,6 +264,63 @@ export function createImportMaintenanceClient(input: {
         "GET",
         `/imports/${input.importId}`,
       )) as ImportProgress;
+    },
+
+    async readbackDigest(itemId) {
+      return await new Promise<ImportReadback>((settle, fail) => {
+        const req = request(
+          {
+            socketPath: input.socketPath,
+            method: "GET",
+            path: `/imports/${input.importId}/items/${itemId}/content`,
+            headers: control(),
+          },
+          (res) => {
+            const status = res.statusCode ?? 0;
+
+            if (status >= 400) {
+              const chunks: Uint8Array[] = [];
+
+              res.on("data", (chunk: Uint8Array) => chunks.push(chunk));
+              res.on("end", () => {
+                let body: unknown = null;
+
+                try {
+                  body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+                } catch {
+                  body = null;
+                }
+                fail(supervisorErrorToMaister(status, body, "ACP_PROTOCOL"));
+              });
+
+              return;
+            }
+
+            const hash = createHash("sha256");
+            let sizeBytes = 0;
+
+            res.on("data", (chunk: Uint8Array) => {
+              hash.update(chunk);
+              sizeBytes += chunk.byteLength;
+            });
+            res.on("error", fail);
+            res.on("end", () =>
+              settle({ sizeBytes, sha256: hash.digest("hex") }),
+            );
+          },
+        );
+
+        req.on("error", (error) =>
+          fail(
+            new MaisterError(
+              "EXECUTOR_UNAVAILABLE",
+              `import maintenance socket is unreachable for ${input.importId}`,
+              { cause: error },
+            ),
+          ),
+        );
+        req.end();
+      });
     },
 
     async putChunk(chunk) {

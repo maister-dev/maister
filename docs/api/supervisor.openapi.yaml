@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: MAIster Supervisor HTTP API
-  version: "0.10.0"
+  version: "0.11.0"
   description: |
     HTTP + SSE surface exposed by `supervisor/` (the Node daemon that owns ACP
     sessions and spawns adapter binaries. Implemented adapters are
@@ -1551,6 +1551,55 @@ paths:
           description: |
             Admission refusals as above, plus `import_item_unknown`,
             `import_item_incomplete` or `import_seal_conflict`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+  /imports/{importId}/items/{itemId}/content:
+    get:
+      tags: [maintenance-import]
+      summary: Stream a sealed item back for the preservation proof (Implemented — S4.5, D9)
+      description: |
+        **Unix socket only — not on the TCP server declared above.** Streams the
+        bytes of the object this item was sealed into — the same file the
+        ordinary `GET /runtime-objects/{objectId}/content` route serves, read
+        from the host's own object root.
+
+        It exists so the operator can prove preservation by READING BACK rather
+        than by trusting the seal. A seal-time digest states what arrived; only
+        a readback states what the host can still hand over, and that is what
+        D9 step 9 requires before a lane may be recorded complete. The operator
+        folds the stream into a digest as it arrives and compares it to the
+        manifest it froze, so no history is held whole on either side.
+
+        An item that was never sealed is `import_item_incomplete`: a lane proved
+        against spooled bytes would attest to a file the ordinary content route
+        cannot serve. A sealed item whose object has left the object root is
+        `runtime_object_missing`.
+      x-transport: unix-socket
+      parameters:
+        - $ref: "#/components/parameters/ImportId"
+        - $ref: "#/components/parameters/ImportGeneration"
+        - $ref: "#/components/parameters/ImportManifest"
+        - name: itemId
+          in: path
+          required: true
+          schema: { type: string, pattern: "^[0-9a-f]{64}$" }
+      responses:
+        "200":
+          description: |
+            The sealed object's bytes; `X-MAIster-Object-Id` names the object the
+            stream was read from.
+          headers:
+            X-MAIster-Object-Id:
+              description: The runtime object this item was sealed into.
+              schema: { type: string }
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        "409":
+          description: |
+            Admission refusals as above, plus `import_item_unknown`,
+            `import_item_incomplete` or `runtime_object_missing`.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
