@@ -117,11 +117,12 @@ flowchart LR
 - **NAV-04:** `railSectionForPathname` MUST be total over the application's route prefixes and MUST map `/` to `home`.
 - **NAV-05:** Every inbound link to `/` MUST resolve to the surface its call site intends; a call site meaning "the portfolio" MUST target `/projects`. The inventory is read from the tree and compared against a declared table (`UT-NAV-05`), so an undeclared new call site fails.
 - **NAV-06:** Rail visibility MUST NEVER be the authorization boundary — every route the rail hides MUST still be refused server-side on its own.
+- **NAV-07:** The shared `(app)` header MUST fit a 390px viewport on every route without making the page scroll horizontally, and MUST keep the mobile rail toggle and every control's accessible name while it does — below `md` only the user's name may lose visible characters, by truncation, never by removal from the DOM.
 
 ## Edge cases
 
 - **EDGE-NAV-01:** No projects exist — the Desk renders the first-run onboarding checklist and empty-state card inside its own frame, and the scratch composer is absent until a project exists.
-- **EDGE-NAV-02:** Narrow viewports stack the Desk regions in the order Decisions, then Work, then Activity; no region is dropped and none makes the Desk's content area scroll horizontally — the work table scrolls inside its own container. Scoped to `<main>`: the shared header overflows a 390px viewport on every route in the app (`/work` measures 471px, `/inbox` 479px), which predates this domain and belongs to the chrome, not to the Desk.
+- **EDGE-NAV-02:** Narrow viewports stack the Desk regions in the order Decisions, then Work, then Activity; no region is dropped and none makes the PAGE scroll horizontally — the work table scrolls inside its own container. Asserted on the document: it was scoped to `<main>` only while the shared header still overflowed a 390px viewport on every route (`/work` measured 471px, `/inbox` 479px), a chrome defect now closed by `NAV-07`.
 
 ## Linked artifacts
 

@@ -1482,6 +1482,30 @@ are not yet evidence of a fix. **T8.6 stays open** until the same result holds o
 rebased tree; if it does, the correct outcome is "was environmental", written down with
 what changed, rather than a silent close.
 
+**T8.9 [x] — Make the shared header fit a phone (`NAV-07`).** Not an M51 defect —
+the `(app)` header overflowed a 390px viewport on EVERY route in the app, measured at
+471px on `/work` and 479px on `/inbox`, and had done so since before this milestone. It
+is recorded here because M51 is what made it visible and what pays for it: `E2E-EDGE-NAV-02`
+had to scope its no-horizontal-scroll assertion to `<main>` to avoid failing on chrome it
+did not own, and a carve-out in an expectation is a debt with a due date.
+
+**Why nothing shrank.** `gap-8` + `px-6` spend 80px before a single control renders, and
+flex items default to `min-width: auto` — so the two groups could not give even when the
+viewport demanded it. The fix is narrow-first gutters (`gap-2 px-3` below `md`),
+`min-w-0` on both groups, and `shrink-0` on everything that must keep its size.
+
+**What may be spent, and what may not.** Below `md` the LangSwitch drops its target
+locale ("EN · RU" → "EN") and the ThemeSwitch drops its word, keeping the icon — both
+carry an explicit `aria-label`, so the affordance shrinks and the accessible name does
+not. The user's name TRUNCATES with CSS and stays whole in the DOM: hiding it would strip
+the person's name out of the control's accessible name, which is the one thing this fix
+is not allowed to buy width with. The mobile rail toggle, the only route to navigation
+below `md`, is untouched.
+
+**Measured after, on the same four routes**: document 390px, nav 390px, viewport 390px —
+`E2E-NAV-07` asserts both halves (fit, and what survived), and `E2E-EDGE-NAV-02` is
+tightened from `<main>` back to the document, which is what `EDGE-NAV-02` always claimed.
+
 **T8.5 [x] — Backlog, PRODUCT_VIEW, and adjacent-defect notes.**
 `.ai-factory/ROADMAP.md` backlog §A1 (the human-facing digest now exists; the
 ADR-123 standup-digest agent stays reserved for a v1 narration).

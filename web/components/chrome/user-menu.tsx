@@ -23,14 +23,23 @@ export async function UserMenu({ user }: UserMenuProps): Promise<ReactElement> {
 
   return (
     <AutoCloseDetails className="group relative">
-      <summary className="inline-flex cursor-pointer list-none items-center gap-2 rounded-full border border-line bg-paper py-1.5 pl-1.5 pr-3 font-mono text-[11px] tracking-[0.04em] text-ink-2 transition-colors hover:border-mute group-open:border-amber-line group-open:bg-amber-soft [&::-webkit-details-marker]:hidden">
-        <span className="inline-flex h-[22px] w-[22px] items-center justify-center rounded-full border border-amber-line bg-amber-soft text-[10.5px] font-bold text-amber">
+      {/* The name is the ONE elastic thing in the header, by design: everything
+          else here is `shrink-0`, so when a narrow viewport runs out of room
+          this truncates instead of the page scrolling sideways
+          (`EDGE-NAV-02`). It stays in the DOM at every width — hiding it would
+          strip the user's name out of the control's accessible name, and the
+          visible text stays a prefix of that name rather than a different
+          string. */}
+      <summary className="inline-flex min-w-0 cursor-pointer list-none items-center gap-2 rounded-full border border-line bg-paper py-1.5 pl-1.5 pr-2.5 font-mono text-[11px] tracking-[0.04em] text-ink-2 transition-colors hover:border-mute group-open:border-amber-line group-open:bg-amber-soft md:pr-3 [&::-webkit-details-marker]:hidden">
+        <span className="inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full border border-amber-line bg-amber-soft text-[10.5px] font-bold text-amber">
           {user.initials}
         </span>
-        <span className="max-w-[180px] truncate">{user.name}</span>
+        <span className="max-w-[48px] truncate md:max-w-[180px]">
+          {user.name}
+        </span>
         <span
           aria-hidden="true"
-          className="text-mute transition-transform group-open:rotate-180"
+          className="shrink-0 text-mute transition-transform group-open:rotate-180"
         >
           ▾
         </span>

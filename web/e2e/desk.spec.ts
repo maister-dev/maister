@@ -156,23 +156,21 @@ test("E2E-EDGE-NAV-02 narrow keeps every region, stacked Decisions then Work the
   expect(boxes[0].top).toBeLessThan(boxes[1].top);
   expect(boxes[1].top).toBeLessThan(boxes[2].top);
 
-  // No Desk region scrolls the CONTENT AREA sideways — the 1180px work table
-  // scrolls inside its own container instead.
+  // Nothing scrolls the PAGE sideways — the 1180px work table scrolls inside
+  // its own container instead.
   //
-  // Scoped to `main`, not to the document: the shared header overflows a 390px
-  // viewport on every route in the app (`/work` and `/inbox` measure 471px and
-  // 479px on this same tree), which predates this milestone and belongs to the
-  // chrome. Asserting on the document would make this spec fail for a reason
-  // that has nothing to do with the Desk.
-  const contentOverflows = await page.evaluate(() => {
-    const main = document.querySelector("main");
+  // Asserted on the DOCUMENT, not on `main`. It was scoped to `main` while the
+  // shared header overflowed 390px on every route in the app (`/work` measured
+  // 471px, `/inbox` 479px); that was chrome, not the Desk, so the narrower
+  // scope kept this spec honest about what it owned. The header now fits — see
+  // `E2E-NAV-07` — so the assertion covers what `EDGE-NAV-02` actually claims.
+  const pageOverflows = await page.evaluate(
+    () =>
+      document.documentElement.scrollWidth >
+      document.documentElement.clientWidth + 1,
+  );
 
-    if (!main) return true;
-
-    return main.scrollWidth > main.clientWidth + 1;
-  });
-
-  expect(contentOverflows).toBe(false);
+  expect(pageOverflows).toBe(false);
 
   // And the table really is the thing scrolling, rather than nothing scrolling
   // because nothing rendered.
@@ -264,4 +262,79 @@ test("E2E-EDGE-NAV-01 the empty Desk reuses the first-run frame and drops the co
   } finally {
     await page.context().close();
   }
+});
+
+// The shared `(app)` header, measured rather than eyeballed (`NAV-07`).
+//
+// It overflowed a 390px viewport on EVERY route — `gap-8` + `px-6` spend 80px
+// before a single control renders, and flex items default to `min-width: auto`,
+// so nothing shrank. Four routes because the header is chrome: a fix that only
+// held on the Desk would be a fix for one page.
+const PRIMARY_NAV = 'nav[aria-label="Primary navigation"]';
+
+test("E2E-NAV-07 the header fits a 390px viewport on every route", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+
+  for (const route of ["/", "/work", "/inbox", "/projects"]) {
+    await page.goto(route);
+    await expect(page.locator(PRIMARY_NAV), route).toBeVisible();
+
+    const measured = await page.evaluate((selector) => {
+      const root = document.documentElement;
+      const header = document.querySelector(selector);
+
+      return {
+        document: root.scrollWidth,
+        client: root.clientWidth,
+        nav: header ? header.scrollWidth : -1,
+        viewport: window.innerWidth,
+      };
+    }, PRIMARY_NAV);
+
+    expect(measured.nav, `${route} nav`).toBeLessThanOrEqual(measured.viewport);
+    expect(measured.document, `${route} document`).toBeLessThanOrEqual(
+      measured.client + 1,
+    );
+  }
+});
+
+// The two things the narrow header must NOT trade away for that fit.
+test("E2E-NAV-07 narrow keeps the rail toggle and every accessible name", async ({
+  page,
+}) => {
+  await page.goto("/work");
+
+  const accountName = async (): Promise<string> =>
+    (
+      (await page
+        .locator(`${PRIMARY_NAV} summary span`)
+        .nth(1)
+        .textContent()) ?? ""
+    ).trim();
+
+  const wide = await accountName();
+
+  expect(wide.length).toBeGreaterThan(0);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/work");
+
+  // The only way to reach navigation below `md`.
+  await expect(page.getByTestId("mobile-rail-toggle")).toBeVisible();
+
+  // Each control is found BY its accessible name, so a name dropped along with
+  // the visible text fails here rather than silently degrading.
+  await expect(
+    page.getByRole("button", { name: /^Switch language to/u }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: /^Switch to (dark|light) mode$/u }),
+  ).toBeVisible();
+
+  // The user's name is TRUNCATED, not removed: the DOM text is what the
+  // control's accessible name is computed from, so it must read identically at
+  // both widths even though only part of it is painted at 390px.
+  expect(await accountName()).toBe(wide);
 });

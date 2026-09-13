@@ -48,6 +48,19 @@ Heroicons: a sun for light mode and a moon for dark mode. After WI-3 the
 breadcrumb no longer carries a supervisor status dot — supervisor status is
 shown once in the footer ([`status-bar.md`](status-bar.md)).
 
+**Narrow (Implemented — `NAV-07`).** The header is laid out narrow-first: `gap-2
+px-3` below `md`, widening to `gap-8 px-6` above it, with `min-w-0` on both
+groups and `shrink-0` on everything that must keep its size. Below `md` the
+language switch shows only the CURRENT locale (`EN`, not `EN · RU`) and the
+theme switch only its icon; both carry an explicit `aria-label`, so what
+shrinks is the affordance and never the accessible name. The user's name
+truncates by CSS and stays whole in the DOM — removing it would take the
+person's name out of the control's accessible name — and the crumb truncates in
+the same way at the widths where it is shown. The mobile rail trigger, the only
+route to navigation below `md`, is never dropped. This replaced a header that
+overflowed a 390px viewport on every route (`/work` 471px, `/inbox` 479px) and
+made the whole page scroll sideways.
+
 ## States
 
 Authenticated only (the `(app)` group redirects unauthenticated requests to

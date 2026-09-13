@@ -10,7 +10,7 @@ import clsx from "clsx";
 import { setLocale } from "@/app/actions/locale";
 
 const navTool = clsx(
-  "inline-flex items-center gap-1.5 rounded-lg border border-line",
+  "inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-line",
   "px-2.5 py-[7px] font-mono text-[11px] leading-none tracking-[0.04em]",
   "text-mute transition-colors cursor-pointer",
   "hover:border-mute hover:text-ink disabled:cursor-wait disabled:opacity-70",
@@ -42,7 +42,11 @@ export function LangSwitch({ className }: LangSwitchProps): ReactElement {
       onClick={handleToggle}
     >
       <b className="font-semibold text-ink">{current.toUpperCase()}</b>
-      <span className="text-mute">· {other.toUpperCase()}</span>
+      {/* The target locale is decoration below `md` — `aria-label` above names
+          the whole action, so narrow viewports lose 30px and no meaning. */}
+      <span className="hidden text-mute md:inline">
+        · {other.toUpperCase()}
+      </span>
     </button>
   );
 }
