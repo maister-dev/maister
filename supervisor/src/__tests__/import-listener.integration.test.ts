@@ -65,6 +65,14 @@ function call(input: {
   return new Promise((resolve, reject) => {
     const req = request(
       {
+        // One socket per call, destroyed with the response. Node's global agent
+        // keeps sockets alive, and a multi-megabyte body (the transfer-bound
+        // case) can still have a write in flight once the response has landed
+        // and ClientRequest has detached its error plumbing — on Linux that
+        // write completes EPIPE with no listener left, so every test passes and
+        // vitest still exits 1 on the uncaught exception. Nothing here reuses a
+        // connection, so pooling only buys that race.
+        agent: false,
         socketPath: listener.socketPath,
         method: input.method,
         path: input.path,
