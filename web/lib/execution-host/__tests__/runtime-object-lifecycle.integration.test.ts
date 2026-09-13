@@ -7,7 +7,6 @@ import type { ExecutionHost } from "@/lib/db/schema";
 import type { RealSupervisor } from "@/test-support/real-supervisor";
 
 import { createHash, randomUUID } from "node:crypto";
-import { mkdtemp } from "node:fs/promises";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
@@ -50,6 +49,7 @@ import {
   startRealSupervisor,
   useRealSupervisorUrl,
 } from "@/test-support/real-supervisor";
+import { mkdtempReal } from "@/test-support/worktree-test-root";
 
 let database: StartedPostgresTestDb;
 let db: Db;
@@ -65,9 +65,7 @@ beforeAll(async () => {
   });
   db = database.db as unknown as Db;
   supervisor = await startRealSupervisor({
-    runtimeRoot: await mkdtemp(
-      "/private/tmp/maister-ab-implementation/s31-host-",
-    ),
+    runtimeRoot: await mkdtempReal("s31-host-"),
   });
   restoreUrl = useRealSupervisorUrl(supervisor.url);
   resetRegistrarStateForTests();
