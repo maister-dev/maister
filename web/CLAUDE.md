@@ -229,6 +229,30 @@ suite that genuinely exercises supervisor behaviour should reach for
 globally is NOT the fix: it would disarm the guard for every suite, which is the
 hijack it exists to prevent.
 
+### Route suites: load the route in a hook, not in a test
+
+`await import("../route")` pulls a large module graph — 700-800 ms for the HITL
+respond and scratch-recover routes. Done lazily inside a per-test helper, that
+cost lands on whichever case ran first, inside vitest's 5 s default. On a loaded
+machine it blows the budget, and the damage does not stop at one red case: a
+timed-out test's request keeps running, so its later calls hit module-level
+spies whose `mockImplementation` now belongs to the NEXT case. That is how the
+respond suite produced `["queued","queued","delivered","delivered"]` for an
+assertion expecting two entries — a false failure in a test that was itself
+correct.
+
+Load the module once in `beforeAll` (its own budget, outside every test) and
+have helpers read the cached handle. After the hoist neither suite has a case
+over 100 ms.
+
+Prefer awaiting the real condition over polling for a side effect. `expect.poll`
+defaults to a 1 s budget, which is ample idle and too tight under contention;
+where a fake already offers a hook on the awaited call, signal a deferred from
+it instead. Note that `fake-execution-host`'s `runCommand` records a call before
+running its behaviour, so a signal sent from `setPromptBehavior` fires with the
+call already in `fake.calls` — and unlike an `onCall` hook it cannot leak, since
+`beforeEach` reinstalls the default behaviour.
+
 ### Suite baselines and known-flaky specs
 
 Compare failure **SETS**, never counts — two runs can tie while one spec traded

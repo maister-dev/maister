@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   localPackages as localPackagesTable,
@@ -393,8 +393,18 @@ function seedAssistantRun(
   return runId;
 }
 
+// Loading the route pulls in a large module graph — ~780 ms on an idle machine.
+// Charged lazily to whichever test called invokePost first, that sat inside a
+// 5 s test budget and timed out under machine contention. Load it once in a
+// hook, where the cost is outside every test budget.
+let routeModule: typeof import("../route");
+
+beforeAll(async () => {
+  routeModule = await import("../route");
+}, 60_000);
+
 async function invokePost(runId: string, body: unknown) {
-  const { POST } = await import("../route");
+  const { POST } = routeModule;
   const req = new NextRequest(
     new Request(`http://localhost/api/scratch-runs/${runId}/recover`, {
       method: "POST",

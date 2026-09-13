@@ -4,7 +4,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { NextRequest } from "next/server";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
 import { requireActiveSession } from "@/lib/authz";
 import {
@@ -647,8 +655,21 @@ function seedBudgetBreachRow(
   return { runId, hitlRequestId };
 }
 
+// Loading the route pulls in a large module graph — ~800 ms on an idle machine.
+// Done lazily inside the first test that called invokePost, that cost was
+// charged to a 5 s test budget, so under machine contention the first case
+// timed out. Worse, a timed-out test's POST keeps running: it later reached the
+// module-level spies, whose mockImplementation now belonged to the NEXT test,
+// which is how `order` collected ["queued","queued","delivered","delivered"].
+// Load it once in a hook instead, where the cost is outside every test budget.
+let routeModule: typeof import("../route");
+
+beforeAll(async () => {
+  routeModule = await import("../route");
+}, 60_000);
+
 async function invokePost(runId: string, hitlRequestId: string, body: unknown) {
-  const { POST } = await import("../route");
+  const { POST } = routeModule;
   const req = new NextRequest(
     new Request(
       `http://localhost/api/runs/${runId}/hitl/${hitlRequestId}/respond`,
@@ -1534,7 +1555,7 @@ describe("HITL respond route — error cases", () => {
   });
 
   it("malformed JSON body returns 400 CONFIG", async () => {
-    const { POST } = await import("../route");
+    const { POST } = routeModule;
     const { runId, hitlRequestId } = seedPermissionRow();
     const req = new NextRequest(
       new Request(
