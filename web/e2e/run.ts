@@ -130,11 +130,28 @@ export function installE2eShutdownSignals(
   };
 }
 
+/**
+ * The env the migrations AND the seeder run under.
+ *
+ * `MAISTER_WORKTREES_ROOT` belongs here as much as in the Playwright env: the
+ * seeder builds real git worktrees for the fixtures that need one, and the
+ * lifecycle service will only REMOVE a worktree that lives under the root
+ * `worktreesRoot()` reports. Passing it to Playwright alone left the seeder
+ * writing to a different place than the app would accept, so archive and drop
+ * answered `409 PRECONDITION "worktreePath is outside allowed root"` — which a
+ * spec waiting on a 200 can only observe as a timeout.
+ */
 export function buildE2eMigrationEnvironment(
   environment: NodeJS.ProcessEnv,
   databaseUrl: string,
+  worktreesRoot = createTestWorktreesRoot("e2e"),
 ): NodeJS.ProcessEnv {
-  return { ...environment, DB_URL: databaseUrl, NODE_ENV: "test" };
+  return {
+    ...environment,
+    DB_URL: databaseUrl,
+    NODE_ENV: "test",
+    MAISTER_WORKTREES_ROOT: worktreesRoot,
+  };
 }
 
 export function buildE2ePlaywrightEnvironment(
@@ -247,7 +264,13 @@ export async function runE2eInvocation(
 
     await prepareE2eDatabase(
       testDatabase.databaseUrl,
-      buildE2eMigrationEnvironment(environment, testDatabase.databaseUrl),
+      // The SAME root the Playwright env below gets — seeding somewhere the
+      // app cannot reach is the whole defect this argument closes.
+      buildE2eMigrationEnvironment(
+        environment,
+        testDatabase.databaseUrl,
+        worktreesRoot,
+      ),
     );
     throwIfE2eInvocationInterrupted(signal);
 

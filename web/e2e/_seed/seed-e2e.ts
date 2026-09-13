@@ -5507,7 +5507,22 @@ async function seedM27Fixture(
   };
   const repoPath = `/tmp/maister-e2e/${ids.project}`;
   const remotePath = `/tmp/maister-e2e/${ids.project}.origin.git`;
-  const worktreeRoot = path.resolve("e2e/.runtime/worktrees", ids.project);
+  // Under `MAISTER_WORKTREES_ROOT`, which `playwright.config.ts` sets before
+  // this seed runs — NOT a path inside the repo.
+  //
+  // The lifecycle service removes a worktree through a containment guard
+  // (`removeOwnedWorktree({ allowedRoot: worktreesRoot() })`), and
+  // `worktreesRoot()` reads that same variable. Seeding into
+  // `e2e/.runtime/worktrees` put every m27 worktree OUTSIDE the only root the
+  // guard accepts, so Archive and Drop answered `409 PRECONDITION
+  // "worktreePath is outside allowed root"` — a refusal the spec could only
+  // see as `waitForResponse` never matching its 200. This was the last
+  // `.runtime/worktrees` use in the tree; every other seed already reads the
+  // variable.
+  const worktreeRoot = path.join(
+    process.env.MAISTER_WORKTREES_ROOT ?? path.resolve("e2e/.runtime/worktrees"),
+    ids.project,
+  );
   const flowWorktreePath = path.join(worktreeRoot, "flow");
   const scratchWorktreePath = path.join(worktreeRoot, "scratch");
 
