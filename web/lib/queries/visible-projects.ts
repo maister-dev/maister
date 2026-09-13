@@ -23,11 +23,12 @@ import "server-only";
 
 import type { GlobalRole } from "@/lib/db/schema";
 
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
 import { projectMembers, projects } from "@/lib/db/schema";
+import { projectRolesForActions, type ProjectAction } from "@/lib/authz";
 
 // FIXME(any): dual drizzle-orm peer-dep variants — matches the handle the
 // observatory read models already thread through their own query helpers.
@@ -37,6 +38,20 @@ const log = pino({
   name: "queries-visible-projects",
   level: process.env.LOG_LEVEL ?? "info",
 });
+
+/**
+ * The four things a decision-queue entry can ask of a reader. The role floor is
+ * derived from THESE, so raising any one of them narrows the queue with no
+ * second edit — and `owner`, which ranks above `admin`, is never dropped.
+ */
+const DECISION_ACTIONS = [
+  "answerHitl",
+  "promoteRun",
+  "recoverRun",
+  "editTask",
+] as const satisfies readonly ProjectAction[];
+
+const ACTING_PROJECT_ROLES = projectRolesForActions(DECISION_ACTIONS);
 
 export interface VisibleProject {
   id: string;
@@ -72,6 +87,53 @@ export async function getVisibleProjects(
   );
 
   return visible;
+}
+
+/**
+ * The projects a reader can ACT in, not merely read (ADR-168 D7).
+ *
+ * `readBoard` is a `viewer` action; `answerHitl`, `promoteRun`, `recoverRun`
+ * and `editTask` — the four things a decision-queue entry asks for — all
+ * require `member`. Scoping the queue by VISIBILITY therefore handed viewers
+ * items they cannot resolve: a promotable run they cannot promote, a crashed
+ * run whose inline recover/discard answers 403. A badge that says "this needs
+ * you" while the action refuses is worse than no badge, and it propagates into
+ * notifications.
+ *
+ * A global `admin` acts everywhere by role, exactly as they see everywhere.
+ */
+export async function getActionableProjectIds(
+  userId: string,
+  globalRole: GlobalRole,
+  client: VisibleProjectsClient = getDb(),
+): Promise<string[]> {
+  if (globalRole === "admin") {
+    return getVisibleProjectIds(userId, globalRole, client);
+  }
+
+  const rows = await client
+    .select({ id: projects.id })
+    .from(projects)
+    .innerJoin(projectMembers, eq(projectMembers.projectId, projects.id))
+    .where(
+      and(
+        eq(projectMembers.userId, userId),
+        isNull(projects.archivedAt),
+        // The membership roles that clear `member` in PROJECT_ACTION_MIN_ROLE.
+        // Spelled as an allow-list: a fourth project role must be classified
+        // deliberately rather than inheriting act-everywhere by default.
+        inArray(projectMembers.role, ACTING_PROJECT_ROLES),
+      ),
+    );
+
+  const actionable = (rows as Array<{ id: string }>).map((row) => row.id);
+
+  log.debug(
+    { userId, globalRole, actionableCount: actionable.length },
+    "resolved actionable projects",
+  );
+
+  return actionable;
 }
 
 export async function getVisibleProjectIds(

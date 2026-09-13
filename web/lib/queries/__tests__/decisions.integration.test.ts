@@ -67,6 +67,9 @@ const fx = {
   secondHitlTask: randomUUID(),
   secondHitlRun: randomUUID(),
   secondHitlRequest: randomUUID(),
+  // A VIEWER on the project that holds all four decision kinds. They can read
+  // the board and can perform none of the four actions the queue asks for.
+  viewer: randomUUID(),
 };
 
 let taskNumber = 0;
@@ -168,6 +171,7 @@ beforeAll(async () => {
   for (const [userId, email, role] of [
     [fx.member, "dq-member@test.local", "member"],
     [fx.stranger, "dq-stranger@test.local", "member"],
+    [fx.viewer, "dq-viewer@test.local", "member"],
   ] as const) {
     await pool.query(
       `insert into users (id, email, role) values ($1, $2, $3)`,
@@ -187,6 +191,11 @@ beforeAll(async () => {
     `insert into project_members (id, project_id, user_id, role)
      values ($1, $2, $3, 'member')`,
     [randomUUID(), fx.secondProject, fx.member],
+  );
+  await pool.query(
+    `insert into project_members (id, project_id, user_id, role)
+     values ($1, $2, $3, 'viewer')`,
+    [randomUUID(), fx.project, fx.viewer],
   );
   await pool.query(
     `insert into project_members (id, project_id, user_id, role)
@@ -425,5 +434,42 @@ describe("IT-ATN-04 a relation-blocked task counts in neither counter", () => {
       actorType: "user",
       actorId: fx.member,
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// IT-ATN-14 (ADR-168 D7) — the queue is scoped by what the reader can DO.
+//
+// Every one of the four populations asks the reader to act: answer, promote,
+// recover, clear. All four require project `member`; `readBoard` is a `viewer`
+// action. Scoping by VISIBILITY handed a viewer promotable runs they cannot
+// promote and crashed runs whose inline recover/discard answers 403 — a badge
+// that says "this needs you" over an action that refuses, and it propagated
+// into notifications.
+// ---------------------------------------------------------------------------
+describe("IT-ATN-14 a project viewer gets no decisions they cannot resolve", () => {
+  it("returns an empty queue for a viewer of a project full of decisions", async () => {
+    const member = await getDecisionsQueue(fx.member, "member");
+    const viewer = await getDecisionsQueue(fx.viewer, "member");
+
+    // The discriminant: the SAME project, seeded with all four kinds, is
+    // non-empty for the member and empty for the viewer.
+    expect(
+      member.items.filter((item) => item.projectId === fx.project).length,
+    ).toBeGreaterThan(0);
+    expect(viewer.items).toEqual([]);
+    expect(viewer.count).toBe(0);
+  });
+
+  it("keeps the count and the list agreeing for a viewer too", async () => {
+    expect(await getDecisionsCount(fx.viewer, "member")).toBe(0);
+  });
+
+  it("still admits a GLOBAL admin, who acts everywhere by role", async () => {
+    // The guard must narrow by project role, not refuse anyone without a
+    // membership row — a global admin has none and reaches every project.
+    const admin = await getDecisionsQueue(fx.stranger, "admin");
+
+    expect(admin.items.length).toBeGreaterThan(0);
   });
 });

@@ -20,10 +20,7 @@ import type {
   CrashedDecisionItem,
   FlaggedDecisionItem,
 } from "@/lib/queries/decision-sources";
-import type {
-  CrossProjectHitlItem,
-  CrossProjectHitlScope,
-} from "@/lib/queries/portfolio";
+import type { CrossProjectHitlItem } from "@/lib/queries/portfolio";
 import type { WorkStage } from "@/lib/work/stage";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
@@ -39,7 +36,7 @@ import {
   listFlaggedForProjects,
 } from "@/lib/queries/decision-sources";
 import { getCrossProjectHitlInbox } from "@/lib/queries/portfolio";
-import { getVisibleProjectIds } from "@/lib/queries/visible-projects";
+import { getActionableProjectIds } from "@/lib/queries/visible-projects";
 import { getOpenRelationBlockers } from "@/lib/social/relations";
 
 const { projects } = schema;
@@ -96,14 +93,15 @@ export interface DecisionsQueue {
 }
 
 /**
- * Narrows to one project, intersected with visibility — never widens it.
- *
- * It EXTENDS the HITL source's scope rather than restating its field, so the
- * two cannot drift: every source of this queue has to honour the same scope,
- * and the one that resolves its own visibility set is the one that silently
- * ignored it.
+ * What the CALLER asks for. Distinct from `CrossProjectHitlScope`, which is the
+ * RESOLVED id set the sources receive: this narrows to one project, that says
+ * exactly which projects may contribute after visibility, actionability and
+ * this narrowing have all been applied.
  */
-export type DecisionsScope = CrossProjectHitlScope;
+export interface DecisionsScope {
+  /** Narrows to one project, intersected with reach — never widens it. */
+  projectId?: string;
+}
 
 const CRITICALITY_RANK = {
   low: 0,
@@ -181,11 +179,20 @@ export async function computeDecisionsQueue(
 ): Promise<DecisionsQueue> {
   const startedAt = Date.now();
   const client = getDb() as NodePgDatabase<typeof schema>;
-  const visibleIds = await getVisibleProjectIds(userId, globalRole, client);
+  // ACTIONABLE, not merely visible (ADR-168 D7). Every one of the four
+  // populations asks the reader to DO something — answer, promote, recover or
+  // clear — and all four require project `member`. A viewer was being handed
+  // items whose inline actions answer 403, which is the opposite of what the
+  // attention tone promises.
+  const actionableIds = await getActionableProjectIds(
+    userId,
+    globalRole,
+    client,
+  );
   const projectIds =
     scope.projectId === undefined
-      ? visibleIds
-      : visibleIds.filter((id) => id === scope.projectId);
+      ? actionableIds
+      : actionableIds.filter((id) => id === scope.projectId);
 
   if (projectIds.length === 0) return { items: [], count: 0 };
 
@@ -195,11 +202,11 @@ export async function computeDecisionsQueue(
         .select({ id: projects.id, slug: projects.slug, name: projects.name })
         .from(projects)
         .where(inArray(projects.id, projectIds)),
-      // The scope goes to ALL FOUR sources. This one resolves its own
-      // visibility set, so it takes the narrowing `scope` rather than
-      // `projectIds`; handing it nothing is what made a project-scoped count
-      // include every other visible project's HITL.
-      getCrossProjectHitlInbox(userId, globalRole, scope),
+      // The resolved set goes to ALL FOUR sources. This one would otherwise
+      // resolve its own — wider — visibility set, which is what made a
+      // project-scoped count include every other project's HITL and a viewer's
+      // count include projects they cannot act in.
+      getCrossProjectHitlInbox(userId, globalRole, { projectIds }),
       listPromotableForProjects(projectIds, { db: client }),
       listCrashedForProjects(projectIds, { db: client }),
       listFlaggedForProjects(projectIds, { db: client }),

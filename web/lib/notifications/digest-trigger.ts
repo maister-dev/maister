@@ -30,6 +30,7 @@ import {
   type DigestLabels,
 } from "@/lib/queries/digest";
 import { computeDecisionsQueue } from "@/lib/queries/decisions";
+import { emitDecisionsDelta } from "@/lib/notifications/attention-consumer";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 import { getDb } from "@/lib/db/client";
 import { isMaisterError } from "@/lib/errors";
@@ -102,6 +103,114 @@ async function digestCandidates(client: Db): Promise<DigestCandidate[]> {
         WHERE ns.owner_user_id = u.id
           AND ns.enabled = true
           AND ns.event_types ? 'attention.digest'
+      )
+  `);
+
+  return (result.rows ?? []) as DigestCandidate[];
+}
+
+export interface DeltaBackstopSummary {
+  candidates: number;
+  emitted: number;
+  errors: string[];
+}
+
+/**
+ * The `decisions` delta BACKSTOP (`NTF-08`), on the `system_sweep` beat beside
+ * the digest.
+ *
+ * ADR-172 D5 makes the domain-event consumer the delta trigger, and that
+ * assumed the taxonomy covers decision transitions. It does not: there is no
+ * `DOMAIN_EVENT_KINDS` member for a HITL opening or a run entering
+ * `NeedsInput`, and `run.review` is emitted only for runs WITH a parent
+ * (`emitDelegatedReviewIfChild` returns early on `!parentRunId`). So the two
+ * commonest ways a decision opens — an ACP permission request, and a top-level
+ * run reaching Review — wake the consumer never, and a reader could sit on an
+ * unnotified queue indefinitely.
+ *
+ * Re-deriving the count per tick closes that without a migration on the
+ * CHECK-constrained `domain_events.kind`, without new emitters in the run
+ * state machine's hot paths, and without a new clock. It uses the SAME
+ * `emitDecisionsDelta` the consumer uses, so a tick that follows a consumer
+ * pass over unchanged state emits nothing. It also doubles as the retry for a
+ * single reader the consumer skipped.
+ */
+export async function runDecisionsDeltaBackstop(
+  opts: { db?: Db } = {},
+): Promise<DeltaBackstopSummary> {
+  const client: Db = opts.db ?? getDb();
+  const summary: DeltaBackstopSummary = {
+    candidates: 0,
+    emitted: 0,
+    errors: [],
+  };
+
+  let readers: DigestCandidate[];
+
+  try {
+    // The same population the digest serves: an active account with an enabled
+    // intent. A reader who asked for no notifications is not woken to be told
+    // nothing changed.
+    readers = await deltaCandidates(client);
+  } catch (err) {
+    summary.errors.push(
+      `delta candidates failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+
+    return summary;
+  }
+
+  summary.candidates = readers.length;
+
+  for (const reader of readers) {
+    try {
+      const sent = await emitDecisionsDelta(
+        client,
+        reader.id,
+        reader.role,
+        // UNCACHED, as in the consumer: a long-lived sweep has no request to
+        // scope the React memo, and a cached queue would hand every reader in
+        // one pass the first reader's count.
+        async (userId, role) =>
+          (await computeDecisionsQueue(userId, role)).count,
+      );
+
+      if (sent) summary.emitted += 1;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+
+      summary.errors.push(`delta for ${reader.id} failed: ${message}`);
+      log.warn(
+        { userId: reader.id, err: message },
+        "delta backstop skipped reader",
+      );
+    }
+  }
+
+  log.info(summary, "[notifications.delta_backstop] summary");
+
+  return summary;
+}
+
+/**
+ * Readers with ANY enabled notification intent naming a decision delta. Unlike
+ * the digest's population this does not care about transport — the fan-out
+ * decides that — only that the reader asked to hear about decisions at all.
+ */
+async function deltaCandidates(client: Db): Promise<DigestCandidate[]> {
+  const result = await client.execute(sql`
+    SELECT u.id, u.role, NULL::timestamptz AS last_digest_at
+    FROM users u
+    WHERE u.account_status = 'active'
+      AND EXISTS (
+        SELECT 1 FROM notification_subscriptions ns
+        WHERE ns.owner_user_id = u.id
+          AND ns.enabled = true
+          AND (
+            ns.event_types ? 'attention.decision_opened'
+            OR ns.event_types ? 'attention.decision_closed'
+            OR ns.event_types ? 'attention.decisions_changed'
+          )
       )
   `);
 

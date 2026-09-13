@@ -17,11 +17,15 @@ import "server-only";
  */
 
 import type { WebhookErrorKind } from "@/lib/webhooks/backoff";
+import type { LookupAddress } from "node:dns";
+
+import { Agent } from "node:https";
 
 import pino from "pino";
 import webpush from "web-push";
 
 import { resolveVapidConfig } from "@/lib/notifications/vapid";
+import { resolveAllowedDestination } from "@/lib/webhooks/destination";
 
 const log = pino({
   name: "notifications-push",
@@ -93,6 +97,50 @@ const GONE_STATUSES = new Set([404, 410]);
 /** The 4xx that mean "later", not "no": request timeout and rate limiting. */
 const RETRYABLE_CLIENT_STATUSES = new Set([408, 429]);
 
+/**
+ * EGRESS. A push endpoint is a browser-supplied absolute URL that this server
+ * then fetches — the same trust shape as an outbound webhook destination, and
+ * it gets the same ADR-077 policy rather than a second, weaker one.
+ *
+ * Without this the feature is an SSRF primitive: any authenticated reader can
+ * register `https://127.0.0.1:<port>/…`, enable web_push, and have the manager
+ * issue authenticated-from-inside requests at private services. `web-push`
+ * calls `https.request` with no destination policy of its own.
+ *
+ * Two halves, because one is not enough:
+ *   - `assertAllowedDestinationUrl` at REGISTRATION refuses the obvious case at
+ *     the API edge (`/api/push/subscribe`), so a bad row never lands.
+ *   - `resolveAllowedDestination` + a pinned agent at SEND vets what the
+ *     hostname actually resolves to and then connects to exactly those
+ *     addresses, which is what closes DNS rebinding. Registration alone cannot:
+ *     the name can resolve differently by the time the drainer runs.
+ */
+function pinnedAgent(addresses: LookupAddress[]): Agent {
+  const vetted = addresses.map((a) => ({
+    address: a.address,
+    family: a.family,
+  }));
+
+  // `lookup` is overloaded on `options.all` — one address, or the whole set —
+  // and the two callback arities cannot be expressed in one signature. The cast
+  // is at the boundary of Node's own overload, not around the logic.
+  const lookup = ((
+    _hostname: string,
+    options: { all?: boolean } | number,
+    callback: (...args: unknown[]) => void,
+  ): void => {
+    if (typeof options === "object" && options.all === true) {
+      callback(null, vetted);
+
+      return;
+    }
+
+    callback(null, vetted[0].address, vetted[0].family);
+  }) as unknown as Agent["options"]["lookup"];
+
+  return new Agent({ lookup });
+}
+
 function timeoutMs(): number {
   const raw = process.env.MAISTER_WEBHOOK_TIMEOUT_MS;
   const parsed = raw ? Number.parseInt(raw, 10) : DEFAULT_TIMEOUT_MS;
@@ -124,6 +172,46 @@ export async function sendPush(
     };
   }
 
+  let endpointUrl: URL;
+
+  try {
+    endpointUrl = new URL(target.endpoint);
+  } catch {
+    return {
+      outcome: "terminal",
+      httpStatus: 0,
+      durationMs: 0,
+      detail: "push endpoint is not a valid URL",
+    };
+  }
+
+  if (endpointUrl.protocol !== "https:") {
+    return {
+      outcome: "terminal",
+      httpStatus: 0,
+      durationMs: 0,
+      detail: "push endpoint must be https",
+    };
+  }
+
+  const destination = await resolveAllowedDestination(endpointUrl.hostname);
+
+  if (!destination.ok) {
+    // TERMINAL, not retryable: a private or link-local destination does not
+    // become public by waiting, and retrying would keep probing it on the curve.
+    log.warn(
+      { pushSubscriptionId: target.id, reason: destination.reason },
+      "push endpoint refused by the egress policy",
+    );
+
+    return {
+      outcome: "terminal",
+      httpStatus: 0,
+      durationMs: 0,
+      detail: destination.reason ?? "blocked push destination",
+    };
+  }
+
   try {
     const result = await webpush.sendNotification(
       {
@@ -139,6 +227,12 @@ export async function sendPush(
         },
         timeout: timeoutMs(),
         TTL: 60 * 60,
+        // Connect to exactly the addresses just vetted. `web-push` honours an
+        // `https.Agent` here; anything else it warns about and ignores, so this
+        // must stay an Agent instance.
+        ...(destination.addresses
+          ? { agent: pinnedAgent(destination.addresses) }
+          : {}),
       },
     );
     const durationMs = Date.now() - startedAt;

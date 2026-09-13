@@ -27,7 +27,7 @@ import { getDb } from "@/lib/db/client";
 import { getUpdatesCount } from "@/lib/queries/updates";
 import { getVisibleProjectIds } from "@/lib/queries/visible-projects";
 import { isMaisterError } from "@/lib/errors";
-import { requireActiveSession } from "@/lib/authz";
+import { requireActiveSession, requireActiveUserById } from "@/lib/authz";
 import { isSseCursor, SSE_STREAM_HEADERS, sseFrame } from "@/lib/sse/frame";
 
 const log = pino({
@@ -162,8 +162,33 @@ async function scanChangedProjects(
   }));
 }
 
+type StreamAuthority = {
+  id: string;
+  role: Parameters<typeof getUpdatesCount>[1];
+};
+
+/**
+ * The reader's CURRENT authority, or `null` when the account may no longer
+ * stream. Re-read per poll rather than carried from the connect-time session,
+ * because an SSE connection outlives the decision that opened it: a role change
+ * or a deactivation has to reach a socket that is already open.
+ */
+async function currentAuthority(
+  userId: string,
+): Promise<StreamAuthority | null> {
+  try {
+    const live = await requireActiveUserById(userId);
+
+    return { id: live.id, role: live.role };
+  } catch {
+    // Any refusal — inactive, deleted, password-change-required — ends the
+    // stream. Failing closed is the only safe direction for an authority check.
+    return null;
+  }
+}
+
 export async function GET(req: NextRequest): Promise<Response> {
-  let user: { id: string; role: Parameters<typeof getUpdatesCount>[1] };
+  let user: StreamAuthority;
 
   try {
     const session = await requireActiveSession();
@@ -265,9 +290,30 @@ export async function GET(req: NextRequest): Promise<Response> {
         }
 
         while (!req.signal.aborted && !closed) {
-          // D6: RBAC is re-established every iteration, so a project that
-          // leaves the reader's visibility mid-stream stops producing frames
-          // without a reconnect.
+          // D6: authority is re-established every iteration — the ROLE as well
+          // as the memberships. Reusing the role captured at connect time meant
+          // a demoted admin kept the see-every-project bypass for as long as
+          // they held the socket open, and a deactivated account kept
+          // streaming; neither is bounded by the quiet cap while events arrive.
+          const live = await currentAuthority(user.id);
+
+          if (live === null) {
+            controller.enqueue(
+              encoder.encode(
+                sseFrame({
+                  event: "attention.stream_timeout",
+                  data: {
+                    type: "attention.stream_timeout",
+                    reason: "access_revoked",
+                  },
+                }),
+              ),
+            );
+            break;
+          }
+
+          user = live;
+
           const projectIds = await getVisibleProjectIds(user.id, user.role);
           const changed =
             projectIds.length === 0

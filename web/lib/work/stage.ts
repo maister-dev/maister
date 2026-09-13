@@ -38,15 +38,13 @@ export interface WorkProgress {
 
 export interface DeriveWorkStageInput {
   /**
-   * `taskStatus`, `taskStage` and `runKind` are part of the input signature
-   * ADR-169 D1 fixes normatively, and NO branch reads any of the three today —
-   * stated here so a reader does not go looking for the branch.
+   * `taskStatus` decides the NO-RUN case before triage does: a terminal task
+   * (`Done`/`Abandoned`) is settled whether or not it ever launched.
    *
-   * They are not redundant by accident. The run axis dominates whenever a run
-   * exists (`stageOf` returns from `STAGE_BY_RUN_STATUS`), and the task axis
-   * answers only the no-run case, where `triageStatus` is the discriminant. A
-   * future divergence — a task abandoned under a live run, a `scratch` run that
-   * must not read as `Executing` — lands as a branch here rather than as a new
+   * `taskStage` and `runKind` are read by no branch today. They are part of the
+   * signature ADR-169 D1 fixes normatively, and they stay because the run axis
+   * dominates whenever a run exists — a future divergence (a `scratch` run that
+   * must not read as `Executing`) lands as a branch here rather than as a new
    * parameter threaded through both call sites.
    */
   taskStatus: Task["status"];
@@ -96,10 +94,33 @@ const STAGE_BY_TRIAGE = {
   WorkStage
 >;
 
-function stageOf(input: DeriveWorkStageInput): WorkStage {
-  const { runStatus, workspaceRemoved, triageStatus } = input;
+// A task that is over is over, whether or not it ever launched a run.
+// `abandonUnlaunchedTasks` (the orchestrator cascade) sets `Abandoned` with
+// `notExists(runs for this task)` in its WHERE — so a run-LESS terminal task is
+// not a theoretical shape, it is the only shape that path produces. Reading
+// such a row through `triageStatus` alone rendered it as live backlog work
+// (`Triage`/`Held`/`Ready`) with working next-action links, and dropped it from
+// the `Abandoned` filter it belongs to.
+const STAGE_BY_TERMINAL_TASK_STATUS = {
+  Done: "Promoted",
+  Abandoned: "Abandoned",
+} as const satisfies Partial<Record<Task["status"], WorkStage>>;
 
-  if (runStatus === null) return STAGE_BY_TRIAGE[triageStatus ?? "untriaged"];
+function terminalTaskStage(status: Task["status"]): WorkStage | null {
+  return status === "Done" || status === "Abandoned"
+    ? STAGE_BY_TERMINAL_TASK_STATUS[status]
+    : null;
+}
+
+function stageOf(input: DeriveWorkStageInput): WorkStage {
+  const { runStatus, workspaceRemoved, triageStatus, taskStatus } = input;
+
+  if (runStatus === null) {
+    return (
+      terminalTaskStage(taskStatus) ??
+      STAGE_BY_TRIAGE[triageStatus ?? "untriaged"]
+    );
+  }
 
   // A user-removed workspace turns a parked Review/Crashed result into
   // historical evidence, so the task must not stay in a lane it cannot be

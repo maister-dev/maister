@@ -21,6 +21,7 @@ import { NextRequest } from "next/server";
 import { Pool } from "pg";
 import {
   afterAll,
+  afterEach,
   beforeAll,
   beforeEach,
   describe,
@@ -58,11 +59,37 @@ let session: { id: string; role: "member" | "admin" } | null = {
 };
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
-vi.mock("@/lib/authz", () => ({
+vi.mock("@/lib/authz", async (importActual) => ({
+  // Everything else stays REAL — notably `projectRolesForActions`, which the
+  // visible-projects reader derives the decision-queue role floor from. A
+  // hand-written stub here would be a second copy of the rank map, which is
+  // exactly the drift the derivation exists to prevent.
+  ...(await importActual<typeof import("@/lib/authz")>()),
   requireActiveSession: vi.fn(async () => {
     if (!session) throw new MaisterError("UNAUTHENTICATED", "no session");
 
     return session;
+  }),
+  // DB-BACKED on purpose. The route re-reads the reader's authority on every
+  // poll, and the whole point of that re-read is that the row can change while
+  // the socket is open — so a mock returning the connect-time session would
+  // assert nothing. This mirrors the real helper: role from the row, refusal
+  // when the account is not active.
+  requireActiveUserById: vi.fn(async (userId: string) => {
+    const rows = await pool.query(
+      `select id, role, account_status from users where id = $1`,
+      [userId],
+    );
+    const row = rows.rows[0] as
+      | { id: string; role: "member" | "admin"; account_status: string }
+      | undefined;
+
+    if (!row) throw new MaisterError("UNAUTHENTICATED", "User not found");
+    if (row.account_status !== "active") {
+      throw new MaisterError("ACCOUNT_INACTIVE", "account is not active");
+    }
+
+    return { id: row.id, role: row.role };
   }),
 }));
 
@@ -185,7 +212,8 @@ beforeAll(async () => {
     [fx.other, "as-other@test.local"],
   ] as const) {
     await pool.query(
-      `insert into users (id, email, role) values ($1, $2, 'member')`,
+      `insert into users (id, email, role, account_status)
+       values ($1, $2, 'member', 'active')`,
       [userId, email],
     );
   }
@@ -421,4 +449,102 @@ describe("IT-ATN-11 the stream is a read path", () => {
 
     expect(await runStateSnapshot()).toBe(before);
   }, 30_000);
+});
+
+// ---------------------------------------------------------------------------
+// IT-ATN-15 (ADR-170 D6) — an SSE connection outlives the decision that opened
+// it, so authority is re-read per poll rather than captured at connect.
+//
+// The loop used the role from the connect-time session. A global admin sees
+// every project BY ROLE, so demoting one mid-stream left the see-everything
+// bypass active for as long as they held the socket, and deactivating an
+// account did not close its stream at all. Neither is bounded by the quiet cap
+// while events keep arriving.
+// ---------------------------------------------------------------------------
+describe("IT-ATN-15 revocation reaches an already-open stream", () => {
+  // These two mutate the reader's own row; put it back so neither test can
+  // leak a demoted or disabled account into anything that runs after it.
+  afterEach(async () => {
+    await pool.query(
+      `update users set role = 'member', account_status = 'active' where id = $1`,
+      [fx.member],
+    );
+    session = { id: fx.member, role: "member" };
+  });
+
+  it("stops naming non-member projects after the admin is demoted", async () => {
+    await pool.query(`update users set role = 'admin' where id = $1`, [
+      fx.member,
+    ]);
+    session = { id: fx.member, role: "admin" };
+
+    const controller = new AbortController();
+    const response = await GET(streamRequest(controller));
+    // Collection has to be RUNNING while the mutations land: frames produced
+    // before a reader attaches are never observed, which would make the
+    // positive control below vacuous.
+    const collected = collect(response, controller, 12_000);
+
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    await addActivity(fx.foreignProject, fx.foreignTask, 5);
+    await new Promise((resolve) => setTimeout(resolve, 3500));
+
+    // Demote mid-stream. The connect-time session still says admin.
+    await pool.query(`update users set role = 'member' where id = $1`, [
+      fx.member,
+    ]);
+    const demotedAt = Date.now();
+
+    // Move BOTH projects. The member-visible one guarantees a tick actually
+    // fires after the demotion, so the negative assertion cannot pass by the
+    // stream simply having gone quiet.
+    await addActivity(fx.foreignProject, fx.foreignTask, 5);
+    await addActivity(fx.project, fx.task, 5);
+
+    const frames = await collected;
+    const ticks = frames.filter((frame) => frame.event === "attention.tick");
+    const named = ticks.flatMap(
+      (frame) => (frame.data?.projectIds as string[]) ?? [],
+    );
+
+    // Positive control: the admin window really did reach the project they are
+    // not a member of, so an empty result cannot pass this test by accident.
+    expect(named).toContain(fx.foreignProject);
+
+    const after = ticks.filter(
+      (frame) =>
+        new Date(String(frame.data?.occurredAt)).getTime() >= demotedAt,
+    );
+    const namedAfter = after.flatMap(
+      (frame) => (frame.data?.projectIds as string[]) ?? [],
+    );
+
+    expect(namedAfter).toContain(fx.project);
+    expect(namedAfter).not.toContain(fx.foreignProject);
+  }, 40_000);
+
+  it("closes the stream when the account stops being active", async () => {
+    await pool.query(
+      `update users set role = 'member', account_status = 'active' where id = $1`,
+      [fx.member],
+    );
+    session = { id: fx.member, role: "member" };
+
+    const controller = new AbortController();
+    const response = await GET(streamRequest(controller));
+
+    await new Promise((resolve) => setTimeout(resolve, 2500));
+    await pool.query(
+      `update users set account_status = 'disabled' where id = $1`,
+      [fx.member],
+    );
+
+    const frames = await collect(response, controller, 7000);
+    const closed = frames.find(
+      (frame) => frame.event === "attention.stream_timeout",
+    );
+
+    expect(closed).toBeDefined();
+    expect(closed?.data?.reason).toBe("access_revoked");
+  }, 40_000);
 });

@@ -29,7 +29,10 @@ import { runWorkspaceReconciliationSweep } from "@/lib/gc/workspace-reconciler";
 import { assertUpgradeMaintenanceAllows } from "@/lib/maintenance/upgrade-fence";
 import { runReconcileSweep } from "@/lib/reconcile";
 import { reconcileTerminalCostRollups } from "@/lib/runs/cost-reconcile-sweep";
-import { runDigestTrigger } from "@/lib/notifications/digest-trigger";
+import {
+  runDecisionsDeltaBackstop,
+  runDigestTrigger,
+} from "@/lib/notifications/digest-trigger";
 import { runSweepTick } from "@/lib/runs/keepalive-sweeper";
 import { runSyncRecoverySweep } from "@/lib/runs/sync-recovery";
 
@@ -387,6 +390,22 @@ export async function runSystemSweep(): Promise<SystemSweepSummary> {
 
   errors.push(...gc.errors);
   bundleErrors.push(...gc.bundleErrors);
+
+  try {
+    // Before the digest: the delta backstop is what actually makes a decision
+    // notification fire, because the domain-event taxonomy has no kind for a
+    // HITL opening or a top-level run reaching Review. Its per-reader failures
+    // are absorbed the same way the digest's are.
+    const deltas = await runDecisionsDeltaBackstop();
+
+    errors.push(...deltas.errors);
+  } catch (err) {
+    const message = errorMessage(err);
+
+    errors.push(`decisions delta backstop failed: ${message}`);
+    bundleErrors.push(`decisions delta backstop failed: ${message}`);
+    log.error({ err: message }, "system_sweep decisions delta backstop threw");
+  }
 
   try {
     digest = await runDigestTrigger();

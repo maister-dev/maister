@@ -287,6 +287,47 @@ export async function registerPushEndpoint(
   return row;
 }
 
+/**
+ * Register this browser AND record that its owner wants web push (`NTF-04`).
+ *
+ * Fan-out needs BOTH rows: `push_subscriptions` says where to send, and an
+ * enabled `notification_subscriptions` row for `web_push` says whether to send
+ * at all. The account panel has one "Enable" control, so creating only the
+ * endpoint left every UI opt-in silently undeliverable — the endpoint existed,
+ * the intent never did, and the `EXISTS` in the fanout query matched nothing.
+ *
+ * The intent names all four `attention.*` types, which is the ENTIRE permitted
+ * surface: ADR-172 D6 already caps triggers at decision deltas plus the digest,
+ * so this is not a broad default, it is the only one the decision allows.
+ *
+ * One transaction: a half-enabled opt-in is the state this function exists to
+ * make unrepresentable. Re-enabling is idempotent — the endpoint upserts on
+ * `(owner, endpoint)` and the intent on `(owner, transport)`.
+ */
+export async function enablePushForOwner(
+  ownerUserId: string,
+  input: PushEndpointInput,
+  db?: Db,
+): Promise<{ id: string }> {
+  const client: Db = db ?? getDb();
+
+  return client.transaction(async (tx: Db) => {
+    const registered = await registerPushEndpoint(ownerUserId, input, tx);
+
+    await upsertNotificationSubscription(
+      ownerUserId,
+      {
+        eventTypes: [...ATTENTION_NOTIFICATION_TYPES],
+        transport: "web_push",
+        enabled: true,
+      },
+      tx,
+    );
+
+    return registered;
+  });
+}
+
 export async function deletePushEndpoint(
   ownerUserId: string,
   endpoint: string,

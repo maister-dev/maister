@@ -95,6 +95,13 @@ vi.mock("@/lib/notifications/digest-trigger", () => ({
     skippedEmpty: 0,
     errors: [],
   })),
+  // The delta backstop shares the module and the bundle's error contract: its
+  // per-reader failures land in `errors`, never in `bundleErrors`.
+  runDecisionsDeltaBackstop: vi.fn(async () => ({
+    candidates: 0,
+    emitted: 0,
+    errors: [],
+  })),
 }));
 
 vi.mock("@/lib/gc/plain-agent-directory-gc", () => ({

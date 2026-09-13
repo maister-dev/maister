@@ -192,36 +192,73 @@ export function buildAttentionConsumer(
 
       for (const [userId, role] of readers) {
         try {
-          const current = await decisionsFor(userId, role);
-          const previous = await lastPublishedCount(client, userId);
-
-          // A reader this consumer has never published for is seeded silently at
-          // zero: their FIRST notification should be a real change, not a
-          // restatement of a backlog they already know about.
-          const baseline = previous ?? 0;
-          const type = deltaTypeFor(baseline, current);
-
-          if (type === null) continue;
-
-          await emitWebhookEvent({
-            db: client,
-            type,
-            ownerUserId: userId,
-            data: { decisions: current, previous: baseline },
-          });
+          await emitDecisionsDelta(client, userId, role, decisionsFor);
         } catch (err) {
+          // Swallowed, and THAT IS THE RETRY DECISION, not an oversight.
+          //
+          // `dispatchDomainEvents` advances the cursor on a clean return, so a
+          // swallowed failure used to lose the notification outright. It no
+          // longer does: the `system_sweep` delta backstop recomputes every
+          // reader who holds an enabled intent — which is exactly the
+          // population that could have received anything — so a failure here
+          // costs latency, not delivery.
+          //
+          // Rethrowing instead would stall the cursor for EVERY reader on one
+          // broken one, and a deployment with a single reader cannot even tell
+          // the two cases apart: "all readers failed" and "the only reader is
+          // poison" are the same observation.
           log.warn(
             {
               userId,
               code: isMaisterError(err) ? err.code : "UNKNOWN",
               err: err instanceof Error ? err.message : String(err),
             },
-            "attention consumer skipped reader (poison-safe — never throws)",
+            "attention consumer skipped reader — backstop will retry",
           );
         }
       }
     },
   };
+}
+
+/**
+ * One reader's delta, shared by the domain-event consumer and the
+ * `system_sweep` backstop so there is exactly one definition of "the count
+ * moved, tell them" (ADR-172 D5/D6).
+ *
+ * Idempotent by construction: the count is recomputed from current state and
+ * compared against the last value PUBLISHED for this reader, so a redelivery,
+ * a sweep landing on the heels of a consumer pass, and both running against the
+ * same unchanged state all emit nothing.
+ */
+export async function emitDecisionsDelta(
+  client: Db,
+  userId: string,
+  role: "admin" | "member" | "viewer",
+  decisionsFor: (
+    userId: string,
+    role: "admin" | "member" | "viewer",
+  ) => Promise<number>,
+): Promise<boolean> {
+  const current = await decisionsFor(userId, role);
+  const previous = await lastPublishedCount(client, userId);
+
+  // A reader this consumer has never published for is seeded at zero, so their
+  // first notification describes a real change rather than a backlog they
+  // already know about.
+  const baseline = previous ?? 0;
+  const type = deltaTypeFor(baseline, current);
+
+  if (type === null) return false;
+
+  await emitWebhookEvent({
+    db: client,
+    type,
+    ownerUserId: userId,
+    data: { decisions: current, previous: baseline },
+  });
+
+  return true;
 }
 
 export const attentionNotificationsConsumer = buildAttentionConsumer();

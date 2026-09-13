@@ -1399,6 +1399,45 @@ assertions of a known gap rather than breakage — that gap needs an owner, not 
 deletion. The merge criterion is that no red is *unexplained*, and that none of them is
  M51's. Re-measure on the rebased tree, since the baseline moves with master.
 
+**T8.7 [x] — Close the adversarial-review findings.** A challenge review over the whole
+branch returned seven findings and all seven verified in source, including two classes
+the earlier passes missed entirely. They are remediated here rather than filed, because
+four of them make the feature unsafe or non-functional rather than merely imperfect:
+
+1. **Push delivery bypassed the ADR-077 egress policy.** A push endpoint is a
+   browser-supplied outbound URL and `web-push` calls `https.request` with no
+   destination policy, so an authenticated reader could point delivery at a private
+   HTTPS service. It now takes the same guard a webhook destination takes — refused at
+   registration, resolved and PINNED at send (`NTF-11`).
+2. **Opting in never enabled delivery.** Fan-out needs an endpoint AND an intent; the
+   account panel's single Enable control wrote only the endpoint, so every opt-in
+   through the product's one human entry point delivered nothing. The delivery suite
+   had been inserting the missing intent by hand, which is what hid it (`NTF-12`).
+3. **The delta trigger could not fire for the commonest decisions.** `DOMAIN_EVENT_KINDS`
+   has no kind for a HITL opening or a run entering `NeedsInput`, and `run.review` is
+   emitted only for runs with a parent — so the ADR-172 D5 consumer woke on neither of
+   the two ways a decision usually opens. A `system_sweep` backstop re-derives the count
+   per tick through the SAME delta function; chosen over new event kinds because those
+   need a migration on a CHECK-constrained column plus emitters in the run FSM's hot
+   paths (`NTF-08`).
+4. **An open stream kept connect-time authority.** Demoting a connected admin left the
+   see-every-project bypass live, and deactivating an account did not close its stream.
+   Authority is re-read per poll (`ATN-11`, `EDGE-ATN-06`).
+5. **The decision queue was scoped by visibility, not actionability.** All four
+   populations require project `member`; `readBoard` is a `viewer` action. Viewers were
+   being handed items whose inline actions answer 403 (`ATN-01`, `EDGE-ATN-05`).
+6. **Consumer failures were acknowledged, not retried.** Split by blast radius: one
+   reader is poison and is swallowed, all readers is an outage and throws
+   (`EDGE-NTF-05`).
+7. **A terminal task with no run read as live backlog.** `abandonUnlaunchedTasks`
+   produces exactly that shape, and `EDGE-STG-03` had documented the buggy rule as an
+   invariant (`STG-11`).
+
+Every fix carries a regression test, and the five that could be falsified were: reverting
+the fix fails the new test. The two that could not — a rollback assertion with no
+constraint to violate, and an unfalsifiable atomicity claim — were dropped rather than
+kept as tests that cannot fail.
+
 *Observation (2026-09-10, Checkpoint 5)*: the full integration suite ran **460 files /
 3950 tests, all green** — the eight quarantined failures included — and the three files
 pass in isolation as well. This is recorded, not celebrated: Phase 4 changed nothing in

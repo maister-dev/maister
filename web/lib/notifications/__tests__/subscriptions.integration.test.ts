@@ -21,6 +21,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import * as fullSchema from "@/lib/db/schema";
 import {
   deleteNotificationSubscription,
+  enablePushForOwner,
   listNotificationSubscriptions,
   registerPushEndpoint,
   countPushEndpoints,
@@ -328,5 +329,101 @@ describe("NTF-06 no signing material lives in these tables", () => {
 
     expect(names).toContain("signing_secret_ref");
     expect(names).not.toContain("signing_secret");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// IT-NTF-13 — opting in through the UI must actually enable delivery.
+//
+// Fan-out needs TWO rows: `push_subscriptions` says where to send, and an
+// enabled `notification_subscriptions` row for `web_push` says whether to send
+// at all. The account panel has a single "Enable" control which called only the
+// endpoint half, so every opt-in through the product's one human entry point
+// registered a browser and then delivered nothing — the `EXISTS` in the fanout
+// query matched no intent. The delivery suite hid it by inserting the intent by
+// hand.
+// ---------------------------------------------------------------------------
+describe("IT-NTF-13 enabling push creates the endpoint AND the intent", () => {
+  async function rows(ownerUserId: string) {
+    const endpoints = await db.execute(sql`
+      SELECT id FROM push_subscriptions WHERE owner_user_id = ${ownerUserId}
+    `);
+    const intents = await db.execute(sql`
+      SELECT event_types, enabled, transport
+      FROM notification_subscriptions
+      WHERE owner_user_id = ${ownerUserId}
+    `);
+
+    return { endpoints: endpoints.rows, intents: intents.rows };
+  }
+
+  it("writes both halves, so a fresh opt-in is deliverable", async () => {
+    const owner = await seedUser();
+
+    await enablePushForOwner(
+      owner,
+      {
+        endpoint: `https://push.example.com/${randomUUID()}`,
+        p256dh: "k",
+        auth: "a",
+        expirationTime: null,
+      },
+      db,
+    );
+
+    const { endpoints, intents } = await rows(owner);
+
+    expect(endpoints).toHaveLength(1);
+    // The half that was missing. Without it the endpoint is unreachable.
+    expect(intents).toHaveLength(1);
+    expect((intents[0] as { transport: string }).transport).toBe("web_push");
+    expect((intents[0] as { enabled: boolean }).enabled).toBe(true);
+  });
+
+  it("subscribes to every attention type ADR-172 D6 permits, and no more", async () => {
+    const owner = await seedUser();
+
+    await enablePushForOwner(
+      owner,
+      {
+        endpoint: `https://push.example.com/${randomUUID()}`,
+        p256dh: "k",
+        auth: "a",
+        expirationTime: null,
+      },
+      db,
+    );
+
+    const { intents } = await rows(owner);
+    const types = (intents[0] as { event_types: string[] }).event_types;
+
+    expect([...types].sort()).toEqual([
+      "attention.decision_closed",
+      "attention.decision_opened",
+      "attention.decisions_changed",
+      "attention.digest",
+    ]);
+  });
+
+  it("is idempotent — a second browser adds an endpoint, not a second intent", async () => {
+    const owner = await seedUser();
+
+    for (const suffix of ["a", "b"]) {
+      await enablePushForOwner(
+        owner,
+        {
+          endpoint: `https://push.example.com/${owner}-${suffix}`,
+          p256dh: "k",
+          auth: "a",
+          expirationTime: null,
+        },
+        db,
+      );
+    }
+
+    const { endpoints, intents } = await rows(owner);
+
+    expect(endpoints).toHaveLength(2);
+    expect(intents).toHaveLength(1);
   });
 });

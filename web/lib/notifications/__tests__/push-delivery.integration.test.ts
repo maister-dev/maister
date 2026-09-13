@@ -185,6 +185,14 @@ async function attemptCount(deliveryId: string): Promise<number> {
   return (r.rows[0] as unknown as { n: number }).n;
 }
 
+// `push.example.invalid` never resolves — `.invalid` is reserved — so the
+// ADR-077 send-time egress check refuses it before the wire, exactly as it
+// would refuse a private address. Allow-listing the fake host is what the
+// operator escape hatch exists for and keeps the guard at full strength for
+// every other destination; blanket-disabling the check would delete the
+// protection this suite's sibling (`UT-NTF-11`) asserts.
+process.env.MAISTER_WEBHOOK_ALLOW_HOSTS = "push.example.invalid";
+
 function gone(status: number): Error {
   const err = new Error(
     `received unexpected response code ${status}`,

@@ -24,8 +24,9 @@ import { httpStatusForAuthz, requireActiveSession } from "@/lib/authz";
 import { isMaisterError } from "@/lib/errors";
 import {
   deletePushEndpoint,
-  registerPushEndpoint,
+  enablePushForOwner,
 } from "@/lib/notifications/subscriptions";
+import { assertAllowedDestinationUrl } from "@/lib/webhooks/destination";
 
 const bodySchema = z
   .object({
@@ -81,7 +82,27 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     );
   }
 
-  const { id } = await registerPushEndpoint(userId, {
+  try {
+    // Egress policy at the API edge (ADR-077), the same guard a webhook
+    // destination gets at creation. The send-time check in `push-sender.ts` is
+    // what closes DNS rebinding; this refuses the obvious case before a row
+    // with a private-address endpoint ever lands.
+    assertAllowedDestinationUrl(new URL(parsed.endpoint));
+  } catch (err) {
+    return NextResponse.json(
+      {
+        code: "CONFIG",
+        message: isMaisterError(err) ? err.message : "blocked push destination",
+      },
+      { status: 400 },
+    );
+  }
+
+  // Registering a browser and WANTING to be notified are one action from the
+  // reader's point of view — the panel has a single "Enable" control. Fan-out
+  // needs both rows, so the endpoint and the intent are created together or the
+  // opt-in silently delivers nothing.
+  const { id } = await enablePushForOwner(userId, {
     endpoint: parsed.endpoint,
     p256dh: parsed.keys.p256dh,
     auth: parsed.keys.auth,

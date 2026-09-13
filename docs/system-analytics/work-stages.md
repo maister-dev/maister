@@ -133,12 +133,13 @@ flowchart LR
 - **STG-08:** `/work` MUST issue a number of queries that is independent of the number of rows returned.
 - **STG-09:** `/work` MUST list tasks only from projects returned by `getVisibleProjectIds` for the requesting user.
 - **STG-10:** Every `WorkStage` member MUST have both an EN and an RU label, and the two MUST differ.
+- **STG-11:** A task whose own status is terminal (`Done`/`Abandoned`) MUST classify as settled (`Promoted`/`Abandoned`) even when it never launched a run — the task axis decides the no-run case before triage does.
 
 ## Edge cases
 
 - **EDGE-STG-01:** A task with several runs is classified from its **latest** run only; older runs contribute no stage. Earlier attempts remain visible in run history and the activity feed.
 - **EDGE-STG-02:** `workspaceRemoved` together with a `Review` or `Crashed` run yields `Ready`, matching the existing board rule that a user-removed workspace turns a parked result into history and returns the task to a relaunchable lane.
-- **EDGE-STG-03:** A task with no run at all is classified from `triage_status` alone (`Triage`, `Held` or `Ready`) and carries no progress and no `promotedKind`.
+- **EDGE-STG-03:** A task with no run is classified from its own STATUS first and from `triage_status` only if that status is still live. `abandonUnlaunchedTasks` sets `Abandoned` with `notExists(runs)` in its WHERE, so a run-less terminal task is not a corner case — it is the only shape that path produces, and reading it through triage alone rendered finished work as `Triage`/`Held`/`Ready` with working next-action links.
 
 ## Linked artifacts
 

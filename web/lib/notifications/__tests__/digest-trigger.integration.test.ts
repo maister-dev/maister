@@ -48,6 +48,9 @@ let runDigestTrigger: (opts?: {
   now?: Date;
 }) => Promise<DigestTriggerSummary>;
 let DIGEST_MIN_INTERVAL_MS: number;
+let runDecisionsDeltaBackstop: (opts?: {
+  db?: unknown;
+}) => Promise<{ candidates: number; emitted: number; errors: string[] }>;
 
 beforeAll(async () => {
   testDatabase = await startMainPostgresTestDb({
@@ -55,9 +58,8 @@ beforeAll(async () => {
   });
   db = testDatabase.db;
   // Imported AFTER the mock is registered.
-  ({ runDigestTrigger, DIGEST_MIN_INTERVAL_MS } = await import(
-    "@/lib/notifications/digest-trigger"
-  ));
+  ({ runDigestTrigger, DIGEST_MIN_INTERVAL_MS, runDecisionsDeltaBackstop } =
+    await import("@/lib/notifications/digest-trigger"));
 }, 180_000);
 
 afterAll(async () => {
@@ -165,6 +167,59 @@ async function digests(ownerUserId: string): Promise<string[]> {
   );
 }
 
+/**
+ * A `Crashed` run owing recover/discard — one of the four decision populations,
+ * and the cheapest to produce: no HITL row, no domain event, no ACP session.
+ * Emitting nothing is exactly what makes it the right fixture for the backstop.
+ */
+async function seedCrashedDecision(): Promise<void> {
+  const projectId = randomUUID();
+  const slug = `bk-${projectId.slice(0, 8)}`;
+  const flowId = randomUUID();
+  const taskId = randomUUID();
+  const runId = randomUUID();
+
+  await db.insert(schema.projects).values({
+    taskKey: `B${randomUUID().slice(0, 8)}`.toUpperCase(),
+    id: projectId,
+    slug,
+    name: slug,
+    repoPath: `/tmp/${slug}`,
+    maisterYamlPath: "/tmp/m.yaml",
+  });
+  await db.insert(schema.flows).values({
+    id: flowId,
+    projectId,
+    flowRefId: "aif",
+    source: "github.com/x/y",
+    version: "v1.0.0",
+    installedPath: "/tmp/flows/aif",
+    manifest: { schemaVersion: 1, name: "aif", nodes: [] },
+    schemaVersion: 1,
+  });
+  await db.insert(schema.tasks).values({
+    id: taskId,
+    projectId,
+    number: 1,
+    title: "crashed work",
+    prompt: "p",
+    flowId,
+    status: "InFlight",
+    stage: "Backlog",
+    triageStatus: "triaged",
+  });
+  await db.insert(schema.runs).values({
+    id: runId,
+    taskId,
+    projectId,
+    flowId,
+    status: "Crashed",
+    flowVersion: "v1.0.0",
+    currentStepId: "implement",
+    endedAt: new Date(),
+  });
+}
+
 describe("IT-NTF-08 the digest trigger", () => {
   it("emits one digest carrying the deterministic sentence", async () => {
     const userId = await seedReader({ wantsDigest: true });
@@ -265,5 +320,93 @@ describe("IT-NTF-08 the digest trigger", () => {
 
     expect(row.project_id).toBeNull();
     expect(row.run_id).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// IT-NTF-14 — the delta BACKSTOP, which is what actually makes a decision
+// notification fire.
+//
+// ADR-172 D5 made the domain-event consumer the delta trigger. That assumed the
+// taxonomy covers decision transitions, and it does not: `DOMAIN_EVENT_KINDS`
+// has no member for a HITL opening or a run entering `NeedsInput`, and
+// `run.review` is emitted only for runs WITH a parent
+// (`emitDelegatedReviewIfChild` returns early on `!parentRunId`). So the two
+// commonest ways a decision opens wake the consumer never.
+//
+// These cases therefore emit NO domain event at all — that is the point. If the
+// backstop is removed, nothing is emitted and every assertion below fails.
+// ---------------------------------------------------------------------------
+describe("IT-NTF-14 the decisions delta backstop", () => {
+  async function deltaEvents(ownerUserId: string) {
+    const rows = await db.execute(sql`
+      SELECT type, data FROM webhook_events
+      WHERE data->>'ownerUserId' = ${ownerUserId}
+        AND type LIKE 'attention.decision%'
+      ORDER BY occurred_at
+    `);
+
+    return rows.rows as Array<{ type: string; data: Record<string, unknown> }>;
+  }
+
+  async function subscribeToDeltas(userId: string): Promise<void> {
+    await db.insert(schema.notificationSubscriptions).values({
+      id: randomUUID(),
+      ownerUserId: userId,
+      transport: "web_push",
+      eventTypes: ["attention.decision_opened", "attention.decisions_changed"],
+      enabled: true,
+    });
+  }
+
+  it("emits a delta with no domain event anywhere in the picture", async () => {
+    const reader = await seedReader({ wantsDigest: false });
+
+    await subscribeToDeltas(reader);
+    await seedCrashedDecision();
+
+    const summary = await runDecisionsDeltaBackstop({ db });
+
+    expect(summary.errors).toEqual([]);
+    expect(summary.emitted).toBe(1);
+
+    const events = await deltaEvents(reader);
+
+    expect(events).toHaveLength(1);
+    expect(events[0].type).toBe("attention.decision_opened");
+    expect(events[0].data.decisions).toBe(1);
+  });
+
+  it("is idempotent — a second tick over unchanged state emits nothing", async () => {
+    const reader = await seedReader({ wantsDigest: false });
+
+    await subscribeToDeltas(reader);
+    await seedCrashedDecision();
+
+    await runDecisionsDeltaBackstop({ db });
+    const second = await runDecisionsDeltaBackstop({ db });
+
+    expect(second.emitted).toBe(0);
+    expect(await deltaEvents(reader)).toHaveLength(1);
+  });
+
+  it("leaves a reader who asked for nothing alone", async () => {
+    const reader = await seedReader({ wantsDigest: false });
+
+    await seedCrashedDecision();
+    await runDecisionsDeltaBackstop({ db });
+
+    expect(await deltaEvents(reader)).toEqual([]);
+  });
+
+  it("does not wake a reader whose intent names only the digest", async () => {
+    // The digest is the OTHER trigger and has its own cadence floor; a
+    // digest-only subscriber must not start receiving per-delta pushes.
+    const reader = await seedReader({ wantsDigest: true });
+
+    await seedCrashedDecision();
+    await runDecisionsDeltaBackstop({ db });
+
+    expect(await deltaEvents(reader)).toEqual([]);
   });
 });

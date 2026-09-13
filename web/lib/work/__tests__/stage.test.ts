@@ -297,3 +297,86 @@ describe("progress rides only an executing run", () => {
     ).toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+// UT-STG-12 — a terminal task with no run is settled, not backlog.
+//
+// `abandonUnlaunchedTasks` (the orchestrator cascade) sets `Abandoned` with
+// `notExists(runs for this task)` in its WHERE, so a run-LESS terminal task is
+// the ONLY shape that path produces. Classifying the no-run case from
+// `triageStatus` alone rendered those rows as live work with working
+// next-action links, and hid them from the `Abandoned` filter.
+// ---------------------------------------------------------------------------
+describe("UT-STG-12 terminal task status wins over triage when no run exists", () => {
+  const base = {
+    taskStage: "Backlog" as const,
+    runStatus: null,
+    runKind: null,
+    promotionState: null,
+    workspaceRemoved: false,
+    blockingRelationCount: 0,
+    progress: null,
+  };
+
+  it("classifies a cascade-abandoned, never-launched task as Abandoned", () => {
+    expect(
+      deriveWorkStage({
+        ...base,
+        taskStatus: "Abandoned",
+        triageStatus: "triaged",
+      }).stage,
+    ).toBe("Abandoned");
+  });
+
+  it("does not let a flagged triage state resurrect an abandoned task", () => {
+    // The dangerous pair: triage says Held, the task is over. Held is a
+    // decision-queue stage, so getting this wrong also invents an attention
+    // item for work nobody can act on.
+    expect(
+      deriveWorkStage({
+        ...base,
+        taskStatus: "Abandoned",
+        triageStatus: "flagged",
+      }).stage,
+    ).toBe("Abandoned");
+  });
+
+  it("classifies a run-less Done task as settled rather than Triage", () => {
+    expect(
+      deriveWorkStage({
+        ...base,
+        taskStatus: "Done",
+        triageStatus: null,
+      }).stage,
+    ).toBe("Promoted");
+  });
+
+  it("still reads a LIVE task from triage, which is the no-run default", () => {
+    for (const [triage, stage] of [
+      [null, "Triage"],
+      ["flagged", "Held"],
+      ["triaged", "Ready"],
+    ] as const) {
+      expect(
+        deriveWorkStage({
+          ...base,
+          taskStatus: "Backlog",
+          triageStatus: triage,
+        }).stage,
+      ).toBe(stage);
+    }
+  });
+
+  it("never lets a terminal task status override a live run", () => {
+    // The run axis still dominates when a run exists — an InFlight task whose
+    // run is Running is Executing, and a terminal task status cannot reach it.
+    expect(
+      deriveWorkStage({
+        ...base,
+        taskStatus: "Abandoned",
+        triageStatus: "triaged",
+        runStatus: "Running",
+      }).stage,
+    ).toBe("Executing");
+  });
+});

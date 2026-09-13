@@ -136,7 +136,7 @@ sequenceDiagram
 
 ## Expectations
 
-- **ATN-01:** `decisions` MUST come from one query covering respondable HITL, promotable runs, `Crashed` runs and triage-flagged tasks, and its count MUST equal the length of the list it labels.
+- **ATN-01:** `decisions` MUST come from one query covering respondable HITL, promotable runs, `Crashed` runs and triage-flagged tasks, scoped to the projects the reader can ACT in (all four populations require project `member`; `readBoard` does not), and its count MUST equal the length of the list it labels.
 - **ATN-02:** `updates` MUST subtract the inbox/activity overlap using `inbox_items.source_ref->>'activityId'`, so one mention counts exactly once. The same rule binds one table over: a `domain_events` kind with a `task_activity` twin MUST NOT be counted, which is what `ATTENTION_EVENT_KINDS` enforces.
 - **ATN-03:** With no `user_activity_cursors` row, `updates` MUST count a bounded 24-hour window, never all history.
 - **ATN-04:** A task blocked by a relation MUST count in neither `decisions` nor `updates`.
@@ -146,7 +146,7 @@ sequenceDiagram
 - **ATN-08:** A `decision_request` HITL row MUST NOT appear on any external surface.
 - **ATN-09:** The activity feed MUST NEVER expose a worktree path, a diff body, or a raw ACP frame.
 - **ATN-10:** A cursor advance MUST be monotonic and idempotent; a stale or out-of-order request MUST NOT move `seen_through` backwards, and a future timestamp MUST be refused `PRECONDITION`.
-- **ATN-11:** The attention stream MUST emit no frame referencing a project outside the reader's visibility, and MUST NEVER mutate persisted run state.
+- **ATN-11:** The attention stream MUST emit no frame referencing a project outside the reader's visibility, MUST re-read the reader's ROLE and account status on every poll rather than trusting the connect-time session, and MUST NEVER mutate persisted run state.
 - **ATN-12:** The digest MUST be deterministic — the same clock and the same rows MUST produce byte-identical output.
 
 ## Edge cases
@@ -155,6 +155,8 @@ sequenceDiagram
 - **EDGE-ATN-02:** Project membership gained or lost after the cursor was written — activity is filtered by **current** visibility and the cursor is never rewound, so a new member sees that project's activity from joining forward and a removed member stops seeing it immediately.
 - **EDGE-ATN-03:** A stale or out-of-order cursor POST is absorbed by the `GREATEST` upsert with no change; a `seen_through` later than `now()` is refused with `MaisterError("PRECONDITION")`.
 - **EDGE-ATN-04:** Reconnect with `Last-Event-ID` replays the tail from durable rows without duplicating already-delivered frames; an unparseable id is clamped to a full replay rather than an error.
+- **EDGE-ATN-05:** A project VIEWER MUST receive an empty decision queue for a project full of decisions: they can read the board and can perform none of the four actions the queue asks for, so an entry would be a badge over an action that answers 403. A global admin, who acts everywhere by role, MUST still receive them.
+- **EDGE-ATN-06:** Revocation MUST reach a stream that is already open. Demoting a connected admin ends the see-every-project bypass on the next poll, and an account that stops being active closes the stream with `attention.stream_timeout` / `access_revoked` — neither is bounded by the quiet cap while events keep arriving.
 
 ## Linked artifacts
 

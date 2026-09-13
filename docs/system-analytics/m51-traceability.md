@@ -35,6 +35,7 @@ what stops this matrix decaying into the historical aliases the Stage B matrix b
 | STG-08 | getWorkTable batched read model | T2.2, T3.1 | IT-STG-08 | Implemented |
 | STG-09 | getVisibleProjectIds | T2.1, T3.2, T3.4 | IT-STG-09 plus E2E-STG-09 | Implemented |
 | STG-10 | workStage i18n namespace, EN and RU | T1.2, T3.2 | UT-STG-10 | Implemented |
+| STG-11 | terminal task status wins with no run | T8.7 | UT-STG-12 | Implemented |
 | EDGE-STG-01 | latest-run selection in the read model | T3.1, T3.4 | IT-EDGE-STG-01 | Implemented |
 | EDGE-STG-02 | workspaceRemoved branch | T1.1 | UT-EDGE-STG-02 | Implemented |
 | EDGE-STG-03 | no-run triage branch | T1.1 | UT-EDGE-STG-03 | Implemented |
@@ -50,6 +51,8 @@ what stops this matrix decaying into the historical aliases the Stage B matrix b
 | ATN-10 | user_activity_cursors GREATEST upsert | T5.1, T5.3, T5.8 | IT-ATN-10 plus E2E-ATN-10 | Implemented |
 | ATN-11 | attention-stream AsyncAPI | T5.5, T5.6 | IT-ATN-11 | Implemented |
 | ATN-12 | digest read model determinism | T5.4 | UT-ATN-12 | Implemented |
+| EDGE-ATN-05 | viewer gets no unactionable decisions | T8.7 | IT-ATN-14 | Implemented |
+| EDGE-ATN-06 | revocation reaches an open stream | T8.7 | IT-ATN-15 | Implemented |
 | EDGE-ATN-01 | absent cursor row | T5.3, T5.8 | UT-EDGE-ATN-01 plus IT-ATN-03 | Implemented |
 | EDGE-ATN-02 | current-visibility filter, no rewind | T4.2 | IT-EDGE-ATN-02 | Implemented |
 | EDGE-ATN-03 | cursor POST clamp and PRECONDITION | T5.3 | IT-EDGE-ATN-03 | Implemented |
@@ -72,9 +75,12 @@ what stops this matrix decaying into the historical aliases the Stage B matrix b
 | NTF-08 | attention consumer trigger bound | T7.5, T7.7 | IT-NTF-08 plus UT-NTF-08 | Implemented |
 | NTF-09 | token scope sets | T4.5, T7.8 | UT-NTF-09 | Implemented |
 | NTF-10 | VAPID env table and boot degradation | T7.9 | UT-NTF-10 | Implemented |
+| NTF-11 | push egress policy + pinned send | T8.7 | UT-NTF-11 | Implemented |
+| NTF-12 | opt-in creates endpoint and intent | T8.7 | IT-NTF-13 | Implemented |
 | EDGE-NTF-01 | idempotent consumer handle | T7.5 | IT-EDGE-NTF-01 | Implemented |
 | EDGE-NTF-02 | 410 Gone terminal path | T7.6 | IT-EDGE-NTF-02 | Implemented |
 | EDGE-NTF-04 | 429 retried, not settled dead | T7.6 | IT-EDGE-NTF-04 | Implemented |
+| EDGE-NTF-05 | consumer failure split by blast radius | T8.7 | UT-NTF-12 | Implemented |
 | EDGE-NTF-03 | existing project webhooks unaffected | T7.2 | IT-EDGE-NTF-03 | Implemented |
 
 ## Second-level tests beside a primary

@@ -161,9 +161,11 @@ flowchart TD
 - **NTF-05:** A push `410 Gone` (or `404`) MUST delete the subscription. A push rejected with any other 4xx except `408`/`429` MUST settle `dead` without retrying — the same request cannot succeed later. Every remaining failure, including `408`/`429`, MUST follow the existing retry curve.
 - **NTF-06:** Signing secrets MUST be stored as `env:NAME` references only, never as plaintext in a column, log or payload.
 - **NTF-07:** A personal token MUST be able to CRUD only its own owner's subscriptions; an unknown id MUST answer `404`, never `403`.
-- **NTF-08:** Notification triggers MUST be `decisions` deltas and digests only, and MUST NEVER be per-event by default.
+- **NTF-08:** Notification triggers MUST be `decisions` deltas and digests only, and MUST NEVER be per-event by default. The delta MUST NOT depend solely on the domain-event consumer: the taxonomy has no kind for a HITL opening or a run entering `NeedsInput`, and `run.review` is emitted only for runs with a parent, so a `system_sweep` backstop re-derives the count per tick using the SAME delta function.
 - **NTF-09:** `decisions:read` and `notifications:subscriptions` MUST be absent from `AGENT_TOKEN_SCOPES` and `CROSS_PROJECT_AGENT_SCOPES`.
 - **NTF-10:** Missing VAPID configuration MUST degrade to "push unavailable" with a clear log line and MUST NEVER crash boot.
+- **NTF-11:** A push endpoint is a browser-supplied outbound destination and MUST be subject to the same ADR-077 egress policy as a webhook destination — refused at registration, and at SEND resolved and connected over a pinned agent so DNS rebinding cannot reach a private address. A refused destination settles `dead`, never retried.
+- **NTF-12:** Enabling push MUST create the endpoint AND the delivery intent together. Fan-out requires both, so registering only the endpoint leaves an opt-in that reports success and delivers nothing.
 
 ## Edge cases
 
@@ -171,6 +173,7 @@ flowchart TD
 - **EDGE-NTF-02:** An expired push subscription answers `410 Gone`; the row is deleted rather than retried, and the reader's remaining transports are unaffected.
 - **EDGE-NTF-04:** A push service answering `429 Too Many Requests` MUST be retried on the normal curve, not settled `dead` — it is the one 4xx that means "later" rather than "no", and collapsing the whole 4xx range into "terminal" would drop a notification under load.
 - **EDGE-NTF-03:** Existing project- and run-scoped webhooks MUST fan out, deliver, retry and prune exactly as before the widening — the nullable columns change no behaviour for rows that fill them.
+- **EDGE-NTF-05:** A per-reader failure in the consumer MUST cost latency, not delivery. It is swallowed — rethrowing would stall the cursor for every reader on one broken one, and a single-reader deployment cannot distinguish an outage from a poison reader — and the `system_sweep` delta backstop MUST be the retry, since it recomputes exactly the readers holding an enabled intent.
 
 ## Linked artifacts
 
