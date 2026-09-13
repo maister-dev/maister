@@ -22,7 +22,7 @@ export default async function PortfolioPage(): Promise<ReactElement> {
   const user = await requireSession();
   const t = await getTranslations("portfolio");
 
-  // ADR-168 D8/ATN-05: the ONE canonical number. React-`cache`d, so the layout's
+  // ADR-169 D8/ATN-05: the ONE canonical number. React-`cache`d, so the layout's
   // badge and this headline are the same computation, not two that can disagree.
   const [portfolio, inbox, decisions] = await Promise.all([
     getPortfolio(user.id, user.role),

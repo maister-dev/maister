@@ -46,7 +46,7 @@ export default async function AppLayout({
     redirect("/change-password");
   }
 
-  // ATN-05 / ADR-168 D7: BOTH counters are computed here, once, and passed
+  // ATN-05 / ADR-169 D7: BOTH counters are computed here, once, and passed
   // down. No surface recomputes its own number, and no badge derives one from
   // the other — they are separate populations.
   const [

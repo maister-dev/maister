@@ -78,7 +78,7 @@ export const DOMAIN_EVENT_CONSUMERS: DomainEventConsumer[] = [
   // gate.failed events into lessons (guarded by projects.brain_enabled),
   // transient failures hold the cursor, schema-invalid distill skips+advances.
   memoryHarvestConsumer,
-  // ADR-172: the `attention.*` notification source. Recomputes each affected
+  // ADR-173: the `attention.*` notification source. Recomputes each affected
   // reader's `decisions` count and emits ONLY when the number moved — deltas and
   // the digest, never a per-event stream (`NTF-08`). One entry, one cursor row,
   // no new clock, and `handle` never throws (the dispatcher holds the cursor on

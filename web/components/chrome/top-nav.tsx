@@ -48,12 +48,12 @@ export async function TopNav({
               sections={sections}
             />
           ) : null}
-          {/* The logo means HOME and keeps targeting `/` (ADR-171 D3). */}
+          {/* The logo means HOME and keeps targeting `/` (ADR-172 D3). */}
           <Link className="cursor-pointer" href="/">
             <Logo size={logoSize} />
           </Link>
           {/* The explicit control for the two meanings `/` used to carry: Desk
-              is `/`, Projects is `/projects` (ADR-171 D3). It is a switch, not
+              is `/`, Projects is `/projects` (ADR-172 D3). It is a switch, not
               a breadcrumb — the crumb below still says where you are. */}
           <HomeSwitch
             deskLabel={t("switchDesk")}

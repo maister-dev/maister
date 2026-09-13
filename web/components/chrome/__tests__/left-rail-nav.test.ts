@@ -45,7 +45,7 @@ function renderActive(
   );
 }
 
-// ADR-168 D7 / `ATN-05`: both numbers come from ONE layout-level fetch and are
+// ADR-169 D7 / `ATN-05`: both numbers come from ONE layout-level fetch and are
 // passed down; the rail never computes either.
 const BOTH_BADGES: RailBadges = {
   inbox: { value: 3, tone: "attention", label: "3 blocked on you" },
@@ -116,7 +116,7 @@ describe("LeftRail navigation", () => {
   });
 });
 
-// T5.7 (ADR-168 D7). The two counters are separate populations, and the tone is
+// T5.7 (ADR-169 D7). The two counters are separate populations, and the tone is
 // the only thing telling a reader which one demands action. A neutral badge
 // wearing the attention colour would make "12 things happened" read as
 // "12 things need you" — the exact confusion this milestone exists to remove.

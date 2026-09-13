@@ -197,10 +197,10 @@ async function toDto(handle: Db, row: any): Promise<WebhookSubscriptionDto> {
 /**
  * "Platform-wide" means `project_id IS NULL` **and** `owner_user_id IS NULL`.
  *
- * The owner clause is not optional. A user subscription (ADR-172) also carries
+ * The owner clause is not optional. A user subscription (ADR-173) also carries
  * `project_id IS NULL`, so `isNull(projectId)` alone would make every admin
  * platform-scope query list, read, delete and expose the deliveries of other
- * people's PERSONAL subscriptions — ADR-172 D3's bug one layer up. A
+ * people's PERSONAL subscriptions — ADR-173 D3's bug one layer up. A
  * project-scoped query needs no owner clause: a personal subscription is never
  * bound to a project.
  */
@@ -376,7 +376,7 @@ export async function deleteSubscription(
   const handle: Db = db ?? getDb();
 
   const deleted = await handle.transaction(async (tx: Db) => {
-    // See `scopeFilter`: platform excludes user-owned rows (ADR-172).
+    // See `scopeFilter`: platform excludes user-owned rows (ADR-173).
     const scopeSql =
       scope.projectId === null
         ? sql`project_id IS NULL AND owner_user_id IS NULL`
@@ -522,7 +522,7 @@ async function loadAttempts(
 // `subscriptionId`, AND is that subscription in `scope`? The replay/inspection
 // routes call this BEFORE acting so a cross-subscription (or cross-scope)
 // delivery id is a 404, never a leaked 409/200. Platform ↔ project_id IS NULL
-// AND owner_user_id IS NULL (ADR-172 — a personal subscription is not platform).
+// AND owner_user_id IS NULL (ADR-173 — a personal subscription is not platform).
 export async function deliveryBelongsToScopedSubscription(
   scope: SubscriptionScope,
   subscriptionId: string,

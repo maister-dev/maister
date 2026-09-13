@@ -1,4 +1,4 @@
-// IT-ATN-11 / IT-EDGE-ATN-04 (ADR-170) — `GET /api/attention/stream`.
+// IT-ATN-11 / IT-EDGE-ATN-04 (ADR-171) — `GET /api/attention/stream`.
 //
 // The wire shape is asserted against the declared contract
 // (`docs/api/async/attention-stream.asyncapi.yaml`), which closes its spine with
@@ -452,7 +452,7 @@ describe("IT-ATN-11 the stream is a read path", () => {
 });
 
 // ---------------------------------------------------------------------------
-// IT-ATN-15 (ADR-170 D6) — an SSE connection outlives the decision that opened
+// IT-ATN-15 (ADR-171 D6) — an SSE connection outlives the decision that opened
 // it, so authority is re-read per poll rather than captured at connect.
 //
 // The loop used the role from the connect-time session. A global admin sees

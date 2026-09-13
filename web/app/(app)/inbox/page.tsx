@@ -23,7 +23,7 @@ export default async function InboxPage(): Promise<ReactElement> {
   const tp = await getTranslations("portfolio");
   const tStage = await getTranslations("workStage");
 
-  // ADR-168 D8/ATN-05: the ONE canonical queue. Its `count` is the number the
+  // ADR-169 D8/ATN-05: the ONE canonical queue. Its `count` is the number the
   // rail badge shows — React-`cache`d, so this is the same computation, not a
   // second one free to disagree with it.
   const [hitl, inboxItems, unreadInbox, queue] = await Promise.all([

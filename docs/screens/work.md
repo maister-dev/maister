@@ -1,6 +1,6 @@
 # Work
 
-**Route:** `/work` · **Status:** Implemented (ADR-169) · **Source:** `web/app/(app)/work/page.tsx`
+**Route:** `/work` · **Status:** Implemented (ADR-170) · **Source:** `web/app/(app)/work/page.tsx`
 
 The cross-project work table: every task the reader can see, in one comparable
 list, whether or not it has ever launched a run.
@@ -107,7 +107,7 @@ render through `Intl.NumberFormat(locale)`; count-bearing client templates use
 
 The table's ROWS live in `web/components/work/work-rows-table.tsx`
 (`WorkRowsTable`) and its row labels in `web/lib/work/work-row-labels.ts`, both
-shared with the Desk (ADR-171 D1). This surface keeps the filter form, the saved
+shared with the Desk (ADR-172 D1). This surface keeps the filter form, the saved
 views and the row count; the Desk renders rows only. `WorkTableLabels extends
 WorkRowsLabels`, so a new column is a compile error on both surfaces rather than
 a blank header on one.
@@ -118,6 +118,6 @@ checked by `UT-STG-11`.
 
 ## Linked artifacts
 
-- [ADR-169](../decisions.md#adr-169) · [ADR-171](../decisions.md#adr-171) · [ADR-170](../decisions.md#adr-170)
+- [ADR-170](../decisions.md#adr-170) · [ADR-172](../decisions.md#adr-172) · [ADR-171](../decisions.md#adr-171)
 - [`system-analytics/work-stages.md`](../system-analytics/work-stages.md)
 - [`desk.md`](desk.md) · [`activity.md`](activity.md)

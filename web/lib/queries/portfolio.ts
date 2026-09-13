@@ -1112,7 +1112,7 @@ export type CrossProjectHitlItem = HitlItem & {
   projectId: string;
   projectSlug: string;
   projectName: string;
-  // ADR-168 ATN-04 filters the decision queue on the owning task, and a
+  // ADR-169 ATN-04 filters the decision queue on the owning task, and a
   // non-`agent_question` HITL row carries a NULL `task_id` by check constraint —
   // so the task is the RUN's, and the id has to ride out here to be filtered on.
   taskId: string | null;

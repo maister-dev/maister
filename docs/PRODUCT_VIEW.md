@@ -248,7 +248,7 @@ strong workload isolation, attention routing, and enterprise identity.
 5. **Observability and attention routing**
    - Turn existing Observatory/run evidence into one summary that answers: what
      changed, what passed, what failed, what is stale, and what needs a human.
-     *(Implemented — ADR-168 the two canonical counters, ADR-171 the Desk's Now
+     *(Implemented — ADR-169 the two canonical counters, ADR-172 the Desk's Now
      tiles and deterministic digest sentence. Four of the five questions:
      promoted, crashed, new events, and what needs a human. "What is stale"
      stays with the graph engine's staleness plane and is deliberately not in
@@ -256,8 +256,8 @@ strong workload isolation, attention routing, and enterprise identity.
    - Recovery events, checkpoint/resume history, gate rerun history, and
      package/capability profile changes visible in the run ledger.
    - Web UI notifications first; Telegram or other channels later.
-     *(Implemented — ADR-170 the user-scoped attention SSE stream for the live
-     tab, ADR-172 per-user subscriptions and web push for off-tab delivery over
+     *(Implemented — ADR-171 the user-scoped attention SSE stream for the live
+     tab, ADR-173 per-user subscriptions and web push for off-tab delivery over
      the widened ADR-077 engine. Telegram stays a Phase 2 candidate on that same
      primitive.)*
    - Project/team inbox expansion after assignment semantics are proven.

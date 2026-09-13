@@ -2855,14 +2855,14 @@ paths:
   /api/v1/ext/decisions:
     get:
       tags: [hitl]
-      summary: (ADR-168, Implemented) List everything blocked on the token owner
+      summary: (ADR-169, Implemented) List everything blocked on the token owner
       description: |
         Scope `decisions:read`. Returns the owner's cross-project **decision
         queue** — the four kinds summed by the canonical `decisions` counter:
         respondable HITL, mechanically promotable runs, `Crashed` runs owing
         recover/discard, and triage-flagged tasks. `count` always equals
         `items.length`; both come from one query, so the number can never
-        disagree with the list it labels (ADR-168 D8).
+        disagree with the list it labels (ADR-169 D8).
 
         Like `GET /api/v1/ext/hitl` this route is only for global personal user
         tokens (`token_kind=user`, `project_id IS NULL`). Project tokens,
@@ -2941,7 +2941,7 @@ paths:
   /api/v1/ext/notification-subscriptions:
     get:
       tags: [hitl]
-      summary: (ADR-172, Implemented) List the token owner's notification subscriptions
+      summary: (ADR-173, Implemented) List the token owner's notification subscriptions
       description: |
         Scope `notifications:subscriptions`. Lists the subscriptions **owned by
         the token owner**. The owner is taken from `auth-context` only and is
@@ -2971,11 +2971,11 @@ paths:
           $ref: "#/components/responses/HitlForbidden"
     post:
       tags: [hitl]
-      summary: (ADR-172, Implemented) Create a notification subscription
+      summary: (ADR-173, Implemented) Create a notification subscription
       description: |
         Scope `notifications:subscriptions`. Creates a subscription owned by the
         token owner. A body field naming an owner is rejected, not honoured
-        (ADR-172 D9). Triggers are restricted to `decisions` deltas and digests
+        (ADR-173 D9). Triggers are restricted to `decisions` deltas and digests
         — a per-event subscription is refused `CONFIG`.
       operationId: extCreateNotificationSubscription
       security:
@@ -3009,10 +3009,10 @@ paths:
         description: |
           Subscription id. A subscription owned by another user answers 404,
           never 403 — the API does not confirm the existence of another
-          owner's rows (ADR-172 D9).
+          owner's rows (ADR-173 D9).
     patch:
       tags: [hitl]
-      summary: (ADR-172, Implemented) Update a notification subscription
+      summary: (ADR-173, Implemented) Update a notification subscription
       description: Scope `notifications:subscriptions`. Owner-scoped; see the path parameter.
       operationId: extUpdateNotificationSubscription
       security:
@@ -3040,7 +3040,7 @@ paths:
           $ref: "#/components/responses/NotFound"
     delete:
       tags: [hitl]
-      summary: (ADR-172, Implemented) Delete a notification subscription
+      summary: (ADR-173, Implemented) Delete a notification subscription
       description: Scope `notifications:subscriptions`. Owner-scoped; see the path parameter.
       operationId: extDeleteNotificationSubscription
       security:
@@ -5196,7 +5196,7 @@ components:
     ExtDecisionItem:
       type: object
       description: |
-        (ADR-168, Implemented) One entry in the owner's cross-project decision
+        (ADR-169, Implemented) One entry in the owner's cross-project decision
         queue. Every field is an explicit DTO projection: this item NEVER
         includes `acp_session_id`, a supervisor session id, an absolute worktree
         path, a diff body, token material, or an internal cost handle.
@@ -5264,7 +5264,7 @@ components:
     ExtNotificationSubscription:
       type: object
       description: |
-        (ADR-172, Implemented) A notification subscription owned by the token owner.
+        (ADR-173, Implemented) A notification subscription owned by the token owner.
         Signing material is stored as an `env:NAME` reference and is NEVER
         returned here, in any form.
       required: [id, eventTypes, transport, enabled, createdAt, updatedAt]
@@ -5293,7 +5293,7 @@ components:
     ExtNotificationSubscriptionInput:
       type: object
       description: |
-        (ADR-172, Implemented) Create/update body. There is deliberately no owner
+        (ADR-173, Implemented) Create/update body. There is deliberately no owner
         field: the owner comes from `auth-context` only. A body naming an owner
         is refused rather than honoured.
       additionalProperties: false

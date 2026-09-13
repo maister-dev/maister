@@ -1,4 +1,4 @@
-// UT-ATN-12 (ADR-168, ADR-171) — the digest is deterministic.
+// UT-ATN-12 (ADR-169, ADR-172) — the digest is deterministic.
 //
 // The property under test is BYTE-identity: the same window and the same labels
 // must produce the same string every time, in any order, on any run. That is

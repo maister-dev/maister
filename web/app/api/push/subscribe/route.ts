@@ -2,7 +2,7 @@ import "server-only";
 
 /**
  * `POST /api/push/subscribe` — register this browser's push endpoint
- * (ADR-172 D9/D11, `NTF-10`).
+ * (ADR-173 D9/D11, `NTF-10`).
  *
  * Session-authenticated, not token-authenticated: it is called by the opt-in UI
  * from the reader's own browser. The owner is the session user and is never read

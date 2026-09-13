@@ -4,7 +4,7 @@ info:
   version: "1.0.0"
   description: |
     Browser-safe attention notifications delivered by
-    `GET /api/attention/stream` (ADR-170).
+    `GET /api/attention/stream` (ADR-171).
 
     One `EventSource` per reader, addressed by the **session user** rather than
     by a run, a project or a filter. The server polls durable read models and
@@ -13,7 +13,7 @@ info:
     resolves a HITL deferred and never advances a read cursor.
 
     Frames are **ticks, not a log**. A tick carries the two canonical counters as
-    of now (`decisions`, `updates` — ADR-168) plus which regions and which
+    of now (`decisions`, `updates` — ADR-169) plus which regions and which
     visible projects moved. Clients follow the `retain: false` idiom and must not
     accumulate frames in state.
 
@@ -59,7 +59,7 @@ channels:
         A quiet stream emits `attention.heartbeat`; a stream that stays quiet
         past the module-level cap is closed with `attention.stream_timeout`
         rather than held open. Poll interval, heartbeat period and quiet cap are
-        module constants, deliberately not environment variables (ADR-170 D5).
+        module constants, deliberately not environment variables (ADR-171 D5).
       message:
         oneOf:
           - $ref: "#/components/messages/AttentionTick"
@@ -110,11 +110,11 @@ components:
           type: string
           format: date-time
         decisions:
-          description: Work blocked on this reader, as of this frame (ADR-168).
+          description: Work blocked on this reader, as of this frame (ADR-169).
           type: integer
           minimum: 0
         updates:
-          description: Unseen activity for this reader, as of this frame (ADR-168).
+          description: Unseen activity for this reader, as of this frame (ADR-169).
           type: integer
           minimum: 0
         changed:

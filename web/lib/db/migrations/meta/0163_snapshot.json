@@ -1,6 +1,6 @@
 {
-  "id": "979d89c6-55ce-4782-9c85-2d531ad90743",
-  "prevId": "3ec611a5-2881-4c75-a625-e2d6e0a2c851",
+  "id": "85fbfdbb-a0ca-4e76-98c0-0c0685fd6acc",
+  "prevId": "d3b74156-320e-49c9-a6ee-a08e2de8eb7b",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -18442,43 +18442,148 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.user_activity_cursors": {
-      "name": "user_activity_cursors",
+    "public.token_lifecycle_events": {
+      "name": "token_lifecycle_events",
       "schema": "",
       "columns": {
-        "user_id": {
-          "name": "user_id",
+        "id": {
+          "name": "id",
           "type": "text",
           "primaryKey": true,
           "notNull": true
         },
-        "seen_through": {
-          "name": "seen_through",
-          "type": "timestamp with time zone",
+        "token_id": {
+          "name": "token_id",
+          "type": "text",
           "primaryKey": false,
           "notNull": true
         },
-        "updated_at": {
-          "name": "updated_at",
+        "project_id": {
+          "name": "project_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "event": {
+          "name": "event",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "actor_user_id": {
+          "name": "actor_user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "actor_label": {
+          "name": "actor_label",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "before": {
+          "name": "before",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "after": {
+          "name": "after",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "token_lifecycle_token_created_idx": {
+          "name": "token_lifecycle_token_created_idx",
+          "columns": [
+            {
+              "expression": "token_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "token_lifecycle_project_created_idx": {
+          "name": "token_lifecycle_project_created_idx",
+          "columns": [
+            {
+              "expression": "project_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
-        "user_activity_cursors_user_id_users_id_fk": {
-          "name": "user_activity_cursors_user_id_users_id_fk",
-          "tableFrom": "user_activity_cursors",
-          "tableTo": "users",
+        "token_lifecycle_events_token_id_project_tokens_id_fk": {
+          "name": "token_lifecycle_events_token_id_project_tokens_id_fk",
+          "tableFrom": "token_lifecycle_events",
+          "tableTo": "project_tokens",
           "columnsFrom": [
-            "user_id"
+            "token_id"
           ],
           "columnsTo": [
             "id"
           ],
           "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "token_lifecycle_events_project_id_projects_id_fk": {
+          "name": "token_lifecycle_events_project_id_projects_id_fk",
+          "tableFrom": "token_lifecycle_events",
+          "tableTo": "projects",
+          "columnsFrom": [
+            "project_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "token_lifecycle_events_actor_user_id_users_id_fk": {
+          "name": "token_lifecycle_events_actor_user_id_users_id_fk",
+          "tableFrom": "token_lifecycle_events",
+          "tableTo": "users",
+          "columnsFrom": [
+            "actor_user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
           "onUpdate": "no action"
         }
       },

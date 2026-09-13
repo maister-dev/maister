@@ -1,4 +1,4 @@
-// `UT-NAV-03` (ADR-171 D2) — the portfolio RELOCATED; it was not rewritten.
+// `UT-NAV-03` (ADR-172 D2) — the portfolio RELOCATED; it was not rewritten.
 //
 // `E2E-NAV-03` proves the seeded surface still renders at `/projects`, but it
 // cannot reach the empty state: the shared e2e database always has projects.

@@ -1,5 +1,5 @@
 /**
- * VAPID configuration for web push (ADR-172 D11, `NTF-10`).
+ * VAPID configuration for web push (ADR-173 D11, `NTF-10`).
  *
  * NOT `server-only`: nothing here is a secret by itself, and the opt-in UI needs
  * the PUBLIC key to call `pushManager.subscribe`. The private key is read only

@@ -2,7 +2,7 @@
 
 /**
  * The activity feed's ROWS, split out of `activity-feed.tsx` so the Desk can
- * render the same log without re-implementing a row (ADR-171 D1).
+ * render the same log without re-implementing a row (ADR-172 D1).
  *
  * The filters, the row count and the "mark all as read" control stay with the
  * full `/activity` surface: the cursor is written from one place.

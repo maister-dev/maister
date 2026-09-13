@@ -1,6 +1,6 @@
 /**
  * The `/work` view layer: filtering and grouping over an already-loaded table
- * (ADR-169).
+ * (ADR-170).
  *
  * Pure by contract — no database handle, no clock. A filter is a view over the
  * ONE comparable list the read model returns, never a different query, which is

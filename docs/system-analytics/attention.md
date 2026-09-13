@@ -10,8 +10,8 @@ fresh. The domain answers exactly two questions — *what is blocked on me* and
 *what happened that I have not seen* — and keeps them separate populations.
 It owns no state machine of its own: it reads run, task, HITL and activity state
 and never writes any of it. The counters' definitions are locked by
-[ADR-168](../decisions.md#adr-168-two-canonical-attention-counters-decisions-and-updates);
-the stream by [ADR-170](../decisions.md#adr-170-user-scoped-attention-sse-stream).
+[ADR-169](../decisions.md#adr-169-two-canonical-attention-counters-decisions-and-updates);
+the stream by [ADR-171](../decisions.md#adr-171-user-scoped-attention-sse-stream).
 Both are **Implemented**.
 
 ## Domain entities
@@ -118,11 +118,11 @@ sequenceDiagram
   `DecisionsScope` is now an alias of that source's own scope type — the two
   cannot drift apart again (`IT-ATN-05`).
 - **The stream's frame is wider than any consumer.** `AttentionTickEvent`
-  carries both counters and the moved `projectIds` because ADR-170 D3 fixes that
+  carries both counters and the moved `projectIds` because ADR-171 D3 fixes that
   shape, but the client hook returns only `tick`, `changed`, `liveness` and
   `reconnect`: the surfaces it serves are server-rendered, a tick becomes
   `router.refresh()`, and re-exposing the counters client-side would be a second
-  source for a number ADR-168 D8 says has exactly one.
+  source for a number ADR-169 D8 says has exactly one.
 - **One cursor spelling, three readers.** The route that parses
   `Last-Event-ID`, the client that decides whether a received id is usable, and
   the AsyncAPI `pattern` all have to agree; the regex therefore lives in
@@ -141,7 +141,7 @@ sequenceDiagram
 - **ATN-03:** With no `user_activity_cursors` row, `updates` MUST count a bounded 24-hour window, never all history.
 - **ATN-04:** A task blocked by a relation MUST count in neither `decisions` nor `updates`.
 - **ATN-05:** Every surface MUST render one layout-level `decisions` value; no surface may recompute its own.
-- **ATN-06:** The external pulse's `needsYouCount` MUST keep its HITL-only semantics unchanged; the reader's own counters are served by `GET /api/v1/ext/decisions` instead, because a project-scoped pulse has no reader to compute them for (ADR-168 amendment).
+- **ATN-06:** The external pulse's `needsYouCount` MUST keep its HITL-only semantics unchanged; the reader's own counters are served by `GET /api/v1/ext/decisions` instead, because a project-scoped pulse has no reader to compute them for (ADR-169 amendment).
 - **ATN-07:** The decision queue MUST order by HITL criticality then age, with non-HITL kinds ranked `crashed` above `promotable` above `flagged`, and MUST NEVER consult `tasks.priority`.
 - **ATN-08:** A `decision_request` HITL row MUST NOT appear on any external surface.
 - **ATN-09:** The activity feed MUST NEVER expose a worktree path, a diff body, or a raw ACP frame.
@@ -160,8 +160,8 @@ sequenceDiagram
 
 ## Linked artifacts
 
-- [ADR-168 — two canonical attention counters](../decisions.md#adr-168-two-canonical-attention-counters-decisions-and-updates)
-- [ADR-170 — user-scoped attention SSE stream](../decisions.md#adr-170-user-scoped-attention-sse-stream)
+- [ADR-169 — two canonical attention counters](../decisions.md#adr-169-two-canonical-attention-counters-decisions-and-updates)
+- [ADR-171 — user-scoped attention SSE stream](../decisions.md#adr-171-user-scoped-attention-sse-stream)
 - [M51 requirement traceability](m51-traceability.md)
 - [Social board — inbox, mentions, subscriptions](social-board.md)
 - [HITL](hitl.md)

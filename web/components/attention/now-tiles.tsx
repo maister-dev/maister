@@ -4,7 +4,7 @@ import type { ReactElement } from "react";
 import Link from "next/link";
 
 /**
- * The Now strip (`ATN-12`, ADR-171 D1) — the five numbers of T5.4's digest
+ * The Now strip (`ATN-12`, ADR-172 D1) — the five numbers of T5.4's digest
  * window, each a link to the surface that owns it.
  *
  * A server component: the tiles carry no state and no interaction beyond the

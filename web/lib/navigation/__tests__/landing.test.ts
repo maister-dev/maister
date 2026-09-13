@@ -1,4 +1,4 @@
-// `UT-NAV-02` (ADR-171 D5) — the landing route forks ONCE, by `role !== "admin"`.
+// `UT-NAV-02` (ADR-172 D5) — the landing route forks ONCE, by `role !== "admin"`.
 //
 // `E2E-NAV-02` proves two real sign-ins land on different routes. This owns the
 // shape of the rule: viewer is covered by the same branch as member (the ADR's

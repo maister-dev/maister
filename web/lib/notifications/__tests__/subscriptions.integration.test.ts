@@ -1,5 +1,5 @@
 /**
- * `IT-NTF-07` (ADR-172 D9) — a token owner may CRUD only their OWN
+ * `IT-NTF-07` (ADR-173 D9) — a token owner may CRUD only their OWN
  * subscriptions, and another owner's id answers "not found", never "forbidden".
  *
  * Both halves matter. A positive grant alone would pass against a store that
@@ -380,7 +380,7 @@ describe("IT-NTF-13 enabling push creates the endpoint AND the intent", () => {
     expect((intents[0] as { enabled: boolean }).enabled).toBe(true);
   });
 
-  it("subscribes to every attention type ADR-172 D6 permits, and no more", async () => {
+  it("subscribes to every attention type ADR-173 D6 permits, and no more", async () => {
     const owner = await seedUser();
 
     await enablePushForOwner(

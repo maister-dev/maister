@@ -45,7 +45,7 @@ test("workbench lifecycle actions render across surfaces and execute handoff flo
   const fx = loadM27Fixture();
 
   // The project card this asserts on is the portfolio's, and the portfolio is
-  // `/projects` since ADR-171 D2.
+  // `/projects` since ADR-172 D2.
   await page.goto("/projects");
   await expect(
     page.getByRole("link", { name: "MAIster E2E M27 Lifecycle" }),

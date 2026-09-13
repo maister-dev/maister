@@ -809,7 +809,7 @@ paths:
   /api/activity/cursor:
     post:
       tags: [attention]
-      summary: (Implemented, ADR-168) Advance the caller's activity read cursor
+      summary: (Implemented, ADR-169) Advance the caller's activity read cursor
       description: |
         Writes `user_activity_cursors.seen_through` for the **session user**.
         The user is `auth-context`; `seenThrough` is body-controlled and clamped
@@ -849,7 +849,7 @@ paths:
   /api/attention/stream:
     get:
       tags: [attention]
-      summary: (Implemented, ADR-170) SSE bridge — the reader's attention stream
+      summary: (Implemented, ADR-171) SSE bridge — the reader's attention stream
       description: |
         Requires an active session (`requireActiveSession()`), which is the
         FIRST await. The stream is addressed by the SESSION USER, never by a run
@@ -924,7 +924,7 @@ paths:
   /api/push/subscribe:
     post:
       tags: [attention]
-      summary: (Implemented, ADR-172) Register a web-push endpoint for the caller
+      summary: (Implemented, ADR-173) Register a web-push endpoint for the caller
       description: |
         Stores a browser push endpoint owned by the **session user**. The owner
         is `auth-context` only and is never read from the body.

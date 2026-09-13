@@ -247,7 +247,7 @@ export function HitlCard({
           </span>
 
           <span className="mt-1 flex flex-wrap items-center gap-2 text-mute">
-            {/* ADR-169: the same stage vocabulary the /work table and the three
+            {/* ADR-170: the same stage vocabulary the /work table and the three
                 decision sections use. On THIS page it varies — WaitingOnHuman
                 beside Review, Crashed and Held — which is what makes the four
                 populations comparable at a glance. */}

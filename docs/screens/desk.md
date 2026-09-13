@@ -1,6 +1,6 @@
 # Desk
 
-**Route:** `/` · **Status:** Implemented (ADR-171) · **Source:** `web/app/(app)/page.tsx`
+**Route:** `/` · **Status:** Implemented (ADR-172) · **Source:** `web/app/(app)/page.tsx`
 
 The home surface. Answers "what needs me, what moved, what is running" in one
 screen, across every project the reader can see. It **composes** surfaces owned
@@ -152,7 +152,7 @@ namespaces for the composed regions. Count-bearing client templates use
 
 ## Linked artifacts
 
-- [ADR-171](../decisions.md#adr-171) · [ADR-168](../decisions.md#adr-168) · [ADR-170](../decisions.md#adr-170)
+- [ADR-172](../decisions.md#adr-172) · [ADR-169](../decisions.md#adr-169) · [ADR-171](../decisions.md#adr-171)
 - [`system-analytics/home-navigation.md`](../system-analytics/home-navigation.md)
 - [`system-analytics/attention.md`](../system-analytics/attention.md)
 - [`work.md`](work.md) · [`activity.md`](activity.md) · [`inbox.md`](inbox.md)

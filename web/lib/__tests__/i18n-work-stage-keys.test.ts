@@ -14,7 +14,7 @@ import { WORK_STAGES } from "@/lib/work/stage";
 //
 // The two non-member keys are part of the same rendering contract: `blocked`
 // labels the attribute that rides beside the stage (STG-05), and
-// `promotedResult` labels the result-only variant ADR-169 D3 refuses to
+// `promotedResult` labels the result-only variant ADR-170 D3 refuses to
 // collapse into a plain "Promoted".
 // ---------------------------------------------------------------------------
 

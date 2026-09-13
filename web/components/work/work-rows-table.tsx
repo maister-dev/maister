@@ -2,7 +2,7 @@
 
 /**
  * The `/work` table's ROWS, split out of `work-table.tsx` so the Desk can show
- * work in flight without re-implementing a single cell (ADR-171 D1).
+ * work in flight without re-implementing a single cell (ADR-172 D1).
  *
  * Only the rows live here. Filters, saved views and the row count stay with the
  * full surface — the Desk composes a summary, not a second control panel.

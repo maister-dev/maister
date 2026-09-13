@@ -10,7 +10,7 @@ import {
 import { useEffect, useState } from "react";
 
 /**
- * Per-user push opt-in (ADR-172 D9/D11, `NTF-07`).
+ * Per-user push opt-in (ADR-173 D9/D11, `NTF-07`).
  *
  * Everything it needs about the DEPLOYMENT arrives as props: the public VAPID key
  * and whether push is configured at all. It never reads an env var, and the

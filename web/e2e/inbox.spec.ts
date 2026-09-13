@@ -7,7 +7,7 @@ import { loadFixtures } from "./_seed/fixtures";
 
 // Inbox card redesign: the full-bleed, project-grouped /inbox surface rendering
 // the unified 3-tier HitlCard, plus the canonical `decisions` badge fan-out
-// (ADR-168). Relies on the shared seed having at least one pending
+// (ADR-169). Relies on the shared seed having at least one pending
 // cross-project HITL (the board / m17 fixtures seed NeedsInput runs), so
 // `decisions` > 0.
 
@@ -178,7 +178,7 @@ test.describe("Inbox card redesign", () => {
   test("the rail badge and the portfolio summary show the same canonical count", async ({
     page,
   }) => {
-    // The summary card moved to `/projects` with the portfolio (ADR-171 D2);
+    // The summary card moved to `/projects` with the portfolio (ADR-172 D2);
     // the Desk's own tile-versus-badge case lives in `e2e/desk.spec.ts`.
     await page.goto("/projects");
 

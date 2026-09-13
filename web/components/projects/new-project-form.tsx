@@ -199,7 +199,7 @@ export function NewProjectForm(): ReactElement {
         } | null;
 
         if (payload?.gitStatus === "remote") {
-          // The PORTFOLIO, not the Desk (ADR-171 D3): a user who just connected
+          // The PORTFOLIO, not the Desk (ADR-172 D3): a user who just connected
           // a repo is looking for the project they created.
           router.push("/projects");
 

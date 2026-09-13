@@ -2,7 +2,7 @@ import "server-only";
 
 /**
  * The per-user read cursor behind `updates` and the activity feed's "your last
- * visit" divider (`ATN-10`, `EDGE-ATN-03`, ADR-168 D3).
+ * visit" divider (`ATN-10`, `EDGE-ATN-03`, ADR-169 D3).
  *
  * An ABSENT row means "never looked" — not "has seen nothing ever". Seeding a
  * constant default at migration time would have been the "looks populated but

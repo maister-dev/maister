@@ -2,7 +2,7 @@ import "server-only";
 
 /**
  * `PATCH|DELETE /api/v1/ext/notification-subscriptions/{subscriptionId}`
- * (ADR-172 D9, `NTF-07`).
+ * (ADR-173 D9, `NTF-07`).
  *
  * A subscription owned by another user answers **404, never 403**: a 403 would
  * confirm that the row exists, which is a disclosure about somebody else's

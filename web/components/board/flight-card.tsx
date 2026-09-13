@@ -43,7 +43,7 @@ export interface FlightCardLabels {
   autoPromoted: (lane: string) => string;
   // ADR-140 PR-state chip labels (open / merged / closed / conflicts / reopen).
   prChip: PrStateChipLabels;
-  // ADR-169: the whole `workStage` namespace, so the label lookup happens
+  // ADR-170: the whole `workStage` namespace, so the label lookup happens
   // once here rather than as a switch at every render site.
   workStage: WorkStageLabels;
   runsCount: (count: number) => string;

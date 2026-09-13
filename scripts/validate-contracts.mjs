@@ -355,7 +355,7 @@ function validateAttentionStreamContract(doc, file) {
     throw new Error(`${file}: AttentionTickEvent.id must be a canonical decimal string`);
   }
   // Both counters are counts. A negative one would mean the subtraction in
-  // ADR-168 D2 underflowed rather than that nothing is waiting.
+  // ADR-169 D2 underflowed rather than that nothing is waiting.
   for (const key of ["decisions", "updates"]) {
     const counter = tick.properties?.[key];
     if (counter?.type !== "integer" || counter?.minimum !== 0) {

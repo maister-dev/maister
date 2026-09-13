@@ -213,7 +213,7 @@ export interface FlightCard {
   // driving the "auto" glyph on the Done card. Null on manual/pending runs.
   autoPromotedLane: string | null;
   blockedBy: Array<{ key: string; number: number }>;
-  // ADR-169: the cross-project work stage, rendered BESIDE the node stage chip
+  // ADR-170: the cross-project work stage, rendered BESIDE the node stage chip
   // because they answer different questions ("where is this task" vs "which
   // node is asking"). Derived per read; never persisted.
   workStage: WorkStage;

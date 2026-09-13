@@ -4,7 +4,7 @@ import { buildLeftRailSections } from "@/components/chrome/left-rail-sections";
 
 const label = (key: string): string => key;
 
-// The order is ADR-171 D4's, not an accident of insertion: Home / Projects /
+// The order is ADR-172 D4's, not an accident of insertion: Home / Projects /
 // Work / Activity / Inbox / Flow Studio / Observatory, then the admin tail.
 describe("buildLeftRailSections", () => {
   it("projects every member-permitted section, including Observatory", () => {
@@ -26,7 +26,7 @@ describe("buildLeftRailSections", () => {
       buildLeftRailSections(label, "member").map((s) => [s.id, s.href]),
     );
 
-    // ADR-171 D3: the rail's "Projects" meant the portfolio all along, and the
+    // ADR-172 D3: the rail's "Projects" meant the portfolio all along, and the
     // portfolio is `/projects` now.
     expect(byId.get("home")).toBe("/");
     expect(byId.get("projects")).toBe("/projects");

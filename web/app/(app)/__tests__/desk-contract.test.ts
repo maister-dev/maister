@@ -1,4 +1,4 @@
-// `UT-NAV-01` — the Desk COMPOSES (ADR-171 D1).
+// `UT-NAV-01` — the Desk COMPOSES (ADR-172 D1).
 //
 // The claim this guards is not "the page renders" — `E2E-NAV-01` owns that. It
 // is the architectural one: every region on `/` goes through the component the

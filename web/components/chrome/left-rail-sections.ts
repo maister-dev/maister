@@ -19,14 +19,14 @@ export function buildLeftRailSections(
   label: (key: RailNavigationLabelKey) => string,
   userRole: GlobalRole | undefined,
 ): LeftRailNavSection[] {
-  // The order ADR-171 D4 fixes: Home / Projects / Work / Activity / Inbox /
+  // The order ADR-172 D4 fixes: Home / Projects / Work / Activity / Inbox /
   // Flow Studio / Observatory, then the admin-only tail.
   const sections: LeftRailNavSection[] = [
     { id: "home", label: label("home"), href: "/", ready: true },
     {
       id: "projects",
       label: label("projects"),
-      // The portfolio, not home (ADR-171 D3). `/` is the Desk.
+      // The portfolio, not home (ADR-172 D3). `/` is the Desk.
       href: "/projects",
       ready: true,
     },

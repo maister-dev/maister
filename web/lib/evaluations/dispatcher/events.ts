@@ -98,7 +98,7 @@ export async function readEvaluationEvents(
 // One SSE frame. `id:` is the per-Study sequence so a browser reconnect sends
 // `Last-Event-ID` and the route replays from there (D17 — replay source is the
 // DB log, never in-memory state). The spelling is shared with the attention
-// stream (ADR-170); only the payload is this domain's.
+// stream (ADR-171); only the payload is this domain's.
 export function formatSseFrame(event: EvaluationEventRow): string {
   return sseFrame({
     id: event.sequence,

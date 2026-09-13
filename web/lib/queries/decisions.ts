@@ -1,7 +1,7 @@
 import "server-only";
 
 /**
- * The cross-project decision queue and the `decisions` counter (ADR-168).
+ * The cross-project decision queue and the `decisions` counter (ADR-169).
  *
  * Four populations, one list, one number: respondable HITL, mechanically
  * promotable runs, `Crashed` runs owing recover/discard, and triage-flagged
@@ -67,7 +67,7 @@ export interface DecisionOrderKey {
 
 export interface DecisionBase extends DecisionOrderKey {
   /**
-   * Where the work sits in the ADR-169 vocabulary. Derived from the kind, not
+   * Where the work sits in the ADR-170 vocabulary. Derived from the kind, not
    * re-derived per surface: a decision-queue item is by definition parked at
    * exactly one of these four stages, and every surface must name it the same.
    */
@@ -110,7 +110,7 @@ const CRITICALITY_RANK = {
   critical: 3,
 } as const satisfies Record<DecisionCriticality, number>;
 
-// ADR-168 D6: the non-HITL kinds carry a FIXED rank on the same scale. They have
+// ADR-169 D6: the non-HITL kinds carry a FIXED rank on the same scale. They have
 // no criticality of their own, and `tasks.priority` is deliberately not
 // consulted — it governs admission, and borrowing it here would create a second
 // ordering authority over the same queue.
@@ -170,7 +170,7 @@ function isCriticality(value: string | null): value is DecisionCriticality {
  * `getDecisionsQueue`; callers that run for the lifetime of a request and must
  * see the database move — the attention stream's poll loop — want this one,
  * because a request-scoped memo would freeze their counter at the value it had
- * when the connection opened (ADR-170 D2).
+ * when the connection opened (ADR-171 D2).
  */
 export async function computeDecisionsQueue(
   userId: string,
@@ -179,7 +179,7 @@ export async function computeDecisionsQueue(
 ): Promise<DecisionsQueue> {
   const startedAt = Date.now();
   const client = getDb() as NodePgDatabase<typeof schema>;
-  // ACTIONABLE, not merely visible (ADR-168 D7). Every one of the four
+  // ACTIONABLE, not merely visible (ADR-169 D7). Every one of the four
   // populations asks the reader to DO something — answer, promote, recover or
   // clear — and all four require project `member`. A viewer was being handed
   // items whose inline actions answer 403, which is the opposite of what the
@@ -288,7 +288,7 @@ export async function computeDecisionsQueue(
     ),
   ];
 
-  // ADR-168 D5: a task held by a blocking relation looks like it needs a human
+  // ADR-169 D5: a task held by a blocking relation looks like it needs a human
   // and does not — nothing the reader can do advances it until its blocker
   // moves. It belongs to a `/work` filter, not to a badge.
   const taskIds = [

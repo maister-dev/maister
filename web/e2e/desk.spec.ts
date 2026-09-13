@@ -1,5 +1,5 @@
 // The Desk, end to end (`E2E-NAV-01`, `E2E-NAV-02`, `E2E-EDGE-NAV-01`,
-// `E2E-EDGE-NAV-02`) — ADR-171.
+// `E2E-EDGE-NAV-02`) — ADR-172.
 //
 // Three states, three readers, because the states are properties of WHO is
 // looking rather than of a page flag:
@@ -11,7 +11,7 @@
 //   empty  — a member of no project at all.
 //
 // The tile-versus-badge case moved here from Phase 5, where no page rendered a
-// tile yet. It asserts the equality that ADR-168 `ATN-05` actually claims — the
+// tile yet. It asserts the equality that ADR-169 `ATN-05` actually claims — the
 // Desk's Decisions region against the rail badge — and asserts that the Now
 // `decisions` TILE is deliberately a different, smaller number: T5.4 defines it
 // as decisions that are NEW since the reader's cursor, while the badge carries

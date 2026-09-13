@@ -210,11 +210,11 @@ validate:docs` enforces stub ↔ body equality and the file bijection.
 | [ADR-166](#adr-166-local-execution-host-contract--durable-host-identity-epoch-fenced-assignments-command-ledger-opaque-adopted-workspaces) | Local execution-host contract — durable host identity, epoch-fenced assignments, command ledger, opaque adopted workspaces | Implemented | 2026-09-02 |
 | [ADR-167](#adr-167-durable-execution-host-event-and-runtime-data-plane) | Durable execution-host event and runtime-data plane | Implemented | 2026-09-04 |
 | [ADR-168](#adr-168-post-issuance-mutation-of-api-tokens) | Post-issuance mutation of API tokens | Implemented | 2026-09-11 |
-| [ADR-168](#adr-168-two-canonical-attention-counters-decisions-and-updates) | Two canonical attention counters, `decisions` and `updates` | Accepted | 2026-09-10 |
-| [ADR-169](#adr-169-derived-work-stage-vocabulary-distinct-from-the-board-columns) | Derived work-stage vocabulary distinct from the board columns | Accepted | 2026-09-10 |
-| [ADR-170](#adr-170-user-scoped-attention-sse-stream) | User-scoped attention SSE stream | Accepted | 2026-09-10 |
-| [ADR-171](#adr-171-desk-home-information-architecture-and-the-member-default-route) | Desk home information architecture and the member default route | Accepted | 2026-09-10 |
-| [ADR-172](#adr-172-user-notification-subscriptions-and-web-push-over-the-widened-outbound-webhook-engine) | User notification subscriptions and web push over the widened outbound-webhook engine | Accepted | 2026-09-10 |
+| [ADR-169](#adr-169-two-canonical-attention-counters-decisions-and-updates) | Two canonical attention counters, `decisions` and `updates` | Accepted | 2026-09-10 |
+| [ADR-170](#adr-170-derived-work-stage-vocabulary-distinct-from-the-board-columns) | Derived work-stage vocabulary distinct from the board columns | Accepted | 2026-09-10 |
+| [ADR-171](#adr-171-user-scoped-attention-sse-stream) | User-scoped attention SSE stream | Accepted | 2026-09-10 |
+| [ADR-172](#adr-172-desk-home-information-architecture-and-the-member-default-route) | Desk home information architecture and the member default route | Accepted | 2026-09-10 |
+| [ADR-173](#adr-173-user-notification-subscriptions-and-web-push-over-the-widened-outbound-webhook-engine) | User notification subscriptions and web push over the widened outbound-webhook engine | Accepted | 2026-09-10 |
 
 ---
 
@@ -1712,16 +1712,7 @@ Full record: [`decisions/adr-167.md`](decisions/adr-167.md)
 
 **Status:** Implemented
 **Date:** 2026-09-11
-### ADR-168: Two canonical attention counters, `decisions` and `updates`
-
-**Status:** Accepted
-**Date:** 2026-09-10
-
-Full record: [`decisions/adr-168.md`](decisions/adr-168.md)
-
----
-
-### ADR-169: Derived work-stage vocabulary distinct from the board columns
+### ADR-169: Two canonical attention counters, `decisions` and `updates`
 
 **Status:** Accepted
 **Date:** 2026-09-10
@@ -1730,7 +1721,7 @@ Full record: [`decisions/adr-169.md`](decisions/adr-169.md)
 
 ---
 
-### ADR-170: User-scoped attention SSE stream
+### ADR-170: Derived work-stage vocabulary distinct from the board columns
 
 **Status:** Accepted
 **Date:** 2026-09-10
@@ -1739,7 +1730,7 @@ Full record: [`decisions/adr-170.md`](decisions/adr-170.md)
 
 ---
 
-### ADR-171: Desk home information architecture and the member default route
+### ADR-171: User-scoped attention SSE stream
 
 **Status:** Accepted
 **Date:** 2026-09-10
@@ -1748,12 +1739,21 @@ Full record: [`decisions/adr-171.md`](decisions/adr-171.md)
 
 ---
 
-### ADR-172: User notification subscriptions and web push over the widened outbound-webhook engine
+### ADR-172: Desk home information architecture and the member default route
 
 **Status:** Accepted
 **Date:** 2026-09-10
 
 Full record: [`decisions/adr-172.md`](decisions/adr-172.md)
+
+---
+
+### ADR-173: User notification subscriptions and web push over the widened outbound-webhook engine
+
+**Status:** Accepted
+**Date:** 2026-09-10
+
+Full record: [`decisions/adr-173.md`](decisions/adr-173.md)
 
 ---
 

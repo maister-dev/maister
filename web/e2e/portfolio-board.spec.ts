@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 
 import { loadFixtures } from "./_seed/fixtures";
 
-// `E2E-NAV-03` (ADR-171 D2): the portfolio moved from `/` to `/projects` and
+// `E2E-NAV-03` (ADR-172 D2): the portfolio moved from `/` to `/projects` and
 // must render exactly what `/` rendered before — the same heading, the same
 // project cards, the same onboarding checklist and the same decisions summary.
 // A relocation that quietly drops one of those is the failure mode D2 names.

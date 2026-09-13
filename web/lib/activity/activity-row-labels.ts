@@ -1,6 +1,6 @@
 /**
  * The activity-row label set, built once for both surfaces that render activity
- * rows: `/activity` and the Desk (ADR-171 D1).
+ * rows: `/activity` and the Desk (ADR-172 D1).
  *
  * Pure, for the same reason as `buildWorkRowsLabels`. The kind catalog is keyed
  * by the RAW kind for the client, while the message catalog keys the

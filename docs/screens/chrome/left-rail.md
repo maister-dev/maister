@@ -36,7 +36,7 @@ The rail is the primary navigation spine. Entry points / exits:
   `/mcps` ([`../mcps.md`](../mcps.md), admin), `/admin/users`,
   `/admin/scheduler`, `/settings`. The active section is resolved from the
   current pathname, so `/settings` selects Settings, `/inbox` selects Inbox,
-  `/` selects **Home** (ADR-171 D4 — not Projects), and `/runs/*` /
+  `/` selects **Home** (ADR-172 D4 — not Projects), and `/runs/*` /
   `/scratch-runs/*` stay under Projects.
 - **Active workspaces** → each row links to its run/workbench (`/runs/[id]`).
 - **Launch** → opens the [launch dialog](launch-dialog.md).
@@ -52,7 +52,7 @@ Expanded mode, top to bottom:
 1. **Section nav** — Home, Projects, Work, Activity (badge), Inbox (badge),
    Flow Studio, Observatory, then the admin block
    (Agents, MCPs, Users, Scheduler, Settings). **Two badges, two tones**
-   (ADR-168 D7): the Inbox badge shows `decisions` in the **attention** tone
+   (ADR-169 D7): the Inbox badge shows `decisions` in the **attention** tone
    (amber, `data-testid="inbox-nav-badge"`) and means "N things are blocked on
    you"; the Activity badge shows `updates` in a **neutral** tone
    (`data-testid="activity-nav-badge"`) and means "N things happened you have
@@ -72,7 +72,7 @@ Expanded mode, top to bottom:
    **The section nav is capped, not `shrink-0`** (`max-h-[45%]`, `min-h-0`,
    `overflow-y-auto`). The rail is a fixed-height flex column
    (`h-[calc(100vh-64px-36px)]`) and an admin's list is twelve sections since `/`
-   became the Desk (ADR-171 D4). Uncapped, the nav took 422 of the 576px of rail
+   became the Desk (ADR-172 D4). Uncapped, the nav took 422 of the 576px of rail
    content at a 720px-tall viewport and the active-workspaces block below it
    resolved to **zero** height — its rows still rendered but stopped being
    clickable, because a zero-height scroll parent swallows pointer events. The

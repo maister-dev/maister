@@ -1,6 +1,6 @@
 {
-  "id": "1b34e109-a26c-452f-8d75-75af8d2f11a8",
-  "prevId": "78de460f-fee7-4eb6-b67b-afd5c18d9020",
+  "id": "78de460f-fee7-4eb6-b67b-afd5c18d9020",
+  "prevId": "979d89c6-55ce-4782-9c85-2d531ad90743",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -18665,6 +18665,157 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "public.token_lifecycle_events": {
+      "name": "token_lifecycle_events",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "token_id": {
+          "name": "token_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "project_id": {
+          "name": "project_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "event": {
+          "name": "event",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "actor_user_id": {
+          "name": "actor_user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "actor_label": {
+          "name": "actor_label",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "before": {
+          "name": "before",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "after": {
+          "name": "after",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "token_lifecycle_token_created_idx": {
+          "name": "token_lifecycle_token_created_idx",
+          "columns": [
+            {
+              "expression": "token_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "token_lifecycle_project_created_idx": {
+          "name": "token_lifecycle_project_created_idx",
+          "columns": [
+            {
+              "expression": "project_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "token_lifecycle_events_token_id_project_tokens_id_fk": {
+          "name": "token_lifecycle_events_token_id_project_tokens_id_fk",
+          "tableFrom": "token_lifecycle_events",
+          "tableTo": "project_tokens",
+          "columnsFrom": [
+            "token_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "token_lifecycle_events_project_id_projects_id_fk": {
+          "name": "token_lifecycle_events_project_id_projects_id_fk",
+          "tableFrom": "token_lifecycle_events",
+          "tableTo": "projects",
+          "columnsFrom": [
+            "project_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "token_lifecycle_events_actor_user_id_users_id_fk": {
+          "name": "token_lifecycle_events_actor_user_id_users_id_fk",
+          "tableFrom": "token_lifecycle_events",
+          "tableTo": "users",
+          "columnsFrom": [
+            "actor_user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.user_activity_cursors": {
       "name": "user_activity_cursors",
       "schema": "",
@@ -18907,13 +19058,7 @@
           "name": "subscription_id",
           "type": "text",
           "primaryKey": false,
-          "notNull": false
-        },
-        "push_subscription_id": {
-          "name": "push_subscription_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "status": {
           "name": "status",
@@ -19008,27 +19153,6 @@
           "method": "btree",
           "with": {}
         },
-        "webhook_deliveries_push_event_uq": {
-          "name": "webhook_deliveries_push_event_uq",
-          "columns": [
-            {
-              "expression": "push_subscription_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "event_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
         "webhook_deliveries_due_idx": {
           "name": "webhook_deliveries_due_idx",
           "columns": [
@@ -19093,30 +19217,12 @@
           ],
           "onDelete": "cascade",
           "onUpdate": "no action"
-        },
-        "webhook_deliveries_push_subscription_id_push_subscriptions_id_fk": {
-          "name": "webhook_deliveries_push_subscription_id_push_subscriptions_id_fk",
-          "tableFrom": "webhook_deliveries",
-          "tableTo": "push_subscriptions",
-          "columnsFrom": [
-            "push_subscription_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {
-        "webhook_deliveries_one_target": {
-          "name": "webhook_deliveries_one_target",
-          "value": "(\"webhook_deliveries\".\"subscription_id\" IS NULL) <> (\"webhook_deliveries\".\"push_subscription_id\" IS NULL)"
-        }
-      },
+      "checkConstraints": {},
       "isRLSEnabled": false
     },
     "public.webhook_delivery_attempts": {
@@ -19251,13 +19357,13 @@
           "name": "project_id",
           "type": "text",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "run_id": {
           "name": "run_id",
           "type": "text",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "type": {
           "name": "type",
@@ -19365,12 +19471,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "owner_user_id": {
-          "name": "owner_user_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
         "name": {
           "name": "name",
           "type": "text",
@@ -19452,21 +19552,6 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
-        },
-        "webhook_subscriptions_owner_idx": {
-          "name": "webhook_subscriptions_owner_idx",
-          "columns": [
-            {
-              "expression": "owner_user_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
         }
       },
       "foreignKeys": {
@@ -19476,19 +19561,6 @@
           "tableTo": "projects",
           "columnsFrom": [
             "project_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "webhook_subscriptions_owner_user_id_users_id_fk": {
-          "name": "webhook_subscriptions_owner_user_id_users_id_fk",
-          "tableFrom": "webhook_subscriptions",
-          "tableTo": "users",
-          "columnsFrom": [
-            "owner_user_id"
           ],
           "columnsTo": [
             "id"

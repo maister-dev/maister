@@ -1,7 +1,7 @@
 import "server-only";
 
 /**
- * Two of the four populations the `decisions` counter sums (ADR-168 D1):
+ * Two of the four populations the `decisions` counter sums (ADR-169 D1):
  * `Crashed` runs owing recover/discard, and tasks a triage verdict flagged.
  *
  * The row → item mappers are exported separately from the queries so the

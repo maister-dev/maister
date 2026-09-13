@@ -27,8 +27,8 @@ what stops this matrix decaying into the historical aliases the Stage B matrix b
 | --- | --- | --- | --- | --- |
 | STG-01 | exhaustive satisfies map over RUN_STATUS_VALUES | T1.1 | UT-STG-01 | Implemented |
 | STG-02 | pure-module rule, no server-only import | T1.1 | UT-STG-02 | Implemented |
-| STG-03 | ADR-169 D2 mapping table | T1.1 | UT-STG-03 | Implemented |
-| STG-04 | ADR-169 D2 mapping table | T1.1 | UT-STG-04 | Implemented |
+| STG-03 | ADR-170 D2 mapping table | T1.1 | UT-STG-03 | Implemented |
+| STG-04 | ADR-170 D2 mapping table | T1.1 | UT-STG-04 | Implemented |
 | STG-05 | deriveWorkStage return shape | T1.1 | UT-STG-05 | Implemented |
 | STG-06 | WorkStage member list | T1.1 | UT-STG-06 | Implemented |
 | STG-07 | DB schema, no work_stage column | T1.1, T3.1 | IT-STG-07 | Implemented |
@@ -57,20 +57,20 @@ what stops this matrix decaying into the historical aliases the Stage B matrix b
 | EDGE-ATN-02 | current-visibility filter, no rewind | T4.2 | IT-EDGE-ATN-02 | Implemented |
 | EDGE-ATN-03 | cursor POST clamp and PRECONDITION | T5.3 | IT-EDGE-ATN-03 | Implemented |
 | EDGE-ATN-04 | lastEventId replay contract | T5.5 | IT-EDGE-ATN-04 | Implemented |
-| NAV-01 | ADR-171 D1, screens desk.md | T6.3 | E2E-NAV-01 | Implemented |
-| NAV-02 | ADR-171 D5 landing clause | T6.6 | E2E-NAV-02 | Implemented |
-| NAV-03 | ADR-171 D2 relocation | T6.1 | E2E-NAV-03 | Implemented |
+| NAV-01 | ADR-172 D1, screens desk.md | T6.3 | E2E-NAV-01 | Implemented |
+| NAV-02 | ADR-172 D5 landing clause | T6.6 | E2E-NAV-02 | Implemented |
+| NAV-03 | ADR-172 D2 relocation | T6.1 | E2E-NAV-03 | Implemented |
 | NAV-04 | railSectionForPathname totality | T3.3, T6.5 | UT-NAV-04 | Implemented |
-| NAV-05 | ADR-171 D3 inbound-link table | T6.2 | UT-NAV-05 | Implemented |
+| NAV-05 | ADR-172 D3 inbound-link table | T6.2 | UT-NAV-05 | Implemented |
 | NAV-06 | server-side route authorization | T6.6 | IT-NAV-06 | Implemented |
 | EDGE-NAV-01 | Desk empty state | T6.4 | E2E-EDGE-NAV-01 | Implemented |
 | EDGE-NAV-02 | narrow stacking order | T6.4 | E2E-EDGE-NAV-02 | Implemented |
 | NTF-01 | ADR-077 outbox reuse, no second outbox | T7.2, T7.5 | IT-NTF-02 | Implemented |
-| NTF-02 | nullable webhook_events columns, migration 0165 | T7.4 | IT-NTF-02 | Implemented |
+| NTF-02 | nullable webhook_events columns, migration 01660 | T7.4 | IT-NTF-02 | Implemented |
 | NTF-03 | two-axis subscriptionMatches | T7.4 | IT-NTF-03 plus UT-NTF-03 | Implemented |
 | NTF-04 | delivery two-phase commit | T7.6 | IT-NTF-04 | Implemented |
 | NTF-05 | push failure classification table | T7.3, T7.6, T7.10 | IT-NTF-05 | Implemented |
-| NTF-06 | signing_secret_ref env reference, migration 0164 | T7.1 | IT-NTF-07 | Implemented |
+| NTF-06 | signing_secret_ref env reference, migration 01650 | T7.1 | IT-NTF-07 | Implemented |
 | NTF-07 | owner from auth-context, ext subscription CRUD | T7.1, T7.8, T7.10 | IT-NTF-07 | Implemented |
 | NTF-08 | attention consumer trigger bound | T7.5, T7.7 | IT-NTF-08 plus UT-NTF-08 | Implemented |
 | NTF-09 | token scope sets | T4.5, T7.8 | UT-NTF-09 | Implemented |
@@ -100,5 +100,5 @@ not.
 
 ## Linked artifacts
 
-- [ADR-168](../decisions.md#adr-168) · [ADR-169](../decisions.md#adr-169) · [ADR-170](../decisions.md#adr-170) · [ADR-171](../decisions.md#adr-171) · [ADR-172](../decisions.md#adr-172)
+- [ADR-169](../decisions.md#adr-169) · [ADR-170](../decisions.md#adr-170) · [ADR-171](../decisions.md#adr-171) · [ADR-172](../decisions.md#adr-172) · [ADR-173](../decisions.md#adr-173)
 - [`work-stages.md`](work-stages.md) · [`attention.md`](attention.md) · [`home-navigation.md`](home-navigation.md) · [`notifications.md`](notifications.md)

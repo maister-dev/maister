@@ -1,6 +1,6 @@
 /**
  * `IT-NTF-04` / `IT-NTF-05` / `IT-EDGE-NTF-02` — the push sender's two-phase commit
- * and its failure table (ADR-172 D7).
+ * and its failure table (ADR-173 D7).
  *
  * The push wire is stubbed at `web-push`, not at HTTP: `webpush.sendNotification`
  * performs ECDH key agreement against the subscription's real keys, and

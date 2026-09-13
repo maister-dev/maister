@@ -1,4 +1,4 @@
-// IT-STG-09 (ADR-169 / D6) — the ONE visible-projects helper the cross-project
+// IT-STG-09 (ADR-170 / D6) — the ONE visible-projects helper the cross-project
 // read models scope by. The admin/member branch was inlined three times before
 // this; five more copies were about to be written.
 //

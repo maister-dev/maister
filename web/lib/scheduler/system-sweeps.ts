@@ -66,7 +66,7 @@ export type SystemSweepSummary = GcCompatibilitySummary & {
     | { status: "refused"; executionHostId: string; reason: string }
     | { status: "unavailable"; executionHostId: string | null; reason: string }
     | null;
-  // ADR-172: the digest notification trigger. Rides this bundle rather than a
+  // ADR-173: the digest notification trigger. Rides this bundle rather than a
   // new `scheduler_jobs.job_kind` (which would be a migration) because the
   // DIGEST WINDOW, not the tick rate, bounds how often a reader hears from it.
   digest: Awaited<ReturnType<typeof runDigestTrigger>> | null;

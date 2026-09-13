@@ -7,7 +7,7 @@ renders, where the project portfolio lives, which rail section a route
 highlights, and which surface a user lands on after sign-in. The domain exists
 because `/` acquired two meanings — "home" and "the portfolio" — and those
 meanings now diverge; its invariants are testable and had no owning document.
-Locked by [ADR-171](../decisions.md#adr-171-desk-home-information-architecture-and-the-member-default-route),
+Locked by [ADR-172](../decisions.md#adr-172-desk-home-information-architecture-and-the-member-default-route),
 and **Implemented**.
 It owns no data and no authorization: every rule here is about routing and
 rendering, and nav visibility is explicitly **not** an access control
@@ -96,7 +96,7 @@ flowchart LR
   `/runs` and `/scratch-runs` still collapse onto `projects`.
 - The rail order is Home / Projects / Work / Activity / Inbox / Flow Studio /
   Observatory, then the admin tail. `Activity` moved ahead of `Inbox`.
-- `UT-NAV-05` found ONE call site beyond the seven ADR-171 D3 tabulated: the
+- `UT-NAV-05` found ONE call site beyond the seven ADR-172 D3 tabulated: the
   proxy's `new URL("/", nextUrl)` bounce for an already-signed-in visitor to
   `/login`. Its intent is "home" and it is unchanged, but it is now declared.
   The gate's pattern covers `href="/"`, `redirect("/")`, `router.push("/")` and
@@ -125,7 +125,7 @@ flowchart LR
 
 ## Linked artifacts
 
-- [ADR-171 — Desk home IA and the member default route](../decisions.md#adr-171-desk-home-information-architecture-and-the-member-default-route)
+- [ADR-172 — Desk home IA and the member default route](../decisions.md#adr-172-desk-home-information-architecture-and-the-member-default-route)
 - [M51 requirement traceability](m51-traceability.md)
 - [Screen reference — the Desk](../screens/desk.md)
 - [Screen reference — left rail](../screens/chrome/left-rail.md)

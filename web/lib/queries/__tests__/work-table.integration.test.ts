@@ -1,4 +1,4 @@
-// IT-STG-08 (ADR-169 / work-stages.md) — `/work` MUST issue a number of queries
+// IT-STG-08 (ADR-170 / work-stages.md) — `/work` MUST issue a number of queries
 // that is independent of the number of rows returned.
 //
 // The anti-N+1 guarantee is written here as an executable assertion rather than

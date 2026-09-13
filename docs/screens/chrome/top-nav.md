@@ -19,7 +19,7 @@ account actions (change password, sign out); admin destinations live in the
 
 ## Navigation
 
-- **Logo** → `/` (the Desk — "home"; ADR-171 D3).
+- **Logo** → `/` (the Desk — "home"; ADR-172 D3).
 - **Breadcrumb** → `~/projects` plus the per-screen crumb.
 - **User menu** → change password, sign out.
 - **Locale / theme** toggles act in place (cookie / class), no navigation.
@@ -32,7 +32,7 @@ account actions (change password, sign out); admin destinations live in the
 Left: logo + a **Desk | Projects** switch + a breadcrumb (`~/projects` and the
 active crumb). The switch (Implemented — `web/components/chrome/home-switch.tsx`)
 is the explicit control for the two meanings `/` used to carry: **Desk** targets
-`/`, **Projects** targets `/projects` (ADR-171 D3). The logo itself means "home"
+`/`, **Projects** targets `/projects` (ADR-172 D3). The logo itself means "home"
 and keeps targeting `/`. Both the switch and the breadcrumb are hidden below
 `md`, where the mobile rail drawer already reaches every destination and the
 header has no room for them.

@@ -42,13 +42,13 @@ import { requireActiveSession } from "@/lib/authz";
 import { splitAtCursor } from "@/lib/activity/activity-view";
 
 /**
- * The Desk (`NAV-01`, ADR-171 D1) — `/`.
+ * The Desk (`NAV-01`, ADR-172 D1) — `/`.
  *
  * It COMPOSES. Every number comes from a read model this milestone already
  * shipped, and every region renders through the component the owning surface
  * renders: `DecisionSections` + `HitlInboxList` from `/inbox`, `WorkRowsTable`
  * from `/work`, `ActivityRowList` from `/activity`. A second copy of any of them
- * would drift, which is the failure ADR-171 D1 exists to prevent.
+ * would drift, which is the failure ADR-172 D1 exists to prevent.
  *
  * It adds NO mutation path: the inline actions on a decision card post to the
  * same promote / recover / discard routes `/inbox` uses.
@@ -88,7 +88,7 @@ export default async function DeskPage(): Promise<ReactElement> {
     getLocale(),
   ]);
 
-  // ADR-168 D8/ATN-05: `getDecisionsQueue` is the ONE canonical queue, and it is
+  // ADR-169 D8/ATN-05: `getDecisionsQueue` is the ONE canonical queue, and it is
   // React-`cache`d — so the rail badge, `/inbox` and this page are the same
   // computation rather than three free to disagree.
   const [portfolio, queue, hitl, table, feed, cursor, digestWindow] =

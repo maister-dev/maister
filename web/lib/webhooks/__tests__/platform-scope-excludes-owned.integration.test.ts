@@ -1,7 +1,7 @@
 /**
  * `IT-NTF-02` — the platform scope must not absorb user-owned subscriptions.
  *
- * This is ADR-172 D3's bug one layer UP, and the D2 reader enumeration is what
+ * This is ADR-173 D3's bug one layer UP, and the D2 reader enumeration is what
  * surfaced it. `subscriptions.ts` expresses "platform-wide" as
  * `project_id IS NULL`. A user subscription also has `project_id IS NULL`, so
  * the moment `owner_user_id` exists, every platform-scope query in the admin

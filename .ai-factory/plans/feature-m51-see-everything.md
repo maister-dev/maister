@@ -272,14 +272,14 @@ migration above idx 161 (every local and remote ref scanned 2026-09-10):
 
 | Reserved | Subject | Phase |
 | --- | --- | --- |
-| **ADR-168** | Two canonical attention counters (`decisions`, `updates`); retires `needsYou` | 0 |
-| **ADR-169** | Derived work-stage vocabulary and its relation to the board columns | 0 |
-| **ADR-170** | User-scoped attention SSE stream | 0 |
-| **ADR-171** | Desk home IA — `/` → Desk, portfolio → `/projects`, rail, member default | 0 |
-| **ADR-172** | User notification subscriptions + web push over the widened ADR-077 engine | 0 |
+| **ADR-169** | Two canonical attention counters (`decisions`, `updates`); retires `needsYou` | 0 |
+| **ADR-170** | Derived work-stage vocabulary and its relation to the board columns | 0 |
+| **ADR-171** | User-scoped attention SSE stream | 0 |
+| **ADR-172** | Desk home IA — `/` → Desk, portfolio → `/projects`, rail, member default | 0 |
+| **ADR-173** | User notification subscriptions + web push over the widened ADR-077 engine | 0 |
 | **migration 0162** | `user_activity_cursors` | 5 |
-| **migration 0163** | `push_subscriptions` + `notification_subscriptions` | 7 |
-| **migration 0164** | Widen `webhook_events` / `webhook_subscriptions` (cross-cutting — own number, never folded into 0163) | 7 |
+| **migration 01640** | `push_subscriptions` + `notification_subscriptions` | 7 |
+| **migration 01650** | Widen `webhook_events` / `webhook_subscriptions` (cross-cutting — own number, never folded into 01640) | 7 |
 
 `docs/CLAUDE.md` **R4 is one decision per ADR**, which is why the request's single
 ADR becomes five. **T8.3 budgets a mandatory renumber pass**: the branch stays
@@ -297,7 +297,7 @@ tree only.
 | `StageChip {label, type}` | the inbox card's **node** chip | `web/lib/queries/hitl-stage.ts:14` |
 
 New vocabulary = **`WorkStage` / `deriveWorkStage`** in `web/lib/work/stage.ts`.
-**Nothing above is renamed** (surgical rule). ADR-169 records the four-way
+**Nothing above is renamed** (surgical rule). ADR-170 records the four-way
 distinction. On the inbox card the `WorkStage` chip is **added beside** the node
 `StageChip` — they answer different questions ("where is this task" vs "which node
 is asking").
@@ -305,7 +305,7 @@ is asking").
 ### D3 — `WorkStage` is total, and the brief's diagram is incomplete
 
 `RUN_STATUS_VALUES` has **11** members; the brief's §5 diagram omits four cases.
-ADR-169 carries this table normatively (requirements `STG-01`, `STG-03`, `STG-04`):
+ADR-170 carries this table normatively (requirements `STG-01`, `STG-03`, `STG-04`):
 
 | Run state | `WorkStage` | Why |
 | --- | --- | --- |
@@ -330,7 +330,7 @@ ADR-169 carries this table normatively (requirements `STG-01`, `STG-03`, `STG-04
 достижимы". A member nothing can produce is dead vocabulary that reads as a UI gap
 and invites a premature renderer. `Delivered` arrives with C2, `Intake` with C3,
 each a one-line widening the exhaustive `satisfies` map makes compile-checked —
-the safety "reserved" was reaching for. ADR-169 names their owning milestones.
+the safety "reserved" was reaching for. ADR-170 names their owning milestones.
 
 ### D4 — The two counters, and the double-count the naïve definition hides
 
@@ -368,7 +368,7 @@ Relation-blocked tasks count in **neither** (`ATN-04`) — a `/work` filter only
 **The ext pulse contract does not change** (`ATN-06`).
 `web/app/api/v1/ext/activity/route.ts:63` carries an explicit ADR-152 D4 note that
 `needsYouCount` stays HITL-only; redefining it would break every deployed
-assistant. ADR-168 freezes it and adds `decisionsCount`/`updatesCount` alongside.
+assistant. ADR-169 freezes it and adds `decisionsCount`/`updatesCount` alongside.
 
 ### D5 — Ordering key: HITL criticality, not task priority
 
@@ -470,7 +470,7 @@ raise existing `PRECONDITION`, `UNAUTHENTICATED`, `UNAUTHORIZED`, `CONFIG`, so
 | Activity | `updates` | **neutral** | "N things happened you have not seen" — nothing waits on you |
 
 **Nothing non-actionable may wear the attention tone.** Relation-blocked tasks are
-the test case (`ATN-04`): they look like they need you and do not. ADR-168 makes
+the test case (`ATN-04`): they look like they need you and do not. ADR-169 makes
 this the rule a future counter must satisfy before claiming a badge.
 
 **i18n mechanics** (project rules, both previously uncited): count-bearing strings
@@ -528,33 +528,33 @@ scope** in a real browser context, not just the header.
 
 ### Phase 0 — Specifications (no application code)
 
-**T0.1 [x] — Reserve the ADR numbers.** `### ADR-168` … `### ADR-172` stubs in
+**T0.1 [x] — Reserve the ADR numbers.** `### ADR-169` … `### ADR-173` stubs in
 `docs/decisions.md` + five `docs/decisions/adr-1NN.md` records. Re-verify the base
 first: `git show master:docs/decisions.md | grep -o '^### ADR-[0-9]*' | tail -1`.
 *Verify*: `node scripts/validate-docs-adr-anchors.mjs --all` (bijection + status equality).
 
-**T0.2 [x] — ADR-169: work-stage vocabulary.** D2's four-way collision, D3's full
+**T0.2 [x] — ADR-170: work-stage vocabulary.** D2's four-way collision, D3's full
 11-status table, `Intake`/`Delivered` as future members with owning milestones,
 `blocked` as an attribute, the no-persisted-column rule. Owns `STG-01..07`.
 
-**T0.3 [x] — ADR-168: two canonical counters.** D4 in full including the worked
+**T0.3 [x] — ADR-169: two canonical counters.** D4 in full including the worked
 double-count example and the no-cursor fallback; D5's ordering; D11's badge rule
 and i18n mechanics; the `needsYouCount` freeze; the `needsYou` retirement list.
 Restate `social-board.md`'s one-number expectation for **both** counters. Owns
 `ATN-01..08`.
 
-**T0.4 [x] — ADR-170: attention SSE stream.** Deviation 2 in full: why no aggregate
+**T0.4 [x] — ADR-171: attention SSE stream.** Deviation 2 in full: why no aggregate
 stream existed, why the study route's shape is not polling-for-transitions (quote
 its header comment), the frame schema, `lastEventId` replay, heartbeat/quiet
 bounds, per-user RBAC. Owns `ATN-11`.
 
-**T0.5 [x] — ADR-171: Desk home IA.** `/` → Desk; portfolio → `/projects` unchanged;
+**T0.5 [x] — ADR-172: Desk home IA.** `/` → Desk; portfolio → `/projects` unchanged;
 rail = Home / Projects / Work / Activity / Inbox / Flow Studio / Observatory +
 admin; `/work` as the non-admin member default (**a clause of this decision**, so
 `/` never forks by role twice). Record what `/` did before and every inbound link
 that moves. Owns `NAV-01..06`.
 
-**T0.6 [x] — ADR-172: notifications.** D12's widening and fan-out; the
+**T0.6 [x] — ADR-173: notifications.** D12's widening and fan-out; the
 `attention.decision_opened | decision_closed | decisions_changed | digest`
 taxonomy; `web_push | webhook` delivery axis; per-user ownership; ext parity; the
 brief §6 anti-pattern this respects. State the fatigue bound: deltas and digests
@@ -629,7 +629,7 @@ owner decision 2026-09-10 without the stated qualification run set".
 green; the M51 requirement group is enforced (T0.11) and fully traced (T0.12).
 Anything a later task needs that the specs do not state is a spec bug fixed **here**.
 
-> **Checkpoint 1** — `docs(m51): specify stages, counters, navigation and notifications with enforced requirement IDs (ADR-168..172)`
+> **Checkpoint 1** — `docs(m51): specify stages, counters, navigation and notifications with enforced requirement IDs (ADR-169..172)`
 
 ---
 
@@ -687,7 +687,7 @@ reverted, the failing files re-run at that baseline, and the changes restored.
 `lib/queries/board` has only six importers, none on these paths. Unit suite is fully
 green (746 files / 7574 tests). Follow-up is **T8.6**.
 
-> **Checkpoint 2** — `feat(work): derive a canonical work stage (ADR-169, STG-01..07)`
+> **Checkpoint 2** — `feat(work): derive a canonical work stage (ADR-170, STG-01..07)`
 
 ---
 
@@ -860,14 +860,14 @@ Migration **0162** was therefore generated here, as a triple plus `schema.ts`
 T5.1 is marked done above rather than left to be re-done.
 
 **Two ADR reference slips in this phase's task text**, corrected against the ADR,
-which is normative: the `MINUS` is ADR-168 **D2** (not D4) and the queue's ordering
+which is normative: the `MINUS` is ADR-169 **D2** (not D4) and the queue's ordering
 is **D6** (not D5; D5 is the relation-blocked exclusion).
 
 **A spec defect I introduced in Phase 0, fixed openly rather than faked.** `ATN-06`
 required `decisionsCount`/`updatesCount` "beside" the ext pulse's `needsYouCount`.
 That is impossible: `needsYouCount` is a telemetry field on a **project-scoped**
 pulse, and a project token has no owner, so there is no reader whose cross-project
-counters could be computed there. Recorded as an ADR-168 `**Amendments:**` entry,
+counters could be computed there. Recorded as an ADR-169 `**Amendments:**` entry,
 `ATN-06` narrowed to the half that is true, and `CT-ATN-06` now pins the freeze.
 The additive surface is `GET /api/v1/ext/decisions`, which does have a reader.
 
@@ -888,7 +888,7 @@ N") remains accurate for the narrower number it shows.
 inbox page and the project page are one computation per render, which is what makes
 `ATN-05` true rather than merely intended.
 
-> **Checkpoint 5** — `feat(inbox): complete decision queue and two canonical counters (ADR-168, ATN-01..08)`
+> **Checkpoint 5** — `feat(inbox): complete decision queue and two canonical counters (ADR-169, ATN-01..08)`
 
 ---
 
@@ -986,7 +986,7 @@ counters are separate populations rather than one number rendered twice.
   **Deviation from the task text:** the attention side keeps
   `task.clarification_answered` as well — it is the one `task.*` kind with no
   `task_activity` twin, so a `run.*`-plus-`gate.failed` prefix match would have made
-  answering an agent's question invisible everywhere. Recorded as an ADR-168
+  answering an agent's question invisible everywhere. Recorded as an ADR-169
   amendment.
 - **T5.2 scope note.** The feed does NOT apply ATN-04's relation-blocked exclusion.
   ATN-04 constrains the two COUNTERS; the feed is a log of facts, and hiding a
@@ -1019,7 +1019,7 @@ counters are separate populations rather than one number rendered twice.
   loop runs for the life of ONE request, so a React-`cache`d read would have frozen
   its `decisions` counter at the value it had when the connection opened. The
   cached export is unchanged for render-scoped callers (ATN-05).
-- **Shared SSE framing extracted** to `web/lib/sse/frame.ts` per ADR-170's own
+- **Shared SSE framing extracted** to `web/lib/sse/frame.ts` per ADR-171's own
   consequence note; `formatSseFrame` re-points at it (367 evaluation tests green
   after).
 - **T5.4 addition.** The task names only `UT-ATN-12`. A digest whose five numbers
@@ -1099,7 +1099,7 @@ admin across the same four files as T3.3, plus `nav.*` i18n EN + RU and the
 Desk | Projects control per `chrome/top-nav.md`.
 
 **T6.6 [x] — `/work` as the member default · `NAV-02`, `NAV-06`.** Non-admin members land
-on `/work`; admins land on the Desk — one routing clause of ADR-171, applied here so
+on `/work`; admins land on the Desk — one routing clause of ADR-172, applied here so
 `/` never forks by role twice. *Verify*: `E2E-NAV-02` (a member and an admin land on
 different routes from the same sign-in flow) and `IT-NAV-06` (nav hiding is not the
 authorization boundary — a member requesting an admin route is refused server-side
@@ -1123,7 +1123,7 @@ regardless of what the rail renders).
   so in a code comment ("the Inbox badge already carries the total"). Shipped as
   the equality `ATN-05` actually claims — the Desk's **Decisions region** count
   against the rail badge — plus `tile <= badge`, with the reasoning in
-  [`screens/desk.md`](../../docs/screens/desk.md) and an ADR-171 amendment.
+  [`screens/desk.md`](../../docs/screens/desk.md) and an ADR-172 amendment.
   Asserting `tile == badge` would have been asserting a bug.
 - **Region counts render as a bare digit.** Same trap the rail badge hit in
   Phase 5: a testid whose text is "3 blocked on you" cannot be compared with
@@ -1143,7 +1143,7 @@ regardless of what the rail renders).
   and `/admin` — both correct as `null`. "Total" means every prefix has a
   DECIDED answer, so the gate now asserts every served segment appears in the
   classifier's declared table. It also found `/flows` undeclared.
-- **`UT-NAV-05` found one call site beyond ADR-171 D3's seven.** `web/proxy.ts`
+- **`UT-NAV-05` found one call site beyond ADR-172 D3's seven.** `web/proxy.ts`
   navigates with `new URL("/", nextUrl)`, which none of the three JSX/router
   idioms match. The gate's pattern now covers it; intent is "home", unchanged.
 - **Two real layout bugs, both caught by `E2E-EDGE-NAV-02` and invisible to the
@@ -1178,7 +1178,7 @@ regardless of what the rail renders).
   gave the same section **3px**: the block has been collapsed for an admin all
   along, and three pixels were merely still clickable. Fixed by capping the nav
   (`max-h-[45%] min-h-0 overflow-y-auto`, replacing `shrink-0`), which gives the
-  blocks below it 133px instead of 0. ADR-171's own consequence note predicted
+  blocks below it 133px instead of 0. ADR-172's own consequence note predicted
   this pressure and declines to introduce grouping; this is not grouping.
 - **Three e2e specs stay red, and the baseline proves they are not M51's.**
   `active-workspaces.spec.ts:169`, `studio.spec.ts:8` and
@@ -1212,7 +1212,7 @@ regardless of what the rail renders).
   red (it reads `app/(app)/page.tsx` by path). Expected, and green once the Desk
   landed.
 
-> **Checkpoint 7** — `feat(desk): the Desk becomes home and the portfolio moves to /projects (ADR-171, NAV-01..06)`
+> **Checkpoint 7** — `feat(desk): the Desk becomes home and the portfolio moves to /projects (ADR-172, NAV-01..06)`
 
 ---
 
@@ -1263,7 +1263,7 @@ and delivery log (DRY — no second engine).
 
 **T7.7 [x] — Triggers · `NTF-08`.** Fire on a `decisions` delta and on the digest.
 **Never a per-event stream by default** (brief §6 fatigue bound, restated in
-ADR-172). The digest payload is T5.4's deterministic sentence.
+ADR-173). The digest payload is T5.4's deterministic sentence.
 
 **T7.8 [x] — Opt-in UI + ext subscription ops · `NTF-07`, `NTF-09`.** *RED*:
 `IT-NTF-07` — a **positive grant** plus a cross-owner negative: token A cannot read,
@@ -1285,16 +1285,16 @@ with a clear log line — it does not crash the web process.
 *Execution notes (2026-09-11, Phase 7):*
 
 - **0164 widens `webhook_deliveries` too, and it had to.** T7.1/T7.2 specify two
-  migrations; neither leaves anywhere to record a PUSH delivery attempt. ADR-172
+  migrations; neither leaves anywhere to record a PUSH delivery attempt. ADR-173
   D7 stamps `delivered_at`, a `webhook_deliveries` column, but that table's
   `subscription_id` is `NOT NULL` to `webhook_subscriptions` and a push endpoint
   has neither an HTTP subscription nor an HMAC secret (`signing_secret_ref` is
-  also `NOT NULL`). Resolved with the owner's agreement by widening `0164`
+  also `NOT NULL`). Resolved with the owner's agreement by widening `01650`
   further: `subscription_id` nullable, `push_subscription_id` added (FK,
   `ON DELETE CASCADE`), and `webhook_deliveries_one_target` CHECK
   `(subscription_id IS NULL) <> (push_subscription_id IS NULL)`. One outbox, one
   drainer, one retry curve, one ledger — D1 read literally — and the `410`
-  deletion cascades its attempts away. Recorded as an ADR-172 amendment.
+  deletion cascades its attempts away. Recorded as an ADR-173 amendment.
 - **The D2 enumeration found a real leak, one layer ABOVE `subscriptionMatches`.**
   `lib/webhooks/subscriptions.ts` expressed "platform-wide" as
   `project_id IS NULL`. A user subscription also carries `project_id IS NULL`, so
@@ -1313,7 +1313,7 @@ with a clear log line — it does not crash the web process.
 - **`emitWebhookEvent` is a two-arm union, not an optional-args widening.** The
   user-scoped arm takes `ownerUserId` and writes NULL project/run; the
   project-scoped arm still REQUIRES both ids, so no existing caller can silently
-  drop them. The owner rides in `data.ownerUserId` because ADR-172 rejected a
+  drop them. The owner rides in `data.ownerUserId` because ADR-173 rejected a
   `user_id` column (D3's bug with an extra column).
 - **Two triggers, and the digest rides `system_sweep`.** A new
   `scheduler_jobs.job_kind` would be a migration for a pass whose cadence is
@@ -1358,7 +1358,7 @@ with a clear log line — it does not crash the web process.
   regression guard that was never green beforehand cannot tell a regression from a
   test that never worked, so it was written against the un-widened tree first.
 
-> **Checkpoint 8** — `feat(notifications): web push and user subscriptions over the widened ADR-077 engine (ADR-172, NTF-01..10)`
+> **Checkpoint 8** — `feat(notifications): web push and user subscriptions over the widened ADR-077 engine (ADR-173, NTF-01..10)`
 
 ---
 
@@ -1378,7 +1378,7 @@ local-only and must actually be run, not assumed.
 **T8.3 [x] — Renumber pass (mandatory).** Its own focused session, **after** rebasing
 onto master. Re-derive the next free ADR from `git show master:docs/decisions.md`
 and the next free migration idx from master's `_journal.json`; renumber if a
-parallel branch landed first; grep prose forms (`pre-ADR-168`, `since 0162`) and
+parallel branch landed first; grep prose forms (`pre-ADR-169`, `since 0162`) and
 prefer number-agnostic phrasing. Re-run `validate-docs-adr-anchors.mjs --all`.
 Re-check **M51** too — a milestone that landed meanwhile takes the number the same
 way an ADR does.
@@ -1415,7 +1415,7 @@ four of them make the feature unsafe or non-functional rather than merely imperf
    had been inserting the missing intent by hand, which is what hid it (`NTF-12`).
 3. **The delta trigger could not fire for the commonest decisions.** `DOMAIN_EVENT_KINDS`
    has no kind for a HITL opening or a run entering `NeedsInput`, and `run.review` is
-   emitted only for runs with a parent — so the ADR-172 D5 consumer woke on neither of
+   emitted only for runs with a parent — so the ADR-173 D5 consumer woke on neither of
    the two ways a decision usually opens. A `system_sweep` backstop re-derives the count
    per tick through the SAME delta function; chosen over new event kinds because those
    need a migration on a CHECK-constrained column plus emitters in the run FSM's hot
@@ -1455,7 +1455,7 @@ routing" (`PRODUCT_VIEW.md:248-254`) — do NOT create a §Phase 2.5.** That ite
 verbatim this work: "one summary that answers: what changed, what passed, what
 failed, what is stale, and **what needs a human**" is the digest plus the decision
 queue; "Web UI notifications first" is Phase 7; "Project/team inbox expansion" is
-B1. Tag shipped bullets `(Implemented — ADR-168…172)` per R6.
+B1. Tag shipped bullets `(Implemented — ADR-169…172)` per R6.
 File as TODOs at the bottom of `docs/decisions.md` (R9 — do **not** fix here):
 (a) a dead 12-entry `WebhookEventType` union at `web/lib/db/schema.ts:6940` with
 zero importers; (b) `social-board.md`'s 24 Expectations bullets vs R5a's cap of 12;
@@ -1473,9 +1473,9 @@ not the "16" claimed in `docs/decisions/adr-077.md`,
   part.** `master` had advanced 7 commits and taken `0162` for
   `event_skip_ledger`, so M51's three shifted to `0163` `user_activity_cursors`,
   `0164` `push_subscriptions` + `notification_subscriptions`, `0165` the
-  widening. ADR-168..172 and **M51** itself were re-derived as free against every
+  widening. ADR-169..172 and **M51** itself were re-derived as free against every
   local and remote ref, not just `master`, so no ADR or milestone renumber was
-  needed. Recorded as an ADR-172 amendment rather than an edit to D1, per R4.
+  needed. Recorded as an ADR-173 amendment rather than an edit to D1, per R4.
 - **The renumber introduced a silent-skip defect that only one gate could see.**
   Drizzle's incremental migrator compares each journal `when` against the
   ledger's high-water `created_at`, so M51's three entries — authored BEFORE
@@ -1572,7 +1572,7 @@ not the "16" claimed in `docs/decisions/adr-077.md`,
 | 4 | Five ADRs instead of one (R4)? | Approved | D1 |
 | 5 | `Delivered` / `Intake`: reserve or add when reachable? | Add when reachable; the plan reflects the order of work | D3 · `STG-06` |
 | 6 | Activity badge — when? | Badges show where **participation is required**: Inbox `decisions` (attention), Activity `updates` (neutral) | D11 · T5.7 |
-| 7 | `/work` as the member default — where? | Phase 6, a clause of ADR-171, so `/` never forks by role twice | T6.6 · `NAV-02` |
+| 7 | `/work` as the member default — where? | Phase 6, a clause of ADR-172, so `/` never forks by role twice | T6.6 · `NAV-02` |
 | 8 | Merge early to dodge the renumber? | No. Commit per phase, merge when the whole plan is done | Branch and merge policy · T8.3 |
 | 9 | Live refresh with no aggregate stream? | A user-scoped attention SSE route on the study route's shape | Deviation 2 · T5.5 |
 | 10 | "No second outbox" vs. run-scoped webhook tables? | Widen the ADR-077 engine; enumerate every reader of the nullable columns | D12 · T7.2 · T7.4 |

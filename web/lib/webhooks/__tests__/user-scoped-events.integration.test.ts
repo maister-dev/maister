@@ -1,10 +1,10 @@
 /**
- * ADR-172 — the widened outbound-webhook engine.
+ * ADR-173 — the widened outbound-webhook engine.
  *
  * `IT-EDGE-NTF-03` is a REGRESSION guard, and the only honest way to run one is
  * green-before and green-after: it is written and run against the un-widened
  * tree first (proving it exercises the project-scoped path rather than passing
- * vacuously), then re-run after the ADR-172 widening makes `webhook_events.project_id`
+ * vacuously), then re-run after the ADR-173 widening makes `webhook_events.project_id`
  * and `.run_id` nullable. A guard that was never green before the change cannot
  * tell a regression from a test that never worked.
  *
@@ -403,7 +403,7 @@ describe("IT-EDGE-NTF-03 project-scoped webhooks are untouched by the widening",
 
 // ===========================================================================
 // IT-NTF-02 — a project-less, run-less event reaches every reader. The table is
-// per-READER, because ADR-172 D2's defect shape is "a reader that structurally
+// per-READER, because ADR-173 D2's defect shape is "a reader that structurally
 // cannot see a NULL row", and that is invisible to a test that only checks the
 // happy delivery.
 // ===========================================================================
@@ -440,7 +440,7 @@ describe("IT-NTF-02 readers of the nullable columns", () => {
     expect(row.project_id).toBeNull();
     expect(row.run_id).toBeNull();
     expect(row.type).toBe("attention.digest");
-    // The owner rides in `data` — ADR-172 rejected a `user_id` column.
+    // The owner rides in `data` — ADR-173 rejected a `user_id` column.
     expect(row.data.ownerUserId).toBe(owner);
   });
 

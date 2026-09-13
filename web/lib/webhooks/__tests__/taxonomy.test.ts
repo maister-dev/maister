@@ -41,7 +41,7 @@ const EXPECTED_TYPES = [
   "run.pr_conflicts",
   "gate.decided",
   "ping",
-  // ADR-172: the four user-scoped attention facts. Deltas and the digest only —
+  // ADR-173: the four user-scoped attention facts. Deltas and the digest only —
   // a per-event type here would be `NTF-08`'s anti-pattern.
   "attention.decision_opened",
   "attention.decision_closed",
@@ -273,7 +273,7 @@ describe("buildEnvelopePayload — per-type data shapes pass through unchanged",
       },
     },
     { type: "ping", data: { message: "MAIster webhook ping" } },
-    // ADR-172: `data` carries the owner and the counters, never a project or a
+    // ADR-173: `data` carries the owner and the counters, never a project or a
     // run — those are the envelope's own null blocks.
     {
       type: "attention.decision_opened",

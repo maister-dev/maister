@@ -44,7 +44,7 @@ by `readBoard` on the run's project.
 ## Layout & regions
 
 Full-bleed page (no centered max-width — `main` gutter provides air). A page
-header (eyebrow, title, and the canonical `decisions` count — ADR-168), then:
+header (eyebrow, title, and the canonical `decisions` count — ADR-169), then:
 
 1. **Needs your action** — `HitlInboxList`: pending HITL across visible projects,
    **grouped by project** (a `project · N waiting` header per group); each group's
@@ -64,7 +64,7 @@ header (eyebrow, title, and the canonical `decisions` count — ADR-168), then:
    `task_mentioned`, with mark-read and read-all), unchanged.
 
 Sections 1–4 are the four kinds summed by `decisions`; section 5 is `updates` and
-carries the **neutral** tone (ADR-168 D7). Sections 2–4 reuse the `HitlCard` shell
+carries the **neutral** tone (ADR-169 D7). Sections 2–4 reuse the `HitlCard` shell
 and add **no new mutation path**.
 
 The empty state appears only when `decisions === 0` across all four decision

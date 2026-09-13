@@ -1,6 +1,6 @@
 /**
  * `E2E-NTF` — the push opt-in flow, a delivered notification, and revocation
- * (ADR-172).
+ * (ADR-173).
  *
  * Chromium's real service worker registers and the real
  * `POST /api/push/subscribe` stores the endpoint. What a test cannot have is a
@@ -193,7 +193,7 @@ test("E2E-NTF opt in stores the endpoint for the session user, and revoking remo
 test("E2E-NTF the subscribe route refuses a body naming an owner", async ({
   page,
 }) => {
-  // ADR-172 D9 at the wire: the owner is `auth-context` only. The strict zod
+  // ADR-173 D9 at the wire: the owner is `auth-context` only. The strict zod
   // schema refuses the extra key rather than ignoring it.
   await page.goto("/account");
 

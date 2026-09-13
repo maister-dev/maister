@@ -9,7 +9,7 @@ decision is waiting without keeping a tab open. It deliberately introduces **no
 second outbox, no second drainer and no second retry curve** — it widens the
 one that ships today, and pays for that by enumerating every reader of the
 columns it makes nullable. Locked by
-[ADR-172](../decisions.md#adr-172-user-notification-subscriptions-and-web-push-over-the-widened-outbound-webhook-engine),
+[ADR-173](../decisions.md#adr-173-user-notification-subscriptions-and-web-push-over-the-widened-outbound-webhook-engine),
 and **Implemented**.
 Project- and run-scoped webhook behaviour is owned by
 [`outbound-webhooks.md`](outbound-webhooks.md) and is unchanged.
@@ -103,15 +103,15 @@ flowchart TD
   more times across a day. The sender classifies instead and the ledger takes an
   explicit `terminal` flag; `408` and `429` are carved out of that arm by name,
   because they are the two 4xx that mean "later".
-- **`webhook_deliveries` is the push ledger too.** ADR-172 D7 stamps
+- **`webhook_deliveries` is the push ledger too.** ADR-173 D7 stamps
   `delivered_at`, which is a `webhook_deliveries` column, and that table's
   `subscription_id` was `NOT NULL` to `webhook_subscriptions` — a push endpoint
   has no HTTP subscription and no HMAC secret, so there was nowhere to record a
-  push attempt. `0165` therefore also makes `subscription_id` nullable, adds
+  push attempt. `01660` therefore also makes `subscription_id` nullable, adds
   `push_subscription_id`, and enforces `webhook_deliveries_one_target`
   (`(subscription_id IS NULL) <> (push_subscription_id IS NULL)`). One outbox,
   one drainer, one retry curve, one ledger — and a `410` cascade-deletes the
-  attempts with the endpoint. Recorded as an ADR-172 amendment.
+  attempts with the endpoint. Recorded as an ADR-173 amendment.
 - **The platform scope had to be narrowed, and this is the highest-value thing
   the D2 enumeration found.** `subscriptions.ts` expressed "platform-wide" as
   `project_id IS NULL`. A user subscription is also `project_id IS NULL`, so the
@@ -119,7 +119,7 @@ flowchart TD
   deliveries of other people's PERSONAL subscriptions. "Platform" now means
   `project_id IS NULL AND owner_user_id IS NULL`, at all four call sites
   (`IT-NTF-02`).
-- **The event's owner rides in `data.ownerUserId`.** ADR-172 rejected a `user_id`
+- **The event's owner rides in `data.ownerUserId`.** ADR-173 rejected a `user_id`
   column on `webhook_events` (D3's bug with an extra column), so `emitWebhookEvent`
   is a two-arm union: the user-scoped arm takes `ownerUserId` and writes NULL
   project/run, and the project-scoped arm still requires both ids, so no existing
@@ -177,8 +177,8 @@ flowchart TD
 
 ## Linked artifacts
 
-- [ADR-172 — user notification subscriptions and web push](../decisions.md#adr-172-user-notification-subscriptions-and-web-push-over-the-widened-outbound-webhook-engine)
-- [ADR-168 — the `decisions` counter whose deltas trigger delivery](../decisions.md#adr-168-two-canonical-attention-counters-decisions-and-updates)
+- [ADR-173 — user notification subscriptions and web push](../decisions.md#adr-173-user-notification-subscriptions-and-web-push-over-the-widened-outbound-webhook-engine)
+- [ADR-169 — the `decisions` counter whose deltas trigger delivery](../decisions.md#adr-169-two-canonical-attention-counters-decisions-and-updates)
 - [Outbound webhooks — the engine being widened](outbound-webhooks.md)
 - [Domain events — the consumer registry and cursor model](domain-events.md)
 - [M51 requirement traceability](m51-traceability.md)

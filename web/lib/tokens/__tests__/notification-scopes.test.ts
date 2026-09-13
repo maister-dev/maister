@@ -1,5 +1,5 @@
 /**
- * `UT-NTF-09` (ADR-172 D10) — the two new scopes are WITHHELD from agents.
+ * `UT-NTF-09` (ADR-173 D10) — the two new scopes are WITHHELD from agents.
  *
  * An agent has no business reading a human's decision queue or editing where
  * that human gets notified. Both omissions are asserted rather than assumed,

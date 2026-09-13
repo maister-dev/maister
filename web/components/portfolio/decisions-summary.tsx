@@ -22,7 +22,7 @@ export interface DecisionsSummaryProps {
 }
 
 // Compact home replacement for the full HITL + social inbox blocks (WI-1): the
-// canonical `decisions` count (ADR-168), a peek at the top items, and a link to
+// canonical `decisions` count (ADR-169), a peek at the top items, and a link to
 // the dedicated /inbox working surface. Inline respond lives on /inbox.
 export function DecisionsSummary({
   count,

@@ -1,7 +1,7 @@
 import "server-only";
 
 /**
- * The ONE visible-projects scope (ADR-169 D6).
+ * The ONE visible-projects scope (ADR-170 D6).
  *
  * `admin` reaches every non-archived project by ROLE, not by membership;
  * everyone else reaches the non-archived projects they belong to. That branch
@@ -90,7 +90,7 @@ export async function getVisibleProjects(
 }
 
 /**
- * The projects a reader can ACT in, not merely read (ADR-168 D7).
+ * The projects a reader can ACT in, not merely read (ADR-169 D7).
  *
  * `readBoard` is a `viewer` action; `answerHitl`, `promoteRun`, `recoverRun`
  * and `editTask` — the four things a decision-queue entry asks for — all

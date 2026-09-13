@@ -1,5 +1,5 @@
 /**
- * SSE wire formatting, shared by the routes that speak it (ADR-170).
+ * SSE wire formatting, shared by the routes that speak it (ADR-171).
  *
  * Three routes now stream: one run, one evaluation study, and the user-scoped
  * attention stream. They disagree about WHAT they send and agree completely

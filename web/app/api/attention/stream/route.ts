@@ -1,7 +1,7 @@
 import "server-only";
 
 /**
- * `GET /api/attention/stream` — the user-scoped attention stream (ADR-170,
+ * `GET /api/attention/stream` — the user-scoped attention stream (ADR-171,
  * `ATN-11`, `EDGE-ATN-04`).
  *
  * ONE connection per reader, addressed by the session user rather than by a run

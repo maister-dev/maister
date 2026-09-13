@@ -1,5 +1,5 @@
 /**
- * Derived work-stage vocabulary (ADR-169).
+ * Derived work-stage vocabulary (ADR-170).
  *
  * A fourth "stage" vocabulary, deliberately separate from the three that
  * already exist — the persisted `tasks.stage` column, its `TaskStage` alias,
@@ -42,7 +42,7 @@ export interface DeriveWorkStageInput {
    * (`Done`/`Abandoned`) is settled whether or not it ever launched.
    *
    * `taskStage` and `runKind` are read by no branch today. They are part of the
-   * signature ADR-169 D1 fixes normatively, and they stay because the run axis
+   * signature ADR-170 D1 fixes normatively, and they stay because the run axis
    * dominates whenever a run exists — a future divergence (a `scratch` run that
    * must not read as `Executing`) lands as a branch here rather than as a new
    * parameter threaded through both call sites.
@@ -132,7 +132,7 @@ function stageOf(input: DeriveWorkStageInput): WorkStage {
   return STAGE_BY_RUN_STATUS[runStatus];
 }
 
-// ADR-169 D3: `promotion_state` carries five values, of which only 'none' and
+// ADR-170 D3: `promotion_state` carries five values, of which only 'none' and
 // 'done' are reachable beside a Done run. Any non-'none' state means a
 // promotion path was engaged, so this stays total without a five-way branch.
 function promotedKindOf(promotionState: string | null): PromotedKind {
@@ -154,7 +154,7 @@ export function deriveWorkStage(input: DeriveWorkStageInput): WorkStageResult {
 }
 
 /**
- * The three-way partition of `WORK_STAGES` the Desk reads (ADR-171 D1).
+ * The three-way partition of `WORK_STAGES` the Desk reads (ADR-172 D1).
  *
  * "Work in flight" is a launched run that has not settled: the stages between
  * `Queued` and `Crashed`. `Triage`/`Held`/`Ready` are work that has not

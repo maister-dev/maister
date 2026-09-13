@@ -10,7 +10,7 @@ import { RunStreamLiveness } from "@/components/feedback/run-stream-liveness";
 import { useAttentionStream } from "@/lib/use-attention-stream";
 
 /**
- * Keeps a cross-project surface fresh from the attention stream (ADR-170, T5.6).
+ * Keeps a cross-project surface fresh from the attention stream (ADR-171, T5.6).
  *
  * The surfaces it serves (`/work`, `/activity`) are server-rendered, so a tick
  * becomes `router.refresh()` — the server re-reads the same read models and the

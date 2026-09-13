@@ -1,4 +1,4 @@
-// IT-ATN-02 / IT-ATN-03 / IT-EDGE-ATN-02 (ADR-168 D1, D2, D3, D4) — the `updates`
+// IT-ATN-02 / IT-ATN-03 / IT-EDGE-ATN-02 (ADR-169 D1, D2, D3, D4) — the `updates`
 // counter.
 //
 // `updates` is a JOIN, not a sum of two cheap counts. One mention writes BOTH a

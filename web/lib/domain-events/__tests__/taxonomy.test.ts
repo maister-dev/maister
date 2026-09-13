@@ -104,7 +104,7 @@ describe("domain-event taxonomy", () => {
   });
 });
 
-// UT-ATN-09 (M51, ADR-168) — the attention plane reads `domain_events` through
+// UT-ATN-09 (M51, ADR-169) — the attention plane reads `domain_events` through
 // a classification, not through a hand-picked prefix. Three kinds are written
 // in the same transaction as a `task_activity` row carrying the same fact;
 // counting those in `updates` scores one task creation twice and rendering them

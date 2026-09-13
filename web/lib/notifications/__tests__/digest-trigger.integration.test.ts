@@ -327,7 +327,7 @@ describe("IT-NTF-08 the digest trigger", () => {
 // IT-NTF-14 — the delta BACKSTOP, which is what actually makes a decision
 // notification fire.
 //
-// ADR-172 D5 made the domain-event consumer the delta trigger. That assumed the
+// ADR-173 D5 made the domain-event consumer the delta trigger. That assumed the
 // taxonomy covers decision transitions, and it does not: `DOMAIN_EVENT_KINDS`
 // has no member for a HITL opening or a run entering `NeedsInput`, and
 // `run.review` is emitted only for runs WITH a parent

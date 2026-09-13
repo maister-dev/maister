@@ -31,7 +31,7 @@ export interface LeftRailNavSection {
 }
 
 /**
- * ADR-168 D7 / `ATN-05`: two badges, two tones, one source. The **attention**
+ * ADR-169 D7 / `ATN-05`: two badges, two tones, one source. The **attention**
  * tone means "N things are blocked on you"; the **neutral** tone means "N things
  * happened you have not seen". Nothing non-actionable may wear the attention
  * tone, which is why the tone travels with the value instead of being inferred
@@ -242,7 +242,7 @@ export function LeftRailNavView(props: LeftRailNavProps): ReactElement {
        *
        * The rail is a fixed-height flex column (`h-[calc(100vh-64px-36px)]`),
        * and an admin's section list is twelve entries since `/` became the Desk
-       * (ADR-171 D4). A `shrink-0` nav that tall starves everything below it —
+       * (ADR-172 D4). A `shrink-0` nav that tall starves everything below it —
        * active workspaces, runners readiness, the launcher. Measured at a
        * 720px-tall viewport: the nav took 422 of the 576px available and the
        * active-workspaces section resolved to ZERO height, at which point its
@@ -252,7 +252,7 @@ export function LeftRailNavView(props: LeftRailNavProps): ReactElement {
        * This predates the twelfth section — at eleven the same section measured
        * 3px, which only looked fine because three pixels are still clickable.
        * The cap is what makes the blocks below the nav real estate rather than
-       * leftovers; ADR-171 notes the rail is near the point of needing grouping,
+       * leftovers; ADR-172 notes the rail is near the point of needing grouping,
        * and this is deliberately not that.
        */
       className={

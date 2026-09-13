@@ -1,7 +1,7 @@
 import "server-only";
 
 /**
- * The `attention.*` domain-event consumer (ADR-172 D5/D6, `NTF-08`,
+ * The `attention.*` domain-event consumer (ADR-173 D5/D6, `NTF-08`,
  * `EDGE-NTF-01`).
  *
  * ONE entry in `DOMAIN_EVENT_CONSUMERS` plus its cursor row — exactly what
@@ -224,7 +224,7 @@ export function buildAttentionConsumer(
 /**
  * One reader's delta, shared by the domain-event consumer and the
  * `system_sweep` backstop so there is exactly one definition of "the count
- * moved, tell them" (ADR-172 D5/D6).
+ * moved, tell them" (ADR-173 D5/D6).
  *
  * Idempotent by construction: the count is recomputed from current state and
  * compared against the last value PUBLISHED for this reader, so a redelivery,

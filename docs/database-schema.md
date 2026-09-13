@@ -1279,13 +1279,13 @@ the acting pair) inside the same transaction as the triggering write.
 Indexed `(recipient_type, recipient_id, read_at, created_at DESC)` for the
 unread badge and inbox panel.
 
-## Attention and notification tables (Implemented — ADR-168/ADR-172, migrations `0163`–`0165`)
+## Attention and notification tables (Implemented — ADR-169/ADR-173, migrations `01640`–`01660`)
 
 Three new tables plus one widening of the shipped ADR-077 tables. The DDL below
 is the **specification**: the migrations implement it rather than becoming it.
 Constraint and index names are normative.
 
-### `user_activity_cursors` (migration `0163`)
+### `user_activity_cursors` (migration `01640`)
 
 One row per user; an **absent** row means "never looked" and is the correct
 seed. No backfill and no constant default — a pre-seeded cursor would
@@ -1310,7 +1310,7 @@ ON CONFLICT (user_id) DO UPDATE
       updated_at   = now();
 ```
 
-### `push_subscriptions` (migration `0164`)
+### `push_subscriptions` (migration `01650`)
 
 A browser push endpoint. `endpoint`, `p256dh` and `auth` are stored **opaque**:
 never parsed for routing, never used to derive a host, never logged. A user may
@@ -1334,7 +1334,7 @@ CREATE INDEX push_subscriptions_owner_idx ON push_subscriptions (owner_user_id);
 The unique constraint makes re-registering the same endpoint idempotent. A push
 `410 Gone` **deletes** the row (`NTF-05`).
 
-### `notification_subscriptions` (migration `0164`)
+### `notification_subscriptions` (migration `01650`)
 
 Per-user delivery **intent**: which `attention.*` types, over which transport.
 One intent row per owner per transport; the sender fans out to that owner's
@@ -1363,9 +1363,9 @@ CREATE INDEX notification_subscriptions_owner_idx
 attention.decisions_changed | attention.digest` — the delta and digest triggers
 only, never a per-event stream (`NTF-08`).
 
-### Widening the ADR-077 tables (migration `0165`, cross-cutting)
+### Widening the ADR-077 tables (migration `01660`, cross-cutting)
 
-Its **own** migration number, never folded into `0164`: it changes live shipped
+Its **own** migration number, never folded into `01650`: it changes live shipped
 tables and must be reviewable and revertable on its own. It widens; it drops
 nothing.
 
@@ -1386,7 +1386,7 @@ ALTER TABLE webhook_deliveries ADD CONSTRAINT webhook_deliveries_one_target
   CHECK ((subscription_id IS NULL) <> (push_subscription_id IS NULL));
 ```
 
-`webhook_deliveries` widens because ADR-172 D7 stamps `delivered_at` — a column
+`webhook_deliveries` widens because ADR-173 D7 stamps `delivered_at` — a column
 of THIS table — for a push delivery too, and a push endpoint has neither an HTTP
 subscription nor an HMAC secret. Exactly one target is set per row; the `410 Gone`
 that deletes an endpoint cascades its attempts away rather than leaving them
@@ -1395,7 +1395,7 @@ dangling. Every pre-existing row has `subscription_id` set and
 
 Scope becomes **two independent axes**, and the existing single-disjunct match
 expression is wrong once `webhook_events.project_id` can be NULL — see
-[ADR-172](decisions.md#adr-172) D3 and
+[ADR-173](decisions.md#adr-173) D3 and
 [`db/webhooks.md`](db/webhooks.md).
 
 ## `runs`

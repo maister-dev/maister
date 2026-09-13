@@ -1,9 +1,9 @@
-// `UT-NAV-04` (ADR-171 D4) — `railSectionForPathname` is TOTAL over the app's
+// `UT-NAV-04` (ADR-172 D4) — `railSectionForPathname` is TOTAL over the app's
 // route prefixes, and `/` resolves to `home`.
 //
 // Before this milestone the classifier collapsed four prefixes onto `projects`:
 // `/`, `/projects`, `/runs` and `/scratch-runs`. Two of those collapses were
-// deliberate and survive; the `/` one was the overload ADR-171 exists to undo.
+// deliberate and survive; the `/` one was the overload ADR-172 exists to undo.
 //
 // "Total" means every prefix has a DECIDED answer — and `null` ("nothing
 // highlighted") is one of them, for surfaces reached from the user menu rather

@@ -1,4 +1,4 @@
-// `UT-NAV-05` (ADR-171 D3) — every inbound navigation to `/` is classified.
+// `UT-NAV-05` (ADR-172 D3) — every inbound navigation to `/` is classified.
 //
 // `/` used to mean one thing. It now means two: the Desk and, via `/projects`,
 // the portfolio. A call site that meant "the portfolio" and still points at `/`

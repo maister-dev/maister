@@ -1,16 +1,16 @@
 # Attention domain ERD
 
 Tables for the user-scoped attention plane: the per-user activity read cursor
-([ADR-168](../decisions.md#adr-168)) and the notification subscription /
-web-push tables ([ADR-172](../decisions.md#adr-172)).
+([ADR-169](../decisions.md#adr-169)) and the notification subscription /
+web-push tables ([ADR-173](../decisions.md#adr-173)).
 See [`../system-analytics/attention.md`](../system-analytics/attention.md) and
 [`../system-analytics/notifications.md`](../system-analytics/notifications.md)
 for behavior, and [`../database-schema.md`](../database-schema.md) for the exact
 DDL, constraint names and index names.
 
-> **Status: Implemented.** Migration `0163` (`user_activity_cursors`) shipped in
-> M51 Phase 4; `0164` added `push_subscriptions` and
-> `notification_subscriptions`, and `0165` widened the ADR-077 tables (drawn in
+> **Status: Implemented.** Migration `01640` (`user_activity_cursors`) shipped in
+> M51 Phase 4; `01650` added `push_subscriptions` and
+> `notification_subscriptions`, and `01660` widened the ADR-077 tables (drawn in
 > [`webhooks.md`](webhooks.md), not here — it also gives `webhook_deliveries` a
 > `push_subscription_id` so one ledger carries both transports).
 
@@ -79,7 +79,7 @@ it is indexed on both sides.
 
 ## Linked artifacts
 
-- [ADR-168](../decisions.md#adr-168) · [ADR-172](../decisions.md#adr-172)
+- [ADR-169](../decisions.md#adr-169) · [ADR-173](../decisions.md#adr-173)
 - [`../system-analytics/attention.md`](../system-analytics/attention.md)
 - [`../system-analytics/notifications.md`](../system-analytics/notifications.md)
 - [`webhooks.md`](webhooks.md) — the widened ADR-077 tables

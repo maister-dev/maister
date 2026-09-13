@@ -120,7 +120,7 @@ test("readiness summary: badge on board/portfolio + panel on run-detail", async 
 
   await expect(overriddenHeading).toBeVisible();
 
-  // (4) Navigate to the portfolio (ADR-171 D2 moved it off `/`). The workspace
+  // (4) Navigate to the portfolio (ADR-172 D2 moved it off `/`). The workspace
   // cards for both runs should display readiness badges
   // [data-readiness="failed"] and [data-readiness="overridden"].
   await page.goto("/projects");

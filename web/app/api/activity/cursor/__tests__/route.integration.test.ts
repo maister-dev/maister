@@ -1,4 +1,4 @@
-// IT-ATN-10 / IT-EDGE-ATN-03 (ADR-168 D3) — `POST /api/activity/cursor`.
+// IT-ATN-10 / IT-EDGE-ATN-03 (ADR-169 D3) — `POST /api/activity/cursor`.
 //
 // The cursor is the one piece of persisted state the attention plane owns, and
 // the only operation on it is an advance. Every case below is about what MUST

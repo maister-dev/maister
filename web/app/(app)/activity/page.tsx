@@ -75,7 +75,7 @@ export default async function ActivityPage({
       : new Date(rows[0].occurredAt.getTime() + 1).toISOString();
 
   const labels: ActivityFeedLabels = {
-    // Row labels come from the shared builder the Desk also calls (ADR-171 D1).
+    // Row labels come from the shared builder the Desk also calls (ADR-172 D1).
     ...buildActivityRowLabels(t, ACTIVITY_FEED_KINDS),
     rowCount: t("rowCount"),
     latestOnly: t("latestOnly"),

@@ -1,7 +1,7 @@
 import "server-only";
 
 /**
- * The `updates` counter (ADR-168 D1, D2, D3, D4).
+ * The `updates` counter (ADR-169 D1, D2, D3, D4).
  *
  * "What happened that I have not seen." Nothing here waits on anyone — that is
  * what keeps it off the attention tone and out of `decisions`.
@@ -45,7 +45,7 @@ const log = pino({
 });
 
 /**
- * ADR-168 D3. An absent cursor row means "never looked", NOT "has seen nothing
+ * ADR-169 D3. An absent cursor row means "never looked", NOT "has seen nothing
  * ever" — counting all history would render a four-digit badge on a first visit
  * and train the reader to dismiss it permanently. Matches the digest's fallback.
  */
@@ -57,7 +57,7 @@ export async function getUpdatesCount(
   now: Date = new Date(),
 ): Promise<number> {
   const client = getDb() as NodePgDatabase<typeof schema>;
-  // ADR-168 D4: activity is filtered by CURRENT visibility and the cursor is
+  // ADR-169 D4: activity is filtered by CURRENT visibility and the cursor is
   // never rewound, so a new member sees a project from joining forward and a
   // removed one stops seeing it immediately.
   const projectIds = await getVisibleProjectIds(userId, globalRole, client);
@@ -104,7 +104,7 @@ export async function getUpdatesCount(
       ),
   ]);
 
-  // ADR-168 D5 / ATN-04: a relation-blocked task counts in NEITHER counter.
+  // ADR-169 D5 / ATN-04: a relation-blocked task counts in NEITHER counter.
   const taskIds = [
     ...new Set(
       [...unreadRows, ...activityRows, ...eventRows].flatMap((row) =>

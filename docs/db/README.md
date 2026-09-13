@@ -34,7 +34,7 @@ Two kinds of view live here (ADR-159):
 | [`integrations-domain.md`](integrations-domain.md) | Project tokens + token audit log. |
 | [`scheduler-domain.md`](scheduler-domain.md) | Scheduler jobs + run schedules + scheduled task launches (ADR-060/071, ADR-139). |
 | [`execution-hosts-domain.md`](execution-hosts-domain.md) | Execution-host placement/command tables (ADR-166, Implemented) plus Stage B event streams, canonical events, session incarnations, consumer cursors, import lanes, and ingest failures (ADR-167, migrations `0131`–`0132`, Designed). |
-| [`attention-domain.md`](attention-domain.md) | Attention plane: per-user activity read cursor + notification/web-push subscriptions (ADR-168/172, migrations `0163`–`0165`, Implemented). |
+| [`attention-domain.md`](attention-domain.md) | Attention plane: per-user activity read cursor + notification/web-push subscriptions (ADR-169/172, migrations `0163`–`0165`, Implemented). |
 | [`webhooks.md`](webhooks.md) | Webhook subscriptions + events outbox + deliveries + attempts (ADR-077). |
 
 ## Cardinality notation

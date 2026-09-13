@@ -1,4 +1,4 @@
-// UT-ATN-05 (ADR-168 D9) — `needsYou` is RETIRED, not deprecated.
+// UT-ATN-05 (ADR-169 D9) — `needsYou` is RETIRED, not deprecated.
 //
 // A deprecated alias would leave a second way to compute a canonical number,
 // which is exactly the drift this decision exists to remove. So the assertion
@@ -93,7 +93,7 @@ describe("CT-ATN-06 the external pulse's needsYou semantics do not change", () =
 
     // HITL items only. Folding promotable runs — or the new `decisions` queue —
     // into this series would silently redefine a number every deployed
-    // assistant already reads (ADR-152 D4, restated by ADR-168 D10).
+    // assistant already reads (ADR-152 D4, restated by ADR-169 D10).
     expect(source).toContain("needsYouCount: response.needsYou.items.length");
     expect(source).toContain(
       "promotableCount: response.needsYou.promotable.length",
@@ -123,7 +123,7 @@ describe("CT-ATN-06 the external pulse's needsYou semantics do not change", () =
 describe("UT-ATN-05 every migrated surface reads the one canonical counter", () => {
   const SURFACES = [
     "app/(app)/layout.tsx",
-    // `/` is the Desk and `/projects` the relocated portfolio (ADR-171 D1/D2).
+    // `/` is the Desk and `/projects` the relocated portfolio (ADR-172 D1/D2).
     // Both render a decisions number, so both stay on this list — dropping the
     // moved page would retire the check along with the route.
     "app/(app)/page.tsx",

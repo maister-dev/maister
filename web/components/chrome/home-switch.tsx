@@ -9,7 +9,7 @@ import { usePathname } from "next/navigation";
 import { railSectionForPathname } from "@/components/chrome/left-rail-route";
 
 /**
- * The Desk | Projects switch (ADR-171 D3, `screens/chrome/top-nav.md`).
+ * The Desk | Projects switch (ADR-172 D3, `screens/chrome/top-nav.md`).
  *
  * `/` carried two meanings before this milestone — "home" and "the portfolio".
  * The switch is the visible answer to which one a reader wants, and it reuses

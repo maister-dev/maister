@@ -218,7 +218,7 @@ cheap). (All Implemented.)
 | `gate.decided` | `gate_results` reaching `passed | failed | overridden` | `flows/graph/gate-store.ts` (insert-at-terminal + all terminal transitions) |
 | `run.rework_claimed` | ADR-161 rework claim: a finished `Review` run returns to `HumanWorking` at a server-resolved re-entry node | `app/api/runs/[runId]/rework-claim/claim/route.ts` |
 | `run.rework_returned` | ADR-161 rework return: the claimed run re-enters the graph (fast-forward-only ingest) | `app/api/runs/[runId]/rework-claim/return/route.ts` |
-| `attention.decision_opened` | a reader's `decisions` count rises from zero (ADR-172 delta trigger) — **user-scoped**, project and run NULL | `notifications/attention-consumer.ts` |
+| `attention.decision_opened` | a reader's `decisions` count rises from zero (ADR-173 delta trigger) — **user-scoped**, project and run NULL | `notifications/attention-consumer.ts` |
 | `attention.decision_closed` | a reader's `decisions` count falls to zero — **user-scoped** | `notifications/attention-consumer.ts` |
 | `attention.decisions_changed` | a reader's `decisions` count moves between two non-zero values — **user-scoped** | `notifications/attention-consumer.ts` |
 | `attention.digest` | the scheduled catch-up digest, at most once per digest window per reader — **user-scoped** | `notifications/digest-trigger.ts`, on the `system_sweep` bundle |

@@ -14,7 +14,7 @@ export interface ScratchLaunchPopoverProps {
   title: string;
   projectId?: string | null;
   /**
-   * `composer` is the Desk's full-width entry (ADR-171 D1). It opens the SAME
+   * `composer` is the Desk's full-width entry (ADR-172 D1). It opens the SAME
    * launcher dialog as `primary` but deliberately does NOT register the global
    * Cmd/Ctrl+K listener — the rail already owns that, and a second registration
    * would open two dialogs at once.

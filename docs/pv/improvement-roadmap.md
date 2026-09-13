@@ -93,7 +93,7 @@ pleasant enough to run the M20 dogfood, and every run emits structured signal.**
 | **Benchmarking** | A/B comparison of runs (with/without a cap, version A vs B), diff-of-diffs, judge-assisted + human verdict; feeds catalog lifecycle | Run substrate (exists) + run volume |
 | **Flow-graph editor** | Visual graph authoring | Graph view (Wave 1) + authoring |
 | **Visual validation ("Eyes")** | Preview URLs + port mapping, browser-backed checks as nodes/gates, screenshots/DOM/console/network/user-flow traces → artifact graph (`PRODUCT_VIEW.md` §Phase 2.1) | Workbench (E1) + artifact graph |
-| **Attention routing** | Run summaries (changed/passed/failed/stale/needs-human), ledger history (recovery/checkpoint/gate-rerun/profile changes), web notifications → Telegram later (`PRODUCT_VIEW.md` §Phase 2 item 5, "Observability and attention routing" — run summaries and web/push notifications Implemented in M51, ADR-168..172) | Observatory (E2) + assignments |
+| **Attention routing** | Run summaries (changed/passed/failed/stale/needs-human), ledger history (recovery/checkpoint/gate-rerun/profile changes), web notifications → Telegram later (`PRODUCT_VIEW.md` §Phase 2 item 5, "Observability and attention routing" — run summaries and web/push notifications Implemented in M51, ADR-169..172) | Observatory (E2) + assignments |
 | **Cost & economics** | Cost by run/node/executor/gate/tool, noisy-command compaction, cache-resume cost, host memory visibility, warn-first budgets (`PRODUCT_VIEW.md` §Phase 2.6) | Extends `cost.jsonl` capture |
 
 ### Wave 4 — Widen the surface (team / external validation)
@@ -297,7 +297,7 @@ its write half. Its action-facing extension — **run summaries, ledger history,
 and web→Telegram notifications** — is the "attention routing" track sequenced in
 Wave 3 (`PRODUCT_VIEW.md` §Phase 2 item 5, "Observability and attention
 routing"). Run summaries and web/push notifications landed in M51
-(ADR-168..172); Telegram remains later.
+(ADR-169..172); Telegram remains later.
 
 ### E3 — Knowledge lifecycle / moat *(Waves 2–3)*
 Close the loop that today only consumes git plugins read-only:

@@ -136,7 +136,7 @@ export default defineConfig({
       // and platform-agents-binding.spec.ts already tolerates `Running` as well
       // as `Pending` for its launched run.
       MAISTER_MAX_CONCURRENT_RUNS: "64",
-      // push-notifications.spec.ts (ADR-172). Throwaway keys; see above.
+      // push-notifications.spec.ts (ADR-173). Throwaway keys; see above.
       MAISTER_VAPID_PUBLIC_KEY,
       MAISTER_VAPID_PRIVATE_KEY,
       MAISTER_VAPID_SUBJECT: "mailto:e2e@maister.local",

@@ -19,10 +19,10 @@ info:
     input, HITL requested/responded, review, promoted, done, failed, crashed,
     abandoned, PR merged/closed/conflicts, rework claimed/returned, escalated,
     gate decided, ping), plus the four **user-scoped** `attention.*` facts
-    (ADR-172). Low-level ACP `session/*` stream events are
+    (ADR-173). Low-level ACP `session/*` stream events are
     NEVER delivered here — see `../async/web-runs.asyncapi.yaml` for those.
 
-    **Two scope axes (ADR-172).** A `run.*`/`gate.*` event is project-scoped and
+    **Two scope axes (ADR-173).** A `run.*`/`gate.*` event is project-scoped and
     carries both `project` and `run`. An `attention.*` event is **user-scoped**:
     `project` and `run` are both `null`, and it is delivered only to the
     subscription owned by that user. A platform-wide subscription (one with no
@@ -347,7 +347,7 @@ components:
       type: object
       description: >-
         Owning project. `null` for the synthetic `ping` envelope and for every
-        user-scoped `attention.*` event (ADR-172).
+        user-scoped `attention.*` event (ADR-173).
       required: [id, slug, name]
       properties:
         id: { type: string, format: uuid }
@@ -358,7 +358,7 @@ components:
       type: object
       description: |
         Originating run. `null` for the synthetic `ping` envelope and for every
-        user-scoped `attention.*` event (ADR-172). `branch` is the run's
+        user-scoped `attention.*` event (ADR-173). `branch` is the run's
         workspace branch.
       required: [id, taskId, flowId, branch, status]
       properties:

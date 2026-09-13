@@ -1,4 +1,4 @@
-// IT-ATN-08 / CT-ATN-06 (ADR-168) — `GET /api/v1/ext/decisions`.
+// IT-ATN-08 / CT-ATN-06 (ADR-169) — `GET /api/v1/ext/decisions`.
 //
 // A decision queue is a PERSON's queue, so this is the narrowest ext actor in
 // the system: a global personal token and nothing else. Every negative is

@@ -1,7 +1,7 @@
 import "server-only";
 
 /**
- * Per-user notification subscriptions and push endpoints (ADR-172 D9,
+ * Per-user notification subscriptions and push endpoints (ADR-173 D9,
  * `NTF-06`, `NTF-07`).
  *
  * EVERY function here takes the owner as its FIRST argument, resolved by the
@@ -297,7 +297,7 @@ export async function registerPushEndpoint(
  * the intent never did, and the `EXISTS` in the fanout query matched nothing.
  *
  * The intent names all four `attention.*` types, which is the ENTIRE permitted
- * surface: ADR-172 D6 already caps triggers at decision deltas plus the digest,
+ * surface: ADR-173 D6 already caps triggers at decision deltas plus the digest,
  * so this is not a broad default, it is the only one the decision allows.
  *
  * One transaction: a half-enabled opt-in is the state this function exists to

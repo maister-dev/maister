@@ -1,4 +1,4 @@
-// E2E-ATN-10 (ADR-168) — the read cursor and the two badges, end to end.
+// E2E-ATN-10 (ADR-169) — the read cursor and the two badges, end to end.
 //
 // Both cases run as a DEDICATED member, never as the shared admin: the admin
 // sees every seeded project, so neither of its counters is a knowable number.
@@ -77,7 +77,7 @@ test("E2E-ATN-10 the divider marks the last visit, and clearing it leaves the de
     await expect(decisionsBadge).toHaveText(String(fx.decisions));
     await expect(updatesBadge).toHaveText(String(fx.unread));
 
-    // ADR-168 D7: only the attention badge wears the attention tone.
+    // ADR-169 D7: only the attention badge wears the attention tone.
     await expect(decisionsBadge).toHaveClass(/bg-amber/);
     await expect(updatesBadge).not.toHaveClass(/amber/);
 

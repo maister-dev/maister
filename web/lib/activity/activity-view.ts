@@ -1,5 +1,5 @@
 /**
- * Pure view helpers for `/activity` (`ATN-10`, ADR-168, ADR-171).
+ * Pure view helpers for `/activity` (`ATN-10`, ADR-169, ADR-172).
  *
  * Everything here is a function of the query string or of already-fetched rows,
  * which is where a silently-dropped filter or an off-by-one divider hides. No

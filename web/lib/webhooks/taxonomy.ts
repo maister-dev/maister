@@ -27,7 +27,7 @@ export const WEBHOOK_EVENT_TYPES = [
   "run.pr_conflicts",
   "gate.decided",
   "ping",
-  // ADR-172: the four USER-scoped attention facts. Their envelopes carry
+  // ADR-173: the four USER-scoped attention facts. Their envelopes carry
   // `project: null` and `run: null` — a shape D4 notes consumers were already
   // obliged to handle, so there is no `apiVersion` bump.
   "attention.decision_opened",

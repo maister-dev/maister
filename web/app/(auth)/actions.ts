@@ -92,7 +92,7 @@ export async function authenticate(
       return { error: credentialResult.reason };
     }
 
-    // `NAV-02` (ADR-171 D5): a non-admin lands on `/work`, an admin on the Desk.
+    // `NAV-02` (ADR-172 D5): a non-admin lands on `/work`, an admin on the Desk.
     // Resolved HERE, from the verified row, because this is the one moment the
     // role is known and no destination has been chosen yet.
     const redirectTo = resolveLandingRoute(

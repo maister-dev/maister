@@ -8,7 +8,7 @@ launched a run — and the cross-project work table that renders it. The domain
 owns `WorkStage`, the pure classifier `deriveWorkStage`, and the batched read
 model behind `/work`. It does **not** own the Kanban board's seven
 `BoardColumn` values, the persisted `tasks.stage` column, or the inbox card's
-node `StageChip`; [ADR-169](../decisions.md#adr-169-derived-work-stage-vocabulary-distinct-from-the-board-columns)
+node `StageChip`; [ADR-170](../decisions.md#adr-170-derived-work-stage-vocabulary-distinct-from-the-board-columns)
 is the map between those four vocabularies. Nothing here is persisted. The
 domain is **Implemented**.
 
@@ -32,7 +32,7 @@ domain is **Implemented**.
 
 `WorkStage` is derived per read, so this diagram describes the observable
 progression of a task through the vocabulary rather than a persisted FSM. The
-authoritative per-status mapping is the normative table in ADR-169 D2.
+authoritative per-status mapping is the normative table in ADR-170 D2.
 
 ```mermaid
 stateDiagram-v2
@@ -109,7 +109,7 @@ flowchart LR
 ## As built
 
 - **Three of the nine classifier inputs are read by no branch.**
-  `taskStatus`, `taskStage` and `runKind` are part of the signature ADR-169 D1
+  `taskStatus`, `taskStage` and `runKind` are part of the signature ADR-170 D1
   fixes normatively, and none is consulted today: the run axis dominates
   whenever a run exists, and the task axis answers only the no-run case, where
   `triageStatus` is the discriminant. They are kept so a future divergence — a
@@ -143,8 +143,8 @@ flowchart LR
 
 ## Linked artifacts
 
-- [ADR-169 — derived work-stage vocabulary](../decisions.md#adr-169-derived-work-stage-vocabulary-distinct-from-the-board-columns)
-- [ADR-168 — the two canonical attention counters](../decisions.md#adr-168-two-canonical-attention-counters-decisions-and-updates)
+- [ADR-170 — derived work-stage vocabulary](../decisions.md#adr-170-derived-work-stage-vocabulary-distinct-from-the-board-columns)
+- [ADR-169 — the two canonical attention counters](../decisions.md#adr-169-two-canonical-attention-counters-decisions-and-updates)
 - [M51 requirement traceability](m51-traceability.md)
 - [Tasks and the board](tasks.md)
 - [Screen reference — `/work`](../screens/work.md)

@@ -1,7 +1,7 @@
 import "server-only";
 
 /**
- * The Now tiles and the catch-up digest (`ATN-12`, ADR-168, ADR-171).
+ * The Now tiles and the catch-up digest (`ATN-12`, ADR-169, ADR-172).
  *
  * One bounded window — since the reader's cursor, or the same 24 hours
  * `updates` falls back to — reduced to five numbers: promoted · crashed · new

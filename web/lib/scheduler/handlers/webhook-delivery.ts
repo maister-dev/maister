@@ -191,7 +191,7 @@ async function runPrunePass(db: Db): Promise<number> {
 // one tx per pass so an event's freeze and its delivery rows commit atomically.
 // ---------------------------------------------------------------------------
 
-// ADR-172 D2 reader: `project_id` and `run_id` are nullable since the ADR-172 widening. The
+// ADR-173 D2 reader: `project_id` and `run_id` are nullable since the ADR-173 widening. The
 // LEFT JOINs already tolerated a missing row; the TYPES now say so, which is
 // what stops a later edit from assuming a project is always there.
 type EventRow = {
@@ -212,7 +212,7 @@ type EventRow = {
 type SubRow = {
   id: string;
   project_id: string | null;
-  /** ADR-172: the second scope axis. Non-null makes the row user-scoped. */
+  /** ADR-173: the second scope axis. Non-null makes the row user-scoped. */
   owner_user_id: string | null;
   enabled: boolean;
   event_types: string[];
@@ -322,7 +322,7 @@ async function runFanoutPass(db: Db, batch: number): Promise<number> {
         {
           type,
           projectId: event.project_id,
-          // The owner of a user-scoped event rides in `data` (ADR-172 rejected
+          // The owner of a user-scoped event rides in `data` (ADR-173 rejected
           // a `user_id` column on the event: one scope expression over two
           // axes is D3's bug with an extra column).
           ownerUserId: ownerUserIdOf(event.data),
@@ -365,13 +365,13 @@ async function runFanoutPass(db: Db, batch: number): Promise<number> {
 }
 
 /**
- * The `web_push` half of fan-out (ADR-172). A user-scoped event whose owner holds
+ * The `web_push` half of fan-out (ADR-173). A user-scoped event whose owner holds
  * an ENABLED `web_push` intent naming this type gets one delivery row per
  * registered browser — "notify me on every browser I have" is why the intent
  * carries no FK to a single endpoint.
  *
  * Same table, same retry curve, same drain pass as an HTTP subscription: the one
- * engine ADR-172 insisted on. `ON CONFLICT DO NOTHING` over
+ * engine ADR-173 insisted on. `ON CONFLICT DO NOTHING` over
  * `(push_subscription_id, event_id)` is what makes an at-least-once redelivery
  * converge to one notification (`EDGE-NTF-01`).
  */
@@ -540,7 +540,7 @@ async function processDelivery(
   timeoutMs: number,
   maxAttempts: number,
 ): Promise<"delivered" | "dead" | "retry"> {
-  // ADR-172: one drain pass, two transports. The push branch is a different
+  // ADR-173: one drain pass, two transports. The push branch is a different
   // WIRE, not a different engine — it shares the claim, the lease, the retry
   // curve, the attempt ledger and this function's return contract.
   if (claimed.push_subscription_id !== null) {
@@ -558,7 +558,7 @@ async function processDelivery(
 }
 
 /**
- * The `web_push` delivery (ADR-172 D7, `NTF-04`/`NTF-05`). The delivery row was
+ * The `web_push` delivery (ADR-173 D7, `NTF-04`/`NTF-05`). The delivery row was
  * persisted at fanout — intent BEFORE the send — and `delivered_at` is stamped
  * by `finishDelivery` only after a 2xx.
  *
@@ -634,7 +634,7 @@ async function processPushDelivery(
  * The delete is the WHOLE operation. `webhook_deliveries.push_subscription_id`
  * cascades from `push_subscriptions`, and `webhook_delivery_attempts.delivery_id`
  * cascades from `webhook_deliveries`, so this row and every attempt on it go
- * with the endpoint — which is what the ADR-172 amendment asks for. Stamping the
+ * with the endpoint — which is what the ADR-173 amendment asks for. Stamping the
  * delivery `dead` first, or recording a final attempt, would be two writes the
  * same transaction deletes.
  */

@@ -7049,7 +7049,7 @@ export const webhookSubscriptions = pgTable(
       onDelete: "cascade",
     }),
     /**
-     * ADR-172: the SECOND, independent scope axis. `NULL`
+     * ADR-173: the SECOND, independent scope axis. `NULL`
      * means "not owned by a person" — a project or platform subscription. A
      * non-null owner makes the row user-scoped, and a user-scoped subscription
      * never matches a project event (see `subscriptionMatches`).
@@ -7093,9 +7093,9 @@ export const webhookEvents = pgTable(
   {
     id: text("id").primaryKey(),
     /**
-     * NULLABLE since the ADR-172 widening: a user-scoped `attention.*`
+     * NULLABLE since the ADR-173 widening: a user-scoped `attention.*`
      * event has no project and no run. Every reader of these two columns is
-     * enumerated in ADR-172 D2 and covered by `IT-NTF-02` — a reader that
+     * enumerated in ADR-173 D2 and covered by `IT-NTF-02` — a reader that
      * structurally cannot see a NULL row is the defect shape.
      */
     projectId: text("project_id").references(() => projects.id, {
@@ -7131,7 +7131,7 @@ export const webhookDeliveries = pgTable(
       .notNull()
       .references(() => webhookEvents.id, { onDelete: "cascade" }),
     /**
-     * NULLABLE since the ADR-172 widening: a `web_push` delivery targets a
+     * NULLABLE since the ADR-173 widening: a `web_push` delivery targets a
      * browser endpoint, not an HTTP subscription. Exactly one of
      * `subscription_id` / `push_subscription_id` is set, enforced by
      * `webhook_deliveries_one_target`.
@@ -7616,7 +7616,7 @@ export type DomainEventConsumerRow = typeof domainEventConsumers.$inferSelect;
 export type DomainEventConsumerInsert =
   typeof domainEventConsumers.$inferInsert;
 
-// M51 (ADR-168 D3): one read cursor per user, global rather than per project.
+// M51 (ADR-169 D3): one read cursor per user, global rather than per project.
 // An ABSENT row means "never looked" — deliberately not seeded with a constant
 // default, which would look populated while permanently excluding every
 // pre-migration user from the fallback window.
@@ -7636,7 +7636,7 @@ export type UserActivityCursorRow = typeof userActivityCursors.$inferSelect;
 export type UserActivityCursorInsert = typeof userActivityCursors.$inferInsert;
 
 /**
- * ADR-172: the four user-scoped notification facts. Deltas and the digest only —
+ * ADR-173: the four user-scoped notification facts. Deltas and the digest only —
  * never a per-event stream, which is the anti-pattern that trains a reader to
  * mute the channel within a week (`NTF-08`).
  */
@@ -7655,7 +7655,7 @@ export const NOTIFICATION_TRANSPORTS = ["web_push", "webhook"] as const;
 export type NotificationTransport = (typeof NOTIFICATION_TRANSPORTS)[number];
 
 /**
- * A browser push endpoint (ADR-172). `endpoint`, `p256dh` and `auth`
+ * A browser push endpoint (ADR-173). `endpoint`, `p256dh` and `auth`
  * are stored OPAQUE: never parsed for routing, never used to derive a host,
  * never logged. A reader may hold several (one per browser), so delivery fans
  * out per owner.
@@ -7691,7 +7691,7 @@ export type PushSubscriptionRow = typeof pushSubscriptions.$inferSelect;
 export type PushSubscriptionInsert = typeof pushSubscriptions.$inferInsert;
 
 /**
- * Per-user delivery INTENT (ADR-172): which `attention.*` types, over
+ * Per-user delivery INTENT (ADR-173): which `attention.*` types, over
  * which transport. One intent per owner per transport, so two rows cannot
  * disagree.
  *

@@ -227,7 +227,7 @@ export default async function ProjectBoardPage({
       getBoardData(project.id),
       getHitlInbox(project.id),
       getPlatformStatus(),
-      // ADR-168 D8: the project-scoped slice of the SAME canonical queue, not a
+      // ADR-169 D8: the project-scoped slice of the SAME canonical queue, not a
       // second local sum that is free to disagree with the rail badge.
       getDecisionsCount(user.id, user.role, { projectId: project.id }),
     ]);

@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * The client half of the attention stream (ADR-170 D3).
+ * The client half of the attention stream (ADR-171 D3).
  *
  * A TICK, never a log. `useRunStream`'s `retain: false` idiom exists because a
  * surface a reader leaves open for a working day must not grow a per-event array
@@ -35,12 +35,12 @@ export interface AttentionTickFrame {
 }
 
 /**
- * Deliberately NARROWER than the frame (ADR-170 D3 fixes the wire, not this).
+ * Deliberately NARROWER than the frame (ADR-171 D3 fixes the wire, not this).
  *
  * The frame also carries `decisions`, `updates` and `projectIds`. None is
  * returned here, because the surfaces this hook serves are server-rendered and
  * a tick becomes `router.refresh()` — which re-reads the counters server-side.
- * Re-exposing them would be a second, client-side source for a number ADR-168
+ * Re-exposing them would be a second, client-side source for a number ADR-169
  * D8 says has exactly one, and it would be the stale one between refreshes.
  */
 export interface UseAttentionStreamResult {

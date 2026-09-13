@@ -1,6 +1,6 @@
 /**
  * The work-row label set, built once for both surfaces that render work rows:
- * `/work` and the Desk (ADR-171 D1).
+ * `/work` and the Desk (ADR-172 D1).
  *
  * Pure — it takes already-resolved translator functions rather than reaching for
  * `getTranslations` itself, so it is callable from a server component without

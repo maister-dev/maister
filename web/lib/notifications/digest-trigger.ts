@@ -1,7 +1,7 @@
 import "server-only";
 
 /**
- * The digest notification trigger (ADR-172 D6, `NTF-08`).
+ * The digest notification trigger (ADR-173 D6, `NTF-08`).
  *
  * One of exactly TWO triggers. The other is a `decisions` delta
  * (`attention-consumer.ts`); there is deliberately no third, and no per-event
@@ -119,7 +119,7 @@ export interface DeltaBackstopSummary {
  * The `decisions` delta BACKSTOP (`NTF-08`), on the `system_sweep` beat beside
  * the digest.
  *
- * ADR-172 D5 makes the domain-event consumer the delta trigger, and that
+ * ADR-173 D5 makes the domain-event consumer the delta trigger, and that
  * assumed the taxonomy covers decision transitions. It does not: there is no
  * `DOMAIN_EVENT_KINDS` member for a HITL opening or a run entering
  * `NeedsInput`, and `run.review` is emitted only for runs WITH a parent

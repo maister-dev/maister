@@ -9,7 +9,7 @@ for behavior, the delivery FSM, and the event taxonomy, and
 > forward-only, no down-migration) adds all four tables and the
 > `platform_runtime_settings.webhooks_enabled` column.
 >
-> **Widening (Implemented — [ADR-172](../decisions.md#adr-172), migration `0165`).**
+> **Widening (Implemented — [ADR-173](../decisions.md#adr-173), migration `01660`).**
 > `webhook_events.project_id` and `.run_id` become nullable and
 > `webhook_subscriptions.owner_user_id` is added, so a per-user `attention.*`
 > event — which has neither a project nor a run — rides this same outbox
@@ -52,7 +52,7 @@ erDiagram
     WEBHOOK_SUBSCRIPTIONS {
         text id PK "server crypto.randomUUID()"
         text project_id FK "NULL -> projects(id); NULL = platform scope"
-        text owner_user_id FK "NULL -> users(id) ON DELETE CASCADE; NON-NULL = user scope (0165, Implemented)"
+        text owner_user_id FK "NULL -> users(id) ON DELETE CASCADE; NON-NULL = user scope (01660, Implemented)"
         text name "display name"
         text url "http/https only; boundary-validated"
         text method "POST|PUT DEFAULT POST"
@@ -67,8 +67,8 @@ erDiagram
 
     WEBHOOK_EVENTS {
         text id PK "server crypto.randomUUID()"
-        text project_id FK "-> projects(id); NULL for user-scoped attention.* events (0165, Implemented)"
-        text run_id FK "-> runs(id); NULL for user-scoped attention.* events (0165, Implemented)"
+        text project_id FK "-> projects(id); NULL for user-scoped attention.* events (01660, Implemented)"
+        text run_id FK "-> runs(id); NULL for user-scoped attention.* events (01660, Implemented)"
         text type "taxonomy type string"
         jsonb data "per-type minimal facts; written at emit"
         jsonb payload "NULL until fanout; full frozen envelope built at FANOUT"

@@ -1,7 +1,7 @@
 /**
- * The post-sign-in landing route (`NAV-02`, ADR-171 D5).
+ * The post-sign-in landing route (`NAV-02`, ADR-172 D5).
  *
- * ONE clause of ADR-171, resolved ONCE per sign-in, so `/` never forks by role
+ * ONE clause of ADR-172, resolved ONCE per sign-in, so `/` never forks by role
  * twice — once in the router and again inside the page. A member who navigates
  * to `/` deliberately still gets the Desk; this only decides where a sign-in
  * that asked for no particular destination lands.

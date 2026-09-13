@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // UT-ATN-13 — the decision queue's role floor is DERIVED, not hand-listed.
 //
-// ADR-168 D7: every entry in the queue is something the reader can do NOW.
+// ADR-169 D7: every entry in the queue is something the reader can do NOW.
 // All four things it can ask for — answer, promote, recover, clear — require
 // project `member`, while `readBoard` is a `viewer` action. Scoping the queue
 // by visibility therefore handed viewers items whose inline actions answer 403.

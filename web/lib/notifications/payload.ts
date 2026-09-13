@@ -1,7 +1,7 @@
 import "server-only";
 
 /**
- * Envelope → notification payload (ADR-172 D6, `NTF-08`).
+ * Envelope → notification payload (ADR-173 D6, `NTF-08`).
  *
  * The sentence is NOT written here. The digest's text is built by
  * `formatDigest` (`lib/queries/digest.ts`) at emit time and carried in the

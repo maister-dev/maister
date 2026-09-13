@@ -1,4 +1,4 @@
-// `IT-NAV-06` (ADR-171 D6) — nav visibility is NOT the authorization boundary.
+// `IT-NAV-06` (ADR-172 D6) — nav visibility is NOT the authorization boundary.
 //
 // The rail appends its admin tail only when `userRole === "admin"`. That is a
 // convenience. This proves the claim the convenience rests on: a member asking

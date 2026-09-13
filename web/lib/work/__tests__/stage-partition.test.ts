@@ -1,7 +1,7 @@
 // `UT-STG-11` — the Desk's "work in flight" is a partition of the whole
 // vocabulary, not a hand-picked subset.
 //
-// ADR-169 made a twelfth run status a compile error. This does the same job one
+// ADR-170 made a twelfth run status a compile error. This does the same job one
 // level up: an eleventh WORK STAGE that nobody classifies would quietly fall out
 // of the Desk's Work region — or quietly into it — and neither shows up as a
 // failure anywhere else.

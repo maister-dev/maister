@@ -1,7 +1,7 @@
 import "server-only";
 
 /**
- * The `/work` read model (ADR-169 · `STG-08`, `STG-09`).
+ * The `/work` read model (ADR-170 · `STG-08`, `STG-09`).
  *
  * One batched pass over every task the reader can see, across projects, whether
  * or not it has ever launched a run. The board's batching, not its per-project

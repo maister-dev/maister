@@ -1,7 +1,7 @@
 import "server-only";
 
 /**
- * Subscription matching over TWO independent scope axes (ADR-172 D3).
+ * Subscription matching over TWO independent scope axes (ADR-173 D3).
  *
  * Before the widening this was one nullable field: a subscription with
  * `projectId === null` meant "platform-wide, matches every project", and the

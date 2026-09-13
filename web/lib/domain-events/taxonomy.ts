@@ -105,7 +105,7 @@ export function isAutoPromotableReviewCause(
   );
 }
 
-// M51 (ADR-168): the taxonomy split the attention plane reads by. Three kinds
+// M51 (ADR-169): the taxonomy split the attention plane reads by. Three kinds
 // are written in the SAME transaction as a `task_activity` row carrying the
 // same fact — `task.created` (`lib/services/tasks.ts`), `task.comment_added`
 // (`lib/social/comments.ts`) and `task.triage_requeued`

@@ -1,7 +1,7 @@
 import "server-only";
 
 /**
- * The web-push sender (ADR-172 D7, `NTF-04`, `NTF-05`).
+ * The web-push sender (ADR-173 D7, `NTF-04`, `NTF-05`).
  *
  * It is NOT a second delivery engine. The outbox is `webhook_events`, the
  * drainer is the `webhook_delivery` scheduler job, the retry curve is

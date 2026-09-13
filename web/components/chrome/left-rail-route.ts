@@ -28,7 +28,7 @@ function isPathPrefix(pathname: string, prefix: string): boolean {
 }
 
 /**
- * `NAV-04` (ADR-171 D4). Total over the app's prefixes: every route the shell
+ * `NAV-04` (ADR-172 D4). Total over the app's prefixes: every route the shell
  * serves has a DECIDED answer, and `null` — "nothing highlighted" — is one of
  * them, for surfaces reached from the user menu rather than the rail.
  *

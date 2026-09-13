@@ -1,6 +1,6 @@
 # Activity
 
-**Route:** `/activity` · **Status:** Implemented (ADR-168, ADR-170) · **Source:** `web/app/(app)/activity/page.tsx`
+**Route:** `/activity` · **Status:** Implemented (ADR-169, ADR-171) · **Source:** `web/app/(app)/activity/page.tsx`
 
 The cross-project activity feed, with a per-user read cursor and an unread
 divider. Answers "what happened that I have not seen" — nothing here waits on
@@ -79,7 +79,7 @@ As built (`web/lib/queries/activity-feed.ts`, `getCrossProjectActivityFeed`):
   the surface says "showing the latest N" rather than inventing a cursor
   contract nothing asks for.
 
-Freshness comes from the attention stream (ADR-170): `AttentionLiveRefresh`
+Freshness comes from the attention stream (ADR-171): `AttentionLiveRefresh`
 holds one `EventSource`, and a pushed tick becomes `router.refresh()`. There is
 no client timer. The accessible liveness pill and its reconnect affordance are
 `<RunStreamLiveness>`, shared with the run and evaluation surfaces.
@@ -114,7 +114,7 @@ stateDiagram-v2
   `timestamptz` carries microseconds that a JS `Date` has already floored away,
   so a cursor set to the row's own millisecond would leave that row unread
   forever.
-- Liveness — `GET /api/attention/stream` (ADR-170).
+- Liveness — `GET /api/attention/stream` (ADR-171).
 
 ## i18n
 
@@ -126,12 +126,12 @@ already the project board's Activity *tab* label.
 The feed's ROWS live in `web/components/activity/activity-row-list.tsx`
 (`ActivityRowList`) and their labels in
 `web/lib/activity/activity-row-labels.ts`, both shared with the Desk
-(ADR-171 D1). The filters, the row count and — importantly — the "mark all as
+(ADR-172 D1). The filters, the row count and — importantly — the "mark all as
 read" control stay here: the read cursor is written from ONE place.
 
 ## Linked artifacts
 
-- [ADR-168](../decisions.md#adr-168) · [ADR-170](../decisions.md#adr-170)
+- [ADR-169](../decisions.md#adr-169) · [ADR-171](../decisions.md#adr-171)
 - [`system-analytics/attention.md`](../system-analytics/attention.md)
 - [`system-analytics/social-board.md`](../system-analytics/social-board.md)
 - [`desk.md`](desk.md) · [`work.md`](work.md) · [`inbox.md`](inbox.md)

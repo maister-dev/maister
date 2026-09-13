@@ -1,7 +1,7 @@
 import "server-only";
 
 /**
- * The cross-project activity feed (`ATN-09`, ADR-168).
+ * The cross-project activity feed (`ATN-09`, ADR-169).
  *
  * "What happened that I have not seen", as a list. The `updates` counter in
  * `lib/queries/updates.ts` counts the same populations; both read
@@ -392,7 +392,7 @@ export async function getCrossProjectActivityFeed(
   }
 
   for (const row of webhookRows) {
-    // ADR-172 D2 reader: `webhook_events.project_id` is nullable since the ADR-172 widening,
+    // ADR-173 D2 reader: `webhook_events.project_id` is nullable since the ADR-173 widening,
     // and a NULL one is a USER-scoped `attention.*` delivery. It is deliberately
     // absent from this feed — the cross-project activity log answers "what
     // happened in the projects I can see", and somebody's personal notification

@@ -1,4 +1,4 @@
-// IT-ATN-09 (M51, ADR-168) — the cross-project activity feed.
+// IT-ATN-09 (M51, ADR-169) — the cross-project activity feed.
 //
 // The load-bearing case is REDACTION, and it is only worth anything if the
 // rows underneath actually carry what must not escape. Every fixture below

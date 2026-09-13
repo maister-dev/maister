@@ -22,7 +22,7 @@ const log = pino({
 type Db = any;
 
 /**
- * ADR-172 D2 reader #1. `projectId` and `runId` are OPTIONAL since the ADR-172 widening: a
+ * ADR-173 D2 reader #1. `projectId` and `runId` are OPTIONAL since the ADR-173 widening: a
  * user-scoped `attention.*` fact has neither. They stay required-looking for
  * every existing caller because `emitWebhookEvent` is typed as a union —
  * omitting them is only legal on the user-scoped overload, so a run-scoped
@@ -67,7 +67,7 @@ export async function emitWebhookEvent(
     projectId: userScoped ? null : input.projectId,
     runId: userScoped ? null : input.runId,
     type: input.type,
-    // The owner travels in `data` rather than in a column of its own: ADR-172
+    // The owner travels in `data` rather than in a column of its own: ADR-173
     // rejected adding `user_id` to the table (it would be D3's bug with an
     // extra column). Fan-out reads it back from here.
     data: userScoped

@@ -17,7 +17,7 @@ import {
 } from "@heroicons/react/24/outline";
 
 // The whole `workStage` namespace, passed in so the lookup happens ONCE at the
-// render root and no call site grows its own switch (ADR-169).
+// render root and no call site grows its own switch (ADR-170).
 export type WorkStageLabels = Record<
   WorkStage | "blocked" | "promotedResult",
   string
@@ -52,7 +52,7 @@ const STAGE_ICON: Record<WorkStage, typeof CheckCircleIcon> = {
 
 // Only genuinely actionable stages carry the amber attention tone; a promoted
 // run reads as success (green check glyph). `blocked` deliberately does NOT get
-// the attention tone — it looks like it needs a human and does not (ADR-168 D7).
+// the attention tone — it looks like it needs a human and does not (ADR-169 D7).
 const STAGE_TONE: Record<WorkStage, string> = {
   Triage: "border-line bg-ivory text-ink-2",
   Held: "border-amber-line bg-amber-soft text-amber",
@@ -68,7 +68,7 @@ const STAGE_TONE: Record<WorkStage, string> = {
 };
 
 // The single label lookup. A result-only completion is NOT a promoted branch,
-// so it does not borrow the "Promoted" copy (ADR-169 D3).
+// so it does not borrow the "Promoted" copy (ADR-170 D3).
 export function workStageLabel(
   labels: WorkStageLabels,
   stage: WorkStage,

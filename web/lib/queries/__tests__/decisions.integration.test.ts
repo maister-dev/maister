@@ -1,4 +1,4 @@
-// IT-ATN-01 / IT-ATN-04 (ADR-168 D1, D5, D8) — the cross-project decision queue.
+// IT-ATN-01 / IT-ATN-04 (ADR-169 D1, D5, D8) — the cross-project decision queue.
 //
 // `decisions` is one number over four populations. The two things that can go
 // wrong are (a) the number disagreeing with the list it labels, which is the
@@ -438,7 +438,7 @@ describe("IT-ATN-04 a relation-blocked task counts in neither counter", () => {
 });
 
 // ---------------------------------------------------------------------------
-// IT-ATN-14 (ADR-168 D7) — the queue is scoped by what the reader can DO.
+// IT-ATN-14 (ADR-169 D7) — the queue is scoped by what the reader can DO.
 //
 // Every one of the four populations asks the reader to act: answer, promote,
 // recover, clear. All four require project `member`; `readBoard` is a `viewer`

@@ -1,4 +1,4 @@
-// UT-ATN-07 (ADR-168 D6) — the decision queue's order, as a pure comparator.
+// UT-ATN-07 (ADR-169 D6) — the decision queue's order, as a pure comparator.
 //
 // Tested here rather than through the query on purpose: an ordering assertion
 // that runs through a database fixture proves the fixture was inserted in some

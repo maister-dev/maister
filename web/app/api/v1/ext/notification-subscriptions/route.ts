@@ -1,7 +1,7 @@
 import "server-only";
 
 /**
- * `GET|POST /api/v1/ext/notification-subscriptions` (ADR-172 D9, `NTF-07`).
+ * `GET|POST /api/v1/ext/notification-subscriptions` (ADR-173 D9, `NTF-07`).
  *
  * Scope `notifications:subscriptions`. The owner comes from `auth-context` and
  * nowhere else: there is no parameter naming a user, and a body that names one

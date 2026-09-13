@@ -30,7 +30,7 @@ function sub(
 ): MatchableSubscription {
   return {
     projectId: null,
-    // ADR-172: the second scope axis. `null` = not owned by a person, which is
+    // ADR-173: the second scope axis. `null` = not owned by a person, which is
     // what every pre-existing subscription is.
     ownerUserId: null,
     enabled: true,
@@ -169,7 +169,7 @@ describe("matchSubscriptions", () => {
 });
 
 // =============================================================================
-// `UT-NTF-03` (ADR-172 D3) — scope is TWO independent axes, not one nullable
+// `UT-NTF-03` (ADR-173 D3) — scope is TWO independent axes, not one nullable
 // field.
 //
 // The bug this pins is specific and it leaks. The old predicate was:
@@ -252,7 +252,7 @@ describe("UT-NTF-03 a user-scoped event reaches only its owner", () => {
   });
 
   it("NEVER matches a platform-wide subscription", () => {
-    // The regression ADR-172 D3 exists to prevent: a platform-wide `*` sub is
+    // The regression ADR-173 D3 exists to prevent: a platform-wide `*` sub is
     // the most common shape an operator creates, and it must not start
     // receiving other people's personal notifications.
     expect(

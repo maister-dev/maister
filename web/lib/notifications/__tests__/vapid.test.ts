@@ -1,5 +1,5 @@
 /**
- * `UT-NTF-10` (ADR-172 D11) — missing VAPID configuration DEGRADES.
+ * `UT-NTF-10` (ADR-173 D11) — missing VAPID configuration DEGRADES.
  *
  * Web push is an optional capability of a self-hosted deployment. A missing
  * optional key must not take the web process down, and the way that guarantee
