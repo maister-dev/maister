@@ -21,7 +21,7 @@ import "server-only";
  * handle they were given.
  */
 
-import type { GlobalRole } from "@/lib/db/schema";
+import type { GlobalRole, ProjectRole } from "@/lib/db/schema";
 
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import pino from "pino";
@@ -51,7 +51,22 @@ const DECISION_ACTIONS = [
   "editTask",
 ] as const satisfies readonly ProjectAction[];
 
-const ACTING_PROJECT_ROLES = projectRolesForActions(DECISION_ACTIONS);
+/**
+ * Derived on CALL, never at module scope.
+ *
+ * `projectRolesForActions` lives in `@/lib/authz`, and calling it at module
+ * scope runs it during IMPORT — so every suite that partially mocks that module
+ * (many do, for `requireProjectAction`) threw
+ * `No "projectRolesForActions" export is defined on the mock` before its first
+ * line, wherever this module is in the import graph. That is a wide graph:
+ * `portfolio.ts` and `updates.ts` both pull it in, so the throw reached route
+ * handlers and surfaced as a 500. The derivation is unchanged and still the
+ * single source of truth; it just no longer happens at import time. It is four
+ * lookups in a rank map, called once per query.
+ */
+function actingProjectRoles(): ProjectRole[] {
+  return projectRolesForActions(DECISION_ACTIONS);
+}
 
 export interface VisibleProject {
   id: string;
@@ -122,7 +137,7 @@ export async function getActionableProjectIds(
         // The membership roles that clear `member` in PROJECT_ACTION_MIN_ROLE.
         // Spelled as an allow-list: a fourth project role must be classified
         // deliberately rather than inheriting act-everywhere by default.
-        inArray(projectMembers.role, ACTING_PROJECT_ROLES),
+        inArray(projectMembers.role, actingProjectRoles()),
       ),
     );
 
