@@ -9,6 +9,7 @@ import { randomUUID } from "node:crypto";
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import pino from "pino";
 
+import { createHitlRequest } from "@/lib/runs/hitl-create";
 import {
   createHitlAssignment,
   systemCloseActiveAssignmentsForHitlRequest,
@@ -235,7 +236,7 @@ async function persistPendingQuestion(
     const nextSequence = Number(sequenceRows[0]?.maxSeq ?? 0) + 1;
     const hitlRequestId = randomUUID();
 
-    await tx.insert(hitlRequests).values({
+    await createHitlRequest(tx, {
       id: hitlRequestId,
       runId: input.sourceRunId,
       stepId: "agent",

@@ -34,7 +34,10 @@ import type { DomainEventRow } from "@/lib/db/schema";
 import { sql } from "drizzle-orm";
 import pino from "pino";
 
-import { ATTENTION_EVENT_KINDS } from "@/lib/domain-events/taxonomy";
+import {
+  ATTENTION_EVENT_KINDS,
+  DECISION_OPENING_EVENT_KINDS,
+} from "@/lib/domain-events/taxonomy";
 import { computeDecisionsQueue } from "@/lib/queries/decisions";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 import { getDb } from "@/lib/db/client";
@@ -48,7 +51,16 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-const ATTENTION_KIND_SET: ReadonlySet<string> = new Set(ATTENTION_EVENT_KINDS);
+/**
+ * The consumer wakes on the UNION: everything that can move the `decisions`
+ * count. `DECISION_OPENING_EVENT_KINDS` are the two that open one directly;
+ * `ATTENTION_EVENT_KINDS` are the run-terminal and triage facts that can close
+ * or open one as a side effect.
+ */
+const ATTENTION_KIND_SET: ReadonlySet<string> = new Set<string>([
+  ...ATTENTION_EVENT_KINDS,
+  ...DECISION_OPENING_EVENT_KINDS,
+]);
 
 export interface AttentionConsumerDeps {
   db?: Db;

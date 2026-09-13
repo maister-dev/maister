@@ -10,6 +10,7 @@ import { and, asc, eq } from "drizzle-orm";
 import pino from "pino";
 
 import { atomicWriteJson } from "@/lib/atomic";
+import { createHitlRequest } from "@/lib/runs/hitl-create";
 import { createHitlAssignmentForRun } from "@/lib/assignments/service";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
@@ -28,8 +29,10 @@ import {
 } from "@/lib/execution-host/agent-pause-permissions";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (mirrors keepalive-sweeper.ts).
-const { hitlRequests, nodeAttempts, projects, runs } =
-  schemaModule as unknown as Record<string, any>;
+const { nodeAttempts, projects, runs } = schemaModule as unknown as Record<
+  string,
+  any
+>;
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 type Db = any;
@@ -281,7 +284,7 @@ export async function escalateHookTrip(
         await markNodeNeedsInput(attempt.id, tx);
       }
 
-      await tx.insert(hitlRequests).values({
+      await createHitlRequest(tx, {
         id: hitlRequestId,
         runId,
         stepId,

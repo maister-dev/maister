@@ -94,6 +94,7 @@ not.
 | --- | --- | --- |
 | STG-09 | `IT-STG-09` in the read model | `E2E-STG-09` through `/work` — the wiring |
 | ATN-10 | `IT-ATN-10` cursor monotonicity | `E2E-ATN-10` the unread divider — the wiring |
+| NTF-08 | `IT-NTF-14` the sweep backstop emits a delta with no domain event at all | `IT-NTF-15` the two decision-OPENING events, plus `UT-NTF-13` that `createHitlRequest` is the only writer of `hitl_requests`. The backstop proves completeness, the events prove latency; neither test can see the other's property |
 | NAV-01 | `E2E-NAV-01` the Desk renders | `UT-NAV-01` it COMPOSES — every region goes through the owning surface's component, and the narrow stacking order is fixed in the source. Invisible to a browser assertion |
 | NAV-02 | `E2E-NAV-02` two sign-ins land apart | `UT-NAV-02` the fork is `role !== "admin"`, so a **viewer** is covered by the same branch as a member |
 | NAV-03 | `E2E-NAV-03` the seeded portfolio at `/projects` | `UT-NAV-03` the empty-state and onboarding branches moved too — unreachable in a browser, because the shared e2e database always has projects |

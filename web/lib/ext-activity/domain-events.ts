@@ -108,6 +108,22 @@ function mapDomainEvent(row: DomainEventActivityRow): DomainEventMapping {
         action: { verb: "finish", object: "run", outcome: "review" },
         summary: `run ${row.runId ?? ""} reached review`.trim(),
       };
+    // The complement of the case above: a run reaching Review with NO parent.
+    // Same fact for a reader of the pulse, different emitter — `run.review` is
+    // scoped to delegated children because its other consumer is the
+    // orchestrator resume (ADR-100).
+    case "run.review_opened":
+      return {
+        salience: "high",
+        action: { verb: "finish", object: "run", outcome: "review" },
+        summary: `run ${row.runId ?? ""} reached review`.trim(),
+      };
+    case "run.needs_input":
+      return {
+        salience: "high",
+        action: { verb: "await", object: "run", outcome: "needs input" },
+        summary: `run ${row.runId ?? ""} is waiting on a human`.trim(),
+      };
     case "run.escalated":
       return {
         salience: "high",

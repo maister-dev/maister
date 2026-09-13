@@ -59,6 +59,7 @@ import {
 } from "./graph/prompt-permission";
 
 import { normalizeCapabilityTokens } from "@/lib/capabilities/token-normalizer";
+import { createHitlRequest } from "@/lib/runs/hitl-create";
 import { appendCapped } from "@/lib/flows/capped-text";
 import {
   completeHitlAssignmentFromCurrentActor,
@@ -439,7 +440,7 @@ async function handlePermissionRequest(
           .set({ schema: permissionSchema, prompt })
           .where(eq(hitlRequests.id, persistedHitlId));
       } else {
-        await tx.insert(hitlRequests).values({
+        await createHitlRequest(tx, {
           id: hitlRequestId,
           runId: pctx.runId,
           stepId: pctx.stepId,

@@ -1142,6 +1142,13 @@
       "when": 1789131129434,
       "tag": "0166_widen_webhook_scope",
       "breakpoints": true
+    },
+    {
+      "idx": 167,
+      "version": "7",
+      "when": 1789131139434,
+      "tag": "0167_decision_opening_events",
+      "breakpoints": true
     }
   ]
 }

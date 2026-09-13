@@ -13,6 +13,7 @@ import pino from "pino";
 
 import { canonicalCommandJson } from "../../../runtime/command-json";
 
+import { createHitlRequest } from "@/lib/runs/hitl-create";
 import {
   agentTurns,
   executionCommands,
@@ -237,7 +238,7 @@ export async function recordOwnedAgentPermissionInTransaction(
   }
   const id = randomUUID();
 
-  await tx.insert(hitlRequests).values({
+  await createHitlRequest(tx, {
     id,
     runId: assignment.runId,
     stepId: "agent",

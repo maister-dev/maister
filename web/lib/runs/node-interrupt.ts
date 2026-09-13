@@ -9,6 +9,7 @@ import path from "node:path";
 import { and, asc, eq, gt } from "drizzle-orm";
 import pino from "pino";
 
+import { createHitlRequest } from "@/lib/runs/hitl-create";
 import { createHitlAssignmentForRun } from "@/lib/assignments/service";
 import { atomicWriteJson } from "@/lib/atomic";
 import { getDb } from "@/lib/db/client";
@@ -318,7 +319,7 @@ export async function escalateNodeInterrupt(
         );
       }
 
-      await tx.insert(hitlRequests).values({
+      await createHitlRequest(tx, {
         id: hitlRequestId,
         runId,
         stepId: nodeId,

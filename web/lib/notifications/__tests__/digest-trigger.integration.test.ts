@@ -68,7 +68,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.execute(sql`
-    TRUNCATE webhook_events, webhook_deliveries, notification_subscriptions,
+    TRUNCATE domain_events, webhook_events, webhook_deliveries, notification_subscriptions,
              workspaces, runs, tasks, flows, project_members, projects, users
     RESTART IDENTITY CASCADE
   `);
@@ -172,6 +172,60 @@ async function digests(ownerUserId: string): Promise<string[]> {
  * and the cheapest to produce: no HITL row, no domain event, no ACP session.
  * Emitting nothing is exactly what makes it the right fixture for the backstop.
  */
+/** A run the event helpers can be pointed at. Returns the ids they need. */
+async function seedRunForEvents(): Promise<{
+  runId: string;
+  projectId: string;
+  taskId: string;
+}> {
+  const projectId = randomUUID();
+  const slug = `ev-${projectId.slice(0, 8)}`;
+  const flowId = randomUUID();
+  const taskId = randomUUID();
+  const runId = randomUUID();
+
+  await db.insert(schema.projects).values({
+    taskKey: `E${randomUUID().slice(0, 8)}`.toUpperCase(),
+    id: projectId,
+    slug,
+    name: slug,
+    repoPath: `/tmp/${slug}`,
+    maisterYamlPath: "/tmp/m.yaml",
+  });
+  await db.insert(schema.flows).values({
+    id: flowId,
+    projectId,
+    flowRefId: "aif",
+    source: "github.com/x/y",
+    version: "v1.0.0",
+    installedPath: "/tmp/flows/aif",
+    manifest: { schemaVersion: 1, name: "aif", nodes: [] },
+    schemaVersion: 1,
+  });
+  await db.insert(schema.tasks).values({
+    id: taskId,
+    projectId,
+    number: 1,
+    title: "event fixture",
+    prompt: "p",
+    flowId,
+    status: "InFlight",
+    stage: "Backlog",
+    triageStatus: "triaged",
+  });
+  await db.insert(schema.runs).values({
+    id: runId,
+    taskId,
+    projectId,
+    flowId,
+    status: "Running",
+    flowVersion: "v1.0.0",
+    currentStepId: "implement",
+  });
+
+  return { runId, projectId, taskId };
+}
+
 async function seedCrashedDecision(): Promise<void> {
   const projectId = randomUUID();
   const slug = `bk-${projectId.slice(0, 8)}`;
@@ -408,5 +462,111 @@ describe("IT-NTF-14 the decisions delta backstop", () => {
     await runDecisionsDeltaBackstop({ db });
 
     expect(await deltaEvents(reader)).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// IT-NTF-15 — the two decision-OPENING events, end to end.
+//
+// This is the half the backstop was compensating for. `createHitlRequest` is the
+// only writer of `hitl_requests` and emits `run.needs_input`;
+// `emitDelegatedReviewIfChild` emits `run.review_opened` for a run with no
+// parent. Both land in `domain_events` in the same transaction as the row they
+// describe, and the attention consumer wakes on them.
+// ---------------------------------------------------------------------------
+describe("IT-NTF-15 decision-opening domain events", () => {
+  async function kinds(runId: string): Promise<string[]> {
+    const rows = await db.execute(sql`
+      SELECT kind FROM domain_events WHERE run_id = ${runId} ORDER BY id
+    `);
+
+    return (rows.rows as Array<{ kind: string }>).map((r) => r.kind);
+  }
+
+  it("emits run.needs_input from the one HITL writer", async () => {
+    const { runId } = await seedRunForEvents();
+    const { createHitlRequest } = await import("@/lib/runs/hitl-create");
+
+    await createHitlRequest(db, {
+      id: randomUUID(),
+      runId,
+      stepId: "implement",
+      kind: "permission",
+      prompt: "may I write the file?",
+    });
+
+    expect(await kinds(runId)).toContain("run.needs_input");
+  });
+
+  it("stays silent when the caller says the row opens no new decision", async () => {
+    const { runId } = await seedRunForEvents();
+    const { createHitlRequest } = await import("@/lib/runs/hitl-create");
+
+    await createHitlRequest(
+      db,
+      {
+        id: randomUUID(),
+        runId,
+        stepId: "implement",
+        kind: "permission",
+        prompt: "superseding an answered one",
+      },
+      { silent: true },
+    );
+
+    expect(await kinds(runId)).not.toContain("run.needs_input");
+  });
+
+  it("emits run.review_opened for a TOP-LEVEL run, not run.review", async () => {
+    const { runId, projectId, taskId } = await seedRunForEvents();
+    const { emitDelegatedReviewIfChild } = await import(
+      "@/lib/runs/delegated-review-emit"
+    );
+
+    const emitted = await emitDelegatedReviewIfChild(db, {
+      runId,
+      projectId,
+      taskId,
+      flowId: null,
+      runKind: "flow",
+      parentRunId: null,
+      cause: "graph_complete",
+      resultStatus: null,
+    } as never);
+
+    // Before this, a top-level Review emitted NOTHING — the helper returned
+    // false on `!parentRunId` — which is why the commonest promotable decision
+    // could never wake the consumer.
+    expect(emitted).toBe(true);
+
+    const seen = await kinds(runId);
+
+    expect(seen).toContain("run.review_opened");
+    // The orchestrator's kind must NOT widen: its population is unchanged.
+    expect(seen).not.toContain("run.review");
+  });
+
+  it("still emits run.review for a delegated CHILD", async () => {
+    const parent = await seedRunForEvents();
+    const child = await seedRunForEvents();
+    const { emitDelegatedReviewIfChild } = await import(
+      "@/lib/runs/delegated-review-emit"
+    );
+
+    await emitDelegatedReviewIfChild(db, {
+      runId: child.runId,
+      projectId: child.projectId,
+      taskId: child.taskId,
+      flowId: null,
+      runKind: "flow",
+      parentRunId: parent.runId,
+      cause: "graph_complete",
+      resultStatus: null,
+    } as never);
+
+    const seen = await kinds(child.runId);
+
+    expect(seen).toContain("run.review");
+    expect(seen).not.toContain("run.review_opened");
   });
 });

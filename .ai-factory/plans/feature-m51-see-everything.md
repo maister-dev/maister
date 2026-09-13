@@ -1426,9 +1426,12 @@ four of them make the feature unsafe or non-functional rather than merely imperf
 5. **The decision queue was scoped by visibility, not actionability.** All four
    populations require project `member`; `readBoard` is a `viewer` action. Viewers were
    being handed items whose inline actions answer 403 (`ATN-01`, `EDGE-ATN-05`).
-6. **Consumer failures were acknowledged, not retried.** Split by blast radius: one
-   reader is poison and is swallowed, all readers is an outage and throws
-   (`EDGE-NTF-05`).
+6. **Consumer failures were acknowledged, not retried.** First fixed by splitting on
+   blast radius — one reader poison, all readers an outage — and then REVERTED inside
+   the same pass: a deployment with a single reader cannot tell the two apart, since
+   "all readers failed" and "the only reader is poison" are the same observation. The
+   shipped answer is that per-reader failures stay swallowed and the sweep backstop is
+   the retry (`EDGE-NTF-05`).
 7. **A terminal task with no run read as live backlog.** `abandonUnlaunchedTasks`
    produces exactly that shape, and `EDGE-STG-03` had documented the buggy rule as an
    invariant (`STG-11`).
@@ -1437,6 +1440,38 @@ Every fix carries a regression test, and the five that could be falsified were: 
 the fix fails the new test. The two that could not — a rollback assertion with no
 constraint to violate, and an unfalsifiable atomicity claim — were dropped rather than
 kept as tests that cannot fail.
+
+**T8.8 [x] — Give the delta trigger real events, not just a poll.** T8.7 closed the
+notification gap with a `system_sweep` backstop, which works but makes every decision
+wait a tick. The owner asked for the event done properly; the investigation changed the
+cost estimate twice, so it is recorded here rather than in a commit message alone.
+
+**What was missing.** `DOMAIN_EVENT_KINDS` had no kind for a run entering `NeedsInput`,
+and `run.review` is emitted only for runs WITH a parent — ADR-100 scoped it that way
+because its consumer is the orchestrator resume. The two commonest openings emitted
+nothing at all.
+
+**Why not widen `run.review`.** The orchestrator consumer self-filters on `parentRunId`
+and would have been safe, but three other populations would have grown silently: the ext
+activity pulse, the `updates` counter and the activity feed. Widening also redefines a
+shipped decision (R4). Migration `0167` adds `run.review_opened` as the COMPLEMENT
+instead — together the two partition every entry into Review, and no existing consumer
+sees a row it did not see before.
+
+**Why the HITL half was expensive.** Fifteen independent `insert(hitlRequests)` call
+sites across eleven files, and neither the status write nor the insert had a choke
+point. Emitting from fifteen sites would make a missed one a SILENT gap — precisely the
+defect being fixed. `createHitlRequest` is now the only writer, enforced by `UT-NTF-13`,
+and it is a THIN wrapper: `values` passes through untouched, because the table carries
+four shape CHECK constraints that differ per `kind`.
+
+**Both counters stay separate.** The new kinds are deliberately absent from
+`ATTENTION_EVENT_KINDS` — that list is the `updates` population, and a decision must not
+also count as an update. The consumer wakes on the union.
+
+**The backstop stays.** Events give latency, the poll gives completeness: a decision also
+opens and closes for reasons with no domain write at all — a blocking relation added or
+removed moves the count and emits nothing. Two guarantees, not redundancy.
 
 *Observation (2026-09-10, Checkpoint 5)*: the full integration suite ran **460 files /
 3950 tests, all green** — the eight quarantined failures included — and the three files

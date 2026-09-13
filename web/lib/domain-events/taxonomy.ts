@@ -16,6 +16,22 @@ export const DOMAIN_EVENT_KINDS = [
   // it wakes a parked orchestrator so it can collect/promote/rework, and it
   // drives as-plan auto-promote. Emitted only when the run has a parent_run_id.
   "run.review",
+  // M51 (ADR-169 amendment, migration 0167): the two ways a DECISION opens,
+  // neither of which the bus could represent before.
+  //
+  // `run.review_opened` is the COMPLEMENT of `run.review` above: ADR-100 scoped
+  // that kind to runs WITH a parent because its consumer is the orchestrator
+  // resume, so a TOP-LEVEL run reaching Review — the commonest promotable
+  // decision there is — emitted nothing at all. Widening `run.review` instead
+  // would have redefined a shipped decision and silently enlarged three
+  // consumer populations (the orchestrator, the ext activity pulse, and the
+  // `updates` counter); a sibling kind disturbs none of them. Together the two
+  // cover every entry into Review.
+  "run.review_opened",
+  // A run blocked on a human answer. Emitted by `createHitlRequest`, which is
+  // the ONLY writer of `hitl_requests` — there were fifteen before, and a
+  // missed one is a decision nobody is told about.
+  "run.needs_input",
   // Execution-policy axis (B3): a run escalated for human attention. ADR-161's
   // operator node interrupt REUSES this kind with `reason: "node_interrupt"` —
   // an operator pausing a node is an escalation like any other, so it needs no
@@ -142,3 +158,23 @@ export const ATTENTION_EVENT_KINDS = [
 ] as const satisfies readonly DomainEventKind[];
 
 export type AttentionEventKind = (typeof ATTENTION_EVENT_KINDS)[number];
+
+/**
+ * The kinds that can move the `decisions` COUNT — deliberately NOT members of
+ * `ATTENTION_EVENT_KINDS`.
+ *
+ * That list is the `updates` population ("what happened that I have not seen")
+ * and the activity feed's. A decision opening is already counted by `decisions`,
+ * and ADR-169 exists to keep the two numbers separate populations; folding these
+ * into `ATTENTION_EVENT_KINDS` would have every new HITL increment BOTH badges
+ * for one fact — the same double-count D2's mention MINUS exists to prevent.
+ *
+ * The attention consumer wakes on the union of the two lists.
+ */
+export const DECISION_OPENING_EVENT_KINDS = [
+  "run.review_opened",
+  "run.needs_input",
+] as const satisfies readonly DomainEventKind[];
+
+export type DecisionOpeningEventKind =
+  (typeof DECISION_OPENING_EVENT_KINDS)[number];

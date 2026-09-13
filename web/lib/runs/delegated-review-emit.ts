@@ -43,8 +43,13 @@ export type ReviewFlipRow = {
  * cascade-abandons every child. Every Review flip therefore routes through
  * here — the graph runner, the operator stop, the sync-resolver returns, and
  * the rework-claim release — so a new flip cannot silently miss the rule. A
- * top-level Review has no orchestrator to route to and emits nothing here; the
- * webhook `run.review` is a separate, unconditional surface. The agent
+ * A top-level Review has no orchestrator to route to, and it now emits
+ * `run.review_opened` instead — the complement kind. That is not cosmetic: a
+ * top-level run reaching Review is the commonest promotable decision there is,
+ * and before the complement existed it produced no domain event at all, so the
+ * attention consumer could never wake on it. Widening `run.review` itself would
+ * have redefined ADR-100's decision and silently enlarged the orchestrator's,
+ * the ext pulse's and the `updates` counter's populations. The agent
  * finalizer (`lib/agents/launch.ts`) is the one sibling emitter with its own
  * payload shape; it carries the same `cause` field.
  *
@@ -54,29 +59,52 @@ export async function emitDelegatedReviewIfChild(
   tx: Db,
   row: ReviewFlipRow,
 ): Promise<boolean> {
-  if (!row.parentRunId) return false;
+  const payload = {
+    runId: row.runId,
+    taskId: row.taskId,
+    flowId: row.flowId,
+    runKind: row.runKind,
+    status: "Review" as const,
+    cause: row.cause,
+    ...(row.resultStatus ? { resultStatus: row.resultStatus } : {}),
+  };
 
+  if (row.parentRunId) {
+    await emitDomainEvent({
+      db: tx,
+      kind: "run.review",
+      projectId: row.projectId,
+      taskId: row.taskId,
+      runId: row.runId,
+      actor: { type: "system", id: null },
+      parentRunId: row.parentRunId,
+      payload,
+    });
+    log.info(
+      { runId: row.runId, parentRunId: row.parentRunId, cause: row.cause },
+      "[delegation.wake] run.review emitted for a delegated child",
+    );
+
+    return true;
+  }
+
+  // The complement. Deliberately NOT a member of `RUN_SETTLED_EVENT_KINDS` and
+  // so it carries no `parentRunId`: that field is the orchestrator's routing
+  // key, and a run with no parent has nothing to route to. Keeping it out of
+  // the settled set is also what guarantees the orchestrator resume consumer
+  // sees exactly the population it saw before.
   await emitDomainEvent({
     db: tx,
-    kind: "run.review",
+    kind: "run.review_opened",
     projectId: row.projectId,
     taskId: row.taskId,
     runId: row.runId,
     actor: { type: "system", id: null },
-    parentRunId: row.parentRunId,
-    payload: {
-      runId: row.runId,
-      taskId: row.taskId,
-      flowId: row.flowId,
-      runKind: row.runKind,
-      status: "Review",
-      cause: row.cause,
-      ...(row.resultStatus ? { resultStatus: row.resultStatus } : {}),
-    },
+    payload,
   });
   log.info(
-    { runId: row.runId, parentRunId: row.parentRunId, cause: row.cause },
-    "[delegation.wake] run.review emitted for a delegated child",
+    { runId: row.runId, cause: row.cause },
+    "[attention] run.review_opened emitted for a top-level run",
   );
 
   return true;

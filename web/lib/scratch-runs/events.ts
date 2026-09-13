@@ -13,6 +13,7 @@ import {
   type ScratchPromptOwner,
 } from "./prompt-owner";
 
+import { createHitlRequest } from "@/lib/runs/hitl-create";
 import { getDb } from "@/lib/db/client";
 import { waitForPromptIncarnation } from "@/lib/execution-host/prompt-incarnation";
 import * as schemaModule from "@/lib/db/schema";
@@ -42,7 +43,7 @@ import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 import { type AdapterId } from "@/lib/acp-runners/adapter-support";
 import { normalizeCapabilityTokens } from "@/lib/capabilities/token-normalizer";
 
-const { hitlRequests, runs, scratchMessages, scratchRuns } =
+const { runs, scratchMessages, scratchRuns } =
   schemaModule as unknown as Record<string, any>;
 
 const log = pino({
@@ -272,7 +273,7 @@ async function persistPermissionRequest(args: {
 
   try {
     await args.db.transaction(async (tx: DbClientLike) => {
-      await tx.insert(hitlRequests).values({
+      await createHitlRequest(tx, {
         id: hitlRequestId,
         runId: args.runId,
         stepId: args.stepId,
