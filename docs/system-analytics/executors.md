@@ -3,8 +3,8 @@
 > **Unified runner & session model (Implemented).** Manifest runner intent
 > uses ONE `flowRunnerConfigSchema` (reuses `capability_agent` /
 > `permission_policy`, adds `effort` / `env`); resolution is **per session/slot**
-> (binding → auto-match → the `default`-session project-flow/platform-flow/
-> project/platform chain) and snapshotted in `run_sessions`, not a single per-run
+> (explicit override → binding → concrete reference → compatible configured
+> default → intent matching) and snapshotted in `run_sessions`, not a single per-run
 > runner. Canonical: [`sessions.md`](sessions.md) /
 > [ADR-114](../decisions.md#adr-114-unified-flow-runner-config-first-class-sessions-per-project-connect-time-bindings-and-run_sessions-as-the-sole-run-runner-source-of-truth).
 > Flipped to as-built in ADR-114 Phase 7.
@@ -392,10 +392,9 @@ config bodies, or raw ACP payloads.
 
 ## Expectations
 
-- Runner resolution MUST follow the strict allow-list chain (launch override >
-  step target > slot binding/auto-match > project Flow default > platform Flow
-  default > project default > platform default) and MUST return `{ runnerId,
-tier }`; it MUST NEVER guess from a missing reference.
+- Session runner resolution MUST follow the precedence and compatible-default
+  chain in [sessions.md](sessions.md#expectations) and MUST return
+  `{ runnerId, tier }`; it MUST NEVER guess from a missing explicit reference.
 - A launch whose resolved runner is missing, disabled, or `NotReady` MUST
   refuse with `MaisterError("EXECUTOR_UNAVAILABLE")`/`("CONFIG")` BEFORE
   `git worktree add`, before any run/workspace DB write, and before supervisor

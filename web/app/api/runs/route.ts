@@ -70,6 +70,11 @@ function errorResponse(err: unknown): NextResponse {
   if (isMaisterError(err)) {
     const status = httpStatusForCode(err.code);
 
+    log.warn(
+      { code: err.code, message: err.message, status },
+      "POST /api/runs refused",
+    );
+
     return NextResponse.json(
       { code: err.code, message: err.message },
       { status },

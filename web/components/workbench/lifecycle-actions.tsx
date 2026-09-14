@@ -19,6 +19,8 @@ import { createPortal } from "react-dom";
 import { useTranslations } from "next-intl";
 import clsx from "clsx";
 
+import { isMaisterErrorCode } from "@/lib/errors-core";
+
 export interface WorkbenchLifecycleActionsProps {
   runId: string;
   runKind: RunKind;
@@ -105,6 +107,7 @@ type LifecycleErrorBody = {
   code?: string;
   message?: string;
   retryHint?: string;
+  reason?: string;
   pushRejected?: "non_fast_forward";
   canForce?: boolean;
 };
@@ -113,6 +116,7 @@ type LifecycleErrorState = {
   code: string;
   message: string | null;
   retryHint: string | null;
+  reason: string | null;
   pushRejected: "non_fast_forward" | null;
   canForce: boolean;
 };
@@ -399,6 +403,7 @@ function errorStateFromBody(
     code: body?.code ?? "UNKNOWN",
     message: body?.message ?? null,
     retryHint: body?.retryHint ?? null,
+    reason: body?.reason ?? null,
     pushRejected: body?.pushRejected ?? null,
     canForce: body?.canForce === true,
   };
@@ -409,6 +414,7 @@ function networkErrorState(): LifecycleErrorState {
     code: "EXECUTOR_UNAVAILABLE",
     message: null,
     retryHint: null,
+    reason: null,
     pushRejected: null,
     canForce: false,
   };
@@ -419,6 +425,13 @@ function compactErrorText(
   error: LifecycleErrorState | null,
 ): string | null {
   if (!error) return null;
+
+  if (error.reason === "workspace_git_identity_invalid")
+    return t("errors.workspace_git_identity_invalid");
+  if (error.reason === "workspace_preservation_failed")
+    return t("errors.workspace_preservation_failed");
+  if (isMaisterErrorCode(error.code) && t.has(`errors.${error.code}`))
+    return t(`errors.${error.code}`);
 
   return t("error");
 }
@@ -559,6 +572,7 @@ export function WorkbenchLifecycleActions({
         code: "PRECONDITION",
         message: null,
         retryHint: null,
+        reason: null,
         pushRejected: null,
         canForce: false,
       });

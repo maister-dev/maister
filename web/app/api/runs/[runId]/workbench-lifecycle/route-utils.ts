@@ -51,6 +51,10 @@ function errorPayload(err: MaisterError): Record<string, unknown> {
   return {
     code: err.code,
     message: err.message,
+    ...(err.details?.reason === "workspace_preservation_failed" ||
+    err.details?.reason === "workspace_git_identity_invalid"
+      ? { reason: err.details.reason }
+      : {}),
     ...(typeof details.pushRejected === "string"
       ? { pushRejected: details.pushRejected }
       : {}),
@@ -69,7 +73,13 @@ export function errorResponse(
     const status = httpStatusForCode(err.code);
 
     log.warn(
-      { ...ctx, code: err.code, message: err.message, status },
+      {
+        ...ctx,
+        code: err.code,
+        reason: err.details?.reason,
+        message: err.message,
+        status,
+      },
       "workbench lifecycle route error",
     );
 

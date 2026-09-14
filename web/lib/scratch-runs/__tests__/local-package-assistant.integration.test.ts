@@ -495,9 +495,6 @@ describe("reconcile does NOT crash a project-less run (ADR-097)", () => {
       runFlow: () => {
         throw new Error("runFlow must not be called for a project-less run");
       },
-      scheduleResumedSessionDrive: () => {
-        throw new Error("resume driver must not run for a project-less run");
-      },
     });
 
     expect(summary.crashed).toBe(0);

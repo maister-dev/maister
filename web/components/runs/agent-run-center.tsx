@@ -3,7 +3,13 @@ import type { FlowRunResultDto } from "@/lib/runs/flow-result-dto";
 
 import Link from "next/link";
 
+import {
+  AttemptFailure,
+  type AttemptFailureLabels,
+} from "@/components/runs/attempt-failure";
+
 export interface AgentRunCenterLabels {
+  failure: AttemptFailureLabels;
   title: string;
   subtitle: string;
   status: string;
@@ -38,6 +44,7 @@ export function AgentRunCenter({
   labels: AgentRunCenterLabels;
 }): ReactElement {
   const latest = latestActivity(result);
+  const attempt = result.timeline.entries.at(-1);
   const showReviewCta =
     result.run.status === "Review" || result.review !== null;
 
@@ -84,6 +91,14 @@ export function AgentRunCenter({
         ))}
       </dl>
 
+      {attempt ? (
+        <AttemptFailure
+          errorCode={attempt.errorCode}
+          exitCode={attempt.exitCode}
+          labels={labels.failure}
+          status={attempt.status}
+        />
+      ) : null}
       {result.run.endedAt ? (
         <div
           className="mt-3 inline-flex rounded-full border border-line bg-ivory px-2.5 py-1 font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute"

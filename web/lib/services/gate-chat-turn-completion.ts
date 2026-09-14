@@ -1,8 +1,7 @@
 import "server-only";
 
 import { execFile } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 
@@ -11,7 +10,10 @@ import pino from "pino";
 
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
-import { applyWorkspacePolicy } from "@/lib/flows/graph/workspace-checkpoint";
+import {
+  applyWorkspacePolicy,
+  captureWorkspaceTree,
+} from "@/lib/flows/graph/workspace-checkpoint";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { gateChatTurns, hitlRequests } = schemaModule as unknown as Record<
@@ -56,25 +58,6 @@ async function git(
   }
 }
 
-// Tree SHA of the CURRENT worktree content (tracked + untracked, ignored
-// excluded) via a temp index — the L3 comparison probe. Same mechanism as
-// captureCheckpoint, without writing a ref.
-async function currentContentTree(worktreePath: string): Promise<string> {
-  const tmpDir = await mkdtemp(path.join(tmpdir(), "maister-l3-probe-"));
-  const env: NodeJS.ProcessEnv = {
-    ...process.env,
-    GIT_INDEX_FILE: path.join(tmpDir, "index"),
-  };
-
-  try {
-    await git(worktreePath, ["add", "-A"], env);
-
-    return (await git(worktreePath, ["write-tree"], env)).trim();
-  } finally {
-    await rm(tmpDir, { recursive: true, force: true });
-  }
-}
-
 async function treePaths(
   worktreePath: string,
   tree: string,
@@ -116,7 +99,7 @@ export async function senseAndRestore(args: {
   const currentTip = (
     await git(args.worktreePath, ["rev-parse", "HEAD"])
   ).trim();
-  const currentTree = await currentContentTree(args.worktreePath);
+  const currentTree = await captureWorkspaceTree(args.worktreePath);
 
   if (currentTree === baselineTree && currentTip === baselineTip) {
     return { reverted: false };

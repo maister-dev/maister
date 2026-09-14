@@ -640,6 +640,106 @@ describe("resolveRunSessions", () => {
     });
   });
 
+  const implementSession = {
+    name: "implement",
+    runner: {
+      runner_type: "acp" as const,
+      capability_agent: "claude" as const,
+      permission_policy: "default" as const,
+    },
+  };
+
+  it.each([
+    [{}, "claude-opus", "platformDefault"],
+    [
+      { project: { defaultRunnerId: "claude-sonnet" } },
+      "claude-sonnet",
+      "projectDefault",
+    ],
+    [
+      { projectFlow: { defaultRunnerId: "claude-sonnet" } },
+      "claude-sonnet",
+      "projectFlowDefault",
+    ],
+    [
+      { runDefaultRunnerId: "claude-sonnet" },
+      "claude-sonnet",
+      "launchOverride",
+    ],
+  ] as const)(
+    "resolves an ambiguous named session through configured defaults: %j",
+    (defaults, runnerId, tier) => {
+      const out = resolveRunSessions(
+        input({
+          ...defaults,
+          sessions: [{ name: "default" }, implementSession],
+        }),
+      );
+
+      expect(out.map((session) => session.runnerId)).toEqual([
+        runnerId,
+        runnerId,
+      ]);
+      expect(out[1].runnerResolutionTier).toBe(tier);
+      expect(out[1].resolutionWarning).toBeUndefined();
+    },
+  );
+
+  it("keeps bindings and other-capability sessions when a run default is selected", () => {
+    const out = resolveRunSessions(
+      input({
+        runDefaultRunnerId: "claude-sonnet",
+        sessions: [
+          implementSession,
+          {
+            name: "review",
+            runner: {
+              runner_type: "acp",
+              capability_agent: "codex",
+              permission_policy: "default",
+            },
+          },
+        ],
+        bindings: [
+          {
+            slotKey: "session:implement",
+            mappedRunnerId: "claude-opus",
+            status: "Mapped",
+          },
+        ],
+      }),
+    );
+
+    expect(out.map((session) => session.runnerId)).toEqual([
+      "claude-opus",
+      "codex-gpt",
+    ]);
+    expect(out[0].runnerResolutionTier).toBe("binding");
+  });
+
+  it("records a model-intent warning when a compatible run choice differs", () => {
+    const out = resolveRunSessions(
+      input({
+        runDefaultRunnerId: "claude-sonnet",
+        sessions: [
+          {
+            ...implementSession,
+            runner: { ...implementSession.runner, model: claudeOpus.model },
+          },
+        ],
+      }),
+    );
+
+    expect(out[0]).toMatchObject({
+      runnerId: "claude-sonnet",
+      resolutionWarning: {
+        code: "runner_intent_soft_mismatch",
+        requested: { model: claudeOpus.model },
+        launched: { runnerId: "claude-sonnet" },
+      },
+    });
+  });
+
   it("resolves multiple sessions independently (auto-match + binding)", () => {
     const out = resolveRunSessions(
       input({

@@ -3,7 +3,7 @@ import "server-only";
 import type { WorkspacePolicy } from "@/lib/config.schema";
 
 import { execFile } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { copyFile, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -113,10 +113,45 @@ export function containmentAssert(
   }
 }
 
-// ADR-079 §1: capture HEAD + tracked + untracked (ignored EXCLUDED) as a
-// temp-index commit PARENTED ON THE CURRENT TIP, stored as a dangling
-// namespaced ref. The branch is never advanced; `<ck>^` is the pre-attempt
-// tip for free.
+// Copying the real index preserves tracked ignored files and skip-worktree
+// blobs: an empty index would omit materialized .gitignore/config files and
+// make rewind try to delete their runtime overrides. The caller's staged state
+// and index flags stay untouched; ignored untracked files remain excluded.
+export async function captureWorkspaceTree(
+  worktreePath: string,
+): Promise<string> {
+  const indexPath = path.resolve(
+    worktreePath,
+    (await git(worktreePath, ["rev-parse", "--git-path", "index"])).trim(),
+  );
+  const tmpDir = await mkdtemp(path.join(tmpdir(), "maister-ck-index-"));
+  const indexFile = path.join(tmpDir, "index");
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    GIT_INDEX_FILE: indexFile,
+  };
+
+  try {
+    await copyFile(indexPath, indexFile);
+    await git(worktreePath, ["add", "-A"], env);
+
+    return (await git(worktreePath, ["write-tree"], env)).trim();
+  } catch (err) {
+    if (err instanceof MaisterError) throw err;
+
+    throw new MaisterError(
+      "CHECKPOINT",
+      `could not capture worktree index ${indexPath}: ${err instanceof Error ? err.message : String(err)}`,
+      { cause: err instanceof Error ? err : undefined },
+    );
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true });
+  }
+}
+
+// ADR-079 §1: snapshot tracked + non-ignored untracked content as a commit
+// parented on the current tip and stored under a dangling namespaced ref.
+// The branch never advances; `<ck>^` remains the pre-attempt tip.
 export async function captureCheckpoint(args: {
   worktreePath: string;
   namespace: CheckpointNamespace;
@@ -125,46 +160,30 @@ export async function captureCheckpoint(args: {
 }): Promise<{ ref: string; sha: string }> {
   const ref = checkpointRefName(args.namespace, args.runId, args.id);
   const tip = (await git(args.worktreePath, ["rev-parse", "HEAD"])).trim();
-  const tmpDir = await mkdtemp(path.join(tmpdir(), "maister-ck-index-"));
-  const indexFile = path.join(tmpDir, "index");
-  const env: NodeJS.ProcessEnv = {
-    ...process.env,
-    ...CHECKPOINT_GIT_IDENT_ENV,
-    GIT_INDEX_FILE: indexFile,
-  };
+  const tree = await captureWorkspaceTree(args.worktreePath);
+  const sha = (
+    await git(
+      args.worktreePath,
+      [
+        "commit-tree",
+        tree,
+        "-p",
+        tip,
+        "-m",
+        `maister checkpoint ${args.namespace}/${args.runId}/${args.id}`,
+      ],
+      { ...process.env, ...CHECKPOINT_GIT_IDENT_ENV },
+    )
+  ).trim();
 
-  try {
-    // Empty temp index + `add -A` stages the exact working-tree content
-    // (tracked + untracked, .gitignore respected) without touching the real
-    // index.
-    await git(args.worktreePath, ["add", "-A"], env);
-    const tree = (await git(args.worktreePath, ["write-tree"], env)).trim();
-    const sha = (
-      await git(
-        args.worktreePath,
-        [
-          "commit-tree",
-          tree,
-          "-p",
-          tip,
-          "-m",
-          `maister checkpoint ${args.namespace}/${args.runId}/${args.id}`,
-        ],
-        env,
-      )
-    ).trim();
+  await git(args.worktreePath, ["update-ref", ref, sha]);
 
-    await git(args.worktreePath, ["update-ref", ref, sha]);
+  log.debug(
+    { worktreePath: args.worktreePath, ref, sha, tip },
+    "[checkpoint] capture",
+  );
 
-    log.debug(
-      { worktreePath: args.worktreePath, ref, sha, tip },
-      "[checkpoint] capture",
-    );
-
-    return { ref, sha };
-  } finally {
-    await rm(tmpDir, { recursive: true, force: true });
-  }
+  return { ref, sha };
 }
 
 // ADR-079 §2: policy semantics against a captured checkpoint.

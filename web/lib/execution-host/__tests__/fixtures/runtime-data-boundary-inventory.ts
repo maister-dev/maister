@@ -797,8 +797,9 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "flow-engine state the manager owns: installed package content, authored packages, run inputs/outputs under .maister/<slug>/runs",
       [
         ["git", "node:child_process.execFile", "spawn", "git"],
-        ["captureCheckpoint", "node:fs/promises.mkdtemp", "write"],
-        ["captureCheckpoint", "node:fs/promises.rm", "remove"],
+        ["captureWorkspaceTree", "node:fs/promises.mkdtemp", "write"],
+        ["captureWorkspaceTree", "node:fs/promises.copyFile", "write"],
+        ["captureWorkspaceTree", "node:fs/promises.rm", "remove"],
         ["deleteChatCheckpoint", "node:child_process.execFile", "spawn", "git"],
       ],
     ),
@@ -1518,8 +1519,6 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "gate-chat L3 sense-and-restore of the run worktree — Stage C repository cut",
       [
         ["git", "node:child_process.execFile", "spawn", "git"],
-        ["currentContentTree", "node:fs/promises.mkdtemp", "write"],
-        ["currentContentTree", "node:fs/promises.rm", "remove"],
         ["senseAndRestore", "node:fs/promises.rm", "remove"],
       ],
     ),
@@ -2054,6 +2053,7 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
   ...wrappers("lib/flows/graph/workspace-checkpoint.ts", "manager-flow-state", [
     ["applyWorkspacePolicy", false],
     ["captureCheckpoint", false],
+    ["captureWorkspaceTree", false],
     ["deleteChatCheckpoint", false],
     ["deleteRunCheckpointRefs", false],
   ]),

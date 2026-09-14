@@ -16625,8 +16625,11 @@ components:
           type: string
           minLength: 1
           description: |
-            Optional per-launch platform ACP runner override. Highest priority
-            in the fail-closed runner resolution chain.
+            Optional per-launch platform ACP runner override. Omitted means the
+            saved task runner, then configured Flow/project/platform defaults.
+            The launch/task choice overrides the primary session and supplies a
+            same-capability default for other unbound sessions. Explicit bindings
+            and other-capability sessions retain their own runner selection.
         baseBranch:
           type: string
           minLength: 1
@@ -20393,6 +20396,10 @@ components:
             - ACCOUNT_INACTIVE
         message: { type: string }
         retryHint: { type: string }
+        reason:
+          type: string
+          enum: [workspace_preservation_failed, workspace_git_identity_invalid]
+          description: Worktree removal was refused because preservation failed or Git could not resolve the snapshot author/committer identity; the worktree remains available.
         pushRejected:
           type: string
           enum: [non_fast_forward]

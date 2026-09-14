@@ -11,6 +11,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
+import messages from "@/messages/en.json";
 import {
   AgentRunCenter,
   type AgentRunCenterLabels,
@@ -19,6 +20,7 @@ import {
 import { buildFlowRunResultDto } from "@/lib/runs/flow-result-dto";
 
 const LABELS: AgentRunCenterLabels = {
+  failure: messages.run.failure,
   title: "Agent run",
   subtitle: "Standalone session",
   status: "Status",
@@ -51,6 +53,8 @@ function entry(over: Partial<TimelineEntry> = {}): TimelineEntry {
     decision: null,
     reworkFromNode: null,
     resolvedPrompt: null,
+    errorCode: null,
+    exitCode: null,
     acpSessionId: "internal-session",
     autoRetry: false,
     startedAt: "2026-06-15T09:00:00.000Z",

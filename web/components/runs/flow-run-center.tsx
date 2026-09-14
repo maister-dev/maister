@@ -28,8 +28,13 @@ import {
 import { buildFlowNodeResult } from "@/lib/runs/flow-node-result";
 import { isLiveRunStatus } from "@/lib/runs/live-inspector";
 import { buildRunHref, parseRunQueryState } from "@/lib/runs/run-query-state";
+import {
+  AttemptFailure,
+  type AttemptFailureLabels,
+} from "@/components/runs/attempt-failure";
 
 export interface FlowRunCenterLabels {
+  failure: AttemptFailureLabels;
   title: string;
   fullscreen: string;
   reviewChanges: string;
@@ -239,6 +244,12 @@ function AttemptRows({
             <CompactRow
               meta={`${attempt.status} | ${formatTokenCount(locale, attempt.tokenTotal)} ${labels.tokens}`}
               title={`${labels.attempt} ${attempt.attempt}`}
+            />
+            <AttemptFailure
+              errorCode={attempt.errorCode}
+              exitCode={attempt.exitCode}
+              labels={labels.failure}
+              status={attempt.status}
             />
             {attempt.resolvedPrompt ? (
               <AttemptPrompt labels={labels} text={attempt.resolvedPrompt} />

@@ -219,6 +219,7 @@ export function buildLaunchBody(args: {
   taskId: string;
   flowId: string;
   runnerId: string;
+  initialRunnerId: string | null;
   baseBranch: string;
   targetBranch: string;
   deliveryPolicy: DeliveryPolicy;
@@ -235,7 +236,8 @@ export function buildLaunchBody(args: {
     allowConcurrent: args.forceRelaunch,
   };
 
-  if (args.runnerId) body.runnerId = args.runnerId;
+  if (args.runnerId && args.runnerId !== args.initialRunnerId)
+    body.runnerId = args.runnerId;
   if (args.baseBranch) body.baseBranch = args.baseBranch;
   if (args.targetBranch) body.targetBranch = args.targetBranch;
 
@@ -246,6 +248,7 @@ export function buildScheduledLaunchBody(args: {
   taskId: string;
   flowId: string;
   runnerId: string;
+  initialRunnerId: string | null;
   baseBranch: string;
   targetBranch: string;
   deliveryPolicy: DeliveryPolicy;
@@ -775,6 +778,7 @@ export function LaunchPopover({
             taskId,
             flowId,
             runnerId,
+            initialRunnerId: options.selectedRunnerId,
             baseBranch,
             targetBranch,
             deliveryPolicy: currentPolicy,
@@ -842,6 +846,7 @@ export function LaunchPopover({
         taskId,
         flowId,
         runnerId,
+        initialRunnerId: options.selectedRunnerId,
         baseBranch,
         targetBranch,
         deliveryPolicy: currentPolicy,

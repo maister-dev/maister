@@ -2497,7 +2497,7 @@
       "ACP_PROTOCOL": "The agent rejected the response. Reload and try again.",
       "HITL_TIMEOUT": "This request expired before your response was delivered.",
       "CONFLICT": "This request was already answered.",
-      "CONFIG": "The response was not valid for this request.",
+      "CONFIG": "The request or configuration is invalid. Check the values and settings.",
       "FLOW_INSTALL": "The Flow is not ready to run. Check its installation and try again.",
       "CHECKPOINT": "The saved run checkpoint could not be used. Reload and try again.",
       "BUDGET_EXCEEDED": "This run has reached its budget limit.",
@@ -2596,6 +2596,23 @@
       "copy": "Copy",
       "copied": "Copied",
       "toolCount": "{name} ×{count}"
+    },
+    "failure": {
+      "unknown": "The step failed without a detailed diagnostic. Check the agent activity and server logs for this run.",
+      "code": "Error code",
+      "exitCode": "Process exit code",
+      "codes": {
+        "ACP_PROTOCOL": "The agent session ended with a protocol error. Check the agent activity and supervisor logs before restarting.",
+        "CONFIG": "The step configuration is invalid. Check the Flow, runner and required settings.",
+        "SPAWN": "The agent process could not start. Check the runner installation and access on the execution host.",
+        "CRASH": "The step stopped unexpectedly. Check the web and supervisor logs for this run.",
+        "EXECUTOR_UNAVAILABLE": "The execution host or runner is unavailable. Restore its readiness before restarting.",
+        "BUDGET_EXCEEDED": "The run reached its budget limit. Review the budget before restarting.",
+        "CHECKPOINT": "The agent session could not resume from its checkpoint. Check adapter resume support and supervisor logs.",
+        "PRECONDITION": "A prerequisite for this step was not met. Check the Flow inputs and required resources.",
+        "HITL_TIMEOUT": "The time allowed for human input expired. Restart after checking the input timeout.",
+        "CONFLICT": "The step encountered a conflicting operation. Check the run state and active operations."
+      }
     }
   },
   "checkoutContext": {
@@ -3537,6 +3554,18 @@
         "stopArchive": "Stop the run, then preserve recoverable work, remove its worktree, and retain run history.",
         "stopDrop": "Stop the run, then preserve recoverable work and remove the worktree."
       }
+    },
+    "errors": {
+      "workspace_git_identity_invalid": "Git cannot determine the archive commit author or committer. Configure user.name and user.email for the server user, then retry removal. The worktree was not deleted.",
+      "workspace_preservation_failed": "The worktree could not be saved before removal. No files were deleted. Check Git access, commit identity and the web server logs, then retry.",
+      "CONFLICT": "The current run state conflicts with this action. Refresh the page and check for another active operation.",
+      "PRECONDITION": "The action prerequisites are not met. Refresh the run and check its workspace state.",
+      "EXECUTOR_UNAVAILABLE": "The execution host or remote is unavailable. Restore the connection, then retry.",
+      "ACP_PROTOCOL": "The agent session could not be stopped cleanly. Check the supervisor logs before retrying.",
+      "CONFIG": "The workspace configuration is invalid. Check the repository path, branch and execution host settings.",
+      "UNAUTHENTICATED": "Sign in again to perform this action.",
+      "UNAUTHORIZED": "You do not have permission to perform this action.",
+      "CRASH": "The server could not complete this action. Check the web server logs for this run."
     }
   },
   "projectMembers": {

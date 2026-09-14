@@ -8,6 +8,8 @@ import type { TimelineGate } from "@/lib/queries/run";
 export interface FlowNodeAttemptResult {
   attempt: number;
   status: string;
+  errorCode: string | null;
+  exitCode: number | null;
   decision: string | null;
   reworkFromNode: string | null;
   autoRetry: boolean;
@@ -80,6 +82,8 @@ function attemptDto(entry: FlowResultTimelineEntryDto): FlowNodeAttemptResult {
   return {
     attempt: entry.attempt,
     status: entry.status,
+    errorCode: entry.errorCode,
+    exitCode: entry.exitCode,
     decision: entry.decision,
     reworkFromNode: entry.reworkFromNode,
     autoRetry: entry.autoRetry,
@@ -165,7 +169,7 @@ function readinessDto(
   result: FlowRunResultDto,
   node: FlowRunNodeDto,
 ): FlowNodeReadinessResult | null {
-  if (result.readiness === null) return null;
+  if (result.readiness === null || node.runtimeStatus === "Failed") return null;
   if (
     !node.current &&
     result.run.status !== "Review" &&

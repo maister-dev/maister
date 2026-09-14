@@ -43,6 +43,7 @@ import { alias } from "drizzle-orm/pg-core";
 import { cache } from "react";
 import pino from "pino";
 
+import { isMaisterErrorCode } from "@/lib/errors-core";
 import { getDb } from "@/lib/db/client";
 import {
   computeRunAutoPromotion,
@@ -1059,6 +1060,8 @@ export interface TimelineEntry {
   nodeType: NodeAttempt["nodeType"];
   attempt: number;
   status: NodeAttempt["status"];
+  errorCode: string | null;
+  exitCode: number | null;
   decision: string | null;
   reworkFromNode: string | null;
   acpSessionId: string | null;
@@ -1234,6 +1237,8 @@ export async function getRunTimeline(runId: string): Promise<RunTimeline> {
       nodeType: nodeAttempts.nodeType,
       attempt: nodeAttempts.attempt,
       status: nodeAttempts.status,
+      errorCode: nodeAttempts.errorCode,
+      exitCode: nodeAttempts.exitCode,
       decision: nodeAttempts.decision,
       autoRetry: nodeAttempts.autoRetry,
       reworkFromNode: nodeAttempts.reworkFromNode,
@@ -1354,6 +1359,8 @@ export async function getRunTimeline(runId: string): Promise<RunTimeline> {
     nodeType: r.nodeType,
     attempt: r.attempt,
     status: r.status,
+    errorCode: isMaisterErrorCode(r.errorCode) ? r.errorCode : null,
+    exitCode: r.exitCode ?? null,
     decision: r.decision,
     reworkFromNode: r.reworkFromNode,
     acpSessionId: r.acpSessionId,

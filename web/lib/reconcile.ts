@@ -1,6 +1,5 @@
 import "server-only";
 
-import type { RunResumedSessionOptions } from "@/lib/runs/resume-driver";
 import type { CrashReason } from "@/lib/runs/state-transitions";
 import type { Db as ExecutionDb } from "@/lib/execution-host/db";
 import type {
@@ -40,7 +39,6 @@ import {
 } from "@/lib/instance-config";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { loadActiveRunSessionsByRunId } from "@/lib/runs/active-run-session";
-import { scheduleResumedSessionDrive } from "@/lib/runs/resume-driver";
 import {
   isTerminalRunStatus,
   SETTLED_RUN_STATUSES,
@@ -336,11 +334,11 @@ function classifyInner(input: ReconcileInput): ReconcileDecision {
     return { action: "sync-recover", reason: "sync-orphaned-idle" };
   }
 
-  // 3. live agent session with no attached runner → re-attach.
+  // 3. A live Flow session is recovered through its durable graph driver.
   //
-  // The resume driver (runResumedSession) is ONLY correct for a flow run
-  // recovering a live supervisor session after an HITL checkpoint: it sends a
-  // continuation prompt and replays the cancelled permission. A scratch run is
+  // Liveness alone does not authorize a continuation prompt: the original
+  // driver may still own the turn. runFlow claims the durable lease and reuses
+  // the immutable command when recovery is needed. A scratch run is
   // a plain conversational dialog — after a turn ends (`end_turn`) its session
   // stays live waiting for the NEXT user message; it has no prior tool call and
   // no stored HITL intent. Reattaching such a run drives a continuation prompt
@@ -418,7 +416,6 @@ export interface RunReconcileSweepOptions {
   executionHosts?: ExecutionHosts;
   listWorktrees?: (repoPath: string) => Promise<WorktreeInfo[]>;
   runFlow?: (runId: string) => Promise<void> | void;
-  scheduleResumedSessionDrive?: (opts: RunResumedSessionOptions) => string;
   now?: () => Date;
 }
 
@@ -1208,10 +1205,8 @@ export async function runReconcileSweep(
     (async (runId: string) => {
       const mod = await import("@/lib/flows/runner");
 
-      await mod.runFlow(runId);
+      await mod.runFlow(runId, { db, executionHosts: hosts });
     });
-  const driveResumed =
-    opts.scheduleResumedSessionDrive ?? scheduleResumedSessionDrive;
   const now = opts.now ?? (() => new Date());
   const graceSeconds = reconcileGraceSeconds();
 
@@ -1717,12 +1712,7 @@ export async function runReconcileSweep(
         return;
       }
       case "reattach": {
-        // Defense-in-depth: the resume driver's continuation-prompt +
-        // permission-replay contract is only valid for flow runs recovering a
-        // checkpointed HITL session. A scratch (or agent) run must NEVER be
-        // routed here, even if a future classifier regression returns
-        // `reattach` for it — driving a continuation prompt on a live scratch
-        // dialog falsely crashes it (`resume-prompt-no-permission`).
+        // Scratch and standalone agents have their own continuation owners.
         if (cand.runKind !== "flow") {
           skipped += 1;
           log.warn(
@@ -1732,12 +1722,17 @@ export async function runReconcileSweep(
 
           return;
         }
-        driveResumed({
-          runId: cand.runId,
-          supervisorSessionId: live!.sessionId,
-          acpSessionId: live!.acpSessionId!,
-          stepId: live!.stepId ?? cand.currentStepId ?? "",
-          db,
+        // A recovered paid turn can be long-lived. Keep the sweep bounded;
+        // runFlow's database lease serializes this wake with every other driver.
+        queueMicrotask(() => {
+          void Promise.resolve()
+            .then(() => runFlow(cand.runId))
+            .catch((error: unknown) => {
+              log.error(
+                { runId: cand.runId, err: error },
+                "reconcile: durable Flow reattachment failed",
+              );
+            });
         });
         reattached += 1;
         log.info({ runId: cand.runId, reason }, "reconcile: reattached");

@@ -12,6 +12,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MaisterError } from "@/lib/errors";
 
 const sendPromptSpy = vi.fn();
+const admitPromptSpy = vi.fn();
 const streamSessionSpy = vi.fn();
 const deliverPermissionSpy = vi.fn();
 const cancelPermissionSpy = vi.fn();
@@ -36,10 +37,14 @@ vi.mock("@/lib/flows/graph/permission-resume", () => ({
 // admin stream. The fake client routes each call to the existing spies with
 // the legacy argument shapes the cases assert on.
 const fakeBoundClient = () => ({
-  prompt: async (sessionId: string, input: unknown) => ({
-    commandId: "cmd",
-    completion: sendPromptSpy(sessionId, input),
-  }),
+  prompt: async (sessionId: string, input: unknown) => {
+    await admitPromptSpy(sessionId, input);
+
+    return {
+      commandId: "cmd",
+      completion: sendPromptSpy(sessionId, input),
+    };
+  },
   waitForPrompt: (handle: { completion: Promise<unknown> }) =>
     handle.completion,
   deliverInput: (
@@ -157,6 +162,7 @@ const dbState: {
 const TABLE_HITL = { _t: "hitl_requests" } as const;
 const TABLE_RUNS = { _t: "runs" } as const;
 const TABLE_NODE_ATTEMPTS = { _t: "node_attempts" } as const;
+const TABLE_EXECUTION_COMMANDS = { _t: "execution_commands" } as const;
 const TABLE_RUN_SESSIONS = {
   _t: "run_sessions",
   runId: { _t: "run_sessions.runId" },
@@ -168,6 +174,7 @@ vi.mock("@/lib/db/schema", () => ({
   hitlRequests: TABLE_HITL,
   runs: TABLE_RUNS,
   nodeAttempts: TABLE_NODE_ATTEMPTS,
+  executionCommands: TABLE_EXECUTION_COMMANDS,
   runSessions: TABLE_RUN_SESSIONS,
 }));
 
@@ -314,6 +321,7 @@ beforeEach(async () => {
   dbState.hitlResponse = { optionId: "allow" };
 
   sendPromptSpy.mockReset();
+  admitPromptSpy.mockReset();
   streamSessionSpy.mockReset();
   deliverPermissionSpy.mockReset();
   cancelPermissionSpy.mockReset();
@@ -329,6 +337,42 @@ beforeEach(async () => {
   if (!runResumedSession) {
     ({ runResumedSession } = await import("../resume-driver"));
   }
+});
+
+describe("runResumedSession — prompt admission ownership", () => {
+  it.each(["command_invariant_conflict", "prompt_owner_invariant"])(
+    "yields on %s without touching the original session or HITL intent",
+    async (reason) => {
+      admitPromptSpy.mockRejectedValueOnce(
+        new MaisterError(
+          "CONFLICT",
+          "prompt admission conflicts with its durable operation",
+          {
+            details: { reason },
+          },
+        ),
+      );
+
+      await runResumedSession({
+        runId: "run-1",
+        supervisorSessionId: "sup-2",
+        acpSessionId: "acp-1",
+        stepId: "review",
+        db: fakeDb,
+      });
+
+      expect(streamSessionSpy).not.toHaveBeenCalled();
+      expect(sendPromptSpy).not.toHaveBeenCalled();
+      expect(deleteSessionSpy).not.toHaveBeenCalled();
+      expect(deliverPermissionSpy).not.toHaveBeenCalled();
+      expect(cancelPermissionSpy).not.toHaveBeenCalled();
+      expect(crashResumedRunSpy).not.toHaveBeenCalled();
+      expect(failResumedRunSpy).not.toHaveBeenCalled();
+      expect(rollbackResumedRunSpy).not.toHaveBeenCalled();
+      expect(dbState.hitlRespondedAt).toBeNull();
+      expect(dbState.hitlResponse).toEqual({ optionId: "allow" });
+    },
+  );
 });
 
 describe("runResumedSession — [FIX-PASS2-F2] retryable prompt failure", () => {

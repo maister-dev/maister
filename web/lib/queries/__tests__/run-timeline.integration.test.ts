@@ -338,6 +338,47 @@ describe("getRunTimeline (integration)", () => {
     expect(handoff?.ownerEmail).toContain("@maister.local");
   });
 
+  it("projects stored failure diagnostics without exposing command output or unknown codes", async () => {
+    const { runId } = await seedRun();
+
+    await db.insert(schema.nodeAttempts).values([
+      {
+        id: randomUUID(),
+        runId,
+        nodeId: "survey",
+        nodeType: "ai_coding",
+        attempt: 1,
+        status: "Failed",
+        errorCode: "ACP_PROTOCOL",
+        exitCode: 1,
+        stdout: "private tool output",
+        startedAt: new Date("2026-09-14T10:00:00Z"),
+      },
+      {
+        id: randomUUID(),
+        runId,
+        nodeId: "survey",
+        nodeType: "ai_coding",
+        attempt: 2,
+        status: "Failed",
+        errorCode: "private unexpected code",
+        startedAt: new Date("2026-09-14T10:01:00Z"),
+      },
+    ]);
+    const timeline = await getRunTimeline(runId);
+
+    expect(timeline.entries[0]).toMatchObject({
+      status: "Failed",
+      errorCode: "ACP_PROTOCOL",
+      exitCode: 1,
+    });
+    expect(timeline.entries[1]).toMatchObject({
+      errorCode: null,
+      exitCode: null,
+    });
+    expect(JSON.stringify(timeline)).not.toContain("private");
+  });
+
   it("returns an empty timeline for a legacy linear run with no node_attempts", async () => {
     const { runId } = await seedRun();
 

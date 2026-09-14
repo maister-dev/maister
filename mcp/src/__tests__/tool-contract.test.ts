@@ -144,6 +144,8 @@ const TOOL_OP: Record<string, { method: string; path: string }> = {
   run_rework: { method: "post", path: "/api/v1/ext/runs/rework" },
   run_sync: { method: "post", path: "/api/v1/ext/runs/sync" },
   run_reopen: { method: "post", path: "/api/v1/ext/runs/reopen" },
+  run_recover: { method: "post", path: "/api/v1/ext/runs/{runId}/recover" },
+  run_discard: { method: "post", path: "/api/v1/ext/runs/{runId}/discard" },
   readiness_get: {
     method: "get",
     path: "/api/v1/ext/runs/{runId}/readiness",
@@ -591,7 +593,10 @@ describe("TOOL_SPECS ↔ external OpenAPI contract", () => {
 
     const declared = declaredStatusList(TOOL_SPECS.run_collect.description);
 
-    expect(declared, "run_collect must declare a resultStatus (a|b|c) list").not.toBeNull();
+    expect(
+      declared,
+      "run_collect must declare a resultStatus (a|b|c) list",
+    ).not.toBeNull();
     expect(declared).toEqual(values);
     // The result envelope itself, not just the status vocabulary.
     expect(TOOL_SPECS.run_collect.description).toContain("result.value");

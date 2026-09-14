@@ -48,6 +48,12 @@ show draft participants, round state, disagreements, HITL resolution state, and
 the final plan artifact — so I can understand agreement work without leaving the
 Flow run detail.
 
+Failed attempts show a localized explanation, an allow-listed diagnostic error
+code, and the recorded exit code in the selected node, agent result, and
+timeline. Raw command bodies and server output are not copied into these
+messages. A failed node does not show a successful readiness summary; missing
+or unrecognized error codes receive the localized unknown-cause explanation.
+
 ## Roles & capabilities
 
 | Role                  | Sees / does                                                                                                         |

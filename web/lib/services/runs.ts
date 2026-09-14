@@ -1002,16 +1002,20 @@ export async function* launchRunStaged(
     const primarySessionName =
       sessionSlots.find((session) => session.name === "default")?.name ??
       sessionSlots[0].name;
+    const runDefaultRunnerId = input.runnerId ?? task.runnerId;
     const sessionResolutions = resolveRunSessions({
       sessions: sessionSlots,
       runnerProfiles: manifest.runner_profiles,
       bindings,
+      runDefaultRunnerId,
       // The single launch-dialog override applies to the run's primary session;
       // ADR-150 controlled-recipe per-session overrides apply to their named
-      // sessions. The primary-session override wins on a key collision.
+      // sessions. Explicit launch choices win over the saved task default;
+      // the single launch-dialog override wins on a key collision.
       ephemeralOverrides:
-        input.runnerId || input.sessionRunnerOverrides
+        runDefaultRunnerId || input.sessionRunnerOverrides
           ? {
+              ...(task.runnerId ? { [primarySessionName]: task.runnerId } : {}),
               ...(input.sessionRunnerOverrides ?? {}),
               ...(input.runnerId
                 ? { [primarySessionName]: input.runnerId }

@@ -7,14 +7,28 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("next-intl", () => ({
-  useTranslations:
-    (namespace: string) =>
-    (key: string, values?: Record<string, unknown>): string =>
-      values
-        ? `${namespace}.${key} ${JSON.stringify(values)}`
-        : `${namespace}.${key}`,
-}));
+vi.mock("next-intl", async () => {
+  const { default: messages } = await import("@/messages/en.json");
+  const errors: Record<string, string> = messages.workbenchLifecycle.errors;
+
+  return {
+    useTranslations: (namespace: string) =>
+      Object.assign(
+        (key: string, values?: Record<string, unknown>): string => {
+          if (namespace === "workbenchLifecycle" && key.startsWith("errors."))
+            return errors[key.slice(7)];
+
+          return values
+            ? `${namespace}.${key} ${JSON.stringify(values)}`
+            : `${namespace}.${key}`;
+        },
+        {
+          has: (key: string): boolean =>
+            key.startsWith("errors.") && key.slice(7) in errors,
+        },
+      ),
+  };
+});
 
 const refreshMock = vi.fn();
 
@@ -202,6 +216,40 @@ describe("WorkbenchLifecycleActions dialogs", () => {
     expect(document.activeElement).toBe(archiveButton);
   });
 
+  it.each([
+    [
+      "workspace_preservation_failed",
+      "worktree could not be saved before removal",
+    ],
+    [
+      "workspace_git_identity_invalid",
+      "Configure user.name and user.email for the server user",
+    ],
+  ])(
+    "explains %s after a refused drop without displaying server text",
+    async (reason, expectedText) => {
+      const fetchMock = vi.fn<FetchLike>(async () =>
+        jsonResponse(
+          { code: "CONFLICT", reason, message: "private server diagnostic" },
+          { status: 409 },
+        ),
+      );
+
+      vi.stubGlobal("fetch", fetchMock);
+      renderActions(["drop"]);
+      await click(findButton(document.body, "workbenchLifecycle.action.drop"));
+      await click(
+        findButton(document.body, "workbenchLifecycle.dialog.confirm"),
+      );
+      await flushPromises();
+
+      expect(textOf(document.body)).toContain(expectedText);
+      expect(textOf(document.body)).not.toContain("private server diagnostic");
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(refreshMock).not.toHaveBeenCalled();
+    },
+  );
+
   it("requires a commit message before calling snapshot-commit", async () => {
     const fetchMock = vi.fn<FetchLike>(async () => metadataResponse(true));
 
@@ -296,7 +344,7 @@ describe("WorkbenchLifecycleActions dialogs", () => {
     await click(findButton(document.body, "workbenchLifecycle.dialog.push"));
     await flushPromises();
 
-    expect(textOf(document.body)).toContain("workbenchLifecycle.error");
+    expect(textOf(document.body)).toContain("current run state conflicts");
     expect(textOf(document.body)).not.toContain(
       "remote branch has newer commits",
     );
@@ -386,7 +434,7 @@ describe("WorkbenchLifecycleActions dialogs", () => {
     await click(findButton(document.body, "workbenchLifecycle.dialog.handoff"));
     await flushPromises();
 
-    expect(textOf(document.body)).toContain("workbenchLifecycle.error");
+    expect(textOf(document.body)).toContain("current run state conflicts");
     expect(textOf(document.body)).not.toContain("CONFLICT");
 
     await click(findButton(document.body, "workbenchLifecycle.dialog.handoff"));

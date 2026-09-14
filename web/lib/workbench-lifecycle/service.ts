@@ -604,6 +604,11 @@ async function preservePresentWorkspace(
     throw new MaisterError(
       "CONFLICT",
       `could not preserve worktree for run ${runId}`,
+      {
+        details: {
+          reason: result.failureReason ?? "workspace_preservation_failed",
+        },
+      },
     );
   }
 

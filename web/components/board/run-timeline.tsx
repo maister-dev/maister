@@ -2,6 +2,11 @@ import type { ReactElement } from "react";
 
 import clsx from "clsx";
 
+import {
+  AttemptFailure,
+  type AttemptFailureLabels,
+} from "@/components/runs/attempt-failure";
+
 export interface TimelineGateView {
   gateId: string;
   kind: string;
@@ -42,6 +47,8 @@ export interface TimelineEntry {
   nodeType: string;
   attempt: number;
   status: string;
+  errorCode: string | null;
+  exitCode: number | null;
   decision: string | null;
   reworkFromNode: string | null;
   acpSessionId: string | null;
@@ -60,6 +67,7 @@ export interface TimelineEntry {
 }
 
 export interface TimelineLabels {
+  failure: AttemptFailureLabels;
   title: string;
   staleGate: string;
   currentGate: string;
@@ -259,6 +267,12 @@ function EntryCard({
         </div>
       </div>
 
+      <AttemptFailure
+        errorCode={entry.errorCode}
+        exitCode={entry.exitCode}
+        labels={labels.failure}
+        status={entry.status}
+      />
       {entry.acpSessionId ? (
         <div className="mt-1 font-mono text-[10px] text-mute">
           ↪ {entry.acpSessionId}

@@ -89,7 +89,10 @@ anthropic_compatible`, policies `default | dangerously_skip_permissions`;
 ## Runner slot intent resolution
 
 Flow runner slots use the catalog as a hard-capability contract plus soft intent
-metadata:
+metadata. Flow sessions first honor explicit overrides/bindings and compatible
+configured defaults under the [session resolution contract](sessions.md#expectations).
+The following intent matching rules apply when those choices have not resolved
+the slot; consensus slots do not inherit session defaults:
 
 - `capability_agent` is hard. A slot that asks for `claude` may only resolve to
   an enabled+ready `claude` runner; it must never fall back to `codex`,

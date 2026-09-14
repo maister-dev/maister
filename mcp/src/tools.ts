@@ -1,9 +1,11 @@
+import type { Tool } from "@modelcontextprotocol/sdk/types.js";
+
 import { type AuthContext, resolveAuthHeader } from "./auth";
 import { callExt, restResponseToToolError } from "./rest";
 
 export type ToolSpec = {
   description: string;
-  inputSchema: Record<string, unknown>;
+  inputSchema: Tool["inputSchema"];
 };
 
 export const TOOL_SPECS: Record<string, ToolSpec> = {
@@ -802,9 +804,8 @@ function propertyIsNumeric(prop: unknown): boolean {
 }
 
 // LLMs routinely emit numeric arguments as JSON strings ("0.8" instead of 0.8).
-// The MCP inputSchema is advisory only (main.ts registers a passthrough
-// z.record — args are never validated against it), so such a string would reach
-// the ext route's strict z.number() gate and fail 422. Normalize every arg whose
+// The ext routes own input validation, so such a string would reach their
+// strict z.number() gate and fail 422. Normalize every arg whose
 // declared inputSchema type admits a number: a finite numeric string becomes a
 // number; anything else (null, non-numeric string, an already-numeric value) is
 // left untouched so genuinely bad input still surfaces at the route.

@@ -5,11 +5,14 @@
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
 
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import {
+  CallToolRequestSchema,
+  ListToolsRequestSchema,
+} from "@modelcontextprotocol/sdk/types.js";
 import pino from "pino";
-import { z } from "zod";
 
 import { httpAuthContext, type AuthContext } from "./auth";
 import { dispatchTool, TOOL_SPECS } from "./tools";
@@ -24,85 +27,92 @@ const log = pino({
 
 const BASE_URL = process.env.MAISTER_API_BASE_URL ?? "http://localhost:3000";
 
-// --- build McpServer and register every external facade tool ---
+// --- publish the canonical JSON Schemas and dispatch external facade tools ---
 
-function buildServer(transportType: "stdio" | "http"): McpServer {
-  const server = new McpServer({ name: "maister-mcp", version: "0.0.1" });
+function buildServer(transportType: "stdio" | "http"): Server {
+  const server = new Server(
+    { name: "maister-mcp", version: "0.0.1" },
+    { capabilities: { tools: {} } },
+  );
 
-  for (const [toolName, spec] of Object.entries(TOOL_SPECS)) {
-    // Use a zod passthrough object so args are typed as Record<string, unknown>.
-    // The input schema from spec is included in the tool definition as-is
-    // (the SDK accepts a ZodRawShape — so we build one from a z.record).
-    // We use z.object({}).passthrough() to accept any args without SDK validation
-    // overhead; our own dispatchTool handles the routing.
-    const inputSchema = z.record(z.unknown());
+  // A generic Zod record serializes to an empty object schema in the SDK.
+  // Publish the JSON Schemas directly; the ext routes own input validation.
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: Object.entries(TOOL_SPECS).map(([name, spec]) => ({
+      name,
+      ...spec,
+      execution: { taskSupport: "forbidden" as const },
+    })),
+  }));
 
-    server.registerTool(
-      toolName,
-      {
-        description: spec.description,
-        inputSchema,
-      },
-      async (args, extra) => {
-        let ctx: AuthContext;
+  server.setRequestHandler(CallToolRequestSchema, async ({ params }, extra) => {
+    const toolName = params.name;
 
-        if (transportType === "stdio") {
-          ctx = {
-            transport: "stdio",
-            env: process.env as {
-              MAISTER_PROJECT_TOKEN?: string;
-              MAISTER_ACCESS_TOKEN?: string;
-            },
-          };
-        } else {
-          // Under Streamable-HTTP, headers are lowercased in the RequestInfo.
-          // extra.requestInfo?.headers is IsomorphicHeaders = Record<string, string | string[] | undefined>
-          const httpCtx = httpAuthContext(
-            extra.requestInfo?.headers["authorization"],
-          );
+    if (!Object.hasOwn(TOOL_SPECS, toolName)) {
+      return {
+        isError: true,
+        content: [
+          { type: "text" as const, text: `Tool ${toolName} not found` },
+        ],
+      };
+    }
+    let ctx: AuthContext;
 
-          if (!httpCtx.inboundAuthorization) {
-            log.warn({ tool: toolName }, "rejected-no-bearer");
-          }
+    if (transportType === "stdio") {
+      ctx = {
+        transport: "stdio",
+        env: process.env as {
+          MAISTER_PROJECT_TOKEN?: string;
+          MAISTER_ACCESS_TOKEN?: string;
+        },
+      };
+    } else {
+      // Under Streamable-HTTP, headers are lowercased in the RequestInfo.
+      // extra.requestInfo?.headers is IsomorphicHeaders = Record<string, string | string[] | undefined>
+      const httpCtx = httpAuthContext(
+        extra.requestInfo?.headers["authorization"],
+      );
 
-          ctx = httpCtx;
-        }
+      if (!httpCtx.inboundAuthorization) {
+        log.warn({ tool: toolName }, "rejected-no-bearer");
+      }
 
-        log.info({ tool: toolName }, "tool-invoke");
+      ctx = httpCtx;
+    }
 
-        const result = await dispatchTool({
-          name: toolName,
-          args: args as Record<string, unknown>,
-          ctx,
-          baseUrl: BASE_URL,
-          signal: extra.signal,
-        });
+    log.info({ tool: toolName }, "tool-invoke");
 
-        if (result.isError) {
-          log.error({ tool: toolName, status: result.status }, "tool-error");
+    const result = await dispatchTool({
+      name: toolName,
+      args: params.arguments ?? {},
+      ctx,
+      baseUrl: BASE_URL,
+      signal: extra.signal,
+    });
 
-          return {
-            isError: true,
-            content: [
-              {
-                type: "text" as const,
-                text: result.message ?? `Error ${result.status}`,
-              },
-            ],
-          };
-        }
+    if (result.isError) {
+      log.error({ tool: toolName, status: result.status }, "tool-error");
 
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: JSON.stringify(result),
-            },
-          ],
-        };
-      },
-    );
-  }
+      return {
+        isError: true,
+        content: [
+          {
+            type: "text" as const,
+            text: result.message ?? `Error ${result.status}`,
+          },
+        ],
+      };
+    }
+
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: JSON.stringify(result),
+        },
+      ],
+    };
+  });
 
   return server;
 }

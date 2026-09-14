@@ -368,7 +368,13 @@ exists. Both directions are matrix-tested. See [`branch-sync.md`](branch-sync.md
 - A lifecycle operation while the `sync` claim (ADR-141) holds the slot →
   `MaisterError("CONFLICT")`; claims are exclusive per workspace.
 - Archive-ref record is written ONLY after `preserveWorktree` succeeds — a
-  preserve failure leaves the workspace unarchived and actionable.
+  preserve failure leaves the workspace unarchived and actionable. The API
+  returns `CONFLICT` with `reason: workspace_preservation_failed`, or
+  `workspace_git_identity_invalid` when Git cannot resolve the archive author
+  or committer. Identity is checked before staging. The UI explains the cause
+  in EN/RU and asks the operator to configure the server user's Git identity
+  before retrying. The web log retains the Git error and
+  workspace/base-ref context. A failed lifecycle claim is reclaimable on retry.
 
 ## Linked artifacts
 

@@ -232,6 +232,28 @@ describe("workbench lifecycle route wrappers", () => {
     );
   });
 
+  it.each(["workspace_preservation_failed", "workspace_git_identity_invalid"])(
+    "POST /api/runs/[runId]/drop returns typed reason %s",
+    async (reason) => {
+      vi.mocked(lifecycleService.dropWorkbench).mockRejectedValueOnce(
+        new MaisterError("CONFLICT", "could not preserve worktree", {
+          details: { reason, private: "not public" },
+        }),
+      );
+      const { POST } = await import("@/app/api/runs/[runId]/drop/route");
+      const res = await POST(postRequest({}), {
+        params: Promise.resolve({ runId: "run-1" }),
+      });
+
+      expect(res.status).toBe(409);
+      expect(await json(res)).toEqual({
+        code: "CONFLICT",
+        message: "could not preserve worktree",
+        reason,
+      });
+    },
+  );
+
   it("POST /api/runs/[runId]/export-branch returns typed push conflicts", async () => {
     vi.mocked(lifecycleService.exportWorkbenchBranch).mockRejectedValueOnce(
       Object.assign(

@@ -2,8 +2,8 @@
 // testcontainer. The advisory-lock + count-then-update crash/promote path
 // and the runs⨝workspaces⨝flow_revisions/flows-manifest join are not
 // faithfully mockable, so the DB is real; the supervisor (`listSessions`),
-// git (`listWorktrees`), the re-dispatcher (`runFlow`) and the re-attach
-// driver (`scheduleResumedSessionDrive`) are INJECTED via opts and asserted
+// git (`listWorktrees`) and durable Flow wake (`runFlow`) are INJECTED
+// via opts and asserted
 // via the returned summary + DB state.
 //
 // Scenarios (plan T2.4 + the QA contract):
@@ -11,8 +11,7 @@
 //      Pending promoted (summary.crashed ≥ 1).
 //   2. agent run, no live session, latest attempt OLDER than grace → Crashed.
 //   3. live session (listSessions returns its acpSessionId, status 'live') →
-//      NOT crashed; scheduleResumedSessionDrive called with the live
-//      session's sessionId (summary.reattached).
+//      NOT crashed; the durable Flow driver is scheduled (summary.reattached).
 //   4. in-flight recover within grace (resumeStartedAt = now) → NOT crashed
 //      (summary.skipped).
 //   5. cli node mid-step, no live session → Crashed, runFlow NOT called for it.
@@ -304,8 +303,7 @@ async function readRun(runId: string): Promise<any> {
 }
 
 // Inject a healthy supervisor that reports the given live records, an empty
-// worktree set by default (overridden per test), and spies for runFlow +
-// scheduleResumedSessionDrive.
+// worktree set by default (overridden per test), and a spy for runFlow.
 // ADR-166: the sweep addresses the host through `ExecutionHosts` — a fresh
 // fake local host per call whose session list (and, when given, teardown)
 // ride the injected functions.
@@ -317,7 +315,6 @@ async function makeOpts(over: {
   now?: () => Date;
 }) {
   const runFlow = vi.fn(async () => {});
-  const scheduleResumedSessionDrive = vi.fn(() => "drive-id");
 
   const listWorktrees = vi.fn(
     async (): Promise<WorktreeInfo[]> =>
@@ -356,11 +353,9 @@ async function makeOpts(over: {
       executionHosts: hosts,
       listWorktrees,
       runFlow,
-      scheduleResumedSessionDrive,
       now: over.now ?? (() => new Date()),
     },
     runFlow,
-    scheduleResumedSessionDrive,
     listWorktrees,
     hosts,
     fake,
@@ -615,7 +610,7 @@ describe("runReconcileSweep (integration)", () => {
 
     // Live session for (runId, "implement") whose acpSessionId does NOT match
     // the run row (which is null).
-    const { opts, scheduleResumedSessionDrive, runFlow } = await makeOpts({
+    const { opts, runFlow } = await makeOpts({
       worktreePaths: ["/worktrees/inflight"],
       liveSessions: [
         liveRecord(inflight, "acp-inflight-unmatched", "implement"),
@@ -626,11 +621,10 @@ describe("runReconcileSweep (integration)", () => {
 
     expect((await readRun(inflight)).status).toBe("Running"); // NOT crashed
     expect(summary.crashed).toBe(0);
-    expect(scheduleResumedSessionDrive).not.toHaveBeenCalled(); // skip, not reattach
     expect(runFlow).not.toHaveBeenCalled();
   }, 60_000);
 
-  it("reattaches a Running run with a live session (no crash); drives with the live sessionId", async () => {
+  it("reattaches a live Running Flow through its durable driver without a permission resume", async () => {
     const attached = await seedRun({
       status: "Running",
       currentStepId: "implement",
@@ -639,7 +633,7 @@ describe("runReconcileSweep (integration)", () => {
 
     await seedWorkspace(attached, "/worktrees/attached");
 
-    const { opts, scheduleResumedSessionDrive, runFlow } = await makeOpts({
+    const { opts, runFlow } = await makeOpts({
       worktreePaths: ["/worktrees/attached"],
       liveSessions: [liveRecord(attached, "acp-live")],
     });
@@ -648,15 +642,8 @@ describe("runReconcileSweep (integration)", () => {
 
     expect((await readRun(attached)).status).toBe("Running");
     expect(summary.reattached).toBeGreaterThanOrEqual(1);
-    expect(scheduleResumedSessionDrive).toHaveBeenCalledTimes(1);
-    expect(scheduleResumedSessionDrive).toHaveBeenCalledWith(
-      expect.objectContaining({
-        runId: attached,
-        supervisorSessionId: `sup-${attached}`,
-        acpSessionId: "acp-live",
-      }),
-    );
-    expect(runFlow).not.toHaveBeenCalled();
+    await expect.poll(() => runFlow.mock.calls.length).toBe(1);
+    expect(runFlow).toHaveBeenCalledWith(attached);
   }, 60_000);
 
   it("does NOT reattach/crash a live Running scratch dialog — leaves it Running, no resume driver", async () => {
@@ -674,7 +661,7 @@ describe("runReconcileSweep (integration)", () => {
 
     await seedWorkspace(scratch, "/worktrees/scratch");
 
-    const { opts, scheduleResumedSessionDrive, runFlow } = await makeOpts({
+    const { opts, runFlow } = await makeOpts({
       worktreePaths: ["/worktrees/scratch"],
       liveSessions: [liveRecord(scratch, "acp-scratch-live")],
     });
@@ -685,7 +672,6 @@ describe("runReconcileSweep (integration)", () => {
     expect(summary.reattached).toBe(0);
     expect(summary.crashed).toBe(0);
     expect(summary.skipped).toBeGreaterThanOrEqual(1);
-    expect(scheduleResumedSessionDrive).not.toHaveBeenCalled();
     expect(runFlow).not.toHaveBeenCalled();
   }, 60_000);
 
@@ -774,7 +760,7 @@ describe("runReconcileSweep (integration)", () => {
       endedAt: new Date(),
     });
 
-    const { opts, runFlow, scheduleResumedSessionDrive } = await makeOpts({
+    const { opts, runFlow } = await makeOpts({
       worktreePaths: [], // takeover's worktree absent — would crash if a candidate
       liveSessions: [],
     });
@@ -785,7 +771,6 @@ describe("runReconcileSweep (integration)", () => {
     expect(summary.candidates).toBe(0);
     expect(summary.crashed).toBe(0);
     expect(runFlow).not.toHaveBeenCalled();
-    expect(scheduleResumedSessionDrive).not.toHaveBeenCalled();
   }, 60_000);
 
   it("does NOT crash a no-worktree agent run (workspace none/repo_read) whose worktreePath is null", async () => {
@@ -917,7 +902,7 @@ describe("runReconcileSweep (integration)", () => {
       acpSessionId: "acp-assistant-live",
     });
 
-    const { opts, scheduleResumedSessionDrive } = await makeOpts({
+    const { opts, runFlow } = await makeOpts({
       worktreePaths: [],
       liveSessions: [liveRecord(runId, "acp-assistant-live", "scratch-dialog")],
     });
@@ -927,7 +912,7 @@ describe("runReconcileSweep (integration)", () => {
     expect(summary.candidates).toBeGreaterThanOrEqual(1);
     expect((await readRun(runId)).status).toBe("Running");
     expect(summary.crashed).toBe(0);
-    expect(scheduleResumedSessionDrive).not.toHaveBeenCalled();
+    expect(runFlow).not.toHaveBeenCalled();
 
     await pool.query(`DELETE FROM "local_packages" WHERE "id" = $1`, [lpId]);
   }, 60_000);

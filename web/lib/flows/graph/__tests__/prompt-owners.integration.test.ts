@@ -2,6 +2,7 @@ import type { Db } from "@/lib/execution-host/db";
 import type { RealSupervisor } from "@/test-support/real-supervisor";
 import type { ProjectionWorker } from "@/lib/execution-host/events/projection-worker";
 import type { FlowYamlV1 } from "@/lib/config.schema";
+import type { ExecutionCommand } from "@/lib/db/schema";
 
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
@@ -32,6 +33,8 @@ import { assertFlowPermissionDelivery } from "@/lib/flows/graph/prompt-permissio
 import { startFlowContinuationWorker } from "@/lib/flows/graph/continuation-worker";
 import { startPromptOwnerWorker } from "@/lib/execution-host/prompt-owner-recovery";
 import { runFlow } from "@/lib/flows/runner";
+import { runReconcileSweep } from "@/lib/reconcile";
+import { runResumedSession } from "@/lib/runs/resume-driver";
 import { respondToHitl } from "@/lib/services/hitl";
 import { buildOrchestratorResumeConsumer } from "@/lib/domain-events/orchestrator-resume";
 import { createExecutionHosts } from "@/lib/execution-host/client";
@@ -157,6 +160,27 @@ function startDriver(runId: string) {
   return startFixtureProcess("flow-prompt-owner-process.ts", runId);
 }
 
+async function resumeOwnedPrompt(command: ExecutionCommand): Promise<void> {
+  if (!command.targetSessionId || !command.ownerRef)
+    throw new Error("owned prompt has no session reference");
+  const [incarnation] = await database.db
+    .select()
+    .from(runSessionIncarnations)
+    .where(eq(runSessionIncarnations.id, command.ownerRef.incarnationId));
+
+  if (!incarnation.acpSessionId)
+    throw new Error("owned prompt has no ACP session handle");
+  await runResumedSession({
+    db: database.db,
+    executionHosts: createExecutionHosts({ db: database.db as unknown as Db }),
+    runId: command.runId,
+    assignmentId: command.executionAssignmentId,
+    supervisorSessionId: command.targetSessionId,
+    acpSessionId: incarnation.acpSessionId,
+    stepId: "work",
+  });
+}
+
 function startFixtureProcess(
   script: string,
   targetId: string,
@@ -269,6 +293,162 @@ async function killAtDatabaseWrite(input: {
 }
 
 describe("Flow prompt owners through the production graph driver", () => {
+  it("reconcile and resume preserve an acknowledged prompt owned by a live driver", async () => {
+    const seeded = await seedOwnerFlow([
+      {
+        id: "work",
+        type: "ai_coding",
+        action: {
+          prompt:
+            'fixture-output:{"bytes":0,"text":"original action","terminalDelayMs":5000}',
+        },
+        transitions: { success: "done" },
+      },
+    ]);
+    const driver = startDriver(seeded.runId);
+    const hosts = createExecutionHosts({ db: database.db as unknown as Db });
+    const reattachments: Promise<void>[] = [];
+
+    try {
+      await expect
+        .poll(
+          async () => {
+            if (driver.child.exitCode !== null)
+              throw new Error(driver.output());
+            const [command] = await database.db
+              .select()
+              .from(executionCommands)
+              .where(
+                and(
+                  eq(executionCommands.runId, seeded.runId),
+                  eq(executionCommands.kind, "session.prompt"),
+                  eq(executionCommands.state, "accepted"),
+                  eq(executionCommands.transportState, "acknowledged"),
+                ),
+              );
+
+            return command !== undefined;
+          },
+          { timeout: 30_000, interval: 25 },
+        )
+        .toBe(true);
+      const [original] = await database.db
+        .select()
+        .from(executionCommands)
+        .where(
+          and(
+            eq(executionCommands.runId, seeded.runId),
+            eq(executionCommands.kind, "session.prompt"),
+          ),
+        );
+      const [before] = await database.db
+        .select()
+        .from(runs)
+        .where(eq(runs.id, seeded.runId));
+
+      expect(before.flowDriverToken).not.toBeNull();
+      const summary = await runReconcileSweep({
+        db: database.db,
+        executionHosts: hosts,
+        runFlow: (runId) => {
+          const drive = runFlow(runId, {
+            db: database.db,
+            executionHosts: hosts,
+            runtimeRoot: supervisor.runtimeRoot,
+          });
+
+          reattachments.push(drive);
+
+          return drive;
+        },
+      });
+
+      await expect.poll(() => reattachments.length).toBe(1);
+      await Promise.all(reattachments);
+      expect(summary.reattached).toBe(1);
+      await resumeOwnedPrompt(original);
+      const commands = await database.db
+        .select()
+        .from(executionCommands)
+        .where(eq(executionCommands.runId, seeded.runId));
+      const [during] = await database.db
+        .select()
+        .from(runs)
+        .where(eq(runs.id, seeded.runId));
+
+      expect(during).toMatchObject({
+        status: "Running",
+        flowDriverToken: before.flowDriverToken,
+        executionAssignmentId: before.executionAssignmentId,
+      });
+      const inFlight = commands.filter(
+        (command) => command.kind === "session.prompt",
+      );
+
+      expect(inFlight).toHaveLength(1);
+      expect(inFlight[0]).toMatchObject({
+        id: original.id,
+        ownerRef: original.ownerRef,
+        logicalOperationKey: original.logicalOperationKey,
+        requestCanonicalJson: original.requestCanonicalJson,
+        state: "accepted",
+        lastError: null,
+      });
+      expect(
+        commands.filter((command) => command.kind === "session.delete"),
+      ).toHaveLength(0);
+      const sessions = await (
+        await hosts.executionFor(seeded.runId)
+      ).admin.listSessions();
+
+      expect(
+        sessions.find(
+          (session) => session.sessionId === original.targetSessionId,
+        ),
+      ).toMatchObject({ status: "live" });
+      await expect
+        .poll(() => driver.child.exitCode, { timeout: 20_000 })
+        .toBe(0);
+      const [finished] = await database.db
+        .select()
+        .from(runs)
+        .where(eq(runs.id, seeded.runId));
+      const [attempt] = await database.db
+        .select()
+        .from(nodeAttempts)
+        .where(eq(nodeAttempts.runId, seeded.runId));
+      const prompts = await database.db
+        .select()
+        .from(executionCommands)
+        .where(
+          and(
+            eq(executionCommands.runId, seeded.runId),
+            eq(executionCommands.kind, "session.prompt"),
+          ),
+        );
+
+      expect(finished.status).toBe("Review");
+      expect(attempt).toMatchObject({
+        status: "Succeeded",
+        stdout: "original action",
+      });
+      expect(prompts).toHaveLength(1);
+      expect(prompts[0]).toMatchObject({
+        id: original.id,
+        ownerRef: original.ownerRef,
+        logicalOperationKey: original.logicalOperationKey,
+        requestCanonicalJson: original.requestCanonicalJson,
+        state: "succeeded",
+        applicationState: "applied",
+      });
+    } finally {
+      if (driver.child.exitCode === null && driver.child.signalCode === null)
+        driver.child.kill("SIGKILL");
+      await driver.exited;
+      await Promise.all(reattachments);
+    }
+  }, 60_000);
+
   it.each(["node", "ai_judgment", "skill_check"] as const)(
     "owner-flow-admission: %s rolls back an INSERT blocked past the driver lease",
     async (origin) => {
@@ -2130,7 +2310,7 @@ describe("Flow prompt owners through the production graph driver", () => {
                 throw new Error(driver?.output());
               if (window === "before_terminal") {
                 const rows = await database.pool.query(
-                  "SELECT count(*)::int AS count FROM execution_commands WHERE run_id = $1 AND kind = 'session.prompt' AND state = 'accepted'",
+                  "SELECT count(*)::int AS count FROM execution_commands WHERE run_id = $1 AND kind = 'session.prompt' AND state = 'accepted' AND transport_state = 'acknowledged'",
                   [seeded.runId],
                 );
 
@@ -2171,6 +2351,55 @@ describe("Flow prompt owners through the production graph driver", () => {
         driver.child.kill("SIGKILL");
         await driver.exited;
         await lock.query("SELECT pg_advisory_unlock(260907, $1)", [lockKey]);
+        if (window !== "before_terminal") {
+          // A terminal command still owns its continuation, including the
+          // interval after application and before the graph cursor commits.
+          const beforeResume = await database.db
+            .select()
+            .from(executionCommands)
+            .where(eq(executionCommands.runId, seeded.runId));
+
+          await resumeOwnedPrompt(original);
+          const afterResume = await database.db
+            .select()
+            .from(executionCommands)
+            .where(eq(executionCommands.runId, seeded.runId));
+          const resumedPrompts = afterResume.filter(
+            (command) => command.kind === "session.prompt",
+          );
+
+          expect(resumedPrompts.map((command) => command.id).sort()).toEqual(
+            beforeResume
+              .filter((command) => command.kind === "session.prompt")
+              .map((command) => command.id)
+              .sort(),
+          );
+          expect(
+            resumedPrompts.filter(
+              (command) =>
+                command.logicalOperationKey === original.logicalOperationKey,
+            ),
+          ).toHaveLength(1);
+          expect(
+            resumedPrompts.find((command) => command.id === original.id),
+          ).toMatchObject({
+            id: original.id,
+            ownerRef: original.ownerRef,
+            logicalOperationKey: original.logicalOperationKey,
+            requestCanonicalJson: original.requestCanonicalJson,
+            state: original.state,
+            lastError: original.lastError,
+          });
+          expect(
+            afterResume
+              .filter((command) => command.kind === "session.delete")
+              .map((command) => command.id),
+          ).toEqual(
+            beforeResume
+              .filter((command) => command.kind === "session.delete")
+              .map((command) => command.id),
+          );
+        }
         ownerWorker = startPromptOwnerWorker({
           db: database.db as unknown as Db,
           owners: flowPromptOwners,
@@ -2221,7 +2450,11 @@ describe("Flow prompt owners through the production graph driver", () => {
             id: original.id,
             requestSha256: original.requestSha256,
             applicationState: "applied",
+            lastError: original.lastError,
           });
+          expect(prompts[0].lastError?.message).toContain(
+            "original action failure",
+          );
           expect(evaluations).toHaveLength(0);
           await expect(
             readFile(

@@ -49,6 +49,11 @@ vi.mock("@/auth", () => ({
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
 
+// Runner selection and persistence are real; do not start background agents.
+vi.mock("@/lib/flows/runner", () => ({
+  runFlow: vi.fn(async () => undefined),
+}));
+
 function readyPlatformStatus(): PlatformStatus {
   return {
     kind: "ready",
@@ -92,6 +97,7 @@ vi.mock("@/lib/worktree", () => ({
   addWorktree: (input: unknown) => addWorktreeMock(input),
   removeWorktree: (input: unknown) => removeWorktreeMock(input),
   listBranches: (repo: string) => listBranchesMock(repo),
+  listRemoteUrls: vi.fn(async () => []),
   resolveBaseCommit: (args: unknown) => resolveBaseCommitMock(args),
 }));
 
@@ -295,6 +301,122 @@ describe("POST /api/runs — launch-time branch persistence (M18, integration)",
     expect(ws.targetBranch).toBe("main");
     expect(ws.promotionMode).toBe("local_merge");
   });
+});
+
+describe("POST /api/runs — inherited session runners", () => {
+  it.each(["platform", "task", "launch", "session"] as const)(
+    "persists the %s choice for compatible unbound sessions",
+    async (source) => {
+      const projectId = `sessions-${source}`;
+      const taskId = `task-${projectId}`;
+      const taskRunnerId = `claude-task-${source}`;
+      const launchRunnerId = `claude-launch-${source}`;
+      const reviewerId = `codex-${source}`;
+
+      await db
+        .insert(schema.platformAcpRunners)
+        .values([
+          testPlatformRunnerRow(taskRunnerId, "claude"),
+          testPlatformRunnerRow(launchRunnerId, "claude"),
+          testPlatformRunnerRow(reviewerId, "codex"),
+        ]);
+      await seedProject(projectId, projectId);
+      await seedTask(taskId, projectId);
+      const manifest = {
+        ...instructManifest,
+        sessions: {
+          implement: {
+            runner: {
+              runner_type: "acp",
+              capability_agent: "claude",
+              permission_policy: "default",
+            },
+          },
+          review: { runner: reviewerId },
+        },
+        nodes: [
+          {
+            ...instructManifest.nodes[0],
+            id: "plan",
+            transitions: { success: "implement" },
+          },
+          {
+            ...instructManifest.nodes[0],
+            session: "implement",
+            transitions: { success: "review" },
+          },
+          { ...instructManifest.nodes[0], id: "review", session: "review" },
+        ],
+      };
+
+      await db
+        .update(schema.flowRevisions)
+        .set({ manifest })
+        .where(eq(schema.flowRevisions.id, `rev-${projectId}`));
+      await db
+        .update(schema.flows)
+        .set({ manifest })
+        .where(eq(schema.flows.id, `flow-${projectId}`));
+      if (source !== "platform") {
+        await db
+          .update(schema.tasks)
+          .set({ runnerId: taskRunnerId })
+          .where(eq(schema.tasks.id, taskId));
+      }
+      if (source === "session") {
+        await db
+          .update(schema.platformAcpRunners)
+          .set({ enabled: false })
+          .where(eq(schema.platformAcpRunners.id, taskRunnerId));
+      }
+      const response =
+        source === "session"
+          ? null
+          : await POST(
+              runRequest({
+                taskId,
+                ...(source === "launch" ? { runnerId: launchRunnerId } : {}),
+              }),
+            );
+      const body = response
+        ? await response.json()
+        : await (
+            await import("@/lib/services/runs")
+          ).launchRun(
+            {
+              taskId,
+              sessionRunnerOverrides: {
+                default: launchRunnerId,
+                implement: launchRunnerId,
+              },
+            },
+            { authorize: async () => undefined },
+            db,
+          );
+
+      if (response) expect(response.status, JSON.stringify(body)).toBe(202);
+      const sessions = await db
+        .select()
+        .from(schema.runSessions)
+        .where(eq(schema.runSessions.runId, body.runId));
+      const chosen =
+        source === "launch"
+          ? launchRunnerId
+          : source !== "platform"
+            ? taskRunnerId
+            : "claude-default";
+
+      expect(
+        Object.fromEntries(
+          sessions.map((session) => [session.sessionName, session.runnerId]),
+        ),
+      ).toEqual({
+        default: source === "session" ? launchRunnerId : chosen,
+        implement: source === "session" ? launchRunnerId : chosen,
+        review: reviewerId,
+      });
+    },
+  );
 });
 
 describe("POST /api/v1/ext/runs — ext launch threads branch fields (M18, integration)", () => {

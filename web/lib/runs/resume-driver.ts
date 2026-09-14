@@ -2,7 +2,7 @@ import "server-only";
 
 import { randomUUID } from "node:crypto";
 
-import { eq, and, isNull } from "drizzle-orm";
+import { eq, and, isNull, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
@@ -32,10 +32,8 @@ import {
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { hitlRequests, nodeAttempts, runs } = schemaModule as unknown as Record<
-  string,
-  any
->;
+const { executionCommands, hitlRequests, nodeAttempts, runs } =
+  schemaModule as unknown as Record<string, any>;
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 type Db = any;
@@ -99,6 +97,33 @@ type StoredIntent = {
   optionId: string;
   originalRequestId: string | null;
 };
+
+// A recorded Flow prompt belongs to the graph driver even after terminal
+// evidence/application. Replacing it with a permission replay changes the
+// immutable request and can destroy the original session during cleanup.
+async function hasDurableFlowSession(
+  db: Db,
+  runId: string,
+  sessionId: string | null,
+): Promise<boolean> {
+  if (!sessionId) return false;
+
+  const rows = await db
+    .select({ id: executionCommands.id })
+    .from(executionCommands)
+    .where(
+      and(
+        eq(executionCommands.runId, runId),
+        eq(executionCommands.kind, "session.prompt"),
+        eq(executionCommands.ownerKind, "flow_node_attempt"),
+        eq(executionCommands.targetSessionId, sessionId),
+        sql`${executionCommands.executionAssignmentId} = (select execution_assignment_id from runs where id = ${runId} and run_kind = 'flow')`,
+      ),
+    )
+    .limit(1);
+
+  return rows.length > 0;
+}
 
 async function activeAssignmentIdOf(
   db: Db,
@@ -314,10 +339,17 @@ export async function runResumedSession(
   const db = opts.db ?? getDb();
   const { runId, supervisorSessionId, acpSessionId, stepId } = opts;
 
-  if (await hasFlowPermissionResume(db, runId)) {
+  if (
+    (await hasFlowPermissionResume(db, runId)) ||
+    (await hasDurableFlowSession(db, runId, supervisorSessionId))
+  ) {
     const currentAssignmentId = await activeAssignmentIdOf(db, runId);
 
     if (opts.assignmentId && opts.assignmentId !== currentAssignmentId) return;
+    log.info(
+      { runId, supervisorSessionId },
+      "resumed session belongs to durable Flow driver",
+    );
     await runFlow(runId, { db, executionHosts: opts.executionHosts });
 
     return;
@@ -369,7 +401,7 @@ export async function runResumedSession(
   let stopReason: string | null = null;
   let permissionDelivered = false;
   let permissionFailed = false;
-  let fenced = false;
+  let yielded = false;
   // Wrapped in an object so the type narrows correctly when read after
   // a closure assignment — TS otherwise narrows `consumerError` to
   // `null` because it can't see closure mutations.
@@ -395,7 +427,8 @@ export async function runResumedSession(
 
   watchdogTimer.unref?.();
 
-  const consumerPromise = (async () => {
+  let consumerPromise: Promise<void> | null = null;
+  const consumeEvents = async (): Promise<void> => {
     try {
       for await (const ev of admin.streamSession(supervisorSessionId, {
         signal: abort.signal,
@@ -413,7 +446,7 @@ export async function runResumedSession(
         );
       }
     }
-  })();
+  };
 
   async function handleEvent(ev: SupervisorEvent): Promise<void> {
     if (ev.type === "session.update") {
@@ -543,6 +576,7 @@ export async function runResumedSession(
     meta?: unknown;
   } | null = null;
   let promptError: Error | null = null;
+  let promptAdmitted = false;
 
   try {
     // S2.12: the idle-resume continuation is an ACTION prompt on the node
@@ -571,6 +605,10 @@ export async function runResumedSession(
       },
     );
 
+    promptAdmitted = true;
+    // Canonical events replay from the beginning, including early permission
+    // requests. Never handle another owner's events before admission succeeds.
+    consumerPromise = consumeEvents();
     promptResult = await client.waitForPrompt(handle);
     stopReason = promptResult.stopReason;
     log.info(
@@ -583,11 +621,31 @@ export async function runResumedSession(
       "runResumedSession: continuation prompt completed",
     );
   } catch (err) {
-    if (isFencedError(err)) {
-      // ADR-166 yield rule: a newer generation owns the run — no terminal
-      // decision, no intent write, no teardown of a session that is not ours.
-      fenced = true;
-      log.warn({ runId }, "runResumedSession: driver-yielded — fenced");
+    const admissionConflict =
+      !promptAdmitted &&
+      isMaisterError(err) &&
+      (err.details?.reason === "command_invariant_conflict" ||
+        err.details?.reason === "prompt_owner_invariant");
+
+    if (
+      isFencedError(err) ||
+      admissionConflict ||
+      (!promptAdmitted &&
+        (await hasDurableFlowSession(db, runId, supervisorSessionId)))
+    ) {
+      // Another durable prompt owner or newer generation controls the session:
+      // no terminal decision, intent write, or teardown from this driver.
+      yielded = true;
+      log.warn(
+        {
+          runId,
+          supervisorSessionId,
+          code: isMaisterError(err) ? err.code : null,
+          reason: isMaisterError(err) ? err.details?.reason : undefined,
+          invariant: isMaisterError(err) ? err.details?.invariant : undefined,
+        },
+        "runResumedSession: driver yielded to durable prompt owner",
+      );
     } else {
       promptError = err instanceof Error ? err : new Error(String(err));
       log.warn(
@@ -598,11 +656,11 @@ export async function runResumedSession(
   } finally {
     clearTimeout(watchdogTimer);
     abort.abort();
-    await consumerPromise.catch(() => undefined);
+    await consumerPromise;
   }
 
   // Decide the final run state.
-  if (fenced) return;
+  if (yielded) return;
 
   try {
     if (permissionFailed) {
@@ -777,10 +835,17 @@ export function scheduleResumedSessionDrive(
       try {
         const db = opts.db ?? getDb();
 
-        if (await hasFlowPermissionResume(db, opts.runId)) {
+        if (
+          (await hasFlowPermissionResume(db, opts.runId)) ||
+          (await hasDurableFlowSession(
+            db,
+            opts.runId,
+            opts.supervisorSessionId,
+          ))
+        ) {
           log.warn(
             { runId: opts.runId, driveId },
-            "owned permission resume awaits graph recovery",
+            "durable Flow prompt awaits graph recovery",
           );
 
           return;

@@ -2,6 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
+import messages from "@/messages/en.json";
 import {
   RunTimeline,
   type TimelineEntry,
@@ -9,6 +10,7 @@ import {
 } from "@/components/board/run-timeline";
 
 const labels: TimelineLabels = {
+  failure: messages.run.failure,
   title: "Timeline",
   staleGate: "stale",
   currentGate: "current",
@@ -44,6 +46,8 @@ function staleEntry(): TimelineEntry {
     nodeType: "check",
     attempt: 1,
     status: "Stale",
+    errorCode: null,
+    exitCode: null,
     decision: null,
     reworkFromNode: null,
     acpSessionId: null,
@@ -73,6 +77,8 @@ function freshEntry(): TimelineEntry {
     nodeType: "check",
     attempt: 2,
     status: "Succeeded",
+    errorCode: null,
+    exitCode: null,
     decision: null,
     reworkFromNode: null,
     acpSessionId: null,
@@ -102,6 +108,8 @@ function handoffEntry(): TimelineEntry {
     nodeType: "human",
     attempt: 1,
     status: "NeedsInput",
+    errorCode: null,
+    exitCode: null,
     decision: null,
     reworkFromNode: null,
     acpSessionId: null,

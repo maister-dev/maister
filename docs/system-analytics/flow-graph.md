@@ -576,7 +576,7 @@ actually execute (before ADR-079 they were parsed and recorded only).
 
 ```mermaid
 flowchart TD
-    A(["ai_coding / cli attempt starts"]) --> B["captureCheckpoint: temp-index commit of HEAD + tracked + untracked (ignored excluded), parented on the current tip, written to refs/maister/checkpoints/runId/nodeAttemptId"]
+    A(["ai_coding / cli attempt starts"]) --> B["captureCheckpoint: temp-index commit of tracked + non-ignored untracked content, parented on the current tip, written to refs/maister/checkpoints/runId/nodeAttemptId"]
     B --> C["record node_attempts.checkpoint_ref (branch NOT advanced)"]
     C --> D["run the attempt"]
     D --> E{"rework workspacePolicy?"}
@@ -587,6 +587,12 @@ flowchart TD
     G --> I
     H --> I
 ```
+
+Capture and the gate-chat neutrality probe copy the worktree's real index before
+staging into a temporary index. Tracked files remain represented even when
+ignored; `skip-worktree` entries retain their indexed blobs, so materialized
+`.gitignore` and AIF config overrides remain local through rewind. Capture never
+changes the caller's staged state or index flags.
 
 The checkpoint commit is parented on the then-current branch tip, so `<ck>^` is
 the pre-attempt tip for free; the rewind target is always `<ck>^`, **never**
@@ -682,7 +688,7 @@ readiness interaction: [`readiness.md`](readiness.md).
   (server-state); an undeclared decision is refused **before** any artifact write
   or state mutation.
 - **(Implemented, ADR-079)** Before each `ai_coding`/`cli` attempt the runner
-  captures a node checkpoint (HEAD + tracked + untracked, ignored excluded) as a
+  captures a node checkpoint (tracked + non-ignored untracked content) as a
   dangling ref parented on the current tip and records
   `node_attempts.checkpoint_ref`; the checkpoint commit MUST NOT be reachable from
   the run branch (the promoted history stays clean).

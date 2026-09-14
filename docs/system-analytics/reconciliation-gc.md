@@ -76,6 +76,12 @@ and enter normal terminal preserve/prune GC after restart.
 > [ADR-114](../decisions.md#adr-114-unified-flow-runner-config-first-class-sessions-per-project-connect-time-bindings-and-run_sessions-as-the-sole-run-runner-source-of-truth).
 > Flipped to as-built in Phase 7 of that work.
 
+Live Flow sessions reattach through `runFlow`: its durable lease yields to an
+active driver, or recovers the existing immutable prompt after owner loss.
+Session liveness does not authorize a permission-continuation prompt. The
+resume driver also yields on durable prompt ownership or admission conflicts,
+without changing the original attempt, HITL intent, or deleting its session.
+
 ## Domain entities
 
 - **Run** — `runs` row. Reconciliation only acts on `runs.status='Running'`
@@ -205,7 +211,7 @@ flowchart TD
     Each --> Act{action}
     Act -- crash --> Crash[crashRunningRun + promoteNextPending]
     Act -- redispatch --> Redis[runFlow re-dispatch CAS-guarded]
-    Act -- reattach --> Reatt[scheduleResumedSessionDrive]
+    Act -- reattach --> Reatt[runFlow durable lease and prompt recovery]
     Act -- skip --> Noop[no action]
 ```
 

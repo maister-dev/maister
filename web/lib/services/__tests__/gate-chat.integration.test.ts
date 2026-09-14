@@ -14,7 +14,7 @@
 
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -38,6 +38,10 @@ import {
   testRunnerSnapshot,
 } from "@/lib/__tests__/runner-fixtures";
 import { MaisterError } from "@/lib/errors";
+import {
+  ensureWorktreeGitignore,
+  writeAiFactoryConfigOverride,
+} from "@/lib/capabilities/materialize-bundle";
 import {
   releaseAssignmentForRun,
   type SupervisorEvent,
@@ -645,6 +649,48 @@ describe("sendGateChatTurn — DD2 refusals", () => {
 });
 
 describe("sendGateChatTurn — L3 mutation sensor (DD11)", () => {
+  it("keeps unchanged materialized overlays neutral across chat turns", async () => {
+    const { runId, hitlId, worktree } = await seedChatPause();
+
+    await mkdir(join(worktree, ".ai-factory"));
+    await writeFile(join(worktree, ".gitignore"), "node_modules/\n");
+    await writeFile(
+      join(worktree, ".ai-factory", "config.yaml"),
+      "git:\n  create_branches: true\n",
+    );
+    await git(worktree, "add", "-A");
+    await git(worktree, "commit", "-q", "-m", "project config");
+    await writeAiFactoryConfigOverride({
+      worktreePath: worktree,
+      baseBranch: "main",
+    });
+    await ensureWorktreeGitignore(worktree);
+    const overlays = await Promise.all([
+      readFile(join(worktree, ".gitignore"), "utf8"),
+      readFile(join(worktree, ".ai-factory", "config.yaml"), "utf8"),
+    ]);
+    const api = await scriptHost({ runId });
+
+    await api.setLiveRunId(runId);
+    for (const message of ["explain the plan", "explain the validation"]) {
+      const out = await sendGateChatTurn({
+        runId,
+        hitlRequestId: hitlId,
+        message,
+        db,
+      });
+
+      expect(out.agentMessage.mutationReverted).toBe(false);
+    }
+    expect(
+      await Promise.all([
+        readFile(join(worktree, ".gitignore"), "utf8"),
+        readFile(join(worktree, ".ai-factory", "config.yaml"), "utf8"),
+      ]),
+    ).toEqual(overlays);
+    expect(await git(worktree, "status", "--porcelain")).toBe("");
+  }, 60_000);
+
   it("captures ONE first-turn baseline, reverts a mutated turn to it, flags the row", async () => {
     const seeded = await seedChatPause();
     const { runId, hitlId, worktree, repo } = seeded;

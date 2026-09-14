@@ -397,6 +397,9 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       revision && flow && flowIssue === null && compatibleManifest
         ? [...compileManifest(compatibleManifest).sessions.values()]
         : [];
+    const primarySessionName =
+      sessionSlots.find((session) => session.name === "default")?.name ??
+      sessionSlots[0]?.name;
     const sessionResolutions: SessionPreviewResolution[] = sessionSlots.map(
       (session) => {
         const declaresRunner = session.runner !== undefined;
@@ -406,6 +409,11 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
             sessions: [session],
             runnerProfiles,
             bindings,
+            runDefaultRunnerId: task.runnerId,
+            ephemeralOverrides:
+              task.runnerId && primarySessionName
+                ? { [primarySessionName]: task.runnerId }
+                : undefined,
             ...defaultChain,
             runners: runnerCatalog,
           });

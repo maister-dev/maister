@@ -218,6 +218,10 @@ export async function resolveTaskLaunchConfig(
           sessions: [defaultSession],
           runnerProfiles: compatibleManifest.runner_profiles,
           bindings,
+          runDefaultRunnerId: task.runnerId,
+          ephemeralOverrides: task.runnerId
+            ? { [defaultSession.name]: task.runnerId }
+            : undefined,
           projectFlow: {
             defaultRunnerId: projectFlowDefaultRows[0]?.runnerId ?? null,
           },

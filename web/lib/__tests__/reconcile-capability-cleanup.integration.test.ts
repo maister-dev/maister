@@ -284,7 +284,6 @@ async function makeOpts(over: {
   liveSessions?: SupervisorSessionRecord[];
 }) {
   const runFlow = vi.fn(async () => {});
-  const scheduleResumedSessionDrive = vi.fn(() => "drive-id");
 
   const listWorktrees = vi.fn(
     async (): Promise<WorktreeInfo[]> =>
@@ -312,7 +311,6 @@ async function makeOpts(over: {
     executionHosts: hosts,
     listWorktrees,
     runFlow,
-    scheduleResumedSessionDrive,
     now: () => new Date(),
   };
 }

@@ -8,12 +8,17 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { MaisterError } from "@/lib/errors";
+import {
+  copyBundleArtifactsToWorktree,
+  ensureWorktreeGitignore,
+  writeAiFactoryConfigOverride,
+} from "@/lib/capabilities/materialize-bundle";
 import {
   applyWorkspacePolicy,
   captureCheckpoint,
@@ -221,6 +226,120 @@ describe("applyWorkspacePolicy — keep (DD6)", () => {
 });
 
 describe("applyWorkspacePolicy — rewind-to-node-checkpoint (DD6)", () => {
+  it("rewinds a materialized worktree without capturing overrides or changing the capture-time index", async () => {
+    const wb = await createPolicyWorkbench("run-materialized-rewind");
+    const bundle = await mkdtemp(join(tmpdir(), "maister-wp-bundle-"));
+
+    createdPaths.push(bundle);
+    await mkdir(join(wb.worktree, ".ai-factory"));
+    await writeFile(
+      join(wb.worktree, ".ai-factory", "config.yaml"),
+      "git:\n  create_branches: true\n",
+    );
+    await writeFile(join(wb.worktree, "tracked-ignored.txt"), "original\n");
+    await git(wb.worktree, "add", "-A");
+    await writeFile(
+      join(wb.worktree, ".gitignore"),
+      "node_modules/\ntracked-ignored.txt\n",
+    );
+    await git(wb.worktree, "add", ".gitignore");
+    await git(wb.worktree, "commit", "-q", "-m", "tracked project config");
+    await mkdir(join(bundle, "skills", "example"), { recursive: true });
+    await writeFile(join(bundle, "skills", "example", "SKILL.md"), "skill\n");
+    await copyBundleArtifactsToWorktree({
+      installedPath: bundle,
+      worktreePath: wb.worktree,
+    });
+    await writeAiFactoryConfigOverride({
+      worktreePath: wb.worktree,
+      baseBranch: "main",
+    });
+    await ensureWorktreeGitignore(wb.worktree);
+
+    const overlays = await Promise.all([
+      readFile(join(wb.worktree, ".gitignore"), "utf8"),
+      readFile(join(wb.worktree, ".ai-factory", "config.yaml"), "utf8"),
+    ]);
+
+    await writeFile(join(wb.worktree, "base.txt"), "staged\n");
+    await git(wb.worktree, "add", "base.txt");
+    await writeFile(join(wb.worktree, "base.txt"), "capture-time unstaged\n");
+    await writeFile(join(wb.worktree, "tracked-ignored.txt"), "tracked edit\n");
+    await writeFile(join(wb.worktree, "notes.txt"), "untracked note\n");
+    await mkdir(join(wb.worktree, "node_modules"));
+    await writeFile(join(wb.worktree, "node_modules", "cache"), "ignored\n");
+    const indexPath = resolve(
+      wb.worktree,
+      (await git(wb.worktree, "rev-parse", "--git-path", "index")).trim(),
+    );
+    const indexBefore = await readFile(indexPath);
+    const tipBefore = (await git(wb.worktree, "rev-parse", "HEAD")).trim();
+    const { ref, sha } = await captureCheckpoint({
+      worktreePath: wb.worktree,
+      namespace: "checkpoints",
+      runId: wb.runId,
+      id: "attempt-1",
+    });
+
+    expect(await readFile(indexPath)).toEqual(indexBefore);
+    expect(await git(wb.worktree, "show", `${sha}:.gitignore`)).toBe(
+      "node_modules/\ntracked-ignored.txt\n",
+    );
+    expect(
+      await git(wb.worktree, "show", `${sha}:.ai-factory/config.yaml`),
+    ).toBe("git:\n  create_branches: true\n");
+    expect(await git(wb.worktree, "show", `${sha}:base.txt`)).toBe(
+      "capture-time unstaged\n",
+    );
+    expect(await git(wb.worktree, "show", `${sha}:tracked-ignored.txt`)).toBe(
+      "tracked edit\n",
+    );
+    expect(
+      await gitFails(wb.worktree, "show", `${sha}:node_modules/cache`),
+    ).toBe(true);
+
+    await writeFile(join(wb.worktree, "base.txt"), "failed attempt\n");
+    await git(wb.worktree, "add", "-A");
+    await git(wb.worktree, "commit", "-q", "-m", "failed attempt");
+    await applyWorkspacePolicy({
+      policy: "rewind-to-node-checkpoint",
+      worktreePath: wb.worktree,
+      checkpointRef: ref,
+    });
+
+    expect((await git(wb.worktree, "rev-parse", "HEAD")).trim()).toBe(
+      tipBefore,
+    );
+    expect(await git(wb.worktree, "diff", "--cached")).toBe("");
+    expect(await readFile(join(wb.worktree, "base.txt"), "utf8")).toBe(
+      "capture-time unstaged\n",
+    );
+    expect(
+      await readFile(join(wb.worktree, "tracked-ignored.txt"), "utf8"),
+    ).toBe("tracked edit\n");
+    expect(await readFile(join(wb.worktree, "notes.txt"), "utf8")).toBe(
+      "untracked note\n",
+    );
+    expect(await git(wb.worktree, "status", "--porcelain")).toMatch(
+      /^\?\? notes\.txt$/m,
+    );
+    expect(
+      await Promise.all([
+        readFile(join(wb.worktree, ".gitignore"), "utf8"),
+        readFile(join(wb.worktree, ".ai-factory", "config.yaml"), "utf8"),
+      ]),
+    ).toEqual(overlays);
+    expect(
+      await git(
+        wb.worktree,
+        "ls-files",
+        "-v",
+        ".gitignore",
+        ".ai-factory/config.yaml",
+      ),
+    ).toBe("S .ai-factory/config.yaml\nS .gitignore\n");
+  });
+
   it("restores the captured state unstaged; attempt commits discarded; untracked nuances hold", async () => {
     const wb = await createPolicyWorkbench("run-rewind");
 

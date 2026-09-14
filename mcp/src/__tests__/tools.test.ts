@@ -51,7 +51,7 @@ afterEach(() => {
 });
 
 describe("TOOL_SPECS registry", () => {
-  it("registers all 41 external tools (incl. assistant activity pulse + run activity + agent memory)", () => {
+  it("registers every external tool", () => {
     expect(Object.keys(TOOL_SPECS).sort()).toEqual(
       [
         "activity_pulse",
@@ -81,11 +81,13 @@ describe("TOOL_SPECS registry", () => {
         "run_cancel",
         "run_collect",
         "run_delegate",
+        "run_discard",
         "run_get",
         "run_launch",
         "run_message",
         "run_plan",
         "run_promote",
+        "run_recover",
         "run_reopen",
         "run_rework",
         "run_sync",
@@ -532,7 +534,10 @@ describe("dispatchTool — per-tool outbound request mapping", () => {
   });
 
   it("activity_pulse → GET /api/v1/ext/activity with query args only", async () => {
-    mockOnce({ happened: { items: [] }, now: { runs: [] }, needsYou: { items: [] } }, 200);
+    mockOnce(
+      { happened: { items: [] }, now: { runs: [] }, needsYou: { items: [] } },
+      200,
+    );
 
     await dispatchTool({
       name: "activity_pulse",
@@ -544,7 +549,9 @@ describe("dispatchTool — per-tool outbound request mapping", () => {
     const { url, init } = lastRequest();
 
     expect(init.method).toBe("GET");
-    expect(url).toBe(`${BASE_URL}/api/v1/ext/activity?since=12&salience=normal`);
+    expect(url).toBe(
+      `${BASE_URL}/api/v1/ext/activity?since=12&salience=normal`,
+    );
     expect(headerAuth(init)).toBe(AUTH);
     expect(parsedBody(init)).toBeUndefined();
   });

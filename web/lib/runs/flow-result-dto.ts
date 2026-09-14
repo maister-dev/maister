@@ -272,6 +272,8 @@ function timelineEntry(entry: TimelineEntry): FlowResultTimelineEntryDto {
     nodeType: entry.nodeType,
     attempt: entry.attempt,
     status: entry.status,
+    errorCode: entry.errorCode,
+    exitCode: entry.exitCode,
     decision: entry.decision,
     reworkFromNode: entry.reworkFromNode,
     autoRetry: entry.autoRetry,

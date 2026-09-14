@@ -279,6 +279,7 @@ describe("LaunchPopover — buildLaunchBody allowConcurrent flag", () => {
     taskId: "task-1",
     flowId: "flow-1",
     runnerId: "runner-1",
+    initialRunnerId: "runner-1",
     baseBranch: "main",
     targetBranch: "main",
     deliveryPolicy: {
@@ -310,15 +311,54 @@ describe("LaunchPopover — buildLaunchBody allowConcurrent flag", () => {
       buildLaunchBody({
         ...base,
         runnerId: "",
+        initialRunnerId: null,
         forceRelaunch: false,
       }),
     ).not.toHaveProperty("runnerId");
   });
 
+  it("preserves runner inheritance when the preview selection is unchanged", () => {
+    expect(
+      buildLaunchBody({ ...base, forceRelaunch: false }),
+    ).not.toHaveProperty("runnerId");
+    expect(
+      buildScheduledLaunchBody({
+        ...base,
+        disambiguation: "later",
+        forceRelaunch: false,
+        scheduledLocalTime: "2026-12-01T10:00",
+        timezone: "America/New_York",
+      }).launchRequest,
+    ).not.toHaveProperty("runnerId");
+  });
+
+  it.each([null, "runner-1"])(
+    "sends a changed runner selection for immediate and scheduled launches (initial: %s)",
+    (initialRunnerId) => {
+      const selection = {
+        ...base,
+        runnerId: "runner-2",
+        initialRunnerId,
+        forceRelaunch: false,
+      };
+
+      expect(buildLaunchBody(selection)).toHaveProperty("runnerId", "runner-2");
+      expect(
+        buildScheduledLaunchBody({
+          ...selection,
+          disambiguation: "later",
+          scheduledLocalTime: "2026-12-01T10:00",
+          timezone: "America/New_York",
+        }).launchRequest,
+      ).toHaveProperty("runnerId", "runner-2");
+    },
+  );
+
   it("preserves the normal launch selection while removing force-relaunch control fields", () => {
     expect(
       buildScheduledLaunchBody({
         ...base,
+        runnerId: "runner-2",
         disambiguation: "later",
         forceRelaunch: true,
         scheduledLocalTime: "2026-12-01T10:00",
@@ -331,7 +371,7 @@ describe("LaunchPopover — buildLaunchBody allowConcurrent flag", () => {
       disambiguation: "later",
       launchRequest: expect.objectContaining({
         flowId: "flow-1",
-        runnerId: "runner-1",
+        runnerId: "runner-2",
         baseBranch: "main",
         targetBranch: "main",
       }),
@@ -339,6 +379,7 @@ describe("LaunchPopover — buildLaunchBody allowConcurrent flag", () => {
     expect(
       buildScheduledLaunchBody({
         ...base,
+        runnerId: "runner-2",
         disambiguation: "later",
         forceRelaunch: true,
         scheduledLocalTime: "2026-12-01T10:00",

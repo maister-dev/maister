@@ -11,6 +11,14 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
+import {
+  FlowRunCenter,
+  type FlowRunCenterLabels,
+  selectFlowRunNode,
+} from "@/components/runs/flow-run-center";
+import { buildFlowRunResultDto } from "@/lib/runs/flow-result-dto";
+import messages from "@/messages/en.json";
+
 let query = new URLSearchParams();
 
 vi.mock("next/navigation", () => ({
@@ -18,14 +26,8 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => query,
 }));
 
-import {
-  FlowRunCenter,
-  type FlowRunCenterLabels,
-  selectFlowRunNode,
-} from "@/components/runs/flow-run-center";
-import { buildFlowRunResultDto } from "@/lib/runs/flow-result-dto";
-
 const LABELS: FlowRunCenterLabels = {
+  failure: messages.run.failure,
   title: "Flow result",
   fullscreen: "Fullscreen",
   reviewChanges: "Review changes",
@@ -158,6 +160,8 @@ function entry(over: Partial<TimelineEntry>): TimelineEntry {
     decision: null,
     reworkFromNode: null,
     resolvedPrompt: null,
+    errorCode: null,
+    exitCode: null,
     acpSessionId: "internal",
     autoRetry: false,
     startedAt: "2026-06-15T09:00:00.000Z",
@@ -277,6 +281,48 @@ describe("FlowRunCenter", () => {
     expect(html).toContain('data-node-status="Running"');
     // The Pending node ("review") surfaces its icon too.
     expect(html).toContain('data-node-status="Pending"');
+  });
+
+  it("renders stored failure diagnostics through the result DTO", () => {
+    query = new URLSearchParams("node=implement");
+    const html = render({
+      timeline: {
+        assignmentEvents: [],
+        entries: [
+          entry({
+            nodeId: "implement",
+            status: "Failed",
+            errorCode: "ACP_PROTOCOL",
+            exitCode: 1,
+          }),
+        ],
+      },
+    });
+
+    expect(html).toContain(messages.run.failure.codes.ACP_PROTOCOL);
+    expect(html).toContain("Error code");
+    expect(html).toContain("ACP_PROTOCOL");
+    expect(html).toContain("Process exit code");
+  });
+
+  it("uses a localized explanation when the stored failure code is unknown", () => {
+    query = new URLSearchParams("node=implement");
+    const html = render({
+      timeline: {
+        assignmentEvents: [],
+        entries: [
+          entry({
+            nodeId: "implement",
+            status: "Failed",
+            errorCode: "private diagnostic",
+            exitCode: null,
+          }),
+        ],
+      },
+    });
+
+    expect(html).toContain(messages.run.failure.unknown);
+    expect(html).not.toContain("private diagnostic");
   });
 
   it("mounts the per-node agent transcript panel for the selected node", () => {

@@ -121,7 +121,7 @@ sequenceDiagram
     participant WT as git worktree
     participant DB as database
     participant SUP as supervisor
-    U->>RES: resolve N sessions (binding → exact intent → graded fallback/default chain)
+    U->>RES: resolve N sessions (override → binding → concrete ref → compatible defaults → intent)
     RES-->>U: N resolved runner snapshots + optional warnings
     U->>WT: git worktree add (before tx)
     U->>DB: one tx { insert runs + insert N run_sessions incl. warnings }
@@ -164,8 +164,9 @@ flowchart LR
 - A session switch MUST reuse checkpoint → `session/resume`; resume MUST use the ACP
   `session/resume` protocol call and MUST fail loud (`MaisterError("CHECKPOINT")`),
   never `session/new`, when the adapter lacks `sessionCapabilities.resume`.
-- Every runner slot whose config has more than one exact host match MUST be bound
-  (`Pending → Mapped`) before the run can launch. A slot with no enabled+ready
+- A session whose config has multiple host matches MUST use a compatible
+  configured default when available; only unresolved ambiguity requires a binding
+  (`Pending → Mapped`). Consensus slots still require a unique match or binding. A slot with no enabled+ready
   runner for the requested `capability_agent` MUST fail with
   `MaisterError("EXECUTOR_UNAVAILABLE")`. A slot whose capability matches but
   whose soft `model` and/or `provider.kind` differs MAY launch on the resolver's
@@ -173,14 +174,24 @@ flowchart LR
   Slot enumeration and the binding UI MUST NOT dedup by intent
   (identical-intent consensus participants are distinct slots).
 - Binding rows MUST be keyed `(project_id, flow_revision_id, slot_key)` with
-  `slot_key` one of the declared forms; a revision that introduces a new slot MUST
-  re-prompt rather than silently inherit.
-- Per-session resolution MUST follow: binding → exact intent auto-match → graded
-  same-capability fallback → (for the `default` session with no explicit runner
-  only) project-flow → platform-flow → project → platform default. Soft fallback
-  priority is same base model, then project default of the same capability, then
-  platform default of the same capability. The ephemeral per-run override MUST
-  NOT persist.
+  `slot_key` one of the declared forms. A new session slot resolves through the
+  same precedence chain; a binding is needed only if defaults/intent cannot
+  resolve it. Existing bindings are not copied to an unrelated slot.
+- Per-session resolution MUST follow: explicit per-session override → binding →
+  concrete host-runner reference → compatible configured default → exact intent
+  auto-match → graded same-capability fallback. The configured-default chain is
+  launch runner (or the saved task runner when omitted) → project-flow →
+  platform-flow → project → platform. It applies to every unbound session;
+  configless sessions use the same chain without a capability filter. The
+  launch/task runner explicitly overrides the primary session and is a
+  same-capability preference for the others. Other-capability sessions retain
+  their own runner resolution. Disabled/not-ready choices MUST fail when used;
+  an explicit per-session choice can supersede an unavailable saved task runner.
+  An unchanged launch-dialog selection MUST preserve inheritance for immediate
+  and scheduled launches. Model/provider differences MUST retain the soft-mismatch warning.
+  Soft fallback priority remains same base model, project default, then platform
+  default of the same capability. Per-launch choices MUST NOT alter task or
+  project settings.
 - `judge` MUST be an ordinary runner-bearing node resolved through its session
   runner; `judge.settings.model` MUST NOT exist (removed clean-cutover).
 - `POST /sessions` MUST carry `sessionName` so canonical usage and execution
@@ -201,7 +212,8 @@ flowchart LR
 - **Capability absent at launch** — a slot with no enabled+ready runner for the
   requested hard `capability_agent` blocks launch with
   `MaisterError("EXECUTOR_UNAVAILABLE")`.
-- **Auto-match ambiguity** — more than one host runner matches a slot's intent →
+- **Auto-match ambiguity without a compatible configured default** — more than
+  one host runner matches a session's intent →
   `MaisterError("CONFIG")` → the slot requires an explicit binding.
 - **Soft model/provider mismatch** — a slot with the required capability but a
   different model variant and/or provider kind launches on the ranked fallback,

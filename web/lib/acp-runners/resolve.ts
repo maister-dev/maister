@@ -563,6 +563,9 @@ export type RunnerSlotResolutionInput = {
   // Ephemeral per-run override (Launch dialog) — wins over everything.
   readonly overrideRunnerId?: string | null;
   readonly binding?: RunnerSlotBinding;
+  // Session-wide choices are preferences within the declared capability;
+  // explicit slot overrides and bindings remain authoritative.
+  readonly preferredRunners?: readonly Candidate[];
   readonly runnerProfiles: Record<string, FlowRunnerConfig> | undefined;
   readonly project?: { readonly defaultRunnerId?: string | null };
   readonly platform?: { readonly defaultRunnerId?: string | null };
@@ -570,7 +573,8 @@ export type RunnerSlotResolutionInput = {
 };
 
 // Resolve ONE bindable slot through the config-driven tiers:
-//   override → Mapped binding → host-id profile-ref → unique intent auto-match.
+//   override → Mapped binding → host-id profile-ref → compatible configured
+//   preference → unique intent auto-match.
 // Returns `null` ONLY when the slot has no declared runner AND no override/
 // binding (the implicit `default` session — the caller applies the default
 // chain). Throws CONFIG (ambiguous / unbound) or EXECUTOR_UNAVAILABLE (no host).
@@ -630,10 +634,27 @@ export function resolveRunnerSlot(
     return resolved("stepTarget", runner, input.slotKey);
   }
 
-  // 4. Auto-match the unified config to a UNIQUE host runner by intent.
+  // 4. Honor a compatible configured preference, then auto-match by intent.
   const config = resolveSlotConfig(input.slot, input.runnerProfiles);
   const candidates = runnerIntentCandidates(config, input.runners);
   const matches = candidates.exact;
+
+  for (const candidate of input.preferredRunners ?? []) {
+    const runner = candidates.sameCapability.find(
+      (entry) => entry.id === candidate.runnerId,
+    );
+
+    if (!runner) continue;
+
+    return resolved(
+      candidate.tier,
+      runner,
+      candidate.tier,
+      matches.some((entry) => entry.id === runner.id)
+        ? undefined
+        : runnerResolutionWarning({ slotKey: input.slotKey, config, runner }),
+    );
+  }
 
   if (matches.length === 1) {
     return resolved("autoMatch", matches[0], input.slotKey);
@@ -688,7 +709,8 @@ export type RunSessionResolutionInput = {
   readonly bindings: readonly RunnerSlotBinding[];
   // Optional ephemeral per-run overrides keyed by session name (Launch dialog).
   readonly ephemeralOverrides?: Readonly<Record<string, string | null>>;
-  // The `default`-session-only fallback chain (a config-less default session).
+  readonly runDefaultRunnerId?: string | null;
+  // Applies to config-less sessions and compatible unbound named sessions.
   readonly projectFlow: { readonly defaultRunnerId?: string | null };
   readonly platformFlow: { readonly defaultRunnerId?: string | null };
   readonly project: { readonly defaultRunnerId?: string | null };
@@ -707,6 +729,17 @@ export function resolveRunSessions(
   const bindingBySlotKey = new Map(
     input.bindings.map((binding) => [binding.slotKey, binding]),
   );
+  const chain: readonly Candidate[] = [
+    { tier: "launchOverride", runnerId: input.runDefaultRunnerId },
+    { tier: "projectFlowDefault", runnerId: input.projectFlow.defaultRunnerId },
+    {
+      tier: "platformFlowDefault",
+      runnerId: input.platformFlow.defaultRunnerId,
+    },
+    { tier: "projectDefault", runnerId: input.project.defaultRunnerId },
+    { tier: "platformDefault", runnerId: input.platform.defaultRunnerId },
+  ];
+
   const out: RunSessionResolution[] = [];
 
   for (const session of input.sessions) {
@@ -716,6 +749,7 @@ export function resolveRunSessions(
       slot: session.runner,
       overrideRunnerId: input.ephemeralOverrides?.[session.name],
       binding: bindingBySlotKey.get(slotKey),
+      preferredRunners: chain,
       runnerProfiles: input.runnerProfiles,
       project: input.project,
       platform: input.platform,
@@ -737,22 +771,6 @@ export function resolveRunSessions(
       });
       continue;
     }
-
-    // Config-less session (only the implicit `default`): the project/platform
-    // default chain. The top two flow tiers are NOT dropped — they are the
-    // session-default fallback when no runner is declared.
-    const chain: readonly Candidate[] = [
-      {
-        tier: "projectFlowDefault",
-        runnerId: input.projectFlow.defaultRunnerId,
-      },
-      {
-        tier: "platformFlowDefault",
-        runnerId: input.platformFlow.defaultRunnerId,
-      },
-      { tier: "projectDefault", runnerId: input.project.defaultRunnerId },
-      { tier: "platformDefault", runnerId: input.platform.defaultRunnerId },
-    ];
 
     let picked: RunSessionResolution | null = null;
 

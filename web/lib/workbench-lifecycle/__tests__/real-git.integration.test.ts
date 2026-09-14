@@ -201,6 +201,49 @@ afterEach(async () => {
 });
 
 describe("workbench lifecycle real git integration", () => {
+  it("drop explains missing Git identity before staging and succeeds after it is configured", async () => {
+    const workbench = await createGitWorkbench("run-no-identity");
+    const store = records();
+    const ctx = lifecycleContext(workbench);
+    const deps = realGitDeps(ctx, workbench.worktreesRoot, store);
+
+    await writeFile(join(workbench.worktree, "course.md"), "week one\n");
+    // An explicitly empty local setting overrides any developer-global identity.
+    await git(workbench.repo, "config", "user.name", "");
+
+    await expect(
+      dropWorkbench(workbench.runId, { deps }),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "workspace_git_identity_invalid" },
+    });
+    expect(await pathExists(workbench.worktree)).toBe(true);
+    expect(
+      await git(workbench.worktree, "diff", "--cached", "--name-only"),
+    ).toBe("");
+    expect(await git(workbench.worktree, "rev-parse", "HEAD")).toBe(
+      `${workbench.baseSha}\n`,
+    );
+    expect(store.drops).toEqual([]);
+    expect(deps.finalizeLifecycleOperation).toHaveBeenCalledWith(
+      expect.objectContaining({ state: "failed" }),
+    );
+
+    await git(workbench.repo, "config", "user.name", "MAIster Test");
+    await git(workbench.repo, "config", "user.email", "test@maister.local");
+    await dropWorkbench(workbench.runId, { deps });
+
+    expect(await pathExists(workbench.worktree)).toBe(false);
+    expect(store.drops).toHaveLength(1);
+    expect(
+      await git(
+        workbench.repo,
+        "show",
+        `maister/archive/${workbench.runId}:course.md`,
+      ),
+    ).toBe("week one\n");
+  });
+
   it("snapshot commit then handoff branch creates and pushes a clean continuation ref", async () => {
     const workbench = await createGitWorkbench();
     const store = records();

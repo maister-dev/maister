@@ -5,6 +5,7 @@ import { promisify } from "node:util";
 
 import pino from "pino";
 
+import { isMaisterError, MaisterError } from "@/lib/errors";
 import { logRange, statusPorcelain } from "@/lib/worktree";
 
 const execFileAsync = promisify(execFile);
@@ -28,6 +29,9 @@ export interface PreserveWorktreeArgs {
 
 export interface PreserveResult {
   ok: boolean;
+  failureReason?:
+    | "workspace_git_identity_invalid"
+    | "workspace_preservation_failed";
   archivedCommit?: string;
   archivedBranch?: string;
   archivedAt?: Date;
@@ -63,6 +67,21 @@ export async function preserveWorktree(
     const dirty = porcelain.trim() !== "";
 
     if (dirty) {
+      // Check both identities before staging: a refused snapshot must not
+      // change the caller's index merely because server Git is unconfigured.
+      try {
+        await git(worktreePath, ["var", "GIT_AUTHOR_IDENT"]);
+        await git(worktreePath, ["var", "GIT_COMMITTER_IDENT"]);
+      } catch (cause) {
+        throw new MaisterError(
+          "CONFIG",
+          "Git could not resolve the snapshot author or committer identity",
+          {
+            cause,
+            details: { reason: "workspace_git_identity_invalid" },
+          },
+        );
+      }
       // Capture tracked + untracked into a snapshot commit on the worktree's
       // own HEAD (the run branch), so `git branch -f` HEAD carries everything.
       await git(worktreePath, ["add", "-A"]);
@@ -131,11 +150,21 @@ export async function preserveWorktree(
     log.warn(
       {
         runId,
-        errorType: err instanceof Error ? err.name : "unknown",
+        worktreePath,
+        branch,
+        baseRef,
+        err,
       },
       "GC preserve failed — caller MUST skip removal",
     );
 
-    return { ok: false };
+    return {
+      ok: false,
+      failureReason:
+        isMaisterError(err) &&
+        err.details?.reason === "workspace_git_identity_invalid"
+          ? "workspace_git_identity_invalid"
+          : "workspace_preservation_failed",
+    };
   }
 }

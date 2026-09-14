@@ -845,6 +845,7 @@ export default async function RunDetailLayout({
   };
 
   const timelineLabels: TimelineLabels = {
+    failure: t.raw("failure"),
     title: t("timelineTitle"),
     staleGate: t("staleGate"),
     currentGate: t("currentGate"),
@@ -870,6 +871,7 @@ export default async function RunDetailLayout({
             : d,
   };
   const agentRunCenterLabels: AgentRunCenterLabels = {
+    failure: t.raw("failure"),
     title: t("agentCenterTitle"),
     subtitle: t("agentCenterSubtitle"),
     status: t("agentCenterStatus"),
@@ -882,6 +884,7 @@ export default async function RunDetailLayout({
     openDiff: t("agentCenterOpenDiff"),
   };
   const flowRunCenterLabels: FlowRunCenterLabels = {
+    failure: t.raw("failure"),
     title: t("flowCenterTitle"),
     fullscreen: t("flowCenterFullscreen"),
     reviewChanges: t("flowCenterReviewChanges"),
@@ -1501,7 +1504,9 @@ export default async function RunDetailLayout({
             />
           ) : null}
 
-          {readiness ? (
+          {readiness &&
+          detail.status !== "Failed" &&
+          detail.status !== "Crashed" ? (
             <ReadinessSummary
               labels={{
                 state: {
