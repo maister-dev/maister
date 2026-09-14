@@ -11,6 +11,7 @@ import {
   getRemoteUrl,
   GitPushRejectedError,
   listRemoteUrls,
+  pullRemote,
   pushBranch,
   remoteAdd,
   remoteRemove,
@@ -206,6 +207,21 @@ export async function fetchProjectRemote(opts: {
     }
     throw err;
   }
+}
+
+export async function pullProjectRemote(opts: {
+  project: RemotesProject;
+  name: string;
+  branch: string;
+}): Promise<RemoteActionResult> {
+  await assertRemoteExists(opts.project, opts.name);
+  await pullRemote({
+    projectRepoPath: opts.project.repoPath,
+    name: opts.name,
+    branch: opts.branch,
+  });
+
+  return { ok: true };
 }
 
 // Self-heal the origin cache (invariant B): if git has an origin whose

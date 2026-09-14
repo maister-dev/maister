@@ -13,6 +13,7 @@ import {
   addProjectRemote,
   fetchProjectRemote,
   listProjectRemotes,
+  pullProjectRemote,
   pushProjectRemote,
   reconcileOriginRepoUrl,
   removeProjectRemote,
@@ -40,7 +41,7 @@ const addBodySchema = z
 
 const actionBodySchema = z
   .object({
-    op: z.enum(["push", "fetch", "set-upstream"]),
+    op: z.enum(["push", "fetch", "pull", "set-upstream"]),
     name: z.string().min(1).max(255),
     branch: z.string().min(1).max(255).optional(),
   })
@@ -75,7 +76,7 @@ function httpStatusForCode(code: string): number {
 function errorResponse(err: unknown, slug: string): NextResponse {
   if (isMaisterError(err)) {
     return NextResponse.json(
-      { code: err.code, message: err.message },
+      { code: err.code, message: err.message, details: err.details },
       { status: httpStatusForCode(err.code) },
     );
   }
@@ -153,8 +154,16 @@ export async function POST(
     if (action.success) {
       const { op, name, branch } = action.data;
 
-      if ((op === "push" || op === "set-upstream") && !branch) {
+      if (op !== "fetch" && !branch) {
         throw new MaisterError("CONFIG", `${op} requires a branch`);
+      }
+
+      if (op === "pull" && branch) {
+        const result = await pullProjectRemote({ project, name, branch });
+
+        log.info({ slug, op, name, branch }, "remote action");
+
+        return NextResponse.json(result);
       }
 
       const result =

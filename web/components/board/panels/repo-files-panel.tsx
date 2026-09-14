@@ -12,7 +12,7 @@ import {
 import FileTree from "@/components/workbench/file-tree";
 import { requireProjectAction } from "@/lib/authz";
 import { workbenchMaxFileBytes } from "@/lib/instance-config";
-import { readBlob, repoRelPathSchema } from "@/lib/worktree";
+import { localBranchHead, readBlob, repoRelPathSchema } from "@/lib/worktree";
 
 const log = pino({
   name: "repo-files-panel",
@@ -47,10 +47,10 @@ const STATE_CLASS =
 
 // The project-board repo tab mirrors the run-detail workbench `?file=` read
 // (ADR-066): the client file tree navigates `?file=<path>` and this server pane
-// re-reads the project's default-branch blob. Read order is fixed — auth
+// re-reads the selected branch's blob. Read order is fixed — auth
 // (readRepoFiles, server-derived projectId) BEFORE the read, repoRelPathSchema
 // BEFORE readBlob — and a rejected path surfaces the not-found state, never the
-// path. `ref` is the project default branch (server-state).
+// path. Pin both panes to one commit so refreshed content and tree agree.
 export async function RepoFilesPanel({
   slug,
   projectId,
@@ -75,6 +75,10 @@ export async function RepoFilesPanel({
   }
 
   await requireProjectAction(projectId, "readRepoFiles");
+  const revision = await localBranchHead({
+    projectRepoPath: repoPath,
+    branch: currentRef,
+  });
 
   let pane: ReactElement;
 
@@ -84,8 +88,8 @@ export async function RepoFilesPanel({
         {labels.selectPrompt}
       </div>
     );
-  } else if (!repoRelPathSchema.safeParse(file).success) {
-    log.warn({ slug, projectId }, "invalid ?file= path");
+  } else if (!revision || !repoRelPathSchema.safeParse(file).success) {
+    log.warn({ slug, projectId, revision }, "repository file unavailable");
     pane = (
       <div className={STATE_CLASS} data-testid="file-not-found" role="alert">
         {labels.notFound}
@@ -94,7 +98,7 @@ export async function RepoFilesPanel({
   } else {
     const blob = await readBlob({
       repo: repoPath,
-      ref: currentRef,
+      ref: revision,
       path: file,
       maxBytes: workbenchMaxFileBytes(),
     });
@@ -111,6 +115,7 @@ export async function RepoFilesPanel({
         <div className="flex flex-wrap items-center gap-2">
           {canFetch ? (
             <RepoFetchButton
+              branch={currentRef}
               failedLabel={labels.fetchFailed}
               label={labels.fetchOrigin}
               pendingLabel={labels.fetching}
@@ -135,12 +140,18 @@ export async function RepoFilesPanel({
           own max-h cap). */}
       <div className="grid grid-cols-1 items-stretch gap-3 md:grid-cols-[minmax(220px,300px)_1fr]">
         <div className="min-h-[560px] [&>[data-testid=file-tree]]:h-full">
-          <FileTree
-            key={currentRef}
-            filesApiBase={`/api/projects/${slug}/files`}
-            gitRef={currentRef}
-            labels={labels}
-          />
+          {revision ? (
+            <FileTree
+              key={revision}
+              filesApiBase={`/api/projects/${slug}/files`}
+              gitRef={revision}
+              labels={labels}
+            />
+          ) : (
+            <div className={STATE_CLASS} role="alert">
+              {labels.loadError}
+            </div>
+          )}
         </div>
         <div className="min-h-[560px] [&_.markdown-rich-view]:!h-full [&_.markdown-rich-view]:!max-h-full [&_[data-testid=code-view]]:!h-full [&_[data-testid=code-view]]:!max-h-full">
           {pane}

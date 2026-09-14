@@ -136,6 +136,13 @@ The board is a horizontally scrollable set of columns:
   [`../../system-analytics/branch-sync.md`](../../system-analytics/branch-sync.md).
 - **Relation blockers** disable launch when a task is blocked by open
   `blocks`, `depends_on`, or success-gated `requires` edges.
+- **Repository tab** (`?tab=repo`) shows the selected branch's committed files.
+  **Pull from origin** updates that branch with `pull --ff-only`; it must
+  already be checked out in the project repository and have no local changes.
+  The action requires `editSettings`. Failure shows localized remediation beside
+  the button and in shared feedback; success refreshes both the file tree and
+  the selected file at the updated commit. Remote actions are specified in
+  [`../../api/web.openapi.yaml`](../../api/web.openapi.yaml).
 - **Integrations panel** in the project settings area is project-bound. Its API
   tokens table lists only tokens with `project_id` set to this project; global
   personal API tokens live on [`../account.md`](../account.md) and are not

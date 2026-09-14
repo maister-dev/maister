@@ -26,7 +26,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { RepoFilesPanel } from "@/components/board/panels/repo-files-panel";
 import { requireProjectAction } from "@/lib/authz";
-import { readBlob } from "@/lib/worktree";
+import { localBranchHead, readBlob } from "@/lib/worktree";
 
 const labels = {
   forbidden: "You do not have access to repository files",
@@ -65,6 +65,7 @@ vi.mock("@/lib/worktree", async () => {
   return {
     repoRelPathSchema: actual.repoRelPathSchema,
     readBlob: vi.fn(),
+    localBranchHead: vi.fn(async () => "a".repeat(40)),
   };
 });
 
@@ -109,10 +110,20 @@ describe("RepoFilesPanel — viewer gate (canReadRepoFiles=false)", () => {
     expect(html).not.toContain('data-testid="file-tree"');
     expect(requireProjectAction).not.toHaveBeenCalled();
     expect(readBlob).not.toHaveBeenCalled();
+    expect(localBranchHead).not.toHaveBeenCalled();
   });
 });
 
 describe("RepoFilesPanel — member access (canReadRepoFiles=true)", () => {
+  it("shows a local error when the branch has no commit yet", async () => {
+    vi.mocked(localBranchHead).mockResolvedValueOnce(null);
+    const html = await render({ canReadRepoFiles: true, file: null });
+
+    expect(html).toContain(labels.loadError);
+    expect(html).toContain('role="alert"');
+    expect(html).not.toContain('data-testid="file-tree"');
+  });
+
   it("mounts the file-tree and gates with (projectId,'readRepoFiles')", async () => {
     const html = await render({ canReadRepoFiles: true, file: null });
 
@@ -151,7 +162,7 @@ describe("RepoFilesPanel — member access (canReadRepoFiles=true)", () => {
     expect(html).toContain('data-testid="code-view"');
     expect(readBlob).toHaveBeenCalledWith({
       repo: "/repos/acme",
-      ref: "main",
+      ref: "a".repeat(40),
       path: "src/x.ts",
       maxBytes: 524288,
     });
@@ -171,9 +182,13 @@ describe("RepoFilesPanel — member access (canReadRepoFiles=true)", () => {
 
     expect(readBlob).toHaveBeenCalledWith({
       repo: "/repos/acme",
-      ref: "feature-x",
+      ref: "a".repeat(40),
       path: "src/x.ts",
       maxBytes: 524288,
+    });
+    expect(localBranchHead).toHaveBeenCalledWith({
+      projectRepoPath: "/repos/acme",
+      branch: "feature-x",
     });
   });
 });

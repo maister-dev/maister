@@ -1484,9 +1484,15 @@ paths:
         Two shapes on one route. **Add** a remote with `{ name, url }`
         (`git remote add`); adding `origin` syncs `projects.repo_url` +
         `provider`. **Run an action** with
-        `{ op: "push" | "fetch" | "set-upstream", name, ... }` — these reuse
-        **host-ambient auth** and never write the DB; a failure is an advisory,
-        nothing to roll back. `requireProjectAction(projectId, "editSettings")`;
+        `{ op: "push" | "fetch" | "pull" | "set-upstream", name, ... }` — these reuse
+        **host-ambient auth** and never write the DB. Push/fetch/set-upstream
+        network failures remain advisories. Pull requires `branch` to be the
+        checked-out branch and a clean working tree, and runs `git pull --ff-only
+        --no-rebase --no-autostash`. It never switches branches or creates a
+        merge commit. Pull failures return 409 (precondition/conflict) or 503
+        (network/auth), never 200 with a warning. Precondition `details.reason`
+        is `branch_mismatch` or `dirty_worktree` when applicable.
+        `requireProjectAction(projectId, "editSettings")`;
         `repo_path` from `server-state`. Remote `name` is `body-controlled` →
         validated by the shared `remoteNameSchema` (dots/slashes allowed); `url`
         is scheme-allow-listed and redacted in every response.
@@ -1518,6 +1524,12 @@ paths:
                 value:
                   op: fetch
                   name: origin
+              pull:
+                summary: Fast-forward the checked-out branch from origin
+                value:
+                  op: pull
+                  name: origin
+                  branch: main
               set-upstream:
                 summary: Set the upstream tracking branch
                 value:
@@ -1527,8 +1539,9 @@ paths:
       responses:
         "200":
           description: |
-            Action (`push` / `fetch` / `set-upstream`) completed, or completed
-            with a non-fatal advisory in `warning`.
+            Action completed. Only `push` / `fetch` / `set-upstream` may return
+            a non-fatal advisory in `warning`; `pull` returns success only after
+            the checkout update completes.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/RemoteActionResponse" }
@@ -1558,11 +1571,18 @@ paths:
           description: |
             `PRECONDITION` — invalid remote name/url, remote already exists
             (add), unknown remote (action), or the repo is not a git repo.
+            Pull also refuses a different checked-out branch or local changes;
+            a failed fast-forward returns `CONFLICT`.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "422":
           description: Malformed body (neither a valid add nor a known `op`) (`CONFIG`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "503":
+          description: Pull failed because the remote was unavailable or Git authentication failed (`EXECUTOR_UNAVAILABLE`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -20496,9 +20516,9 @@ components:
       description: |
         **(Implemented,
         [ADR-093](../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons))**
-        Result of a `push` / `fetch` / `set-upstream` action. `warning` carries
+        Result of a `push` / `fetch` / `pull` / `set-upstream` action. `warning` carries
         a non-fatal advisory (e.g. a rejected push) — host-ambient auth, nothing
-        to roll back.
+        to roll back. Pull never returns an advisory; failure is a non-2xx response.
       additionalProperties: false
       required: [ok]
       properties:
@@ -20525,14 +20545,14 @@ components:
     RemoteActionBody:
       type: object
       description: |
-        Run a remote action (`push` / `fetch` / `set-upstream`) reusing
+        Run a remote action (`push` / `fetch` / `pull` / `set-upstream`) reusing
         host-ambient auth. No DB write.
       additionalProperties: false
       required: [op, name]
       properties:
         op:
           type: string
-          enum: [push, fetch, set-upstream]
+          enum: [push, fetch, pull, set-upstream]
         name:
           type: string
           minLength: 1
@@ -20541,7 +20561,7 @@ components:
         branch:
           type: string
           minLength: 1
-          description: Branch to push / set upstream for (required for `push` and `set-upstream`).
+          description: Branch to push, pull or set upstream for (required except for `fetch`). Pull requires it to be checked out.
           example: main
     RemotePostBody:
       description: |
