@@ -227,6 +227,56 @@ describe("buildFlowRunResultDto", () => {
     expect(dto.timeline.entries[0]).not.toHaveProperty("acpSessionId");
   });
 
+  // A coordinator (orchestrator/consensus) parks its run on WaitingOnChildren
+  // while its node-attempt ledger keeps the NeedsInput pause mark. The node
+  // must not read as a human request when no HITL exists.
+  it("reports the current coordinator node of a WaitingOnChildren run as WaitingOnChildren", () => {
+    const parked = buildFlowRunResultDto(
+      baseInput({
+        run: {
+          ...baseInput().run,
+          status: "WaitingOnChildren",
+          currentStepId: "implement",
+        },
+        graph: graph("plan implement review".split(" "), {
+          currentStepId: "implement",
+          runStatus: "WaitingOnChildren",
+          nodes: {
+            plan: status({ status: "Succeeded" }),
+            implement: status({ status: "NeedsInput" }),
+            review: status({ status: "Pending", attempt: 0 }),
+          },
+        }),
+      }),
+    );
+
+    expect(
+      parked.graph.nodes.find((node) => node.id === "implement"),
+    ).toMatchObject({ runtimeStatus: "WaitingOnChildren", current: true });
+    expect(parked.graph.nodes.find((node) => node.id === "plan")).toMatchObject(
+      { runtimeStatus: "Succeeded" },
+    );
+
+    const humanPause = buildFlowRunResultDto(
+      baseInput({
+        run: {
+          ...baseInput().run,
+          status: "NeedsInput",
+          currentStepId: "implement",
+        },
+        graph: graph("plan implement review".split(" "), {
+          currentStepId: "implement",
+          runStatus: "NeedsInput",
+          nodes: { implement: status({ status: "NeedsInput" }) },
+        }),
+      }),
+    );
+
+    expect(
+      humanPause.graph.nodes.find((node) => node.id === "implement"),
+    ).toMatchObject({ runtimeStatus: "NeedsInput" });
+  });
+
   it("selects the latest timeline node for terminal runs without currentStepId", () => {
     const dto = buildFlowRunResultDto(
       baseInput({

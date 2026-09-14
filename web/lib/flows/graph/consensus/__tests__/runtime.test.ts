@@ -21,6 +21,7 @@ import { renderStrict } from "@/lib/flows/templating";
 const launchConsensusDraftRuns = vi.hoisted(() => vi.fn());
 const latestConsensusRound = vi.hoisted(() => vi.fn());
 const loadConsensusDraftEvidence = vi.hoisted(() => vi.fn());
+const loadConsensusDraftFailureReasons = vi.hoisted(() => vi.fn());
 const loadConsensusVerdicts = vi.hoisted(() => vi.fn());
 const recordConsensusVerdict = vi.hoisted(() => vi.fn());
 const loadConsensusVerdictCell = vi.hoisted(() => vi.fn());
@@ -57,6 +58,7 @@ vi.mock("@/lib/flows/graph/consensus/ledger", async (importOriginal) => {
     ...actual,
     latestConsensusRound,
     loadConsensusDraftEvidence,
+    loadConsensusDraftFailureReasons,
     loadConsensusVerdictCell,
     loadConsensusVerdicts,
     recordConsensusVerdict,
@@ -292,6 +294,7 @@ function input(overrides: Record<string, unknown> = {}) {
     nodeAttemptId: "attempt-1",
     nodeAttemptNumber: 1,
     db: db(),
+    rootDb: { root: true },
     ...overrides,
   } as unknown as Parameters<typeof runConsensusNode>[0];
 }
@@ -309,6 +312,7 @@ beforeEach(() => {
     platform: { defaultRunnerId: null },
   });
   loadConsensusVerdicts.mockResolvedValue([]);
+  loadConsensusDraftFailureReasons.mockResolvedValue({});
   // S2.7: a verification/synthesis turn is applied by its prompt owner; the
   // runtime reads the applied row back instead of the live stdout.
   loadConsensusVerdictCell.mockResolvedValue(null);
@@ -375,6 +379,87 @@ describe("runConsensusNode", () => {
     expect(launchConsensusDraftRuns).toHaveBeenCalledWith(
       expect.objectContaining({ round: 1, nodeAttemptId: "attempt-1" }),
     );
+  });
+
+  // The draft children outlive the parent's traversal (the coordinator parks
+  // and releases its assignment right after fan-out), so their dispatch must
+  // ride the root handle; the traversal handle stays for the fan-out's own rows.
+  it("hands the draft fan-out the root database handle beside the traversal handle", async () => {
+    const rootDb = { root: true };
+
+    latestConsensusRound.mockResolvedValue(0);
+    loadConsensusDraftEvidence.mockResolvedValue([]);
+    launchConsensusDraftRuns.mockResolvedValue([
+      { participantId: "architect", runId: "child-1", status: "Running" },
+      { participantId: "qa", runId: "child-2", status: "Running" },
+    ]);
+    const args = input({ rootDb });
+
+    await runConsensusNode(args);
+
+    expect(launchConsensusDraftRuns).toHaveBeenCalledWith(
+      expect.objectContaining({ db: args.db, rootDb }),
+    );
+  });
+
+  // A round in which no participant produced a draft is an infrastructure
+  // failure, not a disagreement: verifying fail-closed over nothing, spending a
+  // second round on nothing and then asking a human to pick between empty
+  // drafts hides the real error. The node fails with the children's evidence.
+  it("fails the node with CRASH when no settled draft in the round is available", async () => {
+    const def = {
+      ...consensusDef(),
+      rounds: { mode: "iterate", max: 2 },
+    } as ConsensusNodeDef;
+
+    latestConsensusRound.mockResolvedValue(1);
+    loadConsensusDraftEvidence.mockResolvedValue([
+      {
+        ...draft("architect", ""),
+        status: "Crashed",
+        artifactId: null,
+        artifactText: null,
+      },
+      {
+        ...draft("qa", ""),
+        status: "Failed",
+        artifactId: null,
+        artifactText: null,
+      },
+    ]);
+    loadConsensusDraftFailureReasons.mockResolvedValue({
+      "child-architect": "reconcile: agent-session-gone",
+    });
+
+    await expect(runConsensusNode(input({ def }))).rejects.toMatchObject({
+      code: "CRASH",
+      message: expect.stringContaining("agent-session-gone"),
+      details: expect.objectContaining({
+        reason: "consensus_no_draft_available",
+        round: 1,
+        drafts: [
+          expect.objectContaining({
+            participantId: "architect",
+            runId: "child-architect",
+            status: "Crashed",
+            reason: "reconcile: agent-session-gone",
+          }),
+          expect.objectContaining({
+            participantId: "qa",
+            runId: "child-qa",
+            status: "Failed",
+            reason: null,
+          }),
+        ],
+      }),
+    });
+    expect(loadConsensusDraftFailureReasons).toHaveBeenCalledWith(
+      expect.objectContaining({ runIds: ["child-architect", "child-qa"] }),
+    );
+    expect(runAgentStep).not.toHaveBeenCalled();
+    expect(recordConsensusVerdict).not.toHaveBeenCalled();
+    expect(launchConsensusDraftRuns).not.toHaveBeenCalled();
+    expect(atomicWriteJson).not.toHaveBeenCalled();
   });
 
   it("renders the draft prompt against the run template context", async () => {

@@ -43,6 +43,12 @@ export type ConsensusDraftPayload = {
 
 export type ConsensusDraftLaunchInput = {
   db: Db;
+  // The draft child outlives the parent's traversal: the coordinator parks and
+  // releases its execution assignment right after fan-out, so every statement
+  // on the traversal-scoped `db` then fails with FlowDriverClaimLost. The
+  // child's dispatch (session create, prompt, finalization) rides this
+  // independent root handle; only the fan-out's own rows stay on `db`.
+  rootDb: Db;
   projectId: string;
   taskId: string | null;
   // M42 (ADR-114): binding context for portable consensus runner resolution.
@@ -264,7 +270,7 @@ async function defaultCreateRunnerDraftRun(
   if (startResult.started) {
     queueMicrotask(() => {
       void runtime
-        .startAgentSession(runId, { db: input.db })
+        .startAgentSession(runId, { db: input.rootDb })
         .catch((err: unknown) => {
           log.error(
             { runId, err: err instanceof Error ? err.message : String(err) },

@@ -287,10 +287,28 @@ function timelineEntry(entry: TimelineEntry): FlowResultTimelineEntryDto {
   };
 }
 
+// A coordinator (orchestrator/consensus) parks its RUN on WaitingOnChildren
+// while the node-attempt ledger keeps the NeedsInput pause mark. The node's
+// runtime status must not read as a human request when no HITL exists.
+function runtimeNodeStatus(
+  ledgerStatus: string | undefined,
+  args: { nodeId: string; currentNodeId: string | null; runStatus: string },
+): string {
+  if (
+    ledgerStatus === "NeedsInput" &&
+    args.runStatus === "WaitingOnChildren" &&
+    args.nodeId === args.currentNodeId
+  )
+    return "WaitingOnChildren";
+
+  return ledgerStatus ?? "Pending";
+}
+
 function buildGraphDto(
   graph: FlowResultGraphInput | null,
   timeline: RunTimeline,
   runCurrentStepId: string | null,
+  runStatus: string,
 ): FlowRunGraphDto {
   if (graph === null) {
     return {
@@ -323,7 +341,11 @@ function buildGraphDto(
       nodeTypeLabel: node.nodeTypeLabel,
       nodeRole: node.nodeRole,
       declaredGateSummary: node.declaredGateSummary,
-      runtimeStatus: status?.status ?? "Pending",
+      runtimeStatus: runtimeNodeStatus(status?.status, {
+        nodeId: node.id,
+        currentNodeId,
+        runStatus,
+      }),
       attempt: status?.attempt ?? 0,
       autoRetry: status?.autoRetry ?? false,
       rollup: status?.rollup ?? "none",
@@ -454,7 +476,12 @@ export function buildFlowRunResultDto(
       prNumber: input.run.prNumber,
       wallDurationMs,
     },
-    graph: buildGraphDto(input.graph, input.timeline, input.run.currentStepId),
+    graph: buildGraphDto(
+      input.graph,
+      input.timeline,
+      input.run.currentStepId,
+      input.run.status,
+    ),
     timeline: {
       entries: input.timeline.entries.map(timelineEntry),
       assignmentEvents: input.timeline.assignmentEvents,

@@ -15,9 +15,13 @@ import {
   type ConsensusDraftLaunchInput,
 } from "@/lib/flows/graph/consensus/drafts";
 
-function baseInput(db: unknown): ConsensusDraftLaunchInput {
+function baseInput(
+  db: unknown,
+  rootDb: unknown = { root: true },
+): ConsensusDraftLaunchInput {
   return {
     db,
+    rootDb,
     projectId: "project-1",
     taskId: "task-1",
     runDefaultRunnerId: "runner-parent",
@@ -216,5 +220,65 @@ describe("launchConsensusDraftRuns", () => {
         status: "Running",
       },
     ]);
+  });
+
+  // The draft child outlives its parent's traversal: the coordinator parks and
+  // releases its execution assignment right after fan-out, and every statement
+  // on the traversal handle then dies with FlowDriverClaimLost — before the
+  // child's session is ever created. Row creation stays on the traversal
+  // handle (it must serialize with the parent's claim); the dispatch must not.
+  it("dispatches the runner draft session on the root database handle, not the traversal handle", async () => {
+    const db = fakeDb({
+      existingRows: [[]],
+      runnerRows: [
+        {
+          id: "runner-codex",
+          adapter: "codex",
+          capabilityAgent: "codex",
+          model: "gpt-5-codex",
+          provider: { kind: "openai" },
+          permissionPolicy: "default",
+          readinessStatus: "Ready",
+          enabled: true,
+        },
+      ],
+      parentMode: "canonical_events_v1",
+    });
+    const rootDb = { root: true };
+
+    loadRunnerCatalog.mockResolvedValue([
+      {
+        id: "runner-codex",
+        adapter: "codex",
+        capabilityAgent: "codex",
+        model: "gpt-5-codex",
+        providerKind: "openai",
+        permissionPolicy: "default",
+        enabled: true,
+        ready: true,
+      },
+    ]);
+    loadFlowRunnerBindings.mockResolvedValue([]);
+    loadProjectPlatformRunnerDefaults.mockResolvedValue({
+      project: { defaultRunnerId: null },
+      platform: { defaultRunnerId: null },
+    });
+
+    const tryStartRun = vi.fn(async () => ({ started: true as const }));
+    const startAgentSession = vi.fn(async () => undefined);
+    const input = {
+      ...baseInput(db, rootDb),
+      participants: [{ id: "codex", runner: "runner-codex" }],
+    } as ConsensusDraftLaunchInput;
+
+    await launchConsensusDraftRuns(input, { startAgentSession, tryStartRun });
+    // The dispatch rides a microtask so the fan-out returns first.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(tryStartRun).toHaveBeenCalledWith(expect.any(String), { db });
+    expect(startAgentSession).toHaveBeenCalledTimes(1);
+    expect(startAgentSession).toHaveBeenCalledWith(expect.any(String), {
+      db: rootDb,
+    });
   });
 });

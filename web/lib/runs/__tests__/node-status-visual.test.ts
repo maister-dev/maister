@@ -42,6 +42,29 @@ describe("nodeStatusVisual", () => {
     expect(new Set(icons).size).toBe(NODE_STATUS_KEYS.length);
   });
 
+  // Derived (presentation-only) status: a coordinator node whose run parks on
+  // WaitingOnChildren. Not a node_attempts.status value, so it lives beside
+  // NODE_STATUS_KEYS rather than in them.
+  it("maps the derived WaitingOnChildren status to its own visual with EN + RU labels", () => {
+    const visual = nodeStatusVisual("WaitingOnChildren");
+    const ledgerIcons = new Set(
+      NODE_STATUS_KEYS.map((s) => nodeStatusVisual(s).iconName),
+    );
+
+    expect(visual.tone).toBe("pending");
+    expect(visual.iconName).not.toBe("QuestionMarkCircleIcon");
+    expect(ledgerIcons.has(visual.iconName)).toBe(false);
+    expect(visual.i18nKey).toBe("run.nodeStatus.WaitingOnChildren");
+
+    const en = (enMessages as { run: { nodeStatus?: Record<string, string> } })
+      .run.nodeStatus;
+    const ru = (ruMessages as { run: { nodeStatus?: Record<string, string> } })
+      .run.nodeStatus;
+
+    expect(en?.WaitingOnChildren).toBeTruthy();
+    expect(ru?.WaitingOnChildren).toBeTruthy();
+  });
+
   it("falls back to a neutral visual for an unknown status (never throws)", () => {
     const visual = nodeStatusVisual("Bogus");
 

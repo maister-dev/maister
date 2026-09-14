@@ -48,7 +48,9 @@ export async function runFlow(
   const graph = compileManifest(loaded.manifest);
   const hasOwnedPrompts = [...graph.nodes.values()].some(
     (node) =>
-      ["ai_coding", "judge", "orchestrator"].includes(node.nodeType) ||
+      ["ai_coding", "judge", "orchestrator", "consensus"].includes(
+        node.nodeType,
+      ) ||
       node.gates.some(
         (gate) => gate.kind === "ai_judgment" || gate.kind === "skill_check",
       ),

@@ -209,8 +209,9 @@ whatever supervisor was listening — and was green only while one happened to b
 A suite reaches that transport whenever its graph carries **owned prompts**:
 `runFlow` only takes the execution-host branch when `hasOwnedPrompts` is true
 and the run is `Running`/`NeedsInput`, so a graph of `cli`/`check` nodes or
-`artifact_required` gates needs nothing, while one with `ai_coding` nodes or
-`ai_judgment`/`skill_check` gates needs a host. The agent resume path and the
+`artifact_required` gates needs nothing, while one with `ai_coding`/`judge`/
+`orchestrator`/`consensus` nodes or `ai_judgment`/`skill_check` gates needs a
+host. The agent resume path and the
 `system_sweep` event-plane activation reach it too.
 
 Such a suite MUST mock the health seam — it does not need a real supervisor:

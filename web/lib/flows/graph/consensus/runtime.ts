@@ -26,6 +26,7 @@ import {
   CONSENSUS_TEXT_CAP_BYTES,
   latestConsensusRound,
   loadConsensusDraftEvidence,
+  loadConsensusDraftFailureReasons,
   loadConsensusVerdictCell,
   loadConsensusVerdicts,
   recordConsensusVerdict,
@@ -74,6 +75,9 @@ type RunConsensusNodeInput = {
   nodeAttemptId: string;
   nodeAttemptNumber: number;
   db: Db;
+  // Independent root handle for work that outlives this traversal — the draft
+  // children's dispatch. See ConsensusDraftLaunchInput.rootDb.
+  rootDb: Db;
 };
 
 type ConsensusHumanDecision = {
@@ -272,6 +276,65 @@ function orderedDrafts(
     .filter((draft): draft is ConsensusDraftEvidence => draft !== undefined);
 }
 
+function draftAvailable(draft: ConsensusDraftEvidence): boolean {
+  return draft.status === "Done" && !!draft.artifactText;
+}
+
+// A settled round in which no participant produced a draft is an
+// infrastructure failure, not a disagreement: verifying fail-closed over
+// nothing, spending another round on nothing and then asking a human to pick
+// between empty drafts would hide the real error. The node fails with the
+// children's terminal evidence instead.
+async function noDraftAvailableError(
+  args: RunConsensusNodeInput & {
+    round: number;
+    drafts: readonly ConsensusDraftEvidence[];
+  },
+): Promise<MaisterError> {
+  const reasons = await loadConsensusDraftFailureReasons({
+    db: args.db,
+    runIds: args.drafts.map((draft) => draft.runId),
+  });
+  const drafts = args.drafts.map((draft) => ({
+    participantId: draft.participantId,
+    runId: draft.runId,
+    status: draft.status,
+    reason: reasons[draft.runId] ?? null,
+  }));
+  const summary = drafts
+    .map(
+      (draft) =>
+        `${draft.participantId} (run ${draft.runId}) ${draft.status}` +
+        (draft.reason ? ` — ${draft.reason}` : ""),
+    )
+    .join("; ");
+
+  log.error(
+    {
+      runId: args.loaded.run.id,
+      nodeId: args.node.id,
+      nodeAttemptId: args.nodeAttemptId,
+      round: args.round,
+      drafts,
+    },
+    "consensus round produced no available draft — failing the node",
+  );
+
+  return new MaisterError(
+    "CRASH",
+    `consensus node ${args.node.id} round ${args.round} produced no available draft: ${summary}`,
+    {
+      details: {
+        reason: "consensus_no_draft_available",
+        runId: args.loaded.run.id,
+        nodeId: args.node.id,
+        round: args.round,
+        drafts,
+      },
+    },
+  );
+}
+
 function allDraftsSettled(
   def: ConsensusNodeDef,
   drafts: readonly ConsensusDraftEvidence[],
@@ -351,6 +414,7 @@ async function launchRound(
 ): Promise<ConsensusNodeResult> {
   const draftRuns = await launchConsensusDraftRuns({
     db: args.db,
+    rootDb: args.rootDb,
     projectId: args.loaded.run.projectId,
     taskId: args.loaded.run.taskId,
     flowRevisionId: args.loaded.run.flowRevisionId ?? null,
@@ -1159,6 +1223,10 @@ export async function runConsensusNode(
 
   if (currentRound === 0 || !allDraftsSettled(args.def, drafts)) {
     return launchRound({ ...args, round });
+  }
+
+  if (!drafts.some(draftAvailable)) {
+    throw await noDraftAvailableError({ ...args, round, drafts });
   }
 
   const verdicts = await verifyConsensusRound({ ...args, round, drafts });

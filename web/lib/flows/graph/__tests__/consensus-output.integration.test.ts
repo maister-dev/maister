@@ -30,6 +30,7 @@ import {
 import { closeDb } from "@/lib/db/client";
 import { recordCurrentArtifact } from "@/lib/flows/graph/artifact-store";
 import { runFlow } from "@/lib/flows/runner";
+import { fakeGraphHosts } from "@/test-support/fake-execution-host";
 import {
   schema,
   seedGraphRun as seedGraphRunShared,
@@ -131,6 +132,18 @@ function scriptCompletion(vars: Record<string, unknown>): void {
   );
 }
 
+// A consensus graph carries owned prompts, so runFlow takes the fenced driver
+// path and must name a host; the mocked runConsensusNode never reaches it.
+async function drive(seeded: SeededGraphRun): Promise<void> {
+  const { hosts } = await fakeGraphHosts(db, seeded.runId);
+
+  await runFlow(seeded.runId, {
+    db,
+    runtimeRoot: seeded.runtimeRoot,
+    executionHosts: hosts,
+  });
+}
+
 function consensusFlow(
   result: Record<string, unknown> | undefined,
   extra: Record<string, unknown> = {},
@@ -191,7 +204,7 @@ describe("runGraph — ADR-162 consensus engine_vars transport", () => {
       consensusFlow({ schema: "./schemas/consensus.json", required: true }),
     );
 
-    await runFlow(seeded.runId, { db, runtimeRoot: seeded.runtimeRoot });
+    await drive(seeded);
 
     expect((await getRun(seeded.runId)).status).toBe("Review");
 
@@ -225,7 +238,7 @@ describe("runGraph — ADR-162 consensus engine_vars transport", () => {
       consensusFlow({ schema: "./schemas/consensus.json" }),
     );
 
-    await runFlow(seeded.runId, { db, runtimeRoot: seeded.runtimeRoot });
+    await drive(seeded);
 
     expect((await getRun(seeded.runId)).status).toBe("Failed");
 
@@ -245,7 +258,7 @@ describe("runGraph — ADR-162 consensus engine_vars transport", () => {
       consensusFlow({ schema: "./schemas/consensus.json", required: true }),
     );
 
-    await runFlow(required.runId, { db, runtimeRoot: required.runtimeRoot });
+    await drive(required);
 
     expect((await getRun(required.runId)).status).toBe("Failed");
     expect(
@@ -261,7 +274,7 @@ describe("runGraph — ADR-162 consensus engine_vars transport", () => {
       consensusFlow({ schema: "./schemas/consensus.json" }, {}, 'echo "done"'),
     );
 
-    await runFlow(optional.runId, { db, runtimeRoot: optional.runtimeRoot });
+    await drive(optional);
 
     expect((await getRun(optional.runId)).status).toBe("Review");
 
@@ -283,7 +296,7 @@ describe("runGraph — ADR-162 consensus engine_vars transport", () => {
       ),
     );
 
-    await runFlow(seeded.runId, { db, runtimeRoot: seeded.runtimeRoot });
+    await drive(seeded);
 
     const attempts = await getAttempts(seeded.runId);
 
@@ -295,7 +308,7 @@ describe("runGraph — ADR-162 consensus engine_vars transport", () => {
 
     const seeded = await seedGraphRun(consensusFlow(undefined));
 
-    await runFlow(seeded.runId, { db, runtimeRoot: seeded.runtimeRoot });
+    await drive(seeded);
 
     expect((await getRun(seeded.runId)).status).toBe("Review");
 
@@ -378,7 +391,7 @@ describe("runGraph — ADR-162 consensus on_mismatch", () => {
       ),
     );
 
-    await runFlow(seeded.runId, { db, runtimeRoot: seeded.runtimeRoot });
+    await drive(seeded);
 
     expect((await getRun(seeded.runId)).status).toBe("Review");
 

@@ -1461,6 +1461,9 @@ async function executeNodeAction(
     flowDriverClaim?: FlowDriverClaim;
     signal?: AbortSignal;
     bindExecution?: () => Promise<AgentExecution>;
+    // The traversal-independent root handle (opts.driver.rootDb, else db) for
+    // work that outlives this traversal — a coordinator's child dispatch.
+    rootDb: Db;
     capabilityProfilePath?: string;
     capabilityInstructionsPath?: string;
     adapterLaunch?: ScratchAdapterLaunch;
@@ -1757,6 +1760,7 @@ async function executeNodeAction(
         nodeAttemptId: ctx.nodeAttemptId,
         nodeAttemptNumber: ctx.nodeAttemptNumber,
         db: ctx.db,
+        rootDb: ctx.rootDb,
       });
     }
     case "human":
@@ -3458,6 +3462,7 @@ export async function runGraph(
               flowDriverClaim: opts.driver?.claim,
               signal: opts.driver?.signal,
               bindExecution: ensureExecution,
+              rootDb,
               capabilityProfilePath: materialized?.capabilityProfilePath,
               capabilityInstructionsPath:
                 materialized?.capabilityInstructionsPath,
