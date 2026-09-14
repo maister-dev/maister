@@ -62,6 +62,25 @@ describe("collectContentArtifactIds — union over prompt/command/gate ∪ inlin
     ).toEqual(["plan"]);
   });
 
+  it("collects from a consensus node's top-level prompt", () => {
+    expect(
+      collectContentArtifactIds({
+        type: "consensus",
+        prompt: "Draft a plan from {{ artifacts.brief.content }}",
+      }),
+    ).toEqual(["brief"]);
+  });
+
+  it("does NOT collect a top-level prompt on a non-consensus node", () => {
+    expect(
+      collectContentArtifactIds({
+        type: "ai_coding",
+        prompt: "{{ artifacts.unused.content }}",
+        action: { prompt: "do it" },
+      }),
+    ).toEqual([]);
+  });
+
   it("collects from action.command (cli)", () => {
     expect(
       collectContentArtifactIds({

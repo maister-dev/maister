@@ -88,7 +88,14 @@ const log = pino({
 // config.schema.ts). The floor is the whole safety argument: below it the node
 // declaration stays advisory and the env ceilings alone bind, byte-identically
 // to ADR-163, so no shipped manifest changes behaviour.
-export const MAISTER_ENGINE_VERSION = "3.7.0";
+// Bumped 3.7.0 -> 3.8.0 for consensus prompt rendering: a `consensus` node's
+// `prompt` is template-rendered against the run context for the draft
+// participants (it was forwarded literally before) and scanned for
+// `{{ artifacts.<id>.content }}` like any action prompt. A flow whose consensus
+// prompt uses template variables SHOULD `compat.engine_min >= 3.8.0`; an older
+// engine forwards the literal text, which this engine cannot refuse on its
+// behalf, so the floor is documented rather than enforced at load.
+export const MAISTER_ENGINE_VERSION = "3.8.0";
 
 // Minimum engine version a graph (`nodes[]`) manifest must declare in
 // `compat.engine_min` (ADR-026). Enforced in `loadFlowManifest`.

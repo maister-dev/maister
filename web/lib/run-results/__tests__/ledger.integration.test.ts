@@ -102,7 +102,7 @@ describe("publishRunResult (ADR-165)", () => {
     expect(row.revision).toBe(1);
     expect(row.validity).toBe("valid");
     expect(row.value).toEqual({ summary: "one" });
-    expect(row.engineVersion).toBe("3.7.0");
+    expect(row.engineVersion).toBe("3.8.0");
     expect(row.supersededById).toBeNull();
     expect(row.firstCollectedAt).toBeNull();
   });

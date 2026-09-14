@@ -47,8 +47,8 @@ The graph-only cut-over started with engine 3.0.0: manifests require a non-empty
 top-level `nodes[]`. The parser and compiler reject any manifest containing
 `steps[]` with the locked migration message: `legacy steps[] flows are not
 supported since engine 3.0.0; republish the package with nodes[]`. The current
-host engine is `3.5.0` (Implemented — `MAISTER_ENGINE_VERSION` moved
-`3.4.0 → 3.5.0` for the flow-level `reentry` key, below). Graph packages remain
+host engine is `3.8.0` (Implemented — `MAISTER_ENGINE_VERSION` moved
+`3.7.0 → 3.8.0` for consensus prompt rendering, below). Graph packages remain
 compatible when their declared `compat` range includes that version. They do not
 need to raise an open-ended historical `engine_min`.
 
@@ -788,10 +788,12 @@ nodes:
 
 - **`prompt`** — the shared problem statement for every draft participant. It
   is rendered with the same strict Mustache context as `action.prompt`
-  (`{{ task.prompt }}`, `{{ steps.<id>.vars.<name> }}`, …) before the first
-  draft is launched; an unknown variable fails the node with `CONFIG` and no
-  draft child is created. Verifier critique appended on later rounds is agent
-  output and is never re-rendered.
+  (`{{ task.prompt }}`, `{{ steps.<id>.vars.<name> }}`,
+  `{{ artifacts.<id>.content }}`, …) before the first draft is launched; an
+  unknown variable fails the node with `CONFIG` and no draft child is created.
+  Verifier critique appended on later rounds is agent output and is never
+  re-rendered. Engines before `3.8.0` forwarded the prompt literally, so a
+  flow that relies on the rendering SHOULD declare `compat.engine_min >= 3.8.0`.
 - **`participants[]`** — 2..`MAISTER_MAX_ORCHESTRATOR_FANOUT` read-only draft
   authors. Each entry declares exactly one stable `id` plus either `agent` or
   `runner`; stale runtime resolution fails with `PRECONDITION`, not fallback.

@@ -7,8 +7,8 @@ import {
 } from "@/lib/flows/engine-version";
 
 describe("MAISTER_ENGINE_VERSION", () => {
-  it("is 3.7.0 for the governed recursive agent harness (ADR-165)", () => {
-    expect(MAISTER_ENGINE_VERSION).toBe("3.7.0");
+  it("is 3.8.0 for consensus prompt rendering", () => {
+    expect(MAISTER_ENGINE_VERSION).toBe("3.8.0");
   });
 });
 

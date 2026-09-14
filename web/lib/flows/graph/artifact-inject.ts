@@ -90,6 +90,8 @@ function renderedGateField(gate: ScanGate): string | undefined {
 }
 type ScanNode = {
   type?: string;
+  // `consensus` carries its prompt at the top level, not under `action`.
+  prompt?: unknown;
   action?: { prompt?: unknown; command?: unknown };
   input?: { requires?: unknown[] };
   pre_finish?: { gates?: ScanGate[] };
@@ -120,7 +122,8 @@ export type CollectContentOpts = {
 };
 
 // The union of artifact ids a node references for body injection (D10):
-//   - `{{ artifacts.<id>.content }}` in `action.prompt` / `cli.command`,
+//   - `{{ artifacts.<id>.content }}` in `action.prompt` / `cli.command` /
+//     a consensus node's top-level `prompt` (rendered for its drafters),
 //   - every `input.requires[].inline: true` entry's artifact id, and
 //   - the field each INCLUDED `pre_finish` gate renders (ai_judgment→prompt,
 //     skill_check/command_check→command — see `renderedGateField`).
@@ -152,6 +155,14 @@ export function collectContentArtifactIds(
       typeof n.action?.command === "string" ? n.action.command : undefined;
 
     for (const id of scanContentRefs(command)) ids.add(id);
+  }
+  // The consensus runtime renders the top-level `prompt` for every draft
+  // participant (runtime.ts launchRound), so its content refs must hydrate the
+  // context and count toward the engine floor exactly like an action prompt.
+  if (n.type === undefined || n.type === "consensus") {
+    const prompt = typeof n.prompt === "string" ? n.prompt : undefined;
+
+    for (const id of scanContentRefs(prompt)) ids.add(id);
   }
 
   for (const req of n.input?.requires ?? []) {

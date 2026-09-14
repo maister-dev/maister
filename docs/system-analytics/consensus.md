@@ -131,9 +131,10 @@ flowchart LR
   `MAISTER_MAX_ORCHESTRATOR_FANOUT` entries, each with exactly one of `agent` or
   `runner`.
 - The node `prompt` MUST be rendered against the parent run's template
-  context (strict, as `action.prompt`) before any draft child is launched;
-  an unknown variable MUST fail the node with `MaisterError("CONFIG")`
-  without creating a draft child.
+  context (strict, as `action.prompt`, including `{{ artifacts.<id>.content }}`
+  bodies) before any draft child is launched; an unknown variable MUST fail
+  the node with `MaisterError("CONFIG")` without creating a draft child
+  (engine `3.8.0`; earlier engines forwarded the prompt literally).
 - Consensus draft children MUST be durable read-only child runs before the
   parent enters `WaitingOnChildren`.
 - A consensus parent MUST wake only after every draft child in the current round
