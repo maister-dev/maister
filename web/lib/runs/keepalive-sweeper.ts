@@ -23,6 +23,7 @@ import pino from "pino";
 
 import { markCheckpointed } from "./state-transitions";
 
+import { createHitlRequest } from "@/lib/runs/hitl-create";
 import { atomicWriteJson } from "@/lib/atomic";
 import {
   createHitlAssignmentForRun,
@@ -1670,7 +1671,7 @@ async function actBudgetEscalate(
         await markNodeNeedsInput(attempt.id, tx);
       }
 
-      await tx.insert(hitlRequests).values({
+      await createHitlRequest(tx, {
         id: hitlRequestId,
         runId: candidate.id,
         stepId,

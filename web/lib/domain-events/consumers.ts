@@ -5,6 +5,7 @@ import type { DomainEventRow } from "@/lib/db/schema";
 import pino from "pino";
 
 import { agentTriggersConsumer } from "@/lib/agents/triggers";
+import { attentionNotificationsConsumer } from "@/lib/notifications/attention-consumer";
 import { autoLaunchRunPlanConsumer } from "@/lib/domain-events/auto-launch";
 import { costRollupReconcileConsumer } from "@/lib/domain-events/cost-rollup-reconcile";
 import { memoryHarvestConsumer } from "@/lib/domain-events/memory-harvest";
@@ -77,6 +78,12 @@ export const DOMAIN_EVENT_CONSUMERS: DomainEventConsumer[] = [
   // gate.failed events into lessons (guarded by projects.brain_enabled),
   // transient failures hold the cursor, schema-invalid distill skips+advances.
   memoryHarvestConsumer,
+  // ADR-173: the `attention.*` notification source. Recomputes each affected
+  // reader's `decisions` count and emits ONLY when the number moved — deltas and
+  // the digest, never a per-event stream (`NTF-08`). One entry, one cursor row,
+  // no new clock, and `handle` never throws (the dispatcher holds the cursor on
+  // a throw, so one bad reader would stall every later event).
+  attentionNotificationsConsumer,
   // ADR-127: source-indexed Brain tier reindexes enabled project sources after
   // run-terminal domain events. External repo edits remain manual reindex.
   sourceReindexConsumer,

@@ -416,7 +416,8 @@ export function AgentsAttachPanel({
             clearConfirmTitle: t("memoryClearConfirmTitle"),
             clearError: t("memoryClearError"),
             empty: t("memoryEmpty"),
-            size: t("memorySize"),
+            // RAW: the drawer interpolates `{size}`/`{max}` itself.
+            size: t.raw("memorySize"),
             overCap: t("memoryOverCap"),
             conflict: t("memoryConflict"),
             loadError: t("memoryLoadError"),

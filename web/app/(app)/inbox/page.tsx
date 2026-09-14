@@ -3,11 +3,12 @@ import type { ReactElement } from "react";
 
 import { getTranslations } from "next-intl/server";
 
+import { DecisionSections } from "@/components/inbox/decision-sections";
 import { HitlInboxList } from "@/components/inbox/hitl-inbox-list";
 import { InboxPanel } from "@/components/portfolio/inbox-panel";
 import { requireSession } from "@/lib/authz";
+import { getDecisionsQueue, hitlDecisionsOf } from "@/lib/queries/decisions";
 import { getInboxItems, getUnreadInboxCount } from "@/lib/queries/inbox";
-import { getCrossProjectHitlInbox } from "@/lib/queries/portfolio";
 
 export async function generateMetadata(): Promise<Metadata> {
   const t = await getTranslations("inbox");
@@ -19,13 +20,36 @@ export default async function InboxPage(): Promise<ReactElement> {
   const user = await requireSession();
   const t = await getTranslations("inbox");
   const tp = await getTranslations("portfolio");
+  const tStage = await getTranslations("workStage");
 
-  const [hitl, inboxItems, unreadInbox] = await Promise.all([
-    getCrossProjectHitlInbox(user.id, user.role),
+  // ADR-169 D8/ATN-05: the ONE canonical queue. Its `count` is the number the
+  // rail badge shows — React-`cache`d, so this is the same computation, not a
+  // second one free to disagree with it.
+  const [inboxItems, unreadInbox, queue] = await Promise.all([
     getInboxItems(user.id, user.role),
+    // The notifications panel's own population — unread mentions and comments,
+    // which are `updates`, not `decisions`. Keeping them separate is the point.
     getUnreadInboxCount(user.id, user.role),
+    getDecisionsQueue(user.id, user.role),
   ]);
-  const needsYou = hitl.count + unreadInbox;
+  const decisions = queue.count;
+  // ATN-01: the HITL cards come from the queue the count is the length of, not
+  // from a second, wider query printing its own number beside it.
+  const hitlItems = hitlDecisionsOf(queue.items);
+  const stageLabels = {
+    Triage: tStage("Triage"),
+    Held: tStage("Held"),
+    Ready: tStage("Ready"),
+    Queued: tStage("Queued"),
+    Executing: tStage("Executing"),
+    WaitingOnHuman: tStage("WaitingOnHuman"),
+    Review: tStage("Review"),
+    Crashed: tStage("Crashed"),
+    Promoted: tStage("Promoted"),
+    Abandoned: tStage("Abandoned"),
+    blocked: tStage("blocked"),
+    promotedResult: tStage("promotedResult"),
+  };
 
   return (
     <div className="w-full">
@@ -37,28 +61,36 @@ export default async function InboxPage(): Promise<ReactElement> {
           {t("title")}
         </h1>
         <p className="mt-1.5 max-w-[56ch] text-[13.5px] leading-[1.5] text-mute">
-          {t("subtitle", { count: needsYou })}
+          {t("subtitle", { count: decisions })}
         </p>
       </header>
 
-      {needsYou === 0 ? (
+      {decisions === 0 && unreadInbox === 0 ? (
         <div className="rounded-[14px] border border-line bg-paper px-6 py-12 text-center text-[13.5px] text-mute">
           {t("empty")}
         </div>
       ) : (
         <div className="flex flex-col gap-8">
-          {hitl.count > 0 ? (
+          {hitlItems.length > 0 ? (
             <section aria-label={tp("inboxAriaLabel")}>
               <h2 className="mb-3.5 inline-flex items-center gap-2.5 font-sans text-sm font-bold tracking-[-0.01em] text-ink before:h-[7px] before:w-[7px] before:rounded-full before:bg-amber before:content-['']">
-                {t("needsActionTitle", { count: hitl.count })}
+                {t("needsActionTitle", { count: hitlItems.length })}
               </h2>
-              <HitlInboxList
-                canAct
-                currentUserId={user.id}
-                items={hitl.items}
-              />
+              <HitlInboxList canAct currentUserId={user.id} items={hitlItems} />
             </section>
           ) : null}
+
+          <DecisionSections
+            items={queue.items}
+            labels={{
+              promotableTitle: t("decisions.promotableTitle"),
+              crashedTitle: t("decisions.crashedTitle"),
+              flaggedTitle: t("decisions.flaggedTitle"),
+              review: t("decisions.review"),
+              openTask: t("decisions.openTask"),
+              stage: stageLabels,
+            }}
+          />
 
           {unreadInbox > 0 ? (
             <InboxPanel

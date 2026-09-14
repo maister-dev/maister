@@ -14,11 +14,20 @@ info:
     this AsyncAPI doc therefore models the channel from the **consumer's**
     perspective, so the `subscribe` operation = "events the consumer receives".
 
-    **Curated taxonomy, not raw session noise.** Events are 16 curated
+    **Curated taxonomy, not raw session noise.** Events are 22 curated
     lifecycle facts mapped from MAIster DB transitions (run started, needs
     input, HITL requested/responded, review, promoted, done, failed, crashed,
-    abandoned, gate decided, ping). Low-level ACP `session/*` stream events are
+    abandoned, PR merged/closed/conflicts, rework claimed/returned, escalated,
+    gate decided, ping), plus the four **user-scoped** `attention.*` facts
+    (ADR-173). Low-level ACP `session/*` stream events are
     NEVER delivered here — see `../async/web-runs.asyncapi.yaml` for those.
+
+    **Two scope axes (ADR-173).** A `run.*`/`gate.*` event is project-scoped and
+    carries both `project` and `run`. An `attention.*` event is **user-scoped**:
+    `project` and `run` are both `null`, and it is delivered only to the
+    subscription owned by that user. A platform-wide subscription (one with no
+    project) MUST NOT receive user-scoped events, and a user subscription MUST
+    NOT receive project-scoped ones.
 
     **Envelope.** Every delivery body is one `WebhookEnvelope` (`apiVersion: 1`)
     with a stable `id`, the `type`, `occurredAt`, the per-delivery `deliveryId`
@@ -309,7 +318,7 @@ components:
 
     WebhookEventType:
       type: string
-      description: The 18 curated outbound event types.
+      description: The 22 curated outbound event types.
       enum:
         - run.started
         - run.needs_input
@@ -329,10 +338,16 @@ components:
         - run.pr_conflicts
         - gate.decided
         - ping
+        - attention.decision_opened
+        - attention.decision_closed
+        - attention.decisions_changed
+        - attention.digest
 
     ProjectBlock:
       type: object
-      description: Owning project. `null` only for the synthetic `ping` envelope.
+      description: >-
+        Owning project. `null` for the synthetic `ping` envelope and for every
+        user-scoped `attention.*` event (ADR-173).
       required: [id, slug, name]
       properties:
         id: { type: string, format: uuid }
@@ -342,8 +357,9 @@ components:
     RunBlock:
       type: object
       description: |
-        Originating run. `null` only for the synthetic `ping` envelope. `branch`
-        is the run's workspace branch.
+        Originating run. `null` for the synthetic `ping` envelope and for every
+        user-scoped `attention.*` event (ADR-173). `branch` is the run's
+        workspace branch.
       required: [id, taskId, flowId, branch, status]
       properties:
         id: { type: string, format: uuid }

@@ -1,16 +1,19 @@
+import type { RailBadges } from "@/components/chrome/left-rail-nav";
 import type { ReactElement, ReactNode } from "react";
 
 import { getTranslations } from "next-intl/server";
 import { redirect } from "next/navigation";
 
 import { LeftRail } from "@/components/chrome/left-rail";
+import { NavCrumb } from "@/components/chrome/nav-crumb";
 import { buildLeftRailSections } from "@/components/chrome/left-rail-sections";
 import { StatusBar } from "@/components/chrome/status-bar";
 import { TopNav } from "@/components/chrome/top-nav";
 import { summarizeAdapterReadiness } from "@/lib/acp-runners/readiness-summary";
 import { loadRunnerReadinessRows } from "@/lib/acp-runners/runner-readiness-rows";
 import { getSessionUser } from "@/lib/authz";
-import { getNeedsYouCount } from "@/lib/queries/needs-you";
+import { getDecisionsCount } from "@/lib/queries/decisions";
+import { getUpdatesCount } from "@/lib/queries/updates";
 import { getRailWorkspaceGroups } from "@/lib/queries/portfolio";
 import {
   getPlatformDiagnostics,
@@ -43,18 +46,23 @@ export default async function AppLayout({
     redirect("/change-password");
   }
 
+  // ATN-05 / ADR-169 D7: BOTH counters are computed here, once, and passed
+  // down. No surface recomputes its own number, and no badge derives one from
+  // the other — they are separate populations.
   const [
     railWorkspaceGroups,
     platformStatus,
     diagnostics,
     runnerRows,
-    needsYou,
+    decisions,
+    updates,
   ] = await Promise.all([
     sessionUser ? getRailWorkspaceGroups(sessionUser.id, sessionUser.role) : [],
     getPlatformStatus(),
     getPlatformDiagnostics(),
     loadRunnerReadinessRows(),
-    sessionUser ? getNeedsYouCount(sessionUser.id, sessionUser.role) : 0,
+    sessionUser ? getDecisionsCount(sessionUser.id, sessionUser.role) : 0,
+    sessionUser ? getUpdatesCount(sessionUser.id, sessionUser.role) : 0,
   ]);
 
   const runnersReadiness = summarizeAdapterReadiness({
@@ -78,12 +86,31 @@ export default async function AppLayout({
     (key) => tNav(key),
     sessionUser?.role,
   );
+  const railBadges: RailBadges = {
+    inbox: {
+      value: decisions,
+      tone: "attention",
+      label: tNav("badgeDecisions").replace("$count", String(decisions)),
+    },
+    activity: {
+      value: updates,
+      tone: "neutral",
+      label: tNav("badgeUpdates").replace("$count", String(updates)),
+    },
+  };
 
   return (
     <div className="flex min-h-screen flex-col bg-paper-warm pb-9">
       <TopNav
-        crumb={<NavCrumb />}
-        inboxCount={needsYou}
+        badges={railBadges}
+        crumb={
+          <NavCrumb
+            fallback={tNav("crumbDesk")}
+            labels={Object.fromEntries(
+              railSections.map((section) => [section.id, section.label]),
+            )}
+          />
+        }
         sections={railSections}
         user={navUser}
       />
@@ -94,7 +121,7 @@ export default async function AppLayout({
         data-density="comfy"
       >
         <LeftRail
-          inboxCount={needsYou}
+          badges={railBadges}
           platformStatus={platformStatus}
           runnersReadiness={runnersReadiness}
           sections={railSections}
@@ -106,14 +133,5 @@ export default async function AppLayout({
 
       <StatusBar platformStatus={platformStatus} />
     </div>
-  );
-}
-
-function NavCrumb(): ReactElement {
-  return (
-    <>
-      <span className="text-line">/</span>
-      <b className="font-semibold text-ink">portfolio</b>
-    </>
   );
 }

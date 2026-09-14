@@ -7036,19 +7036,9 @@ export type TokenLifecycleEventInsert =
 // Outbound webhooks (ADR-077). Transactional-outbox capture + singleton-drainer
 // fanout/delivery. Secrets are NEVER stored: signing_secret_ref and header values
 // are `env:NAME` references resolved server-side, never plaintext.
-export type WebhookEventType =
-  | "run.started"
-  | "run.needs_input"
-  | "hitl.requested"
-  | "hitl.responded"
-  | "run.review"
-  | "run.promoted"
-  | "run.done"
-  | "run.failed"
-  | "run.crashed"
-  | "run.abandoned"
-  | "gate.decided"
-  | "ping";
+// The event-type union lives in `lib/webhooks/taxonomy.ts`, which is the single
+// source of truth every emitter and the drainer import. A second copy here went
+// 10 entries stale before anyone noticed, so it is deliberately not restored.
 export type WebhookErrorKind = "timeout" | "network" | "http" | "config";
 
 export const webhookSubscriptions = pgTable(
@@ -7056,6 +7046,15 @@ export const webhookSubscriptions = pgTable(
   {
     id: text("id").primaryKey(),
     projectId: text("project_id").references(() => projects.id, {
+      onDelete: "cascade",
+    }),
+    /**
+     * ADR-173: the SECOND, independent scope axis. `NULL`
+     * means "not owned by a person" — a project or platform subscription. A
+     * non-null owner makes the row user-scoped, and a user-scoped subscription
+     * never matches a project event (see `subscriptionMatches`).
+     */
+    ownerUserId: text("owner_user_id").references(() => users.id, {
       onDelete: "cascade",
     }),
     name: text("name").notNull(),
@@ -7080,6 +7079,7 @@ export const webhookSubscriptions = pgTable(
   },
   (t) => ({
     idxProject: index("webhook_subscriptions_project_idx").on(t.projectId),
+    idxOwner: index("webhook_subscriptions_owner_idx").on(t.ownerUserId),
   }),
 );
 export type WebhookSubscription = typeof webhookSubscriptions.$inferSelect;
@@ -7092,12 +7092,16 @@ export const webhookEvents = pgTable(
   "webhook_events",
   {
     id: text("id").primaryKey(),
-    projectId: text("project_id")
-      .notNull()
-      .references(() => projects.id, { onDelete: "cascade" }),
-    runId: text("run_id")
-      .notNull()
-      .references(() => runs.id, { onDelete: "cascade" }),
+    /**
+     * NULLABLE since the ADR-173 widening: a user-scoped `attention.*`
+     * event has no project and no run. Every reader of these two columns is
+     * enumerated in ADR-173 D2 and covered by `IT-NTF-02` — a reader that
+     * structurally cannot see a NULL row is the defect shape.
+     */
+    projectId: text("project_id").references(() => projects.id, {
+      onDelete: "cascade",
+    }),
+    runId: text("run_id").references(() => runs.id, { onDelete: "cascade" }),
     type: text("type").notNull(),
     data: jsonb("data").$type<Record<string, unknown>>().notNull(),
     payload: jsonb("payload").$type<Record<string, unknown>>(),
@@ -7126,9 +7130,25 @@ export const webhookDeliveries = pgTable(
     eventId: text("event_id")
       .notNull()
       .references(() => webhookEvents.id, { onDelete: "cascade" }),
-    subscriptionId: text("subscription_id")
-      .notNull()
-      .references(() => webhookSubscriptions.id, { onDelete: "cascade" }),
+    /**
+     * NULLABLE since the ADR-173 widening: a `web_push` delivery targets a
+     * browser endpoint, not an HTTP subscription. Exactly one of
+     * `subscription_id` / `push_subscription_id` is set, enforced by
+     * `webhook_deliveries_one_target`.
+     */
+    subscriptionId: text("subscription_id").references(
+      () => webhookSubscriptions.id,
+      { onDelete: "cascade" },
+    ),
+    /**
+     * The push endpoint this delivery targets. `ON DELETE CASCADE` is the other
+     * half of `NTF-05`: a `410 Gone` deletes the endpoint, and its attempt rows
+     * go with it rather than dangling.
+     */
+    pushSubscriptionId: text("push_subscription_id").references(
+      () => pushSubscriptions.id,
+      { onDelete: "cascade" },
+    ),
     status: text("status", { enum: ["pending", "delivered", "dead"] })
       .notNull()
       .default("pending"),
@@ -7159,8 +7179,18 @@ export const webhookDeliveries = pgTable(
       .defaultNow(),
   },
   (t) => ({
+    // Exactly one target. A row with both would be delivered twice; a row with
+    // neither has nowhere to go and would be claimed forever by the drain pass.
+    oneTarget: check(
+      "webhook_deliveries_one_target",
+      sql`(${t.subscriptionId} IS NULL) <> (${t.pushSubscriptionId} IS NULL)`,
+    ),
     uniqSubscriptionEvent: uniqueIndex("webhook_deliveries_sub_event_uq").on(
       t.subscriptionId,
+      t.eventId,
+    ),
+    uniqPushEvent: uniqueIndex("webhook_deliveries_push_event_uq").on(
+      t.pushSubscriptionId,
       t.eventId,
     ),
     idxDue: index("webhook_deliveries_due_idx")
@@ -7585,3 +7615,118 @@ export const domainEventConsumers = pgTable("domain_event_consumers", {
 export type DomainEventConsumerRow = typeof domainEventConsumers.$inferSelect;
 export type DomainEventConsumerInsert =
   typeof domainEventConsumers.$inferInsert;
+
+// M51 (ADR-169 D3): one read cursor per user, global rather than per project.
+// An ABSENT row means "never looked" — deliberately not seeded with a constant
+// default, which would look populated while permanently excluding every
+// pre-migration user from the fallback window.
+export const userActivityCursors = pgTable("user_activity_cursors", {
+  userId: text("user_id")
+    .primaryKey()
+    .references(() => users.id, { onDelete: "cascade" }),
+  seenThrough: timestamp("seen_through", {
+    withTimezone: true,
+    mode: "date",
+  }).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+    .notNull()
+    .defaultNow(),
+});
+export type UserActivityCursorRow = typeof userActivityCursors.$inferSelect;
+export type UserActivityCursorInsert = typeof userActivityCursors.$inferInsert;
+
+/**
+ * ADR-173: the four user-scoped notification facts. Deltas and the digest only —
+ * never a per-event stream, which is the anti-pattern that trains a reader to
+ * mute the channel within a week (`NTF-08`).
+ */
+export const ATTENTION_NOTIFICATION_TYPES = [
+  "attention.decision_opened",
+  "attention.decision_closed",
+  "attention.decisions_changed",
+  "attention.digest",
+] as const;
+
+export type AttentionNotificationType =
+  (typeof ATTENTION_NOTIFICATION_TYPES)[number];
+
+export const NOTIFICATION_TRANSPORTS = ["web_push", "webhook"] as const;
+
+export type NotificationTransport = (typeof NOTIFICATION_TRANSPORTS)[number];
+
+/**
+ * A browser push endpoint (ADR-173). `endpoint`, `p256dh` and `auth`
+ * are stored OPAQUE: never parsed for routing, never used to derive a host,
+ * never logged. A reader may hold several (one per browser), so delivery fans
+ * out per owner.
+ */
+export const pushSubscriptions = pgTable(
+  "push_subscriptions",
+  {
+    id: text("id").primaryKey(),
+    ownerUserId: text("owner_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    endpoint: text("endpoint").notNull(),
+    p256dh: text("p256dh").notNull(),
+    auth: text("auth").notNull(),
+    expirationTime: bigint("expiration_time", { mode: "number" }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    // Re-registering the same browser is idempotent.
+    uniqOwnerEndpoint: uniqueIndex("push_subscriptions_owner_endpoint_key").on(
+      t.ownerUserId,
+      t.endpoint,
+    ),
+    idxOwner: index("push_subscriptions_owner_idx").on(t.ownerUserId),
+  }),
+);
+export type PushSubscriptionRow = typeof pushSubscriptions.$inferSelect;
+export type PushSubscriptionInsert = typeof pushSubscriptions.$inferInsert;
+
+/**
+ * Per-user delivery INTENT (ADR-173): which `attention.*` types, over
+ * which transport. One intent per owner per transport, so two rows cannot
+ * disagree.
+ *
+ * There is deliberately no FK to a transport row. A `web_push` intent means
+ * "notify me on EVERY browser I have registered"; pointing it at one
+ * `push_subscriptions` row would silently stop notifying the others the moment
+ * a second browser appeared. The owner column is the join.
+ */
+export const notificationSubscriptions = pgTable(
+  "notification_subscriptions",
+  {
+    id: text("id").primaryKey(),
+    ownerUserId: text("owner_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    transport: text("transport", { enum: NOTIFICATION_TRANSPORTS }).notNull(),
+    eventTypes: jsonb("event_types")
+      .$type<AttentionNotificationType[]>()
+      .notNull(),
+    enabled: boolean("enabled").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    uniqOwnerTransport: uniqueIndex(
+      "notification_subscriptions_owner_transport_key",
+    ).on(t.ownerUserId, t.transport),
+    idxOwner: index("notification_subscriptions_owner_idx").on(t.ownerUserId),
+  }),
+);
+export type NotificationSubscriptionRow =
+  typeof notificationSubscriptions.$inferSelect;
+export type NotificationSubscriptionInsert =
+  typeof notificationSubscriptions.$inferInsert;

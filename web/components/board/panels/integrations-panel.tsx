@@ -81,6 +81,8 @@ export interface TokenLabels {
   scopeHitlRequest: string;
   scopeHitlRespond: string;
   scopeHitlInboxRead: string;
+  scopeDecisionsRead: string;
+  scopeNotificationsSubscriptions: string;
   scopeHitlRespondHuman: string;
   scopeCommentsRead: string;
   scopeCommentsCreate: string;
@@ -152,6 +154,10 @@ function scopeLabel(labels: TokenLabels, scope: string): string {
       return labels.scopeHitlRespond;
     case "hitl:inbox:read":
       return labels.scopeHitlInboxRead;
+    case "decisions:read":
+      return labels.scopeDecisionsRead;
+    case "notifications:subscriptions":
+      return labels.scopeNotificationsSubscriptions;
     case "hitl:respond:human":
       return labels.scopeHitlRespondHuman;
     case "comments:read":
@@ -406,6 +412,8 @@ export async function IntegrationsPanel({
     scopeHitlRequest: t("scopeHitlRequest"),
     scopeHitlRespond: t("scopeHitlRespond"),
     scopeHitlInboxRead: t("scopeHitlInboxRead"),
+    scopeDecisionsRead: t("scopeDecisionsRead"),
+    scopeNotificationsSubscriptions: t("scopeNotificationsSubscriptions"),
     scopeHitlRespondHuman: t("scopeHitlRespondHuman"),
     scopeCommentsRead: t("scopeCommentsRead"),
     scopeCommentsCreate: t("scopeCommentsCreate"),
@@ -447,7 +455,8 @@ export async function IntegrationsPanel({
     apply: t("audit.apply"),
     pagePrev: t("audit.pagePrev"),
     pageNext: t("audit.pageNext"),
-    pageLabel: t("audit.pageLabel"),
+    // RAW: `NumberedPagination` interpolates `{page}` itself.
+    pageLabel: t.raw("audit.pageLabel"),
     paginationLabel: t("audit.paginationLabel"),
   };
 

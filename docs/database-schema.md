@@ -1279,6 +1279,125 @@ the acting pair) inside the same transaction as the triggering write.
 Indexed `(recipient_type, recipient_id, read_at, created_at DESC)` for the
 unread badge and inbox panel.
 
+## Attention and notification tables (Implemented — ADR-169/ADR-173, migrations `01640`–`01660`)
+
+Three new tables plus one widening of the shipped ADR-077 tables. The DDL below
+is the **specification**: the migrations implement it rather than becoming it.
+Constraint and index names are normative.
+
+### `user_activity_cursors` (migration `01640`)
+
+One row per user; an **absent** row means "never looked" and is the correct
+seed. No backfill and no constant default — a pre-seeded cursor would
+permanently exclude every pre-migration row from `updates`.
+
+```sql
+CREATE TABLE user_activity_cursors (
+  user_id      text        PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  seen_through timestamptz NOT NULL,
+  updated_at   timestamptz NOT NULL DEFAULT now()
+);
+```
+
+The only write is a monotonic upsert, so a replayed or out-of-order request
+cannot rewind the cursor (`ATN-10`):
+
+```sql
+INSERT INTO user_activity_cursors (user_id, seen_through, updated_at)
+VALUES ($1, $2, now())
+ON CONFLICT (user_id) DO UPDATE
+  SET seen_through = GREATEST(excluded.seen_through, user_activity_cursors.seen_through),
+      updated_at   = now();
+```
+
+### `push_subscriptions` (migration `01650`)
+
+A browser push endpoint. `endpoint`, `p256dh` and `auth` are stored **opaque**:
+never parsed for routing, never used to derive a host, never logged. A user may
+hold several (one per browser), so the fan-out is per-owner.
+
+```sql
+CREATE TABLE push_subscriptions (
+  id              text        PRIMARY KEY,
+  owner_user_id   text        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  endpoint        text        NOT NULL,
+  p256dh          text        NOT NULL,
+  auth            text        NOT NULL,
+  expiration_time bigint,
+  created_at      timestamptz NOT NULL DEFAULT now(),
+  updated_at      timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT push_subscriptions_owner_endpoint_key UNIQUE (owner_user_id, endpoint)
+);
+CREATE INDEX push_subscriptions_owner_idx ON push_subscriptions (owner_user_id);
+```
+
+The unique constraint makes re-registering the same endpoint idempotent. A push
+`410 Gone` **deletes** the row (`NTF-05`).
+
+### `notification_subscriptions` (migration `01650`)
+
+Per-user delivery **intent**: which `attention.*` types, over which transport.
+One intent row per owner per transport; the sender fans out to that owner's
+`push_subscriptions` rows for `web_push`, and to that owner's
+`webhook_subscriptions` rows for `webhook`. No nullable double-FK to the
+transport tables — the owner is the join.
+
+```sql
+CREATE TABLE notification_subscriptions (
+  id            text        PRIMARY KEY,
+  owner_user_id text        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  transport     text        NOT NULL,
+  event_types   jsonb       NOT NULL,
+  enabled       boolean     NOT NULL DEFAULT true,
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  updated_at    timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT notification_subscriptions_owner_transport_key
+    UNIQUE (owner_user_id, transport)
+);
+CREATE INDEX notification_subscriptions_owner_idx
+  ON notification_subscriptions (owner_user_id);
+```
+
+`transport` is `'web_push' | 'webhook'`. `event_types` holds a subset of
+`attention.decision_opened | attention.decision_closed |
+attention.decisions_changed | attention.digest` — the delta and digest triggers
+only, never a per-event stream (`NTF-08`).
+
+### Widening the ADR-077 tables (migration `01660`, cross-cutting)
+
+Its **own** migration number, never folded into `01650`: it changes live shipped
+tables and must be reviewable and revertable on its own. It widens; it drops
+nothing.
+
+```sql
+ALTER TABLE webhook_events     ALTER COLUMN project_id      DROP NOT NULL;
+ALTER TABLE webhook_events     ALTER COLUMN run_id          DROP NOT NULL;
+ALTER TABLE webhook_deliveries ALTER COLUMN subscription_id DROP NOT NULL;
+ALTER TABLE webhook_subscriptions
+  ADD COLUMN owner_user_id text REFERENCES users(id) ON DELETE CASCADE;
+ALTER TABLE webhook_deliveries
+  ADD COLUMN push_subscription_id text
+    REFERENCES push_subscriptions(id) ON DELETE CASCADE;
+CREATE INDEX webhook_subscriptions_owner_idx
+  ON webhook_subscriptions (owner_user_id);
+CREATE UNIQUE INDEX webhook_deliveries_push_event_uq
+  ON webhook_deliveries (push_subscription_id, event_id);
+ALTER TABLE webhook_deliveries ADD CONSTRAINT webhook_deliveries_one_target
+  CHECK ((subscription_id IS NULL) <> (push_subscription_id IS NULL));
+```
+
+`webhook_deliveries` widens because ADR-173 D7 stamps `delivered_at` — a column
+of THIS table — for a push delivery too, and a push endpoint has neither an HTTP
+subscription nor an HMAC secret. Exactly one target is set per row; the `410 Gone`
+that deletes an endpoint cascades its attempts away rather than leaving them
+dangling. Every pre-existing row has `subscription_id` set and
+`push_subscription_id` NULL, so the CHECK holds for live data.
+
+Scope becomes **two independent axes**, and the existing single-disjunct match
+expression is wrong once `webhook_events.project_id` can be NULL — see
+[ADR-173](decisions.md#adr-173) D3 and
+[`db/webhooks.md`](db/webhooks.md).
+
 ## `runs`
 
 ```ts

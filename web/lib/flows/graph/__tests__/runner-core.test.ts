@@ -1,3 +1,4 @@
+import { MAISTER_ENGINE_VERSION } from "@/lib/flows/engine-version";
 import { getTableName } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
@@ -203,8 +204,7 @@ describe("loadRun — per-session set (M42)", () => {
       ),
     ).rejects.toMatchObject({
       code: "CONFIG",
-      message:
-        "flow manifest in flow revision revision-1 is incompatible with this MAIster engine: engine 3.7.0 < engine_min 4.0.0",
+      message: `flow manifest in flow revision revision-1 is incompatible with this MAIster engine: engine ${MAISTER_ENGINE_VERSION} < engine_min 4.0.0`,
     });
   });
 });

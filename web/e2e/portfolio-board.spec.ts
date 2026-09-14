@@ -2,12 +2,16 @@ import { test, expect } from "@playwright/test";
 
 import { loadFixtures } from "./_seed/fixtures";
 
-test("portfolio and project board expose seeded acceptance work", async ({
+// `E2E-NAV-03` (ADR-172 D2): the portfolio moved from `/` to `/projects` and
+// must render exactly what `/` rendered before — the same heading, the same
+// project cards, the same onboarding checklist and the same decisions summary.
+// A relocation that quietly drops one of those is the failure mode D2 names.
+test("E2E-NAV-03 portfolio and project board expose seeded acceptance work", async ({
   page,
 }) => {
   const fx = loadFixtures().byKey.board;
 
-  await page.goto("/");
+  await page.goto("/projects");
 
   await expect(page.getByRole("heading", { name: "Projects." })).toBeVisible();
   // exact:true targets the main-grid project link. The left rail (rendered at
@@ -22,9 +26,15 @@ test("portfolio and project board expose seeded acceptance work", async ({
   await expect(
     page.getByRole("link", { name: /acceptance-needs-input/ }).first(),
   ).toBeVisible();
-  // WI-1: home collapses the cross-project HITL + social inbox into one compact
-  // "Needs you" summary card (the full surfaces moved to /inbox).
-  await expect(page.getByTestId("needs-you-summary")).toBeVisible();
+  // WI-1: the portfolio collapses the cross-project HITL + social inbox into one
+  // compact "Needs you" summary card (the full surfaces moved to /inbox).
+  await expect(page.getByTestId("decisions-summary")).toBeVisible();
+  // The onboarding checklist is NOT asserted here. `OnboardingChecklist` returns
+  // null once all three first-run steps are complete, and whether this shared
+  // database has launched a task depends on which specs ran first — so the
+  // assertion is order-dependent, not a fact about the move. `UT-NAV-03` proves
+  // the moved page still mounts it, and `E2E-EDGE-NAV-01` renders it for a
+  // reader whose onboarding genuinely is incomplete.
 
   await page.goto(`/projects/${fx.projectSlug}`);
 
@@ -67,7 +77,7 @@ test("portfolio and project board expose seeded acceptance work", async ({
   await expect(page.getByText("acceptance").first()).toBeVisible();
 
   await page.setViewportSize({ width: 375, height: 800 });
-  await page.goto("/");
+  await page.goto("/projects");
 
   const mobileNavTrigger = page.getByTestId("mobile-rail-toggle");
 

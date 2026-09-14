@@ -28,10 +28,19 @@ const log = pino({
 });
 
 // Platform scope = { projectId: null }. Project scope = { projectId: <uuid> }.
-// Every read/write is scoped so the same service backs both the platform-admin
-// routes (T11) and the project routes (T12) without leaking across the boundary.
+// Owner scope = { projectId: null, ownerUserId: <uuid> } — ADR-173's third axis.
+// Every read/write is scoped so the same service backs the platform-admin
+// routes (T11), the project routes (T12) and a person's own notification
+// target without leaking across any of those boundaries.
 export interface SubscriptionScope {
   projectId: string | null;
+  /**
+   * ADR-173: whose subscription this is. Non-null makes the row USER-scoped,
+   * which is the only shape `subscriptionMatches` pairs with a user-scoped
+   * `attention.*` event — a platform row never receives one. Platform scope is
+   * both columns NULL, which is why it cannot be spelled by `projectId` alone.
+   */
+  ownerUserId?: string | null;
 }
 
 // Wire DTO. Mixed casing is intentional and matches the OpenAPI
@@ -194,9 +203,30 @@ async function toDto(handle: Db, row: any): Promise<WebhookSubscriptionDto> {
   };
 }
 
+/**
+ * "Platform-wide" means `project_id IS NULL` **and** `owner_user_id IS NULL`.
+ *
+ * The owner clause is not optional. A user subscription (ADR-173) also carries
+ * `project_id IS NULL`, so `isNull(projectId)` alone would make every admin
+ * platform-scope query list, read, delete and expose the deliveries of other
+ * people's PERSONAL subscriptions — ADR-173 D3's bug one layer up. A
+ * project-scoped query needs no owner clause: a personal subscription is never
+ * bound to a project.
+ */
 function scopeFilter(scope: SubscriptionScope) {
+  const owner = scope.ownerUserId ?? null;
+
+  // An owner scope stands on its own: a personal subscription always carries
+  // `project_id IS NULL`, so intersecting with the platform clause would make
+  // every owner query select nothing, and intersecting with a project clause is
+  // a shape that does not exist.
+  if (owner !== null) return eq(webhookSubscriptions.ownerUserId, owner);
+
   return scope.projectId === null
-    ? isNull(webhookSubscriptions.projectId)
+    ? and(
+        isNull(webhookSubscriptions.projectId),
+        isNull(webhookSubscriptions.ownerUserId),
+      )
     : eq(webhookSubscriptions.projectId, scope.projectId);
 }
 
@@ -248,6 +278,7 @@ export async function createSubscription(
     .values({
       id,
       projectId: scope.projectId,
+      ownerUserId: scope.ownerUserId ?? null,
       name: input.name,
       url: input.url,
       method: input.method ?? "POST",
@@ -260,7 +291,7 @@ export async function createSubscription(
     .returning();
 
   log.debug(
-    { id, projectId: scope.projectId },
+    { id, projectId: scope.projectId, ownerUserId: scope.ownerUserId ?? null },
     "[webhooks.subscriptions] created",
   );
 
@@ -363,9 +394,10 @@ export async function deleteSubscription(
   const handle: Db = db ?? getDb();
 
   const deleted = await handle.transaction(async (tx: Db) => {
+    // See `scopeFilter`: platform excludes user-owned rows (ADR-173).
     const scopeSql =
       scope.projectId === null
-        ? sql`project_id IS NULL`
+        ? sql`project_id IS NULL AND owner_user_id IS NULL`
         : sql`project_id = ${scope.projectId}`;
     const current = await tx.execute(sql`
       SELECT 1 FROM webhook_subscriptions
@@ -507,7 +539,8 @@ async function loadAttempts(
 // Server-state ownership join: does `deliveryId` belong to subscription
 // `subscriptionId`, AND is that subscription in `scope`? The replay/inspection
 // routes call this BEFORE acting so a cross-subscription (or cross-scope)
-// delivery id is a 404, never a leaked 409/200. project_id IS NULL ↔ platform.
+// delivery id is a 404, never a leaked 409/200. Platform ↔ project_id IS NULL
+// AND owner_user_id IS NULL (ADR-173 — a personal subscription is not platform).
 export async function deliveryBelongsToScopedSubscription(
   scope: SubscriptionScope,
   subscriptionId: string,
@@ -517,7 +550,7 @@ export async function deliveryBelongsToScopedSubscription(
   const handle: Db = db ?? getDb();
   const scopeSql =
     scope.projectId === null
-      ? sql`s.project_id IS NULL`
+      ? sql`s.project_id IS NULL AND s.owner_user_id IS NULL`
       : sql`s.project_id = ${scope.projectId}`;
   const r = await handle.execute(sql`
     SELECT 1
@@ -533,8 +566,9 @@ export async function deliveryBelongsToScopedSubscription(
 }
 
 // Self-scoping: the rows are filtered by subscription_id AND a JOIN-equivalent
-// scope predicate on the owning subscription (project_id IS NULL for platform,
-// = scope.projectId for a project). A subscriptionId outside `scope` returns an
+// scope predicate on the owning subscription (project_id IS NULL AND
+// owner_user_id IS NULL for platform, = scope.projectId for a project — see
+// `scopeFilter`). A subscriptionId outside `scope` returns an
 // empty page — never another scope's deliveries. The route still 404-guards the
 // subscription first; this is defense-in-depth for the shared (T12) service.
 export async function listDeliveries(
@@ -552,7 +586,7 @@ export async function listDeliveries(
 
   const scopeProjectSql =
     scope.projectId === null
-      ? sql`s.project_id IS NULL`
+      ? sql`s.project_id IS NULL AND s.owner_user_id IS NULL`
       : sql`s.project_id = ${scope.projectId}`;
   const scopedOwnership = sql`
     ${webhookDeliveries.subscriptionId} = ${subscriptionId}

@@ -8,6 +8,7 @@ import { and, eq } from "drizzle-orm";
 import pino from "pino";
 
 import { createHitlAssignmentForRun } from "@/lib/assignments/service";
+import { createHitlRequestIfAbsent } from "@/lib/runs/hitl-create";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 
@@ -83,9 +84,9 @@ export async function createPlanReviewDecisionRequests({
         : {}),
     };
     const requestId = randomUUID();
-    const [inserted] = await db
-      .insert(hitlRequests)
-      .values({
+    const inserted = (await createHitlRequestIfAbsent(
+      db,
+      {
         id: requestId,
         runId,
         stepId: nodeId,
@@ -95,12 +96,12 @@ export async function createPlanReviewDecisionRequests({
         parentHitlRequestId,
         sourceArtifactId,
         decisionId: decision.id,
-      })
-      .onConflictDoNothing()
-      .returning({
+      },
+      {
         id: hitlRequests.id,
         parentHitlRequestId: hitlRequests.parentHitlRequestId,
-      });
+      },
+    )) as { id: string; parentHitlRequestId: string | null } | undefined;
     const persisted =
       inserted ??
       (

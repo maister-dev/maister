@@ -1,5 +1,8 @@
 import type { ActiveWorkspaceRowLabels } from "@/components/chrome/active-workspace-row";
-import type { LeftRailNavSection } from "@/components/chrome/left-rail-nav";
+import type {
+  LeftRailNavSection,
+  RailBadges,
+} from "@/components/chrome/left-rail-nav";
 import type { RailSectionId } from "@/components/chrome/left-rail-route";
 import type {
   AdapterReadinessCause,
@@ -62,7 +65,7 @@ export interface LeftRailProps {
   activeSection?: RailSectionId | null;
   workspaces?: RailWorkspace[];
   workspaceGroups?: RailWorkspaceGroup[];
-  inboxCount?: number;
+  badges?: RailBadges;
   platformStatus: PlatformStatus;
   runnersReadiness?: readonly AdapterReadinessSummary[];
   sections?: LeftRailNavSection[];
@@ -154,7 +157,7 @@ export async function LeftRail({
   activeSection = "projects",
   workspaces = [],
   workspaceGroups = [],
-  inboxCount = 0,
+  badges,
   platformStatus,
   runnersReadiness = [],
   sections: providedSections,
@@ -239,8 +242,8 @@ export async function LeftRail({
       <LeftRailNav
         activeSection={activeSection}
         ariaLabel={tNav("sectionsLabel")}
+        badges={badges}
         comingSoon={tNav("comingSoon")}
-        inboxCount={inboxCount}
         sections={sections}
         variant="collapsed"
       />
@@ -410,8 +413,8 @@ export async function LeftRail({
       <LeftRailNav
         activeSection={activeSection}
         ariaLabel={tNav("sectionsLabel")}
+        badges={badges}
         comingSoon={tNav("comingSoon")}
-        inboxCount={inboxCount}
         sections={sections}
         variant="expanded"
       />

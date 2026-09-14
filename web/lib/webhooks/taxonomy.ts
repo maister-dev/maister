@@ -27,6 +27,13 @@ export const WEBHOOK_EVENT_TYPES = [
   "run.pr_conflicts",
   "gate.decided",
   "ping",
+  // ADR-173: the four USER-scoped attention facts. Their envelopes carry
+  // `project: null` and `run: null` — a shape D4 notes consumers were already
+  // obliged to handle, so there is no `apiVersion` bump.
+  "attention.decision_opened",
+  "attention.decision_closed",
+  "attention.decisions_changed",
+  "attention.digest",
 ] as const;
 
 export type WebhookEventType = (typeof WEBHOOK_EVENT_TYPES)[number];
@@ -35,6 +42,31 @@ const WEBHOOK_EVENT_TYPE_SET = new Set<string>(WEBHOOK_EVENT_TYPES);
 
 export function isWebhookEventType(s: string): s is WebhookEventType {
   return WEBHOOK_EVENT_TYPE_SET.has(s);
+}
+
+/**
+ * The four `attention.*` types, as their own list. A notification subscription
+ * may name only these, and only deltas and the digest exist — a per-event
+ * stream is the anti-pattern `NTF-08` forbids.
+ */
+export const ATTENTION_WEBHOOK_EVENT_TYPES = [
+  "attention.decision_opened",
+  "attention.decision_closed",
+  "attention.decisions_changed",
+  "attention.digest",
+] as const satisfies readonly WebhookEventType[];
+
+export type AttentionWebhookEventType =
+  (typeof ATTENTION_WEBHOOK_EVENT_TYPES)[number];
+
+const ATTENTION_TYPE_SET: ReadonlySet<string> = new Set(
+  ATTENTION_WEBHOOK_EVENT_TYPES,
+);
+
+export function isAttentionWebhookEventType(
+  value: string,
+): value is AttentionWebhookEventType {
+  return ATTENTION_TYPE_SET.has(value);
 }
 
 export interface WebhookProjectRef {

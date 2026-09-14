@@ -9,7 +9,7 @@ import clsx from "clsx";
 import { useTheme } from "@/lib/theme";
 
 const navTool = clsx(
-  "inline-flex items-center gap-1.5 rounded-lg border border-line",
+  "inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-line",
   "px-2.5 py-[7px] font-mono text-[11px] leading-none tracking-[0.04em]",
   "text-mute transition-colors cursor-pointer",
   "hover:border-mute hover:text-ink",
@@ -44,7 +44,10 @@ export function ThemeSwitch({ className }: ThemeSwitchProps): ReactElement {
   }, []);
 
   if (!isMounted) {
-    return <div aria-hidden className="h-[29px] w-[68px]" />;
+    // Reserves exactly what the mounted button occupies at each breakpoint —
+    // icon-only below `md`, icon + word above it. A single width would shift
+    // the whole header on hydration.
+    return <div aria-hidden className="h-[29px] w-[35px] md:w-[68px]" />;
   }
 
   const handleToggle = () => {
@@ -64,7 +67,9 @@ export function ThemeSwitch({ className }: ThemeSwitchProps): ReactElement {
       onClick={handleToggle}
     >
       <ThemeModeIcon theme={isLight ? "light" : "dark"} />
-      <span>{isLight ? "Light" : "Dark"}</span>
+      {/* The icon already says which mode is on, and `aria-label` says what the
+          button does — so the word is the part narrow viewports can spare. */}
+      <span className="hidden md:inline">{isLight ? "Light" : "Dark"}</span>
     </button>
   );
 }

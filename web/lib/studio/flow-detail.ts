@@ -58,8 +58,11 @@ export async function getStudioFlowDetail(
 
   if (!install) return null;
 
+  // Every hop guarded, not just the first: `manifest` is jsonb, so a row that
+  // lacks `spec` arrives DEFINED and throws past the optional head — the same
+  // defect `assessPackageCompatibility` documents in `lib/queries/packages.ts`.
   const manifest = install.manifest as PackageInstallManifest | undefined;
-  const flow = manifest?.spec.flows.find((f) => f.id === flowId);
+  const flow = manifest?.spec?.flows?.find((f) => f.id === flowId);
 
   if (!flow) return { flowId, flowPath: null, flowYaml: null, compiled: null };
 

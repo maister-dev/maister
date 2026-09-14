@@ -129,6 +129,7 @@ import {
   type RestrictionPathSet,
 } from "./mutation-check";
 
+import { createHitlRequest } from "@/lib/runs/hitl-create";
 import { staleSessionBinding } from "@/lib/execution-host/session-binding";
 import { loadPendingOperatorCorrection } from "@/lib/runs/node-interrupt";
 import { isReviewSchema } from "@/lib/flows/hitl-validate";
@@ -571,7 +572,7 @@ async function escalateAutoRetryExhaustion(args: {
   try {
     await db.transaction(async (tx: Db) => {
       await markNodeNeedsInput(nodeAttemptId, tx);
-      await tx.insert(hitlRequests).values({
+      await createHitlRequest(tx, {
         id: hitlRequestId,
         runId,
         stepId: node.id,
@@ -1152,7 +1153,7 @@ export async function runReviewHuman(
   const hitlRequestId = randomUUID();
 
   const persistHitlRequestAndAssignment = async (tx: Db): Promise<void> => {
-    await tx.insert(hitlRequests).values({
+    await createHitlRequest(tx, {
       id: hitlRequestId,
       runId: loaded.run.id,
       stepId: node.id,
@@ -1299,7 +1300,7 @@ export async function runFormCollect(
   const criticality = settings.criticality ?? null;
 
   const persistHitlRequestAndAssignment = async (tx: Db): Promise<void> => {
-    await tx.insert(hitlRequests).values({
+    await createHitlRequest(tx, {
       id: hitlRequestId,
       runId: loaded.run.id,
       stepId: node.id,

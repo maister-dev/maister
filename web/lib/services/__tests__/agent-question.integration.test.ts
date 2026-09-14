@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq, gt } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
@@ -203,6 +203,26 @@ async function seedHumanUser(userId: string): Promise<void> {
     email: `${userId}@example.test`,
     accountStatus: "active",
   });
+}
+
+/**
+ * The events ONE action wrote, not every event on the task.
+ *
+ * Creating the question is itself a decision opening now — `createHitlRequest`
+ * is the single writer of `hitl_requests` and emits `run.needs_input` in the
+ * same transaction (ADR-169 amendment) — so a task-wide `toEqual` compares the
+ * ANSWER's events against the creation's too. Snapshot the high-water mark
+ * before the act and read past it; that keeps these assertions exact without
+ * making them re-list every kind the bus grows later.
+ */
+async function maxEventId(): Promise<number> {
+  const [row] = await db
+    .select({ id: schema.domainEvents.id })
+    .from(schema.domainEvents)
+    .orderBy(desc(schema.domainEvents.id))
+    .limit(1);
+
+  return row?.id ?? 0;
 }
 
 describe("agent-question lifecycle (ADR-136, integration)", () => {
@@ -772,6 +792,7 @@ describe("agent-question lifecycle (ADR-136, integration)", () => {
       .set({ status: "Crashed", endedAt: new Date() })
       .where(eq(schema.runs.id, seeded.runId));
 
+    const beforeAnswer = await maxEventId();
     const first = await respondToHitl(
       {
         runId: seeded.runId,
@@ -831,7 +852,12 @@ describe("agent-question lifecycle (ADR-136, integration)", () => {
         payload: schema.domainEvents.payload,
       })
       .from(schema.domainEvents)
-      .where(eq(schema.domainEvents.taskId, seeded.taskId));
+      .where(
+        and(
+          eq(schema.domainEvents.taskId, seeded.taskId),
+          gt(schema.domainEvents.id, beforeAnswer),
+        ),
+      );
     const [source] = await db
       .select({ status: schema.runs.status })
       .from(schema.runs)
@@ -908,6 +934,7 @@ describe("agent-question lifecycle (ADR-136, integration)", () => {
 
     await seedHumanUser(actor.userId);
 
+    const beforeAnswer = await maxEventId();
     await expect(
       respondToHitl(
         {
@@ -951,7 +978,12 @@ describe("agent-question lifecycle (ADR-136, integration)", () => {
     const events = await db
       .select({ id: schema.domainEvents.id })
       .from(schema.domainEvents)
-      .where(eq(schema.domainEvents.taskId, seeded.taskId));
+      .where(
+        and(
+          eq(schema.domainEvents.taskId, seeded.taskId),
+          gt(schema.domainEvents.id, beforeAnswer),
+        ),
+      );
 
     expect(request).toEqual({ response: null, respondedAt: null });
     expect(clarification).toEqual({ answer: null, answeredAt: null });
@@ -968,6 +1000,7 @@ describe("agent-question lifecycle (ADR-136, integration)", () => {
 
     await seedHumanUser("triage-responder");
 
+    const beforeAnswer = await maxEventId();
     await respondToHitl(
       {
         runId: seeded.runId,
@@ -986,7 +1019,12 @@ describe("agent-question lifecycle (ADR-136, integration)", () => {
     const events = await db
       .select({ kind: schema.domainEvents.kind })
       .from(schema.domainEvents)
-      .where(eq(schema.domainEvents.taskId, seeded.taskId));
+      .where(
+        and(
+          eq(schema.domainEvents.taskId, seeded.taskId),
+          gt(schema.domainEvents.id, beforeAnswer),
+        ),
+      );
 
     expect(events).toEqual([{ kind: "task.triage_requeued" }]);
   });

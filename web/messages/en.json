@@ -152,7 +152,16 @@
     "openNavigation": "Open navigation",
     "closeNavigation": "Close navigation",
     "collapseRail": "Collapse sidebar",
-    "expandRail": "Expand sidebar"
+    "expandRail": "Expand sidebar",
+    "work": "Work",
+    "activityFeed": "Activity",
+    "badgeDecisions": "$count blocked on you",
+    "badgeUpdates": "$count unseen",
+    "home": "Home",
+    "crumbDesk": "desk",
+    "switchDesk": "Desk",
+    "switchProjects": "Projects",
+    "switchLabel": "Home surface"
   },
   "studio": {
     "title": "Studio",
@@ -820,7 +829,14 @@
     "changes": "Changes",
     "changesSummary": "{files} files · +{additions} −{deletions}",
     "moreGates": "+{count} more",
-    "staleEvidence": "{count} stale"
+    "staleEvidence": "{count} stale",
+    "decisions": {
+      "promotableTitle": "Ready to promote · $count",
+      "crashedTitle": "Crashed — recover or discard · $count",
+      "flaggedTitle": "Held — flagged by triage · $count",
+      "review": "Review and promote",
+      "openTask": "Open the task"
+    }
   },
   "mcps": {
     "eyebrow": "Platform · admin",
@@ -2877,6 +2893,7 @@
         "hitlRead": "Read run HITL",
         "hitlRespond": "Respond to run HITL",
         "hitlInboxRead": "Read personal HITL inbox",
+        "decisionsRead": "Read your decision queue",
         "hitlRespondHuman": "Respond to human HITL",
         "commentsRead": "Read comments",
         "commentsCreate": "Create comments",
@@ -3401,6 +3418,8 @@
     "scopeHitlRequest": "Request agent clarification",
     "scopeHitlRespond": "Respond to HITL",
     "scopeHitlInboxRead": "Read personal HITL inbox",
+    "scopeDecisionsRead": "Read your decision queue",
+    "scopeNotificationsSubscriptions": "Manage your notification subscriptions",
     "scopeHitlRespondHuman": "Respond to human HITL",
     "scopeCommentsRead": "Read comments",
     "scopeCommentsCreate": "Create comments",
@@ -4611,5 +4630,201 @@
     "EXECUTOR_UNAVAILABLE": "A required dependency is unavailable. Try again later.",
     "CRASH": "Internal error. Try again.",
     "generic": "Request failed. Try again."
+  },
+  "workStage": {
+    "Triage": "Triage",
+    "Held": "Held",
+    "Ready": "Ready",
+    "Queued": "Queued",
+    "Executing": "Executing",
+    "WaitingOnHuman": "Waiting on a human",
+    "Review": "Review",
+    "Crashed": "Crashed",
+    "Promoted": "Promoted",
+    "Abandoned": "Abandoned",
+    "blocked": "Blocked",
+    "promotedResult": "Result published"
+  },
+  "work": {
+    "eyebrow": "Everything in flight",
+    "title": "Work",
+    "sub": "Every task you can see, across every project, in one comparable list.",
+    "rowCount": "$count rows",
+    "filters": {
+      "project": "Project",
+      "allProjects": "All projects",
+      "stage": "Stage",
+      "allStages": "All stages",
+      "group": "Group by",
+      "apply": "Apply",
+      "reset": "Reset"
+    },
+    "group": {
+      "none": "Nothing",
+      "project": "Project",
+      "stage": "Stage",
+      "mine": "Waiting on me",
+      "mineHeading": "Waiting on you",
+      "othersHeading": "Everything else"
+    },
+    "columns": {
+      "key": "Task",
+      "title": "Title",
+      "project": "Project",
+      "stage": "Stage",
+      "run": "Run",
+      "readiness": "Readiness",
+      "waitingOn": "Waiting on",
+      "blockers": "Blocked by",
+      "tokens": "Tokens",
+      "lastActivity": "Last activity",
+      "nextAction": "Next"
+    },
+    "waitingOn": {
+      "you": "You",
+      "anyone": "Anyone",
+      "since": "for $age"
+    },
+    "readiness": {
+      "ready": "Ready",
+      "blocked": "Blocked",
+      "stale": "Stale",
+      "failed": "Failed",
+      "waiting": "Waiting",
+      "overridden": "Overridden"
+    },
+    "nextAction": {
+      "triage": "Triage it",
+      "release": "Release the hold",
+      "launch": "Launch a run",
+      "respond": "Respond",
+      "review": "Review",
+      "recover": "Recover or discard",
+      "watch": "Nothing — it is running",
+      "none": "Nothing"
+    },
+    "empty": {
+      "noProjects": "You do not belong to any project yet.",
+      "noRows": "Nothing matches these filters."
+    },
+    "savedViews": {
+      "label": "Saved views",
+      "save": "Save this view",
+      "namePlaceholder": "Name this view",
+      "remove": "Remove this view",
+      "empty": "No saved views yet."
+    },
+    "openTask": "Open the task",
+    "openRun": "Open the run",
+    "openProject": "Open the project board"
+  },
+  "activityFeed": {
+    "eyebrow": "attention",
+    "title": "Activity",
+    "sub": "Everything that happened across your projects, newest first. Nothing here is waiting on you.",
+    "rowCount": "$count events",
+    "latestOnly": "Showing the latest $count — narrow the filters to see further back.",
+    "filters": {
+      "project": "Project",
+      "allProjects": "All projects",
+      "actor": "Actor",
+      "allActors": "Anyone",
+      "kind": "Event",
+      "allKinds": "All events",
+      "mine": "Only tasks I follow",
+      "apply": "Apply"
+    },
+    "actor": {
+      "user": "People",
+      "agent": "Agents",
+      "system": "System"
+    },
+    "divider": "Your last visit",
+    "caughtUp": "You are caught up.",
+    "neverLooked": "First visit — no read position yet.",
+    "markRead": "Mark all as read",
+    "markReadFailed": "Could not save your read position. Try again.",
+    "empty": {
+      "noProjects": "You belong to no project yet, so there is nothing to catch up on.",
+      "noRows": "Nothing matches these filters."
+    },
+    "openTask": "Open task",
+    "openRun": "Open run",
+    "openProject": "Open project",
+    "webhookAttempts": "$count attempts",
+    "kinds": {
+      "task_created": "task created",
+      "comment_added": "comment",
+      "task_mentioned": "mentioned",
+      "relation_added": "relation added",
+      "relation_removed": "relation removed",
+      "run_launched": "run launched",
+      "triage_set": "triage set",
+      "triage_requeued": "sent to triage",
+      "agent_quarantined": "agent quarantined",
+      "experiment_concluded": "experiment concluded",
+      "run_pr_merged": "PR merged",
+      "evaluation_decided": "evaluation decided",
+      "agent_summon_suppressed": "summon suppressed",
+      "task_clarification_answered": "clarification answered",
+      "run_done": "run finished",
+      "run_failed": "run failed",
+      "run_crashed": "run crashed",
+      "run_abandoned": "run abandoned",
+      "run_review": "run reached review",
+      "run_escalated": "run escalated",
+      "run_rework_claimed": "taken back for rework",
+      "run_rework_returned": "returned to the flow",
+      "gate_failed": "gate failed",
+      "webhook_delivered": "webhook delivered",
+      "webhook_dead": "webhook failed"
+    }
+  },
+  "digest": {
+    "promoted": "$count promoted",
+    "crashed": "$count crashed",
+    "decisions": "$count new decisions",
+    "events": "$count new events",
+    "tokens": "$count tokens",
+    "empty": "Nothing happened since your last visit.",
+    "ariaLabel": "Since your last visit"
+  },
+  "desk": {
+    "title": "Desk",
+    "eyebrow": "Home",
+    "sub": "What needs you, what moved, and what is running — across every project you can see.",
+    "composer": "Start a scratch run…",
+    "composerTitle": "Start a scratch run",
+    "nowLabel": "Now",
+    "decisionsTitle": "Decisions",
+    "decisionsCount": "$count blocked on you",
+    "decisionsEmpty": "Nothing is blocked on you.",
+    "decisionsAll": "Open the inbox",
+    "workTitle": "Work in flight",
+    "workCount": "$count in flight",
+    "workEmpty": "Nothing is running.",
+    "workAll": "Open the work table",
+    "activityTitle": "Activity",
+    "activityEmpty": "Nothing has happened yet.",
+    "activityAll": "Open the activity feed",
+    "emptyLead": "No projects yet — connect one and the Desk fills itself in."
+  },
+  "notifications": {
+    "title": "Notifications",
+    "sub": "Get told when a decision starts waiting on you, without keeping a tab open.",
+    "unavailable": "Web push is not configured on this deployment. Ask an admin to set the VAPID keys.",
+    "unsupported": "This browser does not support web push.",
+    "denied": "Notifications are blocked in this browser. Allow them in the site settings and try again.",
+    "enable": "Enable push on this browser",
+    "enabling": "Enabling…",
+    "disable": "Disable push on this browser",
+    "enabled": "Push is on for this browser.",
+    "disabled": "Push is off for this browser.",
+    "failed": "Could not change the push setting. Try again.",
+    "triggersTitle": "When you get notified",
+    "triggerDecisions": "A decision starts or stops waiting on you",
+    "triggerDigest": "A catch-up digest, at most twice a day",
+    "triggersNote": "Deltas and digests only — never one notification per event.",
+    "otherBrowsers": "$count other browser(s) registered"
   }
 }

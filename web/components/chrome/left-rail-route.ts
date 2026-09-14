@@ -1,5 +1,8 @@
 export const RAIL_SECTION_IDS = [
+  "home",
   "projects",
+  "work",
+  "activity",
   "inbox",
   "studio",
   "observatory",
@@ -24,13 +27,22 @@ function isPathPrefix(pathname: string, prefix: string): boolean {
   return pathname === prefix || pathname.startsWith(`${prefix}/`);
 }
 
+/**
+ * `NAV-04` (ADR-172 D4). Total over the app's prefixes: every route the shell
+ * serves has a DECIDED answer, and `null` — "nothing highlighted" — is one of
+ * them, for surfaces reached from the user menu rather than the rail.
+ *
+ * `/` is `home`, not `projects`. The `/runs` and `/scratch-runs` collapse onto
+ * `projects` survives on purpose: a run belongs to a project.
+ */
 export function railSectionForPathname(
   pathname: string | null,
 ): RailSectionId | null {
   const path = normalizedPathname(pathname);
 
+  if (path === "/") return "home";
+
   if (
-    path === "/" ||
     isPathPrefix(path, "/projects") ||
     isPathPrefix(path, "/runs") ||
     isPathPrefix(path, "/scratch-runs")
@@ -38,7 +50,9 @@ export function railSectionForPathname(
     return "projects";
   }
 
+  if (isPathPrefix(path, "/work")) return "work";
   if (isPathPrefix(path, "/inbox")) return "inbox";
+  if (isPathPrefix(path, "/activity")) return "activity";
   if (isPathPrefix(path, "/studio") || isPathPrefix(path, "/flows")) {
     return "studio";
   }

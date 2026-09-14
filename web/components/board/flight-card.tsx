@@ -16,6 +16,10 @@ import {
   type PrStateChipLabels,
 } from "@/components/pr-state-chip";
 import {
+  WorkStageChip,
+  type WorkStageLabels,
+} from "@/components/work/work-stage-chip";
+import {
   TaskDecomposition,
   type TaskDecompositionLabels,
 } from "@/components/board/task-decomposition";
@@ -39,6 +43,9 @@ export interface FlightCardLabels {
   autoPromoted: (lane: string) => string;
   // ADR-140 PR-state chip labels (open / merged / closed / conflicts / reopen).
   prChip: PrStateChipLabels;
+  // ADR-170: the whole `workStage` namespace, so the label lookup happens
+  // once here rather than as a switch at every render site.
+  workStage: WorkStageLabels;
   runsCount: (count: number) => string;
   launch: string;
   launchUnavailable: string;
@@ -349,6 +356,13 @@ export function FlightCard({
         {/* Reopen is `promoteRun` (member) while this board is `readBoard`
             (viewer): withholding the runId selects the chip's disabled
             affordance instead of offering a viewer a guaranteed 403. */}
+        <WorkStageChip
+          blocked={card.workStageBlocked}
+          labels={labels.workStage}
+          progress={null}
+          promotedKind={card.workStagePromotedKind}
+          stage={card.workStage}
+        />
         <PrStateChip
           labels={labels.prChip}
           prHasConflicts={card.prHasConflicts}

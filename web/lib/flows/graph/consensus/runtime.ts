@@ -39,6 +39,7 @@ import {
   loadConsensusSynthesis,
 } from "./prompt-owner";
 
+import { createHitlRequest } from "@/lib/runs/hitl-create";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 import { runAgentStep } from "@/lib/flows/runner-agent";
 import { renderStrict } from "@/lib/flows/templating";
@@ -970,7 +971,7 @@ async function createConsensusHitl(
 
   try {
     await args.db.transaction(async (tx: Db) => {
-      await tx.insert(hitlRequests).values({
+      await createHitlRequest(tx, {
         id: hitlRequestId,
         runId: args.loaded.run.id,
         stepId: args.node.id,

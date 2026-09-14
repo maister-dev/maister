@@ -51,8 +51,8 @@ import {
   getProjectPackageAttachments,
 } from "@/lib/queries/packages";
 import { getProjectLocalPackages } from "@/lib/queries/project-local-packages";
+import { getDecisionsCount } from "@/lib/queries/decisions";
 import { getHitlInbox } from "@/lib/queries/hitl";
-import { getUnreadInboxCount } from "@/lib/queries/inbox";
 import {
   ACTIVITY_LOG_PAGE_SIZE,
   getProjectActivityLog,
@@ -221,13 +221,15 @@ export default async function ProjectBoardPage({
     fetchFailed: tWorkbench("files.fetchFailed"),
   };
 
-  const [pageData, board, hitl, platformStatus, unreadInbox] =
+  const [pageData, board, hitl, platformStatus, projectDecisions] =
     await Promise.all([
       getProjectPageData(project),
       getBoardData(project.id),
       getHitlInbox(project.id),
       getPlatformStatus(),
-      getUnreadInboxCount(user.id, user.role, project.id),
+      // ADR-169 D8: the project-scoped slice of the SAME canonical queue, not a
+      // second local sum that is free to disagree with the rail badge.
+      getDecisionsCount(user.id, user.role, { projectId: project.id }),
     ]);
   const activityLog =
     tab === "activity"
@@ -361,11 +363,7 @@ export default async function ProjectBoardPage({
 
         <div className="flex flex-col items-end gap-3.5">
           <div className="flex items-center overflow-hidden rounded-[10px] border border-line bg-paper">
-            <Count
-              label={t("needYou")}
-              tone="needs"
-              value={hitl.count + unreadInbox}
-            />
+            <Count label={t("needYou")} tone="needs" value={projectDecisions} />
             <Count label={t("inProd")} tone="flight" value={board.inProd} />
             <Count label={t("backlogCount")} value={board.backlog} />
             <Count label={t("mergedDays")} value={board.merged7d} />
@@ -516,7 +514,8 @@ export default async function ProjectBoardPage({
                 apply: tLog("apply"),
                 pagePrev: tLog("pagePrev"),
                 pageNext: tLog("pageNext"),
-                pageLabel: tLog("pageLabel"),
+                // RAW: `NumberedPagination` interpolates `{page}` itself.
+                pageLabel: tLog.raw("pageLabel"),
                 paginationLabel: tLog("paginationLabel"),
                 formerUser: tLog("formerUser"),
                 system: tLog("system"),

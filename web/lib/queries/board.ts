@@ -13,6 +13,11 @@ import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 
 import { crashActionFor, deriveStage } from "@/lib/board";
+import {
+  deriveWorkStage,
+  type PromotedKind,
+  type WorkStage,
+} from "@/lib/work/stage";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import {
@@ -208,6 +213,12 @@ export interface FlightCard {
   // driving the "auto" glyph on the Done card. Null on manual/pending runs.
   autoPromotedLane: string | null;
   blockedBy: Array<{ key: string; number: number }>;
+  // ADR-170: the cross-project work stage, rendered BESIDE the node stage chip
+  // because they answer different questions ("where is this task" vs "which
+  // node is asking"). Derived per read; never persisted.
+  workStage: WorkStage;
+  workStageBlocked: boolean;
+  workStagePromotedKind: PromotedKind | null;
   // M37 Phase 6 (ADR-098): the orchestrator decomposition group (see BacklogCard).
   childTasks: ChildTaskRef[];
   // ADR-163: the orchestrator task this card belongs to (see BacklogCard).
@@ -542,6 +553,7 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
       prState: workspaces.prState,
       prHasConflicts: workspaces.prHasConflicts,
       promotionLane: workspaces.promotionLane,
+      promotionState: workspaces.promotionState,
     })
     .from(runs)
     .innerJoin(workspaces, eq(workspaces.runId, runs.id))
@@ -734,6 +746,22 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
       cardStatus === "humanworking"
         ? (takeoverByRun.get(run.runId) ?? null)
         : null;
+    const derivedWorkStage = deriveWorkStage({
+      taskStatus: task.status,
+      taskStage: task.stage,
+      triageStatus: (task.triageStatus ?? null) as "triaged" | "flagged" | null,
+      runStatus: run.status,
+      runKind: null,
+      promotionState: run.promotionState ?? null,
+      workspaceRemoved: run.removedAt != null,
+      blockingRelationCount: (openBlockers.get(task.taskId) ?? []).length,
+      progress: null,
+    });
+    const workStageFields = {
+      workStage: derivedWorkStage.stage,
+      workStageBlocked: derivedWorkStage.blocked,
+      workStagePromotedKind: derivedWorkStage.promotedKind,
+    };
 
     bucket.flight.push({
       taskId: task.taskId,
@@ -752,6 +780,7 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
       runCount: runCountByTask.get(task.taskId) ?? 0,
       runStatus: run.status,
       triageStatus: (task.triageStatus ?? null) as "triaged" | "flagged" | null,
+      ...workStageFields,
       runId: run.runId,
       agent: takeover
         ? "dev"

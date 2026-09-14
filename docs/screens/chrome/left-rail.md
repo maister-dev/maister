@@ -20,7 +20,7 @@ launch — so I can navigate and start work without leaving the current screen.
 
 | Role | Sees | Notes |
 | --- | --- | --- |
-| Global viewer / member | Projects, Inbox, Flow Studio, Observatory nav; active workspaces; runners readiness; launch | `Agents` / `MCPs` / `Users` / `Scheduler` / `Settings` are hidden (admin-only) |
+| Global viewer / member | Home, Projects, Work, Activity, Inbox, Flow Studio, Observatory nav; active workspaces; runners readiness; launch | `Agents` / `MCPs` / `Users` / `Scheduler` / `Settings` are hidden (admin-only) |
 | Global admin | All of the above plus `Agents`, `MCPs`, `Users`, `Scheduler`, `Settings` | Hidden nav is convenience only; `Agents`/`MCPs`/`Users`/`Scheduler` re-check `requireGlobalRole("admin")`, while `/settings` renders a forbidden panel and loads no admin data for non-admins |
 
 The hidden admin nav is never the authorization boundary — the route enforces it.
@@ -29,12 +29,14 @@ The hidden admin nav is never the authorization boundary — the route enforces 
 
 The rail is the primary navigation spine. Entry points / exits:
 
-- **Section nav** → `/` (portfolio), `/inbox` ([`../inbox.md`](../inbox.md)),
+- **Section nav** → `/` (the Desk — [`../desk.md`](../desk.md)), `/projects`
+  (the portfolio), `/work` ([`../work.md`](../work.md)), `/activity`
+  ([`../activity.md`](../activity.md)), `/inbox` ([`../inbox.md`](../inbox.md)),
   `/studio` ([`../studio/README.md`](../studio/README.md)), `/observatory`, `/agents` (admin),
   `/mcps` ([`../mcps.md`](../mcps.md), admin), `/admin/users`,
   `/admin/scheduler`, `/settings`. The active section is resolved from the
-  current pathname, so
-  `/settings` selects Settings, `/inbox` selects Inbox, and `/runs/*` /
+  current pathname, so `/settings` selects Settings, `/inbox` selects Inbox,
+  `/` selects **Home** (ADR-172 D4 — not Projects), and `/runs/*` /
   `/scratch-runs/*` stay under Projects.
 - **Active workspaces** → each row links to its run/workbench (`/runs/[id]`).
 - **Launch** → opens the [launch dialog](launch-dialog.md).
@@ -47,11 +49,36 @@ See [`../README.md`](../README.md) for the global IA map.
 
 Expanded mode, top to bottom:
 
-1. **Section nav** — Projects, Inbox (badge), Flow Studio, Observatory, then the admin block
-   (Agents, MCPs, Users, Scheduler, Settings). The Inbox badge shows the
-   canonical `needsYou` count (WI-1; see [`../inbox.md`](../inbox.md)). Section
+1. **Section nav** — Home, Projects, Work, Activity (badge), Inbox (badge),
+   Flow Studio, Observatory, then the admin block
+   (Agents, MCPs, Users, Scheduler, Settings). **Two badges, two tones**
+   (ADR-169 D7): the Inbox badge shows `decisions` in the **attention** tone
+   (amber, `data-testid="inbox-nav-badge"`) and means "N things are blocked on
+   you"; the Activity badge shows `updates` in a **neutral** tone
+   (`data-testid="activity-nav-badge"`) and means "N things happened you have
+   not seen". Nothing non-actionable may wear the attention tone. Both values
+   are computed once in `web/app/(app)/layout.tsx` and passed down as one
+   `RailBadges` map — neither badge recomputes its own number (`ATN-05`), and
+   the TONE travels with the value rather than being inferred from the section
+   id, so nothing non-actionable can acquire the attention tone by being moved.
+   The badge element itself is a bare digit (`aria-hidden`); its meaning is a
+   sibling `sr-only` phrase in the expanded variant and part of the link's
+   `aria-label` in the collapsed one, where an `aria-label` would otherwise
+   replace the contents. Collapsed badges carry
+   `data-testid="<section>-nav-badge-collapsed"`. See
+   [`../inbox.md`](../inbox.md) and [`../activity.md`](../activity.md). Section
    icons come from `@heroicons/react`; Settings uses the gear icon and the
    collapsed/expanded states share the same route-derived active marker.
+   **The section nav is capped, not `shrink-0`** (`max-h-[45%]`, `min-h-0`,
+   `overflow-y-auto`). The rail is a fixed-height flex column
+   (`h-[calc(100vh-64px-36px)]`) and an admin's list is twelve sections since `/`
+   became the Desk (ADR-172 D4). Uncapped, the nav took 422 of the 576px of rail
+   content at a 720px-tall viewport and the active-workspaces block below it
+   resolved to **zero** height — its rows still rendered but stopped being
+   clickable, because a zero-height scroll parent swallows pointer events. The
+   block measured 3px even at eleven sections, so the cap fixes a latent defect
+   rather than a new one. Under pressure the nav scrolls; the rail does not
+   introduce grouping.
 2. **Active workspaces** — per-project groups of live runs. The block's surface
    (compact rows, single colour-coded state dot, ticket-derived names + scratch
    rename, linked flow/issue chips, runner info chip, hover/focus icon actions,
@@ -88,7 +115,8 @@ the async Server Component.
 
 Collapsed mode order:
 
-1. **Section icon stack** — Projects, Inbox (badge), Flow Studio, then the admin
+1. **Section icon stack** — Home, Projects, Work, Activity (badge), Inbox
+   (badge), Flow Studio, Observatory, then the admin
    icons when allowed (Agents, MCPs, Users, Scheduler, Settings). These packaged
    icons are the same destinations as expanded mode, not a separate compact menu.
 2. **Active workspaces flyout** — one icon opens the same per-project live-run
@@ -131,8 +159,11 @@ stateDiagram-v2
 
 - `getRailWorkspaceGroups(userId, role)` — active workspaces, RBAC-scoped.
 - `railSectionForPathname(pathname)` — maps app routes to the active rail
-  section (`/settings` → Settings, `/inbox` → Inbox, run detail routes →
-  Projects).
+  section (`/` → Home, `/settings` → Settings, `/inbox` → Inbox, run detail
+  routes → Projects). Total over the app's prefixes, where `null` ("nothing
+  highlighted", e.g. `/account`) is a decided answer — see
+  [`../../system-analytics/home-navigation.md`](../../system-analytics/home-navigation.md)
+  (`NAV-04`).
 - `summarizeAdapterReadiness({ runners, diagnostics })`
   (`lib/acp-runners/readiness-summary.ts`) over `checkSupervisorDiagnostics()`
   `/diagnostics` × `platform_acp_runners` rows (`loadRunnerReadinessRows`, which
@@ -159,7 +190,11 @@ labels), `gc` (TTL badges).
   readiness recompute.
 - Behavior: [`../../system-analytics/acp-runners.md`](../../system-analytics/acp-runners.md),
   [`../../system-analytics/social-board.md`](../../system-analytics/social-board.md)
-  (Needs-you badge).
+  (inbox fanout),
+  [`../../system-analytics/attention.md`](../../system-analytics/attention.md)
+  (both badge counters and their tones),
+  [`../../system-analytics/home-navigation.md`](../../system-analytics/home-navigation.md)
+  (the rail re-cut and the total route classifier).
 - Source: `web/components/chrome/left-rail.tsx`,
   `web/components/chrome/left-rail-nav.tsx`,
   `web/components/chrome/runners-readiness-rail.tsx`,

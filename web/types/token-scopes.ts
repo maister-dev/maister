@@ -13,6 +13,18 @@ export const TOKEN_SCOPES = [
   "hitl:request",
   "hitl:respond",
   "hitl:inbox:read",
+  // M51 (ADR-169): the reader's own cross-project decision queue. Deliberately
+  // absent from AGENT_TOKEN_SCOPES and CROSS_PROJECT_AGENT_SCOPES — an agent
+  // must not read a human's decision queue, and a `*` grant DOES satisfy it
+  // (it is not an EXACT_ONLY scope; the exact-only list guards responding, not
+  // reading).
+  "decisions:read",
+  // M51 (ADR-173 D10): CRUD over the caller's OWN notification subscriptions.
+  // Deliberately absent from AGENT_TOKEN_SCOPES and CROSS_PROJECT_AGENT_SCOPES —
+  // an agent must not edit where a human gets notified. The owner always comes
+  // from `auth-context`, never from the request body (D9), so holding the scope
+  // grants reach over one's own rows and nobody else's.
+  "notifications:subscriptions",
   "hitl:respond:human",
   "comments:read",
   "comments:create",

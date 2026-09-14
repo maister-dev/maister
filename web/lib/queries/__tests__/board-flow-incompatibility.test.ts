@@ -1,3 +1,4 @@
+import { MAISTER_ENGINE_VERSION } from "@/lib/flows/engine-version";
 import { describe, expect, it } from "vitest";
 
 import { boardFlowIncompatibility } from "@/lib/queries/board";
@@ -42,14 +43,14 @@ describe("boardFlowIncompatibility", () => {
       }),
     ).toEqual({
       kind: "engine_incompatible",
-      reason: "engine 3.7.0 < engine_min 4.0.0",
+      reason: `engine ${MAISTER_ENGINE_VERSION} < engine_min 4.0.0`,
     });
   });
 
   it("honors the revision's persisted engine range before its manifest cache", () => {
     expect(boardFlowIncompatibility(graphManifest, "4.0.0", null)).toEqual({
       kind: "engine_incompatible",
-      reason: "engine 3.7.0 < engine_min 4.0.0",
+      reason: `engine ${MAISTER_ENGINE_VERSION} < engine_min 4.0.0`,
     });
   });
 });

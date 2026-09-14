@@ -2,7 +2,9 @@ import type { LeftRailNavSection } from "@/components/chrome/left-rail-nav";
 import type { GlobalRole } from "@/lib/db/schema";
 
 type RailNavigationLabelKey =
+  | "activityFeed"
   | "agents"
+  | "home"
   | "inbox"
   | "mcps"
   | "observatory"
@@ -10,14 +12,33 @@ type RailNavigationLabelKey =
   | "scheduler"
   | "settings"
   | "studio"
-  | "users";
+  | "users"
+  | "work";
 
 export function buildLeftRailSections(
   label: (key: RailNavigationLabelKey) => string,
   userRole: GlobalRole | undefined,
 ): LeftRailNavSection[] {
+  // The order ADR-172 D4 fixes: Home / Projects / Work / Activity / Inbox /
+  // Flow Studio / Observatory, then the admin-only tail.
   const sections: LeftRailNavSection[] = [
-    { id: "projects", label: label("projects"), href: "/", ready: true },
+    { id: "home", label: label("home"), href: "/", ready: true },
+    {
+      id: "projects",
+      label: label("projects"),
+      // The portfolio, not home (ADR-172 D3). `/` is the Desk.
+      href: "/projects",
+      ready: true,
+    },
+    { id: "work", label: label("work"), href: "/work", ready: true },
+    {
+      id: "activity",
+      // `nav.activity` is already the project board's Activity TAB label;
+      // this is the cross-project feed, so it gets its own key.
+      label: label("activityFeed"),
+      href: "/activity",
+      ready: true,
+    },
     { id: "inbox", label: label("inbox"), href: "/inbox", ready: true },
     { id: "studio", label: label("studio"), href: "/studio", ready: true },
     {

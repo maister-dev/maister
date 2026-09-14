@@ -3,15 +3,22 @@ import type { ReactElement } from "react";
 import Link from "next/link";
 import { getTranslations } from "next-intl/server";
 
+import { NotificationsPanel } from "@/components/account/notifications-panel";
 import { PersonalTokensPanel } from "@/components/account/personal-tokens-panel";
 import { ProfileForm } from "@/components/account/profile-form";
+import { countPushEndpoints } from "@/lib/notifications/subscriptions";
+import { publicVapidKey } from "@/lib/notifications/vapid";
 import { requireActiveSession } from "@/lib/authz";
 import { listOwnerTokens } from "@/lib/tokens/list";
 
 export default async function AccountPage(): Promise<ReactElement> {
   const user = await requireActiveSession();
   const t = await getTranslations("account");
-  const tokens = await listOwnerTokens(user.id);
+  const tNotifications = await getTranslations("notifications");
+  const [tokens, registeredEndpoints] = await Promise.all([
+    listOwnerTokens(user.id),
+    countPushEndpoints(user.id),
+  ]);
   const personalTokens = tokens.map((token) => ({
     id: token.id,
     name: token.name,
@@ -49,6 +56,31 @@ export default async function AccountPage(): Promise<ReactElement> {
           </Link>
         </div>
       </header>
+
+      <NotificationsPanel
+        labels={{
+          title: tNotifications("title"),
+          sub: tNotifications("sub"),
+          unavailable: tNotifications("unavailable"),
+          unsupported: tNotifications("unsupported"),
+          denied: tNotifications("denied"),
+          enable: tNotifications("enable"),
+          enabling: tNotifications("enabling"),
+          disable: tNotifications("disable"),
+          enabled: tNotifications("enabled"),
+          disabled: tNotifications("disabled"),
+          failed: tNotifications("failed"),
+          triggersTitle: tNotifications("triggersTitle"),
+          triggerDecisions: tNotifications("triggerDecisions"),
+          triggerDigest: tNotifications("triggerDigest"),
+          triggersNote: tNotifications("triggersNote"),
+          otherBrowsers: tNotifications("otherBrowsers"),
+        }}
+        // The PUBLIC key only. `publicVapidKey` is the only export that returns
+        // VAPID material, and it never returns the private half.
+        publicKey={publicVapidKey()}
+        registeredEndpoints={registeredEndpoints}
+      />
 
       <section className="rounded-[14px] border border-line bg-paper p-6 shadow-[var(--shadow-sm)]">
         <div className="mb-5 flex items-center justify-between gap-4">

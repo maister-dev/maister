@@ -85,6 +85,33 @@ export const PROJECT_ACTION_MIN = {
 
 export type ProjectAction = keyof typeof PROJECT_ACTION_MIN;
 
+/**
+ * Every project role that can perform ALL of `actions`, derived from the one
+ * rank map rather than hand-listed by a caller.
+ *
+ * A read model that wants "projects this reader can act in" needs the role SET,
+ * not a per-row `requireProjectAction` call. Deriving it here keeps
+ * `PROJECT_ORDER` private and makes two things automatic: `owner` (which ranks
+ * ABOVE `admin`, and which a hand-written `["admin","member"]` list silently
+ * drops) is always included, and raising an action's floor narrows every caller
+ * without anyone remembering to follow.
+ */
+export function projectRolesForActions(
+  actions: readonly ProjectAction[],
+): ProjectRole[] {
+  const floor = actions.reduce(
+    (highest, action) =>
+      PROJECT_ORDER[PROJECT_ACTION_MIN[action]] > PROJECT_ORDER[highest]
+        ? PROJECT_ACTION_MIN[action]
+        : highest,
+    "viewer" as ProjectRole,
+  );
+
+  return (Object.keys(PROJECT_ORDER) as ProjectRole[]).filter(
+    (role) => PROJECT_ORDER[role] >= PROJECT_ORDER[floor],
+  );
+}
+
 async function loadUser(id: string) {
   const rows = await db()
     .select({

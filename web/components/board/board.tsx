@@ -75,6 +75,7 @@ export async function Board({
   const tLaunch = await getTranslations("launch");
   const tRun = await getTranslations("run");
   const tRunStatus = await getTranslations("run.runStatus");
+  const tWorkStage = await getTranslations("workStage");
   const tReadiness = await getTranslations("readiness");
   const runStatusLabels = Object.fromEntries(
     RUN_STATUS_KEYS.map((key) => [key, tRunStatus(key)]),
@@ -114,6 +115,20 @@ export async function Board({
     readyToPromote: t("readyToPromote"),
     autoPromoted: (lane: string) => t("autoPromoted", { lane }),
     // ADR-140 PR-state chip labels — sourced from the shared `run` namespace.
+    workStage: {
+      Triage: tWorkStage("Triage"),
+      Held: tWorkStage("Held"),
+      Ready: tWorkStage("Ready"),
+      Queued: tWorkStage("Queued"),
+      Executing: tWorkStage("Executing"),
+      WaitingOnHuman: tWorkStage("WaitingOnHuman"),
+      Review: tWorkStage("Review"),
+      Crashed: tWorkStage("Crashed"),
+      Promoted: tWorkStage("Promoted"),
+      Abandoned: tWorkStage("Abandoned"),
+      blocked: tWorkStage("blocked"),
+      promotedResult: tWorkStage("promotedResult"),
+    },
     prChip: {
       open: tRun("prOpen"),
       merged: tRun("prMerged"),

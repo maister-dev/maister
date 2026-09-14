@@ -210,6 +210,11 @@ validate:docs` enforces stub ↔ body equality and the file bijection.
 | [ADR-166](#adr-166-local-execution-host-contract--durable-host-identity-epoch-fenced-assignments-command-ledger-opaque-adopted-workspaces) | Local execution-host contract — durable host identity, epoch-fenced assignments, command ledger, opaque adopted workspaces | Implemented | 2026-09-02 |
 | [ADR-167](#adr-167-durable-execution-host-event-and-runtime-data-plane) | Durable execution-host event and runtime-data plane | Implemented | 2026-09-04 |
 | [ADR-168](#adr-168-post-issuance-mutation-of-api-tokens) | Post-issuance mutation of API tokens | Implemented | 2026-09-11 |
+| [ADR-169](#adr-169-two-canonical-attention-counters-decisions-and-updates) | Two canonical attention counters, `decisions` and `updates` | Accepted | 2026-09-10 |
+| [ADR-170](#adr-170-derived-work-stage-vocabulary-distinct-from-the-board-columns) | Derived work-stage vocabulary distinct from the board columns | Accepted | 2026-09-10 |
+| [ADR-171](#adr-171-user-scoped-attention-sse-stream) | User-scoped attention SSE stream | Accepted | 2026-09-10 |
+| [ADR-172](#adr-172-desk-home-information-architecture-and-the-member-default-route) | Desk home information architecture and the member default route | Accepted | 2026-09-10 |
+| [ADR-173](#adr-173-user-notification-subscriptions-and-web-push-over-the-widened-outbound-webhook-engine) | User notification subscriptions and web push over the widened outbound-webhook engine | Accepted | 2026-09-10 |
 
 ---
 
@@ -1707,8 +1712,48 @@ Full record: [`decisions/adr-167.md`](decisions/adr-167.md)
 
 **Status:** Implemented
 **Date:** 2026-09-11
+### ADR-169: Two canonical attention counters, `decisions` and `updates`
 
-Full record: [`decisions/adr-168.md`](decisions/adr-168.md)
+**Status:** Accepted
+**Date:** 2026-09-10
+
+Full record: [`decisions/adr-169.md`](decisions/adr-169.md)
+
+---
+
+### ADR-170: Derived work-stage vocabulary distinct from the board columns
+
+**Status:** Accepted
+**Date:** 2026-09-10
+
+Full record: [`decisions/adr-170.md`](decisions/adr-170.md)
+
+---
+
+### ADR-171: User-scoped attention SSE stream
+
+**Status:** Accepted
+**Date:** 2026-09-10
+
+Full record: [`decisions/adr-171.md`](decisions/adr-171.md)
+
+---
+
+### ADR-172: Desk home information architecture and the member default route
+
+**Status:** Accepted
+**Date:** 2026-09-10
+
+Full record: [`decisions/adr-172.md`](decisions/adr-172.md)
+
+---
+
+### ADR-173: User notification subscriptions and web push over the widened outbound-webhook engine
+
+**Status:** Accepted
+**Date:** 2026-09-10
+
+Full record: [`decisions/adr-173.md`](decisions/adr-173.md)
 
 ---
 
@@ -1814,3 +1859,20 @@ properties/lastAction` sets `nullable: true` beside an `allOf` with no sibling
   if it cannot, add a graph-driver registry like `sync-driver-registry` and
   gate the classification on it. Not fixed here — it is a code fix on an
   unrelated path (R9).
+- **`social-board.md` Expectations exceeds the R5a cap (filed 2026-09-11, M51
+  T8.5).** Its **Expectations** section carries 24 bullets against R5a's
+  "≤ 12 bullets. If a domain needs more, the boundary is wrong". The boundary is
+  the real question — the social board covers task identity, relations, comments,
+  mentions, activity and the inbox — so this is a split decision, not a trim.
+  Resolve when that domain is next reworked; M51 only read the doc (R9).
+- **33 of 162 migrations have no Drizzle snapshot (filed 2026-09-11, M51 T8.3).**
+  Noticed because `0162_event_skip_ledger` arrived on `master` with its `.sql`
+  and `_journal.json` entry but no `meta/0162_snapshot.json` — then found to be
+  the NORM, not an anomaly: 33 entries lack one (`0022`–`0035` and others).
+  `migration-journal-integrity.test.ts` asserts a matching snapshot for the
+  **newest** entry only, which is why the pattern persists. M51 deliberately did
+  NOT hand-write the missing snapshot — reconstructing one invents history and
+  would single out `0162` from its 32 peers — and instead carries
+  `execution_event_skips` in its own three snapshots so the chain head still
+  matches `schema.ts` and `db:generate` stays clean. Widening the test to every
+  entry needs those 33 generated first, which is its own piece of work (R9).

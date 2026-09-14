@@ -94,6 +94,7 @@
     "shiki": "4.2.0",
     "tar": "^7.5.16",
     "undici": "8.4.1",
+    "web-push": "^3.6.7",
     "yaml": "^2.9.0",
     "zod": "^3.25.76"
   },
@@ -112,6 +113,7 @@
     "@types/picomatch": "^4.0.3",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
+    "@types/web-push": "^3.6.4",
     "@typescript-eslint/eslint-plugin": "8.34.1",
     "@typescript-eslint/parser": "8.34.1",
     "@vitest/ui": "^2.1.9",

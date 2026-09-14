@@ -195,11 +195,11 @@ never fanned out or retried.
 
 ## Event taxonomy v1
 
-Exactly 16 types, each mapped from a DB transition (never raw `session/update`).
+Exactly 22 types, each mapped from a DB transition (never raw `session/update`).
 Adding a type later = one taxonomy entry + one emit site + one doc row (additive,
 cheap). (All Implemented.)
 
-| Type | Trigger anchor | Emit sites (`web/lib/`) |
+| Type | Trigger anchor | Emit sites (under `web/`) |
 | ---- | -------------- | ----------------------- |
 | `run.started` | `Pending → Running` (direct start and queue-promote) | `scheduler.ts` (`tryStartRun`, `promoteNextPending`) |
 | `run.needs_input` | `→ NeedsInput` (permission / form / human / `budget_breach`) | `flows/runner.ts`, `flows/runner-human.ts`, `flows/runner-agent.ts`, `flows/graph/runner-graph.ts`, `scratch-runs/events.ts`, `runs/keepalive-sweeper.ts` (budget escalate) |
@@ -216,6 +216,12 @@ cheap). (All Implemented.)
 | `run.pr_closed` | `workspaces.pr_state` none/open → `closed` (ADR-140 provider poll) | `scheduler/handlers/pr-state-scan.ts` (`closedEdge`) |
 | `run.pr_conflicts` | `workspaces.pr_has_conflicts` false/null → `true`, non-terminal PR only (ADR-140 provider poll) | `scheduler/handlers/pr-state-scan.ts` (`conflictsEdge`) |
 | `gate.decided` | `gate_results` reaching `passed | failed | overridden` | `flows/graph/gate-store.ts` (insert-at-terminal + all terminal transitions) |
+| `run.rework_claimed` | ADR-161 rework claim: a finished `Review` run returns to `HumanWorking` at a server-resolved re-entry node | `app/api/runs/[runId]/rework-claim/claim/route.ts` |
+| `run.rework_returned` | ADR-161 rework return: the claimed run re-enters the graph (fast-forward-only ingest) | `app/api/runs/[runId]/rework-claim/return/route.ts` |
+| `attention.decision_opened` | a reader's `decisions` count rises from zero (ADR-173 delta trigger) — **user-scoped**, project and run NULL | `notifications/attention-consumer.ts` |
+| `attention.decision_closed` | a reader's `decisions` count falls to zero — **user-scoped** | `notifications/attention-consumer.ts` |
+| `attention.decisions_changed` | a reader's `decisions` count moves between two non-zero values — **user-scoped** | `notifications/attention-consumer.ts` |
+| `attention.digest` | the scheduled catch-up digest, at most once per digest window per reader — **user-scoped** | `notifications/digest-trigger.ts`, on the `system_sweep` bundle |
 | `ping` | synthetic test ping — NOT persisted, NOT fanned out | `webhooks/ping.ts` |
 
 ### Deliberately NOT emitted in v1

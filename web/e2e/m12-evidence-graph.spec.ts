@@ -70,7 +70,15 @@ test("evidence graph renders, artifact payload opens, and the board readiness ba
   // (1) The evidence explorer renders with the seeded node-attempt + artifact
   // nodes. React Flow only mounts nodes inside the fitView viewport, so assert
   // on the container + the impl-diff artifact node (which carries its state).
-  await page.goto(`/runs/${fx.runId}`);
+  //
+  // `?wb=evidence` is REQUIRED, not decoration: the workbench renders every
+  // regular pane and hides the inactive ones (`hidden={activeRegular !==
+  // "evidence"}`), and the default regular tab is the FIRST of
+  // `WORKBENCH_TABS` — `timeline`. A bare `/runs/:id` therefore resolves the
+  // evidence container and finds it hidden, which is what this spec had been
+  // failing on. Clicking the tab is what a reader does; this is the URL that
+  // tab links to.
+  await page.goto(`/runs/${fx.runId}?wb=evidence`);
 
   await expect(page.locator('[data-testid="evidence-graph"]')).toBeVisible();
 
@@ -117,7 +125,7 @@ test("evidence graph renders, artifact payload opens, and the board readiness ba
 
   try {
     // Reload run detail → impl-diff node now surfaces `stale`.
-    await page.goto(`/runs/${fx.runId}`);
+    await page.goto(`/runs/${fx.runId}?wb=evidence`);
     await expect(
       page.locator(
         `[data-testid="evidence-node"][data-artifact-id="${fx.implDiffArtifactId}"]`,

@@ -18,12 +18,31 @@ const INDEXED = [
   ["plans", false],
 ];
 
-const STAGE_B_DOCUMENTS = [
-  "execution-event-plane.md",
-  "execution-prompt-lifecycle.md",
-  "execution-runtime-objects.md",
-  "execution-data-cutover.md",
-];
+const STAGE_B_GROUP = {
+  label: "Stage B",
+  documents: [
+    "execution-event-plane.md",
+    "execution-prompt-lifecycle.md",
+    "execution-runtime-objects.md",
+    "execution-data-cutover.md",
+  ],
+  prefixes: ["EVT", "PRM", "OBJ", "CUT"],
+  traceabilityFile: "execution-data-cutover.md",
+};
+
+const M51_GROUP = {
+  label: "M51",
+  documents: [
+    "work-stages.md",
+    "attention.md",
+    "home-navigation.md",
+    "notifications.md",
+  ],
+  prefixes: ["STG", "ATN", "NAV", "NTF"],
+  traceabilityFile: "m51-traceability.md",
+};
+
+const ANALYTICS_GROUPS = [STAGE_B_GROUP, M51_GROUP];
 
 const R5_SECTIONS = [
   "Purpose",
@@ -63,16 +82,20 @@ function markdownSection(content, title) {
   return match?.[1] ?? null;
 }
 
-function requirementIds(section) {
-  return [...section.matchAll(/^[ \t]*- \*\*((?:EVT|PRM|OBJ|CUT)-\d{2}):\*\*/gm)].map(
-    (match) => match[1],
+function requirementIds(section, prefixes) {
+  const re = new RegExp(
+    `^[ \\t]*- \\*\\*((?:${prefixes.join("|")})-\\d{2}):\\*\\*`,
+    "gm",
   );
+  return [...section.matchAll(re)].map((match) => match[1]);
 }
 
-function edgeIds(section) {
-  return [...section.matchAll(/\*\*(EDGE-(?:EVT|PRM|OBJ|CUT)-\d{2}):\*\*/g)].map(
-    (match) => match[1],
+function edgeIds(section, prefixes) {
+  const re = new RegExp(
+    `\\*\\*(EDGE-(?:${prefixes.join("|")})-\\d{2}):\\*\\*`,
+    "g",
   );
+  return [...section.matchAll(re)].map((match) => match[1]);
 }
 
 function linkedArtifacts(content, file) {
@@ -90,15 +113,16 @@ function linkedArtifacts(content, file) {
   return failures;
 }
 
-export function validateStageBAnalytics(analyticsRoot) {
+export function validateAnalyticsGroup(analyticsRoot, group) {
+  const { label, documents, prefixes, traceabilityFile } = group;
   const failures = [];
   const allRequirementIds = [];
   const allEdgeIds = [];
 
-  for (const name of STAGE_B_DOCUMENTS) {
+  for (const name of documents) {
     const file = join(analyticsRoot, name);
     if (!existsSync(file)) {
-      failures.push(`${file}: missing Stage B analytics document`);
+      failures.push(`${file}: missing ${label} analytics document`);
       continue;
     }
 
@@ -115,22 +139,22 @@ export function validateStageBAnalytics(analyticsRoot) {
       if (count > 12) {
         failures.push(`${file}: Expectations has ${count} bullets; maximum is 12`);
       }
-      allRequirementIds.push(...requirementIds(expectations));
+      allRequirementIds.push(...requirementIds(expectations, prefixes));
     }
 
     const edgeCases = markdownSection(content, "Edge cases");
-    if (edgeCases !== null) allEdgeIds.push(...edgeIds(edgeCases));
+    if (edgeCases !== null) allEdgeIds.push(...edgeIds(edgeCases, prefixes));
     failures.push(...linkedArtifacts(content, file));
   }
 
   const allIds = [...allRequirementIds, ...allEdgeIds];
   for (const id of allIds) {
     if (allIds.filter((candidate) => candidate === id).length > 1) {
-      failures.push(`duplicate Stage B requirement ID ${id}`);
+      failures.push(`duplicate ${label} requirement ID ${id}`);
     }
   }
 
-  const traceabilityPath = join(analyticsRoot, "execution-data-cutover.md");
+  const traceabilityPath = join(analyticsRoot, traceabilityFile);
   const traceability = existsSync(traceabilityPath)
     ? readFileSync(traceabilityPath, "utf8")
     : "";
@@ -145,6 +169,14 @@ export function validateStageBAnalytics(analyticsRoot) {
   }
 
   return failures;
+}
+
+export function validateStageBAnalytics(analyticsRoot) {
+  return validateAnalyticsGroup(analyticsRoot, STAGE_B_GROUP);
+}
+
+export function validateM51Analytics(analyticsRoot) {
+  return validateAnalyticsGroup(analyticsRoot, M51_GROUP);
 }
 
 export function validateDocsIndexes(root = docsRoot) {
@@ -173,7 +205,11 @@ export function validateDocsIndexes(root = docsRoot) {
     }
   }
 
-  failures.push(...validateStageBAnalytics(join(root, "system-analytics")));
+  for (const group of ANALYTICS_GROUPS) {
+    failures.push(
+      ...validateAnalyticsGroup(join(root, "system-analytics"), group),
+    );
+  }
   return { checked, failures };
 }
 

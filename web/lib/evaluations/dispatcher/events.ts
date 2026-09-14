@@ -5,6 +5,7 @@ import type { Db } from "@/lib/evaluations/db";
 import { and, asc, eq, gt, sql } from "drizzle-orm";
 
 import { getDb } from "@/lib/db/client";
+import { sseFrame } from "@/lib/sse/frame";
 import { evaluationEvents, evaluationStudies } from "@/lib/db/schema";
 
 export interface AppendEventArgs {
@@ -96,13 +97,16 @@ export async function readEvaluationEvents(
 
 // One SSE frame. `id:` is the per-Study sequence so a browser reconnect sends
 // `Last-Event-ID` and the route replays from there (D17 — replay source is the
-// DB log, never in-memory state).
+// DB log, never in-memory state). The spelling is shared with the attention
+// stream (ADR-171); only the payload is this domain's.
 export function formatSseFrame(event: EvaluationEventRow): string {
-  const data = JSON.stringify({
-    executionId: event.executionId,
-    sequence: event.sequence,
-    payload: event.payload,
+  return sseFrame({
+    id: event.sequence,
+    event: event.eventType,
+    data: {
+      executionId: event.executionId,
+      sequence: event.sequence,
+      payload: event.payload,
+    },
   });
-
-  return `id: ${event.sequence}\nevent: ${event.eventType}\ndata: ${data}\n\n`;
 }

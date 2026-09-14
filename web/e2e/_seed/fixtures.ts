@@ -224,6 +224,43 @@ export type E2EM22Fixture = {
   viewerPassword: string;
 };
 
+// T3.4 (`E2E-STG-09`): two projects sharing the cross-project /work table, and
+// a member who belongs to exactly one of them — so the spec can assert both a
+// grant and a denial in the same run.
+export type E2EWorkTableFixture = {
+  alphaSlug: string;
+  alphaName: string;
+  betaSlug: string;
+  betaName: string;
+  // A `Ready` task (never launched) in the project the member belongs to.
+  alphaKeyRef: string;
+  // An `Executing` task in the same project — the stage filter needs two.
+  alphaExecutingKeyRef: string;
+  // A task in the project the member must NOT see.
+  betaKeyRef: string;
+  member: E2EUserFixture;
+};
+
+export type E2EActivityFeedFixture = {
+  projectSlug: string;
+  projectName: string;
+  member: E2EUserFixture;
+  // The task the seeded activity rows hang off — the same one on both sides of
+  // the divider, so a spec asserts on POSITION, not on which task moved.
+  unreadKeyRefs: string[];
+  seenKeyRefs: string[];
+  // The reader's ONE decision: a flagged Backlog task, no run required.
+  flaggedKeyRef: string;
+  decisions: number;
+  unread: number;
+};
+
+// T6.4 (`E2E-EDGE-NAV-01`): a member of no project at all, so the Desk's empty
+// state is reachable on a database that always has projects.
+export type E2EDeskFixture = {
+  nobody: E2EUserFixture;
+};
+
 export type E2EFixtures = {
   adminEmail: string;
   adminPassword: string;
@@ -268,6 +305,9 @@ export type E2EFixtures = {
     budgetFork: E2EBudgetForkFixture;
     humanAsk: E2EHumanAskFixture;
     capabilityEnforcement: E2ECapabilityEnforcementFixture;
+    workTable: E2EWorkTableFixture;
+    activityFeed: E2EActivityFeedFixture;
+    desk: E2EDeskFixture;
   };
 };
 

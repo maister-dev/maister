@@ -28,6 +28,7 @@ import {
   testRunnerSnapshot,
 } from "@/lib/__tests__/runner-fixtures";
 import * as schemaModule from "@/lib/db/schema";
+import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
 import { respondToHitl, type HitlActor } from "@/lib/services/hitl";
 import {
   readyExecutionHostCapabilities,
@@ -76,6 +77,13 @@ beforeAll(async () => {
 
   pool = testDatabase.pool;
   db = testDatabase.db;
+
+  // The agent-resume branch claims an execution assignment, which resolves a
+  // host. Without a registered fake the resolver reaches the REAL transport —
+  // refused outright under a test runner, so the async claim never flips the run
+  // to Running and the assertion reads a stale NeedsInput. Same seam the sibling
+  // `hitl-agent-resume-cap.integration.test.ts` installs.
+  await fakeExecutionHosts(db);
 }, 180_000);
 
 afterAll(async () => {

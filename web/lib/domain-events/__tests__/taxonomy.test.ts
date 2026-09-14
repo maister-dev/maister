@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  ATTENTION_EVENT_KINDS,
+  DECISION_OPENING_EVENT_KINDS,
   AUTO_PROMOTABLE_REVIEW_CAUSES,
   DOMAIN_EVENT_KINDS,
   isAutoPromotableReviewCause,
@@ -9,6 +11,7 @@ import {
   isRunTerminalEventKind,
   RUN_REVIEW_CAUSES,
   RUN_SETTLED_EVENT_KINDS,
+  TASK_ACTIVITY_TWINNED_EVENT_KINDS,
 } from "@/lib/domain-events/taxonomy";
 
 // ADR-163 (Codex review F1): a `run.review` says WHY the child entered Review.
@@ -38,7 +41,7 @@ describe("run.review cause", () => {
 });
 
 describe("domain-event taxonomy", () => {
-  it("contains exactly the 13 taxonomy kinds (ADR-086, ADR-136, run.review, B3 run.escalated, ADR-160 rework round-trip)", () => {
+  it("contains exactly the 15 taxonomy kinds (ADR-086, ADR-136, run.review, B3 run.escalated, ADR-160 rework round-trip, ADR-169 decision-opening)", () => {
     expect([...DOMAIN_EVENT_KINDS]).toEqual([
       "task.created",
       "task.comment_added",
@@ -49,6 +52,8 @@ describe("domain-event taxonomy", () => {
       "run.crashed",
       "run.abandoned",
       "run.review",
+      "run.review_opened",
+      "run.needs_input",
       "run.escalated",
       "run.rework_claimed",
       "run.rework_returned",
@@ -99,5 +104,75 @@ describe("domain-event taxonomy", () => {
     expect(isDomainEventKind("gate.decided")).toBe(false);
     expect(isDomainEventKind("")).toBe(false);
     expect(isDomainEventKind("task.created ")).toBe(false);
+  });
+});
+
+// UT-ATN-09 (M51, ADR-169) — the attention plane reads `domain_events` through
+// a classification, not through a hand-picked prefix. Three kinds are written
+// in the same transaction as a `task_activity` row carrying the same fact;
+// counting those in `updates` scores one task creation twice and rendering them
+// in the feed prints the line twice.
+//
+// The classification is now THREE-way, not two. `DECISION_OPENING_EVENT_KINDS`
+// is the third role: a kind that moves the `decisions` count and therefore must
+// NOT also land in `updates` — the same double-count, one counter over. The
+// three lists must PARTITION the taxonomy, so a new kind in none of them still
+// fails here rather than silently defaulting to "counted" or to "invisible".
+describe("UT-ATN-09 attention/twinned partition of the taxonomy", () => {
+  it("partitions every taxonomy kind exactly once", () => {
+    const union = [
+      ...TASK_ACTIVITY_TWINNED_EVENT_KINDS,
+      ...ATTENTION_EVENT_KINDS,
+      ...DECISION_OPENING_EVENT_KINDS,
+    ];
+
+    expect(union.length).toBe(DOMAIN_EVENT_KINDS.length);
+    expect([...union].sort()).toEqual([...DOMAIN_EVENT_KINDS].sort());
+    expect(new Set(union).size).toBe(union.length);
+  });
+
+  it("keeps a decision-opening kind OUT of the updates population", () => {
+    // The load-bearing half of the third bucket: a decision opening is already
+    // counted by `decisions`, so counting it in `updates` too would light both
+    // badges for one fact.
+    for (const kind of DECISION_OPENING_EVENT_KINDS) {
+      expect([...ATTENTION_EVENT_KINDS]).not.toContain(kind);
+      expect([...TASK_ACTIVITY_TWINNED_EVENT_KINDS]).not.toContain(kind);
+      expect([...DOMAIN_EVENT_KINDS]).toContain(kind);
+    }
+  });
+
+  it("classifies the three twinned kinds as twinned, not as attention", () => {
+    for (const kind of [
+      "task.created",
+      "task.comment_added",
+      "task.triage_requeued",
+    ]) {
+      expect([...TASK_ACTIVITY_TWINNED_EVENT_KINDS]).toContain(kind);
+      expect([...ATTENTION_EVENT_KINDS]).not.toContain(kind);
+    }
+  });
+
+  // The one `task.*` kind with no `task_activity` twin. Dropping it because it
+  // starts with `task.` would make answering an agent's question invisible
+  // everywhere — which is why this is a classification, not a prefix match.
+  it("keeps task.clarification_answered on the attention side", () => {
+    expect([...ATTENTION_EVENT_KINDS]).toContain("task.clarification_answered");
+  });
+
+  it("leaves no run or gate kind invisible to the attention plane", () => {
+    // Every `run.*`/`gate.*` fact has to reach the reader through SOMETHING:
+    // the `updates` population, or — for a kind that opens a decision and is
+    // therefore already counted by `decisions` — the decision-opening list.
+    // Landing in neither is the silent case this guards.
+    const visible = new Set<string>([
+      ...ATTENTION_EVENT_KINDS,
+      ...DECISION_OPENING_EVENT_KINDS,
+    ]);
+
+    for (const kind of DOMAIN_EVENT_KINDS) {
+      if (!kind.startsWith("run.") && kind !== "gate.failed") continue;
+      expect([...visible]).toContain(kind);
+    }
   });
 });

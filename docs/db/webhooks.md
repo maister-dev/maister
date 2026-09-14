@@ -8,6 +8,33 @@ for behavior, the delivery FSM, and the event taxonomy, and
 > **Status: Implemented.** Migration `0040_outbound_webhooks.sql` (additive,
 > forward-only, no down-migration) adds all four tables and the
 > `platform_runtime_settings.webhooks_enabled` column.
+>
+> **Widening (Implemented — [ADR-173](../decisions.md#adr-173), migration `01660`).**
+> `webhook_events.project_id` and `.run_id` become nullable and
+> `webhook_subscriptions.owner_user_id` is added, so a per-user `attention.*`
+> event — which has neither a project nor a run — rides this same outbox
+> instead of a second one. The widening drops nothing.
+>
+> `webhook_deliveries` is widened too, for the same reason: a `web_push` delivery
+> targets a browser endpoint rather than an HTTP subscription, so
+> `subscription_id` becomes nullable, `push_subscription_id` is added (FK to
+> `push_subscriptions`, `ON DELETE CASCADE`), and
+> `webhook_deliveries_one_target` enforces
+> `(subscription_id IS NULL) <> (push_subscription_id IS NULL)`. One ledger, two
+> transports; a `410 Gone` deletes the endpoint and its attempts go with it.
+>
+> Scope becomes **two independent axes**, and the admin PLATFORM scope narrows
+> with it: "platform-wide" is `project_id IS NULL AND owner_user_id IS NULL`,
+> because a user subscription also carries a NULL project and would otherwise be
+> listed, read, deleted and exposed by the admin settings surface.
+>
+> Scope matching itself: the shipped match expression
+> `sub.project_id IS NULL OR sub.project_id = event.project_id` treats a NULL
+> subscription project as "platform-wide, matches everything"; once the *event*
+> project can also be NULL that first disjunct would make every platform-wide
+> subscription match every user event. A platform-wide subscription MUST NOT
+> match a user-scoped event, and a user subscription MUST NOT match a
+> project-scoped one — both directions are contractual (`NTF-03`).
 
 The diagram below also notes that `platform_runtime_settings` gains a
 `webhooks_enabled boolean NOT NULL DEFAULT true` global kill-switch column
@@ -25,6 +52,7 @@ erDiagram
     WEBHOOK_SUBSCRIPTIONS {
         text id PK "server crypto.randomUUID()"
         text project_id FK "NULL -> projects(id); NULL = platform scope"
+        text owner_user_id FK "NULL -> users(id) ON DELETE CASCADE; NON-NULL = user scope (01660, Implemented)"
         text name "display name"
         text url "http/https only; boundary-validated"
         text method "POST|PUT DEFAULT POST"
@@ -39,8 +67,8 @@ erDiagram
 
     WEBHOOK_EVENTS {
         text id PK "server crypto.randomUUID()"
-        text project_id FK "NOT NULL -> projects(id)"
-        text run_id FK "NOT NULL -> runs(id)"
+        text project_id FK "-> projects(id); NULL for user-scoped attention.* events (01660, Implemented)"
+        text run_id FK "-> runs(id); NULL for user-scoped attention.* events (01660, Implemented)"
         text type "taxonomy type string"
         jsonb data "per-type minimal facts; written at emit"
         jsonb payload "NULL until fanout; full frozen envelope built at FANOUT"

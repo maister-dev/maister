@@ -264,7 +264,40 @@ places with another. As of 2026-09-03 on `main` + ADR-165:
   flakes under parallel load and passes 4/4 in isolation.
 - **e2e** — **34 pre-existing failures**, plus one known-flaky spec below.
   Ports 3100/7788 and the `maister_e2e` database are shared across worktrees;
-  kill both ports before a run.
+  kill both ports before a run. Two of those 34 were closed on 2026-09-11 by the
+  `assessPackageCompatibility` null-safety fix — `studio.spec.ts` and
+  `studio-local-edit.spec.ts` were not flaky, they were hitting a server-side 500
+  on `/studio` whenever a stored package manifest lacked `spec`. Before filing an
+  e2e failure as environmental, read the `[WebServer]` lines in the run log: a
+  React server-component stack there is a product bug, not a test one.
+
+**Budget ~25 min for the integration lane and do not mistake it for a hang.** It
+is gated by two very slow files — `lib/flows/graph/__tests__/prompt-owners.integration.test.ts`
+(~23 min, 52 tests) and `lib/agents/__tests__/prompt-owners.integration.test.ts`
+(~15 min, 50 tests). While they run, the execution-host resolver logs
+`sequence 0 / disposition duplicate` every 2 s, several hundred times per run.
+That is the normal shape of these suites' event replay, NOT a wedged stream.
+
+**Any test that reaches the supervisor transport must NAME a host** (M51 T8.6,
+2026-09-11). `lib/supervisor-client.ts` refuses an unnamed host under a test
+runner, because the default used to fall through to the dev port and drive
+whatever supervisor was listening on the developer's machine — which is why a set
+of suites appeared to flip between green and red depending on whether
+`pnpm --filter @maister/supervisor dev` happened to be up. Install the fake seam
+instead: `fakeExecutionHosts(db)` in `beforeAll` for service paths that claim an
+assignment, `fakeGraphHosts(db, runId)` per run for graph paths, and pass
+`executionHosts` into `runFlow`. `evidence-readiness-all-blocking-kinds`,
+`hitl-hook-trip` and `lib/flows/__tests__/runner.integration.test.ts` were the
+last three offenders (8 failures) and are fixed; a test that wants a SPAWN
+failure should script the fake's turn to throw rather than omit the host, since
+an unresolvable host now fails at ADR-166 assignment — before the runner can
+record any state.
+
+The separate `takeover-resume` full-suite flake was an `ENOTEMPTY` on a git
+worktree temp root, not a seam problem: a git child may still be writing pack
+objects when the case returns. Both of that spec's `rm` calls now carry
+`maxRetries`/`retryDelay`, the same remedy the sync-resolver temp-repo cleanup
+uses. Reach for that before calling a cleanup failure flaky.
 
 **Known-flaky:** `e2e/recursive-harness.spec.ts` fails roughly one run in three
 under the full parallel suite and passes in isolation. The test supervisor

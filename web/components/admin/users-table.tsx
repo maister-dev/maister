@@ -296,7 +296,8 @@ export function AdminUsersTable({
           labels={{
             ariaLabel: t("paginationLabel"),
             next: t("pageNext"),
-            page: t("pageLabel"),
+            // RAW: `NumberedPagination` interpolates `{page}` itself.
+            page: t.raw("pageLabel"),
             previous: t("pagePrev"),
           }}
           pageCount={totalPages}

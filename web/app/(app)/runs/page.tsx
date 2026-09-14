@@ -261,7 +261,8 @@ export default async function RunsPage({
           labels={{
             ariaLabel: t("paginationLabel"),
             next: t("next"),
-            page: t("page"),
+            // RAW: `NumberedPagination` interpolates `{page}` itself.
+            page: t.raw("page"),
             previous: t("previous"),
           }}
           pageCount={page.pageCount}

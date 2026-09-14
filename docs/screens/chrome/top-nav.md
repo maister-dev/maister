@@ -19,7 +19,7 @@ account actions (change password, sign out); admin destinations live in the
 
 ## Navigation
 
-- **Logo** → `/` (portfolio).
+- **Logo** → `/` (the Desk — "home"; ADR-172 D3).
 - **Breadcrumb** → `~/projects` plus the per-screen crumb.
 - **User menu** → change password, sign out.
 - **Locale / theme** toggles act in place (cookie / class), no navigation.
@@ -29,12 +29,37 @@ account actions (change password, sign out); admin destinations live in the
 
 ## Layout & regions
 
-Left: logo + a breadcrumb (`~/projects` and the active crumb). Below `md`, the
-logo group also contains the mobile rail trigger. Right: language
+Left: logo + a **Desk | Projects** switch + a breadcrumb (`~/projects` and the
+active crumb). The switch (Implemented — `web/components/chrome/home-switch.tsx`)
+is the explicit control for the two meanings `/` used to carry: **Desk** targets
+`/`, **Projects** targets `/projects` (ADR-172 D3). The logo itself means "home"
+and keeps targeting `/`. Both the switch and the breadcrumb are hidden below
+`md`, where the mobile rail drawer already reaches every destination and the
+header has no room for them.
+
+The switch marks its active option from `railSectionForPathname`, the same
+classifier the rail highlights from — a second "am I on the portfolio" check is
+how the header and the rail start disagreeing. The crumb
+(`web/components/chrome/nav-crumb.tsx`) reads it too; it named "portfolio"
+unconditionally before, which was false on the Desk.
+Below `md`, the logo group also contains the mobile rail trigger. Right: language
 switch, theme switch, and the user menu. The theme switch uses packaged
 Heroicons: a sun for light mode and a moon for dark mode. After WI-3 the
 breadcrumb no longer carries a supervisor status dot — supervisor status is
 shown once in the footer ([`status-bar.md`](status-bar.md)).
+
+**Narrow (Implemented — `NAV-07`).** The header is laid out narrow-first: `gap-2
+px-3` below `md`, widening to `gap-8 px-6` above it, with `min-w-0` on both
+groups and `shrink-0` on everything that must keep its size. Below `md` the
+language switch shows only the CURRENT locale (`EN`, not `EN · RU`) and the
+theme switch only its icon; both carry an explicit `aria-label`, so what
+shrinks is the affordance and never the accessible name. The user's name
+truncates by CSS and stays whole in the DOM — removing it would take the
+person's name out of the control's accessible name — and the crumb truncates in
+the same way at the widths where it is shown. The mobile rail trigger, the only
+route to navigation below `md`, is never dropped. This replaced a header that
+overflowed a 390px viewport on every route (`/work` 471px, `/inbox` 479px) and
+made the whole page scroll sideways.
 
 ## States
 
@@ -48,7 +73,9 @@ the session resolved in the layout.
 
 ## i18n
 
-`nav` namespace (`crumbProjects`); the user menu and switches own their strings.
+`nav` namespace (`crumbProjects`, `switchDesk`, `switchProjects`, `switchLabel`,
+`crumbDesk`, plus the section labels the crumb reuses); the user menu and
+locale/theme switches own their strings.
 
 ## Linked artifacts
 
@@ -58,4 +85,7 @@ the session resolved in the layout.
   `web/components/chrome/theme-switch.tsx`,
   `web/components/chrome/user-menu.tsx`,
   `web/components/chrome/platform-status.tsx` (`PlatformStatusDot`, still used by
-  the login side panel).
+  the login side panel), `web/components/chrome/home-switch.tsx`,
+  `web/components/chrome/nav-crumb.tsx`.
+- IA: [`../../system-analytics/home-navigation.md`](../../system-analytics/home-navigation.md)
+  (`NAV-04`, `NAV-05`).

@@ -69,6 +69,7 @@ export function comparePromotable(
 
 type CandidateRow = {
   runId: string;
+  projectId: string | null;
   runKind: string;
   status: string;
   promotionHold: unknown;
@@ -80,14 +81,25 @@ type CandidateRow = {
   reviewEnteredAt: Date | null;
 };
 
-export async function listProjectPromotable(
-  projectId: string,
-  deps?: { db?: DbClient },
-): Promise<PromotionReadyItem[]> {
-  const client = deps?.db ?? (getDb() as DbClient);
+export interface ClassifiedPromotable extends PromotionReadyItem {
+  // The owning project, needed only by the cross-project queue. Deliberately
+  // absent from `PromotionReadyItem`, whose shape is a frozen ext contract.
+  projectId: string;
+}
+
+// SOLID: the loader knows how rows are fetched; the classifier knows what makes
+// a row promotable. Splitting them is what lets ONE readiness pass cover many
+// projects — the classifier no longer has to be told which project it is in.
+async function loadPromotableCandidates(
+  client: DbClient,
+  projectIds: readonly string[],
+): Promise<CandidateRow[]> {
+  if (projectIds.length === 0) return [];
+
   const joined: CandidateRow[] = await client
     .select({
       runId: runs.id,
+      projectId: runs.projectId,
       runKind: runs.runKind,
       status: runs.status,
       promotionHold: runs.promotionHold,
@@ -104,7 +116,7 @@ export async function listProjectPromotable(
     .leftJoin(workspaces, eq(workspaces.runId, runs.id))
     .where(
       and(
-        eq(runs.projectId, projectId),
+        inArray(runs.projectId, [...projectIds]),
         inArray(runs.runKind, [...PROMOTABLE_RUN_KINDS]),
         inArray(runs.status, [...PROMOTABLE_RUN_STATUSES]),
       ),
@@ -115,13 +127,17 @@ export async function listProjectPromotable(
   // the left join is one-to-MANY in principle and would emit the same runId
   // twice. Collapse to the first row per run: the list is a set of runs, and a
   // duplicate would also break the deterministic ordering REQ-A2 AC4 promises.
-  const candidates = [
-    ...new Map(joined.map((row) => [row.runId, row])).values(),
-  ];
+  return [...new Map(joined.map((row) => [row.runId, row])).values()];
+}
 
+async function classifyPromotable(
+  client: DbClient,
+  candidates: readonly CandidateRow[],
+  logScope: Record<string, unknown>,
+): Promise<ClassifiedPromotable[]> {
   if (candidates.length === 0) {
     log.debug(
-      { projectId, candidateCount: 0 },
+      { ...logScope, candidateCount: 0 },
       "[ext-activity.promotable] classified",
     );
 
@@ -140,7 +156,7 @@ export async function listProjectPromotable(
 
     if (readiness === undefined) {
       log.warn(
-        { projectId, runId: row.runId },
+        { ...logScope, runId: row.runId },
         "[ext-activity.promotable] no readiness entry for a candidate run",
       );
       continue;
@@ -179,8 +195,20 @@ export async function listProjectPromotable(
   );
 
   const items = surviving
+    // `runs.project_id` is nullable in the schema (projectless assistant runs),
+    // but the candidate SQL filters `project_id IN (...)`, which excludes NULL
+    // by SQL semantics. This narrows the type; it removes no reachable row.
+    .filter(
+      (
+        entry,
+      ): entry is {
+        row: CandidateRow & { projectId: string };
+        readiness: ReadinessState;
+      } => entry.row.projectId !== null,
+    )
     .map(({ row, readiness }) => ({
       runId: row.runId,
+      projectId: row.projectId,
       taskId: row.taskId ?? null,
       taskKey:
         row.projectTaskKey && row.taskNumber !== null
@@ -195,7 +223,7 @@ export async function listProjectPromotable(
 
   log.debug(
     {
-      projectId,
+      ...logScope,
       candidateCount: candidates.length,
       readyCount: items.length,
       excludedHold: mechanical.length - unheld.length,
@@ -205,4 +233,46 @@ export async function listProjectPromotable(
   );
 
   return items;
+}
+
+/**
+ * Cross-project promotable runs in ONE readiness pass (T2.3).
+ *
+ * Calling `listProjectPromotable` per project would restore the per-project N
+ * the cross-project decision queue exists to avoid.
+ */
+export async function listPromotableForProjects(
+  projectIds: readonly string[],
+  deps?: { db?: DbClient },
+): Promise<ClassifiedPromotable[]> {
+  const client = deps?.db ?? (getDb() as DbClient);
+  const candidates = await loadPromotableCandidates(client, projectIds);
+
+  return classifyPromotable(client, candidates, {
+    projectCount: projectIds.length,
+  });
+}
+
+export async function listProjectPromotable(
+  projectId: string,
+  deps?: { db?: DbClient },
+): Promise<PromotionReadyItem[]> {
+  const client = deps?.db ?? (getDb() as DbClient);
+  const candidates = await loadPromotableCandidates(client, [projectId]);
+  const classified = await classifyPromotable(client, candidates, {
+    projectId,
+  });
+
+  // Project to the EXACT public shape. `projectId` is an internal convenience
+  // for the cross-project caller and must not ride out on a frozen ext contract
+  // just because it happens to be on the object.
+  return classified.map((item) => ({
+    runId: item.runId,
+    taskId: item.taskId,
+    taskKey: item.taskKey,
+    taskTitle: item.taskTitle,
+    targetBranch: item.targetBranch,
+    readiness: item.readiness,
+    inReviewSince: item.inReviewSince,
+  }));
 }

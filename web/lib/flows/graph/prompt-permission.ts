@@ -21,6 +21,7 @@ import { gatePromptOperationKey } from "./prompt-owner";
 import { lockFlowPromptOwner } from "./prompt-owner-authority";
 import { pendingNodePermissionResumeExists } from "./permission-resume";
 
+import { createHitlRequest } from "@/lib/runs/hitl-create";
 import { flowPermissionSourceSchema } from "@/lib/execution-host/flow-permission-source";
 import {
   executionCommands,
@@ -719,7 +720,7 @@ export async function handleFlowPermission(input: {
     const hitlRequestId = existing?.id ?? randomUUID();
 
     if (!existing) {
-      await tx.insert(hitlRequests).values({
+      await createHitlRequest(tx, {
         id: hitlRequestId,
         runId,
         stepId: input.stepId,

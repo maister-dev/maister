@@ -15,6 +15,7 @@ import { and, eq, gte, inArray, isNull, lte, type SQL } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
+import { getVisibleProjectIds } from "@/lib/queries/visible-projects";
 import * as schema from "@/lib/db/schema";
 import { harnessNeverFiredMin } from "@/lib/instance-config";
 import { getProjectAgentization } from "@/lib/queries/observatory-agentization";
@@ -67,7 +68,6 @@ const {
   hitlRequests,
   nodeAttemptCostRollups,
   nodeAttempts,
-  projectMembers,
   projects,
   runCostRollups,
   runs,
@@ -909,17 +909,9 @@ async function getVisibleProjects(
   userId: string,
   globalRole: GlobalRole,
 ): Promise<ProjectScopeRow[]> {
-  if (globalRole === "admin") {
-    return client
-      .select({
-        id: projects.id,
-        slug: projects.slug,
-        name: projects.name,
-        mainBranch: projects.mainBranch,
-      })
-      .from(projects)
-      .where(isNull(projects.archivedAt));
-  }
+  const visibleIds = await getVisibleProjectIds(userId, globalRole, client);
+
+  if (visibleIds.length === 0) return [];
 
   return client
     .select({
@@ -929,8 +921,7 @@ async function getVisibleProjects(
       mainBranch: projects.mainBranch,
     })
     .from(projects)
-    .innerJoin(projectMembers, eq(projectMembers.projectId, projects.id))
-    .where(and(eq(projectMembers.userId, userId), isNull(projects.archivedAt)));
+    .where(inArray(projects.id, visibleIds));
 }
 
 async function loadObservatoryRows(

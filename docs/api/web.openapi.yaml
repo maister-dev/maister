@@ -806,6 +806,176 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/activity/cursor:
+    post:
+      tags: [attention]
+      summary: (Implemented, ADR-169) Advance the caller's activity read cursor
+      description: |
+        Writes `user_activity_cursors.seen_through` for the **session user**.
+        The user is `auth-context`; `seenThrough` is body-controlled and clamped
+        to `<= now()`.
+
+        The write is a single-row monotonic upsert —
+        `seen_through = GREATEST(excluded.seen_through, user_activity_cursors.seen_through)`
+        — so it is idempotent and a replayed or out-of-order request cannot
+        rewind the cursor and resurface read items as unread (`ATN-10`).
+        A `seenThrough` later than `now()` is refused `PRECONDITION` rather than
+        clamped silently, because a future cursor would permanently hide
+        activity.
+
+        A caller may advance only their own cursor; there is no parameter
+        naming a user.
+      operationId: advanceActivityCursor
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [seenThrough]
+              properties:
+                seenThrough:
+                  type: string
+                  format: date-time
+                  description: New high-water mark. Must not be in the future.
+      responses:
+        "204":
+          description: >-
+            Cursor advanced, or left unchanged when the request was stale.
+        "400": { $ref: "#/components/responses/Precondition" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+
+  /api/attention/stream:
+    get:
+      tags: [attention]
+      summary: (Implemented, ADR-171) SSE bridge — the reader's attention stream
+      description: |
+        Requires an active session (`requireActiveSession()`), which is the
+        FIRST await. The stream is addressed by the SESSION USER, never by a run
+        or a project: a reader of `/work` or `/activity` watches n runs across m
+        projects and that set changes while they watch. There is no parameter
+        naming a user.
+
+        A server-side poll of DURABLE read models pushed as SSE. It never writes
+        run state, never resolves a HITL deferred and never advances a read
+        cursor. Project visibility is RE-ESTABLISHED on every poll, so a project
+        that leaves the reader's reach mid-stream stops producing frames without
+        a reconnect.
+
+        Frames are TICKS, not a log: "these projects moved, and here are the two
+        canonical counters as of now". The client refetches; it never
+        accumulates frames. Three event names are emitted — `attention.tick`
+        (the only one carrying an SSE `id`), `attention.heartbeat`, and
+        `attention.stream_timeout`, which closes a stream that has been quiet
+        for five minutes. Frame schemas live in
+        `async/attention-stream.asyncapi.yaml`.
+
+        Use the standard SSE `Last-Event-ID` header (or the `?lastEventId=`
+        query-string fallback) to resume strictly after that frame. An absent,
+        malformed, zero or overlong id is NOT an error: for a tick stream the
+        "full replay" is the current state, which the server sends as one
+        snapshot frame whose `changed` array is empty.
+      operationId: streamAttention
+      parameters:
+        - name: Last-Event-ID
+          in: header
+          required: false
+          schema: { type: string, pattern: "^(0|[1-9][0-9]{0,18})$" }
+        - name: lastEventId
+          in: query
+          required: false
+          description: >-
+            Query-string fallback for `Last-Event-ID`, same canonical decimal
+            form. An unusable value yields a snapshot rather than an error.
+          schema: { type: string, pattern: "^(0|[1-9][0-9]{0,18})$" }
+      responses:
+        "200":
+          description: SSE stream.
+          headers:
+            Content-Type:
+              schema:
+                type: string
+                enum: [text/event-stream]
+            Cache-Control:
+              schema: { type: string, enum: [no-cache] }
+            X-Accel-Buffering:
+              schema:
+                type: string
+                enum: ["no"]
+                description: >-
+                  Suppresses proxy buffering; without it the reader sees nothing
+                  until the connection closes.
+        "401":
+          description: No valid session (`UNAUTHENTICATED`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "403":
+          description: |
+            Any other refusal from the session gate — the account must change
+            its password first (`PASSWORD_CHANGE_REQUIRED`), the account is not
+            active (`ACCOUNT_INACTIVE`), or the session is otherwise
+            unauthorized (`UNAUTHORIZED`). No stream is opened.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
+  /api/push/subscribe:
+    post:
+      tags: [attention]
+      summary: (Implemented, ADR-173) Register a web-push endpoint for the caller
+      description: |
+        Stores a browser push endpoint owned by the **session user**. The owner
+        is `auth-context` only and is never read from the body.
+
+        `endpoint` and `keys` are body-controlled and stored **opaque**: they
+        are never parsed for routing, never used to derive a host, and never
+        logged. Re-registering the same endpoint for the same owner is
+        idempotent.
+
+        With VAPID configuration absent the deployment reports "push
+        unavailable" and this route refuses `CONFIG`; it never crashes boot
+        (`NTF-10`).
+      operationId: subscribeWebPush
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [endpoint, keys]
+              properties:
+                endpoint:
+                  type: string
+                  format: uri
+                  description: Opaque push service URL. Never parsed for routing.
+                expirationTime:
+                  type: integer
+                  nullable: true
+                  description: Push service expiry, when the browser supplies one.
+                keys:
+                  type: object
+                  additionalProperties: false
+                  required: [p256dh, auth]
+                  properties:
+                    p256dh: { type: string }
+                    auth: { type: string }
+      responses:
+        "201":
+          description: Subscription registered.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [id]
+                properties:
+                  id: { type: string, format: uuid }
+        "400": { $ref: "#/components/responses/Config" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+
   /api/runs/launch-options:
     get:
       tags: [runs]

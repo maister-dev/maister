@@ -6,6 +6,7 @@ import { and, eq } from "drizzle-orm";
 import pino from "pino";
 
 import * as schemaModule from "@/lib/db/schema";
+import { createHitlRequest } from "@/lib/runs/hitl-create";
 import {
   admitSyncPrompt,
   type SyncPromptOwner,
@@ -25,7 +26,7 @@ import {
 } from "@/lib/execution-host";
 
 // FIXME(any): dual drizzle-orm peer-dep variants — mirror sync-target.ts.
-const { hitlRequests, runs } = schemaModule as unknown as Record<string, any>;
+const { runs } = schemaModule as unknown as Record<string, any>;
 
 // FIXME(any): the injected db seam is a Drizzle client OR a Testcontainers pg
 // client; both expose select/insert/update/transaction.
@@ -128,7 +129,7 @@ async function persistResolverPermission(args: {
       : "Approve tool call?";
 
   await args.db.transaction(async (tx: Db) => {
-    await tx.insert(hitlRequests).values({
+    await createHitlRequest(tx, {
       id: randomUUID(),
       runId: args.runId,
       stepId: SYNC_STEP_ID,

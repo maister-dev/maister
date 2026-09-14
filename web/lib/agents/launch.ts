@@ -47,6 +47,7 @@ import {
   sharedAgentWorktreesDirectory,
 } from "./workspace-paths";
 
+import { createHitlRequest } from "@/lib/runs/hitl-create";
 import { waitForPromptIncarnation } from "@/lib/execution-host/prompt-incarnation";
 import { latestOwnedCreate } from "@/lib/execution-host/create-intent";
 import { SessionCreatePending } from "@/lib/execution-host/owned-session-create";
@@ -2529,7 +2530,7 @@ async function recordAgentPermissionRequest(args: {
   event: Extract<SupervisorEvent, { type: "session.permission_request" }>;
 }): Promise<void> {
   await args.db.transaction(async (tx: Db) => {
-    await tx.insert(hitlRequests).values({
+    await createHitlRequest(tx, {
       id: randomUUID(),
       runId: args.runId,
       stepId: "agent",

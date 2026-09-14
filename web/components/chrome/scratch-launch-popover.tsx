@@ -13,7 +13,13 @@ export interface ScratchLaunchPopoverProps {
   label: string;
   title: string;
   projectId?: string | null;
-  variant: "icon" | "primary" | "rail";
+  /**
+   * `composer` is the Desk's full-width entry (ADR-172 D1). It opens the SAME
+   * launcher dialog as `primary` but deliberately does NOT register the global
+   * Cmd/Ctrl+K listener — the rail already owns that, and a second registration
+   * would open two dialogs at once.
+   */
+  variant: "icon" | "primary" | "rail" | "composer";
   hint?: string;
   disabled?: boolean;
   shortcut?: ReactNode;
@@ -85,9 +91,11 @@ export function ScratchLaunchPopover({
   const buttonClass =
     variant === "primary"
       ? "flex w-full cursor-pointer items-center gap-2.5 rounded-[10px] bg-amber px-3 py-[11px] pl-3.5 font-sans text-[13.5px] font-semibold tracking-[-0.005em] text-white shadow-[0_8px_24px_-10px_var(--amber),0_1px_0_rgba(255,255,255,0.18)_inset] transition-[transform,box-shadow,background] hover:-translate-y-px hover:bg-amber-2"
-      : variant === "rail"
-        ? "inline-flex h-9 w-9 items-center justify-center rounded-[10px] bg-amber font-mono text-[18px] font-bold leading-none text-white shadow-[0_8px_24px_-12px_var(--amber),0_1px_0_rgba(255,255,255,0.18)_inset] transition-[transform,box-shadow,background] hover:-translate-y-px hover:bg-amber-2"
-        : "inline-flex h-5 w-5 items-center justify-center rounded-md text-[13px] font-semibold text-mute hover:bg-ivory hover:text-amber";
+      : variant === "composer"
+        ? "flex w-full cursor-pointer items-center gap-3 rounded-[14px] border border-line bg-paper px-4 py-3.5 text-left font-sans text-[13.5px] text-mute shadow-[var(--shadow-sm)] transition-[border-color,box-shadow] hover:border-amber-line hover:text-ink"
+        : variant === "rail"
+          ? "inline-flex h-9 w-9 items-center justify-center rounded-[10px] bg-amber font-mono text-[18px] font-bold leading-none text-white shadow-[0_8px_24px_-12px_var(--amber),0_1px_0_rgba(255,255,255,0.18)_inset] transition-[transform,box-shadow,background] hover:-translate-y-px hover:bg-amber-2"
+          : "inline-flex h-5 w-5 items-center justify-center rounded-md text-[13px] font-semibold text-mute hover:bg-ivory hover:text-amber";
 
   return (
     <>
@@ -109,6 +117,13 @@ export function ScratchLaunchPopover({
             </span>
             <span className="flex-1 text-left">{label}</span>
             {shortcut}
+          </>
+        ) : variant === "composer" ? (
+          <>
+            <span className="inline-flex h-[26px] w-[26px] items-center justify-center rounded-[9px] bg-amber font-mono text-[15px] font-bold leading-none text-white">
+              +
+            </span>
+            <span className="flex-1">{label}</span>
           </>
         ) : (
           "+"
