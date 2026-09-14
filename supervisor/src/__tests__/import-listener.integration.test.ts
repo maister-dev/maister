@@ -378,6 +378,23 @@ describe("chunked transfer", () => {
   // The operator needs both halves to resume: aggregate totals to bound its own
   // progress reporting, and the per-item offsets to decide what to re-send. A
   // body that spends one key on both loses the totals silently.
+  // S4.8 / D9 step 6: the manager catalogues every sealed object on the host
+  // that holds it, so the host names itself in the progress it reports and the
+  // catalogue row is bound to that identity rather than to an assumption.
+  it("names the host that holds the bytes", async () => {
+    const progress = JSON.parse(
+      (
+        await call({
+          method: "GET",
+          path: `/imports/${IMPORT_ID}`,
+          headers: controlHeaders(),
+        })
+      ).body,
+    ) as ProgressBody & { host?: { hostKey: string } };
+
+    expect(progress.host).toEqual({ hostKey: hostState.hostKey });
+  });
+
   it("reports aggregate totals alongside the per-item offsets", async () => {
     const bytes = Buffer.from("abcdefghij", "utf8");
     const itemId = await registerItem(bytes);

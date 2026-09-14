@@ -915,6 +915,8 @@ docker compose; production overrides go in `.env`.
 | `MAISTER_ADAPTER_BINARY_OPENCODE`  | unset                                                                   | Optional supervisor-side executable override for `opencode`. When unset, PATH resolution uses `opencode` plus the registry argv `acp`.                                                               |
 | `MAISTER_ADAPTER_BINARY_MIMO`      | unset                                                                   | Optional supervisor-side executable override for `mimo`. When unset, PATH resolution uses `mimo` plus the registry argv `acp`.                                                                       |
 | `LOG_LEVEL`                        | `debug`                                                                 | pino level: `trace`, `debug`, `info`, `warn`, `error`, `fatal`, or `silent`.                                                                                                                         |
+| `MAISTER_IMPORT_ADMISSION_DIR`     | unset                                                                   | **(Implemented — S4.3)** With `MAISTER_IMPORT_ADMISSION_ID`, boots the maintenance import listener on `<dir>/admission/import.sock` (0600 in a 0700 operator-owned directory) for the Stage A → Stage B cut-over. Absent → no listener; the TCP port never serves the import routes. |
+| `MAISTER_IMPORT_ADMISSION_ID`      | unset                                                                   | **(Implemented — S4.3)** The one import id admitted; each boot mints the next generation (`import_admission_enabled`) and a revoked generation cannot be reopened by any request.                          |
 
 Secrets MUST NEVER appear in:
 
@@ -1105,6 +1107,20 @@ remote adapter preserves this contract but remote enrollment and a relay remain
 out of scope. See [`api/supervisor.openapi.yaml`](api/supervisor.openapi.yaml),
 [`api/async/execution-host-events.asyncapi.yaml`](api/async/execution-host-events.asyncapi.yaml),
 and the ADR-167 analytics documents.
+
+**Maintenance import listener (Implemented — S4.3–S4.6).** A second Fastify
+instance on the Unix socket `<MAISTER_IMPORT_ADMISSION_DIR>/admission/import.sock`,
+started only when both admission variables are set, serves the `maintenance-import`
+routes of the OpenAPI contract: bounded progress (which names this host's key,
+so the manager binds every catalogued import object to it — S4.8), exact chunk
+upload, seal, sealed-object readback and admission revocation. It shares nothing with the TCP
+app but the host state; every request carries the enabled generation and the
+manifest digest, the host compares every item, offset and declared identity
+against its own ledger before a byte lands, and a sealed import object is an
+ordinary runtime object served by the ordinary content route. Raw source paths
+never enter the protocol or the log. Procedure and phases:
+[`system-analytics/execution-data-cutover.md`](system-analytics/execution-data-cutover.md);
+operator runbook: [`deployment.md`](deployment.md#14-stage-b-execution-data-cut-over-upgrade-from-stage-a).
 
 ## Limitations on POC
 

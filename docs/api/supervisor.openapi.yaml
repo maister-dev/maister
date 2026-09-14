@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: MAIster Supervisor HTTP API
-  version: "0.11.0"
+  version: "0.12.0"
   description: |
     HTTP + SSE surface exposed by `supervisor/` (the Node daemon that owns ACP
     sessions and spawns adapter binaries. Implemented adapters are
@@ -2865,14 +2865,19 @@ components:
         bounded totals for reporting and the per-item offsets a resumed
         invocation resends from. Item identities are manifest digests, so
         nothing here names a source file, a directory or a workspace.
-      required: [totals, items]
+        (S4.8) `host` names the host that holds the sealed bytes, so the
+        manager's catalogue row for every imported object is bound to the
+        identity the host states — never to an assumption.
+      required: [totals, items, host]
       properties:
         totals: { $ref: "#/components/schemas/ImportTotals" }
         items:
           type: array
           items: { $ref: "#/components/schemas/ImportItemProgress" }
+        host: { $ref: "#/components/schemas/ImportHost" }
       example:
         totals: { items: 2, sealed: 1, receivedBytes: 12, expectedBytes: 16 }
+        host: { hostKey: "host_8f3a2c1d9e" }
         items:
           - itemId: "1111111111111111111111111111111111111111111111111111111111111111"
             sizeBytes: 12
@@ -2884,6 +2889,18 @@ components:
             receivedBytes: 0
             state: pending
             sealedObjectId: null
+    ImportHost:
+      type: object
+      additionalProperties: false
+      description: |
+        (Implemented — S4.8) The durable identity of the host serving this
+        import — the same `hostKey` `GET /health` reports and the manager's
+        `execution_hosts.host_key` registers.
+      required: [hostKey]
+      properties:
+        hostKey: { type: string, pattern: "^[A-Za-z0-9_-]{8,64}$" }
+      example:
+        hostKey: "host_8f3a2c1d9e"
     ImportTotals:
       type: object
       additionalProperties: false

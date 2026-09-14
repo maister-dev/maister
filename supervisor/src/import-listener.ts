@@ -177,8 +177,12 @@ export async function startImportListener(input: {
       }));
 
     // `totals` stays a sibling of `items`: the snapshot's own item COUNT and
-    // the per-item list are different answers and cannot share a key.
-    reply.status(200).send({ totals, items });
+    // the per-item list are different answers and cannot share a key. `host`
+    // is the identity the manager binds each catalogued object to (S4.8): the
+    // key of the host that actually holds the bytes, stated by that host.
+    reply
+      .status(200)
+      .send({ totals, items, host: { hostKey: input.hostState.hostKey } });
   });
 
   app.put(

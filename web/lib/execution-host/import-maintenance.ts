@@ -34,6 +34,9 @@ export type OperatorImportItem = {
   // this item's bytes belong to. S4.4 rewrites exactly those rows, and only
   // against the fingerprint the inventory froze for each.
   associationKey: string;
+  // S4.8: what the inventory classified the source as; the manager catalogue
+  // kind is derived from it, never from a file name.
+  sourceClass: string;
   rowFingerprint: string | null;
 };
 
@@ -61,6 +64,8 @@ export type ImportProgress = {
     expectedBytes: number;
   };
   items: ImportItemProgress[];
+  // S4.8: the identity the manager binds every catalogued object to.
+  host: { hostKey: string };
 };
 
 export type ImportChunkAck = {
@@ -144,7 +149,8 @@ export function readOperatorImportManifest(input: {
       .prepare(
         `SELECT item_id AS itemId, run_id AS runId, lane,
             relative_path AS relativePath, size_bytes AS sizeBytes, sha256,
-            association_key AS associationKey, row_fingerprint AS rowFingerprint
+            association_key AS associationKey, row_fingerprint AS rowFingerprint,
+            source_class AS sourceClass
          FROM import_items
          WHERE import_id = ? AND disposition = 'copy'
          ORDER BY item_id`,
@@ -160,6 +166,7 @@ export function readOperatorImportManifest(input: {
         associationKey: String(row.associationKey),
         rowFingerprint:
           row.rowFingerprint === null ? null : String(row.rowFingerprint),
+        sourceClass: String(row.sourceClass),
       }));
 
     return { importId: input.importId, digest, items };

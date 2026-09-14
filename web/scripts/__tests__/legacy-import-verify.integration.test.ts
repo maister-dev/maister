@@ -33,6 +33,7 @@ import {
   it,
 } from "vitest";
 
+import { ensureLocalExecutionHost } from "@/lib/execution-host";
 import {
   createImportMaintenanceClient,
   readOperatorImportManifest,
@@ -132,7 +133,11 @@ async function seedRun(): Promise<{ runId: string; runDirectory: string }> {
     `${JSON.stringify({ ts: "2026-09-04T00:00:01.000Z", sessionId: "s", input_tokens: 1, output_tokens: 1 })}\n`,
     "utf8",
   );
-  await writeFile(join(runDirectory, "plan.log"), "planning step output\n", "utf8");
+  await writeFile(
+    join(runDirectory, "plan.log"),
+    "planning step output\n",
+    "utf8",
+  );
   await writeFile(
     join(runDirectory, "uploads", "spec", "spec.txt"),
     "spec bytes\n",
@@ -245,8 +250,21 @@ async function startSupervisorFor(id: string): Promise<RealSupervisor> {
   });
 
   supervisors.push(supervisor);
+  await registerHost(supervisor);
 
   return supervisor;
+}
+
+// The manager knows the host the way a running installation does: registered
+// from the supervisor's own identity, as the web boot registers it.
+async function registerHost(supervisor: RealSupervisor): Promise<void> {
+  process.env.MAISTER_SUPERVISOR_URL = supervisor.url;
+  const registration = await ensureLocalExecutionHost({ db: testDatabase.db });
+
+  if (registration.status !== "registered")
+    throw new Error(
+      `host registration failed: ${JSON.stringify(registration)}`,
+    );
 }
 
 function importId(): string {
@@ -380,7 +398,10 @@ async function laneRows(
 async function applyMigration(
   file: string,
 ): Promise<{ ok: boolean; message: string }> {
-  const sql = await readFile(resolve(process.cwd(), "lib/db/migrations", file), "utf8");
+  const sql = await readFile(
+    resolve(process.cwd(), "lib/db/migrations", file),
+    "utf8",
+  );
 
   for (const statement of sql.split("--> statement-breakpoint")) {
     if (!statement.trim()) continue;
@@ -397,7 +418,10 @@ async function applyMigration(
 describe("execution-data-plane:import-legacy verify", () => {
   it("proves every lane by streaming the host's own bytes back", async () => {
     const context = await preserved();
-    const output = await cli("verify", phaseArgs(context.id, context.generation));
+    const output = await cli(
+      "verify",
+      phaseArgs(context.id, context.generation),
+    );
 
     expect(output).toContain("legacy_execution_data_verify_finished");
     expect(output).toContain("proofVersion");
@@ -475,6 +499,41 @@ describe("execution-data-plane:import-legacy verify", () => {
     expect(output).toContain("verify_rows_mismatch");
   }, 120_000);
 
+  // S4.8: the catalogue row the ordinary web read resolves is part of the
+  // proof — a lane whose object the manager cannot find, or finds with other
+  // bytes, is not preserved for the reader even if the host still has it.
+  it("refuses a proof whose catalogue row is gone", async () => {
+    const context = await preserved();
+
+    await testDatabase.pool.query(
+      `delete from execution_runtime_objects
+       where id = (select id from execution_runtime_objects where run_id = $1 limit 1)`,
+      [context.runId],
+    );
+    expect(
+      await cliExpectingRefusal(
+        "verify",
+        phaseArgs(context.id, context.generation),
+      ),
+    ).toContain("verify_catalog_missing");
+  }, 120_000);
+
+  it("refuses a proof whose catalogue row disagrees with the frozen bytes", async () => {
+    const context = await preserved();
+
+    await testDatabase.pool.query(
+      `update execution_runtime_objects set sha256 = repeat('0', 64)
+       where id = (select id from execution_runtime_objects where run_id = $1 limit 1)`,
+      [context.runId],
+    );
+    expect(
+      await cliExpectingRefusal(
+        "verify",
+        phaseArgs(context.id, context.generation),
+      ),
+    ).toContain("verify_catalog_mismatch");
+  }, 120_000);
+
   it("refuses a source that moved after it was inventoried", async () => {
     const context = await preserved();
 
@@ -491,7 +550,6 @@ describe("execution-data-plane:import-legacy verify", () => {
 
     expect(output).toContain("verify_source_changed");
   }, 300_000);
-
 });
 
 describe("execution-data-plane:import-legacy finalize-proof", () => {

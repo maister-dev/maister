@@ -19,6 +19,8 @@ export type ProofRefusal =
   | "verify_count_mismatch"
   | "verify_rows_missing"
   | "verify_rows_mismatch"
+  | "verify_catalog_missing"
+  | "verify_catalog_mismatch"
   | "proof_lane_missing";
 
 export type LaneExpectation = {

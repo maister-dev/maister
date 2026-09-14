@@ -26,6 +26,12 @@ import {
 } from "@/lib/execution-host/import-maintenance";
 
 import {
+  CatalogError,
+  catalogKindFor,
+  catalogueSealedObject,
+  resolveSealingHost,
+} from "./legacy-import/catalog";
+import {
   inventoryLegacyRun,
   walkRunDirectory,
   type LegacyAssociation,
@@ -103,7 +109,8 @@ class LegacyImportError extends Error {
 
 function requiredEnv(name: "DB_URL" | "MAISTER_LEGACY_RUNTIME_ROOT"): string {
   const value = process.env[name];
-  if (!value) throw new Error(`${name} is required for legacy execution-data import`);
+  if (!value)
+    throw new Error(`${name} is required for legacy execution-data import`);
 
   return value;
 }
@@ -192,7 +199,9 @@ function eventPayload(
 ): Record<string, unknown> {
   const { type: _type, monotonicId, ts: _timestamp, ...legacyPayload } = event;
   const sessionId =
-    typeof legacyPayload.sessionId === "string" ? legacyPayload.sessionId : null;
+    typeof legacyPayload.sessionId === "string"
+      ? legacyPayload.sessionId
+      : null;
   const nodeAttemptId =
     typeof legacyPayload.nodeAttemptId === "string"
       ? legacyPayload.nodeAttemptId
@@ -268,8 +277,16 @@ function canonicalUsagePayload(
   }
 
   return redactRuntimeEventPayload({
-    inputTokens: nonNegativeInteger(record.input_tokens, "input_tokens", source),
-    outputTokens: nonNegativeInteger(record.output_tokens, "output_tokens", source),
+    inputTokens: nonNegativeInteger(
+      record.input_tokens,
+      "input_tokens",
+      source,
+    ),
+    outputTokens: nonNegativeInteger(
+      record.output_tokens,
+      "output_tokens",
+      source,
+    ),
     cacheReadInputTokens: nonNegativeInteger(
       record.cache_read_input_tokens,
       "cache_read_input_tokens",
@@ -403,7 +420,9 @@ async function readFrozenSource(input: {
   let bytes: Buffer;
 
   try {
-    bytes = await readFile(path.join(input.runDirectory, input.item.relativePath));
+    bytes = await readFile(
+      path.join(input.runDirectory, input.item.relativePath),
+    );
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
     throw new LegacyImportError(
@@ -415,9 +434,14 @@ async function readFrozenSource(input: {
       { cause: error },
     );
   }
-  const observed = createHash("sha256").update(new Uint8Array(bytes)).digest("hex");
+  const observed = createHash("sha256")
+    .update(new Uint8Array(bytes))
+    .digest("hex");
 
-  if (bytes.byteLength !== input.item.sizeBytes || observed !== input.item.sha256) {
+  if (
+    bytes.byteLength !== input.item.sizeBytes ||
+    observed !== input.item.sha256
+  ) {
     throw new LegacyImportError(
       `legacy ${input.sourceKind} source changed since it was inventoried`,
       input.sourceKind,
@@ -625,7 +649,9 @@ async function importRunRows(input: {
   });
 
   await auditRunListing({ runDirectory, items: input.items });
-  const frozenByPath = new Map(input.items.map((item) => [item.relativePath, item]));
+  const frozenByPath = new Map(
+    input.items.map((item) => [item.relativePath, item]),
+  );
   const eventsItem = frozenByPath.get("run.events.jsonl");
   const eventsContents = await readFrozenSource({
     runDirectory,
@@ -658,10 +684,16 @@ async function importRunRows(input: {
 
   const expectedIds = [
     ...events.map(({ source }) =>
-      legacyEventId(input.run.id, `events:${source.byteOffset}:${sha256(source.raw)}`),
+      legacyEventId(
+        input.run.id,
+        `events:${source.byteOffset}:${sha256(source.raw)}`,
+      ),
     ),
     ...costs.map(({ source }) =>
-      legacyEventId(input.run.id, `cost:${source.byteOffset}:${sha256(source.raw)}`),
+      legacyEventId(
+        input.run.id,
+        `cost:${source.byteOffset}:${sha256(source.raw)}`,
+      ),
     ),
   ];
   const cursor = `v1:phase=rows:manifest=${input.lane.manifestDigest}:items=${input.lane.expectedItems}:rows=${expectedIds.length}`;
@@ -677,8 +709,12 @@ async function importRunRows(input: {
       "SELECT next_execution_event_sequence FROM runs WHERE id = $1 FOR UPDATE",
       [input.run.id],
     );
-    if (!lockedRun.rows[0]) throw new Error("legacy run disappeared during import");
-    const evidence = await input.client.query<{ matched: number; total: number }>(
+    if (!lockedRun.rows[0])
+      throw new Error("legacy run disappeared during import");
+    const evidence = await input.client.query<{
+      matched: number;
+      total: number;
+    }>(
       `SELECT count(*) FILTER (WHERE id = ANY($2::text[]))::int AS matched,
           count(*)::int AS total
        FROM execution_events
@@ -732,7 +768,9 @@ async function importRunRows(input: {
     const attemptIdBySession = new Map(
       attempts.rows
         .filter((attempt) => attempt.acpSessionId)
-        .map((attempt) => [attempt.acpSessionId as string, attempt.id] as const),
+        .map(
+          (attempt) => [attempt.acpSessionId as string, attempt.id] as const,
+        ),
     );
     let sequence = BigInt(lockedRun.rows[0].next_execution_event_sequence);
     for (const { source, event } of events) {
@@ -839,15 +877,17 @@ function resolveImportId(argv: readonly string[]): string {
     : (argv[index + 1] ?? "");
 
   if (!/^[A-Za-z0-9._:-]{1,64}$/.test(value)) {
-    throw new Error(
-      "--import-id must be 1-64 characters of [A-Za-z0-9._:-]",
-    );
+    throw new Error("--import-id must be 1-64 characters of [A-Za-z0-9._:-]");
   }
 
   return value;
 }
 
-const INVENTORY_FLAGS = new Set(["--import-id", "--manifest-dir", "--batch-size"]);
+const INVENTORY_FLAGS = new Set([
+  "--import-id",
+  "--manifest-dir",
+  "--batch-size",
+]);
 const ROWS_FLAGS = new Set(["--import-id", "--manifest-dir"]);
 const COPY_FLAGS = new Set(["--import-id", "--manifest-dir", "--generation"]);
 const ASSOCIATE_FLAGS = COPY_FLAGS;
@@ -906,7 +946,9 @@ function parseInventoryArguments(argv: readonly string[]): {
 } {
   const values = parseFlags(argv, INVENTORY_FLAGS, "inventory");
   const rawBatchSize = values.get("--batch-size");
-  const batchSize = rawBatchSize ? Number(rawBatchSize) : DEFAULT_INVENTORY_BATCH;
+  const batchSize = rawBatchSize
+    ? Number(rawBatchSize)
+    : DEFAULT_INVENTORY_BATCH;
 
   if (!Number.isInteger(batchSize) || batchSize < 1) {
     throw new Error("--batch-size must be a positive integer");
@@ -1046,7 +1088,10 @@ async function inventoryLegacyRuns(input: {
 
   try {
     for (const run of runs.rows) {
-      const refuse = (reason: string, detail: Record<string, unknown>): void => {
+      const refuse = (
+        reason: string,
+        detail: Record<string, unknown>,
+      ): void => {
         unresolvedCount += 1;
         log.error(
           {
@@ -1074,7 +1119,9 @@ async function inventoryLegacyRuns(input: {
          FROM execution_data_plane_imports WHERE run_id = $1`,
         [run.id],
       );
-      const completed = priorLanes.rows.filter((lane) => lane.state === "complete");
+      const completed = priorLanes.rows.filter(
+        (lane) => lane.state === "complete",
+      );
 
       if (completed.length > 0) {
         refuse("lane_already_complete", {
@@ -1240,7 +1287,10 @@ async function copyManifestItem(input: {
 
   try {
     while (offset < input.item.sizeBytes) {
-      const length = Math.min(IMPORT_CHUNK_BYTES, input.item.sizeBytes - offset);
+      const length = Math.min(
+        IMPORT_CHUNK_BYTES,
+        input.item.sizeBytes - offset,
+      );
       const buffer = new Uint8Array(length);
       let filled = 0;
 
@@ -1321,10 +1371,9 @@ async function runCopyCommand(input: {
   });
   const progress = await maintenance.progress();
   const byItem = new Map(progress.items.map((item) => [item.itemId, item]));
-  const owners = await runOwnerSlugs(
-    input.client,
-    [...new Set(manifest.items.map((item) => item.runId))],
-  );
+  const owners = await runOwnerSlugs(input.client, [
+    ...new Set(manifest.items.map((item) => item.runId)),
+  ]);
 
   log.info(
     {
@@ -1473,6 +1522,10 @@ type AssociationTarget = {
   rowId: string;
   rowFingerprint: string;
   objectId: string;
+  // S4.8: what the catalogue row says about the bytes the row points at.
+  sourceClass: string;
+  sizeBytes: number;
+  sha256: string;
 };
 
 function parseAssociationKey(
@@ -1521,7 +1574,8 @@ function alreadyAssociated(
     const locator = asRecord(row.locator);
 
     return (
-      locator.kind === "execution-object" && locator.objectId === target.objectId
+      locator.kind === "execution-object" &&
+      locator.objectId === target.objectId
     );
   }
 
@@ -1532,6 +1586,7 @@ async function repointAssociation(input: {
   client: Client;
   target: AssociationTarget;
   importId: string;
+  hostId: string;
 }): Promise<"repointed" | "already"> {
   const { client, target } = input;
 
@@ -1545,6 +1600,22 @@ async function repointAssociation(input: {
         "association_row_missing",
       );
     }
+    // S4.8: the row is repointed at an object the manager's catalogue names,
+    // in the same transaction — a locator never points at an object the
+    // ordinary read path cannot resolve. An attachment keeps its declared MIME.
+    await catalogueSealedObject(client, {
+      objectId: target.objectId,
+      runId: target.runId,
+      hostId: input.hostId,
+      kind: catalogKindFor(target.sourceClass),
+      logicalName: target.itemId,
+      mimeType:
+        target.kind === "attachment" && typeof row.mimeType === "string"
+          ? row.mimeType
+          : "application/octet-stream",
+      sizeBytes: target.sizeBytes,
+      sha256: target.sha256,
+    });
     if (alreadyAssociated(target, row)) {
       await client.query("COMMIT");
 
@@ -1867,24 +1938,52 @@ async function runAssociateCommand(input: {
       .filter((item) => item.state === "sealed" && item.sealedObjectId)
       .map((item) => [item.itemId, item.sealedObjectId as string]),
   );
+  // S4.8: every catalogue row is bound to the host that stated it holds the
+  // bytes. A manager that knows no such host refuses before any write.
+  let hostId: string;
+
+  try {
+    hostId = await resolveSealingHost(input.client, progress.host.hostKey);
+  } catch (error) {
+    const reason =
+      error instanceof CatalogError
+        ? error.details.reason
+        : (typedRefusalReason(error) ?? "unexpected_association_failure");
+
+    log.error(
+      {
+        event: "legacy_execution_data_associate_refused",
+        importId: input.importId,
+        stage,
+        generation,
+        reason,
+      },
+      "legacy execution-data associate refused",
+    );
+
+    throw new Error(`legacy data association refused: ${reason}`);
+  }
   const targets: AssociationTarget[] = [];
+  const history: OperatorImportItem[] = [];
   const failures: string[] = [];
 
   for (const item of manifest.items) {
     const association = parseAssociationKey(item.associationKey);
-
-    if (!association) continue;
-    if (!item.rowFingerprint) {
-      failures.push(`${item.itemId}:association_fingerprint_missing`);
-      continue;
-    }
-
     const objectId = sealed.get(item.itemId);
 
     // The row is repointed at bytes the host PROVED it holds, never at an
-    // object id the operator hoped for.
+    // object id the operator hoped for — and the same holds for the history
+    // items no row points at, which are catalogued on their own.
     if (!objectId) {
       failures.push(`${item.itemId}:association_bytes_unverified`);
+      continue;
+    }
+    if (!association) {
+      history.push(item);
+      continue;
+    }
+    if (!item.rowFingerprint) {
+      failures.push(`${item.itemId}:association_fingerprint_missing`);
       continue;
     }
     targets.push({
@@ -1894,6 +1993,9 @@ async function runAssociateCommand(input: {
       rowId: association.rowId,
       rowFingerprint: item.rowFingerprint,
       objectId,
+      sourceClass: item.sourceClass,
+      sizeBytes: item.sizeBytes,
+      sha256: item.sha256,
     });
   }
 
@@ -1911,6 +2013,57 @@ async function runAssociateCommand(input: {
 
   let repointed = 0;
   let alreadyCount = 0;
+  let catalogued = 0;
+  let alreadyCatalogued = 0;
+
+  // The preserved history no row points at — transcripts, cost files, logs,
+  // checkpoints, uploads as history — is catalogued the same way, so the
+  // ordinary read path can serve it after the cut-over.
+  for (const item of history) {
+    try {
+      const outcome = await catalogueSealedObject(input.client, {
+        objectId: sealed.get(item.itemId) as string,
+        runId: item.runId,
+        hostId,
+        kind: catalogKindFor(item.sourceClass),
+        logicalName: item.itemId,
+        mimeType: "application/octet-stream",
+        sizeBytes: item.sizeBytes,
+        sha256: item.sha256,
+      });
+
+      if (outcome === "catalogued") catalogued += 1;
+      else alreadyCatalogued += 1;
+      log.info(
+        {
+          event: "legacy_execution_data_object_catalogued",
+          importId: input.importId,
+          itemId: item.itemId,
+          runId: item.runId,
+          lane: item.lane,
+          objectId: sealed.get(item.itemId),
+          outcome,
+        },
+        "legacy execution-data object catalogued",
+      );
+    } catch (error) {
+      const reason =
+        typedRefusalReason(error) ?? "unexpected_catalogue_failure";
+
+      failures.push(`${item.itemId}:${reason}`);
+      log.error(
+        {
+          event: "legacy_execution_data_catalogue_failed",
+          importId: input.importId,
+          itemId: item.itemId,
+          runId: item.runId,
+          lane: item.lane,
+          reason,
+        },
+        "legacy execution-data catalogue failed",
+      );
+    }
+  }
 
   for (const target of targets) {
     try {
@@ -1918,6 +2071,7 @@ async function runAssociateCommand(input: {
         client: input.client,
         target,
         importId: input.importId,
+        hostId,
       });
 
       if (outcome === "repointed") repointed += 1;
@@ -1968,6 +2122,8 @@ async function runAssociateCommand(input: {
       generation,
       repointed,
       alreadyAssociated: alreadyCount,
+      catalogued,
+      alreadyCatalogued,
       mirrorsPreserved: mirrors.preserved,
       mirrorsDeferredTo0134: mirrors.deferred,
       unresolvedCount: failures.length,
@@ -1976,7 +2132,9 @@ async function runAssociateCommand(input: {
   );
 
   if (failures.length > 0) {
-    throw new Error(`legacy data association failed for ${failures.join(", ")}`);
+    throw new Error(
+      `legacy data association failed for ${failures.join(", ")}`,
+    );
   }
 }
 
@@ -2034,13 +2192,18 @@ async function runRowsCommand(input: {
   root: string;
   argv: readonly string[];
 }): Promise<void> {
-  const manifestDir = requireManifestDir(parseFlags(input.argv, ROWS_FLAGS, "rows"));
+  const manifestDir = requireManifestDir(
+    parseFlags(input.argv, ROWS_FLAGS, "rows"),
+  );
   const stage = await assertImportWindow(input.client, input.importId);
 
   await assertNoActiveLegacyWork(input.client, input.importId, stage);
   // The operator manifest gate refuses a missing or empty manifest before a
   // single run directory is read.
-  readOperatorImportManifest({ directory: manifestDir, importId: input.importId });
+  readOperatorImportManifest({
+    directory: manifestDir,
+    importId: input.importId,
+  });
   const frozen = readImportManifestRows({
     file: path.join(manifestDir, `import-${input.importId}.sqlite`),
     importId: input.importId,
@@ -2111,14 +2274,20 @@ async function runRowsCommand(input: {
       });
 
       log.info(
-        { event: "legacy_execution_data_rows_imported", importId: input.importId, ...summary },
+        {
+          event: "legacy_execution_data_rows_imported",
+          importId: input.importId,
+          ...summary,
+        },
         "legacy execution-data rows imported",
       );
     } catch (error) {
       await recordImportFailure(input.client, run.id, error);
       const failure = error instanceof LegacyImportError ? error : null;
 
-      failures.push(`${run.id}:${failure?.reason ?? "unexpected_import_failure"}`);
+      failures.push(
+        `${run.id}:${failure?.reason ?? "unexpected_import_failure"}`,
+      );
       log.error(
         {
           event: "legacy_execution_data_rows_failed",
@@ -2280,7 +2449,8 @@ async function verifyManifestItem(input: {
   // arrived; only a readback proves what the host can still hand over.
   const readback = await input.maintenance.readbackDigest(input.item.itemId);
 
-  if (readback.sizeBytes !== input.item.sizeBytes) return "verify_bytes_missing";
+  if (readback.sizeBytes !== input.item.sizeBytes)
+    return "verify_bytes_missing";
   if (readback.sha256 !== input.item.sha256) return "verify_hash_mismatch";
   if (!input.ownerSlug) return "verify_source_changed";
 
@@ -2363,7 +2533,8 @@ async function verifyScratchShape(input: {
 // reconstruction, so the bytes alone prove nothing about it. The lane holds
 // when `rows` recorded its cursor and the database still carries exactly the
 // rows that cursor counted.
-const ROWS_CURSOR = /^v1:phase=rows:manifest=[0-9a-f]{64}:items=\d+:rows=(\d+)$/;
+const ROWS_CURSOR =
+  /^v1:phase=rows:manifest=[0-9a-f]{64}:items=\d+:rows=(\d+)$/;
 
 async function verifyRowEvidence(
   client: Client,
@@ -2392,6 +2563,68 @@ async function verifyRowEvidence(
 
     if ((rows.rows[0]?.n ?? 0) !== Number(recorded[1]))
       refusals.push({ runId, lane: "events", refusal: "verify_rows_mismatch" });
+  }
+
+  return refusals;
+}
+
+// S4.8: what the ORDINARY read path will resolve after the cut-over is the
+// manager's catalogue row, so the proof reads it back for every sealed object:
+// it must exist, name this run and the host that stated it holds the bytes,
+// and carry the frozen size and digest in state `available`.
+async function verifyCatalogueRows(input: {
+  client: Client;
+  items: readonly ManifestProofItemRow[];
+  sealed: ReadonlyMap<string, string>;
+  hostKey: string;
+}): Promise<RunRefusal[]> {
+  const host = await input.client.query<{ id: string }>(
+    `SELECT id FROM execution_hosts WHERE host_key = $1 AND retired_at IS NULL`,
+    [input.hostKey],
+  );
+  const hostId = host.rows[0]?.id ?? null;
+  const refusals: RunRefusal[] = [];
+
+  for (const item of input.items) {
+    if (item.disposition !== "copy") continue;
+    const objectId = input.sealed.get(item.itemId);
+
+    // An unsealed item is already refused by the item pass.
+    if (!objectId) continue;
+    const rows = await input.client.query<{
+      runId: string;
+      hostId: string;
+      sizeBytes: string;
+      sha256: string | null;
+      state: string;
+    }>(
+      `SELECT run_id AS "runId", execution_host_id AS "hostId",
+          size_bytes::text AS "sizeBytes", sha256, state
+       FROM execution_runtime_objects WHERE id = $1`,
+      [objectId],
+    );
+    const row = rows.rows[0];
+
+    if (!row) {
+      refusals.push({
+        runId: item.runId,
+        lane: item.lane,
+        refusal: "verify_catalog_missing",
+      });
+      continue;
+    }
+    if (
+      row.runId !== item.runId ||
+      row.hostId !== hostId ||
+      row.sizeBytes !== String(item.sizeBytes) ||
+      row.sha256 !== item.sha256 ||
+      row.state !== "available"
+    )
+      refusals.push({
+        runId: item.runId,
+        lane: item.lane,
+        refusal: "verify_catalog_mismatch",
+      });
   }
 
   return refusals;
@@ -2480,6 +2713,12 @@ async function computeImportProof(input: {
         items: frozen.items,
       })),
       ...(await verifyRowEvidence(input.client, runIds)),
+      ...(await verifyCatalogueRows({
+        client: input.client,
+        items: frozen.items,
+        sealed,
+        hostKey: progress.host.hostKey,
+      })),
     ],
   });
 }

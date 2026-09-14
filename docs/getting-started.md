@@ -187,6 +187,13 @@ install-authored-flow-package # install an exported authored package as
 > [deployment preflight](deployment.md#13-engine-300-postgresgraph-only-upgrade)
 > instead.
 
+> **Stage A → Stage B upgrade (execution data plane):** an installation that
+> already holds runs under the old file-based runtime root must NOT run a plain
+> `db:migrate` — migration `0135` refuses until every legacy run's history has
+> been preserved and proven. Follow the staged operator runbook in
+> [deployment](deployment.md#14-stage-b-execution-data-cut-over-upgrade-from-stage-a).
+> A fresh install needs nothing of it: the whole chain applies as usual.
+
 > **`test:e2e` prerequisites (no manual database setup):** `pnpm --filter
 maister-web test:e2e` (or `cd web && pnpm test:e2e`) creates one disposable
 > pgvector Postgres Testcontainer, applies main then Brain migrations, seeds
