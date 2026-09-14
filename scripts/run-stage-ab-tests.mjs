@@ -85,7 +85,10 @@ async function main() {
   const directory = await mkdtemp(join(tmpdir(), `maister-ab-${slice}-`));
   const reportPath = join(directory, "vitest.json");
   const concurrency = laneConcurrency(availableParallelism(), slice);
-  const child = spawn(process.execPath, vitestArgs({ files, reportPath, concurrency }), { cwd, stdio: "inherit" });
+  // Docker is a precondition of this lane, not a question, so a slow runtime
+  // client must not cost a suite its whole beforeAll.
+  const env = { ...process.env, MAISTER_TEST_DOCKER_PROBE_TIMEOUT_MS: "30000" };
+  const child = spawn(process.execPath, vitestArgs({ files, reportPath, concurrency }), { cwd, stdio: "inherit", env });
   const status = await new Promise((resolve, reject) => {
     child.once("error", reject);
     child.once("exit", (code, signal) => resolve({ code, signal }));

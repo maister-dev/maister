@@ -26,7 +26,14 @@ export const PGVECTOR_IMAGE = "pgvector/pgvector:pg16";
 export const TEST_DATABASE_DOCKER_MESSAGE =
   "integration/e2e require Docker; build/unit do not";
 
-const dockerProbeTimeoutMs = 3_000;
+// The probe only exists to turn an absent Docker into a typed error instead of
+// a hang, so a few seconds is right when Docker is missing. On a shared runner
+// mid-container-teardown the runtime client can take longer than that to hand
+// itself back, and the cost is not one slow case: the probe runs inside a
+// suite's beforeAll, so tripping it skips every case in the file. Lanes that
+// already know Docker is present raise it.
+const dockerProbeTimeoutMs =
+  Number(process.env.MAISTER_TEST_DOCKER_PROBE_TIMEOUT_MS) || 3_000;
 const logger = pino({ name: "test-database" });
 
 export type TestDatabaseLane = "integration" | "e2e";
