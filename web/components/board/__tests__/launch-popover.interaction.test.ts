@@ -172,7 +172,7 @@ function button(label: string): HTMLButtonElement {
 
 function roleSelect(): HTMLSelectElement {
   const found = document.querySelector<HTMLSelectElement>(
-    "[data-testid=launch-consensus-runners] select",
+    "[data-testid=launch-runner-slots] select",
   );
 
   if (!found) throw new Error("consensus runner select not found");
@@ -211,7 +211,7 @@ let root: Root;
 let container: HTMLDivElement;
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  vi.resetAllMocks();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("fetch", mocks.fetch);
   container = document.createElement("div");
@@ -239,6 +239,173 @@ async function openDialog(): Promise<void> {
 }
 
 describe("consensus runner binding interaction", () => {
+  it("keeps preview current when selecting the same default and allows saving that runner as an explicit role binding", async () => {
+    const initial = preview("claude-platform");
+
+    mocks.fetch
+      .mockResolvedValueOnce(
+        Response.json({
+          ...initial,
+          runnerSlots: initial.consensusRunnerSlots.map((slot) => ({
+            ...slot,
+            mappedRunnerId: null,
+          })),
+        }),
+      )
+      .mockResolvedValueOnce(Response.json({}))
+      .mockResolvedValueOnce(
+        Response.json({
+          ...initial,
+          runnerSlots: initial.consensusRunnerSlots,
+        }),
+      )
+      .mockResolvedValueOnce(
+        Response.json({ code: "CONFIG" }, { status: 422 }),
+      );
+    await openDialog();
+    expect(primarySelect().value).toBe("claude-platform");
+    await choose(primarySelect(), "claude-platform");
+    expect(mocks.fetch).toHaveBeenCalledTimes(1);
+    expect(button("launch.createRun").disabled).toBe(false);
+    await choose(roleSelect(), "claude-platform");
+    expect(button(`launch.runnerBindingSaveRole ${ROLE}`).disabled).toBe(false);
+    await click(button(`launch.runnerBindingSaveRole ${ROLE}`));
+    expect(JSON.parse(mocks.fetch.mock.calls[1][1].body)).toEqual({
+      flowRevisionId: "revision-1",
+      slotKey: SLOT_KEY,
+      mappedRunnerId: "claude-platform",
+    });
+    expect(primarySelect().value).toBe("claude-platform");
+    await choose(primarySelect(), "claude-platform");
+    expect(mocks.fetch).toHaveBeenCalledTimes(3);
+    expect(button("launch.createRun").disabled).toBe(false);
+    expect(document.body.textContent).not.toContain("launch.loading");
+    await click(button("launch.createRun"));
+    expect(mocks.fetch.mock.calls[3][1].method).toBe("POST");
+    expect(JSON.parse(mocks.fetch.mock.calls[3][1].body)).not.toHaveProperty(
+      "runnerId",
+    );
+  });
+
+  it("refreshes an untouched primary picker after saving its session binding without creating an ephemeral override", async () => {
+    const initial = preview("codex-ready");
+    const primary = {
+      slotKey: "session:default",
+      label: "default",
+      kind: "session",
+      mappedRunnerId: null,
+      runnerId: "claude-platform",
+      errorCode: null,
+    };
+
+    mocks.fetch
+      .mockResolvedValueOnce(
+        Response.json({ ...initial, runnerSlots: [primary] }),
+      )
+      .mockResolvedValueOnce(Response.json({}))
+      .mockResolvedValueOnce(
+        Response.json({
+          ...initial,
+          selectedRunnerId: "codex-other",
+          runnerSlots: [
+            {
+              ...primary,
+              runnerId: "codex-other",
+              mappedRunnerId: "codex-other",
+            },
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(
+        Response.json({ code: "CONFIG" }, { status: 422 }),
+      );
+    await openDialog();
+    await choose(roleSelect(), "codex-other");
+    await click(button("launch.runnerBindingSaveRole default"));
+    expect(
+      new URL(mocks.fetch.mock.calls[2][0], "http://test").searchParams.has(
+        "runnerId",
+      ),
+    ).toBe(false);
+    expect(primarySelect().value).toBe("codex-other");
+    expect(button("launch.createRun").disabled).toBe(false);
+    await click(button("launch.createRun"));
+    expect(mocks.fetch.mock.calls[3][1].method).toBe("POST");
+    expect(JSON.parse(mocks.fetch.mock.calls[3][1].body)).not.toHaveProperty(
+      "runnerId",
+    );
+  });
+
+  it("assigns an unresolved logical session and refreshes before enabling launch with consensus already resolved", async () => {
+    const initial = preview("codex-ready");
+    const session = {
+      slotKey: "session:cross",
+      label: "cross",
+      kind: "session",
+      mappedRunnerId: null,
+      runnerId: null,
+      errorCode: "CONFIG",
+    };
+    const refreshed = deferredResponse();
+
+    mocks.fetch
+      .mockResolvedValueOnce(
+        Response.json({
+          ...initial,
+          runnerSlots: [session, ...initial.consensusRunnerSlots],
+          launchability: {
+            launchable: false,
+            reason: "runner_unresolved",
+            blockers: [],
+          },
+          relaunch: { launchable: false, reason: "runner_unresolved" },
+        }),
+      )
+      .mockResolvedValueOnce(Response.json({}))
+      .mockReturnValueOnce(refreshed.promise);
+    await openDialog();
+    expect(button("launch.createRun").disabled).toBe(true);
+    const select = [
+      ...document.querySelectorAll<HTMLSelectElement>(
+        "select[aria-labelledby]",
+      ),
+    ].find(
+      (item) =>
+        document.getElementById(item.getAttribute("aria-labelledby") ?? "")
+          ?.textContent === "launch.runnerBindingRunner cross",
+    );
+
+    expect(select).toBeDefined();
+    await choose(select!, "codex-other");
+    await click(button("launch.runnerBindingSaveRole cross"));
+    expect(JSON.parse(mocks.fetch.mock.calls[1][1].body)).toEqual({
+      flowRevisionId: "revision-1",
+      slotKey: "session:cross",
+      mappedRunnerId: "codex-other",
+    });
+    expect(button("launch.createRun").disabled).toBe(true);
+    await act(async () =>
+      refreshed.resolve(
+        Response.json({
+          ...initial,
+          runnerSlots: [
+            {
+              ...session,
+              mappedRunnerId: "codex-other",
+              runnerId: "codex-other",
+              errorCode: null,
+            },
+            ...initial.consensusRunnerSlots,
+          ],
+        }),
+      ),
+    );
+    expect(button("launch.createRun").disabled).toBe(false);
+    expect(
+      mocks.fetch.mock.calls.filter(([, init]) => init?.method === "PATCH"),
+    ).toHaveLength(1);
+  });
+
   it("saves exactly one selected binding, refreshes before enabling launch, and supports reset", async () => {
     const save = deferredResponse();
     const refreshed = deferredResponse();
@@ -253,7 +420,7 @@ describe("consensus runner binding interaction", () => {
     expect(button("launch.createRun").disabled).toBe(true);
     expect(roleSelect().value).toBe("");
     await choose(roleSelect(), "codex-other");
-    await click(button(`launch.consensusBindingSaveRole ${ROLE}`));
+    await click(button(`launch.runnerBindingSaveRole ${ROLE}`));
 
     expect(mocks.fetch).toHaveBeenCalledTimes(2);
     expect(mocks.fetch.mock.calls[1][0]).toBe(
@@ -275,7 +442,7 @@ describe("consensus runner binding interaction", () => {
     expect(roleSelect().value).toBe("codex-other");
 
     await choose(roleSelect(), "");
-    await click(button(`launch.consensusBindingSaveRole ${ROLE}`));
+    await click(button(`launch.runnerBindingSaveRole ${ROLE}`));
     expect(
       JSON.parse(mocks.fetch.mock.calls[3][1].body).mappedRunnerId,
     ).toBeNull();
@@ -293,16 +460,14 @@ describe("consensus runner binding interaction", () => {
       .mockResolvedValueOnce(Response.json(preview("codex-ready")));
     await openDialog();
     await choose(roleSelect(), "codex-ready");
-    await click(button(`launch.consensusBindingSaveRole ${ROLE}`));
+    await click(button(`launch.runnerBindingSaveRole ${ROLE}`));
     expect(roleSelect().value).toBe("codex-ready");
     expect(document.querySelector("[role=alert]")?.textContent).toBe(
-      "launch.consensusBindingSaveFailed",
+      "launch.runnerBindingSaveFailed",
     );
     expect(button("launch.createRun").disabled).toBe(true);
-    expect(button(`launch.consensusBindingSaveRole ${ROLE}`).disabled).toBe(
-      false,
-    );
-    await click(button(`launch.consensusBindingSaveRole ${ROLE}`));
+    expect(button(`launch.runnerBindingSaveRole ${ROLE}`).disabled).toBe(false);
+    await click(button(`launch.runnerBindingSaveRole ${ROLE}`));
     expect(button("launch.createRun").disabled).toBe(false);
   });
 
@@ -314,7 +479,7 @@ describe("consensus runner binding interaction", () => {
       .mockResolvedValueOnce(Response.json(preview("codex-other")));
     await openDialog();
     await choose(roleSelect(), "codex-other");
-    await click(button(`launch.consensusBindingSaveRole ${ROLE}`));
+    await click(button(`launch.runnerBindingSaveRole ${ROLE}`));
     expect(button("launch.createRun").disabled).toBe(true);
     expect(roleSelect().value).toBe("codex-other");
     expect(document.querySelector("[role=alert]")?.textContent).toBe(
@@ -339,10 +504,8 @@ describe("consensus runner binding interaction", () => {
     await choose(roleSelect(), "codex-other");
     await click(button("launch.createRun"));
     expect(roleSelect().disabled).toBe(true);
-    expect(button(`launch.consensusBindingSaveRole ${ROLE}`).disabled).toBe(
-      true,
-    );
-    await click(button(`launch.consensusBindingSaveRole ${ROLE}`));
+    expect(button(`launch.runnerBindingSaveRole ${ROLE}`).disabled).toBe(true);
+    await click(button(`launch.runnerBindingSaveRole ${ROLE}`));
     expect(mocks.fetch).toHaveBeenCalledTimes(2);
     expect(mocks.fetch.mock.calls[1][1].method).toBe("POST");
     await act(async () =>
@@ -375,10 +538,10 @@ describe("consensus runner binding interaction", () => {
     mocks.fetch.mockResolvedValueOnce(Response.json(preview(null, false)));
     await openDialog();
     expect(
-      document.querySelector("[data-testid=launch-consensus-runners] select"),
+      document.querySelector("[data-testid=launch-runner-slots] select"),
     ).toBeNull();
     expect(document.body.textContent).toContain(
-      "launch.consensusBindingAdminNeeded",
+      "launch.runnerBindingAdminNeeded",
     );
     expect(mocks.fetch).toHaveBeenCalledTimes(1);
   });

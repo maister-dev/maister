@@ -993,8 +993,10 @@ paths:
         `defaultTargetBranch`, and the delivery-policy default
         (`promotion_mode` → strategy). Secret provider fields and server
         filesystem paths are never returned.
-        All runner-bearing consensus participants and the synthesizer are
-        included in `consensusRunnerSlots`. Unresolved roles block both manual
+        All declared logical sessions, runner-bearing consensus participants,
+        and the synthesizer are included in `runnerSlots`.
+        `consensusRunnerSlots` retains the consensus-only subset. Unresolved
+        sessions (including the implicit default session) and roles block both manual
         and force launch with `runner_unresolved`. Optional Flow/runner query
         selections preview the choices without changing the task or bindings.
       operationId: getRunLaunchOptions
@@ -5037,10 +5039,10 @@ paths:
         defaults are resolved project default -> launch override and snapshotted
         on the created run.
 
-        Consensus participant and synthesizer runner slots are resolved with
+        Ordinary sessions and consensus participant and synthesizer runner slots are resolved with
         the parent runner and compatible configured defaults before run/workspace
         creation. A missing choice returns `CONFIG` or `EXECUTOR_UNAVAILABLE`
-        with allow-listed `details: {reason: "consensus_runner_unresolved",
+        with allow-listed `details: {reason: "flow_runner_unresolved",
         slotKey, label}`. The same details survive the launch error SSE frame;
         provider snapshots and arbitrary error details are excluded.
 
@@ -17917,7 +17919,30 @@ components:
         selectedFlowRevisionId: { type: string, nullable: true }
         canConfigureRunnerBindings:
           type: boolean
-          description: Whether the caller can save project-scoped role bindings (editSettings).
+          description: Whether the caller can save project-scoped slot bindings (editSettings).
+        runnerSlots:
+          type: array
+          description: Declared logical sessions and runner-bearing consensus roles; implicit default sessions use the main runner picker.
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              [slotKey, label, kind, mappedRunnerId, runnerId, errorCode]
+            properties:
+              slotKey: { type: string }
+              label: { type: string }
+              kind:
+                type: string
+                enum: [session, consensus_participant, consensus_synthesizer]
+              runnerId: { type: string, nullable: true }
+              mappedRunnerId:
+                type: string
+                nullable: true
+                description: Explicit saved binding; null uses automatic resolution.
+              errorCode:
+                type: string
+                nullable: true
+                enum: [CONFIG, EXECUTOR_UNAVAILABLE, null]
         consensusRunnerSlots:
           type: array
           description: Runner-bearing consensus roles, including the synthesizer; agent-bound roles use the agent resolver.

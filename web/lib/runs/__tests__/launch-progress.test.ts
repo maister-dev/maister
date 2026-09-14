@@ -87,23 +87,32 @@ describe("scratch launch-progress frame helpers", () => {
     );
   });
 
-  it("preserves a consensus role error through SSE without unrelated details", async () => {
-    const details = {
+  it.each([
+    {
       reason: "consensus_runner_unresolved",
       slotKey: "consensus:plan_consensus:synthesizer",
       label: "plan_consensus · synthesizer",
-    };
-    const frame = formatLaunchErrorFrame("CONFIG", "ambiguous runner", {
-      ...details,
-      provider: { authToken: "private-provider-value" },
-    });
-    const result = await readLaunchStream(new Response(frame), () => {});
+    },
+    {
+      reason: "flow_runner_unresolved",
+      slotKey: "session:cross",
+      label: "cross",
+    },
+  ])(
+    "preserves $slotKey through SSE without unrelated details",
+    async (details) => {
+      const frame = formatLaunchErrorFrame("CONFIG", "ambiguous runner", {
+        ...details,
+        provider: { authToken: "private-provider-value" },
+      });
+      const result = await readLaunchStream(new Response(frame), () => {});
 
-    expect(result.error).toEqual({
-      code: "CONFIG",
-      message: "ambiguous runner",
-      details,
-    });
-    expect(frame).not.toContain("private-provider-value");
-  });
+      expect(result.error).toEqual({
+        code: "CONFIG",
+        message: "ambiguous runner",
+        details,
+      });
+      expect(frame).not.toContain("private-provider-value");
+    },
+  );
 });

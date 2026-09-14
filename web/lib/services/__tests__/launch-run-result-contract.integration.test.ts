@@ -468,6 +468,32 @@ async function installConsensusManifest(manifest: FlowYamlV1): Promise<void> {
   }
 }
 
+async function saveRunnerBinding(
+  slotKey: string,
+  mappedRunnerId: string,
+): Promise<Response> {
+  const { PATCH } = await import(
+    "@/app/api/projects/[slug]/flow-runner-remaps/route"
+  );
+  const slug = `p-${projectId.slice(0, 8)}`;
+
+  return PATCH(
+    new NextRequest(
+      `http://localhost/api/projects/${slug}/flow-runner-remaps`,
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          flowRevisionId: revisionId,
+          slotKey,
+          mappedRunnerId,
+        }),
+      },
+    ),
+    { params: Promise.resolve({ slug }) },
+  );
+}
+
 describe("consensus runner admission", () => {
   it.each([
     {
@@ -545,24 +571,9 @@ describe("consensus runner admission", () => {
       )
     ).rows[0].id;
 
-    const { PATCH } = await import(
-      "@/app/api/projects/[slug]/flow-runner-remaps/route"
-    );
-    const slug = `p-${projectId.slice(0, 8)}`;
-    const response = await PATCH(
-      new NextRequest(
-        `http://localhost/api/projects/${slug}/flow-runner-remaps`,
-        {
-          method: "PATCH",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            flowRevisionId: revisionId,
-            slotKey: "consensus:plan_consensus:independent-draft",
-            mappedRunnerId: runnerId,
-          }),
-        },
-      ),
-      { params: Promise.resolve({ slug }) },
+    const response = await saveRunnerBinding(
+      "consensus:plan_consensus:independent-draft",
+      runnerId,
     );
 
     expect(response.status).toBe(200);
@@ -585,5 +596,93 @@ describe("consensus runner admission", () => {
         )
       ).rows[0].status,
     ).toBe("Pending");
+  }, 60_000);
+
+  it("identifies an unbound ordinary session even when every consensus role is mapped", async () => {
+    const consensus = consensusManifest("independent", "planner");
+    const sessionNames = [
+      "planning",
+      "implement",
+      "verify",
+      "cross",
+      "fix",
+      "commit",
+    ];
+    const manifest = flowYamlV1Schema.parse({
+      ...consensus,
+      sessions: Object.fromEntries(
+        sessionNames.map((name) => [
+          name,
+          { runner: name === "cross" ? "independent" : "planner" },
+        ]),
+      ),
+      nodes: [
+        ...sessionNames.map((name, index) => ({
+          id: `step_${name}`,
+          type: "ai_coding",
+          session: name,
+          action: { prompt: `Perform ${name}.` },
+          transitions: {
+            success:
+              index + 1 < sessionNames.length
+                ? `step_${sessionNames[index + 1]}`
+                : "plan_consensus",
+          },
+        })),
+        ...consensus.nodes,
+      ],
+    });
+
+    await installConsensusManifest(manifest);
+    const independentRunnerId = (
+      await pool.query<{ id: string }>(
+        "SELECT id FROM platform_acp_runners WHERE capability_agent = 'codex' ORDER BY id LIMIT 1",
+      )
+    ).rows[0].id;
+
+    for (const [slotKey, runnerId] of [
+      ["consensus:plan_consensus:planner-draft", executorId],
+      ["consensus:plan_consensus:independent-draft", independentRunnerId],
+      ["consensus:plan_consensus:synthesizer", executorId],
+    ]) {
+      expect((await saveRunnerBinding(slotKey, runnerId)).status).toBe(200);
+    }
+    const taskId = await seedTask();
+
+    await pool.query("UPDATE tasks SET runner_id = $1 WHERE id = $2", [
+      executorId,
+      taskId,
+    ]);
+    await expect(
+      launchRun({ taskId, flowId }, EXT_CTX, db),
+    ).rejects.toMatchObject({
+      code: "CONFIG",
+      details: {
+        reason: "flow_runner_unresolved",
+        slotKey: "session:cross",
+        label: "cross",
+      },
+    });
+    expect((await pool.query("SELECT id FROM runs")).rows).toEqual([]);
+    expect((await pool.query("SELECT id FROM workspaces")).rows).toEqual([]);
+
+    expect(
+      (await saveRunnerBinding("session:cross", independentRunnerId)).status,
+    ).toBe(200);
+    const { runId } = await launchRun({ taskId, flowId }, EXT_CTX, db);
+    const sessions = await pool.query<{
+      session_name: string;
+      runner_id: string;
+    }>(
+      "SELECT session_name, runner_id FROM run_sessions WHERE run_id = $1 ORDER BY session_name",
+      [runId],
+    );
+
+    expect(sessions.rows).toEqual(
+      [...sessionNames].sort().map((name) => ({
+        session_name: name,
+        runner_id: name === "cross" ? independentRunnerId : executorId,
+      })),
+    );
   }, 60_000);
 });

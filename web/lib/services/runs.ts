@@ -5,6 +5,10 @@ import type { ProjectAction } from "@/lib/authz";
 import type { ScheduledLaunchReservation } from "@/lib/scheduled-launches/types";
 import type { FlowDelegationSnapshotInput } from "@/lib/flows/delegatable-flow";
 import type { Db as ExecutionDb } from "@/lib/execution-host/db";
+import type {
+  RunnerCatalogEntry,
+  RunSessionResolution,
+} from "@/lib/acp-runners/resolve";
 
 import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
@@ -22,12 +26,7 @@ import {
 } from "@/lib/config";
 import { atomicWriteJson } from "@/lib/atomic";
 import { loadFlowRunnerBindings } from "@/lib/acp-runners/catalog";
-import { inspectConsensusRunners } from "@/lib/acp-runners/consensus-preflight";
-import {
-  resolveRunSessions,
-  type RunnerCatalogEntry,
-  type RunSessionSlot,
-} from "@/lib/acp-runners/resolve";
+import { inspectFlowRunners } from "@/lib/acp-runners/flow-preflight";
 import { materializeProjectBundlesIntoWorktree } from "@/lib/capabilities/materialize-bundle";
 import {
   applyPackageVersionChoices,
@@ -129,9 +128,7 @@ const {
 
 type RunnerResolutionWarningRecord = {
   readonly sessionName: string;
-  readonly warning: NonNullable<
-    ReturnType<typeof resolveRunSessions>[number]["resolutionWarning"]
-  >;
+  readonly warning: NonNullable<RunSessionResolution["resolutionWarning"]>;
 };
 
 async function appendRunnerResolutionWarningEvents(args: {
@@ -261,6 +258,33 @@ const log = pino({
   name: "service-runs",
   level: process.env.LOG_LEVEL ?? "info",
 });
+
+function runnerAdmissionError(input: {
+  readonly taskId: string;
+  readonly projectId: string;
+  readonly slotKey: string;
+  readonly label: string;
+  readonly error: MaisterError;
+}): MaisterError {
+  log.warn(
+    {
+      taskId: input.taskId,
+      projectId: input.projectId,
+      slotKey: input.slotKey,
+      err: input.error,
+    },
+    "flow runner admission refused before workspace creation",
+  );
+
+  return new MaisterError(input.error.code, input.error.message, {
+    cause: input.error,
+    details: {
+      reason: "flow_runner_unresolved",
+      slotKey: input.slotKey,
+      label: input.label,
+    },
+  });
+}
 
 export type LaunchRunInput = {
   taskId: string;
@@ -997,37 +1021,31 @@ export async function* launchRunStaged(
     // session (the legacy single-runner-per-run behavior). Resolution THROWS on an
     // unbound/ambiguous/no-host slot — the launch fails clean before any worktree.
     const bindings = await loadFlowRunnerBindings(_db, project.id, revision.id);
-    const compiledSessions = [...compiled.sessions.values()];
-    const sessionSlots: RunSessionSlot[] =
-      compiledSessions.length > 0 ? compiledSessions : [{ name: "default" }];
-    const primarySessionName =
-      sessionSlots.find((session) => session.name === "default")?.name ??
-      sessionSlots[0].name;
-    const runDefaultRunnerId = input.runnerId ?? task.runnerId;
-    const sessionResolutions = resolveRunSessions({
-      sessions: sessionSlots,
-      runnerProfiles: manifest.runner_profiles,
+    const runnerInspection = inspectFlowRunners({
+      manifest,
       bindings,
-      runDefaultRunnerId,
-      // The single launch-dialog override applies to the run's primary session;
-      // ADR-150 controlled-recipe per-session overrides apply to their named
-      // sessions. Explicit launch choices win over the saved task default;
-      // the single launch-dialog override wins on a key collision.
-      ephemeralOverrides:
-        runDefaultRunnerId || input.sessionRunnerOverrides
-          ? {
-              ...(task.runnerId ? { [primarySessionName]: task.runnerId } : {}),
-              ...(input.sessionRunnerOverrides ?? {}),
-              ...(input.runnerId
-                ? { [primarySessionName]: input.runnerId }
-                : {}),
-            }
-          : undefined,
+      taskRunnerId: task.runnerId,
+      launchOverrideRunnerId: input.runnerId,
+      sessionRunnerOverrides: input.sessionRunnerOverrides,
       projectFlow: { defaultRunnerId: projectFlowDefaultRunnerId },
       platformFlow: { defaultRunnerId: revision.defaultRunnerId },
       project: { defaultRunnerId: project.defaultRunnerId },
       platform: { defaultRunnerId: platformRuntime.defaultRunnerId },
       runners: runnerCatalog,
+    });
+    const primarySessionName = runnerInspection.primarySessionName;
+    const sessionResolutions = runnerInspection.sessions.map((session) => {
+      if (session.status === "unresolved") {
+        throw runnerAdmissionError({
+          taskId: task.id,
+          projectId: project.id,
+          slotKey: session.slotKey,
+          label: session.label,
+          error: session.error,
+        });
+      }
+
+      return session.resolution;
     });
 
     runnerResolutionWarnings = sessionResolutions.flatMap((session) =>
@@ -1064,33 +1082,14 @@ export async function* launchRunStaged(
       ) ?? sessionResolutions[0];
     const capabilityAgent = runnerResolution.capabilityAgent as CapabilityAgent;
 
-    const consensusRunners = inspectConsensusRunners({
-      manifest,
-      bindings,
-      runDefaultRunnerId: runnerResolution.runnerId,
-      project: { defaultRunnerId: project.defaultRunnerId },
-      platform: { defaultRunnerId: platformRuntime.defaultRunnerId },
-      runners: runnerCatalog,
-    });
-
-    for (const role of consensusRunners) {
+    for (const role of runnerInspection.consensus) {
       if (role.status === "unresolved") {
-        log.warn(
-          {
-            taskId: task.id,
-            projectId: project.id,
-            slotKey: role.slotKey,
-            err: role.error,
-          },
-          "consensus runner admission refused before workspace creation",
-        );
-        throw new MaisterError(role.error.code, role.error.message, {
-          cause: role.error,
-          details: {
-            reason: "consensus_runner_unresolved",
-            slotKey: role.slotKey,
-            label: role.label,
-          },
+        throw runnerAdmissionError({
+          taskId: task.id,
+          projectId: project.id,
+          slotKey: role.slotKey,
+          label: role.label,
+          error: role.error,
         });
       }
 

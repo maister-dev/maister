@@ -254,6 +254,87 @@ describe("consensus runner preview", () => {
     expect(bound.consensusRunnerSlots[1].mappedRunnerId).toBe("codex-other");
   });
 
+  it("blocks both previews for an ambiguous logical session even when all consensus roles are mapped", async () => {
+    const planning = consensusManifest();
+
+    state.flow_revisions[0].manifest = {
+      ...planning,
+      runner_profiles: {
+        cross: { runner_type: "acp", capability_agent: "codex" },
+      },
+      nodes: [
+        (planning.nodes as Row[])[0],
+        {
+          ...(planning.nodes as Row[])[1],
+          transitions: { on_success: "cross" },
+        },
+        aiNode("cross", "cross"),
+      ],
+    };
+    state.flow_runner_remaps = ["architect", "reviewer", "synthesizer"].map(
+      (role) => ({
+        slotKey: `consensus:plan_consensus:${role}`,
+        status: "Mapped",
+        mappedRunnerId: role === "reviewer" ? "codex-ready" : "claude-platform",
+      }),
+    );
+
+    const body = await (await invoke()).json();
+
+    expect(
+      body.consensusRunnerSlots.every((slot: Row) => !slot.errorCode),
+    ).toBe(true);
+    expect(body.launchability).toMatchObject({
+      launchable: false,
+      reason: "runner_unresolved",
+    });
+    expect(body.relaunch).toMatchObject({
+      launchable: false,
+      reason: "runner_unresolved",
+    });
+    expect(body.runnerSlots).toContainEqual({
+      slotKey: "session:cross",
+      label: "cross",
+      kind: "session",
+      mappedRunnerId: null,
+      runnerId: null,
+      errorCode: "CONFIG",
+    });
+
+    const { resolveTaskLaunchConfig } = await import(
+      "@/lib/runs/task-launch-config"
+    );
+    const config = await resolveTaskLaunchConfig("task-1");
+
+    expect(config).toMatchObject({
+      launchable: false,
+      launchReason: "runner_unresolved",
+      runnerSlots: body.runnerSlots,
+    });
+
+    state.flow_runner_remaps.push({
+      slotKey: "session:cross",
+      status: "Mapped",
+      mappedRunnerId: "codex-other",
+    });
+    const bound = await (await invoke()).json();
+
+    expect(bound.launchability.launchable).toBe(true);
+    expect(bound.relaunch.launchable).toBe(true);
+    expect(bound.runnerSlots).toContainEqual({
+      slotKey: "session:cross",
+      label: "cross",
+      kind: "session",
+      mappedRunnerId: "codex-other",
+      runnerId: "codex-other",
+      errorCode: null,
+    });
+    expect(await resolveTaskLaunchConfig("task-1")).toMatchObject({
+      launchable: true,
+      runnerSlots: bound.runnerSlots,
+    });
+  });
+
   it.each(["owner", "admin"])(
     "allows the %s to configure bindings without widening launch authorization",
     async (role) => {
@@ -416,6 +497,52 @@ describe("GET /api/runs/launch-options per-session resolution (M42)", () => {
     expect(body.sessions).toEqual([]);
   });
 
+  it.each([
+    { source: "platform", projectDefault: null, runnerId: "claude-platform" },
+    {
+      source: "project",
+      projectDefault: "codex-ready",
+      runnerId: "codex-ready",
+    },
+  ])(
+    "allows explicit selection and binding equal to the $source default",
+    async ({ projectDefault, runnerId }) => {
+      state.projects[0].defaultRunnerId = projectDefault;
+      const initial = await (await invoke()).json();
+
+      expect(initial.selectedRunnerId).toBe(runnerId);
+
+      const response = await invoke({ runnerId });
+      const selected = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(selected.selectedRunnerId).toBe(runnerId);
+      expect(selected.launchability.launchable).toBe(true);
+      expect(selected.relaunch.launchable).toBe(true);
+      expect(selected.runnerSlots).toEqual(initial.runnerSlots);
+
+      state.flow_runner_remaps = [
+        {
+          slotKey: "session:default",
+          status: "Mapped",
+          mappedRunnerId: runnerId,
+        },
+      ];
+      const bound = await (await invoke({ runnerId })).json();
+
+      expect(bound.launchability.launchable).toBe(true);
+      expect(bound.relaunch.launchable).toBe(true);
+      expect(bound.runnerSlots).toContainEqual({
+        slotKey: "session:default",
+        label: "default",
+        kind: "session",
+        mappedRunnerId: runnerId,
+        runnerId,
+        errorCode: null,
+      });
+    },
+  );
+
   it("returns a warning preview for same-capability model fallback", async () => {
     state.platform_acp_runners = [
       {
@@ -515,6 +642,42 @@ describe("GET /api/runs/launch-options per-session resolution (M42)", () => {
 
     expect(res.status).toBe(200);
     expect(body.selectedRunnerId).toBe("codex-ready");
+  });
+
+  it("honors a valid session binding without first requiring the unused platform default runner", async () => {
+    state.platform_runtime_settings[0].defaultRunnerId = "removed-runner";
+    state.flow_runner_remaps = [
+      {
+        slotKey: "session:default",
+        mappedRunnerId: "codex-ready",
+        status: "Mapped",
+      },
+    ];
+
+    const response = await invoke();
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.selectedRunnerId).toBe("codex-ready");
+    expect(body.launchability.launchable).toBe(true);
+    expect(body.runnerSlots).toContainEqual({
+      slotKey: "session:default",
+      label: "default",
+      kind: "session",
+      mappedRunnerId: "codex-ready",
+      runnerId: "codex-ready",
+      errorCode: null,
+    });
+
+    const { resolveTaskLaunchConfig } = await import(
+      "@/lib/runs/task-launch-config"
+    );
+
+    expect(await resolveTaskLaunchConfig("task-1")).toMatchObject({
+      launchable: true,
+      runner: { id: "codex-ready" },
+      runnerSlots: body.runnerSlots,
+    });
   });
 
   it("returns one session entry per logical session for a multi-session flow", async () => {

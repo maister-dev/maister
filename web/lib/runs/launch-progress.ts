@@ -53,7 +53,7 @@ export function formatLaunchResultFrame(result: unknown): string {
 }
 
 export type LaunchErrorDetails = {
-  reason: "consensus_runner_unresolved";
+  reason: "flow_runner_unresolved" | "consensus_runner_unresolved";
   slotKey: string;
   label: string;
 };
@@ -66,7 +66,8 @@ export function readLaunchErrorDetails(
     !value ||
     typeof value !== "object" ||
     !("reason" in value) ||
-    value.reason !== "consensus_runner_unresolved" ||
+    (value.reason !== "flow_runner_unresolved" &&
+      value.reason !== "consensus_runner_unresolved") ||
     !("slotKey" in value) ||
     typeof value.slotKey !== "string" ||
     !("label" in value) ||

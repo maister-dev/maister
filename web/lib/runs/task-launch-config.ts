@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { FlowRunnerSlotPreview } from "@/lib/acp-runners/flow-preflight";
 import type { ConsensusRunnerSlotPreview } from "@/lib/acp-runners/consensus-preflight";
 import type {
   RunnerCatalogEntry,
@@ -15,18 +16,17 @@ import { and, eq } from "drizzle-orm";
 
 import { LAUNCHABLE_FLOW_ENABLEMENT_STATES } from "@/lib/flows/enablement-states";
 import { loadFlowRunnerBindings } from "@/lib/acp-runners/catalog";
+import { toConsensusRunnerSlotPreview } from "@/lib/acp-runners/consensus-preflight";
 import {
-  inspectConsensusRunners,
-  toConsensusRunnerSlotPreview,
-} from "@/lib/acp-runners/consensus-preflight";
-import { resolveRunSessions } from "@/lib/acp-runners/resolve";
+  inspectFlowRunners,
+  toFlowRunnerSlotPreviews,
+} from "@/lib/acp-runners/flow-preflight";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import {
   isEngineCompatible,
   isSchemaVersionSupported,
 } from "@/lib/flows/engine-version";
-import { compileManifest } from "@/lib/flows/graph/compile";
 import { classifyStoredFlowManifest } from "@/lib/flows/manifest-parser";
 import { resolveDeliveryPolicy } from "@/lib/runs/delivery-policy";
 import { resolveExecutionPolicy } from "@/lib/runs/execution-policy";
@@ -61,6 +61,7 @@ export type TaskLaunchConfig = {
   flowIssueReason: string | null;
   runner: { id: string; model: string; adapter: string } | null;
   runnerTier: RunnerResolutionTier | "task" | null;
+  runnerSlots: FlowRunnerSlotPreview[];
   consensusRunnerSlots: ConsensusRunnerSlotPreview[];
   baseBranch: string;
   targetBranch: string;
@@ -193,43 +194,22 @@ export async function resolveTaskLaunchConfig(
   const platformRuntime = runtimeRows[0];
   const runnerCatalog = runnerRows.map(runnerCatalogEntry);
 
-  let resolvedDefaultId: string | null = null;
-  let resolvedTier: RunnerResolutionTier | null = null;
-
-  // M42 (ADR-114): the card shows the run's `default` session runner (the
-  // single-runner case). A flow whose default session cannot resolve degrades
-  // to `null` — the card just shows no runner, never throws.
   const manifestCompatibility = revision
     ? classifyStoredFlowManifest(revision.manifest)
     : null;
   const compatibleManifest = manifestCompatibility?.compatible
     ? manifestCompatibility.manifest
     : null;
-
-  if (
+  const runnerInspection =
     platformRuntime?.defaultRunnerId &&
     revision &&
     flowRow &&
-    compatibleManifest
-  ) {
-    try {
-      const sessions = [
-        ...compileManifest(compatibleManifest).sessions.values(),
-      ];
-      const defaultSession = sessions.find(
-        (session) => session.name === "default",
-      ) ??
-        sessions[0] ?? { name: "default" };
-
-      if (defaultSession) {
-        const [resolution] = resolveRunSessions({
-          sessions: [defaultSession],
-          runnerProfiles: compatibleManifest.runner_profiles,
+    compatibleManifest &&
+    flowIssue === null
+      ? inspectFlowRunners({
+          manifest: compatibleManifest,
           bindings,
-          runDefaultRunnerId: task.runnerId,
-          ephemeralOverrides: task.runnerId
-            ? { [defaultSession.name]: task.runnerId }
-            : undefined,
+          taskRunnerId: task.runnerId,
           projectFlow: {
             defaultRunnerId: projectFlowDefaultRows[0]?.runnerId ?? null,
           },
@@ -237,34 +217,34 @@ export async function resolveTaskLaunchConfig(
           project: { defaultRunnerId: project.defaultRunnerId },
           platform: { defaultRunnerId: platformRuntime.defaultRunnerId },
           runners: runnerCatalog,
-        });
-
-        resolvedDefaultId = resolution.runnerId;
-        resolvedTier = resolution.runnerResolutionTier;
-      }
-    } catch {
-      resolvedDefaultId = null;
-    }
-  }
-
+        })
+      : null;
+  const primarySession = runnerInspection?.sessions.find(
+    (session) => session.sessionName === runnerInspection.primarySessionName,
+  );
+  const resolvedDefaultId =
+    primarySession?.status === "resolved"
+      ? primarySession.resolution.runnerId
+      : null;
+  const resolvedTier =
+    primarySession?.status === "resolved"
+      ? primarySession.resolution.runnerResolutionTier
+      : null;
   const effectiveRunnerId =
     (task.runnerId as string | null) ?? resolvedDefaultId;
+  const runnerSlots = runnerInspection
+    ? toFlowRunnerSlotPreviews(runnerInspection)
+    : [];
   const consensusRunnerSlots =
-    compatibleManifest && flowIssue === null
-      ? inspectConsensusRunners({
-          manifest: compatibleManifest,
-          bindings,
-          runDefaultRunnerId: resolvedDefaultId,
-          project: { defaultRunnerId: project.defaultRunnerId },
-          platform: { defaultRunnerId: platformRuntime?.defaultRunnerId },
-          runners: runnerCatalog,
-        }).map(toConsensusRunnerSlotPreview)
-      : [];
-  const runnerIssue = consensusRunnerSlots.some(
-    (slot) => slot.errorCode !== null,
-  )
-    ? "runner_unresolved"
-    : null;
+    runnerInspection?.consensus.map(toConsensusRunnerSlotPreview) ?? [];
+  const runnerIssue =
+    flowIssue === null &&
+    (!runnerInspection ||
+      [...runnerInspection.sessions, ...runnerInspection.consensus].some(
+        (slot) => slot.status === "unresolved",
+      ))
+      ? "runner_unresolved"
+      : null;
   const effectiveRunnerRow = effectiveRunnerId
     ? (runnerRows.find(
         (row: Record<string, any>) => row.id === effectiveRunnerId,
@@ -330,6 +310,7 @@ export async function resolveTaskLaunchConfig(
     flowIssueReason,
     runner,
     runnerTier: task.runnerId ? "task" : resolvedTier,
+    runnerSlots,
     consensusRunnerSlots,
     baseBranch,
     targetBranch,

@@ -12,17 +12,16 @@ import {
   requireProjectAction,
 } from "@/lib/authz";
 import { loadFlowRunnerBindings } from "@/lib/acp-runners/catalog";
+import { toConsensusRunnerSlotPreview } from "@/lib/acp-runners/consensus-preflight";
 import {
-  inspectConsensusRunners,
-  toConsensusRunnerSlotPreview,
-} from "@/lib/acp-runners/consensus-preflight";
+  inspectFlowRunners,
+  toFlowRunnerSlotPreviews,
+} from "@/lib/acp-runners/flow-preflight";
 import {
   resolveRunner,
-  resolveRunSessions,
   type RunnerCatalogEntry,
   type RunnerResolutionTier,
   type RunnerResolutionWarning,
-  type RunSessionSlot,
 } from "@/lib/acp-runners/resolve";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
@@ -31,7 +30,6 @@ import {
   isEngineCompatible,
   isSchemaVersionSupported,
 } from "@/lib/flows/engine-version";
-import { compileManifest } from "@/lib/flows/graph/compile";
 import { classifyStoredFlowManifest } from "@/lib/flows/manifest-parser";
 import {
   classifyForceRelaunchLaunchability,
@@ -409,120 +407,79 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       project: { defaultRunnerId: project.defaultRunnerId },
       platform: { defaultRunnerId: platformRuntime.defaultRunnerId },
     } as const;
-    // The dialog's single "default runner" is the implicit `default` session;
-    // it always resolves through the project/platform default chain.
-    const fallbackResolution = resolveRunner({
-      launchOverrideRunnerId: undefined,
-      step: { runnerId: null },
-      ...defaultChain,
-      runners: runnerCatalog,
-    });
-
-    // M42 (ADR-114): resolve EVERY logical session of the selected flow. A slot
-    // that cannot resolve (unbound / ambiguous / no host) degrades to
-    // `runnerId: null` so the options dialog still renders (the binding screen
-    // resolves it) instead of 5xx-ing the whole preview.
-    const runnerProfiles = compatibleManifest?.runner_profiles;
-    const compiledSessionSlots: RunSessionSlot[] =
-      revision && flow && flowIssue === null && compatibleManifest
-        ? [...compileManifest(compatibleManifest).sessions.values()]
-        : [];
-    const sessionSlots: RunSessionSlot[] =
-      revision && flow && flowIssue === null && compatibleManifest
-        ? compiledSessionSlots.length > 0
-          ? compiledSessionSlots
-          : [{ name: "default" }]
-        : [];
-    const primarySessionName =
-      sessionSlots.find((session) => session.name === "default")?.name ??
-      sessionSlots[0]?.name;
-    const sessionResolutions: SessionPreviewResolution[] = sessionSlots.map(
-      (session) => {
-        const declaresRunner = session.runner !== undefined;
-
-        try {
-          const [resolution] = resolveRunSessions({
-            sessions: [session],
-            runnerProfiles,
+    const runnerInspection =
+      compatibleManifest && flow && revision && flowIssue === null
+        ? inspectFlowRunners({
+            manifest: compatibleManifest,
             bindings,
-            runDefaultRunnerId: selectedRunnerId,
-            ephemeralOverrides:
-              selectedRunnerId && primarySessionName
-                ? { [primarySessionName]: selectedRunnerId }
-                : undefined,
+            taskRunnerId: task.runnerId,
+            launchOverrideRunnerId: parsed.data.runnerId,
             ...defaultChain,
             runners: runnerCatalog,
-          });
-
-          return {
-            sessionName: session.name,
-            runnerId: resolution.runnerId,
-            tier: resolution.runnerResolutionTier,
-            warning: resolution.resolutionWarning ?? null,
-            declaresRunner,
-          };
-        } catch (err) {
+          })
+        : null;
+    const sessionResolutions: SessionPreviewResolution[] =
+      runnerInspection?.sessions.map((session) => {
+        if (session.status === "unresolved") {
           log.warn(
             {
-              err: runnerPreviewErrorFields(err),
+              err: runnerPreviewErrorFields(session.error),
               taskId: task.id,
               projectId: project.id,
               flowId: flow?.id ?? null,
               revisionId: revision?.id ?? null,
-              sessionName: session.name,
-              declaresRunner,
+              sessionName: session.sessionName,
+              declaresRunner: session.declaresRunner,
             },
             "runner session preview resolution failed",
           );
-
-          return {
-            sessionName: session.name,
-            runnerId: null,
-            tier: null,
-            warning: null,
-            declaresRunner,
-          };
         }
-      },
+
+        return {
+          sessionName: session.sessionName,
+          runnerId:
+            session.status === "resolved" ? session.resolution.runnerId : null,
+          tier:
+            session.status === "resolved"
+              ? session.resolution.runnerResolutionTier
+              : null,
+          warning:
+            session.status === "resolved"
+              ? (session.resolution.resolutionWarning ?? null)
+              : null,
+          declaresRunner: session.declaresRunner,
+        };
+      }) ?? [];
+    const defaultSession = sessionResolutions.find(
+      (session) => session.sessionName === runnerInspection?.primarySessionName,
     );
-    const defaultSession =
-      sessionResolutions.find((s) => s.sessionName === "default") ??
-      sessionResolutions[0];
-    const defaultResolution =
-      defaultSession?.runnerId && defaultSession.tier
-        ? {
-            runnerId: defaultSession.runnerId,
-            runnerResolutionTier: defaultSession.tier,
-            warning: defaultSession.warning,
-          }
-        : defaultSession?.declaresRunner
-          ? {
-              runnerId: null,
-              runnerResolutionTier: null,
-              warning: null,
-            }
-          : {
-              runnerId: fallbackResolution.runnerId,
-              runnerResolutionTier: fallbackResolution.runnerResolutionTier,
-              warning: null,
-            };
-    const consensusRunnerSlots =
-      compatibleManifest && flowIssue === null
-        ? inspectConsensusRunners({
-            manifest: compatibleManifest,
-            bindings,
-            runDefaultRunnerId: defaultResolution.runnerId,
-            project: defaultChain.project,
-            platform: defaultChain.platform,
+    const defaultResolution = defaultSession
+      ? {
+          runnerId: defaultSession.runnerId,
+          runnerResolutionTier: defaultSession.tier,
+          warning: defaultSession.warning,
+        }
+      : {
+          ...resolveRunner({
+            launchOverrideRunnerId: selectedRunnerId,
+            step: { runnerId: null },
+            ...defaultChain,
             runners: runnerCatalog,
-          }).map(toConsensusRunnerSlotPreview)
-        : [];
-    const hasUnresolvedConsensusRunner = consensusRunnerSlots.some(
-      (slot) => slot.errorCode !== null,
-    );
-    const runnerIssue = hasUnresolvedConsensusRunner
-      ? "runner_unresolved"
-      : null;
+          }),
+          warning: null,
+        };
+    const runnerSlots = runnerInspection
+      ? toFlowRunnerSlotPreviews(runnerInspection)
+      : [];
+    const consensusRunnerSlots =
+      runnerInspection?.consensus.map(toConsensusRunnerSlotPreview) ?? [];
+    const runnerIssue =
+      runnerInspection &&
+      [...runnerInspection.sessions, ...runnerInspection.consensus].some(
+        (slot) => slot.status === "unresolved",
+      )
+        ? "runner_unresolved"
+        : null;
     const latestFlowRun = await getLatestFlowRun(task.id, db);
     const openBlockers =
       (await getOpenRelationBlockers([task.id], db)).get(task.id) ?? [];
@@ -625,6 +582,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     });
 
     return NextResponse.json({
+      runnerSlots,
       consensusRunnerSlots,
       selectedFlowRevisionId: revision?.id ?? null,
       canConfigureRunnerBindings,

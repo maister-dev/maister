@@ -1,6 +1,7 @@
 "use client";
 
 import type { Key, ReactElement } from "react";
+import type { FlowRunnerSlotPreview } from "@/lib/acp-runners/flow-preflight";
 import type { ConsensusRunnerSlotPreview } from "@/lib/acp-runners/consensus-preflight";
 import type { LaunchStage } from "@/lib/runs/launch-progress";
 import type {
@@ -151,6 +152,7 @@ type LaunchOptions = {
   flows: LaunchFlowOption[];
   runners: LaunchRunnerOption[];
   sessions?: LaunchSessionOption[];
+  runnerSlots?: FlowRunnerSlotPreview[];
   consensusRunnerSlots?: ConsensusRunnerSlotPreview[];
   selectedFlowRevisionId?: string | null;
   canConfigureRunnerBindings?: boolean;
@@ -211,7 +213,7 @@ export function launchPreviewMatches(
   );
 }
 
-export function consensusLaunchErrorLabel(error: unknown): string | null {
+export function runnerLaunchErrorLabel(error: unknown): string | null {
   if (!error || typeof error !== "object" || !("details" in error)) return null;
 
   return readLaunchErrorDetails(error.details)?.label ?? null;
@@ -649,6 +651,7 @@ export function LaunchPopover({
         return (await res.json()) as LaunchOptions;
       })
       .then((payload) => {
+        if (controller.signal.aborted) return;
         const fallback = branchFallback(payload);
         const base = payload.defaultBaseBranch ?? fallback;
         const target = payload.defaultTargetBranch ?? fallback;
@@ -709,11 +712,14 @@ export function LaunchPopover({
       return;
 
     const controller = new AbortController();
-    const selection = { flowId, runnerId };
+    const hasRunnerOverride =
+      Boolean(runnerId) &&
+      (flowId !== options.selectedFlowId ||
+        runnerId !== (options.selectedRunnerId ?? ""));
     const query = new URLSearchParams({ taskId });
 
     if (flowId) query.set("flowId", flowId);
-    if (runnerId) query.set("runnerId", runnerId);
+    if (hasRunnerOverride) query.set("runnerId", runnerId);
     setOptionsError(false);
 
     fetch(`/api/runs/launch-options?${query}`, { signal: controller.signal })
@@ -724,12 +730,19 @@ export function LaunchPopover({
       })
       .then((payload) => {
         if (controller.signal.aborted) return;
+        const resolvedRunnerId = hasRunnerOverride
+          ? runnerId
+          : (payload.selectedRunnerId ?? "");
+
         setOptions({
           ...payload,
           selectedFlowId: options.selectedFlowId,
-          selectedRunnerId: options.selectedRunnerId,
+          selectedRunnerId: hasRunnerOverride
+            ? options.selectedRunnerId
+            : payload.selectedRunnerId,
         });
-        setPreviewSelection(selection);
+        if (!hasRunnerOverride) setRunnerId(resolvedRunnerId);
+        setPreviewSelection({ flowId, runnerId: resolvedRunnerId });
       })
       .catch(() => {
         if (!controller.signal.aborted) setOptionsError(true);
@@ -815,17 +828,17 @@ export function LaunchPopover({
     execPreset === "unattended" && budgetAxis === null;
 
   // A flowless task still saves the choice at launch after its selected Flow's
-  // preview passes the same consensus runner preflight as an ordinary launch.
+  // preview passes the same runner preflight as an ordinary launch.
   const unconfigured =
     options?.task.flowId === null ||
     options?.launchability.reason === "unconfigured";
+  const runnerSlots =
+    options?.runnerSlots ?? options?.consensusRunnerSlots ?? [];
   const previewPending =
     options !== null &&
     !launchPreviewMatches(previewSelection, { flowId, runnerId });
 
-  async function saveConsensusRunnerBinding(
-    slot: ConsensusRunnerSlotPreview,
-  ): Promise<void> {
+  async function saveRunnerBinding(slot: FlowRunnerSlotPreview): Promise<void> {
     const revisionId = options?.selectedFlowRevisionId;
 
     if (
@@ -949,11 +962,11 @@ export function LaunchPopover({
           message?: string;
         } | null;
 
-        const role = consensusLaunchErrorLabel(data);
+        const role = runnerLaunchErrorLabel(data);
 
         setError(
           role
-            ? t("consensusRunnerUnresolved", { role })
+            ? t("runnerSlotUnresolved", { role })
             : tRun(resolveUiErrorMessageKey(data?.code)),
         );
 
@@ -966,11 +979,11 @@ export function LaunchPopover({
       }>(res, setLaunchStage);
 
       if (streamed.error) {
-        const role = consensusLaunchErrorLabel(streamed.error);
+        const role = runnerLaunchErrorLabel(streamed.error);
 
         setError(
           role
-            ? t("consensusRunnerUnresolved", { role })
+            ? t("runnerSlotUnresolved", { role })
             : tRun(resolveUiErrorMessageKey(streamed.error.code)),
         );
 
@@ -1358,21 +1371,21 @@ export function LaunchPopover({
                       ) : null}
                     </div>
 
-                    {(options.consensusRunnerSlots?.length ?? 0) > 0 ? (
+                    {runnerSlots.length > 0 ? (
                       <div
                         className="rounded-[8px] border border-line-soft px-3 py-2 text-[12px]"
-                        data-testid="launch-consensus-runners"
+                        data-testid="launch-runner-slots"
                       >
-                        <p className="font-semibold">{t("consensusRunners")}</p>
+                        <p className="font-semibold">{t("flowRunners")}</p>
                         <p className="mt-1 text-mute">
                           {t(
                             options.canConfigureRunnerBindings
-                              ? "consensusBindingScope"
-                              : "consensusBindingAdminNeeded",
+                              ? "runnerBindingScope"
+                              : "runnerBindingAdminNeeded",
                           )}
                         </p>
                         <ul className="mt-1 space-y-1">
-                          {options.consensusRunnerSlots?.map((slot) => {
+                          {runnerSlots.map((slot) => {
                             const bindingKey = `${options.selectedFlowRevisionId}:${slot.slotKey}`;
                             const choice =
                               bindingChoices[bindingKey] ??
@@ -1393,26 +1406,26 @@ export function LaunchPopover({
                                 }
                               >
                                 {slot.errorCode
-                                  ? t("consensusRunnerUnresolved", {
+                                  ? t("runnerSlotUnresolved", {
                                       role: slot.label,
                                     })
-                                  : t("consensusRunnerResolved", {
+                                  : t("runnerSlotResolved", {
                                       role: slot.label,
                                       runner: slot.runnerId ?? "",
                                     })}
                                 <p className="mt-1 text-mute">
                                   {slot.mappedRunnerId
-                                    ? t("consensusBindingExplicit", {
+                                    ? t("runnerBindingExplicit", {
                                         runner: slot.mappedRunnerId,
                                       })
-                                    : t("consensusBindingAutomatic")}
+                                    : t("runnerBindingAutomatic")}
                                 </p>
                                 {options.canConfigureRunnerBindings &&
                                 options.selectedFlowRevisionId ? (
                                   <div className="mt-2 flex flex-wrap items-end gap-2">
                                     <label className="flex min-w-0 flex-1 flex-col gap-1">
                                       <span>
-                                        {t("consensusBindingRunner", {
+                                        {t("runnerBindingRunner", {
                                           role: slot.label,
                                         })}
                                       </span>
@@ -1423,15 +1436,13 @@ export function LaunchPopover({
                                           savingBinding !== null ||
                                           previewPending
                                         }
-                                        label={t("consensusBindingRunner", {
+                                        label={t("runnerBindingRunner", {
                                           role: slot.label,
                                         })}
                                         options={[
                                           {
                                             id: "",
-                                            label: t(
-                                              "consensusBindingAutomatic",
-                                            ),
+                                            label: t("runnerBindingAutomatic"),
                                           },
                                           ...options.runners
                                             .filter(
@@ -1456,10 +1467,9 @@ export function LaunchPopover({
                                       />
                                     </label>
                                     <Button
-                                      aria-label={t(
-                                        "consensusBindingSaveRole",
-                                        { role: slot.label },
-                                      )}
+                                      aria-label={t("runnerBindingSaveRole", {
+                                        role: slot.label,
+                                      })}
                                       isDisabled={
                                         !changed ||
                                         busy ||
@@ -1471,7 +1481,7 @@ export function LaunchPopover({
                                       size="sm"
                                       type="button"
                                       onClick={() =>
-                                        void saveConsensusRunnerBinding(slot)
+                                        void saveRunnerBinding(slot)
                                       }
                                     >
                                       <CheckIcon
@@ -1480,17 +1490,17 @@ export function LaunchPopover({
                                       />
                                       {t(
                                         savingBinding === bindingKey
-                                          ? "consensusBindingSaving"
+                                          ? "runnerBindingSaving"
                                           : rowFeedback === "failed"
-                                            ? "consensusBindingRetry"
-                                            : "consensusBindingSave",
+                                            ? "runnerBindingRetry"
+                                            : "runnerBindingSave",
                                       )}
                                     </Button>
                                   </div>
                                 ) : null}
                                 {savingBinding === bindingKey ? (
                                   <p role="status">
-                                    {t("consensusBindingSaving")}
+                                    {t("runnerBindingSaving")}
                                   </p>
                                 ) : null}
                                 {rowFeedback ? (
@@ -1503,8 +1513,8 @@ export function LaunchPopover({
                                   >
                                     {t(
                                       rowFeedback === "failed"
-                                        ? "consensusBindingSaveFailed"
-                                        : "consensusBindingSaved",
+                                        ? "runnerBindingSaveFailed"
+                                        : "runnerBindingSaved",
                                     )}
                                   </p>
                                 ) : null}
@@ -1512,9 +1522,7 @@ export function LaunchPopover({
                             );
                           })}
                         </ul>
-                        {options.consensusRunnerSlots?.some(
-                          (slot) => slot.errorCode,
-                        ) ? (
+                        {runnerSlots.some((slot) => slot.errorCode) ? (
                           <a
                             className="mt-2 inline-block underline"
                             href={`/projects/${encodeURIComponent(options.task.projectSlug)}?tab=settings`}

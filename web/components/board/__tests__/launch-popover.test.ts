@@ -38,7 +38,7 @@ import {
   launchUnavailableReasonMessage,
   launchVerdictReasonMessage,
   launchPreviewMatches,
-  consensusLaunchErrorLabel,
+  runnerLaunchErrorLabel,
   pruneBudgetText,
 } from "@/components/board/launch-popover";
 
@@ -58,15 +58,15 @@ describe("LaunchPopover — consensus diagnostics", () => {
 
   it("reads only the typed consensus role label from a stale launch refusal", () => {
     expect(
-      consensusLaunchErrorLabel({ code: "CONFIG", message: "private output" }),
+      runnerLaunchErrorLabel({ code: "CONFIG", message: "private output" }),
     ).toBeNull();
     expect(
-      consensusLaunchErrorLabel({
+      runnerLaunchErrorLabel({
         details: { reason: "other", label: "private output" },
       }),
     ).toBeNull();
     expect(
-      consensusLaunchErrorLabel({
+      runnerLaunchErrorLabel({
         details: {
           reason: "consensus_runner_unresolved",
           slotKey: "consensus:plan_consensus:reviewer",
@@ -74,6 +74,15 @@ describe("LaunchPopover — consensus diagnostics", () => {
         },
       }),
     ).toBe("plan_consensus · reviewer");
+    expect(
+      runnerLaunchErrorLabel({
+        details: {
+          reason: "flow_runner_unresolved",
+          slotKey: "session:cross",
+          label: "cross",
+        },
+      }),
+    ).toBe("cross");
     expect(
       launchUnavailableReasonMessage("runner_unresolved", (key) => key),
     ).toBe("launchUnavailableReason.runnerUnresolved");
@@ -93,7 +102,7 @@ function render(over: Partial<Record<string, string>> = {}): string {
 
 describe("LaunchPopover — modal-first launch", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
   });
 
   it("renders the launch dialog trigger with the threaded label", () => {

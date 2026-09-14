@@ -66,8 +66,8 @@ rail. It preloads launch options from the selected task and shows:
 - a human-readable launchability banner for states such as active run,
   relation blocker, missing Flow revision, or installed-but-not-enabled Flow;
 - Flow, runner/model, and execution preset controls are initially visible;
-- consensus runner roles show their resolved runner or a localized binding
-  requirement. Project administrators can select a ready runner for each role
+- logical sessions and consensus runner roles show their resolved runner or a
+  localized binding requirement. Project administrators can select a ready runner for each slot
   and save its binding directly in the dialog, including when no binding row
   exists yet. The choice persists for this project and Flow revision; automatic
   selection clears an explicit binding. Other project members see the role
@@ -123,9 +123,10 @@ The shortcut never fires while focus is in an `input` / `textarea` /
 The `ScratchLauncher` composer owns scratch submission and routing; task-scoped
 run launch uses `GET /api/runs/launch-options?taskId=...` followed by
 `POST /api/runs` with server-validated overrides. `launch-options` returns
-`consensusRunnerSlots`, `selectedFlowRevisionId`, and
+`runnerSlots` (logical sessions and consensus roles), `selectedFlowRevisionId`, and
 `canConfigureRunnerBindings`, and accepts optional `flowId`/`runnerId` selections
-for read-only preview. Role assignments use the existing project-scoped
+for read-only preview. `consensusRunnerSlots` retains the consensus-only subset
+for existing clients. Slot assignments use the existing project-scoped
 `PATCH /api/projects/{slug}/flow-runner-remaps`, guarded by `editSettings`.
 The consensus admission contract is described in
 [`../../system-analytics/consensus.md`](../../system-analytics/consensus.md).
