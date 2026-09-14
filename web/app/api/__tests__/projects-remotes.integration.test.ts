@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -378,6 +378,71 @@ describe("POST/GET/PATCH/DELETE /api/projects/[slug]/remotes (route, integration
 
     expect(res.status).toBe(409);
     expect(body.code).toBe("PRECONDITION");
+  });
+
+  it("POST pull updates checkout and returns failures as HTTP errors", async () => {
+    const source = await initRepo();
+    const clone = join(tmpRoot, `pull-${randomUUID()}`);
+
+    await git(source, ["config", "user.name", "Test"]);
+    await git(source, ["config", "user.email", "test@example.com"]);
+    await writeFile(join(source, "lesson.md"), "old\n");
+    await git(source, ["add", "."]);
+    await git(source, ["commit", "-m", "initial"]);
+    await git(tmpRoot, ["clone", source, clone]);
+    const { slug } = await seedProject(clone);
+    const pull = () =>
+      route.POST(
+        remotesReq("POST", { op: "pull", name: "origin", branch: "main" }),
+        { params: Promise.resolve({ slug }) },
+      );
+
+    await writeFile(join(source, "lesson.md"), "new\n");
+    await git(source, ["commit", "-am", "update"]);
+    const updated = await pull();
+
+    expect(updated.status).toBe(200);
+    expect(await updated.json()).toEqual({ ok: true });
+    expect(await readFile(join(clone, "lesson.md"), "utf8")).toBe("new\n");
+
+    await writeFile(join(clone, "lesson.md"), "local edits\n");
+    const dirty = await pull();
+
+    expect(dirty.status).toBe(409);
+    expect(await dirty.json()).toMatchObject({
+      code: "PRECONDITION",
+      details: { reason: "dirty_worktree" },
+    });
+    expect(await readFile(join(clone, "lesson.md"), "utf8")).toBe(
+      "local edits\n",
+    );
+
+    await writeFile(join(clone, "lesson.md"), "new\n");
+    await git(clone, [
+      "remote",
+      "set-url",
+      "origin",
+      join(tmpRoot, "missing.git"),
+    ]);
+    const unavailable = await pull();
+
+    expect(unavailable.status).toBe(503);
+    expect(await unavailable.json()).toMatchObject({
+      code: "EXECUTOR_UNAVAILABLE",
+    });
+  });
+
+  it("POST pull requires a branch", async () => {
+    const { slug } = await seedProject(await initRepo());
+    const res = await route.POST(
+      remotesReq("POST", { op: "pull", name: "origin" }),
+      {
+        params: Promise.resolve({ slug }),
+      },
+    );
+
+    expect(res.status).toBe(422);
+    expect(await res.json()).toMatchObject({ code: "CONFIG" });
   });
 
   it("POST fetch on an unknown remote → 409 PRECONDITION", async () => {

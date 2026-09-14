@@ -25,7 +25,7 @@ import {
   summarizeDeliveryHistory,
 } from "@/lib/delivery-history-core";
 import { containmentAssert } from "@/lib/flows/graph/workspace-checkpoint";
-import { redactUrl } from "@/lib/repo-source";
+import { classifyGitError, redactUrl } from "@/lib/repo-source";
 import {
   installWorktreeProvenance,
   type MaisterProvenance,
@@ -1214,6 +1214,81 @@ export async function fetchRemote(args: RemoteNameArgs): Promise<void> {
       { cause: asError(err) },
     );
   }
+}
+
+/** Pull the selected, checked-out branch without merges, rebases, or stashes. */
+export async function pullRemote(
+  args: RemoteNameArgs & { branch: string },
+): Promise<void> {
+  const repo = validate(
+    absolutePathSchema,
+    args.projectRepoPath,
+    "projectRepoPath",
+  );
+  const name = validate(remoteNameSchema, args.name, "remote");
+  const branch = validate(branchNameSchema, args.branch, "branch");
+
+  await withRepoPromotionLock(repo, async () => {
+    const checkedOutBranch = await currentBranchName(repo);
+
+    if (checkedOutBranch !== branch) {
+      throw new MaisterError(
+        "PRECONDITION",
+        "pull requires the selected branch to be checked out",
+        {
+          details: { reason: "branch_mismatch", branch, checkedOutBranch },
+        },
+      );
+    }
+    if ((await statusPorcelain({ worktreePath: repo })).trim()) {
+      throw new MaisterError(
+        "PRECONDITION",
+        "commit or stash local changes before pulling",
+        {
+          details: { reason: "dirty_worktree" },
+        },
+      );
+    }
+
+    log.info({ projectRepoPath: repo, remote: name, branch }, "pullRemote");
+    try {
+      await execFileAsync(
+        "git",
+        [
+          "-C",
+          repo,
+          "pull",
+          "--ff-only",
+          "--no-rebase",
+          "--no-autostash",
+          name,
+          branch,
+        ],
+        {
+          signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
+          maxBuffer: EXEC_MAX_BUFFER,
+          env: NETWORK_GIT_ENV,
+        },
+      );
+    } catch (err) {
+      const detail = redactUrl(errorText(err) || asError(err).message);
+      const networkFailure =
+        classifyGitError(detail) !== "UNKNOWN" ||
+        asError(err).name === "AbortError";
+
+      log.warn(
+        { projectRepoPath: repo, remote: name, branch, detail },
+        "pull failed",
+      );
+      throw new MaisterError(
+        networkFailure ? "EXECUTOR_UNAVAILABLE" : "CONFLICT",
+        `git pull failed: ${detail}`,
+        {
+          cause: asError(err),
+        },
+      );
+    }
+  });
 }
 
 // Resolve a repo's default branch for DB-default registration (ADR-093): the
