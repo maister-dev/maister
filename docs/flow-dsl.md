@@ -786,7 +786,12 @@ nodes:
       success: implement
 ```
 
-- **`prompt`** — the shared problem statement for every draft participant.
+- **`prompt`** — the shared problem statement for every draft participant. It
+  is rendered with the same strict Mustache context as `action.prompt`
+  (`{{ task.prompt }}`, `{{ steps.<id>.vars.<name> }}`, …) before the first
+  draft is launched; an unknown variable fails the node with `CONFIG` and no
+  draft child is created. Verifier critique appended on later rounds is agent
+  output and is never re-rendered.
 - **`participants[]`** — 2..`MAISTER_MAX_ORCHESTRATOR_FANOUT` read-only draft
   authors. Each entry declares exactly one stable `id` plus either `agent` or
   `runner`; stale runtime resolution fails with `PRECONDITION`, not fallback.

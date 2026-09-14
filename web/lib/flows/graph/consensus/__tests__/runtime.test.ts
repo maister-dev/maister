@@ -308,6 +308,36 @@ describe("runConsensusNode", () => {
     );
   });
 
+  it("renders the draft prompt against the run template context", async () => {
+    latestConsensusRound.mockResolvedValue(0);
+    loadConsensusDraftEvidence.mockResolvedValue([]);
+    launchConsensusDraftRuns.mockResolvedValue([
+      { participantId: "architect", runId: "child-1", status: "Running" },
+      { participantId: "qa", runId: "child-2", status: "Pending" },
+    ]);
+    const def = { ...consensusDef(), prompt: "Plan for: {{ task.prompt }}" };
+
+    await runConsensusNode(input({ def }));
+
+    expect(launchConsensusDraftRuns).toHaveBeenCalledWith(
+      expect.objectContaining({ prompt: "Plan for: Prompt" }),
+    );
+  });
+
+  it("refuses an unknown template variable in the draft prompt with CONFIG", async () => {
+    latestConsensusRound.mockResolvedValue(0);
+    loadConsensusDraftEvidence.mockResolvedValue([]);
+    const def = {
+      ...consensusDef(),
+      prompt: "Plan for: {{ steps.intake.vars.missing }}",
+    };
+
+    await expect(runConsensusNode(input({ def }))).rejects.toMatchObject({
+      code: "CONFIG",
+    });
+    expect(launchConsensusDraftRuns).not.toHaveBeenCalled();
+  });
+
   it("escalates no consensus as a human HITL pause", async () => {
     latestConsensusRound.mockResolvedValue(1);
     loadConsensusDraftEvidence.mockResolvedValue([

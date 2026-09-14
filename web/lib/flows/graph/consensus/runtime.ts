@@ -41,6 +41,7 @@ import {
 
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 import { runAgentStep } from "@/lib/flows/runner-agent";
+import { renderStrict } from "@/lib/flows/templating";
 import { FlowPromptContinuationPending } from "@/lib/flows/graph/prompt-owner";
 import { MaisterError } from "@/lib/errors";
 import { isFencedError } from "@/lib/execution-host";
@@ -328,8 +329,18 @@ async function launchRound(
     nodeId: args.node.id,
     nodeAttemptId: args.nodeAttemptId,
     round: args.round,
+    // The draft prompt is the only consensus prompt that bypasses
+    // runAgentStep's renderer (it rides the child run's trigger payload), so
+    // it is rendered here against the parent run's context — strict, like
+    // action.prompt — before any draft is launched. Only the author's text is
+    // rendered; the verifier critique appended by roundPrompt is agent output
+    // and must never be re-rendered as a template.
     prompt: roundPrompt({
-      basePrompt: args.def.prompt,
+      basePrompt: renderStrict(
+        args.def.prompt,
+        args.context as unknown as Record<string, unknown>,
+        { traceLog: log },
+      ),
       round: args.round,
       disagreements: args.disagreements ?? [],
     }),
