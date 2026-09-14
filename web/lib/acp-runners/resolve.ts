@@ -5,6 +5,8 @@ import { MaisterError } from "@/lib/errors";
 
 export type RunnerResolutionTier =
   | "launchOverride"
+  // A consensus role inherits the parent run's resolved primary runner.
+  | "runDefault"
   | "stepTarget"
   // M42 (ADR-114): per-slot binding + unique host auto-match tiers.
   | "binding"
@@ -701,6 +703,39 @@ export function resolveRunnerSlot(
       runner: fallback.runner,
     }),
   );
+}
+
+export type ConsensusRunnerResolutionInput = Omit<
+  RunnerSlotResolutionInput,
+  "slot" | "overrideRunnerId" | "preferredRunners"
+> & {
+  readonly slot: RunnerSlot;
+  readonly runDefaultRunnerId: string | null;
+};
+
+// Preview, launch admission, and each consensus phase share the same runner
+// selection. A run default is a preference within the role's capability;
+// explicit slot bindings and concrete runner references remain authoritative.
+export function resolveConsensusRunner(
+  input: ConsensusRunnerResolutionInput,
+): ResolvedRunnerSlot {
+  const resolved = resolveRunnerSlot({
+    ...input,
+    preferredRunners: [
+      { tier: "runDefault", runnerId: input.runDefaultRunnerId },
+      { tier: "projectDefault", runnerId: input.project?.defaultRunnerId },
+      { tier: "platformDefault", runnerId: input.platform?.defaultRunnerId },
+    ],
+  });
+
+  if (!resolved) {
+    throw new MaisterError(
+      "CONFIG",
+      `consensus runner slot "${input.slotKey}" must declare a runner`,
+    );
+  }
+
+  return resolved;
 }
 
 export type RunSessionResolutionInput = {

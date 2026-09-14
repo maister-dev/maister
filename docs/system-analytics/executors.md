@@ -149,6 +149,8 @@ Resolution returns `{ runnerId, tier }`, where `tier` is one of
 `launchOverride`, `stepTarget`, `binding`, `autoMatch`, `projectFlowDefault`,
 `platformFlowDefault`, `projectDefault`, or `platformDefault` (ADR-114 adds the
 per-slot `binding` / `autoMatch` tiers).
+Consensus roles that inherit the run's primary runner record `runDefault`;
+their own explicit bindings retain the `binding` tier.
 
 ## Flow load and attach remapping
 

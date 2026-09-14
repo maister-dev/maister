@@ -993,6 +993,10 @@ paths:
         `defaultTargetBranch`, and the delivery-policy default
         (`promotion_mode` → strategy). Secret provider fields and server
         filesystem paths are never returned.
+        All runner-bearing consensus participants and the synthesizer are
+        included in `consensusRunnerSlots`. Unresolved roles block both manual
+        and force launch with `runner_unresolved`. Optional Flow/runner query
+        selections preview the choices without changing the task or bindings.
       operationId: getRunLaunchOptions
       x-maister-m43-legacy-steps:
         status: 200
@@ -1005,6 +1009,16 @@ paths:
           in: query
           required: true
           schema: { type: string, format: uuid }
+        - name: flowId
+          in: query
+          required: false
+          description: Preview an enabled Flow belonging to the task's project.
+          schema: { type: string, format: uuid }
+        - name: runnerId
+          in: query
+          required: false
+          description: Preview the selected primary-session runner and compatible consensus roles.
+          schema: { type: string }
       responses:
         "200":
           description: Launch options visible to the caller for the task.
@@ -5022,6 +5036,13 @@ paths:
         project. A selected Flow must be enabled for the same project; policy
         defaults are resolved project default -> launch override and snapshotted
         on the created run.
+
+        Consensus participant and synthesizer runner slots are resolved with
+        the parent runner and compatible configured defaults before run/workspace
+        creation. A missing choice returns `CONFIG` or `EXECUTOR_UNAVAILABLE`
+        with allow-listed `details: {reason: "consensus_runner_unresolved",
+        slotKey, label}`. The same details survive the launch error SSE frame;
+        provider snapshots and arbitrary error details are excluded.
 
         After auth, project, Flow, and platform runner checks pass, the web tier
         calls the supervisor `GET /health` through
@@ -17795,6 +17816,7 @@ components:
                   blocked,
                   supervisor_unavailable,
                   runner_unavailable,
+                  runner_unresolved,
                   project_archived,
                   unconfigured,
                   flow_missing,
@@ -17849,6 +17871,7 @@ components:
                   setup_pending,
                   unsupported_schema,
                   incompatible,
+                  runner_unresolved,
                 ]
         flows:
           type: array
@@ -17891,6 +17914,33 @@ components:
               disabledReasonMessage: { type: string, nullable: true }
               isTaskDefault: { type: boolean }
         selectedFlowId: { type: string }
+        selectedFlowRevisionId: { type: string, nullable: true }
+        canConfigureRunnerBindings:
+          type: boolean
+          description: Whether the caller can save project-scoped role bindings (editSettings).
+        consensusRunnerSlots:
+          type: array
+          description: Runner-bearing consensus roles, including the synthesizer; agent-bound roles use the agent resolver.
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              [slotKey, label, kind, mappedRunnerId, runnerId, errorCode]
+            properties:
+              slotKey: { type: string }
+              label: { type: string }
+              kind:
+                type: string
+                enum: [consensus_participant, consensus_synthesizer]
+              runnerId: { type: string, nullable: true }
+              mappedRunnerId:
+                type: string
+                nullable: true
+                description: Explicit saved binding; null uses automatic resolution.
+              errorCode:
+                type: string
+                nullable: true
+                enum: [CONFIG, EXECUTOR_UNAVAILABLE, null]
         sessions:
           type: array
           description: |

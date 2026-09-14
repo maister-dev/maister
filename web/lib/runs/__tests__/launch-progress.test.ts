@@ -6,6 +6,7 @@ import {
   formatLaunchProgressFrame,
   formatLaunchResultFrame,
   launchProgress,
+  readLaunchStream,
 } from "@/lib/runs/launch-progress";
 
 describe("scratch launch-progress frame helpers", () => {
@@ -84,5 +85,25 @@ describe("scratch launch-progress frame helpers", () => {
         message: "supervisor down",
       })}\n\n`,
     );
+  });
+
+  it("preserves a consensus role error through SSE without unrelated details", async () => {
+    const details = {
+      reason: "consensus_runner_unresolved",
+      slotKey: "consensus:plan_consensus:synthesizer",
+      label: "plan_consensus · synthesizer",
+    };
+    const frame = formatLaunchErrorFrame("CONFIG", "ambiguous runner", {
+      ...details,
+      provider: { authToken: "private-provider-value" },
+    });
+    const result = await readLaunchStream(new Response(frame), () => {});
+
+    expect(result.error).toEqual({
+      code: "CONFIG",
+      message: "ambiguous runner",
+      details,
+    });
+    expect(frame).not.toContain("private-provider-value");
   });
 });

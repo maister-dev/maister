@@ -66,6 +66,14 @@ rail. It preloads launch options from the selected task and shows:
 - a human-readable launchability banner for states such as active run,
   relation blocker, missing Flow revision, or installed-but-not-enabled Flow;
 - Flow, runner/model, and execution preset controls are initially visible;
+- consensus runner roles show their resolved runner or a localized binding
+  requirement. Project administrators can select a ready runner for each role
+  and save its binding directly in the dialog, including when no binding row
+  exists yet. The choice persists for this project and Flow revision; automatic
+  selection clears an explicit binding. Other project members see the role
+  status and an administrator-remediation hint. Unresolved roles disable normal
+  and force launch; saving a binding or changing Flow or the main runner
+  refreshes this preview before submission;
 - base/target branch, delivery policy, budget, and advanced execution controls
   are behind explicit disclosures that preserve their selected values;
 - non-blocking runner-resolution warnings when a Flow slot launches on a
@@ -115,6 +123,13 @@ The shortcut never fires while focus is in an `input` / `textarea` /
 The `ScratchLauncher` composer owns scratch submission and routing; task-scoped
 run launch uses `GET /api/runs/launch-options?taskId=...` followed by
 `POST /api/runs` with server-validated overrides. `launch-options` returns
+`consensusRunnerSlots`, `selectedFlowRevisionId`, and
+`canConfigureRunnerBindings`, and accepts optional `flowId`/`runnerId` selections
+for read-only preview. Role assignments use the existing project-scoped
+`PATCH /api/projects/{slug}/flow-runner-remaps`, guarded by `editSettings`.
+The consensus admission contract is described in
+[`../../system-analytics/consensus.md`](../../system-analytics/consensus.md).
+It also returns
 `selectedRunnerWarning` and per-session `warning` objects for soft
 model/provider fallback previews; those warnings do not disable submit, while
 capability absence and exact-match ambiguity keep the existing blocked or

@@ -22,6 +22,7 @@ import {
 } from "@/lib/config";
 import { atomicWriteJson } from "@/lib/atomic";
 import { loadFlowRunnerBindings } from "@/lib/acp-runners/catalog";
+import { inspectConsensusRunners } from "@/lib/acp-runners/consensus-preflight";
 import {
   resolveRunSessions,
   type RunnerCatalogEntry,
@@ -1062,6 +1063,52 @@ export async function* launchRunStaged(
         (session) => session.sessionName === primarySessionName,
       ) ?? sessionResolutions[0];
     const capabilityAgent = runnerResolution.capabilityAgent as CapabilityAgent;
+
+    const consensusRunners = inspectConsensusRunners({
+      manifest,
+      bindings,
+      runDefaultRunnerId: runnerResolution.runnerId,
+      project: { defaultRunnerId: project.defaultRunnerId },
+      platform: { defaultRunnerId: platformRuntime.defaultRunnerId },
+      runners: runnerCatalog,
+    });
+
+    for (const role of consensusRunners) {
+      if (role.status === "unresolved") {
+        log.warn(
+          {
+            taskId: task.id,
+            projectId: project.id,
+            slotKey: role.slotKey,
+            err: role.error,
+          },
+          "consensus runner admission refused before workspace creation",
+        );
+        throw new MaisterError(role.error.code, role.error.message, {
+          cause: role.error,
+          details: {
+            reason: "consensus_runner_unresolved",
+            slotKey: role.slotKey,
+            label: role.label,
+          },
+        });
+      }
+
+      log.debug(
+        {
+          taskId: task.id,
+          slotKey: role.slotKey,
+          runnerId: role.resolution.runnerId,
+        },
+        "consensus runner admitted",
+      );
+      if (role.resolution.resolutionWarning) {
+        log.warn(
+          { taskId: task.id, ...role.resolution.resolutionWarning },
+          "consensus runner resolved with soft intent mismatch",
+        );
+      }
+    }
 
     // ADR-166: re-check the local host with runner context (memoized 30 s;
     // a host that went away mid-resolution refuses here, before any worktree).

@@ -36,6 +36,24 @@ const envRunner: RunnerCatalogEntry = {
   ready: true,
 };
 
+const instanceRunners: RunnerCatalogEntry[] = [
+  ["claude-code", "claude", "opus[1m]"],
+  ["claude-code-glm", "claude", "opus"],
+  ["claude-fable", "claude", "claude-fable-5-1[1m]"],
+  ["codex-openai", "codex", "gpt-5.6-terra"],
+  ["codex-sol", "codex", "gpt-5.6-sol"],
+  ["codex-astra", "codex", "gpt-6-astra"],
+].map(([id, capabilityAgent, model]) => ({
+  id,
+  adapter: capabilityAgent,
+  capabilityAgent,
+  model,
+  providerKind: capabilityAgent === "claude" ? "anthropic" : "openai",
+  permissionPolicy: "default",
+  enabled: true,
+  ready: true,
+}));
+
 describe("consensus role resolution", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -65,6 +83,7 @@ describe("consensus role resolution", () => {
       slotKey: "consensus:gate:p1",
       projectId: "project-1",
       flowRevisionId: "rev-1",
+      runDefaultRunnerId: null,
       runnerProfiles: undefined,
       roleLabel: 'consensus participant "p1"',
     });
@@ -94,6 +113,7 @@ describe("consensus role resolution", () => {
       slotKey: "consensus:gate:synthesizer",
       projectId: "project-1",
       flowRevisionId: "rev-1",
+      runDefaultRunnerId: null,
       runnerProfiles: undefined,
       roleLabel: "consensus synthesizer",
     });
@@ -124,6 +144,7 @@ describe("consensus role resolution", () => {
       slotKey: "consensus:gate:synthesizer",
       projectId: "project-1",
       flowRevisionId: "rev-1",
+      runDefaultRunnerId: null,
       runnerProfiles: undefined,
       roleLabel: "consensus synthesizer",
     });
@@ -137,6 +158,67 @@ describe("consensus role resolution", () => {
       },
     });
   });
+
+  it.each([
+    {
+      capability: "codex" as const,
+      runDefaultRunnerId: "codex-astra",
+      projectDefaultRunnerId: "codex-openai",
+      platformDefaultRunnerId: "codex-sol",
+      runnerId: "codex-astra",
+      tier: "runDefault",
+    },
+    {
+      capability: "claude" as const,
+      runDefaultRunnerId: "codex-astra",
+      projectDefaultRunnerId: "claude-code",
+      platformDefaultRunnerId: "claude-fable",
+      runnerId: "claude-code",
+      tier: "projectDefault",
+    },
+    {
+      capability: "codex" as const,
+      runDefaultRunnerId: "claude-code",
+      projectDefaultRunnerId: "claude-fable",
+      platformDefaultRunnerId: "codex-openai",
+      runnerId: "codex-openai",
+      tier: "platformDefault",
+    },
+  ])(
+    "resolves ambiguous consensus intent through $tier within its capability",
+    async (testCase) => {
+      loadRunnerCatalog.mockResolvedValue(instanceRunners);
+      loadFlowRunnerBindings.mockResolvedValue([]);
+      loadProjectPlatformRunnerDefaults.mockResolvedValue({
+        project: { defaultRunnerId: testCase.projectDefaultRunnerId },
+        platform: { defaultRunnerId: testCase.platformDefaultRunnerId },
+      });
+
+      const resolved = await resolveConsensusRunnerSlot({
+        db: {} as never,
+        slot: "participant",
+        slotKey: "consensus:plan_consensus:participant-draft",
+        projectId: "project-1",
+        flowRevisionId: "rev-1",
+        runDefaultRunnerId: testCase.runDefaultRunnerId,
+        runnerProfiles: {
+          participant: {
+            runner_type: "acp",
+            capability_agent: testCase.capability,
+            effort: "high",
+            permission_policy: "default",
+          },
+        },
+        roleLabel: 'consensus participant "participant-draft"',
+      });
+
+      expect(resolved).toMatchObject({
+        runnerId: testCase.runnerId,
+        runnerResolutionTier: testCase.tier,
+        capabilityAgent: testCase.capability,
+      });
+    },
+  );
 
   it("fails when no host runner matches the slot intent", async () => {
     loadRunnerCatalog.mockResolvedValue([envRunner]);
@@ -153,6 +235,7 @@ describe("consensus role resolution", () => {
         slotKey: "consensus:gate:p1",
         projectId: "project-1",
         flowRevisionId: "rev-1",
+        runDefaultRunnerId: null,
         runnerProfiles: undefined,
         roleLabel: 'consensus participant "p1"',
       }),
@@ -181,6 +264,7 @@ describe("consensus role resolution", () => {
       projectId: "project-1",
       taskId: "task-1",
       flowRevisionId: "rev-1",
+      runDefaultRunnerId: null,
       runnerProfiles: undefined,
       slotKey: "consensus:gate:p1",
       role: { agent: "agent-architect" },

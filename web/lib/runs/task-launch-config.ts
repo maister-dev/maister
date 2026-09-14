@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { ConsensusRunnerSlotPreview } from "@/lib/acp-runners/consensus-preflight";
 import type {
   RunnerCatalogEntry,
   RunnerResolutionTier,
@@ -14,6 +15,10 @@ import { and, eq } from "drizzle-orm";
 
 import { LAUNCHABLE_FLOW_ENABLEMENT_STATES } from "@/lib/flows/enablement-states";
 import { loadFlowRunnerBindings } from "@/lib/acp-runners/catalog";
+import {
+  inspectConsensusRunners,
+  toConsensusRunnerSlotPreview,
+} from "@/lib/acp-runners/consensus-preflight";
 import { resolveRunSessions } from "@/lib/acp-runners/resolve";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
@@ -56,6 +61,7 @@ export type TaskLaunchConfig = {
   flowIssueReason: string | null;
   runner: { id: string; model: string; adapter: string } | null;
   runnerTier: RunnerResolutionTier | "task" | null;
+  consensusRunnerSlots: ConsensusRunnerSlotPreview[];
   baseBranch: string;
   targetBranch: string;
   deliveryPolicy: DeliveryPolicy;
@@ -210,8 +216,10 @@ export async function resolveTaskLaunchConfig(
       const sessions = [
         ...compileManifest(compatibleManifest).sessions.values(),
       ];
-      const defaultSession =
-        sessions.find((session) => session.name === "default") ?? sessions[0];
+      const defaultSession = sessions.find(
+        (session) => session.name === "default",
+      ) ??
+        sessions[0] ?? { name: "default" };
 
       if (defaultSession) {
         const [resolution] = resolveRunSessions({
@@ -241,6 +249,22 @@ export async function resolveTaskLaunchConfig(
 
   const effectiveRunnerId =
     (task.runnerId as string | null) ?? resolvedDefaultId;
+  const consensusRunnerSlots =
+    compatibleManifest && flowIssue === null
+      ? inspectConsensusRunners({
+          manifest: compatibleManifest,
+          bindings,
+          runDefaultRunnerId: resolvedDefaultId,
+          project: { defaultRunnerId: project.defaultRunnerId },
+          platform: { defaultRunnerId: platformRuntime?.defaultRunnerId },
+          runners: runnerCatalog,
+        }).map(toConsensusRunnerSlotPreview)
+      : [];
+  const runnerIssue = consensusRunnerSlots.some(
+    (slot) => slot.errorCode !== null,
+  )
+    ? "runner_unresolved"
+    : null;
   const effectiveRunnerRow = effectiveRunnerId
     ? (runnerRows.find(
         (row: Record<string, any>) => row.id === effectiveRunnerId,
@@ -296,7 +320,9 @@ export async function resolveTaskLaunchConfig(
       ? manifestCompatibility.reason.message
       : null;
   const launchReason =
-    manual === "launchable" ? (flowIssue ?? "launchable") : manual;
+    manual === "launchable"
+      ? (flowIssue ?? runnerIssue ?? "launchable")
+      : manual;
 
   return {
     flow: flowRow ? { id: flowRow.id, refId: flowRow.flowRefId } : null,
@@ -304,10 +330,12 @@ export async function resolveTaskLaunchConfig(
     flowIssueReason,
     runner,
     runnerTier: task.runnerId ? "task" : resolvedTier,
+    consensusRunnerSlots,
     baseBranch,
     targetBranch,
     deliveryPolicy,
-    launchable: manual === "launchable" && flowIssue === null,
+    launchable:
+      manual === "launchable" && flowIssue === null && runnerIssue === null,
     launchReason,
     executionPolicy,
   };

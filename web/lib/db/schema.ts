@@ -3791,6 +3791,7 @@ export const runSessions = pgTable(
     runnerResolutionTier: text("runner_resolution_tier", {
       enum: [
         "launchOverride",
+        "runDefault",
         "stepTarget",
         // M42 (ADR-114) per-slot binding + unique host auto-match tiers.
         "binding",

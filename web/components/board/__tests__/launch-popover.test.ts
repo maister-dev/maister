@@ -37,8 +37,48 @@ import {
   isBudgetFieldInvalid,
   launchUnavailableReasonMessage,
   launchVerdictReasonMessage,
+  launchPreviewMatches,
+  consensusLaunchErrorLabel,
   pruneBudgetText,
 } from "@/components/board/launch-popover";
+
+describe("LaunchPopover — consensus diagnostics", () => {
+  it("invalidates a preview when either the flow or primary runner changes", () => {
+    const preview = { flowId: "flow-a", runnerId: "runner-a" };
+
+    expect(launchPreviewMatches(preview, preview)).toBe(true);
+    expect(
+      launchPreviewMatches(preview, { ...preview, flowId: "flow-b" }),
+    ).toBe(false);
+    expect(
+      launchPreviewMatches(preview, { ...preview, runnerId: "runner-b" }),
+    ).toBe(false);
+    expect(launchPreviewMatches(null, preview)).toBe(false);
+  });
+
+  it("reads only the typed consensus role label from a stale launch refusal", () => {
+    expect(
+      consensusLaunchErrorLabel({ code: "CONFIG", message: "private output" }),
+    ).toBeNull();
+    expect(
+      consensusLaunchErrorLabel({
+        details: { reason: "other", label: "private output" },
+      }),
+    ).toBeNull();
+    expect(
+      consensusLaunchErrorLabel({
+        details: {
+          reason: "consensus_runner_unresolved",
+          slotKey: "consensus:plan_consensus:reviewer",
+          label: "plan_consensus · reviewer",
+        },
+      }),
+    ).toBe("plan_consensus · reviewer");
+    expect(
+      launchUnavailableReasonMessage("runner_unresolved", (key) => key),
+    ).toBe("launchUnavailableReason.runnerUnresolved");
+  });
+});
 
 function render(over: Partial<Record<string, string>> = {}): string {
   return renderToStaticMarkup(

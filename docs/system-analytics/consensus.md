@@ -23,6 +23,19 @@ or the orchestrator delegation MCP toolset ([orchestrator.md](orchestrator.md)).
 
 ## Domain entities
 
+Runner-bearing participants and the synthesizer are resolved during parent-run
+admission, before its run/workspace rows or Git worktree are created. Admission
+and runtime share the same resolver: explicit slot binding or concrete runner
+reference, then a compatible parent-run, project, or platform default, then
+intent matching. A default cannot substitute a different agent capability.
+An unresolved role refuses admission with its stable slot key; the launch
+preview lists every consensus runner role and blocks both normal and force
+launch until the missing choice is resolved. Project administrators can assign
+or clear each role's binding in the launch dialog; the binding is scoped to the
+project and Flow revision. Agent-bound roles continue through the agent launch
+resolver. Inherited parent-run choices are recorded as `runDefault` in the
+child session's resolution provenance.
+
 - **Consensus node** (Implemented) — a `type: consensus` graph node requiring
   `engine_min >= "1.9.0"`, recorded as `node_attempts.node_type = consensus`.
 - **Participant** (Implemented) — ordered config entry with stable `id` and exactly

@@ -47,6 +47,7 @@ export type ConsensusDraftLaunchInput = {
   taskId: string | null;
   // M42 (ADR-114): binding context for portable consensus runner resolution.
   flowRevisionId: string | null;
+  runDefaultRunnerId: string | null;
   runnerProfiles: Record<string, FlowRunnerConfig> | undefined;
   parentRunId: string;
   rootRunId: string;
@@ -183,6 +184,7 @@ async function defaultCreateRunnerDraftRun(
     slotKey: `consensus:${input.nodeId}:${participant.id}`,
     projectId: input.projectId,
     flowRevisionId: input.flowRevisionId,
+    runDefaultRunnerId: input.runDefaultRunnerId,
     runnerProfiles: input.runnerProfiles,
     roleLabel: `consensus participant "${participant.id}"`,
   });

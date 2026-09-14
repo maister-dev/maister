@@ -16,6 +16,7 @@ import {
   formatLaunchErrorFrame,
   formatLaunchProgressFrame,
   formatLaunchResultFrame,
+  readLaunchErrorDetails,
   type LaunchProgressEvent,
 } from "@/lib/runs/launch-progress";
 import { launchRun, launchRunStaged } from "@/lib/services/runs";
@@ -76,7 +77,11 @@ function errorResponse(err: unknown): NextResponse {
     );
 
     return NextResponse.json(
-      { code: err.code, message: err.message },
+      {
+        code: err.code,
+        message: err.message,
+        details: readLaunchErrorDetails(err.details),
+      },
       { status },
     );
   }
@@ -236,7 +241,13 @@ export async function POST(req: NextRequest): Promise<Response> {
         const { code, message } = frameErrorFor(err);
 
         log.warn({ code, message }, "flow launch stream failed");
-        enqueue(formatLaunchErrorFrame(code, message));
+        enqueue(
+          formatLaunchErrorFrame(
+            code,
+            message,
+            isMaisterError(err) ? err.details : undefined,
+          ),
+        );
       } finally {
         try {
           controller.close();

@@ -63,7 +63,8 @@ const fakeDb = {
   }),
 };
 
-vi.mock("@/lib/authz", () => ({
+vi.mock("@/lib/authz", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/authz")>()),
   requireActiveSession: mocks.requireActiveSession,
   requireProjectAction: mocks.requireProjectAction,
 }));
@@ -107,17 +108,221 @@ function manifest(nodes: Row[]): Row {
   };
 }
 
-function request(): NextRequest {
+function request(query: Record<string, string> = {}): NextRequest {
   const url = new URL("http://x/api/runs/launch-options?taskId=task-1");
+
+  for (const [key, value] of Object.entries(query))
+    url.searchParams.set(key, value);
 
   return { nextUrl: url } as NextRequest;
 }
 
-async function invoke(): Promise<Response> {
+async function invoke(query: Record<string, string> = {}): Promise<Response> {
   const { GET } = await import("../route");
 
-  return GET(request());
+  return GET(request(query));
 }
+
+function consensusManifest(): Row {
+  return {
+    schemaVersion: 1,
+    name: "Planning",
+    compat: { engine_min: "3.8.0" },
+    nodes: [
+      aiNode("intake", undefined, "plan_consensus"),
+      {
+        id: "plan_consensus",
+        type: "consensus",
+        prompt: "Produce a plan.",
+        participants: [
+          {
+            id: "architect",
+            runner: { runner_type: "acp", capability_agent: "claude" },
+          },
+          {
+            id: "reviewer",
+            runner: { runner_type: "acp", capability_agent: "codex" },
+          },
+        ],
+        workspace: { mode: "repo_read" },
+        material_axes: ["scope"],
+        rounds: { mode: "single_pass", max: 1 },
+        on_no_consensus: "escalate",
+        synthesizer: {
+          runner: { runner_type: "acp", capability_agent: "claude" },
+        },
+        output: {
+          produces: [
+            { id: "consensus_plan", kind: "plan", current: true },
+            { id: "debate_log", kind: "human_note", current: true },
+          ],
+        },
+        transitions: { on_success: "done" },
+      },
+    ],
+  };
+}
+
+describe("consensus runner preview", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+    seedBase();
+    state.flow_revisions[0].manifest = consensusManifest();
+    state.platform_acp_runners.push({
+      ...state.platform_acp_runners[1],
+      id: "codex-other",
+    });
+  });
+
+  it("reports the ambiguous role and blocks normal and force launch without exposing raw diagnostics", async () => {
+    const response = await invoke();
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.launchability).toMatchObject({
+      launchable: false,
+      reason: "runner_unresolved",
+    });
+    expect(body.relaunch).toMatchObject({
+      launchable: false,
+      reason: "runner_unresolved",
+    });
+    expect(body.consensusRunnerSlots).toEqual([
+      {
+        slotKey: "consensus:plan_consensus:architect",
+        label: "plan_consensus · architect",
+        kind: "consensus_participant",
+        runnerId: "claude-platform",
+        errorCode: null,
+        mappedRunnerId: null,
+      },
+      {
+        slotKey: "consensus:plan_consensus:reviewer",
+        label: "plan_consensus · reviewer",
+        kind: "consensus_participant",
+        runnerId: null,
+        errorCode: "CONFIG",
+        mappedRunnerId: null,
+      },
+      {
+        slotKey: "consensus:plan_consensus:synthesizer",
+        label: "plan_consensus · synthesizer",
+        kind: "consensus_synthesizer",
+        runnerId: "claude-platform",
+        errorCode: null,
+        mappedRunnerId: null,
+      },
+    ]);
+    expect(body.selectedFlowRevisionId).toBe("revision-1");
+    expect(body.canConfigureRunnerBindings).toBe(false);
+    expect(JSON.stringify(body.consensusRunnerSlots)).not.toContain(
+      "requires a per-project binding",
+    );
+
+    const { resolveTaskLaunchConfig } = await import(
+      "@/lib/runs/task-launch-config"
+    );
+    const config = await resolveTaskLaunchConfig("task-1");
+
+    expect(config).toMatchObject({
+      launchable: false,
+      launchReason: "runner_unresolved",
+      consensusRunnerSlots: body.consensusRunnerSlots,
+    });
+  });
+
+  it("refreshes roles for the selected primary runner and preserves explicit role bindings", async () => {
+    const response = await invoke({ runnerId: "codex-ready" });
+    const body = await response.json();
+
+    expect(body.selectedRunnerId).toBe("codex-ready");
+    expect(body.launchability.launchable).toBe(true);
+    expect(body.relaunch.launchable).toBe(true);
+    expect(body.consensusRunnerSlots[1].runnerId).toBe("codex-ready");
+    state.flow_runner_remaps = [
+      {
+        slotKey: "consensus:plan_consensus:reviewer",
+        status: "Mapped",
+        mappedRunnerId: "codex-other",
+      },
+    ];
+
+    const bound = await (await invoke({ runnerId: "codex-ready" })).json();
+
+    expect(bound.consensusRunnerSlots[1].runnerId).toBe("codex-other");
+    expect(bound.consensusRunnerSlots[1].mappedRunnerId).toBe("codex-other");
+  });
+
+  it.each(["owner", "admin"])(
+    "allows the %s to configure bindings without widening launch authorization",
+    async (role) => {
+      mocks.requireProjectAction.mockResolvedValue({ role });
+
+      const body = await (await invoke()).json();
+
+      expect(body.canConfigureRunnerBindings).toBe(true);
+      expect(mocks.requireProjectAction).toHaveBeenCalledWith(
+        "project-1",
+        "launchRun",
+      );
+      expect(mocks.requireProjectAction).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("refreshes the manifest when a different project flow is selected", async () => {
+    state.flows.push({
+      ...state.flows[0],
+      id: "flow-2",
+      flowRefId: "simple",
+      enabledRevisionId: "revision-2",
+    });
+    state.flow_revisions.push({
+      ...state.flow_revisions[0],
+      id: "revision-2",
+      manifest: manifest([aiNode("implement")]),
+    });
+
+    const body = await (await invoke({ flowId: "flow-2" })).json();
+
+    expect(body.selectedFlowId).toBe("flow-2");
+    expect(body.consensusRunnerSlots).toEqual([]);
+    expect(body.launchability.launchable).toBe(true);
+    expect(body.task.flowId).toBe("flow-1");
+  });
+
+  it("uses the primary runner override for a consensus-only flow in the preview and task card", async () => {
+    const planning = consensusManifest();
+
+    state.flow_revisions[0].manifest = {
+      ...planning,
+      nodes: (planning.nodes as Row[]).slice(1),
+    };
+    state.projects[0].defaultRunnerId = "claude-platform";
+
+    const overrideBody = await (
+      await invoke({ runnerId: "codex-ready" })
+    ).json();
+
+    expect(overrideBody.selectedRunnerId).toBe("codex-ready");
+    expect(overrideBody.launchability.launchable).toBe(true);
+    expect(overrideBody.consensusRunnerSlots[1].runnerId).toBe("codex-ready");
+
+    state.tasks[0].runnerId = "codex-ready";
+    const taskBody = await (await invoke()).json();
+    const { resolveTaskLaunchConfig } = await import(
+      "@/lib/runs/task-launch-config"
+    );
+    const config = await resolveTaskLaunchConfig("task-1");
+
+    expect(config).toMatchObject({
+      launchable: true,
+      runner: { id: "codex-ready" },
+      consensusRunnerSlots: taskBody.consensusRunnerSlots,
+    });
+    expect(config?.consensusRunnerSlots[1].runnerId).toBe("codex-ready");
+  });
+});
 
 function seedBase(): void {
   state.tasks = [{ id: "task-1", projectId: "project-1", flowId: "flow-1" }];

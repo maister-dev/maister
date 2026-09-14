@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   baseModelName,
+  defaultRunSessionValues,
+  resolveConsensusRunner,
   resolveRunSessions,
   resolveRunnerSlot,
   resolveSlotConfig,
@@ -151,6 +153,73 @@ describe("runnerIntentCandidates", () => {
     );
 
     expect(candidates).toEqual({ exact: [], sameCapability: [] });
+  });
+});
+
+describe("resolveConsensusRunner", () => {
+  const base = {
+    slotKey: "consensus:plan_consensus:planner-draft",
+    slot: {
+      runner_type: "acp" as const,
+      capability_agent: "claude" as const,
+      permission_policy: "default" as const,
+    },
+    runDefaultRunnerId: "claude-opus",
+    runnerProfiles: undefined,
+    runners: catalog,
+    project: { defaultRunnerId: "claude-opus" },
+    platform: { defaultRunnerId: "claude-opus" },
+  };
+
+  it("records inherited consensus runner provenance without inventing a launch override", () => {
+    const resolved = resolveConsensusRunner(base);
+
+    expect(resolved).toMatchObject({
+      runnerId: "claude-opus",
+      runnerResolutionTier: "runDefault",
+      resolutionSource: "runDefault",
+    });
+    expect(defaultRunSessionValues("draft-run", resolved)).toMatchObject({
+      runnerResolutionTier: "runDefault",
+      resolutionSource: "runDefault",
+    });
+  });
+
+  it("preserves explicit role bindings ahead of compatible run defaults", () => {
+    const resolved = resolveConsensusRunner({
+      ...base,
+      binding: {
+        slotKey: base.slotKey,
+        mappedRunnerId: "claude-sonnet",
+        status: "Mapped",
+      },
+    });
+
+    expect(resolved).toMatchObject({
+      runnerId: "claude-sonnet",
+      runnerResolutionTier: "binding",
+    });
+  });
+
+  it("preserves concrete role runner references ahead of compatible run defaults", () => {
+    expect(
+      resolveConsensusRunner({ ...base, slot: "claude-sonnet" }),
+    ).toMatchObject({
+      runnerId: "claude-sonnet",
+      runnerResolutionTier: "stepTarget",
+    });
+  });
+
+  it("refuses ambiguous roles when all configured preferences have another capability", () => {
+    expectMaisterCode(
+      () =>
+        resolveConsensusRunner({
+          ...base,
+          slot: { ...base.slot, capability_agent: "codex" },
+          runners: [...catalog, { ...codexGpt, id: "codex-alternate" }],
+        }),
+      "CONFIG",
+    );
   });
 });
 

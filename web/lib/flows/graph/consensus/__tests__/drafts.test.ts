@@ -20,6 +20,7 @@ function baseInput(db: unknown): ConsensusDraftLaunchInput {
     db,
     projectId: "project-1",
     taskId: "task-1",
+    runDefaultRunnerId: "runner-parent",
     parentRunId: "parent-run",
     rootRunId: "root-run",
     nodeId: "decide",

@@ -13,7 +13,7 @@ import {
   loadProjectPlatformRunnerDefaults,
   loadRunnerCatalog,
 } from "@/lib/acp-runners/catalog";
-import { resolveRunnerSlot } from "@/lib/acp-runners/resolve";
+import { resolveConsensusRunner } from "@/lib/acp-runners/resolve";
 import {
   mergeRunnerAdapterLaunch,
   runnerSupervisorInput,
@@ -51,16 +51,16 @@ export function executorFromRunnerSnapshot(
 }
 
 // M42 (ADR-114): resolve a consensus runner slot portably. The slot's declared
-// runner intent is bound to a concrete host runner via the per-project binding
-// (`consensus:<nodeId>:<participantId>` / `:synthesizer`) or a unique intent
-// auto-match — never a direct `platform_acp_runners.id` lookup baked in the
-// manifest.
+// runner intent resolves through its per-project binding
+// (`consensus:<nodeId>:<participantId>` / `:synthesizer`), a compatible configured
+// runner preference, or a unique intent match.
 export async function resolveConsensusRunnerSlot(args: {
   db: Db;
   slot: RunnerSlot;
   slotKey: string;
   projectId: string;
   flowRevisionId: string | null;
+  runDefaultRunnerId: string | null;
   runnerProfiles: Record<string, FlowRunnerConfig> | undefined;
   roleLabel: string;
 }): Promise<ResolvedRunnerSlot> {
@@ -71,21 +71,17 @@ export async function resolveConsensusRunnerSlot(args: {
       : Promise.resolve([]),
     loadProjectPlatformRunnerDefaults(args.db, args.projectId),
   ]);
-  const resolved = resolveRunnerSlot({
+
+  return resolveConsensusRunner({
     slotKey: args.slotKey,
     slot: args.slot,
     runnerProfiles: args.runnerProfiles,
     binding: bindings.find((binding) => binding.slotKey === args.slotKey),
+    runDefaultRunnerId: args.runDefaultRunnerId,
     project: defaults.project,
     platform: defaults.platform,
     runners,
   });
-
-  if (!resolved) {
-    throw new MaisterError("CONFIG", `${args.roleLabel} must declare a runner`);
-  }
-
-  return resolved;
 }
 
 function roleRuntimeFromSnapshot(
@@ -109,6 +105,7 @@ export async function resolveConsensusRoleRuntime(args: {
   projectId: string;
   taskId: string | null;
   flowRevisionId: string | null;
+  runDefaultRunnerId: string | null;
   runnerProfiles: Record<string, FlowRunnerConfig> | undefined;
   // The slot key for this role — `consensus:<nodeId>:<participantId>` or
   // `consensus:<nodeId>:synthesizer`. Ignored for agent-bound roles.
@@ -142,6 +139,7 @@ export async function resolveConsensusRoleRuntime(args: {
       slotKey: args.slotKey,
       projectId: args.projectId,
       flowRevisionId: args.flowRevisionId,
+      runDefaultRunnerId: args.runDefaultRunnerId,
       runnerProfiles: args.runnerProfiles,
       roleLabel: args.roleLabel,
     });

@@ -52,11 +52,49 @@ export function formatLaunchResultFrame(result: unknown): string {
   return sseData({ type: "scratch.launch_result", result });
 }
 
-export function formatLaunchErrorFrame(code: string, message: string): string {
-  return sseData({ type: "error", code, message });
+export type LaunchErrorDetails = {
+  reason: "consensus_runner_unresolved";
+  slotKey: string;
+  label: string;
+};
+
+/** Expose only the role identifiers needed for launch remediation. */
+export function readLaunchErrorDetails(
+  value: unknown,
+): LaunchErrorDetails | undefined {
+  if (
+    !value ||
+    typeof value !== "object" ||
+    !("reason" in value) ||
+    value.reason !== "consensus_runner_unresolved" ||
+    !("slotKey" in value) ||
+    typeof value.slotKey !== "string" ||
+    !("label" in value) ||
+    typeof value.label !== "string"
+  )
+    return undefined;
+
+  return { reason: value.reason, slotKey: value.slotKey, label: value.label };
 }
 
-export type LaunchStreamApiError = { code?: string; message?: string };
+export function formatLaunchErrorFrame(
+  code: string,
+  message: string,
+  details?: unknown,
+): string {
+  return sseData({
+    type: "error",
+    code,
+    message,
+    details: readLaunchErrorDetails(details),
+  });
+}
+
+export type LaunchStreamApiError = {
+  code?: string;
+  message?: string;
+  details?: LaunchErrorDetails;
+};
 
 // Client-side reader for the launch POST's `text/event-stream` response: drives
 // `onStage` per progress frame and returns the terminal result/error frame.
@@ -96,6 +134,7 @@ export async function readLaunchStream<T>(
               result?: T;
               code?: string;
               message?: string;
+              details?: unknown;
             }
           | undefined;
 
@@ -112,7 +151,13 @@ export async function readLaunchStream<T>(
         } else if (frame?.type === "scratch.launch_result") {
           result = frame.result;
         } else if (frame?.type === "error") {
-          error = { code: frame.code, message: frame.message };
+          const details = readLaunchErrorDetails(frame.details);
+
+          error = {
+            code: frame.code,
+            message: frame.message,
+            ...(details ? { details } : {}),
+          };
         }
       }
       boundary = buffer.indexOf("\n\n");

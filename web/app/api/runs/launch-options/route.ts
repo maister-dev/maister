@@ -6,8 +6,16 @@ import pino from "pino";
 import { z } from "zod";
 
 import { LAUNCHABLE_FLOW_ENABLEMENT_STATES } from "@/lib/flows/enablement-states";
-import { requireActiveSession, requireProjectAction } from "@/lib/authz";
+import {
+  projectRolesForActions,
+  requireActiveSession,
+  requireProjectAction,
+} from "@/lib/authz";
 import { loadFlowRunnerBindings } from "@/lib/acp-runners/catalog";
+import {
+  inspectConsensusRunners,
+  toConsensusRunnerSlotPreview,
+} from "@/lib/acp-runners/consensus-preflight";
 import {
   resolveRunner,
   resolveRunSessions,
@@ -57,7 +65,13 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-const querySchema = z.object({ taskId: z.string().min(1) }).strict();
+const querySchema = z
+  .object({
+    taskId: z.string().min(1),
+    flowId: z.string().min(1).optional(),
+    runnerId: z.string().min(1).optional(),
+  })
+  .strict();
 
 type FlowLaunchIssue =
   | "unconfigured"
@@ -223,6 +237,8 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     await requireActiveSession();
     const parsed = querySchema.safeParse({
       taskId: req.nextUrl.searchParams.get("taskId"),
+      flowId: req.nextUrl.searchParams.get("flowId") ?? undefined,
+      runnerId: req.nextUrl.searchParams.get("runnerId") ?? undefined,
     });
 
     if (!parsed.success) {
@@ -256,20 +272,31 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       throw new MaisterError("PRECONDITION", "project not found for task");
     }
 
-    await requireProjectAction(project.id, "launchRun");
+    const authorization = await requireProjectAction(project.id, "launchRun");
+    const canConfigureRunnerBindings = projectRolesForActions([
+      "editSettings",
+    ]).includes(authorization.role);
 
     // M34 (ADR-089): a flowless simple-intent task still gets options — the
     // popover doubles as the "set up & launch" dialog (the flow pick PATCHes
     // the task before the run POST). The same response shape is useful for an
     // already-selected flow that cannot launch anymore: users can still change
     // the saved Flow/runner defaults instead of getting a dead dialog.
-    const flowRows = task.flowId
-      ? await db.select().from(flows).where(eq(flows.id, task.flowId))
+    const selectedFlowId = parsed.data.flowId ?? task.flowId;
+    const selectedRunnerId = parsed.data.runnerId ?? task.runnerId;
+    const flowRows = selectedFlowId
+      ? await db
+          .select()
+          .from(flows)
+          .where(
+            and(eq(flows.id, selectedFlowId), eq(flows.projectId, project.id)),
+          )
       : [];
-    const flow = flowRows[0] ?? null;
+    const flow =
+      flowRows.find((row: { id: string }) => row.id === selectedFlowId) ?? null;
 
     let revision: Record<string, any> | null = null;
-    let flowIssue: FlowLaunchIssue | null = task.flowId
+    let flowIssue: FlowLaunchIssue | null = selectedFlowId
       ? flow
         ? null
         : "flow_missing"
@@ -286,7 +313,10 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
           .from(flowRevisions)
           .where(eq(flowRevisions.id, flow.enabledRevisionId));
 
-        revision = revisionRows[0] ?? null;
+        revision =
+          revisionRows.find(
+            (row: { id: string }) => row.id === flow.enabledRevisionId,
+          ) ?? null;
 
         if (!revision) {
           flowIssue = "no_revision";
@@ -393,9 +423,15 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     // `runnerId: null` so the options dialog still renders (the binding screen
     // resolves it) instead of 5xx-ing the whole preview.
     const runnerProfiles = compatibleManifest?.runner_profiles;
-    const sessionSlots: RunSessionSlot[] =
+    const compiledSessionSlots: RunSessionSlot[] =
       revision && flow && flowIssue === null && compatibleManifest
         ? [...compileManifest(compatibleManifest).sessions.values()]
+        : [];
+    const sessionSlots: RunSessionSlot[] =
+      revision && flow && flowIssue === null && compatibleManifest
+        ? compiledSessionSlots.length > 0
+          ? compiledSessionSlots
+          : [{ name: "default" }]
         : [];
     const primarySessionName =
       sessionSlots.find((session) => session.name === "default")?.name ??
@@ -409,10 +445,10 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
             sessions: [session],
             runnerProfiles,
             bindings,
-            runDefaultRunnerId: task.runnerId,
+            runDefaultRunnerId: selectedRunnerId,
             ephemeralOverrides:
-              task.runnerId && primarySessionName
-                ? { [primarySessionName]: task.runnerId }
+              selectedRunnerId && primarySessionName
+                ? { [primarySessionName]: selectedRunnerId }
                 : undefined,
             ...defaultChain,
             runners: runnerCatalog,
@@ -470,6 +506,23 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
               runnerResolutionTier: fallbackResolution.runnerResolutionTier,
               warning: null,
             };
+    const consensusRunnerSlots =
+      compatibleManifest && flowIssue === null
+        ? inspectConsensusRunners({
+            manifest: compatibleManifest,
+            bindings,
+            runDefaultRunnerId: defaultResolution.runnerId,
+            project: defaultChain.project,
+            platform: defaultChain.platform,
+            runners: runnerCatalog,
+          }).map(toConsensusRunnerSlotPreview)
+        : [];
+    const hasUnresolvedConsensusRunner = consensusRunnerSlots.some(
+      (slot) => slot.errorCode !== null,
+    );
+    const runnerIssue = hasUnresolvedConsensusRunner
+      ? "runner_unresolved"
+      : null;
     const latestFlowRun = await getLatestFlowRun(task.id, db);
     const openBlockers =
       (await getOpenRelationBlockers([task.id], db)).get(task.id) ?? [];
@@ -495,7 +548,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     // the options response and edit away from a stale/broken flow.
     const launchability =
       manualLaunchability === "launchable"
-        ? (flowIssue ?? "launchable")
+        ? (flowIssue ?? runnerIssue ?? "launchable")
         : manualLaunchability;
     // ADR-119: the force verdict layers the SAME flow-setup issues as the manual
     // launchability (a flow disabled/dropped after the task's first run), so the
@@ -504,7 +557,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     // precedence; run status is still never consulted.
     const relaunchReason =
       relaunchLaunchability === "launchable"
-        ? (flowIssue ?? "launchable")
+        ? (flowIssue ?? runnerIssue ?? "launchable")
         : relaunchLaunchability;
     const branches = await listBranches(project.repoPath, {
       includeRemotes: true,
@@ -572,6 +625,9 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     });
 
     return NextResponse.json({
+      consensusRunnerSlots,
+      selectedFlowRevisionId: revision?.id ?? null,
+      canConfigureRunnerBindings,
       runners: flowIssue === "incompatible" ? [] : safeRunners,
       // M42 (ADR-114): one entry per logical session of the selected flow, each
       // with its resolved runner; empty for a single-session flow (the single
@@ -651,8 +707,10 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       selectedRunnerId:
         flowIssue === "incompatible"
           ? ""
-          : ((task.runnerId as string | null) ?? defaultResolution.runnerId),
-      selectedRunnerWarning: task.runnerId ? null : defaultResolution.warning,
+          : ((selectedRunnerId as string | null) ?? defaultResolution.runnerId),
+      selectedRunnerWarning: selectedRunnerId
+        ? null
+        : defaultResolution.warning,
       branches,
       defaultBaseBranch,
       defaultTargetBranch,

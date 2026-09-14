@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
+import { NextRequest } from "next/server";
 import { Pool } from "pg";
 import {
   afterAll,
@@ -18,6 +19,7 @@ import {
 } from "vitest";
 
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
+import { flowYamlV1Schema, type FlowYamlV1 } from "@/lib/config.schema";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
 import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
@@ -45,6 +47,11 @@ let pool: Pool;
 let db: NodePgDatabase;
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
+vi.mock("@/lib/authz", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/authz")>()),
+  requireActiveSession: vi.fn(async () => ({ id: "binding-admin" })),
+  requireProjectAction: vi.fn(async () => ({ role: "admin" })),
+}));
 vi.mock("@/lib/scheduler", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/scheduler")>();
 
@@ -400,5 +407,183 @@ describe("the snapshot is immune to revision drift (AC-12)", () => {
     expect(after.schemaRef).toBe("exporter@rev-one:research-result.v1");
     // Still schemaVersion 1 — the run validates against what it launched with.
     expect(after.schema.schemaVersion).toBe(1);
+  }, 60_000);
+});
+
+function consensusManifest(
+  participantRunner: string,
+  synthesizerRunner: string,
+): FlowYamlV1 {
+  return flowYamlV1Schema.parse({
+    schemaVersion: 1,
+    name: "Consensus launch",
+    runner_profiles: {
+      planner: { capability_agent: "claude", effort: "high" },
+      independent: { capability_agent: "codex", effort: "high" },
+    },
+    nodes: [
+      {
+        id: "plan_consensus",
+        type: "consensus",
+        prompt: "Plan the task.",
+        participants: [
+          { id: "planner-draft", runner: "planner" },
+          { id: "independent-draft", runner: participantRunner },
+        ],
+        synthesizer: { runner: synthesizerRunner },
+        workspace: { mode: "repo_read" },
+        material_axes: ["correctness"],
+        rounds: { mode: "iterate", max: 2 },
+        on_no_consensus: "escalate",
+        output: {
+          produces: [
+            { id: "consensus_plan", kind: "plan", current: true },
+            { id: "debate_log", kind: "human_note", current: true },
+          ],
+        },
+        transitions: { success: "done" },
+      },
+    ],
+  });
+}
+
+async function installConsensusManifest(manifest: FlowYamlV1): Promise<void> {
+  await pool.query("UPDATE flow_revisions SET manifest = $1 WHERE id = $2", [
+    JSON.stringify(manifest),
+    revisionId,
+  ]);
+  await pool.query("UPDATE flows SET manifest = $1 WHERE id = $2", [
+    JSON.stringify(manifest),
+    flowId,
+  ]);
+  for (const model of ["gpt-5.6-terra", "gpt-5.6-sol"]) {
+    await pool.query(
+      `INSERT INTO platform_acp_runners
+        (id, adapter, capability_agent, model, provider, permission_policy,
+         readiness_status, readiness_reasons, enabled)
+       VALUES ($1, 'codex', 'codex', $2, '{"kind":"openai"}', 'default',
+               'Ready', '[]', true)`,
+      [randomUUID(), model],
+    );
+  }
+}
+
+describe("consensus runner admission", () => {
+  it.each([
+    {
+      participantRunner: "independent",
+      synthesizerRunner: "planner",
+      role: "independent-draft",
+    },
+    {
+      participantRunner: "planner",
+      synthesizerRunner: "independent",
+      role: "synthesizer",
+    },
+  ])(
+    "refuses an ambiguous $role before creating a run or worktree",
+    async ({ participantRunner, synthesizerRunner, role }) => {
+      await installConsensusManifest(
+        consensusManifest(participantRunner, synthesizerRunner),
+      );
+      const taskId = await seedTask();
+      const before = await execFileAsync("git", [
+        "-C",
+        repoPath,
+        "worktree",
+        "list",
+        "--porcelain",
+      ]);
+
+      await expect(
+        launchRun({ taskId, flowId }, EXT_CTX, db),
+      ).rejects.toMatchObject({
+        code: "CONFIG",
+        message: expect.stringContaining(`consensus:plan_consensus:${role}`),
+      });
+      for (const table of ["runs", "workspaces", "run_sessions"]) {
+        expect(
+          (
+            await pool.query<{ count: number }>(
+              `SELECT count(*)::int AS count FROM ${table}`,
+            )
+          ).rows[0].count,
+        ).toBe(0);
+      }
+      const after = await execFileAsync("git", [
+        "-C",
+        repoPath,
+        "worktree",
+        "list",
+        "--porcelain",
+      ]);
+
+      expect(after.stdout).toBe(before.stdout);
+      expect(
+        (
+          await pool.query<{ status: string }>(
+            "SELECT status FROM tasks WHERE id = $1",
+            [taskId],
+          )
+        ).rows[0].status,
+      ).toBe("Backlog");
+    },
+    60_000,
+  );
+
+  it("admits a blocked consensus after its role is assigned through the project API", async () => {
+    await installConsensusManifest(consensusManifest("independent", "planner"));
+    const taskId = await seedTask();
+
+    await expect(
+      launchRun({ taskId, flowId }, EXT_CTX, db),
+    ).rejects.toMatchObject({ code: "CONFIG" });
+
+    const runnerId = (
+      await pool.query<{ id: string }>(
+        "SELECT id FROM platform_acp_runners WHERE capability_agent = 'codex' ORDER BY id LIMIT 1",
+      )
+    ).rows[0].id;
+
+    const { PATCH } = await import(
+      "@/app/api/projects/[slug]/flow-runner-remaps/route"
+    );
+    const slug = `p-${projectId.slice(0, 8)}`;
+    const response = await PATCH(
+      new NextRequest(
+        `http://localhost/api/projects/${slug}/flow-runner-remaps`,
+        {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            flowRevisionId: revisionId,
+            slotKey: "consensus:plan_consensus:independent-draft",
+            mappedRunnerId: runnerId,
+          }),
+        },
+      ),
+      { params: Promise.resolve({ slug }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(
+      (
+        await pool.query<{ mapped_runner_id: string }>(
+          "SELECT mapped_runner_id FROM flow_runner_remaps WHERE project_id = $1 AND flow_revision_id = $2 AND slot_key = $3",
+          [projectId, revisionId, "consensus:plan_consensus:independent-draft"],
+        )
+      ).rows,
+    ).toEqual([{ mapped_runner_id: runnerId }]);
+
+    const { runId } = await launchRun({ taskId, flowId }, EXT_CTX, db);
+
+    expect(
+      (
+        await pool.query<{ status: string }>(
+          "SELECT status FROM runs WHERE id = $1",
+          [runId],
+        )
+      ).rows[0].status,
+    ).toBe("Pending");
   }, 60_000);
 });

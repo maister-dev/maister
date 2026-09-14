@@ -218,6 +218,7 @@ function consensusRoleCtx(args: RunConsensusNodeInput): {
   projectId: string;
   taskId: string | null;
   flowRevisionId: string | null;
+  runDefaultRunnerId: string;
   runnerProfiles: ReturnType<typeof manifestRunnerProfiles>;
 } {
   return {
@@ -225,6 +226,7 @@ function consensusRoleCtx(args: RunConsensusNodeInput): {
     projectId: args.loaded.run.projectId,
     taskId: args.loaded.run.taskId,
     flowRevisionId: args.loaded.run.flowRevisionId ?? null,
+    runDefaultRunnerId: args.loaded.runner.id,
     runnerProfiles: manifestRunnerProfiles(args),
   };
 }
@@ -352,6 +354,7 @@ async function launchRound(
     projectId: args.loaded.run.projectId,
     taskId: args.loaded.run.taskId,
     flowRevisionId: args.loaded.run.flowRevisionId ?? null,
+    runDefaultRunnerId: args.loaded.runner.id,
     runnerProfiles: args.loaded.manifest.runner_profiles,
     parentRunId: args.loaded.run.id,
     rootRunId: args.loaded.run.rootRunId ?? args.loaded.run.id,

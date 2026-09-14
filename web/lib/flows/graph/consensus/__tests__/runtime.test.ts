@@ -270,6 +270,7 @@ function input(overrides: Record<string, unknown> = {}) {
         flowRevisionId: "rev-1",
       },
       manifest: { runner_profiles: undefined },
+      runner: { id: "runner-parent" },
       executor: {
         id: "runner-parent",
         agent: "claude",
