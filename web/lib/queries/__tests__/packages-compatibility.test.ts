@@ -1,3 +1,4 @@
+import { MAISTER_ENGINE_VERSION } from "@/lib/flows/engine-version";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const loadFlowManifestMock = vi.hoisted(() => vi.fn());
@@ -91,7 +92,7 @@ describe("package compatibility resolver", () => {
 
     await expect(resolveCompatibility(INSTALL)).resolves.toEqual({
       compatible: false,
-      incompatibilityReason: "engine 3.7.0 < engine_min 4.0.0",
+      incompatibilityReason: `engine ${MAISTER_ENGINE_VERSION} < engine_min 4.0.0`,
     });
   });
 });

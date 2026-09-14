@@ -1,3 +1,4 @@
+import { MAISTER_ENGINE_VERSION } from "@/lib/flows/engine-version";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -46,7 +47,7 @@ describe("local package cut compatibility", () => {
       ]),
     ).toEqual({
       compatible: false,
-      incompatibilityReason: "engine 3.7.0 < engine_min 4.0.0",
+      incompatibilityReason: `engine ${MAISTER_ENGINE_VERSION} < engine_min 4.0.0`,
     });
   });
 
