@@ -113,7 +113,7 @@ async function hashFile(absolutePath: string): Promise<string> {
 // Sorted at every level so two inventories of unchanged bytes walk in the same
 // order, and no-follow so a symlink is reported as what it is rather than as
 // whatever it points at.
-async function* walkRunDirectory(
+export async function* walkRunDirectory(
   root: string,
   prefix = "",
 ): AsyncGenerator<ScannedEntry> {
@@ -143,6 +143,11 @@ export async function inventoryLegacyRun(
   input: LegacyRunInventoryInput,
 ): Promise<LegacyRunInventory> {
   const pageSize = input.pageSize ?? DEFAULT_PAGE_SIZE;
+  const artifactPaths = new Set(
+    input.associations
+      .filter((association) => association.associationKind === "artifact")
+      .map((association) => association.relativePath),
+  );
   const items: LegacyManifestItem[] = [];
   const blocks: LegacyInventoryBlock[] = [];
   const scopeLines: string[] = [];
@@ -172,7 +177,10 @@ export async function inventoryLegacyRun(
         continue;
       }
 
-      const classification = classifyLegacySource(entry.relativePath);
+      const classification = classifyLegacySource(
+        entry.relativePath,
+        artifactPaths.has(entry.relativePath) ? "artifact" : undefined,
+      );
 
       if (classification.disposition === "blocked") {
         blocks.push({

@@ -17,6 +17,8 @@ export type ProofRefusal =
   | "verify_scratch_count_mismatch"
   | "verify_item_unsealed"
   | "verify_count_mismatch"
+  | "verify_rows_missing"
+  | "verify_rows_mismatch"
   | "proof_lane_missing";
 
 export type LaneExpectation = {

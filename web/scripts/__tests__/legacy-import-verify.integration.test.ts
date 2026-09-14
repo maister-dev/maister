@@ -53,7 +53,13 @@ const scriptPath = resolve(
 );
 const tsxPath = resolve(process.cwd(), "node_modules/.bin/tsx");
 
-type Phase = "inventory" | "copy" | "associate" | "verify" | "finalize-proof";
+type Phase =
+  | "inventory"
+  | "copy"
+  | "associate"
+  | "rows"
+  | "verify"
+  | "finalize-proof";
 
 let testDatabase: StartedPostgresTestDb;
 let runtimeRoot: string;
@@ -121,7 +127,11 @@ async function seedRun(): Promise<{ runId: string; runDirectory: string }> {
     `${JSON.stringify({ type: "session.line", sessionId: "s", line: "hi" })}\n`,
     "utf8",
   );
-  await writeFile(join(runDirectory, "cost.jsonl"), "{}\n", "utf8");
+  await writeFile(
+    join(runDirectory, "cost.jsonl"),
+    `${JSON.stringify({ ts: "2026-09-04T00:00:01.000Z", sessionId: "s", input_tokens: 1, output_tokens: 1 })}\n`,
+    "utf8",
+  );
   await writeFile(join(runDirectory, "plan.log"), "planning step output\n", "utf8");
   await writeFile(
     join(runDirectory, "uploads", "spec", "spec.txt"),
@@ -254,9 +264,12 @@ function phaseArgs(id: string, generation: number): string[] {
   ];
 }
 
-// inventory -> copy -> associate, the state every S4.5 case starts from.
+// inventory -> copy -> associate -> rows, the state every S4.5 case starts from.
 async function preserved(
-  options: { afterInventory?: (id: string) => Promise<void> } = {},
+  options: {
+    afterInventory?: (id: string) => Promise<void>;
+    rows?: boolean;
+  } = {},
 ): Promise<{
   id: string;
   generation: number;
@@ -286,6 +299,8 @@ async function preserved(
 
   await cli("copy", phaseArgs(id, generation));
   await cli("associate", phaseArgs(id, generation));
+  if (options.rows !== false)
+    await cli("rows", ["--import-id", id, "--manifest-dir", manifestRoot]);
 
   return {
     id,
@@ -425,6 +440,40 @@ describe("execution-data-plane:import-legacy verify", () => {
 
     expect(output).toContain("verify_hash_mismatch");
   }, 300_000);
+
+  // S4.6: the events lane's only manifest item is the manager's row
+  // reconstruction, and nothing before this proved those rows exist. A run whose
+  // rows were never imported must not reach `complete` on the strength of the
+  // bytes alone — 0135 would flip it to canonical with an empty history.
+  it("refuses a proof for a run whose rows were never imported", async () => {
+    const context = await preserved({ rows: false });
+    const output = await cliExpectingRefusal(
+      "verify",
+      phaseArgs(context.id, context.generation),
+    );
+
+    expect(output).toContain("verify_rows_missing");
+    expect(
+      (await laneRows(context.runId)).every((lane) => lane.state === "pending"),
+    ).toBe(true);
+  }, 120_000);
+
+  it("refuses a proof whose row evidence no longer matches", async () => {
+    const context = await preserved();
+
+    await testDatabase.pool.query(
+      `delete from execution_events
+       where id = (select id from execution_events
+                   where run_id = $1 and source = 'legacy_import' limit 1)`,
+      [context.runId],
+    );
+    const output = await cliExpectingRefusal(
+      "verify",
+      phaseArgs(context.id, context.generation),
+    );
+
+    expect(output).toContain("verify_rows_mismatch");
+  }, 120_000);
 
   it("refuses a source that moved after it was inventoried", async () => {
     const context = await preserved();

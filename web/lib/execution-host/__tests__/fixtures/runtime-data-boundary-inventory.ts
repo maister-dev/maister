@@ -1745,9 +1745,22 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "operator-import",
       "Stage A history import: reads legacy run directories once, under operator authority, to publish them as host objects",
       [
-        ["auditLegacyRuntimeObjects", "node:fs/promises.readdir", "list"],
-        ["auditLegacyRuntimeObjects", "node:fs/promises.lstat", "stat"],
-        ["readRequiredFile", "node:fs/promises.readFile", "read"],
+        [
+          "auditRunListing",
+          "scripts/legacy-import/inventory.ts#walkRunDirectory",
+          "wrapper",
+        ],
+        ["readFrozenSource", "node:fs/promises.readFile", "read"],
+        [
+          "runRowsCommand",
+          "lib/execution-host/import-maintenance.ts#readOperatorImportManifest",
+          "wrapper",
+        ],
+        [
+          "runRowsCommand",
+          "scripts/legacy-import/manifest-store.ts#readImportManifestRows",
+          "wrapper",
+        ],
         ["inventoryLegacyRuns", "node:fs/promises.mkdir", "write"],
         [
           "inventoryLegacyRuns",
@@ -2333,6 +2346,7 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
   ]),
   ...wrappers("scripts/legacy-import/inventory.ts", "operator-import", [
     ["inventoryLegacyRun", true],
+    ["walkRunDirectory", true],
   ]),
   ...wrappers("scripts/legacy-import/manifest-store.ts", "operator-import", [
     ["openImportManifestStore", true],

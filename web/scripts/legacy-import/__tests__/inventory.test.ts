@@ -93,6 +93,34 @@ describe("inventoryLegacyRun", () => {
     expect(result.lanes.scratch_session.items[0].sourceClass).toBe("upload");
   });
 
+  it("preserves artifact-referenced evidence that no name rule recognises", async () => {
+    await writeFile(join(runDirectory, "e2e-report.tar.gz"), "tarball bytes\n", "utf8");
+
+    const result = await inventory({
+      associations: [
+        {
+          associationKind: "artifact",
+          id: "art-1",
+          relativePath: "e2e-report.tar.gz",
+          rowFingerprint: "row-1",
+        },
+      ],
+    });
+
+    expect(result.complete).toBe(true);
+    expect(result.blocks).toEqual([]);
+    expect(
+      result.lanes.runtime_objects.items.map((item) => [
+        item.associationKey,
+        item.sourceClass,
+        item.disposition,
+      ]),
+    ).toEqual([
+      ["source", "file_evidence", "copy"],
+      ["artifact:art-1", "file_evidence", "copy"],
+    ]);
+  });
+
   it("blocks an unclassified source instead of completing the run", async () => {
     await writeFile(join(runDirectory, "mystery.bin"), " ", "utf8");
 

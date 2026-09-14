@@ -1,7 +1,7 @@
 // S4.2 / D9 step 4: the `inventory` subcommand walks every legacy run, accounts
 // for every file and owner association across the five lanes, and commits a
-// pending lane manifest. The default one-shot import path is unchanged; this is
-// the phase that runs before any byte is copied.
+// pending lane manifest. This is the phase that runs before any byte is copied
+// and before the `rows` phase reconstructs a single event row.
 
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -264,6 +264,39 @@ describe("execution-data-plane:import-legacy inventory", () => {
     expect(new Set(associations.map((item) => item.sha256)).size).toBe(1);
     expect(new Set(associations.map((item) => item.item_id)).size).toBe(2);
     expect(associations.every((item) => item.row_fingerprint !== null)).toBe(true);
+  });
+
+  it("accounts for file evidence an artifact references by an unrecognised name", async () => {
+    const { runId, runDirectory } = await seedRun();
+
+    await writeFile(join(runDirectory, "e2e-report.tar.gz"), "tarball\n", "utf8");
+    await testDatabase.pool.query(
+      `insert into artifact_instances (id, run_id, kind, producer, locator)
+       values ($1, $2, 'generic_file', 'runner', $3::jsonb)`,
+      [
+        `${runId}-report`,
+        runId,
+        JSON.stringify({ kind: "file", path: "e2e-report.tar.gz" }),
+      ],
+    );
+
+    const id = importId();
+
+    await runInventory(id);
+    const evidence = readManifest(id).items.filter(
+      (item) => item.relative_path === "e2e-report.tar.gz",
+    );
+
+    // Manifest rows come back in item-id order, and the id is a digest over the
+    // random run and import ids — so compare by association key, not position.
+    expect(
+      evidence
+        .map((item) => [item.association_key, item.lane, item.source_class, item.disposition])
+        .sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+    ).toEqual([
+      [`artifact:${runId}-report`, "runtime_objects", "file_evidence", "copy"],
+      ["source", "runtime_objects", "file_evidence", "copy"],
+    ]);
   });
 
   it("preserves a scratch attachment as a scratch-session association", async () => {

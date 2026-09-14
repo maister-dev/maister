@@ -156,10 +156,9 @@ Postgres-owned.
 volume, relay, object store, enrollment secret, or environment variable is
 required. `GET /capabilities` is a local supervisor endpoint; protocol
 capabilities are fixed rather than operator toggles. Upgrade a supervisor and
-web to canonical support, run `pnpm --filter maister-web
-execution-data-plane:import-legacy` with the explicit legacy root, then apply
-migrations `0135` and `0136`. The migration fails before destructive changes
-unless every legacy run has all preservation lanes proven.
+web to canonical support, run the staged import phases below with the explicit
+legacy root, then apply migrations `0135` and `0136`. The migration fails before
+destructive changes unless every legacy run has all preservation lanes proven.
 
 The staged upgrade path for an existing Stage A installation is different: set
 `MAISTER_UPGRADE_MAINTENANCE=1` on every web process first so the installation
@@ -171,9 +170,18 @@ and association before a byte is copied, `execution-data-plane:import-legacy
 copy --import-id <id> --manifest-dir <dir> --generation <n>` to preserve those
 bytes on the host, `execution-data-plane:import-legacy associate` with the same
 flags to repoint every artifact locator and scratch attachment at the object its
-bytes became, the legacy importer, `--stage execution-ab-associations` and
-`--stage execution-ab-finalize` in that order. Each stage refuses with a
-remediation code rather than applying a partial chain.
+bytes became, `execution-data-plane:import-legacy rows --import-id <id>
+--manifest-dir <dir>` to reconstruct the canonical event rows from the frozen
+manifest, `execution-data-plane:import-legacy verify` with the copy flags to
+prove every lane by reading the host's bytes back, `--stage
+execution-ab-associations`, `verify` again against the post-0134 shape,
+`execution-data-plane:import-legacy finalize-proof` to write the five complete
+lane records, and `--stage execution-ab-finalize`, in that order. Each stage
+refuses with a remediation code rather than applying a partial chain, and there
+is no default import mode: an invocation that names no phase refuses. Re-run
+`inventory` only before `associate`: once the rows it reads have been
+repointed it refuses `source_fingerprint_changed` (after 0134,
+`lane_already_complete`) and leaves the frozen manifest untouched.
 
 `copy` needs a supervisor booted in import mode: set `MAISTER_IMPORT_ADMISSION_DIR`
 to that same manifest directory and `MAISTER_IMPORT_ADMISSION_ID` to the import
@@ -187,7 +195,13 @@ directory's OS authority.
 
 The manifest directory is operator-owned and holds the only copy of the raw
 source map, so keep it outside the web process authority and remove it with the
-import authority. See [execution data cutover](system-analytics/execution-data-cutover.md).
+import authority. It must also outlive every restart of the cut-over — a
+supervisor restart re-enables the same manifest and resumes its ledger — so it
+is a durable directory, never a temporary one. Once `MAISTER_IMPORT_ADMISSION_DIR`
+is exported for the supervisor, the CLI takes `--manifest-dir` from it. Use ONE
+import id for the whole cut-over: item identities and lane digests are derived
+from it, so a second id over already-inventoried runs is a different freeze and
+`inventory` refuses it as `source_fingerprint_changed`. See [execution data cutover](system-analytics/execution-data-cutover.md).
 
 Apply migrations and seed the first admin:
 
