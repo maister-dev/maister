@@ -788,6 +788,14 @@ describe("AT-11 baseline upgrade", () => {
     expect(finalize.exitCode, finalize.output).toBe(0);
     await assertCanonical(testDatabase.pool);
     expect(await cliExpectingRefusal("rows", manifestArgs())).toContain("already_canonical");
+    // Step 10, the writer floor: a session that declares no capability — every
+    // binary older than this floor — can no longer touch a preservation record.
+    await expect(
+      testDatabase.pool.query(
+        `update execution_data_plane_imports set attempts = attempts + 1 where run_id = $1`,
+        [fixture.flowRunId],
+      ),
+    ).rejects.toThrow(/writer_class=undeclared/);
 
     // Sources were read and never written, moved or removed.
     expect(await listSources(legacyRoot)).toEqual(before);

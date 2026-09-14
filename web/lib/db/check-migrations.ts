@@ -94,6 +94,59 @@ async function collectPending(
   );
 }
 
+// S4.7 / D9 step 10: the mirror image of a pending migration. A ledger row
+// whose hash no journal entry produces was applied by a NEWER release; a binary
+// that boots over it would write rows the newer invariants exist to refuse.
+export type AppliedUnknownMigration = { hash: string; createdAt: number };
+
+export async function findAppliedUnknownToJournal(
+  db: MigrationCheckDb,
+): Promise<AppliedUnknownMigration[]> {
+  const known = new Set(
+    readJournalTags(MAIN_MIGRATIONS_DIR).map((tag) =>
+      migrationHash(MAIN_MIGRATIONS_DIR, tag),
+    ),
+  );
+  let rows: Array<Record<string, unknown>>;
+
+  try {
+    rows = (
+      await db.execute(
+        sql`SELECT hash, created_at AS "createdAt" FROM drizzle.__drizzle_migrations ORDER BY created_at`,
+      )
+    ).rows;
+  } catch (err) {
+    if ((err as { code?: string }).code === "42P01") return [];
+    throw err;
+  }
+
+  return rows
+    .filter((row) => !known.has(String(row.hash)))
+    .map((row) => ({
+      hash: String(row.hash),
+      createdAt: Number(row.createdAt),
+    }));
+}
+
+export async function assertDatabaseNotAheadOfBinary(
+  db: MigrationCheckDb,
+): Promise<void> {
+  const unknown = await findAppliedUnknownToJournal(db);
+
+  if (unknown.length === 0) return;
+
+  const journal = readMainMigrationJournal();
+  const head = journal[journal.length - 1];
+
+  throw new Error(
+    `[migrations] database is ahead of this binary: ${unknown.length} applied migration(s) unknown to its journal (` +
+      unknown
+        .map((entry) => `${entry.hash.slice(0, 12)}@${entry.createdAt}`)
+        .join(", ") +
+      `); journal head ${head?.tag ?? "none"}@${head?.when ?? 0} — deploy the binary that carries them; an older writer must not run over a newer schema.`,
+  );
+}
+
 // Returns the tags of MAIN-lineage journal migrations NOT present in the DB's
 // ledger. Empty array = the database is fully migrated.
 export async function findPendingMigrations(

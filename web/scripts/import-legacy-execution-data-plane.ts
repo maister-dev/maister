@@ -11,6 +11,7 @@ import {
   classifyDataPlaneStage,
   type DataPlaneStage,
 } from "@/lib/db/migration-stages";
+import { declareWriterCapability } from "@/lib/db/writer-capability";
 
 import { redactRuntimeEventPayload } from "@/lib/execution-host/runtime-events";
 import { CANONICAL_PROJECTION_CONSUMERS } from "@/lib/execution-host/events/projection-consumers";
@@ -2666,6 +2667,7 @@ async function main(): Promise<void> {
   const client = new Client({ connectionString: requiredEnv("DB_URL") });
   const root = requiredEnv("MAISTER_LEGACY_RUNTIME_ROOT");
   await client.connect();
+  await declareWriterCapability(client);
   try {
     if (command === "inventory") {
       await runInventoryCommand({ client, importId, root, argv });

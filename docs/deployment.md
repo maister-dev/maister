@@ -176,7 +176,8 @@ manifest, `execution-data-plane:import-legacy verify` with the copy flags to
 prove every lane by reading the host's bytes back, `--stage
 execution-ab-associations`, `verify` again against the post-0134 shape,
 `execution-data-plane:import-legacy finalize-proof` to write the five complete
-lane records, and `--stage execution-ab-finalize`, in that order. Each stage
+lane records, and `--stage execution-ab-finalize` — which also applies `0169`,
+the writer floor — in that order. Each stage
 refuses with a remediation code rather than applying a partial chain, and there
 is no default import mode: an invocation that names no phase refuses. Re-run
 `inventory` only before `associate`: once the rows it reads have been
@@ -198,7 +199,17 @@ source map, so keep it outside the web process authority and remove it with the
 import authority. It must also outlive every restart of the cut-over — a
 supervisor restart re-enables the same manifest and resumes its ledger — so it
 is a durable directory, never a temporary one. Once `MAISTER_IMPORT_ADMISSION_DIR`
-is exported for the supervisor, the CLI takes `--manifest-dir` from it. Use ONE
+is exported for the supervisor, the CLI takes `--manifest-dir` from it. After
+the finalize stage, migration `0169` is the writer floor: a `complete` lane
+record must carry its proof and is final, and the lane table refuses any session
+that does not declare the `execution-ab-1` writer capability — every binary that
+carries `0169` (web, migrator, import CLI) declares it on connect, so an older
+binary is refused as `writer_class=undeclared` rather than trusted. `0169`
+itself refuses to apply over a `complete` record without proof and names the
+rows; re-prove them with the import CLI against retained sources, never relabel.
+Symmetrically, the web boot and `pnpm db:check` refuse a database whose
+migration ledger is ahead of the binary's journal — deploy the binary that
+carries those migrations instead of running an older one over them. Use ONE
 import id for the whole cut-over: item identities and lane digests are derived
 from it, so a second id over already-inventoried runs is a different freeze and
 `inventory` refuses it as `source_fingerprint_changed`. See [execution data cutover](system-analytics/execution-data-cutover.md).

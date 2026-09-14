@@ -2009,6 +2009,8 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
     ["releaseRunContextMounts", false],
   ]),
   ...wrappers("lib/db/check-migrations.ts", "migration-tooling", [
+    ["assertDatabaseNotAheadOfBinary", false],
+    ["findAppliedUnknownToJournal", false],
     ["findMainMigrationJournalEntry", false],
     ["findPendingBrainMigrations", false],
     ["findPendingMigrations", false],
