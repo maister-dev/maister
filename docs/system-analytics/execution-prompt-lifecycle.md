@@ -549,6 +549,32 @@ Qualification uses real ACP creation and SIGKILL at both DB boundaries, changes
 the agent definition before restart, and checks the original result. An actual
 ACP resume refusal is covered live and with process death before failure commit.
 
+### Agent session observer (Implemented)
+
+A live agent session carries a second, non-owning reader beside its prompt
+owner: the observer that consumes the canonical session stream for permission
+delivery, the `NeedsInput -> Running` flip and terminal events. It is supervised.
+
+Every failure on the stream's path — host content, a projection transaction
+deadline, pool acquisition — surfaces as a transient `MaisterError`, and the
+stream itself is a durable replay, so the observer RE-ENTERS it instead of
+dying: up to `AGENT_CONSUMER_MAX_ATTEMPTS` attempts with capped exponential
+backoff, sized to outlast the reconcile grace. A retry is a RECONNECT, not a
+restart: the observer keeps its per-session state and resumes after the last
+event it finished handling, so no side effect (a permission HITL row, an input
+delivery) is replayed, and the turn text the ADR-165 sentinel contract reads
+survives. A fenced stream or the run's own abort signal stops it without retry.
+
+Every attempt's failure is reported with its `code`, `message` and `details` —
+never a bare error name, which cannot be investigated after the fact — plus the
+attempt number and the resume point. Exhaustion is an ERROR line stating that
+the run has no observer.
+
+The observer never terminalizes the run. An owned prompt's outcome belongs to
+its prompt owner and its own retry/poison ledger; a run whose observer is gone
+while its session is still live is NOT recovered by the reconcile sweep, which
+refuses to reattach a non-flow run.
+
 ### Agent messages (Implemented)
 
 `sendAgentMessage`, `agents/turns.ts` and `agent_turns` persist accepted messages with their original

@@ -67,6 +67,7 @@ export { getPlatformDiagnostics, getPlatformStatus } from "./platform-status";
 export type { PromptHandle, PromptQueryResult } from "./deliverer";
 export {
   COMMAND_POLICY,
+  errorRecord,
   isFencedError,
   isUnknownOutcome,
   queryPrompt,
