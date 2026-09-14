@@ -16,6 +16,7 @@
 
 import { randomUUID } from "node:crypto";
 
+import { eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { NextRequest } from "next/server";
 import { Pool } from "pg";
@@ -31,6 +32,10 @@ import {
 } from "vitest";
 
 import { MaisterError } from "@/lib/errors";
+import { platformAcpRunners, runSessions, runs } from "@/lib/db/schema";
+import { testRunnerSnapshot } from "@/lib/__tests__/runner-fixtures";
+import { createHitlRequest } from "@/lib/runs/hitl-create";
+import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -242,7 +247,18 @@ beforeAll(async () => {
       [
         flowId,
         projectId,
-        JSON.stringify({ schemaVersion: 1, name: "aif", nodes: [] }),
+        JSON.stringify({
+          schemaVersion: 1,
+          name: "aif",
+          nodes: [
+            {
+              id: "intake",
+              type: "form",
+              settings: { form_schema: "form.yaml" },
+              transitions: { success: "done" },
+            },
+          ],
+        }),
       ],
     );
   }
@@ -264,6 +280,25 @@ beforeAll(async () => {
      values ($1, $2, $3, $4, 'Review', 'v1.0.0')`,
     [fx.run, fx.task, fx.project, fx.flow],
   );
+  const runnerId = randomUUID();
+  const runnerSnapshot = testRunnerSnapshot(runnerId);
+
+  await db.insert(platformAcpRunners).values({
+    id: runnerId,
+    adapter: "claude",
+    capabilityAgent: "claude",
+    model: runnerSnapshot.model,
+    provider: { kind: "anthropic" },
+    permissionPolicy: "default",
+  });
+  await db.insert(runSessions).values({
+    id: randomUUID(),
+    runId: fx.run,
+    sessionName: "default",
+    runnerId,
+    capabilityAgent: "claude",
+    runnerSnapshot,
+  });
 
   ({ GET } = await import("@/app/api/attention/stream/route"));
 }, 180_000);
@@ -565,6 +600,81 @@ describe("IT-ATN-15 revocation reaches an already-open stream", () => {
 // or `webhook_deliveries`: the row under test is the only thing that moved.
 // ---------------------------------------------------------------------------
 describe("IT-ATN-16 work invalidation covers run transitions and node progress", () => {
+  it("publishes a form on the next scan when its decision event preceded the NeedsInput commit", async () => {
+    const hitlRequestId = randomUUID();
+    const controller = new AbortController();
+
+    try {
+      await db
+        .update(runs)
+        .set({ status: "Running" })
+        .where(eq(runs.id, fx.run));
+      await db.transaction(async (tx) => {
+        await createHitlRequest(tx, {
+          id: hitlRequestId,
+          runId: fx.run,
+          stepId: "intake",
+          kind: "form",
+          prompt: "Course details",
+          schema: {
+            schemaVersion: 1,
+            fields: [{ name: "topic", type: "text", label: "Topic" }],
+          },
+        });
+      });
+
+      const response = await GET(streamRequest(controller));
+      const reader = response.body!.getReader();
+      const first = await reader.read();
+      const initial = parseFrame(new TextDecoder().decode(first.value).trim());
+
+      reader.releaseLock();
+      expect(initial.data?.decisions).toBe(0);
+
+      // The runner parks after preparing pause artifacts. No new HITL/domain
+      // event or webhook delivery is created by this later transaction.
+      await db.transaction(async (tx) => {
+        await tx
+          .update(runs)
+          .set({ status: "NeedsInput", currentStepId: "intake" })
+          .where(eq(runs.id, fx.run));
+        await emitWebhookEvent({
+          db: tx,
+          type: "run.needs_input",
+          projectId: fx.project,
+          runId: fx.run,
+          data: { nodeId: "intake", reason: "form" },
+        });
+      });
+      await emitWebhookEvent({
+        db,
+        type: "run.needs_input",
+        projectId: fx.foreignProject,
+        runId: fx.run,
+        data: { nodeId: "intake", reason: "form" },
+      });
+
+      const changes = movedFrames(await collect(response, controller, 6000));
+
+      expect(changes).toHaveLength(1);
+      expect(changes[0].data?.decisions).toBe(1);
+      expect(changes[0].data?.changed).toContain("decisions");
+      expect(changes[0].data?.projectIds).toEqual([fx.project]);
+    } finally {
+      controller.abort();
+      await pool.query(`delete from hitl_requests where id = $1`, [
+        hitlRequestId,
+      ]);
+      await pool.query(
+        `delete from webhook_events where type = 'run.needs_input'`,
+      );
+      await db
+        .update(runs)
+        .set({ status: "Review", currentStepId: null })
+        .where(eq(runs.id, fx.run));
+    }
+  }, 30_000);
+
   async function addEvent(kind: string, projectId: string): Promise<void> {
     await pool.query(
       `insert into domain_events (kind, project_id, run_id, payload, occurred_at)

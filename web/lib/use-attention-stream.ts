@@ -47,9 +47,9 @@ export interface UseAttentionStreamResult {
   /** Monotonic count of frames received — the value a consumer effects on. */
   tick: number;
   /**
-   * Regions the latest frame says moved. EMPTY on the connect-time snapshot,
-   * which describes state the page already rendered from — a consumer skips
-   * refetching on it.
+   * Regions the latest frame says moved. EMPTY on the connect-time snapshot;
+   * consumers still refetch on that tick to catch changes since server render
+   * or during disconnection.
    */
   changed: AttentionTickFrame["changed"];
   liveness: RunStreamLifecycleKind;

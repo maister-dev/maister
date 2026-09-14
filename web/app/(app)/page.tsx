@@ -10,7 +10,6 @@ import Link from "next/link";
 import clsx from "clsx";
 
 import { ActivityRowList } from "@/components/activity/activity-row-list";
-import { AttentionLiveRefresh } from "@/components/attention/attention-live-refresh";
 import { DecisionSections } from "@/components/inbox/decision-sections";
 import { EmptyState } from "@/components/portfolio/empty-state";
 import { HitlInboxList } from "@/components/inbox/hitl-inbox-list";
@@ -63,27 +62,17 @@ export async function generateMetadata(): Promise<Metadata> {
 
 export default async function DeskPage(): Promise<ReactElement> {
   const user = await requireActiveSession();
-  const [
-    t,
-    tDigest,
-    tInbox,
-    tPortfolio,
-    tStage,
-    tWork,
-    tActivity,
-    tRun,
-    locale,
-  ] = await Promise.all([
-    getTranslations("desk"),
-    getTranslations("digest"),
-    getTranslations("inbox"),
-    getTranslations("portfolio"),
-    getTranslations("workStage"),
-    getTranslations("work"),
-    getTranslations("activityFeed"),
-    getTranslations("run"),
-    getLocale(),
-  ]);
+  const [t, tDigest, tInbox, tPortfolio, tStage, tWork, tActivity, locale] =
+    await Promise.all([
+      getTranslations("desk"),
+      getTranslations("digest"),
+      getTranslations("inbox"),
+      getTranslations("portfolio"),
+      getTranslations("workStage"),
+      getTranslations("work"),
+      getTranslations("activityFeed"),
+      getLocale(),
+    ]);
 
   // ADR-169 D8/ATN-05: `getDecisionsQueue` is the ONE canonical queue, and it is
   // React-`cache`d — so the rail badge, `/inbox` and this page are the same
@@ -136,14 +125,6 @@ export default async function DeskPage(): Promise<ReactElement> {
           <div className="font-mono text-[11px] font-semibold uppercase tracking-[0.14em] text-mute">
             {t("eyebrow")}
           </div>
-          <AttentionLiveRefresh
-            labels={{
-              disconnected: tRun("streamDisconnected"),
-              live: tRun("streamLive"),
-              reconnect: tRun("streamReconnect"),
-              reconnecting: tRun("streamReconnecting"),
-            }}
-          />
         </div>
         <h1 className="m-0 text-[30px] font-semibold tracking-[-0.03em] text-ink">
           {t("title")}

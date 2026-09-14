@@ -4,7 +4,6 @@ import type { ReactElement } from "react";
 
 import { getLocale, getTranslations } from "next-intl/server";
 
-import { AttentionLiveRefresh } from "@/components/attention/attention-live-refresh";
 import { WorkTable } from "@/components/work/work-table";
 import { buildWorkRowsLabels } from "@/lib/work/work-row-labels";
 import { requireActiveSession } from "@/lib/authz";
@@ -29,11 +28,10 @@ export default async function WorkPage({
   searchParams: SearchParams;
 }): Promise<ReactElement> {
   const user = await requireActiveSession();
-  const [params, t, tStage, tRun, locale] = await Promise.all([
+  const [params, t, tStage, locale] = await Promise.all([
     searchParams,
     getTranslations("work"),
     getTranslations("workStage"),
-    getTranslations("run"),
     getLocale(),
   ]);
   const filters = normalizeWorkTableFilters(params);
@@ -85,14 +83,6 @@ export default async function WorkPage({
           <div className="font-mono text-[11px] font-semibold uppercase tracking-[0.14em] text-mute">
             {t("eyebrow")}
           </div>
-          <AttentionLiveRefresh
-            labels={{
-              disconnected: tRun("streamDisconnected"),
-              live: tRun("streamLive"),
-              reconnect: tRun("streamReconnect"),
-              reconnecting: tRun("streamReconnecting"),
-            }}
-          />
         </div>
         <div>
           <h1 className="m-0 text-[30px] font-semibold tracking-[-0.03em] text-ink">

@@ -820,7 +820,9 @@ export function LaunchPopover({
       }
 
       setOpen(false);
-      startTransition(() => router.refresh());
+      const runId = streamed.result.runId;
+
+      startTransition(() => router.push(`/runs/${runId}`));
     } catch {
       setError(tRun("error.generic"));
     } finally {

@@ -23,7 +23,8 @@ new tab. No in-app navigation originates here.
 ## Layout & regions
 
 Left: the supervisor pill (`PlatformStatusPill`), the host origin
-(`localhost:3000`), and the supervisor version when ready. Right: outbound Docs
+(`localhost:3000`), and the supervisor version when ready. Right: the
+attention-stream liveness pill with its reconnect action, then outbound Docs
 and GitHub links. After WI-3 this is the **only** place supervisor status is
 shown — it was removed from the top nav and the left rail.
 
@@ -43,10 +44,14 @@ stateDiagram-v2
 `checkSupervisorHealth`) — the same value the layout passes to the rail launch
 hint. No client polling.
 
+`AttentionLiveRefresh` owns one `GET /api/attention/stream` connection in this
+persistent footer. Its ticks refresh the shared sidebar counters and the current
+page, including Inbox; see [attention behavior](../../system-analytics/attention.md).
+
 ## i18n
 
 `status` namespace (`supervisorReady`, `supervisorUnavailable`, `supervisor`,
-`docs`).
+`docs`), plus the `run.stream*` liveness labels.
 
 ## Linked artifacts
 

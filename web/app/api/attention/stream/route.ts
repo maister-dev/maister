@@ -103,7 +103,7 @@ function delay(ms: number): Promise<void> {
 }
 
 /**
- * The five durable sources a cross-project surface renders from, scanned in ONE
+ * The durable sources a cross-project surface renders from, scanned in ONE
  * statement. Array interpolations render as a parenthesised parameter list, so
  * they are spelled `in ${...}` — `= any(${...}::text[])` would try to cast a
  * record to an array and fail at runtime, inside the loop, as a logged warning.
@@ -118,7 +118,13 @@ function delay(ms: number): Promise<void> {
  * branch anyway, and a doubled INVALIDATION is one wasted refetch rather than a
  * doubled badge.
  *
- * `node_attempts` is the fifth branch because `/work` renders per-run node
+ * The `run.needs_input` webhook outbox row commits with the run's parked
+ * status. Form/human HITL creation can emit its domain event earlier, while
+ * the run is still Running and its decision is not yet visible in the Inbox.
+ * Scanning the later outbox row closes that gap without waiting for the slower
+ * counter beat or for an external webhook subscription/delivery.
+ *
+ * `node_attempts` is scanned because `/work` renders per-run node
  * progress (`progressOfSpine`), and a node ending or the next one starting
  * writes no activity row, no event and no promotion — so an Executing run's
  * progress bar sat frozen while the connection said Live. It is joined through
@@ -155,6 +161,11 @@ async function scanChangedProjects(
         from domain_events
        where project_id in ${projectIds} and occurred_at > ${since}::timestamptz
          and kind in ${kinds}
+      union all
+      select project_id, occurred_at
+        from webhook_events
+       where project_id in ${projectIds} and occurred_at > ${since}::timestamptz
+         and type = 'run.needs_input'
       union all
       select project_id, promoted_at
         from workspaces

@@ -4,6 +4,7 @@ import type { ReactElement, ReactNode } from "react";
 import { getTranslations } from "next-intl/server";
 import { redirect } from "next/navigation";
 
+import { AttentionLiveRefresh } from "@/components/attention/attention-live-refresh";
 import { LeftRail } from "@/components/chrome/left-rail";
 import { NavCrumb } from "@/components/chrome/nav-crumb";
 import { buildLeftRailSections } from "@/components/chrome/left-rail-sections";
@@ -81,7 +82,10 @@ export default async function AppLayout({
         ),
       }
     : undefined;
-  const tNav = await getTranslations("nav");
+  const [tNav, tRun] = await Promise.all([
+    getTranslations("nav"),
+    getTranslations("run"),
+  ]);
   const railSections = buildLeftRailSections(
     (key) => tNav(key),
     sessionUser?.role,
@@ -131,7 +135,21 @@ export default async function AppLayout({
         <main className="min-w-0 px-4 pb-12 pt-7 md:px-9">{children}</main>
       </div>
 
-      <StatusBar platformStatus={platformStatus} />
+      <StatusBar
+        liveStatus={
+          sessionUser ? (
+            <AttentionLiveRefresh
+              labels={{
+                disconnected: tRun("streamDisconnected"),
+                live: tRun("streamLive"),
+                reconnect: tRun("streamReconnect"),
+                reconnecting: tRun("streamReconnecting"),
+              }}
+            />
+          ) : null
+        }
+        platformStatus={platformStatus}
+      />
     </div>
   );
 }

@@ -1,0 +1,1 @@
+CREATE INDEX IF NOT EXISTS "webhook_events_needs_input_attention_idx" ON "webhook_events" USING btree ("project_id","occurred_at") WHERE "webhook_events"."type" = 'run.needs_input';

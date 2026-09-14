@@ -109,6 +109,18 @@ sequenceDiagram
 
 ## As built
 
+- **One subscription in the shared shell.** The persistent status bar owns
+  `AttentionLiveRefresh` on every app page. Each tick refreshes the current
+  page and shared badges, including the initial snapshot: a decision may become
+  visible between server rendering and opening the stream. Page navigation does
+  not create duplicate attention connections.
+- **Invalidate after a form becomes actionable.** The scan includes the
+  `run.needs_input` row in `webhook_events`, which commits with the run's parked
+  status and is indexed by project and event time. HITL creation can emit its
+  domain event earlier, while the run is still `Running`; that earlier event
+  alone cannot invalidate the later Inbox appearance. The parked event is read
+  on the next two-second scan without requiring a webhook subscription or
+  waiting for the fifteen-second counter check.
 - **Every source of the queue takes the scope, including the one that resolves
   its own visibility.** Three of the four sources accept a project set as their
   first argument; `getCrossProjectHitlInbox` resolves `getVisibleProjectIds`

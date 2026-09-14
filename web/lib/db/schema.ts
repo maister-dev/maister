@@ -7118,6 +7118,9 @@ export const webhookEvents = pgTable(
     idxPendingFanout: index("webhook_events_pending_fanout_idx")
       .on(t.createdAt)
       .where(sql`${t.fanoutAt} IS NULL`),
+    idxNeedsInputAttention: index("webhook_events_needs_input_attention_idx")
+      .on(t.projectId, t.occurredAt)
+      .where(sql`${t.type} = 'run.needs_input'`),
   }),
 );
 export type WebhookEvent = typeof webhookEvents.$inferSelect;

@@ -43,7 +43,10 @@ shortcut respects that same disabled state.
 - **Close:** Esc, a backdrop click, or the top-right **✕** — the shared
   bare-crossmark close ([popup conventions](../README.md#shared-popup--density-conventions),
   no text label).
-- **Submit:** a successful launch routes to the run / scratch detail page.
+- **Submit:** a successful immediate launch routes to the run / scratch detail
+  page. A Flow's initial input form appears there when the runner reaches it;
+  the user does not need to find the request in Inbox. Scheduling a future run
+  keeps the current page open.
 
 ## Layout & regions
 

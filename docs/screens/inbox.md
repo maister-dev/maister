@@ -146,6 +146,8 @@ and activation-unavailable states.
 
 ## Data & APIs
 
+- The shared [status bar](chrome/status-bar.md) subscribes to attention updates,
+  so newly actionable forms appear without reloading or reopening Inbox.
 - `getCrossProjectHitlInbox(userId, role)` → respondable HITL items + count;
   each item additionally carries `taskTitle` and `stage {label, type}`
   alongside the existing project / branch / flow / criticality / assignment

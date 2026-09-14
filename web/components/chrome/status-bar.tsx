@@ -1,5 +1,5 @@
 import type { PlatformStatus } from "@/types/platform-status";
-import type { ReactElement } from "react";
+import type { ReactElement, ReactNode } from "react";
 
 import { headers } from "next/headers";
 import { getTranslations } from "next-intl/server";
@@ -10,11 +10,13 @@ import { PlatformStatusPill } from "@/components/chrome/platform-status";
 export interface StatusBarProps {
   platformStatus: PlatformStatus;
   summary?: string;
+  liveStatus?: ReactNode;
 }
 
 export async function StatusBar({
   platformStatus,
   summary,
+  liveStatus,
 }: StatusBarProps): Promise<ReactElement> {
   const t = await getTranslations("status");
   const requestHeaders = await headers();
@@ -49,6 +51,12 @@ export async function StatusBar({
         ) : null}
       </div>
       <div className="flex items-center gap-3.5">
+        {liveStatus ? (
+          <>
+            {liveStatus}
+            <span className="text-line">·</span>
+          </>
+        ) : null}
         <Link
           className="inline-flex items-center gap-1.5 text-mute transition-colors hover:text-ink"
           href="https://github.com/maister-dev/maister/tree/master/docs"

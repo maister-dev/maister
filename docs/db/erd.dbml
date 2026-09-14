@@ -2563,6 +2563,7 @@ table webhook_events {
 
   indexes {
     created_at [name: 'webhook_events_pending_fanout_idx']
+    (project_id, occurred_at) [name: 'webhook_events_needs_input_attention_idx']
   }
 }
 
