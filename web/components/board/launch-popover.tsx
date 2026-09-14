@@ -599,10 +599,9 @@ export function LaunchPopover({
     {},
   );
   const [savingBinding, setSavingBinding] = useState<string | null>(null);
-  const [bindingFeedback, setBindingFeedback] = useState<{
-    key: string;
-    status: "saved" | "failed";
-  } | null>(null);
+  const [bindingFeedback, setBindingFeedback] = useState<
+    Record<string, "saving" | "saved" | "failed">
+  >({});
   const [flowId, setFlowId] = useState("");
   const [runnerId, setRunnerId] = useState("");
   const [baseBranch, setBaseBranch] = useState("");
@@ -837,8 +836,16 @@ export function LaunchPopover({
   const previewPending =
     options !== null &&
     !launchPreviewMatches(previewSelection, { flowId, runnerId });
+  const hasFailedBinding = runnerSlots.some(
+    (slot) =>
+      bindingFeedback[`${options?.selectedFlowRevisionId}:${slot.slotKey}`] ===
+      "failed",
+  );
 
-  async function saveRunnerBinding(slot: FlowRunnerSlotPreview): Promise<void> {
+  async function saveRunnerBinding(
+    slot: FlowRunnerSlotPreview,
+    mappedRunnerId: string,
+  ): Promise<void> {
     const revisionId = options?.selectedFlowRevisionId;
 
     if (
@@ -853,10 +860,16 @@ export function LaunchPopover({
       return;
 
     const key = `${revisionId}:${slot.slotKey}`;
-    const mappedRunnerId = bindingChoices[key] ?? slot.mappedRunnerId ?? "";
+
+    if (
+      mappedRunnerId === (bindingChoices[key] ?? slot.mappedRunnerId ?? "") &&
+      bindingFeedback[key] !== "failed"
+    )
+      return;
 
     setSavingBinding(key);
-    setBindingFeedback(null);
+    setBindingChoices((current) => ({ ...current, [key]: mappedRunnerId }));
+    setBindingFeedback((current) => ({ ...current, [key]: "saving" }));
 
     try {
       const response = await fetch(
@@ -873,10 +886,10 @@ export function LaunchPopover({
       );
 
       if (!response.ok) throw new Error("runner binding save failed");
-      setBindingFeedback({ key, status: "saved" });
+      setBindingFeedback((current) => ({ ...current, [key]: "saved" }));
       setPreviewSelection(null);
     } catch {
-      setBindingFeedback({ key, status: "failed" });
+      setBindingFeedback((current) => ({ ...current, [key]: "failed" }));
     } finally {
       setSavingBinding(null);
     }
@@ -894,6 +907,7 @@ export function LaunchPopover({
       !effectiveLaunchVerdict(options, forceRelaunch).launchable ||
       previewPending ||
       savingBinding !== null ||
+      hasFailedBinding ||
       optionsError
     )
       return;
@@ -1013,6 +1027,7 @@ export function LaunchPopover({
       !effectiveLaunchVerdict(options, forceRelaunch).launchable ||
       previewPending ||
       savingBinding !== null ||
+      hasFailedBinding ||
       optionsError
     ) {
       return;
@@ -1067,6 +1082,8 @@ export function LaunchPopover({
 
   const fieldLabelClass =
     "font-mono text-[9.5px] font-bold uppercase tracking-[0.06em] text-mute";
+  const retryButtonClass =
+    "h-7 gap-1.5 rounded-md border-line-soft bg-paper px-2 font-mono text-[10px] text-ink-2 hover:border-amber-line hover:bg-amber-soft hover:text-amber";
   const defaultPolicy = options?.deliveryPolicyDefault;
   const flowOptions: Array<SelectOption<string>> =
     options?.flows.map((flow) => ({
@@ -1174,6 +1191,7 @@ export function LaunchPopover({
     !launchVerdict?.launchable ||
     previewPending ||
     savingBinding !== null ||
+    hasFailedBinding ||
     !flowId ||
     !baseBranch ||
     budgetInvalid;
@@ -1301,9 +1319,11 @@ export function LaunchPopover({
                       <div>
                         <p role="alert">{t("optionsError")}</p>
                         <Button
+                          className={retryButtonClass}
                           isDisabled={busy || pending || savingBinding !== null}
                           size="sm"
                           type="button"
+                          variant="outline"
                           onClick={retryPreview}
                         >
                           <ArrowPathIcon
@@ -1333,6 +1353,7 @@ export function LaunchPopover({
                           ) : null}
                         </span>
                         <LaunchSelect
+                          disabled={busy || pending || savingBinding !== null}
                           label={t("flow")}
                           options={flowOptions}
                           value={flowId}
@@ -1352,6 +1373,7 @@ export function LaunchPopover({
                             ) : null}
                           </span>
                           <LaunchSelect
+                            disabled={busy || pending || savingBinding !== null}
                             label={t("runnerModel")}
                             options={runnerOptions}
                             value={runnerId}
@@ -1384,26 +1406,22 @@ export function LaunchPopover({
                               : "runnerBindingAdminNeeded",
                           )}
                         </p>
-                        <ul className="mt-1 space-y-1">
+                        <ul className="mt-2 divide-y divide-line-soft">
                           {runnerSlots.map((slot) => {
                             const bindingKey = `${options.selectedFlowRevisionId}:${slot.slotKey}`;
                             const choice =
                               bindingChoices[bindingKey] ??
                               slot.mappedRunnerId ??
                               "";
-                            const changed =
-                              choice !== (slot.mappedRunnerId ?? "");
-                            const rowFeedback =
-                              bindingFeedback?.key === bindingKey
-                                ? bindingFeedback.status
-                                : null;
+                            const rowFeedback = bindingFeedback[bindingKey];
 
                             return (
                               <li
                                 key={slot.slotKey}
-                                className={
-                                  slot.errorCode ? "text-danger" : "text-mute"
-                                }
+                                className={clsx(
+                                  "py-3 first:pt-1 last:pb-1",
+                                  slot.errorCode ? "text-danger" : "text-mute",
+                                )}
                               >
                                 {slot.errorCode
                                   ? t("runnerSlotUnresolved", {
@@ -1434,7 +1452,8 @@ export function LaunchPopover({
                                           busy ||
                                           pending ||
                                           savingBinding !== null ||
-                                          previewPending
+                                          previewPending ||
+                                          optionsError
                                         }
                                         label={t("runnerBindingRunner", {
                                           role: slot.label,
@@ -1457,21 +1476,51 @@ export function LaunchPopover({
                                             })),
                                         ]}
                                         value={choice}
-                                        onChange={(value) => {
-                                          setBindingFeedback(null);
-                                          setBindingChoices((current) => ({
-                                            ...current,
-                                            [bindingKey]: value,
-                                          }));
-                                        }}
+                                        onChange={(value) =>
+                                          void saveRunnerBinding(slot, value)
+                                        }
                                       />
                                     </label>
+                                  </div>
+                                ) : null}
+                                {savingBinding === bindingKey ? (
+                                  <p
+                                    className="mt-1.5 flex items-center gap-1.5 text-mute"
+                                    role="status"
+                                  >
+                                    <ArrowPathIcon
+                                      aria-hidden="true"
+                                      className="size-3 animate-spin motion-reduce:animate-none"
+                                    />
+                                    {t("runnerBindingSaving")}
+                                  </p>
+                                ) : null}
+                                {rowFeedback === "saved" ? (
+                                  <p
+                                    className="mt-1.5 flex items-center gap-1.5 text-mute"
+                                    role="status"
+                                  >
+                                    <CheckIcon
+                                      aria-hidden="true"
+                                      className="size-3 text-accent-4"
+                                    />
+                                    {t("runnerBindingSaved")}
+                                  </p>
+                                ) : null}
+                                {rowFeedback === "failed" ? (
+                                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                                    <p
+                                      className="flex-1 text-danger"
+                                      role="alert"
+                                    >
+                                      {t("runnerBindingSaveFailed")}
+                                    </p>
                                     <Button
-                                      aria-label={t("runnerBindingSaveRole", {
+                                      aria-label={t("runnerBindingRetryRole", {
                                         role: slot.label,
                                       })}
+                                      className={retryButtonClass}
                                       isDisabled={
-                                        !changed ||
                                         busy ||
                                         pending ||
                                         savingBinding !== null ||
@@ -1480,43 +1529,18 @@ export function LaunchPopover({
                                       }
                                       size="sm"
                                       type="button"
+                                      variant="outline"
                                       onClick={() =>
-                                        void saveRunnerBinding(slot)
+                                        void saveRunnerBinding(slot, choice)
                                       }
                                     >
-                                      <CheckIcon
+                                      <ArrowPathIcon
                                         aria-hidden="true"
-                                        className="size-4"
+                                        className="size-3"
                                       />
-                                      {t(
-                                        savingBinding === bindingKey
-                                          ? "runnerBindingSaving"
-                                          : rowFeedback === "failed"
-                                            ? "runnerBindingRetry"
-                                            : "runnerBindingSave",
-                                      )}
+                                      {t("runnerBindingRetry")}
                                     </Button>
                                   </div>
-                                ) : null}
-                                {savingBinding === bindingKey ? (
-                                  <p role="status">
-                                    {t("runnerBindingSaving")}
-                                  </p>
-                                ) : null}
-                                {rowFeedback ? (
-                                  <p
-                                    role={
-                                      rowFeedback === "failed"
-                                        ? "alert"
-                                        : "status"
-                                    }
-                                  >
-                                    {t(
-                                      rowFeedback === "failed"
-                                        ? "runnerBindingSaveFailed"
-                                        : "runnerBindingSaved",
-                                    )}
-                                  </p>
                                 ) : null}
                               </li>
                             );

@@ -67,10 +67,12 @@ rail. It preloads launch options from the selected task and shows:
   relation blocker, missing Flow revision, or installed-but-not-enabled Flow;
 - Flow, runner/model, and execution preset controls are initially visible;
 - logical sessions and consensus runner roles show their resolved runner or a
-  localized binding requirement. Project administrators can select a ready runner for each slot
-  and save its binding directly in the dialog, including when no binding row
-  exists yet. The choice persists for this project and Flow revision; automatic
-  selection clears an explicit binding. Other project members see the role
+  localized binding requirement. Selecting a ready runner saves its binding
+  automatically for project administrators, including when no binding row
+  exists yet. Each row shows saving, saved, or a localized error with a neutral
+  retry action. A failed save keeps the choice visible and blocks launch until
+  it is saved or replaced. The choice persists for this project and Flow revision;
+  selecting automatic resolution clears the binding. Other project members see the role
   status and an administrator-remediation hint. Unresolved roles disable normal
   and force launch; saving a binding or changing Flow or the main runner
   refreshes this preview before submission;

@@ -267,9 +267,10 @@ describe("consensus runner binding interaction", () => {
     await choose(primarySelect(), "claude-platform");
     expect(mocks.fetch).toHaveBeenCalledTimes(1);
     expect(button("launch.createRun").disabled).toBe(false);
+    expect(document.body.textContent).not.toContain(
+      "launch.runnerBindingSaveRole",
+    );
     await choose(roleSelect(), "claude-platform");
-    expect(button(`launch.runnerBindingSaveRole ${ROLE}`).disabled).toBe(false);
-    await click(button(`launch.runnerBindingSaveRole ${ROLE}`));
     expect(JSON.parse(mocks.fetch.mock.calls[1][1].body)).toEqual({
       flowRevisionId: "revision-1",
       slotKey: SLOT_KEY,
@@ -321,7 +322,6 @@ describe("consensus runner binding interaction", () => {
       );
     await openDialog();
     await choose(roleSelect(), "codex-other");
-    await click(button("launch.runnerBindingSaveRole default"));
     expect(
       new URL(mocks.fetch.mock.calls[2][0], "http://test").searchParams.has(
         "runnerId",
@@ -377,7 +377,6 @@ describe("consensus runner binding interaction", () => {
 
     expect(select).toBeDefined();
     await choose(select!, "codex-other");
-    await click(button("launch.runnerBindingSaveRole cross"));
     expect(JSON.parse(mocks.fetch.mock.calls[1][1].body)).toEqual({
       flowRevisionId: "revision-1",
       slotKey: "session:cross",
@@ -420,7 +419,6 @@ describe("consensus runner binding interaction", () => {
     expect(button("launch.createRun").disabled).toBe(true);
     expect(roleSelect().value).toBe("");
     await choose(roleSelect(), "codex-other");
-    await click(button(`launch.runnerBindingSaveRole ${ROLE}`));
 
     expect(mocks.fetch).toHaveBeenCalledTimes(2);
     expect(mocks.fetch.mock.calls[1][0]).toBe(
@@ -440,9 +438,10 @@ describe("consensus runner binding interaction", () => {
     );
     expect(button("launch.createRun").disabled).toBe(false);
     expect(roleSelect().value).toBe("codex-other");
+    await choose(roleSelect(), "codex-other");
+    expect(mocks.fetch).toHaveBeenCalledTimes(3);
 
     await choose(roleSelect(), "");
-    await click(button(`launch.runnerBindingSaveRole ${ROLE}`));
     expect(
       JSON.parse(mocks.fetch.mock.calls[3][1].body).mappedRunnerId,
     ).toBeNull();
@@ -460,14 +459,12 @@ describe("consensus runner binding interaction", () => {
       .mockResolvedValueOnce(Response.json(preview("codex-ready")));
     await openDialog();
     await choose(roleSelect(), "codex-ready");
-    await click(button(`launch.runnerBindingSaveRole ${ROLE}`));
     expect(roleSelect().value).toBe("codex-ready");
     expect(document.querySelector("[role=alert]")?.textContent).toBe(
       "launch.runnerBindingSaveFailed",
     );
     expect(button("launch.createRun").disabled).toBe(true);
-    expect(button(`launch.runnerBindingSaveRole ${ROLE}`).disabled).toBe(false);
-    await click(button(`launch.runnerBindingSaveRole ${ROLE}`));
+    await click(button(`launch.runnerBindingRetryRole ${ROLE}`));
     expect(button("launch.createRun").disabled).toBe(false);
   });
 
@@ -479,7 +476,6 @@ describe("consensus runner binding interaction", () => {
       .mockResolvedValueOnce(Response.json(preview("codex-other")));
     await openDialog();
     await choose(roleSelect(), "codex-other");
-    await click(button(`launch.runnerBindingSaveRole ${ROLE}`));
     expect(button("launch.createRun").disabled).toBe(true);
     expect(roleSelect().value).toBe("codex-other");
     expect(document.querySelector("[role=alert]")?.textContent).toBe(
@@ -494,6 +490,69 @@ describe("consensus runner binding interaction", () => {
     ).toHaveLength(1);
   });
 
+  it("keeps launch blocked by a failed autosave even after another role saves successfully", async () => {
+    const initial = preview("codex-ready");
+    const secondSlot = {
+      ...initial.consensusRunnerSlots[0],
+      slotKey: "session:cross",
+      label: "cross",
+      kind: "session",
+    };
+    const afterSecondSave = {
+      ...initial,
+      runnerSlots: [
+        initial.consensusRunnerSlots[0],
+        {
+          ...secondSlot,
+          mappedRunnerId: "codex-other",
+          runnerId: "codex-other",
+        },
+      ],
+    };
+
+    mocks.fetch
+      .mockResolvedValueOnce(
+        Response.json({
+          ...initial,
+          runnerSlots: [initial.consensusRunnerSlots[0], secondSlot],
+        }),
+      )
+      .mockResolvedValueOnce(Response.json({}, { status: 409 }))
+      .mockResolvedValueOnce(Response.json({}))
+      .mockResolvedValueOnce(Response.json(afterSecondSave))
+      .mockResolvedValueOnce(Response.json({}))
+      .mockResolvedValueOnce(
+        Response.json({
+          ...afterSecondSave,
+          runnerSlots: afterSecondSave.runnerSlots.map((slot) => ({
+            ...slot,
+            mappedRunnerId: "codex-other",
+            runnerId: "codex-other",
+          })),
+        }),
+      );
+    await openDialog();
+    expect(button("launch.createRun").disabled).toBe(false);
+    await choose(roleSelect(), "codex-other");
+    expect(button("launch.createRun").disabled).toBe(true);
+    expect(button("launch.scheduleRun").disabled).toBe(true);
+    const secondSelect = document.querySelectorAll<HTMLSelectElement>(
+      "[data-testid=launch-runner-slots] select",
+    )[1];
+
+    await choose(secondSelect, "codex-other");
+    expect(document.querySelector("[role=alert]")?.textContent).toBe(
+      "launch.runnerBindingSaveFailed",
+    );
+    expect(roleSelect().value).toBe("codex-other");
+    expect(button("launch.createRun").disabled).toBe(true);
+    await click(button(`launch.runnerBindingRetryRole ${ROLE}`));
+    expect(button("launch.createRun").disabled).toBe(false);
+    expect(
+      mocks.fetch.mock.calls.filter(([, init]) => init?.method === "PATCH"),
+    ).toHaveLength(3);
+  });
+
   it("prevents binding edits and saves while a launch request is in flight", async () => {
     const launch = deferredResponse();
 
@@ -501,11 +560,9 @@ describe("consensus runner binding interaction", () => {
       .mockResolvedValueOnce(Response.json(preview("codex-ready")))
       .mockReturnValueOnce(launch.promise);
     await openDialog();
-    await choose(roleSelect(), "codex-other");
     await click(button("launch.createRun"));
     expect(roleSelect().disabled).toBe(true);
-    expect(button(`launch.runnerBindingSaveRole ${ROLE}`).disabled).toBe(true);
-    await click(button(`launch.runnerBindingSaveRole ${ROLE}`));
+    await choose(roleSelect(), "codex-other");
     expect(mocks.fetch).toHaveBeenCalledTimes(2);
     expect(mocks.fetch.mock.calls[1][1].method).toBe("POST");
     await act(async () =>
