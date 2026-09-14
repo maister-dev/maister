@@ -76,7 +76,9 @@ Fields common to every node: \`id\`, \`type\`, \`transitions\`, \`input\`, \`out
   \`{ id: debate_log, kind: human_note, current: true }\`. N independent drafters
   fan out and the synthesizer merges them into one result. The node
   \`prompt\` is template-rendered like \`action.prompt\` (\`{{ task.prompt }}\`,
-  \`{{ steps.<id>.vars.<name> }}\`). **NEVER emulate
+  \`{{ steps.<id>.vars.<name> }}\`, \`{{ artifacts.<id>.content }}\`); a flow that
+  relies on it SHOULD declare \`compat.engine_min >= 3.8.0\` — older engines
+  forward the literal text to the drafters. **NEVER emulate
   consensus with two judge nodes** — it is a native fan-out/merge node.
 - **judge** — an LLM verdict (no code changes). \`action: { prompt }\`. A
   RUNNER-BEARING node: it resolves via \`settings.runner\` (or its \`session:\`).

@@ -739,7 +739,7 @@ describe("validateNodeStructuredOutput", () => {
         schemaVersion: 1,
         sha256: SCHEMA_SHA256,
         transport: "sentinel",
-        engineVersion: "3.7.0",
+        engineVersion: "3.8.0",
       },
       // ADR-165: the seam also returns the PURE validated value. `result.vars`
       // is a merged bag (engine vars + this payload), so a caller that must
@@ -775,7 +775,7 @@ describe("validateNodeStructuredOutput", () => {
       schemaVersion: 1,
       sha256: SCHEMA_SHA256,
       transport: "file",
-      engineVersion: "3.7.0",
+      engineVersion: "3.8.0",
     });
   });
 

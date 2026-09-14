@@ -656,7 +656,7 @@ describe("runGraph — ADR-162 output_contract identity", () => {
       schemaRef: "./schemas/result.json",
       schemaVersion: 1,
       sha256,
-      engineVersion: "3.7.0",
+      engineVersion: "3.8.0",
     };
 
     expect(attempts.find((a) => a.nodeId === "plan")?.outputContract).toEqual({
@@ -709,7 +709,7 @@ describe("runGraph — ADR-162 output_contract identity", () => {
       schemaVersion: 1,
       sha256,
       transport: "sentinel",
-      engineVersion: "3.7.0",
+      engineVersion: "3.8.0",
     });
   }, 60_000);
 });

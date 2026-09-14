@@ -159,7 +159,7 @@ export function collectContentArtifactIds(
   // The consensus runtime renders the top-level `prompt` for every draft
   // participant (runtime.ts launchRound), so its content refs must hydrate the
   // context and count toward the engine floor exactly like an action prompt.
-  if (n.type === undefined || n.type === "consensus") {
+  if (n.type === "consensus") {
     const prompt = typeof n.prompt === "string" ? n.prompt : undefined;
 
     for (const id of scanContentRefs(prompt)) ids.add(id);

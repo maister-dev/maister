@@ -287,6 +287,32 @@ function allDraftsSettled(
   });
 }
 
+// The author's prompt is rendered ONCE per node visit against the parent run's
+// context (strict, like action.prompt) and reused verbatim by every consensus
+// role: the drafters receive it as their prompt body, the synthesizer as a
+// template VALUE. Nothing downstream re-parses it, so a `{{ }}` in the task
+// text can never fail a later hop.
+function renderedNodePrompt(args: RunConsensusNodeInput): string {
+  return renderStrict(
+    args.def.prompt,
+    args.context as unknown as Record<string, unknown>,
+    { traceLog: log },
+  );
+}
+
+// Agent-authored text (draft excerpts, verdict claims, the debate ledger, a
+// human resolution) reaches the verifier and synthesizer prompts ONLY as
+// template values under `consensus.*`. runAgentStep renders every prompt through
+// renderStrict; a value is inserted, never re-parsed, so Mustache braces inside
+// a draft cannot fail the node. Splicing that text into the template string is
+// the bug this helper exists to make impossible.
+function withConsensusVars(
+  context: FlowContext,
+  vars: Record<string, string>,
+): FlowContext {
+  return { ...context, consensus: vars } as unknown as FlowContext;
+}
+
 function roundPrompt(args: {
   basePrompt: string;
   round: number;
@@ -329,18 +355,12 @@ async function launchRound(
     nodeId: args.node.id,
     nodeAttemptId: args.nodeAttemptId,
     round: args.round,
-    // The draft prompt is the only consensus prompt that bypasses
-    // runAgentStep's renderer (it rides the child run's trigger payload), so
-    // it is rendered here against the parent run's context — strict, like
-    // action.prompt — before any draft is launched. Only the author's text is
-    // rendered; the verifier critique appended by roundPrompt is agent output
-    // and must never be re-rendered as a template.
+    // The draft prompt rides the child run's trigger payload and bypasses
+    // runAgentStep's renderer, so it is rendered here, before any draft is
+    // launched. Only the author's text is rendered; the verifier critique
+    // appended by roundPrompt is agent output and is appended AFTER rendering.
     prompt: roundPrompt({
-      basePrompt: renderStrict(
-        args.def.prompt,
-        args.context as unknown as Record<string, unknown>,
-        { traceLog: log },
-      ),
+      basePrompt: renderedNodePrompt(args),
       round: args.round,
       disagreements: args.disagreements ?? [],
     }),
@@ -371,21 +391,19 @@ async function launchRound(
   };
 }
 
-function verifierPrompt(args: {
-  materialAxes: readonly string[];
-  verifierId: string;
-  target: ConsensusDraftEvidence;
-}): string {
+// A template, not a string: every dynamic part is a `consensus.*` value (see
+// withConsensusVars) so the draft excerpt is never parsed as Mustache.
+function verifierPrompt(): string {
   return [
     "You are a consensus verifier. Audit the target draft against every material axis.",
-    `Verifier id: ${args.verifierId}`,
-    `Target participant id: ${args.target.participantId}`,
+    "Verifier id: {{ consensus.verifier_id }}",
+    "Target participant id: {{ consensus.target_participant_id }}",
     "",
     "Material axes:",
-    JSON.stringify(args.materialAxes),
+    "{{ consensus.material_axes }}",
     "",
     "Target draft excerpt:",
-    capText(args.target.artifactText ?? ""),
+    "{{ consensus.target_draft }}",
     "",
     "Return only a JSON object with this shape:",
     '{"verdict":"agree|disagree","axes":{"axis":true},"disagreements":[{"axis":"axis","claim":"...","counter_evidence":"..."}],"confidence":0.5}',
@@ -429,11 +447,7 @@ async function runVerifier(
           id: `${args.node.id}:verify:${args.round}:${args.verifierId}:${args.target.participantId}`,
           type: "agent",
           mode: "new-session",
-          prompt: verifierPrompt({
-            materialAxes: args.def.material_axes,
-            verifierId: args.verifierId,
-            target: args.target,
-          }),
+          prompt: verifierPrompt(),
         },
         {
           promptOwner: owner,
@@ -460,7 +474,12 @@ async function runVerifier(
             ? { agentBinding: verifierRuntime.agentBinding }
             : {}),
           db: args.db,
-          context: args.context,
+          context: withConsensusVars(args.context, {
+            verifier_id: args.verifierId,
+            target_participant_id: args.target.participantId,
+            material_axes: JSON.stringify(args.def.material_axes),
+            target_draft: capText(args.target.artifactText ?? ""),
+          }),
         },
         args.execution,
       );
@@ -649,24 +668,22 @@ function debateLogText(args: {
   );
 }
 
-function synthesisPrompt(args: {
-  source: string;
-  basePrompt: string;
-  selectedText: string;
-  debateLog: string;
-}): string {
+// A template, not a string: the rendered node prompt, the agreed material and
+// the debate ledger are `consensus.*` values (see withConsensusVars), so
+// neither the task text nor a draft is ever parsed as Mustache here.
+function synthesisPrompt(): string {
   return [
     "Synthesize the final consensus answer.",
-    `Source: ${args.source}`,
+    "Source: {{ consensus.source }}",
     "",
     "Original request:",
-    args.basePrompt,
+    "{{ consensus.prompt }}",
     "",
     "Selected or agreed material:",
-    capText(args.selectedText),
+    "{{ consensus.selected_text }}",
     "",
     "Debate ledger summary:",
-    args.debateLog,
+    "{{ consensus.debate_log }}",
     "",
     "Return only the final plan text. Do not mention internal participant ids unless they are necessary for the answer.",
   ].join("\n");
@@ -720,12 +737,7 @@ async function synthesizeConsensus(
         id: `${args.node.id}:synthesize`,
         type: "agent",
         mode: "new-session",
-        prompt: synthesisPrompt({
-          source: args.source,
-          basePrompt: args.def.prompt,
-          selectedText: args.selectedText,
-          debateLog,
-        }),
+        prompt: synthesisPrompt(),
       },
       {
         promptOwner: owner,
@@ -752,7 +764,12 @@ async function synthesizeConsensus(
           ? { agentBinding: synthesizer.agentBinding }
           : {}),
         db: args.db,
-        context: args.context,
+        context: withConsensusVars(args.context, {
+          source: args.source,
+          prompt: renderedNodePrompt(args),
+          selected_text: capText(args.selectedText),
+          debate_log: debateLog,
+        }),
       },
       args.execution,
     );

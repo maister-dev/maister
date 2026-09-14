@@ -135,6 +135,10 @@ flowchart LR
   bodies) before any draft child is launched; an unknown variable MUST fail
   the node with `MaisterError("CONFIG")` without creating a draft child
   (engine `3.8.0`; earlier engines forwarded the prompt literally).
+- Verifier and synthesizer prompts MUST carry agent-authored text — draft
+  excerpts, verdict claims, the debate ledger, a human resolution — and the
+  rendered node prompt as template values (`consensus.*`), never spliced into
+  the template string, so Mustache braces inside a draft cannot fail the node.
 - Consensus draft children MUST be durable read-only child runs before the
   parent enters `WaitingOnChildren`.
 - A consensus parent MUST wake only after every draft child in the current round

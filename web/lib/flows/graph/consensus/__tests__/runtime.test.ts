@@ -338,6 +338,103 @@ describe("runConsensusNode", () => {
     expect(launchConsensusDraftRuns).not.toHaveBeenCalled();
   });
 
+  it("renders the guarded default form in the draft prompt", async () => {
+    latestConsensusRound.mockResolvedValue(0);
+    loadConsensusDraftEvidence.mockResolvedValue([]);
+    launchConsensusDraftRuns.mockResolvedValue([
+      { participantId: "architect", runId: "child-1", status: "Running" },
+      { participantId: "qa", runId: "child-2", status: "Pending" },
+    ]);
+    const def = {
+      ...consensusDef(),
+      prompt: "Plan for: {{ steps.intake.vars.tests ?? 'unspecified' }}",
+    };
+
+    await runConsensusNode(input({ def }));
+
+    expect(launchConsensusDraftRuns).toHaveBeenCalledWith(
+      expect.objectContaining({ prompt: "Plan for: unspecified" }),
+    );
+  });
+
+  it("passes the draft to the verifier as a template value, never inside the template", async () => {
+    latestConsensusRound.mockResolvedValue(1);
+    loadConsensusDraftEvidence.mockResolvedValue([
+      draft("architect", "Plan A with {{ braces }}"),
+      draft("qa", "Plan B"),
+    ]);
+    runAgentStep.mockResolvedValue({
+      ok: true,
+      stdout:
+        '{"verdict":"agree","axes":{"scope":true,"risk":true},"disagreements":[]}',
+      vars: {},
+    });
+    loadConsensusVerdictCell.mockImplementation(async (args) =>
+      verdict(args.verifierId, args.targetParticipantId),
+    );
+    loadConsensusSynthesis.mockResolvedValue("Final consensus plan");
+
+    await runConsensusNode(input());
+
+    const verifierCall = runAgentStep.mock.calls.find(
+      (call) => call[0]?.id === "decide:verify:1:qa:architect",
+    );
+
+    expect(verifierCall).toBeDefined();
+    expect(verifierCall?.[0].prompt).toContain("{{ consensus.target_draft }}");
+    expect(verifierCall?.[0].prompt).not.toContain("Plan A");
+    expect(verifierCall?.[1].context.consensus).toEqual(
+      expect.objectContaining({
+        verifier_id: "qa",
+        target_participant_id: "architect",
+        target_draft: "Plan A with {{ braces }}",
+      }),
+    );
+  });
+
+  it("passes the rendered prompt and the agreed material to the synthesizer as template values", async () => {
+    latestConsensusRound.mockResolvedValue(1);
+    loadConsensusDraftEvidence.mockResolvedValue([
+      draft("architect", "Plan A"),
+      draft("qa", "Plan A"),
+    ]);
+    runAgentStep.mockResolvedValue({
+      ok: true,
+      stdout:
+        '{"verdict":"agree","axes":{"scope":true,"risk":true},"disagreements":[]}',
+      vars: {},
+    });
+    loadConsensusVerdictCell.mockImplementation(async (args) =>
+      verdict(args.verifierId, args.targetParticipantId),
+    );
+    loadConsensusSynthesis
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue("Final consensus plan");
+    const def = {
+      ...consensusDef(),
+      prompt: "Pick a plan for {{ task.prompt }}.",
+    };
+
+    await runConsensusNode(input({ def }));
+
+    const synthesisCall = runAgentStep.mock.calls.find(
+      (call) => call[0]?.id === "decide:synthesize",
+    );
+
+    expect(synthesisCall).toBeDefined();
+    expect(synthesisCall?.[0].prompt).toContain("{{ consensus.prompt }}");
+    expect(synthesisCall?.[0].prompt).toContain(
+      "{{ consensus.selected_text }}",
+    );
+    expect(synthesisCall?.[0].prompt).not.toContain("Plan A");
+    expect(synthesisCall?.[1].context.consensus).toEqual(
+      expect.objectContaining({
+        prompt: "Pick a plan for Prompt.",
+        selected_text: expect.stringContaining("Plan A"),
+      }),
+    );
+  });
+
   it("escalates no consensus as a human HITL pause", async () => {
     latestConsensusRound.mockResolvedValue(1);
     loadConsensusDraftEvidence.mockResolvedValue([
@@ -636,6 +733,61 @@ describe("runConsensusNode", () => {
       expect.objectContaining({
         round: 2,
         prompt: expect.stringContaining("Prior-round critique"),
+      }),
+    );
+  });
+
+  it("appends the round-2 critique after rendering, so braces in a claim stay literal", async () => {
+    const def = {
+      ...consensusDef(),
+      rounds: { mode: "iterate", max: 2 },
+    } as ConsensusNodeDef;
+    const claim = "scope {{ nope }} mismatch";
+
+    latestConsensusRound.mockResolvedValue(1);
+    loadConsensusDraftEvidence.mockResolvedValue([
+      draft("architect", "Plan A"),
+      draft("qa", "Plan B"),
+    ]);
+    launchConsensusDraftRuns.mockResolvedValue([
+      { participantId: "architect", runId: "child-1", status: "Running" },
+      { participantId: "qa", runId: "child-2", status: "Running" },
+    ]);
+    runAgentStep.mockResolvedValue({
+      ok: true,
+      stdout: JSON.stringify({
+        verdict: "disagree",
+        axes: { scope: false, risk: true },
+        disagreements: [
+          { axis: "scope", claim, counter_evidence: "drafts differ" },
+        ],
+      }),
+      vars: {},
+    });
+    loadConsensusVerdictCell.mockImplementation(async (args) =>
+      verdict(args.verifierId, args.targetParticipantId, {
+        verdict: "disagree",
+        axes: { scope: false, risk: true },
+        disagreements: [
+          { axis: "scope", claim, counterEvidence: "drafts differ" },
+        ],
+      }),
+    );
+    recordConsensusVerdict.mockImplementation(async (args) =>
+      verdict(args.verifierId, args.targetParticipantId, {
+        parseStatus: args.result.parseStatus,
+        verdict: args.result.verdict,
+        axes: args.result.axes,
+        disagreements: args.result.disagreements,
+      }),
+    );
+
+    await runConsensusNode(input({ def }));
+
+    expect(launchConsensusDraftRuns).toHaveBeenCalledWith(
+      expect.objectContaining({
+        round: 2,
+        prompt: expect.stringContaining(`[scope] ${claim}`),
       }),
     );
   });

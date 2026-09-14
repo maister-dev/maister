@@ -554,6 +554,14 @@ const CONTEXT_REPOS_ENGINE_MIN = "3.4.0";
 // ADR-160: the flow-level `reentry` key. Gated on the MANIFEST, not on `nodes`.
 const REENTRY_ENGINE_MIN = "3.5.0";
 
+// Engine 3.8.0 renders a consensus node's `prompt` for its draft participants;
+// before, the drafters received the literal text. This engine cannot make an
+// older one render, so a manifest that uses template variables in a consensus
+// prompt while declaring a floor below 3.8.0 is WARNED about, not refused —
+// refusing would break already-tagged packages on the very engine that fixed
+// them. The runtime path is web/lib/flows/graph/consensus/runtime.ts.
+const CONSENSUS_PROMPT_RENDER_ENGINE_MIN = "3.8.0";
+
 // ADR-162 (D1/C-1): node types whose structured-output transport arrived with
 // engine 3.6.0 — `output.result` on them is refused below that floor. The
 // pre-3.6.0 arms (ai_coding/judge/cli/check) keep the 1.3.0 OUTPUT_ENGINE_MIN
@@ -1532,6 +1540,30 @@ export function validateGraphManifest(
         `graph flow ${flowYamlPath} is declaring artifact body injection ({{ artifacts.<id>.content }} or input.requires[].inline) but engine_min "${engineMin}" < ${ARTIFACT_INLINE_ENGINE_MIN} — bump compat.engine_min to ${ARTIFACT_INLINE_ENGINE_MIN} (host engine is ${MAISTER_ENGINE_VERSION})`,
       );
     }
+  }
+
+  const templatedConsensusNodes = nodes
+    .filter((n) => n.type === "consensus")
+    .filter((n) => {
+      const prompt = (n as { prompt?: unknown }).prompt;
+
+      return typeof prompt === "string" && prompt.includes("{{");
+    })
+    .map((n) => n.id);
+
+  if (
+    templatedConsensusNodes.length > 0 &&
+    !semverGte(engineMin, CONSENSUS_PROMPT_RENDER_ENGINE_MIN)
+  ) {
+    log.warn(
+      {
+        flowYamlPath,
+        declared: engineMin || "(unset)",
+        required: CONSENSUS_PROMPT_RENDER_ENGINE_MIN,
+        nodes: templatedConsensusNodes,
+      },
+      "[engine-floor] consensus prompt uses template variables below the rendering floor — engines before 3.8.0 forward the literal text to the drafters; bump compat.engine_min",
+    );
   }
 
   if (
