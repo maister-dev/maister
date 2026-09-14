@@ -2612,6 +2612,7 @@
       "Succeeded": "Succeeded",
       "Failed": "Failed",
       "NeedsInput": "Needs input",
+      "WaitingOnChildren": "Waiting on children",
       "Reworked": "Reworked",
       "Stale": "Stale",
       "Skipped": "Skipped"
@@ -2737,6 +2738,7 @@
         "Succeeded": "Succeeded",
         "Failed": "Failed",
         "NeedsInput": "Needs input",
+        "WaitingOnChildren": "Waiting on children",
         "Reworked": "Reworked",
         "Stale": "Stale"
       },

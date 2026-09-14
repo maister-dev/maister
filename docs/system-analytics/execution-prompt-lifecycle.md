@@ -303,10 +303,13 @@ stores the bounded action result and original structured-output payload in
 Full-output extraction does not depend on the truncated stdout preview. Local
 CLI/check actions before gates also snapshot their result and file output.
 
-Owned-prompt graphs acquire `runs.flow_driver_token` with a renewable 30-second
-lease. Every traversal transaction checks its active assignment and lease,
-including a final check before commit; global host consumers and other runs
-retain their independent database handles. Owned prompt admission repeats the
+Owned-prompt graphs (any `ai_coding`, `judge`, `orchestrator` or `consensus`
+node, or an `ai_judgment`/`skill_check` gate) acquire `runs.flow_driver_token`
+with a renewable 30-second lease. Every traversal transaction checks its active
+assignment and lease, including a final check before commit; global host
+consumers and other runs retain their independent database handles — including
+a consensus node's draft children, which the fan-out dispatches on the root
+handle because the parked parent has already released its assignment. Owned prompt admission repeats the
 lease check after its immutable INSERT: holding the run lock cannot authorize
 a new command after expiry. Real node and AI/skill gate cases verify rollback
 at that boundary, followed by one successful continuation by the next driver.

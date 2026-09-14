@@ -20,6 +20,12 @@ export const NODE_STATUS_KEYS = [
 
 export type NodeStatusKey = (typeof NODE_STATUS_KEYS)[number];
 
+// Presentation-only statuses derived by the run DTO (not node_attempts.status):
+// a coordinator node whose run parks on WaitingOnChildren.
+export const DERIVED_NODE_STATUS_KEYS = ["WaitingOnChildren"] as const;
+
+export type DerivedNodeStatusKey = (typeof DERIVED_NODE_STATUS_KEYS)[number];
+
 export type NodeStatusTone =
   | "pending"
   | "running"
@@ -40,7 +46,7 @@ export interface NodeStatusVisual {
 // Record (not a switch) so a new NODE_STATUS_KEYS entry is a COMPILE error
 // until its visual is declared — exhaustiveness without a runtime default arm.
 const NODE_STATUS_VISUALS: Record<
-  NodeStatusKey,
+  NodeStatusKey | DerivedNodeStatusKey,
   { iconName: string; tone: NodeStatusTone }
 > = {
   Pending: { iconName: "ClockIcon", tone: "pending" },
@@ -50,6 +56,7 @@ const NODE_STATUS_VISUALS: Record<
   NeedsInput: { iconName: "HandRaisedIcon", tone: "needs" },
   Reworked: { iconName: "ArrowUturnLeftIcon", tone: "rework" },
   Stale: { iconName: "ExclamationTriangleIcon", tone: "stale" },
+  WaitingOnChildren: { iconName: "PauseCircleIcon", tone: "pending" },
 };
 
 // Unknown/absent status → neutral pending visual, never a throw.
@@ -59,7 +66,9 @@ const DEFAULT_VISUAL: { iconName: string; tone: NodeStatusTone } = {
 };
 
 export function nodeStatusVisual(status: string): NodeStatusVisual {
-  const base = NODE_STATUS_VISUALS[status as NodeStatusKey] ?? DEFAULT_VISUAL;
+  const base =
+    NODE_STATUS_VISUALS[status as NodeStatusKey | DerivedNodeStatusKey] ??
+    DEFAULT_VISUAL;
 
   return {
     iconName: base.iconName,

@@ -69,7 +69,8 @@ stateDiagram-v2
     [*] --> Running: node attempt opens
     Running --> Drafting: fan out draft child runs
     Drafting --> WaitingOnChildren: parent parks and releases slot
-    WaitingOnChildren --> Verifying: all draft children settled
+    WaitingOnChildren --> Verifying: all draft children settled, at least one draft available
+    WaitingOnChildren --> Failed: all draft children settled, no draft available
     Verifying --> Tallying: verdict rows persisted
     Tallying --> Synthesizing: unanimous
     Tallying --> Drafting: iterate and rounds remain
@@ -160,7 +161,18 @@ flowchart LR
 - A consensus parent MUST wake only after every draft child in the current round
   reaches a settled state.
 - A failed draft child MUST be treated as settled unavailable evidence unless
-  parent cancellation or abandon is active.
+  parent cancellation or abandon is active. A settled round with NO available
+  draft (no `Done` child with draft text) MUST fail the node attempt with
+  `MaisterError("CRASH")` (`details.reason = "consensus_no_draft_available"`,
+  carrying each child's status and terminal reason) instead of verifying
+  fail-closed over nothing, iterating, or escalating to a human.
+- Draft children MUST be dispatched on the root database handle, never the
+  parent's traversal handle: the parent releases its execution assignment when
+  it parks, after which every traversal-scoped statement refuses with
+  `flow_driver_claim_lost` — before the child's session exists. Only the
+  fan-out's own rows (child `runs`/`run_sessions`, `tryStartRun`) stay on the
+  traversal handle. A consensus graph is an owned-prompt graph and takes the
+  fenced driver path like `ai_coding`/`judge`/`orchestrator` graphs.
 - Cross-verification MUST rotate as `i audits (i + 1) mod N` and MUST persist
   one idempotent verdict row per verifier-target pair, owned by the matrix cell
   it was paid for
@@ -192,7 +204,10 @@ flowchart LR
 - **Stale participant or synthesizer** — a ref that parses but is no longer
   trusted or resolvable at launch fails as `MaisterError("PRECONDITION")`.
 - **Draft child failure** — a failed child is settled unavailable evidence; the
-  parent waits for sibling drafts before iterate/escalate.
+  parent waits for sibling drafts before iterate/escalate. When every draft of
+  the round is unavailable the node fails `CRASH` with the children's terminal
+  reasons (read from their `run.failed` / `run.crashed` / `run.abandoned`
+  domain events); nothing is verified and no HITL is created.
 - **Verifier malformed output** — invalid JSON, unknown axes, missing axes, and
   invalid disagreement rows persist as failed-closed disagree verdicts.
 - **Capacity unavailable** — participant, verifier, or synthesizer admission

@@ -2612,6 +2612,7 @@
       "Succeeded": "Готово",
       "Failed": "Ошибка",
       "NeedsInput": "Нужен ввод",
+      "WaitingOnChildren": "Ждёт подзадач",
       "Reworked": "Доработано",
       "Stale": "Устарело",
       "Skipped": "Пропущено"
@@ -2737,6 +2738,7 @@
         "Succeeded": "Успешно",
         "Failed": "Провалено",
         "NeedsInput": "Нужен ввод",
+        "WaitingOnChildren": "Ждёт подзадач",
         "Reworked": "Переделано",
         "Stale": "Устарело"
       },

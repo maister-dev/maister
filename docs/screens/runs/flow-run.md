@@ -314,7 +314,9 @@ controls until completion.
 - A selected consensus node uses the shared graph card, tooltip, status chip,
   and node-detail layout used by other graph nodes.
 - `WaitingOnChildren` explains which draft children are still running without
-  consuming a scheduler-slot-like visual state.
+  consuming a scheduler-slot-like visual state; the parked coordinator node
+  itself reads `WaitingOnChildren` (pause glyph, "Ждёт подзадач"), not
+  `NeedsInput` — no HITL exists while the parent waits.
 - `NeedsInput` selects the consensus node and shows the same decision options as
   Inbox, with no duplicate or conflicting controls.
 - Terminal consensus success shows exactly one current `consensus_plan` and one

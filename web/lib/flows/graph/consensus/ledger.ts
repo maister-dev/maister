@@ -13,7 +13,7 @@ import type {
   ParsedConsensusVerdict,
 } from "./verdict";
 
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 
 import {
   getArtifactsForRun,
@@ -21,7 +21,7 @@ import {
 } from "@/lib/flows/graph/artifact-store";
 import * as schemaModule from "@/lib/db/schema";
 
-const { artifactInstances, consensusRoundVerdicts, runs } =
+const { artifactInstances, consensusRoundVerdicts, domainEvents, runs } =
   schemaModule as unknown as Record<string, any>;
 
 export const CONSENSUS_TEXT_CAP_BYTES = 32_000;
@@ -170,6 +170,43 @@ export async function loadConsensusDraftEvidence(args: {
       };
     })
     .sort((a, b) => a.participantId.localeCompare(b.participantId));
+}
+
+// The terminal `reason` an agent child's finalization recorded — it lives only
+// on the child's terminal domain event (`run.failed` / `run.crashed` /
+// `run.abandoned` payload), never on the runs row. Newest event per run wins.
+export async function loadConsensusDraftFailureReasons(args: {
+  db: Db;
+  runIds: readonly string[];
+}): Promise<Record<string, string>> {
+  if (args.runIds.length === 0) return {};
+  const rows: Array<{ runId: string | null; payload: unknown }> = await args.db
+    .select({ runId: domainEvents.runId, payload: domainEvents.payload })
+    .from(domainEvents)
+    .where(
+      and(
+        inArray(domainEvents.runId, [...args.runIds]),
+        inArray(domainEvents.kind, [
+          "run.failed",
+          "run.crashed",
+          "run.abandoned",
+        ]),
+      ),
+    )
+    .orderBy(desc(domainEvents.occurredAt));
+  const reasons: Record<string, string> = {};
+
+  for (const row of rows) {
+    const reason =
+      row.payload && typeof row.payload === "object"
+        ? (row.payload as { reason?: unknown }).reason
+        : undefined;
+
+    if (row.runId && typeof reason === "string" && !(row.runId in reasons))
+      reasons[row.runId] = reason;
+  }
+
+  return reasons;
 }
 
 export async function latestConsensusRound(args: {

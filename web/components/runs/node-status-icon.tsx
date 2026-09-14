@@ -8,6 +8,7 @@ import {
   ExclamationTriangleIcon,
   HandRaisedIcon,
   MinusCircleIcon,
+  PauseCircleIcon,
   QuestionMarkCircleIcon,
   XCircleIcon,
 } from "@heroicons/react/24/outline";
@@ -31,6 +32,7 @@ const ICONS: Record<string, typeof ClockIcon> = {
   ArrowUturnLeftIcon,
   ExclamationTriangleIcon,
   MinusCircleIcon,
+  PauseCircleIcon,
   QuestionMarkCircleIcon,
 };
 
