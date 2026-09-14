@@ -1,5 +1,6 @@
 // M11b Phase 3.3 (RED → GREEN) — the CRITICAL resume-gate test. Drives the
-// REAL graph runner (no runFlow mock) so we prove the returned `Running` run
+// REAL graph runner (runFlow is wrapped to record its dispatch promise, never
+// replaced — see `settleDispatches`) so we prove the returned `Running` run
 // resumes at runs.current_step_id (the transitions.takeover re-entry = checks),
 // NOT at graph.entry. Owns matrix row:
 //   resume-reruns-staled-gates (AC-4 / V4)
@@ -132,6 +133,38 @@ vi.mock("@/auth", () => ({
 }));
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
+
+// Still the REAL runner: the wrapper delegates to the actual implementation and
+// only records the promise. The return route dispatches its traversal from a
+// `queueMicrotask` and drops the promise on the floor, so no test body can await
+// it — recording it here is the only way teardown can know the traversal has
+// stopped writing into the worktree before it removes it.
+const { inFlightDispatches } = vi.hoisted(() => ({
+  inFlightDispatches: [] as Promise<unknown>[],
+}));
+
+vi.mock("@/lib/flows/runner", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/flows/runner")>();
+
+  return {
+    ...actual,
+    runFlow: (...args: Parameters<typeof actual.runFlow>) => {
+      const dispatch = actual.runFlow(...args);
+
+      inFlightDispatches.push(dispatch.catch(() => undefined));
+
+      return dispatch;
+    },
+  };
+});
+
+// A traversal can dispatch another one, so drain until the list stops refilling
+// rather than awaiting a single snapshot of it.
+async function settleDispatches(): Promise<void> {
+  while (inFlightDispatches.length > 0) {
+    await Promise.all(inFlightDispatches.splice(0));
+  }
+}
 
 let returnPOST: typeof import("../return/route").POST;
 
@@ -329,6 +362,10 @@ async function seedReadyForReturn(): Promise<Seed> {
     checksAttemptId,
     passedGateId,
     cleanup: async () => {
+      // `force` only forgives a missing entry; a writer that creates one while
+      // the recursive walk is in flight still fails the rmdir with ENOTEMPTY —
+      // so the traversal the return route dispatched is awaited first.
+      await settleDispatches();
       // `root` holds a git worktree, and a git child can still be writing pack
       // objects when the case returns — the ENOTEMPTY/EBUSY window that made
       // this spec flake under the full suite. Same remedy as the sync-resolver
