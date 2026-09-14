@@ -128,7 +128,8 @@ export type BuildContextArgs = {
   projectSlug: string;
   // M11a: extra top-level template vars injected for the rework target (e.g.
   // the review `commentsVar`). Reserved keys (task/run/executor/steps/env)
-  // always win over these.
+  // always win over these; `consensus` is reserved too — the consensus runtime
+  // overwrites it for its verifier/synthesizer steps (FlowContext.consensus).
   extraVars?: Record<string, unknown>;
   envWhitelist?: RegExp[];
   envSource?: Record<string, string | undefined>;

@@ -139,6 +139,8 @@ flowchart LR
   excerpts, verdict claims, the debate ledger, a human resolution — and the
   rendered node prompt as template values (`consensus.*`), never spliced into
   the template string, so Mustache braces inside a draft cannot fail the node.
+  Enforcement: `verifierPrompt()` and `synthesisPrompt()` take no arguments,
+  and `FlowContext.consensus` is the reserved value namespace.
 - Consensus draft children MUST be durable read-only child runs before the
   parent enters `WaitingOnChildren`.
 - A consensus parent MUST wake only after every draft child in the current round

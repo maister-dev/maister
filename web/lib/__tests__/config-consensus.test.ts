@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { stringify as stringifyYaml } from "yaml";
 
-import { loadFlowManifest } from "@/lib/config";
+import { loadFlowManifest, templatedConsensusNodeIds } from "@/lib/config";
 import { flowYamlV1Schema } from "@/lib/config.schema";
 import { isMaisterError } from "@/lib/errors";
 
@@ -252,5 +252,31 @@ describe("flowYamlV1Schema — consensus keeps graph-only exclusivity", () => {
     expect(() => flowYamlV1Schema.parse(manifest)).toThrow(
       /legacy steps\[\] flows are not supported since engine 3\.0\.0/,
     );
+  });
+});
+
+describe("templatedConsensusNodeIds — the 3.8.0 rendering-floor WARN trigger", () => {
+  const node = (id: string, prompt: string, type = "consensus") =>
+    ({ id, type, prompt }) as unknown as Parameters<
+      typeof templatedConsensusNodeIds
+    >[0][number];
+
+  it("names consensus nodes whose prompt carries a well-formed Mustache tag", () => {
+    expect(
+      templatedConsensusNodeIds([
+        node("a", "Plan for {{ task.prompt }}."),
+        node("b", "Plan for {{ steps.intake.vars.tests ?? 'n/a' }}."),
+      ]),
+    ).toEqual(["a", "b"]);
+  });
+
+  it("ignores prose braces without a closing tag and non-consensus nodes", () => {
+    expect(
+      templatedConsensusNodeIds([
+        node("prose", "Use the {{ literal opening only"),
+        node("static", "Settle the release plan."),
+        node("agent", "{{ task.prompt }}", "ai_coding"),
+      ]),
+    ).toEqual([]);
   });
 });

@@ -10,7 +10,13 @@ import path from "node:path";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { runConsensusNode } from "@/lib/flows/graph/consensus/runtime";
+import {
+  runConsensusNode,
+  synthesisPrompt,
+  verifierPrompt,
+  withConsensusVars,
+} from "@/lib/flows/graph/consensus/runtime";
+import { renderStrict } from "@/lib/flows/templating";
 
 const launchConsensusDraftRuns = vi.hoisted(() => vi.fn());
 const latestConsensusRound = vi.hoisted(() => vi.fn());
@@ -288,6 +294,46 @@ beforeEach(() => {
   createHitlAssignmentForRun.mockResolvedValue(undefined);
   emitWebhookEvent.mockResolvedValue(undefined);
   recordCurrentArtifact.mockResolvedValue({ id: "artifact" });
+});
+
+describe("consensus prompt templates", () => {
+  const baseContext = input().context;
+
+  it("renders a draft full of Mustache syntax into the verifier prompt byte-for-byte", () => {
+    const draftText =
+      "x {{ nope }} {{#s}}y{{/s}} {{> partial }} {{{ raw }}} {{ z";
+
+    const rendered = renderStrict(
+      verifierPrompt(),
+      withConsensusVars(baseContext, {
+        verifier_id: "qa",
+        target_participant_id: "architect",
+        material_axes: JSON.stringify(["scope"]),
+        target_draft: draftText,
+      }) as unknown as Record<string, unknown>,
+    );
+
+    expect(rendered).toContain(draftText);
+    expect(rendered).toContain("Verifier id: qa");
+    expect(rendered).not.toContain("{{ consensus.");
+  });
+
+  it("renders task text and agreed material with braces into the synthesis prompt unchanged", () => {
+    const rendered = renderStrict(
+      synthesisPrompt(),
+      withConsensusVars(baseContext, {
+        source: "consensus",
+        prompt: "Plan for {{ literal }} in the task",
+        selected_text: "Plan A {{ nope }}",
+        debate_log: '{"claim":"{{ x }}"}',
+      }) as unknown as Record<string, unknown>,
+    );
+
+    expect(rendered).toContain("Plan for {{ literal }} in the task");
+    expect(rendered).toContain("Plan A {{ nope }}");
+    expect(rendered).toContain('{"claim":"{{ x }}"}');
+    expect(rendered).not.toContain("{{ consensus.");
+  });
 });
 
 describe("runConsensusNode", () => {

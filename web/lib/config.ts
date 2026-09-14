@@ -35,6 +35,7 @@ import {
   declaresGraphCapableEngineMin,
   semverGte,
 } from "@/lib/flows/engine-version";
+import { findMustacheClose } from "@/lib/flows/template-expressions";
 import { orchestratorMaxFanout } from "@/lib/instance-config";
 
 const log = pino({ name: "config" });
@@ -782,6 +783,34 @@ function declaresReworkResetOrOnExhaustion(nodes: NodeDef[]): boolean {
   }
 
   return false;
+}
+
+// True when `text` holds at least one well-formed Mustache tag (`{{ … }}`),
+// using the same tokenizer the renderer's default-expression pass relies on, so a
+// stray `{{` in prose does not count.
+function hasMustacheTag(text: string): boolean {
+  let start = text.indexOf("{{");
+
+  while (start !== -1) {
+    if (findMustacheClose(text, start) !== -1) return true;
+    start = text.indexOf("{{", start + 2);
+  }
+
+  return false;
+}
+
+// Ids of the consensus nodes whose `prompt` the 3.8.0 engine renders for the
+// draft participants (a templated prompt). Drives the load-time WARN below the
+// rendering floor; exported for the loader tests.
+export function templatedConsensusNodeIds(nodes: NodeDef[]): string[] {
+  return nodes
+    .filter((n) => n.type === "consensus")
+    .filter((n) => {
+      const prompt = (n as { prompt?: unknown }).prompt;
+
+      return typeof prompt === "string" && hasMustacheTag(prompt);
+    })
+    .map((n) => n.id);
 }
 
 // ADR-120 (P2): true when any node uses artifact body injection — an
@@ -1542,14 +1571,7 @@ export function validateGraphManifest(
     }
   }
 
-  const templatedConsensusNodes = nodes
-    .filter((n) => n.type === "consensus")
-    .filter((n) => {
-      const prompt = (n as { prompt?: unknown }).prompt;
-
-      return typeof prompt === "string" && prompt.includes("{{");
-    })
-    .map((n) => n.id);
+  const templatedConsensusNodes = templatedConsensusNodeIds(nodes);
 
   if (
     templatedConsensusNodes.length > 0 &&

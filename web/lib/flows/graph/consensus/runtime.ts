@@ -287,11 +287,13 @@ function allDraftsSettled(
   });
 }
 
-// The author's prompt is rendered ONCE per node visit against the parent run's
-// context (strict, like action.prompt) and reused verbatim by every consensus
-// role: the drafters receive it as their prompt body, the synthesizer as a
-// template VALUE. Nothing downstream re-parses it, so a `{{ }}` in the task
-// text can never fail a later hop.
+// The author's prompt is rendered against the parent run's context (strict,
+// like action.prompt) by the hop that needs it — the launching hop for the
+// drafters, the synthesis hop for the synthesizer — and the two renders agree
+// because nothing between them writes to the context (the verifier records no
+// step). Either way the result is consumed as TEXT (draft body) or as a template
+// VALUE (synthesis), never re-parsed, so a `{{ }}` in the task text can never
+// fail a later hop.
 function renderedNodePrompt(args: RunConsensusNodeInput): string {
   return renderStrict(
     args.def.prompt,
@@ -306,11 +308,11 @@ function renderedNodePrompt(args: RunConsensusNodeInput): string {
 // renderStrict; a value is inserted, never re-parsed, so Mustache braces inside
 // a draft cannot fail the node. Splicing that text into the template string is
 // the bug this helper exists to make impossible.
-function withConsensusVars(
+export function withConsensusVars(
   context: FlowContext,
   vars: Record<string, string>,
 ): FlowContext {
-  return { ...context, consensus: vars } as unknown as FlowContext;
+  return { ...context, consensus: vars };
 }
 
 function roundPrompt(args: {
@@ -391,9 +393,10 @@ async function launchRound(
   };
 }
 
-// A template, not a string: every dynamic part is a `consensus.*` value (see
-// withConsensusVars) so the draft excerpt is never parsed as Mustache.
-function verifierPrompt(): string {
+// A template, not a string, and deliberately argument-free: every dynamic part
+// is a `consensus.*` value (see withConsensusVars), so there is no parameter
+// through which the draft excerpt could be spliced into the template.
+export function verifierPrompt(): string {
   return [
     "You are a consensus verifier. Audit the target draft against every material axis.",
     "Verifier id: {{ consensus.verifier_id }}",
@@ -668,10 +671,11 @@ function debateLogText(args: {
   );
 }
 
-// A template, not a string: the rendered node prompt, the agreed material and
-// the debate ledger are `consensus.*` values (see withConsensusVars), so
-// neither the task text nor a draft is ever parsed as Mustache here.
-function synthesisPrompt(): string {
+// A template, not a string, and deliberately argument-free: the rendered node
+// prompt, the agreed material and the debate ledger are `consensus.*` values
+// (see withConsensusVars), so neither the task text nor a draft is ever parsed
+// as Mustache here.
+export function synthesisPrompt(): string {
   return [
     "Synthesize the final consensus answer.",
     "Source: {{ consensus.source }}",

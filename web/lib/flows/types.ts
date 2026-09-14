@@ -62,6 +62,13 @@ export type FlowContext = {
       contentTruncated?: boolean;
     }
   >;
+  // Reserved for the consensus runtime (web/lib/flows/graph/consensus/runtime.ts):
+  // the verifier and synthesizer prompts are static templates whose dynamic
+  // parts — draft excerpt, debate ledger, agreed material, the rendered node
+  // prompt — arrive here as values, so agent-authored text is inserted by
+  // renderStrict and never re-parsed as a template. Set only for those two
+  // agent steps; author-facing prompts never see it.
+  consensus?: Record<string, string>;
 };
 
 export type StepResult = {
