@@ -135,6 +135,7 @@ import {
 } from "@/lib/scheduler";
 import {
   createExecutionHosts,
+  errorRecord,
   executionHosts,
   isFencedError,
   localHost,
@@ -2188,19 +2189,21 @@ async function startConsensusRunnerDraftSession(args: {
       }),
     );
 
-    await dispatchStoredAgentTurn(args.db, execution, turn, session.sessionId);
+    const draft = {
+      runId,
+      participantId: args.payload.participantId,
+      nodeId: args.payload.nodeId,
+      nodeAttemptId: args.payload.nodeAttemptId,
+      round: args.payload.round,
+      runnerId: args.run.runnerId ?? null,
+    };
 
-    log.info(
-      {
-        runId,
-        participantId: args.payload.participantId,
-        nodeId: args.payload.nodeId,
-        nodeAttemptId: args.payload.nodeAttemptId,
-        round: args.payload.round,
-        runnerId: args.run.runnerId ?? null,
-      },
-      "consensus runner draft session started",
-    );
+    // The dispatch below AWAITS the whole turn's application, so this marker
+    // has to be emitted first: logged after it, "session started" timestamps
+    // the settle and reads as a session that began after its own run ended.
+    log.info(draft, "consensus runner draft session started");
+    await dispatchStoredAgentTurn(args.db, execution, turn, session.sessionId);
+    log.info(draft, "consensus runner draft turn settled");
   } catch (err) {
     if (isFencedError(err)) {
       // ADR-166: a newer driver generation owns the run — yield untouched.
@@ -2711,24 +2714,13 @@ function observeOwnedAgentSession(
     { runId: turn.runId, turnId: turn.id, sessionId },
     "agent-owned-session-observing",
   );
-  queueMicrotask(() => {
-    void consumeAgentSession({
-      db,
-      execution,
-      runId: turn.runId,
-      sessionId,
-      signal,
-    }).catch((error: unknown) => {
-      if (signal?.aborted) return;
-      log.error(
-        {
-          runId: turn.runId,
-          turnId: turn.id,
-          errorType: error instanceof Error ? error.name : "unknown",
-        },
-        "agent session consumer failed",
-      );
-    });
+  observeAgentSession({
+    db,
+    execution,
+    runId: turn.runId,
+    sessionId,
+    turnId: turn.id,
+    ...(signal ? { signal } : {}),
   });
 }
 
@@ -3393,18 +3385,11 @@ export async function startAgentSession(
       return;
     }
 
-    queueMicrotask(() => {
-      void consumeAgentSession({
-        db: _db,
-        execution,
-        runId,
-        sessionId: session.sessionId,
-      }).catch((err: unknown) => {
-        log.error(
-          { runId, err: err instanceof Error ? err.message : String(err) },
-          "agent session consumer threw",
-        );
-      });
+    observeAgentSession({
+      db: _db,
+      execution,
+      runId,
+      sessionId: session.sessionId,
     });
   } catch (err) {
     if (isFencedError(err)) {
@@ -3449,22 +3434,143 @@ export async function startAgentSession(
   }
 }
 
+// The consumer's per-session state. It outlives ONE stream: a retry is a
+// RECONNECT, not a restart — it resumes after the last handled event so no
+// side effect (a permission HITL row, an input delivery) is replayed, and it
+// carries the turn text forward.
+export type AgentSessionConsumerState = {
+  // The run sequence of the last event this consumer finished handling.
+  lastEventId?: number;
+  sawPermissionRequest: boolean;
+  // ADR-165 (T5.3): the agent's own text, accumulated per PROMPT TURN. It is
+  // reset when a new turn begins (a resume after a permission answer) so a
+  // sentinel block from an EARLIER turn can never be read as this turn's final
+  // answer — the contract is "the block that ends the completing turn".
+  finalText: string;
+};
+
+export function newAgentSessionConsumerState(): AgentSessionConsumerState {
+  return { sawPermissionRequest: false, finalText: "" };
+}
+
+type AgentSessionObservation = {
+  db: Db;
+  execution: AgentExecution;
+  runId: string;
+  sessionId: string;
+  signal?: AbortSignal;
+  turnId?: string;
+  sleep?: (ms: number) => Promise<void>;
+};
+
+// ADR-167: the canonical session stream is a DURABLE, replayable log, and every
+// failure on its path — host content, a projection transaction deadline, pool
+// acquisition — surfaces as a transient MaisterError. Dying on the first one
+// leaves the run with a live session nobody reads: reconcile refuses to reattach
+// a non-flow run, so the turn can only end later under a borrowed name
+// (`agent-session-gone`, then the coordinator's `orchestrator-stuck`). Re-enter
+// the stream like every other consumer of the same events, and never reduce the
+// reason to a name. The projector framework's own budget is re-armed by a
+// worker clock; this loop is in-process and has no re-arm, so its window is
+// sized to outlast the reconcile grace (90 s) — while the session is live,
+// nothing else will look at this run.
+export const AGENT_CONSUMER_MAX_ATTEMPTS = 10;
+const AGENT_CONSUMER_BACKOFF_BASE_MS = 1_000;
+const AGENT_CONSUMER_BACKOFF_CAP_MS = 15_000;
+
+function agentConsumerBackoffMs(attempt: number): number {
+  return Math.min(
+    AGENT_CONSUMER_BACKOFF_BASE_MS * 2 ** (attempt - 1),
+    AGENT_CONSUMER_BACKOFF_CAP_MS,
+  );
+}
+
+/** Keeps ONE observer on the run's session for as long as the stream can be
+ * re-entered. It never terminalizes the run: an owned prompt's outcome belongs
+ * to its prompt owner, which carries its own retry and poison ledger.
+ */
+export async function superviseAgentSession(
+  args: AgentSessionObservation,
+): Promise<void> {
+  const sleep =
+    args.sleep ??
+    ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const state = newAgentSessionConsumerState();
+
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      await consumeAgentSession({
+        db: args.db,
+        execution: args.execution,
+        runId: args.runId,
+        sessionId: args.sessionId,
+        ...(args.signal ? { signal: args.signal } : {}),
+        state,
+      });
+
+      return;
+    } catch (error) {
+      if (args.signal?.aborted) return;
+      if (isFencedError(error)) {
+        log.warn(
+          { runId: args.runId, sessionId: args.sessionId, turnId: args.turnId },
+          "agent session consumer yielded to a newer generation",
+        );
+
+        return;
+      }
+      const failure = {
+        runId: args.runId,
+        sessionId: args.sessionId,
+        turnId: args.turnId ?? null,
+        attempt,
+        lastEventId: state.lastEventId ?? null,
+        ...errorRecord(error),
+      };
+
+      if (attempt >= AGENT_CONSUMER_MAX_ATTEMPTS) {
+        log.error(
+          failure,
+          "agent session consumer gave up — this run has no observer",
+        );
+
+        return;
+      }
+      log.warn(
+        failure,
+        "agent session consumer failed — re-entering the durable stream",
+      );
+      await sleep(agentConsumerBackoffMs(attempt));
+    }
+  }
+}
+
+function observeAgentSession(args: AgentSessionObservation): void {
+  queueMicrotask(() => {
+    void superviseAgentSession(args).catch((error: unknown) => {
+      log.error(
+        { runId: args.runId, sessionId: args.sessionId, ...errorRecord(error) },
+        "agent session supervisor threw",
+      );
+    });
+  });
+}
+
 export async function consumeAgentSession(args: {
   db: Db;
   execution: AgentExecution;
   runId: string;
   sessionId: string;
   signal?: AbortSignal;
+  state?: AgentSessionConsumerState;
 }): Promise<void> {
-  let sawPermissionRequest = false;
-  // ADR-165 (T5.3): the agent's own text, accumulated per PROMPT TURN. It is
-  // reset when a new turn begins (a resume after a permission answer) so a
-  // sentinel block from an EARLIER turn can never be read as this turn's final
-  // answer — the contract is "the block that ends the completing turn".
-  let finalText = "";
+  const state = args.state ?? newAgentSessionConsumerState();
 
   for await (const event of args.execution.admin.streamSession(args.sessionId, {
     signal: args.signal,
+    ...(state.lastEventId === undefined
+      ? {}
+      : { lastEventId: state.lastEventId }),
   })) {
     switch (event.type) {
       case "session.update": {
@@ -3472,16 +3578,16 @@ export async function consumeAgentSession(args: {
         // permission wait and carries the first text of the NEW turn, so
         // appending first and clearing after would discard the very chunk that
         // starts the turn we care about.
-        if (sawPermissionRequest) finalText = "";
+        if (state.sawPermissionRequest) state.finalText = "";
         {
           const chunk = agentMessageText(event.update);
 
-          if (chunk) finalText = appendCapped(finalText, chunk);
+          if (chunk) state.finalText = appendCapped(state.finalText, chunk);
         }
-        if (sawPermissionRequest) {
+        if (state.sawPermissionRequest) {
           // The permission was answered (the session is active again);
           // the runner owns NeedsInput → Running for agent runs too.
-          sawPermissionRequest = false;
+          state.sawPermissionRequest = false;
           if (
             !(await agentSessionHasOwnedPrompt(
               args.db,
@@ -3506,7 +3612,7 @@ export async function consumeAgentSession(args: {
             event,
           )
         ) {
-          sawPermissionRequest = false;
+          state.sawPermissionRequest = false;
           break;
         }
         if (
@@ -3516,7 +3622,7 @@ export async function consumeAgentSession(args: {
             event,
           )
         ) {
-          sawPermissionRequest = false;
+          state.sawPermissionRequest = false;
           break;
         }
         const autoDelivered = await tryAutoDeliverAgentPermission({
@@ -3528,10 +3634,10 @@ export async function consumeAgentSession(args: {
         });
 
         if (autoDelivered) {
-          sawPermissionRequest = false;
+          state.sawPermissionRequest = false;
           break;
         }
-        sawPermissionRequest = true;
+        state.sawPermissionRequest = true;
         if (
           await recordOwnedAgentPermission(
             args.db,
@@ -3608,7 +3714,7 @@ export async function consumeAgentSession(args: {
                 : `session exited with code ${event.exitCode}`,
             // ADR-165: the completing turn's text, from which the finalizer
             // extracts the public-result sentinel block.
-            finalText,
+            finalText: state.finalText,
           },
         );
 
@@ -3691,6 +3797,7 @@ export async function consumeAgentSession(args: {
       default:
         break;
     }
+    state.lastEventId = event.monotonicId;
   }
 
   log.warn(

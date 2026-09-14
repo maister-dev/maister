@@ -141,7 +141,9 @@ export function isFencedError(err: unknown): boolean {
   );
 }
 
-function errorRecord(err: unknown): Record<string, unknown> {
+/** The house shape for reporting a failure: a bare `error.name` cannot be
+ * investigated after the fact. */
+export function errorRecord(err: unknown): Record<string, unknown> {
   if (isMaisterError(err)) {
     return {
       code: err.code,
