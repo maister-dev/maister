@@ -12,6 +12,6 @@ project:
 packages:
   - id: aif
     source: https://github.com/maister-dev/maister-plugins
-    version: aif/v2.5.0
+    version: aif/v3.0.0
     path: packages/aif
 flows: []
