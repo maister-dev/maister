@@ -35,9 +35,11 @@ export async function registerNodeRuntime(): Promise<void> {
   // pre-cut-over schema. See
   // lib/db/check-migrations.ts + `pnpm db:check`.
   try {
-    const { findPendingMigrations, findPendingBrainMigrations } = await import(
-      "@/lib/db/check-migrations"
-    );
+    const {
+      assertDatabaseNotAheadOfBinary,
+      findPendingMigrations,
+      findPendingBrainMigrations,
+    } = await import("@/lib/db/check-migrations");
     const { getDb } = await import("@/lib/db/client");
     const db = getDb();
     // ADR-122: the brain lineage has its OWN journal + ledger table, so it is
@@ -66,6 +68,9 @@ export async function registerNodeRuntime(): Promise<void> {
 
       throw new Error(msg);
     }
+    // S4.7: the other direction — a schema from a newer release refuses this
+    // binary before it can write a row the newer invariants exist to refuse.
+    await assertDatabaseNotAheadOfBinary(db);
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error(

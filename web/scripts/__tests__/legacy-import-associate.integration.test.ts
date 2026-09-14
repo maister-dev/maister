@@ -5,7 +5,7 @@
 // refused, never overwritten, and every other column survives untouched.
 
 import { execFile } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -21,6 +21,7 @@ import {
   it,
 } from "vitest";
 
+import { ensureLocalExecutionHost } from "@/lib/execution-host";
 import {
   startMainPostgresTestDbUpTo,
   type StartedPostgresTestDb,
@@ -207,7 +208,10 @@ async function enabledGeneration(supervisor: RealSupervisor): Promise<number> {
   return (JSON.parse(line) as { generation: number }).generation;
 }
 
-async function startSupervisorFor(importId: string): Promise<RealSupervisor> {
+async function startSupervisorFor(
+  importId: string,
+  options: { register?: boolean } = {},
+): Promise<RealSupervisor> {
   const supervisor = await startRealSupervisor({
     env: {
       MAISTER_IMPORT_ADMISSION_DIR: manifestRoot,
@@ -216,8 +220,21 @@ async function startSupervisorFor(importId: string): Promise<RealSupervisor> {
   });
 
   supervisors.push(supervisor);
+  if (options.register !== false) await registerHost(supervisor);
 
   return supervisor;
+}
+
+// The manager knows the host the way a running installation does: registered
+// from the supervisor's own identity, as the web boot registers it.
+async function registerHost(supervisor: RealSupervisor): Promise<void> {
+  process.env.MAISTER_SUPERVISOR_URL = supervisor.url;
+  const registration = await ensureLocalExecutionHost({ db: testDatabase.db });
+
+  if (registration.status !== "registered")
+    throw new Error(
+      `host registration failed: ${JSON.stringify(registration)}`,
+    );
 }
 
 function importId(): string {
@@ -313,6 +330,137 @@ describe("execution-data-plane:import-legacy associate", () => {
     expect(attachment.file_name).toBe("spec.txt");
     expect(attachment.mime_type).toBe("text/plain");
     expect(attachment.byte_size).toBe(7);
+  }, 180_000);
+
+  // S4.8 / D9 steps 5-6: the manager performs the object metadata. Every
+  // sealed item becomes a catalogue row on the host that sealed it — the row
+  // the ordinary web read path resolves — so the preserved history is served
+  // after the cut-over without the maintenance socket and without a source.
+  it("catalogues every sealed object on the host that sealed it", async () => {
+    const { runId, runDirectory } = await seedRun();
+
+    await writeFile(join(runDirectory, "plan.log"), "planning\n", "utf8");
+    await mkdir(join(runDirectory, "uploads", "launch"), { recursive: true });
+    await writeFile(
+      join(runDirectory, "uploads", "launch", "spec.txt"),
+      "a spec\n",
+      "utf8",
+    );
+    const artifactId = await seedArtifact({ runId, relativePath: "plan.log" });
+    const attachmentId = await seedAttachment({
+      runId,
+      relativePath: "uploads/launch/spec.txt",
+    });
+    const id = importId();
+
+    await cli("inventory", ["--import-id", id, "--manifest-dir", manifestRoot]);
+    const supervisor = await startSupervisorFor(id);
+    const generation = await enabledGeneration(supervisor);
+
+    await cli("copy", phaseArgs(id, generation));
+    await cli("associate", phaseArgs(id, generation));
+
+    const host = await testDatabase.pool.query<{ id: string }>(
+      "select id from execution_hosts where retired_at is null",
+    );
+
+    expect(host.rows).toHaveLength(1);
+    const catalogue = await testDatabase.pool.query<{
+      id: string;
+      kind: string;
+      mime_type: string;
+      size_bytes: string;
+      sha256: string;
+      state: string;
+      execution_host_id: string;
+      execution_assignment_id: string | null;
+      logical_name: string;
+    }>(
+      `select id, kind, mime_type, size_bytes::text as size_bytes, sha256, state,
+          execution_host_id, execution_assignment_id, logical_name
+       from execution_runtime_objects where run_id = $1 order by kind, logical_name`,
+      [runId],
+    );
+
+    // Six sealed items: the transcript, the cost file, the log as history and
+    // as the artifact's payload, the upload as history and as the attachment.
+    expect(catalogue.rows).toHaveLength(6);
+    expect(catalogue.rows.map((row) => row.kind)).toEqual([
+      "attachment",
+      "attachment",
+      "cost_diagnostic",
+      "raw_transcript",
+      "session_log",
+      "session_log",
+    ]);
+    for (const row of catalogue.rows) {
+      expect(row.state).toBe("available");
+      expect(row.execution_host_id).toBe(host.rows[0].id);
+      expect(row.execution_assignment_id).toBeNull();
+      expect(row.logical_name).toMatch(/^[0-9a-f]{64}$/);
+    }
+
+    const locator = (await artifactRow(artifactId)).locator as {
+      objectId: string;
+    };
+    const artifactObject = catalogue.rows.find(
+      (row) => row.id === locator.objectId,
+    );
+
+    expect(artifactObject).toMatchObject({
+      kind: "session_log",
+      mime_type: "application/octet-stream",
+      size_bytes: "9",
+      sha256: createHash("sha256").update("planning\n", "utf8").digest("hex"),
+    });
+    const attachment = await attachmentRow(attachmentId);
+    const attachmentObject = catalogue.rows.find(
+      (row) => row.id === attachment.value,
+    );
+
+    expect(attachmentObject).toMatchObject({
+      kind: "attachment",
+      mime_type: "text/plain",
+      size_bytes: "7",
+    });
+
+    // A re-run catalogues nothing twice.
+    await cli("associate", phaseArgs(id, generation));
+    const again = await testDatabase.pool.query<{ n: number }>(
+      "select count(*)::int as n from execution_runtime_objects where run_id = $1",
+      [runId],
+    );
+
+    expect(again.rows[0].n).toBe(6);
+  }, 180_000);
+
+  it("refuses before any write when the manager knows no host with the key that sealed the bytes", async () => {
+    const { runId, runDirectory } = await seedRun();
+
+    await writeFile(join(runDirectory, "plan.log"), "planning\n", "utf8");
+    const artifactId = await seedArtifact({ runId, relativePath: "plan.log" });
+    const id = importId();
+
+    await cli("inventory", ["--import-id", id, "--manifest-dir", manifestRoot]);
+    const supervisor = await startSupervisorFor(id, { register: false });
+    const generation = await enabledGeneration(supervisor);
+
+    await cli("copy", phaseArgs(id, generation));
+    const output = await cliExpectingRefusal(
+      "associate",
+      phaseArgs(id, generation),
+    );
+
+    expect(output).toContain("execution_host_missing");
+    expect(
+      ((await artifactRow(artifactId)).locator as { kind: string }).kind,
+    ).toBe("file");
+    const catalogue = await testDatabase.pool.query<{ n: number }>(
+      "select count(*)::int as n from execution_runtime_objects where run_id = $1",
+      [runId],
+    );
+
+    expect(catalogue.rows[0].n).toBe(0);
   }, 180_000);
 
   it("re-runs over its own output without changing a row", async () => {

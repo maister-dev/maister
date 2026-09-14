@@ -27,6 +27,7 @@ export const LEGACY_LANES: readonly LegacyLane[] = [
 export type LegacySourceClass =
   | "raw_transcript"
   | "cost_diagnostic"
+  | "file_evidence"
   | "manager_owned"
   | "step_log"
   | "upload"
@@ -46,6 +47,11 @@ export type LegacySourceClassification =
       disposition: "manager_authoritative";
     }
   | { sourceClass: "step_log"; lane: "runtime_objects"; disposition: "copy" }
+  | {
+      sourceClass: "file_evidence";
+      lane: "runtime_objects";
+      disposition: "copy";
+    }
   | {
       sourceClass: "upload";
       lane: "scratch_session";
@@ -94,8 +100,13 @@ export function relativePathDigest(relativePath: string): string {
     .digest("hex");
 }
 
+// D9 "File artifact/evidence locators: derive from the artifact's ... locator".
+// A produced artifact is whatever the flow declared (`env-e2e` produces
+// `e2e-report.tar.gz`), so the row that references a file is what classifies
+// it as evidence — after every name rule, never instead of one.
 export function classifyLegacySource(
   relativePath: string,
+  referencedBy?: "artifact",
 ): LegacySourceClassification {
   const segments = relativePath.split("/");
   const name = segments[segments.length - 1];
@@ -140,6 +151,8 @@ export function classifyLegacySource(
 
   if (name.endsWith(".log"))
     return { sourceClass: "step_log", lane: "runtime_objects", disposition: "copy" };
+  if (referencedBy === "artifact")
+    return { sourceClass: "file_evidence", lane: "runtime_objects", disposition: "copy" };
 
   return UNCLASSIFIED;
 }

@@ -93,6 +93,21 @@ describe("classifyLegacySource", () => {
     });
   });
 
+  // D9 "File artifact/evidence locators: derive from the artifact's ... locator".
+  // A produced artifact is whatever the flow declared — `env-e2e` produces
+  // `e2e-report.tar.gz` and `e2e-compose-logs.txt` — so the row that references
+  // a file classifies it as evidence, whatever its name.
+  it("classifies a file an artifact row references as evidence, whatever its name", () => {
+    expect(classifyLegacySource("e2e-report.tar.gz", "artifact")).toEqual({
+      sourceClass: "file_evidence",
+      lane: "runtime_objects",
+      disposition: "copy",
+    });
+    expect(classifyLegacySource("e2e-report.tar.gz")).toMatchObject({
+      disposition: "blocked",
+    });
+  });
+
   it("blocks an unrecognized source rather than admitting it through an allowlist", () => {
     expect(classifyLegacySource("mystery.bin")).toEqual({
       sourceClass: "unclassified",

@@ -1,7 +1,7 @@
 import { chmodSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 
-import { LEGACY_MANIFEST_VERSION } from "./sources";
+import { LEGACY_MANIFEST_VERSION, type LegacyLane } from "./sources";
 import type { LegacyRunInventory } from "./inventory";
 
 // D9: "raw paths remain only in the host-private manifest/operator source map"
@@ -194,4 +194,73 @@ export function openImportManifestStore(input: {
       db.close();
     },
   };
+}
+
+// S4.5 reads the frozen manifest back for the proof: the lane rows carry the
+// expectation a lane is judged against, and the item rows carry the identity
+// every verified byte is compared to.
+
+export type ManifestLaneRow = {
+  runId: string;
+  lane: LegacyLane;
+  manifestDigest: string;
+  expectedItems: number;
+  totalBytes: number;
+};
+
+export type ManifestProofItemRow = {
+  itemId: string;
+  runId: string;
+  lane: LegacyLane;
+  disposition: string;
+  associationKey: string;
+  relativePath: string;
+  sizeBytes: number;
+  sha256: string;
+};
+
+export function readImportManifestRows(input: {
+  file: string;
+  importId: string;
+}): { lanes: ManifestLaneRow[]; items: ManifestProofItemRow[] } {
+  const db = new DatabaseSync(input.file, { readOnly: true });
+
+  try {
+    const lanes = db
+      .prepare(
+        `SELECT run_id AS runId, lane, manifest_digest AS manifestDigest,
+            expected_items AS expectedItems, total_bytes AS totalBytes
+         FROM import_lanes WHERE import_id = ? ORDER BY run_id, lane`,
+      )
+      .all(input.importId)
+      .map((row) => ({
+        runId: String(row.runId),
+        lane: String(row.lane) as LegacyLane,
+        manifestDigest: String(row.manifestDigest),
+        expectedItems: Number(row.expectedItems),
+        totalBytes: Number(row.totalBytes),
+      }));
+    const items = db
+      .prepare(
+        `SELECT item_id AS itemId, run_id AS runId, lane, disposition,
+            association_key AS associationKey,
+            relative_path AS relativePath, size_bytes AS sizeBytes, sha256
+         FROM import_items WHERE import_id = ? ORDER BY item_id`,
+      )
+      .all(input.importId)
+      .map((row) => ({
+        itemId: String(row.itemId),
+        runId: String(row.runId),
+        lane: String(row.lane) as LegacyLane,
+        disposition: String(row.disposition),
+        associationKey: String(row.associationKey),
+        relativePath: String(row.relativePath),
+        sizeBytes: Number(row.sizeBytes),
+        sha256: String(row.sha256),
+      }));
+
+    return { lanes, items };
+  } finally {
+    db.close();
+  }
 }

@@ -6,6 +6,8 @@ import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
+  assertDatabaseNotAheadOfBinary,
+  findAppliedUnknownToJournal,
   findPendingMigrations,
   mainMigrationLedgerHighWater,
 } from "@/lib/db/check-migrations";
@@ -109,5 +111,33 @@ describe("findPendingMigrations", () => {
     expect(indexes.rows.map((row) => row.indexname)).toEqual([
       "scheduled_task_launch_attempts_launch_live_uq",
     ]);
+  });
+});
+
+// S4.7 / D9 step 10: a ledger that records a migration this binary's journal
+// does not know is a database from a newer release. An older binary must not
+// boot over it and write rows the newer invariants were introduced to refuse.
+describe("a database ahead of this binary", () => {
+  it("names the applied migrations the journal does not know and refuses the boot", async () => {
+    const hash = "f".repeat(64);
+
+    await db.execute(
+      sql`INSERT INTO drizzle.__drizzle_migrations (hash, created_at)
+          VALUES (${hash}, (SELECT coalesce(max(created_at), 0) + 1 FROM drizzle.__drizzle_migrations))`,
+    );
+    try {
+      expect(await findAppliedUnknownToJournal(db)).toEqual([
+        { hash, createdAt: expect.any(Number) },
+      ]);
+      await expect(assertDatabaseNotAheadOfBinary(db)).rejects.toThrow(
+        /ahead of this binary.*ffffffffffff/,
+      );
+    } finally {
+      await db.execute(
+        sql`DELETE FROM drizzle.__drizzle_migrations WHERE hash = ${hash}`,
+      );
+    }
+    expect(await findAppliedUnknownToJournal(db)).toEqual([]);
+    await expect(assertDatabaseNotAheadOfBinary(db)).resolves.toBeUndefined();
   });
 });

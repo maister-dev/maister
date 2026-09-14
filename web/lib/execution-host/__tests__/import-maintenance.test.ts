@@ -192,6 +192,7 @@ describe("readOperatorImportManifest", () => {
         relativePath: "plan.log",
         sizeBytes: 10,
         sha256: "b".repeat(64),
+        sourceClass: "step_log",
         associationKey: "source",
         rowFingerprint: null,
       },
@@ -211,6 +212,7 @@ describe("createImportMaintenanceClient", () => {
       reply(200, {
         totals: { items: 0, sealed: 0, receivedBytes: 0, expectedBytes: 0 },
         items: [],
+        host: { hostKey: "host_fixture_key" },
       }),
     );
 

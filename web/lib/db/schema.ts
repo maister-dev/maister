@@ -4385,7 +4385,15 @@ export const executionDataPlaneImports = pgTable(
     }),
     attempts: integer("attempts").notNull().default(0),
   },
-  (t) => ({ primary: primaryKey({ columns: [t.runId, t.sourceKind] }) }),
+  (t) => ({
+    primary: primaryKey({ columns: [t.runId, t.sourceKind] }),
+    // S4.7 / D9 step 10: 0135's five-lane preflight, made permanent. A
+    // `complete` record carries its proof or it is not a record.
+    completeProofCheck: check(
+      "execution_data_plane_imports_complete_proof_check",
+      sql`${t.state} <> 'complete' OR (${t.sourceFingerprint} IS NOT NULL AND ${t.lastSourcePosition} IS NOT NULL AND ${t.startedAt} IS NOT NULL AND ${t.completedAt} IS NOT NULL AND ${t.attempts} > 0 AND ${t.lastError} IS NULL)`,
+    ),
+  }),
 );
 
 export const executionEventIngestFailures = pgTable(

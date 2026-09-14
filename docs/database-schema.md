@@ -4288,6 +4288,20 @@ capability_ref_id)`, `project_flow_roles(project_id, role_ref)`,
 ## A/B stabilization persistence contract (Designed)
 
 These forward additions belong to the existing command/catalog/consumer ledgers.
+**(Implemented — S4.7, migration `0169_cutover_writer_floor`)** The writer
+floor after the guarded cut-over: `execution_data_plane_imports` gains the CHECK
+`execution_data_plane_imports_complete_proof_check` (a `complete` lane record
+carries fingerprint, position, `started_at`, `completed_at`, `attempts > 0` and a
+null `last_error` — 0135's preflight made permanent), the trigger
+`execution_data_plane_imports_complete_is_final` (a proven lane's state,
+fingerprint, position and count never move) and the trigger
+`execution_data_plane_imports_writer_gate`, which accepts INSERT/UPDATE only from
+a session that declared `maister.writer_capability = 'execution-ab-1'`
+(`web/lib/db/writer-capability.ts`; the web client, the migrator and the import
+CLI declare it on connect) and refuses any other as `writer_class=<declared|undeclared>`.
+The migration refuses to apply over an unproven `complete` record and names it
+without altering it. `check-migrations.ts` additionally refuses a ledger holding a
+hash the binary's journal does not produce (web boot and `db:check`).
 S1 consumer state is implemented. Migration `0140_immutable_command_requests`
 adds the private request, transport and application fields below, a closed
 v2 owner/request CHECK, and a trigger protecting admitted request/owner/routing

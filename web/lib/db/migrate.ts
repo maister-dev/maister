@@ -16,6 +16,7 @@ import {
   mainMigrationLedgerHighWater,
   readMainMigrationJournal,
 } from "./check-migrations";
+import { declareWriterCapability } from "./writer-capability";
 import {
   EXECUTION_AB_STAGES,
   EXECUTION_AB_STAGE_NAMES,
@@ -241,6 +242,12 @@ async function main(): Promise<void> {
     "running migrations",
   );
   const pool = new Pool({ connectionString: url });
+
+  pool.on("connect", (client) => {
+    declareWriterCapability(client).catch((err: unknown) => {
+      log.error({ err }, "writer capability declaration failed");
+    });
+  });
   const db = drizzle(pool);
   let preM43MigrationRoot: string | null = null;
   let preStageBMigrationRoot: string | null = null;

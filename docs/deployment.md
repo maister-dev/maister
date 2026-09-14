@@ -156,38 +156,14 @@ Postgres-owned.
 volume, relay, object store, enrollment secret, or environment variable is
 required. `GET /capabilities` is a local supervisor endpoint; protocol
 capabilities are fixed rather than operator toggles. Upgrade a supervisor and
-web to canonical support, run `pnpm --filter maister-web
-execution-data-plane:import-legacy` with the explicit legacy root, then apply
-migrations `0135` and `0136`. The migration fails before destructive changes
-unless every legacy run has all preservation lanes proven.
+web to canonical support, run the staged import phases below with the explicit
+legacy root, then apply migrations `0135` and `0136`. The migration fails before
+destructive changes unless every legacy run has all preservation lanes proven.
 
-The staged upgrade path for an existing Stage A installation is different: set
-`MAISTER_UPGRADE_MAINTENANCE=1` on every web process first so the installation
-admits no run, starts no agent turn, claims no scheduler job and runs no
-destructive sweep, drain the active work, then run `db:migrate --stage
-execution-ab-additive`, `execution-data-plane:import-legacy inventory
---import-id <id> --manifest-dir <dir>` to account for every historical source
-and association before a byte is copied, `execution-data-plane:import-legacy
-copy --import-id <id> --manifest-dir <dir> --generation <n>` to preserve those
-bytes on the host, `execution-data-plane:import-legacy associate` with the same
-flags to repoint every artifact locator and scratch attachment at the object its
-bytes became, the legacy importer, `--stage execution-ab-associations` and
-`--stage execution-ab-finalize` in that order. Each stage refuses with a
-remediation code rather than applying a partial chain.
-
-`copy` needs a supervisor booted in import mode: set `MAISTER_IMPORT_ADMISSION_DIR`
-to that same manifest directory and `MAISTER_IMPORT_ADMISSION_ID` to the import
-id, and take `--generation` from the `import_admission_enabled` line the
-supervisor logs at startup. Admission exists only while those two variables are
-set; a restart mints the next generation and refuses the previous one, so re-read
-the log after every restart rather than reusing a number. The listener is a Unix
-socket (`<dir>/admission/import.sock`, mode 0600 inside a 0700 directory) and is
-absent from the supervisor's TCP port — the web process must stay outside that
-directory's OS authority.
-
-The manifest directory is operator-owned and holds the only copy of the raw
-source map, so keep it outside the web process authority and remove it with the
-import authority. See [execution data cutover](system-analytics/execution-data-cutover.md).
+The staged upgrade path for an existing Stage A installation is different and
+is a runbook of its own: [§14](#14-stage-b-execution-data-cut-over-upgrade-from-stage-a);
+a plain `db:migrate` on such an installation stops at `0135` by design. See
+[execution data cutover](system-analytics/execution-data-cutover.md).
 
 Apply migrations and seed the first admin:
 
@@ -601,6 +577,123 @@ or database credentials.
   multi-host placement and remote trust/relay belong to Stage C/D
   ([ADR-167](decisions/adr-167.md)).
 - **No managed git secrets.** Provider auth lives in the host's SSH/credential config, not in MAIster ([ADR-025](decisions.md#adr-025-project-repo-onboarding--url-clone-or-local-path-host-credential-auth-configurable-roots)). Git auth is **host-ambient** — ssh-agent/keys, the credential helper, optional `gh`, and the one-off Add-project token (Implemented, [ADR-093](decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons)). **Persist-config push and remote push/fetch reuse this same host-ambient auth** — there is no managed credential store, and on an auth failure the action returns an advisory without rolling back the local commit / DB state.
+
+## 14. Stage B execution-data cut-over (upgrade from Stage A)
+
+**(Implemented — S4.1–S4.7; procedure D9 in
+[execution-data-cutover](system-analytics/execution-data-cutover.md).)** An
+installation that already holds runs under the old file-based runtime root
+(`<MAISTER_RUNTIME_ROOT>/.maister/<slug>/runs/<runId>/`) must preserve every
+byte of that history on the execution host and prove it before migration
+`0135` may flip the runs to the canonical event plane. A plain `db:migrate`
+refuses at `0135` until that proof exists; this is the only supported path.
+Every step is idempotent and resumable, every refusal carries a remediation
+code, and no step deletes, moves or rewrites a source file. Source deletion is
+a separate retention decision after acceptance — never part of generating
+proof.
+
+If the inventory (step 4) reports zero legacy runs — a Stage A installation
+that never ran a flow — there is nothing to preserve: skip steps 5–9 and run
+the finalize stage (step 10) directly; unchanged `0135` is satisfied vacuously,
+exactly as on a fresh install.
+
+Choose, once, an import id (`^[A-Za-z0-9._:-]{1,64}$`) and a durable,
+operator-owned manifest directory (`0700`) outside the web process's OS
+authority — never under `~/.maister` and never a temporary directory:
+
+```bash
+export IMPORT_ID=cutover-2026-09
+export MANIFEST_DIR=/var/lib/maister-import/$IMPORT_ID
+export MAISTER_LEGACY_RUNTIME_ROOT=/opt/maister/runtime   # the frozen Stage A root
+export MAISTER_IMPORT_ADMISSION_DIR=$MANIFEST_DIR          # the CLI takes --manifest-dir from it
+```
+
+1. **Preliminary backup.** Postgres (§12), the supervisor state dir and
+   runtime root, the legacy runtime root and the adapter journals. Record the
+   digests, the software revision and the ledger high-water
+   (`select max(created_at) from drizzle.__drizzle_migrations`).
+2. **Drain and freeze.** Set `MAISTER_UPGRADE_MAINTENANCE=1` on every web
+   process and restart them: no run is admitted, no agent turn starts, no
+   scheduler job is claimed, no sweep runs, while cancel, checkpoint and HITL
+   delivery stay open. Bring every legacy run to a terminal status through the
+   ordinary controls — the importer and the destructive stages refuse
+   `active_legacy_work` otherwise. Stop the old web binaries. Now take the
+   **final coordinated snapshot**: the Postgres dump, the supervisor state dir
+   and runtime root (supervisor stopped), the legacy root and — once it exists
+   — the manifest directory. Restore that set to disposable storage and confirm
+   it boots before continuing; AT-11 restores exactly this set and completes
+   the cut-over from it.
+3. **Additive stage** — everything through `0133`, nothing destructive:
+   ```bash
+   pnpm --filter maister-web db:migrate --stage execution-ab-additive
+   ```
+4. **Inventory** — no supervisor needed; freezes every source of every legacy
+   run into `$MANIFEST_DIR/import-$IMPORT_ID.sqlite`, the only place a raw
+   source path is written:
+   ```bash
+   pnpm --filter maister-web execution-data-plane:import-legacy inventory --import-id $IMPORT_ID
+   ```
+   A refusal names the run and the reason (`unclassified_source`,
+   `non_regular_source`, `missing_association_payload`); fix the cause, never
+   the manifest. Re-run it only before step 6.
+5. **Supervisor in import mode, then copy.** Start the supervisor with
+   `MAISTER_IMPORT_ADMISSION_DIR=$MANIFEST_DIR` and
+   `MAISTER_IMPORT_ADMISSION_ID=$IMPORT_ID`; take the generation from its
+   `import_admission_enabled` log line — every restart mints the next one and
+   refuses the previous:
+   ```bash
+   pnpm --filter maister-web execution-data-plane:import-legacy copy --import-id $IMPORT_ID --generation <n>
+   ```
+   Interrupting it loses nothing: a re-run continues at the host's committed
+   chunk offset and reports every already-sealed item as skipped.
+6. **Associate** — catalogues every sealed object for the ordinary read path
+   on the host that sealed it and repoints every artifact locator and scratch
+   attachment at it, one row per transaction under an exact old-row CAS. The
+   manager must already know the host by the key the supervisor reports (the
+   web boot registered it); `execution_host_missing` means it does not — boot
+   the current web tier once under the maintenance fence, then re-run:
+   ```bash
+   pnpm --filter maister-web execution-data-plane:import-legacy associate --import-id $IMPORT_ID --generation <n>
+   ```
+7. **Rows** — reconstructs each run's canonical `execution_events` from the
+   frozen manifest (no host needed) and completes nothing:
+   ```bash
+   pnpm --filter maister-web execution-data-plane:import-legacy rows --import-id $IMPORT_ID
+   ```
+8. **Verify, then `0134`, then verify again** — the proof streams every
+   sealed object back through the host, re-hashes the source freeze, reads
+   every repointed row back and requires the reconstructed rows:
+   ```bash
+   pnpm --filter maister-web execution-data-plane:import-legacy verify --import-id $IMPORT_ID --generation <n>
+   pnpm --filter maister-web db:migrate --stage execution-ab-associations
+   pnpm --filter maister-web execution-data-plane:import-legacy verify --import-id $IMPORT_ID --generation <n>
+   ```
+9. **Finalize the proof** — the only writer of a `complete` lane record; it
+   writes none unless every lane of every run holds:
+   ```bash
+   pnpm --filter maister-web execution-data-plane:import-legacy finalize-proof --import-id $IMPORT_ID --generation <n>
+   ```
+10. **Finalize stage** — unchanged `0135`–`0136`, then every forward migration
+    including `0169`, the writer floor: a proven lane is final, an undeclared
+    writer is refused by class, and a binary refuses a ledger ahead of its
+    journal.
+    ```bash
+    pnpm --filter maister-web db:migrate --stage execution-ab-finalize
+    ```
+11. **Start the current web tier with the legacy root inaccessible** and
+    without the import variables; qualify history, transcripts, cost,
+    artifacts, HITL and resume through the ordinary UI/API. Then **revoke the
+    import authority**: stop the supervisor, unset
+    `MAISTER_IMPORT_ADMISSION_DIR` and `MAISTER_IMPORT_ADMISSION_ID`, restart
+    it — admission is disabled at shutdown and no request can reopen it — and
+    remove `$MANIFEST_DIR`, which holds the only copy of the raw source map.
+    Clear `MAISTER_UPGRADE_MAINTENANCE`. Keep the sources and the snapshot set
+    until retention allows their removal.
+
+Rollback: before `0134`, restore the step-2 snapshot set as one fenced
+installation and restart the old release. After `0134`/`0135` the default is
+forward repair; a downgrade restores Postgres, host state and sources
+together, never one side of the set.
 
 ## Running the MCP facade
 

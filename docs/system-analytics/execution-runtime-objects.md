@@ -18,6 +18,7 @@ artifact association.
   generation, sealing, and deletion state.
 - `ArtifactLocator {kind:"execution-object",objectId}` associates a cataloged
   host object with an existing artifact without host/run/path data.
+- **(S4.8)** Imported Stage A history enters the catalogue by a second path: the `associate` phase of `execution-data-plane:import-legacy` writes an `available` row per sealed import object, bound to the host whose key the maintenance progress body states, kind mapped from the frozen source class (`session_log`, `raw_transcript`, `cost_diagnostic`, `checkpoint`, `attachment`, `evidence`), retention class `run`, no assignment. No event is emitted for it — the import has no intent row and no epoch by design — and the cut-over proof reads the row back (`verify_catalog_*`).
 - `runtime_object.available` and `runtime_object.state` are canonical catalog
   events.
 - Stage A `execution_commands`, receipts, assignment ID, and epoch fence own

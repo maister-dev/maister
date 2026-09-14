@@ -34,6 +34,9 @@ export type OperatorImportItem = {
   // this item's bytes belong to. S4.4 rewrites exactly those rows, and only
   // against the fingerprint the inventory froze for each.
   associationKey: string;
+  // S4.8: what the inventory classified the source as; the manager catalogue
+  // kind is derived from it, never from a file name.
+  sourceClass: string;
   rowFingerprint: string | null;
 };
 
@@ -61,6 +64,8 @@ export type ImportProgress = {
     expectedBytes: number;
   };
   items: ImportItemProgress[];
+  // S4.8: the identity the manager binds every catalogued object to.
+  host: { hostKey: string };
 };
 
 export type ImportChunkAck = {
@@ -74,8 +79,14 @@ export type ImportSealReceipt = {
   sha256: string;
 };
 
+export type ImportReadback = { sizeBytes: number; sha256: string };
+
 export type ImportMaintenanceClient = {
   progress(): Promise<ImportProgress>;
+  // S4.5: streams the sealed object back and folds it into a digest as it
+  // arrives. The whole point of the import protocol is that no history is ever
+  // held whole, and proving it must not be the one step that does.
+  readbackDigest(itemId: string): Promise<ImportReadback>;
   putChunk(input: {
     itemId: string;
     chunkIndex: number;
@@ -138,7 +149,8 @@ export function readOperatorImportManifest(input: {
       .prepare(
         `SELECT item_id AS itemId, run_id AS runId, lane,
             relative_path AS relativePath, size_bytes AS sizeBytes, sha256,
-            association_key AS associationKey, row_fingerprint AS rowFingerprint
+            association_key AS associationKey, row_fingerprint AS rowFingerprint,
+            source_class AS sourceClass
          FROM import_items
          WHERE import_id = ? AND disposition = 'copy'
          ORDER BY item_id`,
@@ -154,6 +166,7 @@ export function readOperatorImportManifest(input: {
         associationKey: String(row.associationKey),
         rowFingerprint:
           row.rowFingerprint === null ? null : String(row.rowFingerprint),
+        sourceClass: String(row.sourceClass),
       }));
 
     return { importId: input.importId, digest, items };
@@ -258,6 +271,63 @@ export function createImportMaintenanceClient(input: {
         "GET",
         `/imports/${input.importId}`,
       )) as ImportProgress;
+    },
+
+    async readbackDigest(itemId) {
+      return await new Promise<ImportReadback>((settle, fail) => {
+        const req = request(
+          {
+            socketPath: input.socketPath,
+            method: "GET",
+            path: `/imports/${input.importId}/items/${itemId}/content`,
+            headers: control(),
+          },
+          (res) => {
+            const status = res.statusCode ?? 0;
+
+            if (status >= 400) {
+              const chunks: Uint8Array[] = [];
+
+              res.on("data", (chunk: Uint8Array) => chunks.push(chunk));
+              res.on("end", () => {
+                let body: unknown = null;
+
+                try {
+                  body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+                } catch {
+                  body = null;
+                }
+                fail(supervisorErrorToMaister(status, body, "ACP_PROTOCOL"));
+              });
+
+              return;
+            }
+
+            const hash = createHash("sha256");
+            let sizeBytes = 0;
+
+            res.on("data", (chunk: Uint8Array) => {
+              hash.update(chunk);
+              sizeBytes += chunk.byteLength;
+            });
+            res.on("error", fail);
+            res.on("end", () =>
+              settle({ sizeBytes, sha256: hash.digest("hex") }),
+            );
+          },
+        );
+
+        req.on("error", (error) =>
+          fail(
+            new MaisterError(
+              "EXECUTOR_UNAVAILABLE",
+              `import maintenance socket is unreachable for ${input.importId}`,
+              { cause: error },
+            ),
+          ),
+        );
+        req.end();
+      });
     },
 
     async putChunk(chunk) {

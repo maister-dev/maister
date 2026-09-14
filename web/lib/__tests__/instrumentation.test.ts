@@ -7,11 +7,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const getDb = vi.hoisted(() => vi.fn());
 const findPendingMigrations = vi.hoisted(() => vi.fn());
 const findPendingBrainMigrations = vi.hoisted(() => vi.fn());
+const assertDatabaseNotAheadOfBinary = vi.hoisted(() => vi.fn());
 const startKeepaliveSweeper = vi.hoisted(() => vi.fn());
 const startReconcileSweeper = vi.hoisted(() => vi.fn());
 const startSchedulerTimer = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/db/check-migrations", () => ({
+  assertDatabaseNotAheadOfBinary,
   findPendingBrainMigrations,
   findPendingMigrations,
 }));
@@ -60,6 +62,8 @@ describe("instrumentation DB boot boundary", () => {
     findPendingMigrations.mockResolvedValue([]);
     findPendingBrainMigrations.mockReset();
     findPendingBrainMigrations.mockResolvedValue([]);
+    assertDatabaseNotAheadOfBinary.mockReset();
+    assertDatabaseNotAheadOfBinary.mockResolvedValue(undefined);
     startKeepaliveSweeper.mockReset();
     startReconcileSweeper.mockReset();
     startSchedulerTimer.mockReset();
@@ -88,6 +92,19 @@ describe("instrumentation DB boot boundary", () => {
     await expect(register()).rejects.toThrow(
       /0094_postgres_graph_only_cutover/,
     );
+  });
+
+  // S4.7 / D9 step 10: the other direction of the ledger check — a schema from
+  // a newer release refuses this binary before it can write a row.
+  it("rejects boot when the database is ahead of this binary", async () => {
+    assertDatabaseNotAheadOfBinary.mockRejectedValue(
+      new Error(
+        "[migrations] database is ahead of this binary: 1 applied migration(s) unknown to its journal",
+      ),
+    );
+
+    await expect(register()).rejects.toThrow(/ahead of this binary/);
+    expect(startSchedulerTimer).not.toHaveBeenCalled();
   });
 
   it("starts only the scheduler fallback timer after boot recovery", async () => {

@@ -1668,6 +1668,7 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
         ["runGit", "node:child_process.execFile", "spawn", "git"],
         ["pushBranch", "node:child_process.execFile", "spawn", "git"],
         ["fetchRemote", "node:child_process.execFile", "spawn", "git"],
+        ["pullRemote", "node:child_process.execFile", "spawn", "git"],
         ["remoteBranchHead", "node:child_process.execFile", "spawn", "git"],
         ["pruneWorktrees", "node:child_process.execFile", "spawn", "git"],
         ["removeWorktree", "node:child_process.execFile", "spawn", "git"],
@@ -1745,9 +1746,22 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "operator-import",
       "Stage A history import: reads legacy run directories once, under operator authority, to publish them as host objects",
       [
-        ["auditLegacyRuntimeObjects", "node:fs/promises.readdir", "list"],
-        ["auditLegacyRuntimeObjects", "node:fs/promises.lstat", "stat"],
-        ["readRequiredFile", "node:fs/promises.readFile", "read"],
+        [
+          "auditRunListing",
+          "scripts/legacy-import/inventory.ts#walkRunDirectory",
+          "wrapper",
+        ],
+        ["readFrozenSource", "node:fs/promises.readFile", "read"],
+        [
+          "runRowsCommand",
+          "lib/execution-host/import-maintenance.ts#readOperatorImportManifest",
+          "wrapper",
+        ],
+        [
+          "runRowsCommand",
+          "scripts/legacy-import/manifest-store.ts#readImportManifestRows",
+          "wrapper",
+        ],
         ["inventoryLegacyRuns", "node:fs/promises.mkdir", "write"],
         [
           "inventoryLegacyRuns",
@@ -1769,6 +1783,18 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
         [
           "runAssociateCommand",
           "lib/execution-host/import-maintenance.ts#readOperatorImportManifest",
+          "wrapper",
+        ],
+        ["digestFile", "node:fs/promises.stat", "stat"],
+        ["digestFile", "node:fs.createReadStream", "read"],
+        [
+          "computeImportProof",
+          "lib/execution-host/import-maintenance.ts#readOperatorImportManifest",
+          "wrapper",
+        ],
+        [
+          "computeImportProof",
+          "scripts/legacy-import/manifest-store.ts#readImportManifestRows",
           "wrapper",
         ],
       ],
@@ -1817,6 +1843,7 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       [
         ["openImportManifestStore", "node:sqlite.DatabaseSync", "sqlite"],
         ["openImportManifestStore", "node:fs.chmodSync", "write"],
+        ["readImportManifestRows", "node:sqlite.DatabaseSync", "sqlite"],
       ],
       {
         authority:
@@ -1983,6 +2010,8 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
     ["releaseRunContextMounts", false],
   ]),
   ...wrappers("lib/db/check-migrations.ts", "migration-tooling", [
+    ["assertDatabaseNotAheadOfBinary", false],
+    ["findAppliedUnknownToJournal", false],
     ["findMainMigrationJournalEntry", false],
     ["findPendingBrainMigrations", false],
     ["findPendingMigrations", false],
@@ -2295,6 +2324,7 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
     ["promoteLocalMerge", false],
     ["promoteRebaseMerge", false],
     ["pruneWorktrees", false],
+    ["pullRemote", false],
     ["pushBranch", false],
     ["readBlob", false],
     ["rebaseOntoRef", false],
@@ -2320,9 +2350,11 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
   ]),
   ...wrappers("scripts/legacy-import/inventory.ts", "operator-import", [
     ["inventoryLegacyRun", true],
+    ["walkRunDirectory", true],
   ]),
   ...wrappers("scripts/legacy-import/manifest-store.ts", "operator-import", [
     ["openImportManifestStore", true],
+    ["readImportManifestRows", true],
   ]),
 ];
 

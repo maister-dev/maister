@@ -5,6 +5,7 @@ import { Pool } from "pg";
 import pino from "pino";
 
 import {
+  assertDatabaseNotAheadOfBinary,
   findPendingBrainMigrations,
   findPendingMigrations,
 } from "./check-migrations";
@@ -43,6 +44,7 @@ async function main(): Promise<void> {
       process.exit(1);
     }
 
+    await assertDatabaseNotAheadOfBinary(db);
     log.info("all journal migrations are applied (main + brain lineages)");
   } finally {
     await pool.end();

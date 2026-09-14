@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import { lstat, mkdir, open, readFile, readdir, stat } from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import { mkdir, open, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 
 import pino from "pino";
@@ -10,6 +11,7 @@ import {
   classifyDataPlaneStage,
   type DataPlaneStage,
 } from "@/lib/db/migration-stages";
+import { declareWriterCapability } from "@/lib/db/writer-capability";
 
 import { redactRuntimeEventPayload } from "@/lib/execution-host/runtime-events";
 import { CANONICAL_PROJECTION_CONSUMERS } from "@/lib/execution-host/events/projection-consumers";
@@ -24,10 +26,34 @@ import {
 } from "@/lib/execution-host/import-maintenance";
 
 import {
+  CatalogError,
+  catalogKindFor,
+  catalogueSealedObject,
+  resolveSealingHost,
+} from "./legacy-import/catalog";
+import {
   inventoryLegacyRun,
+  walkRunDirectory,
   type LegacyAssociation,
 } from "./legacy-import/inventory";
-import { openImportManifestStore } from "./legacy-import/manifest-store";
+import {
+  openImportManifestStore,
+  readImportManifestRows,
+  type ManifestLaneRow,
+  type ManifestProofItemRow,
+} from "./legacy-import/manifest-store";
+import {
+  IMPORT_PROOF_VERSION,
+  reduceRunProofs,
+  type ItemOutcome,
+  type ProofRefusal,
+  type RunProof,
+  type RunRefusal,
+} from "./legacy-import/proof";
+import {
+  classifyLegacySource,
+  relativePathDigest,
+} from "./legacy-import/sources";
 
 type ImportSourceKind = "events" | "transcript" | "cost" | "runtime_objects";
 type LegacyLaneKind = ImportSourceKind | "scratch_session";
@@ -70,7 +96,7 @@ const TRANSCRIPT_EVENT_TYPES = new Set([
 class LegacyImportError extends Error {
   constructor(
     message: string,
-    readonly sourceKind: ImportSourceKind,
+    readonly sourceKind: LegacyLaneKind,
     readonly reason: string,
     readonly sourcePosition: string | null = null,
     readonly fingerprint: string | null = null,
@@ -83,7 +109,8 @@ class LegacyImportError extends Error {
 
 function requiredEnv(name: "DB_URL" | "MAISTER_LEGACY_RUNTIME_ROOT"): string {
   const value = process.env[name];
-  if (!value) throw new Error(`${name} is required for legacy execution-data import`);
+  if (!value)
+    throw new Error(`${name} is required for legacy execution-data import`);
 
   return value;
 }
@@ -172,7 +199,9 @@ function eventPayload(
 ): Record<string, unknown> {
   const { type: _type, monotonicId, ts: _timestamp, ...legacyPayload } = event;
   const sessionId =
-    typeof legacyPayload.sessionId === "string" ? legacyPayload.sessionId : null;
+    typeof legacyPayload.sessionId === "string"
+      ? legacyPayload.sessionId
+      : null;
   const nodeAttemptId =
     typeof legacyPayload.nodeAttemptId === "string"
       ? legacyPayload.nodeAttemptId
@@ -248,8 +277,16 @@ function canonicalUsagePayload(
   }
 
   return redactRuntimeEventPayload({
-    inputTokens: nonNegativeInteger(record.input_tokens, "input_tokens", source),
-    outputTokens: nonNegativeInteger(record.output_tokens, "output_tokens", source),
+    inputTokens: nonNegativeInteger(
+      record.input_tokens,
+      "input_tokens",
+      source,
+    ),
+    outputTokens: nonNegativeInteger(
+      record.output_tokens,
+      "output_tokens",
+      source,
+    ),
     cacheReadInputTokens: nonNegativeInteger(
       record.cache_read_input_tokens,
       "cache_read_input_tokens",
@@ -324,82 +361,97 @@ function runtimeRunDirectory(input: {
   return target;
 }
 
-function isManagerOwnedLegacyFile(relativePath: string): boolean {
-  if (relativePath.includes(path.sep)) return false;
-  return (
-    relativePath === "run.events.jsonl" ||
-    relativePath === "cost.jsonl" ||
-    relativePath === "run.json" ||
-    relativePath === "needs-input.json" ||
-    relativePath === "flow-assistant-actions.jsonl" ||
-    /^input-[A-Za-z0-9._-]+\.json$/.test(relativePath) ||
-    /^node-start-[A-Za-z0-9._-]+\.json$/.test(relativePath) ||
-    /^output-[A-Za-z0-9._-]+\.json$/.test(relativePath)
-  );
-}
+// S4.6 / D9: the row phase trusts the frozen manifest, never a list of file
+// names. Every entry the walk finds must be one the inventory froze at the same
+// size, and every frozen entry must still be there. Bytes are not re-hashed
+// here — `verify` re-hashes every source against the freeze — so this is the
+// cheap listing check that refuses before a row is written.
+async function auditRunListing(input: {
+  runDirectory: string;
+  items: readonly ManifestProofItemRow[];
+}): Promise<{ checkedEntries: number }> {
+  const frozen = new Map(input.items.map((item) => [item.relativePath, item]));
+  const seen = new Set<string>();
+  let checkedEntries = 0;
 
-async function auditLegacyRuntimeObjects(runDirectory: string): Promise<{
-  fingerprint: string;
-  checkedEntries: number;
-}> {
-  const pending = [runDirectory];
-  const manifest: string[] = [];
-  const unpreserved: string[] = [];
+  for await (const entry of walkRunDirectory(input.runDirectory)) {
+    checkedEntries += 1;
+    if (entry.kind === "directory") continue;
 
-  while (pending.length > 0) {
-    const directory = pending.pop();
-    if (!directory) throw new Error("legacy runtime audit directory disappeared");
-    const entries = await readdir(directory, { withFileTypes: true });
-    for (const entry of entries) {
-      const absolute = path.join(directory, entry.name);
-      const relative = path.relative(runDirectory, absolute);
-      if (entry.isDirectory()) {
-        manifest.push(`directory:${relative}`);
-        pending.push(absolute);
-        continue;
-      }
-      const metadata = await lstat(absolute);
-      const kind = metadata.isFile() ? "file" : metadata.isSymbolicLink() ? "symlink" : "other";
-      manifest.push(`${kind}:${relative}:${metadata.size}`);
-      if (!metadata.isFile() || !isManagerOwnedLegacyFile(relative)) {
-        unpreserved.push(relative);
-      }
+    const item = frozen.get(entry.relativePath);
+
+    if (!item || entry.kind !== "file" || entry.size !== item.sizeBytes) {
+      throw new LegacyImportError(
+        "legacy run directory no longer matches the frozen manifest",
+        item?.lane ??
+          classifyLegacySource(entry.relativePath).lane ??
+          "runtime_objects",
+        "source_fingerprint_changed",
+        `path:${relativePathDigest(entry.relativePath)}`,
+      );
     }
+    seen.add(entry.relativePath);
   }
 
-  manifest.sort();
-  unpreserved.sort();
-  const fingerprint = sha256(`runtime-object-audit-v1\n${manifest.join("\n")}`);
-  if (unpreserved.length > 0) {
+  for (const [relativePath, item] of frozen) {
+    if (seen.has(relativePath)) continue;
+
     throw new LegacyImportError(
-      `legacy run has ${unpreserved.length} unpreserved host runtime object(s)`,
-      "runtime_objects",
-      "runtime_object_unpreserved",
-      `entries:${unpreserved.length}`,
-      fingerprint,
+      "a source the manifest froze is no longer in the legacy run directory",
+      item.lane,
+      "required_source_missing",
+      `path:${relativePathDigest(relativePath)}`,
     );
   }
 
-  return { fingerprint, checkedEntries: manifest.length };
+  return { checkedEntries };
 }
 
-async function readRequiredFile(
-  filePath: string,
-  sourceKind: "events" | "cost",
-): Promise<string> {
+// The manifest decides whether a row source exists for this run: a source it
+// never froze contributes no rows, and one it did freeze must still carry
+// exactly the bytes it froze. Hashed as bytes, the way the inventory hashed it.
+async function readFrozenSource(input: {
+  runDirectory: string;
+  item: ManifestProofItemRow | undefined;
+  sourceKind: "events" | "cost";
+}): Promise<string> {
+  if (!input.item) return "";
+
+  let bytes: Buffer;
+
   try {
-    return await readFile(filePath, "utf8");
+    bytes = await readFile(
+      path.join(input.runDirectory, input.item.relativePath),
+    );
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
     throw new LegacyImportError(
-      `legacy ${sourceKind} source is ${code === "ENOENT" ? "missing" : "unreadable"}`,
-      sourceKind,
+      `legacy ${input.sourceKind} source is ${code === "ENOENT" ? "missing" : "unreadable"}`,
+      input.sourceKind,
       code === "ENOENT" ? "required_source_missing" : "source_read_failed",
       null,
       null,
       { cause: error },
     );
   }
+  const observed = createHash("sha256")
+    .update(new Uint8Array(bytes))
+    .digest("hex");
+
+  if (
+    bytes.byteLength !== input.item.sizeBytes ||
+    observed !== input.item.sha256
+  ) {
+    throw new LegacyImportError(
+      `legacy ${input.sourceKind} source changed since it was inventoried`,
+      input.sourceKind,
+      "source_fingerprint_changed",
+      null,
+      observed,
+    );
+  }
+
+  return bytes.toString("utf8");
 }
 
 async function upsertImportState(input: {
@@ -477,6 +529,10 @@ function payloadDigest(payload: Record<string, unknown>): {
   return { json, sha256: sha256(json), bytes: Buffer.byteLength(json, "utf8") };
 }
 
+function legacyEventId(runId: string, sourceKey: string): string {
+  return deterministicUuid(`urn:maister:legacy-event:${runId}:${sourceKey}`);
+}
+
 async function insertLegacyEvent(input: {
   client: Client;
   runId: string;
@@ -489,9 +545,7 @@ async function insertLegacyEvent(input: {
   runSequence: bigint;
 }): Promise<void> {
   const digest = payloadDigest(input.payload);
-  const eventId = deterministicUuid(
-    `urn:maister:legacy-event:${input.runId}:${input.sourceKey}`,
-  );
+  const eventId = legacyEventId(input.runId, input.sourceKey);
   const inserted = await input.client.query(
     `INSERT INTO execution_events
       (id, source, source_key, run_id, host_session_id, event_type,
@@ -561,10 +615,19 @@ async function insertLegacyEvent(input: {
   }
 }
 
-async function importRun(input: {
+// S4.6 / D9: reconstruct the canonical event rows for one inventoried run in
+// ONE transaction, and complete nothing. The events lane keeps the `pending`
+// record the inventory wrote and only its versioned cursor advances to
+// `phase=rows`; `finalize-proof` is the only writer of a `complete` record.
+// Idempotence rests on the rows themselves: every row id is derived from the
+// source bytes, so an exact match of the expected id set means this source was
+// already imported — even after a re-inventory reset the cursor.
+async function importRunRows(input: {
   client: Client;
   run: LegacyRun;
   root: string;
+  lane: ManifestLaneRow;
+  items: readonly ManifestProofItemRow[];
 }): Promise<{
   runId: string;
   eventCount: number;
@@ -575,7 +638,7 @@ async function importRun(input: {
   if (!input.run.ownerSlug) {
     throw new LegacyImportError(
       "legacy run has no project or local-package owner",
-      "runtime_objects",
+      "events",
       "owner_missing",
     );
   }
@@ -584,27 +647,22 @@ async function importRun(input: {
     ownerSlug: input.run.ownerSlug,
     runId: input.run.id,
   });
-  const runtimeObjectAudit = await auditLegacyRuntimeObjects(runDirectory);
-  const eventsContents = await readRequiredFile(
-    runtimeFilePath({
-      root: input.root,
-      ownerSlug: input.run.ownerSlug,
-      runId: input.run.id,
-      name: "run.events.jsonl",
-    }),
-    "events",
+
+  await auditRunListing({ runDirectory, items: input.items });
+  const frozenByPath = new Map(
+    input.items.map((item) => [item.relativePath, item]),
   );
-  const costContents = await readRequiredFile(
-    runtimeFilePath({
-      root: input.root,
-      ownerSlug: input.run.ownerSlug,
-      runId: input.run.id,
-      name: "cost.jsonl",
-    }),
-    "cost",
-  );
-  const eventFingerprint = sha256(eventsContents);
-  const costFingerprint = sha256(costContents);
+  const eventsItem = frozenByPath.get("run.events.jsonl");
+  const eventsContents = await readFrozenSource({
+    runDirectory,
+    item: eventsItem,
+    sourceKind: "events",
+  });
+  const costContents = await readFrozenSource({
+    runDirectory,
+    item: frozenByPath.get("cost.jsonl"),
+    sourceKind: "cost",
+  });
   const events = sourceLines(eventsContents).map((source) => {
     const parsed = parseJsonLine(source, "events");
     if (typeof parsed.type !== "string" || parsed.type.length === 0) {
@@ -613,7 +671,7 @@ async function importRun(input: {
         "events",
         "event_type_missing",
         `line:${source.line}:byte:${source.byteOffset}`,
-        eventFingerprint,
+        eventsItem?.sha256 ?? null,
       );
     }
 
@@ -624,6 +682,25 @@ async function importRun(input: {
     record: parseJsonLine(source, "cost"),
   }));
 
+  const expectedIds = [
+    ...events.map(({ source }) =>
+      legacyEventId(
+        input.run.id,
+        `events:${source.byteOffset}:${sha256(source.raw)}`,
+      ),
+    ),
+    ...costs.map(({ source }) =>
+      legacyEventId(
+        input.run.id,
+        `cost:${source.byteOffset}:${sha256(source.raw)}`,
+      ),
+    ),
+  ];
+  const cursor = `v1:phase=rows:manifest=${input.lane.manifestDigest}:items=${input.lane.expectedItems}:rows=${expectedIds.length}`;
+  const transcriptCount = events.filter(({ event }) =>
+    TRANSCRIPT_EVENT_TYPES.has(event.type),
+  ).length;
+
   await input.client.query("BEGIN");
   try {
     const lockedRun = await input.client.query<{
@@ -632,75 +709,53 @@ async function importRun(input: {
       "SELECT next_execution_event_sequence FROM runs WHERE id = $1 FOR UPDATE",
       [input.run.id],
     );
-    if (!lockedRun.rows[0]) throw new Error("legacy run disappeared during import");
-    const fileArtifacts = await input.client.query<{ id: string }>(
-      `SELECT id FROM artifact_instances
-       WHERE run_id = $1 AND locator->>'kind' = 'file' LIMIT 1`,
-      [input.run.id],
-    );
-    if (fileArtifacts.rows[0]) {
-      throw new LegacyImportError(
-        "legacy run still has a file-backed runtime artifact",
-        "runtime_objects",
-        "file_artifact_unpreserved",
-      );
-    }
-    const priorImports = await input.client.query<{
-      sourceKind: string;
-      state: string;
-      fingerprint: string | null;
+    if (!lockedRun.rows[0])
+      throw new Error("legacy run disappeared during import");
+    const evidence = await input.client.query<{
+      matched: number;
+      total: number;
     }>(
-      `SELECT source_kind AS "sourceKind", state,
-          source_fingerprint AS fingerprint
-       FROM execution_data_plane_imports
-       WHERE run_id = $1 FOR UPDATE`,
-      [input.run.id],
+      `SELECT count(*) FILTER (WHERE id = ANY($2::text[]))::int AS matched,
+          count(*)::int AS total
+       FROM execution_events
+       WHERE run_id = $1 AND source = 'legacy_import'`,
+      [input.run.id, expectedIds],
     );
-    const complete = new Set(
-      priorImports.rows
-        .filter((row) => row.state === "complete")
-        .map((row) => row.sourceKind),
-    );
-    const requiredKinds: readonly ImportSourceKind[] = [
-      "events",
-      "transcript",
-      "cost",
-      "runtime_objects",
-    ];
-    if (requiredKinds.every((kind) => complete.has(kind))) {
-      const priorEvents = priorImports.rows.find((row) => row.sourceKind === "events");
-      const priorCost = priorImports.rows.find((row) => row.sourceKind === "cost");
-      const priorRuntimeObjects = priorImports.rows.find(
-        (row) => row.sourceKind === "runtime_objects",
-      );
-      const changedSource =
-        priorEvents?.fingerprint !== eventFingerprint
-          ? { kind: "events" as const, fingerprint: eventFingerprint }
-          : priorCost?.fingerprint !== costFingerprint
-            ? { kind: "cost" as const, fingerprint: costFingerprint }
-            : priorRuntimeObjects?.fingerprint !== runtimeObjectAudit.fingerprint
-              ? {
-                  kind: "runtime_objects" as const,
-                  fingerprint: runtimeObjectAudit.fingerprint,
-                }
-              : null;
-      if (changedSource) {
+    const { matched, total } = evidence.rows[0];
+
+    if (total > 0) {
+      if (matched !== expectedIds.length || total !== expectedIds.length) {
         throw new LegacyImportError(
-          "completed legacy import source fingerprint changed",
-          changedSource.kind,
-          "source_fingerprint_changed",
-          null,
-          changedSource.fingerprint,
+          "legacy rows in the database do not match the frozen source",
+          "events",
+          "rows_evidence_mismatch",
+          `rows:${matched}:${total}`,
         );
+      }
+      const recorded = await input.client.query<{ position: string | null }>(
+        `SELECT last_source_position AS position
+         FROM execution_data_plane_imports
+         WHERE run_id = $1 AND source_kind = 'events'`,
+        [input.run.id],
+      );
+      if (recorded.rows[0]?.position !== cursor) {
+        await upsertImportState({
+          client: input.client,
+          runId: input.run.id,
+          sourceKind: "events",
+          state: "pending",
+          fingerprint: input.lane.manifestDigest,
+          lastSourcePosition: cursor,
+          importedCount: expectedIds.length,
+          error: null,
+        });
       }
       await input.client.query("COMMIT");
 
       return {
         runId: input.run.id,
         eventCount: events.length,
-        transcriptCount: events.filter(({ event }) =>
-          TRANSCRIPT_EVENT_TYPES.has(event.type),
-        ).length,
+        transcriptCount,
         costCount: costs.length,
         alreadyComplete: true,
       };
@@ -713,15 +768,15 @@ async function importRun(input: {
     const attemptIdBySession = new Map(
       attempts.rows
         .filter((attempt) => attempt.acpSessionId)
-        .map((attempt) => [attempt.acpSessionId as string, attempt.id] as const),
+        .map(
+          (attempt) => [attempt.acpSessionId as string, attempt.id] as const,
+        ),
     );
     let sequence = BigInt(lockedRun.rows[0].next_execution_event_sequence);
-    const transcriptPayloads: Record<string, unknown>[] = [];
     for (const { source, event } of events) {
       const occurrence = eventOccurredAt(event, input.run.stableOccurredAt);
       const payload = eventPayload(event, attemptIdBySession, source);
       if (occurrence.approximate) payload.legacyOccurredAtApproximate = true;
-      if (TRANSCRIPT_EVENT_TYPES.has(event.type)) transcriptPayloads.push(payload);
       await insertLegacyEvent({
         client: input.client,
         runId: input.run.id,
@@ -756,46 +811,14 @@ async function importRun(input: {
       "UPDATE runs SET next_execution_event_sequence = $2 WHERE id = $1",
       [input.run.id, sequence.toString()],
     );
-    const eventPosition = `byte:${Buffer.byteLength(eventsContents, "utf8")}`;
-    const costPosition = `byte:${Buffer.byteLength(costContents, "utf8")}`;
     await upsertImportState({
       client: input.client,
       runId: input.run.id,
       sourceKind: "events",
-      state: "complete",
-      fingerprint: eventFingerprint,
-      lastSourcePosition: eventPosition,
-      importedCount: events.length,
-      error: null,
-    });
-    await upsertImportState({
-      client: input.client,
-      runId: input.run.id,
-      sourceKind: "transcript",
-      state: "complete",
-      fingerprint: sha256(JSON.stringify(transcriptPayloads)),
-      lastSourcePosition: eventPosition,
-      importedCount: transcriptPayloads.length,
-      error: null,
-    });
-    await upsertImportState({
-      client: input.client,
-      runId: input.run.id,
-      sourceKind: "cost",
-      state: "complete",
-      fingerprint: costFingerprint,
-      lastSourcePosition: costPosition,
-      importedCount: costs.length,
-      error: null,
-    });
-    await upsertImportState({
-      client: input.client,
-      runId: input.run.id,
-      sourceKind: "runtime_objects",
-      state: "complete",
-      fingerprint: runtimeObjectAudit.fingerprint,
-      lastSourcePosition: `entries:${runtimeObjectAudit.checkedEntries}`,
-      importedCount: 0,
+      state: "pending",
+      fingerprint: input.lane.manifestDigest,
+      lastSourcePosition: cursor,
+      importedCount: expectedIds.length,
       error: null,
     });
     await input.client.query("COMMIT");
@@ -803,7 +826,7 @@ async function importRun(input: {
     return {
       runId: input.run.id,
       eventCount: events.length,
-      transcriptCount: transcriptPayloads.length,
+      transcriptCount,
       costCount: costs.length,
       alreadyComplete: false,
     };
@@ -854,15 +877,18 @@ function resolveImportId(argv: readonly string[]): string {
     : (argv[index + 1] ?? "");
 
   if (!/^[A-Za-z0-9._:-]{1,64}$/.test(value)) {
-    throw new Error(
-      "--import-id must be 1-64 characters of [A-Za-z0-9._:-]",
-    );
+    throw new Error("--import-id must be 1-64 characters of [A-Za-z0-9._:-]");
   }
 
   return value;
 }
 
-const INVENTORY_FLAGS = new Set(["--import-id", "--manifest-dir", "--batch-size"]);
+const INVENTORY_FLAGS = new Set([
+  "--import-id",
+  "--manifest-dir",
+  "--batch-size",
+]);
+const ROWS_FLAGS = new Set(["--import-id", "--manifest-dir"]);
 const COPY_FLAGS = new Set(["--import-id", "--manifest-dir", "--generation"]);
 const ASSOCIATE_FLAGS = COPY_FLAGS;
 
@@ -897,11 +923,18 @@ function parseFlags(
   return values;
 }
 
+// The same directory the supervisor was booted with, so an operator who has
+// already exported `MAISTER_IMPORT_ADMISSION_DIR` for it need not repeat it.
 function requireManifestDir(values: ReadonlyMap<string, string>): string {
-  const manifestDir = values.get("--manifest-dir") ?? "";
+  const manifestDir =
+    values.get("--manifest-dir") ??
+    process.env.MAISTER_IMPORT_ADMISSION_DIR?.trim() ??
+    "";
 
   if (!manifestDir) {
-    throw new Error("--manifest-dir is required: the operator owns the manifest");
+    throw new Error(
+      "--manifest-dir is required (or MAISTER_IMPORT_ADMISSION_DIR): the operator owns the manifest",
+    );
   }
 
   return path.resolve(manifestDir);
@@ -913,7 +946,9 @@ function parseInventoryArguments(argv: readonly string[]): {
 } {
   const values = parseFlags(argv, INVENTORY_FLAGS, "inventory");
   const rawBatchSize = values.get("--batch-size");
-  const batchSize = rawBatchSize ? Number(rawBatchSize) : DEFAULT_INVENTORY_BATCH;
+  const batchSize = rawBatchSize
+    ? Number(rawBatchSize)
+    : DEFAULT_INVENTORY_BATCH;
 
   if (!Number.isInteger(batchSize) || batchSize < 1) {
     throw new Error("--batch-size must be a positive integer");
@@ -1053,7 +1088,10 @@ async function inventoryLegacyRuns(input: {
 
   try {
     for (const run of runs.rows) {
-      const refuse = (reason: string, detail: Record<string, unknown>): void => {
+      const refuse = (
+        reason: string,
+        detail: Record<string, unknown>,
+      ): void => {
         unresolvedCount += 1;
         log.error(
           {
@@ -1081,7 +1119,9 @@ async function inventoryLegacyRuns(input: {
          FROM execution_data_plane_imports WHERE run_id = $1`,
         [run.id],
       );
-      const completed = priorLanes.rows.filter((lane) => lane.state === "complete");
+      const completed = priorLanes.rows.filter(
+        (lane) => lane.state === "complete",
+      );
 
       if (completed.length > 0) {
         refuse("lane_already_complete", {
@@ -1247,7 +1287,10 @@ async function copyManifestItem(input: {
 
   try {
     while (offset < input.item.sizeBytes) {
-      const length = Math.min(IMPORT_CHUNK_BYTES, input.item.sizeBytes - offset);
+      const length = Math.min(
+        IMPORT_CHUNK_BYTES,
+        input.item.sizeBytes - offset,
+      );
       const buffer = new Uint8Array(length);
       let filled = 0;
 
@@ -1328,10 +1371,9 @@ async function runCopyCommand(input: {
   });
   const progress = await maintenance.progress();
   const byItem = new Map(progress.items.map((item) => [item.itemId, item]));
-  const owners = await runOwnerSlugs(
-    input.client,
-    [...new Set(manifest.items.map((item) => item.runId))],
-  );
+  const owners = await runOwnerSlugs(input.client, [
+    ...new Set(manifest.items.map((item) => item.runId)),
+  ]);
 
   log.info(
     {
@@ -1480,6 +1522,10 @@ type AssociationTarget = {
   rowId: string;
   rowFingerprint: string;
   objectId: string;
+  // S4.8: what the catalogue row says about the bytes the row points at.
+  sourceClass: string;
+  sizeBytes: number;
+  sha256: string;
 };
 
 function parseAssociationKey(
@@ -1528,7 +1574,8 @@ function alreadyAssociated(
     const locator = asRecord(row.locator);
 
     return (
-      locator.kind === "execution-object" && locator.objectId === target.objectId
+      locator.kind === "execution-object" &&
+      locator.objectId === target.objectId
     );
   }
 
@@ -1539,6 +1586,7 @@ async function repointAssociation(input: {
   client: Client;
   target: AssociationTarget;
   importId: string;
+  hostId: string;
 }): Promise<"repointed" | "already"> {
   const { client, target } = input;
 
@@ -1552,6 +1600,22 @@ async function repointAssociation(input: {
         "association_row_missing",
       );
     }
+    // S4.8: the row is repointed at an object the manager's catalogue names,
+    // in the same transaction — a locator never points at an object the
+    // ordinary read path cannot resolve. An attachment keeps its declared MIME.
+    await catalogueSealedObject(client, {
+      objectId: target.objectId,
+      runId: target.runId,
+      hostId: input.hostId,
+      kind: catalogKindFor(target.sourceClass),
+      logicalName: target.itemId,
+      mimeType:
+        target.kind === "attachment" && typeof row.mimeType === "string"
+          ? row.mimeType
+          : "application/octet-stream",
+      sizeBytes: target.sizeBytes,
+      sha256: target.sha256,
+    });
     if (alreadyAssociated(target, row)) {
       await client.query("COMMIT");
 
@@ -1874,24 +1938,52 @@ async function runAssociateCommand(input: {
       .filter((item) => item.state === "sealed" && item.sealedObjectId)
       .map((item) => [item.itemId, item.sealedObjectId as string]),
   );
+  // S4.8: every catalogue row is bound to the host that stated it holds the
+  // bytes. A manager that knows no such host refuses before any write.
+  let hostId: string;
+
+  try {
+    hostId = await resolveSealingHost(input.client, progress.host.hostKey);
+  } catch (error) {
+    const reason =
+      error instanceof CatalogError
+        ? error.details.reason
+        : (typedRefusalReason(error) ?? "unexpected_association_failure");
+
+    log.error(
+      {
+        event: "legacy_execution_data_associate_refused",
+        importId: input.importId,
+        stage,
+        generation,
+        reason,
+      },
+      "legacy execution-data associate refused",
+    );
+
+    throw new Error(`legacy data association refused: ${reason}`);
+  }
   const targets: AssociationTarget[] = [];
+  const history: OperatorImportItem[] = [];
   const failures: string[] = [];
 
   for (const item of manifest.items) {
     const association = parseAssociationKey(item.associationKey);
-
-    if (!association) continue;
-    if (!item.rowFingerprint) {
-      failures.push(`${item.itemId}:association_fingerprint_missing`);
-      continue;
-    }
-
     const objectId = sealed.get(item.itemId);
 
     // The row is repointed at bytes the host PROVED it holds, never at an
-    // object id the operator hoped for.
+    // object id the operator hoped for — and the same holds for the history
+    // items no row points at, which are catalogued on their own.
     if (!objectId) {
       failures.push(`${item.itemId}:association_bytes_unverified`);
+      continue;
+    }
+    if (!association) {
+      history.push(item);
+      continue;
+    }
+    if (!item.rowFingerprint) {
+      failures.push(`${item.itemId}:association_fingerprint_missing`);
       continue;
     }
     targets.push({
@@ -1901,6 +1993,9 @@ async function runAssociateCommand(input: {
       rowId: association.rowId,
       rowFingerprint: item.rowFingerprint,
       objectId,
+      sourceClass: item.sourceClass,
+      sizeBytes: item.sizeBytes,
+      sha256: item.sha256,
     });
   }
 
@@ -1918,6 +2013,57 @@ async function runAssociateCommand(input: {
 
   let repointed = 0;
   let alreadyCount = 0;
+  let catalogued = 0;
+  let alreadyCatalogued = 0;
+
+  // The preserved history no row points at — transcripts, cost files, logs,
+  // checkpoints, uploads as history — is catalogued the same way, so the
+  // ordinary read path can serve it after the cut-over.
+  for (const item of history) {
+    try {
+      const outcome = await catalogueSealedObject(input.client, {
+        objectId: sealed.get(item.itemId) as string,
+        runId: item.runId,
+        hostId,
+        kind: catalogKindFor(item.sourceClass),
+        logicalName: item.itemId,
+        mimeType: "application/octet-stream",
+        sizeBytes: item.sizeBytes,
+        sha256: item.sha256,
+      });
+
+      if (outcome === "catalogued") catalogued += 1;
+      else alreadyCatalogued += 1;
+      log.info(
+        {
+          event: "legacy_execution_data_object_catalogued",
+          importId: input.importId,
+          itemId: item.itemId,
+          runId: item.runId,
+          lane: item.lane,
+          objectId: sealed.get(item.itemId),
+          outcome,
+        },
+        "legacy execution-data object catalogued",
+      );
+    } catch (error) {
+      const reason =
+        typedRefusalReason(error) ?? "unexpected_catalogue_failure";
+
+      failures.push(`${item.itemId}:${reason}`);
+      log.error(
+        {
+          event: "legacy_execution_data_catalogue_failed",
+          importId: input.importId,
+          itemId: item.itemId,
+          runId: item.runId,
+          lane: item.lane,
+          reason,
+        },
+        "legacy execution-data catalogue failed",
+      );
+    }
+  }
 
   for (const target of targets) {
     try {
@@ -1925,6 +2071,7 @@ async function runAssociateCommand(input: {
         client: input.client,
         target,
         importId: input.importId,
+        hostId,
       });
 
       if (outcome === "repointed") repointed += 1;
@@ -1975,6 +2122,8 @@ async function runAssociateCommand(input: {
       generation,
       repointed,
       alreadyAssociated: alreadyCount,
+      catalogued,
+      alreadyCatalogued,
       mirrorsPreserved: mirrors.preserved,
       mirrorsDeferredTo0134: mirrors.deferred,
       unresolvedCount: failures.length,
@@ -1983,7 +2132,9 @@ async function runAssociateCommand(input: {
   );
 
   if (failures.length > 0) {
-    throw new Error(`legacy data association failed for ${failures.join(", ")}`);
+    throw new Error(
+      `legacy data association failed for ${failures.join(", ")}`,
+    );
   }
 }
 
@@ -2029,6 +2180,139 @@ async function runInventoryCommand(input: {
     throw new Error(
       `legacy inventory left ${summary.unresolvedCount} run(s) unresolved`,
     );
+  }
+}
+
+// D9: the manager's row reconstruction is its own phase. It needs the frozen
+// manifest and nothing from the host — no socket, no generation — and it runs
+// after `inventory` in whatever order the operator sequences the byte phases.
+async function runRowsCommand(input: {
+  client: Client;
+  importId: string;
+  root: string;
+  argv: readonly string[];
+}): Promise<void> {
+  const manifestDir = requireManifestDir(
+    parseFlags(input.argv, ROWS_FLAGS, "rows"),
+  );
+  const stage = await assertImportWindow(input.client, input.importId);
+
+  await assertNoActiveLegacyWork(input.client, input.importId, stage);
+  // The operator manifest gate refuses a missing or empty manifest before a
+  // single run directory is read.
+  readOperatorImportManifest({
+    directory: manifestDir,
+    importId: input.importId,
+  });
+  const frozen = readImportManifestRows({
+    file: path.join(manifestDir, `import-${input.importId}.sqlite`),
+    importId: input.importId,
+  });
+  const eventsLaneByRun = new Map(
+    frozen.lanes
+      .filter((lane) => lane.lane === "events")
+      .map((lane) => [lane.runId, lane]),
+  );
+
+  log.info(
+    {
+      event: "legacy_execution_data_rows_started",
+      importId: input.importId,
+      stage,
+      manifestRuns: eventsLaneByRun.size,
+    },
+    "legacy execution-data rows started",
+  );
+  const runs = await input.client.query<LegacyRun>(
+    `SELECT r.id, coalesce(p.slug, lp.slug) AS "ownerSlug",
+        r.started_at::text AS "stableOccurredAt"
+     FROM runs r
+     LEFT JOIN projects p ON p.id = r.project_id
+     LEFT JOIN local_packages lp ON lp.id = r.local_package_id
+     WHERE r.execution_data_plane_mode = 'legacy_file_v1'
+     ORDER BY r.id`,
+  );
+  const failures: string[] = [];
+
+  for (const run of runs.rows) {
+    const lane = eventsLaneByRun.get(run.id);
+
+    try {
+      if (!lane) {
+        throw new LegacyImportError(
+          "legacy run is not in the frozen manifest",
+          "events",
+          "proof_lane_missing",
+        );
+      }
+      const recorded = await input.client.query<{ state: string }>(
+        `SELECT state FROM execution_data_plane_imports
+         WHERE run_id = $1 AND source_kind = 'events'`,
+        [run.id],
+      );
+      // Out of phase order: a completed lane is proof, and this phase writes
+      // nothing over it — not even a failure record.
+      if (recorded.rows[0]?.state === "complete") {
+        failures.push(`${run.id}:lane_already_complete`);
+        log.error(
+          {
+            event: "legacy_execution_data_rows_refused",
+            importId: input.importId,
+            runId: run.id,
+            reason: "lane_already_complete",
+          },
+          "legacy execution-data rows refused",
+        );
+        continue;
+      }
+      const summary = await importRunRows({
+        client: input.client,
+        run,
+        root: input.root,
+        lane,
+        items: frozen.items.filter((item) => item.runId === run.id),
+      });
+
+      log.info(
+        {
+          event: "legacy_execution_data_rows_imported",
+          importId: input.importId,
+          ...summary,
+        },
+        "legacy execution-data rows imported",
+      );
+    } catch (error) {
+      await recordImportFailure(input.client, run.id, error);
+      const failure = error instanceof LegacyImportError ? error : null;
+
+      failures.push(
+        `${run.id}:${failure?.reason ?? "unexpected_import_failure"}`,
+      );
+      log.error(
+        {
+          event: "legacy_execution_data_rows_failed",
+          importId: input.importId,
+          runId: run.id,
+          sourceKind: failure?.sourceKind ?? null,
+          reason: failure?.reason ?? "unexpected_import_failure",
+          sourcePosition: failure?.sourcePosition ?? null,
+        },
+        "legacy execution-data rows failed",
+      );
+    }
+  }
+  log.info(
+    {
+      event: "legacy_execution_data_rows_finished",
+      importId: input.importId,
+      stage,
+      runCount: runs.rows.length,
+      unresolvedCount: failures.length,
+    },
+    "legacy execution-data rows finished",
+  );
+  if (failures.length > 0) {
+    throw new Error(`legacy rows import failed for ${failures.join(", ")}`);
   }
 }
 
@@ -2089,13 +2373,530 @@ async function assertNoActiveLegacyWork(
   );
 }
 
+const VERIFY_FLAGS = COPY_FLAGS;
+
+function requireProofArguments(
+  argv: readonly string[],
+  command: "verify" | "finalize-proof",
+): { manifestDir: string; generation: number } {
+  const values = parseFlags(argv, VERIFY_FLAGS, command);
+  const manifestDir = requireManifestDir(values);
+  const generation = Number(values.get("--generation"));
+
+  if (!Number.isInteger(generation) || generation < 1) {
+    throw new Error(
+      "--generation is required: the generation the supervisor logged when it enabled this import",
+    );
+  }
+
+  return { manifestDir, generation };
+}
+
+async function digestFile(
+  absolutePath: string,
+): Promise<{ sizeBytes: number; sha256: string } | null> {
+  const observed = await stat(absolutePath).catch(() => null);
+
+  if (!observed?.isFile()) return null;
+
+  const hash = createHash("sha256");
+  let sizeBytes = 0;
+
+  for await (const chunk of createReadStream(absolutePath, {
+    highWaterMark: IMPORT_CHUNK_BYTES,
+  }) as AsyncIterable<Uint8Array>) {
+    hash.update(chunk);
+    sizeBytes += chunk.byteLength;
+  }
+
+  return { sizeBytes, sha256: hash.digest("hex") };
+}
+
+// What the row points at TODAY, in the canonical shape S4.4 wrote. A row that
+// was never repointed answers null here exactly like one that drifted, and both
+// are refusals — the lane cannot be proved by a row that does not name the
+// object whose bytes the lane is made of.
+async function readAssociatedObjectId(
+  client: Client,
+  association: { kind: "artifact" | "attachment"; rowId: string },
+): Promise<string | null> {
+  const rows =
+    association.kind === "artifact"
+      ? await client.query<{ objectId: string | null }>(
+          `SELECT CASE WHEN locator->>'kind' = 'execution-object'
+                THEN locator->>'objectId' END AS "objectId"
+           FROM artifact_instances WHERE id::text = $1`,
+          [association.rowId],
+        )
+      : await client.query<{ objectId: string | null }>(
+          `SELECT CASE WHEN storage_path IS NULL THEN value END AS "objectId"
+           FROM scratch_attachments WHERE id::text = $1`,
+          [association.rowId],
+        );
+
+  return rows.rows[0]?.objectId ?? null;
+}
+
+async function verifyManifestItem(input: {
+  client: Client;
+  maintenance: ImportMaintenanceClient;
+  item: ManifestProofItemRow;
+  objectId: string;
+  ownerSlug: string | null;
+  root: string;
+}): Promise<ProofRefusal | null> {
+  // The host streams the SEALED object back. A seal-time digest proves what
+  // arrived; only a readback proves what the host can still hand over.
+  const readback = await input.maintenance.readbackDigest(input.item.itemId);
+
+  if (readback.sizeBytes !== input.item.sizeBytes)
+    return "verify_bytes_missing";
+  if (readback.sha256 !== input.item.sha256) return "verify_hash_mismatch";
+  if (!input.ownerSlug) return "verify_source_changed";
+
+  const runDirectory = runtimeRunDirectory({
+    root: input.root,
+    ownerSlug: input.ownerSlug,
+    runId: input.item.runId,
+  });
+  const absolutePath = path.resolve(runDirectory, input.item.relativePath);
+
+  if (!absolutePath.startsWith(`${runDirectory}${path.sep}`))
+    return "verify_source_changed";
+
+  // D9 step 9 re-checks the freeze: a proof is worth nothing if the source it
+  // was compared against moved while the import was running.
+  const source = await digestFile(absolutePath);
+
+  if (
+    !source ||
+    source.sizeBytes !== input.item.sizeBytes ||
+    source.sha256 !== input.item.sha256
+  )
+    return "verify_source_changed";
+
+  const association = parseAssociationKey(input.item.associationKey);
+
+  if (!association) return null;
+
+  return (await readAssociatedObjectId(input.client, association)) ===
+    input.objectId
+    ? null
+    : "verify_association_drifted";
+}
+
+async function verifyScratchShape(input: {
+  client: Client;
+  stage: DataPlaneStage;
+  runIds: readonly string[];
+  items: readonly ManifestProofItemRow[];
+}): Promise<RunRefusal[]> {
+  // `additive` still carries the mirror 0134 has not dropped, so there is no
+  // post-migration shape to count yet. The check exists for the tree AFTER
+  // 0134, where a scratch attachment that quietly kept its legacy path is a
+  // hole the five-lane preflight would otherwise wave straight through.
+  if (input.stage === "additive") return [];
+
+  const refusals: RunRefusal[] = [];
+
+  for (const runId of input.runIds) {
+    const expected = input.items
+      .filter(
+        (item) =>
+          item.runId === runId &&
+          item.lane === "scratch_session" &&
+          item.associationKey.startsWith("attachment:"),
+      )
+      .map((item) => item.associationKey.slice("attachment:".length));
+
+    if (expected.length === 0) continue;
+
+    const canonical = await input.client.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM scratch_attachments
+       WHERE run_id = $1 AND id::text = ANY($2::text[])
+         AND storage_path IS NULL`,
+      [runId, expected],
+    );
+
+    if ((canonical.rows[0]?.n ?? 0) !== expected.length)
+      refusals.push({
+        runId,
+        lane: "scratch_session",
+        refusal: "verify_scratch_count_mismatch",
+      });
+  }
+
+  return refusals;
+}
+
+// S4.6: the events lane's only manifest item is the manager's row
+// reconstruction, so the bytes alone prove nothing about it. The lane holds
+// when `rows` recorded its cursor and the database still carries exactly the
+// rows that cursor counted.
+const ROWS_CURSOR =
+  /^v1:phase=rows:manifest=[0-9a-f]{64}:items=\d+:rows=(\d+)$/;
+
+async function verifyRowEvidence(
+  client: Client,
+  runIds: readonly string[],
+): Promise<RunRefusal[]> {
+  const refusals: RunRefusal[] = [];
+
+  for (const runId of runIds) {
+    const lane = await client.query<{ position: string | null }>(
+      `SELECT last_source_position AS position
+       FROM execution_data_plane_imports
+       WHERE run_id = $1 AND source_kind = 'events'`,
+      [runId],
+    );
+    const recorded = ROWS_CURSOR.exec(lane.rows[0]?.position ?? "");
+
+    if (!recorded) {
+      refusals.push({ runId, lane: "events", refusal: "verify_rows_missing" });
+      continue;
+    }
+    const rows = await client.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM execution_events
+       WHERE run_id = $1 AND source = 'legacy_import'`,
+      [runId],
+    );
+
+    if ((rows.rows[0]?.n ?? 0) !== Number(recorded[1]))
+      refusals.push({ runId, lane: "events", refusal: "verify_rows_mismatch" });
+  }
+
+  return refusals;
+}
+
+// S4.8: what the ORDINARY read path will resolve after the cut-over is the
+// manager's catalogue row, so the proof reads it back for every sealed object:
+// it must exist, name this run and the host that stated it holds the bytes,
+// and carry the frozen size and digest in state `available`.
+async function verifyCatalogueRows(input: {
+  client: Client;
+  items: readonly ManifestProofItemRow[];
+  sealed: ReadonlyMap<string, string>;
+  hostKey: string;
+}): Promise<RunRefusal[]> {
+  const host = await input.client.query<{ id: string }>(
+    `SELECT id FROM execution_hosts WHERE host_key = $1 AND retired_at IS NULL`,
+    [input.hostKey],
+  );
+  const hostId = host.rows[0]?.id ?? null;
+  const refusals: RunRefusal[] = [];
+
+  for (const item of input.items) {
+    if (item.disposition !== "copy") continue;
+    const objectId = input.sealed.get(item.itemId);
+
+    // An unsealed item is already refused by the item pass.
+    if (!objectId) continue;
+    const rows = await input.client.query<{
+      runId: string;
+      hostId: string;
+      sizeBytes: string;
+      sha256: string | null;
+      state: string;
+    }>(
+      `SELECT run_id AS "runId", execution_host_id AS "hostId",
+          size_bytes::text AS "sizeBytes", sha256, state
+       FROM execution_runtime_objects WHERE id = $1`,
+      [objectId],
+    );
+    const row = rows.rows[0];
+
+    if (!row) {
+      refusals.push({
+        runId: item.runId,
+        lane: item.lane,
+        refusal: "verify_catalog_missing",
+      });
+      continue;
+    }
+    if (
+      row.runId !== item.runId ||
+      row.hostId !== hostId ||
+      row.sizeBytes !== String(item.sizeBytes) ||
+      row.sha256 !== item.sha256 ||
+      row.state !== "available"
+    )
+      refusals.push({
+        runId: item.runId,
+        lane: item.lane,
+        refusal: "verify_catalog_mismatch",
+      });
+  }
+
+  return refusals;
+}
+
+// D9 steps 8-9. Nothing before this proved preservation: `copy` proved a byte
+// arrived and `associate` proved a row was rewritten, but neither proves the
+// host can still hand back what the operator froze. Every sealed object is
+// streamed back and folded into a digest, every source is re-hashed against the
+// freeze, every rewritten row is read back — and one pure reducer decides.
+async function computeImportProof(input: {
+  client: Client;
+  importId: string;
+  root: string;
+  manifestDir: string;
+  generation: number;
+  stage: DataPlaneStage;
+}): Promise<RunProof[]> {
+  const manifest = readOperatorImportManifest({
+    directory: input.manifestDir,
+    importId: input.importId,
+  });
+  const frozen = readImportManifestRows({
+    file: path.join(input.manifestDir, `import-${input.importId}.sqlite`),
+    importId: input.importId,
+  });
+  const maintenance = createImportMaintenanceClient({
+    socketPath: path.join(input.manifestDir, "admission", "import.sock"),
+    importId: input.importId,
+    generation: input.generation,
+    manifestDigest: manifest.digest,
+  });
+  const progress = await maintenance.progress();
+  const sealed = new Map(
+    progress.items
+      .filter((item) => item.state === "sealed" && item.sealedObjectId)
+      .map((item) => [item.itemId, item.sealedObjectId as string]),
+  );
+  const runIds = [...new Set(frozen.lanes.map((lane) => lane.runId))].sort();
+  const owners = await runOwnerSlugs(input.client, runIds);
+  const items: ItemOutcome[] = [];
+
+  for (const item of frozen.items) {
+    const outcome: ItemOutcome = {
+      itemId: item.itemId,
+      runId: item.runId,
+      lane: item.lane,
+      sizeBytes: item.sizeBytes,
+      refusal: null,
+    };
+    // A manager-authoritative source never became an object: the manager owns
+    // that state already, and the lane accounts for it where it lives.
+    const objectId =
+      item.disposition === "copy" ? (sealed.get(item.itemId) ?? null) : null;
+
+    if (item.disposition !== "copy") {
+      items.push(outcome);
+      continue;
+    }
+    items.push(
+      objectId
+        ? {
+            ...outcome,
+            refusal: await verifyManifestItem({
+              client: input.client,
+              maintenance,
+              item,
+              objectId,
+              ownerSlug: owners.get(item.runId) ?? null,
+              root: input.root,
+            }),
+          }
+        : { ...outcome, refusal: "verify_item_unsealed" },
+    );
+  }
+
+  return reduceRunProofs({
+    runIds,
+    expectations: frozen.lanes,
+    items,
+    runRefusals: [
+      ...(await verifyScratchShape({
+        client: input.client,
+        stage: input.stage,
+        runIds,
+        items: frozen.items,
+      })),
+      ...(await verifyRowEvidence(input.client, runIds)),
+      ...(await verifyCatalogueRows({
+        client: input.client,
+        items: frozen.items,
+        sealed,
+        hostKey: progress.host.hostKey,
+      })),
+    ],
+  });
+}
+
+function logProof(input: {
+  event: string;
+  importId: string;
+  stage: DataPlaneStage;
+  proofs: readonly RunProof[];
+}): void {
+  log.info(
+    {
+      event: input.event,
+      importId: input.importId,
+      stage: input.stage,
+      proofVersion: IMPORT_PROOF_VERSION,
+      runCount: input.proofs.length,
+      unresolvedCount: input.proofs.filter((proof) => !proof.holds).length,
+      // Counts and bytes only. The proof is about preserved content and must
+      // never carry any of it, nor an operator source path.
+      lanes: input.proofs.flatMap((proof) =>
+        proof.lanes.map((lane) => ({
+          runId: proof.runId,
+          lane: lane.lane,
+          expectedItems: lane.expectedItems,
+          verifiedItems: lane.verifiedItems,
+          expectedBytes: lane.expectedBytes,
+          verifiedBytes: lane.verifiedBytes,
+        })),
+      ),
+    },
+    "legacy execution-data proof evaluated",
+  );
+}
+
+function refuseUnprovenRuns(proofs: readonly RunProof[]): void {
+  const failing = proofs.filter((proof) => !proof.holds);
+
+  if (failing.length === 0) return;
+
+  log.error(
+    {
+      event: "legacy_execution_data_proof_refused",
+      unresolvedCount: failing.length,
+      refusals: failing.flatMap((proof) => proof.refusals),
+    },
+    "legacy execution-data proof refused",
+  );
+
+  throw new Error(
+    `legacy import proof refused for ${failing
+      .map((proof) => `${proof.runId}:${proof.refusals.join(",")}`)
+      .join("; ")}`,
+  );
+}
+
+async function runVerifyCommand(input: {
+  client: Client;
+  importId: string;
+  root: string;
+  argv: readonly string[];
+}): Promise<void> {
+  const { manifestDir, generation } = requireProofArguments(
+    input.argv,
+    "verify",
+  );
+  const stage = await assertImportWindow(input.client, input.importId);
+
+  await assertNoActiveLegacyWork(input.client, input.importId, stage);
+
+  const proofs = await computeImportProof({
+    client: input.client,
+    importId: input.importId,
+    root: input.root,
+    manifestDir,
+    generation,
+    stage,
+  });
+
+  logProof({
+    event: "legacy_execution_data_verify_finished",
+    importId: input.importId,
+    stage,
+    proofs,
+  });
+  refuseUnprovenRuns(proofs);
+}
+
+async function runFinalizeProofCommand(input: {
+  client: Client;
+  importId: string;
+  root: string;
+  argv: readonly string[];
+}): Promise<void> {
+  const { manifestDir, generation } = requireProofArguments(
+    input.argv,
+    "finalize-proof",
+  );
+  const stage = await assertImportWindow(input.client, input.importId);
+
+  await assertNoActiveLegacyWork(input.client, input.importId, stage);
+
+  const proofs = await computeImportProof({
+    client: input.client,
+    importId: input.importId,
+    root: input.root,
+    manifestDir,
+    generation,
+    stage,
+  });
+
+  logProof({
+    event: "legacy_execution_data_finalize_evaluated",
+    importId: input.importId,
+    stage,
+    proofs,
+  });
+  // Nothing is written until every lane of every run holds. A `complete` record
+  // is the only thing unchanged 0135 reads, so writing one for a run whose
+  // proof failed would hand the cutover the exact false proof it exists to
+  // refuse.
+  refuseUnprovenRuns(proofs);
+
+  for (const proof of proofs) {
+    await input.client.query("BEGIN");
+    try {
+      // One transaction per run: no lane reaches `complete` without the
+      // verified count, byte position and lane fingerprint that justify it.
+      for (const lane of proof.lanes) {
+        await upsertImportState({
+          client: input.client,
+          runId: proof.runId,
+          sourceKind: lane.lane,
+          state: "complete",
+          fingerprint: lane.fingerprint,
+          lastSourcePosition: lane.position,
+          importedCount: lane.verifiedItems,
+          error: null,
+        });
+      }
+      await input.client.query("COMMIT");
+    } catch (error) {
+      await input.client.query("ROLLBACK");
+      throw error;
+    }
+  }
+  log.info(
+    {
+      event: "legacy_execution_data_proof_finalized",
+      importId: input.importId,
+      stage,
+      proofVersion: IMPORT_PROOF_VERSION,
+      runCount: proofs.length,
+    },
+    "legacy execution-data proof finalized",
+  );
+}
+
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   const command = argv[0] && !argv[0].startsWith("--") ? argv[0] : null;
 
-  const SUBCOMMANDS = ["inventory", "copy", "associate"] as const;
+  const SUBCOMMANDS = [
+    "inventory",
+    "copy",
+    "associate",
+    "rows",
+    "verify",
+    "finalize-proof",
+  ] as const;
 
-  if (command !== null && !SUBCOMMANDS.includes(command as never)) {
+  // One CLI mode does one operation; there is no default that does several.
+  if (command === null) {
+    throw new Error(
+      `a command is required; expected one of ${SUBCOMMANDS.join(", ")}`,
+    );
+  }
+  if (!SUBCOMMANDS.includes(command as never)) {
     throw new Error(
       `unknown command ${command}; expected one of ${SUBCOMMANDS.join(", ")}`,
     );
@@ -2105,6 +2906,7 @@ async function main(): Promise<void> {
   const client = new Client({ connectionString: requiredEnv("DB_URL") });
   const root = requiredEnv("MAISTER_LEGACY_RUNTIME_ROOT");
   await client.connect();
+  await declareWriterCapability(client);
   try {
     if (command === "inventory") {
       await runInventoryCommand({ client, importId, root, argv });
@@ -2121,57 +2923,18 @@ async function main(): Promise<void> {
 
       return;
     }
+    if (command === "rows") {
+      await runRowsCommand({ client, importId, root, argv });
 
-    const stage = await assertImportWindow(client, importId);
-
-    await assertNoActiveLegacyWork(client, importId, stage);
-    log.info(
-      { event: "legacy_execution_data_import_started", importId, stage },
-      "legacy execution-data import started",
-    );
-    const runs = await client.query<LegacyRun>(
-      `SELECT r.id, coalesce(p.slug, lp.slug) AS "ownerSlug",
-          r.started_at::text AS "stableOccurredAt"
-       FROM runs r
-       LEFT JOIN projects p ON p.id = r.project_id
-       LEFT JOIN local_packages lp ON lp.id = r.local_package_id
-       WHERE r.execution_data_plane_mode = 'legacy_file_v1'
-       ORDER BY r.id`,
-    );
-    const failures: string[] = [];
-    for (const run of runs.rows) {
-      try {
-        const summary = await importRun({ client, run, root });
-        log.info({ event: "legacy_execution_data_imported", importId, ...summary });
-      } catch (error) {
-        await recordImportFailure(client, run.id, error);
-        const failure = error instanceof LegacyImportError ? error : null;
-        failures.push(`${run.id}:${failure?.reason ?? "unexpected_import_failure"}`);
-        log.error(
-          {
-            event: "legacy_execution_data_import_failed",
-            importId,
-            runId: run.id,
-            sourceKind: failure?.sourceKind ?? null,
-            reason: failure?.reason ?? "unexpected_import_failure",
-            sourcePosition: failure?.sourcePosition ?? null,
-          },
-          "legacy execution-data import failed",
-        );
-      }
+      return;
     }
-    log.info(
-      {
-        event: "legacy_execution_data_import_finished",
-        importId,
-        stage,
-        runCount: runs.rows.length,
-        unresolvedCount: failures.length,
-      },
-      "legacy execution-data import finished",
-    );
-    if (failures.length > 0) {
-      throw new Error(`legacy data import failed for ${failures.join(", ")}`);
+    if (command === "verify") {
+      await runVerifyCommand({ client, importId, root, argv });
+
+      return;
+    }
+    if (command === "finalize-proof") {
+      await runFinalizeProofCommand({ client, importId, root, argv });
     }
   } finally {
     await client.end();
