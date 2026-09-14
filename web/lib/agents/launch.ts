@@ -9,7 +9,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, stat } from "node:fs/promises";
 import path from "node:path";
 
-import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import pino from "pino";
 
 import {
@@ -73,6 +73,11 @@ import {
   type ParsedAgentDefinition,
 } from "@/lib/agents/definition";
 import { materializeAgentReadOnlySettings } from "@/lib/agents/dirty-watchdog";
+import {
+  claimAgentSessionObserver,
+  recordAgentObserverFailure,
+  releaseAgentSessionObserver,
+} from "@/lib/agents/session-observer-registry";
 import {
   resolveEffectiveAgentDefinition,
   type EffectiveAgentDefinition,
@@ -2527,12 +2532,44 @@ export async function reworkChildRun(
   return { childRunId, status: current.status };
 }
 
+// The unowned twin of `recordOwnedAgentPermissionInTransaction`, and idempotent
+// for the same reason: the canonical stream is REPLAYABLE, so an observer that
+// re-enters it from the beginning (a sweep re-observing after the web process
+// died) sees every permission request again. Keyed on the host's own
+// (session, request) identity — a second row for one permission would ask the
+// human the same question twice and leave an unanswerable row behind. The owned
+// path matches on `agentPrompt.commandId`; an unowned row has no owner, so the
+// session id is the narrowest true discriminant.
 async function recordAgentPermissionRequest(args: {
   db: Db;
   runId: string;
   event: Extract<SupervisorEvent, { type: "session.permission_request" }>;
 }): Promise<void> {
   await args.db.transaction(async (tx: Db) => {
+    const [existing] = await tx
+      .select({ id: hitlRequests.id })
+      .from(hitlRequests)
+      .where(
+        and(
+          eq(hitlRequests.runId, args.runId),
+          eq(hitlRequests.kind, "permission"),
+          sql`${hitlRequests.schema}->>'requestId' = ${args.event.requestId}`,
+          sql`${hitlRequests.schema}->>'supervisorSessionId' = ${args.event.sessionId}`,
+        ),
+      );
+
+    if (existing) {
+      log.debug(
+        {
+          runId: args.runId,
+          requestId: args.event.requestId,
+          hitlRequestId: existing.id,
+        },
+        "agent permission already recorded — replayed request kept its row",
+      );
+
+      return;
+    }
     await createHitlRequest(tx, {
       id: randomUUID(),
       runId: args.runId,
@@ -2710,11 +2747,7 @@ function observeOwnedAgentSession(
   sessionId: string,
   signal?: AbortSignal,
 ): void {
-  log.info(
-    { runId: turn.runId, turnId: turn.id, sessionId },
-    "agent-owned-session-observing",
-  );
-  observeAgentSession({
+  const started = observeAgentSession({
     db,
     execution,
     runId: turn.runId,
@@ -2722,6 +2755,11 @@ function observeOwnedAgentSession(
     turnId: turn.id,
     ...(signal ? { signal } : {}),
   });
+
+  log.info(
+    { runId: turn.runId, turnId: turn.id, sessionId, started },
+    "agent-owned-session-observing",
+  );
 }
 
 // Drives one standalone agent session end-to-end: spawn (resume-aware),
@@ -3529,6 +3567,16 @@ export async function superviseAgentSession(
       };
 
       if (attempt >= AGENT_CONSUMER_MAX_ATTEMPTS) {
+        // Record it where the sweep that eventually terminalizes this run can
+        // read it: `agent-session-gone` names what the sweep noticed, not what
+        // happened, and that gap is what made the stand failure unknowable.
+        recordAgentObserverFailure(args.runId, {
+          sessionId: args.sessionId,
+          attempts: attempt,
+          lastEventId: state.lastEventId ?? null,
+          at: new Date().toISOString(),
+          ...(errorRecord(error) as { code: string; message: string }),
+        });
         log.error(
           failure,
           "agent session consumer gave up — this run has no observer",
@@ -3545,14 +3593,74 @@ export async function superviseAgentSession(
   }
 }
 
-function observeAgentSession(args: AgentSessionObservation): void {
+/**
+ * Starts THE observer for a session. Returns false when this process already
+ * observes it: two readers of one canonical stream double every side effect on
+ * that path, and nothing used to prevent it — every entry into
+ * `startAgentSession`/`dispatchStoredAgentTurn` started its own. The claim is
+ * taken synchronously so two callers in the same tick cannot both queue one.
+ */
+export function observeAgentSession(args: AgentSessionObservation): boolean {
+  if (!claimAgentSessionObserver(args.runId, args.sessionId)) {
+    log.debug(
+      { runId: args.runId, sessionId: args.sessionId, turnId: args.turnId },
+      "agent session already observed in this process — not starting a second",
+    );
+
+    return false;
+  }
   queueMicrotask(() => {
-    void superviseAgentSession(args).catch((error: unknown) => {
-      log.error(
-        { runId: args.runId, sessionId: args.sessionId, ...errorRecord(error) },
-        "agent session supervisor threw",
-      );
-    });
+    void superviseAgentSession(args)
+      .catch((error: unknown) => {
+        log.error(
+          {
+            runId: args.runId,
+            sessionId: args.sessionId,
+            ...errorRecord(error),
+          },
+          "agent session supervisor threw",
+        );
+      })
+      .finally(() => releaseAgentSessionObserver(args.sessionId));
+  });
+
+  return true;
+}
+
+/**
+ * Puts an observer back on a live agent session that has none in this process —
+ * the reconcile recovery for a web restart or an exhausted observer supervisor.
+ * Binds the run's ACTIVE assignment so the reader belongs to the generation that
+ * owns the run; a never-placed run is left alone rather than minting one from a
+ * sweep. Returns false when nothing was started.
+ */
+export async function reobserveAgentSession(args: {
+  db: Db;
+  runId: string;
+  sessionId: string;
+  executionHosts?: ExecutionHosts;
+}): Promise<boolean> {
+  const [run] = await args.db
+    .select({
+      runKind: runs.runKind,
+      assignmentId: runs.executionAssignmentId,
+    })
+    .from(runs)
+    .where(eq(runs.id, args.runId));
+
+  if (run?.runKind !== "agent" || !run.assignmentId) return false;
+  const hosts = args.executionHosts ?? createExecutionHosts({ db: args.db });
+  const execution = await bindAgentExecution(
+    hosts,
+    args.runId,
+    run.assignmentId as string,
+  );
+
+  return observeAgentSession({
+    db: args.db,
+    execution,
+    runId: args.runId,
+    sessionId: args.sessionId,
   });
 }
 

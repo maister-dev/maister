@@ -47,6 +47,11 @@ import {
 import { findSharedTreeWorkspace } from "@/lib/runs/shared-tree";
 import { crashRunningRun } from "@/lib/runs/state-transitions";
 import { hasSyncDriver } from "@/lib/runs/sync-driver-registry";
+import {
+  hasAgentSessionObserver,
+  recordAgentObserverFailure,
+  takeAgentObserverFailure,
+} from "@/lib/agents/session-observer-registry";
 import { promoteNextPending } from "@/lib/scheduler";
 import { createExecutionHosts, isFencedError } from "@/lib/execution-host";
 import { listWorktrees } from "@/lib/worktree";
@@ -86,6 +91,11 @@ function runStepKey(runId: string, stepId: string | null): string {
 export type ReconcileAction =
   | "skip"
   | "reattach"
+  // A live agent session whose ONLY in-process reader is gone (web restart, or
+  // the observer's supervisor exhausted its retries). Puts an observer back on
+  // the session; it never drives a prompt and never writes run state — the
+  // outcome still belongs to the run's own prompt owner.
+  | "reobserve"
   | "redispatch"
   | "crash"
   // ADR-141: a `Running` run with a non-terminal `run_sync_attempts`
@@ -104,6 +114,9 @@ export type ReconcileReason =
   | "live-session"
   | "live-session-by-step"
   | "live-scratch-session"
+  // A live agent session with / without an in-process observer.
+  | "agent-observer-live"
+  | "agent-observer-gone"
   | "gate-redispatch"
   | "cli-not-retry-safe"
   | "grace-window"
@@ -181,6 +194,14 @@ export interface ReconcileInput {
   // resolver session: WITH a driver → healthy (skip); WITHOUT one (post-restart)
   // → orphaned (W2 recover). Default false.
   syncDriverActive?: boolean;
+  // True when an in-process observer reads this run's live agent session in
+  // THIS process (`@/lib/agents/session-observer-registry`). Same skip-vs-recover
+  // shape as `syncDriverActive`: WITH an observer → healthy (skip); WITHOUT one
+  // → the session is live and unread (a web restart, or the observer's
+  // supervisor gave up) → re-observe. Read ONLY for `runKind === "agent"`.
+  // Default false — a fresh process has no observers, which is exactly the
+  // state that needs recovery.
+  agentObserverActive?: boolean;
 }
 
 export interface ReconcileDecision {
@@ -345,9 +366,24 @@ function classifyInner(input: ReconcileInput): ReconcileDecision {
   // it can never satisfy and the watchdog crashes it (`resume-prompt-no-
   // permission`). A live `Running` scratch dialog is healthy → skip it; the
   // next user message resumes it through the scratch message path, not here.
+  //
+  // An agent run (platform agent, consensus draft, orchestrator child) has no
+  // continuation driver either — its live path is a single in-process OBSERVER
+  // of the canonical stream (`consumeAgentSession`). This arm used to return
+  // `reattach`, which the sweep then refused for every non-flow kind, so a run
+  // whose observer was gone held a live session nobody read until the session
+  // died and the sweep crashed it under a borrowed name. Give it an observer
+  // back instead; with one already running here, it is healthy → skip. The
+  // branch ORDER is unchanged — both outcomes replace what was previously
+  // classified `reattach` and then discarded as a no-op skip.
   if (input.liveSession) {
     if (input.runKind === "scratch") {
       return { action: "skip", reason: "live-scratch-session" };
+    }
+    if (input.runKind === "agent") {
+      return input.agentObserverActive
+        ? { action: "skip", reason: "agent-observer-live" }
+        : { action: "reobserve", reason: "agent-observer-gone" };
     }
 
     return { action: "reattach", reason: "live-session" };
@@ -436,6 +472,9 @@ export interface ReconcileSweepSummary {
   // tick via the branch-sync recovery executor (W2/W3). A driver-owned live sync is
   // counted in `skipped`, not here.
   syncRecovered: number;
+  // Live agent sessions handed a fresh in-process observer this tick. A session
+  // this process already observes is counted in `skipped`, not here.
+  reobserved: number;
   // Codex review F2 (ADR-163): live supervisor sessions found under an
   // `Abandoned` run row and stopped this tick — the recovery path for a
   // cascade whose best-effort session teardown did not complete.
@@ -459,6 +498,7 @@ const ZERO_SUMMARY: ReconcileSweepSummary = {
   cutoverSessionsStopped: 0,
   staleClaimsCleared: 0,
   syncRecovered: 0,
+  reobserved: 0,
   orphanSessionsReaped: 0,
   handlesLost: 0,
 };
@@ -1367,6 +1407,7 @@ export async function runReconcileSweep(
   let reattached = 0;
   let skipped = 0;
   let syncRecovered = 0;
+  let reobserved = 0;
 
   await runWithConcurrency(candidates, PER_PASS_CONCURRENCY, async (cand) => {
     // M34: a null worktreePath is the no-workspace agent shape (none/
@@ -1441,6 +1482,13 @@ export async function runReconcileSweep(
         syncDriverActive: cand.activeSyncAttempt
           ? hasSyncDriver(cand.runId)
           : false,
+        // Keyed on the HOST session id, which is what an observer claims —
+        // `acpSessionId` is the adapter's resume handle and is reused across
+        // incarnations.
+        agentObserverActive:
+          cand.runKind === "agent" && live
+            ? hasAgentSessionObserver(live.sessionId)
+            : false,
       },
       cand.runId,
     );
@@ -1578,6 +1626,12 @@ export async function runReconcileSweep(
           // token revoke + emits + agent-pool promote. Lazy import keeps the
           // pure classifier importable standalone.
           const { finalizeAgentRun } = await import("@/lib/agents/launch");
+          // `agent-session-gone` names what the SWEEP noticed. When this
+          // process also recorded WHY the run lost its observer, the terminal
+          // status carries that instead of only its own classification — that
+          // gap is what made the stand failure unknowable. Absent (the web
+          // process that observed it died), the classification stands alone.
+          const observerFailure = takeAgentObserverFailure(cand.runId);
 
           // closeOpenHitl: an orphan paused on a permission request must not
           // keep counting toward "Needs you" under a Crashed row — the flow
@@ -1588,11 +1642,18 @@ export async function runReconcileSweep(
           // may pretend it was.
           const result = await finalizeAgentRun(cand.runId, "Crashed", {
             db,
-            reason: `reconcile: ${reason}`,
+            reason: observerFailure
+              ? `reconcile: ${reason} (observer gave up after ${observerFailure.attempts} attempts: ${observerFailure.code} ${observerFailure.message})`
+              : `reconcile: ${reason}`,
             closeOpenHitl: true,
           });
 
           if (!result.finalized) {
+            // Nothing was crashed, so the evidence this arm consumed was not
+            // spent — hand it back for whichever tick does write the terminal
+            // status.
+            if (observerFailure)
+              recordAgentObserverFailure(cand.runId, observerFailure);
             skipped += 1;
             log.warn(
               { runId: cand.runId, reason },
@@ -1607,7 +1668,14 @@ export async function runReconcileSweep(
             reason: `reconcile crashed run: ${reason}`,
           });
           crashed += 1;
-          log.info({ runId: cand.runId, reason }, "reconcile: crashed agent");
+          log.info(
+            {
+              runId: cand.runId,
+              reason,
+              ...(observerFailure ? { observerFailure } : {}),
+            },
+            "reconcile: crashed agent",
+          );
 
           return;
         }
@@ -1739,6 +1807,62 @@ export async function runReconcileSweep(
 
         return;
       }
+      case "reobserve": {
+        // The run's live session has no reader in this process. Put one back:
+        // the observer records permission HITL rows, halting hook trips and the
+        // unowned terminal transitions — nothing else on this path does. It
+        // never drives a prompt and never terminalizes a run with an owned
+        // prompt, so this arm writes NO run state.
+        if (!live) {
+          // Unreachable through the classifier (the arm requires a live
+          // session); defensive so a future caller cannot re-observe nothing.
+          skipped += 1;
+
+          return;
+        }
+        try {
+          const { reobserveAgentSession } = await import("@/lib/agents/launch");
+          const started = await reobserveAgentSession({
+            db,
+            runId: cand.runId,
+            sessionId: live.sessionId,
+            executionHosts: hosts,
+          });
+
+          if (!started) {
+            skipped += 1;
+            log.debug(
+              { runId: cand.runId, sessionId: live.sessionId, reason },
+              "reconcile: agent session already observed or unplaced — nothing to re-observe",
+            );
+
+            return;
+          }
+          reobserved += 1;
+          log.warn(
+            { runId: cand.runId, sessionId: live.sessionId, reason },
+            "reconcile: re-observed a live agent session that had no reader",
+          );
+        } catch (err) {
+          // ADR-166: a fenced assignment means a newer generation owns the run
+          // — yield WITHOUT writing run state. Any other failure leaves the run
+          // exactly as it was for the next tick; a reader that cannot attach is
+          // never a reason to tear a live session down.
+          skipped += 1;
+          log.warn(
+            {
+              runId: cand.runId,
+              sessionId: live.sessionId,
+              reason,
+              fenced: isFencedError(err),
+              err: err instanceof Error ? err.message : String(err),
+            },
+            "reconcile: could not re-observe the agent session — retrying next tick",
+          );
+        }
+
+        return;
+      }
       case "sync-recover": {
         // ADR-141: a Running run with an in-flight branch sync whose
         // in-proc driver is gone. `live` present ⇒ W2 (orphaned live resolver
@@ -1802,6 +1926,7 @@ export async function runReconcileSweep(
     cutoverSessionsStopped,
     staleClaimsCleared,
     syncRecovered,
+    reobserved,
     orphanSessionsReaped,
     handlesLost,
   };

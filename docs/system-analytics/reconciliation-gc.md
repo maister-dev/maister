@@ -212,6 +212,7 @@ flowchart TD
     Act -- crash --> Crash[crashRunningRun + promoteNextPending]
     Act -- redispatch --> Redis[runFlow re-dispatch CAS-guarded]
     Act -- reattach --> Reatt[runFlow durable lease and prompt recovery]
+    Act -- reobserve --> Reobs[agent run: put an observer back on the live session]
     Act -- skip --> Noop[no action]
 ```
 
@@ -239,7 +240,10 @@ flowchart TD
     Node -- check/judge --> Redis[RE-DISPATCH]
     Node -- cli, no live session --> CrashC[CRASH cli-not-retry-safe]
     Candidates --> Sess{live session?}
-    Sess -- yes --> Reatt[RE-ATTACH]
+    Sess -- yes, flow --> Reatt[RE-ATTACH]
+    Sess -- yes, agent, no observer here --> Reobs[RE-OBSERVE]
+    Sess -- yes, agent, observer here --> SkipO[SKIP agent-observer-live]
+    Sess -- yes, scratch --> SkipS[SKIP live-scratch-session]
 ```
 
 ### Operator Recover — hybrid resume / re-dispatch (Implemented)
@@ -463,6 +467,15 @@ row is already `Done` with a deadline, which is what
   session for its `(runId, currentStepId)` MUST be SKIPPED (reason
   `live-session-by-step`), never crashed: the node's prompt is in-flight and
   `acp_session_id` is persisted only after it returns.
+- A `Running` `run_kind='agent'` run with a LIVE session and NO in-process
+  observer MUST be given one back (`reobserve`, reason `agent-observer-gone`);
+  with an observer already registered in this process it MUST be skipped
+  (`agent-observer-live`). The re-observe MUST NOT write run state, MUST NOT
+  drive a prompt and MUST yield on a fenced assignment; a reader that cannot
+  attach is never a reason to tear a live session down. A live `run_kind='scratch'`
+  dialog stays `live-scratch-session` — its next user message is its continuation
+  owner. When THIS process recorded why an observer gave up, the terminal status
+  the sweep later writes MUST name that failure alongside its own classification.
 - A supervisor `listSessions` failure MUST skip the whole reconcile tick;
   the sweep NEVER crashes a run on transient supervisor unavailability.
 - (ADR-121, T15) The sweep MUST clear a STALE C2 admission claim — a
@@ -568,7 +581,10 @@ For each run at reconcile time, gather: `run.status`, `run.runKind`,
 |-----------|-----------|--------|--------|
 | status ∉ `{Running}` | any | **SKIP** | reconcile is **allow-list `Running`-only**; `NeedsInput`/`NeedsInputIdle`/`HumanWorking`/terminal owned by other sweeps |
 | `Running` | worktree MISSING | **CRASH** (`crashRunningRun`, reason `worktree-gone`) | the "runs vs `git worktree list`" check; cannot continue |
-| `Running` | worktree present, `liveSession` present | **RE-ATTACH** (`scheduleResumedSessionDrive`) or re-dispatch `runFlow` | live agent session with no attached runner (post web restart) — not crashed |
+| `Running`, `runKind='flow'` | worktree present, `liveSession` present | **RE-ATTACH** (`scheduleResumedSessionDrive`) or re-dispatch `runFlow` | live agent session with no attached runner (post web restart) — not crashed |
+| `Running`, `runKind='agent'` | worktree present, `liveSession` present, an in-process observer holds the host session | **SKIP** (reason `agent-observer-live`) | the run's single reader of its canonical stream is alive here — healthy |
+| `Running`, `runKind='scratch'` | worktree present, `liveSession` present | **SKIP** (reason `live-scratch-session`) | a scratch dialog between turns is healthy; its continuation owner is the next user message, and a continuation prompt it cannot satisfy would be crashed by the watchdog |
+| `Running`, `runKind='agent'` | worktree present, `liveSession` present, NO in-process observer | **RE-OBSERVE** (`reobserveAgentSession`, counted as `reobserved`) | an agent run has no continuation driver — its live path is ONE in-process observer (`consumeAgentSession`). A web restart, or an observer whose supervisor exhausted its retries, leaves a live session nobody reads; this arm used to classify RE-ATTACH and was then refused ("refusing reattach for non-flow run"), so the run held an unread session until it died and the sweep crashed it as `agent-session-gone`. The re-observe binds the run's ACTIVE assignment, writes NO run state, and yields on a fenced assignment |
 | `Running` | worktree present, no `acpSessionId` match but a LIVE session exists for this `(runId, currentStepId)` | **SKIP** (reason `live-session-by-step`) | an agent node's prompt is in-flight — `acp_session_id` persists only AFTER it returns, so the active `run_sessions` row's is still null; the node is genuinely running and must NOT be crashed (the bug this guards) or re-attached (double-drive) |
 | `Running` | worktree present, no live session, current node is a **retry-safe gate eval** (`check`/`judge`/`guard`/`human`/`form`/null — read-only) | **RE-DISPATCH** `runFlow` (CAS-guarded) | safe re-run of a read-only evaluation; avoids the forbidden false-positive crash on a gate executing between sessions |
 | `Running` | worktree present, no live session, current node is **`cli`** (arbitrary side effects, NOT retry-safe) | **CRASH** (`crashRunningRun`, reason `cli-not-retry-safe`) | CAS prevents concurrent runners, NOT re-run idempotency (Codex F4); a half-run `cli` may have partial file/network side effects — never silently re-run. Recoverable via an explicit Recover call **only** when the node config declares `retry_safe: true` (accepted-risk re-dispatch); otherwise discard-only. |

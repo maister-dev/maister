@@ -377,6 +377,100 @@ describe("classifyRunReconcile — scratch runs behave as an agent node", () => 
   });
 });
 
+// An agent run's canonical event stream has exactly ONE in-process reader
+// (`consumeAgentSession`). When the web process dies — or the observer's
+// supervisor exhausts its retry budget — nothing replaced it: this arm
+// classified `reattach`, which the sweep then REFUSED (`refusing reattach for
+// non-flow run`), so the run held a live session nobody read until the session
+// died and the sweep crashed it under a borrowed name. Membership in the
+// in-process observer registry is the discriminant, exactly as
+// `syncDriverActive` is for branch sync.
+describe("classifyRunReconcile — a live agent session needs an observer", () => {
+  it("agent + live session + NO observer in this process → reobserve / agent-observer-gone", () => {
+    expect(
+      classifyRunReconcile(
+        input({
+          runKind: "agent",
+          currentNodeKind: null,
+          liveSession: true,
+          agentObserverActive: false,
+        }),
+      ),
+    ).toEqual({ action: "reobserve", reason: "agent-observer-gone" });
+  });
+
+  it("agent + live session + observer already running here → skip / agent-observer-live", () => {
+    expect(
+      classifyRunReconcile(
+        input({
+          runKind: "agent",
+          currentNodeKind: null,
+          liveSession: true,
+          agentObserverActive: true,
+        }),
+      ),
+    ).toEqual({ action: "skip", reason: "agent-observer-live" });
+  });
+
+  it("an omitted agentObserverActive reads as no observer (a fresh process has none)", () => {
+    expect(
+      classifyRunReconcile(
+        input({ runKind: "agent", currentNodeKind: null, liveSession: true }),
+      ),
+    ).toEqual({ action: "reobserve", reason: "agent-observer-gone" });
+  });
+
+  it("a live scratch dialog is still skipped — the observer arm is agent-only", () => {
+    expect(
+      classifyRunReconcile(
+        input({
+          runKind: "scratch",
+          currentNodeKind: null,
+          liveSession: true,
+          agentObserverActive: false,
+        }),
+      ),
+    ).toEqual({ action: "skip", reason: "live-scratch-session" });
+  });
+
+  it("a live flow run is still reattached — the observer arm is agent-only", () => {
+    expect(
+      classifyRunReconcile(
+        input({
+          runKind: "flow",
+          liveSession: true,
+          agentObserverActive: false,
+        }),
+      ),
+    ).toEqual({ action: "reattach", reason: "live-session" });
+  });
+
+  it("an agent run with NO live session keeps the grace-then-crash arm", () => {
+    // The new arm lives INSIDE the existing liveSession branch — it must never
+    // reach a run whose session is already gone.
+    expect(
+      classifyRunReconcile(
+        input({ runKind: "agent", currentNodeKind: null, liveSession: false }),
+      ),
+    ).toEqual({ action: "crash", reason: "agent-session-gone" });
+  });
+
+  it("an agent orphan (coordinator gone) still crashes before the observer arm", () => {
+    expect(
+      classifyRunReconcile(
+        input({
+          runKind: "agent",
+          currentNodeKind: null,
+          liveSession: true,
+          agentObserverActive: false,
+          parentRunId: "parent-1",
+          parentStatus: "Crashed",
+        }),
+      ),
+    ).toEqual({ action: "crash", reason: "orphaned-child" });
+  });
+});
+
 describe("classifyRunReconcile — M37 T7.1: orphaned child (parent gone)", () => {
   // A Running child whose delegator parent is Crashed/Abandoned/missing can no
   // longer be coordinated → crash. Caught BEFORE the session/grace checks, so an

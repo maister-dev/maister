@@ -945,6 +945,8 @@ describe("runReconcileSweep (integration)", () => {
       staleClaimsCleared: 0,
       // ADR-141: the sweep also recovers orphaned branch-sync attempts.
       syncRecovered: 0,
+      // And puts an observer back on a live agent session that has none.
+      reobserved: 0,
       // Codex review F2: and reaps live sessions under Abandoned rows.
       orphanSessionsReaped: 0,
       handlesLost: 0,
