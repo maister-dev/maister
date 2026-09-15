@@ -31,6 +31,31 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
+// The ACP `sessionUpdate` variants that carry no artifact. `tool_call` and
+// `tool_call_update` are the only deriving ones; everything else the protocol
+// defines is transcript or telemetry. Taken from the SDK's own schema rather
+// than discovered one incident at a time — `usage_update` alone poisoned six
+// consumers. Vendor adapters add frames beyond the spec, so an unlisted one
+// warns and skips (below) instead of stopping the run's projection.
+const NON_DERIVING_SESSION_UPDATES: ReadonlySet<string> = new Set([
+  // @agentclientprotocol/sdk 1.4.0 schema.
+  "agent_message_chunk",
+  "agent_thought_chunk",
+  "available_commands_update",
+  "compaction_summary_chunk",
+  "compaction_update",
+  "config_option_update",
+  "current_mode_update",
+  "plan",
+  "plan_removed",
+  "plan_update",
+  "session_info_update",
+  "usage_update",
+  "user_message_chunk",
+  // Vendor extensions: claude's model-reconciliation advisory.
+  "model_advisory",
+]);
+
 /** An ACP frame this projector does not classify. Adapters keep adding
  * telemetry shapes; that is not a corrupt event, so it never poisons. */
 class UnknownSessionUpdateShape extends Error {
@@ -160,18 +185,9 @@ function deriveFromLine(line: Record<string, unknown>): Derivation | null {
     return deriveFromToolCall(update);
   }
 
-  // Known non-tool shape (e.g. agent_message_chunk) → derive nothing. The last
-  // two are adapter telemetry — `model_advisory` (claude), `session_info_update`
-  // (codex) — listed so the ordinary run logs no warning for them.
   if (
-    sessionUpdate === "agent_message_chunk" ||
-    sessionUpdate === "agent_thought_chunk" ||
-    sessionUpdate === "user_message_chunk" ||
-    sessionUpdate === "plan" ||
-    sessionUpdate === "available_commands_update" ||
-    sessionUpdate === "current_mode_update" ||
-    sessionUpdate === "model_advisory" ||
-    sessionUpdate === "session_info_update"
+    typeof sessionUpdate === "string" &&
+    NON_DERIVING_SESSION_UPDATES.has(sessionUpdate)
   ) {
     return null;
   }
