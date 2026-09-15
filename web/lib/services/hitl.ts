@@ -54,6 +54,7 @@ import {
   resolveConfidence,
 } from "@/lib/flows/hitl-validate";
 import { isPlanReviewDecisionRequestSchema } from "@/lib/flows/graph/plan-review-decisions";
+import { hasFlowPermissionResume } from "@/lib/flows/graph/permission-resume";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { isLaunchedLineageRun } from "@/lib/evaluations/membership";
 import { runFlow } from "@/lib/flows/runner";
@@ -885,6 +886,28 @@ async function handlePermissionResponse(
         `optionId ${optionId} not in declared options`,
       );
     }
+  }
+
+  // A permission whose answer already rides an AUTHORIZED resume is no longer
+  // answerable: the resume carries `optionId` in the next prompt instead of a
+  // session.input, and `responded_at` deliberately stays NULL so the later
+  // result/continuation handoff can still find this row through
+  // `lockNodePermissionSource`. The row therefore keeps LOOKING actionable, and
+  // every resubmit used to die deep inside `lockPermissionSource` as an
+  // unexplained `permission_attempt_generation`. Refuse by name, and BEFORE the
+  // assignment claim below, so a refused request leaves no trace.
+  if (runRow.runKind === "flow" && (await hasFlowPermissionResume(db, runId))) {
+    throw new MaisterError(
+      "CONFLICT",
+      "this permission answer is already being delivered by a resume",
+      {
+        details: {
+          reason: "permission_resume_in_flight",
+          runId,
+          hitlRequestId,
+        },
+      },
+    );
   }
 
   const assignmentClaim = await claimAssignmentForResponse({

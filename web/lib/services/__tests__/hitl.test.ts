@@ -189,6 +189,17 @@ vi.mock("@/lib/db/client", () => ({
   getDb: () => fakeDb,
 }));
 
+// The resume predicate's meaning lives entirely in its WHERE clause, which the
+// fake select ignores. Control the seam: no resume in flight by default. The
+// refusal branch runs against a real database in
+// hitl-permission-ledger.integration.test.ts.
+vi.mock("@/lib/flows/graph/permission-resume", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("@/lib/flows/graph/permission-resume")
+  >()),
+  hasFlowPermissionResume: vi.fn(async () => false),
+}));
+
 vi.mock("@/lib/supervisor-client", () => ({
   listSessions: vi.fn(async () => []),
   cancelPrompt: vi.fn(async () => ({ cancelled: false })),

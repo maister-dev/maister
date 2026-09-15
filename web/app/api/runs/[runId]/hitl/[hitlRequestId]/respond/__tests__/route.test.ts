@@ -326,6 +326,20 @@ vi.mock("@/lib/db/client", () => ({
   getDb: () => fakeDb,
 }));
 
+// `hasFlowPermissionResume` asks whether an authorized resume is already
+// carrying this answer — a question whose whole meaning lives in its WHERE
+// clause, which the fake select above ignores (it returns every row of the
+// table). Control the seam explicitly instead: no resume in flight by default,
+// so these cases exercise the ordinary delivery path. The refusal branch is
+// pinned against a real database in
+// lib/services/__tests__/hitl-permission-ledger.integration.test.ts.
+vi.mock("@/lib/flows/graph/permission-resume", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("@/lib/flows/graph/permission-resume")
+  >()),
+  hasFlowPermissionResume: vi.fn(async () => false),
+}));
+
 // ADR-166: the permission delivery is a `session.input` command queued in the
 // Phase-1 claim tx (`prepareInput`) and delivered after it commits; the ack
 // callback runs the Phase-2 domain writes. The fake client below keeps the
