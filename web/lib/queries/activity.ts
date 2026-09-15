@@ -23,7 +23,7 @@ export type ActivityAgent = AdapterId | "dev";
 
 export interface ActivityEvent {
   id: string;
-  agent: ActivityAgent;
+  agent: ActivityAgent | null;
   title: string;
   code: string | null;
   meta: string;

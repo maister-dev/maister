@@ -76,7 +76,7 @@ export function AgentRunCenter({
       <dl className="grid gap-px overflow-hidden rounded-lg border border-line bg-line sm:grid-cols-4">
         {[
           [labels.status, result.run.status],
-          [labels.runner, result.run.agent],
+          [labels.runner, result.run.agent ?? "-"],
           [labels.latestActivity, latest ?? labels.noActivity],
           [labels.evidence, String(result.evidence.nodes.length)],
         ].map(([label, value]) => (

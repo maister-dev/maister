@@ -180,7 +180,7 @@ export interface RunDetail {
   currentStepId: string | null;
   branch: string;
   worktreePath: string;
-  agent: CapabilityAgent;
+  agent: CapabilityAgent | null;
   // Run kind drives the Review surface: flow and worktree-agent runs use the
   // ReviewPanel; scratch runs keep their own promote affordance.
   runKind: "flow" | "scratch" | "agent";

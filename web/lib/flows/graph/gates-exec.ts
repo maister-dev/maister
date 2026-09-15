@@ -52,6 +52,7 @@ import {
   getOrCreateGateEvaluation,
 } from "./prompt-owner";
 
+import { ensureSubstepRunSession } from "@/lib/runs/substep-session";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
 import { createExecutionHosts, isFencedError } from "@/lib/execution-host";
@@ -492,6 +493,23 @@ async function runOneGate(
 
         return "failed";
       }
+
+      // This gate spawns its own session on the run's default runner (the
+      // `loaded.executor` handed to runAgentStep below). Seed its row before
+      // the create ack, which would otherwise insert it with every runner
+      // column NULL (lib/runs/substep-session.ts). `runnerId` is deliberately
+      // omitted: this snapshot is the stored one, and its platform runner may
+      // since have been deleted.
+      await ensureSubstepRunSession({
+        db: ctx.db,
+        runId: loaded.run.id,
+        sessionName: common.sessionName,
+        snapshot: loaded.runner,
+        // The gate inherits the run's default runner rather than resolving one
+        // of its own, which is exactly what this tier names.
+        runnerResolutionTier: "runDefault",
+        resolutionSource: `gate:${gate.id}`,
+      });
 
       const res = await runGateStepGuarded(id, ctx.db, () =>
         runAgentStep(

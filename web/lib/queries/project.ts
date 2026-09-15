@@ -29,7 +29,6 @@ import {
 import { computeReadinessByRun } from "@/lib/queries/readiness-batch";
 import {
   ACTIVE_RUN_STATUSES,
-  type AgentRole,
   type PortfolioWorkspace,
   lifecycleActionsForWorkspace,
   relativeTime,
@@ -476,7 +475,7 @@ export async function getProjectPageData(
       capabilityAgent: row.capabilityAgent,
       runnerSnapshot: row.runnerSnapshot,
       context: row.runId,
-    }) as AgentRole,
+    }),
     status: runStatusToWorkspace(row.status),
     time: relativeTime(row.startedAt, now),
     href:

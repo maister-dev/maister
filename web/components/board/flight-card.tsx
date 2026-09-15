@@ -91,7 +91,11 @@ const STRIPE: Record<FlightCardData["status"], string> = {
   waiting: "bg-accent-2",
 };
 
-const AGENT_PILL: Record<FlightCardData["agent"], string> = {
+// A run whose active session carries no recorded adapter renders a muted
+// placeholder rather than dropping the card (queries/runner-agent.ts).
+const UNKNOWN_AGENT_PILL = "border-line bg-ivory text-mute";
+
+const AGENT_PILL: Record<NonNullable<FlightCardData["agent"]>, string> = {
   claude: "text-amber bg-amber-soft border-amber-line",
   codex:
     "text-accent-3 bg-accent-3-soft border-[color-mix(in_oklab,var(--accent-3)_30%,var(--line))]",
@@ -235,8 +239,13 @@ export function FlightCard({
         >
           {card.flowRef ?? labels.unconfigured}
         </span>
-        <span className={clsx(BADGE, AGENT_PILL[card.agent])}>
-          {card.agent}
+        <span
+          className={clsx(
+            BADGE,
+            card.agent ? AGENT_PILL[card.agent] : UNKNOWN_AGENT_PILL,
+          )}
+        >
+          {card.agent ?? "—"}
         </span>
         {isNeeds ? (
           <span

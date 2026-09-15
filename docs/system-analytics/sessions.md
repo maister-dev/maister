@@ -162,13 +162,36 @@ flowchart LR
   for a node (a gate evaluation, a consensus verification or synthesis, the
   branch-sync AI resolver) — MUST carry a logical name of its own
   (`gate-<gateId>`, `<nodeId>-verify-<round>-<n>`, `<nodeId>-synthesize`,
-  `sync-<attempt>`) and MUST NOT bind `default`. Its `run_sessions` row exists
-  for the create ack's binding and for its incarnation's parentage; no node
-  dispatches into it. A top-level `sessions:` key MUST NOT take one of those
+  `sync-<attempt>`) and MUST NOT bind `default`. Its `run_sessions` row MUST be
+  pre-seeded with the runner it spawns on BEFORE the create command is issued
+  (`lib/runs/substep-session.ts`; `sync-<attempt>` has done so since ADR-141).
+  The create ack does not carry a runner, so without that seed its INSERT branch
+  writes the row with `runner_id`, `runner_resolution_tier`, `capability_agent`,
+  `runner_snapshot` and `resolution_source` NULL, and nothing backfills them —
+  which matters because while it is LIVE a substep row outranks the node's own
+  in active-session selection (see the ranking rule below) and so becomes the
+  row the portfolio/board/run/inbox read and the bucket per-session cost is
+  attributed to. Beyond that runner record the row exists for the create ack's
+  binding and for its incarnation's parentage; no node dispatches into it. A
+  top-level `sessions:` key MUST NOT take one of those
   shapes — a declared session that collides with a substep name would be bound
   by that substep (today a naming convention, not a load-time refusal). A
   run-continuing respawn is NOT a substep: resume, recover and gate chat re-bind
   the session they are continuing.
+- A run's ACTIVE session MUST be ranked live-first, where **live means holding a
+  non-terminal `run_session_incarnations` row** (`created | active |
+  checkpointed` — the same state set as the partial unique index
+  `run_session_incarnations_active_run_session_uq`). `acp_session_id IS NOT NULL`
+  MUST NOT be the liveness test: it means "has been prompted at least once" and
+  deliberately OUTLIVES the process, because it is the `session/resume`
+  checkpoint handle and nothing clears it when an incarnation goes terminal.
+  Ranking on it alone let a FINISHED substep session outrank the node's own — it
+  keeps its handle and carries a newer `updated_at` (only the create ack bumps
+  that). The resume handle MUST remain the SECOND key, so that within the live
+  class a checkpointed session holding a handle still beats a freshly-created
+  one that has none; otherwise idle resume would read a null handle and fail the
+  run terminally. A LIVE substep outranking the node is correct — it is what a
+  permission HITL is blocked on. (`lib/runs/active-run-session.ts`.)
 - Nodes sharing a `session:` name MUST share one ACP process and one continuous
   `acp_session_id` resumed in graph order; all sessions in a run MUST share the
   run's single worktree and MUST execute sequentially (never in parallel).

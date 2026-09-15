@@ -265,14 +265,15 @@ export async function ProjectCard({
                   <span
                     className={clsx(
                       "rounded-[3px] border px-1.5 py-px text-[10px] tracking-[0.02em]",
-                      wsAgentChip[ws.agent] ?? "border-line bg-ivory text-mute",
+                      (ws.agent ? wsAgentChip[ws.agent] : null) ??
+                        "border-line bg-ivory text-mute",
                     )}
                   >
                     {ws.runKind === "scratch"
                       ? "scratch"
                       : ws.runKind === "agent"
                         ? "agent"
-                        : ws.agent}
+                        : (ws.agent ?? "—")}
                   </span>
                   {ws.readiness !== "ready" ? (
                     <span

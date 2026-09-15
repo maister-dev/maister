@@ -52,7 +52,7 @@ export interface FlowResultRunInput {
   endedAt: Date | string | null;
   currentStepId: string | null;
   branch: string;
-  agent: string;
+  agent: string | null;
   runKind: RunKind;
   recoverable: boolean;
   takeoverOwnerUserId: string | null;
@@ -162,7 +162,7 @@ export interface FlowRunResultDto {
     endedAt: string | null;
     currentStepId: string | null;
     branch: string;
-    agent: string;
+    agent: string | null;
     runKind: RunKind;
     recoverable: boolean;
     takeoverOwnerUserId: string | null;

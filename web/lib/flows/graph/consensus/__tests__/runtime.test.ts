@@ -137,6 +137,22 @@ function verdict(
   };
 }
 
+// `ensureSubstepRunSession` seeds a substep's `run_sessions` row on the
+// top-level handle before the create ack, so the stub must model the real
+// chain: insert().values().onConflictDoNothing(). Values are recorded so a
+// test can assert WHICH runner the substep's row records.
+const runSessionInserts: Record<string, unknown>[] = [];
+
+function runSessionInsertStub() {
+  return vi.fn(() => ({
+    values: vi.fn((values: Record<string, unknown>) => {
+      runSessionInserts.push(values);
+
+      return { onConflictDoNothing: vi.fn(async () => undefined) };
+    }),
+  }));
+}
+
 function db(): unknown {
   const tx = {
     insert: vi.fn(() => ({ values: vi.fn(async () => undefined) })),
@@ -155,6 +171,7 @@ function db(): unknown {
 
   return {
     transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn(tx)),
+    insert: runSessionInsertStub(),
     select: vi.fn(() => ({
       from: vi.fn(() => ({
         where: vi.fn(async () => [
@@ -226,6 +243,7 @@ function dbWithRunnerRows(rows: Record<string, unknown>[]): unknown {
 
   return {
     transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn(tx)),
+    insert: runSessionInsertStub(),
     select: vi.fn(() => ({
       from: vi.fn(() => ({
         where: vi.fn(async () => {
@@ -300,6 +318,7 @@ function input(overrides: Record<string, unknown> = {}) {
 }
 
 beforeEach(() => {
+  runSessionInserts.length = 0;
   vi.resetAllMocks();
   acquireConsensusAgentCapacity.mockResolvedValue(releaseCapacity);
   loadRunnerCatalog.mockResolvedValue([
@@ -723,6 +742,74 @@ describe("runConsensusNode", () => {
         }),
         runner: expect.objectContaining({ runnerId: "codex" }),
       }),
+    );
+  });
+
+  // A verify substep names its own session, so nothing pre-inserts its
+  // `run_sessions` row at launch — `applyCreateAck` would otherwise INSERT it
+  // with every runner column NULL. That row then OUTRANKS the node's own in
+  // `activeRunSessionScalar` (live handle first, then newest), which is what
+  // took `runnerAgentFromFields` — and the portfolio/board/run/inbox screens
+  // reading it — down. Seed it with the runner the verifier actually spawns on.
+  it("seeds each verify substep session row with its own resolved runner", async () => {
+    latestConsensusRound.mockResolvedValue(1);
+    loadConsensusDraftEvidence.mockResolvedValue([
+      draft("architect", "Plan A"),
+      draft("qa", "Plan B"),
+    ]);
+    runAgentStep.mockResolvedValue({
+      ok: true,
+      stdout:
+        '{"verdict":"agree","axes":{"scope":true,"risk":true},"disagreements":[]}',
+      vars: {},
+    });
+    loadConsensusVerdictCell.mockImplementation(async (args) =>
+      verdict(args.verifierId, args.targetParticipantId, {
+        verdict: "agree",
+        axes: { scope: true, risk: true },
+        disagreements: [],
+      }),
+    );
+    loadConsensusSynthesis.mockResolvedValue("Agreed plan");
+
+    await runConsensusNode(
+      input({
+        db: dbWithRunnerRows([
+          runnerRow("claude", "claude"),
+          runnerRow("codex", "codex"),
+          runnerRow("claude", "claude"),
+        ]),
+      }),
+    );
+
+    // Every substep row carries a runner, synthesis included — the helper is
+    // the same, so a regression in either path shows up here.
+    for (const seed of runSessionInserts) {
+      expect(seed.capabilityAgent).not.toBeNull();
+      expect(seed.runnerSnapshot).not.toBeNull();
+    }
+    expect(
+      runSessionInserts.some((row) =>
+        String(row.sessionName).endsWith("-synthesize"),
+      ),
+    ).toBe(true);
+
+    const verifySeeds = runSessionInserts.filter((row) =>
+      String(row.sessionName).includes("-verify-"),
+    );
+
+    expect(verifySeeds.length).toBeGreaterThan(0);
+    for (const seed of verifySeeds) {
+      expect(seed.capabilityAgent).not.toBeNull();
+      expect(seed.runnerSnapshot).toEqual(
+        expect.objectContaining({ capabilityAgent: seed.capabilityAgent }),
+      );
+    }
+
+    // The two verifiers resolve to DIFFERENT runners — the fact a shared
+    // `default` row could never have recorded.
+    expect(new Set(verifySeeds.map((seed) => seed.capabilityAgent))).toEqual(
+      new Set(["claude", "codex"]),
     );
   });
 

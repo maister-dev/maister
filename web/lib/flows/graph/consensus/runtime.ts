@@ -40,6 +40,7 @@ import {
   loadConsensusSynthesis,
 } from "./prompt-owner";
 
+import { ensureSubstepRunSession } from "@/lib/runs/substep-session";
 import { createHitlRequest } from "@/lib/runs/hitl-create";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 import { runAgentStep } from "@/lib/flows/runner-agent";
@@ -514,6 +515,19 @@ async function runVerifier(
       errorCode = "draft_unavailable";
     } else {
       verifierRuntime = await resolveVerifierRuntime(args);
+      // The verifier runs its own session beside the node's, deliberately on a
+      // DIFFERENT runner — seed its row before the create ack so the runner is
+      // recorded rather than left NULL (lib/runs/substep-session.ts).
+      await ensureSubstepRunSession({
+        db: args.db,
+        runId: args.loaded.run.id,
+        sessionName: args.sessionName,
+        snapshot: verifierRuntime.resolution.runnerSnapshot,
+        runnerId: verifierRuntime.resolution.runnerId,
+        runnerResolutionTier: verifierRuntime.resolution.runnerResolutionTier,
+        resolutionSource: verifierRuntime.resolutionSource,
+        resolutionWarning: verifierRuntime.resolution.resolutionWarning ?? null,
+      });
       const res = await runAgentStep(
         {
           id: `${args.node.id}:verify:${args.round}:${args.verifierId}:${args.target.participantId}`,
@@ -781,6 +795,17 @@ async function synthesizeConsensus(
   },
 ): Promise<ConsensusNodeResult> {
   const synthesizer = await resolveSynthesizerRuntime(args);
+
+  await ensureSubstepRunSession({
+    db: args.db,
+    runId: args.loaded.run.id,
+    sessionName: `${args.node.id}-synthesize`,
+    snapshot: synthesizer.resolution.runnerSnapshot,
+    runnerId: synthesizer.resolution.runnerId,
+    runnerResolutionTier: synthesizer.resolution.runnerResolutionTier,
+    resolutionSource: synthesizer.resolutionSource,
+    resolutionWarning: synthesizer.resolution.resolutionWarning ?? null,
+  });
 
   const startedAt = Date.now();
   const debateLog = debateLogText(args);

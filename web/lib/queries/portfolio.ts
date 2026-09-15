@@ -27,7 +27,6 @@ import {
 import { hasReadyPlatformRunner } from "@/lib/acp-runners/ready-runner";
 import { getDb } from "@/lib/db/client";
 import { getVisibleProjectIds } from "@/lib/queries/visible-projects";
-import { MaisterError } from "@/lib/errors";
 import { isProjectFlowLaunchable } from "@/lib/flows/project-flow-launchability";
 import { deriveTtlInfo } from "@/lib/gc/ttl";
 import {
@@ -121,7 +120,7 @@ export interface PortfolioWorkspace {
   // trigger that fired it; null on flow/scratch rows.
   agentId: string | null;
   triggerSource: string | null;
-  agent: AgentRole;
+  agent: AgentRole | null;
   status: WorkspaceStatus;
   time: string;
   href: string;
@@ -149,14 +148,14 @@ export interface PortfolioWorkspace {
 
 export interface PortfolioRecentMerge {
   branch: string;
-  agent: AgentRole;
+  agent: AgentRole | null;
   time: string;
 }
 
 export interface PortfolioNeed {
   runId: string;
   prompt: string;
-  agent: AgentRole;
+  agent: AgentRole | null;
   branch: string;
 }
 
@@ -577,7 +576,7 @@ export async function getPortfolio(
 
     // A claimed run is human-driven, not agent-driven — surface the `dev` pill
     // instead of the run's executor agent (mirrors lib/board.ts takeover cards).
-    const agent: AgentRole =
+    const agent: AgentRole | null =
       row.status === "HumanWorking"
         ? "dev"
         : runnerAgentFromFields({
@@ -861,14 +860,13 @@ function executorDisplay(row: {
   const ref = row.runnerSnapshot?.id ?? null;
   const model = row.runnerSnapshot?.model ?? null;
 
-  if (ref === null || model === null) {
-    throw new MaisterError(
-      "PRECONDITION",
-      `Run ${row.runId} has no runner snapshot label`,
-    );
-  }
+  // Display-only, same contract as `runnerAgentFromFields`: a session row
+  // persisted without its runner leaves this label unresolvable, and one
+  // incomplete column must not 500 the rail. Each part degrades on its own so
+  // a partially-populated snapshot still shows what it does know.
+  const parts = [ref, agent, model].filter((part) => part !== null);
 
-  return `${ref} · ${agent} · ${model}`;
+  return parts.length > 0 ? parts.join(" · ") : "—";
 }
 
 function creatorDisplay(

@@ -65,7 +65,8 @@ async function seedContextRun(): Promise<Seeded> {
       [taskId, src.project_id, taskNumber, title, taskPrompt, src.flow_id],
     );
     // A complete runner snapshot — the active-workspaces rail's executorDisplay
-    // throws unless the snapshot carries both `id` and `model`.
+    // renders `id · agent · model`, degrading each missing part rather than
+    // failing, so seed all three to assert the full label.
     const runnerSnapshot = {
       id: src.runner_id,
       adapter: "claude",

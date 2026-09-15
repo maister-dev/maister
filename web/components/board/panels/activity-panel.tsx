@@ -8,7 +8,11 @@ export interface ActivityPanelProps {
   events: ActivityEvent[];
 }
 
-const AVA: Record<ActivityEvent["agent"], string> = {
+// An event whose run session carries no recorded adapter keeps its row and
+// renders a muted avatar (queries/runner-agent.ts).
+const AVA_UNKNOWN = "bg-mute";
+
+const AVA: Record<NonNullable<ActivityEvent["agent"]>, string> = {
   claude: "bg-amber",
   codex: "bg-accent-3",
   gemini: "bg-accent-2",
@@ -18,6 +22,7 @@ const AVA: Record<ActivityEvent["agent"], string> = {
 };
 
 function avaInitials(agent: ActivityEvent["agent"]): string {
+  if (agent === null) return "—";
   if (agent === "claude") return "cl";
   if (agent === "codex") return "cx";
   if (agent === "gemini") return "gm";
@@ -54,7 +59,7 @@ export async function ActivityPanel({
             <span
               className={clsx(
                 "inline-flex h-7 w-7 flex-none items-center justify-center rounded-lg font-mono text-[9.5px] font-extrabold tracking-[0.02em] text-white",
-                AVA[event.agent],
+                event.agent ? AVA[event.agent] : AVA_UNKNOWN,
               )}
             >
               {avaInitials(event.agent)}
