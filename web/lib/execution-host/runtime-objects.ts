@@ -100,6 +100,28 @@ export function assertRuntimeObjectContentHeaders(input: {
   }
 }
 
+// A bounded reader asks for its whole byte budget, which routinely exceeds the
+// object it reads. RFC 7233 reads a last-byte-pos past the end as "to the end",
+// but this object contract refuses `end >= total` on BOTH sides of the wire
+// (`parseObjectContentRange`, `assertRuntimeObjectContentHeaders`, and the
+// host's own range parser), so the window is narrowed against the authoritative
+// catalogue before it is asked for. A window that already covers the object is
+// read whole — the only readable form of a zero-byte object. A start at or past
+// the end stays unsatisfiable and is left for the host to refuse.
+function clampRangeToCatalogue(
+  range: { start: number; end?: number } | undefined,
+  sizeBytes: bigint | null,
+): { start: number; end?: number } | undefined {
+  const total = sizeBytes === null ? NaN : Number(sizeBytes);
+
+  if (!range || range.end === undefined || !Number.isSafeInteger(total))
+    return range;
+  if (range.end < total) return range;
+  if (range.start === 0) return undefined;
+
+  return range.start >= total ? range : { start: range.start, end: total - 1 };
+}
+
 // A retried manager operation must address the same host object. The ID binds
 // that operation to the exact bytes without leaking a manager-selected path.
 export function deterministicRuntimeObjectId(input: {
@@ -300,8 +322,9 @@ export async function openRuntimeObjectContent(input: {
   const transport = input.transportForHost
     ? await input.transportForHost(loaded.executionHost)
     : defaultRuntimeObjectTransport(loaded.executionHost);
+  const range = clampRangeToCatalogue(input.range, loaded.object.sizeBytes);
   const content = await transport.openRuntimeObjectContent(input.objectId, {
-    range: input.range,
+    range,
     signal: input.signal,
   });
 
@@ -325,7 +348,7 @@ export async function openRuntimeObjectContent(input: {
     assertRuntimeObjectContentHeaders({
       runId: input.runId,
       sizeBytes: loaded.object.sizeBytes,
-      range: input.range,
+      range,
       contentLength: content.contentLength,
       contentRange: content.contentRange,
     });
@@ -336,7 +359,7 @@ export async function openRuntimeObjectContent(input: {
 
   try {
     const verified = await verifyRuntimeObjectResponse(content, {
-      range: input.range,
+      range,
       signal: input.signal,
     });
 

@@ -1143,12 +1143,20 @@ export function createFakeExecutionHost(
         });
       }
       const start = opts?.range?.start ?? 0;
-      const end = Math.min(
-        opts?.range?.end ?? object.bytes.byteLength - 1,
-        object.bytes.byteLength - 1,
-      );
+      const end = opts?.range?.end ?? object.bytes.byteLength - 1;
 
-      if (start < 0 || end < start) {
+      // Mirrors the real host (supervisor `objectByteRange`): a window past the
+      // representation is REFUSED, never silently truncated. Clamping here once
+      // hid a manager-side bug that 416'd in production against every object
+      // smaller than the reader's byte budget. An unranged read of a zero-byte
+      // object stays legal, as it is on the real host.
+      if (
+        start < 0 ||
+        (opts?.range &&
+          (end < start ||
+            start >= object.bytes.byteLength ||
+            end >= object.bytes.byteLength))
+      ) {
         throw precondition("fake: runtime object range is invalid", {
           reason: "runtime_object_range_invalid",
         });
