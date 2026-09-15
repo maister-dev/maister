@@ -4,6 +4,7 @@ import type { ArtifactLocator } from "@/lib/db/schema";
 import type { ExecutionEvent } from "@/lib/db/schema";
 
 import { and, eq } from "drizzle-orm";
+import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
 import {
@@ -24,6 +25,20 @@ const { runs, nodeAttempts } = schemaModule as unknown as Record<string, any>;
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 type Db = any;
+
+const log = pino({
+  name: "artifact-projector",
+  level: process.env.LOG_LEVEL ?? "info",
+});
+
+/** An ACP frame this projector does not classify. Adapters keep adding
+ * telemetry shapes; that is not a corrupt event, so it never poisons. */
+class UnknownSessionUpdateShape extends Error {
+  constructor(readonly shape: string) {
+    super(`unknown sessionUpdate shape: ${shape}`);
+    this.name = "UnknownSessionUpdateShape";
+  }
+}
 
 export const canonicalArtifactProjector: ExecutionEventProjector = {
   consumerName: CANONICAL_PROJECTION_CONSUMERS.artifact,
@@ -109,9 +124,10 @@ function deriveFromToolCall(toolCall: Record<string, unknown>): Derivation {
 }
 
 // Classify a single parsed event line into a derivation, or null when it
-// derives nothing (chunk / non-deriving). Throws only when a session.update
-// carries an unknown sessionUpdate shape, so the caller can WARN + skip while
-// still advancing. A well-formed permission line never throws.
+// derives nothing (chunk / non-deriving). Throws UnknownSessionUpdateShape only
+// when a session.update carries an unknown sessionUpdate discriminant, so the
+// caller can WARN + skip while still advancing. A well-formed permission line
+// never throws.
 function deriveFromLine(line: Record<string, unknown>): Derivation | null {
   const type = line.type;
 
@@ -144,19 +160,23 @@ function deriveFromLine(line: Record<string, unknown>): Derivation | null {
     return deriveFromToolCall(update);
   }
 
-  // Known non-tool shape (e.g. agent_message_chunk) → derive nothing.
+  // Known non-tool shape (e.g. agent_message_chunk) → derive nothing. The last
+  // two are adapter telemetry — `model_advisory` (claude), `session_info_update`
+  // (codex) — listed so the ordinary run logs no warning for them.
   if (
     sessionUpdate === "agent_message_chunk" ||
     sessionUpdate === "agent_thought_chunk" ||
     sessionUpdate === "user_message_chunk" ||
     sessionUpdate === "plan" ||
     sessionUpdate === "available_commands_update" ||
-    sessionUpdate === "current_mode_update"
+    sessionUpdate === "current_mode_update" ||
+    sessionUpdate === "model_advisory" ||
+    sessionUpdate === "session_info_update"
   ) {
     return null;
   }
 
-  throw new Error(`unknown sessionUpdate shape: ${String(sessionUpdate)}`);
+  throw new UnknownSessionUpdateShape(String(sessionUpdate));
 }
 
 function permanentCanonicalProjectionError(
@@ -247,6 +267,22 @@ async function projectCanonicalArtifactEvent(
     derivation = deriveFromLine(canonicalEventLine(event));
   } catch (error) {
     if (error instanceof ExecutionEventProjectionError) throw error;
+    // A shape this projector does not know derives no artifact, and poisoning
+    // the consumer over it would stop EVERY later event in the run — the
+    // failure mode this arm exists to avoid. Warn with the discriminant (the
+    // only thing needed to allow-list it) and advance.
+    if (error instanceof UnknownSessionUpdateShape) {
+      log.warn(
+        {
+          runId: event.runId,
+          eventId: event.id,
+          sessionUpdate: error.shape,
+        },
+        "artifact projector skipped an unknown session update shape",
+      );
+
+      return;
+    }
     throw permanentCanonicalProjectionError(
       error instanceof Error
         ? `canonical artifact event has an invalid shape: ${error.message}`
