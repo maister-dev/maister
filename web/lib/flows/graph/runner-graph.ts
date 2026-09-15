@@ -1479,9 +1479,10 @@ async function executeNodeAction(
     attempt: number;
     // M30 (ADR-081): resume the prior attempt's ACP session on this dispatch.
     resumeSessionId?: string;
-    // M42 (ADR-114): the node's logical session + its host runner. Default to
-    // the run-level executor/runner (single-session parity) when absent.
-    sessionName?: string;
+    // M42 (ADR-114): the node's logical session + its host runner. The runner
+    // defaults to the run-level one (single-session parity) when absent; the
+    // session NAME does not — every dispatch states the session it binds.
+    sessionName: string;
     sessionExecutor?: LoadedRun["executor"];
     sessionRunner?: LoadedRun["runner"];
     planReviewOutputBindings?: PlanReviewOutputBindings;

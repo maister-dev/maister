@@ -338,6 +338,11 @@ async function runOneGate(
     projectSlug: loaded.projectSlug,
     runId: loaded.run.id,
     stepId: gate.id,
+    // A gate spawns its own isolated session while the node's session is still
+    // live (parked, or checkpointed awaiting the next node), so it carries its
+    // own logical identity instead of claiming the run's. Stable per gate: a
+    // permission resume respawns THIS session and must rebind the same row.
+    sessionName: `gate-${gate.id}`,
     worktreePath: ctx.worktreePath,
     context,
   };

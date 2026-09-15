@@ -589,6 +589,42 @@ describe("runConsensusNode", () => {
     );
   });
 
+  it("names every substep session for its own substep, never the run's default", async () => {
+    latestConsensusRound.mockResolvedValue(1);
+    loadConsensusDraftEvidence.mockResolvedValue([
+      draft("architect", "Plan A"),
+      draft("qa", "Plan A"),
+    ]);
+    runAgentStep.mockResolvedValue({
+      ok: true,
+      stdout:
+        '{"verdict":"agree","axes":{"scope":true,"risk":true},"disagreements":[]}',
+      vars: {},
+    });
+    loadConsensusVerdictCell.mockImplementation(async (args) =>
+      verdict(args.verifierId, args.targetParticipantId),
+    );
+    loadConsensusSynthesis
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue("Final consensus plan");
+
+    await runConsensusNode(input());
+
+    const names: Array<string | undefined> = runAgentStep.mock.calls.map(
+      (call: unknown[]) => (call[1] as { sessionName?: string }).sessionName,
+    );
+
+    // A substep session that answers to "default" claims the run's main logical
+    // session: its create ack rebinds that session's ACP handle, and its
+    // incarnation collides with the live one on the active-incarnation index.
+    expect(names.length).toBeGreaterThan(1);
+    expect(names).not.toContain("default");
+    expect(names).not.toContain(undefined);
+    expect(new Set(names).size).toBe(names.length);
+    expect(names.at(-1)).toBe("decide-synthesize");
+    for (const name of names) expect(name).toMatch(/^[A-Za-z0-9._-]+$/);
+  });
+
   it("escalates no consensus as a human HITL pause", async () => {
     latestConsensusRound.mockResolvedValue(1);
     loadConsensusDraftEvidence.mockResolvedValue([
