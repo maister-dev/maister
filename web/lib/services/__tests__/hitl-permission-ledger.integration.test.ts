@@ -241,6 +241,70 @@ describe("permission response ledger (ADR-166 I1–I3)", () => {
     expect((await hitlRow(hitlRequestId)).respondedAt).toBeInstanceOf(Date);
   });
 
+  // Once a permission-resume is authorized the answer is already in flight: it
+  // rides the next prompt instead of a session.input, and `responded_at` stays
+  // NULL because the later result handoff still has to find this row through
+  // `lockNodePermissionSource`. The row therefore still LOOKS answerable, and
+  // every resubmit used to die deep inside `lockPermissionSource` as an
+  // unexplained `permission_attempt_generation` — six times over eleven hours
+  // on the stand. Refuse it here, by name, before anything is claimed.
+  it("refuses a resubmit while a permission resume is already in flight", async () => {
+    const { runId, hitlRequestId, hosts, fake } = await seedLiveNeedsInput();
+    const [run] = await db
+      .select()
+      .from(schema.runs)
+      .where(eq(schema.runs.id, runId));
+
+    await db.insert(schema.nodeAttempts).values({
+      id: randomUUID(),
+      runId,
+      nodeId: "plan",
+      nodeType: "ai_coding",
+      attempt: 1,
+      status: "Running",
+      startedAt: new Date(),
+      executionAssignmentId: run.executionAssignmentId,
+      actionPromptOrdinal: 1,
+      // The exact shape `authorizeNodePermissionResume` writes — the
+      // node_attempts check constraint enforces every field.
+      actionResume: {
+        version: 1,
+        kind: "permission",
+        sourceCommandId: randomUUID(),
+        sourceAssignmentId: randomUUID(),
+        assignmentId: run.executionAssignmentId,
+        promptOrdinal: 1,
+        resumeSessionId: "acp-1",
+        hitlRequestId,
+        sourceRequestId: "req-1",
+        optionId: "allow",
+      },
+    });
+
+    // A null active assignment would make the resume predicate silently false
+    // and this guard vacuous.
+    expect(run.executionAssignmentId).toEqual(expect.any(String));
+
+    await expect(
+      respondToHitl(
+        { runId, hitlRequestId, body: { optionId: "allow" } },
+        actor,
+        { db, executionHosts: hosts },
+      ),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "permission_resume_in_flight" },
+    });
+
+    // A refused request leaves no trace.
+    expect(await commandRows(runId)).toHaveLength(0);
+    expect(fake.callsOf("deliverInput")).toHaveLength(0);
+    const row = await hitlRow(hitlRequestId);
+
+    expect(row.respondedAt).toBeNull();
+    expect(row.response).toBeNull();
+  });
+
   it("I3: a lost response is retried under the SAME command id; the host replay records _audit.deliveryReplayed", async () => {
     const { runId, hitlRequestId, hosts, fake } = await seedLiveNeedsInput();
 
