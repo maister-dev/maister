@@ -466,9 +466,13 @@ async function handlePermissionRequest(
         // while already NeedsInput). Without it keepalive_until stays null, the
         // sweeper never idles the run, and the agent runs forever re-emitting.
         // Mirrors the agent-run path (lib/agents/launch.ts).
+        // The node cursor belongs to the graph runner, which stamped node.id
+        // before dispatch. `pctx.stepId` is the SESSION's label — the gate id
+        // for a gate, `<node>-verify` for a consensus substep — and writing it
+        // here left `runs.current_step_id` naming no graph node at all, which
+        // breaks every node derivation and admission fence downstream.
         .set({
           status: "NeedsInput",
-          currentStepId: pctx.stepId,
           keepaliveUntil: nextKeepaliveAt(),
         })
         .where(and(eq(runs.id, pctx.runId), eq(runs.status, "Running")))

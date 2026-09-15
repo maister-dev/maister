@@ -1292,6 +1292,8 @@ export async function runReconcileSweep(
   // transient supervisor unavailability).
   let liveMap: Map<string, SupervisorSessionRecord>;
   let liveByRunStep: Map<string, SupervisorSessionRecord>;
+  // One live session per run — the in-flight guard's index.
+  let liveByRun: Map<string, SupervisorSessionRecord>;
   let cutoverSessionsStopped = 0;
   let orphanSessionsReaped = 0;
   let handlesLost = 0;
@@ -1350,6 +1352,7 @@ export async function runReconcileSweep(
 
     liveMap = new Map();
     liveByRunStep = new Map();
+    liveByRun = new Map();
     for (const rec of records) {
       if (rec.status !== "live") continue;
       if (rec.acpSessionId) liveMap.set(rec.acpSessionId, rec);
@@ -1357,6 +1360,7 @@ export async function runReconcileSweep(
       // agent node whose run row has not yet persisted acp_session_id (prevents
       // the false "agent-session-gone" crash of a live, long-running node).
       liveByRunStep.set(runStepKey(rec.runId, rec.stepId), rec);
+      if (!liveByRun.has(rec.runId)) liveByRun.set(rec.runId, rec);
     }
   } catch (err) {
     log.warn(
@@ -1422,12 +1426,14 @@ export async function runReconcileSweep(
         : cand.repoPath != null &&
           (worktreesByRepo.get(cand.repoPath)?.has(cand.worktreePath) ?? false);
     const live = cand.acpSessionId ? liveMap.get(cand.acpSessionId) : undefined;
-    // acp_session_id unmatched but a live session exists for (runId, stepId) →
-    // the agent's prompt is still in-flight (acp_session_id not yet persisted).
-    const liveRunStep =
-      !live && cand.currentStepId
-        ? liveByRunStep.get(runStepKey(cand.runId, cand.currentStepId))
-        : undefined;
+    // acp_session_id unmatched but the RUN has a live session → its prompt is
+    // still in-flight (acp_session_id is persisted only after it returns).
+    // Keyed by the run alone: a session's stepId is a label the host rewrites
+    // per prompt and never equals the cursor for a gate or a consensus substep,
+    // so keying on it left this guard unable to fire for them — and a live node
+    // was crashed as `agent-session-gone`. Over-matching here only skips a
+    // tick; under-matching kills a working run.
+    const liveRunStep = !live ? liveByRun.get(cand.runId) : undefined;
 
     // A parked orchestrator (WaitingOnChildren) is classified by the §0
     // branch which reads no node-kind — skip the resolve.
