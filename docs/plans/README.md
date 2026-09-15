@@ -31,3 +31,4 @@ fails when a file here is missing from it).
 | [`2026-07-01-project-brain-architecture.md`](2026-07-01-project-brain-architecture.md) | Shipped — sub-projects A/B/C all landed (ADR-122/127/128) |
 | [`2026-09-02-rah-companion-package.md`](2026-09-02-rah-companion-package.md) | Pending — handoff pointer for `maister-plugins/packages/rah` (ADR-165); authored after this repo merges |
 | [`2026-09-11-ext-recover-discard-design.md`](2026-09-11-ext-recover-discard-design.md) | Shipped (2026-09-11) — ADR-034 amendment; `runs:recover` over `/api/v1/ext` |
+| [`2026-09-15-project-manifest-sync-design.md`](2026-09-15-project-manifest-sync-design.md) | Design (2026-09-15) — input for `/aif-plan`; drift model + explicit persist + adopt-from-repo; amends ADR-088/093 |
