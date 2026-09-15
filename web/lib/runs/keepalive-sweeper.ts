@@ -149,17 +149,22 @@ function needsInputIdleTtlHours(): number {
   return parsed;
 }
 
-// ADR-166: the live host session for the candidate's CURRENT node, read through
-// the client bound to the run's assignment. Matching by (runId, stepId) keeps
-// the "only the exact capped node's session" rule; a lookup failure is the
-// caller's "leave for the next tick" signal.
+// ADR-166: the run's live host session, read through the client bound to its
+// assignment. It is deliberately NOT narrowed by stepId. A session's stepId is
+// a label the host rewrites on every prompt, and it does not equal
+// `runs.current_step_id` for a gate (the gate id), a consensus substep
+// (`<node>-verify` / `-synthesize`) or any run whose last prompt relabelled the
+// record. Narrowing by it made a live agent read as "confirmed absent", and
+// both callers below then terminalize the run while it keeps spending — the
+// split-brain this sweeper exists to avoid. Both callers are terminating the
+// WHOLE run, so its live session is theirs to tear down whichever node it
+// belongs to; a lookup failure remains the "leave for the next tick" signal.
 async function liveSessionFor(
   client: BoundClient,
-  stepId: string | null,
 ): Promise<SupervisorSessionRecord | undefined> {
   const records = await client.sessionsForRun();
 
-  return records.find((r) => r.status === "live" && r.stepId === stepId);
+  return records.find((r) => r.status === "live");
 }
 
 type Pass1Candidate = {
@@ -576,7 +581,7 @@ async function runTimeLimitPass(
 
     try {
       client = await hosts.forRun(row.id, { teardown: true });
-      live = await liveSessionFor(client, row.currentStepId);
+      live = await liveSessionFor(client);
     } catch (err) {
       log.warn(
         {
@@ -1476,10 +1481,7 @@ async function boundLiveSession(
 } | null> {
   try {
     const client = await hosts.forRun(candidate.id, { teardown: true });
-    const live = await liveSessionFor(
-      client,
-      candidate.runKind === "agent" ? "agent" : candidate.currentStepId,
-    );
+    const live = await liveSessionFor(client);
 
     return { client, live };
   } catch (err) {

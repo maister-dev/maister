@@ -624,6 +624,38 @@ describe("runReconcileSweep (integration)", () => {
     expect(runFlow).not.toHaveBeenCalled();
   }, 60_000);
 
+  // The same guard, with the session carrying a stepId that is NOT the run's
+  // node cursor — a consensus substep (`<node>-verify`), a gate (the gate id),
+  // or any run whose last prompt relabelled the host record. Keyed by stepId
+  // the guard can never match those, and a live node is crashed as
+  // `agent-session-gone`.
+  it("does NOT crash a live in-flight node whose session stepId is not the node cursor", async () => {
+    const substep = await seedRun({
+      status: "Running",
+      currentStepId: "implement",
+      acpSessionId: null,
+      resumeStartedAt: null,
+    });
+
+    await seedWorkspace(substep, "/worktrees/substep");
+    await seedNodeAttempt(substep, {
+      startedAt: new Date(Date.now() - 600_000), // past the 90s grace
+    });
+
+    const { opts, runFlow } = await makeOpts({
+      worktreePaths: ["/worktrees/substep"],
+      liveSessions: [
+        liveRecord(substep, "acp-substep-unmatched", "implement-verify"),
+      ],
+    });
+
+    const summary = await runReconcileSweep(opts);
+
+    expect((await readRun(substep)).status).toBe("Running"); // NOT crashed
+    expect(summary.crashed).toBe(0);
+    expect(runFlow).not.toHaveBeenCalled();
+  }, 60_000);
+
   it("reattaches a live Running Flow through its durable driver without a permission resume", async () => {
     const attached = await seedRun({
       status: "Running",

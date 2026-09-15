@@ -254,18 +254,20 @@ async function seedRunningNode(opts: {
   return { runId, supervisorSessionId };
 }
 
-// The watchdog matches a live session by the server-owned (runId, stepId), not
-// by acp_session_id (which the runner persists only after the prompt returns).
+// The watchdog matches a live session by runId, not by acp_session_id (which the
+// runner persists only after the prompt returns) and not by stepId (a per-prompt
+// label that does not equal the run's node cursor for gates or substeps).
 function liveSessionRecord(
   runId: string,
   supervisorSessionId: string,
   acpSessionId?: string,
+  stepId = "implement",
 ) {
   return {
     sessionId: supervisorSessionId,
     runId,
     projectSlug: "wd-app",
-    stepId: "implement",
+    stepId,
     status: "live" as const,
     pid: 1,
     startedAt: "",
@@ -479,11 +481,11 @@ describe("time-limit watchdog — kill-on-cap (3B.1 / 3B.2)", () => {
     expect(attempt.errorCode).not.toBeNull();
   }, 60_000);
 
-  it("tears down a mid-prompt over-cap session even when acp_session_id is still null (matched by runId+stepId)", async () => {
+  it("tears down a mid-prompt over-cap session even when acp_session_id is still null (matched by runId)", async () => {
     // The dangerous path: the run is over cap while the node prompt is still
     // running, so runs.acp_session_id has NOT been persisted yet — but a live
-    // supervisor session exists. Matching by (runId, stepId) MUST find and kill
-    // it, otherwise the run is marked Failed while the agent keeps running.
+    // supervisor session exists. The run-keyed lookup MUST find and kill it,
+    // otherwise the run is marked Failed while the agent keeps running.
     const { runId, supervisorSessionId } = await seedRunningNode({
       maxDurationMinutes: 10,
       attemptStartedAt: new Date(Date.now() - 30 * 60_000),
@@ -491,7 +493,7 @@ describe("time-limit watchdog — kill-on-cap (3B.1 / 3B.2)", () => {
     });
 
     listSessionsSpy.mockResolvedValue([
-      // No acpSessionId on the record either — matched purely by runId+stepId.
+      // No acpSessionId on the record either — matched purely by runId.
       liveSessionRecord(runId, supervisorSessionId),
     ]);
 
@@ -501,6 +503,34 @@ describe("time-limit watchdog — kill-on-cap (3B.1 / 3B.2)", () => {
     expect(deleteSessionSpy).toHaveBeenCalledWith(supervisorSessionId);
     expect((await getRun(runId)).status).toBe("Failed");
     expect((await getAttempt(runId)).status).toBe("Failed");
+  }, 60_000);
+
+  // A session's stepId is a LABEL, not the run's node cursor: the host rewrites
+  // it on every prompt, consensus substeps send `<node>-verify` / `-synthesize`
+  // and gates send the gate id, none of which equal runs.current_step_id.
+  // Narrowing the lookup by it makes the watchdog declare a live agent
+  // "confirmed absent" and mark the run Failed while it keeps spending.
+  it("tears down a live session whose stepId is not the node cursor", async () => {
+    const { runId, supervisorSessionId } = await seedRunningNode({
+      maxDurationMinutes: 10,
+      attemptStartedAt: new Date(Date.now() - 30 * 60_000),
+      acpSessionId: null,
+    });
+
+    listSessionsSpy.mockResolvedValue([
+      liveSessionRecord(
+        runId,
+        supervisorSessionId,
+        undefined,
+        "implement-verify",
+      ),
+    ]);
+
+    await runSweepTick({ db, executionHosts: hosts });
+
+    expect(deleteSessionSpy).toHaveBeenCalledTimes(1);
+    expect(deleteSessionSpy).toHaveBeenCalledWith(supervisorSessionId);
+    expect((await getRun(runId)).status).toBe("Failed");
   }, 60_000);
 
   it("leaves the run Running (retries next tick) when deleteSession fails with a retryable 5xx", async () => {
