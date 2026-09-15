@@ -11,12 +11,18 @@
 import type { AgentExecution } from "@/lib/agents/launch";
 import type { SupervisorEvent } from "@/lib/supervisor-client";
 
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import {
   AGENT_CONSUMER_MAX_ATTEMPTS,
+  observeAgentSession,
   superviseAgentSession,
 } from "@/lib/agents/launch";
+import {
+  hasAgentSessionObserver,
+  resetAgentSessionObserversForTests,
+  takeAgentObserverFailure,
+} from "@/lib/agents/session-observer-registry";
 import { MaisterError } from "@/lib/errors";
 
 type StreamAttempt = (sessionId: string) => AsyncGenerator<SupervisorEvent>;
@@ -73,6 +79,10 @@ async function* failing(): AsyncGenerator<SupervisorEvent> {
 async function* silent(): AsyncGenerator<SupervisorEvent> {
   // An empty stream that ends cleanly.
 }
+
+beforeEach(() => {
+  resetAgentSessionObserversForTests();
+});
 
 describe("superviseAgentSession", () => {
   it("re-enters the durable stream after a transient failure", async () => {
@@ -165,5 +175,89 @@ describe("superviseAgentSession", () => {
     });
 
     expect(resumedFrom).toHaveLength(AGENT_CONSUMER_MAX_ATTEMPTS);
+  });
+
+  // The sweep that eventually crashes this run names the failure, not just its
+  // own classification: the give-up is recorded where the sweep can read it.
+  it("records the typed give-up so the sweep's terminal status can name it", async () => {
+    const { execution } = streamingExecution([failing]);
+
+    await superviseAgentSession({
+      db,
+      execution,
+      runId: "run-give-up",
+      sessionId: "session-give-up",
+      sleep: async () => {},
+    });
+
+    expect(takeAgentObserverFailure("run-give-up")).toMatchObject({
+      code: "EXECUTOR_UNAVAILABLE",
+      message: "projection database connection acquisition timed out",
+      attempts: AGENT_CONSUMER_MAX_ATTEMPTS,
+      sessionId: "session-give-up",
+    });
+  });
+
+  it("records nothing when the stream ends cleanly", async () => {
+    const { execution } = streamingExecution([silent]);
+
+    await superviseAgentSession({
+      db,
+      execution,
+      runId: "run-clean",
+      sessionId: "session-clean",
+      sleep: async () => {},
+    });
+
+    expect(takeAgentObserverFailure("run-clean")).toBeNull();
+  });
+});
+
+// An observer is the run's ONLY reader of its canonical stream; two of them on
+// one session double every side effect on that path (a permission HITL row, an
+// input delivery). Nothing prevented it before — every entry into
+// `startAgentSession`/`dispatchStoredAgentTurn` started its own.
+describe("observeAgentSession — one observer per session per process", () => {
+  function pendingExecution(): AgentExecution {
+    return {
+      client: {} as never,
+      admin: {
+        async *streamSession(): AsyncGenerator<SupervisorEvent> {
+          await new Promise<void>(() => {});
+        },
+      },
+    } as unknown as AgentExecution;
+  }
+
+  it("refuses a second observer for a session this process already observes", () => {
+    const args = {
+      db,
+      execution: pendingExecution(),
+      runId: "run-dup",
+      sessionId: "session-dup",
+    };
+
+    expect(observeAgentSession(args)).toBe(true);
+    expect(observeAgentSession(args)).toBe(false);
+    expect(hasAgentSessionObserver("session-dup")).toBe(true);
+  });
+
+  it("releases the session once its observer returns, so a later sweep can re-observe", async () => {
+    const { execution } = streamingExecution([silent]);
+
+    expect(
+      observeAgentSession({
+        db,
+        execution,
+        runId: "run-release",
+        sessionId: "session-release",
+      }),
+    ).toBe(true);
+    await expect
+      .poll(() => hasAgentSessionObserver("session-release"), {
+        timeout: 1_000,
+        interval: 5,
+      })
+      .toBe(false);
   });
 });

@@ -571,9 +571,32 @@ attempt number and the resume point. Exhaustion is an ERROR line stating that
 the run has no observer.
 
 The observer never terminalizes the run. An owned prompt's outcome belongs to
-its prompt owner and its own retry/poison ledger; a run whose observer is gone
-while its session is still live is NOT recovered by the reconcile sweep, which
-refuses to reattach a non-flow run.
+its prompt owner and its own retry/poison ledger.
+
+There is exactly ONE observer per host session per process. The in-process
+registry (`lib/agents/session-observer-registry.ts`, the `hasSyncDriver`
+precedent) is that mutual exclusion — two readers of one canonical stream would
+double every side effect on it — and it is also the discriminant the reconcile
+sweep keys on. A `Running` `run_kind='agent'` run whose session is live and whose
+observer is gone (the web process died, or the supervisor above exhausted its
+attempts) is given an observer back by the sweep (`reobserve`,
+`agent-observer-gone`); with one registered here it is healthy and skipped
+(`agent-observer-live`). See [`reconciliation-gc.md`](reconciliation-gc.md).
+
+Re-observation after process death re-enters the stream FROM THE BEGINNING — the
+new reader has no resume point — so every side effect on that path is idempotent
+by (session, request) identity: a replayed permission request keeps its existing
+`hitl_requests` row, re-announces nothing and re-delivers nothing. Because the
+sweep only ever re-observes a `Running` run with a LIVE session, no terminal or
+halting event can be in that replay: a `session.exited` would mean the session is
+not live, and an applied halting `session.hook_trip` checkpoints the session and
+leaves the run non-`Running`.
+
+When exhaustion happened in THIS process, the give-up is recorded with its typed
+`code`, `message` and attempt count, and the terminal status the sweep eventually
+writes carries it — `agent-session-gone` names what the sweep noticed, not what
+happened, and that gap is what made the failure unknowable. After a process
+death nothing recorded it, so the classification stands alone.
 
 ### Agent messages (Implemented)
 
