@@ -20,10 +20,14 @@ vi.mock("@/lib/db/schema", () => ({
   // M42 (ADR-114): the resume handle now lives on run_sessions.
   runSessions: {
     _t: "run_sessions",
+    id: { _t: "run_sessions.id" },
     runId: { _t: "run_sessions.runId" },
     acpSessionId: { _t: "run_sessions.acpSessionId" },
     updatedAt: { _t: "run_sessions.updatedAt" },
   },
+  // The active-session ranking correlates liveness off the incarnation ledger,
+  // so the module-level destructure in active-run-session.ts needs it present.
+  runSessionIncarnations: { _t: "run_session_incarnations" },
   flows: { _t: "flows" },
   // M11b: resume-recovery now also references these tags for the
   // takeover-return stranded-Running sweep (runTakeoverReturnRecoverySweep).

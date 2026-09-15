@@ -33,7 +33,11 @@ import { AssignmentActions } from "@/components/board/assignment-actions";
 import { RunHitlResponse } from "@/components/board/run-hitl-response";
 import { WorkStageChip } from "@/components/work/work-stage-chip";
 
-const AVATAR: Record<HitlItem["agent"], string> = {
+// A request whose run session carries no recorded adapter keeps its card and
+// renders a muted avatar (queries/runner-agent.ts).
+const AVATAR_UNKNOWN = "bg-mute";
+
+const AVATAR: Record<NonNullable<HitlItem["agent"]>, string> = {
   claude: "bg-amber",
   codex: "bg-accent-3",
   gemini: "bg-accent-2",
@@ -42,6 +46,7 @@ const AVATAR: Record<HitlItem["agent"], string> = {
 };
 
 function avatarInitials(agent: HitlItem["agent"]): string {
+  if (agent === null) return "—";
   if (agent === "claude") return "cl";
   if (agent === "codex") return "cx";
   if (agent === "gemini") return "gm";
@@ -217,7 +222,7 @@ export function HitlCard({
         <span
           className={clsx(
             "inline-flex h-8 w-8 flex-none items-center justify-center rounded-[9px] font-mono text-[10px] font-extrabold tracking-[0.02em] text-white",
-            AVATAR[item.agent],
+            item.agent ? AVATAR[item.agent] : AVATAR_UNKNOWN,
           )}
         >
           {avatarInitials(item.agent)}

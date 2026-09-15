@@ -176,6 +176,9 @@ vi.mock("@/lib/db/schema", () => ({
   nodeAttempts: TABLE_NODE_ATTEMPTS,
   executionCommands: TABLE_EXECUTION_COMMANDS,
   runSessions: TABLE_RUN_SESSIONS,
+  // The active-session ranking correlates liveness off the incarnation ledger,
+  // so the module-level destructure in active-run-session.ts needs it present.
+  runSessionIncarnations: { _t: "run_session_incarnations" },
 }));
 
 const selectChainFactory = () => {

@@ -1090,7 +1090,7 @@ export default async function RunDetailLayout({
           },
         ]
       : []),
-    { label: t("agentCenterRunner"), value: detail.agent },
+    { label: t("agentCenterRunner"), value: detail.agent ?? "-" },
     { label: t("inspectorRunKind"), value: detail.runKind },
     { label: t("headerBranch"), value: detail.branch },
     { label: t("baseBranch"), value: detail.baseBranch ?? "-" },

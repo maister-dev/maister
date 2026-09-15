@@ -198,7 +198,7 @@ export default async function ScratchRunDetailLayout({
 
   const inspectorFacts = [
     { label: t("flowCenterStatus"), value: detail.status },
-    { label: t("agentCenterRunner"), value: detail.agent },
+    { label: t("agentCenterRunner"), value: detail.agent ?? "-" },
     { label: t("headerBranch"), value: detail.branch },
     { label: t("baseBranch"), value: baseBranch },
     { label: t("targetBranch"), value: targetBranch },

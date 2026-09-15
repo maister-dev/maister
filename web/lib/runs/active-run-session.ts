@@ -5,17 +5,9 @@ import type { RunnerSnapshot } from "@/lib/db/schema";
 import type { AnyColumn, SQL } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
-import {
-  and,
-  desc,
-  eq,
-  getTableName,
-  inArray,
-  isNotNull,
-  sql,
-} from "drizzle-orm";
+import { desc, eq, getTableName, inArray, sql } from "drizzle-orm";
 
-import { runSessions } from "@/lib/db/schema";
+import { runSessionIncarnations, runSessions } from "@/lib/db/schema";
 import * as schema from "@/lib/db/schema";
 
 type ReadDb = Pick<NodePgDatabase<typeof schema>, "select">;
@@ -53,11 +45,42 @@ function toActiveRunSession(row: Record<string, unknown>): ActiveRunSession {
   };
 }
 
+// Liveness, as the incarnation ledger defines it: a session is live when it
+// holds a non-terminal incarnation. That is the SAME state set as the partial
+// unique index `run_session_incarnations_active_run_session_uq`, so at most one
+// incarnation per session qualifies.
+//
+// `acp_session_id IS NOT NULL` is NOT liveness — it means "has been prompted at
+// least once", and it deliberately OUTLIVES the process: it is the
+// `session/resume` checkpoint handle, so nothing clears it when an incarnation
+// goes terminal. Ranking on it alone let a FINISHED substep session (a consensus
+// verification, a gate evaluation) outrank the node's own — it keeps its handle
+// and carries a newer `updated_at`, since `updated_at` is bumped only by the
+// create ack. Liveness is therefore the first key, the resume handle only breaks
+// ties within a liveness class, and a checkpointed session still ranks live
+// (`checkpointed` is non-terminal) so idle resume keeps finding it.
+function liveIncarnationFor(sessionIdRef: SQL | AnyColumn): SQL {
+  return sql`EXISTS (SELECT 1 FROM ${runSessionIncarnations} rsi WHERE rsi.run_session_id = ${sessionIdRef} AND rsi.state IN ('created', 'active', 'checkpointed'))`;
+}
+
+// Ordering for the correlated-subquery form, where the row is aliased `rs`.
+const ACTIVE_SESSION_ORDER = sql`${liveIncarnationFor(sql`rs.id`)} DESC, (rs.acp_session_id IS NOT NULL) DESC, rs.updated_at DESC`;
+
+// Same three keys for the query-builder form, which addresses real columns.
+function activeSessionOrderBy(): SQL[] {
+  return [
+    sql`${liveIncarnationFor(runSessions.id)} DESC`,
+    sql`(${runSessions.acpSessionId} IS NOT NULL) DESC`,
+    sql`${runSessions.updatedAt} DESC`,
+  ];
+}
+
 // M42 (ADR-114): a correlated scalar subquery for a column of a run's ACTIVE
-// session (live-handle-first, else newest), keyed on a `runs.id` column in the
-// outer query. Drop-in replacement for the dropped `runs.<mirror>` columns in
-// display/list selects — keeps the select's projected shape identical. `runIdCol`
-// is a trusted schema column (never user input); the column names are literal.
+// session (live-first, then resumable, then newest), keyed on a `runs.id` column
+// in the outer query. Drop-in replacement for the dropped `runs.<mirror>` columns
+// in display/list selects — keeps the select's projected shape identical.
+// `runIdCol` is a trusted schema column (never user input); the column names are
+// literal.
 function activeRunSessionScalar<T>(
   runIdCol: AnyColumn,
   sessionColumn: SQL,
@@ -66,7 +89,7 @@ function activeRunSessionScalar<T>(
     getTableName(runIdCol.table),
   )}.${sql.identifier(runIdCol.name)}`;
 
-  return sql<T | null>`(SELECT ${sessionColumn} FROM ${runSessions} rs WHERE rs.run_id = ${qualifiedRunId} ORDER BY (rs.acp_session_id IS NOT NULL) DESC, rs.updated_at DESC LIMIT 1)`;
+  return sql<T | null>`(SELECT ${sessionColumn} FROM ${runSessions} rs WHERE rs.run_id = ${qualifiedRunId} ORDER BY ${ACTIVE_SESSION_ORDER} LIMIT 1)`;
 }
 
 export function activeSessionAcpSessionId(
@@ -95,34 +118,24 @@ export function activeSessionRunnerId(runIdCol: AnyColumn): SQL<string | null> {
 }
 
 // The run's ACTIVE logical session — the one whose ACP process is live/paused.
-// Sessions are sequential, so the active one is the most-recently-updated
-// `run_sessions` row that still holds a live `acp_session_id`. When no session
-// has a live handle (a fresh launch, or all sessions exited) it falls back to
-// the most-recently-updated row so the resolved `runner_snapshot` / agent stay
-// available, and to null only when the run has no sessions at all.
+// Ranked by `activeSessionOrderBy`: a session holding a non-terminal incarnation
+// first (a checkpointed one still counts, so idle resume finds it), then one
+// holding a `session/resume` handle, then the most recently bound. When nothing
+// is live it still falls back to the newest row so the resolved
+// `runner_snapshot` / agent stay available, and to null only when the run has no
+// sessions at all.
 export async function loadActiveRunSession(
   db: ReadDb,
   runId: string,
 ): Promise<ActiveRunSession | null> {
-  const live = await db
-    .select()
-    .from(runSessions)
-    .where(
-      and(eq(runSessions.runId, runId), isNotNull(runSessions.acpSessionId)),
-    )
-    .orderBy(desc(runSessions.updatedAt))
-    .limit(1);
-
-  if (live[0]) return toActiveRunSession(live[0]);
-
-  const latest = await db
+  const rows = await db
     .select()
     .from(runSessions)
     .where(eq(runSessions.runId, runId))
-    .orderBy(desc(runSessions.updatedAt))
+    .orderBy(...activeSessionOrderBy())
     .limit(1);
 
-  return latest[0] ? toActiveRunSession(latest[0]) : null;
+  return rows[0] ? toActiveRunSession(rows[0]) : null;
 }
 
 // Every logical session of a run, newest first — the terminal/promote/abandon
@@ -141,9 +154,10 @@ export async function loadRunSessions(
   return rows.map(toActiveRunSession);
 }
 
-// Batch variant for list/sweep readers: the ACTIVE session per run id (same
-// "live handle wins, else newest" rule as `loadActiveRunSession`). Runs with no
-// `run_sessions` row are simply absent from the map.
+// Batch variant for list/sweep readers: the ACTIVE session per run id, ranked by
+// the same three keys as `loadActiveRunSession`. Because the rows arrive already
+// ordered, the FIRST row per run is that run's active session — no second-guess
+// merge rule. Runs with no `run_sessions` row are simply absent from the map.
 export async function loadActiveRunSessionsByRunId(
   db: ReadDb,
   runIds: readonly string[],
@@ -156,19 +170,12 @@ export async function loadActiveRunSessionsByRunId(
     .select()
     .from(runSessions)
     .where(inArray(runSessions.runId, [...new Set(runIds)]))
-    .orderBy(desc(runSessions.updatedAt));
+    .orderBy(...activeSessionOrderBy());
 
   for (const row of rows) {
     const runId = row.runId as string;
-    const active = toActiveRunSession(row);
-    const existing = out.get(runId);
 
-    // First (most-recent) row per run wins; a later row only replaces it when
-    // it carries a live acp handle the incumbent lacks.
-    if (!existing) out.set(runId, active);
-    else if (!existing.acpSessionId && active.acpSessionId) {
-      out.set(runId, active);
-    }
+    if (!out.has(runId)) out.set(runId, toActiveRunSession(row));
   }
 
   return out;

@@ -40,7 +40,11 @@ export interface SettingsViewNode {
 //  - a capability node with no declared/strict classes → present, classes: [].
 export function buildSettingsView(
   nodes: SettingsViewNode[],
-  agent: CapabilityAgent,
+  // Null when the run's active session carries no recorded adapter. Live
+  // enforceability is per-adapter, so it cannot be evaluated then — a recorded
+  // snapshot still projects, and anything else degrades to `classes: []` rather
+  // than failing the settings read.
+  agent: CapabilityAgent | null,
   snapshotByNode?: Record<string, EnforcementSnapshotEntry[]>,
 ): SettingsNodeView[] {
   const view: SettingsNodeView[] = [];
@@ -51,10 +55,12 @@ export function buildSettingsView(
     const recorded = snapshotByNode?.[node.id];
     const entries = recorded
       ? recorded
-      : evaluateNodeEnforcement(
-          node.settings as AiCodingSettings | JudgeSettings | undefined,
-          agent,
-        );
+      : agent === null
+        ? []
+        : evaluateNodeEnforcement(
+            node.settings as AiCodingSettings | JudgeSettings | undefined,
+            agent,
+          );
 
     view.push({
       nodeId: node.id,

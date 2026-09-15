@@ -324,6 +324,24 @@ describe("gate execution", () => {
     expect(creates().map((payload) => payload.sessionName)).toEqual([
       "gate-judge",
     ]);
+
+    // ...and that session's row records the runner it spawned on. Nothing
+    // pre-inserts a substep row at launch, so without the seed the create ack's
+    // INSERT branch leaves every runner column NULL — and since a live substep
+    // row outranks the node's own in active-session selection, that NULL is
+    // what the portfolio/board/run/inbox would read.
+    const [gateSession] = await db
+      .select()
+      .from(fullSchema.runSessions)
+      .where(
+        and(
+          eq(fullSchema.runSessions.runId, seeded.runId),
+          eq(fullSchema.runSessions.sessionName, "gate-judge"),
+        ),
+      );
+
+    expect(gateSession?.capabilityAgent).not.toBeNull();
+    expect(gateSession?.runnerSnapshot).not.toBeNull();
   });
 
   it("two blocking gates: a failing one fails the run, both verdicts recorded", async () => {

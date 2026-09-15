@@ -114,7 +114,7 @@ export interface HitlItem {
   assignmentStaleEvidenceSummary: Record<string, unknown> | null;
   assigneeLabel: string | null;
   assigneeUserId: string | null;
-  agent: HitlAgent;
+  agent: HitlAgent | null;
   branch: string;
   flowRef: string;
   // Originating flow node: label (= step_id) + resolved node kind.

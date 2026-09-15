@@ -2,6 +2,7 @@ import "server-only";
 
 import type {
   ResolvedRunnerSlot,
+  RunnerResolution,
   RunnerSnapshot,
 } from "@/lib/acp-runners/resolve";
 import type { FlowRunnerConfig, RunnerSlot } from "@/lib/config.schema";
@@ -36,6 +37,12 @@ export type ConsensusRoleRuntime = {
   runner?: RunAgentStepCtx["runner"];
   adapterLaunch?: RunAgentStepCtx["adapterLaunch"];
   agentBinding?: { id: string };
+  // M42 (ADR-114): the resolved runner behind this role, kept so the substep's
+  // own `run_sessions` row can record the runner it actually spawned with. A
+  // consensus role deliberately runs a DIFFERENT runner from the node's, which
+  // is precisely the fact a snapshot-less row loses.
+  resolution: RunnerResolution;
+  resolutionSource: string;
 };
 
 export function executorFromRunnerSnapshot(
@@ -84,11 +91,13 @@ export async function resolveConsensusRunnerSlot(args: {
   });
 }
 
-function roleRuntimeFromSnapshot(
-  snapshot: RunnerSnapshot,
+function roleRuntimeFromResolution(
+  resolution: RunnerResolution,
   roleKind: "agent" | "runner",
   roleRef: string,
+  resolutionSource: string,
 ): ConsensusRoleRuntime {
+  const snapshot = resolution.runnerSnapshot;
   const adapterLaunch = mergeRunnerAdapterLaunch(snapshot);
 
   return {
@@ -96,6 +105,8 @@ function roleRuntimeFromSnapshot(
     roleRef,
     executor: executorFromRunnerSnapshot(snapshot),
     runner: runnerSupervisorInput({ snapshot }),
+    resolution,
+    resolutionSource,
     ...(adapterLaunch ? { adapterLaunch } : {}),
   };
 }
@@ -123,10 +134,11 @@ export async function resolveConsensusRoleRuntime(args: {
     });
 
     return {
-      ...roleRuntimeFromSnapshot(
-        runtime.resolution.runnerSnapshot,
+      ...roleRuntimeFromResolution(
+        runtime.resolution,
         "agent",
         args.role.agent,
+        `agent:${args.role.agent}`,
       ),
       agentBinding: { id: args.role.agent },
     };
@@ -144,10 +156,11 @@ export async function resolveConsensusRoleRuntime(args: {
       roleLabel: args.roleLabel,
     });
 
-    return roleRuntimeFromSnapshot(
-      resolved.runnerSnapshot,
+    return roleRuntimeFromResolution(
+      resolved,
       "runner",
       resolved.runnerId,
+      resolved.resolutionSource,
     );
   }
 

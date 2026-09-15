@@ -166,7 +166,7 @@ export interface FlightCard {
   // chip; non-launchable even with a flow set (mirrors the backlog card).
   triageStatus: "triaged" | "flagged" | null;
   runId: string;
-  agent: BoardAgent;
+  agent: BoardAgent | null;
   status: CardStatus;
   stepLabel: string;
   spine: SpineSegment[];

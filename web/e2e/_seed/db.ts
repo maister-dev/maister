@@ -45,7 +45,7 @@ export async function singleValue<T>(
 }
 
 // The standard single-runner `claude` snapshot shape the UI rail/list readers
-// expect (executorDisplay needs both `id` and `model`).
+// expect (executorDisplay renders `id · agent · model`, omitting absent parts).
 export function e2eClaudeRunnerSnapshot(runnerId: string) {
   return {
     id: runnerId,
