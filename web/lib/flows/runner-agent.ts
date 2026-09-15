@@ -152,9 +152,15 @@ export type RunAgentStepCtx = {
     env?: Record<string, string>;
   };
   runner?: SupervisorRunnerInput;
-  // M42 (ADR-114): the logical Flow session this node runs in — forwarded to the
-  // supervisor for per-session cost/event attribution.
-  sessionName?: string;
+  // M42 (ADR-114): the logical Flow session this step runs in — forwarded to the
+  // supervisor for per-session cost/event attribution, and the identity the
+  // create ack binds. REQUIRED: a step that omits it inherits the run's
+  // `default` session, rebinding that session's ACP handle to a throwaway
+  // process and adding a second live incarnation to it, which
+  // `run_session_incarnations_active_run_session_uq` refuses. A substep that
+  // runs alongside a node's session names ITSELF (see gates-exec /
+  // consensus/runtime, and `sync-${attempt}` in runs/sync-target).
+  sessionName: string;
   context: FlowContext;
   capabilityProfilePath?: string;
   capabilityInstructionsPath?: string;

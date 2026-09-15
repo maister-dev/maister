@@ -158,6 +158,17 @@ flowchart LR
 - A node with neither `session:` nor `runner:` MUST join the implicit `default`
   session; a node with `runner:` and no `session:` MUST get its own solo session; a
   node with `session:` MUST join that named group.
+- A **substep** session — one an engine phase spawns beside a node rather than
+  for a node (a gate evaluation, a consensus verification or synthesis, the
+  branch-sync AI resolver) — MUST carry a logical name of its own
+  (`gate-<gateId>`, `<nodeId>-verify-<round>-<n>`, `<nodeId>-synthesize`,
+  `sync-<attempt>`) and MUST NOT bind `default`. Its `run_sessions` row exists
+  for the create ack's binding and for its incarnation's parentage; no node
+  dispatches into it. A top-level `sessions:` key MUST NOT take one of those
+  shapes — a declared session that collides with a substep name would be bound
+  by that substep (today a naming convention, not a load-time refusal). A
+  run-continuing respawn is NOT a substep: resume, recover and gate chat re-bind
+  the session they are continuing.
 - Nodes sharing a `session:` name MUST share one ACP process and one continuous
   `acp_session_id` resumed in graph order; all sessions in a run MUST share the
   run's single worktree and MUST execute sequentially (never in parallel).
@@ -231,6 +242,17 @@ flowchart LR
 - **Runner deleted while bound/in-use** — the runner delete guard refuses while a
   binding or a live `run_sessions` row references it
   (`MaisterError("CONFLICT")` / `PRECONDITION`).
+- **Substep session binding the run's own name** — a second live host session on
+  one logical session. `applyCreateAck` rebinds that session's
+  `host_session_id`/`acp_session_id` to the throwaway process, and the lifecycle
+  projector's incarnation insert is refused by
+  `run_session_incarnations_active_run_session_uq` — a raw database error the
+  projector reads as transient, so it retries and poisons the run's cursor and
+  every later event behind it
+  ([execution-event-plane.md](execution-event-plane.md)). Same-epoch
+  predecessors are NOT retired: `retireSupersededSessionIncarnations` retires
+  only strictly lower `assignment_epoch`s, which exist solely for
+  resume/recover/rework/interrupt re-entries.
 
 ## Linked artifacts
 

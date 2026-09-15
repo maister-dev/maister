@@ -701,6 +701,153 @@ describe("runtime event ingestion", () => {
     expect(exitedIncarnation.rows).toEqual([{ state: "exited", ended: true }]);
   });
 
+  it("admits a concurrent substep session only under its own logical name, and wedges the stream when it reuses the run's", async () => {
+    const overlapRunId = randomUUID();
+    const overlapHostId = randomUUID();
+    const overlapAssignmentId = randomUUID();
+    const overlapHostKey = `eh_${randomUUID().replace(/-/g, "")}`;
+    const overlapStreamId = randomUUID();
+    const nodeSessionId = randomUUID();
+    const substepSessionId = randomUUID();
+    const collidingSessionId = randomUUID();
+
+    await testDatabase.pool.query(
+      `insert into runs
+         (id, project_id, run_kind, status, execution_data_plane_mode, flow_version, flow_revision)
+       values ($1, $2, 'flow', 'Running', 'canonical_events_v1', '1.0.0', 'r1')`,
+      [overlapRunId, projectId],
+    );
+    await testDatabase.pool.query(
+      // `execution_hosts_local_active_uq` admits one live local host; this
+      // fixture only needs an identity to attribute a stream to.
+      `insert into execution_hosts
+         (id, host_key, kind, display_name, transport, retired_at)
+       values ($1, $2, 'local_direct', 'overlap host', '{"kind":"local_direct"}', now())`,
+      [overlapHostId, overlapHostKey],
+    );
+    await testDatabase.pool.query(
+      `insert into execution_assignments
+         (id, run_id, execution_host_id, epoch, state, placement_reason)
+       values ($1, $2, $3, 1, 'active', 'launch')`,
+      [overlapAssignmentId, overlapRunId, overlapHostId],
+    );
+    await testDatabase.pool.query(
+      `update runs set execution_assignment_id = $1 where id = $2`,
+      [overlapAssignmentId, overlapRunId],
+    );
+
+    const created = (
+      sequence: string,
+      hostSessionId: string,
+      sessionName: string,
+    ) => ({
+      envelopeVersion: 1,
+      eventId: randomUUID(),
+      hostKey: overlapHostKey,
+      hostBootId: randomUUID(),
+      streamId: overlapStreamId,
+      sequence,
+      runId: overlapRunId,
+      assignmentId: overlapAssignmentId,
+      assignmentEpoch: 1,
+      hostSessionId,
+      eventType: "session.created",
+      occurredAt: "2026-09-15T00:00:00.000Z",
+      payloadSchema: "maister.session.created.v1",
+      payload: { sessionName, adapter: "claude", acpSessionId: hostSessionId },
+    });
+    const project = () =>
+      projectCanonicalSessionLifecycle({
+        db: testDatabase.db,
+        runId: overlapRunId,
+      });
+    const incarnations = async () =>
+      (
+        await testDatabase.pool.query(
+          `select i.host_session_id, i.state, s.session_name
+             from run_session_incarnations i
+             join run_sessions s on s.id = i.run_session_id
+            where i.run_id = $1
+            order by s.session_name`,
+          [overlapRunId],
+        )
+      ).rows;
+
+    for (const envelope of [
+      created("0", nodeSessionId, "default"),
+      created("1", substepSessionId, "gate-judge"),
+    ]) {
+      await ingestRuntimeEvent({
+        db: testDatabase.db,
+        executionHostId: overlapHostId,
+        envelope,
+      });
+    }
+
+    expect(await project()).toMatchObject({ projected: 2, poisoned: false });
+    expect(await incarnations()).toEqual([
+      {
+        host_session_id: nodeSessionId,
+        state: "active",
+        session_name: "default",
+      },
+      {
+        host_session_id: substepSessionId,
+        state: "active",
+        session_name: "gate-judge",
+      },
+    ]);
+
+    // The same substep under the run's own session name: a SECOND non-terminal
+    // incarnation of one logical session, which the active-incarnation index
+    // forbids. The refusal is a raw database error, so the projector reads it as
+    // transient and stops the cursor dead.
+    await ingestRuntimeEvent({
+      db: testDatabase.db,
+      executionHostId: overlapHostId,
+      envelope: created("2", collidingSessionId, "default"),
+    });
+
+    expect(await project()).toMatchObject({ projected: 0, deferred: true });
+    const wedged = await testDatabase.pool.query(
+      `select state, last_error->>'type' as type from execution_event_consumers
+        where run_id = $1 and consumer_name = 'canonical-session-lifecycle-v1'`,
+      [overlapRunId],
+    );
+
+    expect(wedged.rows[0]).toEqual({
+      state: "retrying",
+      type: "unexpected_error",
+    });
+
+    // Everything behind the wedge is unreachable — including the node session's
+    // own terminal event, which is why such a run never settles.
+    await ingestRuntimeEvent({
+      db: testDatabase.db,
+      executionHostId: overlapHostId,
+      envelope: {
+        ...created("3", nodeSessionId, "default"),
+        eventType: "session.exited",
+        payloadSchema: "maister.session.exited.v1",
+        payload: { exitCode: 0, reason: "intentional" },
+      },
+    });
+    await project();
+
+    expect(await incarnations()).toEqual([
+      {
+        host_session_id: nodeSessionId,
+        state: "active",
+        session_name: "default",
+      },
+      {
+        host_session_id: substepSessionId,
+        state: "active",
+        session_name: "gate-judge",
+      },
+    ]);
+  });
+
   it("accepts a late terminal event for its exact released-assignment command while quarantining unrelated stale events", async () => {
     const lateRunId = randomUUID();
     const lateHostId = randomUUID();

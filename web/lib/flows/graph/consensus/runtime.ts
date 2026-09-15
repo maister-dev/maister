@@ -486,6 +486,7 @@ async function runVerifier(
     round: number;
     verifierId: string;
     target: ConsensusDraftEvidence;
+    sessionName: string;
   },
 ): Promise<ConsensusVerdictEvidence> {
   const startedAt = Date.now();
@@ -526,6 +527,7 @@ async function runVerifier(
           projectSlug: args.loaded.projectSlug,
           runId: args.loaded.run.id,
           stepId: `${args.node.id}-verify`,
+          sessionName: args.sessionName,
           nodeAttemptId: args.nodeAttemptId,
           worktreePath: args.worktreePath,
           bindExecution: args.bindExecution,
@@ -656,7 +658,9 @@ async function verifyConsensusRound(
   );
   const verdicts: ConsensusVerdictEvidence[] = [];
 
-  for (const assignment of buildConsensusRotation(participantOrder(args.def))) {
+  for (const [ordinal, assignment] of buildConsensusRotation(
+    participantOrder(args.def),
+  ).entries()) {
     const key = `${assignment.verifierId}:${assignment.targetParticipantId}`;
     const cached = byPair.get(key);
 
@@ -691,6 +695,11 @@ async function verifyConsensusRound(
         ...args,
         verifierId: assignment.verifierId,
         target,
+        // Verifications run alongside the node's own live session and one after
+        // another, so each takes a logical session of its own rather than
+        // claiming (and serially re-claiming) the run's. Ordinal rather than the
+        // id pair: the name is a path segment with a length budget.
+        sessionName: `${args.node.id}-verify-${args.round}-${ordinal}`,
       }),
     );
   }
@@ -817,6 +826,7 @@ async function synthesizeConsensus(
         projectSlug: args.loaded.projectSlug,
         runId: args.loaded.run.id,
         stepId: `${args.node.id}-synthesize`,
+        sessionName: `${args.node.id}-synthesize`,
         nodeAttemptId: args.nodeAttemptId,
         worktreePath: args.worktreePath,
         bindExecution: args.bindExecution,

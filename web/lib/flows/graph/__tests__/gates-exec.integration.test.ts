@@ -300,6 +300,32 @@ describe("gate execution", () => {
     expect(fake.callsOf("deleteSession")).toHaveLength(0);
   });
 
+  it("an agent gate creates its session under a gate-scoped logical name, never the run's default", async () => {
+    const seeded = await seedGraphRun(
+      oneNode([
+        {
+          id: "judge",
+          kind: "ai_judgment",
+          mode: "blocking",
+          prompt: "judge the work",
+        },
+      ]),
+    );
+    const { hosts, creates } = await fakeGraphHosts(db, seeded.runId);
+
+    await runFlow(seeded.runId, {
+      db,
+      runtimeRoot: seeded.runtimeRoot,
+      executionHosts: hosts,
+    });
+
+    // The node is `cli`, so the gate owns the run's only session create. A gate
+    // that answered to "default" would claim the run's logical session.
+    expect(creates().map((payload) => payload.sessionName)).toEqual([
+      "gate-judge",
+    ]);
+  });
+
   it("two blocking gates: a failing one fails the run, both verdicts recorded", async () => {
     const seeded = await seedGraphRun(
       oneNode([
