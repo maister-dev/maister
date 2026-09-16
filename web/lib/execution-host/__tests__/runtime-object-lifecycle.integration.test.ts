@@ -189,6 +189,26 @@ describe("runtime object intent and seal reconciliation through a real host", ()
     },
   );
 
+  it("reads an object smaller than a bounded reader's byte budget", async () => {
+    const { client, runId, input } = await fixture();
+
+    await client.uploadRuntimeObject(input);
+    await deliverAvailable(input.objectId);
+
+    // The injection seam reads a BUDGET (`MAISTER_NODE_OUTPUT_MAX_BYTES + 1`),
+    // which routinely exceeds the object. This host refuses `end >= total` with
+    // 416 rather than truncating, so an unclamped window made every artifact
+    // SMALLER than the budget unreadable — the plan-review PRECONDITION.
+    const { content } = await readRuntimeObjectContent({
+      db,
+      runId,
+      objectId: input.objectId,
+      range: { start: 0, end: 262_144 },
+    });
+
+    expect(content.bytes).toEqual(input.bytes);
+  });
+
   it.each(["generation", "representation"] as const)(
     "refuses a conflicting peer %s and cancels the unconsumed body",
     async (fault) => {
