@@ -5930,7 +5930,8 @@ components:
         working" without the caller re-deriving the run-status vocabulary.
         `outputText` is DEPRECATED in favour of `result.value`; it is now
         deterministic (`ORDER BY created_at DESC LIMIT 1`) where it used to pick
-        an arbitrary qualifying inline artifact. The pre-v2 `"unknown"` status
+        an arbitrary qualifying inline artifact, and it no longer reads
+        projector-derived rows at all (TRC-04). The pre-v2 `"unknown"` status
         fallback for a missing row is REMOVED — a run that is not a direct child
         of the bound orchestrator is refused `PRECONDITION` → 409 instead of
         being reported as a fictional child.
@@ -6045,6 +6046,14 @@ components:
             DEPRECATED (ADR-165) — use `result.value`. Legacy inline-artifact
             text (`{{ steps.<id>.output }}`), now selected deterministically by
             newest `created_at`.
+
+            NARROWED (TRC-04): composed only from artifacts a producer
+            deliberately recorded. Rows written by the artifact projector
+            (`producer='projector'`) are excluded — those are tool telemetry,
+            never the child's answer. A caller that previously received
+            projector-derived text here now receives `null` unless the child
+            recorded a real inline `log` / `human_note` / `ai_judgment`
+            artifact of its own.
 
     ExtRunCancelBody:
       type: object
