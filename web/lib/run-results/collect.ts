@@ -89,7 +89,7 @@ function diffRefFromLocator(locator: ArtifactLocator): string | undefined {
   return undefined;
 }
 
-type ArtifactRow = {
+export type ArtifactRow = {
   id: string;
   kind: string;
   locator: ArtifactLocator;
@@ -107,7 +107,9 @@ type ArtifactRow = {
  * yield the same answer. It used to take whichever row the planner happened to
  * return, which made the field unusable as a contract.
  */
-function outputTextFromArtifacts(rows: ArtifactRow[]): string | undefined {
+export function outputTextFromArtifacts(
+  rows: ArtifactRow[],
+): string | undefined {
   const textual = rows.find(
     (r) =>
       r.locator.kind === "inline" &&

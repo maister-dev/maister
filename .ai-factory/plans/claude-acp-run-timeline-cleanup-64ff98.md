@@ -301,9 +301,9 @@ one day succeed.
 - [x] T0.1 Author `docs/system-analytics/run-trace.md`
 - [x] T0.2 Register the `TRC` group in the docs validator
 - [x] T0.3 Update the API contract before any code
-- [ ] T1.1 RED — artifact derivation and evidence safety
-- [ ] T1.2 RED — prompt recording
-- [ ] T1.3 RED — allocation and idempotency
+- [x] T1.1 RED — artifact derivation and evidence safety
+- [x] T1.2 RED — prompt recording
+- [x] T1.3 RED — allocation and idempotency
 - [ ] T2.1 Migration — `prompt_dispatch_key`
 - [ ] T2.2 One sequence allocator
 - [ ] T2.3 Drop the `log` arm of `deriveFromToolCall`
