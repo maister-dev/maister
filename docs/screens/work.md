@@ -18,7 +18,7 @@ list, whether or not it has ever launched a run.
 
 | Role | Sees | Does |
 | --- | --- | --- |
-| Global `admin` | Tasks from every non-archived project | Filter, group, save views; rows are view-only |
+| Global `admin` | Tasks from every non-archived project | Filter, group, save views; rows are view-only **on this surface** |
 | Global `member` | Tasks from their own projects only | Same |
 | Global `viewer` | Tasks from their own projects only | Same |
 
@@ -41,14 +41,33 @@ flowchart LR
 
 ## Layout & regions
 
-Full-width data-management layout: no centered max-width, a horizontal scroll
-container owned by the table rather than the page, and responsive column
-behaviour. Rows are **view-only** — the table is for seeing, and every action
-lives on the surface that owns it.
+Full-width data-management layout: no centered max-width and responsive column
+behaviour. Narrow viewports drop columns by priority (`tokens` and `readiness`
+first) rather than scrolling the table sideways (`REQ-D11`, Designed).
 
-Columns: `KEY-N` · title · project · stage (with the progress spine) · run dot ·
-readiness · waiting-on (with age) · blockers (`KEY-N` chips) · tokens ·
-last activity · next action.
+Rows are **view-only on `/work`** — this surface is for seeing, and every action
+lives on the surface that owns it. The rule is this screen's, not the row
+component's: the Desk renders the same rows with an opt-in expansion panel behind
+a prop defaulting to **off**, and `/work` does not pass it (`REQ-D12`, ADR-174 D5).
+Turning it on here — and deciding what a backlog or settled row expands into, which
+the Desk never has to answer — is a later increment.
+
+Columns: `KEY-N` · title · project · stage (with the progress spine) · readiness ·
+waiting-on (with age) · blockers (`KEY-N` chips) · tokens · last activity ·
+next action.
+
+The **project** column is hidden when and only when grouping is `project` — the
+group header already names it — at both surfaces, because the rule is
+grouping-derived rather than surface-derived (`REQ-D7`, Designed).
+
+**The run-status column is removed** (`REQ-D8`, Designed), and its distinction moves
+into the stage chip. This also closes a pre-existing drift: this document specified a
+compact "run dot" while the code shipped the raw `runStatus` enum as text.
+`STAGE_BY_RUN_STATUS` is many-to-one, so `NeedsInput` / `NeedsInputIdle` /
+`HumanWorking` — a live session, a checkpoint, a manual takeover — collapse into one
+chip, as do `Running` / `WaitingOnChildren`; the chip carries that refinement in its
+accessible name instead. A chip given no run status renders exactly as before, which
+is what keeps `decision-card.tsx` and `hitl-card.tsx` unchanged.
 
 **Waiting-on resolves to a person, not a role.** The flow DSL has no role
 concept to read one from, so the column answers with what the data actually
@@ -57,8 +76,12 @@ the reader (or the reader holds the takeover claim), the assignee's label when i
 is someone else, and `anyone` when the request is open and unassigned. An age
 rides alongside it.
 
-**Next action** is a pure function of the stage — the table names the action and
-links to the surface that owns it, and never performs one.
+**Next action** is a pure function of the stage — on `/work` the table names the
+action and links to the surface that owns it, and never performs one. It stays a pure
+function of the stage wherever the rows render; a `none` action renders an em dash
+rather than a sentence (`REQ-D10`, Designed). The Desk's expansion panel is the one
+place an action can be taken from a row, and it adds no mutation path of its own —
+every action posts to the route `/inbox` already uses (`REQ-D14`, `REQ-D18`).
 
 Grouping is `nothing | project | stage | waiting on me`. Stage groups follow the
 declared lifecycle order and project groups are alphabetical, so the same query
@@ -116,8 +139,13 @@ a blank header on one.
 "work in flight"; it is one third of a spelled-out partition of `WORK_STAGES`
 checked by `UT-STG-11`.
 
+The component is **not forked** to give the Desk its expansion (ADR-174 D5): a fork
+would trade the compile-error guarantee above for a prop default, and the prop default
+is available either way. Every column change therefore still lands on both surfaces at
+once.
+
 ## Linked artifacts
 
-- [ADR-170](../decisions.md#adr-170) · [ADR-172](../decisions.md#adr-172) · [ADR-171](../decisions.md#adr-171)
+- [ADR-170](../decisions.md#adr-170) · [ADR-172](../decisions.md#adr-172) · [ADR-174](../decisions.md#adr-174-the-desk-renders-one-object-per-work-item) · [ADR-171](../decisions.md#adr-171)
 - [`system-analytics/work-stages.md`](../system-analytics/work-stages.md)
 - [`desk.md`](desk.md) · [`activity.md`](activity.md)
