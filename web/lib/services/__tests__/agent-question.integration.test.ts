@@ -935,6 +935,7 @@ describe("agent-question lifecycle (ADR-136, integration)", () => {
     await seedHumanUser(actor.userId);
 
     const beforeAnswer = await maxEventId();
+
     await expect(
       respondToHitl(
         {
@@ -1001,6 +1002,7 @@ describe("agent-question lifecycle (ADR-136, integration)", () => {
     await seedHumanUser("triage-responder");
 
     const beforeAnswer = await maxEventId();
+
     await respondToHitl(
       {
         runId: seeded.runId,

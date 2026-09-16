@@ -5520,7 +5520,8 @@ async function seedM27Fixture(
   // `.runtime/worktrees` use in the tree; every other seed already reads the
   // variable.
   const worktreeRoot = path.join(
-    process.env.MAISTER_WORKTREES_ROOT ?? path.resolve("e2e/.runtime/worktrees"),
+    process.env.MAISTER_WORKTREES_ROOT ??
+      path.resolve("e2e/.runtime/worktrees"),
     ids.project,
   );
   const flowWorktreePath = path.join(worktreeRoot, "flow");

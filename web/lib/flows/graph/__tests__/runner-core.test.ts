@@ -1,7 +1,7 @@
-import { MAISTER_ENGINE_VERSION } from "@/lib/flows/engine-version";
 import { getTableName } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
+import { MAISTER_ENGINE_VERSION } from "@/lib/flows/engine-version";
 import { loadRun } from "@/lib/flows/graph/runner-core";
 import {
   flows as flowsTable,
