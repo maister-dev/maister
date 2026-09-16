@@ -20,6 +20,7 @@ Failed state and never offers Recover, Resume, Respond, Promote or retry.
 - **Status:** Implemented
 - **Source:** `web/components/board/board.tsx`,
   `web/components/board/task-card.tsx`,
+  `web/components/board/task-card-description.tsx`,
   `web/components/board/task-card-editing.tsx`,
   `web/components/social/markdown-body.tsx`,
   `web/components/social/task-detail-prompt-editor.tsx`,
@@ -71,15 +72,24 @@ The board is a horizontally scrollable set of columns:
 - **Backlog cards** show a compact top metadata bar (`KEY-N`, flow tag, full
   edit action), then a full-width title row, run count, description, relation
   blockers, decomposition children, triage state, and the launch control.
-  Backlog card title and description expose an inline edit icon on hover/focus;
-  the displayed description renders Markdown in the card body, and description
-  editing uses a rich Markdown editor with heading, list, quote, inline
-  formatting, link, inline-code, code-block, and divider controls in a shared
-  toolbar. The toolbar keeps the WYSIWYG/Markdown switch at the right edge.
-  Markdown preview code blocks use a distinct block background and show a
-  language badge when the fence declares one. The editor preserves the HTML/Word
-  paste path where the browser provides rich clipboard content. The inline save uses
-  `PATCH /api/projects/{slug}/tasks/{number}`.
+  Backlog card title and description expose an inline edit icon on hover/focus.
+  The card keeps the description compact. A description whose plain text is at
+  most ~120 characters renders its Markdown directly in the card body with no
+  extra control. A longer one renders instead a one-line plain-text excerpt —
+  markup stripped, whitespace collapsed, cut at a word boundary and closed with
+  `…` — beside an expand control that reveals the full Markdown in place inside
+  the card and collapses it again. The control is a labelled button carrying its
+  expanded state, so it is reachable by keyboard and screen reader; expanding is
+  presentation only and never alters the authored source. Description editing is
+  independent of that state and always opens on the full source: it uses a rich
+  Markdown editor with heading, list, quote, inline formatting, link,
+  inline-code, code-block, and divider controls in a shared toolbar. The toolbar
+  keeps the WYSIWYG/Markdown switch at the right edge. Markdown preview code
+  blocks use a distinct block background and show a language badge when the
+  fence declares one. The editor preserves the HTML/Word paste path where the
+  browser provides rich clipboard content. The inline save uses
+  `PATCH /api/projects/{slug}/tasks/{number}`; leaving the editor by save or
+  cancel returns the card to the collapsed excerpt.
 - **Full card editor** opens from the card edit icon. It follows an issue-detail
   layout: title and description on the left; persisted first-level task
   properties on the right (`flowId`, `runnerId`, `baseBranch`,
@@ -283,6 +293,7 @@ namespaces; EN + RU parity required.
   (reopen affordance).
 - Source: `web/components/board/board.tsx`,
   `web/components/board/task-card.tsx`,
+  `web/components/board/task-card-description.tsx`,
   `web/components/board/task-card-editing.tsx`,
   `web/components/board/panels/integrations-panel.tsx`,
   `web/components/board/token-actions.tsx`,

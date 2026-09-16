@@ -535,6 +535,13 @@ Review | Crashed`.
 launchable`, held **even when `flow_id` is set** — and MUST be cleared only
   by a human (remove `duplicate_of` / re-send to triage); the
   `auto_launch_triaged` tick MUST NEVER launch a `flagged` task.
+- **(Implemented)** A Backlog card is **compact in the description axis**,
+  the sibling of the flight card's identity-first contract above: it shows at
+  most a ~120-character plain-text excerpt of `tasks.prompt`, and the full
+  Markdown is reachable in place behind a disclosure control on the card.
+  Truncation is display-only — the authored source is never altered and the
+  editor always opens on the full text. Enforced by
+  `web/lib/markdown-excerpt.ts` and `web/lib/__tests__/markdown-excerpt.test.ts`.
 - **(Implemented)** `PATCH /api/projects/{slug}/tasks/{number}` MUST
   update verdict fields in ONE transaction with explicit-`null` CLEAR
   semantics, validating `flowId`/`runnerId` against server-state allow-lists.
