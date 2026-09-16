@@ -42,7 +42,17 @@ const M51_GROUP = {
   traceabilityFile: "m51-traceability.md",
 };
 
-const ANALYTICS_GROUPS = [STAGE_B_GROUP, M51_GROUP];
+// A single-document group: `execution-prompt-lifecycle.md` is already at the
+// 12-bullet Expectations cap, and `artifacts.md`/`runs.md` are over it, so the
+// TRC contract cannot be hosted by an existing document without failing here.
+const RUN_TRACE_GROUP = {
+  label: "Run trace",
+  documents: ["run-trace.md"],
+  prefixes: ["TRC"],
+  traceabilityFile: "run-trace.md",
+};
+
+const ANALYTICS_GROUPS = [STAGE_B_GROUP, M51_GROUP, RUN_TRACE_GROUP];
 
 const R5_SECTIONS = [
   "Purpose",
@@ -177,6 +187,10 @@ export function validateStageBAnalytics(analyticsRoot) {
 
 export function validateM51Analytics(analyticsRoot) {
   return validateAnalyticsGroup(analyticsRoot, M51_GROUP);
+}
+
+export function validateRunTraceAnalytics(analyticsRoot) {
+  return validateAnalyticsGroup(analyticsRoot, RUN_TRACE_GROUP);
 }
 
 export function validateDocsIndexes(root = docsRoot) {
