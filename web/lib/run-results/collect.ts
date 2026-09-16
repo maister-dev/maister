@@ -96,6 +96,7 @@ export type ArtifactRow = {
   uri: string | null;
   nodeId: string | null;
   validity: string;
+  producer: string;
   createdAt: Date;
 };
 
@@ -110,9 +111,15 @@ export type ArtifactRow = {
 export function outputTextFromArtifacts(
   rows: ArtifactRow[],
 ): string | undefined {
+  // TRC-04: `log` stays a declarable manifest kind (D2) — a flow can legitimately
+  // produce a `producer:"runner"` log artifact — so the predicate narrows by
+  // PRODUCER, never by kind. A projector-derived row was never a deliberate
+  // output, and an orchestrator reading one as its child's answer is reading
+  // tool telemetry as a result.
   const textual = rows.find(
     (r) =>
       r.locator.kind === "inline" &&
+      r.producer !== "projector" &&
       (r.kind === "log" || r.kind === "human_note" || r.kind === "ai_judgment"),
   );
 
@@ -180,6 +187,7 @@ export async function collectChild(
       uri: artifactInstances.uri,
       nodeId: artifactInstances.nodeId,
       validity: artifactInstances.validity,
+      producer: artifactInstances.producer,
       createdAt: artifactInstances.createdAt,
     })
     .from(artifactInstances)

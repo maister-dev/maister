@@ -304,11 +304,11 @@ one day succeed.
 - [x] T1.1 RED — artifact derivation and evidence safety
 - [x] T1.2 RED — prompt recording
 - [x] T1.3 RED — allocation and idempotency
-- [ ] T2.1 Migration — `prompt_dispatch_key`
-- [ ] T2.2 One sequence allocator
-- [ ] T2.3 Drop the `log` arm of `deriveFromToolCall`
-- [ ] T2.4 Producer predicate in `run_collect`
-- [ ] T2.5 Record every dispatched prompt
+- [x] T2.1 Migration — `prompt_dispatch_key`
+- [x] T2.2 One sequence allocator
+- [x] T2.3 Drop the `log` arm of `deriveFromToolCall`
+- [x] T2.4 Producer predicate in `run_collect`
+- [x] T2.5 Record every dispatched prompt
 - [ ] T3.1 Refactor under a green suite
 - [ ] T3.2 Falsify every guard
 - [ ] T3.3 Close the coverage gate

@@ -91,14 +91,16 @@ describe("dispatched prompt recording", () => {
           id: "implement",
           type: "ai_coding",
           action: { prompt: "Implement the widget." },
-          gates: [
-            {
-              id: "review",
-              kind: "ai_judgment",
-              mode: "blocking",
-              prompt: "Judge the work.",
-            },
-          ],
+          pre_finish: {
+            gates: [
+              {
+                id: "review",
+                kind: "ai_judgment",
+                mode: "blocking",
+                prompt: "Judge the work.",
+              },
+            ],
+          },
           transitions: { success: "done" },
         },
       ],
@@ -115,7 +117,6 @@ describe("dispatched prompt recording", () => {
     });
 
     const prompts = await userMessages(seeded.runId);
-
     expect(prompts).toHaveLength(2);
     expect(prompts[0].content).toContain("Implement the widget.");
     expect(prompts[1].content).toContain("Judge the work.");

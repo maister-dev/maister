@@ -308,12 +308,15 @@ async function loadEvent(eventId: string) {
 }
 
 describe("projectRunEvents", () => {
+  // Updated at TRC-01: this case used to assert that the URL-less tool call
+  // ALSO derived a `kind:"log"` artifact. That behavior is deliberately gone —
+  // the assertion is obsolete, not broken — so the case now pins what replaced
+  // it: BOTH events are still projected (the consumer cursor advances over
+  // each one), and only the openable surface becomes evidence.
   it("derives typed artifacts only from canonical host events and is idempotent", async () => {
     const seeded = await seedRun();
-    const logEventId = await recordHostToolEvent(seeded, {
-      sequence: 0n,
-      title: "Run check",
-    });
+
+    await recordHostToolEvent(seeded, { sequence: 0n, title: "Run check" });
     const previewEventId = await recordHostToolEvent(seeded, {
       sequence: 1n,
       title: "Open preview",
@@ -330,12 +333,6 @@ describe("projectRunEvents", () => {
     expect(first.projected).toBe(2);
     expect(second.projected).toBe(0);
     expect(artifacts).toEqual([
-      expect.objectContaining({
-        id: `proj:${seeded.runId}:event:${logEventId}`,
-        kind: "log",
-        nodeAttemptId: seeded.nodeAttemptId,
-        monotonicId: null,
-      }),
       expect.objectContaining({
         id: `proj:${seeded.runId}:event:${previewEventId}`,
         kind: "preview",
