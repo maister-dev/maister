@@ -532,7 +532,9 @@ export async function assertGatePermissionResult(
   await assertPermissionHandoffSource(db, { command, assignment, resume });
 }
 
-export function pendingGatePermissionResumeExists(): SQL {
+/** `hitlRequestId` narrows the predicate to the ONE permission the resume
+ * carries — see `pendingNodePermissionResumeExists`. */
+export function pendingGatePermissionResumeExists(hitlRequestId?: string): SQL {
   return sql`exists (
     select 1 from gate_results resumed_gate
     join node_attempts gate_parent on gate_parent.id = resumed_gate.node_attempt_id
@@ -548,6 +550,7 @@ export function pendingGatePermissionResumeExists(): SQL {
         where newer_gate.run_id = resumed_gate.run_id and newer_gate.node_attempt_id = resumed_gate.node_attempt_id
           and newer_gate.gate_id = resumed_gate.gate_id
           and (newer_gate.created_at, newer_gate.id) > (resumed_gate.created_at, resumed_gate.id))
+      ${hitlRequestId === undefined ? sql`` : sql`and resumed_gate.permission_resume->>'hitlRequestId' = ${hitlRequestId}`}
   )`;
 }
 

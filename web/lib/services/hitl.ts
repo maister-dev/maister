@@ -895,8 +895,14 @@ async function handlePermissionResponse(
   // `lockNodePermissionSource`. The row therefore keeps LOOKING actionable, and
   // every resubmit used to die deep inside `lockPermissionSource` as an
   // unexplained `permission_attempt_generation`. Refuse by name, and BEFORE the
-  // assignment claim below, so a refused request leaves no trace.
-  if (runRow.runKind === "flow" && (await hasFlowPermissionResume(db, runId))) {
+  // assignment claim below, so a refused request leaves no trace. The question
+  // is about THIS row: the resumed session can raise a fresh permission while
+  // the resume that carried the previous answer is still pending, and that one
+  // is answerable.
+  if (
+    runRow.runKind === "flow" &&
+    (await hasFlowPermissionResume(db, runId, hitlRequestId))
+  ) {
     throw new MaisterError(
       "CONFLICT",
       "this permission answer is already being delivered by a resume",

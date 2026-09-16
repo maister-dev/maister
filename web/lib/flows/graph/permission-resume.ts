@@ -637,7 +637,11 @@ export async function authorizeNodePermissionContinuation(
   );
 }
 
-export function pendingNodePermissionResumeExists(): SQL {
+/** `hitlRequestId` narrows the predicate to the ONE permission the resume
+ * carries. A run drives one resume at a time, but the session it resumes can
+ * raise a FRESH permission while that resume is still pending, and that answer
+ * is nobody else's. */
+export function pendingNodePermissionResumeExists(hitlRequestId?: string): SQL {
   return sql`exists (
     select 1 from node_attempts resume_attempt
     where resume_attempt.run_id = ${runs.id}
@@ -650,12 +654,14 @@ export function pendingNodePermissionResumeExists(): SQL {
           and resume_attempt.action_completion is not null))
       and resume_attempt.action_resume->>'assignmentId' = ${runs.executionAssignmentId}
       and resume_attempt.action_resume->'promptOrdinal' = to_jsonb(resume_attempt.action_prompt_ordinal)
+      ${hitlRequestId === undefined ? sql`` : sql`and resume_attempt.action_resume->>'hitlRequestId' = ${hitlRequestId}`}
   )`;
 }
 
 export async function hasFlowPermissionResume(
   db: Db,
   runId: string,
+  hitlRequestId?: string,
 ): Promise<boolean> {
   const [row] = await db
     .select({ id: runs.id })
@@ -663,7 +669,7 @@ export async function hasFlowPermissionResume(
     .where(
       and(
         eq(runs.id, runId),
-        sql`(${pendingNodePermissionResumeExists()} or ${pendingGatePermissionResumeExists()})`,
+        sql`(${pendingNodePermissionResumeExists(hitlRequestId)} or ${pendingGatePermissionResumeExists(hitlRequestId)})`,
       ),
     );
 

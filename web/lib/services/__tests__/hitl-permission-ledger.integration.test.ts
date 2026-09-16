@@ -29,6 +29,8 @@ import {
 } from "@/lib/__tests__/runner-fixtures";
 import * as schemaModule from "@/lib/db/schema";
 import { mintAssignment } from "@/lib/execution-host";
+import { type Db } from "@/lib/execution-host/db";
+import { hasFlowPermissionResume } from "@/lib/flows/graph/permission-resume";
 import { respondToHitl, type HitlActor } from "@/lib/services/hitl";
 import {
   definitiveUnavailableError,
@@ -303,6 +305,59 @@ describe("permission response ledger (ADR-166 I1–I3)", () => {
 
     expect(row.respondedAt).toBeNull();
     expect(row.response).toBeNull();
+  });
+
+  // The question above is about THIS row, not about the run. A resumed session
+  // raises its own permissions while the resume that carried the previous
+  // answer is still pending on the same attempt, and refusing those stalls
+  // every checkpointed flow at its second permission.
+  it("answers a fresh permission while another answer rides a resume", async () => {
+    const { runId, hitlRequestId, hosts, fake } = await seedLiveNeedsInput();
+    const [run] = await db
+      .select()
+      .from(schema.runs)
+      .where(eq(schema.runs.id, runId));
+
+    await db.insert(schema.nodeAttempts).values({
+      id: randomUUID(),
+      runId,
+      nodeId: "plan",
+      nodeType: "ai_coding",
+      attempt: 1,
+      status: "Running",
+      startedAt: new Date(),
+      executionAssignmentId: run.executionAssignmentId,
+      actionPromptOrdinal: 1,
+      actionResume: {
+        version: 1,
+        kind: "permission",
+        sourceCommandId: randomUUID(),
+        sourceAssignmentId: randomUUID(),
+        assignmentId: run.executionAssignmentId,
+        promptOrdinal: 1,
+        resumeSessionId: "acp-1",
+        // The permission this resume carries is an EARLIER one.
+        hitlRequestId: randomUUID(),
+        sourceRequestId: "req-0",
+        optionId: "allow",
+      },
+    });
+
+    // Everything but the carried id matches, so a delivery here is the
+    // narrowing and not a predicate that has gone quietly false.
+    expect(await hasFlowPermissionResume(db as unknown as Db, runId)).toBe(
+      true,
+    );
+
+    const res = await respondToHitl(
+      { runId, hitlRequestId, body: { optionId: "allow" } },
+      actor,
+      { db, executionHosts: hosts },
+    );
+
+    expect(res.status).toBe(200);
+    expect(fake.callsOf("deliverInput")).toHaveLength(1);
+    expect((await hitlRow(hitlRequestId)).respondedAt).toBeInstanceOf(Date);
   });
 
   it("I3: a lost response is retried under the SAME command id; the host replay records _audit.deliveryReplayed", async () => {
