@@ -117,6 +117,7 @@ describe("dispatched prompt recording", () => {
     });
 
     const prompts = await userMessages(seeded.runId);
+
     expect(prompts).toHaveLength(2);
     expect(prompts[0].content).toContain("Implement the widget.");
     expect(prompts[1].content).toContain("Judge the work.");

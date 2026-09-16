@@ -132,7 +132,11 @@ export async function appendRunMessage(
     })
     .returning({ id: runMessages.id });
 
-  if (inserted.length === 0) {
+  // Reachable only for a keyed row: the conflict target carries the index's
+  // own `IS NOT NULL` predicate, so an untagged row cannot be suppressed here.
+  // A sequence collision is NOT swallowed — it raises, which is what makes a
+  // failure of the scope lock visible instead of silent.
+  if (inserted.length === 0 && promptDispatchKey !== null) {
     const [existing] = await tx
       .select({ sequence: runMessages.sequence })
       .from(runMessages)
@@ -142,7 +146,7 @@ export async function appendRunMessage(
           input.nodeAttemptId === null
             ? isNull(runMessages.nodeAttemptId)
             : eq(runMessages.nodeAttemptId, input.nodeAttemptId),
-          eq(runMessages.promptDispatchKey, promptDispatchKey as string),
+          eq(runMessages.promptDispatchKey, promptDispatchKey),
         ),
       )
       .limit(1);
@@ -152,11 +156,12 @@ export async function appendRunMessage(
         runId: input.runId,
         nodeAttemptId: input.nodeAttemptId,
         promptDispatchKey,
+        sequence: existing?.sequence ?? null,
       },
       "run message already recorded for this dispatch",
     );
 
-    return { sequence: existing?.sequence ?? -1, inserted: false };
+    return { sequence: existing.sequence, inserted: false };
   }
 
   await tx

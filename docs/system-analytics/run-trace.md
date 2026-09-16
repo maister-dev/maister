@@ -1,8 +1,9 @@
 # Run trace
 
-> **Status:** Designed. The `TRC` requirement set below is the acceptance
+> **Status:** Implemented. The `TRC` requirement set below is the acceptance
 > contract for the run-trace plane; per-requirement status lives in the
-> traceability matrix at the end of this file.
+> traceability matrix at the end of this file. Runs created before this landed
+> are untouched by design (TRC-12) and keep their projector `log` artifacts.
 
 ## Purpose
 
@@ -168,22 +169,22 @@ sequenceDiagram
 
 | Requirement | Contract/schema | Enforcement/task | Primary test | Status |
 | --- | --- | --- | --- | --- |
-| TRC-01 | `deriveFromToolCall` returns null without a preview URL | T2.3 | `UT-TRC-01` | Planned |
-| TRC-02 | `artifact_instances.artifact_def_id` null on projector rows | T2.3 | `IT-TRC-02` | Planned |
-| TRC-03 | `UnknownSessionUpdateShape` warn-and-advance | T2.3 | `UT-TRC-03` | Planned |
-| TRC-04 | `outputTextFromArtifacts` producer predicate | T2.4 | `UT-TRC-04` | Planned |
-| TRC-05 | `run_messages.role='user'` on dispatch | T2.5 | `IT-TRC-05` | Planned |
-| TRC-06 | `run_messages_prompt_dispatch_key_uq` | T2.1, T2.5 | `IT-TRC-06` | Planned |
-| TRC-07 | `createOperationKey` / `gatePromptOperationKey` reuse | T2.5 | `UT-TRC-07` | Planned |
-| TRC-08 | best-effort write contract | T2.5 | `UT-TRC-08` | Planned |
-| TRC-09 | 256 KiB bound + truncation marker | T2.5 | `UT-TRC-09` | Planned |
-| TRC-10 | `run_transcript_states` `SELECT ... FOR UPDATE` | T2.2 | `IT-TRC-10` | Planned |
-| TRC-11 | transcript route `readRepoFiles` | T0.3 | `CT-TRC-11` | Planned |
-| TRC-12 | absence of migration/query predicate touching prior runs | T3.3 | `CT-TRC-12` | Planned |
-| EDGE-TRC-01 | permission-request derivation path | T2.3 | `UT-EDGE-TRC-01` | Planned |
-| EDGE-TRC-02 | `prepareArtifactContent` rehydration | T2.3 | `IT-EDGE-TRC-02` | Planned |
-| EDGE-TRC-03 | `nulls not distinct` scope | T2.1, T2.2 | `IT-EDGE-TRC-03` | Planned |
-| EDGE-TRC-04 | consensus owner variants | T2.5 | `IT-EDGE-TRC-04` | Planned |
-| EDGE-TRC-05 | truncation marker | T2.5 | `UT-EDGE-TRC-05` | Planned |
-| EDGE-TRC-06 | concurrent duplicate dispatch | T2.1, T2.5 | `IT-EDGE-TRC-06` | Planned |
-| EDGE-TRC-07 | context-mount suffix | T2.5 | `UT-EDGE-TRC-07` | Planned |
+| TRC-01 | `deriveFromToolCall` returns null without a preview URL | T2.3 | `UT-TRC-01` | Implemented |
+| TRC-02 | `artifact_instances.artifact_def_id` null on projector rows | T2.3 | `IT-TRC-02` | Implemented |
+| TRC-03 | `UnknownSessionUpdateShape` warn-and-advance | T2.3 | `UT-TRC-03` | Implemented |
+| TRC-04 | `outputTextFromArtifacts` producer predicate | T2.4 | `UT-TRC-04` | Implemented |
+| TRC-05 | `run_messages.role='user'` on dispatch | T2.5 | `IT-TRC-05` | Implemented |
+| TRC-06 | `run_messages_prompt_dispatch_key_uq` | T2.1, T2.5 | `IT-TRC-06` | Implemented |
+| TRC-07 | `createOperationKey` / `gatePromptOperationKey` reuse | T2.5 | `UT-TRC-07` | Implemented |
+| TRC-08 | best-effort write contract | T2.5 | `UT-TRC-08` | Implemented |
+| TRC-09 | 256 KiB bound + truncation marker | T2.5 | `UT-TRC-09` | Implemented |
+| TRC-10 | `run_transcript_states` `SELECT ... FOR UPDATE` | T2.2 | `IT-TRC-10` | Implemented |
+| TRC-11 | transcript route `readRepoFiles` | T0.3 | `CT-TRC-11` | Implemented |
+| TRC-12 | absence of migration/query predicate touching prior runs | T3.3 | `CT-TRC-12` | Implemented |
+| EDGE-TRC-01 | permission-request derivation path | T2.3 | `UT-EDGE-TRC-01` | Implemented |
+| EDGE-TRC-02 | `prepareArtifactContent` rehydration | T2.3 | `IT-EDGE-TRC-02` | Implemented |
+| EDGE-TRC-03 | `nulls not distinct` scope | T2.1, T2.2 | `IT-EDGE-TRC-03` | Implemented |
+| EDGE-TRC-04 | consensus owner variants | T2.5 | `IT-EDGE-TRC-04` | Implemented |
+| EDGE-TRC-05 | truncation marker | T2.5 | `UT-EDGE-TRC-05` | Implemented |
+| EDGE-TRC-06 | concurrent duplicate dispatch | T2.1, T2.5 | `IT-EDGE-TRC-06` | Implemented |
+| EDGE-TRC-07 | context-mount suffix | T2.5 | `UT-EDGE-TRC-07` | Implemented |

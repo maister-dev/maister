@@ -94,6 +94,31 @@ function chunkEvent(seeded: Seeded, runSequence: bigint) {
   } as never;
 }
 
+// A `tool_call` ALWAYS allocates a fresh sequence. A text chunk does not: with
+// an open text row the projector coalesces into it via `replace`, allocating
+// nothing — which is exactly how an earlier version of IT-TRC-10 managed to
+// "race" without ever opening the allocator window.
+function toolCallEvent(seeded: Seeded, runSequence: bigint) {
+  return {
+    id: randomUUID(),
+    source: "host",
+    runId: seeded.runId,
+    eventType: "session.update",
+    payloadSchema: "maister.session.update.v1",
+    payload: {
+      nodeAttemptId: seeded.nodeAttemptId,
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: `tool-${runSequence.toString()}`,
+        title: "Run check",
+        status: "completed",
+      },
+    },
+    runSequence,
+    ingestDisposition: "accepted",
+  } as never;
+}
+
 async function messagesFor(seeded: Seeded) {
   return db
     .select()
@@ -103,17 +128,34 @@ async function messagesFor(seeded: Seeded) {
 
 describe("run_messages allocation", () => {
   // IT-TRC-10. Without a shared lock both writers read the same
-  // `next_sequence` and the second insert dies on the unique key. The loop is
-  // deliberate: a single pass hits the window only sometimes, and a guard that
-  // reproduces its own bug one run in twenty is not a guard
-  // (memory:falsify-every-regression-guard).
+  // `next_sequence` and the second insert dies on the unique key.
+  //
+  // The scope's state row MUST already exist before the race, and that is the
+  // whole difficulty of this test. On a fresh scope both writers contend on
+  // `INSERT ... ON CONFLICT DO NOTHING` into `run_transcript_states`, and that
+  // insert is itself a serialization point — the loser blocks on the unique
+  // index until the winner's transaction commits, so the allocator window
+  // never opens. An earlier version of this test raced on fresh scopes and
+  // passed 3/3 against the UNFIXED allocator: it proved nothing
+  // (memory:falsify-every-regression-guard). Seeding the row first reproduces
+  // the real production shape — the projector created it, a prompt arrives —
+  // and fails reliably without the lock.
+  //
+  // The loop is deliberate for the same reason: a guard that reproduces its
+  // own bug one run in twenty is not a guard.
   it("IT-TRC-10: serializes a prompt write against a concurrent projected chunk", async () => {
     const ROUNDS = 12;
 
     for (let round = 0; round < ROUNDS; round += 1) {
       const seeded = await seedRun();
-      const event = chunkEvent(seeded, BigInt(round));
 
+      // Establish the scope: after this the allocator row exists and its
+      // creation can no longer serialize the two writers below.
+      await db.transaction(async (tx) =>
+        projectTranscriptEvent(tx as never, toolCallEvent(seeded, 0n)),
+      );
+
+      const event = toolCallEvent(seeded, BigInt(round + 1));
       const [, projected] = await Promise.all([
         db.transaction(async (tx) =>
           appendRunMessage(tx as never, {
@@ -134,8 +176,9 @@ describe("run_messages allocation", () => {
       const rows = await messagesFor(seeded);
       const sequences = rows.map((row) => row.sequence as number);
 
-      expect(rows).toHaveLength(2);
-      expect(new Set(sequences).size).toBe(2);
+      // Seed tool row + racing tool row + prompt row, each at its own sequence.
+      expect(rows).toHaveLength(3);
+      expect(new Set(sequences).size).toBe(3);
     }
   }, 180_000);
 

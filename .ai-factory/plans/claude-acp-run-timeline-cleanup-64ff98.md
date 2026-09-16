@@ -309,10 +309,10 @@ one day succeed.
 - [x] T2.3 Drop the `log` arm of `deriveFromToolCall`
 - [x] T2.4 Producer predicate in `run_collect`
 - [x] T2.5 Record every dispatched prompt
-- [ ] T3.1 Refactor under a green suite
-- [ ] T3.2 Falsify every guard
-- [ ] T3.3 Close the coverage gate
-- [ ] T4.1 `/aif-docs` checkpoint
+- [x] T3.1 Refactor under a green suite
+- [x] T3.2 Falsify every guard
+- [x] T3.3 Close the coverage gate
+- [x] T4.1 `/aif-docs` checkpoint
 
 TDD contract for every implementation task below: **RED first** — the test is written and
 observed failing *for its assertion*, never for a missing import or a typo; **GREEN** —
