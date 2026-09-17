@@ -120,7 +120,7 @@ nodes:
 }
 
 // A package whose flow exercises the structured node-form controls (TE.3): an
-// ai_coding node (skills MultiSelectField + `/`-autosuggest action.prompt) and a
+// ai_coding node (skills McpSelect picker + `/`-autosuggest action.prompt) and a
 // human node (roles StringListField), plus a bundled skill so `/` has a catalog.
 function buildStructuredControlsPackageRepo(): string {
   const repo = mkdtempSync(join(tmpdir(), "maister-e2e-struct-"));
@@ -595,18 +595,30 @@ test("local editor structured controls: skills multiselect, /-autosuggest prompt
   await expect(variableMenu).toHaveCSS("overflow-y", "auto");
   await page.getByTestId("capability-variable-button").click();
 
-  // (c) skills MultiSelectField: free-add a chip, then remove it
+  // (c) skills picker: free-add a value, then remove it.
+  //
+  // The node form's `skills` (and `mcps`) field is an `McpSelect`, which
+  // REPLACED the MultiSelectField this block was written against — its own
+  // source says "type-to-filter parity with the old MultiSelectField". It has
+  // no `-chip`: a selected value is the option button itself, rendered
+  // `aria-pressed` and toggled off by clicking it again. The old
+  // `node-skills-chip` assertions therefore waited on a node that cannot
+  // exist, while the free-add underneath them had in fact worked — the page
+  // snapshot showed `button "extra-skill" [pressed]` the whole time.
   await page.getByTestId("node-skills-input").fill("extra-skill");
   await page.getByTestId("node-skills-free-add").click();
-  await expect(
-    page.getByTestId("node-skills-chip").filter({ hasText: "extra-skill" }),
-  ).toBeVisible();
+
+  const freeAdded = page.getByTestId("node-skills-option-extra-skill");
+
+  await expect(freeAdded).toHaveAttribute("aria-pressed", "true");
   await expect(flowYamlInput).toHaveValue(/extra-skill/);
-  await page
-    .getByTestId("node-skills-chip")
-    .filter({ hasText: "extra-skill" })
-    .getByRole("button")
-    .click();
+  // Same control removes it — `onClick={() => toggle(option.value)}`. A
+  // free-added value has no catalog entry, so it is only rendered while it is
+  // SELECTED ("selected values with no catalog entry are free-added
+  // forward-refs"); deselecting drops the button entirely rather than leaving
+  // it unpressed.
+  await freeAdded.click();
+  await expect(freeAdded).toHaveCount(0);
   await expect(flowYamlInput).not.toHaveValue(/extra-skill/);
 
   // (c) insert a skill chip via `/` autosuggest → stores a canonical token
