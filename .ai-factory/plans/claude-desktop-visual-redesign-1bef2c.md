@@ -445,7 +445,7 @@ Exit: gates 1–6.
 
 ### Phase 6 — Layout, identity, close-out
 
-**T6.1 [ ] — Single column, region order, composer removed**
+**T6.1 [x] — Single column, region order, composer removed**
 
 Replace the `xl:grid-cols-[...]` grid with one column at every width; order header ·
 strip · work · Held · activity. Delete the `ScratchLaunchPopover` call — the rail
@@ -455,7 +455,7 @@ Turns green every e2e case parked RED in T1.3.
 
 Proves: `AC-D21`, `AC-D22` · Implements: `REQ-D21`, `REQ-D22`.
 
-**T6.2 [ ] — Finish `desk-contract.test.ts`**
+**T6.2 [x] — Finish `desk-contract.test.ts`**
 
 This test reads `page.tsx` **as source text**, so it breaks on nearly every change here
 by design. Each assertion, named:
@@ -473,7 +473,7 @@ by design. Each assertion, named:
 
 Proves: `AC-D2`, `AC-D18`, `AC-D21`.
 
-**T6.3 [ ] — Declare `NAV-08` with its matrix row and its test, in one commit**
+**T6.3 [x] — Declare `NAV-08` with its matrix row and its test, in one commit**
 
 `REQ-D24` — one work item appears as exactly one object on the Desk — is the change's
 reason for existing and currently nothing would catch its regression.
@@ -488,7 +488,7 @@ All three land together, or CI goes red on a declared id with no resolvable test
 
 Proves: `AC-D24` · Implements: `REQ-D24`.
 
-**T6.4 [ ] — Re-home the `ATN-05` assertion and amend `EDGE-NAV-01`**
+**T6.4 [x] — Re-home the `ATN-05` assertion and amend `EDGE-NAV-01`**
 
 `ATN-05`'s text is untouched — "Every surface MUST render one layout-level `decisions`
 value" is surface-agnostic. Only the Desk-side assertion moves to `/inbox` (the
@@ -500,7 +500,7 @@ unconditional. Update the clause, its matrix row, and `desk.spec.ts` test 6.
 Verify, do not rewrite: `IT-ATN-05` and both `UT-ATN-05` suites assert at the query
 layer and are unaffected.
 
-**T6.5 [ ] — Documentation checkpoint**
+**T6.5 [x] — Documentation checkpoint**
 
 Mandatory per Settings. Re-verify every contract surface in the spec against the code
 at HEAD **by opening each file**, not by assuming the edit landed. Flip

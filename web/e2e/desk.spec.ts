@@ -88,13 +88,13 @@ test("E2E-NAV-01 the Desk is home, and every region it promises is on it", async
     );
   }
 
-  // All three regions, plus the composer (projects exist for the admin).
-  await expect(page.getByTestId("desk-decisions")).toBeVisible();
   await expect(page.getByTestId("desk-work")).toBeVisible();
   await expect(page.getByTestId("desk-activity")).toBeVisible();
+
+  // `EDGE-NAV-01`, the other half: the composer is absent even WITH projects.
   await expect(
     page.getByRole("button", { name: "Start a scratch run" }),
-  ).toBeVisible();
+  ).toHaveCount(0);
 
   // Busy: the admin has work in flight, and it is rendered ONCE — as rows.
   // ADR-174 D2 removed the Decisions region because three of its four
@@ -457,8 +457,8 @@ test("E2E-EDGE-NAV-01 the empty Desk reuses the first-run frame and drops the co
     await expect(empty.getByTestId("portfolio-onboarding")).toBeVisible();
     await expect(empty.getByTestId("portfolio-empty-state")).toBeVisible();
 
-    // The composer is absent, not disabled — there is nowhere for a scratch run
-    // to go until a project exists.
+    // The composer is absent UNCONDITIONALLY now (`REQ-D22`) — not "until a
+    // project exists". The rail owns the launcher and the Cmd/Ctrl+K listener.
     await expect(
       page.getByRole("button", { name: "Start a scratch run" }),
     ).toHaveCount(0);
@@ -474,6 +474,60 @@ test("E2E-EDGE-NAV-01 the empty Desk reuses the first-run frame and drops the co
   } finally {
     await page.context().close();
   }
+});
+
+// `NAV-08` — one work item, one object (ADR-174).
+//
+// This is the change's reason for existing, and until now nothing would have
+// caught its regression. The counted finding behind the ADR was a single task
+// rendered FOUR times on one screen; a `WaitingOnHuman` row is the exact shape
+// that used to produce two of them — a work row and a HITL card — because
+// `STAGE_BY_KIND` maps the `hitl` decision kind onto an in-flight stage.
+//
+// The activity feed is deliberately excluded: it is a log of EVENTS, and
+// ADR-174 D4 refuses to collapse it.
+
+test("E2E-NAV-08 a task in flight and blocked on a human is ONE object", async ({
+  page,
+}) => {
+  await page.goto("/");
+
+  const work = page.getByTestId("desk-work");
+  const blocked = work
+    .locator('tr[data-testid="work-row"][data-stage="WaitingOnHuman"]')
+    .first();
+
+  // The fixture must actually contain the shape under test, or this passes
+  // vacuously — which is how a guard for "exactly one" quietly becomes a guard
+  // for "at most one, including zero".
+  await expect(
+    blocked,
+    "the seeded Desk must hold a WaitingOnHuman row",
+  ).toBeVisible();
+
+  const key = (await blocked.locator("td").first().innerText()).trim();
+
+  expect(key, "the row names its task").not.toBe("");
+
+  // Every object on the Desk that renders this task, OUTSIDE the activity log.
+  const objects = page.locator(
+    [
+      `[data-testid="work-row"]:has-text("${key}")`,
+      `[data-testid="hitl-card"]:has-text("${key}")`,
+      `[data-testid="decision-card"]:has-text("${key}")`,
+    ].join(", "),
+  );
+
+  expect(
+    await objects.count(),
+    `${key} must appear exactly once outside the activity feed`,
+  ).toBe(1);
+
+  // And its decision is reachable — merged INTO that one object rather than
+  // deleted along with the duplicate.
+  await blocked.click();
+  await expect(blocked).toHaveAttribute("aria-expanded", "true");
+  await expect(work.locator('[data-testid="work-row-panel"]')).toHaveCount(1);
 });
 
 // The shared `(app)` header, measured rather than eyeballed (`NAV-07`).

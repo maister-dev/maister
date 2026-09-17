@@ -4864,8 +4864,6 @@
   "desk": {
     "title": "Desk",
     "eyebrow": "Home",
-    "composer": "Start a scratch run…",
-    "composerTitle": "Start a scratch run",
     "nowLabel": "Now",
     "workTitle": "Work in flight",
     "workCount": "$count in flight",

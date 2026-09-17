@@ -4864,8 +4864,6 @@
   "desk": {
     "title": "Рабочий стол",
     "eyebrow": "Главная",
-    "composer": "Запустить черновой прогон…",
-    "composerTitle": "Запустить черновой прогон",
     "nowLabel": "Сейчас",
     "workTitle": "В работе",
     "workCount": "$count в работе",

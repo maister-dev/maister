@@ -1,7 +1,7 @@
 # Desk — one object per work item (ADR-174)
 
 **Date:** 2026-09-17
-**Status:** Specification — not implemented
+**Status:** Implemented (2026-09-17) — every requirement built and gated; see the traceability table below
 **Plan:** [`../plans/claude-desktop-visual-redesign-1bef2c.md`](../plans/claude-desktop-visual-redesign-1bef2c.md)
 **Design rationale:** [`../../docs/plans/2026-09-17-desk-visual-redesign-design.md`](../../docs/plans/2026-09-17-desk-visual-redesign-design.md)
 

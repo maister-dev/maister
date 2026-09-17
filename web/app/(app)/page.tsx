@@ -19,7 +19,6 @@ import { HitlPanel } from "@/components/inbox/hitl-panel";
 import { NowTiles } from "@/components/attention/now-tiles";
 import { RunRecoverActions } from "@/components/runs/run-recover-actions";
 import { OnboardingChecklist } from "@/components/portfolio/onboarding-checklist";
-import { ScratchLaunchPopover } from "@/components/chrome/scratch-launch-popover";
 import { WorkRowsTable } from "@/components/work/work-rows-table";
 import {
   ACTIVITY_FEED_KINDS,
@@ -177,17 +176,6 @@ export default async function DeskPage({
         </h1>
       </header>
 
-      {/* EDGE-NAV-01: the composer is absent until a project exists — there is
-          nowhere for a scratch run to go. */}
-      {hasProjects ? (
-        <ScratchLaunchPopover
-          hint={tPortfolio("launchHint")}
-          label={t("composer")}
-          title={t("composerTitle")}
-          variant="composer"
-        />
-      ) : null}
-
       <NowTiles
         activeStage={activeStage}
         counts={stageCounts}
@@ -212,110 +200,92 @@ export default async function DeskPage({
       )}
 
       {/*
-        EDGE-NAV-02: ONE column below `xl`, so the narrow stack is exactly the
-        source order — Decisions, then Work, then Activity.
+        REQ-D21: ONE column at EVERY width, so the rendered order IS the source
+        order and the two cannot disagree. The previous cut kept a second
+        desktop arrangement in explicit grid coordinates — two layouts to keep
+        true at once — and removing the Decisions region removed the reason for
+        the second one.
 
-        Desktop wants a different arrangement (Activity beside Decisions, the
-        table full width below it), and that is done with explicit grid
-        placement rather than by reordering the source. Moving Work after
-        Activity in the source would fix desktop and silently break narrow,
-        which is what the first cut of this page did.
+        Order: header, strip, work, Held, activity.
       */}
-      <div className="grid grid-cols-1 gap-7 xl:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
-        {/* ADR-174 D2: the Decisions region is GONE. Three of its four
-            populations were the work table under another name — `hitl`,
-            `crashed` and `promotable` all map onto `WORK_IN_FLIGHT_STAGES`
-            members — and they now ride on the row itself.
+      <DeskRegion
+        action={{ href: "/work", label: t("workAll") }}
+        count={{
+          value: visible.length,
+          label: t("workCount").replace("$count", String(visible.length)),
+        }}
+        testid="desk-work"
+        title={t("workTitle")}
+      >
+        {visible.length === 0 ? (
+          <DeskEmpty
+            clear={
+              activeStage === null
+                ? undefined
+                : { href: "/", label: t("workClearFilter") }
+            }
+            testid={
+              activeStage === null ? "desk-work-empty" : "desk-work-filtered"
+            }
+            text={
+              activeStage === null
+                ? t("workEmpty")
+                : t("workEmptyFiltered").replace("$stage", tStage(activeStage))
+            }
+          />
+        ) : (
+          <WorkRowsTable
+            expandable
+            groupBy="project"
+            groups={workGroups}
+            labels={workLabels}
+            locale={locale}
+            now={now}
+            panels={panels}
+          />
+        )}
+      </DeskRegion>
+      {/* ADR-174 D2: the Decisions region is GONE. Three of its four
+          populations were the work table under another name — `hitl`,
+          `crashed` and `promotable` all map onto `WORK_IN_FLIGHT_STAGES`
+          members — and they now ride on the row itself.
 
-            `Held` is the exception that proves the rule: `WORK_BACKLOG_STAGES`,
-            not in flight, so no row carries it. It keeps a region. */}
-        {heldItems.length > 0 ? (
-          <div
-            className="xl:col-start-1 xl:row-start-1"
-            data-testid="desk-held"
-          >
-            <DecisionSections
-              items={heldItems}
-              labels={{
-                promotableTitle: tInbox("decisions.promotableTitle"),
-                crashedTitle: tInbox("decisions.crashedTitle"),
-                flaggedTitle: tInbox("decisions.flaggedTitle"),
-                review: tInbox("decisions.review"),
-                openTask: tInbox("decisions.openTask"),
-                stage: workLabels.stage,
-              }}
-            />
-          </div>
-        ) : null}
-
-        {/* `min-w-0`: a grid item defaults to `min-width: auto`, which sizes it
-            to the 1180px table's min-content width and stretches the whole page
-            sideways — the inner `overflow-x-auto` never gets a chance. This is
-            what keeps `EDGE-NAV-02`'s "no page-level horizontal scroll" true. */}
-        <div className="min-w-0 xl:col-span-2 xl:col-start-1 xl:row-start-2">
-          <DeskRegion
-            action={{ href: "/work", label: t("workAll") }}
-            count={{
-              value: visible.length,
-              label: t("workCount").replace("$count", String(visible.length)),
+          `Held` is the exception that proves the rule: `WORK_BACKLOG_STAGES`,
+          not in flight, so no row carries it. It keeps a region. */}
+      {heldItems.length > 0 ? (
+        <div data-testid="desk-held">
+          <DecisionSections
+            items={heldItems}
+            labels={{
+              promotableTitle: tInbox("decisions.promotableTitle"),
+              crashedTitle: tInbox("decisions.crashedTitle"),
+              flaggedTitle: tInbox("decisions.flaggedTitle"),
+              review: tInbox("decisions.review"),
+              openTask: tInbox("decisions.openTask"),
+              stage: workLabels.stage,
             }}
-            testid="desk-work"
-            title={t("workTitle")}
-          >
-            {visible.length === 0 ? (
-              <DeskEmpty
-                clear={
-                  activeStage === null
-                    ? undefined
-                    : { href: "/", label: t("workClearFilter") }
-                }
-                testid={
-                  activeStage === null
-                    ? "desk-work-empty"
-                    : "desk-work-filtered"
-                }
-                text={
-                  activeStage === null
-                    ? t("workEmpty")
-                    : t("workEmptyFiltered").replace(
-                        "$stage",
-                        tStage(activeStage),
-                      )
-                }
-              />
-            ) : (
-              <WorkRowsTable
-                expandable
-                groupBy="project"
-                groups={workGroups}
-                labels={workLabels}
-                locale={locale}
-                now={now}
-                panels={panels}
-              />
-            )}
-          </DeskRegion>
+          />
         </div>
-        <DeskRegion
-          action={{ href: "/activity", label: t("activityAll") }}
-          className="xl:col-start-2 xl:row-start-1"
-          testid="desk-activity"
-          title={t("activityTitle")}
-        >
-          {activity.unread.length + activity.seen.length === 0 ? (
-            <DeskEmpty text={t("activityEmpty")} />
-          ) : (
-            <ActivityRowList
-              divider={activity.divider}
-              labels={activityLabels}
-              locale={locale}
-              now={now}
-              seen={activity.seen}
-              unread={activity.unread}
-            />
-          )}
-        </DeskRegion>
-      </div>
+      ) : null}
+
+      <DeskRegion
+        action={{ href: "/activity", label: t("activityAll") }}
+        testid="desk-activity"
+        title={t("activityTitle")}
+      >
+        {activity.unread.length + activity.seen.length === 0 ? (
+          <DeskEmpty text={t("activityEmpty")} />
+        ) : (
+          <ActivityRowList
+            divider={activity.divider}
+            labels={activityLabels}
+            locale={locale}
+            now={now}
+            seen={activity.seen}
+            unread={activity.unread}
+          />
+        )}
+      </DeskRegion>
     </div>
   );
 }

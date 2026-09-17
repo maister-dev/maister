@@ -21,8 +21,8 @@ const DESK = readFileSync(path.join(WEB_ROOT, "app/(app)/page.tsx"), "utf8");
 describe("UT-NAV-01 the Desk composes rather than re-implements", () => {
   it("renders each region through the surface that owns it", () => {
     for (const component of [
-      // `/inbox` — `DecisionSections` survives for `Held`; the HITL list does
-      // not, because ADR-174 D2 moved that population onto the work row.
+      // `/inbox` — `DecisionSections` survives for `Held`, and `HitlPanel` is
+      // the body `/inbox` itself is now rebuilt on.
       "DecisionSections",
       "HitlPanel",
       // `/work`
@@ -33,10 +33,17 @@ describe("UT-NAV-01 the Desk composes rather than re-implements", () => {
       "NowTiles",
       "OnboardingChecklist",
       "EmptyState",
-      // the existing scratch launcher, not a new composer
-      "ScratchLaunchPopover",
     ]) {
       expect(DESK, component).toMatch(new RegExp(`<${component}[\\s/>]`, "u"));
+    }
+  });
+
+  it("renders neither the HITL list nor the scratch composer", () => {
+    // ADR-174 D2 moved the HITL population onto the work row; `REQ-D22` removed
+    // the composer outright, because the rail already renders the launcher with
+    // the global Cmd/Ctrl+K listener and a second one opened two dialogs.
+    for (const gone of ["HitlInboxList", "ScratchLaunchPopover"]) {
+      expect(DESK, gone).not.toMatch(new RegExp(`<${gone}[\\s/>]`, "u"));
     }
   });
 
@@ -86,33 +93,50 @@ describe("UT-NAV-01 the Desk composes rather than re-implements", () => {
     expect(DESK).not.toMatch(/method:\s*"POST"/u);
   });
 
-  it("keeps the composer out of the empty state", () => {
-    // `EDGE-NAV-01`: the scratch composer is absent until a project exists.
-    expect(DESK).toMatch(/hasProjects \?\s*\(?\s*<ScratchLaunchPopover/u);
+  it("EDGE-NAV-01 gates only the first-run frame on having projects", () => {
+    // The composer used to be the other thing this flag gated. It is gone
+    // unconditionally now, so `hasProjects` must reach exactly one consumer:
+    // the onboarding + empty-state frame.
+    expect(DESK).toContain("desk-empty");
+    expect(DESK).not.toContain("ScratchLaunchPopover");
   });
 
-  it("orders the regions Held, Work, Activity in the SOURCE", () => {
-    // `EDGE-NAV-02`. The grid is one column below `xl`, so source order IS the
-    // narrow order — and the first cut of this page had Work last, which put it
-    // below Activity on a phone. Desktop's different arrangement is done with
-    // explicit grid placement, never by reordering the source.
-    const order = ["desk-held", "desk-work", "desk-activity"].map((id) =>
+  it("AC-D21 orders the regions Work, Held, Activity in the SOURCE", () => {
+    const order = ["desk-work", "desk-held", "desk-activity"].map((id) =>
       DESK.indexOf(`testid="${id}"`),
     );
 
     expect(
       order.every((at) => at > 0),
-      DESK.slice(0, 0) || "all found",
+      "all three regions present",
     ).toBe(true);
     expect(order).toEqual([...order].sort((a, b) => a - b));
   });
 
-  it("places the desktop arrangement with grid coordinates, not with order", () => {
-    expect(DESK).toContain("xl:grid-cols-");
-    // Work spans the full width on row 2; Decisions and Activity share row 1.
-    expect(DESK).toContain("xl:col-span-2 xl:col-start-1 xl:row-start-2");
-    expect(DESK).toContain("xl:col-start-1 xl:row-start-1");
-    expect(DESK).toContain("xl:col-start-2 xl:row-start-1");
+  it("AC-D21 lays out one column at EVERY width", () => {
+    // There is no second arrangement any more, so the rendered order IS the
+    // source order asserted above and the two cannot disagree. A returning
+    // `xl:` placement would reintroduce a layout this test cannot see.
+    expect(DESK).not.toMatch(/xl:grid-cols-/u);
+    expect(DESK).not.toMatch(/xl:col-(start|span)-/u);
+    expect(DESK).not.toMatch(/xl:row-start-/u);
+  });
+
+  it("AC-D2 reads no query beyond the ones it already made", () => {
+    // `REQ-D2`: the strip is a SUMMARY of rows the page already loads. The
+    // cheapest way to break that is a new read model for the five numbers, so
+    // the allow-list is the assertion.
+    const queryImports = [
+      ...DESK.matchAll(/from "(@\/lib\/queries\/[a-z-]+)"/gu),
+    ].map((match) => match[1]);
+
+    expect([...new Set(queryImports)].sort()).toEqual([
+      "@/lib/queries/activity-cursor",
+      "@/lib/queries/activity-feed",
+      "@/lib/queries/decisions",
+      "@/lib/queries/portfolio",
+      "@/lib/queries/work-table",
+    ]);
   });
 });
 

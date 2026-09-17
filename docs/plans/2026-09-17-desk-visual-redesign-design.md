@@ -1,10 +1,10 @@
 # Desk visual redesign — design
 
 **Date:** 2026-09-17 · **Route:** `/` · **Source:** `web/app/(app)/page.tsx`
-· **Status:** Design, not implemented.
+· **Status:** Shipped (2026-09-17) — ADR-174; built on branch `claude/desktop-visual-redesign-1bef2c`.
 
-Supersedes the layout half of [`../screens/desk.md`](../screens/desk.md)
-§"Layout & regions" once built. Touches [ADR-172](../decisions/adr-172.md) D1,
+Superseded the layout half of [`../screens/desk.md`](../screens/desk.md)
+§"Layout & regions", which is now rewritten to match what shipped. Touches [ADR-172](../decisions/adr-172.md) D1,
 which enumerates the composed regions.
 
 ## The problem this solves

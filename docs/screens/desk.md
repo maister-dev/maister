@@ -1,6 +1,6 @@
 # Desk
 
-**Route:** `/` · **Status:** Implemented (ADR-172); rebuild Designed (ADR-174) · **Source:** `web/app/(app)/page.tsx`
+**Route:** `/` · **Status:** Implemented (ADR-172, ADR-174) · **Source:** `web/app/(app)/page.tsx`
 
 The home surface. Answers "what needs me, what moved, what is running" in one
 screen, across every project the reader can see. It **composes** surfaces owned
@@ -46,7 +46,7 @@ flowchart LR
 
 ## Layout & regions
 
-One column at **every** width, top to bottom (`REQ-D21`, ADR-174 D1) — **(Designed)**:
+One column at **every** width, top to bottom (`REQ-D21`, ADR-174 D1) — **(Implemented)**:
 
 1. **Header** — eyebrow and title. No digest sentence, no period, no window
    selector: the Desk answers "what is true now", and a windowed number answers a
@@ -77,7 +77,7 @@ so no capability is lost (`REQ-D22`).
 
 Liveness comes from one `EventSource` on the attention stream; the regions refetch on
 a tick and never hold an accumulated event list (Implemented). An active `?stage=`
-filter survives the refetch tick (`REQ-D5`, Designed).
+filter survives the refetch tick (`REQ-D5`, Implemented).
 
 ### As built
 
@@ -89,7 +89,7 @@ out** of their surfaces rather than copied, and their label sets come from one b
 each (`lib/work/work-row-labels.ts`, `lib/activity/activity-row-labels.ts`) so a new
 column cannot reach `/work` and miss the Desk (Implemented).
 
-**The row carries its own decision** (Designed). The row→decision join is built in the
+**The row carries its own decision** (Implemented). The row→decision join is built in the
 page from the decision queue it **already loads**, keyed on `runId`;
 `getWorkTable` is not modified and the Desk adds no query (`REQ-D2`, `REQ-D15`). Panel
 content resolves by stage: `WaitingOnHuman` → the HITL panel; `Review` → a **link** to
@@ -97,7 +97,7 @@ the run's review surface, never an inline promote, because the drift-guarded rev
 target commit exists only there; `Crashed` → recover/discard; `Executing`/`Queued` →
 that run's recent events.
 
-**The HITL panel is one implementation, not two** (Designed). `HitlCard` was
+**The HITL panel is one implementation, not two** (Implemented). `HitlCard` was
 monolithic — its own expansion state, header toggle, lazy `inbox-context` fetch and
 trailing response form. The panel body is extracted with its `expanded` state owned by
 the parent, and **`/inbox` is rebuilt on the extracted panel**, so the Desk and the
@@ -106,7 +106,7 @@ the second copy ADR-172 D1 exists to prevent. The panel fetches `inbox-context` 
 **first expand only** — the Desk may hold many `WaitingOnHuman` rows, and a mount-time
 fetch would fire one request per row on load (`REQ-D16`).
 
-**The expansion adds no mutation path** (`REQ-D18`, Designed). Every action inside a
+**The expansion adds no mutation path** (`REQ-D18`, Implemented). Every action inside a
 panel posts to the route `/inbox` already uses; the page source carries no
 `"use server"`, no `fetch(`, and no `method: "POST"`, and that assertion is not
 relaxed.
@@ -117,7 +117,7 @@ sites. Expansion ships behind a prop defaulting to **off**, and `/work` turns it
 a later increment (ADR-174 D5). Two columns go: the `project` column is hidden when
 and only when `groupBy === "project"` — the group header already names it — and the
 raw `runStatus` column is removed, its distinction folded into `WorkStageChip`
-(Designed).
+(Implemented).
 
 The Desk shows a bounded slice of each region (12 work rows, 12 activity rows) and
 links to the full surface; there is no paging here (Implemented).
@@ -152,11 +152,11 @@ stateDiagram-v2
 ```
 
 Every viewport stacks strip, then Work, then Held, then Activity (`EDGE-NAV-02`,
-Designed) — there is no second arrangement, so the rendered order **is** the source
+Implemented) — there is no second arrangement, so the rendered order **is** the source
 order at every width and the two cannot disagree.
 
 Narrow viewports drop table columns by priority (`tokens` and `readiness` first)
-rather than scrolling the table sideways (`REQ-D11`, Designed). Hiding is CSS-driven,
+rather than scrolling the table sideways (`REQ-D11`, Implemented). Hiding is CSS-driven,
 so the `<td>` elements stay in the DOM and any `colSpan` must be the **full** column
 count, never the visible count — an expanded row computed from the visible count
 misaligns exactly where the columns drop.

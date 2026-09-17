@@ -1,6 +1,6 @@
 # Work
 
-**Route:** `/work` · **Status:** Implemented (ADR-170) · **Source:** `web/app/(app)/work/page.tsx`
+**Route:** `/work` · **Status:** Implemented (ADR-170, ADR-174) · **Source:** `web/app/(app)/work/page.tsx`
 
 The cross-project work table: every task the reader can see, in one comparable
 list, whether or not it has ever launched a run.
@@ -43,7 +43,7 @@ flowchart LR
 
 Full-width data-management layout: no centered max-width and responsive column
 behaviour. Narrow viewports drop columns by priority (`tokens` and `readiness`
-first) rather than scrolling the table sideways (`REQ-D11`, Designed).
+first) rather than scrolling the table sideways (`REQ-D11`, Implemented).
 
 Rows are **view-only on `/work`** — this surface is for seeing, and every action
 lives on the surface that owns it. The rule is this screen's, not the row
@@ -58,9 +58,9 @@ next action.
 
 The **project** column is hidden when and only when grouping is `project` — the
 group header already names it — at both surfaces, because the rule is
-grouping-derived rather than surface-derived (`REQ-D7`, Designed).
+grouping-derived rather than surface-derived (`REQ-D7`, Implemented).
 
-**The run-status column is removed** (`REQ-D8`, Designed), and its distinction moves
+**The run-status column is removed** (`REQ-D8`, Implemented), and its distinction moves
 into the stage chip. This also closes a pre-existing drift: this document specified a
 compact "run dot" while the code shipped the raw `runStatus` enum as text.
 `STAGE_BY_RUN_STATUS` is many-to-one, so `NeedsInput` / `NeedsInputIdle` /
@@ -79,7 +79,7 @@ rides alongside it.
 **Next action** is a pure function of the stage — on `/work` the table names the
 action and links to the surface that owns it, and never performs one. It stays a pure
 function of the stage wherever the rows render; a `none` action renders an em dash
-rather than a sentence (`REQ-D10`, Designed). The Desk's expansion panel is the one
+rather than a sentence (`REQ-D10`, Implemented). The Desk's expansion panel is the one
 place an action can be taken from a row, and it adds no mutation path of its own —
 every action posts to the route `/inbox` already uses (`REQ-D14`, `REQ-D18`).
 

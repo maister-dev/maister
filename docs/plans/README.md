@@ -31,4 +31,4 @@ fails when a file here is missing from it).
 | [`2026-07-01-project-brain-architecture.md`](2026-07-01-project-brain-architecture.md) | Shipped — sub-projects A/B/C all landed (ADR-122/127/128) |
 | [`2026-09-02-rah-companion-package.md`](2026-09-02-rah-companion-package.md) | Pending — handoff pointer for `maister-plugins/packages/rah` (ADR-165); authored after this repo merges |
 | [`2026-09-11-ext-recover-discard-design.md`](2026-09-11-ext-recover-discard-design.md) | Shipped (2026-09-11) — ADR-034 amendment; `runs:recover` over `/api/v1/ext` |
-| [`2026-09-17-desk-visual-redesign-design.md`](2026-09-17-desk-visual-redesign-design.md) | Design, not implemented — specified as ADR-174 in `.ai-factory/specs/desk-one-object-per-work-item.spec.md` |
+| [`2026-09-17-desk-visual-redesign-design.md`](2026-09-17-desk-visual-redesign-design.md) | Shipped (2026-09-17) — ADR-174; `NAV-08` declares the one-object-per-work-item contract |
