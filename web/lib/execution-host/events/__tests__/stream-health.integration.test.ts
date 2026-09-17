@@ -9,6 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
   findStalledEventStreams,
+  reportPoisonedConsumers,
   runEventStreamHealthPass,
 } from "@/lib/execution-host/events/stream-health";
 import {
@@ -174,6 +175,35 @@ describe("execution event stream health", () => {
     expect(second.degraded).toBe(1);
     expect(restarted).toEqual([hostId]);
     expect(await streamState()).toBe("lost");
+  });
+
+  it("reports a poisoned projection consumer instead of leaving it silent", async () => {
+    await testDatabase.pool.query(
+      `insert into execution_event_consumers
+         (consumer_name, run_id, state, attempts, last_error, last_run_sequence)
+       values ('canonical-run-transcript-v2', $1, 'poisoned', 5,
+               '{"reason":"projection_failure"}'::jsonb, 30198)`,
+      [runId],
+    );
+
+    const poisoned = await reportPoisonedConsumers({ db: testDatabase.db });
+
+    expect(poisoned.count).toBe(1);
+    expect(poisoned.errors[0]).toContain("canonical-run-transcript-v2");
+
+    const pass = await runEventStreamHealthPass({
+      db: testDatabase.db,
+      stallSeconds: STALL_SECONDS,
+      restartConsumer: () => {},
+    });
+
+    expect(pass.poisonedConsumers).toBe(1);
+    expect(pass.errors.some((e) => e.includes("poisoned"))).toBe(true);
+
+    await testDatabase.pool.query(
+      `delete from execution_event_consumers where run_id = $1`,
+      [runId],
+    );
   });
 
   it("leaves a recovered stream alone after its restart worked", async () => {

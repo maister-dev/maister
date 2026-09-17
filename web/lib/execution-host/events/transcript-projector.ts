@@ -37,9 +37,41 @@ export const canonicalTranscriptProjector: ExecutionEventProjector = {
   consumerName: CANONICAL_PROJECTION_CONSUMERS.transcript,
   prepare: prepareTranscriptContent,
   project: async (tx, event) => {
-    await projectTranscriptEvent(tx, event);
+    try {
+      await projectTranscriptEvent(tx, event);
+    } catch (error) {
+      // This projector round-trips message bodies through `::jsonb` so the
+      // concatenation stays in PostgreSQL. A value jsonb cannot represent
+      // therefore fails HERE, deterministically — but as a raw driver error it
+      // was classified transient, burned five retries, and landed as
+      // `unexpected_error` with no hint of its cause. Name it: a deterministic
+      // failure poisons at once, which is what the operator repair path expects.
+      const sqlState = unstorableSqlState(error);
+
+      if (sqlState)
+        throw new ExecutionEventProjectionError(
+          `transcript content cannot be represented in jsonb (${sqlState})`,
+          true,
+        );
+      throw error;
+    }
   },
 };
+
+// 22P05 unsupported_character_value, 22P02 invalid_text_representation,
+// 22021 character_not_in_repertoire. None can succeed on a retry.
+const UNSTORABLE_SQLSTATES = new Set(["22P05", "22P02", "22021"]);
+
+function unstorableSqlState(error: unknown): string | null {
+  for (let cause = error, depth = 0; cause && depth < 5; depth += 1) {
+    const code = (cause as { code?: unknown }).code;
+
+    if (typeof code === "string" && UNSTORABLE_SQLSTATES.has(code)) return code;
+    cause = (cause as { cause?: unknown }).cause;
+  }
+
+  return null;
+}
 
 /** Applies one event using fixed-size pointers and indexed message keys.
  * Existing large message bodies stay inside PostgreSQL during concatenation. */

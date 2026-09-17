@@ -7,6 +7,7 @@ import { and, eq, inArray, lt, sql } from "drizzle-orm";
 
 import {
   executionCommands,
+  executionEventConsumers,
   executionEventStreams,
   executionHosts,
 } from "@/lib/db/schema";
@@ -68,8 +69,54 @@ export type StreamHealthSweepSummary = {
   checked: number;
   stalled: number;
   degraded: number;
+  /** Projection consumers parked on an event they cannot apply. A poisoned row
+   * never advances its cursor, so that run's read model is frozen until an
+   * operator rearms it — which nothing surfaced before. */
+  poisonedConsumers: number;
   errors: string[];
 };
+
+/** Report every poisoned projector cursor. Poison is deliberately terminal
+ * (`execution-event-plane.md`: it never advances the cursor or skips evidence),
+ * so the only thing missing was somebody saying so out loud. */
+export async function reportPoisonedConsumers(input: {
+  db: Db;
+  logger?: Logger;
+}): Promise<{ count: number; errors: string[] }> {
+  const rows = await input.db
+    .select({
+      consumerName: executionEventConsumers.consumerName,
+      runId: executionEventConsumers.runId,
+      poisonEventId: executionEventConsumers.poisonEventId,
+      lastRunSequence: executionEventConsumers.lastRunSequence,
+      lastError: executionEventConsumers.lastError,
+    })
+    .from(executionEventConsumers)
+    .where(eq(executionEventConsumers.state, "poisoned"));
+
+  for (const row of rows)
+    input.logger?.warn(
+      {
+        consumerName: row.consumerName,
+        runId: row.runId,
+        poisonEventId: row.poisonEventId,
+        cursor: row.lastRunSequence?.toString() ?? null,
+        reason:
+          typeof row.lastError?.reason === "string"
+            ? row.lastError.reason
+            : null,
+      },
+      "execution-projection-consumer-poisoned",
+    );
+
+  return {
+    count: rows.length,
+    errors: rows.map(
+      (row) =>
+        `projection consumer ${row.consumerName} is poisoned for run ${row.runId}`,
+    ),
+  };
+}
 
 /**
  * Degrade a stalled stream to `lost`. This is the LAST move, not the first: the
@@ -152,8 +199,16 @@ export async function runEventStreamHealthPass(input: {
     checked: 0,
     stalled: 0,
     degraded: 0,
+    poisonedConsumers: 0,
     errors: [],
   };
+  const poisoned = await reportPoisonedConsumers({
+    db: input.db,
+    logger: input.logger,
+  });
+
+  summary.poisonedConsumers = poisoned.count;
+  summary.errors.push(...poisoned.errors);
   const stalled = await findStalledEventStreams({
     db: input.db,
     now: input.now,
