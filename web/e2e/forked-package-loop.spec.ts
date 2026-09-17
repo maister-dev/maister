@@ -607,12 +607,21 @@ test("upstream re-tag → install & sync with conflict → resolve → publish b
   // Publish to a bare remote registered WITH a base branch (T14 field).
   const barePath = mkdtempSync(join(tmpdir(), "maister-e2e-fpl-bare-"));
 
+  // The publish picker lists each source by its STORED url, and `addGitSource`
+  // stores `file://<path>` — the scheme `validateUrl` requires (see its
+  // comment). Selecting by the bare temp path therefore matched no option at
+  // all, and `selectOption` sat there until the test budget ran out. The
+  // `file://` prefix was added to `addGitSource` in the ADR-129 remediation but
+  // never reached these two call sites, because this test has been skipped
+  // behind the serial-mode batch failure above it ever since.
+  const bareUrl = `file://${barePath}`;
+
   git(barePath, "init", "--bare");
   await addGitSource(page, barePath, "develop");
 
   await page.goto(`/studio/edit/${fork1Id}`);
   await page.getByTestId("local-editor-publish").click();
-  await page.getByTestId("publish-source").selectOption({ label: barePath });
+  await page.getByTestId("publish-source").selectOption({ label: bareUrl });
   await page.getByTestId("publish-submit").click();
   await expect(page.getByTestId("publish-result")).toBeVisible({
     timeout: 60_000,
@@ -641,7 +650,7 @@ test("upstream re-tag → install & sync with conflict → resolve → publish b
   git(barePath, "update-ref", `refs/heads/${branch}`, moved);
 
   await page.getByTestId("local-editor-publish").click();
-  await page.getByTestId("publish-source").selectOption({ label: barePath });
+  await page.getByTestId("publish-source").selectOption({ label: bareUrl });
   await page.getByTestId("publish-submit").click();
   await expect(page.getByTestId("publish-upstream-moved")).toBeVisible({
     timeout: 60_000,
