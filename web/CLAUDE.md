@@ -263,7 +263,7 @@ places with another. As of 2026-09-03 on `main` + ADR-165:
 - **integration** — 0 failures, except the two-case
   `lib/runs/__tests__/dirty-resolution-race.integration.test.ts` pair, which
   flakes under parallel load and passes 4/4 in isolation.
-- **e2e** — **15 pre-existing failures across 14 spec files**, enumerated below,
+- **e2e** — **7 pre-existing failures across 7 spec files**, enumerated below,
   plus one known-flaky spec. Ports 3100/7788 and the `maister_e2e` database are
   shared across worktrees; kill both ports before a run. Before filing an e2e
   failure as environmental, read the `[WebServer]` lines in the run log: a React
@@ -275,14 +275,31 @@ places with another. As of 2026-09-03 on `main` + ADR-165:
   this section's own first line says to compare SETS, and a bare number cannot
   be diffed.
 
-  `multi-run-cost-policy` (2) · `evaluation-lab` · `execution-host-contract` ·
-  `forked-package-loop` · `platform-acp-runners` · `platform-agents-page` ·
-  `project-automations` · `project-onboarding` · `project-registration` ·
-  `review-comments` · `run-schedules` · `run-sync` · `studio-ai-assistant` ·
-  `studio-package-viewer`.
+  `evaluation-lab` · `execution-host-contract` · `forked-package-loop` ·
+  `project-onboarding` · `project-registration` · `review-comments` ·
+  `studio-ai-assistant`.
 
-  **Closed on 2026-09-17** (13 spec files, 15 cases), all stale expectations
-  except one product bug: `studio-diff` · `studio-import` · `package-management`
+  Each has its OWN cause — this set has no shared theme left, so triage from the
+  failure rather than looking for a pattern. Two of them (`evaluation-lab`,
+  `forked-package-loop`) share one: both POST an evaluation launch-batch with a
+  hand-written recipe whose `flowRefId`, `flowRevisionId` and contract digests
+  are placeholders, and the ADR-150 preflight refuses it with
+  `PRECONDITION -> 404`. That is not fixable by adjusting the values:
+  `lab-queries.ts` states the contract outright — the server resolves the recipe
+  scaffold and "the client can never fabricate a digest that would pass
+  preflight", so the specs have to take the scaffold from the server.
+
+  **Closed on 2026-09-17** (20 spec files, 23 cases), all stale expectations
+  except two product bugs. The second: `listProjectAutomations` sorted by a rank
+  written as a bare integer literal, which Postgres reads in ORDER BY as an
+  ORDINAL POSITION — `ORDER BY 0` failed to analyse and the project Automations
+  tab fell to the error boundary on every project, taking `run-schedules` and
+  `project-automations` with it. Both had been filed as stale tests. Every test
+  that touched that function mocked it, so the SQL was never executed.
+  Additionally closed: `platform-acp-runners` · `run-schedules` ·
+  `project-automations` · `studio-package-viewer` · `multi-run-cost-policy` (2) ·
+  `run-sync`, and `platform-agents-page`, which now passes untouched. The first
+  product bug: `studio-diff` · `studio-import` · `package-management`
   (stale `flow.yaml` fixtures missing `compat.engine_min`, and a digest-labelled
   install button) · `flows-authoring` (3) · `m11b-takeover` ·
   `m11c-settings-enforcement` · `m13-assignments` · `m16-external-operations` ·
