@@ -457,23 +457,32 @@ recorded in the task; the commit lands at green (see Commit Plan).
 
 ### Phase 3: REFACTOR and verify
 
-- [ ] **T7: Refactor under green and verify against the spec (depends on T6)**
+- [x] **T7: Refactor under green and verify against the spec (depends on T6)**
 
-  STATUS 2026-09-17 — refactor half DONE, visual half OUTSTANDING.
+  STATUS 2026-09-17 — COMPLETE, including the in-app visual pass.
   The review pass found nothing to change (SRP/DRY/KISS/conventions all hold, the
   S3 WHY comment is present), so there is no Commit 3 refactor. Automated
-  verification is complete: 8026 unit tests, a production `next build` (79 pages —
-  the only check that proves the RSC boundary, since `TaskCard` is a Server
-  Component and `TaskCardDescription` is `"use client"`), typecheck, lint, and
-  `validate:docs`. Every S1.2 row and every S2 state is pinned by a test, and three
-  guards were falsified rather than assumed.
-  NOT done: the in-app visual pass. The board sits behind auth and entering a
-  password into a login form is not something the agent does; the Browser pane
-  could not be surfaced to the owner to sign in there. E2 needs no browser by this
-  plan's own wording ("code review against this line; no automated check") and that
-  review was performed against `flow-graph-view.tsx:597`. What remains for a human
-  is the holistic look listed under Verification below.
+  verification: 8026 unit tests, a production `next build` (79 pages — the only
+  check that proves the RSC boundary, since `TaskCard` is a Server Component and
+  `TaskCardDescription` is `"use client"`), typecheck, lint, `validate:docs`.
+  Three guards were falsified rather than assumed.
 
+  Verified live on `/projects/aidev-mipt-course`, RU locale, 296px card, against
+  the real 829-char Backlog description (the owner signed in; the agent does not
+  enter credentials):
+
+  | S2 state  | Observed                                                              |
+  | --------- | --------------------------------------------------------------------- |
+  | collapsed | `aria-expanded="false"`, label `Ещё`, 119 code points ending `…`, no heading rendered, `aria-controls` resolves |
+  | expanded  | `aria-expanded="true"`, label `Свернуть`, 4 real Markdown paragraphs, 806 chars |
+  | round trip| expand → collapse returns to 119 chars / 1 paragraph / `…`             |
+  | editing   | opens on the FULL source (803 chars, not the excerpt); toggle unmounts; cancel returns COLLAPSED |
+
+  E2 confirmed with real layout, not review alone: the excerpt node carries
+  exactly `min-w-0 break-words [overflow-wrap:anywhere]`, `scrollWidth` does not
+  exceed the 296px card, and the document does not scroll horizontally in either
+  state. Console across the whole expand → edit → cancel cycle: EMPTY — no
+  "Rendered fewer hooks than expected", no warnings.
 
   With the suite green, review and clean up without changing behavior:
 
