@@ -11,7 +11,15 @@
 // side-effect mechanics (which the integration suite owns).
 
 import { NextRequest } from "next/server";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import {
@@ -354,8 +362,23 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+// Both route modules pull a large graph — ~700-800 ms the first time. Loaded
+// lazily inside these helpers, that cost landed inside vitest's 5 s per-test
+// budget on whichever case ran first, and the damage did not stop there: a
+// timed-out test's request keeps running, so its later calls reached spies whose
+// `mockImplementation` already belonged to the NEXT case. That is how
+// "401 when unauthenticated" observed a 200 it never produced.
+//
+// `beforeAll` has its own budget, outside every test.
+let claimRoute: typeof import("../[runId]/takeover/claim/route");
+let returnRoute: typeof import("../[runId]/takeover/return/route");
+
+beforeAll(async () => {
+  claimRoute = await import("../[runId]/takeover/claim/route");
+  returnRoute = await import("../[runId]/takeover/return/route");
+});
+
 async function invokeClaim(runId = "run-1") {
-  const { POST } = await import("../[runId]/takeover/claim/route");
   const req = new NextRequest(
     new Request(`http://localhost/api/runs/${runId}/takeover/claim`, {
       method: "POST",
@@ -363,11 +386,10 @@ async function invokeClaim(runId = "run-1") {
     }),
   );
 
-  return POST(req, { params: Promise.resolve({ runId }) });
+  return claimRoute.POST(req, { params: Promise.resolve({ runId }) });
 }
 
 async function invokeReturn(runId = "run-1") {
-  const { POST } = await import("../[runId]/takeover/return/route");
   const req = new NextRequest(
     new Request(`http://localhost/api/runs/${runId}/takeover/return`, {
       method: "POST",
@@ -375,7 +397,7 @@ async function invokeReturn(runId = "run-1") {
     }),
   );
 
-  return POST(req, { params: Promise.resolve({ runId }) });
+  return returnRoute.POST(req, { params: Promise.resolve({ runId }) });
 }
 
 describe("POST /api/runs/{runId}/takeover/claim — contract", () => {
