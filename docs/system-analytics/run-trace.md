@@ -19,8 +19,10 @@ projector-derived `log` artifact is a strictly lossier duplicate of a transcript
 row that already carries the tool's name, kind, status, arguments and result. The
 boundary this document draws is therefore one-directional — the artifact
 projector derives only what a reviewer can open (a preview URL), and every prompt
-the platform dispatches to an agent is recorded once, in Trace, as the `user`
-message that opens the turn it paid for.
+the flow graph driver dispatches is recorded once, in Trace, as the `user`
+message that opens the turn it paid for. The scope word is *flow*: a standalone
+agent run (`run_kind = 'agent'`) dispatches through its own launcher and records
+no prompt row, which the Prompt owner entity below states precisely.
 
 ## Domain entities
 
@@ -40,8 +42,15 @@ message that opens the turn it paid for.
   `(run_id, node_attempt_id)` scope; it is the lock both writers take.
 - **Prompt owner** — the durable owner of a dispatch, a six-variant union:
   `node`, `permission_resume`, `gate_ai`, `gate_skill`, `consensus_verifier`,
-  `consensus_synthesis`. The standalone-agent create owner `agent` writes
-  `run_messages` rows whose `node_attempt_id` is `NULL`.
+  `consensus_synthesis`. These six are exactly the owners this contract covers,
+  because the recorder is called from exactly one place — the flow dispatch in
+  [`runner-agent.ts`](../../web/lib/flows/runner-agent.ts). A seventh owner
+  exists on the command plane: the standalone-agent create owner `agent`, whose
+  turns are dispatched by
+  [`agents/launch.ts`](../../web/lib/agents/launch.ts). That path writes no
+  `run_messages` row, so a standalone agent run's transcript carries no `user`
+  prompt and its dispatches are keyed only on the command ledger
+  (Phase 2 — extending the recorder to it is unclaimed work).
 - **Derivation** — the artifact projector's classification of one ACP frame:
   a `preview` or nothing. See
   [`../../web/lib/projector/artifact-projector.ts`](../../web/lib/projector/artifact-projector.ts).
@@ -110,7 +119,7 @@ sequenceDiagram
 - **TRC-02:** No projector-derived artifact is reachable by a gate or an artifact binding — projector rows carry `artifact_def_id = NULL` and every `artifact_required` / `input.requires` / `output.produces` resolution keys on `artifact_def_id`.
 - **TRC-03:** An ACP frame the artifact projector cannot classify warns with its discriminant and advances; it never poisons a run's projection.
 - **TRC-04:** A child run's legacy `outputText` is composed only from artifacts a producer deliberately recorded, never from a projector-derived row.
-- **TRC-05:** Every prompt dispatched to an agent is recorded as a `user` message in `run_messages`, for every prompt-owner variant and for every dispatch within one node attempt.
+- **TRC-05:** Every prompt the flow graph driver dispatches is recorded as a `user` message in `run_messages`, for each of the six flow prompt-owner variants and for every dispatch within one node attempt; a standalone agent run's turns are outside this contract (Phase 2).
 - **TRC-06:** Prompt recording is idempotent per dispatch, enforced by a database constraint rather than by application ordering alone.
 - **TRC-07:** A prompt row's dispatch identity is derived from the existing owner operation-key functions; no parallel identity scheme is introduced.
 - **TRC-08:** Prompt recording is best-effort — a failed prompt-row write warns and never blocks, delays, or fails dispatch.
@@ -125,9 +134,10 @@ sequenceDiagram
   `preview`; without one it derives nothing.
 - **EDGE-TRC-02:** A payload offloaded to a host-private object is rehydrated before
   classification, so an offloaded preview URL is not lost.
-- **EDGE-TRC-03:** An agent run's prompt row has `node_attempt_id = NULL`; `nulls not
-  distinct` keeps both the sequence unique key and the dispatch-key constraint
-  effective.
+- **EDGE-TRC-03:** The dispatch-key index declares `nulls not distinct`, matching its
+  sequence-key sibling, so it stays effective for a row whose `node_attempt_id`
+  is `NULL`; no flow dispatch produces such a row today, so `IT-EDGE-TRC-03`
+  pins the constraint directly rather than through a producer.
 - **EDGE-TRC-04:** A `consensus_verifier` / `consensus_synthesis` dispatch records its
   prompt like any other owner.
 - **EDGE-TRC-05:** A prompt over 256 KiB is stored truncated with the marker and the

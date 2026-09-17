@@ -770,11 +770,13 @@ of node-status text and a single aggregate token count.
   projector and `run_messages.supervisor_event_id` horizon, but its
   client-safe DTO, salience filtering, and liveness synthesis are documented
   separately in [assistant-activity.md](assistant-activity.md); the raw
-  transcript route remains the internal rail. Since TRC-05 the transcript also
-  OPENS with what the agent was asked: every dispatched prompt is written as a
-  `user` row by a second, non-projector writer, one row per dispatch, bounded
-  at 256 KiB. That writer shares the projector's `run_transcript_states` scope
-  lock — see [`run-trace.md`](run-trace.md).
+  transcript route remains the internal rail. Since TRC-05 a FLOW run's
+  transcript also OPENS with what the agent was asked: every prompt the graph
+  driver dispatches is written as a `user` row by a second, non-projector
+  writer, one row per dispatch, bounded at 256 KiB. That writer shares the
+  projector's `run_transcript_states` scope lock. A standalone agent run has no
+  such row — its launcher records no prompt — see
+  [`run-trace.md`](run-trace.md).
 - **Node-status iconography.** Per-node status (`Pending | Running | Succeeded |
   Failed | NeedsInput | Reworked | Stale`) renders as a localized icon
   + accessible tooltip across the three run-detail surfaces (the "Ноды" list,

@@ -5160,12 +5160,14 @@ export const runMessages = pgTable(
     //
     // The migration declares this index `NULLS NOT DISTINCT`, which drizzle
     // offers only on `unique()` constraints — and a constraint cannot be
-    // partial. Without it the index would silently do nothing for the rows
-    // that need it most: a standalone agent's rows carry
-    // `node_attempt_id = NULL`, and default NULLS DISTINCT would make every
-    // one of them unique regardless of its dispatch key. Do not "simplify"
-    // this to a `unique()` and do not regenerate the migration's DDL from
-    // this declaration alone.
+    // partial. The clause keeps this index in step with its sequence-key
+    // sibling above: under the default NULLS DISTINCT a row whose
+    // `node_attempt_id` is NULL would be unique regardless of its dispatch
+    // key, silently exempting it. Only the flow dispatcher records prompts
+    // today and it always names an attempt, so no such row exists yet — the
+    // clause is what stops that from becoming a correctness hole the day one
+    // does. Do not "simplify" this to a `unique()` and do not regenerate the
+    // migration's DDL from this declaration alone.
     uniqPromptDispatchKey: uniqueIndex("run_messages_prompt_dispatch_key_uq")
       .on(t.runId, t.nodeAttemptId, t.promptDispatchKey)
       .where(sql`${t.promptDispatchKey} IS NOT NULL`),

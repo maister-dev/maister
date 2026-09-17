@@ -2533,9 +2533,11 @@ existing operation-key function, never from a parallel identity scheme.
 `(run_id, node_attempt_id, prompt_dispatch_key) WHERE prompt_dispatch_key IS NOT
 NULL`, declared `NULLS NOT DISTINCT`. Both halves are load-bearing: the
 predicate keeps the projector's untagged rows entirely outside the index, and
-`NULLS NOT DISTINCT` is what makes it effective for a standalone agent's rows,
-whose `node_attempt_id` is NULL (under the default, every such row would be
-unique regardless of its dispatch key). Drizzle can express the option only on
+`NULLS NOT DISTINCT` keeps it in step with the sequence key for a row whose
+`node_attempt_id` is NULL (under the default, such a row would be unique
+regardless of its dispatch key). Only the flow dispatcher records prompts today
+and it always names an attempt, so no such row exists yet — the clause is what
+keeps that from becoming a hole the day one does. Drizzle can express the option only on
 `unique()` constraints, which cannot be partial, so the clause lives in the
 migration SQL and NOT in the `uniqueIndex()` declaration — regenerating that DDL
 from `schema.ts` alone will drop it.

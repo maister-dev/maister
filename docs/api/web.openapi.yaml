@@ -6120,11 +6120,11 @@ paths:
         run it projects ordered manager-owned `execution_events` into
         `run_messages`; no route handler reads a host transcript or event file.
         It returns the LATEST attempt of the `?node=` node as ordered
-        `TranscriptMessage` rows plus the node's latest usage. For a run that
-        recorded them, the transcript OPENS with the dispatched prompt as a
-        `user` row (one per dispatch, bounded — see `TranscriptMessage`); that
-        prompt text is served only behind the same `readRepoFiles` gate as the
-        rest of the transcript. `?node=`
+        `TranscriptMessage` rows plus the node's latest usage. On a FLOW run the
+        transcript OPENS with the dispatched prompt as a `user` row (one per
+        dispatch, bounded — see `TranscriptMessage`, which names the run classes
+        that carry none); that prompt text is served only behind the same
+        `readRepoFiles` gate as the rest of the transcript. `?node=`
         is server-state validated against the run's compiled flow graph — an
         unknown node is a `409` PRECONDITION. No internal handles (e.g.
         `acpSessionId`) are serialized.
@@ -19330,14 +19330,18 @@ components:
         `tool` = JSON tool payload, `system` = JSON system payload
         (thought | usage | …). The client parser decodes `content`.
 
-        On a flow or agent run a `user` row carries the prompt dispatched to the
-        agent — ONE row per dispatch, so a node attempt that dispatches again
+        On a FLOW run a `user` row carries the prompt dispatched to the agent —
+        ONE row per dispatch, so a node attempt that dispatches again
         (permission resume, gate evaluation, consensus turn) contributes a
         further `user` row rather than overwriting the first. The body is
         bounded at 256 KiB; a longer prompt is stored truncated behind an
         explicit marker naming `node_attempts.resolved_prompt` as the
-        unabridged source for the attempt's first dispatch. Runs created before
-        this contract landed carry no such rows — nothing is backfilled.
+        unabridged source for the attempt's first dispatch.
+
+        Two run classes carry NO such row, and a client must not wait for one:
+        a standalone agent run (`run_kind = 'agent'`), whose turns are
+        dispatched by a different launcher that records no prompt, and any run
+        created before this contract landed — nothing is backfilled.
       properties:
         id: { type: string }
         role: { type: string, enum: [user, assistant, tool, system] }

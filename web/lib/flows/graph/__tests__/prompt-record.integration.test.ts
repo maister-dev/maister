@@ -1,4 +1,7 @@
-// TRC-05 + EDGE-TRC-04: every prompt dispatched to an agent is recorded.
+// TRC-05 + EDGE-TRC-04: every prompt the FLOW GRAPH DRIVER dispatches is
+// recorded. A standalone agent run (`run_kind='agent'`) is out of scope — it
+// dispatches through `lib/agents/launch.ts`, which records no `run_messages`
+// row — so nothing here should be read as covering that path.
 //
 // `node_attempts.resolved_prompt` keeps at most ONE prompt per attempt, behind
 // two restrictions that together hide most of what a run was actually told:

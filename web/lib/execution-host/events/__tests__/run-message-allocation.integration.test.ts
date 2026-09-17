@@ -229,11 +229,17 @@ describe("run_messages allocation", () => {
     await expect(messagesFor(seeded)).resolves.toHaveLength(1);
   }, 60_000);
 
-  // IT-EDGE-TRC-03. A standalone agent's rows carry `node_attempt_id = NULL`.
-  // Postgres treats NULLs as distinct in a unique key by default, which would
-  // silently disable BOTH the sequence key and the dispatch-key constraint for
-  // exactly those rows — so the new index must match the existing one's
-  // `nulls not distinct`.
+  // IT-EDGE-TRC-03. Postgres treats NULLs as distinct in a unique key by
+  // default, which would silently disable BOTH the sequence key and the
+  // dispatch-key constraint for a row whose `node_attempt_id` is NULL — so the
+  // new index must match the existing one's `nulls not distinct`.
+  //
+  // This calls `appendRunMessage` DIRECTLY and deliberately: no production
+  // writer produces this row today. The only recorder is the flow dispatcher
+  // and it always names an attempt, so there is no producer to drive here.
+  // That makes this a FORWARD contract on the constraint rather than coverage
+  // of a live path — it is what stops the null-attempt case from being a
+  // silent hole if a second recorder (a standalone agent turn) is ever wired.
   it("IT-EDGE-TRC-03: keeps both unique keys effective when node_attempt_id is null", async () => {
     const seeded = await seedRun();
     const key = `dispatch:agent:${seeded.runId}:0`;
