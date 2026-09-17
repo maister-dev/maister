@@ -190,6 +190,7 @@ The retained identifiers below are historical scenario aliases, not executed tes
 | EDGE-EVT-05 | sequence/timestamp schema | boundary parser T0.3/T1.3     | CT-EVT-05           | Acceptance unverified |
 | EDGE-EVT-06 | quarantine schema         | ingest T0.3/T1.3              | CT-EVT-08           | Acceptance unverified |
 | EDGE-EVT-07 | command/assignment fence  | ingest/projector T1.3/T1.4    | IT-EVT-05           | Acceptance unverified |
+| EDGE-EVT-08 | jsonb-unstorable payload  | ingest escape + skip ledger   | IT-EVT-08-UNSTORABLE | Verified (`ingest-unstorable-payload.integration.test.ts`) |
 | EDGE-PRM-01 | receipt/event contract    | prompt reconcile T3.1/T3.2    | IT-PRM-02-ACK-LOSS  | Acceptance unverified |
 | EDGE-PRM-02 | turn_lost schema          | startup repair T3.1           | IT-PRM-05           | Acceptance unverified |
 | EDGE-PRM-03 | terminal conflict error   | reconciliation T1.4/T3.2      | IT-PRM-06           | Acceptance unverified |
