@@ -377,6 +377,14 @@ places with another. As of 2026-09-03 on `main` + ADR-165:
   retry fails somewhere else entirely and its error describes the first
   attempt's leftovers, not the defect. Diagnose the FIRST attempt.
 
+  **4 workers oversaturates this Mac on a wide selection.** A 28-spec run at
+  `--workers=4` failed `adr160-rework-claim` and `forked-package-loop:518` in
+  both attempts; the SAME 28 specs at `--workers=2` went 57 passed, exit 0, and
+  finished faster (1.9 m vs 2.2 m). Both stragglers also pass alone and paired
+  with each suspected neighbour. Halve the workers before reading anything into
+  a wide run's failures — and note that the cap is NOT the mechanism here:
+  `playwright.config.ts` sets `MAISTER_MAX_CONCURRENT_RUNS: "64"` for e2e.
+
   **Read the host before believing a timeout-class failure.** The 2026-09-17
   measurement ran at load average 55-59 on 16 cores, against a competing
   `vitest --project integration` from another worktree and a 688 %-CPU VM. That
