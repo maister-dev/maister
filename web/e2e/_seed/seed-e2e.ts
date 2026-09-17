@@ -32,6 +32,8 @@ import { Pool } from "pg";
 
 import { E2E_EXECUTION_HOST_SLUG } from "./fixtures";
 
+import { LEGACY_STEPS_REFUSAL_MESSAGE } from "@/lib/flows/manifest-shape";
+
 const execFileAsync = promisify(execFile);
 
 type SeedAdapterId = "claude" | "codex" | "gemini" | "opencode" | "mimo";
@@ -6623,10 +6625,17 @@ async function seedFlowsAuthoringFixture(
       versionLabel: "none",
     },
     files: [],
+    // This fixture's body is a legacy `steps:` manifest, which the validator
+    // REFUSES since the engine-3.0.0 graph-only cut-over — so "valid" with
+    // zero issues was a state no production writer can produce. The flows page
+    // derives `readinessReady` straight from `validation.status === "valid"`,
+    // so the stale payload left Publish ENABLED on a flow that cannot compile,
+    // and `flows-authoring.spec.ts`'s "blocks publish" assertion had nothing
+    // to hold. Seed what the validator actually returns for this body.
     validation: {
-      status: "valid",
-      issueCount: 0,
-      issues: [],
+      status: "invalid",
+      issueCount: 1,
+      issues: [{ path: "", message: LEGACY_STEPS_REFUSAL_MESSAGE }],
       manifestDigest: null,
       contentHash: null,
     },
