@@ -535,6 +535,23 @@ Review | Crashed`.
 launchable`, held **even when `flow_id` is set** — and MUST be cleared only
   by a human (remove `duplicate_of` / re-send to triage); the
   `auto_launch_triaged` tick MUST NEVER launch a `flagged` task.
+- **(Implemented)** A Backlog card is **compact in the description axis**,
+  the sibling of the flight card's identity-first contract above: it shows at
+  most a ~120-character plain-text excerpt of `tasks.prompt`, and the full
+  Markdown is reachable in place behind a disclosure control on the card.
+  Truncation is display-only — the authored source is never altered. The excerpt
+  MUST read as the expanded body reads: it strips only the markup the renderer
+  itself consumes, and keeps what the renderer shows literally (raw HTML is shown
+  literally here — there is no `rehype-raw`, ADR-078 D10). Enforced by
+  `web/lib/markdown-excerpt.ts`, its per-rule table in
+  `web/lib/__tests__/markdown-excerpt.test.ts`, and
+  `web/lib/__tests__/markdown-excerpt-renderer-parity.test.ts`, which asserts the
+  excerpt against the renderer's own output rather than a hand-written string.
+- **(Implemented)** Board-card text is **read-only**. Neither the title nor the
+  description carries an inline editor on the card; the title is a link and the
+  description is presentation only. Both are edited through the full card editor
+  (`PUT`) or on the task detail page (`PATCH`), which keeps ONE editing surface
+  per field instead of two that can disagree.
 - **(Implemented)** `PATCH /api/projects/{slug}/tasks/{number}` MUST
   update verdict fields in ONE transaction with explicit-`null` CLEAR
   semantics, validating `flowId`/`runnerId` against server-state allow-lists.

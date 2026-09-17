@@ -1366,6 +1366,8 @@
     "decompositionNoRun": "нет запуска",
     "delegatedBy": "делегировано из",
     "delegatedRelaunchHint": "Дочерняя задача {key} — запуск с этой карточки создаст прогон вне дерева оркестратора.",
+    "descriptionExpand": "Ещё",
+    "descriptionCollapse": "Свернуть",
     "editTask": "Редактировать задачу",
     "editTitle": "Изменить название",
     "editDescription": "Изменить описание",

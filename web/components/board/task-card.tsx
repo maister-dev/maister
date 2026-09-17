@@ -8,9 +8,9 @@ import clsx from "clsx";
 import Link from "next/link";
 
 import { LaunchPopover } from "@/components/board/launch-popover";
+import { CollapsibleDescription } from "@/components/board/task-card-description";
 import {
   TaskCardEditModal,
-  TaskInlineEditableField,
   type TaskEditableTarget,
 } from "@/components/board/task-card-editing";
 import { TaskDecomposition } from "@/components/board/task-decomposition";
@@ -141,15 +141,12 @@ export function TaskCard({
           />
         </div>
       </div>
-      <TaskInlineEditableField
-        canEdit={canAct}
-        className="min-w-0 text-[13.5px] font-semibold leading-[1.35] tracking-[-0.005em] text-ink"
-        field="title"
+      <Link
+        className="min-w-0 break-words text-[13.5px] font-semibold leading-[1.35] tracking-[-0.005em] text-ink hover:text-amber hover:underline"
         href={`/projects/${slug}/tasks/${card.number}`}
-        slug={slug}
-        taskNumber={card.number}
-        value={card.title}
-      />
+      >
+        {card.title}
+      </Link>
       {card.runCount > 0 ? (
         <span
           className="w-fit rounded-full border border-line bg-ivory px-2 py-[2px] font-mono text-[10px] font-bold tracking-[0.04em] text-ink-2"
@@ -158,15 +155,7 @@ export function TaskCard({
           {runsCountLabel(card.runCount)}
         </span>
       ) : null}
-      <TaskInlineEditableField
-        multiline
-        canEdit={canAct}
-        className="font-mono text-[11px] leading-[1.45] tracking-[0.01em] text-mute"
-        field="prompt"
-        slug={slug}
-        taskNumber={card.number}
-        value={card.prompt}
-      />
+      <CollapsibleDescription text={card.prompt} />
       {card.blockedBy.length > 0 ? (
         <div className="flex flex-wrap items-center gap-1 font-mono text-[10px] text-danger">
           <span>{blockedByLabel}</span>

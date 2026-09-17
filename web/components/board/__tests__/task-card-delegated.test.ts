@@ -7,6 +7,9 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("@/components/board/launch-popover", () => ({
   LaunchPopover: () => null,
 }));
+vi.mock("@/components/board/task-card-description", () => ({
+  CollapsibleDescription: () => null,
+}));
 vi.mock("@/components/board/task-card-editing", () => ({
   TaskCardEditModal: () => null,
   TaskInlineEditableField: () => null,
