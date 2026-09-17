@@ -127,6 +127,33 @@ ASCII before it the two implementations agree and the row would prove nothing.
 
 ## S2. Card render contract
 
+> **AMENDED 2026-09-17, after the owner's review of the shipped feature.**
+> In-place editing was REMOVED from the board card: the title is now a plain
+> link and the description is presentation only, because the full card editor
+> already edits both and is the better surface. Two consequences, both load-
+> bearing for anyone reading S3 below:
+>
+> 1. The `editing` state in the table below no longer exists on the card. S2 has
+>    three states, not four, and the S2-d test was deleted rather than rewritten
+>    — there is no longer a code path for it to guard.
+> 2. **S3's entire rationale is gone.** `renderView` is not used by the card any
+>    more, so the hook-order hazard it existed to avoid cannot occur, the
+>    `TaskCardDescription` wrapper was deleted, and `TaskCard` renders
+>    `CollapsibleDescription` directly (a Server Component may render a client
+>    component across a serializable `text: string` prop). The WHY comment went
+>    with it.
+>
+> What DID become true is the repair this plan predicted in T6 and I dropped as
+> unnecessary: with `TaskCardDescription` gone, `TaskCard` reaches the real
+> component instead of the mocked `task-card-editing`, its `useTranslations`
+> runs unmocked, and `task-card-delegated` + `task-card-launch-reason` go red.
+> Both now mock `@/components/board/task-card-description`. Measured, not
+> assumed, in both directions.
+>
+> The task detail page is unchanged and KEEPS inline editing (S4 always put it
+> out of scope), so `TaskInlineEditableField` remains in use.
+
+
 `CollapsibleDescription` has exactly four observable states:
 
 | State     | Condition                                    | Renders                                                                     |

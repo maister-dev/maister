@@ -72,7 +72,11 @@ The board is a horizontally scrollable set of columns:
 - **Backlog cards** show a compact top metadata bar (`KEY-N`, flow tag, full
   edit action), then a full-width title row, run count, description, relation
   blockers, decomposition children, triage state, and the launch control.
-  Backlog card title and description expose an inline edit icon on hover/focus.
+  **Card text is read-only.** The title is a plain link to the task page and the
+  description is presentation only; neither carries an inline edit affordance,
+  because the full card editor already edits both and is the better surface for
+  it. Every text edit therefore goes through the card edit icon in the metadata
+  bar.
   The card keeps the description compact. A description whose plain text is at
   most ~120 characters renders its Markdown directly in the card body with no
   extra control. A longer one renders instead a one-line plain-text excerpt —
@@ -80,16 +84,7 @@ The board is a horizontally scrollable set of columns:
   `…` — beside an expand control that reveals the full Markdown in place inside
   the card and collapses it again. The control is a labelled button carrying its
   expanded state, so it is reachable by keyboard and screen reader; expanding is
-  presentation only and never alters the authored source. Description editing is
-  independent of that state and always opens on the full source: it uses a rich
-  Markdown editor with heading, list, quote, inline formatting, link,
-  inline-code, code-block, and divider controls in a shared toolbar. The toolbar
-  keeps the WYSIWYG/Markdown switch at the right edge. Markdown preview code
-  blocks use a distinct block background and show a language badge when the
-  fence declares one. The editor preserves the HTML/Word paste path where the
-  browser provides rich clipboard content. The inline save uses
-  `PATCH /api/projects/{slug}/tasks/{number}`; leaving the editor by save or
-  cancel returns the card to the collapsed excerpt.
+  presentation only and never alters the authored source.
 - **Full card editor** opens from the card edit icon. It follows an issue-detail
   layout: title and description on the left; persisted first-level task
   properties on the right (`flowId`, `runnerId`, `baseBranch`,
@@ -99,10 +94,18 @@ The board is a horizontally scrollable set of columns:
   `PUT /api/projects/{slug}/tasks/{number}` and is accepted only before work
   starts. Relation targets are picked with a compact search field that matches
   task number, title, and prompt text; the relation-kind select stays narrow so
-  the target search has the primary width.
-- **Task detail page** repeats the same inline title/description editing and
-  full task editor so an operator can make issue-style changes without returning
-  to the board. The header keeps breadcrumbs, status chips, and action buttons in
+  the target search has the primary width. Description editing here uses a rich
+  Markdown editor with heading, list, quote, inline formatting, link,
+  inline-code, code-block, and divider controls in a shared toolbar, and the
+  toolbar keeps the WYSIWYG/Markdown switch at the right edge. Markdown preview
+  code blocks use a distinct block background and show a language badge when the
+  fence declares one. The editor preserves the HTML/Word paste path where the
+  browser provides rich clipboard content.
+- **Task detail page** is the surface that DOES keep inline title/description
+  editing — the board card deliberately does not — alongside the same full task
+  editor, so an operator can make issue-style changes without returning to the
+  board. Its inline save uses `PATCH /api/projects/{slug}/tasks/{number}`.
+  The header keeps breadcrumbs, status chips, and action buttons in
   a compact top strip, then gives the editable task title a full-width row before
   the prompt. The launch-configuration summary mirrors the editable properties
   form: inherited defaults are displayed as concrete effective values while still
