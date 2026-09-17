@@ -1164,6 +1164,7 @@ describe("Flow prompt owners through the production graph driver", () => {
         id: original.executionAssignmentId,
       });
       const request = readCreateIntent(original, client.host.hostKey);
+      const sessionName = request.envelope.payload.sessionName ?? "default";
       const oldOwner = request.intent.owner;
 
       if (oldOwner.variant === "agent")
@@ -1223,7 +1224,7 @@ describe("Flow prompt owners through the production graph driver", () => {
             runId: seeded.runId,
             assignmentId: original.executionAssignmentId,
             nodeAttemptId: oldOwner.nodeAttemptId,
-            sessionName: request.envelope.payload.sessionName ?? "default",
+            sessionName,
             result: oldResult,
           }),
         );
@@ -1241,10 +1242,17 @@ describe("Flow prompt owners through the production graph driver", () => {
           state: "succeeded",
           result: oldResult,
         });
+        // A gate substep names its own session (508be005), so the run carries a
+        // `default` row beside it; the create under test binds exactly one.
         const [binding] = await db
           .select()
           .from(runSessions)
-          .where(eq(runSessions.runId, seeded.runId));
+          .where(
+            and(
+              eq(runSessions.runId, seeded.runId),
+              eq(runSessions.sessionName, sessionName),
+            ),
+          );
 
         expect(binding).toMatchObject({
           hostSessionId: successor.sessionId,
@@ -2806,11 +2814,16 @@ describe("Flow prompt owners through the production graph driver", () => {
           );
 
         expect(prompts).toHaveLength(1);
+        // The SIGKILLed transaction rolls back without recording anything, so
+        // recovery must not cost an attempt. Pinned to the pre-kill count, not
+        // to zero: the driver's own application is retried on its own schedule
+        // and a transient failure there is in contract, so a bare `0` asserts a
+        // phase this test never controls.
         expect(prompts[0]).toMatchObject({
           id: before.id,
           requestSha256: before.requestSha256,
           applicationState: "applied",
-          applicationAttempts: 0,
+          applicationAttempts: before.applicationAttempts,
         });
         if (continuation === "fenced") {
           await database.db.transaction((tx) =>

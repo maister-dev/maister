@@ -147,4 +147,11 @@ jobs:
         run: docker run --rm --workdir /app/web --entrypoint node maister-ab:ci node_modules/vitest/vitest.mjs run lib/__tests__/supervisor-client-binary.integration.test.ts --project=integration
       - name: Production HTTP and SIGTERM against real PostgreSQL
         working-directory: web
+        # The two steps above just built and ran a container, so Docker's
+        # presence is this step's precondition, not its question. The default
+        # 3 s probe guards the absent-Docker hang; a runtime client handing
+        # itself back slowly right after a layer export is not that case, and
+        # tripping it aborts the smoke before it starts.
+        env:
+          MAISTER_TEST_DOCKER_PROBE_TIMEOUT_MS: "30000"
         run: pnpm exec tsx --import ./scripts/_register-shim.mjs scripts/smoke-production-image.ts maister-ab:ci
