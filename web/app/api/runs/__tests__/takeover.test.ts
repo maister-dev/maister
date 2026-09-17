@@ -376,7 +376,11 @@ let returnRoute: typeof import("../[runId]/takeover/return/route");
 beforeAll(async () => {
   claimRoute = await import("../[runId]/takeover/claim/route");
   returnRoute = await import("../[runId]/takeover/return/route");
-});
+  // Explicit budget: two large route graphs. vitest's 10s hook default is
+  // ample idle and not ample on a loaded machine, where exceeding it fails the
+  // whole FILE rather than one case — a worse failure mode than the per-test
+  // timeout this hoist was introduced to escape.
+}, 60_000);
 
 async function invokeClaim(runId = "run-1") {
   const req = new NextRequest(

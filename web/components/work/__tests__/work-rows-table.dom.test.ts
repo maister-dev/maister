@@ -86,6 +86,14 @@ function panelRows(): number {
   return container.querySelectorAll('[data-testid="work-row-panel"]').length;
 }
 
+/** Mounted AND shown. The panel stays mounted once opened, so presence alone
+ *  stopped being the question the moment it started holding a response form. */
+function shownPanels(): number {
+  return container.querySelectorAll(
+    '[data-testid="work-row-panel"]:not([hidden])',
+  ).length;
+}
+
 beforeEach(() => {
   container = document.createElement("div");
   document.body.appendChild(container);
@@ -111,7 +119,7 @@ describe("T-D13 a Desk row expands into its panel", () => {
     });
 
     expect(tr.getAttribute("aria-expanded")).toBe("true");
-    expect(panelRows()).toBe(1);
+    expect(shownPanels()).toBe(1);
     expect(container.textContent).toContain("PANEL BODY");
   });
 
@@ -132,11 +140,14 @@ describe("T-D13 a Desk row expands into its panel", () => {
       });
 
       expect(tr.getAttribute("aria-expanded")).toBe("true");
-      expect(panelRows()).toBe(1);
+      expect(shownPanels()).toBe(1);
     });
   }
 
-  it("collapses again on a second activation", () => {
+  it("collapses without unmounting the panel", () => {
+    // The panel carries the HITL response form. Conditionally unmounting it
+    // would throw away a half-typed answer on an accidental collapse, which is
+    // why the project's rule is mount-once-then-`hidden`.
     mount([row()], true);
 
     const tr = firstRow();
@@ -144,12 +155,66 @@ describe("T-D13 a Desk row expands into its panel", () => {
     act(() => {
       tr.click();
     });
+
+    const opened = container.querySelector('[data-testid="work-row-panel"]');
+
+    act(() => {
+      tr.click();
+    });
+
+    expect(tr.getAttribute("aria-expanded")).toBe("false");
+    expect(shownPanels(), "hidden, not removed").toBe(0);
+    expect(panelRows(), "still mounted").toBe(1);
+    expect(
+      container.querySelector('[data-testid="work-row-panel"]'),
+      "the SAME element, so its form state survived",
+    ).toBe(opened);
+  });
+
+  it("does not toggle when the click ends a text selection", () => {
+    // Copying a task title out of the table must not open a panel.
+    mount([row()], true);
+
+    const tr = firstRow();
+    const selection = globalThis.getSelection();
+
+    selection?.removeAllRanges();
+
+    const range = document.createRange();
+
+    range.selectNodeContents(tr);
+    selection?.addRange(range);
+
     act(() => {
       tr.click();
     });
 
     expect(tr.getAttribute("aria-expanded")).toBe("false");
     expect(panelRows()).toBe(0);
+
+    selection?.removeAllRanges();
+  });
+
+  it("associates the row with the panel it controls", () => {
+    mount([row()], true);
+
+    const tr = firstRow();
+
+    // Before the first expand the panel row does not exist yet, so advertising
+    // `aria-controls` would point a screen reader at a missing id.
+    expect(tr.getAttribute("aria-controls")).toBeNull();
+
+    act(() => {
+      tr.click();
+    });
+
+    const controls = tr.getAttribute("aria-controls");
+
+    expect(controls).toBeTruthy();
+    expect(
+      container.querySelector(`#${controls}`)?.getAttribute("data-testid"),
+      "aria-controls points at the panel row",
+    ).toBe("work-row-panel");
   });
 
   it("does NOT toggle when a link inside the row is clicked", () => {
@@ -173,10 +238,16 @@ describe("T-D13 a Desk row expands into its panel", () => {
     expect(panelRows()).toBe(0);
   });
 
-  it("is reachable from the keyboard", () => {
+  it("is reachable from the keyboard before it is operable by it", () => {
+    // Focusability is the precondition for the Enter/Space cases above: without
+    // it they would pass on a control no keyboard user can ever reach.
     mount([row()], true);
 
-    expect(firstRow().tabIndex).toBe(0);
+    const tr = firstRow();
+
+    expect(tr.tabIndex).toBe(0);
+    tr.focus();
+    expect(document.activeElement).toBe(tr);
   });
 });
 

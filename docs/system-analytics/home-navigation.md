@@ -7,17 +7,21 @@ renders, where the project portfolio lives, which rail section a route
 highlights, and which surface a user lands on after sign-in. The domain exists
 because `/` acquired two meanings — "home" and "the portfolio" — and those
 meanings now diverge; its invariants are testable and had no owning document.
-Locked by [ADR-172](../decisions.md#adr-172-desk-home-information-architecture-and-the-member-default-route),
-and **Implemented**.
+Locked by [ADR-172](../decisions.md#adr-172-desk-home-information-architecture-and-the-member-default-route)
+and [ADR-174](../decisions.md#adr-174-the-desk-renders-one-object-per-work-item)
+(which supersedes ADR-172 D1 in part — see `NAV-08`), and **Implemented**.
 It owns no data and no authorization: every rule here is about routing and
 rendering, and nav visibility is explicitly **not** an access control
 (see NAV-06).
 
 ## Domain entities
 
-- **The Desk** — `/`. Composes the Now tiles, the decision queue, work in
-  flight, the activity feed and the digest sentence. Composition only; it
-  re-implements none of them.
+- **The Desk** — `/`. Composes the Now strip, work in flight, `Held` and the
+  activity feed. Composition only; it re-implements none of them. The decision
+  queue and the digest sentence were removed by ADR-174: three of the queue's
+  four populations map onto `WORK_IN_FLIGHT_STAGES` members, so the region was a
+  second rendering of the work table and the decision now rides on the row;
+  `Held` is the one kind no row carries, so it keeps a region.
 - **The portfolio** — `/projects`. The project-card grid formerly at `/`,
   behaviour unchanged, including the onboarding checklist and empty state.
 - **`RailSectionId`** — the rail's section vocabulary, gaining `home`, `work`
@@ -128,6 +132,7 @@ flowchart LR
 ## Linked artifacts
 
 - [ADR-172 — Desk home IA and the member default route](../decisions.md#adr-172-desk-home-information-architecture-and-the-member-default-route)
+- [ADR-174 — the Desk renders one object per work item](../decisions.md#adr-174-the-desk-renders-one-object-per-work-item)
 - [M51 requirement traceability](m51-traceability.md)
 - [Screen reference — the Desk](../screens/desk.md)
 - [Screen reference — left rail](../screens/chrome/left-rail.md)

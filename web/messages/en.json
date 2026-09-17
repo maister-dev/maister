@@ -4870,6 +4870,7 @@
     "workEmpty": "Nothing is running.",
     "workEmptyFiltered": "Nothing in flight is at $stage.",
     "workClearFilter": "Show everything in flight",
+    "panelNoEvents": "No recent activity for this run.",
     "workAll": "Open the work table",
     "activityTitle": "Activity",
     "activityEmpty": "Nothing has happened yet.",

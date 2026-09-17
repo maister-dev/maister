@@ -4870,6 +4870,7 @@
     "workEmpty": "Ничего не выполняется.",
     "workEmptyFiltered": "На этапе «$stage» сейчас ничего нет.",
     "workClearFilter": "Показать всё в работе",
+    "panelNoEvents": "Недавних событий по этому прогону нет.",
     "workAll": "Открыть таблицу работ",
     "activityTitle": "События",
     "activityEmpty": "Событий пока нет.",

@@ -294,7 +294,9 @@ test("T-D14 each stage expands to its own panel, and Review never promotes inlin
     await row.click();
     await expect(row).toHaveAttribute("aria-expanded", "true");
 
-    const panel = work.locator('[data-testid="work-row-panel"]').first();
+    const panel = work
+      .locator('[data-testid="work-row-panel"]:not([hidden])')
+      .first();
 
     await expect(panel, stage).toBeVisible();
     seen.add(stage);
@@ -398,7 +400,7 @@ test("E2E-EDGE-NAV-02 narrow keeps every region, stacked strip then Work then He
 
     const rowBox = await expandableRow.boundingBox();
     const panelBox = await work
-      .locator('[data-testid="work-row-panel"] td')
+      .locator('[data-testid="work-row-panel"]:not([hidden]) td')
       .first()
       .boundingBox();
 
@@ -566,7 +568,9 @@ test("E2E-NAV-08 a task in flight and blocked on a human is ONE object", async (
   // deleted along with the duplicate.
   await blocked.click();
   await expect(blocked).toHaveAttribute("aria-expanded", "true");
-  await expect(work.locator('[data-testid="work-row-panel"]')).toHaveCount(1);
+  await expect(
+    work.locator('[data-testid="work-row-panel"]:not([hidden])'),
+  ).toHaveCount(1);
 });
 
 // The shared `(app)` header, measured rather than eyeballed (`NAV-07`).

@@ -229,11 +229,25 @@ function WorkTableRowView({
   // Open state gates RENDERING, so it lives in `useState` — a ref read during
   // render is a silent no-re-render bug this project has already paid for.
   const [open, setOpen] = useState(false);
+  // Mount-once, then hide. `open` alone would conditionally unmount the panel,
+  // which discards an unsent HITL answer in the response form it carries — the
+  // project's standing rule is that a surface holding live state stays MOUNTED
+  // and toggles via `hidden`. Mounting only after the FIRST expand is what keeps
+  // `REQ-D16` true: no panel exists on page load, so no request fires per row.
+  const [hasOpened, setHasOpened] = useState(false);
   const canExpand = expandable && panel !== undefined;
+  const panelId = `work-row-panel-${row.taskId}`;
 
   function activate(event: MouseEvent | KeyboardEvent): void {
     if (!canExpand || isInteractiveTarget(event.target)) return;
-    setOpen((wasOpen) => !wasOpen);
+    // Selecting a task title or KEY-N ends in a `click` on the row. Copying a
+    // value out of a table is an everyday action; it must not open a panel.
+    if ((globalThis.getSelection?.()?.toString() ?? "") !== "") return;
+    setOpen((wasOpen) => {
+      if (!wasOpen) setHasOpened(true);
+
+      return !wasOpen;
+    });
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLTableRowElement>): void {
@@ -247,10 +261,15 @@ function WorkTableRowView({
   return (
     <>
       <tr
+        // Only once the target EXISTS: the panel row is not rendered until the
+        // first expand, and `aria-controls` pointing at a missing id is a
+        // dangling reference, not a hint.
+        aria-controls={canExpand && hasOpened ? panelId : undefined}
         aria-expanded={canExpand ? open : undefined}
         className={clsx(
           "border-b border-line last:border-b-0",
-          canExpand && "cursor-pointer hover:bg-ivory/60",
+          canExpand &&
+            "cursor-pointer hover:bg-ivory/60 focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-amber",
         )}
         data-stage={row.stage}
         data-testid="work-row"
@@ -385,10 +404,12 @@ function WorkTableRowView({
           </span>
         </td>
       </tr>
-      {canExpand && open ? (
+      {canExpand && hasOpened ? (
         <tr
           className="border-b border-line last:border-b-0"
           data-testid="work-row-panel"
+          hidden={!open}
+          id={panelId}
         >
           {/* The FULL column count, never the visible one: the responsive
             columns are hidden by CSS and their `<td>`s stay in the DOM, so a

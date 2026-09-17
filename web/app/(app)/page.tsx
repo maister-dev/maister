@@ -138,6 +138,7 @@ export default async function DeskPage({
       currentUserId: user.id,
       activityLabels: buildActivityRowLabels(tActivity, ACTIVITY_FEED_KINDS),
       reviewLabel: tInbox("decisions.review"),
+      noEventsLabel: t("panelNoEvents"),
       locale,
       now,
     });
@@ -309,6 +310,7 @@ function deskRowPanel({
   currentUserId,
   activityLabels,
   reviewLabel,
+  noEventsLabel,
   locale,
   now,
 }: {
@@ -319,6 +321,7 @@ function deskRowPanel({
   currentUserId: string;
   activityLabels: ActivityRowLabels;
   reviewLabel: string;
+  noEventsLabel: string;
   locale: string;
   now: Date;
 }): ReactNode {
@@ -358,16 +361,26 @@ function deskRowPanel({
   }
 
   if (row.stage === "Executing" || row.stage === "Queued") {
-    return events.length === 0 ? null : (
+    // ALWAYS a panel, never `null`. The events come from the cross-project feed
+    // this page already loads, which is capped — so a run whose events fall
+    // outside that window would otherwise lose its expand affordance entirely,
+    // and which rows are expandable would depend on OTHER projects' activity.
+    // That degrades exactly under the growth ADR-174 optimizes for. The
+    // affordance is therefore stable and the panel says when it has nothing.
+    return (
       <DeskPanelFrame>
-        <ActivityRowList
-          divider={false}
-          labels={activityLabels}
-          locale={locale}
-          now={now}
-          seen={events.slice(0, DESK_PANEL_EVENTS)}
-          unread={[]}
-        />
+        {events.length === 0 ? (
+          <p className="m-0 text-[12.5px] text-mute">{noEventsLabel}</p>
+        ) : (
+          <ActivityRowList
+            divider={false}
+            labels={activityLabels}
+            locale={locale}
+            now={now}
+            seen={events.slice(0, DESK_PANEL_EVENTS)}
+            unread={[]}
+          />
+        )}
       </DeskPanelFrame>
     );
   }

@@ -39,9 +39,9 @@ describe("UT-NAV-01 the Desk composes rather than re-implements", () => {
   });
 
   it("T-D22 renders neither the HITL list nor the scratch composer", () => {
-    // ADR-174 D2 moved the HITL population onto the work row; `REQ-D22` removed
-    // the composer outright, because the rail already renders the launcher with
-    // the global Cmd/Ctrl+K listener and a second one opened two dialogs.
+    // Source-level only. Whether a scratch CONTROL is painted for a reader is
+    // `desk.spec.ts`'s question, asserted there against both fixtures; this one
+    // is the cheap structural guard that cannot regress silently.
     for (const gone of ["HitlInboxList", "ScratchLaunchPopover"]) {
       expect(DESK, gone).not.toMatch(new RegExp(`<${gone}[\\s/>]`, "u"));
     }
@@ -155,6 +155,23 @@ describe("UT-NAV-01 Desk i18n", () => {
         // convention in this milestone is replacement, not ICU.
         expect(value, key).not.toMatch(/\{count\}/u);
         if (/Count$/u.test(key)) expect(value, key).toContain("$count");
+      }
+    }
+  });
+
+  // Every placeholder the page consumes by `.replace()` must survive
+  // translation. A dropped `$stage` does not throw — it renders copy that no
+  // longer names the active filter, silently breaking `REQ-D6`. `$count` has
+  // had this guard since M51; `$stage` arrived without one.
+  it("keeps every replacement placeholder the page substitutes", () => {
+    const placeholders: Array<[string, string]> = [
+      ["workEmptyFiltered", "$stage"],
+      ["workCount", "$count"],
+    ];
+
+    for (const catalog of [en.desk, ru.desk] as Array<Record<string, string>>) {
+      for (const [key, token] of placeholders) {
+        expect(catalog[key], `${key} must carry ${token}`).toContain(token);
       }
     }
   });
