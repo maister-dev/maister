@@ -150,8 +150,14 @@ test("scenario B — strict enforcement refuses the launch with CONFIG (no run c
   expect(body.message).toContain(fx.nodeId); // "implement"
   expect(body.message).toContain(fx.refusedClass); // "skills" (ADR-130: mcps now enforced; skills stays instructed → refused)
 
-  // The UI surfaces the refusal: the dialog renders the typed code inline.
-  await expect(dialog.getByRole("alert")).toContainText("CONFIG");
+  // The UI surfaces the refusal. The dialog does NOT render the raw code: the
+  // launch popover maps `code` through the `run.error.*` catalogue, which is
+  // the documented convention (branch on the typed code, never show it). So
+  // assert the CONFIG-specific copy — it still discriminates this refusal from
+  // `generic`/`CRASH`/every other code, which carry different sentences.
+  await expect(dialog.getByRole("alert")).toContainText(
+    "The request or configuration is invalid.",
+  );
 
   // No run was created — reload the board and assert the task is still in
   // Backlog (its Launch control re-renders) and no flight card links a run for

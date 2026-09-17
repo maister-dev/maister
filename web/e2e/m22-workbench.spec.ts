@@ -157,10 +157,21 @@ test("run shell inspector toggles and workbench exposes evidence and timeline ta
     page.locator('[data-testid="run-shell-inspector"]'),
   ).toBeVisible();
 
-  await expect(page.getByRole("tab", { name: "Files" })).toBeVisible();
-  await expect(page.getByRole("tab", { name: "Diff" })).toBeVisible();
+  // Timeline/Evidence are the always-visible workbench tabs.
   await expect(page.getByRole("tab", { name: "Evidence" })).toBeVisible();
   await expect(page.getByRole("tab", { name: "Timeline" })).toBeVisible();
+
+  // Files/Diff moved inside the collapsed "Files / Diff" <details>, which only
+  // starts open when `?wb=` already names one of them. Closed <details> content
+  // is out of the a11y tree entirely, so those tabs are not merely invisible —
+  // they do not resolve at all until the disclosure is opened.
+  const disclosure = page.getByTestId("workbench-disclosure");
+
+  await expect(disclosure).toBeVisible();
+  await disclosure.locator("> summary").click();
+
+  await expect(page.getByRole("tab", { name: "Files" })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "Diff" })).toBeVisible();
 
   await page.getByRole("tab", { name: "Evidence" }).click();
   await page.waitForURL(/[?&]wb=evidence/);
@@ -358,6 +369,30 @@ test("theme toggle recolors the code-view without refetching the run/file route"
 
     runRequests.push({ url: req.url(), prefetch });
   });
+
+  // Let the initial navigation's OWN work drain before anything is attributed
+  // to the toggle. Next's dev router issues a lazy, non-prefetch `_rsc` fetch
+  // for the open route after hydration; when it lands after the click it is
+  // indistinguishable from a toggle-triggered refetch, and the assertion below
+  // failed on exactly that request. Wait for THIS route to go quiet — not for
+  // the whole network, since `networkidle` never settles against a dev server's
+  // HMR socket — then reset and start attributing.
+  let settledCount = -1;
+
+  await expect
+    .poll(
+      () => {
+        const stable = runRequests.length === settledCount;
+
+        settledCount = runRequests.length;
+
+        return stable;
+      },
+      { intervals: [250], timeout: 15_000 },
+    )
+    .toBe(true);
+
+  runRequests.length = 0;
 
   const htmlClassBefore = await page.evaluate(
     () => document.documentElement.className,

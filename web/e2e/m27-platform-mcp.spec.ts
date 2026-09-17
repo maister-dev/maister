@@ -1,16 +1,22 @@
 import { test, expect } from "@playwright/test";
 
-// M27/T-C2: the admin can create, edit, and delete a platform MCP server via the
-// /settings UI — mirrors platform-acp-runners.spec.ts (the CRUD + modal flow).
-test("admin can create, edit, and delete a platform MCP server via settings", async ({
+// M27/T-C2: the admin can create, edit, and delete a platform MCP server —
+// mirrors platform-acp-runners.spec.ts (the CRUD + modal flow).
+//
+// The panel moved off /settings onto its own /mcps hub (the read model + trust
+// + used-by work); /settings never re-mounted McpServersPanel, so this spec was
+// asserting against a page that no longer carries the UI at all.
+test("admin can create, edit, and delete a platform MCP server via the MCP hub", async ({
   page,
 }) => {
   const mcpId = "e2e-temp-mcp";
 
-  await page.goto("/settings");
+  await page.goto("/mcps");
 
+  // `level: 1` disambiguates: the hub's own <h1> and the panel's section <h3>
+  // both read "MCP servers", so an unqualified heading query matches two.
   await expect(
-    page.getByRole("heading", { name: "MCP servers" }),
+    page.getByRole("heading", { level: 1, name: "MCP servers" }),
   ).toBeVisible();
 
   // --- Create: open the modal, fill a stdio server (default transport).

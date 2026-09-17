@@ -141,7 +141,14 @@ test("external-operations API: token → task → launch → readiness gate repo
   });
 
   await page.goto(`/projects/${fx.projectSlug}?tab=integrations`);
+  // Scope to the tokens table. The token-audit table on the same tab renders a
+  // row per API call, each carrying `token:<name>`, so a page-wide row filter
+  // matches those too once this token has been used.
   const userTokenRow = page
+    .locator("section")
+    .filter({
+      has: page.getByRole("heading", { name: "API tokens", exact: true }),
+    })
     .getByRole("row")
     .filter({ hasText: "e2e-personal-webhook" });
 
@@ -278,7 +285,10 @@ test("external-operations API: token → task → launch → readiness gate repo
   // (7) The evidence graph surfaces the test_report artifact from the report.
   // React Flow only mounts nodes inside the fitView viewport; scope the graph to
   // artifact nodes (URL filter) and assert on the artifact node by its id.
-  await page.goto(`/runs/${fx.runId}?kind=artifact`);
+  // `wb=evidence` is required: the workbench keeps every pane mounted and only
+  // toggles `hidden`, defaulting to the FIRST regular tab (timeline). Without
+  // it the evidence graph resolves in the DOM but is hidden, never absent.
+  await page.goto(`/runs/${fx.runId}?wb=evidence&kind=artifact`);
   await expect(page.locator('[data-testid="evidence-graph"]')).toBeVisible();
 
   const reportNode = page.locator(
