@@ -263,7 +263,7 @@ places with another. As of 2026-09-03 on `main` + ADR-165:
 - **integration** — 0 failures, except the two-case
   `lib/runs/__tests__/dirty-resolution-race.integration.test.ts` pair, which
   flakes under parallel load and passes 4/4 in isolation.
-- **e2e** — **20 pre-existing failures across 17 spec files**, enumerated below,
+- **e2e** — **15 pre-existing failures across 14 spec files**, enumerated below,
   plus one known-flaky spec. Ports 3100/7788 and the `maister_e2e` database are
   shared across worktrees; kill both ports before a run. Before filing an e2e
   failure as environmental, read the `[WebServer]` lines in the run log: a React
@@ -275,8 +275,7 @@ places with another. As of 2026-09-03 on `main` + ADR-165:
   this section's own first line says to compare SETS, and a bare number cannot
   be diffed.
 
-  `studio-local-edit` (3) · `multi-run-cost-policy` (2) · `evaluation-lab` ·
-  `execution-host-contract` · `flow-package-viewer` · `flow-studio-artifacts` ·
+  `multi-run-cost-policy` (2) · `evaluation-lab` · `execution-host-contract` ·
   `forked-package-loop` · `platform-acp-runners` · `platform-agents-page` ·
   `project-automations` · `project-onboarding` · `project-registration` ·
   `review-comments` · `run-schedules` · `run-sync` · `studio-ai-assistant` ·
@@ -289,18 +288,40 @@ places with another. As of 2026-09-03 on `main` + ADR-165:
   `m11c-settings-enforcement` · `m13-assignments` · `m16-external-operations` ·
   `m22-workbench` · `m27-flow-editor` · `m27-platform-mcp` ·
   `adr160-rework-claim` · `adr161-node-interrupt` (the last two needed no
-  change). The product bug: `IntegrationsPanel`, a server component, called
-  `isManagedTokenRow` from a `"use client"` module, so the project Integrations
-  tab crashed on any project holding at least one API token.
+  change) · `flow-package-viewer` · `flow-studio-artifacts` ·
+  `studio-local-edit` (3). The product bug: `IntegrationsPanel`, a server
+  component, called `isManagedTokenRow` from a `"use client"` module, so the
+  project Integrations tab crashed on any project holding at least one API
+  token.
 
   **Two causes recur — check both before diagnosing anything else.**
   `waitForLoadState("networkidle")` cannot settle against a Next dev server and
-  will burn the whole test budget; wait for the specific response instead.
-  `flow-package-viewer`, `flow-studio-artifacts` and `studio-local-edit` still
-  carry that call. And a UI that renders the same text twice (a header pill plus
-  an inspector row, a page `<h1>` plus a section `<h3>`) turns a bare
-  `getByText`/`getByRole` into a strict-mode violation, which reads like a
-  missing element but is the opposite.
+  will burn the whole test budget; wait for the specific response instead. No
+  e2e spec calls it any more — keep it that way. Note that a save is not always
+  a route POST: the LOCAL package editor passes a CLIENT function to
+  `<form action={...}>`, so React calls it directly and it emits one
+  PUT/DELETE per changed file with no navigation at all.
+
+  And a UI that renders the same text twice (a header pill plus an inspector
+  row, a page `<h1>` plus a section `<h3>`) turns a bare `getByText`/`getByRole`
+  into a strict-mode violation, which reads like a missing element but is the
+  opposite.
+
+  **Assume things are collapsed.** Much of this UI now hides content behind a
+  disclosure, a non-default tab, or a collapsed tree folder — the workbench
+  Files/Diff tabs, the package viewer's raw YAML, the composition Files tab and
+  its folders, the Studio AI dock (which a graph-node selection also force-
+  closes). Some render `hidden`, some do not mount at all; the second kind fails
+  fast, but `scrollIntoViewIfNeeded()` on the FIRST kind never fails at all — it
+  retried for a full 180 s budget, which is what made `studio-local-edit` look
+  slow rather than red.
+
+  **Do not assume a click focused CodeMirror.** Measured on
+  `flow-package-viewer`: on failing runs `document.activeElement` was the body,
+  on passing ones `cm-content`. Keystrokes are then swallowed silently and the
+  buffer keeps its original text, so the failure surfaces far away — at a later
+  hidden-input assertion — looking like a broken form. Click until focus lands,
+  and scope to the intended editor: a page can host several.
 
   **They were deterministic, not interference.** Sampled `studio-diff`,
   `project-registration` and `m13-assignments` — three different areas — and all
