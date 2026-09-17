@@ -226,7 +226,7 @@ assertions, and re-asserting one requirement at two layers.
 | **AC-D8** | Each of `NeedsInput` / `NeedsInputIdle` / `HumanWorking` yields a distinguishable accessible name; `Running` and `WaitingOnChildren` likewise; a chip given no run status renders byte-identically to the pre-change output | REQ-D8 | T-D8 (unit, markup, 6 cases incl. the negative) |
 | **AC-D9** | The run remains reachable from the row by an affordance with an accessible name | REQ-D9 | T-D9 (unit, markup) |
 | **AC-D10** | A `none` next action renders an em dash; a non-`none` one renders the affordance | REQ-D10 | T-D10 (unit, markup, 2 cases) |
-| **AC-D11** | At 390px the low-priority columns are not visible, the page does not scroll horizontally, and the expanded row's cell still spans the full width | REQ-D11 | T-D11 (e2e, short viewport) |
+| **AC-D11** | At 390px the low-priority columns are not visible, the page does not scroll horizontally, and the expanded row's cell still spans the full width | REQ-D11 | T-D11 — split by what each layer can see: the `colSpan` VALUE in unit/jsdom (2 cases, incl. the conditionally-rendered project column), the painted width in e2e at 390px (jsdom applies no stylesheet) |
 | **AC-D12** | `/work` renders no expand affordance and its row markup is otherwise unchanged | REQ-D12 | T-D12 (unit, markup, negative) |
 | **AC-D13** | Clicking a row expands it; Enter and Space do the same; `aria-expanded` flips; clicking a link inside the row does not toggle | REQ-D13 | T-D13 (unit, jsdom, 4 cases) |
 | **AC-D14** | Each stage expands to its own panel; the `Review` panel exposes a link and no promote control | REQ-D14 | T-D14 (e2e, 4 stages + the negative) |

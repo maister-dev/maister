@@ -196,3 +196,62 @@ describe("T-D13 expansion is opt-in", () => {
     expect(panelRows()).toBe(0);
   });
 });
+
+describe("T-D11 the panel cell spans the FULL column count", () => {
+  // The invariant the responsive columns make dangerous, and the one clause of
+  // `AC-D11` that had no test at any layer. Column hiding is CSS-driven, so the
+  // `<td>` elements stay in the DOM; a `colSpan` derived from what is PAINTED
+  // would under-span exactly at the widths where columns drop, and the expanded
+  // panel would sit under part of the row instead of all of it.
+  //
+  // jsdom applies no stylesheet, so "visible column count" is not observable
+  // here — which is precisely why the value must be derived from the full set
+  // rather than measured. The 390px rendering half lives in `desk.spec.ts`.
+  function panelCell(): HTMLTableCellElement {
+    const cell = container.querySelector<HTMLTableCellElement>(
+      '[data-testid="work-row-panel"] td',
+    );
+
+    if (cell === null) throw new Error("no panel cell rendered");
+
+    return cell;
+  }
+
+  function headerCount(): number {
+    return container.querySelectorAll("thead th").length;
+  }
+
+  it("spans every column the header renders, ungrouped", () => {
+    mount([row()], true);
+    act(() => {
+      firstRow().click();
+    });
+
+    expect(panelCell().colSpan).toBe(headerCount());
+  });
+
+  it("drops exactly one span when the project column is not rendered", () => {
+    // Under project grouping the project cell is conditionally rendered — NOT
+    // CSS-hidden — so it genuinely leaves the DOM and the span must follow it
+    // down by one. This is the case a blanket "always the full count" would get
+    // wrong in the other direction.
+    act(() => {
+      root.render(
+        createElement(WorkRowsTable, {
+          expandable: true,
+          groupBy: "project",
+          groups: groupWorkTableRows([row()], "project"),
+          labels,
+          locale: "en",
+          now: NOW,
+          panels: { "task-1": createElement("div", null, "PANEL BODY") },
+        }),
+      );
+    });
+    act(() => {
+      firstRow().click();
+    });
+
+    expect(panelCell().colSpan).toBe(headerCount());
+  });
+});

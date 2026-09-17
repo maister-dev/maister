@@ -38,7 +38,7 @@ describe("UT-NAV-01 the Desk composes rather than re-implements", () => {
     }
   });
 
-  it("renders neither the HITL list nor the scratch composer", () => {
+  it("T-D22 renders neither the HITL list nor the scratch composer", () => {
     // ADR-174 D2 moved the HITL population onto the work row; `REQ-D22` removed
     // the composer outright, because the rail already renders the launcher with
     // the global Cmd/Ctrl+K listener and a second one opened two dialogs.
@@ -85,7 +85,7 @@ describe("UT-NAV-01 the Desk composes rather than re-implements", () => {
     expect(readModel).not.toContain("decision");
   });
 
-  it("adds no mutation path of its own", () => {
+  it("T-D18 adds no mutation path of its own", () => {
     // The Desk is a read surface. A `fetch`/server action here would be a
     // second way to promote, recover or answer — the thing D1 forbids.
     expect(DESK).not.toContain("use server");
@@ -101,7 +101,7 @@ describe("UT-NAV-01 the Desk composes rather than re-implements", () => {
     expect(DESK).not.toContain("ScratchLaunchPopover");
   });
 
-  it("AC-D21 orders the regions Work, Held, Activity in the SOURCE", () => {
+  it("T-D21 orders the regions Work, Held, Activity in the SOURCE", () => {
     const order = ["desk-work", "desk-held", "desk-activity"].map((id) =>
       DESK.indexOf(`testid="${id}"`),
     );
@@ -113,7 +113,7 @@ describe("UT-NAV-01 the Desk composes rather than re-implements", () => {
     expect(order).toEqual([...order].sort((a, b) => a - b));
   });
 
-  it("AC-D21 lays out one column at EVERY width", () => {
+  it("T-D21 lays out one column at EVERY width", () => {
     // There is no second arrangement any more, so the rendered order IS the
     // source order asserted above and the two cannot disagree. A returning
     // `xl:` placement would reintroduce a layout this test cannot see.

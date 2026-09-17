@@ -91,7 +91,7 @@ test("E2E-NAV-01 the Desk is home, and every region it promises is on it", async
   await expect(page.getByTestId("desk-work")).toBeVisible();
   await expect(page.getByTestId("desk-activity")).toBeVisible();
 
-  // `EDGE-NAV-01`, the other half: the composer is absent even WITH projects.
+  // `T-D22` / `EDGE-NAV-01`, the other half: absent even WITH projects.
   await expect(
     page.getByRole("button", { name: "Start a scratch run" }),
   ).toHaveCount(0);
@@ -386,6 +386,33 @@ test("E2E-EDGE-NAV-02 narrow keeps every region, stacked strip then Work then He
     "the table must fit its container at 390px",
   ).toBe(false);
 
+  // `T-D11`: an expanded panel still spans the FULL painted width at 390px.
+  // jsdom can prove the colSpan VALUE but applies no stylesheet, so only a real
+  // viewport can show that the cell actually covers the row once columns drop.
+  const expandableRow = work
+    .locator('tr[data-testid="work-row"][aria-expanded]')
+    .first();
+
+  if ((await expandableRow.count()) > 0) {
+    await expandableRow.click();
+
+    const rowBox = await expandableRow.boundingBox();
+    const panelBox = await work
+      .locator('[data-testid="work-row-panel"] td')
+      .first()
+      .boundingBox();
+
+    expect(rowBox, "the row is laid out").not.toBeNull();
+    expect(panelBox, "the panel cell is laid out").not.toBeNull();
+    // Within a pixel: the panel must not stop short of the row it belongs to.
+    expect(
+      Math.abs((panelBox?.width ?? 0) - (rowBox?.width ?? 0)),
+      "panel cell spans the full row width at 390px",
+    ).toBeLessThanOrEqual(1);
+
+    await expandableRow.click();
+  }
+
   // And it fits because columns DROPPED, not because nothing rendered.
   await expect(work.locator('[data-testid="work-row"]').first()).toBeVisible();
   expect(
@@ -469,8 +496,8 @@ test("E2E-EDGE-NAV-01 the empty Desk reuses the first-run frame and drops the co
     await expect(empty.getByTestId("portfolio-onboarding")).toBeVisible();
     await expect(empty.getByTestId("portfolio-empty-state")).toBeVisible();
 
-    // The composer is absent UNCONDITIONALLY now (`REQ-D22`) — not "until a
-    // project exists". The rail owns the launcher and the Cmd/Ctrl+K listener.
+    // `T-D22`: the composer is absent UNCONDITIONALLY now (`REQ-D22`) — not
+    // "until a project exists". The rail owns the launcher and the shortcut.
     await expect(
       page.getByRole("button", { name: "Start a scratch run" }),
     ).toHaveCount(0);
