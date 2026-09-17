@@ -27,23 +27,41 @@ test("platform ACP runners drive admin settings, task launch, and scratch launch
   ).toHaveAttribute("disabled", "");
 
   await page.goto(`/projects/${board.projectSlug}`);
-  await expect(page.getByText("claude-code").first()).toBeVisible();
+  // The board card surfaces the resolved MODEL, not the runner id — the id
+  // survives in the launch popover, which renders `<id> · <model>`. Asserting
+  // "claude-code" here matched nothing on the page at all.
+  await expect(page.getByText("claude-sonnet-4-6").first()).toBeVisible();
 
   const backlogCard = page
     .locator("[data-board]")
     .getByText("Acceptance backlog launch")
     .locator("xpath=ancestor::article");
 
+  // Advanced options moved off the card and into the ADR-087 launch dialog, as a
+  // collapsed <details> — so it is neither a button on the card nor a region.
   await backlogCard
-    .getByRole("button", { name: "Advanced launch options" })
+    .getByRole("button", { name: "Launch", exact: true })
     .click();
-  await expect(
-    backlogCard.getByRole("region", { name: "Advanced launch options" }),
-  ).toBeVisible();
+
+  const launchDialog = page.getByTestId("task-launch-dialog");
+
+  await expect(launchDialog).toBeVisible();
+
+  const advanced = launchDialog.getByTestId("launch-advanced-options");
+
+  await advanced.locator("> summary").click();
+  await expect(advanced).toHaveAttribute("open", "");
+  // `.first()`: the field renders its label twice, once visibly and once
+  // `sr-only` for the control's accessible name.
+  await expect(advanced.getByText("Base branch").first()).toBeVisible();
 
   await page.goto(`/scratch-runs/new?projectId=${scratch.projectId}`);
 
-  const scratchRunner = page.getByLabel("Runner");
+  // `getByRole("combobox")`, not `getByLabel`: the sidebar's active-workspace
+  // cards each render a `runner-chip` span carrying `aria-label="Runner
+  // <model>"`, so a bare label lookup resolved to 31 elements. The launcher's
+  // control is the only <select> among them.
+  const scratchRunner = page.getByRole("combobox", { name: "Runner" });
 
   // Generous first wait: the composer shows "Loading launch options…" until
   // the async options fetch resolves.

@@ -95,14 +95,20 @@ test("studio package viewer: tabbed groups, hidden-empty tabs, card → read-onl
   await expect(page.getByTestId("package-tab-skills")).toHaveCount(0);
   await expect(page.getByTestId("package-tab-agents")).toHaveCount(0);
 
-  // The flow renders as a card (not a bare id chip); View opens the read-only
-  // flow detail (the URL carries the flow segment).
+  // The flow renders as a card (not a bare id chip); opening it lands on the
+  // read-only flow detail (the URL carries the flow segment).
+  //
+  // A FLOW renders as `flow-preview-card` — a richer card carrying the graph and
+  // the node/gate counts — not as the `element-card` every other kind uses, and
+  // its title link is the open affordance rather than a separate View button.
+  // The title falls back to the flow id here because this fixture manifest has
+  // no `metadata` block.
   const card = page
-    .getByTestId("element-card")
+    .getByTestId("flow-preview-card")
     .filter({ hasText: `${RUN_TAG}-flow` });
 
   await expect(card).toBeVisible();
-  await card.getByTestId("element-card-view").click();
+  await card.getByRole("link", { name: `${RUN_TAG}-flow` }).click();
   await expect(page).toHaveURL(
     new RegExp(`/studio/packages/${RUN_TAG}/flows/`),
   );
