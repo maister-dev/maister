@@ -1,7 +1,7 @@
 import type { ActivityRowLabels } from "@/components/activity/activity-row-list";
-import type { DigestLabels } from "@/lib/queries/digest";
 import type { NowTilesLabels } from "@/components/attention/now-tiles";
 import type { WorkRowsLabels } from "@/components/work/work-rows-table";
+import type { WorkInFlightStage } from "@/lib/work/stage";
 import type { Metadata } from "next";
 import type { ReactElement, ReactNode } from "react";
 
@@ -23,28 +23,31 @@ import {
 } from "@/lib/queries/activity-feed";
 import { buildActivityRowLabels } from "@/lib/activity/activity-row-labels";
 import { buildWorkRowsLabels } from "@/lib/work/work-row-labels";
-import {
-  formatDigest,
-  getNowTileCounts,
-  NOW_TILE_IDS,
-} from "@/lib/queries/digest";
+import { countWorkInFlightByStage } from "@/lib/work/stage-counts";
 import { getActivityCursor } from "@/lib/queries/activity-cursor";
 import { getDecisionsQueue, hitlDecisionsOf } from "@/lib/queries/decisions";
 import { getPortfolio } from "@/lib/queries/portfolio";
 import { getWorkTable } from "@/lib/queries/work-table";
-import { groupWorkTableRows } from "@/lib/work/work-table-view";
-import { isWorkInFlight } from "@/lib/work/stage";
+import {
+  groupWorkTableRows,
+  normalizeDeskStageFilter,
+} from "@/lib/work/work-table-view";
+import { isWorkInFlight, WORK_IN_FLIGHT_STAGES } from "@/lib/work/stage";
 import { requireActiveSession } from "@/lib/authz";
 import { splitAtCursor } from "@/lib/activity/activity-view";
 
 /**
- * The Desk (`NAV-01`, ADR-172 D1) — `/`.
+ * The Desk (`NAV-01`, ADR-172 D1; ADR-174) — `/`.
  *
  * It COMPOSES. Every number comes from a read model this milestone already
  * shipped, and every region renders through the component the owning surface
  * renders: `DecisionSections` + `HitlInboxList` from `/inbox`, `WorkRowsTable`
  * from `/work`, `ActivityRowList` from `/activity`. A second copy of any of them
  * would drift, which is the failure ADR-172 D1 exists to prevent.
+ *
+ * ADR-174 adds the rule the composition alone did not give: ONE OBJECT PER WORK
+ * ITEM. The Now strip is a summary of the work table rather than a second
+ * population beside it, so its five numbers are counted from the same rows.
  *
  * It adds NO mutation path: the inline actions on a decision card post to the
  * same promote / recover / discard routes `/inbox` uses.
@@ -54,18 +57,24 @@ import { splitAtCursor } from "@/lib/activity/activity-view";
 const DESK_WORK_ROWS = 12;
 const DESK_ACTIVITY_ROWS = 12;
 
+type SearchParams = Promise<Record<string, string | string[] | undefined>>;
+
 export async function generateMetadata(): Promise<Metadata> {
   const t = await getTranslations("desk");
 
   return { title: t("title") };
 }
 
-export default async function DeskPage(): Promise<ReactElement> {
+export default async function DeskPage({
+  searchParams,
+}: {
+  searchParams: SearchParams;
+}): Promise<ReactElement> {
   const user = await requireActiveSession();
-  const [t, tDigest, tInbox, tPortfolio, tStage, tWork, tActivity, locale] =
+  const [params, t, tInbox, tPortfolio, tStage, tWork, tActivity, locale] =
     await Promise.all([
+      searchParams,
       getTranslations("desk"),
-      getTranslations("digest"),
       getTranslations("inbox"),
       getTranslations("portfolio"),
       getTranslations("workStage"),
@@ -77,23 +86,32 @@ export default async function DeskPage(): Promise<ReactElement> {
   // ADR-169 D8/ATN-05: `getDecisionsQueue` is the ONE canonical queue, and it is
   // React-`cache`d — so the rail badge, `/inbox` and this page are the same
   // computation rather than three free to disagree.
-  const [portfolio, queue, table, feed, cursor, digestWindow] =
-    await Promise.all([
-      getPortfolio(user.id, user.role),
-      getDecisionsQueue(user.id, user.role),
-      getWorkTable({ id: user.id, role: user.role }),
-      getCrossProjectActivityFeed({ id: user.id, role: user.role }),
-      getActivityCursor(user.id),
-      getNowTileCounts({ id: user.id, role: user.role }),
-    ]);
+  const [portfolio, queue, table, feed, cursor] = await Promise.all([
+    getPortfolio(user.id, user.role),
+    getDecisionsQueue(user.id, user.role),
+    getWorkTable({ id: user.id, role: user.role }),
+    getCrossProjectActivityFeed({ id: user.id, role: user.role }),
+    getActivityCursor(user.id),
+  ]);
 
   const now = new Date();
   // ATN-01: the cards and the number above them are ONE population.
   const hitlItems = hitlDecisionsOf(queue.items);
   const hasProjects = portfolio.projects.length > 0;
   const inFlight = table.rows.filter((row) => isWorkInFlight(row.stage));
+  // REQ-D2: counted over EVERY in-flight row, before the filter and before the
+  // slice. A strip counted later would answer "what is on this page" while
+  // claiming to answer "what is in flight".
+  const stageCounts = countWorkInFlightByStage(inFlight);
+  const activeStage = normalizeDeskStageFilter(params);
+  // REQ-D3: the filter narrows BEFORE the slice, so `?stage=Crashed` shows the
+  // first 12 crashed rows rather than the crashed rows among the first 12.
+  const visible =
+    activeStage === null
+      ? inFlight
+      : inFlight.filter((row) => row.stage === activeStage);
   const workGroups = groupWorkTableRows(
-    inFlight.slice(0, DESK_WORK_ROWS),
+    visible.slice(0, DESK_WORK_ROWS),
     "project",
   );
   const activity = splitAtCursor(
@@ -101,16 +119,13 @@ export default async function DeskPage(): Promise<ReactElement> {
     cursor,
   );
 
-  // One set of tile names, read by both the sentence and the strip: the digest
-  // and the tiles are two renderings of the same five numbers, so they must not
-  // be able to name them differently.
-  const tileNames = Object.fromEntries(
-    NOW_TILE_IDS.map((id) => [id, tDigest(id)]),
-  ) as Record<(typeof NOW_TILE_IDS)[number], string>;
-  const digestLabels: DigestLabels = { ...tileNames, empty: tDigest("empty") };
+  // The strip reads the SAME `workStage` namespace the row chips read, so a
+  // tile and the rows it filters to can never name their stage differently.
   const nowLabels: NowTilesLabels = {
-    names: tileNames,
-    ariaLabel: tDigest("ariaLabel"),
+    heading: t("nowLabel"),
+    names: Object.fromEntries(
+      WORK_IN_FLIGHT_STAGES.map((stage) => [stage, tStage(stage)]),
+    ) as Record<WorkInFlightStage, string>,
   };
   const workLabels: WorkRowsLabels = buildWorkRowsLabels(tWork, tStage);
   const activityLabels: ActivityRowLabels = buildActivityRowLabels(
@@ -129,15 +144,6 @@ export default async function DeskPage(): Promise<ReactElement> {
         <h1 className="m-0 text-[30px] font-semibold tracking-[-0.03em] text-ink">
           {t("title")}
         </h1>
-        {/* The digest sentence. Deterministic by construction (`ATN-12`) — the
-            same window and labels always produce the same bytes, which is what
-            later makes it a safe notification payload. */}
-        <p
-          className="m-0 max-w-[760px] text-[13.5px] leading-[1.55] text-mute"
-          data-testid="desk-digest"
-        >
-          {formatDigest(digestWindow, { locale, labels: digestLabels })}
-        </p>
       </header>
 
       {/* EDGE-NAV-01: the composer is absent until a project exists — there is
@@ -151,7 +157,12 @@ export default async function DeskPage(): Promise<ReactElement> {
         />
       ) : null}
 
-      <NowTiles labels={nowLabels} locale={locale} tiles={digestWindow.tiles} />
+      <NowTiles
+        activeStage={activeStage}
+        counts={stageCounts}
+        labels={nowLabels}
+        locale={locale}
+      />
 
       {hasProjects ? null : (
         <div className="flex flex-col gap-5" data-testid="desk-empty">
@@ -224,14 +235,33 @@ export default async function DeskPage(): Promise<ReactElement> {
           <DeskRegion
             action={{ href: "/work", label: t("workAll") }}
             count={{
-              value: inFlight.length,
-              label: t("workCount").replace("$count", String(inFlight.length)),
+              value: visible.length,
+              label: t("workCount").replace("$count", String(visible.length)),
             }}
             testid="desk-work"
             title={t("workTitle")}
           >
-            {inFlight.length === 0 ? (
-              <DeskEmpty text={t("workEmpty")} />
+            {visible.length === 0 ? (
+              <DeskEmpty
+                clear={
+                  activeStage === null
+                    ? undefined
+                    : { href: "/", label: t("workClearFilter") }
+                }
+                testid={
+                  activeStage === null
+                    ? "desk-work-empty"
+                    : "desk-work-filtered"
+                }
+                text={
+                  activeStage === null
+                    ? t("workEmpty")
+                    : t("workEmptyFiltered").replace(
+                        "$stage",
+                        tStage(activeStage),
+                      )
+                }
+              />
             ) : (
               <WorkRowsTable
                 groupBy="project"
@@ -320,10 +350,29 @@ function DeskRegion({
   );
 }
 
-function DeskEmpty({ text }: { text: string }): ReactElement {
+function DeskEmpty({
+  text,
+  clear,
+  testid,
+}: {
+  text: string;
+  clear?: { href: string; label: string };
+  testid?: string;
+}): ReactElement {
   return (
-    <p className="m-0 rounded-[14px] border border-line bg-paper px-4 py-6 text-center text-[13px] text-mute">
+    <p
+      className="m-0 flex flex-col items-center gap-2 rounded-[14px] border border-line bg-paper px-4 py-6 text-center text-[13px] text-mute"
+      data-testid={testid}
+    >
       {text}
+      {clear ? (
+        <Link
+          className="font-mono text-[11px] text-mute underline hover:text-ink"
+          href={clear.href}
+        >
+          {clear.label}
+        </Link>
+      ) : null}
     </p>
   );
 }

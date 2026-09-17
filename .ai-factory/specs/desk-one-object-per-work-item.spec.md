@@ -77,8 +77,14 @@ Every claim below was checked against the tree at
   rendered sibling.
 - `/work` keeps filter and grouping state **in the URL**, submitted by a plain
   `<form action="/work">`; only the saved-view list is `localStorage`.
-- Both vitest projects are `environment: "node"`. There is **no jsdom project**, so a
-  click cannot be simulated in vitest.
+- Both vitest projects are `environment: "node"`, but that does **not** mean a
+  click cannot be simulated in vitest. **Corrected 2026-09-17, during Phase 1:**
+  the repository has an established per-file idiom — a `// @vitest-environment
+  jsdom` pragma atop a `*.dom.test.ts`, driven with `react-dom/client` + `act()`.
+  There are **28** such files, `jsdom@25.0.1` is installed, and they are
+  collected by the `unit` project, which **CI runs**. "No jsdom project" is true
+  and irrelevant; it had been used to route all interaction proof to Playwright,
+  which CI does not run.
 - **Playwright does not run in CI.** CI enforces lint, typecheck, `test:unit`,
   `test:integration`, `validate:docs:all` and `validate:contracts` — nothing else.
   `test:e2e` and `validate:m51-coverage` are manual gates.
@@ -196,8 +202,14 @@ the *cheapest layer that can actually prove it*, and at exactly one layer:
 - pure computation → `unit`, pure function, no rendering;
 - markup given props → `unit` via `renderToStaticMarkup`;
 - structural invariants readable from source → `unit`, the source-contract test;
-- anything requiring interaction, layout or a real viewport → `e2e` only, because
-  vitest has no DOM.
+- **interaction on a mounted component** (a click, a key, a fetch that must not
+  fire) → `unit` via a `*.dom.test.ts` jsdom pragma, because that runs in CI;
+- anything requiring real layout, a viewport, navigation or a URL → `e2e`, the
+  only layer that can see those, and the one CI does not run.
+
+The interaction layer is preferred over `e2e` wherever it can carry the proof: a
+guard in the lane CI runs is worth more than the same guard in a lane that is
+green because nobody ran it.
 
 **Forbidden:** "renders without crashing", "the export is defined", snapshot-only
 assertions, and re-asserting one requirement at two layers.
@@ -216,10 +228,10 @@ assertions, and re-asserting one requirement at two layers.
 | **AC-D10** | A `none` next action renders an em dash; a non-`none` one renders the affordance | REQ-D10 | T-D10 (unit, markup, 2 cases) |
 | **AC-D11** | At 390px the low-priority columns are not visible, the page does not scroll horizontally, and the expanded row's cell still spans the full width | REQ-D11 | T-D11 (e2e, short viewport) |
 | **AC-D12** | `/work` renders no expand affordance and its row markup is otherwise unchanged | REQ-D12 | T-D12 (unit, markup, negative) |
-| **AC-D13** | Clicking a row expands it; Enter and Space do the same; `aria-expanded` flips; clicking a link inside the row navigates without toggling | REQ-D13 | T-D13 (e2e, 4 cases) |
+| **AC-D13** | Clicking a row expands it; Enter and Space do the same; `aria-expanded` flips; clicking a link inside the row does not toggle | REQ-D13 | T-D13 (unit, jsdom, 4 cases) |
 | **AC-D14** | Each stage expands to its own panel; the `Review` panel exposes a link and no promote control | REQ-D14 | T-D14 (e2e, 4 stages + the negative) |
 | **AC-D15** | The page source retains the literal `hitlDecisionsOf(queue.items)`, still imports from `@/lib/queries/decisions`, and `lib/queries/work-table.ts` is unchanged in the diff | REQ-D15 | T-D15 (unit, source contract) |
-| **AC-D16** | No `inbox-context` request is issued while every row is collapsed; expanding one issues exactly one; a failing response renders the error branch | REQ-D16 | T-D16 (e2e, 3 cases, network-intercepted) |
+| **AC-D16** | No `inbox-context` request is issued while every row is collapsed; expanding one issues exactly one; a failing response renders the error branch | REQ-D16 | T-D16 (unit, jsdom, 3 cases, `fetch` stubbed) |
 | **AC-D17** | `hitl-card.tsx` contains no second copy of the panel body — it renders the extracted panel | REQ-D17 | T-D17 (unit, source contract) |
 | **AC-D18** | The Desk source contains no `"use server"`, no `fetch(`, and no `method: "POST"` | REQ-D18 | T-D18 (unit, source contract — the existing assertion, retained) |
 | **AC-D19** | A feed row whose task join is absent still names its run; one with a task names the task | REQ-D19 | T-D19 (unit, markup, 2 cases) |
@@ -237,6 +249,10 @@ assertions, and re-asserting one requirement at two layers.
   into, is not in this change.
 - Collapsing or grouping repeated activity events (REQ-D20, scope source 6).
 - Idea-mode intake, paging, any change to `/inbox`'s own surface.
+- **Moving the remaining e2e cases into jsdom.** `AC-D3`, `AC-D5`, `AC-D6`,
+  `AC-D11`, `AC-D14`, `AC-D22` and `AC-D24` each turn on a URL, a viewport, real
+  layout, or navigation between pages; jsdom can see none of those, so they stay
+  in Playwright and stay outside CI.
 - **Fixing `queryTokensSpentSince`.** It filters `runs.startedAt >= since`, summing the
   lifetime cost of runs that merely *started* in the window, and `run_cost_rollups` has
   no time dimension at all (PK `runId`), so a true per-period figure is not computable

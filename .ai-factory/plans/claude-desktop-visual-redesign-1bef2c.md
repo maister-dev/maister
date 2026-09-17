@@ -171,7 +171,7 @@ test.
 
 ### Phase 1 — The Now strip
 
-**T1.1 [ ] — RED: the partition count**
+**T1.1 [x] — RED: the partition count**
 
 Write `web/lib/work/__tests__/stage-counts.test.ts` (**T-D1**, project `unit`) against
 a function that does not exist. Assert the map has exactly the five
@@ -183,13 +183,13 @@ file.
 
 Proves: `AC-D1` · Implements: `REQ-D1`, `REQ-D2`.
 
-**T1.2 [ ] — GREEN: implement the count**
+**T1.2 [x] — GREEN: implement the count**
 
 `web/lib/work/stage-counts.ts` — pure, `readonly WorkTableRow[] → Record<stage,
 number>` as a `satisfies` map so an eleventh stage is a compile error. No DB handle,
 no clock.
 
-**T1.3 [ ] — Retarget `NowTiles` and add the URL filter**
+**T1.3 [x] — Retarget `NowTiles` and add the URL filter**
 
 `now-tiles.tsx` has one consumer, so it is free to reshape. Tiles become the five
 in-flight stages; a tile links to `/?stage=<Stage>`; the Desk reads `searchParams` and
@@ -204,7 +204,7 @@ here. `AC-D2` is asserted in T1.6.
 
 Proves: `AC-D3`, `AC-D5`, `AC-D6` · Implements: `REQ-D3`, `REQ-D5`, `REQ-D6`.
 
-**T1.4 [ ] — Stop rendering the digest window**
+**T1.4 [x] — Stop rendering the digest window**
 
 Remove the digest sentence and the `getNowTileCounts` / `formatDigest` calls from
 `page.tsx`. Both stay in the codebase for ADR-173; `digest.test.ts` and
@@ -217,7 +217,7 @@ module, which survives.
 
 Proves: `AC-D4` · Implements: `REQ-D4`.
 
-**T1.5 [ ] — Migrate the assertions this phase invalidates**
+**T1.5 [x] — Migrate the assertions this phase invalidates**
 
 Named individually, because a bare "migrate the tests" line reliably gets trimmed.
 **This phase owns them** — deferring any of these is what the phase-ownership rule
@@ -230,7 +230,7 @@ forbids.
 - `web/app/(app)/__tests__/desk-contract.test.ts` — the `NOW_TILE_HREFS` block moves
   (T1.4).
 
-**T1.6 [ ] — i18n, and close the orphan-key hole**
+**T1.6 [x] — i18n, and close the orphan-key hole**
 
 The five stage names already exist in the `workStage` namespace, and `desk.nowLabel`
 is already in both catalogs — **the strip needs no new keys.** Render `nowLabel` as

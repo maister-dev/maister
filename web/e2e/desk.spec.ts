@@ -10,12 +10,11 @@
 //            decision of any kind.
 //   empty  — a member of no project at all.
 //
-// The tile-versus-badge case moved here from Phase 5, where no page rendered a
-// tile yet. It asserts the equality that ADR-169 `ATN-05` actually claims — the
-// Desk's Decisions region against the rail badge — and asserts that the Now
-// `decisions` TILE is deliberately a different, smaller number: T5.4 defines it
-// as decisions that are NEW since the reader's cursor, while the badge carries
-// the whole queue. Asserting those two equal would be asserting a bug.
+// ADR-174 retargets the Now strip: its five tiles are the five in-flight WORK
+// STAGES, counted from the rows the table renders, not the five numbers of a
+// digest window. There is therefore no `decisions` tile left to compare against
+// the rail badge — the `ATN-05` equality that survives is the Desk's Decisions
+// region against that badge, and it is asserted on its own below.
 
 import type { Browser, Page } from "@playwright/test";
 
@@ -24,6 +23,17 @@ import { test, expect } from "@playwright/test";
 import { loadFixtures, type E2EUserFixture } from "./_seed/fixtures";
 
 const EMPTY_STORAGE = { cookies: [], origins: [] };
+
+// `WORK_IN_FLIGHT_STAGES`, spelled out: an e2e spec must not import server
+// modules, and a sixth in-flight stage should fail HERE as a count mismatch
+// rather than pass silently against a list derived from the code under test.
+const IN_FLIGHT_STAGES = [
+  "Queued",
+  "Executing",
+  "WaitingOnHuman",
+  "Review",
+  "Crashed",
+] as const;
 
 async function signIn(
   browser: Browser,
@@ -65,17 +75,16 @@ test("E2E-NAV-01 the Desk is home, and every region it promises is on it", async
   );
 
   await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
-  // The digest sentence is never blank: an all-zero window collapses to one
-  // "nothing happened" clause rather than to an empty string.
-  await expect(page.getByTestId("desk-digest")).not.toBeEmpty();
+  // ADR-174 D3: no digest sentence, no window, no period selector.
+  await expect(page.getByTestId("desk-digest")).toHaveCount(0);
 
-  // Five Now tiles, each a link.
+  // Five Now tiles — the in-flight partition — each filtering `/` in place.
   await expect(page.getByTestId("now-tiles")).toBeVisible();
   await expect(page.locator("[data-now-tile]")).toHaveCount(5);
-  for (const tile of ["promoted", "crashed", "decisions", "events", "tokens"]) {
-    await expect(page.locator(`[data-now-tile="${tile}"]`)).toHaveAttribute(
+  for (const stage of IN_FLIGHT_STAGES) {
+    await expect(page.locator(`[data-now-tile="${stage}"]`)).toHaveAttribute(
       "href",
-      /^\//u,
+      `/?stage=${stage}`,
     );
   }
 
@@ -108,9 +117,129 @@ test("E2E-NAV-01 the Desk is home, and every region it promises is on it", async
   await expect(page.getByRole("heading", { name: "Projects." })).toBeVisible();
 });
 
-test("the Desk's Decisions count is the rail badge, and the Now tile is not", async ({
+// ── The Now strip filters the table in place (ADR-174 D1/D3) ───────────────
+//
+// `T-D3`/`T-D5`/`T-D6`. These are e2e rather than unit because every one of them
+// is about a URL, a navigation and what the server then renders — none of which
+// a pure function or a markup snapshot can see.
+
+const DESK_WORK_ROWS = 12;
+
+async function deskRows(page: Page): Promise<number> {
+  return page
+    .getByTestId("desk-work")
+    .locator('[data-testid="work-row"]')
+    .count();
+}
+
+test("T-D3 a Now tile filters the Desk in place, and a bad value does not", async ({
   page,
 }) => {
+  await page.goto("/");
+
+  const unfiltered = await deskRows(page);
+
+  expect(unfiltered).toBeGreaterThan(0);
+
+  // 1 — the filter narrows to exactly its stage, and the URL stays on `/`.
+  await page.locator('[data-now-tile="Crashed"]').click();
+  await expect(page).toHaveURL(/\/\?stage=Crashed$/u);
+
+  const crashedTile = await digits(page, "now-tile-Crashed");
+  const crashedRows = await deskRows(page);
+  const work = page.getByTestId("desk-work");
+
+  // Every row rendered under the filter really is that stage — a row count
+  // alone would pass for a filter that narrowed to the wrong population.
+  expect(await work.locator('[data-stage="Crashed"]').count()).toBe(
+    crashedRows,
+  );
+
+  // 2 — narrowed BEFORE the slice: the table shows the first `DESK_WORK_ROWS`
+  // of the whole crashed population, not the crashed rows among the first 12.
+  // Counting after the slice is the plausible-looking bug this catches.
+  expect(crashedRows).toBe(Math.min(crashedTile, DESK_WORK_ROWS));
+
+  // 3 — an unknown value, and a valid-but-settled one, both render unfiltered
+  // rather than refusing (`REQ-D3`).
+  for (const value of ["Nonsense", "Promoted"]) {
+    await page.goto(`/?stage=${value}`);
+    expect(await deskRows(page), value).toBe(unfiltered);
+    await expect(
+      page.locator("[data-now-tile][aria-current]"),
+      value,
+    ).toHaveCount(0);
+  }
+});
+
+test("T-D5 an active filter survives a re-render that discards client state", async ({
+  page,
+}) => {
+  await page.goto("/?stage=Crashed");
+
+  const before = await deskRows(page);
+
+  await expect(page.locator('[data-now-tile="Crashed"]')).toHaveAttribute(
+    "aria-current",
+    "true",
+  );
+
+  // `AttentionLiveRefresh` answers a tick with `router.refresh()`, which
+  // re-renders the CURRENT url on the server. Waiting for a real tick would be
+  // waiting on a fixture's background activity, so this asserts the property
+  // that MAKES the filter tick-proof: it is derived from the URL and from
+  // nothing else.
+  //
+  // A full reload is deliberately HARSHER than the tick — it destroys every
+  // piece of client state a refresh would keep. A filter that survives this
+  // cannot be lost by a refresh; one held in `useState` would fail here, and
+  // that is the regression `REQ-D5` exists to catch.
+  await page.reload();
+
+  await expect(page).toHaveURL(/\/\?stage=Crashed$/u);
+  await expect(page.locator('[data-now-tile="Crashed"]')).toHaveAttribute(
+    "aria-current",
+    "true",
+  );
+  expect(await deskRows(page)).toBe(before);
+});
+
+test("T-D6 a filter matching nothing says so, distinctly, and offers a way back", async ({
+  browser,
+}) => {
+  // The `/work` fixture's member has work in flight and nothing crashed, so a
+  // crashed filter is genuinely empty for them without seeding a new state.
+  const fx = loadFixtures().byKey.workTable;
+  const { page } = await signIn(browser, fx.member);
+
+  try {
+    await page.goto("/");
+
+    const unfilteredEmpty = page.getByTestId("desk-work-empty");
+
+    // Precondition: unfiltered, this reader's Desk is NOT empty.
+    await expect(unfilteredEmpty).toHaveCount(0);
+
+    await page.goto("/?stage=Crashed");
+
+    const filtered = page.getByTestId("desk-work-filtered");
+
+    // Distinct from the unfiltered empty state — a filtered Desk that reads
+    // "Nothing is running." tells the reader the platform is dead (`REQ-D6`).
+    await expect(filtered).toBeVisible();
+    await expect(unfilteredEmpty).toHaveCount(0);
+    await expect(filtered).toContainText("Crashed");
+
+    // And the filter is reversible from the empty state itself.
+    await filtered.getByRole("link").click();
+    await expect(page).toHaveURL(/\/$/u);
+    expect(await deskRows(page)).toBeGreaterThan(0);
+  } finally {
+    await page.context().close();
+  }
+});
+
+test("the Desk's Decisions count is the rail badge", async ({ page }) => {
   await page.goto("/");
 
   const badge = await digits(page, "inbox-nav-badge");
@@ -119,13 +248,6 @@ test("the Desk's Decisions count is the rail badge, and the Now tile is not", as
   // `ATN-05`: one layout-level read, two renders of it.
   expect(badge).toBeGreaterThan(0);
   expect(region).toBe(badge);
-
-  // The tile is the windowed number ("new since your last visit"), so it may be
-  // anything from zero up to the queue — but never MORE than the queue, which
-  // is the only relationship that can be asserted without a fixed cursor.
-  const tile = await digits(page, "now-tile-decisions");
-
-  expect(tile).toBeLessThanOrEqual(badge);
 });
 
 test("E2E-EDGE-NAV-02 narrow keeps every region, stacked Decisions then Work then Activity", async ({
@@ -255,10 +377,14 @@ test("E2E-EDGE-NAV-01 the empty Desk reuses the first-run frame and drops the co
       page.getByRole("button", { name: "Start a scratch run" }),
     ).toHaveCount(0);
 
-    // The Desk frame itself survives: the tiles are all zero, not missing.
+    // The Desk frame itself survives: all five tiles render at zero, not
+    // missing — `REQ-D1`. A reader with no projects still sees the shape.
     await expect(page.getByTestId("now-tiles")).toBeVisible();
-    expect(await digits(page, "now-tile-decisions")).toBe(0);
-    await expect(page.getByTestId("desk-digest")).not.toBeEmpty();
+    await expect(page.locator("[data-now-tile]")).toHaveCount(5);
+    for (const stage of IN_FLIGHT_STAGES) {
+      expect(await digits(page, `now-tile-${stage}`), stage).toBe(0);
+    }
+    await expect(page.getByTestId("desk-digest")).toHaveCount(0);
   } finally {
     await page.context().close();
   }

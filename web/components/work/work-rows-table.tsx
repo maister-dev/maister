@@ -157,7 +157,11 @@ function WorkTableRowView({
   const nextAction = workNextAction(row.stage);
 
   return (
-    <tr className="border-b border-line last:border-b-0" data-testid="work-row">
+    <tr
+      className="border-b border-line last:border-b-0"
+      data-stage={row.stage}
+      data-testid="work-row"
+    >
       <td className={CELL}>
         <Link
           className="font-mono text-[12px] font-semibold text-ink no-underline"

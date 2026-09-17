@@ -183,6 +183,10 @@ export const WORK_SETTLED_STAGES = [
   "Abandoned",
 ] as const satisfies readonly WorkStage[];
 
-export function isWorkInFlight(stage: WorkStage): boolean {
+export type WorkInFlightStage = (typeof WORK_IN_FLIGHT_STAGES)[number];
+
+// A type predicate rather than a bare boolean: callers that partition rows by
+// this need the narrowed stage to index an in-flight-keyed map without a cast.
+export function isWorkInFlight(stage: WorkStage): stage is WorkInFlightStage {
   return (WORK_IN_FLIGHT_STAGES as readonly WorkStage[]).includes(stage);
 }

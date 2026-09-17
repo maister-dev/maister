@@ -166,4 +166,31 @@ describe("UT-ATN-12 the tile vocabulary", () => {
   it("counts a kind the attention plane still carries", () => {
     expect([...ATTENTION_EVENT_KINDS]).toContain(DIGEST_CRASHED_EVENT_KIND);
   });
+
+  // Rehomed from `desk-contract.test.ts` by ADR-174. The Desk no longer renders
+  // this vocabulary — the notification trigger is its only caller now — but the
+  // vocabulary itself still has to hold, and it belongs beside the module that
+  // owns it rather than beside a page that stopped using it.
+  it("names every tile in both catalogs, with an aria label", () => {
+    for (const catalog of [en.digest, ru.digest] as Array<
+      Record<string, string>
+    >) {
+      for (const id of NOW_TILE_IDS) {
+        expect(catalog[id], id).toContain("$count");
+      }
+      expect(catalog.ariaLabel).toBeTruthy();
+    }
+  });
+
+  it("points every tile at a route that exists", () => {
+    for (const id of NOW_TILE_IDS) {
+      const href = NOW_TILE_HREFS[id];
+      const route = href.split("?")[0];
+
+      expect(
+        ["/work", "/inbox", "/activity", "/observatory"],
+        `${id} -> ${href}`,
+      ).toContain(route);
+    }
+  });
 });

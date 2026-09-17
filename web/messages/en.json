@@ -4860,7 +4860,6 @@
   "desk": {
     "title": "Desk",
     "eyebrow": "Home",
-    "sub": "What needs you, what moved, and what is running — across every project you can see.",
     "composer": "Start a scratch run…",
     "composerTitle": "Start a scratch run",
     "nowLabel": "Now",
@@ -4871,6 +4870,8 @@
     "workTitle": "Work in flight",
     "workCount": "$count in flight",
     "workEmpty": "Nothing is running.",
+    "workEmptyFiltered": "Nothing in flight is at $stage.",
+    "workClearFilter": "Show everything in flight",
     "workAll": "Open the work table",
     "activityTitle": "Activity",
     "activityEmpty": "Nothing has happened yet.",

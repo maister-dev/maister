@@ -14,7 +14,6 @@ import { describe, expect, it } from "vitest";
 
 import en from "@/messages/en.json";
 import ru from "@/messages/ru.json";
-import { NOW_TILE_HREFS, NOW_TILE_IDS } from "@/lib/queries/digest";
 
 const WEB_ROOT = path.resolve(__dirname, "../../..");
 const DESK = readFileSync(path.join(WEB_ROOT, "app/(app)/page.tsx"), "utf8");
@@ -49,6 +48,15 @@ describe("UT-NAV-01 the Desk composes rather than re-implements", () => {
     expect(DESK).toContain('from "@/lib/queries/decisions"');
     expect(DESK).toContain("getDecisionsQueue");
     expect(DESK).not.toContain("computeDecisionsQueue");
+  });
+
+  it("T-D4 renders no digest window, while the module survives for ADR-173", () => {
+    // ADR-174 D3: the Desk is current state, not a window. `formatDigest` and
+    // `getNowTileCounts` stay in the codebase — the notification trigger is
+    // their real caller — but nothing here computes or prints a window.
+    expect(DESK).not.toContain("formatDigest");
+    expect(DESK).not.toContain("getNowTileCounts");
+    expect(DESK).not.toContain("desk-digest");
   });
 
   it("adds no mutation path of its own", () => {
@@ -108,26 +116,18 @@ describe("UT-NAV-01 Desk i18n", () => {
     }
   });
 
-  it("names every Now tile in both catalogs", () => {
-    for (const catalog of [en.digest, ru.digest] as Array<
-      Record<string, string>
-    >) {
-      for (const id of NOW_TILE_IDS) {
-        expect(catalog[id], id).toContain("$count");
-      }
-      expect(catalog.ariaLabel).toBeTruthy();
-    }
-  });
-
-  it("points every Now tile at a route that exists", () => {
-    for (const id of NOW_TILE_IDS) {
-      const href = NOW_TILE_HREFS[id];
-      const route = href.split("?")[0];
-
-      expect(
-        ["/work", "/inbox", "/activity", "/observatory"],
-        `${id} -> ${href}`,
-      ).toContain(route);
+  // `T-D23` (`AC-D23`), the coverage half of the i18n contract.
+  //
+  // Parity alone cannot catch an orphan: it only proves EN and RU agree, and two
+  // catalogs agree perfectly about a key neither surface renders. That is how
+  // `desk.sub` and `desk.nowLabel` both sat unused — present, translated, and
+  // reaching no reader. A key with no render site is either dead weight or a
+  // string someone believes is on screen and is not.
+  it("T-D23 gives every desk key a render site on the page", () => {
+    for (const key of deskKeys) {
+      expect(DESK, `desk.${key}`).toMatch(
+        new RegExp(`\\bt\\(\\s*"${key}"\\s*\\)`, "u"),
+      );
     }
   });
 });

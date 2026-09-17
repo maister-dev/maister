@@ -9,9 +9,9 @@
  */
 
 import type { WorkTableRow } from "@/lib/queries/work-table";
-import type { WorkStage } from "@/lib/work/stage";
+import type { WorkInFlightStage, WorkStage } from "@/lib/work/stage";
 
-import { WORK_STAGES } from "@/lib/work/stage";
+import { WORK_IN_FLIGHT_STAGES, WORK_STAGES } from "@/lib/work/stage";
 
 export const WORK_GROUP_BYS = ["none", "project", "stage", "mine"] as const;
 
@@ -65,6 +65,23 @@ export function normalizeWorkTableFilters(
     stage: oneOf(firstParam(params.stage), WORK_STAGES),
     groupBy: oneOf(firstParam(params.group), WORK_GROUP_BYS) ?? "none",
   };
+}
+
+/**
+ * The Desk's `?stage=` filter (`REQ-D3`), narrower than the `/work` one above.
+ *
+ * The Desk renders only work in flight, so a valid-but-settled stage
+ * (`Promoted`) would select nothing and leave the reader staring at a dead
+ * filtered-empty state for a filter the surface can never satisfy.
+ *
+ * An absent, unknown, or non-in-flight value is DROPPED rather than refused —
+ * the Desk renders unfiltered, never an error, matching the existence-hiding
+ * convention `normalizeWorkTableFilters` already uses for a project slug.
+ */
+export function normalizeDeskStageFilter(
+  params: Record<string, string | string[] | undefined>,
+): WorkInFlightStage | null {
+  return oneOf(firstParam(params.stage), WORK_IN_FLIGHT_STAGES);
 }
 
 export function workTableFiltersToQuery(filters: WorkTableFilters): string {
