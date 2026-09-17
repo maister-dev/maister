@@ -57,12 +57,18 @@ function loadFixture(): ReviewCommentsFixture {
   return all.byKey.reviewComments;
 }
 
-// The review workspace is a three-column surface — file tree, diff, thread rail
-// — inside a `max-h-[calc(100vh-260px)]` scroller. At the default 1280x720 the
-// per-line gutter targets are unreachable: Playwright reports the cell as
-// "outside of the viewport" however far it scrolls the inner container. Give
-// the spec a desk-sized window, which is what this screen is designed for.
-test.use({ viewport: { width: 1600, height: 1200 } });
+// A desk-sized window is load-bearing here, not cosmetic. Measured at the
+// default 1280x720: the shell (sidebar + run inspector) leaves `main` 848px,
+// the review workspace splits that into the diff column (410px) and the thread
+// rail (380px), and the diff-view then splits its 392px between the file tree
+// (220-320px) and the diff itself — which lands at SEVENTY-TWO pixels in split
+// mode. The per-line add-widget, pushed onto the column seam by the library's
+// `translateX`, then straddles the container's `overflow-hidden` edge and drops
+// out of the hit-test tree entirely: `elementsFromPoint` at its centre returns
+// the container, never the button. 1920x1080 gives the diff enough width that
+// the widget sits well inside. 1280 fails; this is the smallest round size
+// checked that passes.
+test.use({ viewport: { width: 1920, height: 1080 } });
 
 // KNOWN FAILING (measured 2026-09-17, not yet fixed). With the viewport above
 // and the centring below, this gets as far as the composer never opening. What
@@ -84,19 +90,28 @@ test.use({ viewport: { width: 1600, height: 1200 } });
 // the lib's hover add-widget (`group-hover:visible`), so hover the cell first,
 // then click the revealed "+" button.
 async function openComposerOnNewLine(page: Page, line: number): Promise<void> {
-  const gutterCell = page
-    .locator('[data-testid="diff-view"] td.diff-line-new-num')
-    .filter({ has: page.locator(`span[data-line-num="${line}"]`) })
+  const row = page
+    .locator('[data-testid="diff-view"] tr.diff-line')
+    .filter({
+      has: page.locator(`td.diff-line-new-num span[data-line-num="${line}"]`),
+    })
     .first();
+  // The CONTENT cell's widget, not the gutter cell's. The library renders one
+  // `.diff-add-widget` in each, and its CSS pushes the gutter's `translateX(-50%)`
+  // and the content's `translateX(50%)` so both land on the seam between the two
+  // columns, stacked at the identical rect. The content one is on top, so it is
+  // the one a pointer reaches — targeting the gutter's meant every click was
+  // delivered to its twin and the composer never opened.
+  const contentCell = row.locator("td.diff-line-new-content").first();
 
   // Centre the row first: the frame has a sticky top nav (z-40) and a fixed
   // status footer (z-30), and Playwright scrolls a target only just into view,
   // which parks it under one of those bands.
-  await gutterCell.evaluate((el) => {
+  await contentCell.evaluate((el) => {
     el.scrollIntoView({ block: "center", inline: "nearest" });
   });
-  await gutterCell.hover();
-  await gutterCell.locator("button.diff-add-widget").click();
+  await contentCell.hover();
+  await contentCell.locator("button.diff-add-widget").click();
 }
 
 test("review gate: seeded threads render; add root + reply; resolve; rework decision accepted", async ({
