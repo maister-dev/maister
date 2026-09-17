@@ -2528,7 +2528,7 @@
       "EXECUTOR_UNAVAILABLE": "The supervisor is unreachable. Retry in a moment.",
       "ACP_PROTOCOL": "The agent rejected the response. Reload and try again.",
       "HITL_TIMEOUT": "This request expired before your response was delivered.",
-      "CONFLICT": "This request was already answered.",
+      "CONFLICT": "This conflicts with the run's current state. Check the refreshed view before retrying.",
       "CONFIG": "The request or configuration is invalid. Check the values and settings.",
       "FLOW_INSTALL": "The Flow is not ready to run. Check its installation and try again.",
       "CHECKPOINT": "The saved run checkpoint could not be used. Reload and try again.",

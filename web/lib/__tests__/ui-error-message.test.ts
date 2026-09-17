@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   isMaisterErrorCode,
+  isStaleViewErrorCode,
   resolveUiErrorMessageKey,
 } from "@/lib/ui-error-message";
 
@@ -37,4 +38,28 @@ describe("UI error-message resolver", () => {
       expect(isMaisterErrorCode(code)).toBe(false);
     },
   );
+});
+
+describe("stale-view error codes", () => {
+  it.each(["CONFLICT", "PRECONDITION", "HITL_TIMEOUT"])(
+    "treats %s as a refusal the rendered view cannot survive",
+    (code) => {
+      expect(isStaleViewErrorCode(code)).toBe(true);
+    },
+  );
+
+  // Retryable and validation refusals leave the view current and the caller's
+  // entered payload valid — re-syncing there would be noise, not a fix.
+  it.each([
+    "EXECUTOR_UNAVAILABLE",
+    "NEEDS_INPUT",
+    "CONFIG",
+    "CRASH",
+    "ACP_PROTOCOL",
+    undefined,
+    null,
+    409,
+  ])("leaves the view alone for %s", (code) => {
+    expect(isStaleViewErrorCode(code)).toBe(false);
+  });
 });

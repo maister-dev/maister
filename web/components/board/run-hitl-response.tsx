@@ -27,7 +27,10 @@ import {
 } from "@/components/board/hitl-decision-controls";
 import { requestPendingHitlFocus } from "@/components/board/pending-hitl-focus-restorer";
 import { ConfirmDialog } from "@/components/feedback/confirm-dialog";
-import { resolveUiErrorMessageKey } from "@/lib/ui-error-message";
+import {
+  isStaleViewErrorCode,
+  resolveUiErrorMessageKey,
+} from "@/lib/ui-error-message";
 
 type ReviewFeedbackPreview = {
   reviewSource: {
@@ -129,6 +132,17 @@ export function RunHitlResponse({
     return t(resolveUiErrorMessageKey(code));
   }
 
+  // A refusal that means this card no longer reflects the run. Leaving it as
+  // rendered hands the operator live-looking buttons on a request the server
+  // will keep refusing, which is how a stale permission card outlives its run.
+  function reportError(code: unknown): void {
+    setError(errorMessage(code));
+
+    if (isStaleViewErrorCode(code)) {
+      startTransition(() => router.refresh());
+    }
+  }
+
   async function post(payload: Record<string, unknown>): Promise<void> {
     setBusy(true);
     setError(null);
@@ -148,7 +162,7 @@ export function RunHitlResponse({
           code?: string;
         } | null;
 
-        setError(errorMessage(data?.code));
+        reportError(data?.code);
 
         return;
       }
@@ -189,7 +203,7 @@ export function RunHitlResponse({
         | null;
 
       if (!res.ok || body === null || !("feedback" in body)) {
-        setError(errorMessage(body?.code));
+        reportError(body?.code);
 
         return;
       }
