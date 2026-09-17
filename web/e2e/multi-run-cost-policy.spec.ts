@@ -92,8 +92,19 @@ test.describe("multi-run cost and delivery policy UI", () => {
     const dialog = page.getByRole("dialog", { name: /Run again/i });
 
     await expect(dialog).toBeVisible();
-    await expect(dialog.getByLabel("Flow")).toBeVisible();
-    await expect(dialog.getByLabel("Runner / Model")).toBeVisible();
+    // By ROLE, not by label. Each HeroUI Select renders a trigger button AND a
+    // hidden native <select> inside the same <label>, so `getByLabel` matches
+    // both as soon as that select carries options — which it does once more
+    // than one package is attached to the shared board project. That happened
+    // the moment forked-package-loop stopped skipping its second test and
+    // attached a second package, and the hidden select's accessible name in the
+    // failure carried that spec's run tag.
+    await expect(
+      dialog.getByRole("button", { name: /Flow/i }).first(),
+    ).toBeVisible();
+    await expect(
+      dialog.getByRole("button", { name: /Runner \/ Model/i }).first(),
+    ).toBeVisible();
 
     // Delivery policy sits inside the collapsed "Advanced launch options"
     // <details>, so its heading resolves in the DOM but is hidden until the
