@@ -10,7 +10,6 @@ import type { ReactElement, ReactNode } from "react";
 
 import { getLocale, getTranslations } from "next-intl/server";
 import Link from "next/link";
-import clsx from "clsx";
 
 import { ActivityRowList } from "@/components/activity/activity-row-list";
 import { DecisionSections } from "@/components/inbox/decision-sections";
@@ -37,6 +36,7 @@ import {
 } from "@/lib/work/work-table-view";
 import { isWorkInFlight, WORK_IN_FLIGHT_STAGES } from "@/lib/work/stage";
 import { requireActiveSession } from "@/lib/authz";
+import { runReviewHref } from "@/lib/runs/run-query-state";
 import { splitAtCursor } from "@/lib/activity/activity-view";
 
 /**
@@ -126,6 +126,10 @@ export default async function DeskPage({
       item.runId === null ? [] : [[item.runId, item] as const],
     ),
   );
+  const activityLabels: ActivityRowLabels = buildActivityRowLabels(
+    tActivity,
+    ACTIVITY_FEED_KINDS,
+  );
   const panels: Record<string, ReactNode> = {};
 
   for (const row of shownRows) {
@@ -136,7 +140,7 @@ export default async function DeskPage({
       events: feed.rows.filter((event) => event.runId === row.runId),
       canAct: user.role !== "viewer",
       currentUserId: user.id,
-      activityLabels: buildActivityRowLabels(tActivity, ACTIVITY_FEED_KINDS),
+      activityLabels,
       reviewLabel: tInbox("decisions.review"),
       noEventsLabel: t("panelNoEvents"),
       locale,
@@ -159,10 +163,6 @@ export default async function DeskPage({
     ) as Record<WorkInFlightStage, string>,
   };
   const workLabels: WorkRowsLabels = buildWorkRowsLabels(tWork, tStage);
-  const activityLabels: ActivityRowLabels = buildActivityRowLabels(
-    tActivity,
-    ACTIVITY_FEED_KINDS,
-  );
 
   return (
     <div className="flex w-full flex-col gap-7">
@@ -341,7 +341,7 @@ function deskRowPanel({
       <DeskPanelFrame>
         <Link
           className="inline-flex h-8 items-center rounded-[10px] border border-line bg-ivory px-3 text-[12.5px] font-semibold text-ink no-underline"
-          href={`/runs/${row.runId}?wb=review&scope=review`}
+          href={runReviewHref(row.runId)}
         >
           {reviewLabel}
         </Link>
@@ -397,20 +397,18 @@ function DeskRegion({
   count,
   action,
   testid,
-  className,
   children,
 }: {
   title: string;
   count?: { value: number; label: string };
   action: { href: string; label: string };
   testid: string;
-  className?: string;
   children: ReactNode;
 }): ReactElement {
   return (
     <section
       aria-label={title}
-      className={clsx("flex min-w-0 flex-col gap-3.5", className)}
+      className="flex min-w-0 flex-col gap-3.5"
       data-testid={testid}
     >
       <div className="flex flex-wrap items-baseline gap-3">

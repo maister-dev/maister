@@ -97,6 +97,16 @@ the run's review surface, never an inline promote, because the drift-guarded rev
 target commit exists only there; `Crashed` → recover/discard; `Executing`/`Queued` →
 that run's recent events.
 
+**A row expands only when its panel has something to say.** The two read models the
+join spans are scoped differently by design: the table reads `getVisibleProjectIds`,
+the decision queue reads `getActionableProjectIds` — project `member` and up, because
+ADR-169 D7 made the queue *actionable*, not merely visible. A project-`viewer`
+therefore sees `WaitingOnHuman` and `Crashed` rows with no decision behind them, and
+those rows render inert: no panel, and so no `aria-expanded`, no `tabIndex`, no hover
+affordance. That is the intended degradation — an expansion whose every control
+answers 403 is what D7 already refused. The `Review` and `Executing`/`Queued` arms
+need no decision and expand for every reader.
+
 **The HITL panel is one implementation, not two** (Implemented). `HitlCard` was
 monolithic — its own expansion state, header toggle, lazy `inbox-context` fetch and
 trailing response form. The panel body is extracted with its `expanded` state owned by

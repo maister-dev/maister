@@ -42,8 +42,12 @@ flowchart LR
 ## Layout & regions
 
 Full-width data-management layout: no centered max-width and responsive column
-behaviour. Narrow viewports drop columns by priority (`tokens` and `readiness`
-first) rather than scrolling the table sideways (`REQ-D11`, Implemented).
+behaviour. Narrow viewports drop columns by priority rather than scrolling the
+table sideways (`REQ-D11`, Implemented). Widest-first, the order is `blockers` +
+`last activity` below `xl`, then `readiness` + `waiting-on` + `tokens` below
+`lg`, then `project` below `md`. A header and its cells carry the same drop
+class: when they disagree the header row renders one more visible cell than
+every body row, and every label after that point sits over the wrong column.
 
 Rows are **view-only on `/work`** — this surface is for seeing, and every action
 lives on the surface that owns it. The rule is this screen's, not the row
@@ -56,9 +60,11 @@ Columns: `KEY-N` · title · project · stage (with the progress spine) · readi
 waiting-on (with age) · blockers (`KEY-N` chips) · tokens · last activity ·
 next action.
 
-The **project** column is hidden when and only when grouping is `project` — the
-group header already names it — at both surfaces, because the rule is
-grouping-derived rather than surface-derived (`REQ-D7`, Implemented).
+The **project** column leaves the DOM when and only when grouping is `project` —
+the group header already names it — at both surfaces, because the rule is
+grouping-derived rather than surface-derived (`REQ-D7`, Implemented). That is
+distinct from the responsive rule above, which only *hides* it below `md` with
+the cell still in the DOM; the two conditions are independent and compose.
 
 **The run-status column is removed** (`REQ-D8`, Implemented), and its distinction moves
 into the stage chip. This also closes a pre-existing drift: this document specified a

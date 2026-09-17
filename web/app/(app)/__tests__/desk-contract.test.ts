@@ -85,6 +85,24 @@ describe("UT-NAV-01 the Desk composes rather than re-implements", () => {
     expect(readModel).not.toContain("decision");
   });
 
+  it("NAV-08 feeds the decision region ONLY the kind no work row carries", () => {
+    // ADR-174 D2, and the only guard for it in a lane CI runs — `E2E-NAV-08`
+    // proves the rendered consequence, but Playwright is not in CI.
+    //
+    // `STAGE_BY_KIND` maps `hitl`, `crashed` and `promotable` onto
+    // `WORK_IN_FLIGHT_STAGES` members, so each of those already IS a work row.
+    // `flagged` maps to `Held`, which is `WORK_BACKLOG_STAGES` and therefore
+    // appears in no row. Widen this filter to `queue.items` and
+    // `DecisionSections` — which buckets by kind internally and renders a
+    // section per populated bucket — silently restores the duplication the ADR
+    // exists to delete, with every other assertion here still green.
+    expect(DESK).toMatch(/kind === "flagged"/u);
+    expect(
+      DESK,
+      "the Held region renders the filtered list, never the whole queue",
+    ).toMatch(/<DecisionSections[\s\S]{0,400}?items=\{heldItems\}/u);
+  });
+
   it("T-D18 adds no mutation path of its own", () => {
     // The Desk is a read surface. A `fetch`/server action here would be a
     // second way to promote, recover or answer — the thing D1 forbids.

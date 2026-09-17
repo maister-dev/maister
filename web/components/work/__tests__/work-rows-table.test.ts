@@ -177,6 +177,77 @@ describe("T-D10 the next action is an affordance, and `none` is an em dash", () 
   });
 });
 
+describe("T-D11 a header drops exactly when its cells do", () => {
+  // The responsive columns are hidden by CSS, and a `<th>` sits ~170 lines from
+  // its `<td>`. When the two disagree the header row renders MORE visible cells
+  // than every body row, so every header from that point rightward labels the
+  // wrong column — and it happens only below a breakpoint, which is why neither
+  // the markup tests (no stylesheet) nor the jsdom `colSpan` test above can see
+  // it. `waitingOn` shipped that way: `DROP_SM` on the cell, nothing on the head.
+  //
+  // Asserted as the PAIRING rather than as a column count, so the failure names
+  // the column instead of a number, and so adding an eleventh column cannot
+  // satisfy it by accident.
+  const BREAKPOINT = { md: 768, lg: 1024, xl: 1280 } as const;
+
+  /** The `hidden <bp>:table-cell` pair reduced to its breakpoint, or null. */
+  function dropToken(className: string): keyof typeof BREAKPOINT | null {
+    if (!className.includes("hidden")) return null;
+    for (const bp of Object.keys(BREAKPOINT) as Array<
+      keyof typeof BREAKPOINT
+    >) {
+      if (className.includes(`${bp}:table-cell`)) return bp;
+    }
+
+    return null;
+  }
+
+  function columns(html: string): {
+    head: Array<keyof typeof BREAKPOINT | null>;
+    body: Array<keyof typeof BREAKPOINT | null>;
+  } {
+    const thead = html.slice(html.indexOf("<thead"), html.indexOf("</thead>"));
+    const rowAt = html.indexOf('data-testid="work-row"');
+    const tbody = html.slice(rowAt, html.indexOf("</tr>", rowAt));
+
+    return {
+      head: [...thead.matchAll(/<th class="([^"]*)"/gu)].map((m) =>
+        dropToken(m[1]),
+      ),
+      body: [...tbody.matchAll(/<td class="([^"]*)"/gu)].map((m) =>
+        dropToken(m[1]),
+      ),
+    };
+  }
+
+  for (const groupBy of ["none", "project"] as const) {
+    it(`pairs every header with its cell under ${groupBy} grouping`, () => {
+      const { head, body } = columns(render([row()], groupBy));
+
+      // Guards the guard: a selector that matched nothing would make the
+      // equality below vacuously true.
+      expect(head.length, "headers found").toBeGreaterThan(0);
+      expect(head.length, "one header per cell").toBe(body.length);
+      expect(head).toEqual(body);
+    });
+  }
+
+  it("keeps the header and the body the same width at every breakpoint", () => {
+    // The consequence, stated the way a reader would see it. 390px and 800px
+    // are the two widths that were broken.
+    const { head, body } = columns(render([row()], "none"));
+    const visible = (
+      cols: Array<keyof typeof BREAKPOINT | null>,
+      width: number,
+    ): number =>
+      cols.filter((bp) => bp === null || width >= BREAKPOINT[bp]).length;
+
+    for (const width of [390, 800, 1100, 1300]) {
+      expect(visible(head, width), `${width}px`).toBe(visible(body, width));
+    }
+  });
+});
+
 describe("T-D12 `/work` keeps the row it always had", () => {
   // The expansion is the Desk's, behind a prop defaulting to OFF (ADR-174 D5).
   // This is the guard that keeps it off here: `/work` and the Desk share one

@@ -36,6 +36,7 @@ import clsx from "clsx";
 
 import { AssignmentActions } from "@/components/board/assignment-actions";
 import { RunHitlResponse } from "@/components/board/run-hitl-response";
+import { runReviewHref } from "@/lib/runs/run-query-state";
 
 type GateTone = "ok" | "warn" | "bad" | "muted";
 
@@ -164,7 +165,7 @@ export function HitlPanel({
   const isPermission = item.kind === "permission";
   const isAgentQuestion = item.kind === "agent_question";
   const isReview = isReviewGate(item);
-  const reviewHref = `/runs/${item.runId}?wb=review&scope=review`;
+  const reviewHref = runReviewHref(item.runId);
 
   return (
     <>
@@ -189,7 +190,12 @@ export function HitlPanel({
             options={item.options}
             runId={item.runId}
             schema={item.schema}
-            onRespond={() => window.location.reload()}
+            // `router.refresh()`, not `window.location.reload()`: this panel now
+            // renders inside a Desk row whose expansion is client state, and a
+            // full reload would collapse every open row on the page. The RSC
+            // refetch shows the same answered state — it is what the non-
+            // permission arm below has always used.
+            onRespond={() => router.refresh()}
           />
         ) : canAct ? (
           <button

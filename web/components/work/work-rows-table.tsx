@@ -99,8 +99,23 @@ const HEAD =
 
 /**
  * `REQ-D11` — narrow viewports DROP columns by priority rather than scrolling
- * the table sideways. Lowest value first: `tokens` and `readiness` go at the
- * smallest widths, `blockers` and `lastActivity` next.
+ * the table sideways. Each constant is named for the widths at which its
+ * columns are GONE, so they drop in the order `MD` -> `SM` -> `XS` as the
+ * viewport narrows:
+ *
+ * 1. `blockers`, `lastActivity` — below `xl`.
+ * 2. `readiness`, `waitingOn`, `tokens` — below `lg`. `waitingOn` is an em dash
+ *    on every row without a pending request, and the widest text column when it
+ *    is not; the Desk's expanded panel and the run surface both still name the
+ *    person.
+ * 3. `project` — below `md`, last because it is the highest-value of the three
+ *    groups but also the widest cheap win on a phone, and `/work` — which does
+ *    NOT group by project and so always renders it — was the surface still
+ *    pushing the page sideways at 390px.
+ *
+ * A `<th>` and its `<td>` MUST carry the SAME constant. They are ~170 lines
+ * apart, and a header that outlives its cells leaves every row one column short
+ * of its own header from that point rightward — `T-D11` pins the pairing.
  *
  * Hiding is CSS-driven, so the `<td>` stays in the DOM. Every `colSpan` below
  * must therefore be the FULL column count, never the visible one — a span
@@ -108,10 +123,6 @@ const HEAD =
  */
 const DROP_SM = "hidden lg:table-cell";
 const DROP_MD = "hidden xl:table-cell";
-// `project` is the exception to the priority order: it is high-value, but it is
-// also the widest cheap win on a phone, and `/work` — which does NOT group by
-// project and so always renders it — was the surface still pushing the page
-// sideways at 390px.
 const DROP_XS = "hidden md:table-cell";
 
 /** Every column the table can render, hidden or not — the `colSpan` basis. */
@@ -149,7 +160,7 @@ export function WorkRowsTable({
             ) : null}
             <th className={HEAD}>{labels.columns.stage}</th>
             <th className={clsx(HEAD, DROP_SM)}>{labels.columns.readiness}</th>
-            <th className={HEAD}>{labels.columns.waitingOn}</th>
+            <th className={clsx(HEAD, DROP_SM)}>{labels.columns.waitingOn}</th>
             <th className={clsx(HEAD, DROP_MD)}>{labels.columns.blockers}</th>
             <th className={clsx(HEAD, DROP_SM, "text-right")}>
               {labels.columns.tokens}

@@ -776,9 +776,12 @@
   cross-project feed carrying no worktree path, diff body or raw ACP frame; a
   monotonic `GREATEST` cursor upsert; a deterministic digest; and ONE
   user-scoped attention SSE stream — a server-side poll of durable read models,
-  never a state-transition trigger. **(D) The Desk** (ADR-172): `/` renders the
-  Desk, the portfolio moves to `/projects`, the rail is re-cut, and a non-admin
-  lands on `/work`. **(E) Notifications** (ADR-173): per-user subscriptions and
+  never a state-transition trigger. **(D) The Desk** (ADR-172, ADR-174): `/`
+  renders the Desk, the portfolio moves to `/projects`, the rail is re-cut, and
+  a non-admin lands on `/work`. ADR-174 then supersedes ADR-172 D1 in part —
+  the Desk renders ONE object per work item, so the decision queue and the
+  digest sentence stop being regions of their own and a decision rides on its
+  work row (`NAV-08`). **(E) Notifications** (ADR-173): per-user subscriptions and
   web push over the **widened** ADR-077 engine — no second outbox, paid for by
   enumerating every reader of the newly nullable `webhook_events` columns and by
   making subscription scope two independent axes. Migrations `01640`–`01660`.
