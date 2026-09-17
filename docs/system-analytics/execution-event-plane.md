@@ -24,7 +24,8 @@ files.
 - `execution_event_skips` records a sequence this manager deliberately dropped:
   stream, host sequence, event id, run id, event type, reason, occurred-at. Its
   `run_id` is plain text, not a foreign key — the run it names does not exist
-  here, which is the whole reason the row exists.
+  here, which is the whole reason the row exists. Its `reason` is
+  `unknown_run` or `payload_unstorable`.
 
 ## State machine
 
@@ -40,6 +41,8 @@ stateDiagram-v2
   quarantined --> [*]
   emitted --> skipped_unknown_run: run unknown to this manager
   skipped_unknown_run --> [*]
+  emitted --> skipped_payload_unstorable: PostgreSQL cannot represent the payload
+  skipped_payload_unstorable --> [*]
   acknowledged --> pruned: ACK plus replay grace
 ```
 
@@ -66,6 +69,61 @@ and the ledger is what makes it answerable later.
 
 Reachable without any misconfiguration: `execution_events.run_id` cascades on
 delete, so deleting a run with events in flight lands in the same place.
+
+## An event PostgreSQL cannot store
+
+`execution_events.payload` is `jsonb`, and `jsonb` cannot represent `U+0000` or
+an unpaired surrogate: the insert raises `22P05`. Agent output contains both —
+a coding agent editing a string literal that spells a NUL escape is the case
+that stopped ingest host-wide for 15 h on 2026-09-16. The failing insert was
+retried forever, so the contiguity walk never passed that sequence and every
+later event of every run stayed behind it, while the stream still reported
+`state=active` and the host `readiness=ready`.
+
+Two independent guarantees now apply, in this order.
+
+**The payload is made storable.** Ingest escapes those characters reversibly
+into the Private Use Area before the payload, its digest and its byte count are
+computed, so all three describe the same stored value. The escape is a storage
+representation only: the transcript reader decodes it, so what the agent wrote
+is what a person reads. Escaping the *stringified* form would be a no-op —
+`JSON.stringify` has already turned a NUL into a six-character escape, and that
+escape is what later breaks a `::jsonb` cast.
+
+**An event PostgreSQL still refuses never holds the stream.** A deterministic
+write failure (`22P05`, `22P02`, `22021`) is recorded in
+`execution_event_skips` as `payload_unstorable`, the watermark advances past
+that sequence and the walk continues — the same terms an event for an unknown
+run already gets, and for the same reason: no retry could ever succeed. It is
+logged at warn; it is never routine.
+
+## Stream liveness
+
+Nothing read `execution_event_streams.last_seen_at` before this: it, the gap
+columns, `last_error` and `next_retry_at` were all write-only, and the `lost`
+and `closed` states were unreachable. That is why a dead stream reported
+healthy for 15 hours.
+
+A stall CANNOT be defined as elapsed silence. There is no heartbeat event type
+— every runtime event is session- or runtime-object-scoped — and one stream row
+serves a whole host, so a quiet stand legitimately emits nothing. The stall is
+the conjunction: `last_seen_at` older than `MAISTER_EVENT_STREAM_STALL_SECONDS`
+(default 300) **and** the host `ready` **and** at least one `delivering` or
+`accepted` command that ought to be producing events.
+
+The response is repair first. The `system_sweep` pass restarts the stream's
+consumer loop and records that it tried; if the restarted loop makes progress
+`last_seen_at` moves and nothing is marked. Only a stream a restarted consumer
+still cannot advance is degraded to `state='lost'`. Degrading is the admission
+that automatic repair failed, never the first move. A `lost` stream is what the
+command-impasse signal reads.
+
+Two supporting corrections make that predicate honest: a `duplicate` ingest now
+advances `last_seen_at` (it proves the stream is alive even though no watermark
+moves, so a replay loop is no longer indistinguishable from an idle host), and
+the consumer's two silent reconnect paths — a failed post-ACK watermark record,
+and a lost or changed claim — now log and record instead of retrying every 2 s
+in complete silence.
 
 ## Process flows
 
@@ -266,7 +324,8 @@ Use the same scheduling primitives for command evidence reconciliation and owner
 
 - **EDGE-EVT-01:** An identical duplicate is a no-op insert and repeats the current contiguous ACK (`IT-EVT-03`).
 - **EDGE-EVT-02:** A conflicting event ID or stream position degrades the stream without ACKing past it (`IT-EVT-03-CONFLICT`).
-- **EDGE-EVT-03:** A missing sequence below replay floor produces `event_gap_unrecoverable` and explicit recovery work (`IT-EVT-06-FLOOR`).
+- **EDGE-EVT-03:** A missing sequence below replay floor produces `event_gap_unrecoverable` and explicit recovery work (`IT-EVT-06-FLOOR`). An ABSENT cursor is not a lost cursor: omission starts at the retained floor, as the route contract states. Conflating the two refused every cursor-less consumer against any host that had ever pruned.
+- **EDGE-EVT-08:** A payload PostgreSQL cannot represent is escaped losslessly at ingest; one it still refuses is skipped as `payload_unstorable` and the walk advances.
 - **EDGE-EVT-04:** An ACK for a replaced stream fails with `event_stream_mismatch` (`IT-EVT-07-ACK-RACE`).
 - **EDGE-EVT-05:** Invalid decimal sequences fail with `invalid_event_sequence`; valid skew is metadata and increments a metric (`CT-EVT-05`).
 - **EDGE-EVT-06:** Unknown schema or redaction failure retains only bounded spine/error metadata (`CT-EVT-08`, `IT-EVT-08-QUARANTINE`).

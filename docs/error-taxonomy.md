@@ -584,7 +584,7 @@ or epoch), `ACP_PROTOCOL` (integrity disagreement), or
 `stream_identity_conflict`, `ack_not_contiguous`, `ack_beyond_emitted`,
 `event_sequence_invalid`, `event_identity_conflict`, `event_stream_mismatch`,
 `event_schema_invalid`, `stale_assignment_epoch`, `event_redaction_failed`,
-`event_payload_oversize`, `event_outbox_backpressure`,
+`event_payload_oversize`, `event_payload_unstorable`, `event_outbox_backpressure`,
 `data_plane_unsupported`, `command_invariant_conflict`,
 `runtime_object_not_found`, `runtime_object_missing`,
 `runtime_object_range_invalid`, `runtime_object_integrity_mismatch`, `runtime_object_retained` (manager-internal),

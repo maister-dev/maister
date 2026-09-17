@@ -150,6 +150,38 @@ export async function issueCommand<TPayload>(
     "command-queued",
   );
 
+  // `input.assignment` is a SNAPSHOT captured when the client was bound, and a
+  // detached `runFlow` traversal holds that closure for its whole lifetime — so
+  // this decision can be made from a state that is hours old, and only a process
+  // restart clears it. It is still the snapshot that DECIDES: an assignment goes
+  // `superseded` the moment a successor is minted, yet its original owner may
+  // legitimately still delete its own immutable runtime objects (test D3), so
+  // deciding on live state would break object-scoped cleanup. The host remains
+  // the authority — it rejects a stale epoch on the wire.
+  //
+  // What was missing is that the divergence was invisible: a driver issuing
+  // against a long-released assignment looked identical to a healthy one, and
+  // the stale id in `command-fenced-locally` read as a database inconsistency.
+  const [live] = await db
+    .select({ state: executionAssignments.state })
+    .from(executionAssignments)
+    .where(eq(executionAssignments.id, input.assignment.id))
+    .limit(1);
+
+  if (live && live.state !== input.assignment.state)
+    logger.warn(
+      {
+        commandId,
+        commandKind: input.kind,
+        runId: input.assignment.runId,
+        assignmentId: input.assignment.id,
+        assignmentEpoch: input.assignment.epoch,
+        snapshotState: input.assignment.state,
+        liveState: live.state,
+      },
+      "command-issued-on-stale-assignment-snapshot",
+    );
+
   if (
     !isAdmissible(input.kind, input.assignment.state, {
       inputAction: inputAction(input.payload),
@@ -177,6 +209,7 @@ export async function issueCommand<TPayload>(
         assignmentId: input.assignment.id,
         assignmentEpoch: input.assignment.epoch,
         state: input.assignment.state,
+        liveState: live?.state ?? null,
       },
       "command-fenced-locally",
     );

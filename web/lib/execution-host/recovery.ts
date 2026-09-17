@@ -27,6 +27,7 @@ import {
   promptEnvelopeFromCommand,
 } from "./command-request";
 import { classifyPromptTransportFailure } from "./prompt-transport";
+import { lostStreamHostIds } from "./events/stream-health";
 import { reconcilePromptCommand } from "./prompt-reconciliation";
 import { getHostById, STALE_ASSIGNMENT_RUN_STATUSES } from "./hosts";
 import { buildEnvelope } from "./ledger";
@@ -60,6 +61,12 @@ export type ExecutionCommandRecoverySummary = {
   folded: number;
   turnLost: number;
   skippedInFlight: number;
+  /** Open commands on a host whose event stream this manager has given up on.
+   * A prompt can only terminalize from an INGESTED terminal event, so while the
+   * stream is `lost` these are waiting for evidence that cannot arrive. Nothing
+   * here writes state — the driver does not own the outcome — but an operator
+   * can finally see the impasse instead of a silent `skippedInFlight`. */
+  impasse: number;
   errors: string[];
 };
 
@@ -370,6 +377,7 @@ export async function recoverExecutionCommands(
     folded: 0,
     turnLost: 0,
     skippedInFlight: 0,
+    impasse: 0,
     errors: [],
   };
   const hosts = new Map<string, ExecutionHost | null>();
@@ -379,6 +387,9 @@ export async function recoverExecutionCommands(
     return hosts.get(id) ?? null;
   };
 
+  // Read once per pass: the stall detector runs earlier in the same sweep, so
+  // this is the state it just wrote.
+  const lostStreamHosts = await lostStreamHostIds({ db });
   const recoverRow = async (row: ExecutionCommand): Promise<void> => {
     const at = now();
 
@@ -546,7 +557,22 @@ export async function recoverExecutionCommands(
         )
           summary.turnLost += 1;
         else summary.folded += 1;
-      } else summary.skippedInFlight += 1;
+      } else {
+        summary.skippedInFlight += 1;
+        if (lostStreamHosts.has(row.executionHostId)) {
+          summary.impasse += 1;
+          logger.warn(
+            {
+              commandId: row.id,
+              runId: row.runId,
+              hostId: row.executionHostId,
+              acceptedAt: row.acceptedAt,
+              state: row.state,
+            },
+            "command-impasse-stream-lost",
+          );
+        }
+      }
 
       return;
     }

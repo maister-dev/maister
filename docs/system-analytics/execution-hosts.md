@@ -361,6 +361,26 @@ sequenceDiagram
 `recoverExecutionCommands()` runs at startup and on every `system_sweep`
 pass.
 
+A `session.prompt` only terminalizes from an INGESTED terminal event, so when
+the event plane stops, an `accepted` prompt cannot be settled by anyone and the
+flow driver re-acquires and yields on every sweep. That is not a reason to
+terminalize it on age — the two-sided retirement handshake forbids exactly that,
+and a timeout firing while the turn is alive turns a duplicate request into a
+second execution. The pass therefore counts and warns (`impasse`) when an open
+command sits on a host whose stream is `lost`, and writes no state: the impasse
+becomes answerable while the decision stays with the owner. `waitForPromptCompletion`
+reads the same signal and yields typed rather than spinning forever on evidence
+that cannot arrive.
+
+`BoundClient` captures its assignment once and a detached traversal holds that
+closure for its lifetime, so a command can be issued against an assignment the
+database released long before. Admission still decides from that SNAPSHOT
+deliberately: minting a successor marks the previous assignment `superseded`,
+and `isAdmissible` refuses every kind in that state, yet its original owner may
+still delete its own immutable runtime objects. The host stays the authority —
+it rejects a stale epoch on the wire — and the divergence is now logged instead
+of surfacing only as a stale id in `command-fenced-locally`.
+
 ```mermaid
 sequenceDiagram
     autonumber

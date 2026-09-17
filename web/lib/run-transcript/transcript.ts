@@ -1,5 +1,6 @@
 import type { ScratchMessageRole } from "@/lib/db/schema";
 
+import { decodeJsonbSafe } from "@/lib/execution-host/events/jsonb-safe";
 import {
   FLOW_ASSISTANT_ACTION_FENCE,
   parseFlowActionResultPayload,
@@ -399,16 +400,19 @@ export function parseScratchMessageContent(
     return {
       kind: "text",
       markdown: true,
-      text: stripFlowAssistantActionFencesForDisplay(content),
+      text: decodeJsonbSafe(stripFlowAssistantActionFencesForDisplay(content)),
     };
-  if (role === "user") return { kind: "text", markdown: false, text: content };
+  if (role === "user")
+    return { kind: "text", markdown: false, text: decodeJsonbSafe(content) };
 
   let parsed: unknown = null;
 
   try {
-    parsed = JSON.parse(content);
+    // Decode AFTER parsing: the escape lives inside JSON string values, and a
+    // raw NUL put back before the parse would be invalid JSON.
+    parsed = decodeJsonbSafe(JSON.parse(content));
   } catch {
-    return { kind: "legacy", role, text: content };
+    return { kind: "legacy", role, text: decodeJsonbSafe(content) };
   }
 
   const obj = asObject(parsed);

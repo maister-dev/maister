@@ -65,6 +65,8 @@ export type RuntimeEventConsumerSummary = {
   duplicates: number;
   staleEpochs: number;
   reconnectRequired: boolean;
+  /** Why the pass asked for a reconnect. Null when it ended on progress. */
+  reconnectReason: "ack_record_failed" | "claim_lost" | null;
 };
 
 function activeClaimPredicate(now: Date, owner: string) {
@@ -209,6 +211,7 @@ async function recordConsumerFailure(input: {
   error: unknown;
   now: Date;
   retryAt: Date;
+  logger?: Logger;
 }): Promise<void> {
   const reason =
     input.error instanceof MaisterError
@@ -223,21 +226,31 @@ async function recordConsumerFailure(input: {
         ? input.error.message.slice(0, 512)
         : "unknown event consumer failure",
   };
+  // Without a claim there is no owner to match, and keying on claim_owner
+  // matched NO rows exactly when the claim was held by someone else — the case
+  // that most needs a recorded failure. Fall back to this host's active stream.
   const where = input.streamRowId
     ? eq(executionEventStreams.id, input.streamRowId)
     : and(
         eq(executionEventStreams.executionHostId, input.executionHostId),
-        eq(executionEventStreams.claimOwner, input.owner),
+        eq(executionEventStreams.state, "active"),
       );
 
-  await input.db
+  const updated = await input.db
     .update(executionEventStreams)
     .set({
       nextRetryAt: input.retryAt,
       lastError: details,
       claimExpiresAt: input.now,
     })
-    .where(where);
+    .where(where)
+    .returning({ id: executionEventStreams.id });
+
+  if (!updated[0])
+    input.logger?.warn(
+      { hostId: input.executionHostId, reason: details.reason },
+      "runtime-event-consumer-failure-unrecorded",
+    );
 }
 
 export async function consumeRuntimeEventStreamOnce(input: {
@@ -258,6 +271,7 @@ export async function consumeRuntimeEventStreamOnce(input: {
     duplicates: 0,
     staleEpochs: 0,
     reconnectRequired: false,
+    reconnectReason: null,
   };
   let claim = await claimRuntimeEventStream({
     db: input.db,
@@ -309,6 +323,7 @@ export async function consumeRuntimeEventStreamOnce(input: {
 
       if (!recorded) {
         summary.reconnectRequired = true;
+        summary.reconnectReason = "ack_record_failed";
 
         return summary;
       }
@@ -342,6 +357,7 @@ export async function consumeRuntimeEventStreamOnce(input: {
       });
       if (!claim || claim.streamId !== result.streamId) {
         summary.reconnectRequired = true;
+        summary.reconnectReason = "claim_lost";
         break;
       }
       if (result.contiguousThrough !== null) {
@@ -390,6 +406,7 @@ export async function consumeRuntimeEventStreamOnce(input: {
       error,
       now: now(),
       retryAt,
+      logger,
     });
     throw error;
   } finally {
@@ -400,7 +417,26 @@ export async function consumeRuntimeEventStreamOnce(input: {
   return summary;
 }
 
-type ConsumerLoop = { controller: AbortController; promise: Promise<void> };
+type ConsumerLoop = {
+  controller: AbortController;
+  promise: Promise<void>;
+  /** Last time this loop ingested or acknowledged anything. A loop that is
+   * reconnect-spinning never advances it, which is the only way a caller can
+   * tell a wedged consumer from a healthy idle one. */
+  lastProgressAt: number;
+};
+
+/** A consumer that has made no progress for longer than this is replaced on the
+ * next activation rather than left spinning. Matches the stream stall window. */
+const CONSUMER_STALL_MS = 300_000;
+
+export function runtimeEventConsumerStalled(
+  loop: { lastProgressAt: number },
+  now: number,
+  stallMs: number = CONSUMER_STALL_MS,
+): boolean {
+  return now - loop.lastProgressAt > stallMs;
+}
 
 declare global {
   var __maisterRuntimeEventConsumers: Map<string, ConsumerLoop> | undefined;
@@ -424,10 +460,29 @@ export function startRuntimeEventConsumer(input: {
     );
   const existing = consumers.get(input.executionHostId);
 
-  if (existing) return () => existing.controller.abort();
+  if (existing) {
+    // A live entry used to be proof enough, so a loop that could never make
+    // progress again was never replaced and every re-activation was a no-op.
+    if (!runtimeEventConsumerStalled(existing, Date.now()))
+      return () => existing.controller.abort();
+    (input.logger ?? defaultLog).warn(
+      {
+        hostId: input.executionHostId,
+        stalledForMs: Date.now() - existing.lastProgressAt,
+      },
+      "runtime-event-consumer-replaced-stalled",
+    );
+    existing.controller.abort();
+    consumers.delete(input.executionHostId);
+  }
   const controller = new AbortController();
   const owner = `web-event-consumer:${randomUUID()}`;
   const logger = input.logger ?? defaultLog;
+  const loop: ConsumerLoop = {
+    controller,
+    promise: Promise.resolve(),
+    lastProgressAt: Date.now(),
+  };
   const promise = (async (): Promise<void> => {
     let delayMs = RECONNECT_MIN_MS;
 
@@ -440,6 +495,21 @@ export function startRuntimeEventConsumer(input: {
           logger,
         });
 
+        if (summary.received > 0 || summary.acknowledged > 0)
+          loop.lastProgressAt = Date.now();
+        if (summary.reconnectRequired)
+          // This pass made no progress and asked to reconnect. It used to say
+          // nothing at all — no log, no row — so a consumer could spin here
+          // every 2 s indefinitely while every operator surface read healthy.
+          logger.warn(
+            {
+              hostId: input.executionHostId,
+              reason: summary.reconnectReason ?? "unknown",
+              received: summary.received,
+              delayMs,
+            },
+            "runtime-event-consumer-reconnect-required",
+          );
         delayMs = nextReconnectDelayMs(
           delayMs,
           summary.reconnectRequired ? "reconnect" : "progress",
@@ -492,9 +562,23 @@ export function startRuntimeEventConsumer(input: {
     }
   });
 
-  consumers.set(input.executionHostId, { controller, promise });
+  loop.promise = promise;
+  consumers.set(input.executionHostId, loop);
 
   return () => controller.abort();
+}
+
+/** Drop a consumer loop so the next activation starts a fresh one. Used by the
+ * stall repair path, which must be able to replace a loop that can no longer
+ * make progress. */
+export function abortRuntimeEventConsumer(executionHostId: string): boolean {
+  const existing = consumers.get(executionHostId);
+
+  if (!existing) return false;
+  existing.controller.abort();
+  consumers.delete(executionHostId);
+
+  return true;
 }
 
 export function resetRuntimeEventConsumersForTests(): void {

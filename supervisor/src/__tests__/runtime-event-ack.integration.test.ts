@@ -159,12 +159,44 @@ describe("Stage B host runtime-event acknowledgement", () => {
       ),
     ).toBe(1);
 
-    const belowFloor = await fetch(`${host.url}/runtime-events`);
+    // Omission starts AT the retained floor — a manager with no durable
+    // watermark must be able to bootstrap. This used to answer 409, which wedged
+    // it against any host that had ever pruned.
+    const fromFloor = await collectRuntimeSse(`${host.url}/runtime-events`, 1);
+
+    expect(fromFloor).toEqual([
+      expect.objectContaining({
+        id: "1",
+        data: expect.objectContaining({ sequence: "1" }),
+      }),
+    ]);
+
+    host.hostState.ackRuntimeEvents(streamId, "1");
+    clock += host.hostState.limits.eventAckGraceMs + 1;
+    expect(
+      host.hostState.pruneAcknowledgedRuntimeEvents(
+        new Date(clock - host.hostState.limits.eventAckGraceMs),
+      ),
+    ).toBe(1);
+
+    const belowFloor = await fetch(`${host.url}/runtime-events`, {
+      headers: { "Last-Event-ID": "0" },
+    });
 
     expect(belowFloor.status).toBe(409);
-    expect(await belowFloor.json()).toMatchObject({
+
+    const belowFloorBody = (await belowFloor.json()) as {
+      message: string;
+      details: { reason: string };
+    };
+
+    expect(belowFloorBody).toMatchObject({
       details: { reason: "replay_floor_lost" },
     });
+    // The refusal must name the cursor it rejected, not only the floor —
+    // without it the message reads as an inverted comparison.
+    expect(belowFloorBody.message).toContain("0");
+    expect(belowFloorBody.message).toContain("1");
 
     const malformed = await fetch(`${host.url}/runtime-events`, {
       headers: { "Last-Event-ID": "1.5" },

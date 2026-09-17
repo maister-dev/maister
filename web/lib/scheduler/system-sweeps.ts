@@ -11,6 +11,7 @@ import type { WorkspaceReconciliationSummary } from "@/lib/gc/workspace-reconcil
 
 import pino from "pino";
 
+import { runEventStreamHealthSweep } from "@/lib/execution-host/events/stream-health";
 import { runBrainDecaySweep } from "@/lib/brain/decay";
 import { runBrainReindexSweep } from "@/lib/brain/reindex";
 import { runCapabilitiesCleanupSweep } from "@/lib/capabilities/cleanup";
@@ -44,6 +45,7 @@ export type GcCompatibilitySummary = {
 };
 
 export type SystemSweepSummary = GcCompatibilitySummary & {
+  streamHealth: Awaited<ReturnType<typeof runEventStreamHealthSweep>> | null;
   // Service-level failures mean the scheduler bundle did not complete and must
   // consume the scheduler attempt's retry budget. Candidate failures remain in
   // `errors` only because their own durable rows carry retry/quarantine state.
@@ -280,6 +282,7 @@ export async function runSystemSweep(): Promise<SystemSweepSummary> {
   let syncRecovery: SystemSweepSummary["syncRecovery"] = null;
   let cost: SystemSweepSummary["cost"] = null;
   let executionEventPlane: SystemSweepSummary["executionEventPlane"] = null;
+  let streamHealth: SystemSweepSummary["streamHealth"] = null;
   let digest: SystemSweepSummary["digest"] = null;
 
   try {
@@ -347,6 +350,17 @@ export async function runSystemSweep(): Promise<SystemSweepSummary> {
     errors.push(`execution event-plane activation failed: ${message}`);
     bundleErrors.push(`execution event-plane activation failed: ${message}`);
     log.error({ err: message }, "system_sweep event-plane activation threw");
+  }
+
+  try {
+    streamHealth = await runEventStreamHealthSweep({ logger: log });
+    errors.push(...streamHealth.errors);
+  } catch (err) {
+    const message = errorMessage(err);
+
+    errors.push(`event stream health pass failed: ${message}`);
+    bundleErrors.push(`event stream health pass failed: ${message}`);
+    log.error({ err: message }, "system_sweep event stream health threw");
   }
 
   try {
@@ -428,6 +442,7 @@ export async function runSystemSweep(): Promise<SystemSweepSummary> {
     syncRecovery,
     cost,
     executionEventPlane,
+    streamHealth,
     executionHost,
     brain,
     brainReindex,

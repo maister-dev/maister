@@ -4,7 +4,7 @@ import type { CommandId, CommandKind, CommandState } from "./types";
 
 import { randomUUID } from "node:crypto";
 
-import { and, asc, eq, gt, inArray, lt, or, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, or, sql } from "drizzle-orm";
 import pino, { type Logger } from "pino";
 
 import { redactPayload } from "./redact";
@@ -448,21 +448,4 @@ export async function listCommandsForRun(
     .from(executionCommands)
     .where(eq(executionCommands.runId, runId))
     .orderBy(asc(executionCommands.createdAt));
-}
-
-export async function pruneTerminalCommands(
-  db: Db,
-  olderThan: Date,
-): Promise<number> {
-  const rows = await db
-    .delete(executionCommands)
-    .where(
-      and(
-        inArray(executionCommands.state, [...TERMINAL_COMMAND_STATES]),
-        lt(executionCommands.completedAt, olderThan),
-      ),
-    )
-    .returning({ id: executionCommands.id });
-
-  return rows.length;
 }

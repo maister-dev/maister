@@ -227,6 +227,13 @@ export function gcAgeDays(): number {
 // ADR-117: lookback window (hours) for the system_sweep cost-rollup backstop
 // reconcile — only runs whose ended_at is within this window are candidates.
 // Default 168h = 7d, matching the GC horizon (DEFAULT_GC_AGE_DAYS).
+// The event stream carries no heartbeat and one row serves a whole host, so a
+// quiet stand is normal: this bounds how long OPEN WORK may produce no events
+// before the stream is treated as stalled. See events/stream-health.ts.
+export function eventStreamStallSeconds(): number {
+  return positiveIntFromEnv("MAISTER_EVENT_STREAM_STALL_SECONDS", 300);
+}
+
 export function costReconcileLookbackHours(): number {
   return positiveIntFromEnv("MAISTER_COST_RECONCILE_LOOKBACK_HOURS", 168);
 }
