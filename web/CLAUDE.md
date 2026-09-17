@@ -263,38 +263,57 @@ places with another. As of 2026-09-03 on `main` + ADR-165:
 - **integration** — 0 failures, except the two-case
   `lib/runs/__tests__/dirty-resolution-race.integration.test.ts` pair, which
   flakes under parallel load and passes 4/4 in isolation.
-- **e2e** — **35 pre-existing failures across 30 spec files**, enumerated below,
+- **e2e** — **20 pre-existing failures across 17 spec files**, enumerated below,
   plus one known-flaky spec. Ports 3100/7788 and the `maister_e2e` database are
   shared across worktrees; kill both ports before a run. Before filing an e2e
   failure as environmental, read the `[WebServer]` lines in the run log: a React
-  server-component stack there is a product bug, not a test one.
+  server-component stack there is a product bug, not a test one. That is not
+  hypothetical — it is how the ADR-168 Integrations crash below was found.
 
-  **The set, not the count** (measured 2026-09-17, one failing case per spec
-  unless noted). The previous entry said "34" with no list, which is unusable:
+  **The set, not the count** (re-measured 2026-09-17, one failing case per spec
+  unless noted). An earlier entry said "34" with no list, which is unusable:
   this section's own first line says to compare SETS, and a bare number cannot
-  be diffed. It had also decayed — two `studio` entries it still counted were
-  closed on 2026-09-11 by the `assessPackageCompatibility` null-safety fix, and
-  `active-workspaces.spec.ts`'s stale `rail-stop` assertion was since inverted
-  to `toHaveCount(0)`.
+  be diffed.
 
-  `studio-local-edit` (3) · `flows-authoring` (3) · `multi-run-cost-policy` (2) ·
-  `adr160-rework-claim` · `adr161-node-interrupt` · `evaluation-lab` ·
+  `studio-local-edit` (3) · `multi-run-cost-policy` (2) · `evaluation-lab` ·
   `execution-host-contract` · `flow-package-viewer` · `flow-studio-artifacts` ·
-  `forked-package-loop` · `m11b-takeover` · `m11c-settings-enforcement` ·
-  `m13-assignments` · `m16-external-operations` · `m22-workbench` ·
-  `m27-flow-editor` · `m27-platform-mcp` · `package-management` ·
-  `platform-acp-runners` · `platform-agents-page` · `project-automations` ·
-  `project-onboarding` · `project-registration` · `review-comments` ·
-  `run-schedules` · `run-sync` · `studio-ai-assistant` · `studio-diff` ·
-  `studio-import` · `studio-package-viewer`.
+  `forked-package-loop` · `platform-acp-runners` · `platform-agents-page` ·
+  `project-automations` · `project-onboarding` · `project-registration` ·
+  `review-comments` · `run-schedules` · `run-sync` · `studio-ai-assistant` ·
+  `studio-package-viewer`.
 
-  **They are deterministic, not interference.** Sampled `studio-diff`,
+  **Closed on 2026-09-17** (13 spec files, 15 cases), all stale expectations
+  except one product bug: `studio-diff` · `studio-import` · `package-management`
+  (stale `flow.yaml` fixtures missing `compat.engine_min`, and a digest-labelled
+  install button) · `flows-authoring` (3) · `m11b-takeover` ·
+  `m11c-settings-enforcement` · `m13-assignments` · `m16-external-operations` ·
+  `m22-workbench` · `m27-flow-editor` · `m27-platform-mcp` ·
+  `adr160-rework-claim` · `adr161-node-interrupt` (the last two needed no
+  change). The product bug: `IntegrationsPanel`, a server component, called
+  `isManagedTokenRow` from a `"use client"` module, so the project Integrations
+  tab crashed on any project holding at least one API token.
+
+  **Two causes recur — check both before diagnosing anything else.**
+  `waitForLoadState("networkidle")` cannot settle against a Next dev server and
+  will burn the whole test budget; wait for the specific response instead.
+  `flow-package-viewer`, `flow-studio-artifacts` and `studio-local-edit` still
+  carry that call. And a UI that renders the same text twice (a header pill plus
+  an inspector row, a page `<h1>` plus a section `<h3>`) turns a bare
+  `getByText`/`getByRole` into a strict-mode violation, which reads like a
+  missing element but is the opposite.
+
+  **They were deterministic, not interference.** Sampled `studio-diff`,
   `project-registration` and `m13-assignments` — three different areas — and all
-  three fail in isolation (2 workers, no cross-spec load) AND on a detached
+  three failed in isolation (2 workers, no cross-spec load) AND on a detached
   `master` with the identical pass/fail split. So the shared-DB-interference
   explanation this config's `retries: 1` exists to absorb does NOT cover them;
-  every one of the 35 fails both its attempts. `m13-assignments` fails in 9.1 s,
-  which is far too fast to be host saturation.
+  each failed both its attempts. `m13-assignments` failed in 9.1 s, far too fast
+  to be host saturation.
+
+  **A retry can lie.** Several of these specs mutate seeded state one way — a
+  claim, a git commit, a token create. Once the first attempt fails partway, the
+  retry fails somewhere else entirely and its error describes the first
+  attempt's leftovers, not the defect. Diagnose the FIRST attempt.
 
   **Read the host before believing a timeout-class failure.** The 2026-09-17
   measurement ran at load average 55-59 on 16 cores, against a competing
