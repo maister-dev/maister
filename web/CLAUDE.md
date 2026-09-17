@@ -263,7 +263,7 @@ places with another. As of 2026-09-03 on `main` + ADR-165:
 - **integration** — 0 failures, except the two-case
   `lib/runs/__tests__/dirty-resolution-race.integration.test.ts` pair, which
   flakes under parallel load and passes 4/4 in isolation.
-- **e2e** — **3 pre-existing failures across 3 spec files**, enumerated below,
+- **e2e** — **2 pre-existing failures across 2 spec files**, enumerated below,
   plus one known-flaky spec. Ports 3100/7788 and the `maister_e2e` database are
   shared across worktrees; kill both ports before a run. Before filing an e2e
   failure as environmental, read the `[WebServer]` lines in the run log: a React
@@ -275,13 +275,14 @@ places with another. As of 2026-09-03 on `main` + ADR-165:
   this section's own first line says to compare SETS, and a bare number cannot
   be diffed.
 
-  `forked-package-loop` · `review-comments` · `studio-ai-assistant`.
+  `review-comments` · `studio-ai-assistant`.
 
   **A serial file hides tests behind its first failure.** `forked-package-loop`
-  is `mode: "serial"`, so the batch failure had been SKIPPING the two tests
-  after it — the old "(1)" undercounted, and closing that one exposed `:467`
-  (passes) and `:518` (fails at the publish step, `publish-source` with no
-  options). Count the SKIPS, not just the failures, before trusting a serial
+  is `mode: "serial"`, so its batch failure had been SKIPPING the two tests
+  after it — the old "(1)" undercounted by two whole tests, and both carried
+  stale expectations of their own (an unreachable `sync-notice`, and a publish
+  source selected by bare path rather than by the `file://` url it is stored
+  under). Count the SKIPS, not just the failures, before trusting a serial
   file's entry here.
 
   `review-comments` is diagnosed in the spec itself: the hover-revealed
@@ -301,7 +302,8 @@ places with another. As of 2026-09-03 on `main` + ADR-165:
   scaffold and "the client can never fabricate a digest that would pass
   preflight", so the specs have to take the scaffold from the server.
 
-  **Closed on 2026-09-17** (24 spec files, 27 cases), all stale expectations
+  **Closed on 2026-09-17** (25 spec files, 30 cases — 3 of them tests that a
+  serial-mode skip had been hiding), all stale expectations
   except three product bugs. `evaluation-lab` and `forked-package-loop`'s batch
   test needed the launch dialog rather than a hand-written recipe: since
   ADR-150 the route preflights every inline recipe, and `lab-queries.ts` records
