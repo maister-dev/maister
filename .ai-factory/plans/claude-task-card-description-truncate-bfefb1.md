@@ -57,7 +57,16 @@ markdownExcerpt(source: string, maxChars = 120): { text: string; truncated: bool
 1. **Plain-text derivation.** Reduce the markdown source to human-readable text:
    - ATX heading markers, blockquote markers, unordered bullets (`-`, `*`, `+`),
      ordered markers (`1.`), horizontal rules → removed.
-   - Emphasis markers `**`, `__`, `*`, `_`, `~~` → removed, content kept.
+   - Emphasis markers `**`, `*`, `~~` → removed, content kept.
+   - `__`/`_` → removed ONLY where the run could delimit emphasis. CommonMark
+     refuses an underscore run flanked by word characters on both sides, so
+     `snake_case` is literal there and MUST stay literal here — otherwise the
+     collapsed excerpt reads `snakecase` while the expanded Markdown directly
+     below it reads `snake_case`. (`*` is not given the same exemption:
+     CommonMark DOES allow intra-word `*` emphasis. A glob such as
+     `web/**/*.ts` is therefore still stripped — accepted, since its asterisks
+     are flanked by `/`, not word characters, and no flanking rule would save
+     it.)
    - Inline-code backticks and fenced-code delimiters → removed, content kept.
    - HTML tags → removed, text content kept.
    - `[label](url)` → `label`. `![alt](url)` → `alt`.
@@ -100,10 +109,13 @@ code points long. This is deliberate — the budget governs content, not the mar
 | 15  | 200 chars whose only space is at index 40        | exactly 120 code points + `…` | `true`     |
 | 16  | 200 chars whose last space before 120 is at 100  | first 100 chars + `…`        | `true`     |
 | 17  | emoji at code point 119, ASCII either side       | 119 chars + the whole emoji + `…`       | `true` |
+| 18  | `**bold** and snake_case stays`                  | `bold and snake_case stays`  | `false`     |
 
 Rows 14 and 15 are the two sides of the `floor` guard and are both required; row 16
 is the back-off hit. Rows 1-12 are the derivation rules, one per rule — do not add a
-second case per rule, and do not add a "returns an object" test.
+second case per rule, and do not add a "returns an object" test. Row 18 was
+added 2026-09-17 with the intra-word underscore amendment above; it is the only
+row that pins a marker being KEPT.
 
 Row 17 amended 2026-09-17 during T3: it first read "cut before the emoji", which
 S1.1 does not produce. At code point 119 the emoji is the LAST code point inside

@@ -9,7 +9,11 @@ const IMAGE = /!\[([^\]]*)\]\([^)]*\)/g;
 const LINK = /\[([^\]]*)\]\([^)]*\)/g;
 const HTML_TAG = /<[^>]*>/g;
 const BACKTICKS = /`+/g;
-const EMPHASIS_MARKER = /\*\*|__|~~|[*_]/g;
+const EMPHASIS_MARKER = /\*\*|~~|\*/g;
+// CommonMark refuses an underscore run flanked by word characters, so
+// `snake_case` is literal there. Stripping it here would make the excerpt read
+// `snakecase` while the expanded Markdown right below reads `snake_case`.
+const UNDERSCORE_EMPHASIS = /(?<![\p{L}\p{N}])_{1,2}|_{1,2}(?![\p{L}\p{N}])/gu;
 const WHITESPACE_RUN = /\s+/g;
 
 const WORD_BOUNDARY_FLOOR_RATIO = 0.6;
@@ -33,6 +37,7 @@ function toPlainText(source: string): string {
     .replace(HTML_TAG, "")
     .replace(BACKTICKS, "")
     .replace(EMPHASIS_MARKER, "")
+    .replace(UNDERSCORE_EMPHASIS, "")
     .replace(WHITESPACE_RUN, " ")
     .trim();
 }

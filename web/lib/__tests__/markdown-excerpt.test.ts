@@ -112,6 +112,12 @@ const cases: {
     expected: `${"a".repeat(119)}😀…`,
     truncated: true,
   },
+  {
+    name: "18 an underscore between word characters is literal, not emphasis",
+    input: "**bold** and snake_case stays",
+    expected: "bold and snake_case stays",
+    truncated: false,
+  },
 ];
 
 describe("markdownExcerpt", () => {
