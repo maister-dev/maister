@@ -41,7 +41,7 @@ function buildPackageRepo(): string {
   );
   writeFileSync(
     join(pkgDir, "flows/e2e-flow/flow.yaml"),
-    `schemaVersion: 1\nname: ${RUN_TAG}-flow\nnodes:\n  - id: s1\n    type: cli\n    action:\n      command: echo hi\n    transitions:\n      success: done\n`,
+    `schemaVersion: 1\nname: ${RUN_TAG}-flow\ncompat:\n  engine_min: 1.1.0\nnodes:\n  - id: s1\n    type: cli\n    action:\n      command: echo hi\n    transitions:\n      success: done\n`,
   );
   git(repo, "add", "-A");
   git(repo, "commit", "-m", "init");
@@ -111,7 +111,15 @@ test("package source → discovery → install → attach → detach round-trip"
   await expect(page.getByText(`${RUN_TAG}-flow`).first()).toBeVisible();
 
   // 5. Detach → attachment gone (empty state or no link).
-  await page.getByRole("button", { name: "Detach" }).click();
+  // Scoped to THIS package's row. The bare `getByRole("button", …)` assumed
+  // the project had exactly one attachment; the seed since gained another
+  // (`e2e-mentions-pkg`), so the unscoped locator matched two Detach buttons
+  // and died on strict mode. Row-scoping is also what the test means — it
+  // detaches the package it attached, not whichever one renders first.
+  await page
+    .locator("tr", { hasText: RUN_TAG })
+    .getByRole("button", { name: "Detach" })
+    .click();
   await expect(
     page.getByRole("link", { name: RUN_TAG, exact: true }),
   ).toHaveCount(0, { timeout: 30_000 });
