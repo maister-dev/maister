@@ -57,6 +57,29 @@ function loadFixture(): ReviewCommentsFixture {
   return all.byKey.reviewComments;
 }
 
+// The review workspace is a three-column surface — file tree, diff, thread rail
+// — inside a `max-h-[calc(100vh-260px)]` scroller. At the default 1280x720 the
+// per-line gutter targets are unreachable: Playwright reports the cell as
+// "outside of the viewport" however far it scrolls the inner container. Give
+// the spec a desk-sized window, which is what this screen is designed for.
+test.use({ viewport: { width: 1600, height: 1200 } });
+
+// KNOWN FAILING (measured 2026-09-17, not yet fixed). With the viewport above
+// and the centring below, this gets as far as the composer never opening. What
+// the DOM says immediately after the hover, on the widget's own element:
+//
+//   wrapper visibility: visible      (so the group-hover reveal DID fire)
+//   button rect:        [719,187,20,20]
+//   elementFromPoint(729,197) -> the diff-view container DIV, not the button
+//
+// The button is painted but clipped out of the hit-test tree by the scroller,
+// so nothing routes a pointer to it — a real click, a coordinate click and
+// `force` all land on the container. `dispatchEvent("click")` reaches the node
+// and still does not open the composer, so the library wants a real pointer
+// sequence. The row also renders TWO stacked `.diff-add-widget`s at the exact
+// same rect (gutter cell + content cell), which is worth ruling in or out
+// first. This needs the widget's own event contract, not another locator.
+
 // Opens the inline composer on a NEW-side diff line: the gutter cell renders
 // the lib's hover add-widget (`group-hover:visible`), so hover the cell first,
 // then click the revealed "+" button.
@@ -66,6 +89,12 @@ async function openComposerOnNewLine(page: Page, line: number): Promise<void> {
     .filter({ has: page.locator(`span[data-line-num="${line}"]`) })
     .first();
 
+  // Centre the row first: the frame has a sticky top nav (z-40) and a fixed
+  // status footer (z-30), and Playwright scrolls a target only just into view,
+  // which parks it under one of those bands.
+  await gutterCell.evaluate((el) => {
+    el.scrollIntoView({ block: "center", inline: "nearest" });
+  });
   await gutterCell.hover();
   await gutterCell.locator("button.diff-add-widget").click();
 }
