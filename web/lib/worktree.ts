@@ -1301,6 +1301,38 @@ export async function getDefaultBranch(
 
   log.debug({ projectRepoPath: repo }, "getDefaultBranch");
 
+  // Answer about THIS repository or not at all. Every probe below runs `git -C
+  // <dir>`, and git resolves upward from there — so on a directory that is not
+  // itself a repository root, they all silently describe the ENCLOSING
+  // checkout. That is not hypothetical: the new-empty onboarding path writes
+  // the manifest BEFORE `gitInit` runs (the operator's directory is mutated
+  // last on purpose), so a greenfield folder created inside another working
+  // tree reported that tree's `origin/HEAD` and stamped `main_branch: master`
+  // into a manifest for a repo `gitInit` then created on `main`.
+  //
+  // `--show-prefix` is empty exactly at a work-tree root and is the path down
+  // from the root otherwise, so it separates the two cases without any
+  // symlink-sensitive path comparison, and it fails outright outside a repo.
+  try {
+    const { stdout } = await runGit(repo, ["rev-parse", "--show-prefix"]);
+
+    if (stdout.trim() !== "") {
+      log.debug(
+        { branch: "main", tier: "not-a-repo-root" },
+        "getDefaultBranch resolved",
+      );
+
+      return "main";
+    }
+  } catch {
+    log.debug(
+      { branch: "main", tier: "not-a-repo" },
+      "getDefaultBranch resolved",
+    );
+
+    return "main";
+  }
+
   try {
     const { stdout } = await runGit(repo, [
       "symbolic-ref",
