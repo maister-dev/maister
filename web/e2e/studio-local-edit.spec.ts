@@ -213,10 +213,25 @@ async function installPackageFromRepo(
   await expect(page.getByText(tag, { exact: true })).toBeVisible({
     timeout: 30_000,
   });
-  await page.getByRole("button", { name: `${tag}/v1.0.0 · install` }).click();
-  await expect(
-    page.getByRole("button", { name: `${tag}/v1.0.0 · installed` }),
-  ).toBeVisible({ timeout: 30_000 });
+  // ADR-132: a `kind:local` source installs its CURRENT bytes, and the version
+  // label is SERVER-derived from the content digest (`local-<digest12>`) — so
+  // the chip reads `local-… · install`, never the `<tag>/v1.0.0` git form this
+  // helper expected. `installPackageRevision` returns exactly
+  // `entry.digestVersionLabel` for a local source
+  // (`local-source-attach.integration.test.ts`), and the panel renders one
+  // digest chip instead of a tag list when `pkg.tags` is empty.
+  //
+  // The label therefore is not knowable before the run, so locate the chip by
+  // its package row and its trailing verb. The `$` matters: without it
+  // `· install` would also match `· installed`. This spec is the ONLY e2e
+  // cover of the local-directory source path, which is why it keeps that
+  // source kind rather than switching to the `file://` form its siblings use.
+  const row = page.locator("tr", { hasText: tag });
+
+  await row.getByRole("button", { name: /· install$/u }).click();
+  await expect(row.getByRole("button", { name: /· installed$/u })).toBeVisible({
+    timeout: 30_000,
+  });
 }
 
 async function selectGraphNode(page: Page, nodeId: string): Promise<void> {
