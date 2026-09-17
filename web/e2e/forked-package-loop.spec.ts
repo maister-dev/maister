@@ -387,37 +387,57 @@ test("install → fork → edit → cut → evaluation batch shows fork-vs-upstr
   );
 
   // A controlled batch pins upstream (variant A) vs the fork cut (variant B):
-  // 2 variants × 1 replicate. Each recipe carries the concrete package pin so a
-  // launched participant's provenance is unambiguous.
-  const recipe = (packageInstallId: string): Record<string, unknown> => ({
-    schemaVersion: 1,
-    flow: {
-      flowRefId: FLOW_ID,
-      flowRevisionId: `${RUN_TAG}-rev`,
-      inputContractDigest: "d-in",
-      artifactContractDigest: "d-art",
-    },
-    inputs: { taskSnapshotRef: taskId, formValues: {} },
-    executionPolicy: { preset: "supervised" },
-    materializationIntent: {
-      packagePins: [{ packageInstallId }],
-      capabilityRequirements: [],
-      allowedProjectOverlays: [],
-    },
-  });
+  // 2 variants × 1 replicate, so a launched participant's provenance is
+  // unambiguous.
+  //
+  // Driven through the dialog, not posted. Since ADR-150 the launch route
+  // preflights every inline recipe against the live contracts, and a recipe
+  // carries the flow ref, the pinned revision and the frozen input/artifact
+  // contract digests — computed by one server-side assembler, which is why
+  // `lab-queries.ts` records that "the client can never fabricate a digest that
+  // would pass preflight". The hand-written recipe this used to post (a
+  // placeholder `<tag>-rev` revision and `"d-in"`/`"d-art"` digests) was
+  // refused PRECONDITION -> 404. The dialog seeds every one of those fields
+  // from the server scaffold and leaves the test only the axis it actually
+  // cares about: the per-variant package pin.
+  await page.goto(`/projects/${fx.projectSlug}/evaluations/${study.id}`);
+  await expect(
+    page.getByRole("heading", { name: `Fork vs upstream ${RUN_TAG}` }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Launch variants" }).click();
 
-  const batchRes = await page.request.post(
-    `/api/projects/${fx.projectSlug}/evaluations/studies/${study.id}/launch-batches`,
-    {
-      data: {
-        idempotencyKey: `${RUN_TAG}-fork-batch`,
-        items: [
-          { definition: recipe(upstreamInstallId), replicateCount: 1 },
-          { definition: recipe(cut1InstallId), replicateCount: 1 },
-        ],
-      },
-    },
+  const launchDialog = page.getByRole("dialog");
+
+  await expect(launchDialog).toBeVisible();
+
+  // The provenance picker offers the fork beside its upstream (native
+  // <option>s → assert attached, not visible).
+  await expect(
+    launchDialog.locator("option", { hasText: "local cut" }).first(),
+  ).toBeAttached();
+  await expect(
+    launchDialog.locator("option", { hasText: "upstream" }).first(),
+  ).toBeAttached();
+
+  // The dialog opens with two variants; pin one to each side.
+  const pinSelects = launchDialog.getByLabel("Package pin");
+
+  await pinSelects.nth(0).selectOption({ value: upstreamInstallId });
+  await pinSelects.nth(1).selectOption({ value: cut1InstallId });
+
+  const batchCreate = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname.endsWith(
+        `/evaluations/studies/${study.id}/launch-batches`,
+      ),
   );
+
+  await launchDialog
+    .getByRole("button", { name: "Launch", exact: true })
+    .click();
+
+  const batchRes = await batchCreate;
 
   expect(batchRes.status()).toBe(201);
   const batchCreated = (await batchRes.json()) as {
@@ -439,22 +459,9 @@ test("install → fork → edit → cut → evaluation batch shows fork-vs-upstr
 
   expect(batchItems).toHaveLength(2);
 
-  // The Study surface renders the provenance picker: open the controlled-launch
-  // dialog and assert the package-pin options offer the fork ("local cut")
-  // beside its "upstream" (native <option>s → assert attached, not visible).
-  await page.goto(`/projects/${fx.projectSlug}/evaluations/${study.id}`);
-  await expect(
-    page.getByRole("heading", { name: `Fork vs upstream ${RUN_TAG}` }),
-  ).toBeVisible();
-  await page.getByRole("button", { name: "Launch variants" }).click();
-  const dialog = page.getByRole("dialog");
-
-  await expect(
-    dialog.locator("option", { hasText: "local cut" }).first(),
-  ).toBeAttached();
-  await expect(
-    dialog.locator("option", { hasText: "upstream" }).first(),
-  ).toBeAttached();
+  // The provenance picker was asserted above, on the same dialog this batch was
+  // launched from — selecting each pin by install id proves the options carry
+  // the right identities, not just the right labels.
 });
 
 test("attach the fork beside its upstream: rename explainer → rename + re-cut → attached", async ({
@@ -555,13 +562,17 @@ test("upstream re-tag → install & sync with conflict → resolve → publish b
     .getByTestId("sync-target-select")
     .selectOption({ label: `Install & sync — ${RUN_TAG}/v2.0.0` });
   await page.getByTestId("sync-start").click();
-  await expect(page.getByTestId("sync-notice")).toBeVisible({
+
+  // The dialog closing IS the completion signal. `sync-notice` cannot be
+  // observed: `runSync` sets the clean/conflict message and then calls
+  // `setOpen(false)` in the same batch, and that message only renders inside
+  // the open dialog — so it never paints, and there is no Close button left to
+  // click either. It became unreachable in 93fe4a83 ("complete resilient
+  // feedback and run UX"); this test has been skipped ever since, because the
+  // serial-mode batch test above it failed first, so nobody saw it.
+  await expect(page.getByTestId("sync-start")).toHaveCount(0, {
     timeout: 60_000,
   });
-  await page
-    .getByRole("dialog")
-    .getByRole("button", { name: "Close", exact: true })
-    .click();
 
   // The pending banner lists the conflicted file.
   await page.reload();
