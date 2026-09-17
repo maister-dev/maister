@@ -11,10 +11,11 @@
 import type { WorkStageLabels } from "@/components/work/work-stage-chip";
 import type { WorkTableRow } from "@/lib/queries/work-table";
 import type { WorkGroupBy, WorkTableGroup } from "@/lib/work/work-table-view";
-import type { ReactElement } from "react";
+import type { KeyboardEvent, MouseEvent, ReactElement, ReactNode } from "react";
 
 import Link from "next/link";
 import clsx from "clsx";
+import { useState } from "react";
 import { ArrowTopRightOnSquareIcon } from "@heroicons/react/24/outline";
 
 import { WorkStageChip } from "@/components/work/work-stage-chip";
@@ -53,6 +54,32 @@ export interface WorkRowsTableProps {
   labels: WorkRowsLabels;
   locale: string;
   now: Date;
+  /**
+   * Row expansion, OFF by default (ADR-174 D5). The Desk turns it on; `/work`
+   * adopts it in a later increment, once "what does a backlog row expand into"
+   * has an answer. A default of `false` is what keeps one shared component from
+   * needing a fork.
+   */
+  expandable?: boolean;
+  /**
+   * Panel content by `taskId`. A ReactNode rather than a render function on
+   * purpose: this is a client component, and a FUNCTION prop cannot cross the
+   * RSC boundary — the Desk is a server component that builds these elements and
+   * passes them as children would be passed.
+   */
+  panels?: Record<string, ReactNode>;
+}
+
+/**
+ * A click that lands on a link or a button belongs to that control, never to the
+ * row (`REQ-D13`). A reader clicking `MYAPP-1` wants the task; getting the task
+ * AND an expanded panel is the bug this closes.
+ */
+function isInteractiveTarget(target: EventTarget | null): boolean {
+  return (
+    target instanceof Element &&
+    target.closest('a,button,input,select,textarea,[role="button"]') !== null
+  );
 }
 
 const READINESS_TONE: Record<string, string> = {
@@ -89,6 +116,8 @@ export function WorkRowsTable({
   labels,
   locale,
   now,
+  expandable = false,
+  panels,
 }: WorkRowsTableProps): ReactElement {
   const numberFormat = new Intl.NumberFormat(locale);
   const dateFormat = new Intl.DateTimeFormat(locale, {
@@ -139,10 +168,13 @@ export function WorkRowsTable({
             {group.rows.map((row) => (
               <WorkTableRowView
                 key={row.taskId}
+                columnCount={showProject ? TOTAL_COLUMNS : TOTAL_COLUMNS - 1}
                 dateFormat={dateFormat}
+                expandable={expandable}
                 labels={labels}
                 now={now}
                 numberFormat={numberFormat}
+                panel={panels?.[row.taskId]}
                 row={row}
                 showProject={showProject}
               />
@@ -171,6 +203,9 @@ function WorkTableRowView({
   dateFormat,
   now,
   showProject,
+  expandable,
+  panel,
+  columnCount,
 }: {
   row: WorkTableRow;
   labels: WorkRowsLabels;
@@ -178,137 +213,180 @@ function WorkTableRowView({
   dateFormat: Intl.DateTimeFormat;
   now: Date;
   showProject: boolean;
+  expandable: boolean;
+  panel: ReactNode;
+  columnCount: number;
 }): ReactElement {
   const taskHref = `/projects/${row.projectSlug}/tasks/${row.number}`;
   const nextAction = workNextAction(row.stage);
+  // Open state gates RENDERING, so it lives in `useState` — a ref read during
+  // render is a silent no-re-render bug this project has already paid for.
+  const [open, setOpen] = useState(false);
+  const canExpand = expandable && panel !== undefined;
+
+  function activate(event: MouseEvent | KeyboardEvent): void {
+    if (!canExpand || isInteractiveTarget(event.target)) return;
+    setOpen((wasOpen) => !wasOpen);
+  }
+
+  function onKeyDown(event: KeyboardEvent<HTMLTableRowElement>): void {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    if (isInteractiveTarget(event.target)) return;
+    // Space scrolls the page otherwise, and Enter would submit an ancestor form.
+    event.preventDefault();
+    activate(event);
+  }
 
   return (
-    <tr
-      className="border-b border-line last:border-b-0"
-      data-stage={row.stage}
-      data-testid="work-row"
-    >
-      <td className={CELL}>
-        <Link
-          className="font-mono text-[12px] font-semibold text-ink no-underline"
-          href={taskHref}
-          title={labels.openTask}
-        >
-          {row.keyRef}
-        </Link>
-      </td>
-      <td className={clsx(CELL, "max-w-[320px] truncate text-ink")}>
-        {row.title}
-      </td>
-      {showProject ? (
+    <>
+      <tr
+        aria-expanded={canExpand ? open : undefined}
+        className={clsx(
+          "border-b border-line last:border-b-0",
+          canExpand && "cursor-pointer hover:bg-ivory/60",
+        )}
+        data-stage={row.stage}
+        data-testid="work-row"
+        tabIndex={canExpand ? 0 : undefined}
+        onClick={canExpand ? activate : undefined}
+        onKeyDown={canExpand ? onKeyDown : undefined}
+      >
         <td className={CELL}>
           <Link
-            className="text-ink-2 no-underline"
-            href={`/projects/${row.projectSlug}`}
+            className="font-mono text-[12px] font-semibold text-ink no-underline"
+            href={taskHref}
+            title={labels.openTask}
           >
-            {row.projectName}
+            {row.keyRef}
           </Link>
         </td>
-      ) : null}
-      <td className={CELL}>
-        <WorkStageChip
-          blocked={row.blocked}
-          labels={labels.stage}
-          progress={row.progress}
-          promotedKind={row.promotedKind}
-          runStatus={row.runStatus}
-          stage={row.stage}
-        />
-      </td>
-      <td className={clsx(CELL, DROP_SM)}>
-        {row.readiness === null ? (
-          <span className="text-mute">—</span>
-        ) : (
-          <span
-            className={clsx(
-              "font-mono text-[11px]",
-              READINESS_TONE[row.readiness] ?? "text-ink-2",
-            )}
-          >
-            {labels.readiness[row.readiness] ?? row.readiness}
-          </span>
-        )}
-      </td>
-      <td className={CELL}>
-        {row.waitingOn === null ? (
-          <span className="text-mute">—</span>
-        ) : (
-          <span className="text-ink-2">
-            {row.waitingOn.kind === "you"
-              ? labels.waitingOn.you
-              : (row.waitingOn.name ?? labels.waitingOn.anyone)}{" "}
-            <span className="text-mute">
-              {labels.waitingOn.since.replace(
-                "$age",
-                workAge(row.waitingOn.since, now),
-              )}
-            </span>
-          </span>
-        )}
-      </td>
-      <td className={clsx(CELL, DROP_MD)}>
-        {row.blockers.length === 0 ? (
-          <span className="text-mute">—</span>
-        ) : (
-          <span className="flex flex-wrap gap-1">
-            {row.blockers.map((blocker) => (
-              <span
-                key={blocker.taskId}
-                className="rounded-full border border-line bg-ivory px-1.5 py-0.5 font-mono text-[10.5px] text-mute"
-              >
-                {blocker.keyRef}
-              </span>
-            ))}
-          </span>
-        )}
-      </td>
-      <td
-        className={clsx(
-          CELL,
-          DROP_SM,
-          "text-right font-mono text-[11.5px] text-ink-2",
-        )}
-      >
-        {numberFormat.format(row.tokens)}
-      </td>
-      <td className={clsx(CELL, DROP_MD, "whitespace-nowrap text-mute")}>
-        <span suppressHydrationWarning>
-          {dateFormat.format(row.lastActivityAt)}
-        </span>
-      </td>
-      {/* The trailing action cluster: the next action, then the run. Reads
-          left-to-right primary -> secondary, per web/CLAUDE.md. */}
-      <td className={clsx(CELL, "whitespace-nowrap text-ink-2")}>
-        <span className="inline-flex items-center gap-2">
-          {/* `REQ-D10` — a `none` action is an em dash. "Nothing" reads as a
-              thing to do, which is the opposite of what it means. */}
-          {nextAction === "none" ? (
+        <td className={clsx(CELL, "max-w-[320px] truncate text-ink")}>
+          {row.title}
+        </td>
+        {showProject ? (
+          <td className={CELL}>
+            <Link
+              className="text-ink-2 no-underline"
+              href={`/projects/${row.projectSlug}`}
+            >
+              {row.projectName}
+            </Link>
+          </td>
+        ) : null}
+        <td className={CELL}>
+          <WorkStageChip
+            blocked={row.blocked}
+            labels={labels.stage}
+            progress={row.progress}
+            promotedKind={row.promotedKind}
+            runStatus={row.runStatus}
+            stage={row.stage}
+          />
+        </td>
+        <td className={clsx(CELL, DROP_SM)}>
+          {row.readiness === null ? (
             <span className="text-mute">—</span>
           ) : (
-            <span>{labels.nextAction[nextAction] ?? nextAction}</span>
-          )}
-          {/* `REQ-D9` — removing the run COLUMN must not remove the ability to
-              open the run. Icon-only, so it carries an accessible name. */}
-          {row.runId === null ? null : (
-            <Link
-              aria-label={labels.openRun}
-              className="text-mute no-underline hover:text-ink"
-              href={`/runs/${row.runId}`}
-              title={labels.openRun}
+            <span
+              className={clsx(
+                "font-mono text-[11px]",
+                READINESS_TONE[row.readiness] ?? "text-ink-2",
+              )}
             >
-              <ArrowTopRightOnSquareIcon
-                aria-hidden="true"
-                className="h-3.5 w-3.5"
-              />
-            </Link>
+              {labels.readiness[row.readiness] ?? row.readiness}
+            </span>
           )}
-        </span>
-      </td>
-    </tr>
+        </td>
+        <td className={CELL}>
+          {row.waitingOn === null ? (
+            <span className="text-mute">—</span>
+          ) : (
+            <span className="text-ink-2">
+              {row.waitingOn.kind === "you"
+                ? labels.waitingOn.you
+                : (row.waitingOn.name ?? labels.waitingOn.anyone)}{" "}
+              <span className="text-mute">
+                {labels.waitingOn.since.replace(
+                  "$age",
+                  workAge(row.waitingOn.since, now),
+                )}
+              </span>
+            </span>
+          )}
+        </td>
+        <td className={clsx(CELL, DROP_MD)}>
+          {row.blockers.length === 0 ? (
+            <span className="text-mute">—</span>
+          ) : (
+            <span className="flex flex-wrap gap-1">
+              {row.blockers.map((blocker) => (
+                <span
+                  key={blocker.taskId}
+                  className="rounded-full border border-line bg-ivory px-1.5 py-0.5 font-mono text-[10.5px] text-mute"
+                >
+                  {blocker.keyRef}
+                </span>
+              ))}
+            </span>
+          )}
+        </td>
+        <td
+          className={clsx(
+            CELL,
+            DROP_SM,
+            "text-right font-mono text-[11.5px] text-ink-2",
+          )}
+        >
+          {numberFormat.format(row.tokens)}
+        </td>
+        <td className={clsx(CELL, DROP_MD, "whitespace-nowrap text-mute")}>
+          <span suppressHydrationWarning>
+            {dateFormat.format(row.lastActivityAt)}
+          </span>
+        </td>
+        {/* The trailing action cluster: the next action, then the run. Reads
+          left-to-right primary -> secondary, per web/CLAUDE.md. */}
+        <td className={clsx(CELL, "whitespace-nowrap text-ink-2")}>
+          <span className="inline-flex items-center gap-2">
+            {/* `REQ-D10` — a `none` action is an em dash. "Nothing" reads as a
+              thing to do, which is the opposite of what it means. */}
+            {nextAction === "none" ? (
+              <span className="text-mute">—</span>
+            ) : (
+              <span>{labels.nextAction[nextAction] ?? nextAction}</span>
+            )}
+            {/* `REQ-D9` — removing the run COLUMN must not remove the ability to
+              open the run. Icon-only, so it carries an accessible name. */}
+            {row.runId === null ? null : (
+              <Link
+                aria-label={labels.openRun}
+                className="text-mute no-underline hover:text-ink"
+                href={`/runs/${row.runId}`}
+                title={labels.openRun}
+              >
+                <ArrowTopRightOnSquareIcon
+                  aria-hidden="true"
+                  className="h-3.5 w-3.5"
+                />
+              </Link>
+            )}
+          </span>
+        </td>
+      </tr>
+      {canExpand && open ? (
+        <tr
+          className="border-b border-line last:border-b-0"
+          data-testid="work-row-panel"
+        >
+          {/* The FULL column count, never the visible one: the responsive
+            columns are hidden by CSS and their `<td>`s stay in the DOM, so a
+            span derived from what is painted misaligns exactly at the widths
+            where the columns drop (`REQ-D11`). */}
+          <td className="bg-ivory/40 p-0" colSpan={columnCount}>
+            {panel}
+          </td>
+        </tr>
+      ) : null}
+    </>
   );
 }

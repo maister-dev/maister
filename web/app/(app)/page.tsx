@@ -2,6 +2,9 @@ import type { ActivityRowLabels } from "@/components/activity/activity-row-list"
 import type { NowTilesLabels } from "@/components/attention/now-tiles";
 import type { WorkRowsLabels } from "@/components/work/work-rows-table";
 import type { WorkInFlightStage } from "@/lib/work/stage";
+import type { ActivityFeedRow } from "@/lib/queries/activity-feed";
+import type { DecisionItem } from "@/lib/queries/decisions";
+import type { WorkTableRow } from "@/lib/queries/work-table";
 import type { Metadata } from "next";
 import type { ReactElement, ReactNode } from "react";
 
@@ -12,8 +15,9 @@ import clsx from "clsx";
 import { ActivityRowList } from "@/components/activity/activity-row-list";
 import { DecisionSections } from "@/components/inbox/decision-sections";
 import { EmptyState } from "@/components/portfolio/empty-state";
-import { HitlInboxList } from "@/components/inbox/hitl-inbox-list";
+import { HitlPanel } from "@/components/inbox/hitl-panel";
 import { NowTiles } from "@/components/attention/now-tiles";
+import { RunRecoverActions } from "@/components/runs/run-recover-actions";
 import { OnboardingChecklist } from "@/components/portfolio/onboarding-checklist";
 import { ScratchLaunchPopover } from "@/components/chrome/scratch-launch-popover";
 import { WorkRowsTable } from "@/components/work/work-rows-table";
@@ -25,7 +29,7 @@ import { buildActivityRowLabels } from "@/lib/activity/activity-row-labels";
 import { buildWorkRowsLabels } from "@/lib/work/work-row-labels";
 import { countWorkInFlightByStage } from "@/lib/work/stage-counts";
 import { getActivityCursor } from "@/lib/queries/activity-cursor";
-import { getDecisionsQueue, hitlDecisionsOf } from "@/lib/queries/decisions";
+import { getDecisionsQueue } from "@/lib/queries/decisions";
 import { getPortfolio } from "@/lib/queries/portfolio";
 import { getWorkTable } from "@/lib/queries/work-table";
 import {
@@ -56,6 +60,8 @@ import { splitAtCursor } from "@/lib/activity/activity-view";
 /** How much of each region the Desk shows before deferring to its full surface. */
 const DESK_WORK_ROWS = 12;
 const DESK_ACTIVITY_ROWS = 12;
+/** How much of a running row's history its panel shows before deferring. */
+const DESK_PANEL_EVENTS = 5;
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
@@ -95,8 +101,9 @@ export default async function DeskPage({
   ]);
 
   const now = new Date();
-  // ATN-01: the cards and the number above them are ONE population.
-  const hitlItems = hitlDecisionsOf(queue.items);
+  // ADR-174 D2: `Held` is the one decision kind no work row carries, so it is
+  // the one that still needs a region of its own.
+  const heldItems = queue.items.filter((item) => item.kind === "flagged");
   const hasProjects = portfolio.projects.length > 0;
   const inFlight = table.rows.filter((row) => isWorkInFlight(row.stage));
   // REQ-D2: counted over EVERY in-flight row, before the filter and before the
@@ -110,10 +117,34 @@ export default async function DeskPage({
     activeStage === null
       ? inFlight
       : inFlight.filter((row) => row.stage === activeStage);
-  const workGroups = groupWorkTableRows(
-    visible.slice(0, DESK_WORK_ROWS),
-    "project",
+  const shownRows = visible.slice(0, DESK_WORK_ROWS);
+  const workGroups = groupWorkTableRows(shownRows, "project");
+  // REQ-D15: the row -> decision join, on `runId`, built from the queue this
+  // page ALREADY loads. `getWorkTable` is untouched — a read-model change here
+  // would have been the tell that the merge was really a rewrite.
+  const decisionByRunId = new Map<string, DecisionItem>(
+    queue.items.flatMap((item) =>
+      item.runId === null ? [] : [[item.runId, item] as const],
+    ),
   );
+  const panels: Record<string, ReactNode> = {};
+
+  for (const row of shownRows) {
+    const panel = deskRowPanel({
+      row,
+      decision:
+        row.runId === null ? null : (decisionByRunId.get(row.runId) ?? null),
+      events: feed.rows.filter((event) => event.runId === row.runId),
+      canAct: user.role !== "viewer",
+      currentUserId: user.id,
+      activityLabels: buildActivityRowLabels(tActivity, ACTIVITY_FEED_KINDS),
+      reviewLabel: tInbox("decisions.review"),
+      locale,
+      now,
+    });
+
+    if (panel !== null) panels[row.taskId] = panel;
+  }
   const activity = splitAtCursor(
     feed.rows.slice(0, DESK_ACTIVITY_ROWS),
     cursor,
@@ -191,41 +222,31 @@ export default async function DeskPage({
         which is what the first cut of this page did.
       */}
       <div className="grid grid-cols-1 gap-7 xl:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
-        <DeskRegion
-          action={{ href: "/inbox", label: t("decisionsAll") }}
-          className="xl:col-start-1 xl:row-start-1"
-          count={{
-            value: queue.count,
-            label: t("decisionsCount").replace("$count", String(queue.count)),
-          }}
-          testid="desk-decisions"
-          title={t("decisionsTitle")}
-        >
-          {queue.count === 0 ? (
-            <DeskEmpty text={t("decisionsEmpty")} />
-          ) : (
-            <div className="flex flex-col gap-6">
-              {hitlItems.length > 0 ? (
-                <HitlInboxList
-                  canAct={user.role !== "viewer"}
-                  currentUserId={user.id}
-                  items={hitlItems}
-                />
-              ) : null}
-              <DecisionSections
-                items={queue.items}
-                labels={{
-                  promotableTitle: tInbox("decisions.promotableTitle"),
-                  crashedTitle: tInbox("decisions.crashedTitle"),
-                  flaggedTitle: tInbox("decisions.flaggedTitle"),
-                  review: tInbox("decisions.review"),
-                  openTask: tInbox("decisions.openTask"),
-                  stage: workLabels.stage,
-                }}
-              />
-            </div>
-          )}
-        </DeskRegion>
+        {/* ADR-174 D2: the Decisions region is GONE. Three of its four
+            populations were the work table under another name — `hitl`,
+            `crashed` and `promotable` all map onto `WORK_IN_FLIGHT_STAGES`
+            members — and they now ride on the row itself.
+
+            `Held` is the exception that proves the rule: `WORK_BACKLOG_STAGES`,
+            not in flight, so no row carries it. It keeps a region. */}
+        {heldItems.length > 0 ? (
+          <div
+            className="xl:col-start-1 xl:row-start-1"
+            data-testid="desk-held"
+          >
+            <DecisionSections
+              items={heldItems}
+              labels={{
+                promotableTitle: tInbox("decisions.promotableTitle"),
+                crashedTitle: tInbox("decisions.crashedTitle"),
+                flaggedTitle: tInbox("decisions.flaggedTitle"),
+                review: tInbox("decisions.review"),
+                openTask: tInbox("decisions.openTask"),
+                stage: workLabels.stage,
+              }}
+            />
+          </div>
+        ) : null}
 
         {/* `min-w-0`: a grid item defaults to `min-width: auto`, which sizes it
             to the 1180px table's min-content width and stretches the whole page
@@ -264,11 +285,13 @@ export default async function DeskPage({
               />
             ) : (
               <WorkRowsTable
+                expandable
                 groupBy="project"
                 groups={workGroups}
                 labels={workLabels}
                 locale={locale}
                 now={now}
+                panels={panels}
               />
             )}
           </DeskRegion>
@@ -295,6 +318,95 @@ export default async function DeskPage({
       </div>
     </div>
   );
+}
+
+/**
+ * `REQ-D14` — panel content resolves BY STAGE, and adds no mutation path.
+ *
+ * `Review` is a LINK, never an inline promote: the drift-guarded reviewed target
+ * commit exists only on the run's own review surface, so promoting from here
+ * would be promoting something the reader never saw.
+ *
+ * Every arm renders through the component the owning surface renders — the
+ * extracted `HitlPanel` that `/inbox` is now built on, `RunRecoverActions` from
+ * the run surface, `ActivityRowList` from `/activity`.
+ */
+function deskRowPanel({
+  row,
+  decision,
+  events,
+  canAct,
+  currentUserId,
+  activityLabels,
+  reviewLabel,
+  locale,
+  now,
+}: {
+  row: WorkTableRow;
+  decision: DecisionItem | null;
+  events: ActivityFeedRow[];
+  canAct: boolean;
+  currentUserId: string;
+  activityLabels: ActivityRowLabels;
+  reviewLabel: string;
+  locale: string;
+  now: Date;
+}): ReactNode {
+  if (row.stage === "WaitingOnHuman" && decision?.kind === "hitl") {
+    return (
+      <HitlPanel
+        expanded
+        canAct={canAct}
+        currentUserId={currentUserId}
+        item={decision.hitl}
+      />
+    );
+  }
+
+  if (row.stage === "Review" && row.runId !== null) {
+    return (
+      <DeskPanelFrame>
+        <Link
+          className="inline-flex h-8 items-center rounded-[10px] border border-line bg-ivory px-3 text-[12.5px] font-semibold text-ink no-underline"
+          href={`/runs/${row.runId}?wb=review&scope=review`}
+        >
+          {reviewLabel}
+        </Link>
+      </DeskPanelFrame>
+    );
+  }
+
+  if (row.stage === "Crashed" && decision?.kind === "crashed") {
+    return (
+      <DeskPanelFrame>
+        <RunRecoverActions
+          canRecover={decision.crashed.action === "recover"}
+          runId={decision.crashed.runId}
+        />
+      </DeskPanelFrame>
+    );
+  }
+
+  if (row.stage === "Executing" || row.stage === "Queued") {
+    return events.length === 0 ? null : (
+      <DeskPanelFrame>
+        <ActivityRowList
+          divider={false}
+          labels={activityLabels}
+          locale={locale}
+          now={now}
+          seen={events.slice(0, DESK_PANEL_EVENTS)}
+          unread={[]}
+        />
+      </DeskPanelFrame>
+    );
+  }
+
+  return null;
+}
+
+function DeskPanelFrame({ children }: { children: ReactNode }): ReactElement {
+  return <div className="px-4 py-3.5">{children}</div>;
 }
 
 function DeskRegion({

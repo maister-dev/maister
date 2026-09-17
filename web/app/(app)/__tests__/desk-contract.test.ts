@@ -21,9 +21,10 @@ const DESK = readFileSync(path.join(WEB_ROOT, "app/(app)/page.tsx"), "utf8");
 describe("UT-NAV-01 the Desk composes rather than re-implements", () => {
   it("renders each region through the surface that owns it", () => {
     for (const component of [
-      // `/inbox`
-      "HitlInboxList",
+      // `/inbox` — `DecisionSections` survives for `Held`; the HITL list does
+      // not, because ADR-174 D2 moved that population onto the work row.
       "DecisionSections",
+      "HitlPanel",
       // `/work`
       "WorkRowsTable",
       // `/activity`
@@ -59,6 +60,24 @@ describe("UT-NAV-01 the Desk composes rather than re-implements", () => {
     expect(DESK).not.toContain("desk-digest");
   });
 
+  it("T-D15 joins rows to decisions from the queue it already loads", () => {
+    // `REQ-D15`: the row -> decision join is built HERE, on `runId`, from the
+    // canonical queue. A read-model change would have been the tell that the
+    // merge was really a rewrite.
+    expect(DESK).toContain("decisionByRunId");
+    expect(DESK).toContain("queue.items");
+    expect(DESK).toContain("getWorkTable({ id: user.id, role: user.role })");
+
+    // And `getWorkTable` gained nothing Desk-shaped on the other side.
+    const readModel = readFileSync(
+      path.join(WEB_ROOT, "lib/queries/work-table.ts"),
+      "utf8",
+    );
+
+    expect(readModel.toLowerCase()).not.toContain("desk");
+    expect(readModel).not.toContain("decision");
+  });
+
   it("adds no mutation path of its own", () => {
     // The Desk is a read surface. A `fetch`/server action here would be a
     // second way to promote, recover or answer — the thing D1 forbids.
@@ -72,12 +91,12 @@ describe("UT-NAV-01 the Desk composes rather than re-implements", () => {
     expect(DESK).toMatch(/hasProjects \?\s*\(?\s*<ScratchLaunchPopover/u);
   });
 
-  it("orders the regions Decisions, Work, Activity in the SOURCE", () => {
+  it("orders the regions Held, Work, Activity in the SOURCE", () => {
     // `EDGE-NAV-02`. The grid is one column below `xl`, so source order IS the
     // narrow order — and the first cut of this page had Work last, which put it
     // below Activity on a phone. Desktop's different arrangement is done with
     // explicit grid placement, never by reordering the source.
-    const order = ["desk-decisions", "desk-work", "desk-activity"].map((id) =>
+    const order = ["desk-held", "desk-work", "desk-activity"].map((id) =>
       DESK.indexOf(`testid="${id}"`),
     );
 

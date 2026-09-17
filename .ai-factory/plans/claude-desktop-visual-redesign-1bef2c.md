@@ -371,7 +371,7 @@ Exit: gates 1–6.
 
 ### Phase 4 — Expandable rows (Desk only)
 
-**T4.1 [ ] — RED: expansion behaviour, in e2e**
+**T4.1 [x] — RED: expansion behaviour, in e2e**
 
 Nothing in this repo expands a `<tr>`; `<details>` cannot wrap one. This is new
 ground, and **vitest cannot prove it** — write **T-D13** (4 cases: click, Enter,
@@ -381,7 +381,7 @@ Park it RED; T4.2 turns it green.
 
 Proves: `AC-D13` · Implements: `REQ-D13`.
 
-**T4.2 [ ] — GREEN: the expandable row shape**
+**T4.2 [x] — GREEN: the expandable row shape**
 
 A second `<tr>` with a `colSpan`-spanning cell, behind an `expandable` prop defaulting
 to `false`. Follow the repo's disclosure idiom — `useState(open)` + `aria-expanded` +
@@ -391,7 +391,7 @@ Open state gates rendering, so it lives in `useState`, **never a `useRef`** — 
 read during render is a silent no-re-render bug the project has already paid for.
 `colSpan` is the full column count (T2.4).
 
-**T4.3 [ ] — Join on `runId`, and wire the panel by stage**
+**T4.3 [x] — Join on `runId`, and wire the panel by stage**
 
 Build a `Map<runId, DecisionItem>` in `page.tsx` from the queue it **already loads**.
 `getWorkTable` is not modified. Keep the literal `hitlDecisionsOf(queue.items)` — the
@@ -409,7 +409,7 @@ load — the failure mode a mount-time fetch would produce.
 
 Proves: `AC-D14`, `AC-D15`, `AC-D16` · Implements: `REQ-D14`, `REQ-D15`, `REQ-D16`.
 
-**T4.4 [ ] — Remove the Decisions region; keep Held**
+**T4.4 [x] — Remove the Decisions region; keep Held**
 
 Drop `HitlInboxList` and the `hitl` / `crashed` / `promotable` sections.
 `DecisionSections` keeps rendering `flagged` as its own region — `Held` is in

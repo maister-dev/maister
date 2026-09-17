@@ -96,14 +96,12 @@ test("E2E-NAV-01 the Desk is home, and every region it promises is on it", async
     page.getByRole("button", { name: "Start a scratch run" }),
   ).toBeVisible();
 
-  // Busy: the admin has decisions, and the Desk composes `/inbox`'s cards
-  // rather than a second copy of them.
-  expect(await digits(page, "desk-decisions-count")).toBeGreaterThan(0);
+  // Busy: the admin has work in flight, and it is rendered ONCE — as rows.
+  // ADR-174 D2 removed the Decisions region because three of its four
+  // populations were these same rows under another name.
+  await expect(page.getByTestId("desk-decisions")).toHaveCount(0);
   await expect(
-    page
-      .getByTestId("desk-decisions")
-      .locator('[data-testid^="decision-section-"], [data-testid="hitl-card"]')
-      .first(),
+    page.getByTestId("desk-work").locator('[data-testid="work-row"]').first(),
   ).toBeVisible();
 
   // The Desk | Projects switch is the explicit control for the two meanings
@@ -239,15 +237,83 @@ test("T-D6 a filter matching nothing says so, distinctly, and offers a way back"
   }
 });
 
-test("the Desk's Decisions count is the rail badge", async ({ page }) => {
+test("ATN-05 the rail badge is the number /inbox renders", async ({ page }) => {
+  // Re-homed from the Desk by ADR-174: the Desk no longer renders a decisions
+  // number, because it no longer renders a decisions REGION. `ATN-05`'s text is
+  // surface-agnostic — "every surface MUST render one layout-level `decisions`
+  // value" — so the assertion follows the surviving surface rather than dying
+  // with the removed one.
   await page.goto("/");
 
   const badge = await digits(page, "inbox-nav-badge");
-  const region = await digits(page, "desk-decisions-count");
 
-  // `ATN-05`: one layout-level read, two renders of it.
   expect(badge).toBeGreaterThan(0);
-  expect(region).toBe(badge);
+
+  await page.goto("/inbox");
+
+  // Asserted on `/inbox`'s own copy, with no testid added there: this change
+  // does not touch that surface.
+  await expect(
+    page.getByText(/things waiting on you across all projects/u),
+  ).toHaveText(new RegExp(`^${badge}\\b`, "u"));
+});
+
+// ── A row expands into its decision panel (ADR-174 D2) ─────────────────────
+//
+// `T-D14`. The interaction itself is proved in jsdom, in CI
+// (`components/work/__tests__/work-rows-table.dom.test.ts`); what needs a real
+// page is that the panel a given STAGE opens is the right one, wired to the
+// right run, against seeded data.
+
+test("T-D14 each stage expands to its own panel, and Review never promotes inline", async ({
+  page,
+}) => {
+  await page.goto("/");
+
+  const work = page.getByTestId("desk-work");
+  const expandable = work.locator('tr[data-testid="work-row"][aria-expanded]');
+
+  // The Desk opts in; every row it renders can be opened.
+  expect(await expandable.count()).toBeGreaterThan(0);
+
+  const seen = new Set<string>();
+
+  for (const stage of IN_FLIGHT_STAGES) {
+    const row = work
+      .locator(`tr[data-testid="work-row"][data-stage="${stage}"]`)
+      .first();
+
+    if ((await row.count()) === 0) continue;
+
+    await row.click();
+    await expect(row).toHaveAttribute("aria-expanded", "true");
+
+    const panel = work.locator('[data-testid="work-row-panel"]').first();
+
+    await expect(panel, stage).toBeVisible();
+    seen.add(stage);
+
+    if (stage === "Review") {
+      // `REQ-D14`: a LINK to the review surface, never an inline promote. The
+      // drift-guarded reviewed target commit exists only there, so promoting
+      // from here would promote something the reader never saw.
+      await expect(panel.locator('a[href*="wb=review"]')).toHaveCount(1);
+      await expect(
+        panel.getByRole("button", { name: /promote/iu }),
+        "no promote control may render in a Desk panel",
+      ).toHaveCount(0);
+    }
+
+    await row.click();
+    await expect(row).toHaveAttribute("aria-expanded", "false");
+  }
+
+  // A seeded Desk that happened to contain no in-flight row would make every
+  // assertion above vacuous.
+  expect(
+    seen.size,
+    "no expandable stage was present in the fixture",
+  ).toBeGreaterThan(0);
 });
 
 test("E2E-EDGE-NAV-02 narrow keeps every region, stacked Decisions then Work then Activity", async ({
@@ -354,12 +420,19 @@ test("the quiet Desk says so instead of rendering an empty Decisions region", as
     await page.goto("/");
 
     // Quiet: projects exist, work is in flight, nothing is blocked on the reader.
-    expect(await digits(page, "desk-decisions-count")).toBe(0);
-    await expect(page.getByTestId("desk-decisions")).toContainText(
-      "Nothing is blocked on you.",
-    );
     expect(await digits(page, "desk-work-count")).toBeGreaterThan(0);
     await expect(page.getByTestId("desk-work")).toContainText(fx.alphaName);
+
+    // No Held region — `Held` is the one decision kind no work row carries, and
+    // this reader has none of it. Quiet is now the ABSENCE of that region
+    // rather than a region saying it is empty.
+    await expect(page.getByTestId("desk-held")).toHaveCount(0);
+
+    // And the tiles that mean "a human is needed" are zero, while the strip
+    // itself still renders all five — `REQ-D1`.
+    for (const stage of ["WaitingOnHuman", "Review", "Crashed"]) {
+      expect(await digits(page, `now-tile-${stage}`), stage).toBe(0);
+    }
     // The Desk renders for a member too — only the LANDING route forks by role.
     await expect(page.getByTestId("now-tiles")).toBeVisible();
     await expect(page.getByTestId("desk-empty")).toHaveCount(0);
