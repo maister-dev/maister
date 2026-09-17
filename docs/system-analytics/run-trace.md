@@ -122,7 +122,7 @@ sequenceDiagram
 - **TRC-05:** Every prompt the flow graph driver dispatches is recorded as a `user` message in `run_messages`, for each of the six flow prompt-owner variants and for every dispatch within one node attempt; a standalone agent run's turns are outside this contract (Phase 2).
 - **TRC-06:** Prompt recording is idempotent per dispatch, enforced by a database constraint rather than by application ordering alone.
 - **TRC-07:** A prompt row's dispatch identity is derived from the existing owner operation-key functions; no parallel identity scheme is introduced.
-- **TRC-08:** Prompt recording is best-effort — a failed prompt-row write warns and never blocks, delays, or fails dispatch.
+- **TRC-08:** Prompt recording is best-effort — a failed prompt-row write warns and never fails dispatch, and it cannot delay one because the dispatcher passes its driver-scoped handle (`flowDriverDatabase` → `projectionTransaction`: cumulative deadline, server-side `statement_timeout`/`lock_timeout`, backend cancellation, rollback, driver abort signal).
 - **TRC-09:** A recorded prompt body is bounded at 256 KiB; a longer body is stored truncated behind an explicit marker naming the unabridged source.
 - **TRC-10:** `run_messages` sequence allocation is serialized on a single per-scope lock, so a projector write and a prompt write can never collide on a sequence.
 - **TRC-11:** Prompt text in `run_messages` is served only behind `readRepoFiles` and adds no exposure surface beyond the one `node_attempts.resolved_prompt` already crosses.
@@ -147,6 +147,10 @@ sequenceDiagram
   (`MaisterError` is NOT raised — the write is best-effort per TRC-08).
 - **EDGE-TRC-07:** With `runs.context_mounts` non-empty the row carries exactly one
   appended line naming the mounted slugs; with no mounts the row is byte-exact.
+- **EDGE-TRC-08:** A recorded prompt is anchored to the run's ingested-event horizon
+  in the same column the projector uses for its own rows, and the node transcript
+  orders on that shared axis, so a node and its gate read in causal order however
+  late projection runs — never as two prompts followed by two replies.
 
 ## Linked artifacts
 
@@ -198,3 +202,4 @@ sequenceDiagram
 | EDGE-TRC-05 | truncation marker | T2.5 | `UT-EDGE-TRC-05` | Implemented |
 | EDGE-TRC-06 | concurrent duplicate dispatch | T2.1, T2.5 | `IT-EDGE-TRC-06` | Implemented |
 | EDGE-TRC-07 | context-mount suffix | T2.5 | `UT-EDGE-TRC-07` | Implemented |
+| EDGE-TRC-08 | event-horizon anchor in `run_messages.supervisor_event_id` + node-transcript ordering | T2.5 | `IT-EDGE-TRC-08` | Implemented |

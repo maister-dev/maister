@@ -28,6 +28,10 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { closeDb } from "@/lib/db/client";
 import { recordDispatchedPrompt } from "@/lib/flows/graph/prompt-record";
 import { runFlow } from "@/lib/flows/runner";
+import {
+  getRunNodeTranscript,
+  projectRunTranscript,
+} from "@/lib/runs/run-transcript-projector";
 import { fakeGraphHosts } from "@/test-support/fake-execution-host";
 import {
   schema,
@@ -229,5 +233,135 @@ describe("dispatched prompt recording", () => {
     expect(new Set(prompts.map((p) => p.promptDispatchKey)).size).toBe(
       owners.length,
     );
+  }, 120_000);
+
+  // IT-EDGE-TRC-08. The two `run_messages` writers share one counter but run
+  // on different clocks: a prompt is written eagerly at dispatch, while a
+  // reply is projected by the canonical worker or lazily on read — the graph
+  // runner drives only the ARTIFACT projector at its sync points. The gap
+  // between a node's turn ending and its gate dispatching is a few
+  // milliseconds, so the reply is normally still unprojected at that moment.
+  //
+  // Reproduced here by ingesting the reply event WITHOUT projecting it, which
+  // is exactly the state the runner is in. Against the undrained recorder the
+  // order is `NODE-PROMPT, GATE-PROMPT, NODE-REPLY` — permanently, since
+  // sequences are never rewritten. This asserts the whole conversation, not
+  // just the prompts: `userMessages` filters replies out and therefore cannot
+  // see the defect at all.
+  it("IT-EDGE-TRC-08: keeps causal order when a reply is still unprojected", async () => {
+    const projectId = randomUUID();
+    const runId = randomUUID();
+    const nodeAttemptId = randomUUID();
+    const slug = `order-${projectId.slice(0, 8)}`;
+
+    await db.insert(schema.projects).values({
+      id: projectId,
+      taskKey: `T${projectId.slice(0, 8)}`.toUpperCase(),
+      slug,
+      name: slug,
+      repoPath: `/tmp/${slug}`,
+      maisterYamlPath: `/tmp/${slug}/maister.yaml`,
+    } as never);
+    await db.insert(schema.runs).values({
+      id: runId,
+      projectId,
+      runKind: "flow",
+      status: "Running",
+      executionDataPlaneMode: "canonical_events_v1",
+      flowVersion: "v1",
+      flowRevision: "manual",
+    } as never);
+    await db.insert(schema.nodeAttempts).values({
+      id: nodeAttemptId,
+      runId,
+      nodeId: "implement",
+      nodeType: "ai_coding",
+      attempt: 1,
+      status: "Running",
+    } as never);
+
+    await recordDispatchedPrompt({
+      db,
+      runId,
+      nodeAttemptId,
+      stepId: "implement",
+      owner: { variant: "node", nodeAttemptId, promptOrdinal: 0 },
+      prompt: "NODE-PROMPT",
+      contextMounts: null,
+    });
+
+    await db.insert(schema.executionEvents).values({
+      id: randomUUID(),
+      source: "manager",
+      sourceKey: "prompt-order:0",
+      runId,
+      eventType: "session.update",
+      payloadSchema: "maister.session.update.v1",
+      payload: {
+        nodeAttemptId,
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "NODE-REPLY" },
+        },
+      },
+      occurredAt: new Date(),
+      receivedAt: new Date(),
+      runSequence: BigInt(0),
+      ingestDisposition: "accepted",
+    } as never);
+
+    await recordDispatchedPrompt({
+      db,
+      runId,
+      nodeAttemptId,
+      stepId: "implement-gate",
+      owner: {
+        variant: "gate_ai",
+        nodeAttemptId,
+        gateId: "review",
+        evaluationId: "eval-1",
+        promptOrdinal: 0,
+      },
+      prompt: "GATE-PROMPT",
+      contextMounts: null,
+    });
+
+    // The canonical worker catching up ARBITRARILY late — after BOTH prompts.
+    // This is the whole point of anchoring: the reply takes the highest
+    // `sequence` of the three, so any reader ordering on arrival gets it last.
+    // Only the event-stream anchor can still place it in the middle.
+    await projectRunTranscript(runId, { client: db as never });
+
+    // Read through the REAL reader, not raw SQL: the ordering is the thing
+    // under test, and asserting it against a query written here would prove
+    // only that this test can sort.
+    const transcript = await getRunNodeTranscript(runId, "implement", {
+      client: db as never,
+    });
+    const rows = transcript?.messages ?? [];
+    const positionOf = (needle: string): number =>
+      rows.findIndex((row) => row.content.includes(needle));
+
+    // Each marker is present exactly once and they read in causal order.
+    for (const marker of ["NODE-PROMPT", "NODE-REPLY", "GATE-PROMPT"]) {
+      expect(rows.filter((row) => row.content.includes(marker))).toHaveLength(
+        1,
+      );
+    }
+    expect(positionOf("NODE-PROMPT")).toBeLessThan(positionOf("NODE-REPLY"));
+    expect(positionOf("NODE-REPLY")).toBeLessThan(positionOf("GATE-PROMPT"));
+
+    // The defect this replaces was invisible to arrival order, so pin that the
+    // reply really did arrive LAST — otherwise a future change that restores
+    // eager projection would make this test pass for the wrong reason.
+    const stored = (await db
+      .select()
+      .from(schema.runMessages)
+      .where(eq(schema.runMessages.runId, runId))
+      .orderBy(asc(schema.runMessages.sequence))) as unknown as {
+      content: string;
+    }[];
+
+    expect(stored[stored.length - 1].content).toContain("NODE-REPLY");
   }, 120_000);
 });

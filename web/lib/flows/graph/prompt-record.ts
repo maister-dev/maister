@@ -5,14 +5,14 @@ import type { ConsensusPromptOwner } from "./consensus/prompt-owner";
 import type { NodePromptOwner } from "./node-prompt-owner";
 import type { GatePromptOwner } from "./prompt-owner";
 
-import { eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { consensusPromptOperationKey } from "./consensus/prompt-owner";
 import { nodePromptOperationKey } from "./node-prompt-owner";
 import { gatePromptOperationKey } from "./prompt-owner";
 
-import { runs } from "@/lib/db/schema";
+import { executionEvents, runs } from "@/lib/db/schema";
 import { appendRunMessage } from "@/lib/execution-host/events/run-message-store";
 
 const log = pino({
@@ -104,6 +104,27 @@ export function appendContextMountLine(
 // FIXME(any): dual drizzle-orm peer-dep variants (mirrors runner-agent.ts).
 type DbClientLike = any;
 
+/** EDGE-TRC-08. The run's last INGESTED event, independent of whether it has
+ * been projected yet — that independence is the whole point. `-1` for a run
+ * with no events keeps a first prompt ahead of event `0`. Only `accepted`
+ * events count: a duplicate or skipped one never becomes a transcript row, so
+ * anchoring past it would push the prompt beyond replies that follow. */
+async function eventHorizon(db: DbClientLike, runId: string): Promise<string> {
+  const [row] = await db
+    .select({
+      horizon: sql<string | null>`max(${executionEvents.runSequence})`,
+    })
+    .from(executionEvents)
+    .where(
+      and(
+        eq(executionEvents.runId, runId),
+        eq(executionEvents.ingestDisposition, "accepted"),
+      ),
+    );
+
+  return row?.horizon ?? "-1";
+}
+
 async function loadContextMounts(
   db: DbClientLike,
   runId: string,
@@ -124,6 +145,16 @@ async function loadContextMounts(
  * failed write must cost the run nothing. The alternative — a transcript-row
  * problem taking down the dispatch it was only meant to describe — is strictly
  * worse than a missing row.
+ *
+ * "Never DELAYS dispatch" is not enforced here, and deliberately so: `db` is
+ * the caller's driver-scoped handle from `flowDriverDatabase`, whose `query`
+ * and `transaction` both run through `projectionTransaction` — a cumulative
+ * deadline, server-side `statement_timeout`/`lock_timeout`, backend
+ * cancellation and rollback, plus the driver's abort signal. Both the read
+ * below and the transaction are therefore already bounded, and a second
+ * local budget would be a duplicate clock that could only drift from it.
+ * The invariant this function depends on: callers pass the driver handle.
+ * A raw root-pool handle would take the same locks with no deadline.
  *
  * `contextMounts` is read from the run when omitted; pass it explicitly
  * (`null` for none) to skip that read.
@@ -148,6 +179,26 @@ export async function recordDispatchedPrompt(input: {
     const promptDispatchKeyValue = input.owner
       ? promptDispatchKey(input.owner)
       : null;
+
+    // EDGE-TRC-08. Anchor this row in the run's EVENT stream, not in the order
+    // the two writers happened to arrive.
+    //
+    // `sequence` is an arrival counter shared by two writers on different
+    // clocks: a prompt is written eagerly at dispatch, while replies are
+    // projected by the canonical worker or lazily on read — the graph runner
+    // drives only the ARTIFACT projector at its sync points, never this one.
+    // The gap between a node's turn ending and its gate dispatching is a few
+    // milliseconds, so the reply is normally still unprojected and a node with
+    // a blocking gate would read `node prompt, gate prompt, node reply, gate
+    // reply` for good. Ordering must therefore be a property of the DATA.
+    //
+    // The horizon is the run's last ingested event, which is exactly what the
+    // transcript projector stores in the same column for its own rows
+    // (`supervisorEventId = event.runSequence`), so both writers land on ONE
+    // axis. `-1` when the run has no events yet keeps a first prompt ahead of
+    // event 0. Readers break an exact tie with the dispatch key, since a
+    // prompt issued AFTER event E sorts after the reply projected FROM E.
+    const anchor = await eventHorizon(input.db, input.runId);
     const result = await input.db.transaction(
       (tx: Parameters<typeof appendRunMessage>[0]) =>
         appendRunMessage(tx, {
@@ -156,6 +207,7 @@ export async function recordDispatchedPrompt(input: {
           role: "user",
           content: bounded.content,
           promptDispatchKey: promptDispatchKeyValue,
+          supervisorEventId: anchor,
         }),
     );
 

@@ -176,6 +176,13 @@ describe("recordDispatchedPrompt", () => {
   // problem taking down the dispatch it was only meant to describe.
   it("UT-TRC-08: warns and resolves when the write fails, never rejecting", async () => {
     const db = {
+      // EDGE-TRC-08 reads the event horizon before the write, so the double
+      // must offer that surface too — otherwise it fails on a missing method
+      // and this test passes for the wrong reason, never reaching the write
+      // whose failure it exists to pin.
+      select: vi.fn(() => ({
+        from: () => ({ where: async () => [{ horizon: "7" }] }),
+      })),
       transaction: vi.fn(async () => {
         throw new Error("connection terminated");
       }),

@@ -2509,7 +2509,7 @@ transcript ledger shared by scratch AND flow `ai_coding` node sessions.
   sequence,                      // monotonic per (run, node attempt)
   role: 'user' | 'assistant' | 'tool' | 'system',
   content,
-  supervisorEventId?,
+  supervisorEventId?,          // run-event position; see EDGE-TRC-08 below
   projectionToolKey?,
   promptDispatchKey?,            // TRC-06; NULL on every projector-written row
   createdAt
@@ -2544,7 +2544,18 @@ from `schema.ts` alone will drop it.
 
 Because `run_messages` now has two writers on one scope, both take the same
 `SELECT ... FOR UPDATE` on the `run_transcript_states` row before allocating a
-`sequence`. → [`system-analytics/run-trace.md`](system-analytics/run-trace.md).
+`sequence`.
+
+That lock makes allocation SAFE, not ordered — the two writers run on different
+clocks (a prompt is written eagerly at dispatch, a reply whenever projection
+runs), so `sequence` is arrival order, not causal order. `supervisor_event_id`
+is the shared axis that carries causality: the transcript projector stores the
+`run_sequence` of the event a row was projected FROM, and the flow dispatcher
+stores the run's ingested-event horizon a prompt was issued AFTER (`-1` before
+the first event). The node transcript orders on
+`(supervisor_event_id, prompt_dispatch_key IS NOT NULL, sequence)` — the middle
+term placing a prompt anchored at `E` after the reply projected from `E`
+(EDGE-TRC-08). → [`system-analytics/run-trace.md`](system-analytics/run-trace.md).
 
 Studio assistant action results (ADR-110) are stored as server-produced system
 messages with `kind = "flow_action_result"`. They contain relative touched
