@@ -425,7 +425,7 @@ Exit: gates 1–6.
 
 ### Phase 5 — Activity
 
-**T5.1 [ ] — RED → GREEN: every row names its subject**
+**T5.1 [x] — RED → GREEN: every row names its subject**
 
 Test first — `web/components/activity/__tests__/activity-row-list.test.ts` is **new**;
 no test imports this component today. **T-D19** (2 cases: a row with no task join
