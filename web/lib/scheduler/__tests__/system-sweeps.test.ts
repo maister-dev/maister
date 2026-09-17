@@ -76,6 +76,14 @@ vi.mock("@/lib/execution-host", () => ({
 // un-mocked too, so they threw on getDb() into the same swallowed `errors[]`.
 // Mocked here so `errors: []` below is a real guard for EVERY arm — otherwise
 // the next sweep to go silently broken hides behind them.
+vi.mock("@/lib/execution-host/events/stream-health", () => ({
+  runEventStreamHealthSweep: vi.fn(async () => ({
+    checked: 0,
+    stalled: 0,
+    degraded: 0,
+    errors: [],
+  })),
+}));
 vi.mock("@/lib/brain/decay", () => ({
   runBrainDecaySweep: runBrainDecaySweepMock,
 }));

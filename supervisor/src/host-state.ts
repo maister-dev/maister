@@ -1728,15 +1728,20 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
         ? hostEventSequenceSortKey(parseHostEventSequence(afterSequence))
         : null;
 
+      // An ABSENT cursor is not a lost cursor. The contract is explicit —
+      // "Omission starts at the replay floor" — and every row at or below the
+      // floor was deleted, so the retained page already IS the floor-forward
+      // replay. Refusing omission wedged a manager with no durable watermark
+      // against any host that had ever pruned, permanently and undiagnosably.
       if (
         stream.replay_floor_sequence !== null &&
-        (afterSequence === null ||
-          parseHostEventSequence(afterSequence) <
-            parseHostEventSequence(stream.replay_floor_sequence))
+        afterSequence !== null &&
+        parseHostEventSequence(afterSequence) <
+          parseHostEventSequence(stream.replay_floor_sequence)
       ) {
         throw new HostRuntimeEventError(
           "replay_floor_exceeded",
-          `runtime event replay must start at retained floor ${stream.replay_floor_sequence}`,
+          `runtime event replay cursor ${afterSequence} is below the retained floor ${stream.replay_floor_sequence} on stream ${stream.stream_id}`,
         );
       }
 

@@ -10,6 +10,7 @@ import { ZodError } from "zod";
 
 import { hasNativeOutputCommand } from "../runtime-object-intent";
 
+import { encodeJsonbSafe } from "./jsonb-safe";
 import { seedCanonicalProjectionConsumers } from "./projection-consumers";
 import { runEventWakeBus } from "./run-wake";
 
@@ -721,7 +722,13 @@ export async function ingestRuntimeEvent(input: {
   let envelope: RuntimeEventEnvelope;
 
   try {
-    envelope = RuntimeEventEnvelopeSchema.parse(input.envelope);
+    // `execution_events.payload` is jsonb, which cannot hold U+0000 or a lone
+    // surrogate. Escaping here — before the identity hash, the duplicate probe
+    // and the insert all read it — keeps every derived value describing the same
+    // stored bytes. Readers restore the original through decodeJsonbSafe.
+    envelope = encodeJsonbSafe(
+      RuntimeEventEnvelopeSchema.parse(input.envelope),
+    );
   } catch (error) {
     await recordIngestFailure(input.db, {
       executionHostId: input.executionHostId,
@@ -755,6 +762,14 @@ export async function ingestRuntimeEvent(input: {
       });
 
       if (duplicate) {
+        // A duplicate proves the stream is alive even though no watermark moves.
+        // Without this, a host replaying the same page forever is indistinguishable
+        // from an idle one — the stall detector would never see it.
+        await tx
+          .update(executionEventStreams)
+          .set({ lastSeenAt: now })
+          .where(eq(executionEventStreams.id, stream.id));
+
         return {
           disposition: "duplicate" as const,
           eventId: envelope.eventId,
@@ -941,6 +956,20 @@ export async function ingestRuntimeEvent(input: {
         "event_identity_conflict",
       );
     }
+    if (unstorablePayloadCode(error)) {
+      // PostgreSQL refuses this payload outright, so no retry can ever succeed
+      // and rethrowing would park the contiguity walk on it forever — the exact
+      // shape that stopped the platform for 15 h on 2026-09-16. Drop it into the
+      // skip ledger, on the same terms as an event for an unknown run.
+      return quarantineUnstorableEvent({
+        db: input.db,
+        executionHostId: input.executionHostId,
+        envelope,
+        sqlState: unstorablePayloadCode(error) ?? "unknown",
+        now,
+        logger: input.logger,
+      });
+    }
     throw error;
   }
 
@@ -980,6 +1009,109 @@ export async function ingestRuntimeEvent(input: {
   return result;
 }
 
+// SQLSTATEs PostgreSQL raises for a value it cannot represent at all:
+// 22P05 unsupported_character_value (a NUL or lone surrogate reaching jsonb),
+// 22P02 invalid_text_representation, 22021 character_not_in_repertoire. None of
+// them is retryable — the same bytes fail identically every time.
+const UNSTORABLE_SQLSTATES = new Set(["22P05", "22P02", "22021"]);
+
+function unstorablePayloadCode(error: unknown): string | null {
+  for (let cause = error, depth = 0; cause && depth < 5; depth += 1) {
+    const code = (cause as { code?: unknown }).code;
+
+    if (typeof code === "string" && UNSTORABLE_SQLSTATES.has(code)) return code;
+    cause = (cause as { cause?: unknown }).cause;
+  }
+
+  return null;
+}
+
+async function quarantineUnstorableEvent(input: {
+  db: Db;
+  executionHostId: string;
+  envelope: RuntimeEventEnvelope;
+  sqlState: string;
+  now: Date;
+  logger?: Logger;
+}): Promise<RuntimeEventIngestResult> {
+  const { envelope, now } = input;
+  const sequence = decimalSequence(envelope.sequence);
+  const result = await input.db.transaction(async (tx) => {
+    const stream = await lockOrCreateStream(tx, {
+      executionHostId: input.executionHostId,
+      envelope,
+      now,
+    });
+
+    await tx
+      .insert(executionEventSkips)
+      .values({
+        id: randomUUID(),
+        eventStreamId: stream.id,
+        executionHostId: input.executionHostId,
+        hostSequence: sequence,
+        eventId: envelope.eventId,
+        runId: envelope.runId,
+        eventType: envelope.eventType,
+        reason: "payload_unstorable",
+        occurredAt: new Date(envelope.occurredAt),
+      })
+      .onConflictDoNothing();
+
+    const lastReceived = stream.lastReceivedSequence ?? -1n;
+
+    await tx
+      .update(executionEventStreams)
+      .set({
+        lastReceivedSequence: sequence > lastReceived ? sequence : lastReceived,
+        lastBootId: envelope.hostBootId,
+        lastSeenAt: now,
+      })
+      .where(eq(executionEventStreams.id, stream.id));
+
+    const promoted = await promoteContiguousPrefix(tx, {
+      executionHostId: input.executionHostId,
+      stream,
+      now,
+    });
+
+    return {
+      disposition: "skipped_unknown_run" as const,
+      eventId: envelope.eventId,
+      streamId: envelope.streamId,
+      sequence: envelope.sequence,
+      contiguousThrough: promoted.contiguousThrough?.toString() ?? null,
+      acceptedCount: promoted.acceptedCount,
+      staleEpochCount: promoted.staleEpochCount,
+      pendingGapCount: 0,
+      skippedCount: promoted.skippedCount,
+    } satisfies RuntimeEventIngestResult;
+  });
+
+  await recordIngestFailure(input.db, {
+    executionHostId: input.executionHostId,
+    envelope,
+    error: new Error(`payload rejected by PostgreSQL (${input.sqlState})`),
+    now,
+    reason: "event_payload_unstorable",
+  });
+  input.logger?.warn(
+    {
+      hostId: input.executionHostId,
+      streamId: result.streamId,
+      eventId: result.eventId,
+      sequence: result.sequence,
+      runId: envelope.runId,
+      eventType: envelope.eventType,
+      sqlState: input.sqlState,
+      contiguousThrough: result.contiguousThrough,
+    },
+    "runtime-event-payload-unstorable",
+  );
+
+  return result;
+}
+
 async function markHostUnavailable(
   db: Db,
   executionHostId: string,
@@ -999,6 +1131,7 @@ async function recordIngestFailure(
     envelope: unknown;
     error: unknown;
     now: Date;
+    reason?: string;
   },
 ): Promise<void> {
   const candidate =
@@ -1043,7 +1176,7 @@ async function recordIngestFailure(
       streamId,
       eventIdText,
       sequenceText,
-      reason: "event_schema_invalid",
+      reason: input.reason ?? "event_schema_invalid",
       details,
       encodedBytes: Math.min(encodedBytes, 1_048_576),
       firstSeenAt: input.now,

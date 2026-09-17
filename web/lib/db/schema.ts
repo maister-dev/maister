@@ -4022,7 +4022,9 @@ export const executionEventSkips = pgTable(
     eventId: text("event_id").notNull(),
     runId: text("run_id").notNull(),
     eventType: text("event_type").notNull(),
-    reason: text("reason", { enum: ["unknown_run"] }).notNull(),
+    reason: text("reason", {
+      enum: ["unknown_run", "payload_unstorable"],
+    }).notNull(),
     occurredAt: timestamp("occurred_at", {
       withTimezone: true,
       mode: "date",
