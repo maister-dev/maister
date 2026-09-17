@@ -285,6 +285,12 @@ test("T-D14 each stage expands to its own panel, and Review never promotes inlin
 
     if ((await row.count()) === 0) continue;
 
+    // A row is expandable only when its stage actually resolves to content: a
+    // `Queued` or `Executing` run with no recent events opens onto nothing, and
+    // an affordance that promises a panel and delivers an empty box is worse
+    // than no affordance. `aria-expanded` is therefore the feature detector.
+    if ((await row.getAttribute("aria-expanded")) === null) continue;
+
     await row.click();
     await expect(row).toHaveAttribute("aria-expanded", "true");
 
@@ -316,7 +322,7 @@ test("T-D14 each stage expands to its own panel, and Review never promotes inlin
   ).toBeGreaterThan(0);
 });
 
-test("E2E-EDGE-NAV-02 narrow keeps every region, stacked Decisions then Work then Activity", async ({
+test("E2E-EDGE-NAV-02 narrow keeps every region, stacked strip then Work then Held then Activity", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
@@ -324,10 +330,15 @@ test("E2E-EDGE-NAV-02 narrow keeps every region, stacked Decisions then Work the
 
   const boxes: Array<{ id: string; top: number }> = [];
 
-  for (const id of ["desk-decisions", "desk-work", "desk-activity"]) {
+  // `desk-held` renders only when a `flagged` decision exists — it is the one
+  // decision kind no work row carries — so it is included when present rather
+  // than required, and the ORDER is asserted over whatever is there.
+  for (const id of ["now-tiles", "desk-work", "desk-held", "desk-activity"]) {
     const region = page.getByTestId(id);
 
-    await expect(region).toBeVisible();
+    if (id === "desk-held" && (await region.count()) === 0) continue;
+
+    await expect(region, id).toBeVisible();
 
     const box = await region.boundingBox();
 
@@ -335,14 +346,15 @@ test("E2E-EDGE-NAV-02 narrow keeps every region, stacked Decisions then Work the
     boxes.push({ id, top: box?.y ?? 0 });
   }
 
-  // No region is dropped, and the order is the one `EDGE-NAV-02` fixes.
-  expect(boxes.map((entry) => entry.id)).toEqual([
-    "desk-decisions",
-    "desk-work",
-    "desk-activity",
-  ]);
-  expect(boxes[0].top).toBeLessThan(boxes[1].top);
-  expect(boxes[1].top).toBeLessThan(boxes[2].top);
+  // Every region that exists is present and in source order — and since there
+  // is only ONE arrangement now (`REQ-D21`), this IS the order at every width.
+  expect(
+    boxes.length,
+    "strip, work and activity are never dropped",
+  ).toBeGreaterThanOrEqual(3);
+  expect(boxes.map((entry) => entry.top)).toEqual(
+    [...boxes.map((entry) => entry.top)].sort((a, b) => a - b),
+  );
 
   // Nothing scrolls the PAGE sideways.
   //

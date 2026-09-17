@@ -91,9 +91,11 @@ const READINESS_TONE: Record<string, string> = {
   overridden: "text-ink-2",
 };
 
-const CELL = "px-3 py-2 align-middle";
+// Tighter gutters on a phone. Four visible columns spend 96px on padding at
+// `px-3`, which is a quarter of a 390px viewport before any content renders.
+const CELL = "px-2 py-2 align-middle sm:px-3";
 const HEAD =
-  "px-3 py-2 text-left font-mono text-[10.5px] font-semibold uppercase tracking-[0.12em] text-mute";
+  "px-2 py-2 text-left font-mono text-[10.5px] font-semibold uppercase tracking-[0.12em] text-mute sm:px-3";
 
 /**
  * `REQ-D11` — narrow viewports DROP columns by priority rather than scrolling
@@ -106,6 +108,11 @@ const HEAD =
  */
 const DROP_SM = "hidden lg:table-cell";
 const DROP_MD = "hidden xl:table-cell";
+// `project` is the exception to the priority order: it is high-value, but it is
+// also the widest cheap win on a phone, and `/work` — which does NOT group by
+// project and so always renders it — was the surface still pushing the page
+// sideways at 390px.
+const DROP_XS = "hidden md:table-cell";
 
 /** Every column the table can render, hidden or not — the `colSpan` basis. */
 const TOTAL_COLUMNS = 10;
@@ -138,7 +145,7 @@ export function WorkRowsTable({
             <th className={HEAD}>{labels.columns.key}</th>
             <th className={HEAD}>{labels.columns.title}</th>
             {showProject ? (
-              <th className={HEAD}>{labels.columns.project}</th>
+              <th className={clsx(HEAD, DROP_XS)}>{labels.columns.project}</th>
             ) : null}
             <th className={HEAD}>{labels.columns.stage}</th>
             <th className={clsx(HEAD, DROP_SM)}>{labels.columns.readiness}</th>
@@ -260,11 +267,12 @@ function WorkTableRowView({
             {row.keyRef}
           </Link>
         </td>
-        <td className={clsx(CELL, "max-w-[320px] truncate text-ink")}>
+        {/* Absorbs the leftover width and ellipsises — see the DROP_* note. */}
+        <td className={clsx(CELL, "w-full max-w-0 truncate text-ink")}>
           {row.title}
         </td>
         {showProject ? (
-          <td className={CELL}>
+          <td className={clsx(CELL, DROP_XS)}>
             <Link
               className="text-ink-2 no-underline"
               href={`/projects/${row.projectSlug}`}
@@ -297,7 +305,7 @@ function WorkTableRowView({
             </span>
           )}
         </td>
-        <td className={CELL}>
+        <td className={clsx(CELL, DROP_SM)}>
           {row.waitingOn === null ? (
             <span className="text-mute">—</span>
           ) : (
@@ -353,7 +361,11 @@ function WorkTableRowView({
             {nextAction === "none" ? (
               <span className="text-mute">—</span>
             ) : (
-              <span>{labels.nextAction[nextAction] ?? nextAction}</span>
+              // The WORDS drop on a phone; the run affordance beside them does
+              // not, so `REQ-D9` still holds at every width.
+              <span className="hidden sm:inline">
+                {labels.nextAction[nextAction] ?? nextAction}
+              </span>
             )}
             {/* `REQ-D9` — removing the run COLUMN must not remove the ability to
               open the run. Icon-only, so it carries an accessible name. */}

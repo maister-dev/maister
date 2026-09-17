@@ -155,7 +155,10 @@ export function WorkStageChip({
         {iconOnly ? null : counted}
         {refinement === null || iconOnly ? null : (
           <span
-            className="font-normal text-[10px] opacity-80"
+            // Supplementary by definition — the stage is the primary fact. It
+            // is CSS-hidden rather than dropped below `lg`, so it stays in the
+            // DOM (and in these tests) while the row fits a phone (`REQ-D11`).
+            className="hidden font-normal text-[10px] opacity-80 lg:inline"
             data-work-run-status={refinement}
           >
             {labels[`run${refinement}`]}
