@@ -263,7 +263,7 @@ places with another. As of 2026-09-03 on `main` + ADR-165:
 - **integration** — 0 failures, except the two-case
   `lib/runs/__tests__/dirty-resolution-race.integration.test.ts` pair, which
   flakes under parallel load and passes 4/4 in isolation.
-- **e2e** — **2 pre-existing failures across 2 spec files**, enumerated below,
+- **e2e** — **1 pre-existing failure in 1 spec file**, enumerated below,
   plus one known-flaky spec. Ports 3100/7788 and the `maister_e2e` database are
   shared across worktrees; kill both ports before a run. Before filing an e2e
   failure as environmental, read the `[WebServer]` lines in the run log: a React
@@ -275,7 +275,8 @@ places with another. As of 2026-09-03 on `main` + ADR-165:
   this section's own first line says to compare SETS, and a bare number cannot
   be diffed.
 
-  `review-comments` · `studio-ai-assistant`.
+  `studio-ai-assistant` — it needs a real ACP turn from the test supervisor,
+  which is infrastructure rather than a selector.
 
   **A serial file hides tests behind its first failure.** `forked-package-loop`
   is `mode: "serial"`, so its batch failure had been SKIPPING the two tests
@@ -285,12 +286,16 @@ places with another. As of 2026-09-03 on `main` + ADR-165:
   under). Count the SKIPS, not just the failures, before trusting a serial
   file's entry here.
 
-  `review-comments` is diagnosed in the spec itself: the hover-revealed
-  `.diff-add-widget` is painted but clipped out of the hit-test tree, so no
-  pointer route reaches it and `dispatchEvent` reaches the node without opening
-  the composer. It needs that widget's event contract. `studio-ai-assistant`
-  needs a real ACP turn from the test supervisor — infrastructure, not a
-  selector.
+  **A control can be painted and still be unreachable.** `review-comments` spent
+  a long time looking like a broken selector. It was two things: the library
+  renders a `.diff-add-widget` in BOTH the gutter and content cells, pushed onto
+  the column seam by opposing `translateX` so they stack at one rect (the
+  content one is on top and is what a pointer hits); and at 1280x720 the split
+  diff pane is SEVENTY-TWO pixels wide — shell 848 → diff column 410 → file tree
+  + 72 — so the widget straddled the container's `overflow-hidden` edge and left
+  the hit-test tree. `elementsFromPoint` at a control's own centre is the cheap
+  way to tell "wrong locator" from "nothing can click this": if it returns an
+  ancestor, no amount of `force` or `dispatchEvent` will help.
 
   Each has its OWN cause — this set has no shared theme left, so triage from the
   failure rather than looking for a pattern. Two of them (`evaluation-lab`,
@@ -302,7 +307,7 @@ places with another. As of 2026-09-03 on `main` + ADR-165:
   scaffold and "the client can never fabricate a digest that would pass
   preflight", so the specs have to take the scaffold from the server.
 
-  **Closed on 2026-09-17** (25 spec files, 30 cases — 3 of them tests that a
+  **Closed on 2026-09-17** (26 spec files, 31 cases — 3 of them tests that a
   serial-mode skip had been hiding), all stale expectations
   except three product bugs. `evaluation-lab` and `forked-package-loop`'s batch
   test needed the launch dialog rather than a hand-written recipe: since
