@@ -51,8 +51,14 @@ test("a non-admin member has no /agents nav link and is forbidden on the route",
 
     // Direct navigation is gated: forbidden copy, no panel affordance.
     await page.goto("/agents");
+    // `.first()`: the admin-gate copy renders twice — the shared refusal frame
+    // emits a visible variant and a hidden one — so an unscoped match is a
+    // strict-mode violation, and which of the two it reported was a race. Same
+    // shape as the refusal in project-registration.spec.ts.
     await expect(
-      page.getByText("You do not have access to the platform agents catalog."),
+      page
+        .getByText("You do not have access to the platform agents catalog.")
+        .first(),
     ).toBeVisible();
     await expect(
       page.getByRole("button", { name: "Re-sync catalog" }),
