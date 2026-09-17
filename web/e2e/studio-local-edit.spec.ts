@@ -242,6 +242,49 @@ async function selectGraphNode(page: Page, nodeId: string): Promise<void> {
   await node.dispatchEvent("click");
 }
 
+// Save through the editor top bar and wait for the write burst it triggers.
+//
+// There is NO navigation and NO route POST to wait for: `saveAction` is a
+// CLIENT function handed to `<form action={...}>`, so React calls it directly
+// and it emits one PUT (or DELETE) per changed file to
+// `/api/studio/local-packages/<id>/files/<path>`. The old
+// `waitForLoadState("networkidle")` was therefore waiting for an event that
+// never happens — and against a Next dev server networkidle cannot settle
+// anyway, so it burned this test's entire 180 s budget on every run.
+//
+// A save can emit several writes, so wait for the burst to go quiet rather than
+// for the first response: at least one write, then a poll with no new ones.
+async function saveViaTopBar(page: Page, packageId: string): Promise<void> {
+  const prefix = `/api/studio/local-packages/${packageId}/files/`;
+  let writes = 0;
+  const count = (response: { url: () => string }): void => {
+    if (response.url().includes(prefix)) writes += 1;
+  };
+
+  page.on("response", count);
+
+  try {
+    await page.getByTestId("topbar-save").click();
+
+    let settledAt = -1;
+
+    await expect
+      .poll(
+        () => {
+          const quiet = writes > 0 && writes === settledAt;
+
+          settledAt = writes;
+
+          return quiet;
+        },
+        { intervals: [250], timeout: 30_000 },
+      )
+      .toBe(true);
+  } finally {
+    page.off("response", count);
+  }
+}
+
 test("canonical Studio wizard creates a package Flow and adds another Flow in the same editor", async ({
   page,
 }) => {
@@ -298,6 +341,16 @@ test("canonical Studio wizard creates a package Flow and adds another Flow in th
   // wizard UI, then launch the immutable attached package from the board. The
   // test Flow is all-cli so the real engine reaches a terminal state without an
   // ACP agent session.
+  // Leave the editor BEFORE driving the lock/file API directly. The open editor
+  // runs a keep-alive that refreshes its OWN lock session, so the competing
+  // session acquired below can be taken back from under this test between the
+  // acquire and the PUT — the write then fails the lock guard, with a bare
+  // `expect(write.ok()).toBeTruthy()` as the only clue. Running this file
+  // alongside the other studio specs widens that window enough to hit it
+  // regularly; alone it mostly wins the race.
+  await page.getByTestId("local-editor-end-edit").click();
+  await page.waitForURL(/\/studio\/local$/, { timeout: 15_000 });
+
   const sessionId = `canonical-e2e-${Math.random().toString(36).slice(2, 10)}`;
   const lock = await page.request.post(
     `/api/studio/local-packages/${packageId}/lock-refresh`,
@@ -454,17 +507,30 @@ test("fork an installed package to local → land in the /studio/edit editor", a
   await page.waitForURL(/\/studio\/edit\//, { timeout: 30_000 });
   expect(page.url()).toMatch(/\/studio\/edit\//);
 
-  // M39 (ADR-105): the no-path editor lands on the package HOME (overview +
-  // manifest form), NOT an empty flow canvas — so there is no spurious
-  // "YAML is invalid" sync banner. End-edit releases the lock and returns to the
-  // local list.
+  // M39 (ADR-105, as revised by ADR-116): the no-path editor lands on the
+  // package COMPOSITION view, NOT an empty flow canvas — so there is no
+  // spurious "YAML is invalid" sync banner. End-edit releases the lock and
+  // returns to the local list.
   const editId = page.url().match(/\/studio\/edit\/([^/?#]+)/)?.[1];
 
   expect(editId).toBeTruthy();
   await page.goto(`/studio/edit/${editId}`);
   await expect(page.getByTestId("package-composition")).toBeVisible();
-  await expect(page.getByTestId("package-manifest-form")).toBeVisible();
   await expect(page.getByTestId("flow-yaml-sync-error")).toHaveCount(0);
+
+  // The manifest form is reached by OPENING the manifest, not by landing.
+  // ADR-116 deleted `PackageHome` and recorded that "the manifest form is
+  // reused inside the composition header" — but `PackageComposition` never
+  // referenced `PackageManifestForm`, so that consequence went unimplemented
+  // and the form survives only as the per-file editor for a `manifest`-kind
+  // file. Asserting it on the landing (what this spec used to do) therefore
+  // tested a screen that does not exist. Open the file so the coverage stays.
+  await page.getByRole("tab", { name: /^Files/u }).click();
+  await page
+    .getByRole("button", { name: "maister-package.yaml", exact: true })
+    .click();
+  await expect(page.getByTestId("package-manifest-form")).toBeVisible();
+  await page.goto(`/studio/edit/${editId}`);
   await page.getByTestId("local-editor-end-edit").click();
   await page.waitForURL(/\/studio\/local$/, { timeout: 15_000 });
 });
@@ -529,11 +595,15 @@ test("local editor reference pickers save runner, agent, free-text agent, and sc
   );
 
   await expect(page.getByTestId("topbar-save")).toBeEnabled();
-  await page.getByTestId("topbar-save").click();
-  await page.waitForLoadState("networkidle");
+  await saveViaTopBar(page, editId as string);
 
   await page.goto(`/studio/edit/${editId}`);
   await expect(page.getByTestId("package-composition")).toBeVisible();
+  // The composition lands on the Flows tab; the package file list lives on the
+  // Files tab, and that tree starts with every folder COLLAPSED — so the saved
+  // schema needs both the tab and its folder opened before it is on screen.
+  await page.getByRole("tab", { name: /^Files/u }).click();
+  await page.getByRole("button", { name: "schemas", exact: true }).click();
   await expect(
     page.getByRole("button", { name: "review-intake.json", exact: true }),
   ).toBeVisible();
@@ -692,8 +762,15 @@ test("local editor structured controls: skills multiselect, /-autosuggest prompt
   await page.getByTestId("node-roles-remove-1").click();
   await expect(flowYamlInput).not.toHaveValue(/reviewer/);
 
-  // (a) the docked assistant first-prompt input is the same /-autosuggest composer
-  await page.getByTestId("studio-ai-prompt").scrollIntoViewIfNeeded();
+  // (a) the docked assistant first-prompt input is the same /-autosuggest
+  // composer. Open the dock first: it starts collapsed (`aiOpen` defaults to
+  // false) AND selecting a graph node force-closes it — which the `review`
+  // selection above just did. The panel is rendered but `hidden`, so the old
+  // `scrollIntoViewIfNeeded()` never failed fast; it retried "element is not
+  // visible" for the entire 180 s budget, which is what made this spec slow
+  // rather than merely red.
+  await page.getByTestId("local-editor-ai-toggle").click();
+  await expect(page.getByTestId("local-editor-ai-panel")).toBeVisible();
   await expect(page.getByTestId("studio-ai-prompt")).toBeVisible();
   await expect(
     page

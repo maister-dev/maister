@@ -58,6 +58,25 @@ async function openEditor(
   return page.url();
 }
 
+// Submit the draft and wait for the server action's OWN response. Do NOT use
+// `waitForLoadState("networkidle")`: it cannot settle against a Next dev server
+// (the HMR socket and RSC streams hold connections open), so it burns the whole
+// test budget instead of the ~100 ms the save takes. The action POSTs back to
+// the editor route, so its response is the exact "the round-trip is done"
+// signal the reopen below needs — and it is equally the right signal for a
+// REFUSED save: the CONFIG gate still answers the POST.
+async function saveDraft(page: Page, editorUrl: string): Promise<void> {
+  const pathname = new URL(editorUrl).pathname;
+  const saved = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname === pathname,
+  );
+
+  await page.getByRole("button", { name: /save draft/i }).click();
+  await saved;
+}
+
 // Ensure the [Files] drawer is open (the package-files tree + artifact editors
 // live there in Phase B; it is closed by default on each load).
 async function ensureFilesDrawer(page: Page): Promise<void> {
@@ -164,8 +183,7 @@ test("flow studio: artifact form + save gate, form-schema preview, typed edge, l
 
   // Save with the BLOCK present. The server `assertAuthoredFlowContentValid`
   // gate throws CONFIG BEFORE the CAS, so the draft row is NOT mutated.
-  await page.getByRole("button", { name: /save draft/i }).click();
-  await page.waitForLoadState("networkidle");
+  await saveDraft(page, editorUrl);
 
   // Reopen the same draft: the cleared description was NEVER persisted (the
   // server BLOCK gate held) — the original frontmatter is intact.
@@ -187,8 +205,7 @@ test("flow studio: artifact form + save gate, form-schema preview, typed edge, l
     page.locator('[data-testid="artifact-content-ok"]'),
   ).toBeVisible();
 
-  await page.getByRole("button", { name: /save draft/i }).click();
-  await page.waitForLoadState("networkidle");
+  await saveDraft(page, editorUrl);
 
   await page.goto(editorUrl);
   await openPackageFile(page, "SKILL.md");

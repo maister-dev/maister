@@ -6900,8 +6900,9 @@ async function seedInstalledPackageFixture(
       installedPath,
     ],
   );
-  // The project flow row: Enabled + trusted, pointing at the revision. The
-  // packages tab lists this (getFlowPackages) → the card links to the viewer.
+  // The project flow row: Enabled + trusted, pointing at the revision. This
+  // still drives the VIEWER page itself (the static graph, the raw flow.yaml,
+  // the file list).
   await pool.query(
     `INSERT INTO flows
        (id, project_id, flow_ref_id, source, version, revision, installed_path,
@@ -6917,6 +6918,50 @@ async function seedInstalledPackageFixture(
       JSON.stringify(FLOW_VIEWER_MANIFEST),
       ids.revision,
     ],
+  );
+  // ...but the packages TAB no longer reads flow rows. It lists
+  // `project_package_attachments` → `package_installs`, and the per-package
+  // block builds its flow cards from the on-disk BOM, which enumerates
+  // `manifest.spec.flows`. That card is the only remaining inbound link to the
+  // project package viewer, so without this pair the tab renders "No packages
+  // attached" and the whole board → viewer nav path is unreachable — which is
+  // exactly how `flow-package-viewer.spec.ts` failed.
+  //
+  // `flow.path` resolves against `installed_path`; the bundle above writes
+  // `flow.yaml` at the package root. The BOM's flow card is labelled
+  // `metadata.title ?? flow.id`, and this manifest carries no `metadata`, so
+  // the link reads `aif-flow-viewer` — the ref the spec clicks by.
+  const installId = randomUUID();
+
+  await pool.query(
+    `DELETE FROM project_package_attachments WHERE package_name = $1`,
+    [FLOW_VIEWER_REF],
+  );
+  await pool.query(`DELETE FROM package_installs WHERE name = $1`, [
+    FLOW_VIEWER_REF,
+  ]);
+  await pool.query(
+    `INSERT INTO package_installs
+       (id, source_url, name, version_label, resolved_revision, manifest,
+        manifest_digest, installed_path, package_status, trust_status)
+     VALUES ($1, $2, $3, $4, 'rev-flow-viewer', $5,
+        'f10wv1ewe40000000000000000000000000000000', $6, 'Installed', 'trusted')`,
+    [
+      installId,
+      source,
+      FLOW_VIEWER_REF,
+      FLOW_VIEWER_VERSION,
+      JSON.stringify({
+        spec: { flows: [{ id: FLOW_VIEWER_REF, path: "flow.yaml" }] },
+      }),
+      installedPath,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO project_package_attachments
+       (id, project_id, package_install_id, package_name)
+     VALUES ($1, $2, $3, $4)`,
+    [randomUUID(), ids.project, installId, FLOW_VIEWER_REF],
   );
 
   return {
