@@ -263,14 +263,52 @@ places with another. As of 2026-09-03 on `main` + ADR-165:
 - **integration** — 0 failures, except the two-case
   `lib/runs/__tests__/dirty-resolution-race.integration.test.ts` pair, which
   flakes under parallel load and passes 4/4 in isolation.
-- **e2e** — **34 pre-existing failures**, plus one known-flaky spec below.
-  Ports 3100/7788 and the `maister_e2e` database are shared across worktrees;
-  kill both ports before a run. Two of those 34 were closed on 2026-09-11 by the
-  `assessPackageCompatibility` null-safety fix — `studio.spec.ts` and
-  `studio-local-edit.spec.ts` were not flaky, they were hitting a server-side 500
-  on `/studio` whenever a stored package manifest lacked `spec`. Before filing an
-  e2e failure as environmental, read the `[WebServer]` lines in the run log: a
-  React server-component stack there is a product bug, not a test one.
+- **e2e** — **35 pre-existing failures across 30 spec files**, enumerated below,
+  plus one known-flaky spec. Ports 3100/7788 and the `maister_e2e` database are
+  shared across worktrees; kill both ports before a run. Before filing an e2e
+  failure as environmental, read the `[WebServer]` lines in the run log: a React
+  server-component stack there is a product bug, not a test one.
+
+  **The set, not the count** (measured 2026-09-17, one failing case per spec
+  unless noted). The previous entry said "34" with no list, which is unusable:
+  this section's own first line says to compare SETS, and a bare number cannot
+  be diffed. It had also decayed — two `studio` entries it still counted were
+  closed on 2026-09-11 by the `assessPackageCompatibility` null-safety fix, and
+  `active-workspaces.spec.ts`'s stale `rail-stop` assertion was since inverted
+  to `toHaveCount(0)`.
+
+  `studio-local-edit` (3) · `flows-authoring` (3) · `multi-run-cost-policy` (2) ·
+  `adr160-rework-claim` · `adr161-node-interrupt` · `evaluation-lab` ·
+  `execution-host-contract` · `flow-package-viewer` · `flow-studio-artifacts` ·
+  `forked-package-loop` · `m11b-takeover` · `m11c-settings-enforcement` ·
+  `m13-assignments` · `m16-external-operations` · `m22-workbench` ·
+  `m27-flow-editor` · `m27-platform-mcp` · `package-management` ·
+  `platform-acp-runners` · `platform-agents-page` · `project-automations` ·
+  `project-onboarding` · `project-registration` · `review-comments` ·
+  `run-schedules` · `run-sync` · `studio-ai-assistant` · `studio-diff` ·
+  `studio-import` · `studio-package-viewer`.
+
+  **They are deterministic, not interference.** Sampled `studio-diff`,
+  `project-registration` and `m13-assignments` — three different areas — and all
+  three fail in isolation (2 workers, no cross-spec load) AND on a detached
+  `master` with the identical pass/fail split. So the shared-DB-interference
+  explanation this config's `retries: 1` exists to absorb does NOT cover them;
+  every one of the 35 fails both its attempts. `m13-assignments` fails in 9.1 s,
+  which is far too fast to be host saturation.
+
+  **Read the host before believing a timeout-class failure.** The 2026-09-17
+  measurement ran at load average 55-59 on 16 cores, against a competing
+  `vitest --project integration` from another worktree and a 688 %-CPU VM. That
+  does not explain a 9 s deterministic failure, but it does inflate the 30 s
+  `toBeVisible` and 180 s `click` timeouts in this set — re-measure those on a
+  quiet host before diagnosing them as product bugs.
+
+  **Not in the set, deliberately:** `execution-ab-content.spec.ts` (4 cases)
+  used to fail here every run. It owns a lane of its own
+  (`playwright.execution-ab.config.ts`) with a dedicated supervisor and runtime
+  roots, was not listed in `AUTHED_SPEC`, and so ran UNAUTHENTICATED in the
+  default `chromium` project where it cannot pass. The default config now
+  ignores `execution-ab-*.spec.ts` the same way it already ignored `live-*`.
 
 **Budget ~25 min for the integration lane and do not mistake it for a hang.** It
 is gated by two very slow files — `lib/flows/graph/__tests__/prompt-owners.integration.test.ts`

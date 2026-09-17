@@ -78,6 +78,14 @@ export default defineConfig({
         /.*\.setup\.ts$/,
         AUTHED_SPEC,
         /live-.*\.spec\.ts$/,
+        // Same reason as `live-`: this spec owns a lane of its own
+        // (`playwright.execution-ab.config.ts`, `pnpm test:e2e:execution-ab`)
+        // whose webServer points at a dedicated supervisor, its own runtime and
+        // worktree roots, and a raised concurrency cap. Nothing here supplies
+        // any of that, and the spec is not in `AUTHED_SPEC`, so without this
+        // line it ran UNAUTHENTICATED in the default lane and contributed four
+        // guaranteed failures to every full-suite run.
+        /execution-ab-.*\.spec\.ts$/,
       ],
     },
     // M11a/M11b/M11c + portfolio/launch/registration/admin/scratch/platform specs run as
