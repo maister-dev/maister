@@ -3,10 +3,10 @@ import type { TokenScope } from "@/types/token-scopes";
 import { describe, expect, it } from "vitest";
 
 import {
-  isManagedTokenRow,
   toggleScope,
   toggleScopeForEdit,
 } from "@/components/board/token-actions";
+import { isManagedTokenRow } from "@/lib/tokens/managed-row";
 
 // ADR-168 T5.3. The two toggles differ in exactly one branch, and that branch
 // is the whole point: on a CREATE form an empty selection defensibly means
