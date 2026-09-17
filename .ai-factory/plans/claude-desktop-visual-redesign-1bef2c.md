@@ -333,7 +333,7 @@ Exit: gates 1–6.
 
 ### Phase 3 — Extract the HITL panel
 
-**T3.1 [ ] — RED: the panel's markup and error contract**
+**T3.1 [x] — RED: the panel's markup and error contract**
 
 Write `web/components/inbox/__tests__/hitl-panel.test.ts` (**T-D17** plus the markup
 half, `unit`, `renderToStaticMarkup`) against a module that does not exist: collapsed
@@ -344,7 +344,7 @@ function used in `useCallback`/`useEffect` deps MUST preserve the real hook's st
 identity — cache one translator per namespace inside the hoisted factory. A fresh
 function per render has previously looped this suite to a 4 GB OOM.
 
-**T3.2 [ ] — GREEN: extract, then rebuild `HitlCard` on it**
+**T3.2 [x] — GREEN: extract, then rebuild `HitlCard` on it**
 
 `HitlCard` is a client component and monolithic — its own `useState` expansion, its
 own header toggle, a lazy `inbox-context` fetch, a trailing `RunHitlResponse`, and a
@@ -359,7 +359,7 @@ Logging: preserve the existing loading/error branch **verbatim** (`REQ-D16`).
 
 Proves: `AC-D17` · Implements: `REQ-D16`, `REQ-D17`.
 
-**T3.3 [ ] — Verify `/inbox` is unchanged**
+**T3.3 [x] — Verify `/inbox` is unchanged**
 
 `/inbox` renders the rebuilt card. Run the inbox e2e spec and the existing
 `components/inbox/__tests__/hitl-card.test.ts` unmodified — if either needs editing,
