@@ -8,7 +8,8 @@ import { useTranslations } from "next-intl";
 import { useState, useTransition } from "react";
 import clsx from "clsx";
 
-import { readApiError } from "@/lib/api-error";
+import { apiErrorText, readApiErrorBody } from "@/lib/api-error";
+import { isStaleViewErrorCode } from "@/lib/ui-error-message";
 
 export interface HitlActionsProps {
   runId: string;
@@ -50,7 +51,14 @@ export function HitlActions({
       );
 
       if (!res.ok) {
-        setError(await readApiError(res, tApiErrors));
+        const body = await readApiErrorBody(res);
+
+        setError(apiErrorText(body, tApiErrors));
+        // The card no longer reflects the run — re-sync rather than leave the
+        // option buttons live on a request the server will keep refusing.
+        if (isStaleViewErrorCode(body?.code)) {
+          startTransition(() => router.refresh());
+        }
 
         return;
       }
