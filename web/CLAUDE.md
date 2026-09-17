@@ -263,7 +263,7 @@ places with another. As of 2026-09-03 on `main` + ADR-165:
 - **integration** — 0 failures, except the two-case
   `lib/runs/__tests__/dirty-resolution-race.integration.test.ts` pair, which
   flakes under parallel load and passes 4/4 in isolation.
-- **e2e** — **7 pre-existing failures across 7 spec files**, enumerated below,
+- **e2e** — **4 pre-existing failures across 4 spec files**, enumerated below,
   plus one known-flaky spec. Ports 3100/7788 and the `maister_e2e` database are
   shared across worktrees; kill both ports before a run. Before filing an e2e
   failure as environmental, read the `[WebServer]` lines in the run log: a React
@@ -275,9 +275,15 @@ places with another. As of 2026-09-03 on `main` + ADR-165:
   this section's own first line says to compare SETS, and a bare number cannot
   be diffed.
 
-  `evaluation-lab` · `execution-host-contract` · `forked-package-loop` ·
-  `project-onboarding` · `project-registration` · `review-comments` ·
+  `evaluation-lab` · `forked-package-loop` · `review-comments` ·
   `studio-ai-assistant`.
+
+  `review-comments` is diagnosed in the spec itself: the hover-revealed
+  `.diff-add-widget` is painted but clipped out of the hit-test tree, so no
+  pointer route reaches it and `dispatchEvent` reaches the node without opening
+  the composer. It needs that widget's event contract. `studio-ai-assistant`
+  needs a real ACP turn from the test supervisor — infrastructure, not a
+  selector.
 
   Each has its OWN cause — this set has no shared theme left, so triage from the
   failure rather than looking for a pattern. Two of them (`evaluation-lab`,
@@ -289,8 +295,13 @@ places with another. As of 2026-09-03 on `main` + ADR-165:
   scaffold and "the client can never fabricate a digest that would pass
   preflight", so the specs have to take the scaffold from the server.
 
-  **Closed on 2026-09-17** (20 spec files, 23 cases), all stale expectations
-  except two product bugs. The second: `listProjectAutomations` sorted by a rank
+  **Closed on 2026-09-17** (23 spec files, 26 cases), all stale expectations
+  except three product bugs. The third: `getDefaultBranch` probes with
+  `git -C <dir>`, which resolves UPWARD — so for a directory that is not itself
+  a repo root it described the enclosing checkout. New-empty onboarding writes
+  the manifest before `gitInit` runs, so a greenfield folder inside another
+  working tree stamped that tree's default into the manifest and the project
+  row, for a repo then created on `main`. The second: `listProjectAutomations` sorted by a rank
   written as a bare integer literal, which Postgres reads in ORDER BY as an
   ORDINAL POSITION — `ORDER BY 0` failed to analyse and the project Automations
   tab fell to the error boundary on every project, taking `run-schedules` and
@@ -298,8 +309,9 @@ places with another. As of 2026-09-03 on `main` + ADR-165:
   that touched that function mocked it, so the SQL was never executed.
   Additionally closed: `platform-acp-runners` · `run-schedules` ·
   `project-automations` · `studio-package-viewer` · `multi-run-cost-policy` (2) ·
-  `run-sync`, and `platform-agents-page`, which now passes untouched. The first
-  product bug: `studio-diff` · `studio-import` · `package-management`
+  `run-sync` · `execution-host-contract` · `project-onboarding` ·
+  `project-registration`, and `platform-agents-page`, which now passes
+  untouched. The first product bug: `studio-diff` · `studio-import` · `package-management`
   (stale `flow.yaml` fixtures missing `compat.engine_min`, and a digest-labelled
   install button) · `flows-authoring` (3) · `m11b-takeover` ·
   `m11c-settings-enforcement` · `m13-assignments` · `m16-external-operations` ·
