@@ -226,6 +226,29 @@ export async function runEventStreamHealthSweep(
   });
 }
 
+/** True when the event stream of the host holding this command is `lost`.
+ * A prompt only terminalizes from an INGESTED terminal event, so a waiter on
+ * such a host is waiting for evidence that cannot arrive. */
+export async function commandStreamLost(input: {
+  db: Db;
+  commandId: string;
+}): Promise<boolean> {
+  const rows = await input.db
+    .select({ state: executionEventStreams.state })
+    .from(executionCommands)
+    .innerJoin(
+      executionEventStreams,
+      eq(
+        executionEventStreams.executionHostId,
+        executionCommands.executionHostId,
+      ),
+    )
+    .where(eq(executionCommands.id, input.commandId))
+    .limit(1);
+
+  return rows[0]?.state === "lost";
+}
+
 /** Streams this manager has given up on. Read by the command-impasse signal. */
 export async function lostStreamHostIds(input: {
   db: Db;

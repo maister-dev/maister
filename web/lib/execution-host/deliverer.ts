@@ -39,6 +39,7 @@ import {
   reconcileStoredPromptEvidence,
   promptEvidenceConflict,
 } from "./prompt-evidence";
+import { commandStreamLost } from "./events/stream-health";
 
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { runs } from "@/lib/db/schema";
@@ -852,15 +853,40 @@ export async function queryPrompt(
   };
 }
 
+/** How often the unbounded wait below re-checks that the evidence it is waiting
+ * for can still arrive. The wake loop itself spins at 4 Hz; this is a DB read. */
+const STREAM_HEALTH_CHECK_MS = 30_000;
+
 export async function waitForPromptCompletion(
   input: PromptQueryOptions & {
     assignmentIsCurrent?: () => Promise<boolean>;
   },
 ): Promise<PromptResult> {
+  let nextHealthCheck = Date.now() + STREAM_HEALTH_CHECK_MS;
+
   for (;;) {
     const result = await queryPrompt(input);
 
     if (result.state === "succeeded") return result.result;
+    if (Date.now() >= nextHealthCheck) {
+      nextHealthCheck = Date.now() + STREAM_HEALTH_CHECK_MS;
+      // This wait used to be unbounded with no exit but an abort. A prompt can
+      // only terminalize from an ingested terminal event, so once the manager
+      // has given up on the stream the wait can never end — yield instead of
+      // spinning forever. The caller turns this into a continuation-pending
+      // yield: no run state is written and a later driver can resume.
+      if (
+        await commandStreamLost({
+          db: input.db,
+          commandId: input.handle.commandId,
+        })
+      )
+        throw new MaisterError(
+          "EXECUTOR_UNAVAILABLE",
+          "execution host event stream is lost; prompt evidence cannot arrive",
+          { details: { reason: "event_stream_lost" } },
+        );
+    }
     await waitForCommandWake(input.handle.commandId, input.signal);
   }
 }

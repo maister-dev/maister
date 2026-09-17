@@ -38,6 +38,18 @@ export async function POST(
       endpoint: ENDPOINT,
       method: "POST",
       requireScope: true,
+      // Without this a GLOBAL operator token is refused on BINDING, before the
+      // scope check, even though `runs:recover` already maps to `recoverRun`.
+      // Resolving the project from the run reaches that ladder; a project-bound
+      // token pointed at a foreign run is still existence-hidden as 404.
+      resolveProjectId: async ({ db: handlerDb }) => {
+        const rows = await handlerDb
+          .select({ projectId: runs.projectId })
+          .from(runs)
+          .where(eq(runs.id, runId));
+
+        return rows[0]?.projectId ?? null;
+      },
       db,
     },
     async (ctx) => {
