@@ -272,6 +272,16 @@ does not download an ever-growing message into the worker. Scratch dialogs
 retain their existing transcript owner, which also owns user-message ordering;
 the canonical transcript worker must not overwrite scratch message positions.
 
+`run_messages` now has a SECOND, non-projector writer: the flow dispatcher
+records each dispatched prompt as a `user` row (TRC-05). Sequence allocation is
+therefore no longer safe by virtue of being alone — both writers take the same
+`SELECT ... FOR UPDATE` on the scope's `run_transcript_states` row, or two
+readers of one `next_sequence` collide on
+`run_messages_run_node_attempt_sequence_uq`. Prompt rows are additionally keyed
+by a nullable `prompt_dispatch_key` under a partial unique index; the
+projector's own rows leave it NULL and stay outside that index.
+See [`run-trace.md`](run-trace.md).
+
 The cost consumer applies each accepted usage event with its cursor in the
 same transaction. Existing rollups are rebuilt per touched aggregate key using
 the `canonical-worker:v1:` source-cursor version, so replay starts each old

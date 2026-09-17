@@ -192,9 +192,23 @@ sequenceDiagram
 
 ### Canonical projector replay (event-stream evidence)
 
-The artifact projector derives tool-call activity `log` and `preview` records
+The artifact projector derives `preview` records — and ONLY `preview` records —
 from manager-owned `execution_events`. It runs at runner sync points and at
 startup through the shared durable projector primitive.
+
+A tool surface derives an artifact only when it carries an `http(s)` preview
+URL, i.e. something a reviewer can open (TRC-01). It used to derive a
+`kind:"log"` artifact from every tool call as well, whose entire body was
+`title · toolCallId · status` — a strictly lossier duplicate of a transcript
+row that already carries the tool's name, kind, status, arguments and result.
+On one install that was 96% of the evidence graph. Tool activity belongs to the
+Trace plane; see [`run-trace.md`](run-trace.md).
+
+Two things this did NOT change. `log` remains a legal, declarable manifest kind
+— a flow can legitimately produce a `producer:"runner"` log artifact — so every
+predicate that excludes projector output keys on `producer='projector'`, never
+on `kind` alone. And runs created before the change keep their projector `log`
+rows: there is no backfill and no read-side filter (TRC-12).
 
 ```mermaid
 sequenceDiagram
@@ -205,7 +219,7 @@ sequenceDiagram
     DB-->>PR: execution_events after canonical run_sequence
     loop each event
         alt session.update / session.permission_request
-            PR->>PR: derive log or preview artifact\n(PK = proj:runId:event:eventId)
+            PR->>PR: derive preview artifact when a URL is present\n(PK = proj:runId:event:eventId)
         else known non-deriving shape
             PR->>PR: no artifact
         end

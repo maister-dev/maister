@@ -122,6 +122,16 @@ remains pending S2.12; this development path is not the S2 activation gate.
 
 Keep `execution_commands.payload` as the existing allowlisted diagnostic projection. Add a **server-private** immutable `request_canonical_json` TEXT on the same ledger, with version and SHA-256. Store the exact JCS UTF-8 string for `{requestVersion, command:{id,kind,issuedAt}, fence, target:{hostSessionId}, payload}`; include every effect-affecting field, array order and frozen content/object references. Normalize optional fields once before storage. `issuedAt` and all generated IDs are created once and reused; no clock/random input during retry. Parsed request → strict schema → digest comparison precedes every dispatch. The host uses the same digest schema, including the URL target (not only envelope payload), before replaying a receipt.
 
+> **Distinct from the run-trace read model.** `request_canonical_json` is
+> COMMAND-DELIVERY data: server-private, immutable, digest-compared before every
+> dispatch, and never served to a browser. Since TRC-05 the same prompt text
+> also reaches a separate read model — a `user` row in `run_messages`, served by
+> `GET /api/runs/{runId}/transcript` behind `readRepoFiles`, bounded at 256 KiB
+> and keyed per dispatch. The two never share a row or a lifecycle: one exists
+> so a command can be replayed byte-exactly, the other so a reader can see what
+> the agent was asked. See [`run-trace.md`](run-trace.md). (Prose only — this
+> document is at the 12-bullet Expectations cap and gains no new `PRM` id.)
+
 Prompt text in this private request is protected user data, never a generic command DTO, browser event, log or metric. Persist credential references only; never resolved API keys/env secrets. Do not replay from redacted `payload`, a hash alone, a mutable scratch message, a refreshed capability profile, or current configuration. Existing credential injection remains at its established trusted boundary. An immutable request containing an unsupported secret-bearing transport field must be refused before admission, not silently redacted into a different replay request.
 
 For new prompts, owner reference, logical operation key, request schema/digest/body, target incarnation and accepted generation are mandatory together. Retain the existing unique `(run_id, logical_operation_key)` with the owner family/subvariant encoded in the namespaced key and request-content comparison before replay; the key includes durable owner generation/turn identity, not a freshly generated retry UUID. Lock the authoritative owner generation and look up its logical key **before** allocating command UUID/issuedAt. If present, reuse those stored fields and compare the normalized caller-controlled semantics against the immutable request; a concurrent unique-key winner follows this same lookup/comparison path. Only a genuinely new operation allocates generated fields. Same key/same canonical request reattaches; same key/different request returns `409 CONFLICT` / `command_invariant_conflict` without effect. An authorized new turn creates a new owner generation and key.

@@ -8,6 +8,7 @@ import {
   validateAnalyticsGroup,
   validateDocsIndexes,
   validateM51Analytics,
+  validateRunTraceAnalytics,
   validateStageBAnalytics,
 } from "./validate-docs-indexes.mjs";
 
@@ -36,7 +37,15 @@ const M51 = {
   ],
 };
 
-const GROUPS = [STAGE_B, M51];
+// A single-document group whose matrix lives inside that same document — the
+// degenerate case of Stage B's inline idiom, and the shape the TRC group uses.
+const RUN_TRACE = {
+  label: "Run trace",
+  traceabilityFile: "run-trace.md",
+  documents: [["run-trace.md", "TRC-01", "EDGE-TRC-01"]],
+};
+
+const GROUPS = [STAGE_B, M51, RUN_TRACE];
 
 function documentBody(requirement, edge, traceability = "") {
   return `# Fixture\n\n## Purpose\n\nText.\n\n## Domain entities\n\n- Entity.\n\n## State machine\n\nText.\n\n## Process flows\n\nText.\n\n## Expectations\n\n- **${requirement}:** Contract.\n\n## Edge cases\n\n- **${edge}:** Case.\n\n## Linked artifacts\n\n- [Artifact](artifact.md)\n${traceability}`;
@@ -121,6 +130,45 @@ test("accepts a complete, indexed Stage B specification fixture", async () => {
 test("accepts a complete, indexed M51 specification fixture", async () => {
   await withFixture(async (root) => {
     assert.deepEqual(validateM51Analytics(join(root, "system-analytics")), []);
+  });
+});
+
+test("accepts a complete, indexed Run trace specification fixture", async () => {
+  await withFixture(async (root) => {
+    assert.deepEqual(validateRunTraceAnalytics(join(root, "system-analytics")), []);
+  });
+});
+
+test("rejects a TRC requirement with no row in the run-trace matrix", async () => {
+  await withFixture(async (root) => {
+    const analytics = join(root, "system-analytics");
+    const matrix = join(analytics, "run-trace.md");
+    const current = await readFile(matrix, "utf8");
+    await writeFile(
+      matrix,
+      current.replace("| TRC-01 | contract | enforcement | IT-TRC-01 | Designed |\n", ""),
+    );
+    const failures = validateRunTraceAnalytics(analytics).join("\n");
+    assert.match(failures, /TRC-01: missing traceability row with primary test/);
+    // The other groups keep their own documents; a TRC edit is not their problem.
+    assert.deepEqual(validateStageBAnalytics(analytics), []);
+  });
+});
+
+test("rejects a TRC traceability row whose primary test cell is blank", async () => {
+  await withFixture(async (root) => {
+    const analytics = join(root, "system-analytics");
+    const matrix = join(analytics, "run-trace.md");
+    const current = await readFile(matrix, "utf8");
+    await writeFile(
+      matrix,
+      current.replace(
+        "| EDGE-TRC-01 | contract | enforcement | IT-EDGE-TRC-01 | Designed |",
+        "| EDGE-TRC-01 | contract | enforcement |   | Designed |",
+      ),
+    );
+    const failures = validateRunTraceAnalytics(analytics).join("\n");
+    assert.match(failures, /EDGE-TRC-01: missing traceability row with primary test/);
   });
 });
 

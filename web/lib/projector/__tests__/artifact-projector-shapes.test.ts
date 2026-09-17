@@ -112,7 +112,10 @@ describe("canonicalArtifactProjector shapes", () => {
     },
   );
 
-  it("warns and skips an unrecognised shape instead of poisoning the consumer", async () => {
+  // UT-TRC-03 — the primary test for that requirement. It predates the TRC set
+  // and already states the contract exactly, so it is re-pointed here rather
+  // than duplicated: a second test of the same invariant is overlap.
+  it("UT-TRC-03: warns and skips an unrecognised shape instead of poisoning the consumer", async () => {
     await expect(
       canonicalArtifactProjector.project(
         tx,

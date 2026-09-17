@@ -179,6 +179,17 @@ sequenceDiagram
 
 Only DIRECT children are visible. A missing row is existence-hidden: `409`.
 
+`outputText` (deprecated in favour of `result.value`) is composed only from
+artifacts a producer DELIBERATELY recorded: its predicate excludes
+`producer='projector'` (TRC-04). A projector-derived row was never the child's
+answer — it is tool telemetry — and an orchestrator that read one as a result
+would be reading the wrong plane. The predicate narrows by producer, never by
+kind: `log` stays a declarable manifest kind, so a flow's own
+`producer:"runner"` log artifact is still eligible.
+A **shipped contract narrows** here: a parent that previously received a
+projector-derived `outputText` now receives `undefined` unless its child
+recorded a real one. See [`run-trace.md`](run-trace.md).
+
 ### (f) Reference RAH workflow
 
 ```mermaid

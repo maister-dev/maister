@@ -1856,11 +1856,13 @@ table run_messages {
   content text [not null]
   supervisor_event_id text
   projection_tool_key text
+  prompt_dispatch_key text
   created_at "timestamp with time zone" [not null, default: `now()`]
 
   indexes {
     (run_id, node_attempt_id, projection_tool_key, sequence) [name: 'run_messages_projection_tool_idx']
     (run_id, node_attempt_id, sequence) [name: 'run_messages_run_node_attempt_sequence_uq', unique]
+    (run_id, node_attempt_id, prompt_dispatch_key) [name: 'run_messages_prompt_dispatch_key_uq', unique]
   }
 }
 

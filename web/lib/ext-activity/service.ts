@@ -11,7 +11,7 @@ import type {
   RunActivitySourceMessage,
 } from "@/lib/ext-activity/types";
 
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
@@ -209,7 +209,24 @@ async function loadRunActivitySources(
     })
     .from(runMessages)
     .leftJoin(nodeAttempts, eq(nodeAttempts.id, runMessages.nodeAttemptId))
-    .where(eq(runMessages.runId, run.runId))
+    .where(
+      and(
+        eq(runMessages.runId, run.runId),
+        // TRC-11. A dispatcher-recorded prompt MUST NOT cross this seam. This
+        // endpoint family admits a project-bound `runs:read` token, while the
+        // internal transcript route requires `readRepoFiles` (member) — and a
+        // resolved prompt can carry injected artifact bodies via
+        // `{{ artifacts.<id>.content }}` (ADR-120), i.e. repository content.
+        // Serving it here would be a strictly wider exposure than
+        // `node_attempts.resolved_prompt` already crosses.
+        //
+        // The predicate keys on the dispatch key, never on `role`: a SCRATCH
+        // run's `user` rows are the operator's own dialog and belong in this
+        // feed. `prompt_dispatch_key` is non-null on exactly the rows the flow
+        // dispatcher recorded, and NULL on every scratch and projector row.
+        isNull(runMessages.promptDispatchKey),
+      ),
+    )
     .orderBy(
       sql`coalesce(${runMessages.supervisorEventId}, '0')::bigint asc`,
       asc(runMessages.sequence),

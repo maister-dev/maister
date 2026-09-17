@@ -606,7 +606,9 @@ additively as `status: "Pending" | "Running"`. Every settle path calls
 - **Result fields.** `settled`, `resultStatus` (7 values), `result`
   (`{schemaRef, value}`, null unless `valid`), `resultRevision`, `resultFailure`.
   `outputText` is deprecated and now deterministic
-  (`ORDER BY created_at DESC LIMIT 1`); the untruthful `"unknown"` status
+  (`ORDER BY created_at DESC LIMIT 1`); it excludes projector-derived rows
+  (TRC-04 — see [`run-trace.md`](run-trace.md)), so a coordinator never reads
+  tool telemetry as its child's answer; the untruthful `"unknown"` status
   fallback is removed.
 
 ### Wake invariant

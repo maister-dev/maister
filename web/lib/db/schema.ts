@@ -5138,6 +5138,10 @@ export const runMessages = pgTable(
     content: text("content").notNull(),
     supervisorEventId: text("supervisor_event_id"),
     projectionToolKey: text("projection_tool_key"),
+    // TRC-06: the per-dispatch identity of a recorded prompt, derived from the
+    // owner's existing operation-key function. NULL on every transcript-
+    // projector row, which the partial index below leaves unconstrained.
+    promptDispatchKey: text("prompt_dispatch_key"),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
       .notNull()
       .defaultNow(),
@@ -5151,6 +5155,22 @@ export const runMessages = pgTable(
     )
       .on(t.runId, t.nodeAttemptId, t.sequence)
       .nullsNotDistinct(),
+    // TRC-06 / EDGE-TRC-03. Idempotency is a CONSTRAINT, not application
+    // ordering: a retry from another process must not double-write.
+    //
+    // The migration declares this index `NULLS NOT DISTINCT`, which drizzle
+    // offers only on `unique()` constraints — and a constraint cannot be
+    // partial. The clause keeps this index in step with its sequence-key
+    // sibling above: under the default NULLS DISTINCT a row whose
+    // `node_attempt_id` is NULL would be unique regardless of its dispatch
+    // key, silently exempting it. Only the flow dispatcher records prompts
+    // today and it always names an attempt, so no such row exists yet — the
+    // clause is what stops that from becoming a correctness hole the day one
+    // does. Do not "simplify" this to a `unique()` and do not regenerate the
+    // migration's DDL from this declaration alone.
+    uniqPromptDispatchKey: uniqueIndex("run_messages_prompt_dispatch_key_uq")
+      .on(t.runId, t.nodeAttemptId, t.promptDispatchKey)
+      .where(sql`${t.promptDispatchKey} IS NOT NULL`),
   }),
 );
 

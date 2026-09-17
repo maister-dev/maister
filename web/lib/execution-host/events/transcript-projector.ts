@@ -10,6 +10,7 @@ import { and, desc, eq, isNull, sql } from "drizzle-orm";
 
 import { CANONICAL_PROJECTION_CONSUMERS } from "./projection-consumers";
 import { ExecutionEventProjectionError } from "./projector";
+import { lockTranscriptState, transcriptStateId } from "./run-message-store";
 import { prepareTranscriptContent } from "./session-content";
 
 import {
@@ -117,25 +118,12 @@ export async function projectTranscriptEvent(
         true,
       );
   }
-  const id = createHash("sha256")
-    .update(JSON.stringify([event.runId, nodeAttemptId]))
-    .digest("hex");
+  // TRC-10: the SAME lock `appendRunMessage` takes. `run_messages` now has a
+  // second writer on this scope, and an unlocked read of `next_sequence` by
+  // either side is a unique violation waiting for the two to interleave.
+  const id = transcriptStateId(event.runId, nodeAttemptId);
+  const state = await lockTranscriptState(tx, event.runId, nodeAttemptId);
 
-  await tx
-    .insert(runTranscriptStates)
-    .values({ id, runId: event.runId, nodeAttemptId })
-    .onConflictDoNothing();
-  const [state] = await tx
-    .select()
-    .from(runTranscriptStates)
-    .where(eq(runTranscriptStates.id, id))
-    .limit(1);
-
-  if (!state)
-    throw new ExecutionEventProjectionError(
-      "transcript state is missing",
-      true,
-    );
   if (RESET_EVENTS.has(event.eventType)) {
     await tx
       .update(runTranscriptStates)

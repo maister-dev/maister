@@ -32,8 +32,10 @@ const log = pino({
 });
 
 // The ACP `sessionUpdate` variants that carry no artifact. `tool_call` and
-// `tool_call_update` are the only deriving ones; everything else the protocol
-// defines is transcript or telemetry. Taken from the SDK's own schema rather
+// `tool_call_update` are the only ones that can derive at all, and since
+// TRC-01 they do so only when the surface carries an http(s) preview URL;
+// everything else the protocol defines is transcript or telemetry. Taken from
+// the SDK's own schema rather
 // than discovered one incident at a time — `usage_update` alone poisoned six
 // consumers. Vendor adapters add frames beyond the spec, so an unlisted one
 // warns and skips (below) instead of stopping the run's projection.
@@ -77,10 +79,12 @@ type Attribution = {
   attempt: number;
 };
 
+// TRC-01: a tool surface derives evidence only when it carries something a
+// reviewer can open. `preview` is the only kind this projector produces.
 type Derivation = {
-  kind: "log" | "preview";
+  kind: "preview";
   locator: ArtifactLocator;
-  uri: string | null;
+  uri: string;
 };
 
 const HTTP_URL = /^https?:\/\/\S+$/i;
@@ -119,32 +123,24 @@ function findPreviewUrl(value: unknown): string | null {
   return null;
 }
 
-function shortLogSummary(update: Record<string, unknown>): string {
-  const title = typeof update.title === "string" ? update.title : undefined;
-  const toolCallId =
-    typeof update.toolCallId === "string" ? update.toolCallId : undefined;
-  const status = typeof update.status === "string" ? update.status : undefined;
-
-  return [title, toolCallId, status].filter(Boolean).join(" · ") || "tool_call";
-}
-
 // Classify a tool-call surface (ACP toolCall with title/toolCallId/status/
-// content/locations) into a preview-or-log derivation.
-function deriveFromToolCall(toolCall: Record<string, unknown>): Derivation {
+// content/locations). A surface with no openable preview URL derives NOTHING:
+// what the tool did is already carried, and carried better, by the Trace plane
+// (`run_messages`) — name, kind, status, arguments, result. The `log` artifact
+// this used to synthesize held only `title · toolCallId · status`, a strictly
+// lossier duplicate that nonetheless grew to 96% of one install's evidence
+// graph and buried the artifacts a reviewer actually needed.
+function deriveFromToolCall(
+  toolCall: Record<string, unknown>,
+): Derivation | null {
   const previewUrl = findPreviewUrl(toolCall);
 
-  if (previewUrl) {
-    return {
-      kind: "preview",
-      locator: { kind: "inline", text: previewUrl },
-      uri: previewUrl,
-    };
-  }
+  if (!previewUrl) return null;
 
   return {
-    kind: "log",
-    locator: { kind: "inline", text: shortLogSummary(toolCall) },
-    uri: null,
+    kind: "preview",
+    locator: { kind: "inline", text: previewUrl },
+    uri: previewUrl,
   };
 }
 
@@ -305,6 +301,23 @@ async function projectCanonicalArtifactEvent(
         : "canonical artifact event has an invalid shape",
     );
   }
+  // The rehydration behind this decision is NOT free: `prepareArtifactContent`
+  // pulls each offloaded payload's bytes back before classification, because a
+  // preview URL can only be found inside them. Skipping the fetch would lose
+  // previews silently, so the cost is logged rather than avoided.
+  log.debug(
+    {
+      runId: event.runId,
+      eventId: event.id,
+      sessionUpdate:
+        typeof event.payload?.update === "object" && event.payload.update
+          ? (event.payload.update as Record<string, unknown>).sessionUpdate
+          : event.eventType,
+      payloadBytes: event.payloadBytes,
+      derived: derivation ? "preview" : null,
+    },
+    "artifact projector classified an event",
+  );
   if (!derivation) return;
 
   const attribution = await canonicalAttribution(tx, event);

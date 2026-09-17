@@ -124,6 +124,50 @@ describe("GET /api/runs/[runId]/transcript", () => {
     );
   });
 
+  // CT-TRC-11: prompt text recorded as a `user` row is served by this route and
+  // by nothing weaker. The two tests above assert the gate is CALLED; this one
+  // asserts what the gate actually protects — the prompt bytes themselves never
+  // reach a caller the gate rejected, and reach one it admitted verbatim.
+  it("CT-TRC-11: serves a user prompt row only behind readRepoFiles", async () => {
+    const prompt = "/aif-plan implement the widget";
+
+    vi.mocked(getRunNodeTranscript).mockResolvedValue({
+      messages: [
+        {
+          id: "m0",
+          role: "user",
+          content: prompt,
+          createdAt: "2026-06-29T00:00:00.000Z",
+        },
+        {
+          id: "m1",
+          role: "assistant",
+          content: "done",
+          createdAt: "2026-06-29T00:00:01.000Z",
+        },
+      ],
+      usage: null,
+    });
+
+    const admitted = await invoke(RUN_ID, "implement");
+    const body = (await admitted.json()) as {
+      messages: { role: string; content: string }[];
+    };
+
+    expect(admitted.status).toBe(200);
+    expect(body.messages.map((m) => m.role)).toEqual(["user", "assistant"]);
+    expect(body.messages[0]?.content).toBe(prompt);
+
+    vi.mocked(requireProjectAction).mockRejectedValue(
+      new MaisterError("UNAUTHORIZED", "not a member"),
+    );
+
+    const refused = await invoke(RUN_ID, "implement");
+
+    expect(refused.status).toBe(403);
+    expect(await refused.text()).not.toContain(prompt);
+  });
+
   it("returns 404 when the run does not exist", async () => {
     vi.mocked(getRunDetail).mockResolvedValue(
       null as unknown as Awaited<ReturnType<typeof getRunDetail>>,

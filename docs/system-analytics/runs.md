@@ -615,11 +615,23 @@ first dispatch's prompt rather than overwriting it. It is best-effort — a fail
 `UPDATE` logs a `WARN` and never blocks dispatch (the prompt is audit data, not
 control flow).
 
-UI surface: the run timeline exposes a collapsible **Prompt** disclosure per
-node-attempt (monospace + copy). For runs created before `0053`,
-`resolved_prompt` is null and the node's manifest **template** is shown instead
-with a "resolved prompt not captured for this run" note — never a best-effort
-re-render (which would lie on `{{ steps.*.output }}`).
+UI surface: the **run centre** exposes a collapsible **Prompt** disclosure per
+node-attempt (monospace + copy) — `flow-run-attempt-prompt` in
+`components/runs/flow-run-center.tsx`. It is NOT on the Timeline tab. Two
+different types share the name `TimelineEntry`: the query DTO in
+`lib/queries/run.ts` DOES carry `resolvedPrompt` (the run centre reads it), while
+the Timeline tab component's own props type in `components/board/run-timeline.tsx`
+does not — so the tab could not render it. For runs created
+before `0053`, `resolved_prompt` is null and the node's manifest **template** is
+shown instead with a "resolved prompt not captured for this run" note — never a
+best-effort re-render (which would lie on `{{ steps.*.output }}`).
+
+`node_attempts.resolved_prompt` remains exactly this: ONE prompt per attempt,
+for that disclosure. It is not the record of what the run was told. Since
+TRC-05 every dispatch — node, permission resume, gate and both consensus
+variants — is additionally recorded as a `user` row in `run_messages`, so a
+node attempt that dispatches more than once contributes more than one row. See
+[`run-trace.md`](run-trace.md).
 
 ### Delivery policy (Implemented, ADR-087)
 
@@ -758,7 +770,13 @@ of node-status text and a single aggregate token count.
   projector and `run_messages.supervisor_event_id` horizon, but its
   client-safe DTO, salience filtering, and liveness synthesis are documented
   separately in [assistant-activity.md](assistant-activity.md); the raw
-  transcript route remains the internal rail.
+  transcript route remains the internal rail. Since TRC-05 a FLOW run's
+  transcript also OPENS with what the agent was asked: every prompt the graph
+  driver dispatches is written as a `user` row by a second, non-projector
+  writer, one row per dispatch, bounded at 256 KiB. That writer shares the
+  projector's `run_transcript_states` scope lock. A standalone agent run has no
+  such row — its launcher records no prompt — see
+  [`run-trace.md`](run-trace.md).
 - **Node-status iconography.** Per-node status (`Pending | Running | Succeeded |
   Failed | NeedsInput | Reworked | Stale`) renders as a localized icon
   + accessible tooltip across the three run-detail surfaces (the "Ноды" list,

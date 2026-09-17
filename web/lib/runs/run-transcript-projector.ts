@@ -3,7 +3,7 @@ import "server-only";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type { TranscriptMessage } from "@/components/run-transcript/transcript-view";
 
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
 
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
@@ -151,7 +151,24 @@ export async function getRunNodeTranscript(
         eq(runMessages.nodeAttemptId, attempt.id),
       ),
     )
-    .orderBy(asc(runMessages.sequence));
+    // EDGE-TRC-08. Order on the run's EVENT stream, not on the order the two
+    // writers arrived. Both store their stream position in the same column:
+    // the projector writes the event it came FROM, the dispatcher the horizon
+    // it was issued AFTER. Ordering on `sequence` alone reads a node with a
+    // blocking gate as `node prompt, gate prompt, node reply, gate reply`
+    // whenever the reply is still unprojected at the gate's dispatch — which
+    // is the normal case, since the runner drives only the artifact projector.
+    //
+    // The middle term breaks an exact tie: a prompt anchored at E was issued
+    // AFTER the event E, so it must follow the reply projected FROM E. Within
+    // one horizon several prompts fall back to `sequence`, their dispatch
+    // order. Every row in a node transcript carries a position, so the
+    // coalesce is defensive only.
+    .orderBy(
+      sql`coalesce(${runMessages.supervisorEventId}, '0')::bigint asc`,
+      sql`(${runMessages.promptDispatchKey} is not null) asc`,
+      asc(runMessages.sequence),
+    );
 
   const messages: TranscriptMessage[] = rows.map((r) => ({
     id: r.id,
@@ -222,9 +239,24 @@ export async function getAgentRunTranscript(
   return { messages, usage };
 }
 
+/**
+ * TRC-11. `includeRecordedPrompts` defaults to FALSE — a dispatcher-recorded
+ * prompt is withheld unless a caller asks for it by name.
+ *
+ * The default is inverted deliberately. This feed is the FALLBACK the external
+ * `runs:read` activity seam takes when its own filtered query returns no rows,
+ * which is exactly the state of a flow run whose only rows so far ARE its
+ * prompts. A filter applied at that one call site would have left the next
+ * caller to rediscover the problem; refusing by default means forgetting is
+ * safe and remembering is explicit.
+ */
 export async function getWholeRunTranscriptMessages(
   runId: string,
-  opts: { client?: DbClient; runtimeRoot?: string } = {},
+  opts: {
+    client?: DbClient;
+    runtimeRoot?: string;
+    includeRecordedPrompts?: boolean;
+  } = {},
 ): Promise<WholeRunTranscriptFeed> {
   const client = opts.client ?? db();
   const [run] = await client
@@ -243,7 +275,18 @@ export async function getWholeRunTranscriptMessages(
       createdAt: runMessages.createdAt,
     })
     .from(runMessages)
-    .where(eq(runMessages.runId, runId))
+    .where(
+      opts.includeRecordedPrompts
+        ? eq(runMessages.runId, runId)
+        : and(
+            eq(runMessages.runId, runId),
+            isNull(runMessages.promptDispatchKey),
+          ),
+    )
+    // Left on arrival order on purpose: this feed serves scratch and agent
+    // runs, whose `user` rows carry no stream position, so the EDGE-TRC-08
+    // ordering used by the node transcript would sort them all to the front.
+    // With prompts excluded by default there is nothing here to re-order.
     .orderBy(asc(runMessages.createdAt), asc(runMessages.sequence));
 
   return {

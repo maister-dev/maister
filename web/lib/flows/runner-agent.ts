@@ -16,6 +16,7 @@ import { eq, and, isNull, isNotNull, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { PERMISSION_RESUME_PROMPT } from "./graph/permission-resume";
+import { recordDispatchedPrompt } from "./graph/prompt-record";
 import { renderStrict } from "./templating";
 import {
   admitNodePrompt,
@@ -1261,6 +1262,22 @@ export async function runAgentStep(
     },
     "agent step start",
   );
+
+  // TRC-05: record THIS dispatch in the run's transcript, before it is sent.
+  // Deliberately carries neither of the two restrictions below — every owner
+  // variant is recorded (a gate's and a consensus turn's prompts were
+  // previously never captured at all) and every dispatch within an attempt
+  // gets its own row (the write-once guard kept only the first). The two
+  // writes coexist: `node_attempts.resolved_prompt` still backs the run
+  // centre's single-prompt disclosure (D4).
+  await recordDispatchedPrompt({
+    db: ctx.db ?? getDb(),
+    runId: ctx.runId,
+    nodeAttemptId: ctx.nodeAttemptId ?? null,
+    stepId: ctx.stepId,
+    ...(ctx.promptOwner ? { owner: ctx.promptOwner } : {}),
+    prompt: resolvedPrompt,
+  });
 
   // Capture the resolved prompt for this attempt before dispatch so it stays
   // visible even if the step later crashes or stalls. Best-effort: audit data,
