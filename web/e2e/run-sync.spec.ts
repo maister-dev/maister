@@ -29,8 +29,11 @@ test.describe("branch sync (ADR-141)", () => {
     // (2) Sync entry point → dialog seeded from the project default (rebase).
     await page.getByTestId("review-sync-open").first().click();
     await expect(page.getByTestId("review-sync-dialog")).toBeVisible();
-    await expect(page.getByTestId("review-sync-strategy")).toHaveValue(
-      "rebase",
+    // The control is a HeroUI Select, not a native <select> — `toHaveValue`
+    // answers "Not an input element". Assert the seeded choice the way a reader
+    // sees it: the trigger renders the selected option's label.
+    await expect(page.getByTestId("review-sync-strategy")).toContainText(
+      "Rebase",
     );
 
     // (3) Start the sync — a clean rebase resolves mechanically (no agent).
