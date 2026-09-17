@@ -263,7 +263,7 @@ places with another. As of 2026-09-03 on `main` + ADR-165:
 - **integration** — 0 failures, except the two-case
   `lib/runs/__tests__/dirty-resolution-race.integration.test.ts` pair, which
   flakes under parallel load and passes 4/4 in isolation.
-- **e2e** — **4 pre-existing failures across 4 spec files**, enumerated below,
+- **e2e** — **3 pre-existing failures across 3 spec files**, enumerated below,
   plus one known-flaky spec. Ports 3100/7788 and the `maister_e2e` database are
   shared across worktrees; kill both ports before a run. Before filing an e2e
   failure as environmental, read the `[WebServer]` lines in the run log: a React
@@ -275,8 +275,14 @@ places with another. As of 2026-09-03 on `main` + ADR-165:
   this section's own first line says to compare SETS, and a bare number cannot
   be diffed.
 
-  `evaluation-lab` · `forked-package-loop` · `review-comments` ·
-  `studio-ai-assistant`.
+  `forked-package-loop` · `review-comments` · `studio-ai-assistant`.
+
+  **A serial file hides tests behind its first failure.** `forked-package-loop`
+  is `mode: "serial"`, so the batch failure had been SKIPPING the two tests
+  after it — the old "(1)" undercounted, and closing that one exposed `:467`
+  (passes) and `:518` (fails at the publish step, `publish-source` with no
+  options). Count the SKIPS, not just the failures, before trusting a serial
+  file's entry here.
 
   `review-comments` is diagnosed in the spec itself: the hover-revealed
   `.diff-add-widget` is painted but clipped out of the hit-test tree, so no
@@ -295,8 +301,12 @@ places with another. As of 2026-09-03 on `main` + ADR-165:
   scaffold and "the client can never fabricate a digest that would pass
   preflight", so the specs have to take the scaffold from the server.
 
-  **Closed on 2026-09-17** (23 spec files, 26 cases), all stale expectations
-  except three product bugs. The third: `getDefaultBranch` probes with
+  **Closed on 2026-09-17** (24 spec files, 27 cases), all stale expectations
+  except three product bugs. `evaluation-lab` and `forked-package-loop`'s batch
+  test needed the launch dialog rather than a hand-written recipe: since
+  ADR-150 the route preflights every inline recipe, and `lab-queries.ts` records
+  that "the client can never fabricate a digest that would pass preflight" — so
+  a spec that POSTs one directly can only ever get a 404. The third: `getDefaultBranch` probes with
   `git -C <dir>`, which resolves UPWARD — so for a directory that is not itself
   a repo root it described the enclosing checkout. New-empty onboarding writes
   the manifest before `gitInit` runs, so a greenfield folder inside another
