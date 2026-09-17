@@ -4,7 +4,10 @@ import { markdownExcerpt } from "@/lib/markdown-excerpt";
 
 // Table transcribed from S1.2 of the plan. Rows 1-12 pin one derivation rule
 // each; rows 13-17 pin the truncation boundary, including both sides of the
-// word-boundary floor and the code-point (not UTF-16) measurement.
+// word-boundary floor and the code-point (not UTF-16) measurement. Rows 18-20
+// pin agreement with the renderer rather than any one direction: 18 and 19 keep
+// a marker `MarkdownBody` shows literally, 20 drops one it unwraps. The rule is
+// "read as the expanded body reads", not "strip everything that looks markup-ish".
 
 const WORD = "абвгдеж";
 const PROSE = Array.from({ length: 25 }, () => WORD).join(" ");
@@ -116,6 +119,18 @@ const cases: {
     name: "18 an underscore between word characters is literal, not emphasis",
     input: "**bold** and snake_case stays",
     expected: "bold and snake_case stays",
+    truncated: false,
+  },
+  {
+    name: "19 a raw HTML tag survives, because the renderer shows it literally",
+    input: "Use Array<string> for the list",
+    expected: "Use Array<string> for the list",
+    truncated: false,
+  },
+  {
+    name: "20 an autolink loses its angle brackets, because the renderer does",
+    input: "See <https://example.com> now",
+    expected: "See https://example.com now",
     truncated: false,
   },
 ];

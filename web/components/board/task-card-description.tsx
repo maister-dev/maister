@@ -4,9 +4,12 @@ import type { ReactElement } from "react";
 
 import { ChevronDownIcon, ChevronUpIcon } from "@heroicons/react/24/outline";
 import { useTranslations } from "next-intl";
-import { useId, useMemo, useState } from "react";
+import { useId, useState } from "react";
 
-import { MarkdownBody } from "@/components/social/markdown-body";
+import {
+  MARKDOWN_COMPACT_TEXT_CLASS,
+  MarkdownBody,
+} from "@/components/social/markdown-body";
 import { markdownExcerpt } from "@/lib/markdown-excerpt";
 
 export function CollapsibleDescription({
@@ -17,12 +20,14 @@ export function CollapsibleDescription({
   const tBoard = useTranslations("board");
   const [expanded, setExpanded] = useState(false);
   const bodyId = useId();
-  const excerpt = useMemo(() => markdownExcerpt(text), [text]);
+  const excerpt = markdownExcerpt(text);
 
   if (!excerpt.truncated) return <MarkdownBody text={text} variant="compact" />;
 
   return (
-    <div className="flex min-w-0 flex-col gap-1 font-mono text-[11px] leading-[1.45] tracking-[0.01em] text-mute">
+    <div
+      className={`flex min-w-0 flex-col gap-1 ${MARKDOWN_COMPACT_TEXT_CLASS}`}
+    >
       <div id={bodyId}>
         {expanded ? (
           <MarkdownBody text={text} variant="compact" />

@@ -68,7 +68,21 @@ markdownExcerpt(source: string, maxChars = 120): { text: string; truncated: bool
      are flanked by `/`, not word characters, and no flanking rule would save
      it.)
    - Inline-code backticks and fenced-code delimiters → removed, content kept.
-   - HTML tags → removed, text content kept.
+   - Raw HTML tags → **KEPT verbatim** (amended 2026-09-17, review finding C1).
+     `MarkdownBody` mounts remark-only with no `rehype-raw` (ADR-078 D10), so
+     `<div>` renders as literal text in the expanded body directly below. This
+     is the same rule as the intra-word underscore above: the excerpt MUST NOT
+     strip a marker the renderer shows. The rule this replaces ("HTML tags →
+     removed, text content kept") was never derived against the renderer, and
+     the regex written from it (`/<[^>]*>/g`) additionally deleted everything
+     between any `<` and a later `>` — `Use Array<string> for the list` became
+     `Use Array for the list`.
+   - CommonMark **autolinks** — `<scheme:rest>` and `<user@host>` → angle
+     brackets removed, inner text kept. These are real markup: the renderer
+     turns `<https://example.com>` into a link whose text is
+     `https://example.com`, so keeping the brackets would diverge in the other
+     direction. (Verified by rendering each form through `MarkdownBody`; the
+     old blanket strip deleted autolinks entirely, which matched neither.)
    - `[label](url)` → `label`. `![alt](url)` → `alt`.
    - GFM table pipes and alignment rows (`|---|:--:|`) → removed; cell text kept,
      separated by a space.
@@ -110,12 +124,21 @@ code points long. This is deliberate — the budget governs content, not the mar
 | 16  | 200 chars whose last space before 120 is at 100  | first 100 chars + `…`        | `true`     |
 | 17  | emoji at code point 119, ASCII either side       | 119 chars + the whole emoji + `…`       | `true` |
 | 18  | `**bold** and snake_case stays`                  | `bold and snake_case stays`  | `false`     |
+| 19  | `Use Array<string> for the list`                 | `Use Array<string> for the list` | `false` |
+| 20  | `See <https://example.com> now`                  | `See https://example.com now` | `false`    |
 
 Rows 14 and 15 are the two sides of the `floor` guard and are both required; row 16
 is the back-off hit. Rows 1-12 are the derivation rules, one per rule — do not add a
 second case per rule, and do not add a "returns an object" test. Row 18 was
-added 2026-09-17 with the intra-word underscore amendment above; it is the only
-row that pins a marker being KEPT.
+added 2026-09-17 with the intra-word underscore amendment above; rows 18-19 are
+the ones that pin a marker being KEPT.
+
+Rows 19-20 were added 2026-09-17 with the raw-HTML/autolink amendment above.
+They are deliberately a PAIR, because the two angle-bracket forms resolve in
+opposite directions and a single row would let the wrong blanket rule pass: 19
+pins raw HTML surviving, 20 pins an autolink being unwrapped. Both expectations
+were read off `MarkdownBody`'s rendered text, not chosen — the excerpt's job is
+to agree with it.
 
 Row 17 amended 2026-09-17 during T3: it first read "cut before the emoji", which
 S1.1 does not produce. At code point 119 the emoji is the LAST code point inside
@@ -154,14 +177,14 @@ ASCII before it the two implementations agree and the row would prove nothing.
 > out of scope), so `TaskInlineEditableField` remains in use.
 
 
-`CollapsibleDescription` has exactly four observable states:
+`CollapsibleDescription` has exactly three observable states (was four until
+2026-09-17; the `editing` row went with in-place editing — see the banner above):
 
 | State     | Condition                                    | Renders                                                                     |
 | --------- | -------------------------------------------- | --------------------------------------------------------------------------- |
 | plain     | `truncated === false`                        | `<MarkdownBody variant="compact">`, **no** toggle                            |
 | collapsed | `truncated === true`, `expanded === false`   | excerpt text + toggle, `aria-expanded="false"`, label `board.descriptionExpand` |
 | expanded  | `truncated === true`, `expanded === true`    | `<MarkdownBody variant="compact">` + toggle, `aria-expanded="true"`, label `board.descriptionCollapse` |
-| editing   | `TaskInlineEditableField.editing === true`   | the Markdown editor on the **full source**; `CollapsibleDescription` is unmounted; on save or cancel it remounts **collapsed** |
 
 Expectations, each naming its enforcement point:
 
@@ -181,42 +204,55 @@ Expectations, each naming its enforcement point:
 - **E4.** Both locales carry both keys.
   *Enforced by:* `web/lib/__tests__/i18n-parity.test.ts`, which fails on key-for-key
   EN/RU drift. Do not restate this as a convention in prose.
-- **E5.** Entering edit mode from the expanded state does not crash and returns a
-  collapsed card.
-  *Enforced by:* test S2-d. See S3 — this is the regression this plan exists to
-  prevent.
+- **E5. WITHDRAWN 2026-09-17** (was: "entering edit mode from the expanded state
+  does not crash and returns a collapsed card", enforced by test S2-d). The card
+  has no edit mode, so the expectation has no subject and S2-d was deleted rather
+  than rewritten. Kept as a struck entry, not silently dropped, because E5 was
+  the expectation this plan was originally written to protect — see S3.
+- **E6.** The excerpt reads exactly as the expanded body does. The two sit one
+  click apart, so any marker the excerpt strips that `MarkdownBody` renders (or
+  keeps that `MarkdownBody` unwraps) is a visible contradiction.
+  *Enforced by:* `web/lib/__tests__/markdown-excerpt-renderer-parity.test.ts`,
+  which asserts each case against the renderer's own output rather than against a
+  hand-written string. Added 2026-09-17 with review finding C1, whose defect —
+  a blanket `/<[^>]*>/g` — this expectation had no mechanism to catch.
 
-## S3. Component decomposition — load-bearing, do not collapse
+## S3. Component decomposition — SUPERSEDED 2026-09-17
 
-Two components, and the split is **not** stylistic:
+**This section no longer describes the code, and none of it is normative.**
+Rewritten in place (review finding C2) because the original text survived the
+in-place-editing removal unchanged: it still prescribed a three-level component
+chain that no longer exists, under a heading reading "load-bearing, do not
+collapse", and still carried a `MUST` — a `WHY` comment at the `renderView` call
+site — that no code path could satisfy. A stale normative bullet outlives the
+narrative that corrects it, so the bullets are gone rather than annotated.
+
+**As built:**
 
 ```
 TaskCard (RSC)
-  └── TaskCardDescription  ("use client")   ← exists to cross the RSC boundary
-        └── TaskInlineEditableField
-              └── renderView(value) → <CollapsibleDescription text={value} />
-                    ← exists to own the hooks
+  └── CollapsibleDescription  ("use client")   ← owns the hooks
 ```
 
-- `TaskCardDescription` exists because `TaskCard` is a React Server Component and a
-  function prop (`renderView`) cannot cross the RSC boundary. Precedent:
-  `web/components/social/task-detail-prompt-editor.tsx`.
-- `CollapsibleDescription` exists because **`renderView` is invoked inside
-  `TaskInlineEditableField`'s render body** (`task-card-editing.tsx:561`), and that
-  component returns early at `task-card-editing.tsx:504` when `editing` is true.
-  Any hook called from the callback body would register as a hook of
-  `TaskInlineEditableField` and would be skipped on the editing render — React then
-  throws *"Rendered fewer hooks than expected"* the moment the user clicks the edit
-  pencil.
+`TaskCard` renders `CollapsibleDescription` directly across a serializable
+`text: string` prop. No `renderView` and no wrapper component are involved.
 
-  **Therefore: the `renderView` callback body MUST only construct an element. No
-  `useState`, no `useMemo`, no `useId`, no `useTranslations` in it.** All hooks —
-  including `useTranslations` — live inside `CollapsibleDescription`.
+**Why the original design existed, and why the hazard is gone.** The plan was
+written around a real React defect: `TaskInlineEditableField` invokes its
+`renderView` callback inside its own render body while returning early when
+`editing` is true, so any hook called from that callback registers against
+`TaskInlineEditableField` and is skipped on the editing render — *"Rendered
+fewer hooks than expected"* the moment the edit pencil is clicked. That was
+verified by inlining `useState` into the callback and watching all four card
+tests fail with exactly that message. The card no longer uses `renderView` at
+all, so the hazard is unreachable from this surface.
 
-The implementation MUST carry a short `WHY` comment at the `renderView` call site
-recording this constraint (project convention: comment the non-obvious invariant,
-never the mechanics). Without it the next reader will "simplify" the two components
-back into one and reintroduce the crash.
+**Still live for the task detail page.** `TaskInlineEditableField` keeps that
+`renderView` seam and is still used by
+`web/components/social/task-detail-prompt-editor.tsx` and the task detail page.
+The constraint — *a `renderView` callback body constructs an element and calls no
+hooks* — remains true for any FUTURE caller, and is recorded here for that
+reason. It is a property of `TaskInlineEditableField`, not of this card.
 
 ## S4. Scope boundaries
 
@@ -243,6 +279,17 @@ is character count alone. Do not add a line-count or rendered-height heuristic:
 there is no evidence it occurs in practice and it adds a knob with an arbitrary
 threshold. If it shows up it is a separate, evidenced change.
 
+Second accepted limitation, recorded 2026-09-17 (review finding): the derivation
+is line-based and has no notion of being *inside* a fence, so a `---` line within
+a fenced code block is dropped as a horizontal rule — ` ```\n---\n``` ` excerpts to
+the empty string. Fixing it means tracking fence state across the line filter,
+which buys a more faithful preview of a case (a code block whose content is only
+rule punctuation) that no observed description has. Left as is, deliberately.
+Note this cuts the OTHER way from E6: it is a divergence from the rendered body
+that the parity test does not cover, because the parity corpus is angle brackets.
+If a third such case appears, widen the corpus rather than adding another
+special-case regex.
+
 ## S6. Contract surfaces
 
 | Surface                    | Changes? | Spec file                                             |
@@ -260,8 +307,13 @@ threshold. If it shows up it is a separate, evidenced change.
 
 **No API contract and no DB migration exist in this change**, and none will be
 invented to satisfy a template. There is no route, wire field, SSE event or error
-code; `PATCH /api/projects/{slug}/tasks/{number}` is reused unchanged by the
-existing editor. There is no new table, column or index; the payload is untouched.
+code. There is no new table, column or index; the payload is untouched.
+
+Amended 2026-09-17: this originally read "`PATCH /api/projects/{slug}/tasks/{number}`
+is reused unchanged by the existing editor". After the in-place-editing removal the
+card issues no `PATCH` at all — its edits go through the full card editor's `PUT`,
+and `PATCH` stays the task detail page's inline save. The claim this sentence
+exists to make (no contract changed) is unaffected; both routes are untouched.
 
 **Deployment touchpoints: none** — no env var, config file, sidecar binary, bound
 port or host-mounted file, so no `Dockerfile` / `compose*.yml` / `.env.example` task.
@@ -277,18 +329,33 @@ Phase 3 completes, so no published HEAD ever describes absent behavior.
 | Test file                                                      | Project | Matching include glob                  |
 | -------------------------------------------------------------- | ------- | -------------------------------------- |
 | `web/lib/__tests__/markdown-excerpt.test.ts`                   | `unit`  | `lib/**/__tests__/**/*.test.ts`        |
+| `web/lib/__tests__/markdown-excerpt-renderer-parity.test.ts`   | `unit`  | `lib/**/__tests__/**/*.test.ts`        |
 | `web/components/board/__tests__/task-card-description.test.ts` | `unit`  | `components/**/__tests__/**/*.test.ts` |
 
-Globs from `web/vitest.workspace.ts`. Both land in already-globbed families, so
-`web/vitest.workspace.ts` MUST NOT be edited. Project default environment is `node`;
-the component test opts in with the per-file `// @vitest-environment jsdom`
-directive, as `web/components/board/__tests__/launch-popover.interaction.test.ts`
-already does in the same project.
+Globs from `web/vitest.workspace.ts`. All three land in already-globbed families,
+so `web/vitest.workspace.ts` MUST NOT be edited. Project default environment is
+`node`; the component test and the parity test opt in with the per-file
+`// @vitest-environment jsdom` directive, as
+`web/components/board/__tests__/launch-popover.interaction.test.ts` already does
+in the same project. The parity test is the first `lib/` file to take that
+directive — it is a `lib` test by subject (the helper is the unit under test) and
+needs a DOM only because its oracle is a real render.
 
-**No overlap, no trivial tests.** The helper's behavior is tested once, at the
-helper, table-driven from S1.2. The component tests assert only the four S2 states
-and never re-derive excerpt text. Forbidden: "renders without crashing", "exports a
-function", asserting React's own attribute plumbing.
+**No overlap, no trivial tests.** Each of the three files tests a different axis
+and none re-derives another's expectations:
+
+- `markdown-excerpt.test.ts` — one row per derivation rule, table-driven from
+  S1.2, expectations written out literally.
+- `markdown-excerpt-renderer-parity.test.ts` — the E6 invariant, expectations
+  taken from `MarkdownBody`'s output. It does NOT restate rows 19-20: those pin
+  the two angle-bracket directions as fixed strings so a renderer change is
+  visible as a conflict between the two files rather than silently ratified by
+  both.
+- `task-card-description.test.ts` — the three S2 states only; it never
+  re-derives excerpt text.
+
+Forbidden: "renders without crashing", "exports a function", asserting React's
+own attribute plumbing.
 
 **Assertion migration is in scope (T6), and these are the files:**
 `web/components/board/__tests__/task-card-delegated.test.ts` and
@@ -297,17 +364,28 @@ function", asserting React's own attribute plumbing.
 imports the new component they need the equivalent mock, or the real component
 renders, its `useTranslations` throws unmocked, and both suites go red.
 
-**Amended 2026-09-17 during T6 — the predicted breakage does not occur, and no
-mock was added.** Measured, not assumed: both suites were run against the wired
-`TaskCard` before any repair and stayed green (6 passed). The reason is S3's own
-split. `TaskCardDescription` declares no hooks — it only constructs
-`TaskInlineEditableField`, which these suites already mock to `() => null`. A
-mock never invokes `renderView`, so `CollapsibleDescription` is never
-constructed and `useTranslations` is never called. Adding a third mock would
-mock a component that already cannot render, so T6 step 4 is dropped rather
-than performed. If `TaskCardDescription` ever gains a hook of its own, that
-assumption dies and the mock becomes real work — which is precisely what the S3
-WHY comment forbids.
+**Amended twice on 2026-09-17. Net result: the mock IS required and both suites
+carry it.** The two amendments are kept in order because the pair is the lesson.
+
+1. *During T6 — predicted breakage did not occur.* Measured, not assumed: both
+   suites ran against the wired `TaskCard` before any repair and stayed green (6
+   passed). The reason was the then-current three-level split — the intermediate
+   wrapper declared no hooks and only constructed `TaskInlineEditableField`,
+   which these suites already mock to `() => null`; a mock never invokes
+   `renderView`, so `CollapsibleDescription` was never constructed and
+   `useTranslations` never called. T6 step 4 was dropped rather than performed.
+2. *After the in-place-editing removal — the breakage arrived.* With the wrapper
+   deleted, `TaskCard` imports `CollapsibleDescription` directly, so the
+   `task-card-editing` mock no longer shields it, `useTranslations` runs
+   unmocked, and both suites went red. Each now mocks
+   `@/components/board/task-card-description`. Measured in this direction too.
+
+The load-bearing point is not which answer was right. It is that the prediction
+was checked against a run in both directions instead of being inherited: a
+dropped repair became necessary the moment the structure it depended on changed.
+
+*(This paragraph was itself corrected on 2026-09-17 by review finding C2, which
+caught it still asserting "no mock was added" after both mocks had landed.)*
 
 **RED tests are never committed red.** The red state is observed and its output
 recorded in the task; the commit lands at green (see Commit Plan).
@@ -421,6 +499,14 @@ recorded in the task; the commit lands at green (see Commit Plan).
 
   Acceptance: all four fail for the right reason (missing component), and S2-d is
   written such that it would fail against a hooks-in-callback implementation.
+
+  > **Superseded 2026-09-17 (after T4 completed).** The task above is left as the
+  > execution record of what was actually done — all four tests were written and
+  > observed red. It is no longer a specification: the in-place-editing removal
+  > deleted **S2-d** (no edit mode on the card = no hazard to guard), and with it
+  > the `task-markdown-editor` stub and the "do NOT mock `TaskInlineEditableField`"
+  > rule, both of which existed only to serve S2-d. The shipped file has three
+  > tests and mocks only `next-intl`. Do not re-derive S2-d from this task.
 
   Files: `web/components/board/__tests__/task-card-description.test.ts`
 

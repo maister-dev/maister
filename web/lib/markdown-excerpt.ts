@@ -7,7 +7,14 @@ const HEADING_MARKER = /^\s*#{1,6}\s+/;
 const LIST_MARKER = /^\s*(?:[-*+]\s+|\d+[.)]\s+)/;
 const IMAGE = /!\[([^\]]*)\]\([^)]*\)/g;
 const LINK = /\[([^\]]*)\]\([^)]*\)/g;
-const HTML_TAG = /<[^>]*>/g;
+// Only the angle-bracket form the renderer UNWRAPS. A CommonMark autolink
+// becomes a link whose text has no brackets, so the excerpt drops them too.
+// Raw HTML is deliberately absent here: `MarkdownBody` mounts remark-only with
+// no rehype-raw (ADR-078 D10), so `<div>` and `Array<string>` render as literal
+// text one click below — stripping them would make the excerpt disagree, the
+// same way stripping an intra-word `_` would.
+const AUTOLINK =
+  /<([A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*|[^\s<>@]+@[^\s<>@]+)>/g;
 const BACKTICKS = /`+/g;
 const EMPHASIS_MARKER = /\*\*|~~|\*/g;
 // CommonMark refuses an underscore run flanked by word characters, so
@@ -34,7 +41,7 @@ function toPlainText(source: string): string {
     .join(" ")
     .replace(IMAGE, "$1")
     .replace(LINK, "$1")
-    .replace(HTML_TAG, "")
+    .replace(AUTOLINK, "$1")
     .replace(BACKTICKS, "")
     .replace(EMPHASIS_MARKER, "")
     .replace(UNDERSCORE_EMPHASIS, "")
@@ -59,10 +66,10 @@ export function markdownExcerpt(
     if (codePoints[index] === " ") lastSpace = index;
   }
 
+  // No trailing trim: whitespace runs are already collapsed, and a space at the
+  // last in-budget index would itself be `lastSpace` (>= floor), so the
+  // hard-cut branch cannot end on one either.
   const cut = lastSpace >= floor ? lastSpace : maxChars;
 
-  return {
-    text: `${codePoints.slice(0, cut).join("").trimEnd()}…`,
-    truncated: true,
-  };
+  return { text: `${codePoints.slice(0, cut).join("")}…`, truncated: true };
 }

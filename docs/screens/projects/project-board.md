@@ -80,11 +80,16 @@ The board is a horizontally scrollable set of columns:
   The card keeps the description compact. A description whose plain text is at
   most ~120 characters renders its Markdown directly in the card body with no
   extra control. A longer one renders instead a one-line plain-text excerpt —
-  markup stripped, whitespace collapsed, cut at a word boundary and closed with
-  `…` — beside an expand control that reveals the full Markdown in place inside
-  the card and collapses it again. The control is a labelled button carrying its
-  expanded state, so it is reachable by keyboard and screen reader; expanding is
+  whitespace collapsed, cut at a word boundary and closed with `…` — beside an
+  expand control that reveals the full Markdown in place inside the card and
+  collapses it again. The control is a labelled button carrying its expanded
+  state, so it is reachable by keyboard and screen reader; expanding is
   presentation only and never alters the authored source.
+  The excerpt reads as the expanded body reads: it removes only the markup the
+  renderer itself consumes (emphasis, backticks, link syntax, an autolink's
+  angle brackets) and keeps what the renderer shows literally — an intra-word
+  `_`, and a raw HTML tag such as `<div>`, which this app renders as text and
+  never as markup.
 - **Full card editor** opens from the card edit icon. It follows an issue-detail
   layout: title and description on the left; persisted first-level task
   properties on the right (`flowId`, `runnerId`, `baseBranch`,

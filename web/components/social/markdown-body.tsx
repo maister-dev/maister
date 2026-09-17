@@ -124,9 +124,14 @@ const components: Components = {
   ol: ({ children }) => <ol className="my-1 list-decimal pl-5">{children}</ol>,
 };
 
+// Exported so a plain-text stand-in for a compact body (the collapsed
+// task-card excerpt) can carry the same type scale from one place: the two sit
+// one click apart and must not drift.
+export const MARKDOWN_COMPACT_TEXT_CLASS =
+  "font-mono text-[11px] leading-[1.45] tracking-[0.01em] text-mute";
+
 const ROOT_CLASS_BY_VARIANT: Record<MarkdownBodyVariant, string> = {
-  compact:
-    "min-w-0 break-words font-mono text-[11px] leading-[1.45] tracking-[0.01em] text-mute [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_h1]:mt-2 [&_h1]:text-[12px] [&_h1]:font-semibold [&_h2]:mt-2 [&_h2]:text-[11.5px] [&_h2]:font-semibold [&_p]:my-1",
+  compact: `min-w-0 break-words ${MARKDOWN_COMPACT_TEXT_CLASS} [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_h1]:mt-2 [&_h1]:text-[12px] [&_h1]:font-semibold [&_h2]:mt-2 [&_h2]:text-[11.5px] [&_h2]:font-semibold [&_p]:my-1`,
   default:
     "text-[13px] leading-[1.6] text-ink [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_h1]:mt-3 [&_h1]:text-[15px] [&_h1]:font-semibold [&_h2]:mt-3 [&_h2]:text-[14px] [&_h2]:font-semibold [&_p]:my-1.5",
 };
