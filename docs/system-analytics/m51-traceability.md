@@ -66,7 +66,7 @@ what stops this matrix decaying into the historical aliases the Stage B matrix b
 | NAV-06 | server-side route authorization | T6.6 | IT-NAV-06 | Implemented |
 | NAV-07 | header fits 390px, keeps names and toggle | T8.9 | E2E-NAV-07 | Implemented |
 | EDGE-NAV-01 | Desk empty state | T6.4 | E2E-EDGE-NAV-01 | Implemented |
-| EDGE-NAV-02 | narrow stacking order | T6.4 | E2E-EDGE-NAV-02 | Implemented |
+| EDGE-NAV-02 | narrow stacking order; columns drop, table does not scroll (ADR-174) | T6.4 | E2E-EDGE-NAV-02 | Implemented |
 | NTF-01 | ADR-077 outbox reuse, no second outbox | T7.2, T7.5 | IT-NTF-02 | Implemented |
 | NTF-02 | nullable webhook_events columns, migration 01660 | T7.4 | IT-NTF-02 | Implemented |
 | NTF-03 | two-axis subscriptionMatches | T7.4 | IT-NTF-03 plus UT-NTF-03 | Implemented |

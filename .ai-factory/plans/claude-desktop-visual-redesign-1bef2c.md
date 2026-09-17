@@ -257,7 +257,7 @@ Both consumers change together. `WorkTableLabels extends WorkRowsLabels` makes a
 column change a compile error at both call sites — that is the anti-drift mechanism
 working. **Do not fork the component** (`REQ-D12`).
 
-**T2.1 [ ] — RED → GREEN: hide the project column under project grouping**
+**T2.1 [x] — RED → GREEN: hide the project column under project grouping**
 
 Test first (**T-D7**, `unit`, markup, 2 cases): under `group=project` no project cell
 renders; under another grouping it does.
@@ -266,7 +266,7 @@ Then implement. Adjust the group-header `colSpan`, currently hardcoded `11`.
 
 Proves: `AC-D7` · Implements: `REQ-D7`.
 
-**T2.2 [ ] — RED → GREEN: fold the run-status refinement into the chip**
+**T2.2 [x] — RED → GREEN: fold the run-status refinement into the chip**
 
 Test first (**T-D8**, `unit`, markup, **6 cases including the negative**): each of
 `NeedsInput` / `NeedsInputIdle` / `HumanWorking` gives a distinguishable accessible
@@ -288,7 +288,7 @@ Refinement labels go in the `workStage` namespace, EN and RU.
 
 Proves: `AC-D8` · Implements: `REQ-D8`.
 
-**T2.3 [ ] — RED → GREEN: the run affordance and the next-action affordance**
+**T2.3 [x] — RED → GREEN: the run affordance and the next-action affordance**
 
 Tests first: **T-D9** (the run stays reachable by a named affordance) and **T-D10**
 (2 cases: `none` → em dash; otherwise the affordance). `workNextAction` stays a pure
@@ -296,7 +296,7 @@ function of the stage.
 
 Proves: `AC-D9`, `AC-D10` · Implements: `REQ-D9`, `REQ-D10`.
 
-**T2.4 [ ] — Responsive columns — and the `colSpan` rule that goes with them**
+**T2.4 [x] — Responsive columns — and the `colSpan` rule that goes with them**
 
 Drop columns by priority (`tokens`, `readiness` first) instead of horizontal scroll.
 
@@ -307,7 +307,7 @@ widths and would have produced a misaligned expanded row.
 
 Proves: `AC-D11` · Implements: `REQ-D11`.
 
-**T2.5 [ ] — Amend `EDGE-NAV-02` and its assertions, in this phase**
+**T2.5 [x] — Amend `EDGE-NAV-02` and its assertions, in this phase**
 
 T2.4 falsifies `EDGE-NAV-02`, which currently reads "…the work table scrolls inside
 its own container". The expectation, its matrix row and its e2e assertion move
@@ -319,7 +319,7 @@ its own container". The expectation, its matrix row and its e2e assertion move
 - `web/e2e/desk.spec.ts` test 3 — the internal-scroll assertion inverts; pin a short
   viewport per the project's scroll-regression convention.
 
-**T2.6 [ ] — Migrate `/work`'s own assertions**
+**T2.6 [x] — Migrate `/work`'s own assertions**
 
 `web/app/(app)/work/__tests__/page-contract.test.ts` — column expectations. Add
 **T-D12** (`unit`, markup, negative): `/work` renders no expand affordance and its row

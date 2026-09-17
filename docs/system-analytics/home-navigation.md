@@ -122,7 +122,7 @@ flowchart LR
 ## Edge cases
 
 - **EDGE-NAV-01:** No projects exist — the Desk renders the first-run onboarding checklist and empty-state card inside its own frame, and the scratch composer is absent until a project exists.
-- **EDGE-NAV-02:** Narrow viewports stack the Desk regions in the order Decisions, then Work, then Activity; no region is dropped and none makes the PAGE scroll horizontally — the work table scrolls inside its own container. Asserted on the document: it was scoped to `<main>` only while the shared header still overflowed a 390px viewport on every route (`/work` measured 471px, `/inbox` 479px), a chrome defect now closed by `NAV-07`.
+- **EDGE-NAV-02:** Narrow viewports stack the Desk regions in source order; no region is dropped and none makes the PAGE scroll horizontally — the work table DROPS columns by priority (`tokens` and `readiness` first) rather than scrolling inside its own container (ADR-174, `REQ-D11`). Column hiding is CSS-driven, so the `<td>` elements remain in the DOM and any `colSpan` is the FULL column count, never the visible one. Asserted on the document: it was scoped to `<main>` only while the shared header still overflowed a 390px viewport on every route (`/work` measured 471px, `/inbox` 479px), a chrome defect now closed by `NAV-07`. The stacked order itself becomes strip, then Work, then Held, then Activity (Designed — ADR-174 D1; the Decisions region is removed and the order is asserted once the layout lands).
 
 ## Linked artifacts
 

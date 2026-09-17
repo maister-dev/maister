@@ -8,8 +8,40 @@
  */
 
 import type { WorkRowsLabels } from "@/components/work/work-rows-table";
+import type { WorkStageLabels } from "@/components/work/work-stage-chip";
 
 type Translate = (key: string) => string;
+
+/**
+ * The whole `workStage` namespace, in one place.
+ *
+ * Four surfaces render a `WorkStageChip` and every one of them used to build
+ * this map by hand, so ADR-174's five refinement keys were a compile error at
+ * all four at once. That is the type doing its job — and the reason to build the
+ * map once: the NEXT stage vocabulary change should be one line, not four.
+ */
+export function buildWorkStageLabels(tStage: Translate): WorkStageLabels {
+  return {
+    Triage: tStage("Triage"),
+    Held: tStage("Held"),
+    Ready: tStage("Ready"),
+    Queued: tStage("Queued"),
+    Executing: tStage("Executing"),
+    WaitingOnHuman: tStage("WaitingOnHuman"),
+    Review: tStage("Review"),
+    Crashed: tStage("Crashed"),
+    Promoted: tStage("Promoted"),
+    Abandoned: tStage("Abandoned"),
+    blocked: tStage("blocked"),
+    promotedResult: tStage("promotedResult"),
+    // ADR-174 `REQ-D8`: the refinement the removed run-status column carried.
+    runNeedsInput: tStage("runNeedsInput"),
+    runNeedsInputIdle: tStage("runNeedsInputIdle"),
+    runHumanWorking: tStage("runHumanWorking"),
+    runRunning: tStage("runRunning"),
+    runWaitingOnChildren: tStage("runWaitingOnChildren"),
+  };
+}
 
 export function buildWorkRowsLabels(
   t: Translate,
@@ -21,7 +53,6 @@ export function buildWorkRowsLabels(
       title: t("columns.title"),
       project: t("columns.project"),
       stage: t("columns.stage"),
-      run: t("columns.run"),
       readiness: t("columns.readiness"),
       waitingOn: t("columns.waitingOn"),
       blockers: t("columns.blockers"),
@@ -60,20 +91,7 @@ export function buildWorkRowsLabels(
       watch: t("nextAction.watch"),
       none: t("nextAction.none"),
     },
-    stage: {
-      Triage: tStage("Triage"),
-      Held: tStage("Held"),
-      Ready: tStage("Ready"),
-      Queued: tStage("Queued"),
-      Executing: tStage("Executing"),
-      WaitingOnHuman: tStage("WaitingOnHuman"),
-      Review: tStage("Review"),
-      Crashed: tStage("Crashed"),
-      Promoted: tStage("Promoted"),
-      Abandoned: tStage("Abandoned"),
-      blocked: tStage("blocked"),
-      promotedResult: tStage("promotedResult"),
-    },
+    stage: buildWorkStageLabels(tStage),
     openTask: t("openTask"),
     openRun: t("openRun"),
   };

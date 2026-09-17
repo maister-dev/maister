@@ -278,8 +278,7 @@ test("E2E-EDGE-NAV-02 narrow keeps every region, stacked Decisions then Work the
   expect(boxes[0].top).toBeLessThan(boxes[1].top);
   expect(boxes[1].top).toBeLessThan(boxes[2].top);
 
-  // Nothing scrolls the PAGE sideways — the 1180px work table scrolls inside
-  // its own container instead.
+  // Nothing scrolls the PAGE sideways.
   //
   // Asserted on the DOCUMENT, not on `main`. It was scoped to `main` while the
   // shared header overflowed 390px on every route in the app (`/work` measured
@@ -294,17 +293,31 @@ test("E2E-EDGE-NAV-02 narrow keeps every region, stacked Decisions then Work the
 
   expect(pageOverflows).toBe(false);
 
-  // And the table really is the thing scrolling, rather than nothing scrolling
-  // because nothing rendered.
-  const scroller = page
-    .getByTestId("desk-work")
-    .locator("div.overflow-x-auto")
-    .first();
+  // INVERTED by ADR-174 `REQ-D11`: the table no longer scrolls inside its own
+  // container — it drops columns by priority instead. A horizontal scroller on
+  // a phone hides data behind a gesture nobody makes.
+  const work = page.getByTestId("desk-work");
 
-  await expect(scroller).toBeVisible();
+  await expect(work.locator("div.overflow-x-auto")).toHaveCount(0);
+
+  const table = work.locator("table").first();
+
+  await expect(table).toBeVisible();
   expect(
-    await scroller.evaluate((el) => el.scrollWidth > el.clientWidth + 1),
-  ).toBe(true);
+    await table.evaluate((el) => el.scrollWidth > el.clientWidth + 1),
+    "the table must fit its container at 390px",
+  ).toBe(false);
+
+  // And it fits because columns DROPPED, not because nothing rendered.
+  await expect(work.locator('[data-testid="work-row"]').first()).toBeVisible();
+  expect(
+    await work.locator("thead th").count(),
+    "low-priority headers are still in the DOM, hidden by CSS",
+  ).toBeGreaterThan(0);
+  expect(
+    await work.locator("thead th:visible").count(),
+    "but fewer of them are painted at 390px",
+  ).toBeLessThan(await work.locator("thead th").count());
 });
 
 test("E2E-NAV-02 a member lands on /work and an admin on the Desk", async ({

@@ -15,6 +15,7 @@ import type { ReactElement } from "react";
 
 import Link from "next/link";
 import clsx from "clsx";
+import { ArrowTopRightOnSquareIcon } from "@heroicons/react/24/outline";
 
 import { WorkStageChip } from "@/components/work/work-stage-chip";
 import { workAge, workNextAction } from "@/lib/work/work-table-view";
@@ -29,7 +30,6 @@ export interface WorkRowsLabels {
     | "title"
     | "project"
     | "stage"
-    | "run"
     | "readiness"
     | "waitingOn"
     | "blockers"
@@ -68,6 +68,21 @@ const CELL = "px-3 py-2 align-middle";
 const HEAD =
   "px-3 py-2 text-left font-mono text-[10.5px] font-semibold uppercase tracking-[0.12em] text-mute";
 
+/**
+ * `REQ-D11` — narrow viewports DROP columns by priority rather than scrolling
+ * the table sideways. Lowest value first: `tokens` and `readiness` go at the
+ * smallest widths, `blockers` and `lastActivity` next.
+ *
+ * Hiding is CSS-driven, so the `<td>` stays in the DOM. Every `colSpan` below
+ * must therefore be the FULL column count, never the visible one — a span
+ * computed from what is painted misaligns exactly where the columns drop.
+ */
+const DROP_SM = "hidden lg:table-cell";
+const DROP_MD = "hidden xl:table-cell";
+
+/** Every column the table can render, hidden or not — the `colSpan` basis. */
+const TOTAL_COLUMNS = 10;
+
 export function WorkRowsTable({
   groups,
   groupBy,
@@ -81,23 +96,31 @@ export function WorkRowsTable({
     timeStyle: "short",
   });
 
+  // `REQ-D7` — grouping-derived, not surface-derived: under project grouping the
+  // group header already names the project, so the cell is a second copy of a
+  // value the reader is already looking at. The rule holds at BOTH surfaces.
+  const showProject = groupBy !== "project";
+
   return (
-    <div className="overflow-x-auto rounded-[14px] border border-line bg-paper">
-      <table className="w-full min-w-[1180px] border-collapse text-[12.5px]">
+    <div className="rounded-[14px] border border-line bg-paper">
+      <table className="w-full border-collapse text-[12.5px]">
         <thead className="border-b border-line bg-ivory">
           <tr>
             <th className={HEAD}>{labels.columns.key}</th>
             <th className={HEAD}>{labels.columns.title}</th>
-            <th className={HEAD}>{labels.columns.project}</th>
+            {showProject ? (
+              <th className={HEAD}>{labels.columns.project}</th>
+            ) : null}
             <th className={HEAD}>{labels.columns.stage}</th>
-            <th className={HEAD}>{labels.columns.run}</th>
-            <th className={HEAD}>{labels.columns.readiness}</th>
+            <th className={clsx(HEAD, DROP_SM)}>{labels.columns.readiness}</th>
             <th className={HEAD}>{labels.columns.waitingOn}</th>
-            <th className={HEAD}>{labels.columns.blockers}</th>
-            <th className={clsx(HEAD, "text-right")}>
+            <th className={clsx(HEAD, DROP_MD)}>{labels.columns.blockers}</th>
+            <th className={clsx(HEAD, DROP_SM, "text-right")}>
               {labels.columns.tokens}
             </th>
-            <th className={HEAD}>{labels.columns.lastActivity}</th>
+            <th className={clsx(HEAD, DROP_MD)}>
+              {labels.columns.lastActivity}
+            </th>
             <th className={HEAD}>{labels.columns.nextAction}</th>
           </tr>
         </thead>
@@ -107,7 +130,7 @@ export function WorkRowsTable({
               <tr className="border-b border-line bg-ivory/60">
                 <th
                   className="px-3 py-1.5 text-left font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-2"
-                  colSpan={11}
+                  colSpan={showProject ? TOTAL_COLUMNS : TOTAL_COLUMNS - 1}
                 >
                   {groupHeading(group, labels)}
                 </th>
@@ -121,6 +144,7 @@ export function WorkRowsTable({
                 now={now}
                 numberFormat={numberFormat}
                 row={row}
+                showProject={showProject}
               />
             ))}
           </tbody>
@@ -146,12 +170,14 @@ function WorkTableRowView({
   numberFormat,
   dateFormat,
   now,
+  showProject,
 }: {
   row: WorkTableRow;
   labels: WorkRowsLabels;
   numberFormat: Intl.NumberFormat;
   dateFormat: Intl.DateTimeFormat;
   now: Date;
+  showProject: boolean;
 }): ReactElement {
   const taskHref = `/projects/${row.projectSlug}/tasks/${row.number}`;
   const nextAction = workNextAction(row.stage);
@@ -174,37 +200,27 @@ function WorkTableRowView({
       <td className={clsx(CELL, "max-w-[320px] truncate text-ink")}>
         {row.title}
       </td>
-      <td className={CELL}>
-        <Link
-          className="text-ink-2 no-underline"
-          href={`/projects/${row.projectSlug}`}
-        >
-          {row.projectName}
-        </Link>
-      </td>
+      {showProject ? (
+        <td className={CELL}>
+          <Link
+            className="text-ink-2 no-underline"
+            href={`/projects/${row.projectSlug}`}
+          >
+            {row.projectName}
+          </Link>
+        </td>
+      ) : null}
       <td className={CELL}>
         <WorkStageChip
           blocked={row.blocked}
           labels={labels.stage}
           progress={row.progress}
           promotedKind={row.promotedKind}
+          runStatus={row.runStatus}
           stage={row.stage}
         />
       </td>
-      <td className={CELL}>
-        {row.runId === null ? (
-          <span className="text-mute">—</span>
-        ) : (
-          <Link
-            className="font-mono text-[11px] text-ink-2 no-underline"
-            href={`/runs/${row.runId}`}
-            title={labels.openRun}
-          >
-            {row.runStatus}
-          </Link>
-        )}
-      </td>
-      <td className={CELL}>
+      <td className={clsx(CELL, DROP_SM)}>
         {row.readiness === null ? (
           <span className="text-mute">—</span>
         ) : (
@@ -235,7 +251,7 @@ function WorkTableRowView({
           </span>
         )}
       </td>
-      <td className={CELL}>
+      <td className={clsx(CELL, DROP_MD)}>
         {row.blockers.length === 0 ? (
           <span className="text-mute">—</span>
         ) : (
@@ -252,17 +268,46 @@ function WorkTableRowView({
         )}
       </td>
       <td
-        className={clsx(CELL, "text-right font-mono text-[11.5px] text-ink-2")}
+        className={clsx(
+          CELL,
+          DROP_SM,
+          "text-right font-mono text-[11.5px] text-ink-2",
+        )}
       >
         {numberFormat.format(row.tokens)}
       </td>
-      <td className={clsx(CELL, "whitespace-nowrap text-mute")}>
+      <td className={clsx(CELL, DROP_MD, "whitespace-nowrap text-mute")}>
         <span suppressHydrationWarning>
           {dateFormat.format(row.lastActivityAt)}
         </span>
       </td>
+      {/* The trailing action cluster: the next action, then the run. Reads
+          left-to-right primary -> secondary, per web/CLAUDE.md. */}
       <td className={clsx(CELL, "whitespace-nowrap text-ink-2")}>
-        {labels.nextAction[nextAction] ?? nextAction}
+        <span className="inline-flex items-center gap-2">
+          {/* `REQ-D10` — a `none` action is an em dash. "Nothing" reads as a
+              thing to do, which is the opposite of what it means. */}
+          {nextAction === "none" ? (
+            <span className="text-mute">—</span>
+          ) : (
+            <span>{labels.nextAction[nextAction] ?? nextAction}</span>
+          )}
+          {/* `REQ-D9` — removing the run COLUMN must not remove the ability to
+              open the run. Icon-only, so it carries an accessible name. */}
+          {row.runId === null ? null : (
+            <Link
+              aria-label={labels.openRun}
+              className="text-mute no-underline hover:text-ink"
+              href={`/runs/${row.runId}`}
+              title={labels.openRun}
+            >
+              <ArrowTopRightOnSquareIcon
+                aria-hidden="true"
+                className="h-3.5 w-3.5"
+              />
+            </Link>
+          )}
+        </span>
       </td>
     </tr>
   );

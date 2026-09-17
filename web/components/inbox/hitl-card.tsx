@@ -31,6 +31,7 @@ import clsx from "clsx";
 
 import { AssignmentActions } from "@/components/board/assignment-actions";
 import { RunHitlResponse } from "@/components/board/run-hitl-response";
+import { buildWorkStageLabels } from "@/lib/work/work-row-labels";
 import { WorkStageChip } from "@/components/work/work-stage-chip";
 
 // A request whose run session carries no recorded adapter keeps its card and
@@ -258,20 +259,7 @@ export function HitlCard({
                 populations comparable at a glance. */}
             <WorkStageChip
               blocked={false}
-              labels={{
-                Triage: tStage("Triage"),
-                Held: tStage("Held"),
-                Ready: tStage("Ready"),
-                Queued: tStage("Queued"),
-                Executing: tStage("Executing"),
-                WaitingOnHuman: tStage("WaitingOnHuman"),
-                Review: tStage("Review"),
-                Crashed: tStage("Crashed"),
-                Promoted: tStage("Promoted"),
-                Abandoned: tStage("Abandoned"),
-                blocked: tStage("blocked"),
-                promotedResult: tStage("promotedResult"),
-              }}
+              labels={buildWorkStageLabels(tStage)}
               progress={null}
               promotedKind={null}
               stage="WaitingOnHuman"

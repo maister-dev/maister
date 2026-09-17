@@ -4711,7 +4711,12 @@
     "Promoted": "Продвинута",
     "Abandoned": "Отменена",
     "blocked": "Заблокирована",
-    "promotedResult": "Результат опубликован"
+    "promotedResult": "Результат опубликован",
+    "runNeedsInput": "сессия активна",
+    "runNeedsInputIdle": "на контрольной точке",
+    "runHumanWorking": "ручное вмешательство",
+    "runRunning": "выполняется",
+    "runWaitingOnChildren": "ждёт дочерние"
   },
   "work": {
     "eyebrow": "Всё, что в работе",
@@ -4740,7 +4745,6 @@
       "title": "Название",
       "project": "Проект",
       "stage": "Этап",
-      "run": "Запуск",
       "readiness": "Готовность",
       "waitingOn": "Ждёт",
       "blockers": "Заблокирована",
