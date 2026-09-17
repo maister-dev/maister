@@ -93,8 +93,18 @@ test("manual takeover loop: claim → board → commit → return → diff → s
   const returnBtn = page.getByRole("button", { name: "Return", exact: true });
 
   await expect(returnBtn).toBeVisible();
-  // The run status pill now reads HumanWorking (run-detail header).
-  await expect(page.getByText("HumanWorking", { exact: true })).toBeVisible();
+  // The run status pill now reads HumanWorking (run-detail header). Target the
+  // pill by testid: the run inspector renders the same status text in its own
+  // <dd>, so a bare `getByText("HumanWorking", { exact: true })` matched two
+  // elements and failed on strict mode rather than on the product.
+  //
+  // NOTE for whoever reads a RETRY failure here: this test claims a seeded run,
+  // which is one-way. Once the claim lands, a retry finds no "Take over" button
+  // and dies at (a) — that error is an artifact of the first attempt, never the
+  // root cause. Diagnose the FIRST attempt.
+  await expect(page.getByTestId("run-header-status")).toHaveText(
+    "HumanWorking",
+  );
 
   // (c) The BOARD card surfaces owner + branch + elapsed + the pending Return
   // action and is visually distinct (humanworking variant). The card is the
@@ -207,5 +217,13 @@ test("manual takeover loop: claim → board → commit → return → diff → s
 
   // (h, continued) The fresh review HITL is the live pending input — the
   // "Waiting on you" review panel is back, confirming a new review gate.
-  await expect(page.getByText("Waiting on you", { exact: true })).toBeVisible();
+  // Match the panel HEADING with a prefix regex. Two things defeat the obvious
+  // locators here, both because the fresh review gate joins one already open:
+  // the heading appends a count ("Waiting on you (2 requests)"), so `exact:
+  // true` can never hold; and each pending request renders its own
+  // `pending-input-card`, so that testid resolves to two elements. Only the
+  // primary panel carries this h2.
+  await expect(
+    page.getByRole("heading", { name: /^Waiting on you/u }),
+  ).toBeVisible();
 });

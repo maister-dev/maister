@@ -169,7 +169,13 @@ export function FlowEditorTabs({
       : null,
   );
   const [seedKey, setSeedKey] = useState(0);
-  const [syncError, setSyncError] = useState(false);
+  // The REASONS the canvas could not be rebuilt, not just that it could not.
+  // `syncYamlToCanvas` already returns `diagnostics` on its error decision and
+  // this dropped them, leaving one fixed sentence — "YAML is invalid" — in
+  // front of every refusal. For a legacy `steps[]` flow that sentence is
+  // simply untrue: the YAML parses, and the actionable message ("republish the
+  // package with nodes[]") was computed and then discarded.
+  const [syncIssues, setSyncIssues] = useState<readonly string[]>([]);
 
   useEffect(() => {
     onDirtyChange?.(yaml !== initialYaml || title !== initialTitle);
@@ -193,15 +199,15 @@ export function FlowEditorTabs({
     const decision = syncYamlToCanvas(yaml, canvasManifestRef.current);
 
     if (decision.kind === "noop") {
-      setSyncError(false);
+      setSyncIssues([]);
 
       return;
     }
 
     if (decision.kind === "error") {
-      // eslint-disable-next-line no-console
-      console.warn("[flowEditor] yaml parse error");
-      setSyncError(true);
+      setSyncIssues(
+        decision.diagnostics.map((diagnostic) => diagnostic.message),
+      );
 
       return;
     }
@@ -214,7 +220,7 @@ export function FlowEditorTabs({
     });
     setSeedKey((k) => k + 1);
     setLiveManifest(decision.manifest);
-    setSyncError(false);
+    setSyncIssues([]);
   }, [yaml]);
 
   // Sync yaml → canvas ONLY while the YAML drawer is open: there the user edits
@@ -330,14 +336,24 @@ export function FlowEditorTabs({
         }
       />
 
-      {syncError ? (
-        <p
+      {syncIssues.length > 0 ? (
+        <div
           className="border-b border-danger-line bg-danger-soft px-3 py-2 font-mono text-[11px] text-danger"
           data-testid="flow-yaml-sync-error"
           role="alert"
         >
-          {labels.syncError}
-        </p>
+          <p className="m-0">{labels.syncError}</p>
+          {/* The refusal itself. Without it the banner says only that the
+              canvas is stale, and the reader has to guess why — for a legacy
+              `steps[]` flow the reason is also the fix. */}
+          <ul className="m-0 mt-1 grid list-none gap-0.5 p-0">
+            {syncIssues.map((issue) => (
+              <li key={issue} data-testid="flow-yaml-sync-issue">
+                {issue}
+              </li>
+            ))}
+          </ul>
+        </div>
       ) : null}
 
       <div className="relative min-h-0 flex-1">

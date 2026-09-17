@@ -363,23 +363,6 @@ export function toggleScopeForEdit(
   });
 }
 
-// ADR-168 D3, mirrored client-side: lib/tokens/lifecycle.ts is server-only and
-// cannot be imported here (same constraint as JUDGE_TOKEN_SCOPES above). A
-// non-managed token is machine-minted and run-bound — `issueOrchestratorRunToken`
-// mints token_kind='project' named `orchestrator-run:<runId>`, and listTokens
-// filters on project_id alone, so those rows DO render in this table today.
-// This only withholds the affordance; the server refuses the PATCH regardless.
-const RESERVED_TOKEN_NAME_PATTERN = /^(orchestrator-run|agent-run):/i;
-
-export function isManagedTokenRow(token: {
-  kind: string;
-  name: string;
-}): boolean {
-  return (
-    token.kind !== "agent" && !RESERVED_TOKEN_NAME_PATTERN.test(token.name)
-  );
-}
-
 function toLocalInputValue(value: Date | null): string {
   if (!value) return "";
 

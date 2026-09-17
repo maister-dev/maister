@@ -10,8 +10,14 @@
 // never counted them.
 //
 // The property is "nowhere else", which no type can express — so, like
-// `UT-NTF-13`, the guard is a grep. `hitlDecisionsOf(queue.items)` is the one
-// permitted source.
+// `UT-NTF-13`, the guard is a grep. `queue.items` is the one permitted source.
+//
+// BROADENED 2026-09-17 (ADR-174). This used to require the literal
+// `hitlDecisionsOf(queue.items)`. The Desk no longer renders a HITL LIST — its
+// HITL population rides on the work row, joined on `runId` — so that exact call
+// has no consumer there and keeping it would have pinned dead code. What must
+// not change is where the population COMES FROM, and that is asserted on the
+// queue object itself, which both shapes read.
 //
 // If this fails: render from the canonical queue. A surface that genuinely
 // needs the wider population is not a decision surface and does not belong in
@@ -37,7 +43,10 @@ describe("UT-ATN-13 decision surfaces have one HITL source", () => {
   });
 
   it.each(DECISION_SURFACES)("%s renders HITL from the queue", (rel) => {
-    expect(read(rel)).toContain("hitlDecisionsOf(queue.items)");
+    // Either canonical shape: `/inbox` still takes the whole HITL list with
+    // `hitlDecisionsOf(queue.items)`; the Desk joins `queue.items` onto its rows
+    // by `runId`. Both read the ONE queue whose length is the number.
+    expect(read(rel)).toMatch(/\bqueue\.items\b/u);
   });
 
   it("can still see the query where it legitimately lives", () => {

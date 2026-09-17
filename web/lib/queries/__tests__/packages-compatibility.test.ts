@@ -1,5 +1,6 @@
-import { MAISTER_ENGINE_VERSION } from "@/lib/flows/engine-version";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import { MAISTER_ENGINE_VERSION } from "@/lib/flows/engine-version";
 
 const loadFlowManifestMock = vi.hoisted(() => vi.fn());
 

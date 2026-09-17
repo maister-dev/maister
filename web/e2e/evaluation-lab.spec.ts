@@ -52,22 +52,6 @@ const KNOWN_ITEM_STATUS = new Set([
 // each `definition`). The flow ref + contract digests are opaque non-empty
 // strings — nothing dereferences them at batch-create time, and the launch seam
 // drives off the Study's task, not this ref.
-function inlineRecipe(
-  flowRefId: string,
-  taskId: string,
-): Record<string, unknown> {
-  return {
-    schemaVersion: 1,
-    flow: {
-      flowRefId,
-      flowRevisionId: `${flowRefId}-rev`,
-      inputContractDigest: "d-in",
-      artifactContractDigest: "d-art",
-    },
-    inputs: { taskSnapshotRef: taskId, formValues: {} },
-    executionPolicy: { preset: "supervised" },
-  };
-}
 
 test("evaluation lab: study, observed participant, controlled batch, start affordance, verdict", async ({
   page,
@@ -190,22 +174,49 @@ test("evaluation lab: study, observed participant, controlled batch, start affor
       { data: { runIds: [runId], labels: { [runId]: label } } },
     );
 
-    expect(addRes.status()).toBe(201);
+    // Carry the body into the failure message: a 404 here is ambiguous on its
+    // own — the eval routes map PRECONDITION to 404, and so does a Next dev
+    // server that has not compiled the route yet — and this step has been seen
+    // to flake roughly one run in five.
+    expect(addRes.status(), await addRes.text()).toBe(201);
   }
 
-  // ── Inline controlled batch: 2 variants × 1 replicate ─────────────────────
-  const batchRes = await page.request.post(
-    `/api/projects/${fx.projectSlug}/evaluations/studies/${study.id}/launch-batches`,
-    {
-      data: {
-        idempotencyKey: `eval-batch-${suffix}`,
-        items: [
-          { definition: inlineRecipe(fx.flowId, taskId), replicateCount: 1 },
-          { definition: inlineRecipe(fx.flowId, taskId), replicateCount: 1 },
-        ],
-      },
-    },
+  // ── Controlled batch: 2 variants × 1 replicate, driven through the UI ─────
+  // This CANNOT be posted directly. Since ADR-150 the launch route preflights
+  // every inline recipe against the live contracts, and a recipe carries the
+  // flow ref, the pinned revision and the frozen input/artifact contract
+  // digests. Those digests are computed by one server-side assembler
+  // (`buildFlowContractProjection`), and `lab-queries.ts` states the
+  // consequence outright: the server resolves the recipe scaffold and "the
+  // client can never fabricate a digest that would pass preflight". A
+  // hand-written recipe is therefore refused — PRECONDITION -> 404 — which is
+  // exactly how this spec used to fail, on a placeholder `<flowId>-rev`
+  // revision and `"d-in"`/`"d-art"` digests.
+  //
+  // So drive the affordance a real operator uses: the dialog is seeded from the
+  // server-provided scaffold and opens with two variants ("Control",
+  // "Candidate"), which is the 2 × 1 shape this test wants.
+  await page.goto(`/projects/${fx.projectSlug}/evaluations/${study.id}`);
+
+  const batchCreate = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname.endsWith(
+        `/evaluations/studies/${study.id}/launch-batches`,
+      ),
   );
+
+  await page.getByRole("button", { name: "Launch variants" }).click();
+
+  const launchDialog = page.getByRole("dialog");
+
+  await expect(launchDialog).toBeVisible();
+  await expect(launchDialog.getByText("Variants (2)")).toBeVisible();
+  await launchDialog
+    .getByRole("button", { name: "Launch", exact: true })
+    .click();
+
+  const batchRes = await batchCreate;
 
   expect(batchRes.status()).toBe(201);
   const batchCreated = (await batchRes.json()) as BatchCreateResponse;
@@ -228,8 +239,7 @@ test("evaluation lab: study, observed participant, controlled batch, start affor
   }
 
   // ── Study Lab UI ──────────────────────────────────────────────────────────
-  await page.goto(`/projects/${fx.projectSlug}/evaluations/${study.id}`);
-
+  // Already on the study page — the controlled launch above was driven from it.
   await expect(
     page.getByRole("heading", { name: `Eval study ${suffix}` }),
   ).toBeVisible();
@@ -238,8 +248,16 @@ test("evaluation lab: study, observed participant, controlled batch, start affor
   await expect(
     page.getByRole("heading", { name: "Participants", exact: false }),
   ).toBeVisible();
-  await expect(page.getByText(`Observed A ${suffix}`)).toBeVisible();
-  await expect(page.getByText(`Observed B ${suffix}`)).toBeVisible();
+  // By CELL: each participant label also appears as a verdict-picker option in
+  // the fieldset further down, so a bare text match is ambiguous. (This is the
+  // first run in which these lines are reached at all — the spec used to die
+  // earlier, at the launch batch.)
+  await expect(
+    page.getByRole("cell", { name: `Observed A ${suffix}` }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("cell", { name: `Observed B ${suffix}` }),
+  ).toBeVisible();
   await expect(
     page.getByText("Observed", { exact: true }).first(),
   ).toBeVisible();

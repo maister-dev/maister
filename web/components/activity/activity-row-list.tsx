@@ -18,6 +18,19 @@ import clsx from "clsx";
 // copy of the unit thresholds is how the two surfaces start disagreeing.
 import { workAge } from "@/lib/work/work-table-view";
 
+/**
+ * `REQ-D19` — every row names its subject.
+ *
+ * A row whose task join is absent used to render time + kind + actor + a
+ * GENERIC "open the run" label + the project name, naming the thing it is about
+ * nowhere. That degradation lands hardest on `run.crashed`, the highest-signal
+ * kind in the feed, because a crashed run often has no task joined to it.
+ *
+ * Eight characters is the repo's existing short-id convention: long enough to
+ * identify a run in a list, short enough not to crowd the row.
+ */
+const SHORT_RUN_ID_LENGTH = 8;
+
 /** What a ROW needs. `ActivityFeedLabels` extends it. */
 export interface ActivityRowLabels {
   /** Keyed by the raw kind, so the client needs no key transform. */
@@ -107,6 +120,11 @@ function ActivityRow({
   dateFormat: Intl.DateTimeFormat;
   now: Date;
 }): ReactElement {
+  // Mirrors the task link's OWN render condition below, not just `taskKey`: a
+  // key that arrives without its number renders no link, so such a row is
+  // unnamed by the narrower path and needs the fallback too.
+  const namesTask = row.taskKey !== null && row.taskNumber !== null;
+
   return (
     <li
       className={clsx(
@@ -162,11 +180,16 @@ function ActivityRow({
       ) : null}
       {row.runId ? (
         <Link
-          className="font-mono text-[11.5px] text-mute no-underline"
+          className={clsx(
+            "font-mono text-[11.5px] no-underline",
+            namesTask ? "text-mute" : "text-ink",
+          )}
           href={`/runs/${row.runId}`}
           title={labels.openRun}
         >
-          {labels.openRun}
+          {/* The task is the better name when there is one; two identifiers on
+              one row is noise. The id only stands in when nothing else does. */}
+          {namesTask ? labels.openRun : row.runId.slice(0, SHORT_RUN_ID_LENGTH)}
         </Link>
       ) : null}
       <Link

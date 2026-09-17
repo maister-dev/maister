@@ -213,8 +213,9 @@ validate:docs` enforces stub ↔ body equality and the file bijection.
 | [ADR-169](#adr-169-two-canonical-attention-counters-decisions-and-updates) | Two canonical attention counters, `decisions` and `updates` | Accepted | 2026-09-10 |
 | [ADR-170](#adr-170-derived-work-stage-vocabulary-distinct-from-the-board-columns) | Derived work-stage vocabulary distinct from the board columns | Accepted | 2026-09-10 |
 | [ADR-171](#adr-171-user-scoped-attention-sse-stream) | User-scoped attention SSE stream | Accepted | 2026-09-10 |
-| [ADR-172](#adr-172-desk-home-information-architecture-and-the-member-default-route) | Desk home information architecture and the member default route | Accepted | 2026-09-10 |
+| [ADR-172](#adr-172-desk-home-information-architecture-and-the-member-default-route) | Desk home information architecture and the member default route | Accepted; D1 partially superseded by ADR-174 | 2026-09-10 |
 | [ADR-173](#adr-173-user-notification-subscriptions-and-web-push-over-the-widened-outbound-webhook-engine) | User notification subscriptions and web push over the widened outbound-webhook engine | Accepted | 2026-09-10 |
+| [ADR-174](#adr-174-the-desk-renders-one-object-per-work-item) | The Desk renders one object per work item | Accepted | 2026-09-17 |
 
 ---
 
@@ -1741,7 +1742,7 @@ Full record: [`decisions/adr-171.md`](decisions/adr-171.md)
 
 ### ADR-172: Desk home information architecture and the member default route
 
-**Status:** Accepted
+**Status:** Partially superseded by ADR-174; D1's composed regions and their order are replaced, the compose-never-reimplement principle stands
 **Date:** 2026-09-10
 
 Full record: [`decisions/adr-172.md`](decisions/adr-172.md)
@@ -1754,6 +1755,15 @@ Full record: [`decisions/adr-172.md`](decisions/adr-172.md)
 **Date:** 2026-09-10
 
 Full record: [`decisions/adr-173.md`](decisions/adr-173.md)
+
+---
+
+### ADR-174: The Desk renders one object per work item
+
+**Status:** Accepted
+**Date:** 2026-09-17
+
+Full record: [`decisions/adr-174.md`](decisions/adr-174.md)
 
 ---
 

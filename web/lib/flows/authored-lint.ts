@@ -90,12 +90,20 @@ export function flowYamlDiagnostics(text: string): LintDiagnostic[] {
     return [];
   }
 
-  return result.error.issues.map((issue) => ({
-    from: 0,
-    to: text.length,
-    severity: "error" as const,
-    message: `${issue.path.join(".")}: ${issue.message}`,
-  }));
+  return result.error.issues.map((issue) => {
+    // A ROOT-level issue has an empty path, and prefixing it produced a bare
+    // ": " in front of the message — visible wherever a diagnostic is shown to
+    // a reader, and the shape a whole-document refusal (legacy `steps[]`)
+    // always takes.
+    const path = issue.path.join(".");
+
+    return {
+      from: 0,
+      to: text.length,
+      severity: "error" as const,
+      message: path ? `${path}: ${issue.message}` : issue.message,
+    };
+  });
 }
 
 export function jsonDiagnostics(text: string): LintDiagnostic[] {

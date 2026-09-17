@@ -340,11 +340,27 @@ test("execution-host contract: board launch places the run; checkpoint + resume 
     ),
   ).toBe(workspaceHandle);
 
+  // Poll for the epoch-2 create rather than reading the ledger once. The
+  // assignment's epoch is minted inside the placement CAS, and the command row
+  // is only persisted `queued` on the way to the wire call — so the epoch-2
+  // assignment the poll above waits for is visible strictly BEFORE its create
+  // command is, and a single read lands in that window.
+  await expect
+    .poll(
+      () =>
+        commandRows(runId).then((rows) =>
+          rows
+            .filter((row) => row.kind === "session.create")
+            .map((row) => row.epoch),
+        ),
+      { timeout: 60_000 },
+    )
+    .toEqual([1, 2]);
+
   const commands = await commandRows(runId);
   const creates = commands.filter((c) => c.kind === "session.create");
 
   expect(commands.filter((c) => c.kind === "workspace.adopt")).toHaveLength(1);
-  expect(creates.map((c) => c.epoch)).toEqual([1, 2]);
   expect(creates[1].payload.resumeSessionId).toBeTruthy();
 
   // The resumed driver auto-delivers the stored answer and the graph finishes;

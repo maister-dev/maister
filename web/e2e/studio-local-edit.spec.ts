@@ -45,7 +45,7 @@ function buildPackageRepo(): string {
   );
   writeFileSync(
     join(pkgDir, "flows/e2e-flow/flow.yaml"),
-    `schemaVersion: 1\nname: ${RUN_TAG}-flow\nnodes:\n  - id: s1\n    type: cli\n    action:\n      command: echo hi\n    transitions:\n      success: done\n`,
+    `schemaVersion: 1\nname: ${RUN_TAG}-flow\ncompat:\n  engine_min: 1.1.0\nnodes:\n  - id: s1\n    type: cli\n    action:\n      command: echo hi\n    transitions:\n      success: done\n`,
   );
   git(repo, "add", "-A");
   git(repo, "commit", "-m", "init");
@@ -120,7 +120,7 @@ nodes:
 }
 
 // A package whose flow exercises the structured node-form controls (TE.3): an
-// ai_coding node (skills MultiSelectField + `/`-autosuggest action.prompt) and a
+// ai_coding node (skills McpSelect picker + `/`-autosuggest action.prompt) and a
 // human node (roles StringListField), plus a bundled skill so `/` has a catalog.
 function buildStructuredControlsPackageRepo(): string {
   const repo = mkdtempSync(join(tmpdir(), "maister-e2e-struct-"));
@@ -213,10 +213,25 @@ async function installPackageFromRepo(
   await expect(page.getByText(tag, { exact: true })).toBeVisible({
     timeout: 30_000,
   });
-  await page.getByRole("button", { name: `${tag}/v1.0.0 · install` }).click();
-  await expect(
-    page.getByRole("button", { name: `${tag}/v1.0.0 · installed` }),
-  ).toBeVisible({ timeout: 30_000 });
+  // ADR-132: a `kind:local` source installs its CURRENT bytes, and the version
+  // label is SERVER-derived from the content digest (`local-<digest12>`) — so
+  // the chip reads `local-… · install`, never the `<tag>/v1.0.0` git form this
+  // helper expected. `installPackageRevision` returns exactly
+  // `entry.digestVersionLabel` for a local source
+  // (`local-source-attach.integration.test.ts`), and the panel renders one
+  // digest chip instead of a tag list when `pkg.tags` is empty.
+  //
+  // The label therefore is not knowable before the run, so locate the chip by
+  // its package row and its trailing verb. The `$` matters: without it
+  // `· install` would also match `· installed`. This spec is the ONLY e2e
+  // cover of the local-directory source path, which is why it keeps that
+  // source kind rather than switching to the `file://` form its siblings use.
+  const row = page.locator("tr", { hasText: tag });
+
+  await row.getByRole("button", { name: /· install$/u }).click();
+  await expect(row.getByRole("button", { name: /· installed$/u })).toBeVisible({
+    timeout: 30_000,
+  });
 }
 
 async function selectGraphNode(page: Page, nodeId: string): Promise<void> {
@@ -225,6 +240,49 @@ async function selectGraphNode(page: Page, nodeId: string): Promise<void> {
   await page.getByTestId("flow-graph-editor").scrollIntoViewIfNeeded();
   await expect(node).toBeVisible();
   await node.dispatchEvent("click");
+}
+
+// Save through the editor top bar and wait for the write burst it triggers.
+//
+// There is NO navigation and NO route POST to wait for: `saveAction` is a
+// CLIENT function handed to `<form action={...}>`, so React calls it directly
+// and it emits one PUT (or DELETE) per changed file to
+// `/api/studio/local-packages/<id>/files/<path>`. The old
+// `waitForLoadState("networkidle")` was therefore waiting for an event that
+// never happens — and against a Next dev server networkidle cannot settle
+// anyway, so it burned this test's entire 180 s budget on every run.
+//
+// A save can emit several writes, so wait for the burst to go quiet rather than
+// for the first response: at least one write, then a poll with no new ones.
+async function saveViaTopBar(page: Page, packageId: string): Promise<void> {
+  const prefix = `/api/studio/local-packages/${packageId}/files/`;
+  let writes = 0;
+  const count = (response: { url: () => string }): void => {
+    if (response.url().includes(prefix)) writes += 1;
+  };
+
+  page.on("response", count);
+
+  try {
+    await page.getByTestId("topbar-save").click();
+
+    let settledAt = -1;
+
+    await expect
+      .poll(
+        () => {
+          const quiet = writes > 0 && writes === settledAt;
+
+          settledAt = writes;
+
+          return quiet;
+        },
+        { intervals: [250], timeout: 30_000 },
+      )
+      .toBe(true);
+  } finally {
+    page.off("response", count);
+  }
 }
 
 test("canonical Studio wizard creates a package Flow and adds another Flow in the same editor", async ({
@@ -283,6 +341,16 @@ test("canonical Studio wizard creates a package Flow and adds another Flow in th
   // wizard UI, then launch the immutable attached package from the board. The
   // test Flow is all-cli so the real engine reaches a terminal state without an
   // ACP agent session.
+  // Leave the editor BEFORE driving the lock/file API directly. The open editor
+  // runs a keep-alive that refreshes its OWN lock session, so the competing
+  // session acquired below can be taken back from under this test between the
+  // acquire and the PUT — the write then fails the lock guard, with a bare
+  // `expect(write.ok()).toBeTruthy()` as the only clue. Running this file
+  // alongside the other studio specs widens that window enough to hit it
+  // regularly; alone it mostly wins the race.
+  await page.getByTestId("local-editor-end-edit").click();
+  await page.waitForURL(/\/studio\/local$/, { timeout: 15_000 });
+
   const sessionId = `canonical-e2e-${Math.random().toString(36).slice(2, 10)}`;
   const lock = await page.request.post(
     `/api/studio/local-packages/${packageId}/lock-refresh`,
@@ -439,17 +507,30 @@ test("fork an installed package to local → land in the /studio/edit editor", a
   await page.waitForURL(/\/studio\/edit\//, { timeout: 30_000 });
   expect(page.url()).toMatch(/\/studio\/edit\//);
 
-  // M39 (ADR-105): the no-path editor lands on the package HOME (overview +
-  // manifest form), NOT an empty flow canvas — so there is no spurious
-  // "YAML is invalid" sync banner. End-edit releases the lock and returns to the
-  // local list.
+  // M39 (ADR-105, as revised by ADR-116): the no-path editor lands on the
+  // package COMPOSITION view, NOT an empty flow canvas — so there is no
+  // spurious "YAML is invalid" sync banner. End-edit releases the lock and
+  // returns to the local list.
   const editId = page.url().match(/\/studio\/edit\/([^/?#]+)/)?.[1];
 
   expect(editId).toBeTruthy();
   await page.goto(`/studio/edit/${editId}`);
   await expect(page.getByTestId("package-composition")).toBeVisible();
-  await expect(page.getByTestId("package-manifest-form")).toBeVisible();
   await expect(page.getByTestId("flow-yaml-sync-error")).toHaveCount(0);
+
+  // The manifest form is reached by OPENING the manifest, not by landing.
+  // ADR-116 deleted `PackageHome` and recorded that "the manifest form is
+  // reused inside the composition header" — but `PackageComposition` never
+  // referenced `PackageManifestForm`, so that consequence went unimplemented
+  // and the form survives only as the per-file editor for a `manifest`-kind
+  // file. Asserting it on the landing (what this spec used to do) therefore
+  // tested a screen that does not exist. Open the file so the coverage stays.
+  await page.getByRole("tab", { name: /^Files/u }).click();
+  await page
+    .getByRole("button", { name: "maister-package.yaml", exact: true })
+    .click();
+  await expect(page.getByTestId("package-manifest-form")).toBeVisible();
+  await page.goto(`/studio/edit/${editId}`);
   await page.getByTestId("local-editor-end-edit").click();
   await page.waitForURL(/\/studio\/local$/, { timeout: 15_000 });
 });
@@ -514,11 +595,15 @@ test("local editor reference pickers save runner, agent, free-text agent, and sc
   );
 
   await expect(page.getByTestId("topbar-save")).toBeEnabled();
-  await page.getByTestId("topbar-save").click();
-  await page.waitForLoadState("networkidle");
+  await saveViaTopBar(page, editId as string);
 
   await page.goto(`/studio/edit/${editId}`);
   await expect(page.getByTestId("package-composition")).toBeVisible();
+  // The composition lands on the Flows tab; the package file list lives on the
+  // Files tab, and that tree starts with every folder COLLAPSED — so the saved
+  // schema needs both the tab and its folder opened before it is on screen.
+  await page.getByRole("tab", { name: /^Files/u }).click();
+  await page.getByRole("button", { name: "schemas", exact: true }).click();
   await expect(
     page.getByRole("button", { name: "review-intake.json", exact: true }),
   ).toBeVisible();
@@ -580,18 +665,30 @@ test("local editor structured controls: skills multiselect, /-autosuggest prompt
   await expect(variableMenu).toHaveCSS("overflow-y", "auto");
   await page.getByTestId("capability-variable-button").click();
 
-  // (c) skills MultiSelectField: free-add a chip, then remove it
+  // (c) skills picker: free-add a value, then remove it.
+  //
+  // The node form's `skills` (and `mcps`) field is an `McpSelect`, which
+  // REPLACED the MultiSelectField this block was written against — its own
+  // source says "type-to-filter parity with the old MultiSelectField". It has
+  // no `-chip`: a selected value is the option button itself, rendered
+  // `aria-pressed` and toggled off by clicking it again. The old
+  // `node-skills-chip` assertions therefore waited on a node that cannot
+  // exist, while the free-add underneath them had in fact worked — the page
+  // snapshot showed `button "extra-skill" [pressed]` the whole time.
   await page.getByTestId("node-skills-input").fill("extra-skill");
   await page.getByTestId("node-skills-free-add").click();
-  await expect(
-    page.getByTestId("node-skills-chip").filter({ hasText: "extra-skill" }),
-  ).toBeVisible();
+
+  const freeAdded = page.getByTestId("node-skills-option-extra-skill");
+
+  await expect(freeAdded).toHaveAttribute("aria-pressed", "true");
   await expect(flowYamlInput).toHaveValue(/extra-skill/);
-  await page
-    .getByTestId("node-skills-chip")
-    .filter({ hasText: "extra-skill" })
-    .getByRole("button")
-    .click();
+  // Same control removes it — `onClick={() => toggle(option.value)}`. A
+  // free-added value has no catalog entry, so it is only rendered while it is
+  // SELECTED ("selected values with no catalog entry are free-added
+  // forward-refs"); deselecting drops the button entirely rather than leaving
+  // it unpressed.
+  await freeAdded.click();
+  await expect(freeAdded).toHaveCount(0);
   await expect(flowYamlInput).not.toHaveValue(/extra-skill/);
 
   // (c) insert a skill chip via `/` autosuggest → stores a canonical token
@@ -665,8 +762,15 @@ test("local editor structured controls: skills multiselect, /-autosuggest prompt
   await page.getByTestId("node-roles-remove-1").click();
   await expect(flowYamlInput).not.toHaveValue(/reviewer/);
 
-  // (a) the docked assistant first-prompt input is the same /-autosuggest composer
-  await page.getByTestId("studio-ai-prompt").scrollIntoViewIfNeeded();
+  // (a) the docked assistant first-prompt input is the same /-autosuggest
+  // composer. Open the dock first: it starts collapsed (`aiOpen` defaults to
+  // false) AND selecting a graph node force-closes it — which the `review`
+  // selection above just did. The panel is rendered but `hidden`, so the old
+  // `scrollIntoViewIfNeeded()` never failed fast; it retried "element is not
+  // visible" for the entire 180 s budget, which is what made this spec slow
+  // rather than merely red.
+  await page.getByTestId("local-editor-ai-toggle").click();
+  await expect(page.getByTestId("local-editor-ai-panel")).toBeVisible();
   await expect(page.getByTestId("studio-ai-prompt")).toBeVisible();
   await expect(
     page

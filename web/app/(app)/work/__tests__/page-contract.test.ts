@@ -238,7 +238,6 @@ describe("work page contract — i18n", () => {
       "title",
       "project",
       "stage",
-      "run",
       "readiness",
       "waitingOn",
       "blockers",
@@ -247,6 +246,32 @@ describe("work page contract — i18n", () => {
       "nextAction",
     ]) {
       expect(keys).toContain(`columns.${column}`);
+    }
+  });
+
+  // ADR-174 `REQ-D8`: the raw-enum column is gone and its key with it. A key
+  // left behind is a string nobody renders — exactly the orphan class `T-D23`
+  // exists to stop on the Desk side.
+  it("no longer ships a run-status column label", () => {
+    expect(flatKeys(en.work)).not.toContain("columns.run");
+    expect(flatKeys(ru.work)).not.toContain("columns.run");
+  });
+
+  // And the refinement it carried has a home, in both locales.
+  it("translates every run-status refinement the chip can show", () => {
+    for (const key of [
+      "runNeedsInput",
+      "runNeedsInputIdle",
+      "runHumanWorking",
+      "runRunning",
+      "runWaitingOnChildren",
+    ]) {
+      expect(en.workStage, key).toHaveProperty(key);
+      expect(ru.workStage, key).toHaveProperty(key);
+      expect(
+        (en.workStage as Record<string, string>)[key],
+        `${key} must differ from the RU copy`,
+      ).not.toBe((ru.workStage as Record<string, string>)[key]);
     }
   });
 

@@ -10,10 +10,10 @@ import { useRef, useState, useTransition } from "react";
 
 import { EXACT_ONLY_TOKEN_SCOPES, TOKEN_SCOPE_ALL } from "@/types/token-scopes";
 import {
-  isManagedTokenRow,
   toggleScopeForEdit,
   USER_TOKEN_SCOPE_VALUES,
 } from "@/components/board/token-actions";
+import { isManagedTokenRow } from "@/lib/tokens/managed-row";
 import { useModalA11y } from "@/components/use-modal-a11y";
 
 type PersonalTokenDto = {

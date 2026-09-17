@@ -6,6 +6,7 @@ import { getTranslations } from "next-intl/server";
 import { DecisionSections } from "@/components/inbox/decision-sections";
 import { HitlInboxList } from "@/components/inbox/hitl-inbox-list";
 import { InboxPanel } from "@/components/portfolio/inbox-panel";
+import { buildWorkStageLabels } from "@/lib/work/work-row-labels";
 import { requireSession } from "@/lib/authz";
 import { getDecisionsQueue, hitlDecisionsOf } from "@/lib/queries/decisions";
 import { getInboxItems, getUnreadInboxCount } from "@/lib/queries/inbox";
@@ -36,20 +37,7 @@ export default async function InboxPage(): Promise<ReactElement> {
   // ATN-01: the HITL cards come from the queue the count is the length of, not
   // from a second, wider query printing its own number beside it.
   const hitlItems = hitlDecisionsOf(queue.items);
-  const stageLabels = {
-    Triage: tStage("Triage"),
-    Held: tStage("Held"),
-    Ready: tStage("Ready"),
-    Queued: tStage("Queued"),
-    Executing: tStage("Executing"),
-    WaitingOnHuman: tStage("WaitingOnHuman"),
-    Review: tStage("Review"),
-    Crashed: tStage("Crashed"),
-    Promoted: tStage("Promoted"),
-    Abandoned: tStage("Abandoned"),
-    blocked: tStage("blocked"),
-    promotedResult: tStage("promotedResult"),
-  };
+  const stageLabels = buildWorkStageLabels(tStage);
 
   return (
     <div className="w-full">

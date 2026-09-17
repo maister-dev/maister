@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import en from "@/messages/en.json";
 import ru from "@/messages/ru.json";
+import { STAGE_REFINEMENTS } from "@/components/work/work-stage-chip";
 import { WORK_STAGES } from "@/lib/work/stage";
 
 // ---------------------------------------------------------------------------
@@ -12,13 +13,22 @@ import { WORK_STAGES } from "@/lib/work/stage";
 // copied to satisfy a parity check, which is exactly what this milestone's
 // "EN + RU in the task that adds the string" rule exists to prevent.
 //
-// The two non-member keys are part of the same rendering contract: `blocked`
-// labels the attribute that rides beside the stage (STG-05), and
-// `promotedResult` labels the result-only variant ADR-170 D3 refuses to
-// collapse into a plain "Promoted".
+// The non-member keys are part of the same rendering contract: `blocked` labels
+// the attribute that rides beside the stage (STG-05), `promotedResult` labels
+// the result-only variant ADR-170 D3 refuses to collapse into a plain
+// "Promoted", and the `run*` keys label the run-status refinement ADR-174
+// `REQ-D8` moved into the chip when it removed the raw-enum column.
+//
+// The refinement keys are DERIVED from `STAGE_REFINEMENTS` rather than listed,
+// so a sixth collapsed run status cannot be added to the code and quietly
+// skipped here — it arrives in this list and immediately demands EN and RU copy.
 // ---------------------------------------------------------------------------
 
-const EXTRA_KEYS = ["blocked", "promotedResult"] as const;
+const EXTRA_KEYS = [
+  "blocked",
+  "promotedResult",
+  ...STAGE_REFINEMENTS.map((refinement) => `run${refinement}` as const),
+] as const;
 
 const REQUIRED_KEYS = [...WORK_STAGES, ...EXTRA_KEYS] as const;
 

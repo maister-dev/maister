@@ -385,7 +385,20 @@ async function listProjectAutomationRows(input: {
   const oneTimeSort: AutomationSortColumns = {
     active: sql<boolean>`${scheduledTaskLaunches.nextAttemptAt} IS NOT NULL`,
     id: sql<string>`${scheduledTaskLaunches.id}`,
-    kindRank: sql<number>`0`,
+    // `0::int`, not `0`. A BARE integer literal in ORDER BY is an ORDINAL
+    // POSITION to Postgres, not a constant — `ORDER BY 0` is out of range and
+    // the whole query dies with "ORDER BY position 0 is not in select list",
+    // which took the project Automations tab down with it. The cast makes it an
+    // expression, which is what a rank constant has to be.
+    //
+    // `1::int` below was NOT breaking anything: within one source every row has
+    // the same rank, so the key is inert, and `ORDER BY 1` happened to resolve
+    // to that query's first selected column — `runSchedules.id`, already the
+    // next tiebreaker. It is cast for the same reason regardless: as an ordinal
+    // it silently tracks the select list, so reordering the columns would
+    // change the sort. Cross-KIND ordering never came from here — it is the
+    // `kindRank(type)` comparator that merges the three sources.
+    kindRank: sql<number>`0::int`,
     nextActionAt: sql<Date | null>`${scheduledTaskLaunches.nextAttemptAt}`,
     updatedAt: sql<Date>`${scheduledTaskLaunches.updatedAt}`,
   };
@@ -396,7 +409,7 @@ async function listProjectAutomationRows(input: {
   const recurringSort: AutomationSortColumns = {
     active: sql<boolean>`${recurringNextActionAt} IS NOT NULL`,
     id: sql<string>`${runSchedules.id}`,
-    kindRank: sql<number>`1`,
+    kindRank: sql<number>`1::int`,
     nextActionAt: recurringNextActionAt,
     updatedAt: sql<Date>`${runSchedules.updatedAt}`,
   };

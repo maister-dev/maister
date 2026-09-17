@@ -21,6 +21,11 @@ test("admin registers a local project and duplicate registration conflicts", asy
   const fx = loadFixtures().byKey.registration;
 
   await page.goto("/projects/new");
+  // The form opens in "Clone from URL" mode, where submit is gated on the URL
+  // field, not on `target` — so filling only the path left the button disabled
+  // and the click below waited out the whole budget. This test registers an
+  // EXISTING local repo, so select that source first.
+  await page.getByRole("radio", { name: "Existing local repo" }).click();
   await page.locator('input[name="target"]').fill(fx.repoPath);
 
   const registerResponse = page.waitForResponse(
@@ -42,7 +47,10 @@ test("admin registers a local project and duplicate registration conflicts", asy
 
   expect(registeredCount).toBe(1);
 
+  // "Register another" resets the form, which puts the source back to the
+  // default "Clone from URL" — so the mode has to be chosen again here.
   await page.getByRole("button", { name: "Register another" }).click();
+  await page.getByRole("radio", { name: "Existing local repo" }).click();
   await page.locator('input[name="target"]').fill(fx.repoPath);
 
   const duplicateResponse = page.waitForResponse(
@@ -84,8 +92,11 @@ test("non-admin users cannot register projects", async ({
     // project_members rows).
     await loginAs(page, users.memberCandidate);
     await page.goto("/projects/new");
+    // `.first()`: the refusal is rendered twice — once in the page body and
+    // once in a variant that stays hidden — so an unscoped match is a strict
+    // mode violation, and which of the two it reported was a race.
     await expect(
-      page.getByText("Only an admin can register a project."),
+      page.getByText("Only an admin can register a project.").first(),
     ).toBeVisible();
   } finally {
     await context.close();

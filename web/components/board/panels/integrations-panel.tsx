@@ -11,9 +11,9 @@ import {
 import {
   CreateTokenModal,
   EditTokenModal,
-  isManagedTokenRow,
   RevokeTokenButton,
 } from "@/components/board/token-actions";
+import { isManagedTokenRow } from "@/lib/tokens/managed-row";
 
 export {
   TokenSecretReveal,

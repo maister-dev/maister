@@ -1,21 +1,23 @@
 import type { ActivityRowLabels } from "@/components/activity/activity-row-list";
-import type { DigestLabels } from "@/lib/queries/digest";
 import type { NowTilesLabels } from "@/components/attention/now-tiles";
 import type { WorkRowsLabels } from "@/components/work/work-rows-table";
+import type { WorkInFlightStage } from "@/lib/work/stage";
+import type { ActivityFeedRow } from "@/lib/queries/activity-feed";
+import type { DecisionItem } from "@/lib/queries/decisions";
+import type { WorkTableRow } from "@/lib/queries/work-table";
 import type { Metadata } from "next";
 import type { ReactElement, ReactNode } from "react";
 
 import { getLocale, getTranslations } from "next-intl/server";
 import Link from "next/link";
-import clsx from "clsx";
 
 import { ActivityRowList } from "@/components/activity/activity-row-list";
 import { DecisionSections } from "@/components/inbox/decision-sections";
 import { EmptyState } from "@/components/portfolio/empty-state";
-import { HitlInboxList } from "@/components/inbox/hitl-inbox-list";
+import { HitlPanel } from "@/components/inbox/hitl-panel";
 import { NowTiles } from "@/components/attention/now-tiles";
+import { RunRecoverActions } from "@/components/runs/run-recover-actions";
 import { OnboardingChecklist } from "@/components/portfolio/onboarding-checklist";
-import { ScratchLaunchPopover } from "@/components/chrome/scratch-launch-popover";
 import { WorkRowsTable } from "@/components/work/work-rows-table";
 import {
   ACTIVITY_FEED_KINDS,
@@ -23,28 +25,32 @@ import {
 } from "@/lib/queries/activity-feed";
 import { buildActivityRowLabels } from "@/lib/activity/activity-row-labels";
 import { buildWorkRowsLabels } from "@/lib/work/work-row-labels";
-import {
-  formatDigest,
-  getNowTileCounts,
-  NOW_TILE_IDS,
-} from "@/lib/queries/digest";
+import { countWorkInFlightByStage } from "@/lib/work/stage-counts";
 import { getActivityCursor } from "@/lib/queries/activity-cursor";
-import { getDecisionsQueue, hitlDecisionsOf } from "@/lib/queries/decisions";
+import { getDecisionsQueue } from "@/lib/queries/decisions";
 import { getPortfolio } from "@/lib/queries/portfolio";
 import { getWorkTable } from "@/lib/queries/work-table";
-import { groupWorkTableRows } from "@/lib/work/work-table-view";
-import { isWorkInFlight } from "@/lib/work/stage";
+import {
+  groupWorkTableRows,
+  normalizeDeskStageFilter,
+} from "@/lib/work/work-table-view";
+import { isWorkInFlight, WORK_IN_FLIGHT_STAGES } from "@/lib/work/stage";
 import { requireActiveSession } from "@/lib/authz";
+import { runReviewHref } from "@/lib/runs/run-query-state";
 import { splitAtCursor } from "@/lib/activity/activity-view";
 
 /**
- * The Desk (`NAV-01`, ADR-172 D1) — `/`.
+ * The Desk (`NAV-01`, ADR-172 D1; ADR-174) — `/`.
  *
  * It COMPOSES. Every number comes from a read model this milestone already
  * shipped, and every region renders through the component the owning surface
  * renders: `DecisionSections` + `HitlInboxList` from `/inbox`, `WorkRowsTable`
  * from `/work`, `ActivityRowList` from `/activity`. A second copy of any of them
  * would drift, which is the failure ADR-172 D1 exists to prevent.
+ *
+ * ADR-174 adds the rule the composition alone did not give: ONE OBJECT PER WORK
+ * ITEM. The Now strip is a summary of the work table rather than a second
+ * population beside it, so its five numbers are counted from the same rows.
  *
  * It adds NO mutation path: the inline actions on a decision card post to the
  * same promote / recover / discard routes `/inbox` uses.
@@ -53,6 +59,10 @@ import { splitAtCursor } from "@/lib/activity/activity-view";
 /** How much of each region the Desk shows before deferring to its full surface. */
 const DESK_WORK_ROWS = 12;
 const DESK_ACTIVITY_ROWS = 12;
+/** How much of a running row's history its panel shows before deferring. */
+const DESK_PANEL_EVENTS = 5;
+
+type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
 export async function generateMetadata(): Promise<Metadata> {
   const t = await getTranslations("desk");
@@ -60,12 +70,16 @@ export async function generateMetadata(): Promise<Metadata> {
   return { title: t("title") };
 }
 
-export default async function DeskPage(): Promise<ReactElement> {
+export default async function DeskPage({
+  searchParams,
+}: {
+  searchParams: SearchParams;
+}): Promise<ReactElement> {
   const user = await requireActiveSession();
-  const [t, tDigest, tInbox, tPortfolio, tStage, tWork, tActivity, locale] =
+  const [params, t, tInbox, tPortfolio, tStage, tWork, tActivity, locale] =
     await Promise.all([
+      searchParams,
       getTranslations("desk"),
-      getTranslations("digest"),
       getTranslations("inbox"),
       getTranslations("portfolio"),
       getTranslations("workStage"),
@@ -77,46 +91,78 @@ export default async function DeskPage(): Promise<ReactElement> {
   // ADR-169 D8/ATN-05: `getDecisionsQueue` is the ONE canonical queue, and it is
   // React-`cache`d — so the rail badge, `/inbox` and this page are the same
   // computation rather than three free to disagree.
-  const [portfolio, queue, table, feed, cursor, digestWindow] =
-    await Promise.all([
-      getPortfolio(user.id, user.role),
-      getDecisionsQueue(user.id, user.role),
-      getWorkTable({ id: user.id, role: user.role }),
-      getCrossProjectActivityFeed({ id: user.id, role: user.role }),
-      getActivityCursor(user.id),
-      getNowTileCounts({ id: user.id, role: user.role }),
-    ]);
+  const [portfolio, queue, table, feed, cursor] = await Promise.all([
+    getPortfolio(user.id, user.role),
+    getDecisionsQueue(user.id, user.role),
+    getWorkTable({ id: user.id, role: user.role }),
+    getCrossProjectActivityFeed({ id: user.id, role: user.role }),
+    getActivityCursor(user.id),
+  ]);
 
   const now = new Date();
-  // ATN-01: the cards and the number above them are ONE population.
-  const hitlItems = hitlDecisionsOf(queue.items);
+  // ADR-174 D2: `Held` is the one decision kind no work row carries, so it is
+  // the one that still needs a region of its own.
+  const heldItems = queue.items.filter((item) => item.kind === "flagged");
   const hasProjects = portfolio.projects.length > 0;
   const inFlight = table.rows.filter((row) => isWorkInFlight(row.stage));
-  const workGroups = groupWorkTableRows(
-    inFlight.slice(0, DESK_WORK_ROWS),
-    "project",
+  // REQ-D2: counted over EVERY in-flight row, before the filter and before the
+  // slice. A strip counted later would answer "what is on this page" while
+  // claiming to answer "what is in flight".
+  const stageCounts = countWorkInFlightByStage(inFlight);
+  const activeStage = normalizeDeskStageFilter(params);
+  // REQ-D3: the filter narrows BEFORE the slice, so `?stage=Crashed` shows the
+  // first 12 crashed rows rather than the crashed rows among the first 12.
+  const visible =
+    activeStage === null
+      ? inFlight
+      : inFlight.filter((row) => row.stage === activeStage);
+  const shownRows = visible.slice(0, DESK_WORK_ROWS);
+  const workGroups = groupWorkTableRows(shownRows, "project");
+  // REQ-D15: the row -> decision join, on `runId`, built from the queue this
+  // page ALREADY loads. `getWorkTable` is untouched — a read-model change here
+  // would have been the tell that the merge was really a rewrite.
+  const decisionByRunId = new Map<string, DecisionItem>(
+    queue.items.flatMap((item) =>
+      item.runId === null ? [] : [[item.runId, item] as const],
+    ),
   );
+  const activityLabels: ActivityRowLabels = buildActivityRowLabels(
+    tActivity,
+    ACTIVITY_FEED_KINDS,
+  );
+  const panels: Record<string, ReactNode> = {};
+
+  for (const row of shownRows) {
+    const panel = deskRowPanel({
+      row,
+      decision:
+        row.runId === null ? null : (decisionByRunId.get(row.runId) ?? null),
+      events: feed.rows.filter((event) => event.runId === row.runId),
+      canAct: user.role !== "viewer",
+      currentUserId: user.id,
+      activityLabels,
+      reviewLabel: tInbox("decisions.review"),
+      noEventsLabel: t("panelNoEvents"),
+      locale,
+      now,
+    });
+
+    if (panel !== null) panels[row.taskId] = panel;
+  }
   const activity = splitAtCursor(
     feed.rows.slice(0, DESK_ACTIVITY_ROWS),
     cursor,
   );
 
-  // One set of tile names, read by both the sentence and the strip: the digest
-  // and the tiles are two renderings of the same five numbers, so they must not
-  // be able to name them differently.
-  const tileNames = Object.fromEntries(
-    NOW_TILE_IDS.map((id) => [id, tDigest(id)]),
-  ) as Record<(typeof NOW_TILE_IDS)[number], string>;
-  const digestLabels: DigestLabels = { ...tileNames, empty: tDigest("empty") };
+  // The strip reads the SAME `workStage` namespace the row chips read, so a
+  // tile and the rows it filters to can never name their stage differently.
   const nowLabels: NowTilesLabels = {
-    names: tileNames,
-    ariaLabel: tDigest("ariaLabel"),
+    heading: t("nowLabel"),
+    names: Object.fromEntries(
+      WORK_IN_FLIGHT_STAGES.map((stage) => [stage, tStage(stage)]),
+    ) as Record<WorkInFlightStage, string>,
   };
   const workLabels: WorkRowsLabels = buildWorkRowsLabels(tWork, tStage);
-  const activityLabels: ActivityRowLabels = buildActivityRowLabels(
-    tActivity,
-    ACTIVITY_FEED_KINDS,
-  );
 
   return (
     <div className="flex w-full flex-col gap-7">
@@ -129,29 +175,14 @@ export default async function DeskPage(): Promise<ReactElement> {
         <h1 className="m-0 text-[30px] font-semibold tracking-[-0.03em] text-ink">
           {t("title")}
         </h1>
-        {/* The digest sentence. Deterministic by construction (`ATN-12`) — the
-            same window and labels always produce the same bytes, which is what
-            later makes it a safe notification payload. */}
-        <p
-          className="m-0 max-w-[760px] text-[13.5px] leading-[1.55] text-mute"
-          data-testid="desk-digest"
-        >
-          {formatDigest(digestWindow, { locale, labels: digestLabels })}
-        </p>
       </header>
 
-      {/* EDGE-NAV-01: the composer is absent until a project exists — there is
-          nowhere for a scratch run to go. */}
-      {hasProjects ? (
-        <ScratchLaunchPopover
-          hint={tPortfolio("launchHint")}
-          label={t("composer")}
-          title={t("composerTitle")}
-          variant="composer"
-        />
-      ) : null}
-
-      <NowTiles labels={nowLabels} locale={locale} tiles={digestWindow.tiles} />
+      <NowTiles
+        activeStage={activeStage}
+        counts={stageCounts}
+        labels={nowLabels}
+        locale={locale}
+      />
 
       {hasProjects ? null : (
         <div className="flex flex-col gap-5" data-testid="desk-empty">
@@ -170,101 +201,195 @@ export default async function DeskPage(): Promise<ReactElement> {
       )}
 
       {/*
-        EDGE-NAV-02: ONE column below `xl`, so the narrow stack is exactly the
-        source order — Decisions, then Work, then Activity.
+        REQ-D21: ONE column at EVERY width, so the rendered order IS the source
+        order and the two cannot disagree. The previous cut kept a second
+        desktop arrangement in explicit grid coordinates — two layouts to keep
+        true at once — and removing the Decisions region removed the reason for
+        the second one.
 
-        Desktop wants a different arrangement (Activity beside Decisions, the
-        table full width below it), and that is done with explicit grid
-        placement rather than by reordering the source. Moving Work after
-        Activity in the source would fix desktop and silently break narrow,
-        which is what the first cut of this page did.
+        Order: header, strip, work, Held, activity.
       */}
-      <div className="grid grid-cols-1 gap-7 xl:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
-        <DeskRegion
-          action={{ href: "/inbox", label: t("decisionsAll") }}
-          className="xl:col-start-1 xl:row-start-1"
-          count={{
-            value: queue.count,
-            label: t("decisionsCount").replace("$count", String(queue.count)),
-          }}
-          testid="desk-decisions"
-          title={t("decisionsTitle")}
-        >
-          {queue.count === 0 ? (
-            <DeskEmpty text={t("decisionsEmpty")} />
-          ) : (
-            <div className="flex flex-col gap-6">
-              {hitlItems.length > 0 ? (
-                <HitlInboxList
-                  canAct={user.role !== "viewer"}
-                  currentUserId={user.id}
-                  items={hitlItems}
-                />
-              ) : null}
-              <DecisionSections
-                items={queue.items}
-                labels={{
-                  promotableTitle: tInbox("decisions.promotableTitle"),
-                  crashedTitle: tInbox("decisions.crashedTitle"),
-                  flaggedTitle: tInbox("decisions.flaggedTitle"),
-                  review: tInbox("decisions.review"),
-                  openTask: tInbox("decisions.openTask"),
-                  stage: workLabels.stage,
-                }}
-              />
-            </div>
-          )}
-        </DeskRegion>
+      <DeskRegion
+        action={{ href: "/work", label: t("workAll") }}
+        count={{
+          value: visible.length,
+          label: t("workCount").replace("$count", String(visible.length)),
+        }}
+        testid="desk-work"
+        title={t("workTitle")}
+      >
+        {visible.length === 0 ? (
+          <DeskEmpty
+            clear={
+              activeStage === null
+                ? undefined
+                : { href: "/", label: t("workClearFilter") }
+            }
+            testid={
+              activeStage === null ? "desk-work-empty" : "desk-work-filtered"
+            }
+            text={
+              activeStage === null
+                ? t("workEmpty")
+                : t("workEmptyFiltered").replace("$stage", tStage(activeStage))
+            }
+          />
+        ) : (
+          <WorkRowsTable
+            expandable
+            groupBy="project"
+            groups={workGroups}
+            labels={workLabels}
+            locale={locale}
+            now={now}
+            panels={panels}
+          />
+        )}
+      </DeskRegion>
+      {/* ADR-174 D2: the Decisions region is GONE. Three of its four
+          populations were the work table under another name — `hitl`,
+          `crashed` and `promotable` all map onto `WORK_IN_FLIGHT_STAGES`
+          members — and they now ride on the row itself.
 
-        {/* `min-w-0`: a grid item defaults to `min-width: auto`, which sizes it
-            to the 1180px table's min-content width and stretches the whole page
-            sideways — the inner `overflow-x-auto` never gets a chance. This is
-            what keeps `EDGE-NAV-02`'s "no page-level horizontal scroll" true. */}
-        <div className="min-w-0 xl:col-span-2 xl:col-start-1 xl:row-start-2">
-          <DeskRegion
-            action={{ href: "/work", label: t("workAll") }}
-            count={{
-              value: inFlight.length,
-              label: t("workCount").replace("$count", String(inFlight.length)),
+          `Held` is the exception that proves the rule: `WORK_BACKLOG_STAGES`,
+          not in flight, so no row carries it. It keeps a region. */}
+      {heldItems.length > 0 ? (
+        <div data-testid="desk-held">
+          <DecisionSections
+            items={heldItems}
+            labels={{
+              promotableTitle: tInbox("decisions.promotableTitle"),
+              crashedTitle: tInbox("decisions.crashedTitle"),
+              flaggedTitle: tInbox("decisions.flaggedTitle"),
+              review: tInbox("decisions.review"),
+              openTask: tInbox("decisions.openTask"),
+              stage: workLabels.stage,
             }}
-            testid="desk-work"
-            title={t("workTitle")}
-          >
-            {inFlight.length === 0 ? (
-              <DeskEmpty text={t("workEmpty")} />
-            ) : (
-              <WorkRowsTable
-                groupBy="project"
-                groups={workGroups}
-                labels={workLabels}
-                locale={locale}
-                now={now}
-              />
-            )}
-          </DeskRegion>
+          />
         </div>
-        <DeskRegion
-          action={{ href: "/activity", label: t("activityAll") }}
-          className="xl:col-start-2 xl:row-start-1"
-          testid="desk-activity"
-          title={t("activityTitle")}
-        >
-          {activity.unread.length + activity.seen.length === 0 ? (
-            <DeskEmpty text={t("activityEmpty")} />
-          ) : (
-            <ActivityRowList
-              divider={activity.divider}
-              labels={activityLabels}
-              locale={locale}
-              now={now}
-              seen={activity.seen}
-              unread={activity.unread}
-            />
-          )}
-        </DeskRegion>
-      </div>
+      ) : null}
+
+      <DeskRegion
+        action={{ href: "/activity", label: t("activityAll") }}
+        testid="desk-activity"
+        title={t("activityTitle")}
+      >
+        {activity.unread.length + activity.seen.length === 0 ? (
+          <DeskEmpty text={t("activityEmpty")} />
+        ) : (
+          <ActivityRowList
+            divider={activity.divider}
+            labels={activityLabels}
+            locale={locale}
+            now={now}
+            seen={activity.seen}
+            unread={activity.unread}
+          />
+        )}
+      </DeskRegion>
     </div>
   );
+}
+
+/**
+ * `REQ-D14` — panel content resolves BY STAGE, and adds no mutation path.
+ *
+ * `Review` is a LINK, never an inline promote: the drift-guarded reviewed target
+ * commit exists only on the run's own review surface, so promoting from here
+ * would be promoting something the reader never saw.
+ *
+ * Every arm renders through the component the owning surface renders — the
+ * extracted `HitlPanel` that `/inbox` is now built on, `RunRecoverActions` from
+ * the run surface, `ActivityRowList` from `/activity`.
+ */
+function deskRowPanel({
+  row,
+  decision,
+  events,
+  canAct,
+  currentUserId,
+  activityLabels,
+  reviewLabel,
+  noEventsLabel,
+  locale,
+  now,
+}: {
+  row: WorkTableRow;
+  decision: DecisionItem | null;
+  events: ActivityFeedRow[];
+  canAct: boolean;
+  currentUserId: string;
+  activityLabels: ActivityRowLabels;
+  reviewLabel: string;
+  noEventsLabel: string;
+  locale: string;
+  now: Date;
+}): ReactNode {
+  if (row.stage === "WaitingOnHuman" && decision?.kind === "hitl") {
+    return (
+      <HitlPanel
+        expanded
+        canAct={canAct}
+        currentUserId={currentUserId}
+        item={decision.hitl}
+      />
+    );
+  }
+
+  if (row.stage === "Review" && row.runId !== null) {
+    return (
+      <DeskPanelFrame>
+        <Link
+          className="inline-flex h-8 items-center rounded-[10px] border border-line bg-ivory px-3 text-[12.5px] font-semibold text-ink no-underline"
+          href={runReviewHref(row.runId)}
+        >
+          {reviewLabel}
+        </Link>
+      </DeskPanelFrame>
+    );
+  }
+
+  if (row.stage === "Crashed" && decision?.kind === "crashed") {
+    return (
+      <DeskPanelFrame>
+        <RunRecoverActions
+          canRecover={decision.crashed.action === "recover"}
+          runId={decision.crashed.runId}
+        />
+      </DeskPanelFrame>
+    );
+  }
+
+  if (row.stage === "Executing" || row.stage === "Queued") {
+    // ALWAYS a panel, never `null`. The events come from the cross-project feed
+    // this page already loads, which is capped — so a run whose events fall
+    // outside that window would otherwise lose its expand affordance entirely,
+    // and which rows are expandable would depend on OTHER projects' activity.
+    // That degrades exactly under the growth ADR-174 optimizes for. The
+    // affordance is therefore stable and the panel says when it has nothing.
+    return (
+      <DeskPanelFrame>
+        {events.length === 0 ? (
+          <p className="m-0 text-[12.5px] text-mute">{noEventsLabel}</p>
+        ) : (
+          <ActivityRowList
+            divider={false}
+            labels={activityLabels}
+            locale={locale}
+            now={now}
+            seen={events.slice(0, DESK_PANEL_EVENTS)}
+            unread={[]}
+          />
+        )}
+      </DeskPanelFrame>
+    );
+  }
+
+  return null;
+}
+
+function DeskPanelFrame({ children }: { children: ReactNode }): ReactElement {
+  return <div className="px-4 py-3.5">{children}</div>;
 }
 
 function DeskRegion({
@@ -272,20 +397,18 @@ function DeskRegion({
   count,
   action,
   testid,
-  className,
   children,
 }: {
   title: string;
   count?: { value: number; label: string };
   action: { href: string; label: string };
   testid: string;
-  className?: string;
   children: ReactNode;
 }): ReactElement {
   return (
     <section
       aria-label={title}
-      className={clsx("flex min-w-0 flex-col gap-3.5", className)}
+      className="flex min-w-0 flex-col gap-3.5"
       data-testid={testid}
     >
       <div className="flex flex-wrap items-baseline gap-3">
@@ -320,10 +443,29 @@ function DeskRegion({
   );
 }
 
-function DeskEmpty({ text }: { text: string }): ReactElement {
+function DeskEmpty({
+  text,
+  clear,
+  testid,
+}: {
+  text: string;
+  clear?: { href: string; label: string };
+  testid?: string;
+}): ReactElement {
   return (
-    <p className="m-0 rounded-[14px] border border-line bg-paper px-4 py-6 text-center text-[13px] text-mute">
+    <p
+      className="m-0 flex flex-col items-center gap-2 rounded-[14px] border border-line bg-paper px-4 py-6 text-center text-[13px] text-mute"
+      data-testid={testid}
+    >
       {text}
+      {clear ? (
+        <Link
+          className="font-mono text-[11px] text-mute underline hover:text-ink"
+          href={clear.href}
+        >
+          {clear.label}
+        </Link>
+      ) : null}
     </p>
   );
 }

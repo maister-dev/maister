@@ -47,6 +47,11 @@ const labels: FlightCardLabels = {
     Abandoned: "Abandoned",
     blocked: "Blocked",
     promotedResult: "Result published",
+    runNeedsInput: "live session",
+    runNeedsInputIdle: "checkpointed",
+    runHumanWorking: "manual takeover",
+    runRunning: "running",
+    runWaitingOnChildren: "waiting on children",
   },
   prChip: {
     open: "PR open",

@@ -77,4 +77,25 @@ describe("getDefaultBranch", () => {
 
     expect(await getDefaultBranch(dir)).toBe("main");
   });
+
+  // The case the three tiers above miss: the directory is not a repo, but it
+  // sits INSIDE one. `git -C <dir>` resolves upward, so every tier answered
+  // about the ENCLOSING checkout. New-empty onboarding writes the manifest
+  // before `gitInit` runs, so a greenfield folder created inside another
+  // working tree stamped that tree's default ("trunk" here, `master` on the
+  // machine that surfaced this) into a manifest for a repo then created on
+  // `main` — the project row and its own HEAD disagreed from birth.
+  it('returns "main" for a plain directory nested inside another repo', async () => {
+    const outer = join(root, "outer");
+
+    await mkdir(outer, { recursive: true });
+    git(outer, "init", "--initial-branch=trunk");
+    commit(outer, "seed");
+
+    const greenfield = join(outer, "nested", "greenfield");
+
+    await mkdir(greenfield, { recursive: true });
+
+    expect(await getDefaultBranch(greenfield)).toBe("main");
+  });
 });

@@ -34,6 +34,24 @@ async function replaceYamlEditor(page: Page, text: string): Promise<void> {
   await page.keyboard.insertText(text);
 }
 
+// Submit the draft and wait for the server action's OWN response, not for the
+// network to fall quiet. `waitForLoadState("networkidle")` cannot settle against
+// a Next DEV server — the HMR socket and RSC streams keep connections open, so
+// it burned the whole 30 s test budget on every run. The action POSTs back to
+// this same route, so its response is the precise "the save round-trip is done"
+// signal the reopen below depends on. It is also the right signal for the
+// REFUSED save: a rejected draft still posts, and still answers.
+async function saveDraft(page: Page, url: string): Promise<void> {
+  const saved = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname === url,
+  );
+
+  await page.getByRole("button", { name: "Save draft" }).click();
+  await saved;
+}
+
 // M27/T-A9: the flow-graph editor mounts on the authored-flow page; a canvas
 // edit (toolbar add-node — robust, not a ReactFlow drag) flows into the shared
 // flowYaml, the existing Save form persists it, and the save-time hard-gate
@@ -67,8 +85,7 @@ test("M27 flow editor: canvas add-node saves + persists; invalid edit refused", 
   await expect(page.locator('input[name="flowYaml"]')).toHaveValue(/cli_1/);
 
   // Save the draft through the existing updateAuthoredFlowAction form.
-  await page.getByRole("button", { name: "Save draft" }).click();
-  await page.waitForLoadState("networkidle");
+  await saveDraft(page, url);
 
   // Reopen → the added node persisted.
   await page.goto(url);
@@ -97,8 +114,7 @@ test("M27 flow editor: canvas add-node saves + persists; invalid edit refused", 
   await expect(page.locator('input[name="flowYaml"]')).toHaveValue(
     /Broken Draft/,
   );
-  await page.getByRole("button", { name: "Save draft" }).click();
-  await page.waitForLoadState("networkidle");
+  await saveDraft(page, url);
 
   // Draft unchanged on reopen: still the valid cli_1 draft, not the rejected one.
   await page.goto(url);

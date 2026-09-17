@@ -1,6 +1,6 @@
-import { MAISTER_ENGINE_VERSION } from "@/lib/flows/engine-version";
 import { describe, expect, it } from "vitest";
 
+import { MAISTER_ENGINE_VERSION } from "@/lib/flows/engine-version";
 import {
   INVALID_LOCAL_FLOW_MANIFEST_REMEDIATION,
   classifyLocalPackageCutCompatibility,

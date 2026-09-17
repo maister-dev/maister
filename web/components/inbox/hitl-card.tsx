@@ -1,36 +1,25 @@
 "use client";
 
 import type { HitlItem } from "@/lib/queries/hitl";
-import type {
-  InboxCardContext,
-  InboxGateChip,
-} from "@/lib/queries/inbox-context";
-import type { ReactElement, ReactNode } from "react";
+import type { ReactElement } from "react";
 
 import {
-  ArrowTopRightOnSquareIcon,
   ChevronDownIcon,
   ChevronUpIcon,
-  CheckIcon,
-  ClockIcon,
+  ClipboardDocumentListIcon,
   CommandLineIcon,
   CpuChipIcon,
-  ExclamationTriangleIcon,
-  MinusIcon,
   ScaleIcon,
   ShieldCheckIcon,
   UserGroupIcon,
   UserIcon,
-  XMarkIcon,
-  ClipboardDocumentListIcon,
 } from "@heroicons/react/24/outline";
-import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { useTranslations } from "next-intl";
 import clsx from "clsx";
 
-import { AssignmentActions } from "@/components/board/assignment-actions";
-import { RunHitlResponse } from "@/components/board/run-hitl-response";
+import { Chip, HitlPanel } from "@/components/inbox/hitl-panel";
+import { buildWorkStageLabels } from "@/lib/work/work-row-labels";
 import { WorkStageChip } from "@/components/work/work-stage-chip";
 
 // A request whose run session carries no recorded adapter keeps its card and
@@ -84,73 +73,6 @@ const STAGE_ICON: Record<string, typeof UserIcon> = {
   guard: ShieldCheckIcon,
 };
 
-type GateTone = "ok" | "warn" | "bad" | "muted";
-
-const GATE_TONE: Record<string, GateTone> = {
-  passed: "ok",
-  failed: "bad",
-  stale: "warn",
-  pending: "warn",
-  running: "warn",
-  skipped: "muted",
-  overridden: "muted",
-};
-
-const GATE_TONE_CLASS: Record<GateTone, string> = {
-  ok: "border-[color-mix(in_oklab,var(--accent-2)_30%,var(--line))] bg-[color-mix(in_oklab,var(--accent-2)_10%,var(--paper))] text-accent-2",
-  warn: "border-amber-line bg-amber-soft text-amber",
-  bad: "border-[color-mix(in_oklab,var(--status-red)_35%,var(--line))] bg-[color-mix(in_oklab,var(--status-red)_12%,var(--paper))] text-[var(--status-red)]",
-  muted: "border-line bg-ivory text-mute",
-};
-
-function GateIcon({ tone }: { tone: GateTone }): ReactElement {
-  const cls = "h-3 w-3";
-
-  if (tone === "ok") return <CheckIcon className={cls} />;
-  if (tone === "bad") return <XMarkIcon className={cls} />;
-  if (tone === "warn") return <ClockIcon className={cls} />;
-
-  return <MinusIcon className={cls} />;
-}
-
-const MAX_GATE_CHIPS = 5;
-
-function Chip({
-  children,
-  className,
-}: {
-  children: ReactNode;
-  className?: string;
-}): ReactElement {
-  return (
-    <span
-      className={clsx(
-        "inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 font-mono text-[10.5px] tracking-[0.02em]",
-        className,
-      )}
-    >
-      {children}
-    </span>
-  );
-}
-
-function staleCount(summary: Record<string, unknown> | null): number {
-  if (summary === null) return 0;
-  const count = summary.count;
-
-  return typeof count === "number" && count > 0 ? count : 0;
-}
-
-function isReviewGate(item: HitlItem): boolean {
-  return (
-    item.kind === "human" &&
-    typeof item.schema === "object" &&
-    item.schema !== null &&
-    !Array.isArray(item.schema) &&
-    (item.schema as { review?: unknown }).review === true
-  );
-}
-
 export interface HitlCardProps {
   item: HitlItem;
   canAct: boolean;
@@ -163,45 +85,14 @@ export function HitlCard({
   currentUserId,
 }: HitlCardProps): ReactElement {
   const t = useTranslations("inbox");
-  const tb = useTranslations("board");
   const tcrit = useTranslations("run");
   const tStage = useTranslations("workStage");
-  const router = useRouter();
+  // The card owns ONLY the disclosure; the fetch, the actions and the context
+  // region moved to `HitlPanel`, which the Desk renders too (`REQ-D17`).
   const [expanded, setExpanded] = useState(false);
-  const [context, setContext] = useState<InboxCardContext | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(false);
-
-  async function loadContext(): Promise<void> {
-    setLoading(true);
-    setError(false);
-
-    try {
-      const res = await fetch(`/api/runs/${item.runId}/inbox-context`);
-
-      if (!res.ok) throw new Error("inbox-context");
-      setContext((await res.json()) as InboxCardContext);
-    } catch {
-      setError(true);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  function toggle(): void {
-    const next = !expanded;
-
-    setExpanded(next);
-    if (next && context === null && !loading) void loadContext();
-  }
-
   const crit = item.criticality ?? "low";
   const StageIcon = item.stage.type ? STAGE_ICON[item.stage.type] : null;
-  const stale = staleCount(item.assignmentStaleEvidenceSummary);
-  const isPermission = item.kind === "permission";
   const isAgentQuestion = item.kind === "agent_question";
-  const isReview = isReviewGate(item);
-  const reviewHref = `/runs/${item.runId}?wb=review&scope=review`;
 
   return (
     <article
@@ -217,7 +108,7 @@ export function HitlCard({
         aria-expanded={expanded}
         className="flex w-full items-start gap-3 px-4 pt-3.5 text-left"
         type="button"
-        onClick={toggle}
+        onClick={() => setExpanded((open) => !open)}
       >
         <span
           className={clsx(
@@ -258,20 +149,7 @@ export function HitlCard({
                 populations comparable at a glance. */}
             <WorkStageChip
               blocked={false}
-              labels={{
-                Triage: tStage("Triage"),
-                Held: tStage("Held"),
-                Ready: tStage("Ready"),
-                Queued: tStage("Queued"),
-                Executing: tStage("Executing"),
-                WaitingOnHuman: tStage("WaitingOnHuman"),
-                Review: tStage("Review"),
-                Crashed: tStage("Crashed"),
-                Promoted: tStage("Promoted"),
-                Abandoned: tStage("Abandoned"),
-                blocked: tStage("blocked"),
-                promotedResult: tStage("promotedResult"),
-              }}
+              labels={buildWorkStageLabels(tStage)}
               progress={null}
               promotedKind={null}
               stage="WaitingOnHuman"
@@ -309,219 +187,13 @@ export function HitlCard({
         </span>
       </button>
 
-      <div className="flex flex-wrap items-center gap-2 px-4 pb-3.5 pt-2.5">
-        {isReview ? (
-          <a
-            className="inline-flex items-center gap-1.5 rounded-md border border-amber bg-amber px-2.5 py-1 font-mono text-[11px] font-semibold text-white transition-colors hover:bg-amber-2"
-            href={reviewHref}
-          >
-            {t("reviewCode")}
-            <ArrowTopRightOnSquareIcon className="h-3.5 w-3.5" />
-          </a>
-        ) : isPermission && canAct ? (
-          <RunHitlResponse
-            compact
-            availableOptions={item.availableOptions}
-            canAct={canAct}
-            claimStage={item.claimStage}
-            criticality={item.criticality}
-            hitlRequestId={item.hitlRequestId}
-            kind={item.kind}
-            options={item.options}
-            runId={item.runId}
-            schema={item.schema}
-            onRespond={() => window.location.reload()}
-          />
-        ) : !isPermission && canAct ? (
-          <button
-            className="inline-flex items-center gap-1.5 rounded-md border border-line bg-ivory px-2.5 py-1 font-mono text-[11px] font-semibold text-ink-2 transition-colors hover:bg-paper"
-            type="button"
-            onClick={() => {
-              if (!expanded) toggle();
-            }}
-          >
-            {isAgentQuestion ? t("answerClarification") : t("respond")}
-          </button>
-        ) : null}
-
-        <AssignmentActions
-          assigneeUserId={item.assigneeUserId}
-          assignmentId={item.assignmentId}
-          canAct={canAct}
-          currentUserId={currentUserId}
-          labels={{
-            claim: tb("assignmentClaim"),
-            release: tb("assignmentRelease"),
-            takeOver: tb("assignmentTakeOver"),
-          }}
-          status={item.assignmentStatus}
-        />
-
-        <a
-          className="ml-auto inline-flex items-center gap-1 font-mono text-[11px] font-semibold text-accent-2 hover:underline"
-          href={isReview ? reviewHref : `/runs/${item.runId}`}
-        >
-          {t("viewRun")}
-          <ArrowTopRightOnSquareIcon className="h-3.5 w-3.5" />
-        </a>
-      </div>
-
-      {expanded ? (
-        <div className="border-t border-line bg-[color-mix(in_oklab,var(--ivory)_50%,var(--paper))] px-4 py-3.5">
-          {loading ? (
-            <div className="font-mono text-[11px] text-mute" role="status">
-              {t("contextLoading")}
-            </div>
-          ) : error ? (
-            <div
-              className="flex items-center gap-3 font-mono text-[11px] text-[var(--status-red)]"
-              role="alert"
-            >
-              {t("contextError")}
-              <button
-                className="rounded border border-line bg-paper px-2 py-0.5 text-ink-2 hover:bg-ivory"
-                type="button"
-                onClick={() => void loadContext()}
-              >
-                {t("retry")}
-              </button>
-            </div>
-          ) : context ? (
-            <ExpandedContext context={context} stale={stale} t={t} />
-          ) : null}
-
-          {!isReview && !isPermission && canAct ? (
-            <div className="mt-3.5 border-t border-line pt-3.5">
-              <RunHitlResponse
-                compact
-                availableOptions={
-                  item.kind === "budget_breach"
-                    ? (context?.availableOptions ?? item.availableOptions)
-                    : item.availableOptions
-                }
-                budgetProgress={context?.budgetProgress ?? null}
-                canAct={canAct}
-                claimStage={context?.claimStage ?? item.claimStage}
-                criticality={item.criticality}
-                hitlRequestId={item.hitlRequestId}
-                kind={item.kind}
-                nodeInterrupt={item.nodeInterrupt}
-                options={item.options}
-                runId={item.runId}
-                schema={item.schema}
-                onRespond={() => router.refresh()}
-              />
-            </div>
-          ) : null}
-        </div>
-      ) : null}
+      <HitlPanel
+        canAct={canAct}
+        currentUserId={currentUserId}
+        expanded={expanded}
+        item={item}
+        onRequestExpand={() => setExpanded(true)}
+      />
     </article>
-  );
-}
-
-function Section({
-  label,
-  children,
-}: {
-  label: string;
-  children: ReactNode;
-}): ReactElement {
-  return (
-    <div className="mb-3 last:mb-0">
-      <div className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.12em] text-mute">
-        {label}
-      </div>
-      {children}
-    </div>
-  );
-}
-
-function ExpandedContext({
-  context,
-  stale,
-  t,
-}: {
-  context: InboxCardContext;
-  stale: number;
-  t: ReturnType<typeof useTranslations>;
-}): ReactElement {
-  // Blocking gates first, then advisory; cap the chips and roll the rest into
-  // a "+k more" chip.
-  const ordered = [...context.gates].sort(
-    (a, b) => Number(b.mode === "blocking") - Number(a.mode === "blocking"),
-  );
-  const shown = ordered.slice(0, MAX_GATE_CHIPS);
-  const overflow = ordered.length - shown.length;
-
-  return (
-    <>
-      {context.gates.length > 0 || stale > 0 ? (
-        <Section label={t("gatesEvidence")}>
-          <div className="flex flex-wrap gap-1.5">
-            {shown.map((gate: InboxGateChip) => {
-              const tone = GATE_TONE[gate.status] ?? "muted";
-
-              return (
-                <Chip key={gate.gateId} className={GATE_TONE_CLASS[tone]}>
-                  <GateIcon tone={tone} />
-                  {gate.gateId}
-                </Chip>
-              );
-            })}
-            {overflow > 0 ? (
-              <Chip className="border-line bg-ivory text-mute">
-                {t("moreGates", { count: overflow })}
-              </Chip>
-            ) : null}
-            {stale > 0 ? (
-              <Chip className="border-line bg-ivory text-mute">
-                <ExclamationTriangleIcon className="h-3 w-3" />
-                {t("staleEvidence", { count: stale })}
-              </Chip>
-            ) : null}
-          </div>
-        </Section>
-      ) : null}
-
-      {context.lastAgentMessage ? (
-        <Section label={t("lastAgentMessage")}>
-          <div className="max-h-32 overflow-y-auto whitespace-pre-wrap rounded-md border border-line bg-paper px-3 py-2 text-[12.5px] leading-[1.5] text-ink-2">
-            {context.lastAgentMessage.text}
-          </div>
-        </Section>
-      ) : null}
-
-      {context.progress ? (
-        <Section label={t("stageProgress")}>
-          <div className="flex items-center gap-2">
-            <div className="h-1.5 w-32 overflow-hidden rounded-full bg-line">
-              <div
-                className="h-full bg-accent-2"
-                style={{
-                  width: `${Math.round(
-                    (context.progress.done / context.progress.total) * 100,
-                  )}%`,
-                }}
-              />
-            </div>
-            <span className="font-mono text-[11px] text-ink-2">
-              {context.progress.done} / {context.progress.total}
-            </span>
-          </div>
-        </Section>
-      ) : null}
-
-      {context.diff ? (
-        <Section label={t("changes")}>
-          <span className="font-mono text-[11.5px] text-ink-2">
-            {t("changesSummary", {
-              files: context.diff.files,
-              additions: context.diff.additions,
-              deletions: context.diff.deletions,
-            })}
-          </span>
-        </Section>
-      ) : null}
-    </>
   );
 }

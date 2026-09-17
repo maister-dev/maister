@@ -201,3 +201,19 @@ export function buildRunDiffFileHref(
     diffFile,
   });
 }
+
+/**
+ * A run's REVIEW surface, from anywhere outside the run (ADR-174 `REQ-D14`).
+ *
+ * Three surfaces send a reader here — the Desk's expanded `Review` row, the
+ * HITL panel's review-gate action, and the run layout's own diff link — and all
+ * three had spelled the query string by hand. The pair matters: `wb` picks the
+ * workbench tab and `scope` picks the diff scope, so dropping one silently
+ * lands the reader on a DIFFERENT view of the same run.
+ */
+export function runReviewHref(runId: string): string {
+  return buildRunHref(`/runs/${runId}`, null, {
+    wb: "review",
+    scope: "review",
+  });
+}

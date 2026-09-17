@@ -1,4 +1,5 @@
 import type { ReactElement } from "react";
+import type { RunStatusValue } from "@/lib/runs/run-status-values";
 import type { PromotedKind, WorkProgress, WorkStage } from "@/lib/work/stage";
 
 import clsx from "clsx";
@@ -16,10 +17,31 @@ import {
   PlayCircleIcon,
 } from "@heroicons/react/24/outline";
 
+/**
+ * The run statuses `STAGE_BY_RUN_STATUS` collapses many-to-one (ADR-174).
+ *
+ * A live session, a checkpoint and a manual takeover are all `WaitingOnHuman`;
+ * a running graph and a parked orchestrator are both `Executing`. The raw-enum
+ * column used to carry that distinction, and `REQ-D8` moves it here rather than
+ * dropping it — the column went away, the information did not.
+ *
+ * Spelled out under `satisfies` so a twelfth run status that ALSO collapses is
+ * a compile error rather than a silently unrefined chip.
+ */
+export const STAGE_REFINEMENTS = [
+  "NeedsInput",
+  "NeedsInputIdle",
+  "HumanWorking",
+  "Running",
+  "WaitingOnChildren",
+] as const satisfies readonly RunStatusValue[];
+
+export type StageRefinement = (typeof STAGE_REFINEMENTS)[number];
+
 // The whole `workStage` namespace, passed in so the lookup happens ONCE at the
 // render root and no call site grows its own switch (ADR-170).
 export type WorkStageLabels = Record<
-  WorkStage | "blocked" | "promotedResult",
+  WorkStage | "blocked" | "promotedResult" | `run${StageRefinement}`,
   string
 >;
 
@@ -29,6 +51,12 @@ export interface WorkStageChipProps {
   promotedKind: PromotedKind | null;
   progress: WorkProgress | null;
   labels: WorkStageLabels;
+  /**
+   * OPTIONAL by contract (`REQ-D8`). `decision-card.tsx`, `hitl-card.tsx` and
+   * `flight-card.tsx` all render this chip and pass none; a chip given none
+   * MUST render exactly as it did before the refinement existed.
+   */
+  runStatus?: RunStatusValue | null;
   // Icon-only mode still needs an accessible name, so the label is rendered as
   // `aria-label` rather than dropped.
   iconOnly?: boolean;
@@ -81,12 +109,23 @@ export function workStageLabel(
   return labels[stage];
 }
 
+function refinementOf(
+  runStatus: RunStatusValue | null | undefined,
+): StageRefinement | null {
+  return runStatus !== null &&
+    runStatus !== undefined &&
+    (STAGE_REFINEMENTS as readonly string[]).includes(runStatus)
+    ? (runStatus as StageRefinement)
+    : null;
+}
+
 export function WorkStageChip({
   stage,
   blocked,
   promotedKind,
   progress,
   labels,
+  runStatus,
   iconOnly = false,
 }: WorkStageChipProps): ReactElement {
   const Icon = STAGE_ICON[stage];
@@ -95,18 +134,36 @@ export function WorkStageChip({
     progress !== null && progress.total > 0
       ? `${label} ${progress.done}/${progress.total}`
       : label;
+  const refinement = refinementOf(runStatus);
+  // The refinement joins the ACCESSIBLE name too, not just the painted text —
+  // an icon-only chip is exactly where losing it would be invisible.
+  const named =
+    refinement === null
+      ? counted
+      : `${counted} — ${labels[`run${refinement}`]}`;
 
   return (
     <span className="inline-flex items-center gap-1">
       <span
-        aria-label={iconOnly ? counted : undefined}
+        aria-label={iconOnly ? named : undefined}
         className={clsx(CHIP, STAGE_TONE[stage])}
         data-testid="work-stage-chip"
         data-work-stage={stage}
-        title={iconOnly ? counted : undefined}
+        title={iconOnly ? named : undefined}
       >
         <Icon aria-hidden="true" className="h-3.5 w-3.5" />
         {iconOnly ? null : counted}
+        {refinement === null || iconOnly ? null : (
+          <span
+            // Supplementary by definition — the stage is the primary fact. It
+            // is CSS-hidden rather than dropped below `lg`, so it stays in the
+            // DOM (and in these tests) while the row fits a phone (`REQ-D11`).
+            className="hidden font-normal text-[10px] opacity-80 lg:inline"
+            data-work-run-status={refinement}
+          >
+            {labels[`run${refinement}`]}
+          </span>
+        )}
       </span>
       {blocked ? (
         <span

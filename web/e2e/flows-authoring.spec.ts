@@ -20,6 +20,21 @@ import path from "node:path";
 
 import { test, expect, type Page } from "@playwright/test";
 
+// Every test in this file drives the SAME authored capability —
+// `/flows/{projectSlug}/{capId}` from one seeded fixture — and it is mutable
+// shared state, not a read-only page. `saving a restored valid manifest` calls
+// `save draft`, which REPLACES the seeded legacy `steps:` body server-side;
+// `an invalid manifest surfaces a lint marker` types unparseable YAML into it.
+// Under the root config's `fullyParallel: true` those ran concurrently across
+// four workers against that one document, so `legacy steps[] …` could read a
+// body another test had already overwritten — which is exactly what it did,
+// reporting "YAML is invalid" for a fixture that is valid YAML.
+//
+// Serial keeps them in file order, where the legacy reader runs before the
+// writer. The alternative — a per-test capability — is the better fix and a
+// bigger one: it means teaching the seed to mint fixtures per test.
+test.describe.configure({ mode: "serial" });
+
 type FlowsAuthoringFixture = {
   projectSlug: string;
   capId: string;
@@ -117,8 +132,19 @@ test("Ctrl+Space opens autocomplete with the ai_coding node-type option", async 
   ).toBeVisible();
 
   // Type a fresh token prefix on its own line, then trigger completion.
-  await replaceEditorContent(page, "schemaVersion: 1\nag");
-  await page.keyboard.press("ControlOrMeta+ ");
+  // `ai`, not `ag`. `ag` is the prefix of the LEGACY `type: agent`, which the
+  // graph-only cut-over renamed to `ai_coding` — `flowYamlCompletions("ag")`
+  // now returns [], so CodeMirror had nothing to offer and never opened a
+  // tooltip. The test was left pointing at the old vocabulary by the same
+  // change that introduced it.
+  await replaceEditorContent(page, "schemaVersion: 1\nai");
+  // `Control+Space`, NOT `ControlOrMeta+ `. CodeMirror's `completionKeymap`
+  // binds `Ctrl-Space` on every platform, while Playwright resolves
+  // `ControlOrMeta` to META on macOS — so this pressed Cmd+Space, which
+  // CodeMirror has no binding for (and which is Spotlight on a real Mac).
+  // The select-all above is a different case: THAT one is genuinely
+  // platform-dependent, so it keeps `ControlOrMeta`.
+  await page.keyboard.press("Control+Space");
 
   const tooltip = page.locator(".cm-tooltip-autocomplete");
 
@@ -157,11 +183,23 @@ nodes:
   await expect(page.locator('input[name="flowYaml"]')).toHaveValue(
     new RegExp(savedName),
   );
-  await page.getByRole("button", { name: /save draft/i }).click();
+  // Wait for the server action's OWN response, not for the network to fall
+  // quiet. `waitForLoadState("networkidle")` cannot settle against a Next DEV
+  // server — the HMR socket and RSC streams keep connections open, so it burned
+  // the whole 30 s test budget every run. Playwright discourages it for exactly
+  // this reason. The action POSTs back to this route, so its response is the
+  // precise "the draft is persisted" signal the reload below depends on.
+  const saved = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname ===
+        `/flows/${fx.projectSlug}/${fx.capId}`,
+  );
 
-  // The action redirects back to the detail page; reload to read the persisted
-  // revision body.
-  await page.waitForLoadState("networkidle");
+  await page.getByRole("button", { name: /save draft/i }).click();
+  await saved;
+
+  // Reload to read the persisted revision body.
   await page.goto(`/flows/${fx.projectSlug}/${fx.capId}`);
 
   // The saved manifest now compiles → the editor defaults to the graph tab;

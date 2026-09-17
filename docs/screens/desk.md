@@ -1,6 +1,6 @@
 # Desk
 
-**Route:** `/` · **Status:** Implemented (ADR-172) · **Source:** `web/app/(app)/page.tsx`
+**Route:** `/` · **Status:** Implemented (ADR-172, ADR-174) · **Source:** `web/app/(app)/page.tsx`
 
 The home surface. Answers "what needs me, what moved, what is running" in one
 screen, across every project the reader can see. It **composes** surfaces owned
@@ -46,62 +46,104 @@ flowchart LR
 
 ## Layout & regions
 
-Top to bottom, in mockup order:
+One column at **every** width, top to bottom (`REQ-D21`, ADR-174 D1) — **(Implemented)**:
 
-1. **Header + digest sentence** — the deterministic digest for the window since
-   the reader's cursor (or a bounded 24 h fallback): promoted, crashed, new
-   decisions, new events, tokens spent. One sentence, no narration, no cost in
-   USD.
-2. **Composer** — the existing scratch launcher. Idea-mode intake is a later
-   milestone and is **not stubbed here**.
-3. **Now tiles** — the same five counts as the digest, each a link target.
-4. **Decisions** — the decision queue with inline actions, reusing the
-   `/inbox` section components. Ordered by HITL criticality then age
-   (`ATN-07`).
-5. **Work in flight** — the work table's row component, full width on desktop.
-6. **Activity** — the cross-project feed, beside Decisions on desktop.
+1. **Header** — eyebrow and title. No digest sentence, no period, no window
+   selector: the Desk answers "what is true now", and a windowed number answers a
+   different question (ADR-174 D3).
+2. **Now strip** — five tiles, one per `WORK_IN_FLIGHT_STAGES` member
+   (`Queued`, `Executing`, `WaitingOnHuman`, `Review`, `Crashed`), in that order.
+   All five render at zero; tiles that appear and disappear destroy the fixed
+   positions a reader scans by. Activating a tile filters the table **in place**
+   via `?stage=<WorkStage>` and does not navigate away.
+3. **Work in flight** — the spine of the page (ADR-174 D1). A row expands into its
+   own decision panel; every other region is either a summary of this one or a
+   different kind of fact about it.
+4. **Held** — `flagged` decisions, the one kind the table does not carry: `Held` is
+   a `WORK_BACKLOG_STAGES` member, not an in-flight one.
+5. **Activity** — the cross-project feed, chronological. Repeated events are never
+   collapsed, grouped or reordered (ADR-174 D4).
 
-Liveness comes from one `EventSource` on the attention stream; the regions
-refetch on a tick and never hold an accumulated event list.
+**The strip's sum is total work in flight, not the number of visible rows.** The
+table slices to 12; the counts are derived from the full row array before the slice,
+so the strip stays truthful about work the reader cannot see (`REQ-D2`). Both come
+from the same array, so strip and table are one population by construction rather
+than by agreement.
+
+Gone from the previous cut (ADR-174 supersedes ADR-172 D1 in part): the digest
+sentence, the scratch composer, and the Decisions region. The composer is removed
+outright — the rail already renders the launcher with the global Cmd/Ctrl+K listener,
+so no capability is lost (`REQ-D22`).
+
+Liveness comes from one `EventSource` on the attention stream; the regions refetch on
+a tick and never hold an accumulated event list (Implemented). An active `?stage=`
+filter survives the refetch tick (`REQ-D5`, Implemented).
 
 ### As built
 
-Composition is literal: `HitlInboxList` + `DecisionSections` from `/inbox`,
-`WorkRowsTable` from `/work`, `ActivityRowList` from `/activity`, `NowTiles`,
-and — for the empty state — `OnboardingChecklist` + `EmptyState` from the
-portfolio. The two row components were **split out** of their surfaces in this
-phase (`components/work/work-rows-table.tsx`,
-`components/activity/activity-row-list.tsx`), and their label sets come from
-one builder each (`lib/work/work-row-labels.ts`,
-`lib/activity/activity-row-labels.ts`) so a new column cannot reach `/work`
-and miss the Desk. The composer is the existing scratch launcher under a
-`composer` variant that deliberately does **not** register the global
-Cmd/Ctrl+K listener — the rail already owns it, and a second registration
-would open two dialogs.
+Composition stays literal, and that principle is reaffirmed rather than replaced:
+`WorkRowsTable` from `/work`, `ActivityRowList` from `/activity`, `DecisionSections`
+from `/inbox`, `NowTiles`, and — for the empty state — `OnboardingChecklist` +
+`EmptyState` from the portfolio (Implemented). The two row components were **split
+out** of their surfaces rather than copied, and their label sets come from one builder
+each (`lib/work/work-row-labels.ts`, `lib/activity/activity-row-labels.ts`) so a new
+column cannot reach `/work` and miss the Desk (Implemented).
 
-The Desk shows a bounded slice of each region (12 work rows, 12 activity rows)
-and links to the full surface; there is no paging here.
+**The row carries its own decision** (Implemented). The row→decision join is built in the
+page from the decision queue it **already loads**, keyed on `runId`;
+`getWorkTable` is not modified and the Desk adds no query (`REQ-D2`, `REQ-D15`). Panel
+content resolves by stage: `WaitingOnHuman` → the HITL panel; `Review` → a **link** to
+the run's review surface, never an inline promote, because the drift-guarded reviewed
+target commit exists only there; `Crashed` → recover/discard; `Executing`/`Queued` →
+that run's recent events.
+
+**A row expands only when its panel has something to say.** The two read models the
+join spans are scoped differently by design: the table reads `getVisibleProjectIds`,
+the decision queue reads `getActionableProjectIds` — project `member` and up, because
+ADR-169 D7 made the queue *actionable*, not merely visible. A project-`viewer`
+therefore sees `WaitingOnHuman` and `Crashed` rows with no decision behind them, and
+those rows render inert: no panel, and so no `aria-expanded`, no `tabIndex`, no hover
+affordance. That is the intended degradation — an expansion whose every control
+answers 403 is what D7 already refused. The `Review` and `Executing`/`Queued` arms
+need no decision and expand for every reader.
+
+**The HITL panel is one implementation, not two** (Implemented). `HitlCard` was
+monolithic — its own expansion state, header toggle, lazy `inbox-context` fetch and
+trailing response form. The panel body is extracted with its `expanded` state owned by
+the parent, and **`/inbox` is rebuilt on the extracted panel**, so the Desk and the
+inbox render one component. Shipping the extraction without that rebuild would leave
+the second copy ADR-172 D1 exists to prevent. The panel fetches `inbox-context` on
+**first expand only** — the Desk may hold many `WaitingOnHuman` rows, and a mount-time
+fetch would fire one request per row on load (`REQ-D16`).
+
+**The expansion adds no mutation path** (`REQ-D18`, Implemented). Every action inside a
+panel posts to the route `/inbox` already uses; the page source carries no
+`"use server"`, no `fetch(`, and no `method: "POST"`, and that assertion is not
+relaxed.
+
+**The shared table is not forked** (`REQ-D12`). `WorkTableLabels extends
+WorkRowsLabels` deliberately, so a column change is a compile error at both call
+sites. Expansion ships behind a prop defaulting to **off**, and `/work` turns it on in
+a later increment (ADR-174 D5). Two columns go: the `project` column is hidden when
+and only when `groupBy === "project"` — the group header already names it — and the
+raw `runStatus` column is removed, its distinction folded into `WorkStageChip`
+(Implemented).
+
+The Desk shows a bounded slice of each region (12 work rows, 12 activity rows) and
+links to the full surface; there is no paging here (Implemented).
 
 **"Work in flight"** is `WORK_IN_FLIGHT_STAGES` — `Queued`, `Executing`,
-`WaitingOnHuman`, `Review`, `Crashed`. It is one third of a spelled-out
-partition of `WORK_STAGES` (`lib/work/stage.ts`, `UT-STG-11`), so an
-eleventh stage falls into no bucket and fails rather than silently appearing
-or disappearing here.
+`WaitingOnHuman`, `Review`, `Crashed`. It is one third of a spelled-out partition of
+`WORK_STAGES` (`lib/work/stage.ts`, `UT-STG-11`), so an eleventh stage falls into no
+bucket and fails rather than silently appearing or disappearing here (Implemented).
 
-**The Decisions region count is the rail badge; the Now `decisions` tile is
-not.** The region renders `getDecisionsQueue().count` — the canonical total
-`ATN-05` constrains — while the tile is T5.4's *windowed* number, decisions
-that are new since the reader's cursor. `E2E-NAV-01`'s companion case asserts
-region == badge and tile ≤ badge; asserting tile == badge would be asserting a
-bug.
+Region counts render as a bare digit with the phrase in an `sr-only` sibling, for the
+same reason the rail badges do: a testid whose text reads "3 blocked on you" cannot be
+compared numerically (Implemented).
 
-Region counts render as a bare digit with the phrase in an `sr-only` sibling,
-for the same reason the rail badges do: a testid whose text reads
-"3 blocked on you" cannot be compared numerically.
-
-A **viewer** gets `canAct={false}` on the HITL list, per the role table above.
-`/inbox` still passes `canAct` unconditionally; that difference is the
-inbox's, and is not changed here.
+A **viewer** gets `canAct={false}` on the HITL surface, per the role table above.
+`/inbox` still passes `canAct` unconditionally; that difference is the inbox's, and is
+not changed here (Implemented).
 
 ## States
 
@@ -115,24 +157,24 @@ stateDiagram-v2
     Empty --> Quiet: first project registered
     note right of Empty
         onboarding checklist and empty-state card
-        inside the Desk frame, composer absent
+        inside the Desk frame
     end note
 ```
 
-Narrow viewports stack Decisions, then Work, then Activity (`EDGE-NAV-02`).
+Every viewport stacks strip, then Work, then Held, then Activity (`EDGE-NAV-02`,
+Implemented) — there is no second arrangement, so the rendered order **is** the source
+order at every width and the two cannot disagree.
 
-The grid is one column below `xl`, so the narrow order **is** the source order;
-desktop's different arrangement (Activity beside Decisions, the table full
-width below) is done with explicit grid coordinates rather than by reordering
-the source. The work table scrolls inside its own `overflow-x-auto` container,
-which needs `min-w-0` on the grid item — a grid item defaults to
-`min-width: auto` and would otherwise stretch the content area to the table's
-1180px min-content width.
+Narrow viewports drop table columns by priority (`tokens` and `readiness` first)
+rather than scrolling the table sideways (`REQ-D11`, Implemented). Hiding is CSS-driven,
+so the `<td>` elements stay in the DOM and any `colSpan` must be the **full** column
+count, never the visible count — an expanded row computed from the visible count
+misaligns exactly where the columns drop.
 
 Each state is reached by a different reader rather than by a flag, which is how
 `e2e/desk.spec.ts` exercises all three: the seeded admin sees every project
-(busy), the `/work` fixture's member sees one project and no decisions (quiet),
-and a member of no project at all sees the first-run frame (empty).
+(busy), the `/work` fixture's member sees one project and nothing needing them
+(quiet), and a member of no project at all sees the first-run frame (empty).
 
 ## Data & APIs
 
@@ -152,7 +194,7 @@ namespaces for the composed regions. Count-bearing client templates use
 
 ## Linked artifacts
 
-- [ADR-172](../decisions.md#adr-172) · [ADR-169](../decisions.md#adr-169) · [ADR-171](../decisions.md#adr-171)
+- [ADR-174](../decisions.md#adr-174-the-desk-renders-one-object-per-work-item) · [ADR-172](../decisions.md#adr-172) · [ADR-169](../decisions.md#adr-169) · [ADR-171](../decisions.md#adr-171)
 - [`system-analytics/home-navigation.md`](../system-analytics/home-navigation.md)
 - [`system-analytics/attention.md`](../system-analytics/attention.md)
 - [`work.md`](work.md) · [`activity.md`](activity.md) · [`inbox.md`](inbox.md)

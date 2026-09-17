@@ -263,14 +263,146 @@ places with another. As of 2026-09-03 on `main` + ADR-165:
 - **integration** — 0 failures, except the two-case
   `lib/runs/__tests__/dirty-resolution-race.integration.test.ts` pair, which
   flakes under parallel load and passes 4/4 in isolation.
-- **e2e** — **34 pre-existing failures**, plus one known-flaky spec below.
-  Ports 3100/7788 and the `maister_e2e` database are shared across worktrees;
-  kill both ports before a run. Two of those 34 were closed on 2026-09-11 by the
-  `assessPackageCompatibility` null-safety fix — `studio.spec.ts` and
-  `studio-local-edit.spec.ts` were not flaky, they were hitting a server-side 500
-  on `/studio` whenever a stored package manifest lacked `spec`. Before filing an
-  e2e failure as environmental, read the `[WebServer]` lines in the run log: a
-  React server-component stack there is a product bug, not a test one.
+- **e2e** — **1 pre-existing failure in 1 spec file**, enumerated below,
+  plus one known-flaky spec. Ports 3100/7788 and the `maister_e2e` database are
+  shared across worktrees; kill both ports before a run. Before filing an e2e
+  failure as environmental, read the `[WebServer]` lines in the run log: a React
+  server-component stack there is a product bug, not a test one. That is not
+  hypothetical — it is how the ADR-168 Integrations crash below was found.
+
+  **The set, not the count** (re-measured 2026-09-17, one failing case per spec
+  unless noted). An earlier entry said "34" with no list, which is unusable:
+  this section's own first line says to compare SETS, and a bare number cannot
+  be diffed.
+
+  `studio-ai-assistant` — it needs a real ACP turn from the test supervisor,
+  which is infrastructure rather than a selector.
+
+  **A serial file hides tests behind its first failure.** `forked-package-loop`
+  is `mode: "serial"`, so its batch failure had been SKIPPING the two tests
+  after it — the old "(1)" undercounted by two whole tests, and both carried
+  stale expectations of their own (an unreachable `sync-notice`, and a publish
+  source selected by bare path rather than by the `file://` url it is stored
+  under). Count the SKIPS, not just the failures, before trusting a serial
+  file's entry here.
+
+  **A control can be painted and still be unreachable.** `review-comments` spent
+  a long time looking like a broken selector. It was two things: the library
+  renders a `.diff-add-widget` in BOTH the gutter and content cells, pushed onto
+  the column seam by opposing `translateX` so they stack at one rect (the
+  content one is on top and is what a pointer hits); and at 1280x720 the split
+  diff pane is SEVENTY-TWO pixels wide — shell 848 → diff column 410 → file tree
+  + 72 — so the widget straddled the container's `overflow-hidden` edge and left
+  the hit-test tree. `elementsFromPoint` at a control's own centre is the cheap
+  way to tell "wrong locator" from "nothing can click this": if it returns an
+  ancestor, no amount of `force` or `dispatchEvent` will help.
+
+  Each has its OWN cause — this set has no shared theme left, so triage from the
+  failure rather than looking for a pattern. Two of them (`evaluation-lab`,
+  `forked-package-loop`) share one: both POST an evaluation launch-batch with a
+  hand-written recipe whose `flowRefId`, `flowRevisionId` and contract digests
+  are placeholders, and the ADR-150 preflight refuses it with
+  `PRECONDITION -> 404`. That is not fixable by adjusting the values:
+  `lab-queries.ts` states the contract outright — the server resolves the recipe
+  scaffold and "the client can never fabricate a digest that would pass
+  preflight", so the specs have to take the scaffold from the server.
+
+  **Closed on 2026-09-17** (26 spec files, 31 cases — 3 of them tests that a
+  serial-mode skip had been hiding), all stale expectations
+  except three product bugs. `evaluation-lab` and `forked-package-loop`'s batch
+  test needed the launch dialog rather than a hand-written recipe: since
+  ADR-150 the route preflights every inline recipe, and `lab-queries.ts` records
+  that "the client can never fabricate a digest that would pass preflight" — so
+  a spec that POSTs one directly can only ever get a 404. The third: `getDefaultBranch` probes with
+  `git -C <dir>`, which resolves UPWARD — so for a directory that is not itself
+  a repo root it described the enclosing checkout. New-empty onboarding writes
+  the manifest before `gitInit` runs, so a greenfield folder inside another
+  working tree stamped that tree's default into the manifest and the project
+  row, for a repo then created on `main`. The second: `listProjectAutomations` sorted by a rank
+  written as a bare integer literal, which Postgres reads in ORDER BY as an
+  ORDINAL POSITION — `ORDER BY 0` failed to analyse and the project Automations
+  tab fell to the error boundary on every project, taking `run-schedules` and
+  `project-automations` with it. Both had been filed as stale tests. Every test
+  that touched that function mocked it, so the SQL was never executed.
+  Additionally closed: `platform-acp-runners` · `run-schedules` ·
+  `project-automations` · `studio-package-viewer` · `multi-run-cost-policy` (2) ·
+  `run-sync` · `execution-host-contract` · `project-onboarding` ·
+  `project-registration`, and `platform-agents-page`, which now passes
+  untouched. The first product bug: `studio-diff` · `studio-import` · `package-management`
+  (stale `flow.yaml` fixtures missing `compat.engine_min`, and a digest-labelled
+  install button) · `flows-authoring` (3) · `m11b-takeover` ·
+  `m11c-settings-enforcement` · `m13-assignments` · `m16-external-operations` ·
+  `m22-workbench` · `m27-flow-editor` · `m27-platform-mcp` ·
+  `adr160-rework-claim` · `adr161-node-interrupt` (the last two needed no
+  change) · `flow-package-viewer` · `flow-studio-artifacts` ·
+  `studio-local-edit` (3). The product bug: `IntegrationsPanel`, a server
+  component, called `isManagedTokenRow` from a `"use client"` module, so the
+  project Integrations tab crashed on any project holding at least one API
+  token.
+
+  **Two causes recur — check both before diagnosing anything else.**
+  `waitForLoadState("networkidle")` cannot settle against a Next dev server and
+  will burn the whole test budget; wait for the specific response instead. No
+  e2e spec calls it any more — keep it that way. Note that a save is not always
+  a route POST: the LOCAL package editor passes a CLIENT function to
+  `<form action={...}>`, so React calls it directly and it emits one
+  PUT/DELETE per changed file with no navigation at all.
+
+  And a UI that renders the same text twice (a header pill plus an inspector
+  row, a page `<h1>` plus a section `<h3>`) turns a bare `getByText`/`getByRole`
+  into a strict-mode violation, which reads like a missing element but is the
+  opposite.
+
+  **Assume things are collapsed.** Much of this UI now hides content behind a
+  disclosure, a non-default tab, or a collapsed tree folder — the workbench
+  Files/Diff tabs, the package viewer's raw YAML, the composition Files tab and
+  its folders, the Studio AI dock (which a graph-node selection also force-
+  closes). Some render `hidden`, some do not mount at all; the second kind fails
+  fast, but `scrollIntoViewIfNeeded()` on the FIRST kind never fails at all — it
+  retried for a full 180 s budget, which is what made `studio-local-edit` look
+  slow rather than red.
+
+  **Do not assume a click focused CodeMirror.** Measured on
+  `flow-package-viewer`: on failing runs `document.activeElement` was the body,
+  on passing ones `cm-content`. Keystrokes are then swallowed silently and the
+  buffer keeps its original text, so the failure surfaces far away — at a later
+  hidden-input assertion — looking like a broken form. Click until focus lands,
+  and scope to the intended editor: a page can host several.
+
+  **They were deterministic, not interference.** Sampled `studio-diff`,
+  `project-registration` and `m13-assignments` — three different areas — and all
+  three failed in isolation (2 workers, no cross-spec load) AND on a detached
+  `master` with the identical pass/fail split. So the shared-DB-interference
+  explanation this config's `retries: 1` exists to absorb does NOT cover them;
+  each failed both its attempts. `m13-assignments` failed in 9.1 s, far too fast
+  to be host saturation.
+
+  **A retry can lie.** Several of these specs mutate seeded state one way — a
+  claim, a git commit, a token create. Once the first attempt fails partway, the
+  retry fails somewhere else entirely and its error describes the first
+  attempt's leftovers, not the defect. Diagnose the FIRST attempt.
+
+  **4 workers oversaturates this Mac on a wide selection.** A 28-spec run at
+  `--workers=4` failed `adr160-rework-claim` and `forked-package-loop:518` in
+  both attempts; the SAME 28 specs at `--workers=2` went 57 passed, exit 0, and
+  finished faster (1.9 m vs 2.2 m). Both stragglers also pass alone and paired
+  with each suspected neighbour. Halve the workers before reading anything into
+  a wide run's failures — and note that the cap is NOT the mechanism here:
+  `playwright.config.ts` sets `MAISTER_MAX_CONCURRENT_RUNS: "64"` for e2e.
+
+  **Read the host before believing a timeout-class failure.** The 2026-09-17
+  measurement ran at load average 55-59 on 16 cores, against a competing
+  `vitest --project integration` from another worktree and a 688 %-CPU VM. That
+  does not explain a 9 s deterministic failure, but it does inflate the 30 s
+  `toBeVisible` and 180 s `click` timeouts in this set — re-measure those on a
+  quiet host before diagnosing them as product bugs.
+
+  **Not in the set, deliberately:** `execution-ab-content.spec.ts` (4 cases)
+  used to fail here every run. It owns a lane of its own
+  (`playwright.execution-ab.config.ts`) with a dedicated supervisor and runtime
+  roots, was not listed in `AUTHED_SPEC`, and so ran UNAUTHENTICATED in the
+  default `chromium` project where it cannot pass. The default config now
+  ignores `execution-ab-*.spec.ts` the same way it already ignored `live-*`.
 
 **Budget ~25 min for the integration lane and do not mistake it for a hang.** It
 is gated by two very slow files — `lib/flows/graph/__tests__/prompt-owners.integration.test.ts`

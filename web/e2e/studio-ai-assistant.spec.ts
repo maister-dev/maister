@@ -57,7 +57,7 @@ function buildPackageRepo(): string {
   );
   writeFileSync(
     join(pkgDir, "flows/e2e-flow/flow.yaml"),
-    `schemaVersion: 1\nname: ${RUN_TAG}-flow\nnodes:\n  - id: s1\n    type: cli\n    action:\n      command: echo hi\n    transitions:\n      success: done\n`,
+    `schemaVersion: 1\nname: ${RUN_TAG}-flow\ncompat:\n  engine_min: 1.1.0\nnodes:\n  - id: s1\n    type: cli\n    action:\n      command: echo hi\n    transitions:\n      success: done\n`,
   );
   git(repo, "add", "-A");
   git(repo, "commit", "-m", "init");
@@ -115,12 +115,40 @@ test("bottom AI assistant: start the assistant from the editor panel", async ({
   await page.waitForURL(/\/studio\/edit\//, { timeout: 30_000 });
   await lockAcquired;
 
-  // The assistant sits below the editor, not hidden behind a view switch. The
-  // working-dir lock acquires on mount, enabling the launch control.
+  // A1 (ADR-105): the fork lands on the package-home OVERVIEW, not a flow
+  // canvas — and the assistant panel is mounted only once a flow file is open
+  // (`flowPath !== null` in `local-package-editor.tsx`, because the assistant
+  // targets a flow). This spec pre-dates that change and asserted the panel
+  // straight off the fork, so it timed out on an element that was never going
+  // to render. Open the flow explicitly, and wait for the REMOUNTED editor to
+  // re-acquire the working-dir lock before launching — the launch below is
+  // lock-asserted server-side. `studio-diff.spec.ts` does the same.
+  const pkgId = new URL(page.url()).pathname.split("/")[3];
+  const lockReacquired = page.waitForResponse(
+    (r) =>
+      new URL(r.url()).pathname.endsWith("/lock-refresh") &&
+      r.request().method() === "POST" &&
+      r.ok(),
+  );
+
+  await page.goto(`/studio/edit/${pkgId}/flows/e2e-flow/flow.yaml`);
+  await lockReacquired;
+
+  // `aiOpen` starts FALSE, so the panel mounts `hidden` and the right slot
+  // shows the inspector until the assistant is switched on. The comment this
+  // replaces said the assistant "sits below the editor, not hidden behind a
+  // view switch" — that described a layout the editor no longer has, which is
+  // why the assertion below was waiting on a permanently hidden element.
+  await page.getByTestId("local-editor-ai-toggle").click();
   await expect(page.getByTestId("local-editor-ai-panel")).toBeVisible();
   await expect(page.getByTestId("studio-ai-tab")).toBeVisible();
 
-  const collapse = page.getByTestId("local-editor-ai-collapse");
+  // The separate `local-editor-ai-collapse` control no longer exists — the one
+  // `local-editor-ai-toggle` opened above is now also what closes the panel
+  // (it drives `aiOpen`, and the right slot swaps back to the inspector). The
+  // round-trip below is still worth asserting: it proves the toggle is a real
+  // toggle and that the assistant survives being hidden and shown again.
+  const collapse = page.getByTestId("local-editor-ai-toggle");
 
   await collapse.click();
   await expect(page.getByTestId("studio-ai-tab")).toBeHidden();
@@ -135,8 +163,14 @@ test("bottom AI assistant: start the assistant from the editor panel", async ({
 
   // The launch button is disabled until a non-empty prompt is entered (and the
   // working-dir lock is held). Fill the prompt first, then it enables.
+  // `studio-ai-prompt` names the CapabilityComposer WRAPPER div — its `testId`
+  // prop lands on the outer element, while the editable surface is the TipTap
+  // contenteditable it renders inside (`capability-composer-input`). Filling
+  // the wrapper throws "Element is not an <input>, <textarea>, <select> or
+  // [contenteditable]".
   await page
     .getByTestId("studio-ai-prompt")
+    .getByTestId("capability-composer-input")
     .fill("Add a review gate to the flow");
   await expect(launch).toBeEnabled({ timeout: 15_000 });
 

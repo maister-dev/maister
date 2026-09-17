@@ -144,6 +144,7 @@ import {
 } from "@/lib/runs/inspector-actions";
 import { type WorkbenchRunStatus } from "@/lib/workbench-lifecycle/policy";
 import { RUN_STATUS_KEYS, type RunStatusKey } from "@/lib/runs/run-status-tone";
+import { runReviewHref } from "@/lib/runs/run-query-state";
 import { DirtyResolutionBanner } from "@/components/runs/dirty-resolution-banner";
 import { DeliveryPolicyCancelButton } from "@/components/runs/delivery-policy-cancel-button";
 import { GateChatPanel } from "@/components/runs/gate-chat-panel";
@@ -1013,7 +1014,7 @@ export default async function RunDetailLayout({
     detail.parentRepoPath,
     reposRoot(),
   );
-  const reviewDiffHref = `/runs/${detail.runId}?wb=review&scope=review`;
+  const reviewDiffHref = runReviewHref(detail.runId);
   const inspectorChangeScope = hasReviewGate
     ? "review"
     : dirtySummary

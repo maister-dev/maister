@@ -220,7 +220,19 @@ test("assignment queue actions: take over → release → claim stay consistent 
   await page.goto(`/projects/${PROJECT_SLUG}`);
 
   await expect(page.getByRole("heading", { name: "HITL inbox" })).toBeVisible();
-  await expect(page.getByText("claimed by E2E Edit Target")).toBeVisible();
+
+  // The inbox does NOT name the claim owner — no surface on the board does for
+  // an ASSIGNMENT claim. (`flight-card` renders "claimed by" only for an
+  // ADR-030 manual takeover, where the RUN is HumanWorking; this fixture leaves
+  // the run in review.) The owner name is a run-detail fact, asserted below.
+  //
+  // What the inbox does project is `actionForStatus`: open -> Claim, claimed by
+  // me -> Release, claimed by someone else -> Take over. That single affordance
+  // is a faithful, one-to-one read of the claim state, so drive the state
+  // machine through it rather than through prose that the card never rendered.
+  const inbox = page.getByRole("region", {
+    name: "Human-in-the-loop inbox",
+  });
 
   const takeOverResponse = page.waitForResponse(
     (r) =>
@@ -228,9 +240,12 @@ test("assignment queue actions: take over → release → claim stay consistent 
       r.request().method() === "POST",
   );
 
-  await page.getByRole("button", { name: "Take over", exact: true }).click();
+  // Seeded as claimed by another actor → the only offered action is Take over.
+  await inbox.getByRole("button", { name: "Take over", exact: true }).click();
   expect((await takeOverResponse).status()).toBe(200);
-  await expect(page.getByText("claimed by E2E Admin")).toBeVisible();
+  await expect(
+    inbox.getByRole("button", { name: "Release", exact: true }),
+  ).toBeVisible();
 
   const releaseResponse = page.waitForResponse(
     (r) =>
@@ -238,9 +253,11 @@ test("assignment queue actions: take over → release → claim stay consistent 
       r.request().method() === "POST",
   );
 
-  await page.getByRole("button", { name: "Release", exact: true }).click();
+  await inbox.getByRole("button", { name: "Release", exact: true }).click();
   expect((await releaseResponse).status()).toBe(200);
-  await expect(page.getByText("unclaimed").first()).toBeVisible();
+  await expect(
+    inbox.getByRole("button", { name: "Claim", exact: true }),
+  ).toBeVisible();
 
   const claimResponse = page.waitForResponse(
     (r) =>
@@ -248,9 +265,11 @@ test("assignment queue actions: take over → release → claim stay consistent 
       r.request().method() === "POST",
   );
 
-  await page.getByRole("button", { name: "Claim", exact: true }).click();
+  await inbox.getByRole("button", { name: "Claim", exact: true }).click();
   expect((await claimResponse).status()).toBe(200);
-  await expect(page.getByText("claimed by E2E Admin")).toBeVisible();
+  await expect(
+    inbox.getByRole("button", { name: "Release", exact: true }),
+  ).toBeVisible();
 
   await page.goto(`/runs/${fx.runId}`);
   await expect(page.getByText("claimed by E2E Admin")).toBeVisible();

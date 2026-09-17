@@ -32,6 +32,8 @@ import { Pool } from "pg";
 
 import { E2E_EXECUTION_HOST_SLUG } from "./fixtures";
 
+import { LEGACY_STEPS_REFUSAL_MESSAGE } from "@/lib/flows/manifest-shape";
+
 const execFileAsync = promisify(execFile);
 
 type SeedAdapterId = "claude" | "codex" | "gemini" | "opencode" | "mimo";
@@ -5520,7 +5522,8 @@ async function seedM27Fixture(
   // `.runtime/worktrees` use in the tree; every other seed already reads the
   // variable.
   const worktreeRoot = path.join(
-    process.env.MAISTER_WORKTREES_ROOT ?? path.resolve("e2e/.runtime/worktrees"),
+    process.env.MAISTER_WORKTREES_ROOT ??
+      path.resolve("e2e/.runtime/worktrees"),
     ids.project,
   );
   const flowWorktreePath = path.join(worktreeRoot, "flow");
@@ -6622,10 +6625,17 @@ async function seedFlowsAuthoringFixture(
       versionLabel: "none",
     },
     files: [],
+    // This fixture's body is a legacy `steps:` manifest, which the validator
+    // REFUSES since the engine-3.0.0 graph-only cut-over — so "valid" with
+    // zero issues was a state no production writer can produce. The flows page
+    // derives `readinessReady` straight from `validation.status === "valid"`,
+    // so the stale payload left Publish ENABLED on a flow that cannot compile,
+    // and `flows-authoring.spec.ts`'s "blocks publish" assertion had nothing
+    // to hold. Seed what the validator actually returns for this body.
     validation: {
-      status: "valid",
-      issueCount: 0,
-      issues: [],
+      status: "invalid",
+      issueCount: 1,
+      issues: [{ path: "", message: LEGACY_STEPS_REFUSAL_MESSAGE }],
       manifestDigest: null,
       contentHash: null,
     },
@@ -6890,8 +6900,9 @@ async function seedInstalledPackageFixture(
       installedPath,
     ],
   );
-  // The project flow row: Enabled + trusted, pointing at the revision. The
-  // packages tab lists this (getFlowPackages) → the card links to the viewer.
+  // The project flow row: Enabled + trusted, pointing at the revision. This
+  // still drives the VIEWER page itself (the static graph, the raw flow.yaml,
+  // the file list).
   await pool.query(
     `INSERT INTO flows
        (id, project_id, flow_ref_id, source, version, revision, installed_path,
@@ -6907,6 +6918,50 @@ async function seedInstalledPackageFixture(
       JSON.stringify(FLOW_VIEWER_MANIFEST),
       ids.revision,
     ],
+  );
+  // ...but the packages TAB no longer reads flow rows. It lists
+  // `project_package_attachments` → `package_installs`, and the per-package
+  // block builds its flow cards from the on-disk BOM, which enumerates
+  // `manifest.spec.flows`. That card is the only remaining inbound link to the
+  // project package viewer, so without this pair the tab renders "No packages
+  // attached" and the whole board → viewer nav path is unreachable — which is
+  // exactly how `flow-package-viewer.spec.ts` failed.
+  //
+  // `flow.path` resolves against `installed_path`; the bundle above writes
+  // `flow.yaml` at the package root. The BOM's flow card is labelled
+  // `metadata.title ?? flow.id`, and this manifest carries no `metadata`, so
+  // the link reads `aif-flow-viewer` — the ref the spec clicks by.
+  const installId = randomUUID();
+
+  await pool.query(
+    `DELETE FROM project_package_attachments WHERE package_name = $1`,
+    [FLOW_VIEWER_REF],
+  );
+  await pool.query(`DELETE FROM package_installs WHERE name = $1`, [
+    FLOW_VIEWER_REF,
+  ]);
+  await pool.query(
+    `INSERT INTO package_installs
+       (id, source_url, name, version_label, resolved_revision, manifest,
+        manifest_digest, installed_path, package_status, trust_status)
+     VALUES ($1, $2, $3, $4, 'rev-flow-viewer', $5,
+        'f10wv1ewe40000000000000000000000000000000', $6, 'Installed', 'trusted')`,
+    [
+      installId,
+      source,
+      FLOW_VIEWER_REF,
+      FLOW_VIEWER_VERSION,
+      JSON.stringify({
+        spec: { flows: [{ id: FLOW_VIEWER_REF, path: "flow.yaml" }] },
+      }),
+      installedPath,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO project_package_attachments
+       (id, project_id, package_install_id, package_name)
+     VALUES ($1, $2, $3, $4)`,
+    [randomUUID(), ids.project, installId, FLOW_VIEWER_REF],
   );
 
   return {

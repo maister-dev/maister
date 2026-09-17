@@ -1,5 +1,8 @@
 import type { TokenListItem } from "@/lib/tokens/list";
 
+import { readFileSync } from "node:fs";
+import path from "node:path";
+
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
@@ -317,5 +320,72 @@ describe("TokensTable — no secret leak in the read-only table (M16)", () => {
     // secret value. This guards against a regression where the create response
     // (which DOES carry the secret) gets passed into the list table.
     expect(html).not.toMatch(/mai_[A-Za-z0-9]+\.[A-Za-z0-9-]+/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// REGRESSION (ADR-168 D3). `IntegrationsPanel` is an async SERVER component,
+// and `renderRevoke` runs during ITS render — not in the browser. When the
+// row-level predicate `isManagedTokenRow` lived in `token-actions.tsx` (a
+// `"use client"` module), React refused to invoke it from the server and the
+// whole Integrations tab fell to the error boundary — but ONLY once the project
+// had at least one token, because an empty table never calls the callback. The
+// tests above render `TokensTable` directly and so never crossed that seam.
+//
+// A server component may RENDER a client component; it may not CALL a function
+// a client module exports. Pin that: every value `integrations-panel.tsx` takes
+// from `token-actions` must be a component, and the predicate must come from a
+// module that is neither `"use client"` nor `server-only`.
+// ---------------------------------------------------------------------------
+describe("IntegrationsPanel — server/client module boundary", () => {
+  const read = (relative: string): string =>
+    readFileSync(path.resolve(process.cwd(), relative), "utf8");
+
+  const PANEL = "components/board/panels/integrations-panel.tsx";
+  const SHARED = "lib/tokens/managed-row.ts";
+  const CLIENT = "components/board/token-actions.tsx";
+
+  it("is a server component (no 'use client' directive)", () => {
+    expect(read(PANEL)).not.toMatch(/^\s*["']use client["']/mu);
+  });
+
+  it("imports only components from the 'use client' token-actions module", () => {
+    const source = read(PANEL);
+    const block =
+      /import\s*\{([^}]*)\}\s*from\s*["']@\/components\/board\/token-actions["']/u.exec(
+        source,
+      );
+
+    expect(block, `${PANEL} must import from ${CLIENT}`).not.toBeNull();
+
+    const bindings = (block as RegExpExecArray)[1]
+      .split(",")
+      .map((binding) => binding.trim())
+      .filter((binding) => binding.length > 0)
+      .map((binding) => binding.split(/\s+as\s+/u).pop() as string);
+
+    expect(bindings.length).toBeGreaterThan(0);
+
+    for (const binding of bindings) {
+      expect(
+        binding,
+        `${binding} is not a component — a server component may render a client component, but never call a client export`,
+      ).toMatch(/^[A-Z]/u);
+    }
+  });
+
+  it("takes isManagedTokenRow from the shared module, not the client one", () => {
+    expect(read(PANEL)).toMatch(
+      /import\s*\{\s*isManagedTokenRow\s*\}\s*from\s*["']@\/lib\/tokens\/managed-row["']/u,
+    );
+    expect(read(CLIENT)).not.toMatch(/isManagedTokenRow/u);
+  });
+
+  it("keeps the shared module usable from both render sides", () => {
+    const shared = read(SHARED);
+
+    expect(shared).not.toMatch(/^\s*["']use client["']/mu);
+    expect(shared).not.toMatch(/["']server-only["']/u);
+    expect(shared).toMatch(/export function isManagedTokenRow/u);
   });
 });
