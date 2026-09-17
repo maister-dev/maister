@@ -167,10 +167,13 @@ OpenAPI surface.
 **No migration.** No table, column, index, constraint or enum value changes. REQ-D15
 exists precisely so the row→decision join needs no read-model change.
 
-The newest journal entry is `0169_cutover_writer_floor`, so **`0170`** is the next free
-number should this ever stop being true. `web/lib/db/schema.ts` is untouched, and
-`drizzle-kit generate` must therefore report "No schema changes" at every phase — that
-report is the check, not an assumption.
+The newest journal entry is `0170_prompt_dispatch_key`, so **`0171`** is the next free
+number should this ever stop being true. (Re-derived at the 2026-09-17 rebase onto
+`59f907ca`: this branch was authored against `0169_cutover_writer_floor` and master
+claimed `0170` meanwhile. The number is read from `_journal.json`, never from this
+prose.) `web/lib/db/schema.ts` is untouched, and `drizzle-kit generate` must therefore
+report "No schema changes" at every phase — that report is the check, not an
+assumption.
 
 ## System-analytics contract
 
