@@ -459,6 +459,22 @@ recorded in the task; the commit lands at green (see Commit Plan).
 
 - [ ] **T7: Refactor under green and verify against the spec (depends on T6)**
 
+  STATUS 2026-09-17 — refactor half DONE, visual half OUTSTANDING.
+  The review pass found nothing to change (SRP/DRY/KISS/conventions all hold, the
+  S3 WHY comment is present), so there is no Commit 3 refactor. Automated
+  verification is complete: 8026 unit tests, a production `next build` (79 pages —
+  the only check that proves the RSC boundary, since `TaskCard` is a Server
+  Component and `TaskCardDescription` is `"use client"`), typecheck, lint, and
+  `validate:docs`. Every S1.2 row and every S2 state is pinned by a test, and three
+  guards were falsified rather than assumed.
+  NOT done: the in-app visual pass. The board sits behind auth and entering a
+  password into a login form is not something the agent does; the Browser pane
+  could not be surfaced to the owner to sign in there. E2 needs no browser by this
+  plan's own wording ("code review against this line; no automated check") and that
+  review was performed against `flow-graph-view.tsx:597`. What remains for a human
+  is the holistic look listed under Verification below.
+
+
   With the suite green, review and clean up without changing behavior:
 
   - **SRP** — `markdownExcerpt` derives text and nothing else; `CollapsibleDescription`
