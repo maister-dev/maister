@@ -99,11 +99,19 @@ code points long. This is deliberate — the budget governs content, not the mar
 | 14  | one 200-char token, no whitespace                | exactly 120 code points + `…` | `true`     |
 | 15  | 200 chars whose only space is at index 40        | exactly 120 code points + `…` | `true`     |
 | 16  | 200 chars whose last space before 120 is at 100  | first 100 chars + `…`        | `true`     |
-| 17  | 200 chars with an emoji straddling index 120     | cut before the emoji, no lone surrogate | `true` |
+| 17  | emoji at code point 119, ASCII either side       | 119 chars + the whole emoji + `…`       | `true` |
 
 Rows 14 and 15 are the two sides of the `floor` guard and are both required; row 16
 is the back-off hit. Rows 1-12 are the derivation rules, one per rule — do not add a
 second case per rule, and do not add a "returns an object" test.
+
+Row 17 amended 2026-09-17 during T3: it first read "cut before the emoji", which
+S1.1 does not produce. At code point 119 the emoji is the LAST code point inside
+the 120 budget, so step 5 keeps it. That placement is what makes the row
+load-bearing — its surrogate pair straddles UTF-16 index 120, so a UTF-16 slice
+emits a lone surrogate exactly there, while the normative code-point slice keeps
+the emoji whole. An emoji at code point 120 would indeed be cut away, but with
+ASCII before it the two implementations agree and the row would prove nothing.
 
 ## S2. Card render contract
 
@@ -250,6 +258,18 @@ function", asserting React's own attribute plumbing.
 imports the new component they need the equivalent mock, or the real component
 renders, its `useTranslations` throws unmocked, and both suites go red.
 
+**Amended 2026-09-17 during T6 — the predicted breakage does not occur, and no
+mock was added.** Measured, not assumed: both suites were run against the wired
+`TaskCard` before any repair and stayed green (6 passed). The reason is S3's own
+split. `TaskCardDescription` declares no hooks — it only constructs
+`TaskInlineEditableField`, which these suites already mock to `() => null`. A
+mock never invokes `renderView`, so `CollapsibleDescription` is never
+constructed and `useTranslations` is never called. Adding a third mock would
+mock a component that already cannot render, so T6 step 4 is dropped rather
+than performed. If `TaskCardDescription` ever gains a hook of its own, that
+assumption dies and the mock becomes real work — which is precisely what the S3
+WHY comment forbids.
+
 **RED tests are never committed red.** The red state is observed and its output
 recorded in the task; the commit lands at green (see Commit Plan).
 
@@ -309,7 +329,7 @@ recorded in the task; the commit lands at green (see Commit Plan).
 
 ### Phase 1: RED — failing tests from the spec
 
-- [ ] **T3: Write the `markdownExcerpt` tests (normative source: S1.2; starts after Phase 0)**
+- [x] **T3: Write the `markdownExcerpt` tests (normative source: S1.2; starts after Phase 0)**
 
   Create `web/lib/__tests__/markdown-excerpt.test.ts` as a single `it.each` table
   transcribed from S1.2, plus one focused case for a non-default `maxChars` to prove
@@ -326,7 +346,7 @@ recorded in the task; the commit lands at green (see Commit Plan).
 
   Files: `web/lib/__tests__/markdown-excerpt.test.ts`
 
-- [ ] **T4: Write the card render tests (normative source: S2; starts after Phase 0)**
+- [x] **T4: Write the card render tests (normative source: S2; starts after Phase 0)**
 
   Create `web/components/board/__tests__/task-card-description.test.ts` with
   `// @vitest-environment jsdom` on line 1, using the `createRoot` + `act` + mocked
@@ -367,7 +387,7 @@ recorded in the task; the commit lands at green (see Commit Plan).
 
 ### Phase 2: GREEN — minimal implementation
 
-- [ ] **T5: Implement `markdownExcerpt` (depends on T3)**
+- [x] **T5: Implement `markdownExcerpt` (depends on T3)**
 
   Create `web/lib/markdown-excerpt.ts` implementing S1.1 exactly. Self-contained
   pure function. Do NOT reach for remark/mdast — they are only transitive deps of
@@ -383,7 +403,7 @@ recorded in the task; the commit lands at green (see Commit Plan).
 
   Files: `web/lib/markdown-excerpt.ts`
 
-- [ ] **T6: Implement the card surface and repair the existing suites (depends on T4, T5)**
+- [x] **T6: Implement the card surface and repair the existing suites (depends on T4, T5)**
 
   1. **i18n** — add to the `board` namespace of BOTH `web/messages/en.json` and
      `web/messages/ru.json`:
@@ -450,6 +470,32 @@ recorded in the task; the commit lands at green (see Commit Plan).
   Files: as touched by the refactor
 
 ## Verification
+
+### Integration-lane baseline (recorded 2026-09-17, T6)
+
+`pnpm --filter maister-web test` does not go fully green on this host, and not
+because of this change. Measured three ways, same 7 files:
+
+| Run                                      | Files failed | Tests failed |
+| ---------------------------------------- | ------------ | ------------ |
+| full lane, parallel, changes PRESENT      | 7            | 8            |
+| the 7 files, serial, changes PRESENT      | 5            | 6            |
+| the 7 files, serial, changes ABSENT (HEAD)| 6            | 7            |
+
+The pristine-HEAD baseline fails MORE than the working tree, and the failing set
+drifts run to run within the same files (`owner-agent-budget` in one run,
+`owner-agent-live-message` in the next), so these are flaky-or-broken at the
+branch base, not deterministic regressions. `execution-host` D3 failed only in
+the parallel run — a load flake under 14 concurrent Postgres containers.
+`project-pull` + `projects-remotes` are the known host-specific pair.
+
+Independently, the change is unreachable from that lane: `@/lib/markdown-excerpt`
+is imported only by `task-card-description.tsx` and its own test,
+`task-card-description` only by `task-card.tsx` and its own test, and none of the
+7 failing files reference a message catalog or a board component.
+
+Unit lane, which DOES cover this change, is green: 787 files / 8025 tests.
+
 
 - `pnpm --filter maister-web lint` clean, no new warnings.
 - `pnpm --filter maister-web test` green.

@@ -1366,6 +1366,8 @@
     "decompositionNoRun": "no run",
     "delegatedBy": "delegated by",
     "delegatedRelaunchHint": "Delegated child of {key} — a launch from this card starts a run outside its orchestrator's tree.",
+    "descriptionExpand": "More",
+    "descriptionCollapse": "Less",
     "editTask": "Edit task",
     "editTitle": "Edit title",
     "editDescription": "Edit description",

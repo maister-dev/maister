@@ -8,6 +8,7 @@ import clsx from "clsx";
 import Link from "next/link";
 
 import { LaunchPopover } from "@/components/board/launch-popover";
+import { TaskCardDescription } from "@/components/board/task-card-description";
 import {
   TaskCardEditModal,
   TaskInlineEditableField,
@@ -158,14 +159,11 @@ export function TaskCard({
           {runsCountLabel(card.runCount)}
         </span>
       ) : null}
-      <TaskInlineEditableField
-        multiline
+      <TaskCardDescription
         canEdit={canAct}
-        className="font-mono text-[11px] leading-[1.45] tracking-[0.01em] text-mute"
-        field="prompt"
+        prompt={card.prompt}
         slug={slug}
         taskNumber={card.number}
-        value={card.prompt}
       />
       {card.blockedBy.length > 0 ? (
         <div className="flex flex-wrap items-center gap-1 font-mono text-[10px] text-danger">
