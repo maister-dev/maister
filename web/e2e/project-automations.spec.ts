@@ -169,8 +169,11 @@ test("Automations: schedule, inspect overdue recovery, cancel, and show a safe t
       response.request().method() === "POST",
   );
 
-  page.once("dialog", (dialog) => dialog.accept());
+  // Cancelling is gated by an in-page `ConfirmDialog`, not `window.confirm`, so
+  // the old `page.once("dialog", …)` handler never fired — the click merely
+  // opened the dialog and the POST this waits for was never sent.
   await cancellableRow.getByRole("button", { name: "Cancel" }).click();
+  await page.getByTestId("automation-cancel-confirm-submit").click();
   expect((await cancelResponse).status()).toBe(200);
   await expect(
     page
