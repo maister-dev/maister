@@ -675,7 +675,10 @@ describe("runReconcileSweep (integration)", () => {
     expect((await readRun(attached)).status).toBe("Running");
     expect(summary.reattached).toBeGreaterThanOrEqual(1);
     await expect.poll(() => runFlow.mock.calls.length).toBe(1);
-    expect(runFlow).toHaveBeenCalledWith(attached);
+    // ADR-175: the reattach carries the crash-resume signal when the run holds a
+    // committed recover intent, and `undefined` when it does not — this run was
+    // never recovered, so it takes the ordinary durable continuation.
+    expect(runFlow).toHaveBeenCalledWith(attached, undefined);
   }, 60_000);
 
   it("does NOT reattach/crash a live Running scratch dialog — leaves it Running, no resume driver", async () => {
@@ -982,6 +985,9 @@ describe("runReconcileSweep (integration)", () => {
       // Codex review F2: and reaps live sessions under Abandoned rows.
       orphanSessionsReaped: 0,
       handlesLost: 0,
+      // ADR-175: and classifies the two crash-recover re-entry shapes.
+      crashRecoverReentered: 0,
+      runningIdleSession: 0,
     });
     expect((await readRun(orphan)).status).toBe("Running");
   }, 60_000);

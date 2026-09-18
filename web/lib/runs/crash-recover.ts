@@ -34,12 +34,9 @@ const log = pino({
 async function openRunningAttempts(
   db: Db,
   input: { runId: string; nodeId: string },
-): Promise<Array<{ id: string; executionAssignmentId: string | null }>> {
+): Promise<Array<{ id: string }>> {
   return await db
-    .select({
-      id: nodeAttempts.id,
-      executionAssignmentId: nodeAttempts.executionAssignmentId,
-    })
+    .select({ id: nodeAttempts.id })
     .from(nodeAttempts)
     .where(
       and(
@@ -86,17 +83,20 @@ export async function applyCrashedTurnEvidence(
 
   if (attempts.length === 0) return "absent";
 
+  const commandRows = await db
+    .select()
+    .from(executionCommands)
+    .where(
+      and(
+        eq(executionCommands.runId, input.runId),
+        eq(executionCommands.kind, "session.prompt"),
+      ),
+    )
+    .orderBy(desc(executionCommands.createdAt));
+
   for (const attempt of attempts) {
-    const commandRows = await db
-      .select()
-      .from(executionCommands)
-      .where(
-        and(
-          eq(executionCommands.runId, input.runId),
-          eq(executionCommands.kind, "session.prompt"),
-        ),
-      )
-      .orderBy(desc(executionCommands.createdAt));
+    // Newest first, so a node re-prompted within one attempt reconciles the
+    // turn that was actually in flight when the crash happened.
     const command = commandRows.find(
       (row: Record<string, any>) =>
         row.ownerRef?.variant === "node" &&

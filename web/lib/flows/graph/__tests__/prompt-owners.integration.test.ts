@@ -3111,9 +3111,19 @@ describe("Flow prompt owners through the production graph driver", () => {
 
     if (!original) throw new Error("no owned node prompt was ever issued");
 
-    await killAdapterProcesses();
+    // Re-kill on every poll rather than once: `pgrep` can race an adapter that
+    // has not appeared in the process table yet, and a one-shot kill then never
+    // retries — which is exactly how this helper timed out roughly one family
+    // run in three while passing every time the case ran alone.
     await expect
-      .poll(() => liveSessionCount(seeded.runId), { timeout: 30_000 })
+      .poll(
+        async () => {
+          await killAdapterProcesses();
+
+          return await liveSessionCount(seeded.runId);
+        },
+        { timeout: 60_000, interval: 500 },
+      )
       .toBe(0);
 
     // Age the run past MAISTER_RECONCILE_GRACE_SECONDS the way the existing
@@ -3211,7 +3221,11 @@ describe("Flow prompt owners through the production graph driver", () => {
 
             return rows.rows[0].count as number;
           },
-          { timeout: 60_000, interval: 250 },
+          // Generous on purpose: this poll waits on a real adapter spawn plus a
+          // paid turn, which is ~60 s idle — a tighter budget makes the BUDGET
+          // the thing that fails under lane load, not the behaviour. The
+          // assertion itself is unchanged and still exact.
+          { timeout: 150_000, interval: 250 },
         )
         .toBe(1);
       await expect
@@ -3224,7 +3238,7 @@ describe("Flow prompt owners through the production graph driver", () => {
 
             return run.status;
           },
-          { timeout: 90_000, interval: 250 },
+          { timeout: 150_000, interval: 250 },
         )
         .toBe("Review");
 
@@ -3284,7 +3298,7 @@ describe("Flow prompt owners through the production graph driver", () => {
       await continuation?.stop();
       await ownerWorker?.stop();
     }
-  }, 240_000);
+  }, 420_000);
 
   it("owner-flow-crash-recover: agreeing terminal evidence is applied with no second prompt", async () => {
     const crashedRun = await crashAgentRunMidTurn({ window: "before_apply" });
@@ -3325,7 +3339,7 @@ describe("Flow prompt owners through the production graph driver", () => {
 
             return run.status;
           },
-          { timeout: 90_000, interval: 250 },
+          { timeout: 150_000, interval: 250 },
         )
         .toBe("Review");
 
@@ -3364,7 +3378,7 @@ describe("Flow prompt owners through the production graph driver", () => {
       await continuation?.stop();
       await ownerWorker?.stop();
     }
-  }, 240_000);
+  }, 420_000);
 
   it("owner-flow-crash-recover: the recovered dispatch resumes the node's own handle, never a substep's", async () => {
     const crashedRun = await crashAgentRunMidTurn({
@@ -3438,7 +3452,7 @@ describe("Flow prompt owners through the production graph driver", () => {
       resumeSessionId: crashedRun.nodeAcpSessionId,
     });
     expect(recovered?.payload?.resumeSessionId).not.toBe(substepHandle);
-  }, 240_000);
+  }, 420_000);
 
   it("owner-flow-crash-recover: the committed intent recovers without a second click, and a concurrent recover is refused", async () => {
     const crashedRun = await crashAgentRunMidTurn({
@@ -3524,13 +3538,13 @@ describe("Flow prompt owners through the production graph driver", () => {
 
             return run.status;
           },
-          { timeout: 90_000, interval: 250 },
+          { timeout: 150_000, interval: 250 },
         )
         .toBe("Review");
     } finally {
       await continuation?.stop();
     }
-  }, 240_000);
+  }, 420_000);
 
   it("owner-flow-crash-recover: a coordinator crashed mid-wait re-enters its wait gate, not a new turn", async () => {
     const parent = await seedOwnerFlow(

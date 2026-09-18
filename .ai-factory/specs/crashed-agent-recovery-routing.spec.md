@@ -1,8 +1,18 @@
 # Crashed-agent recovery routing — Operator Recover re-enters the graph (ADR-175)
 
-Status: **Designed.** Every `REQ-*` below is normative; every `AC-*` names one
-primary test and its lane. Tags flip to **Implemented** only in Phase 4 (T4.3),
-and only where the shipped code matches the sentence.
+Status: **Implemented (ADR-175).** Every `REQ-*` below is satisfied and every
+`AC-*` names a green test; see the plan's T4.1 falsification record and T4.2a
+conformance walk.
+
+**Three requirements were AMENDED during implementation, each because the code
+falsified the mechanism the freeze had named — never because the code was easier
+to leave alone.** They are marked ⟲ inline and summarised here: REQ-05/06 (the
+live owner path cannot apply a crashed turn at all — it is an explicit
+generation handoff), REQ-13 (the sweep's `reattach` arm does not see this state;
+it needed its own classifier arm), and the T2.3 note under REQ-08 (a crashed
+attempt row carries no resume handle, so the session policy needed a
+logical-session fallback).
+
 Date: 2026-09-18
 Branch: `claude/crashed-agent-recovery-routing-dc28b6`
 Baseline: `83bce7bb` (identical ADR/migration heads to `master`).
@@ -92,15 +102,16 @@ RFC-2119 phrasing. Every REQ names the function or route that enforces it.
 
 | ID | Requirement (normative) |
 | --- | --- |
-| **REQ-05** | The FIRST step of the agent arm MUST reconcile the crashed attempt's last `session.prompt` through the existing `executionCommandReconcilePass` / `startPromptOwnerWorker` path, **outside every DB transaction** (it performs host I/O). It MUST NOT introduce a second terminal writer. |
-| **REQ-06** | When that command carries agreeing terminal evidence the owner has not applied, the evidence MUST be applied through the existing owner path and the graph continued with `runFlow(runId, {db, executionHosts})` and **no** new `session.prompt`. When evidence is absent or disagrees — including a quarantined disagreement — the arm MUST fall through to REQ-02 + REQ-01 unchanged. A quarantined disagreement MUST NOT be converted into a re-prompt. |
-| **REQ-07** | Applying that evidence MUST re-bind the applied attempt's `execution_assignment_id` to the new epoch inside the application transaction, mirroring what `applyCreateAck` does for a fresh dispatch. The `staleSessionBinding` guard at `runner-graph.ts:2880-2889` MUST keep its current meaning and MUST NOT gain a crash-recover exemption. |
+| **REQ-05** ⟲ | The FIRST step of the agent arm MUST reconcile the crashed attempt's last `session.prompt` through the existing `reconcilePromptCommand` path, **outside every DB transaction** (it performs host I/O). It MUST NOT introduce a second terminal writer. **Amended:** the freeze named `startPromptOwnerWorker` as the applying path. It cannot serve this case — `lockFlowPromptOwner` requires `runs.execution_assignment_id` to still BE the command's assignment, and the recover claim has already minted the next epoch, so the live owner's only possible disposition is `superseded`, which is terminal and destroys the evidence. |
+| **REQ-06** ⟲ | When that command carries agreeing terminal evidence nobody has applied, the evidence MUST be applied through the **explicit generation handoff** the eligibility table defines for a `Crashed` row — the SAME `decodeNodePromptCompletion` reducer the live owner uses, applied under the new generation, with `permission-resume.ts` as the existing precedent for its shape — and the graph continued with `runFlow(runId, {db, executionHosts})` and **no** new `session.prompt`. No second reducer may exist. When evidence is absent the arm MUST fall through to REQ-02 + REQ-01 unchanged; a **quarantined** disagreement MUST refuse `unresumable` and MUST NOT be converted into a re-prompt. |
+| **REQ-07a** | `closeAppliedFlowPromptSession` MUST admit a completion whose command sits on a **retired** assignment without an `action_resume` permission witness — the shape a crash-recover handoff produces — and MUST do so on a durable witness: the command's own assignment is no longer `active`, the run and the applied attempt are both bound to the current one, and that attempt's `action_completion.commandId` is this command. It MUST NOT key on the incarnation's state, which stays non-terminal through exactly the window a recover runs in. The arm decides only whether a `deleteSession` goes out; it revives no write authority, and a live generation still falls through to the permission-result rule. |
+| **REQ-07** | Applying that evidence MUST re-bind the applied attempt's `execution_assignment_id` to the new epoch inside the application transaction, mirroring what `applyCreateAck` does for a fresh dispatch. The `staleSessionBinding` guard MUST keep its current meaning and MUST NOT gain a crash-recover exemption. The applied command's claim fields MUST be released in the same write (`execution_commands_application_shape_check` binds the disposition to them); an unexpired owner claim is NOT a reason to yield, because it was taken under the retired generation and can only ever resolve `superseded`. |
 
 ### Scope 3 — session identity
 
 | ID | Requirement (normative) |
 | --- | --- |
-| **REQ-08** | Every recover-path read of the resume handle MUST be **node-scoped**: the recover-target node's own `node_attempts.acp_session_id`, falling back to its logical `run_sessions` row selected by `node.session ?? "default"`. `loadActiveRunSession` MUST NOT be the source on this path, because for a crashed run every incarnation is terminal and a finished `gate-*` / `*-verify-*` row can win on `updated_at` (baseline C2). |
+| **REQ-08** | Every recover-path read of the resume handle MUST be **node-scoped**: the recover-target node's own `node_attempts.acp_session_id`, falling back to its logical `run_sessions` row selected by `node.session ?? "default"`. `loadActiveRunSession` MUST NOT be the source on this path, because for a crashed run every incarnation is terminal and a finished `gate-*` / `*-verify-*` row can win on `updated_at` (baseline C2). ⟲ **The DISPATCH needs that same fallback, not just the classifier.** The freeze had the handle riding the ADR-081 session policy alone, because that resolution reads `latestAttemptForNode` — the node's own row. It does, but `node_attempts.acp_session_id` is written ONCE at append and no create ack back-fills it, so a crashed attempt carries **null** and every crash-resume dispatch degraded to `session_fallback`. The policy seeding is kept (it makes an absent handle observable); its `resume` branch falls back to the node's own logical session, narrowed to the crash-resume target so an ordinary rework re-entry is unchanged. |
 | **REQ-09** | The node-scoped resolution MUST be a single shared function used by **all three** call sites: `resumeCrashedRun` Phase 1, `driveResume`, and `isRunRecoverable` (`web/lib/queries/run.ts`). A second copy is a defect: the UI affordance and the route would drift. |
 | **REQ-10** | `web/lib/scheduler.ts`'s queued-recover promotion MUST take the same node-scoped resolution when deriving `isResume`, or the cap-full path resumes a gate's context while the direct path resumes the node's. |
 | **REQ-11** | `acp_session_id` MUST stay server-side. No recover DTO may carry it. |
@@ -110,7 +121,7 @@ RFC-2119 phrasing. Every REQ names the function or route that enforces it.
 | ID | Requirement (normative) |
 | --- | --- |
 | **REQ-12** | The durable authorization MUST remain the existing Phase-1 transaction — `takeSchedulerLock` → `SELECT … FOR UPDATE` → CAS `Crashed → Running\|Pending` writing `resume_started_at` and `current_step_id` → `mintPlacement(reason:"recover")` — committed **before** any supervisor call. No part of it moves into `driveResume`. |
-| **REQ-13** | A web death after that commit and before the dispatch MUST be recoverable with **no second operator click**. The recovery predicate is exactly: `runs.status='Running'` AND `resume_started_at IS NOT NULL` AND `current_step_id` non-null AND no live session. `startFlowContinuationWorker` cannot serve it (its `node_attempts` arm requires an open `Running` attempt on the **active** assignment), so the reconcile sweep MUST own it. |
+| **REQ-13** ⟲ | A web death after that commit and before the dispatch MUST be recoverable with **no second operator click**. The recovery predicate is exactly: `runs.status='Running'` AND `resume_started_at IS NOT NULL` AND `current_step_id` non-null AND no live session. `startFlowContinuationWorker` cannot serve it (its `node_attempts` arm requires an open `Running` attempt on the **active** assignment), so the reconcile sweep MUST own it — through its **own classifier arm** (`recover`), ordered AFTER the grace guard, handing the run to `driveResume`. **Amended:** the freeze put this in the `reattach` arm, which fires only when a LIVE session exists; with none, the classifier reached the agent no-live-session branch and, past grace, **crashed the run again**, discarding the operator's decision. The `reattach` arm keeps its own fix for the live-session case. |
 | **REQ-14** | The single-winner guard MUST remain the `resume_started_at` CAS-clear in `runGraph`. A concurrent second `POST /recover` MUST answer `409 CONFLICT`. No attempt counter or retry budget is added: the re-entry is idempotent (the loser no-ops), and the bound is the existing grace window plus `crashRunningRun` — a run that cannot be re-entered returns to `Crashed` and stops. |
 
 ### Scope 5 — the cap-full path
@@ -294,6 +305,7 @@ deliberate.
 | `execution-prompt-lifecycle.md` | one **crash recover** owner/recovery row + prose; the `Crashed` eligibility row's `H until explicit recovery claim` is unchanged — this change defines the claim it names | ⚠ The document is in the Stage B group enforced by `scripts/validate-docs-indexes.mjs` and is at **exactly** the 12-bullet `## Expectations` cap with `PRM-01…PRM-12` all allocated and traced. A 13th bullet or a new `PRM` id **fails `pnpm validate:docs`**. Therefore: **table row and prose only**, mirroring the established escape-hatch parenthetical already used at `:133`. |
 | `reconciliation-gc.md` | rewrite "Operator Recover — hybrid resume / re-dispatch" so the agent arm enters the graph; state the D2 recovery priority in order; move `judge`; add the Scope-6 classification | owns the acceptance contract; in **no** enforced group. At most **two** new Expectations bullets. |
 | `runs.md` | invariant 4 restated for both arms | — |
+| `execution-prompt-lifecycle.md` (owner row) | the crash-recover row also states the applied-completion **cleanup** rule (REQ-07a): a retired source generation means there is nothing to close | prose only, same cap constraint |
 | `architecture.md` | re-verify the manager↔host sequence and component responsibilities (T4.3) | — |
 
 **Recorded honestly:** `reconciliation-gc.md` already carries **19**
@@ -327,7 +339,7 @@ family name **`owner-flow-crash-recover`**.
 | AC | Criterion | Requirements | Test |
 | --- | --- | --- | --- |
 | **AC-01** | SIGKILL an `ai_coding` adapter mid-turn → reconcile `Crashed` → Recover → the run reaches a terminal state; **exactly one** new `session.prompt` command exists under the NEW `execution_assignment_id`; the crashed attempt is closed `Reworked`/`crash_recover`. On unfixed code the run stays `Running` with a live idle session, zero prompt commands under the new assignment, and `node_admission_generation` in the log. | REQ-01, REQ-02, REQ-03, REQ-12 | **T-CR1** (integ+sup) |
-| **AC-02** | A completed turn whose owner never applied is applied on recover with **no** second `session.prompt` for that attempt; `execution_commands.application_state='applied'` with `completion_applied_at` set. The test must not hand-write `action_completion`. | REQ-05, REQ-06, REQ-07 | **T-CR2** (integ+sup) |
+| **AC-02** | A completed turn nobody applied is applied on recover with **no** second `session.prompt` for that attempt; `execution_commands.application_state='applied'` with `completion_applied_at` set, and the graph finishes the visit. The test must not hand-write `action_completion`. | REQ-05, REQ-06, REQ-07, REQ-07a | **T-CR2** (integ+sup) |
 | **AC-03** | With a finished `gate-<id>` substep session newer than the node's own and every incarnation terminal, the recovered dispatch resumes the **node attempt's** handle, never the substep's; the classifier's session input is likewise node-scoped. | REQ-08, REQ-09 | **T-CR3** (integ) |
 | **AC-04** | SIGKILL the web process between the Phase-1 CAS and the dispatch → after restart the run continues through the ordinary re-entry with **no** second operator click; separately, a concurrent second `POST /recover` answers `409`. | REQ-13, REQ-14, REQ-17 | **T-CR4** (integ, real web) |
 | **AC-05** | `classifyRecover` routes `judge` to `resume-agent` with a handle and `discard-only` without one; `retry_safe` no longer decides for `judge`. | REQ-23 | **T-CR5** (unit, decision table) |

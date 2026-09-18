@@ -334,12 +334,24 @@ attempt on the ACTIVE assignment), which is why the sweep owns it. A run that
 cannot be re-entered returns to `Crashed` and stops; the bound is the grace
 window plus `crashRunningRun`, not a retry counter.
 
-**No silent no-op (Implemented — ADR-175).** A `Running` run holding a live
-**idle** session with no driver is classified, logged and counted in the sweep
-summary. When it carries the crash-recover marker the sweep re-enters it through
-`crashResume` rather than a bare `runFlow(runId)`, which the already-owned graph
-guard would no-op. That is also what reclaims the orphaned idle sessions left by
-the pre-ADR-175 recover arm.
+**No silent no-op (Implemented — ADR-175).** Two arms, because the committed
+intent can be left in two different shapes:
+
+- **No live session** — the shape a web death after the recover claim actually
+  leaves. `classifyRunReconcile` gains a `recover` action for it, ordered AFTER
+  the grace guard so a dispatch in flight is never raced, and the sweep hands the
+  run to `driveResume` — one owner for the whole evidence → close → dispatch
+  sequence rather than a second copy of that ordering in the sweep. Without this
+  arm the classifier reached the agent no-live-session branch and, past grace,
+  **crashed the run again**, discarding the operator's decision.
+- **Live session, no driver** — the orphaned idle session the pre-ADR-175
+  recover arm left behind. The reattach arm now carries `{db, executionHosts}`
+  and, when the marker is set, the `crashResume` signal, instead of a bare
+  `runFlow(runId)` the already-owned graph guard no-ops.
+
+Both are classified, logged and **counted** in the sweep summary
+(`crashRecoverReentered`, `runningIdleSession`), so an operator sees the
+classification rather than having to grep a log.
 
 What the reconciler may never do is resume a mid-turn agent **implicitly** —
 that is the rule the classification table above enforces, and it is unchanged by
@@ -685,10 +697,10 @@ For each run at reconcile time, gather: `run.status`, `run.runKind`,
   `execution_assignment_id` — and none at all when the crashed attempt already
   carries agreeing terminal evidence, which is applied first.
 - A `Running` run left holding `runs.resume_started_at` with a non-null
-  `current_step_id` MUST be re-entered by the reconcile sweep through the same
-  crash-resume claim without a second operator action, and a `Running` run
-  holding a live idle session with no driver MUST be counted in
-  `ReconcileSweepSummary` rather than silently skipped.
+  `current_step_id` MUST be re-entered by the reconcile sweep without a second
+  operator action — through the `recover` classifier arm when no session is live,
+  and through the crash-resume reattach when one is — and both outcomes MUST be
+  counted in `ReconcileSweepSummary` rather than silently skipped or re-crashed.
 - Related domains: [`runs.md`](runs.md), [`workspaces.md`](workspaces.md),
   [`workbench-lifecycle.md`](workbench-lifecycle.md),
   [`flow-packages.md`](flow-packages.md), [`flow-graph.md`](flow-graph.md).

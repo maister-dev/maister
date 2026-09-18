@@ -1058,7 +1058,7 @@ carries neither, so it can never be read as a human claim.
 Exit criteria: every new guard falsified, every suite green or explicitly
 classified, docs re-verified against the code.
 
-- [ ] **T4.1 — Falsify every new guard.**
+- [x] **T4.1 — Falsify every new guard.**
   For each of RED 1–4, revert the specific fix and confirm the test goes red
   **for the stated reason** — RED 1 must name `node_admission_generation`
   (revert T2.2 to `scheduleResumedSessionDrive`); RED 2 must show a second
@@ -1070,7 +1070,7 @@ classified, docs re-verified against the code.
   contend on the `resume_started_at` CAS; if the second click never allocates,
   the guard was not exercised — measure and repeat until misses are negligible.
 
-- [ ] **T4.2 — Run the named suites and classify every change.**
+- [x] **T4.2 — Run the named suites and classify every change.**
   Commands, as separate invocations:
   ```bash
   pnpm --filter maister-web typecheck && pnpm --filter maister-web exec eslint .
@@ -1101,7 +1101,7 @@ classified, docs re-verified against the code.
   before attributing any timeout to the code, and remember `pnpm lint` is
   `eslint --fix` and mutates the tree — check `git status` before staging.
 
-- [ ] **T4.2a — Conformance gate: implementation against spec.**
+- [x] **T4.2a — Conformance gate: implementation against spec.**
   This is a review pass with a written verdict, not a feeling. Produce an
   **AC conformance walk** in the plan: one row per AC, naming the test that
   proves it and the commit that made it green. An AC with no green test is an
@@ -1132,7 +1132,7 @@ classified, docs re-verified against the code.
   Verify: the conformance walk is written, every row cites a test id, and
   `pnpm --filter maister-web typecheck` plus `eslint .` are clean.
 
-- [ ] **T4.3 — Documentation truth pass (as-built).**
+- [x] **T4.3 — Documentation truth pass (as-built).**
   Re-read T0.2/T0.3/T0.4's artifacts against the shipped code and flip every
   **Designed** tag to **Implemented** only where the code matches. Re-verify the
   component responsibilities and the manager↔host sequence diagrams in
@@ -1142,7 +1142,7 @@ classified, docs re-verified against the code.
   and `db:erd --check` gates — the last expected to be a no-op, since this plan
   changes no schema) and `pnpm validate:contracts`.
 
-- [ ] **T4.4 — Retire the obsolete memory note and the ADR renumber pass.**
+- [x] **T4.4 — Retire the obsolete memory note and the ADR renumber pass.**
   The note "Recovery has three doors, only node interrupt opens a dead node"
   (`diagnosing-maister-stand-failures`) becomes false once this lands — update
   it to say Recover now re-enters the graph, and keep the node-interrupt entry
@@ -1150,6 +1150,135 @@ classified, docs re-verified against the code.
   requires `runs.status === "Running"`).
   Re-check `master` HEAD for ADR-175 collisions after rebasing and renumber if a
   parallel branch took it; grep prose forms (`pre-175`, `since 175`).
+
+#### T4.1 falsification record (2026-09-18)
+
+Each fix reverted in isolation against the otherwise-complete branch, the test
+re-run, the tree restored. Every one went red **for its stated reason**.
+
+| Guard reverted | Test | Verbatim failure | Stated reason met? |
+| --- | --- | --- | --- |
+| T2.2 — the agent arm answers `resumed` without entering the graph (what the pre-ADR-175 path amounted to once admission refused its prompt) | RED 1 | `Matcher did not succeed in 60000ms` / `expected +0 to be 1` — **zero** `session.prompt` rows under the run's current assignment | yes: the discriminating observable is the absent prompt under the new epoch |
+| T2.4 — `applyCrashedTurnEvidence` forced to `"absent"` | RED 2 | `expected [ … ] to have a length of 1 but got 2` | yes: a **second** `session.prompt` — the paid duplicate turn |
+| T2.5 — `resolveNodeResumeSessionId` reads `loadActiveRunSession` again | RED 3 | `resumeSessionId` expected `mock-e672d77c-…`, received `acp-substep-8518b6f0-…` | yes: the finished substep's handle |
+| T3.1 — the sweep's `recover` classifier arm disabled | RED 4 | `expected +0 to be 1` on `crashRecoverReentered`, with `run-state … from "Running" to "Crashed" reason "agent-session-gone"` twice in the log | yes: re-crashed, exactly A12 |
+
+**RED 1's fuller falsification is the `83bce7bb` run itself** — that commit IS
+"T2.2 not applied", and its log carries the whole chain the defect is made of:
+`run-resume-driver {"code":"CONFLICT","reason":"prompt_owner_invariant"}
+"driver yielded to durable prompt owner"` → `reconcile: reattached (live-session)`
+→ `driver-yielded … {"reason":"assignment_fenced"}`. The `causeCode` at that seam
+is `node_admission_generation` (`node-prompt-owner.ts:107`); the runner's
+top-level error log now carries `details`, so that code is visible in the log
+rather than only derivable from the source.
+
+**RED 4's race half, measured rather than assumed.** What contends is the
+Phase-1 status CAS (`WHERE status='Crashed'`), not the graph's `resume_started_at`
+CAS-clear — two different guards, and only the first is reachable from two
+concurrent `POST /recover` calls. It cannot silently fail to allocate: Phase 1
+opens with `takeSchedulerLock`, so the loser BLOCKS on the advisory lock rather
+than finishing before the winner starts, and its `conflict` result is produced
+only INSIDE that transaction, after the lock, by the status guard or a
+zero-row CAS. A `conflict` outcome is therefore itself proof the second click
+allocated. Measured 5/5 on the concurrent case
+(`recover.integration.test.ts` → `two concurrent recovers`): every run split
+`["conflict","resumed"]` with exactly ONE dispatch. Misses: 0/5.
+
+#### T4.2 suite record — the full integration lane, classified (2026-09-18)
+
+`pnpm --filter maister-web test:integration`: **6 failed / 4282 passed**, 486 of
+491 files. Compared as a failure SET against `master` (`83bce7bb`, measured in
+the main checkout on this same host), never as a count.
+
+| Failure | Classification | How it was established |
+| --- | --- | --- |
+| `project pull with real Git > rejects an unavailable origin…` | **pre-existing on master** | ran on the master checkout: identical assertion text |
+| `…/projects/[slug]/remotes > POST pull…` | **pre-existing on master** | same run: `expected 409 to be 503` |
+| `runReconcileSweep > reattaches a live Running Flow…` | **mine — obsolete expectation, fixed** | the reattach arm now passes a second argument; the case asserts `(attached, undefined)`, pinning that a run with NO committed intent still takes the ordinary continuation |
+| `runReconcileSweep > skips the whole tick (zeroed summary)…` | **mine — obsolete expectation, fixed** | the summary gained two counters; both added to the `toEqual` |
+| `owner-agent-budget 'terminate_restorable' … 'before_application'` | **lane load** | passes idle in **49 s** against its own 75 s budget; the diff touches nothing under `web/lib/agents`, and nothing agent-side calls `driveResume`, so the new `run_kind` guard cannot reach it |
+| `owner-flow-crash-recover: a crashed agent node recovers…` | **my test's budget, fixed** | passed idle in **63 s** against a **60 s** poll budget — the BUDGET was failing, not the behaviour. Raised to 150 s (and the case timeout to 420 s) with the assertion untouched |
+
+**The two pre-existing failures have a proven mechanism, not just a matching
+name.** `classifyGitError` (`web/lib/repo-source.ts:138`) string-matches ENGLISH
+git stderr; git on this host emits Russian, so every branch falls through to
+`UNKNOWN` and `pullRemote` answers `CONFLICT` (409) where the test expects
+`EXECUTOR_UNAVAILABLE` (503). Reproduced outside the suite entirely:
+`git pull /tmp/definitely-missing.git main` prints
+`fatal: Не удалось прочитать из внешнего репозитория.` — exactly the string the
+classifier seeks as `could not read from remote repository`. `NETWORK_GIT_ENV`
+sets `GIT_TERMINAL_PROMPT` and `GIT_SSH_COMMAND` but no `LC_ALL=C`. Introduced by
+`4db75d76`, merged as `2c778fb5`. A real defect on any non-English host, out of
+this change's scope — recorded under Follow-ups.
+
+**A seventh defect the lane hid, found by re-running the family.** With the host
+idle, `owner-flow-crash-recover: …resumes the node's own handle` failed roughly
+one family run in three at the 30 s live-session poll, while passing every time
+it ran alone. Cause: `crashAgentRunMidTurn` killed adapters **once**, so a
+`pgrep` that raced the adapter's appearance in the process table never retried.
+The kill is now re-issued on every poll iteration. Measured 3/3 green after the
+fix; falsified against the one-shot form below.
+
+Host conditions, recorded: the lane ran at load 6–23 on 16 cores against a
+competing worktree. `pmset -g log` was not implicated — no sleep window overlaps
+the run. `pnpm lint` is `eslint --fix` and mutates the tree; `git status` was
+checked before every stage, and `eslint .` sits at the documented 14-warning
+baseline.
+
+#### T4.2a AC conformance walk (2026-09-18)
+
+One row per AC, the test that proves it, and the commit that made it green.
+`C1` = `0862bf2a` (docs freeze) · `C2` = `e5641d98` (RED) · `P2` = `22f3b731`
+(Phase 2) · `P3` = `7678d2c0` (Phase 3).
+
+| AC | Primary test | Green at | Note |
+| --- | --- | --- | --- |
+| **AC-01** | `owner-flow-crash-recover: a crashed agent node recovers to a terminal state…` | P2 | asserts the prompt under the NEW assignment first, then `Review`, then the closed attempt |
+| **AC-02** | `…agreeing terminal evidence is applied with no second prompt` | P2 | one prompt for the run, `applied` + `completion_applied_at`, and the `after` node's side effect on disk |
+| **AC-03** | `…resumes the node's own handle, never a substep's` | P2 | pins the hazard first (`loadActiveRunSession` returns the substep), then the dispatched `resumeSessionId` |
+| **AC-04** | `…the committed intent recovers without a second click…` | **P3** | needed T3.1; also asserts `crashRecoverReentered === 1` and `crashed === 0` |
+| **AC-05** | `recover-classify.test.ts` agent-kind table | P2 | `judge` moved into the agent describe block, out of the session-less list |
+| **AC-06** | `run-recoverable.test.ts` → `a crashed judge with a retained handle is recoverable` | P2 | the UI affordance follows the classifier by construction |
+| **AC-07** | `owner-flow-crash-recover: a coordinator crashed mid-wait…` | P2 | zero new children, zero new coordinator prompts, `WaitingOnChildren` with `resume_requested_at` cleared, and the HTTP body checked through `recoverHttpResponse` |
+| **AC-08** | `operator-restart-budget.test.ts` + `observatory-operator-restarts.test.ts`, both `T-CR8` | P3 | both counters and the rework epoch; the operator budget is asserted unchanged by the sibling `operator_interrupt` cases the same files already hold |
+| **AC-09** | `…committed intent…` (`crashRecoverReentered`) | P3 | the counter is asserted, not just logged |
+| **AC-10** | `recover.integration.test.ts` → queued-resume + `it.each(["scratch","agent"])` | P2 | one case per discriminant arm |
+| **AC-11** | `recover-http.test.ts` → `reports the committed run status` | P2 | plus the parametrised success table |
+| **AC-12** | `i18n-parity.test.ts` + the `decisionLabel` arm | P3 | EN/RU parity enforced; the label maps rather than falling through |
+| **AC-13** | folded into AC-03's precondition assertion | P2 | the ranking hazard is demonstrated in the same case that depends on it, rather than in a separate suite — one primary test per AC, no duplicate |
+| **AC-14** | `pnpm validate:docs` (`db:erd --check`) + `_journal.json` untouched in the final diff | C1→P3 | zero migrations, as the DB contract predicted |
+
+**Four dimensions, checked explicitly.**
+
+- **Spec fidelity.** Every REQ is satisfied as written except the four marked
+  ⟲ in the spec, each **amended in the same increment** with the evidence that
+  falsified it — never silently reinterpreted. The contract was narrowed to what
+  the code does (REQ-05/06 name the handoff the code performs, not the owner path
+  it cannot use), never widened to match optimistic prose — the trap
+  `patches/2026-09-17-09.57.md` records. One REQ was ADDED (REQ-07a) because the
+  implementation surfaced a rule the freeze had not anticipated.
+- **SOLID.** The crash-recover behaviour enters through the existing `runFlow` /
+  graph-driver seam; no parallel driver exists. The one place a second dispatcher
+  could have grown — the sweep — hands the run to `driveResume` instead of
+  re-implementing its ordering. `driveResume`'s agent and redispatch arms are
+  NOT "the same but for a flag": the agent arm owns evidence, the attempt close
+  and the orchestrator branch, none of which the redispatch arm has.
+- **DRY.** All three reuse obligations hold: the settled-children predicate is
+  the existing `SETTLED_RUN_STATUSES` `notInArray` (no fourth copy); the
+  provenance constants live once in `attempt-decisions.ts` and are consumed as a
+  SET; the node-scoped session resolution is one function
+  (`resolveNodeResumeSessionId`) used by all four readers — Phase-1 classify,
+  `driveResume`, `isRunRecoverable`, and the scheduler's queued promotion — plus
+  the graph's crash-resume dispatch.
+- **KISS.** Zero migrations, zero new run statuses, zero new owner variants, zero
+  new `action_resume` kinds, and the `RecoverResult` union still has eight arms.
+  Nothing reached for one mid-flight.
+
+Conventions confirmed: every domain failure is a typed `MaisterError`
+(`PromptOwnerHandoffLost` carries `CONFLICT` + a `details.reason`); no new `any`
+without a `FIXME(any):` (the two new modules reuse the file-local
+dual-peer-dep cast the surrounding code already uses, with that comment);
+imports go through `@/`; comments explain WHY.
 
 <!-- Commit checkpoint C6: tasks T4.1-T4.4 (incl. T4.2a) -->
 
@@ -1181,6 +1310,20 @@ classified, docs re-verified against the code.
 
 ## Follow-ups this plan creates
 
+- **`session_fallback` is now reachable on a path that should rarely take it.**
+  The crash-resume dispatch resolves its handle from the node's attempt row and
+  then the node's logical session; when a node runs in a NAMED session whose
+  `run_sessions` row was never created, both miss and the dispatch degrades to a
+  fresh session. Correct, observable, and not a defect — but worth a metric
+  before crash-recover is ever automated.
+- **`node_attempts.acp_session_id` is write-once at append and nothing
+  back-fills it.** `applyCreateAck` stamps the attempt's `execution_assignment_id`
+  but not its handle, so the column is null for every attempt whose session was
+  created after the row. Several readers treat it as the node's handle (it is
+  where ADR-081's `resume` policy looks first). Either back-fill it in the create
+  ack or delete the column's implied meaning; leaving it half-true is what cost
+  this change a falsified premise.
+
 - **Untranslated provenance decisions.** `operator_interrupt` and
   `review_rework_claim` render as raw snake_case in both locales, because
   `decisionLabel` only maps approve/rework/takeover. Two keys per locale plus two
@@ -1206,10 +1349,13 @@ classified, docs re-verified against the code.
   because each re-entry needs an explicit operator or token decision; it becomes
   one if crash-recover is ever automated. Record it in the ADR rather than
   inventing an env var now.
-- T2.6 widens `judge` on the recover path only. The reconcile sweep still
-  classifies a session-less `judge` as `gate-redispatch`
-  (`web/lib/reconcile.ts:435`); confirm during T3.1 that the two paths disagreeing
-  is intentional and write down why, or align them.
+- T2.6 widens `judge` on the recover path only. **Confirmed during T3.1 and
+  written down** (`reconciliation-gc.md`, the note under the classifier table):
+  the reconcile sweep still classifies a session-less `judge` as
+  `gate-redispatch`, and the divergence is intentional — the sweep acts with no
+  operator decision, and the rule it enforces is that the reconciler may never
+  resume a mid-turn agent implicitly. A caller POSTing recover has made that
+  decision explicitly. The two paths stay different on purpose.
 
 ## Открытые вопросы
 
