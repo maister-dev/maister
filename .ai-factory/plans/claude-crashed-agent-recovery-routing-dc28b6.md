@@ -636,7 +636,7 @@ Failure classification for the dispatch step:
 | supervisor refuses `resumeSessionId` (`CHECKPOINT`) | **not a recover failure** | `Running`, `session_fallback` stamped | the graph continues fresh (A19) |
 | any other throw | `410 CHECKPOINT` (`unresumable`) via `crashRunningRun` | `Crashed` again, marker cleared by A6 | operator |
 
-- [ ] **T2.1 — Close the crashed attempt, after the evidence decision and before dispatch.**
+- [x] **T2.1 — Close the crashed attempt, after the evidence decision and before dispatch.**
   Files: `web/lib/runs/recover.ts` (`driveResume`'s agent arm);
   `web/lib/flows/graph/ledger.ts` (`markNodeReworked`, `:484`).
 
@@ -681,7 +681,7 @@ Failure classification for the dispatch step:
   assignmentId, assignmentEpoch, closedAttemptIds}`; `WARN` when the CAS finds
   no open attempt (a legitimate state after T2.4 applied terminal evidence).
 
-- [ ] **T2.2 — Send the `resume-agent` arm through `runFlow`.**
+- [x] **T2.2 — Send the `resume-agent` arm through `runFlow`.**
   Files: `web/lib/runs/recover.ts:374-457`.
   Replace `createSession({resumeSessionId}) + scheduleResumedSessionDrive` with
   `runFlow(runId, {crashResume:{targetStepId: resumeTarget}, db, executionHosts})`.
@@ -709,7 +709,7 @@ Failure classification for the dispatch step:
   nodeKind, resumeSessionIdPresent}`; DEBUG the chosen plan and the classifier
   inputs.
 
-- [ ] **T2.3 — Carry the node's retained ACP handle into the crash-resume dispatch.**
+- [x] **T2.3 — Carry the node's retained ACP handle into the crash-resume dispatch.**
   Files: `web/lib/flows/graph/runner-graph.ts` (the `isCrashResume` block at
   `:2284-2288` and the fresh-attempt branch at `:3013-3063`).
   When `isCrashResume` is true, seed
@@ -724,7 +724,7 @@ Failure classification for the dispatch step:
   Logging: `INFO [graph] crash-resume dispatch {runId, nodeId, attemptId,
   resumeSessionId: !!handle, sessionFallback}`.
 
-- [ ] **T2.4 — Apply existing terminal evidence before dispatching anything.**
+- [x] **T2.4 — Apply existing terminal evidence before dispatching anything.**
   Files: `web/lib/runs/recover.ts` (in `driveResume`, the FIRST step of the
   agent arm — before T2.1's close and before any dispatch; outside every DB
   transaction, because it performs host I/O);
@@ -750,7 +750,7 @@ Failure classification for the dispatch step:
 
 <!-- Commit checkpoint C3: tasks T2.1-T2.4 -->
 
-- [ ] **T2.5 — Take the classifier's session input from the node, not the newest row.**
+- [x] **T2.5 — Take the classifier's session input from the node, not the newest row.**
   Files: `web/lib/runs/recover.ts:177-189` and `:328-347`;
   `web/lib/queries/run.ts:408-424`.
   Phase 1 feeds `classifyRecover` from `loadActiveRunSession(...)?.acpSessionId`.
@@ -782,7 +782,7 @@ Failure classification for the dispatch step:
   Logging: DEBUG the resolved session name and whether it came from the attempt
   row or the logical session row; never log the handle itself.
 
-- [ ] **T2.6 — Admit `judge` to the recover classifier's agent set.**
+- [x] **T2.6 — Admit `judge` to the recover classifier's agent set.**
   *(Owner decision 2026-09-18: extend.)*
   Files: `web/lib/runs/recover-classify.ts:32-44`;
   `web/lib/runs/__tests__/recover-classify.test.ts`;
@@ -809,7 +809,7 @@ Failure classification for the dispatch step:
   Logging: `INFO [recover] classified {runId, nodeKind, plan, retrySafe,
   acpSessionIdPresent}` — the existing classifier log, extended with nodeKind.
 
-- [ ] **T2.7 — A crashed orchestrator waiting on children re-enters its wait gate.**
+- [x] **T2.7 — A crashed orchestrator waiting on children re-enters its wait gate.**
   *(Owner decision 2026-09-18: fix here.)*
   Files: `web/lib/runs/recover.ts` (the agent arm, after T2.4's evidence step);
   `web/lib/domain-events/orchestrator-resume.ts:270-294`;
@@ -886,6 +886,36 @@ Failure classification for the dispatch step:
   `session.prompt` commands for the coordinator node.
   Logging: `INFO [recover] orchestrator arm {runId, childrenTotal,
   childrenUnsettled, arm: "wait" | "resume" | "crash-resume"}`.
+
+#### Two plan premises the code falsified during Phase 2 (recorded, not worked around)
+
+1. **T2.3's mechanism does not carry the handle by itself.** The plan had the
+   retained ACP handle riding the ADR-081 session policy because that resolution
+   reads `latestAttemptForNode` — the node's own attempt row. It does, but
+   `node_attempts.acp_session_id` is written ONCE at append and no create ack
+   back-fills it, so a crashed attempt carries **null** and every crash-recover
+   dispatch degraded to `session_fallback`. The policy seeding is kept (it is
+   what makes an absent handle observable), and the `resume` resolution gains a
+   fallback to the node's own LOGICAL `run_sessions` row — still node-scoped, so
+   a substep can never be selected — narrowed to the crash-resume target so an
+   ordinary rework re-entry keeps its existing behaviour.
+
+2. **T2.4's "apply through the existing owner path" is not reachable after the
+   claim.** `lockFlowPromptOwner` requires `runs.execution_assignment_id` to
+   still BE the command's assignment, and Phase 1 has already minted the next
+   epoch — so the live owner's only possible disposition is `superseded`, which
+   is terminal and would destroy the evidence. What the eligibility table
+   actually describes for a `Crashed` row is an **explicit generation handoff**,
+   and `permission-resume.ts` is the existing precedent for its code shape:
+   `readPromptOutput` + the SAME `decodeNodePromptCompletion` reducer, applied
+   under the new generation. That is what shipped; no second reducer exists.
+   Its consequence surfaced one more gap — `closeAppliedFlowPromptSession`
+   had no arm for an applied completion whose command sits on a retired
+   assignment without an `action_resume` permission witness, and refused with
+   `permission_result_cleanup_authority`. The new arm's witness is the command's
+   assignment no longer being `active` (NOT the incarnation's state, which stays
+   non-terminal through exactly the window a recover runs in), and it decides
+   only whether a `deleteSession` goes out.
 
 <!-- Commit checkpoint C4: tasks T2.5-T2.7 -->
 

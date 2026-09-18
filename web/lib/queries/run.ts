@@ -71,6 +71,7 @@ import {
 import { resolveReentryNode } from "@/lib/runs/reentry";
 import { assertReworkClaimEligible } from "@/lib/runs/rework-claim";
 import { resolveNodeRecoverInfo } from "@/lib/flows/graph/current-node-kind";
+import { resolveNodeResumeSessionId } from "@/lib/runs/crash-recover";
 import { buildSettingsView } from "@/lib/flows/settings-view";
 import { gcAgeDays, gcWarningDays } from "@/lib/instance-config";
 import { extractOptions } from "@/lib/queries/hitl";
@@ -505,17 +506,31 @@ export const getRunDetail = cache(async function getRunDetail(
   // resume_target_step_id (set at crash time), falling back to current_step_id
   // for live/hand-seeded rows. resolveNodeRecoverInfo yields {nodeKind, retrySafe}.
   const recoverTargetStepId = row.resumeTargetStepId ?? row.currentStepId;
-  const { nodeKind: recoverNodeKind, retrySafe } =
-    shouldResolveRunRecoverTarget(row.status)
-      ? await resolveNodeRecoverInfo(client, {
-          flowRevisionId: row.flowRevisionId,
-          flowId: row.flowId,
-          stepId: recoverTargetStepId,
-        })
-      : { nodeKind: null, retrySafe: false };
+  const {
+    nodeKind: recoverNodeKind,
+    retrySafe,
+    sessionName: recoverSessionName,
+  } = shouldResolveRunRecoverTarget(row.status)
+    ? await resolveNodeRecoverInfo(client, {
+        flowRevisionId: row.flowRevisionId,
+        flowId: row.flowId,
+        stepId: recoverTargetStepId,
+      })
+    : { nodeKind: null, retrySafe: false, sessionName: "default" };
+  // ADR-175: the affordance MUST consume the same node-scoped handle the route
+  // will, or the UI offers Recover on a run the route refuses (and vice versa).
+  // `row.acpSessionId` is the run's ACTIVE session, which for a crashed run can
+  // be a finished substep.
+  const recoverAcpSessionId = shouldResolveRunRecoverTarget(row.status)
+    ? await resolveNodeResumeSessionId(client, {
+        runId,
+        nodeId: recoverTargetStepId,
+        sessionName: recoverSessionName,
+      })
+    : row.acpSessionId;
   const recoverable = isRunRecoverable({
     status: row.status,
-    acpSessionId: row.acpSessionId,
+    acpSessionId: recoverAcpSessionId,
     currentNodeKind: recoverNodeKind,
     retrySafe,
     workspaceRemoved: row.removedAt !== null,

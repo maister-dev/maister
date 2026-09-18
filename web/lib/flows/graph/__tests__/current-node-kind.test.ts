@@ -37,6 +37,14 @@ describe("resolveNodeRecoverInfo — incompatible stored graph", () => {
           stepId: "implement",
         },
       ),
-    ).resolves.toEqual({ nodeKind: null, retrySafe: false });
+    ).resolves.toEqual({
+      nodeKind: null,
+      retrySafe: false,
+      // ADR-175: the recover path also needs the node's LOGICAL session name to
+      // resolve a node-scoped resume handle. An unresolvable target falls back
+      // to the run's default session, which carries no handle either — so the
+      // plan is still discard-only.
+      sessionName: "default",
+    });
   });
 });

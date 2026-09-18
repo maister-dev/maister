@@ -18,6 +18,8 @@ import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
+import { resolveNodeRecoverInfo } from "@/lib/flows/graph/current-node-kind";
+import { resolveNodeResumeSessionId } from "@/lib/runs/crash-recover";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import {
@@ -521,6 +523,51 @@ export type ReleaseSlotOnIdleOptions = {
   runFlow?: (runId: string) => void;
 };
 
+// ADR-175: the resume handle a queued promotion should carry. A run the recover
+// claim queued has `resume_started_at` stamped and `current_step_id` parked at
+// the recover target, so its handle is that NODE's — not the run's newest
+// `run_sessions` row, which for a crashed run can be a finished substep. A run
+// queued for any other reason has no recover target and keeps the run-level
+// resolution.
+async function resumeHandleForQueuedRun(
+  tx: Db,
+  runId: string,
+): Promise<string | null> {
+  const rows: Array<{
+    currentStepId: string | null;
+    resumeTargetStepId: string | null;
+    resumeStartedAt: Date | null;
+    flowId: string | null;
+    flowRevisionId: string | null;
+  }> = await tx
+    .select({
+      currentStepId: runs.currentStepId,
+      resumeTargetStepId: runs.resumeTargetStepId,
+      resumeStartedAt: runs.resumeStartedAt,
+      flowId: runs.flowId,
+      flowRevisionId: runs.flowRevisionId,
+    })
+    .from(runs)
+    .where(eq(runs.id, runId));
+  const row = rows[0];
+  const target = row?.currentStepId ?? row?.resumeTargetStepId ?? null;
+
+  if (!row || !row.resumeStartedAt || !target)
+    return (await loadActiveRunSession(tx, runId))?.acpSessionId ?? null;
+
+  const { sessionName } = await resolveNodeRecoverInfo(tx, {
+    flowRevisionId: row.flowRevisionId,
+    flowId: row.flowId,
+    stepId: target,
+  });
+
+  return await resolveNodeResumeSessionId(tx, {
+    runId,
+    nodeId: target,
+    sessionName,
+  });
+}
+
 export async function releaseSlotOnIdle(
   opts: ReleaseSlotOnIdleOptions,
 ): Promise<{ promotedRunId: string | null }> {
@@ -847,9 +894,15 @@ export async function promoteNextPending(
         if (cand.cls === "C1") {
           // M19/M42: a checkpointed Pending run (acp session on its active session)
           // resumes via session/resume rather than re-running from step 0.
+          // ADR-175: a queued RECOVER carries the same substep hazard the direct
+          // path does — the recover claim stamped `current_step_id` and after a
+          // crash every incarnation is terminal, so `loadActiveRunSession` can
+          // rank a finished `gate-*` row first. Resolve the recover target's OWN
+          // handle so the cap-full path and the direct path never disagree about
+          // which context is being resumed.
           const targetAcpSessionId = isAgent
             ? null
-            : ((await loadActiveRunSession(tx, runId))?.acpSessionId ?? null);
+            : await resumeHandleForQueuedRun(tx, runId);
           const isResume = !isAgent && targetAcpSessionId != null;
 
           const flipped: Array<{ projectId: string }> = await tx

@@ -129,6 +129,7 @@ import {
   type RestrictionPathSet,
 } from "./mutation-check";
 
+import { resolveNodeResumeSessionId } from "@/lib/runs/node-resume-session";
 import { createHitlRequest } from "@/lib/runs/hitl-create";
 import { staleSessionBinding } from "@/lib/execution-host/session-binding";
 import { loadPendingOperatorCorrection } from "@/lib/runs/node-interrupt";
@@ -2622,13 +2623,22 @@ export async function runGraph(
   // M30 (ADR-081): set by the rework block — the next visit of the TARGET
   // node carries the resolved session policy (resume threads the prior
   // attempt's acp_session_id into the dispatch).
+  // ADR-175: a crash-resume appends a FRESH attempt for the recover target (its
+  // crashed row was closed `crash_recover`), so the retained ACP handle has to
+  // ride the SAME ADR-081 session policy a rework re-entry uses. That resolution
+  // reads `latestAttemptForNode` — the NODE's own row — which is what keeps a
+  // finished `gate-*` / `*-verify-*` substep session out of the node's dispatch
+  // structurally rather than by filtering. An absent handle already degrades
+  // observably through `setSessionFallback`; no second fallback is added.
   let pendingSessionPolicy: { nodeId: string; policy: SessionPolicy } | null =
     restoredFinish?.sessionPolicy && restoredFinish.targetNodeId
       ? {
           nodeId: restoredFinish.targetNodeId,
           policy: restoredFinish.sessionPolicy,
         }
-      : null;
+      : isCrashResume && resumeNodeId
+        ? { nodeId: resumeNodeId, policy: "resume" }
+        : null;
 
   // M30 (ADR-080): auto-retry decision for a failed ai_coding/cli attempt:
   //  - "retry"    → the caller `continue`s on the SAME node (fresh new-session
@@ -3024,6 +3034,25 @@ export async function runGraph(
             const prior = await latestAttemptForNode(runId, node.id, db);
 
             attemptResumeSessionId = prior?.acpSessionId ?? undefined;
+            // ADR-175: a CRASHED attempt's row carries no handle —
+            // `node_attempts.acp_session_id` is written once at append and the
+            // create ack never back-fills it — so the node's own LOGICAL
+            // session is the crash-resume fallback. Still node-scoped: a
+            // substep session (`gate-<id>`, `<node>-verify-<n>-<k>`) has a
+            // different name and can never be selected here. Narrowed to the
+            // crash-resume target so an ordinary rework re-entry keeps its
+            // existing degrade-to-fresh behaviour.
+            if (
+              !attemptResumeSessionId &&
+              isCrashResume &&
+              node.id === resumeNodeId
+            )
+              attemptResumeSessionId =
+                (await resolveNodeResumeSessionId(db, {
+                  runId,
+                  nodeId: node.id,
+                  sessionName: nodeSessionName,
+                })) ?? undefined;
           }
         }
 
@@ -5212,7 +5241,13 @@ export async function runGraph(
           cause: asError(err),
         });
 
-    log2.error({ err: e.message, code: e.code }, "runGraph top-level error");
+    // `details` carries the discriminator for every typed refusal on this path
+    // (`reason`, and a prompt-owner invariant's `causeCode`). Without it the
+    // log says only "failed its invariant", which names no site.
+    log2.error(
+      { err: e.message, code: e.code, details: e.details },
+      "runGraph top-level error",
+    );
     failed = true;
     runErrorCode = e.code;
   }
