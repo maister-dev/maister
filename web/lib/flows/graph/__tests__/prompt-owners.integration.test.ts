@@ -3329,6 +3329,18 @@ describe("Flow prompt owners through the production graph driver", () => {
       });
 
       expect(result).toEqual({ state: "resumed" });
+      // ADR-175: this arm re-enters the graph WITHOUT `crashResume`, so
+      // `runGraph`'s CAS-clear of the intent marker never fires and the arm has
+      // to release it itself. Left set, `classifyRunReconcile` reads this run's
+      // NEXT, unrelated crash as an unclaimed recover intent and re-dispatches a
+      // paid turn with no operator decision — the `Crashed` row an operator is
+      // supposed to answer never appears.
+      const [afterApply] = await database.db
+        .select()
+        .from(runs)
+        .where(eq(runs.id, crashedRun.seeded.runId));
+
+      expect(afterApply.resumeStartedAt).toBeNull();
       continuation = startFlowContinuationWorker({
         db: database.db as unknown as Db,
         runtimeRoot: supervisor.runtimeRoot,

@@ -19,7 +19,7 @@ import pino from "pino";
 import { getDb } from "@/lib/db/client";
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import { resolveNodeRecoverInfo } from "@/lib/flows/graph/current-node-kind";
-import { resolveNodeResumeSessionId } from "@/lib/runs/crash-recover";
+import { resolveNodeResumeSessionId } from "@/lib/runs/node-resume-session";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import {

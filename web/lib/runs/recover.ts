@@ -20,6 +20,7 @@ import { classifyRecover } from "@/lib/runs/recover-classify";
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import {
   applyCrashedTurnEvidence,
+  clearCrashRecoverMarker,
   closeCrashedNodeAttempts,
   resolveNodeResumeSessionId,
 } from "@/lib/runs/crash-recover";
@@ -425,6 +426,22 @@ export async function driveResume(
     return { state: "redispatched" };
   }
 
+  // `classifyRecover` has THREE outcomes and this dispatch is entered
+  // standalone — by the scheduler's queued promotion and by the reconcile
+  // sweep's crash-recover arm, neither of which re-runs Phase 1's refusal. A
+  // target with no resumable handle must therefore refuse HERE too, or the
+  // sweep silently dispatches a fresh session for a node `POST /recover`
+  // answers `409 discard-only` on.
+  if (plan === "discard-only") {
+    log.warn(
+      { runId, nodeKind, retrySafe, targetStepId: resumeTarget },
+      "driveResume: no resumable target — discard-only",
+    );
+    await crashRunningRun(runId, "agent-session-gone", { db });
+
+    return { state: "unresumable" };
+  }
+
   // resume-agent: re-enter the graph at the recover target.
   const launch = recoveredRunLaunchInput({
     runnerSnapshot:
@@ -480,6 +497,18 @@ export async function driveResume(
       // epoch, so the ordinary durable continuation finishes the visit. No
       // crash-resume signal: that would append a fresh attempt and re-prompt.
       await runFlowFn(runId, { db, executionHosts: hosts });
+      // This arm re-enters WITHOUT `crashResume`, so `runGraph`'s CAS-clear
+      // never fires and the intent marker would outlive the recover that
+      // consumed it. Best-effort like the sibling `releaseSlotOnIdle` below:
+      // the graph continuation has ALREADY run, so letting this throw into the
+      // catch would crash a run that just succeeded. A missed clear costs one
+      // redundant sweep re-entry; a wrong crash costs the turn.
+      await clearCrashRecoverMarker(db, runId).catch((error: unknown) => {
+        log.warn(
+          { runId, code: isMaisterError(error) ? error.code : "UNKNOWN" },
+          "driveResume: could not release the recover intent marker",
+        );
+      });
       log.info(
         { runId, targetStepId: resumeTarget, assignmentId },
         "driveResume: agent arm -> evidence applied, graph continued without a new prompt",
@@ -652,6 +681,16 @@ async function driveOrchestratorRecover(
     orchestratorResume: { targetStepId },
     db,
     executionHosts: hosts,
+  });
+  // `isOrchestratorResume` requires `!isCrashResume`, so the graph's CAS-clear
+  // is unreachable on this arm by construction — release the claim here.
+  // Best-effort for the same reason as the evidence arm: the re-entry already
+  // happened, so this must not be able to turn a success into a crash.
+  await clearCrashRecoverMarker(db, runId).catch((error: unknown) => {
+    log.warn(
+      { runId, code: isMaisterError(error) ? error.code : "UNKNOWN" },
+      "driveResume: could not release the recover intent marker",
+    );
   });
 
   return { state: "resumed" };

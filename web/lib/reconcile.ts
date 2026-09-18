@@ -519,11 +519,13 @@ export interface ReconcileSweepSummary {
   // coordinator that is now gone) — distinct from `crashed`, which is a
   // recoverable outcome; these have nothing to recover.
   abandoned: number;
-  // ADR-175: reattaches that carried a committed crash-recover intent
-  // (`resume_started_at` set with a parked `current_step_id`) and were therefore
-  // re-entered through the single-winner crash-resume claim rather than the bare
-  // `runFlow(runId)` the already-owned graph guard no-ops. A subset of
-  // `reattached`.
+  // ADR-175: runs carrying a committed crash-recover intent (`resume_started_at`
+  // set with a parked `current_step_id`) that this tick re-entered through the
+  // single-winner crash-resume claim rather than the bare `runFlow(runId)` the
+  // already-owned graph guard no-ops. Counts BOTH arms — the `recover` action
+  // (no live session, handed to `driveResume`) and the `reattach` action (live
+  // session) — so it is NOT a subset of `reattached`; only the reattach half
+  // overlaps it.
   crashRecoverReentered: number;
   // ADR-175: `Running` runs found holding a LIVE session with no driver lease.
   // The state is not silently skipped any more — a reattach goes out and this
@@ -1531,8 +1533,13 @@ export async function runReconcileSweep(
         liveRunStepSession: Boolean(liveRunStep),
         // ADR-175 recovery predicate, named exactly: a flow run left `Running`
         // with the recover claim's marker still set and its target node parked.
-        // The graph CAS-clears that marker the moment a driver takes the
-        // re-entry, so a non-null marker means nobody has.
+        // A non-null marker means no driver has taken the re-entry — enforced by
+        // BOTH release paths, which together cover every arm that takes it:
+        // `runGraph`'s CAS-clear for a `crashResume` entry, and
+        // `clearCrashRecoverMarker` for the two arms that re-enter without that
+        // signal (applied evidence, all-settled orchestrator). Leaving either
+        // uncleared would make this predicate fire on the run's NEXT, unrelated
+        // crash and re-dispatch a paid turn with no operator decision.
         crashRecoverPending:
           cand.runKind === "flow" &&
           cand.resumeStartedAt !== null &&

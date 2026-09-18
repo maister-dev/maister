@@ -2935,7 +2935,7 @@ export async function runGraph(
       // ADR-161 + ADR-175: operator restarts AND crash recovers are excluded
       // from the epoch count — see effectiveAttempts. Zero of them leaves the
       // arithmetic unchanged.
-      const nodeOperatorRestarts = nonCorrectionAttemptCount(attempts, node.id);
+      const nodeNonCorrections = nonCorrectionAttemptCount(attempts, node.id);
 
       if (
         node.rework &&
@@ -2943,7 +2943,7 @@ export async function runGraph(
         effectiveAttempts(
           nodeAttemptCount,
           nodeReworkBaseline,
-          nodeOperatorRestarts,
+          nodeNonCorrections,
         ) > node.rework.maxLoops
       ) {
         throw new MaisterError(

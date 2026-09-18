@@ -679,6 +679,11 @@ describe("runReconcileSweep (integration)", () => {
     // committed recover intent, and `undefined` when it does not — this run was
     // never recovered, so it takes the ordinary durable continuation.
     expect(runFlow).toHaveBeenCalledWith(attached, undefined);
+    // REQ-18: a `Running` run holding a live session with no driver is
+    // CLASSIFIED and COUNTED, never silently skipped — asserted here rather
+    // than left to a log grep, which is the whole point of the counter.
+    expect(summary.runningIdleSession).toBeGreaterThanOrEqual(1);
+    expect(summary.crashRecoverReentered).toBe(0);
   }, 60_000);
 
   it("does NOT reattach/crash a live Running scratch dialog — leaves it Running, no resume driver", async () => {

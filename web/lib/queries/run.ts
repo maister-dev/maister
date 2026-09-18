@@ -71,7 +71,7 @@ import {
 import { resolveReentryNode } from "@/lib/runs/reentry";
 import { assertReworkClaimEligible } from "@/lib/runs/rework-claim";
 import { resolveNodeRecoverInfo } from "@/lib/flows/graph/current-node-kind";
-import { resolveNodeResumeSessionId } from "@/lib/runs/crash-recover";
+import { resolveNodeResumeSessionId } from "@/lib/runs/node-resume-session";
 import { buildSettingsView } from "@/lib/flows/settings-view";
 import { gcAgeDays, gcWarningDays } from "@/lib/instance-config";
 import { extractOptions } from "@/lib/queries/hitl";

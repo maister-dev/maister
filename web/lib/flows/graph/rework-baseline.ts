@@ -29,9 +29,9 @@ import { NON_CORRECTION_DECISIONS } from "@/lib/flows/graph/attempt-decisions";
 export function effectiveAttempts(
   attemptNumber: number,
   baseline: number | null | undefined,
-  operatorRestarts: number = 0,
+  nonCorrections: number = 0,
 ): number {
-  return attemptNumber - (baseline ?? 0) - operatorRestarts;
+  return attemptNumber - (baseline ?? 0) - nonCorrections;
 }
 
 // Count a node's attempts closed WITHOUT a failed automated iteration — an

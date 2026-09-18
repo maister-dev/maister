@@ -2,7 +2,7 @@ import "server-only";
 
 import type { FlowActionCompletion } from "@/lib/flows/graph/action-completion";
 
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import pino from "pino";
 
 import * as schemaModule from "@/lib/db/schema";
@@ -14,7 +14,7 @@ import { resolveNodeResumeSessionId } from "@/lib/runs/node-resume-session";
 import { MaisterError } from "@/lib/errors";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { executionCommands, nodeAttempts, runSessionIncarnations } =
+const { executionCommands, nodeAttempts, runs, runSessionIncarnations } =
   schemaModule as unknown as Record<string, any>;
 
 // Re-exported so the recover path keeps a single import surface; the resolution
@@ -34,9 +34,14 @@ const log = pino({
 async function openRunningAttempts(
   db: Db,
   input: { runId: string; nodeId: string },
-): Promise<Array<{ id: string }>> {
+): Promise<
+  Array<{ id: string; actionCompletion: FlowActionCompletion | null }>
+> {
   return await db
-    .select({ id: nodeAttempts.id })
+    .select({
+      id: nodeAttempts.id,
+      actionCompletion: nodeAttempts.actionCompletion,
+    })
     .from(nodeAttempts)
     .where(
       and(
@@ -46,6 +51,23 @@ async function openRunningAttempts(
         isNull(nodeAttempts.endedAt),
       ),
     );
+}
+
+// Did this command's completion land on the attempt after all? A 0-row
+// completion CAS says only that SOMETHING changed; re-reading says what. The
+// answer decides between "continue the graph" and "buy the turn again", so it
+// must be a durable read, never inferred from the CAS's row count.
+async function evidenceAlreadyApplied(
+  db: Db,
+  nodeAttemptId: string,
+  commandId: string,
+): Promise<boolean> {
+  const [row] = await db
+    .select({ actionCompletion: nodeAttempts.actionCompletion })
+    .from(nodeAttempts)
+    .where(eq(nodeAttempts.id, nodeAttemptId));
+
+  return row?.actionCompletion?.commandId === commandId;
 }
 
 export type CrashEvidenceOutcome = "applied" | "absent" | "quarantined";
@@ -83,27 +105,50 @@ export async function applyCrashedTurnEvidence(
 
   if (attempts.length === 0) return "absent";
 
-  const commandRows = await db
-    .select()
-    .from(executionCommands)
-    .where(
-      and(
-        eq(executionCommands.runId, input.runId),
-        eq(executionCommands.kind, "session.prompt"),
-      ),
-    )
-    .orderBy(desc(executionCommands.createdAt));
-
   for (const attempt of attempts) {
     // Newest first, so a node re-prompted within one attempt reconciles the
-    // turn that was actually in flight when the crash happened.
-    const command = commandRows.find(
-      (row: Record<string, any>) =>
-        row.ownerRef?.variant === "node" &&
-        row.ownerRef?.nodeAttemptId === attempt.id,
-    );
+    // turn that was actually in flight when the crash happened. Owner-filtered
+    // in SQL and capped: selecting every prompt command of the run pulled each
+    // turn's whole `request_canonical_json` back to satisfy one match.
+    const [command] = await db
+      .select({
+        id: executionCommands.id,
+        completionAppliedAt: executionCommands.completionAppliedAt,
+      })
+      .from(executionCommands)
+      .where(
+        and(
+          eq(executionCommands.runId, input.runId),
+          eq(executionCommands.kind, "session.prompt"),
+          sql`${executionCommands.ownerRef}->>'variant' = 'node'`,
+          sql`${executionCommands.ownerRef}->>'nodeAttemptId' = ${attempt.id}`,
+        ),
+      )
+      .orderBy(desc(executionCommands.createdAt))
+      .limit(1);
 
     if (!command) continue;
+
+    // ADR-175: an earlier recover already folded this turn into the ledger and
+    // its graph continuation then failed, so the operator recovered again. The
+    // applied completion is the ANSWER here, not a row to skip past — falling
+    // through would close the attempt `crash_recover` and buy the finished turn
+    // a SECOND time, which is the one thing this whole arm exists to prevent.
+    if (attempt.actionCompletion?.commandId === command.id) {
+      log.info(
+        {
+          runId: input.runId,
+          nodeId: input.nodeId,
+          nodeAttemptId: attempt.id,
+          commandId: command.id,
+          outcome: "applied",
+          source: "ledger",
+        },
+        "crash-recover: evidence-first — already applied by an earlier recover",
+      );
+
+      return "applied";
+    }
     if (command.completionAppliedAt) continue;
 
     // Fold a terminal receipt the crash lost into the ledger. Never sends a
@@ -175,7 +220,12 @@ export async function applyCrashedTurnEvidence(
           )
           .returning({ id: nodeAttempts.id });
 
-        if (rows.length === 0) return false;
+        // Another writer won the application between the read above and this
+        // write. The evidence is in the ledger either way, so that is `applied`
+        // — never a reason to buy the turn again. A 0-row update for any OTHER
+        // reason (the attempt is no longer `Running`) falls through.
+        if (rows.length === 0)
+          return await evidenceAlreadyApplied(tx, attempt.id, settled.id);
 
         // `execution_commands_application_shape_check` binds the disposition to
         // the claim fields: `applied` requires `completion_applied_at`, and
@@ -214,14 +264,17 @@ export async function applyCrashedTurnEvidence(
 
         return true;
       })
-      .catch((error: unknown) => {
+      .catch(async (error: unknown) => {
         if (error instanceof PromptOwnerHandoffLost) {
           log.info(
             { runId: input.runId, commandId: settled.id },
             "crash-recover: evidence-first lost the handoff to another writer",
           );
 
-          return false;
+          // The winner wrote BOTH halves in one transaction, so if its
+          // completion is on the attempt the evidence is applied and must not
+          // be re-prompted just because this writer rolled back.
+          return await evidenceAlreadyApplied(db, attempt.id, settled.id);
         }
 
         throw error;
@@ -283,4 +336,31 @@ export async function closeCrashedNodeAttempts(
     .returning({ id: nodeAttempts.id });
 
   return closed.map((row: { id: string }) => row.id);
+}
+
+// ADR-175. `runs.resume_started_at` means "a committed crash-recover intent
+// nobody has taken yet" — it is both the single-winner claim and the predicate
+// `classifyRunReconcile` re-enters a web death on. `runGraph` CAS-clears it for
+// a `crashResume` re-entry, but the two arms that re-enter WITHOUT that signal
+// (an applied-evidence continuation, an all-settled orchestrator resume) have
+// no such clear, and a marker left behind makes the sweep read this run's NEXT,
+// unrelated crash as an unclaimed recover intent — silently re-dispatching a
+// paid turn in place of the `Crashed` row an operator is supposed to decide on.
+//
+// Called AFTER the re-entry returns, never before: while the dispatch is in
+// flight the marker is exactly what lets the sweep recover a web death.
+export async function clearCrashRecoverMarker(
+  db: Db,
+  runId: string,
+): Promise<void> {
+  const cleared = await db
+    .update(runs)
+    .set({ resumeStartedAt: null })
+    .where(and(eq(runs.id, runId), isNotNull(runs.resumeStartedAt)))
+    .returning({ id: runs.id });
+
+  log.debug(
+    { runId, cleared: cleared.length > 0 },
+    "crash-recover: released the recover intent marker",
+  );
 }

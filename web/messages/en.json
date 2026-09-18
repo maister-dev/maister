@@ -2421,6 +2421,7 @@
     "recoverConfirmBody": "Recovery re-runs the current node from its last checkpoint. Work already saved to the worktree is kept, but the node executes again from the start.",
     "recoverQueued": "The host is at capacity — recovery is queued and will resume when a slot frees.",
     "recoverSucceeded": "Recovery started.",
+    "recoverSucceededWaiting": "Recovery started — the coordinator is waiting on its child runs.",
     "streamLive": "Live",
     "streamReconnecting": "Reconnecting",
     "streamDisconnected": "Disconnected",

@@ -43,7 +43,7 @@ describe("recoverHttpResponse", () => {
   it.each(CASES)(
     "$state → $httpStatus with runStatus $runStatus",
     ({ state, httpStatus, runStatus }) => {
-      expect(recoverHttpResponse(state)).toEqual({
+      expect(recoverHttpResponse({ state })).toEqual({
         httpStatus,
         body: { ok: true, state, runStatus },
       });
@@ -53,7 +53,7 @@ describe("recoverHttpResponse", () => {
   it.each(REFUSALS)(
     "$state → $httpStatus with typed code $code",
     ({ state, httpStatus, code, reason }) => {
-      const res = recoverHttpResponse(state);
+      const res = recoverHttpResponse({ state });
 
       expect(res.httpStatus).toBe(httpStatus);
       expect(res.body).toMatchObject({ code });
@@ -83,7 +83,7 @@ describe("recoverHttpResponse", () => {
 
   it("never leaks a session handle in any outcome", () => {
     for (const { state } of [...CASES, ...REFUSALS]) {
-      const serialized = JSON.stringify(recoverHttpResponse(state).body);
+      const serialized = JSON.stringify(recoverHttpResponse({ state }).body);
 
       expect(serialized).not.toContain("acpSessionId");
       expect(serialized).not.toContain("acp_session_id");

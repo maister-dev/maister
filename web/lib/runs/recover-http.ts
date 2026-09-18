@@ -114,13 +114,10 @@ function isSuccessState(state: RecoverState): state is RecoverSuccessState {
 }
 
 export function recoverHttpResponse(
-  result: RecoverState | RecoverResult,
+  result: RecoverResult,
 ): RecoverHttpResponse {
-  const state = typeof result === "string" ? result : result.state;
-  const committed =
-    typeof result === "string" || result.state !== "resumed"
-      ? undefined
-      : result.runStatus;
+  const { state } = result;
+  const committed = result.state === "resumed" ? result.runStatus : undefined;
   const httpStatus = statusForState(state);
 
   if (isSuccessState(state)) {
