@@ -2401,9 +2401,14 @@ paths:
         durable-marker-before-side-effect ordering, and the SAME outcome → status
         projection as the internal route.
 
-        An `ai_coding` node continues its prior ACP session
-        (`session/resume` on `acp_session_id`); a session-less node is
-        re-dispatched only when its manifest config declares `retry_safe: true`.
+        (ADR-175) An AGENT node — `ai_coding`, `judge` or `orchestrator` —
+        re-enters the flow graph at the recover target and resumes the node's
+        OWN retained ACP session (`session/resume` on that node's
+        `acp_session_id`, never the newest `run_sessions` row). A session-less
+        node (`cli`/`check`/`guard`/`human`/`form`) is re-dispatched only when
+        its manifest config declares `retry_safe: true`. Agreeing terminal
+        evidence from the crashed turn is applied BEFORE any dispatch, so a
+        recover never pays for a turn the host already completed.
 
         **Concurrency is safe to automate.** The `Crashed → Running|Pending`
         claim is a status-guarded CAS, so a concurrent second call is `409` and
@@ -2412,7 +2417,9 @@ paths:
 
         **Retry semantics.** Only `503` is retryable. `409` and `410` are
         terminal classifications — this run cannot continue, and the caller
-        should `POST /api/v1/ext/runs/{runId}/discard` instead.
+        should `POST /api/v1/ext/runs/{runId}/discard` instead. (ADR-175) The
+        three `409` outcomes are machine-distinguishable on `details.reason`:
+        `discard_only`, `recover_cas_lost`, `workspace_removed`.
 
         **Identifiers (trust contour).** The `projectId` is derived SERVER-SIDE
         from the run row, existence-hidden `404` on mismatch. The body is empty
@@ -2438,9 +2445,11 @@ paths:
       responses:
         "200":
           description: |
-            Recovery started; the run is `Running` again. `resumed` continued the
-            prior agent session, `redispatched` re-ran a retry-safe
-            session-less node.
+            Recovery started. `resumed` re-entered the graph at the recover
+            target (continuing the node's prior agent session); `redispatched`
+            re-ran a retry-safe session-less node. (ADR-175) `runStatus` is the
+            run's COMMITTED status: a crashed orchestrator handed back to its
+            existing child-wait gate answers `WaitingOnChildren`.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ExtRecoverAccepted" }
@@ -2470,8 +2479,11 @@ paths:
               schema: { $ref: "#/components/schemas/ExtErrorBody" }
         "410":
           description: |
-            Terminal refusal, NOT retryable. Code `CHECKPOINT` — the stored ACP
-            session is unresumable. Discard the run.
+            Terminal refusal, NOT retryable. Code `CHECKPOINT` — the recover
+            dispatch failed unrecoverably. (ADR-175) A supervisor that merely
+            refuses the retained resume handle is NOT this case: the graph
+            degrades observably to a fresh session and the recover succeeds.
+            Discard the run.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ExtErrorBody" }
@@ -3486,9 +3498,12 @@ components:
           enum: [resumed, redispatched, queued]
         runStatus:
           type: string
-          enum: [Running, Pending]
+          enum: [Running, Pending, WaitingOnChildren]
           description: |
-            `Running` for `resumed`/`redispatched`; `Pending` for `queued`.
+            The run's COMMITTED status — `Running` for an ordinary
+            `resumed`/`redispatched`, `Pending` for `queued`, and (ADR-175)
+            `WaitingOnChildren` when a crashed coordinator was handed back to
+            its existing child-wait gate rather than re-prompted.
 
     ExtDiscardResult:
       type: object

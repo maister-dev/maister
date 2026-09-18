@@ -8747,17 +8747,33 @@ paths:
 
         | recover target node | `acpSessionId` | node `retry_safe` | plan | result |
         | ------------------- | -------------- | ----------------- | ---- | ------ |
-        | `ai_coding` (agent) | present | ignored | `resume-agent` — ACP `session/resume <acpSessionId>` | 200 resumed / 202 queued |
-        | `ai_coding` (agent) | null | ignored | `discard-only` | 409 |
-        | session-less (`cli`/`check`/`judge`/`guard`/`human`) | irrelevant | `true` | `redispatch` — re-run the node | 200 redispatched / 202 queued |
+        | agent (`ai_coding`/`judge`/`orchestrator`) | present | ignored | `resume-agent` — graph re-entry at the target node, resuming the node's own ACP session | 200 resumed / 202 queued |
+        | agent (`ai_coding`/`judge`/`orchestrator`) | null | ignored | `discard-only` | 409 |
+        | session-less (`cli`/`check`/`guard`/`human`/`form`) | irrelevant | `true` | `redispatch` — re-run the node | 200 redispatched / 202 queued |
         | session-less | irrelevant | `false` (default) | `discard-only` | 409 |
         | unresolvable target node | — | — | `discard-only` | 409 |
 
-        An agent node is recovered by continuing its prior ACP session; a
-        session-less node has no resumable session and is only redispatchable
-        when its manifest config opts in with `retry_safe: true` (re-running a
-        session-less node repeats its side effects — accepted-risk). Otherwise
-        the run is discard-only.
+        (ADR-175) `judge` is an AGENT node on this table: it runs an ACP session
+        and `admitNodePrompt` already accepts it, so a crashed judge holding a
+        retained handle resumes instead of being discarded.
+
+        An agent node is recovered by **re-entering the flow graph** at the
+        recover target (`runFlow(runId, { crashResume: { targetStepId } })`),
+        which appends a fresh `node_attempts` row under the newly minted
+        assignment epoch and resumes the node's OWN retained ACP handle
+        (`session/resume`); a supervisor that refuses the handle degrades
+        observably to a fresh session (`session_fallback`, ADR-081) rather than
+        failing the recover. A session-less node has no resumable session and is
+        only redispatchable when its manifest config opts in with
+        `retry_safe: true` (re-running a session-less node repeats its side
+        effects — accepted-risk). Otherwise the run is discard-only.
+
+        (ADR-175) Before any dispatch the crashed attempt's last
+        `session.prompt` is reconciled: agreeing terminal evidence the owner
+        never applied is applied first and the graph continues with **no second
+        paid turn**. A crashed `orchestrator` still waiting on children is
+        handed back to its existing wait gate instead of being re-prompted —
+        that answer is `200 {state:"resumed", runStatus:"WaitingOnChildren"}`.
 
         Requires project membership at `member` or above
         (`requireProjectAction("recoverRun")`). The `projectId` is derived from
@@ -8770,8 +8786,10 @@ paths:
         `WHERE status='Crashed'`, then re-admit through the global concurrency
         cap (a `Crashed` run already released its slot — Recover is a re-launch,
         NOT a cap bypass). On a free slot the run flips `Crashed→Running` with
-        `runs.resume_started_at = now()` and proceeds to Phase 2
-        (`createSession({resumeSessionId})`). On a full cap the run flips
+        `runs.resume_started_at = now()` and proceeds to Phase 2 (evidence
+        reconcile → close the crashed attempt `Reworked`/`crash_recover` →
+        graph re-entry, claimed single-winner by a CAS-clear of
+        `resume_started_at`). On a full cap the run flips
         `Crashed→Pending` (retaining `acpSessionId`, stamping
         `resume_started_at`) and returns `202 {state:"queued"}` with NO
         supervisor call — the scheduler resumes it when a slot frees. The
@@ -8790,7 +8808,7 @@ paths:
         | `runId` | path parameter, route-shape validated | `url-param` |
         | `userId` | Auth.js session | `auth-context` |
         | `projectId` | DB join from the run row | `server-state` |
-        | `acpSessionId`, recover target node (`resume_target_step_id`) | DB row / pinned manifest | `server-state` |
+        | `acpSessionId` (resolved from the recover-target NODE's own attempt / logical session, never the newest `run_sessions` row), recover target node (`resume_target_step_id`) | DB row / pinned manifest | `server-state` |
       operationId: recoverRun
       parameters:
         - name: runId
@@ -8803,19 +8821,28 @@ paths:
         "200":
           description: |
             Run resumed now. A slot was free, so the run flipped
-            `Crashed→Running` and the supervisor restored the session via the
-            ACP `session/resume` call.
+            `Crashed→Running` and the graph was re-entered at the recover
+            target. (ADR-175) `runStatus` reports the run's COMMITTED status,
+            not a constant derived from the outcome: a crashed orchestrator
+            handed back to its child-wait gate answers `WaitingOnChildren`.
           content:
             application/json:
               schema:
                 type: object
-                required: [ok, runStatus]
+                required: [ok, state, runStatus]
                 properties:
                   ok: { type: boolean, enum: [true] }
+                  state:
+                    type: string
+                    enum: [resumed, redispatched]
                   runStatus:
                     type: string
-                    enum: [Running]
-                    description: AFTER-side marker — the driver attaches at the resume target node.
+                    enum: [Running, WaitingOnChildren]
+                    description: |
+                      The run's committed status after the recover claim —
+                      `Running` for an ordinary graph re-entry,
+                      `WaitingOnChildren` for a coordinator parked back onto its
+                      existing wait gate.
         "202":
           description: |
             Cap full at admission. The run flipped `Crashed→Pending` (retaining
@@ -8828,31 +8855,51 @@ paths:
           $ref: "#/components/responses/Unauthenticated"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          description: |
+            No run with this id is visible to the caller. The route answers
+            `PRECONDITION` here, not `CONFLICT` — the membership check runs
+            only after the run row resolves.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "409":
           description: |
             Run is not in `Crashed`, or a concurrent Recover won the Phase-1 CAS
-            first (run is now `Running`/`Pending`) — a duplicate `createSession`
-            is impossible — or `classifyRecover` resolved to `discard-only` (an
+            first (run is now `Running`/`Pending`) — a duplicate dispatch is
+            impossible — or `classifyRecover` resolved to `discard-only` (an
             agent target node with no `acpSessionId`, a session-less target node
             that is not `retry_safe`, or an unresolvable target node), so only
-            Discard is offered (`CONFLICT`).
+            Discard is offered; or the run's workspace was already removed
+            (`PRECONDITION`, not `CONFLICT`).
+
+            (ADR-175) The three are machine-distinguishable on
+            `details.reason`: `discard_only`, `recover_cas_lost`,
+            `workspace_removed`. An unattended caller branches on that reason to
+            tell "retry later" from "this run is unrecoverable"; the UI keeps
+            branching on `code`.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "410":
           description: |
-            The stored acp session is unresumable — supervisor refused the
-            `session/resume` (`CHECKPOINT`). The run is `Crashed`; surface discard-only.
+            The recover dispatch failed unrecoverably (`CHECKPOINT`); the run is
+            `Crashed` again — surface discard-only. (ADR-175) A supervisor that
+            merely refuses the retained `resumeSessionId` is NOT this case: the
+            graph degrades to a fresh session with `session_fallback` stamped
+            and the recover succeeds.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "503":
           description: |
-            Transient supervisor failure (5xx / network / timeout) during the
-            `createSession` side-effect (`EXECUTOR_UNAVAILABLE`). The run is
-            left `Running` — NO rollback (an ack may have been lost and a
-            session may be live); the reconciler re-attaches if it came up, else
-            re-crashes past the grace window. Retryable.
+            Transient supervisor failure (5xx / network / timeout), or a fenced
+            assignment, during the Phase-2 side-effect
+            (`EXECUTOR_UNAVAILABLE`). The run is left `Running` with
+            `resume_started_at` still set — NO rollback (an ack may have been
+            lost and a session may be live); the reconciler re-enters it through
+            the same crash-resume claim, else re-crashes past the grace window.
+            Retryable.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -16772,19 +16819,22 @@ components:
     RecoverQueuedResponse:
       type: object
       description: |
-        (Designed, M19) Returned by `POST /api/runs/{runId}/recover` with HTTP
-        202 when the global concurrency cap was full at admission. The run
-        flipped `Crashed→Pending` (retaining `acpSessionId`); the scheduler
-        resumes it via `session/resume` when a slot frees.
-      required: [state]
+        (Implemented, M19; body corrected ADR-175) Returned by
+        `POST /api/runs/{runId}/recover` with HTTP 202 when the global
+        concurrency cap was full at admission. The run flipped
+        `Crashed→Pending` (retaining `acpSessionId`); the scheduler resumes it
+        through the same graph re-entry when a slot frees. Mirrors the ext twin
+        `ExtRecoverAccepted` — `queuePosition` is NOT emitted by the route and
+        is no longer declared.
+      required: [ok, state, runStatus]
       properties:
+        ok: { type: boolean, enum: [true] }
         state:
           type: string
           enum: [queued]
-        queuePosition:
-          type: integer
-          minimum: 1
-          description: Optional queue position for the re-admitted resume.
+        runStatus:
+          type: string
+          enum: [Pending]
     GcSweepSummary:
       type: object
       description: |

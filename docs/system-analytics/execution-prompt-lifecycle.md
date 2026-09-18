@@ -920,9 +920,41 @@ winner. Released/stale assignment evidence always starts at H; only the separate
 current-owner claim can create P's explicit application handoff. No H path
 re-enters ACP or writes current owner state.
 
+**The `Crashed` row's explicit recovery claim (Implemented — ADR-175).** The
+`H until explicit recovery claim` cell above is unchanged; this is the claim it
+names. Operator Recover commits the claim — CAS `Crashed → Running` (or
+`Pending` when the cap is full) with `resume_started_at` and `current_step_id`,
+plus a `recover` placement minting the next assignment epoch — BEFORE any host
+call, and then re-enters the flow graph at the recover target. It has three
+windows, each recovered without a second operator decision:
+
+1. **Crash before terminal evidence.** No agreeing receipt exists, so the
+   crashed attempt is closed `Reworked`/`crash_recover` and the graph appends a
+   fresh attempt under the new epoch, resuming the node's own handle. The old
+   attempt's evidence stays historical; nothing is replayed.
+2. **Crash after terminal evidence but before owner application.** Evidence is
+   reconciled FIRST, outside every transaction, and applied through the existing
+   owner path together with a re-binding of that attempt's
+   `execution_assignment_id` to the new epoch — so the graph continues with **no
+   second paid turn** and the `staleSessionBinding` guard keeps its meaning. A
+   quarantined disagreement is never converted into a re-prompt.
+3. **Web death after the claim commits but before dispatch.** The run is left
+   `status='Running'` with `resume_started_at` set and `current_step_id`
+   pinned — a state the bounded continuation worker cannot serve, because its
+   `node_attempts` arm requires an open `Running` attempt on the ACTIVE
+   assignment. The reconcile sweep owns it and re-enters through the same
+   single-winner claim. A `Running` run holding a live idle session with no
+   driver is classified and counted there, never silently skipped.
+
+Identifier trust on both recover surfaces is unchanged: the request body is
+EMPTY, `runId` is a `url-param`, and the project, recover-target node, resume
+handle and runner snapshot are all `server-state`. (Prose only — this document
+is at the 12-bullet Expectations cap and gains no new `PRM` id.)
+
 | Owner mode / local state | Additional rule and recovery |
 | --- | --- |
 | Flow `node`, `permission_resume` | Attempt/cursor and prompt ordinal must match; answered permissions retain their original input-command identity. A non-resumable adapter refuses resume; an orchestrator waiting for children uses its existing wait gate. |
+| Flow `node`, **crash recover** (ADR-175) | Key inputs: the run, the recover-target node (`runs.resume_target_step_id` ?? `current_step_id`), the assignment epoch minted by the recover claim, and the retained `acp_session_id` of THAT NODE's own attempt — never the run's newest `run_sessions` row, which for a crashed run can be a finished `gate-*` or `*-verify-*` substep. The durable authority reused is `runs.resume_started_at` (stamped by the recover claim, CAS-cleared single-winner by the graph) plus the new-epoch assignment plus the crashed attempt closed `Reworked`/`crash_recover`. No new owner variant, no fifth `action_resume` kind: the re-dispatch admits a FRESH attempt under the new epoch, so `variant:"node"` admission passes by construction and the logical operation key cannot collide. A supervisor that refuses the retained resume handle degrades observably to a fresh session (`session_fallback`, ADR-081) inside the graph rather than failing the recover; only a dispatch that fails for another reason keeps the existing `CHECKPOINT → 410` mapping. |
 | Flow `gate_skill`, `gate_ai` | The exact pending gate evaluation must match; verdict, output reference, gate terminal transition and application marker share one transaction. |
 | Flow `consensus_verifier`, `consensus_synthesis` | Match node attempt, round and exact cell or synthesis identity; no matrix-wide last-writer selection. Pending child/draft holds still gate aggregation. |
 | Agent `initial`, `resume`, `rework` | Match the original turn and immutable result contract; resumed/rework turns have distinct admitted generations and never borrow the initial turn's result. |

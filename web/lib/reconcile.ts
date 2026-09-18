@@ -80,8 +80,11 @@ const log = pino({
 const PER_TICK_LIMIT = 100;
 const PER_PASS_CONCURRENCY = 4;
 
-// Server-owned liveness key: a session's (runId, stepId). Used to detect a live
-// agent session whose acp_session_id is not yet persisted on the run row.
+// Server-owned liveness key: a session's (runId, stepId). It no longer backs the
+// in-flight guard — that reads `liveByRun`, because a session's stepId is a label
+// the host rewrites per prompt (see the comment at the guard). Its only remaining
+// job is to de-duplicate the per-run session index built below, which the D3
+// cutover stop and the identity-scan pass iterate whole.
 function runStepKey(runId: string, stepId: string | null): string {
   return `${runId}\u0000${stepId ?? ""}`;
 }
@@ -210,8 +213,11 @@ export interface ReconcileDecision {
 }
 
 // Pure (no db/clock): the §0.3 decision table, asserted in EXACT order. A
-// scratch run carries no compiled graph node, so it ALWAYS takes the agent
-// branch (kind forced to 'ai_coding') regardless of currentNodeKind.
+// scratch or platform-agent run carries no compiled graph node, so when it
+// reaches the no-live-session branch its kind is FORCED to 'ai_coding'
+// regardless of currentNodeKind. That forcing is reached only there: a live
+// session short-circuits both kinds earlier (`live-scratch-session` /
+// `agent-observer-live|gone`).
 export function classifyRunReconcile(
   input: ReconcileInput,
   runId?: string,
@@ -1356,9 +1362,10 @@ export async function runReconcileSweep(
     for (const rec of records) {
       if (rec.status !== "live") continue;
       if (rec.acpSessionId) liveMap.set(rec.acpSessionId, rec);
-      // Server-owned identity index → lets reconcile recognize an in-flight
-      // agent node whose run row has not yet persisted acp_session_id (prevents
-      // the false "agent-session-gone" crash of a live, long-running node).
+      // Per-(run, step) index of live sessions. NOT the in-flight guard — that
+      // reads `liveByRun` below; nothing `.get`s this map. It is consumed whole
+      // by the D3 cutover stop and the host identity scan, which need every
+      // live session of this supervisor, de-duplicated per (run, step).
       liveByRunStep.set(runStepKey(rec.runId, rec.stepId), rec);
       if (!liveByRun.has(rec.runId)) liveByRun.set(rec.runId, rec);
     }

@@ -1767,6 +1767,15 @@ Full record: [`decisions/adr-174.md`](decisions/adr-174.md)
 
 ---
 
+### ADR-175: Operator Recover of a crashed agent node re-enters the flow graph
+
+**Status:** Accepted
+**Date:** 2026-09-18
+
+Full record: [`decisions/adr-175.md`](decisions/adr-175.md)
+
+---
+
 ## Template for New Decisions
 
 ```markdown
