@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   effectiveAttempts,
-  operatorInterruptCount,
+  nonCorrectionAttemptCount,
 } from "@/lib/flows/graph/rework-baseline";
 
 // T-B10 (AC-B10) — ADR-161: operator restarts must not burn the flow author's
@@ -42,9 +42,9 @@ describe("T-B10 ADR-161 — operator restarts are outside the rework epoch", () 
       { nodeId: "implement", decision: "operator_interrupt" },
     ];
 
-    expect(operatorInterruptCount(attempts, "implement")).toBe(2);
-    expect(operatorInterruptCount(attempts, "checks")).toBe(1);
-    expect(operatorInterruptCount(attempts, "never-ran")).toBe(0);
+    expect(nonCorrectionAttemptCount(attempts, "implement")).toBe(2);
+    expect(nonCorrectionAttemptCount(attempts, "checks")).toBe(1);
+    expect(nonCorrectionAttemptCount(attempts, "never-ran")).toBe(0);
   });
 
   // N operator restarts must not advance the epoch: with maxLoops=3, attempt 6
@@ -57,7 +57,7 @@ describe("T-B10 ADR-161 — operator restarts are outside the rework epoch", () 
       "operator_interrupt",
       "operator_interrupt",
     );
-    const restarts = operatorInterruptCount(attempts, "implement");
+    const restarts = nonCorrectionAttemptCount(attempts, "implement");
 
     expect(restarts).toBe(3);
     // 6 prior attempts, 3 of them operator restarts → effective 3, still within
@@ -84,7 +84,7 @@ describe("T-B10 ADR-161 — operator restarts are outside the rework epoch", () 
   // Mixed: operator restarts are subtracted, genuine reworks are not.
   it("subtracts only the operator restarts in a mixed run", () => {
     const attempts = ledger(null, "rework", "operator_interrupt", "rework");
-    const restarts = operatorInterruptCount(attempts, "implement");
+    const restarts = nonCorrectionAttemptCount(attempts, "implement");
 
     expect(restarts).toBe(1);
     // 5 visits, 1 operator restart → effective 4, which overruns maxLoops = 3.
@@ -95,5 +95,54 @@ describe("T-B10 ADR-161 — operator restarts are outside the rework epoch", () 
   // The ADR-118 baseline and the ADR-161 exclusion compose.
   it("composes with the ADR-118 rework_baseline reset", () => {
     expect(effectiveAttempts(10, 4, 2)).toBe(4);
+  });
+});
+
+// T-CR8 (AC-08) — ADR-175: a crash recover advances the attempt counter for the
+// same non-reason an operator restart does, so it is carved out by the SAME
+// term. The two are one set, not two filters — a filter that names one member
+// is how the next provenance decision gets missed.
+describe("T-CR8 ADR-175 — crash recovers are outside the rework epoch too", () => {
+  it("counts crash_recover alongside operator_interrupt, per node", () => {
+    const attempts: Attempt[] = [
+      { nodeId: "implement", decision: "crash_recover" },
+      { nodeId: "implement", decision: "operator_interrupt" },
+      { nodeId: "implement", decision: "rework" },
+      { nodeId: "implement", decision: "review_rework_claim" },
+      { nodeId: "checks", decision: "crash_recover" },
+      { nodeId: "implement", decision: null },
+    ];
+
+    expect(nonCorrectionAttemptCount(attempts, "implement")).toBe(2);
+    expect(nonCorrectionAttemptCount(attempts, "checks")).toBe(1);
+    // A review rework claim IS a correction — it must keep counting.
+    expect(nonCorrectionAttemptCount(attempts, "never-ran")).toBe(0);
+  });
+
+  it("N crash recovers do not advance the rework epoch, and a real rework still exhausts it", () => {
+    const maxLoops = 2;
+    const crashes = ledger(null, "crash_recover", "crash_recover");
+
+    // Attempt 3 reached purely by two crash recovers is still effective 1.
+    expect(
+      effectiveAttempts(
+        3,
+        null,
+        nonCorrectionAttemptCount(crashes, "implement"),
+      ),
+    ).toBe(1);
+
+    // The bound is not removed, only moved off crashes: genuine reworks still
+    // exhaust at maxLoops + 1.
+    const reworks = ledger(null, "rework", "rework");
+
+    expect(
+      effectiveAttempts(
+        3,
+        null,
+        nonCorrectionAttemptCount(reworks, "implement"),
+      ),
+    ).toBe(3);
+    expect(3 > maxLoops).toBe(true);
   });
 });

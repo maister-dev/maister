@@ -258,41 +258,113 @@ crash time; `current_step_id` is nulled on crash), falling back to
 
 | recover target node | `acpSessionId` | node `retry_safe` | plan | recoverable? |
 | ------------------- | -------------- | ----------------- | ---- | ------------ |
-| `ai_coding` (agent) | present | ignored | `resume-agent` — ACP `session/resume <acpSessionId>` | yes (200 resumed / 202 queued) |
-| `ai_coding` (agent) | null | ignored | `discard-only` | no (409) |
-| session-less (`cli`/`check`/`judge`/`guard`/`human`/`form`) | irrelevant | `true` | `redispatch` — re-run the node | yes (200 redispatched / 202 queued) |
+| agent (`ai_coding`/`judge`/`orchestrator`) | present | ignored | `resume-agent` — graph re-entry at the target node, resuming THAT NODE's ACP session | yes (200 resumed / 202 queued) |
+| agent (`ai_coding`/`judge`/`orchestrator`) | null | ignored | `discard-only` | no (409) |
+| session-less (`cli`/`check`/`guard`/`human`/`form`) | irrelevant | `true` | `redispatch` — re-run the node | yes (200 redispatched / 202 queued) |
 | session-less | irrelevant | `false` (default) | `discard-only` | no (409) |
 | unresolvable target node | — | — | `discard-only` | no (409) |
 
-An agent node continues the prior agent session via the ACP `session/resume`
-call on `acpSessionId` (`createSession({ resumeSessionId })` +
-`scheduleResumedSessionDrive`) — the
-same mechanism idle-resume uses, and the continuation is exercised in CI
-against the mock ACP adapter. A session-less node carries no resumable session
-and is re-dispatched via `runFlow` **only** when its manifest config declares
-`retry_safe: true` (re-running a session-less node repeats its side effects —
-accepted-risk); otherwise it is discard-only. The durable `Crashed → Running`
-(or `Crashed → Pending` when the cap is full) flip commits before any supervisor
+**`judge` is an agent node here (Implemented — ADR-175).** It runs an ACP
+session and `admitNodePrompt` already accepts it, so a crashed judge holding a
+retained handle resumes rather than being discarded. Before ADR-175 it fell to
+the session-less row, where `retry_safe: false` (the default) made it
+`discard-only`; the reconcile sweep still classifies a session-less `judge` as
+`gate-redispatch`, which is deliberate — the sweep acts without an operator
+decision and may never resume a mid-turn agent implicitly.
+
+**Both arms take the same door: the graph (Implemented — ADR-175).** An agent
+node is NOT recovered by re-creating a session and handing it to the permission
+driver — that driver has no durable continuation to resume for a crashed run,
+and the prompt it issues is refused by `admitNodePrompt`
+(`node_admission_generation`) because the crashed attempt is still bound to the
+retired assignment epoch. Recover instead calls
+`runFlow(runId, { crashResume: { targetStepId }, db, executionHosts })`, exactly
+as the `redispatch` arm does. The graph appends a **fresh** `node_attempts` row
+stamped with the new epoch, so admission passes by construction and the prompt's
+logical operation key cannot collide; `applyCreateAck` re-binds the row. The
+retained handle rides the existing ADR-081 session policy, which reads the
+**node's own** attempt row — so a finished `gate-*` or `*-verify-*` substep
+session can never be resumed in the node's place. A supervisor that refuses the
+handle degrades observably to a fresh session (`session_fallback`), it does not
+fail the recover.
+
+Recovery priority, in order:
+
+1. **Reconcile existing command evidence** for the crashed attempt's last
+   `session.prompt` — outside every transaction, because it is host I/O.
+2. **Apply an owned terminal result** if one agrees and the owner never applied
+   it, re-binding that attempt to the new epoch in the same transaction, and
+   continue the graph with **no second paid turn**. A quarantined disagreement is
+   never converted into a re-prompt.
+3. **Close the attempt boundary and re-dispatch once** — the crashed attempt is
+   closed `Reworked` with `decision='crash_recover'` (excluded from
+   `rework.maxLoops`, from both Observatory correction counters, and from the
+   operator-restart budget), then the graph re-enters.
+4. **Never replay a prompt that already has agreeing terminal evidence.**
+
+A crashed **orchestrator** is branched before any of that: children unsettled →
+it is handed back to its existing child-wait gate (`WaitingOnChildren`,
+`resume_requested_at` cleared, slot released through the ordinary idle release)
+and the wake path drives it, so the answer is
+`200 {state:"resumed", runStatus:"WaitingOnChildren"}`; all children settled →
+it re-enters through `orchestratorResume`, which REUSES the parked `NeedsInput`
+attempt and threads the coordinator's own handle; no children ever created →
+the ordinary crash-resume path. `crashResume` and `orchestratorResume` are
+mutually exclusive by construction, and passing both would silently take the
+crash path and re-delegate.
+
+A session-less node carries no resumable session and is re-dispatched via
+`runFlow` **only** when its manifest config declares `retry_safe: true`
+(re-running a session-less node repeats its side effects — accepted-risk);
+otherwise it is discard-only. The durable `Crashed → Running` (or
+`Crashed → Pending` when the cap is full) flip commits before any supervisor
 side-effect, so a lost supervisor ack leaves the run `Running` for the
 reconciler, never double-spawns.
 
 The runner recognizes Recover as a **crash-resume mode** (a third resume mode
-alongside NeedsInput-resume and takeover-resume): `driveResume` flips
-`Crashed → Running` and calls `runFlow(runId, { crashResume: { targetStepId } })`;
-`runGraph`/`runFlow` resume FROM the target node, re-running it once as a fresh
-attempt instead of no-op'ing on the already-owned graph guard. The claim is
-single-winner via a CAS-clear of the
-in-flight marker (`UPDATE runs SET resume_started_at = NULL WHERE id = ? AND
-resume_started_at IS NOT NULL`): the winner drives, the loser bails.
+alongside NeedsInput-resume and takeover-resume). The claim is single-winner via
+a CAS-clear of the in-flight marker (`UPDATE runs SET resume_started_at = NULL
+WHERE id = ? AND resume_started_at IS NOT NULL`): the winner drives, the loser
+bails. That same marker is what makes the intent durable — a web death after the
+Phase-1 commit leaves `status='Running'` with the marker set and
+`current_step_id` pinned, and the reconcile sweep re-enters it through the same
+claim with **no second operator click**. The bounded flow continuation worker
+cannot serve that state (its `node_attempts` arm requires an open `Running`
+attempt on the ACTIVE assignment), which is why the sweep owns it. A run that
+cannot be re-entered returns to `Crashed` and stops; the bound is the grace
+window plus `crashRunningRun`, not a retry counter.
+
+**No silent no-op (Implemented — ADR-175).** Two arms, because the committed
+intent can be left in two different shapes:
+
+- **No live session** — the shape a web death after the recover claim actually
+  leaves. `classifyRunReconcile` gains a `recover` action for it, ordered AFTER
+  the grace guard so a dispatch in flight is never raced, and the sweep hands the
+  run to `driveResume` — one owner for the whole evidence → close → dispatch
+  sequence rather than a second copy of that ordering in the sweep. Without this
+  arm the classifier reached the agent no-live-session branch and, past grace,
+  **crashed the run again**, discarding the operator's decision.
+- **Live session, no driver** — the orphaned idle session the pre-ADR-175
+  recover arm left behind. The reattach arm now carries `{db, executionHosts}`
+  and, when the marker is set, the `crashResume` signal, instead of a bare
+  `runFlow(runId)` the already-owned graph guard no-ops.
+
+Both are classified, logged and **counted** in the sweep summary
+(`crashRecoverReentered`, `runningIdleSession`), so an operator sees the
+classification rather than having to grep a log.
 
 What the reconciler may never do is resume a mid-turn agent **implicitly** —
 that is the rule the classification table above enforces, and it is unchanged by
 the external route. A caller POSTing either recover endpoint has made the
 decision explicitly; only the credential carrying it differs. Both entry points
 run the same classifier, the same Phase-1 CAS + cap re-admission, and the same
-`RecoverResult → HTTP` projection (`web/lib/runs/recover-http.ts`), so a second
-concurrent call is `409` and a cap-full recover queues rather than over-spawning
-— which is what makes the operation safe for an unattended caller. See
+`RecoverResult → HTTP` projection (`web/lib/runs/recover-http.ts`) — whose
+success `runStatus` reports the run's COMMITTED status rather than a constant —
+so a second concurrent call is `409` and a cap-full recover queues rather than
+over-spawning, and the queued promotion reaches the same graph re-entry through
+`driveResume`. The three `409` outcomes are machine-distinguishable on
+`details.reason` (`discard_only`, `recover_cas_lost`, `workspace_removed`), which
+is what makes the operation safe for an unattended caller. See
 [external-operations.md](external-operations.md).
 
 ### Cron GC route (Implemented; compatibility wrapper Implemented)
@@ -618,6 +690,17 @@ For each run at reconcile time, gather: `run.status`, `run.runKind`,
 - Error taxonomy: [`../error-taxonomy.md`](../error-taxonomy.md)
   (`CHECKPOINT`, `CONFLICT`, `PRECONDITION`, `EXECUTOR_UNAVAILABLE` —
   reused, no new code).
+- Operator Recover of a crashed **agent** node MUST re-enter the flow graph at
+  the recover target (`runFlow(runId, { crashResume: { targetStepId } })`) with
+  the crashed `node_attempts` row closed `Reworked`/`decision='crash_recover'`
+  and exactly ONE new `session.prompt` command issued under the newly minted
+  `execution_assignment_id` — and none at all when the crashed attempt already
+  carries agreeing terminal evidence, which is applied first.
+- A `Running` run left holding `runs.resume_started_at` with a non-null
+  `current_step_id` MUST be re-entered by the reconcile sweep without a second
+  operator action — through the `recover` classifier arm when no session is live,
+  and through the crash-resume reattach when one is — and both outcomes MUST be
+  counted in `ReconcileSweepSummary` rather than silently skipped or re-crashed.
 - Related domains: [`runs.md`](runs.md), [`workspaces.md`](workspaces.md),
   [`workbench-lifecycle.md`](workbench-lifecycle.md),
   [`flow-packages.md`](flow-packages.md), [`flow-graph.md`](flow-graph.md).

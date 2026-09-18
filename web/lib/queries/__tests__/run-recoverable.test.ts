@@ -108,8 +108,10 @@ describe("isRunRecoverable — run-detail recoverability (M19)", () => {
     }
   });
 
+  // ADR-175: `judge` moved to the AGENT set — see the case below. It is not a
+  // session-less kind any more, and leaving it here would assert the defect.
   it("every session-less node kind is recoverable ONLY when retry_safe", () => {
-    const sessionLess: NodeAttemptType[] = ["cli", "check", "judge", "human"];
+    const sessionLess: NodeAttemptType[] = ["cli", "check", "human"];
 
     for (const kind of sessionLess) {
       expect(
@@ -126,6 +128,30 @@ describe("isRunRecoverable — run-detail recoverability (M19)", () => {
           acpSessionId: null,
           currentNodeKind: kind,
           retrySafe: false,
+        }),
+      ).toBe(false);
+    }
+  });
+
+  // ADR-175: the UI Recover button and the route consume the SAME classifier, so
+  // widening the agent set has to move the affordance with it. A crashed judge
+  // with a retained handle used to be offered Discard only.
+  it("a crashed judge with a retained handle is recoverable regardless of retry_safe", () => {
+    for (const retrySafe of [false, true]) {
+      expect(
+        isRunRecoverable({
+          status: "Crashed",
+          acpSessionId: "acp-judge",
+          currentNodeKind: "judge",
+          retrySafe,
+        }),
+      ).toBe(true);
+      expect(
+        isRunRecoverable({
+          status: "Crashed",
+          acpSessionId: null,
+          currentNodeKind: "judge",
+          retrySafe,
         }),
       ).toBe(false);
     }

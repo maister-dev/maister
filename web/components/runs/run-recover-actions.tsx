@@ -33,6 +33,22 @@ const RECOVER_ERROR_KEY: Record<RecoverErrorState, string> = {
   error: "recoverError",
 };
 
+// ADR-175: the recover route's success body carries the run's COMMITTED status
+// as a declared enum field. Reading it is not the string-matching the rule
+// above forbids — that bans branching on server MESSAGES. A body that fails to
+// parse degrades to the ordinary message rather than failing the recover.
+async function committedRunStatus(res: Response): Promise<string | null> {
+  try {
+    const body: unknown = await res.json();
+
+    return typeof body === "object" && body !== null && "runStatus" in body
+      ? String((body as { runStatus: unknown }).runStatus)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 export function RunRecoverActions({
   runId,
   canRecover,
@@ -65,8 +81,16 @@ export function RunRecoverActions({
       const state = recoverHttpToUiState(res.status);
 
       if (state === "resumed") {
+        // A 200 does not always mean the run is Running: a crashed coordinator
+        // handed back to its child-wait gate commits as `WaitingOnChildren`, so
+        // "Recovery started." would name a state it is not in.
+        const runStatus = await committedRunStatus(res);
+
         feedback.success({
-          message: t("recoverSucceeded"),
+          message:
+            runStatus === "WaitingOnChildren"
+              ? t("recoverSucceededWaiting")
+              : t("recoverSucceeded"),
           mutationId: `recover:${runId}`,
         });
         router.refresh();

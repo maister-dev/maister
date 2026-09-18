@@ -23,7 +23,7 @@ export type RecoverHttpResponse = {
   httpStatus: number;
   body:
     | { ok: true; state: RecoverSuccessState; runStatus?: string }
-    | { code: string; message: string };
+    | { code: string; message: string; details?: { reason: string } };
 };
 
 function statusForState(state: RecoverState): number {
@@ -44,9 +44,18 @@ function statusForState(state: RecoverState): number {
   }
 }
 
-function runStatusForState(state: RecoverSuccessState): string {
+// ADR-175: the COMMITTED status, not a constant derived from the outcome. The
+// orchestrator wait arm hands a run back while leaving it `WaitingOnChildren`,
+// so a derived `"Running"` would publish a status the run does not have. The
+// result carries the committed value when it differs; the switch stays
+// exhaustive, so a new state is still a compile error.
+function runStatusForState(
+  state: RecoverSuccessState,
+  committed: string | undefined,
+): string {
   switch (state) {
     case "resumed":
+      return committed ?? "Running";
     case "redispatched":
       return "Running";
     case "queued":
@@ -57,32 +66,40 @@ function runStatusForState(state: RecoverSuccessState): string {
 // Non-success states are typed MaisterError codes (ADR-008 closed union) so API
 // clients can branch on `code` per docs/error-taxonomy.md — not just the HTTP
 // status. The codes match the OpenAPI 409/410/503 entries (MaisterErrorBody).
+// ADR-175: three outcomes answer 409 and two of them share `CONFLICT`, so an
+// unattended caller could not tell "retry later" from "this run is
+// unrecoverable". `details.reason` is the sanctioned discriminator (the UI still
+// branches on `code`); the tokens are registered in docs/error-taxonomy.md.
 function errorBodyForState(state: RecoverRefusalState): {
   code: string;
   message: string;
+  details?: { reason: string };
 } {
   switch (state) {
     case "discard-only":
       return {
         code: "CONFLICT",
         message: "run has no resumable session — discard it instead",
+        details: { reason: "discard_only" },
       };
     case "conflict":
       return {
         code: "CONFLICT",
         message:
           "run is not in Crashed — already terminal or a concurrent recover won the CAS",
+        details: { reason: "recover_cas_lost" },
       };
     case "workspace-removed":
       return {
         code: "PRECONDITION",
         message:
           "run workspace was removed; archived history cannot be recovered",
+        details: { reason: "workspace_removed" },
       };
     case "unresumable":
       return {
         code: "CHECKPOINT",
-        message: "the stored acp session is unresumable — discard the run",
+        message: "the recover dispatch failed unrecoverably — discard the run",
       };
     case "transient":
       return {
@@ -96,13 +113,21 @@ function isSuccessState(state: RecoverState): state is RecoverSuccessState {
   return state === "resumed" || state === "redispatched" || state === "queued";
 }
 
-export function recoverHttpResponse(state: RecoverState): RecoverHttpResponse {
+export function recoverHttpResponse(
+  result: RecoverResult,
+): RecoverHttpResponse {
+  const { state } = result;
+  const committed = result.state === "resumed" ? result.runStatus : undefined;
   const httpStatus = statusForState(state);
 
   if (isSuccessState(state)) {
     return {
       httpStatus,
-      body: { ok: true, state, runStatus: runStatusForState(state) },
+      body: {
+        ok: true,
+        state,
+        runStatus: runStatusForState(state, committed),
+      },
     };
   }
 

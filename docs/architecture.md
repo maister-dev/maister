@@ -389,7 +389,8 @@ stateDiagram-v2
     Running --> Review: agent exits 0
     Running --> Crashed: agent exits non-zero<br/>or heartbeat dead
 
-    Crashed --> Running: user clicks Recover<br/>(session/resume from acp_session_id)
+    Crashed --> Running: user clicks Recover<br/>(graph re-entry at the crashed node,<br/>resuming that node's acp_session_id)
+    Crashed --> WaitingOnChildren: user clicks Recover<br/>on a coordinator whose children are unsettled
     Crashed --> Abandoned: user clicks Discard
 
     Review --> Done: user clicks Promote<br/>(local merge succeeds)

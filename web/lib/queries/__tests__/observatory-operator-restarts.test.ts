@@ -108,3 +108,39 @@ describe("T-B11 ADR-161 — operator restarts are excluded from both counters", 
     expect(m.retryCount).toBe(0);
   });
 });
+
+// T-CR8 (AC-08) — ADR-175: a crash recover advances `attempt` exactly like an
+// operator restart, so it is excluded from BOTH counters for the same reason.
+// Moving one alone leaves the metric inflated — the file's own thesis.
+describe("T-CR8 ADR-175 — crash recovers are excluded from both counters", () => {
+  it("reports correctionRate 0 for a run whose only churn was crash recovers", () => {
+    const m = rollup([
+      attempt({ attempt: 1, status: "Reworked", decision: "crash_recover" }),
+      attempt({ attempt: 2, status: "Reworked", decision: "crash_recover" }),
+      attempt({ attempt: 3, status: "Succeeded" }),
+    ]);
+
+    expect(m.reworkCount).toBe(0);
+    // max(attempt) - 1 = 2, minus the 2 crash recovers = 0.
+    expect(m.retryCount).toBe(0);
+    expect(m.correctionRate).toBe(0);
+  });
+
+  it("counts the genuine rework in a run that also crashed and recovered", () => {
+    const m = rollup([
+      attempt({ attempt: 1, status: "Reworked", decision: "crash_recover" }),
+      attempt({ attempt: 2, status: "Reworked", decision: "rework" }),
+      attempt({
+        attempt: 3,
+        status: "Reworked",
+        decision: "operator_interrupt",
+      }),
+      attempt({ attempt: 4, status: "Succeeded" }),
+    ]);
+
+    expect(m.reworkCount).toBe(1);
+    // max(attempt) - 1 = 3, minus one crash recover and one operator restart.
+    expect(m.retryCount).toBe(1);
+    expect(m.correctionRate).toBe(2);
+  });
+});

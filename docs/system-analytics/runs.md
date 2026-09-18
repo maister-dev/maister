@@ -337,11 +337,20 @@ invariants bind it to the run machine:
    a `cli` node is `Crashed` (`cli-not-retry-safe`) and never auto-re-dispatched.
 4. **Hybrid Recover.** `POST /api/runs/{runId}/recover` flips `Crashed → Running`
    and stamps `runs.resume_started_at` BEFORE the supervisor side-effect, then
-   resumes an agent node (ACP `session/resume`) or re-dispatches a session-less gate node. It
-   re-admits through the global cap (a `Crashed` run already released its slot):
-   slot-free resumes now, cap-full queues as `Pending` (202) and the scheduler
-   resumes it on slot-free. `POST /api/runs/{runId}/discard` marks `Abandoned`
-   and enters the GC countdown (no synchronous worktree removal).
+   **both arms re-enter the flow graph** (ADR-175): an agent node
+   (`ai_coding`/`judge`/`orchestrator`) and a retry-safe session-less node alike
+   go through `runFlow(runId, { crashResume: { targetStepId } })`. The agent arm
+   closes its crashed attempt `Reworked`/`crash_recover` first, so the fresh
+   attempt the graph appends is bound to the newly minted assignment epoch and
+   prompt admission passes by construction; agreeing terminal evidence from the
+   crashed turn is applied BEFORE any dispatch, so a recover never pays twice for
+   one turn. A coordinator still waiting on children is handed back to its
+   existing wait gate instead (`WaitingOnChildren`), which the success body
+   reports as the committed `runStatus`. Recover re-admits through the global cap
+   (a `Crashed` run already released its slot): slot-free resumes now, cap-full
+   queues as `Pending` (202) and the scheduler resumes it on slot-free through
+   the same door. `POST /api/runs/{runId}/discard` marks `Abandoned` and enters
+   the GC countdown (no synchronous worktree removal).
 
 ### Flow-run `Review → Done` promotion (Implemented)
 

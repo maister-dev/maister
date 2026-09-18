@@ -2,29 +2,40 @@
 // Postgres testcontainer. The Phase-1 advisory-lock CAS (Crashed→Running /
 // Crashed→Pending), the cap re-admission count, and the durable-marker-before-
 // side-effect ordering are not faithfully mockable, so the DB is real; the
-// supervisor (`createSession`), the re-attach driver
-// (`scheduleResumedSessionDrive`), and the re-dispatcher (`runFlow`) are
-// INJECTED via opts and asserted via the returned RecoverResult + DB state.
+// supervisor (`createSession`) and the graph re-entry (`runFlow`) are INJECTED
+// via opts and asserted via the returned RecoverResult + DB state.
 //
-// Contract source: plan §3.2 + the QA Phase-3 contract block.
+// ADR-175 rewrote the `resume-agent` expectations as OBSOLETE, not broken: the
+// agent arm no longer creates a session and hands it to the NeedsInput
+// permission driver. That was the defect — the driver has no durable
+// continuation to resume for a crashed run, so it prompted directly, admission
+// refused the prompt on the retired epoch, and the refusal was swallowed as a
+// yield. Both arms now enter the graph through `crashResume`, so `createSession`
+// is the WRONG observable here and every case asserts the dispatch instead.
+//
+// Contract source: plan §3.2 + the QA Phase-3 contract block + ADR-175.
 //   - resume-agent happy (slot free): Crashed agent run + acpSessionId →
 //     Phase-1 flips Running + resume_started_at set + current_step_id set
-//     BEFORE createSession is invoked → {state:"resumed"} + driver scheduled.
+//     BEFORE the graph re-entry → {state:"resumed"} + runFlow called with
+//     `crashResume`, NO createSession.
 //   - redispatch: Crashed run on a `check` node → {state:"redispatched"},
 //     runFlow called, NO createSession.
+//   - judge (ADR-175): a crashed `judge` with a handle is an AGENT node →
+//     {state:"resumed"}, not the `discard-only` it used to answer.
 //   - discard-only: Crashed agent run + null acpSessionId → {state:"discard-only"},
-//     no flip (still Crashed), no createSession.
+//     no flip (still Crashed), no dispatch.
+//   - run_kind discriminant: a `scratch` run is refused before the flow-only
+//     arm — its own recovery owner drives it.
 //   - cap full: cap=1 + one live Running + a Crashed agent run → {state:"queued"},
-//     run is Pending with acpSessionId retained + resume_started_at set, NO
-//     createSession.
+//     run is Pending with acpSessionId retained + resume_started_at set, no
+//     dispatch.
 //   - queued→resumed via scheduler: the queued Pending+acpSessionId run, when a
-//     slot frees and promoteNextPending runs, is RESUMED via driveResume
-//     (createSession called, not a fresh runFlow).
-//   - concurrent 2nd recover → {state:"conflict"} (CAS lost); only ONE
-//     createSession across two concurrent resumeCrashedRun calls.
-//   - transient: createSession throws EXECUTOR_UNAVAILABLE → {state:"transient"},
+//     slot frees and promoteNextPending runs, takes the SAME graph door.
+//   - concurrent 2nd recover → {state:"conflict"} (CAS lost); only ONE dispatch
+//     across two concurrent resumeCrashedRun calls.
+//   - transient: the dispatch throws EXECUTOR_UNAVAILABLE → {state:"transient"},
 //     run LEFT Running (not rolled back), resume_started_at still set.
-//   - unresumable: createSession throws CHECKPOINT → {state:"unresumable"},
+//   - unresumable: the dispatch throws CHECKPOINT → {state:"unresumable"},
 //     run back to Crashed with resume_started_at CLEARED.
 
 import type { CreateSessionResult } from "@/lib/supervisor-client";
@@ -32,7 +43,7 @@ import type { ExecutionHosts } from "@/lib/execution-host";
 
 import { randomUUID } from "node:crypto";
 
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import {
   afterAll,
@@ -50,7 +61,11 @@ import {
   testRunnerSnapshot,
 } from "@/lib/__tests__/runner-fixtures";
 import { MaisterError } from "@/lib/errors";
-import { driveResume, resumeCrashedRun } from "@/lib/runs/recover";
+import {
+  driveResume,
+  resumeCrashedRun,
+  type RunFlowResumeOpts,
+} from "@/lib/runs/recover";
 import { promoteNextPending } from "@/lib/scheduler";
 import {
   startMainPostgresTestDb,
@@ -110,6 +125,14 @@ const MANIFEST = {
       type: "check",
       action: { command: "true" },
       // No retry_safe → a crashed `guarded` is discard-only.
+      transitions: { success: "done" },
+    },
+    {
+      id: "adjudicate",
+      // ADR-175: an AGENT node without `retry_safe`. Before ADR-175 a crashed
+      // judge fell to the session-less branch and answered `discard-only`.
+      type: "judge",
+      action: { prompt: "/adjudicate" },
       transitions: { success: "done" },
     },
   ],
@@ -214,7 +237,7 @@ beforeEach(async () => {
 
 type SeedRunOpts = {
   status?: string;
-  runKind?: "flow" | "scratch";
+  runKind?: "flow" | "scratch" | "agent";
   acpSessionId?: string | null;
   currentStepId?: string | null;
   resumeStartedAt?: Date | null;
@@ -306,50 +329,50 @@ function sessionResult(acpSessionId = "acp-resumed"): CreateSessionResult {
 }
 
 describe("resumeCrashedRun — resume-agent happy path (slot free)", () => {
-  it("flips Crashed→Running + stamps resume_started_at + current_step_id BEFORE createSession, then {state:'resumed'}", async () => {
+  it("flips Crashed→Running + stamps resume_started_at + current_step_id BEFORE the graph re-entry, then {state:'resumed'}", async () => {
     const runId = await seedRun({
       status: "Crashed",
       currentStepId: "implement",
       acpSessionId: "acp-old",
     });
 
-    // Capture the DB state at the instant createSession is invoked: the
-    // durable marker MUST be committed before the supervisor side-effect.
-    let statusAtCreate: string | null = null;
-    let resumeStartedAtAtCreate: Date | null = null;
-    let currentStepIdAtCreate: string | null = null;
+    // Capture the DB state at the instant the dispatch is invoked: the durable
+    // marker MUST be committed before any side-effect.
+    let statusAtDispatch: string | null = null;
+    let resumeStartedAtAtDispatch: Date | null = null;
+    let currentStepIdAtDispatch: string | null = null;
 
-    const createSession = installCreateSession(
-      async (): Promise<CreateSessionResult> => {
-        const row = await readRun(runId);
+    const createSession = installCreateSession(async () => sessionResult());
+    const runFlow = vi.fn(async () => {
+      const row = await readRun(runId);
 
-        statusAtCreate = row.status;
-        resumeStartedAtAtCreate = row.resumeStartedAt;
-        currentStepIdAtCreate = row.currentStepId;
-
-        return sessionResult();
-      },
-    );
-    const scheduleResumedSessionDrive = vi.fn(() => "drive-id");
-    const runFlow = vi.fn(async () => {});
+      statusAtDispatch = row.status;
+      resumeStartedAtAtDispatch = row.resumeStartedAt;
+      currentStepIdAtDispatch = row.currentStepId;
+    });
 
     const result = await resumeCrashedRun(runId, {
       db,
       executionHosts: hosts,
-      scheduleResumedSessionDrive,
       runFlow,
     });
 
     expect(result).toEqual({ state: "resumed" });
-    expect(createSession).toHaveBeenCalledTimes(1);
-    expect(statusAtCreate).toBe("Running");
-    expect(resumeStartedAtAtCreate).not.toBeNull();
-    expect(currentStepIdAtCreate).toBe("implement");
-    expect(scheduleResumedSessionDrive).toHaveBeenCalledTimes(1);
-    expect(runFlow).not.toHaveBeenCalled();
+    // ADR-175: the agent arm takes the SAME door the redispatch arm takes.
+    expect(createSession).not.toHaveBeenCalled();
+    expect(runFlow).toHaveBeenCalledTimes(1);
+    expect(runFlow).toHaveBeenCalledWith(
+      runId,
+      expect.objectContaining({
+        crashResume: { targetStepId: "implement" },
+        executionHosts: hosts,
+      }),
+    );
+    expect(statusAtDispatch).toBe("Running");
+    expect(resumeStartedAtAtDispatch).not.toBeNull();
+    expect(currentStepIdAtDispatch).toBe("implement");
 
-    // ADR-166 D3: the create rode the `recover` generation the claim minted,
-    // and the resumed-session driver is handed that same row.
+    // ADR-166 D3: the claim minted the `recover` generation before the dispatch.
     const [assignment] = await db
       .select({
         id: schema.executionAssignments.id,
@@ -360,21 +383,53 @@ describe("resumeCrashedRun — resume-agent happy path (slot free)", () => {
       .where(eq(schema.executionAssignments.runId, runId));
 
     expect(assignment).toMatchObject({ epoch: 1, placementReason: "recover" });
-    const [create] = await db
-      .select({ assignmentEpoch: schema.executionCommands.assignmentEpoch })
-      .from(schema.executionCommands)
-      .where(
-        and(
-          eq(schema.executionCommands.runId, runId),
-          eq(schema.executionCommands.kind, "session.create"),
-        ),
-      );
+  }, 60_000);
 
-    expect(create.assignmentEpoch).toBe(1);
-    expect(scheduleResumedSessionDrive).toHaveBeenCalledWith(
-      expect.objectContaining({ runId, assignmentId: assignment.id }),
+  it("ADR-175: a crashed `judge` with a retained handle resumes instead of being discarded", async () => {
+    const runId = await seedRun({
+      status: "Crashed",
+      currentStepId: "adjudicate",
+      acpSessionId: "acp-judge",
+    });
+    const runFlow = vi.fn(async () => {});
+
+    const result = await resumeCrashedRun(runId, {
+      db,
+      executionHosts: hosts,
+      runFlow,
+    });
+
+    expect(result).toEqual({ state: "resumed" });
+    expect(runFlow).toHaveBeenCalledWith(
+      runId,
+      expect.objectContaining({ crashResume: { targetStepId: "adjudicate" } }),
     );
   }, 60_000);
+
+  // One case per discriminant arm: half-A-tested plus half-B-tested is not
+  // A∘B-tested, and `driveResume` is SHARED with the scheduler's promotion.
+  it.each(["scratch", "agent"] as const)(
+    "refuses a %s run before the flow-only arm — its own recovery owner drives it",
+    async (runKind) => {
+      const runId = await seedRun({
+        status: "Crashed",
+        runKind,
+        currentStepId: "implement",
+        acpSessionId: `acp-${runKind}`,
+      });
+      const runFlow = vi.fn(async () => {});
+
+      const result = await resumeCrashedRun(runId, {
+        db,
+        executionHosts: hosts,
+        runFlow,
+      });
+
+      expect(result).toEqual({ state: "unresumable" });
+      expect(runFlow).not.toHaveBeenCalled();
+    },
+    60_000,
+  );
 });
 
 describe("resumeCrashedRun — redispatch (session-less retry_safe node)", () => {
@@ -386,22 +441,27 @@ describe("resumeCrashedRun — redispatch (session-less retry_safe node)", () =>
     });
 
     const createSession = installCreateSession(async () => sessionResult());
-    const scheduleResumedSessionDrive = vi.fn(() => "drive-id");
     const runFlow = vi.fn(async () => {});
 
     const result = await resumeCrashedRun(runId, {
       db,
       executionHosts: hosts,
-      scheduleResumedSessionDrive,
       runFlow,
     });
 
     expect(result).toEqual({ state: "redispatched" });
     // The crash-resume signal carries the retained target so the runner resumes
     // FROM that node (re-runs it once) rather than no-op'ing or restarting.
-    expect(runFlow).toHaveBeenCalledWith(runId, {
-      crashResume: { targetStepId: "verify" },
-    });
+    // ADR-175 adds `db`/`executionHosts`: without them the runner binds a fresh
+    // local host over `getDb()` instead of the caller's handle and the minted
+    // assignment.
+    expect(runFlow).toHaveBeenCalledWith(
+      runId,
+      expect.objectContaining({
+        crashResume: { targetStepId: "verify" },
+        executionHosts: hosts,
+      }),
+    );
     expect(createSession).not.toHaveBeenCalled();
     expect((await readRun(runId)).status).toBe("Running");
   }, 60_000);
@@ -518,18 +578,19 @@ describe("resumeCrashedRun — queued resume via scheduler (Codex F2)", () => {
       .where(eq(runs.id, live));
 
     const createSession = installCreateSession(async () => sessionResult());
-    const scheduleResumedSessionDrive = vi.fn(() => "drive-id");
-    const runFlow = vi.fn(async (_id: string) => {});
+    const freshLaunch = vi.fn((_id: string) => {});
+    const resumeDispatch = vi.fn(
+      async (_id: string, _opts?: RunFlowResumeOpts) => {},
+    );
 
     await promoteNextPending({
       db,
-      runFlow: (id: string) => void runFlow(id),
+      runFlow: (id: string) => void freshLaunch(id),
       resumeRun: (id: string) =>
         void driveResume(id, {
           db,
           executionHosts: hosts,
-          scheduleResumedSessionDrive,
-          runFlow,
+          runFlow: resumeDispatch,
         }),
     });
 
@@ -537,8 +598,13 @@ describe("resumeCrashedRun — queued resume via scheduler (Codex F2)", () => {
     await new Promise((r) => setTimeout(r, 50));
 
     expect((await readRun(crashed)).status).toBe("Running");
-    expect(createSession).toHaveBeenCalledTimes(1);
-    expect(runFlow).not.toHaveBeenCalledWith(crashed);
+    // ADR-175: the cap-full path takes the SAME graph door as the direct one.
+    expect(createSession).not.toHaveBeenCalled();
+    expect(freshLaunch).not.toHaveBeenCalledWith(crashed);
+    expect(resumeDispatch).toHaveBeenCalledWith(
+      crashed,
+      expect.objectContaining({ crashResume: { targetStepId: "implement" } }),
+    );
   }, 60_000);
 });
 
@@ -550,26 +616,17 @@ describe("resumeCrashedRun — concurrent 2nd recover → conflict", () => {
       acpSessionId: "acp-race",
     });
 
-    const createSession = installCreateSession(async () => sessionResult());
-    const scheduleResumedSessionDrive = vi.fn(() => "drive-id");
+    const runFlow = vi.fn(async () => {});
 
     const [a, b] = await Promise.all([
-      resumeCrashedRun(runId, {
-        db,
-        executionHosts: hosts,
-        scheduleResumedSessionDrive,
-      }),
-      resumeCrashedRun(runId, {
-        db,
-        executionHosts: hosts,
-        scheduleResumedSessionDrive,
-      }),
+      resumeCrashedRun(runId, { db, executionHosts: hosts, runFlow }),
+      resumeCrashedRun(runId, { db, executionHosts: hosts, runFlow }),
     ]);
 
     const states = [a.state, b.state].sort();
 
     expect(states).toEqual(["conflict", "resumed"]);
-    expect(createSession).toHaveBeenCalledTimes(1);
+    expect(runFlow).toHaveBeenCalledTimes(1);
   }, 60_000);
 
   it("a not-Crashed run → {state:'conflict'} with no side-effect", async () => {
@@ -579,28 +636,31 @@ describe("resumeCrashedRun — concurrent 2nd recover → conflict", () => {
       acpSessionId: "acp-running",
     });
 
-    const createSession = installCreateSession(async () => sessionResult());
+    const runFlow = vi.fn(async () => {});
 
-    const result = await resumeCrashedRun(runId, { db, executionHosts: hosts });
+    const result = await resumeCrashedRun(runId, {
+      db,
+      executionHosts: hosts,
+      runFlow,
+    });
 
     expect(result).toEqual({ state: "conflict" });
-    expect(createSession).not.toHaveBeenCalled();
+    expect(runFlow).not.toHaveBeenCalled();
     expect((await readRun(runId)).status).toBe("Running");
   }, 60_000);
 });
 
 describe("resumeCrashedRun — transient supervisor failure (no rollback)", () => {
-  it("createSession throws EXECUTOR_UNAVAILABLE → {state:'transient'}, run LEFT Running, resume_started_at still set", async () => {
+  it("the dispatch throws EXECUTOR_UNAVAILABLE → {state:'transient'}, run LEFT Running, resume_started_at still set", async () => {
     const runId = await seedRun({
       status: "Crashed",
       currentStepId: "implement",
       acpSessionId: "acp-transient",
     });
 
-    installCreateSession(async () => {
+    const runFlow = vi.fn(async () => {
       throw new MaisterError("EXECUTOR_UNAVAILABLE", "supervisor 503");
     });
-    const runFlow = vi.fn(async () => {});
 
     const result = await resumeCrashedRun(runId, {
       db,
@@ -611,24 +671,30 @@ describe("resumeCrashedRun — transient supervisor failure (no rollback)", () =
     expect(result).toEqual({ state: "transient" });
     const row = await readRun(runId);
 
+    // The committed intent survives for the reconcile sweep to re-enter — the
+    // marker is what makes that re-entry need no second operator click.
     expect(row.status).toBe("Running");
     expect(row.resumeStartedAt).not.toBeNull();
+    expect(row.currentStepId).toBe("implement");
   }, 60_000);
 });
 
-describe("resumeCrashedRun — unresumable acp session", () => {
-  it("createSession throws CHECKPOINT → {state:'unresumable'}, run back to Crashed, resume_started_at CLEARED", async () => {
+describe("resumeCrashedRun — unresumable dispatch", () => {
+  it("the dispatch throws CHECKPOINT → {state:'unresumable'}, run back to Crashed, resume_started_at CLEARED", async () => {
     const runId = await seedRun({
       status: "Crashed",
       currentStepId: "implement",
       acpSessionId: "acp-checkpoint",
     });
-
-    installCreateSession(async () => {
+    const runFlow = vi.fn(async () => {
       throw new MaisterError("CHECKPOINT", "unresumable session");
     });
 
-    const result = await resumeCrashedRun(runId, { db, executionHosts: hosts });
+    const result = await resumeCrashedRun(runId, {
+      db,
+      executionHosts: hosts,
+      runFlow,
+    });
 
     expect(result).toEqual({ state: "unresumable" });
     const row = await readRun(runId);
@@ -637,18 +703,25 @@ describe("resumeCrashedRun — unresumable acp session", () => {
     expect(row.resumeStartedAt).toBeNull();
   }, 60_000);
 
-  it("createSession returns an EMPTY acpSessionId → {state:'unresumable'}, run back to Crashed", async () => {
+  it("an agent recover with no resolvable target node → {state:'unresumable'} with no dispatch", async () => {
     const runId = await seedRun({
       status: "Crashed",
       currentStepId: "implement",
-      acpSessionId: "acp-empty",
+      acpSessionId: "acp-no-target",
     });
 
-    installCreateSession(async () => sessionResult(""));
-
-    const result = await resumeCrashedRun(runId, { db, executionHosts: hosts });
+    // The run reaches driveResume, then loses its cursor before the dispatch —
+    // the state a torn write leaves. The arm must refuse rather than dispatch a
+    // recover it cannot aim.
+    const runFlow = vi.fn(async () => {});
+    const result = await driveResume(runId, {
+      db,
+      executionHosts: hosts,
+      runFlow,
+      assignmentId: null,
+    });
 
     expect(result).toEqual({ state: "unresumable" });
-    expect((await readRun(runId)).status).toBe("Crashed");
+    expect(runFlow).not.toHaveBeenCalled();
   }, 60_000);
 });

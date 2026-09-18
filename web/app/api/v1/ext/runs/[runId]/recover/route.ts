@@ -71,7 +71,7 @@ export async function POST(
       }
 
       const result = await resumeCrashedRun(runId);
-      const { httpStatus, body } = recoverHttpResponse(result.state);
+      const { httpStatus, body } = recoverHttpResponse(result);
 
       return NextResponse.json(body, { status: httpStatus });
     },

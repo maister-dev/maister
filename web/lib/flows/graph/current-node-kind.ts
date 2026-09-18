@@ -138,17 +138,28 @@ export async function resolveNodeRecoverInfo(
     flowId: string | null;
     stepId: string | null;
   },
-): Promise<{ nodeKind: NodeAttemptType | null; retrySafe: boolean }> {
-  if (!run.stepId) return { nodeKind: null, retrySafe: false };
+): Promise<{
+  nodeKind: NodeAttemptType | null;
+  retrySafe: boolean;
+  // ADR-175: the node's LOGICAL session name (`node.session ?? "default"`) —
+  // the fallback the node-scoped resume-handle resolution needs when the node's
+  // own ledger row carries no handle. Resolved here so the recover path reads
+  // the pinned manifest once.
+  sessionName: string;
+}> {
+  if (!run.stepId)
+    return { nodeKind: null, retrySafe: false, sessionName: "default" };
 
   const manifest = await resolveManifest(db, run);
 
-  if (!manifest) return { nodeKind: null, retrySafe: false };
+  if (!manifest)
+    return { nodeKind: null, retrySafe: false, sessionName: "default" };
 
   const node = compileManifest(manifest).nodes.get(run.stepId);
 
   return {
     nodeKind: node?.nodeType ?? null,
     retrySafe: node?.retrySafe ?? false,
+    sessionName: node?.session ?? "default",
   };
 }

@@ -1,4 +1,4 @@
-import { OPERATOR_INTERRUPT_DECISION } from "@/lib/flows/graph/attempt-decisions";
+import { NON_CORRECTION_DECISIONS } from "@/lib/flows/graph/attempt-decisions";
 
 // ADR-118: effective attempt count for a rework-loop node.
 //
@@ -20,21 +20,34 @@ import { OPERATOR_INTERRUPT_DECISION } from "@/lib/flows/graph/attempt-decisions
 // operator restarts are capped per run by `MAISTER_MAX_OPERATOR_RESTARTS`.
 // A run with zero operator restarts passes 0 here and is byte-identical to
 // pre-ADR-161.
+//
+// ADR-175: crash RECOVERS are subtracted on the same reasoning and by the same
+// term — a crash advanced the attempt counter without any automated iteration
+// failing, so charging it here would let a crash-loop silently exhaust a flow's
+// rework allowance. Unlike an operator restart it is deliberately NOT capped by
+// `MAISTER_MAX_OPERATOR_RESTARTS`: a crash is not an operator action.
 export function effectiveAttempts(
   attemptNumber: number,
   baseline: number | null | undefined,
-  operatorRestarts: number = 0,
+  nonCorrections: number = 0,
 ): number {
-  return attemptNumber - (baseline ?? 0) - operatorRestarts;
+  return attemptNumber - (baseline ?? 0) - nonCorrections;
 }
 
-// Count a node's attempts closed by an operator interrupt. Pure so the bound
+// Count a node's attempts closed WITHOUT a failed automated iteration — an
+// operator interrupt (ADR-161) or a crash recover (ADR-175). Pure so the bound
 // check stays unit-testable without Postgres.
-export function operatorInterruptCount(
+//
+// A SET, not a single value: the two share every accounting rule, and a filter
+// that names one member is how the next provenance decision gets missed.
+export function nonCorrectionAttemptCount(
   attempts: ReadonlyArray<{ nodeId: string; decision: string | null }>,
   nodeId: string,
 ): number {
   return attempts.filter(
-    (a) => a.nodeId === nodeId && a.decision === OPERATOR_INTERRUPT_DECISION,
+    (a) =>
+      a.nodeId === nodeId &&
+      a.decision !== null &&
+      NON_CORRECTION_DECISIONS.includes(a.decision),
   ).length;
 }

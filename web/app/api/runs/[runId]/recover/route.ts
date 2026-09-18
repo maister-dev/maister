@@ -99,7 +99,7 @@ export async function POST(
 
     log.info({ runId, state: r.state }, "recover handled");
 
-    const { httpStatus, body } = recoverHttpResponse(r.state);
+    const { httpStatus, body } = recoverHttpResponse(r);
 
     if ("code" in body) {
       log.warn({ runId, state: r.state, code: body.code }, "recover refused");

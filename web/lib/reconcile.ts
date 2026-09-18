@@ -80,8 +80,11 @@ const log = pino({
 const PER_TICK_LIMIT = 100;
 const PER_PASS_CONCURRENCY = 4;
 
-// Server-owned liveness key: a session's (runId, stepId). Used to detect a live
-// agent session whose acp_session_id is not yet persisted on the run row.
+// Server-owned liveness key: a session's (runId, stepId). It no longer backs the
+// in-flight guard — that reads `liveByRun`, because a session's stepId is a label
+// the host rewrites per prompt (see the comment at the guard). Its only remaining
+// job is to de-duplicate the per-run session index built below, which the D3
+// cutover stop and the identity-scan pass iterate whole.
 function runStepKey(runId: string, stepId: string | null): string {
   return `${runId}\u0000${stepId ?? ""}`;
 }
@@ -97,6 +100,10 @@ export type ReconcileAction =
   // outcome still belongs to the run's own prompt owner.
   | "reobserve"
   | "redispatch"
+  // ADR-175: a COMMITTED crash-recover intent whose dispatcher died. Re-entered
+  // through the recover driver itself — one owner for the whole evidence →
+  // close → dispatch sequence, instead of a second copy of that ordering here.
+  | "recover"
   | "crash"
   // ADR-141: a `Running` run with a non-terminal `run_sync_attempts`
   // row is routed to the branch-sync recovery executor, NEVER the flow
@@ -121,6 +128,11 @@ export type ReconcileReason =
   | "cli-not-retry-safe"
   | "grace-window"
   | "agent-session-gone"
+  // ADR-175: `Running` + `resume_started_at` set + a parked `current_step_id`,
+  // past grace with no live session — the state a web death between the recover
+  // claim and its dispatch leaves. Crashing it again would discard the
+  // operator's decision; re-entry needs no second click.
+  | "crash-recover-pending"
   // ADR-141 branch-sync recovery discriminants.
   | "sync-driver-live"
   | "sync-orphaned-live"
@@ -168,6 +180,10 @@ export interface ReconcileInput {
   // in-flight (it is persisted only AFTER the prompt returns). The node is
   // genuinely running; reconcile must NOT crash it. Default false/omitted.
   liveRunStepSession?: boolean;
+  // ADR-175: this run carries a committed crash-recover intent that no driver
+  // has taken yet (`resume_started_at` set with `current_step_id` parked).
+  // Resolved by the caller from the run row; the classifier stays pure.
+  crashRecoverPending?: boolean;
   resumeStartedAt: Date | null;
   latestAttemptStartedAt: Date | null;
   nowMs: number;
@@ -210,8 +226,11 @@ export interface ReconcileDecision {
 }
 
 // Pure (no db/clock): the §0.3 decision table, asserted in EXACT order. A
-// scratch run carries no compiled graph node, so it ALWAYS takes the agent
-// branch (kind forced to 'ai_coding') regardless of currentNodeKind.
+// scratch or platform-agent run carries no compiled graph node, so when it
+// reaches the no-live-session branch its kind is FORCED to 'ai_coding'
+// regardless of currentNodeKind. That forcing is reached only there: a live
+// session short-circuits both kinds earlier (`live-scratch-session` /
+// `agent-observer-live|gone`).
 export function classifyRunReconcile(
   input: ReconcileInput,
   runId?: string,
@@ -428,6 +447,15 @@ function classifyInner(input: ReconcileInput): ReconcileDecision {
       return { action: "skip", reason: "grace-window" };
     }
 
+    // ADR-175: past grace with a committed crash-recover intent still unclaimed
+    // means the operator's Recover lost its dispatcher, NOT that the run is
+    // unrecoverable. Crashing it here is what made a recovered run loop: the
+    // click is discarded and the operator has to click again. Ordered AFTER the
+    // grace guard so a live dispatch in flight is never raced.
+    if (input.crashRecoverPending) {
+      return { action: "recover", reason: "crash-recover-pending" };
+    }
+
     return { action: "crash", reason: "agent-session-gone" };
   }
 
@@ -451,7 +479,12 @@ export interface RunReconcileSweepOptions {
   db?: Db;
   executionHosts?: ExecutionHosts;
   listWorktrees?: (repoPath: string) => Promise<WorktreeInfo[]>;
-  runFlow?: (runId: string) => Promise<void> | void;
+  // ADR-175: the sweep's reattach arm must be able to pass the crash-resume
+  // signal, so the injection point carries the runner's options.
+  runFlow?: (
+    runId: string,
+    opts?: { crashResume?: { targetStepId: string } },
+  ) => Promise<void> | void;
   now?: () => Date;
 }
 
@@ -486,6 +519,19 @@ export interface ReconcileSweepSummary {
   // coordinator that is now gone) — distinct from `crashed`, which is a
   // recoverable outcome; these have nothing to recover.
   abandoned: number;
+  // ADR-175: runs carrying a committed crash-recover intent (`resume_started_at`
+  // set with a parked `current_step_id`) that this tick re-entered through the
+  // single-winner crash-resume claim rather than the bare `runFlow(runId)` the
+  // already-owned graph guard no-ops. Counts BOTH arms — the `recover` action
+  // (no live session, handed to `driveResume`) and the `reattach` action (live
+  // session) — so it is NOT a subset of `reattached`; only the reattach half
+  // overlaps it.
+  crashRecoverReentered: number;
+  // ADR-175: `Running` runs found holding a LIVE session with no driver lease.
+  // The state is not silently skipped any more — a reattach goes out and this
+  // counter makes the classification visible to an operator rather than only to
+  // a log grep. A subset of `reattached`.
+  runningIdleSession: number;
 }
 
 const ZERO_SUMMARY: ReconcileSweepSummary = {
@@ -501,6 +547,8 @@ const ZERO_SUMMARY: ReconcileSweepSummary = {
   reobserved: 0,
   orphanSessionsReaped: 0,
   handlesLost: 0,
+  crashRecoverReentered: 0,
+  runningIdleSession: 0,
 };
 
 // ADR-121 (T15): a C2 admission claim (tasks.queue_claimed_at) is held only across
@@ -1242,10 +1290,13 @@ export async function runReconcileSweep(
   const worktreesFor = opts.listWorktrees ?? listWorktrees;
   const runFlow =
     opts.runFlow ??
-    (async (runId: string) => {
+    (async (
+      runId: string,
+      runOpts?: { crashResume?: { targetStepId: string } },
+    ) => {
       const mod = await import("@/lib/flows/runner");
 
-      await mod.runFlow(runId, { db, executionHosts: hosts });
+      await mod.runFlow(runId, { ...runOpts, db, executionHosts: hosts });
     });
   const now = opts.now ?? (() => new Date());
   const graceSeconds = reconcileGraceSeconds();
@@ -1356,9 +1407,10 @@ export async function runReconcileSweep(
     for (const rec of records) {
       if (rec.status !== "live") continue;
       if (rec.acpSessionId) liveMap.set(rec.acpSessionId, rec);
-      // Server-owned identity index → lets reconcile recognize an in-flight
-      // agent node whose run row has not yet persisted acp_session_id (prevents
-      // the false "agent-session-gone" crash of a live, long-running node).
+      // Per-(run, step) index of live sessions. NOT the in-flight guard — that
+      // reads `liveByRun` below; nothing `.get`s this map. It is consumed whole
+      // by the D3 cutover stop and the host identity scan, which need every
+      // live session of this supervisor, de-duplicated per (run, step).
       liveByRunStep.set(runStepKey(rec.runId, rec.stepId), rec);
       if (!liveByRun.has(rec.runId)) liveByRun.set(rec.runId, rec);
     }
@@ -1412,6 +1464,8 @@ export async function runReconcileSweep(
   let skipped = 0;
   let syncRecovered = 0;
   let reobserved = 0;
+  let crashRecoverReentered = 0;
+  let runningIdleSession = 0;
 
   await runWithConcurrency(candidates, PER_PASS_CONCURRENCY, async (cand) => {
     // M34: a null worktreePath is the no-workspace agent shape (none/
@@ -1477,6 +1531,19 @@ export async function runReconcileSweep(
         worktreeExists,
         liveSession: Boolean(live),
         liveRunStepSession: Boolean(liveRunStep),
+        // ADR-175 recovery predicate, named exactly: a flow run left `Running`
+        // with the recover claim's marker still set and its target node parked.
+        // A non-null marker means no driver has taken the re-entry — enforced by
+        // BOTH release paths, which together cover every arm that takes it:
+        // `runGraph`'s CAS-clear for a `crashResume` entry, and
+        // `clearCrashRecoverMarker` for the two arms that re-enter without that
+        // signal (applied evidence, all-settled orchestrator). Leaving either
+        // uncleared would make this predicate fire on the run's NEXT, unrelated
+        // crash and re-dispatch a paid turn with no operator decision.
+        crashRecoverPending:
+          cand.runKind === "flow" &&
+          cand.resumeStartedAt !== null &&
+          cand.currentStepId !== null,
         resumeStartedAt: cand.resumeStartedAt,
         latestAttemptStartedAt: attemptStartedAt,
         nowMs,
@@ -1785,6 +1852,36 @@ export async function runReconcileSweep(
 
         return;
       }
+      case "recover": {
+        // ADR-175: hand the committed intent back to the recover driver, which
+        // owns the whole evidence → close → dispatch sequence and is safe to
+        // call standalone on an already-`Running` run. Re-implementing that
+        // ordering here would be a second dispatcher — the exact shape this
+        // change exists to remove. Idempotent: the graph's `resume_started_at`
+        // CAS-clear makes the re-entry single-winner and a loser no-ops, so no
+        // attempt counter is added. The bound is the existing grace window plus
+        // `crashRunningRun`: a run that cannot be re-entered returns to
+        // `Crashed` and stops.
+        crashRecoverReentered += 1;
+        log.info(
+          { runId: cand.runId, targetStepId: cand.currentStepId, reason },
+          "reconcile: crash-recover re-entry",
+        );
+        queueMicrotask(() => {
+          void import("@/lib/runs/recover")
+            .then((mod) =>
+              mod.driveResume(cand.runId, { db, executionHosts: hosts }),
+            )
+            .catch((error: unknown) => {
+              log.error(
+                { runId: cand.runId, err: error },
+                "reconcile: crash-recover re-entry failed",
+              );
+            });
+        });
+
+        return;
+      }
       case "reattach": {
         // Scratch and standalone agents have their own continuation owners.
         if (cand.runKind !== "flow") {
@@ -1796,11 +1893,49 @@ export async function runReconcileSweep(
 
           return;
         }
+        // ADR-175: a run carrying a COMMITTED crash-recover intent
+        // (`resume_started_at` stamped with `current_step_id` parked at the
+        // recover target) is the state a web death between the recover claim and
+        // its dispatch leaves. A bare `runFlow(runId)` no-ops on the
+        // already-owned graph guard, which is how such a run looped forever;
+        // the crash-resume signal re-enters through the single-winner CAS-clear
+        // instead. The bounded continuation worker cannot serve this state — its
+        // `node_attempts` arm needs an open `Running` attempt on the ACTIVE
+        // assignment — so the sweep owns it. Record that, so P0-2 can adopt it
+        // later without re-deriving the reason.
+        const crashResume =
+          cand.resumeStartedAt !== null && cand.currentStepId !== null
+            ? { crashResume: { targetStepId: cand.currentStepId } }
+            : undefined;
+
+        // No attempt counter is added: the re-entry is idempotent (the CAS-clear
+        // makes it single-winner and a loser no-ops), and the bound is the
+        // existing grace window plus `crashRunningRun` — a run that cannot be
+        // re-entered returns to `Crashed` and stops.
+        if (crashResume) {
+          crashRecoverReentered += 1;
+          log.info(
+            {
+              runId: cand.runId,
+              targetStepId: cand.currentStepId,
+            },
+            "reconcile: crash-recover re-entry",
+          );
+        } else {
+          // Classified, logged and COUNTED — never a silent no-op. This is the
+          // shape the pre-ADR-175 recover arm left behind: a live session with
+          // nobody driving it.
+          runningIdleSession += 1;
+          log.warn(
+            { runId: cand.runId, sessionId: cand.acpSessionId },
+            "reconcile: running-with-idle-session",
+          );
+        }
         // A recovered paid turn can be long-lived. Keep the sweep bounded;
         // runFlow's database lease serializes this wake with every other driver.
         queueMicrotask(() => {
           void Promise.resolve()
-            .then(() => runFlow(cand.runId))
+            .then(() => runFlow(cand.runId, crashResume))
             .catch((error: unknown) => {
               log.error(
                 { runId: cand.runId, err: error },
@@ -1935,6 +2070,8 @@ export async function runReconcileSweep(
     reobserved,
     orphanSessionsReaped,
     handlesLost,
+    crashRecoverReentered,
+    runningIdleSession,
   };
 
   log.info(summary, "reconcile sweep complete");

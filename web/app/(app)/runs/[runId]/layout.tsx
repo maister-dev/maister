@@ -7,6 +7,7 @@ import { getLocale, getTranslations } from "next-intl/server";
 import { notFound, redirect } from "next/navigation";
 import { ExclamationTriangleIcon } from "@heroicons/react/24/outline";
 
+import { CRASH_RECOVER_DECISION } from "@/lib/flows/graph/attempt-decisions";
 import { getDb } from "@/lib/db/client";
 import { loadRunPublicResult } from "@/lib/runs/run-result-dto";
 import {
@@ -862,6 +863,10 @@ export default async function RunDetailLayout({
     duration: t("duration"),
     tokenTotal: t("tokenTotal"),
     empty: t("timelineEmpty"),
+    // A decision this map does not know renders as its RAW snake_case token, so
+    // every provenance decision needs an arm here AND a key in both catalogs.
+    // ADR-175 adds `crash_recover`; `operator_interrupt` and
+    // `review_rework_claim` are a pre-existing gap recorded under Follow-ups.
     decisionLabel: (d) =>
       d === "approve"
         ? t("decisionApprove")
@@ -869,7 +874,9 @@ export default async function RunDetailLayout({
           ? t("decisionRework")
           : d === "takeover"
             ? t("takeOver")
-            : d,
+            : d === CRASH_RECOVER_DECISION
+              ? t("decisionCrashRecover")
+              : d,
   };
   const agentRunCenterLabels: AgentRunCenterLabels = {
     failure: t.raw("failure"),

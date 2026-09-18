@@ -646,7 +646,12 @@ export async function endActiveTakeover(runId: string, db?: Db): Promise<void> {
 // accounting and from both Observatory correction counters.
 // Defined in the pure `attempt-decisions` module and re-exported here so the
 // existing server-side import sites keep working.
+// ADR-175 (`crash_recover`): marks an attempt closed by an operator Recover of a
+// crashed agent node, so the graph re-dispatches it as a fresh attempt under the
+// newly minted assignment epoch.
 export {
+  CRASH_RECOVER_DECISION,
+  NON_CORRECTION_DECISIONS,
   OPERATOR_INTERRUPT_DECISION,
   REVIEW_REWORK_CLAIM_DECISION,
 } from "@/lib/flows/graph/attempt-decisions";
