@@ -307,6 +307,8 @@ deliberate.
 | `runs.md` | invariant 4 restated for both arms | — |
 | `execution-prompt-lifecycle.md` (owner row) | the crash-recover row also states the applied-completion **cleanup** rule (REQ-07a): a retired source generation means there is nothing to close | prose only, same cap constraint |
 | `architecture.md` | re-verify the manager↔host sequence and component responsibilities (T4.3) | — |
+| `flow-graph.md` | REQ-20 widens the rework-epoch carve-out from one decision to the `NON_CORRECTION_DECISIONS` set; the block naming `operatorInterruptCount(runId, nodeId)` names a function this change RENAMES, so it is drift the moment REQ-19 lands | — |
+| `observatory.md` | REQ-20 subtracts `crash_recover` from `reworkCount` AND `retryCount`, so the `correction_rate` formula prose and its normative Expectations bullet (`MUST use … status = 'Reworked' … max(attempt) - 1`) both stop being literally true | in no enforced group, so nothing catches this automatically — it is a review-exit obligation |
 
 **Recorded honestly:** `reconciliation-gc.md` already carries **19**
 Expectations bullets against the documented R5a cap of 12

@@ -254,11 +254,20 @@ flowchart TD
 
 - `run_count` is the distinct count of `runs.id` in scope where
   `run_kind = 'flow'` and at least one `node_attempts` row exists.
-- `rework_count` counts `node_attempts.status = 'Reworked'`. This status is
-  written only by the graph runner after a manifest-declared rework transition
-  is selected.
+- `rework_count` counts `node_attempts.status = 'Reworked'`, MINUS the rows
+  whose `decision` is a non-correction provenance marker (see below). The status
+  is written by the graph runner after a manifest-declared rework transition is
+  selected — and also by the two re-entries that reuse the same mechanism
+  without being corrections.
 - `retry_count` is the sum of `max(node_attempts.attempt) - 1` per
-  `(run_id, node_id)`.
+  `(run_id, node_id)`, MINUS that node's non-correction closes.
+- **Non-correction closes (ADR-161, ADR-175).** `decision='operator_interrupt'`
+  (an operator node interrupt) and `decision='crash_recover'` (an operator
+  Recover of a crashed agent node) each advance `attempt` exactly like a genuine
+  retry, so both counters subtract them — the `NON_CORRECTION_DECISIONS` set in
+  `flows/graph/attempt-decisions.ts`. Excluding them from `rework_count` alone
+  would still report a fabricated rate, because `retry_count` would keep
+  counting the same event. See [`flow-graph.md`](flow-graph.md).
 - Artifact grouping joins `artifact_instances` through `node_attempt_id` when
   available and otherwise groups by `kind`.
 - The result is an unbounded pressure ratio. A value greater than `1` means
@@ -395,7 +404,9 @@ flowchart TD
 - Formula helpers MUST accept an explicit `now` and MUST NOT call `Date.now()`
   internally.
 - `correction_rate` MUST use `node_attempts.status = 'Reworked'` for rework
-  and `max(attempt) - 1` per `(run_id, node_id)` for retries.
+  and `max(attempt) - 1` per `(run_id, node_id)` for retries, and MUST subtract
+  the run-node's `NON_CORRECTION_DECISIONS` closes (`operator_interrupt`,
+  `crash_recover`) from **both** terms — never from one.
 - `correction_rate` MUST be rendered as an unbounded pressure ratio, never as a
   percentage.
 - Autonomy wait time MUST clamp HITL intervals to their run interval and merge

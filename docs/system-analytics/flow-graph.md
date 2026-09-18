@@ -414,30 +414,37 @@ staled, so the flow's own gates re-validate the human's commits. See
 [`run-continuation.md`](run-continuation.md) and
 [`flow-dsl.md`](../flow-dsl.md).
 
-**Operator restarts are outside the rework epoch (ADR-161 — Implemented).** An
-operator node interrupt closes the parked attempt `Reworked` with
-`node_attempts.decision = 'operator_interrupt'`, which makes `runGraph` append a
-fresh attempt — the same mechanism a declared rework uses. It is deliberately
-**not** the same accounting event:
+**Non-correction closes are outside the rework epoch (ADR-161, ADR-175 —
+Implemented).** Two provenance decisions close a parked attempt `Reworked` and
+make `runGraph` append a fresh one — the same mechanism a declared rework uses —
+without being the same accounting event: an operator node interrupt
+(`decision='operator_interrupt'`, ADR-161) and an operator Recover of a crashed
+agent node (`decision='crash_recover'`, ADR-175). They are the
+`NON_CORRECTION_DECISIONS` set in `flows/graph/attempt-decisions.ts`, and every
+rule below applies to the SET, never to one member:
 
 - The effective count becomes
-  `effective = nodeAttemptNumber − (rework_baseline ?? 0) − operatorInterruptCount(runId, nodeId)`,
-  where the operator count is that node's closed attempts carrying
-  `decision='operator_interrupt'`. A run with zero operator restarts computes
+  `effective = nodeAttemptNumber − (rework_baseline ?? 0) − nonCorrectionAttemptCount(attempts, nodeId)`,
+  where the subtracted count is that node's closed attempts whose `decision` is
+  in `NON_CORRECTION_DECISIONS`. A run with none of them computes
   byte-identically to today, so the back-compat property above is preserved.
 - **Why exclude:** `rework.maxLoops` expresses the flow author's tolerance for
   *automated* rework loops. An operator stepping in to correct a wandering agent
-  is human intervention, not a failed iteration; charging it to the budget would
-  let a reviewer exhaust a flow's rework allowance by helping it.
-- The bound is not removed, only moved: operator restarts are capped per run by
-  `MAISTER_MAX_OPERATOR_RESTARTS` (default `10`), which refuses further restarts
-  with `MaisterError("CONFLICT")`.
+  is human intervention, and a crash is not an iteration at all; charging either
+  to the budget would let a reviewer — or a crash loop — exhaust a flow's rework
+  allowance without a single automated iteration having failed.
+- The bound is not removed for operator restarts, only moved: they are capped
+  per run by `MAISTER_MAX_OPERATOR_RESTARTS` (default `10`), which refuses
+  further restarts with `MaisterError("CONFLICT")`. A `crash_recover` attempt is
+  deliberately NOT charged to that budget — a crash is not an operator action —
+  so its bound is the reconcile grace window plus `crashRunningRun` instead.
 - The same rows are excluded from **both** Observatory correction counters —
   `reworkCount` (status `Reworked`) and `retryCount` (`max(attempt) − 1` per
-  `(run, node)`). An operator restart advances both, so excluding one alone would
+  `(run, node)`). Either kind advances both, so excluding one counter alone would
   still report a fabricated correction rate. See
-  [`observatory.md`](observatory.md) and
-  [`run-continuation.md`](run-continuation.md).
+  [`observatory.md`](observatory.md),
+  [`run-continuation.md`](run-continuation.md) and
+  [`reconciliation-gc.md`](reconciliation-gc.md).
 
 **Two `maxLoops`.** The loop node's `maxLoops` bounds iterations per round; the
 human node's own `rework.maxLoops` bounds the number of reset rounds (each human
