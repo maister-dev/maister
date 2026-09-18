@@ -3111,10 +3111,14 @@ describe("Flow prompt owners through the production graph driver", () => {
 
     if (!original) throw new Error("no owned node prompt was ever issued");
 
-    // Re-kill on every poll rather than once: `pgrep` can race an adapter that
-    // has not appeared in the process table yet, and a one-shot kill then never
-    // retries — which is exactly how this helper timed out roughly one family
-    // run in three while passing every time the case ran alone.
+    // Robustness, NOT a diagnosed fix. This helper was seen to time out ONCE at
+    // the old 30 s budget during a family run, and the hypothesis was that
+    // `pgrep` had raced the adapter's appearance so a one-shot kill never
+    // retried. That hypothesis is UNCONFIRMED: restoring the one-shot form and
+    // re-running the family passed 4/4, so the observation remains unexplained
+    // and the failing assertion was never captured. Re-killing each iteration
+    // and doubling the budget cost nothing and remove a real (if unproven)
+    // window; if this times out again, capture the assertion before theorising.
     await expect
       .poll(
         async () => {

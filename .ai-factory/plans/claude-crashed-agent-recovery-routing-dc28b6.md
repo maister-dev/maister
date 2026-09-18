@@ -1211,13 +1211,27 @@ sets `GIT_TERMINAL_PROMPT` and `GIT_SSH_COMMAND` but no `LC_ALL=C`. Introduced b
 `4db75d76`, merged as `2c778fb5`. A real defect on any non-English host, out of
 this change's scope — recorded under Follow-ups.
 
-**A seventh defect the lane hid, found by re-running the family.** With the host
-idle, `owner-flow-crash-recover: …resumes the node's own handle` failed roughly
-one family run in three at the 30 s live-session poll, while passing every time
-it ran alone. Cause: `crashAgentRunMidTurn` killed adapters **once**, so a
-`pgrep` that raced the adapter's appearance in the process table never retried.
-The kill is now re-issued on every poll iteration. Measured 3/3 green after the
-fix; falsified against the one-shot form below.
+**One unexplained flake, and a diagnosis that did NOT survive falsification.**
+With the host idle, `owner-flow-crash-recover: …resumes the node's own handle`
+timed out ONCE in a family run at ~30 s — the old live-session poll budget —
+while passing every time it ran alone. The failing assertion was never captured;
+the site was inferred from the duration alone, which was the first mistake.
+
+The hypothesis was that `crashAgentRunMidTurn` killed adapters **once**, so a
+`pgrep` racing the adapter's appearance never retried. **Falsified: restoring the
+one-shot form and re-running the family passed 4/4.** The mechanism is therefore
+NOT established, and the single observation remains unexplained.
+
+What shipped is kept as robustness, not as a fix: the kill is re-issued each
+poll iteration and the budget doubled to 60 s — both free, both closing a real
+if unproven window. The code comment says exactly this, so the next reader does
+not inherit a confident story the evidence does not support. If it times out
+again, capture the assertion before theorising.
+
+This is recorded rather than quietly dropped because the near-miss is the
+lesson: 3/3 green after a change is not evidence the change did anything, and
+"passes alone, fails in the family" invites a race story that the unfixed code
+then refuses to tell.
 
 Host conditions, recorded: the lane ran at load 6–23 on 16 cores against a
 competing worktree. `pmset -g log` was not implicated — no sleep window overlaps
