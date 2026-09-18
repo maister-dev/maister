@@ -6,7 +6,7 @@ import type { ExecutionCommand } from "@/lib/db/schema";
 
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { fork, type ChildProcess } from "node:child_process";
+import { execFile, fork, type ChildProcess } from "node:child_process";
 import path from "node:path";
 
 import { and, eq } from "drizzle-orm";
@@ -34,6 +34,8 @@ import { startFlowContinuationWorker } from "@/lib/flows/graph/continuation-work
 import { startPromptOwnerWorker } from "@/lib/execution-host/prompt-owner-recovery";
 import { runFlow } from "@/lib/flows/runner";
 import { runReconcileSweep } from "@/lib/reconcile";
+import { resumeCrashedRun } from "@/lib/runs/recover";
+import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import { runResumedSession } from "@/lib/runs/resume-driver";
 import { respondToHitl } from "@/lib/services/hitl";
 import { buildOrchestratorResumeConsumer } from "@/lib/domain-events/orchestrator-resume";
@@ -71,6 +73,7 @@ let database: StartedPostgresTestDb;
 let supervisor: RealSupervisor;
 let worker: ProjectionWorker;
 let restoreUrl: () => void = () => {};
+let priorRuntimeRoot: string | undefined;
 
 beforeAll(async () => {
   database = await startMainPostgresTestDb({
@@ -86,10 +89,18 @@ beforeAll(async () => {
     db: database.db as unknown as Db,
     projectors: canonicalProjectors,
   });
+  // The crash-recover arm re-enters through production `runFlow`, which takes
+  // no runtimeRoot from its caller — it resolves the configured one. Point that
+  // at the supervisor's root so the recovered dispatch adopts the same
+  // workspace the driver did.
+  priorRuntimeRoot = process.env.MAISTER_RUNTIME_ROOT;
+  process.env.MAISTER_RUNTIME_ROOT = supervisor.runtimeRoot;
 }, 180_000);
 
 afterAll(async () => {
   await stopRuntimeEventConsumers();
+  if (priorRuntimeRoot === undefined) delete process.env.MAISTER_RUNTIME_ROOT;
+  else process.env.MAISTER_RUNTIME_ROOT = priorRuntimeRoot;
   restoreUrl();
   await worker?.stop();
   await supervisor?.kill();
@@ -2943,4 +2954,574 @@ describe("Flow prompt owners through the production graph driver", () => {
       await database.pool.query(`DROP FUNCTION IF EXISTS ${trigger}()`);
     }
   }, 60_000);
+
+  // --- owner-flow-crash-recover (ADR-175) ---------------------------------
+  //
+  // Operator Recover of a crashed AGENT node. These cases drive the REAL
+  // supervisor because the defect only exists once a paid turn is in flight
+  // against a live adapter: they SIGKILL the adapter process the supervisor
+  // spawned, let the reconcile sweep write `Crashed`, and then call the
+  // production `resumeCrashedRun` — never a stub. A mocked route suite cannot
+  // host any of these assertions (its `select` ignores `WHERE` and it stubs
+  // `resumeCrashedRun` outright).
+
+  async function adapterPids(): Promise<number[]> {
+    return await new Promise((resolve) => {
+      execFile("pgrep", ["-f", supervisor.fixturePath], (_err, stdout) => {
+        resolve(
+          String(stdout)
+            .split("\n")
+            .map((line) => Number.parseInt(line.trim(), 10))
+            .filter((pid) => Number.isInteger(pid) && pid > 0),
+        );
+      });
+    });
+  }
+
+  // Kill the adapter the way a host-side crash does: the supervisor survives,
+  // its session goes terminal, and the ACP resume handle outlives it.
+  async function killAdapterProcesses(): Promise<void> {
+    for (const pid of await adapterPids()) {
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {
+        // already gone
+      }
+    }
+  }
+
+  async function liveSessionCount(runId: string): Promise<number> {
+    const hosts = createExecutionHosts({ db: database.db as unknown as Db });
+    const sessions = await (await hosts.executionFor(runId)).admin.listSessions();
+
+    return sessions.filter(
+      (session) => session.runId === runId && session.status === "live",
+    ).length;
+  }
+
+  type CrashedAgentRun = {
+    seeded: Awaited<ReturnType<typeof seedOwnerFlow>>;
+    original: (typeof executionCommands)["$inferSelect"];
+    crashedAttemptId: string;
+    nodeAcpSessionId: string;
+    crashedAssignmentId: string;
+  };
+
+  // Drives a real `ai_coding`/`judge` turn, kills the web driver in the named
+  // window, kills the adapter, and lets the production reconcile sweep write
+  // `Crashed`. Returns the durable state Recover will be handed.
+  async function crashAgentRunMidTurn(options: {
+    window: "before_terminal" | "before_apply";
+    nodeType?: "ai_coding" | "judge";
+  }): Promise<CrashedAgentRun> {
+    const nodeType = options.nodeType ?? "ai_coding";
+    const seeded = await seedOwnerFlow([
+      {
+        id: "work",
+        type: nodeType,
+        action: {
+          prompt: `fixture-output:${JSON.stringify({
+            bytes: 0,
+            text: "original action",
+            terminalDelayMs: options.window === "before_terminal" ? 30_000 : 0,
+          })}`,
+          ...(nodeType === "judge"
+            ? { schema: { type: "object" } }
+            : {}),
+        },
+        transitions: { success: "after" },
+      },
+      {
+        id: "after",
+        type: "cli",
+        action: { command: "printf 'continued\\n' >> continuation-count.txt" },
+        transitions: { success: "done" },
+      },
+    ]);
+    const trigger = `crash_recover_pause_${randomUUID().replaceAll("-", "")}`;
+    const lockKey = Math.floor(Math.random() * 2_000_000_000) + 1;
+    const lock = await database.pool.connect();
+    let driver: ReturnType<typeof startDriver> | undefined;
+
+    try {
+      await lock.query("SELECT pg_advisory_lock(260909, $1)", [lockKey]);
+      if (options.window === "before_apply") {
+        await database.pool.query(
+          `CREATE FUNCTION ${trigger}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.run_id = '${seeded.runId}' AND NEW.node_id = 'work' AND OLD.action_completion IS NULL AND NEW.action_completion IS NOT NULL THEN PERFORM pg_advisory_xact_lock(260909, ${lockKey}); END IF; RETURN NEW; END $$`,
+        );
+        await database.pool.query(
+          `CREATE TRIGGER ${trigger} BEFORE UPDATE ON node_attempts FOR EACH ROW EXECUTE FUNCTION ${trigger}()`,
+        );
+      }
+      driver = startDriver(seeded.runId);
+      await expect
+        .poll(
+          async () => {
+            if (driver?.child.exitCode !== null)
+              throw new Error(driver?.output());
+            if (options.window === "before_apply") {
+              const waiting = await database.pool.query(
+                "SELECT count(*)::int AS count FROM pg_locks WHERE locktype = 'advisory' AND classid = 260909 AND objid = $1 AND NOT granted",
+                [lockKey],
+              );
+
+              return waiting.rows[0].count as number;
+            }
+            const rows = await database.pool.query(
+              "SELECT count(*)::int AS count FROM execution_commands WHERE run_id = $1 AND kind = 'session.prompt' AND state = 'accepted' AND transport_state = 'acknowledged'",
+              [seeded.runId],
+            );
+
+            return rows.rows[0].count as number;
+          },
+          { timeout: 40_000, interval: 25 },
+        )
+        .toBe(1);
+      driver.child.kill("SIGKILL");
+      await driver.exited;
+      await lock.query("SELECT pg_advisory_unlock(260909, $1)", [lockKey]);
+    } finally {
+      if (
+        driver &&
+        driver.child.exitCode === null &&
+        driver.child.signalCode === null
+      )
+        driver.child.kill("SIGKILL");
+      await driver?.exited;
+      await lock.query("SELECT pg_advisory_unlock_all()");
+      lock.release();
+      if (options.window === "before_apply") {
+        await database.pool.query(
+          `DROP TRIGGER IF EXISTS ${trigger} ON node_attempts`,
+        );
+        await database.pool.query(`DROP FUNCTION IF EXISTS ${trigger}()`);
+      }
+    }
+
+    const [original] = await database.db
+      .select()
+      .from(executionCommands)
+      .where(
+        and(
+          eq(executionCommands.runId, seeded.runId),
+          eq(executionCommands.kind, "session.prompt"),
+        ),
+      );
+
+    if (!original) throw new Error("no owned node prompt was ever issued");
+
+    await killAdapterProcesses();
+    await expect
+      .poll(() => liveSessionCount(seeded.runId), { timeout: 30_000 })
+      .toBe(0);
+
+    // Age the run past MAISTER_RECONCILE_GRACE_SECONDS the way the existing
+    // prompt-owner fixture does — the grace anchor is the more recent of
+    // resume_started_at and the latest attempt's started_at.
+    await database.pool.query(
+      "UPDATE node_attempts SET started_at = now() - interval '1 hour' WHERE run_id = $1",
+      [seeded.runId],
+    );
+    await database.pool.query(
+      "UPDATE runs SET resume_started_at = NULL WHERE id = $1",
+      [seeded.runId],
+    );
+
+    const summary = await runReconcileSweep({
+      db: database.db,
+      executionHosts: createExecutionHosts({
+        db: database.db as unknown as Db,
+      }),
+    });
+
+    expect(summary.crashed).toBeGreaterThanOrEqual(1);
+    const [crashed] = await database.db
+      .select()
+      .from(runs)
+      .where(eq(runs.id, seeded.runId));
+
+    expect(crashed).toMatchObject({
+      status: "Crashed",
+      resumeTargetStepId: "work",
+    });
+    const [attempt] = await database.db
+      .select()
+      .from(nodeAttempts)
+      .where(eq(nodeAttempts.runId, seeded.runId));
+    const [session] = await database.db
+      .select()
+      .from(runSessions)
+      .where(eq(runSessions.runId, seeded.runId));
+
+    // The resume handle outlives the process, which is what makes the run
+    // recoverable at all.
+    expect(session.acpSessionId).toBeTruthy();
+    if (!original.executionAssignmentId)
+      throw new Error("the crashed prompt carries no assignment");
+
+    return {
+      seeded,
+      original,
+      crashedAttemptId: attempt.id,
+      nodeAcpSessionId: session.acpSessionId as string,
+      crashedAssignmentId: original.executionAssignmentId,
+    };
+  }
+
+  it(
+    "owner-flow-crash-recover: a crashed agent node recovers to a terminal state with one new prompt under the new epoch",
+    async () => {
+      const crashedRun = await crashAgentRunMidTurn({
+        window: "before_terminal",
+      });
+      let ownerWorker: ReturnType<typeof startPromptOwnerWorker> | undefined;
+      let continuation:
+        | ReturnType<typeof startFlowContinuationWorker>
+        | undefined;
+
+      try {
+        const result = await resumeCrashedRun(crashedRun.seeded.runId, {
+          db: database.db,
+          executionHosts: createExecutionHosts({
+            db: database.db as unknown as Db,
+          }),
+        });
+
+        expect(result).toEqual({ state: "resumed" });
+        ownerWorker = startPromptOwnerWorker({
+          db: database.db as unknown as Db,
+          owners: flowPromptOwners,
+        });
+        continuation = startFlowContinuationWorker({
+          db: database.db as unknown as Db,
+          runtimeRoot: supervisor.runtimeRoot,
+        });
+
+        // The discriminating observable, asserted before the terminal state: a
+        // prompt admitted under the NEW assignment. Unfixed, the recover arm
+        // prompts under the RETIRED epoch, `admitNodePrompt` refuses it
+        // (`prompt_owner_invariant` / `node_admission_generation`), the driver
+        // treats the refusal as a yield, and this count stays 0 forever.
+        await expect
+          .poll(
+            async () => {
+              const rows = await database.pool.query(
+                "SELECT count(*)::int AS count FROM execution_commands c JOIN runs r ON r.id = c.run_id WHERE c.run_id = $1 AND c.kind = 'session.prompt' AND c.execution_assignment_id = r.execution_assignment_id",
+                [crashedRun.seeded.runId],
+              );
+
+              return rows.rows[0].count as number;
+            },
+            { timeout: 60_000, interval: 250 },
+          )
+          .toBe(1);
+        await expect
+          .poll(
+            async () => {
+              const [run] = await database.db
+                .select()
+                .from(runs)
+                .where(eq(runs.id, crashedRun.seeded.runId));
+
+              return run.status;
+            },
+            { timeout: 90_000, interval: 250 },
+          )
+          .toBe("Review");
+
+        const [run] = await database.db
+          .select()
+          .from(runs)
+          .where(eq(runs.id, crashedRun.seeded.runId));
+
+        expect(run.executionAssignmentId).not.toBe(
+          crashedRun.crashedAssignmentId,
+        );
+        const prompts = await database.db
+          .select()
+          .from(executionCommands)
+          .where(
+            and(
+              eq(executionCommands.runId, crashedRun.seeded.runId),
+              eq(executionCommands.kind, "session.prompt"),
+            ),
+          );
+
+        // Exactly ONE new prompt, under the NEW epoch — the fence is satisfied
+        // by construction, not relaxed.
+        expect(
+          prompts.filter(
+            (command) =>
+              command.executionAssignmentId ===
+              crashedRun.crashedAssignmentId,
+          ),
+        ).toHaveLength(1);
+        expect(
+          prompts.filter(
+            (command) =>
+              command.executionAssignmentId === run.executionAssignmentId,
+          ),
+        ).toHaveLength(1);
+
+        const attempts = await database.db
+          .select()
+          .from(nodeAttempts)
+          .where(
+            and(
+              eq(nodeAttempts.runId, crashedRun.seeded.runId),
+              eq(nodeAttempts.nodeId, "work"),
+            ),
+          );
+        const closed = attempts.find(
+          (attempt) => attempt.id === crashedRun.crashedAttemptId,
+        );
+
+        expect(closed).toMatchObject({
+          status: "Reworked",
+          decision: "crash_recover",
+        });
+        expect(closed?.endedAt).not.toBeNull();
+        expect(attempts).toHaveLength(2);
+      } finally {
+        await continuation?.stop();
+        await ownerWorker?.stop();
+      }
+    },
+    240_000,
+  );
+
+  it(
+    "owner-flow-crash-recover: agreeing terminal evidence is applied with no second prompt",
+    async () => {
+      const crashedRun = await crashAgentRunMidTurn({ window: "before_apply" });
+      let ownerWorker: ReturnType<typeof startPromptOwnerWorker> | undefined;
+      let continuation:
+        | ReturnType<typeof startFlowContinuationWorker>
+        | undefined;
+
+      try {
+        // The crashed turn already produced its terminal receipt; only the
+        // owner application was lost. Recover must NOT buy that turn twice.
+        expect(crashedRun.original.state).toBe("succeeded");
+        expect(crashedRun.original.applicationState).not.toBe("applied");
+
+        ownerWorker = startPromptOwnerWorker({
+          db: database.db as unknown as Db,
+          owners: flowPromptOwners,
+        });
+        const result = await resumeCrashedRun(crashedRun.seeded.runId, {
+          db: database.db,
+          executionHosts: createExecutionHosts({
+            db: database.db as unknown as Db,
+          }),
+        });
+
+        expect(result).toEqual({ state: "resumed" });
+        continuation = startFlowContinuationWorker({
+          db: database.db as unknown as Db,
+          runtimeRoot: supervisor.runtimeRoot,
+        });
+        await expect
+          .poll(
+            async () => {
+              const [run] = await database.db
+                .select()
+                .from(runs)
+                .where(eq(runs.id, crashedRun.seeded.runId));
+
+              return run.status;
+            },
+            { timeout: 90_000, interval: 250 },
+          )
+          .toBe("Review");
+
+        const prompts = await database.db
+          .select()
+          .from(executionCommands)
+          .where(
+            and(
+              eq(executionCommands.runId, crashedRun.seeded.runId),
+              eq(executionCommands.kind, "session.prompt"),
+            ),
+          );
+
+        // Per ATTEMPT, not per run: the crashed attempt must never be prompted
+        // a second time.
+        expect(
+          prompts.filter(
+            (command) =>
+              command.ownerRef?.variant === "node" &&
+              command.ownerRef.nodeAttemptId === crashedRun.crashedAttemptId,
+          ),
+        ).toHaveLength(1);
+        expect(prompts).toHaveLength(1);
+        expect(prompts[0]).toMatchObject({
+          id: crashedRun.original.id,
+          applicationState: "applied",
+        });
+        expect(prompts[0].completionAppliedAt).not.toBeNull();
+        expect(
+          await readFile(
+            path.join(
+              crashedRun.seeded.worktreePath,
+              "continuation-count.txt",
+            ),
+            "utf8",
+          ),
+        ).toBe("continued\n");
+      } finally {
+        await continuation?.stop();
+        await ownerWorker?.stop();
+      }
+    },
+    240_000,
+  );
+
+  it(
+    "owner-flow-crash-recover: the recovered dispatch resumes the node's own handle, never a substep's",
+    async () => {
+      const crashedRun = await crashAgentRunMidTurn({
+        window: "before_terminal",
+      });
+      const substepHandle = `acp-substep-${randomUUID()}`;
+
+      // After a crash every incarnation is terminal, so `loadActiveRunSession`'s
+      // liveness key ties false for every row and the remaining two keys decide.
+      // Assert that precondition rather than assuming the adapter kill produced
+      // it — without it the node's own row would win on liveness and this case
+      // would pass for the wrong reason.
+      await database.pool.query(
+        "UPDATE run_session_incarnations SET state = 'crashed' WHERE run_session_id IN (SELECT id FROM run_sessions WHERE run_id = $1)",
+        [crashedRun.seeded.runId],
+      );
+
+      // SEEDED, and deliberately so: a gate substep session is written by
+      // `gates-exec`, whose own dispatch would have to reach a live adapter to
+      // produce one here. What this pins is the CONSTRAINT — a finished substep
+      // row that is newer and carries a handle must never be selected as the
+      // node's resume source — not the path that creates it.
+      await database.pool.query(
+        `INSERT INTO run_sessions (id, run_id, session_name, acp_session_id, capability_agent, runner_id, runner_resolution_tier, runner_snapshot, created_at, updated_at)
+         SELECT $1, run_id, 'gate-review', $2, capability_agent, runner_id, runner_resolution_tier, runner_snapshot, now(), now() + interval '1 second'
+         FROM run_sessions WHERE run_id = $3 LIMIT 1`,
+        [randomUUID(), substepHandle, crashedRun.seeded.runId],
+      );
+
+      // The hazard is real, not hypothetical: the newest row now outranks the
+      // node's own, so any resolution that reads the run's active session
+      // resumes a finished gate's context.
+      const ranked = await loadActiveRunSession(
+        database.db,
+        crashedRun.seeded.runId,
+      );
+
+      expect(ranked?.acpSessionId).toBe(substepHandle);
+
+      const result = await resumeCrashedRun(crashedRun.seeded.runId, {
+        db: database.db,
+        executionHosts: createExecutionHosts({
+          db: database.db as unknown as Db,
+        }),
+      });
+
+      expect(result).toEqual({ state: "resumed" });
+      const creates = await database.db
+        .select()
+        .from(executionCommands)
+        .where(
+          and(
+            eq(executionCommands.runId, crashedRun.seeded.runId),
+            eq(executionCommands.kind, "session.create"),
+          ),
+        );
+      const recovered = creates.at(-1);
+
+      expect(recovered?.payload).toMatchObject({
+        resumeSessionId: crashedRun.nodeAcpSessionId,
+      });
+      expect(recovered?.payload?.resumeSessionId).not.toBe(substepHandle);
+    },
+    240_000,
+  );
+
+  it(
+    "owner-flow-crash-recover: the committed intent recovers without a second click, and a concurrent recover is refused",
+    async () => {
+      const crashedRun = await crashAgentRunMidTurn({
+        window: "before_terminal",
+      });
+      let continuation:
+        | ReturnType<typeof startFlowContinuationWorker>
+        | undefined;
+
+      try {
+        // Stand in for a web death between the Phase-1 commit and the dispatch:
+        // the durable row set is byte-identical, because the injected runFlow
+        // is the LAST thing the arm does.
+        const result = await resumeCrashedRun(crashedRun.seeded.runId, {
+          db: database.db,
+          executionHosts: createExecutionHosts({
+            db: database.db as unknown as Db,
+          }),
+          runFlow: () => {
+            /* the process died here */
+          },
+        });
+
+        expect(result).toEqual({ state: "resumed" });
+        const [afterClaim] = await database.db
+          .select()
+          .from(runs)
+          .where(eq(runs.id, crashedRun.seeded.runId));
+
+        // The recovery predicate, named exactly.
+        expect(afterClaim).toMatchObject({
+          status: "Running",
+          currentStepId: "work",
+        });
+        expect(afterClaim.resumeStartedAt).not.toBeNull();
+
+        // A second operator click must be refused while the first claim stands.
+        await expect(
+          resumeCrashedRun(crashedRun.seeded.runId, {
+            db: database.db,
+            executionHosts: createExecutionHosts({
+              db: database.db as unknown as Db,
+            }),
+            runFlow: () => {
+              throw new Error("a second recover must never dispatch");
+            },
+          }),
+        ).resolves.toEqual({ state: "conflict" });
+
+        // No second click: the ordinary re-entry owns the committed intent.
+        continuation = startFlowContinuationWorker({
+          db: database.db as unknown as Db,
+          runtimeRoot: supervisor.runtimeRoot,
+        });
+        await runReconcileSweep({
+          db: database.db,
+          executionHosts: createExecutionHosts({
+            db: database.db as unknown as Db,
+          }),
+        });
+        await expect
+          .poll(
+            async () => {
+              const [run] = await database.db
+                .select()
+                .from(runs)
+                .where(eq(runs.id, crashedRun.seeded.runId));
+
+              return run.status;
+            },
+            { timeout: 90_000, interval: 250 },
+          )
+          .toBe("Review");
+      } finally {
+        await continuation?.stop();
+      }
+    },
+    240_000,
+  );
 });

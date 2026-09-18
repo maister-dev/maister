@@ -506,7 +506,7 @@ Trap 5 is binding: the mocked route suites drive a fake `select` that ignores
 stubs `resumeCrashedRun` outright), so **no pinning assertion may live in a
 mocked suite**.
 
-- [ ] **T1.1 — RED 1: the stand reproduction.**
+- [x] **T1.1 — RED 1: the stand reproduction.**
   Launch a flow run onto an `ai_coding` node through the production graph
   driver. SIGKILL the adapter process (by the pid `createSession` returns, or
   `pgrep -f supervisor.fixturePath`; see
@@ -528,7 +528,7 @@ mocked suite**.
   Files: the chosen test file; helpers from `web/test-support/`.
   Logging: the test asserts on structured fields, never on prose.
 
-- [ ] **T1.2 — RED 2: evidence first, no second prompt.**
+- [x] **T1.2 — RED 2: evidence first, no second prompt.**
   Let the adapter COMPLETE the turn so a terminal receipt lands and its event is
   ingested, then kill the web-side driver process before owner application
   (fork pattern: `permission-resume.integration.test.ts:98-131`), then kill the
@@ -543,7 +543,7 @@ mocked suite**.
   (`startPromptOwnerWorker`) is the applying path; the test must not hand-write
   `action_completion`.
 
-- [ ] **T1.3 — RED 3: session identity.**
+- [x] **T1.3 — RED 3: session identity.**
   Seed a run whose finished `gate-<id>` substep `run_sessions` row is **newer**
   (`updated_at`) than the node's `default` row and also carries a non-null
   `acp_session_id`, with every incarnation terminal (so A14's first ranking key
@@ -555,7 +555,7 @@ mocked suite**.
   Also assert `classifyRecover`'s input: the plan/target decision must not be
   taken from a substep row (see T2.5).
 
-- [ ] **T1.4 — RED 4: durable authorization and the concurrent second click.**
+- [x] **T1.4 — RED 4: durable authorization and the concurrent second click.**
   SIGKILL the web process between the Phase-1 CAS and the dispatch
   (`web/test-support/real-web.ts` + the pattern at
   `web/test-support/__tests__/execution-ab-isolation.integration.test.ts:335`).
@@ -566,6 +566,34 @@ mocked suite**.
   (A20) and which must not regress.
   Expected RED on `83bce7bb`: after restart the run is re-crashed
   `agent-session-gone` (A12) or silently no-ops (A11).
+
+#### RED evidence recorded against `83bce7bb` (2026-09-18)
+
+All four executed in `integration` against real Postgres + the real supervisor
+(`mock-acp-adapter-resumable.mjs`). Family: `owner-flow-crash-recover` in
+`web/lib/flows/graph/__tests__/prompt-owners.integration.test.ts`.
+
+| RED | Verbatim failure | Chain observed in the driver log |
+| --- | --- | --- |
+| 1 (T1.1) | `AssertionError: expected 'Running' to be 'Review'`, preceded by the discriminating count: zero `session.prompt` rows under the run's current `execution_assignment_id` | `run-resume-driver … {"code":"CONFLICT","reason":"prompt_owner_invariant"} "runResumedSession: driver yielded to durable prompt owner"` → `reconcile … {"reason":"live-session"} "reconcile: reattached"` → `flow-runner-graph … {"code":"CONFLICT","details":{"reason":"assignment_fenced","assignmentId":"<retired>","local":true}} "driver-yielded awaiting durable prompt continuation"` |
+| 2 (T1.2) | `AssertionError: expected 'Running' to be 'Review'` — the owner applies the evidence, but nothing drives the graph afterwards | same `prompt_owner_invariant` yield; the continuation worker cannot serve the crashed attempt (A26) |
+| 3 (T1.3) | `expected … to match object { resumeSessionId: "mock-ea717fcc-…" }` / `received "acp-substep-8381dca3-…"` | the unfixed arm reads `loadActiveRunSession`, which ranks the finished `gate-review` row first once every incarnation is terminal |
+| 4 (T1.4) | `AssertionError: expected 'Running' to be 'Review'` | the committed intent has no owner: the sweep's `reattach` arm calls a bare `runFlow(runId)` and the already-owned guard no-ops it |
+
+`prompt_owner_invariant` is the `details.reason` that
+`PromptOwnerInvariantError` stamps; its `causeCode` at this seam is
+`node_admission_generation` (`node-prompt-owner.ts:107`). The test asserts the
+durable twin of that refusal — zero prompts under the new epoch — because the
+admission throws BEFORE the ledger row is written, so nothing about the refusal
+itself is persisted.
+
+**RED 3 was rewritten once.** Its first form PASSED against unfixed code: the
+node's own `run_session_incarnations` row was still non-terminal after the
+adapter kill, so liveness — ranking key 1 — decided in the node's favour and the
+substep never competed. The rewrite forces every incarnation terminal (the state
+a crashed run actually reaches once the host events settle) and asserts that
+precondition explicitly via `loadActiveRunSession`, so the case now fails for the
+hazard it is meant to pin rather than passing for the wrong reason.
 
 <!-- Commit checkpoint C2: tasks T1.1-T1.4 -->
 
