@@ -1,4 +1,4 @@
-import { OPERATOR_INTERRUPT_DECISION } from "@/lib/flows/graph/attempt-decisions";
+import { NON_CORRECTION_DECISIONS } from "@/lib/flows/graph/attempt-decisions";
 
 export type ObservatoryNodeStatus =
   | "Pending"
@@ -236,17 +236,18 @@ export function rollupCorrectionMetrics(input: {
   let retryCount = 0;
 
   for (const attempts of attemptsByRunNode.values()) {
-    // ADR-161: an operator restart advances `attempt` exactly like a genuine
-    // retry, so subtract them here as well. Excluding them from `reworkCount`
-    // ALONE would still report a fabricated correction rate — both counters
-    // have to move or the metric stays inflated.
-    const operatorRestarts = attempts.filter(
-      (row) => row.decision === OPERATOR_INTERRUPT_DECISION,
+    // ADR-161 + ADR-175: an operator restart and a crash recover each advance
+    // `attempt` exactly like a genuine retry, so subtract them here as well.
+    // Excluding them from `reworkCount` ALONE would still report a fabricated
+    // correction rate — both counters have to move or the metric stays inflated.
+    const nonCorrections = attempts.filter(
+      (row) =>
+        row.decision != null && NON_CORRECTION_DECISIONS.includes(row.decision),
     ).length;
 
     retryCount += Math.max(
       0,
-      maxNumber(attempts.map((row) => row.attempt)) - 1 - operatorRestarts,
+      maxNumber(attempts.map((row) => row.attempt)) - 1 - nonCorrections,
     );
   }
 
@@ -254,7 +255,8 @@ export function rollupCorrectionMetrics(input: {
     (attempt) =>
       eligibleRunSet.has(attempt.runId) &&
       attempt.status === "Reworked" &&
-      attempt.decision !== OPERATOR_INTERRUPT_DECISION,
+      (attempt.decision == null ||
+        !NON_CORRECTION_DECISIONS.includes(attempt.decision)),
   ).length;
   const runCount = eligibleRunIds.length;
 

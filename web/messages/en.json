@@ -2314,6 +2314,7 @@
     "reviewPreviewCancel": "Keep reviewing",
     "decisionApprove": "Approve",
     "decisionRework": "Request rework",
+    "decisionCrashRecover": "Recovered after crash",
     "reworking": "Reworking",
     "liveRefresh": "SSE refresh",
     "inputTokens": "Input tokens",

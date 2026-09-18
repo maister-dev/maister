@@ -580,6 +580,10 @@ export async function loadNodeInterruptMatrices(args: {
       decision: string | null;
     }>;
   const ledgerNodeIds = ledgerRows.map((r) => r.nodeId);
+  // ADR-175: this is the OPERATOR budget (`MAISTER_MAX_OPERATOR_RESTARTS`), so
+  // it names one decision deliberately and must NOT be widened to
+  // `NON_CORRECTION_DECISIONS`. A crash is not an operator action; counting it
+  // here would let crashes consume a reviewer's restart allowance.
   const operatorRestartCount = ledgerRows.filter(
     (r) => r.decision === OPERATOR_INTERRUPT_DECISION,
   ).length;

@@ -237,7 +237,7 @@ beforeEach(async () => {
 
 type SeedRunOpts = {
   status?: string;
-  runKind?: "flow" | "scratch";
+  runKind?: "flow" | "scratch" | "agent";
   acpSessionId?: string | null;
   currentStepId?: string | null;
   resumeStartedAt?: Date | null;
@@ -406,24 +406,30 @@ describe("resumeCrashedRun — resume-agent happy path (slot free)", () => {
     );
   }, 60_000);
 
-  it("refuses a non-flow run before the flow-only arm — its own recovery owner drives it", async () => {
-    const runId = await seedRun({
-      status: "Crashed",
-      runKind: "scratch",
-      currentStepId: "implement",
-      acpSessionId: "acp-scratch",
-    });
-    const runFlow = vi.fn(async () => {});
+  // One case per discriminant arm: half-A-tested plus half-B-tested is not
+  // A∘B-tested, and `driveResume` is SHARED with the scheduler's promotion.
+  it.each(["scratch", "agent"] as const)(
+    "refuses a %s run before the flow-only arm — its own recovery owner drives it",
+    async (runKind) => {
+      const runId = await seedRun({
+        status: "Crashed",
+        runKind,
+        currentStepId: "implement",
+        acpSessionId: `acp-${runKind}`,
+      });
+      const runFlow = vi.fn(async () => {});
 
-    const result = await resumeCrashedRun(runId, {
-      db,
-      executionHosts: hosts,
-      runFlow,
-    });
+      const result = await resumeCrashedRun(runId, {
+        db,
+        executionHosts: hosts,
+        runFlow,
+      });
 
-    expect(result).toEqual({ state: "unresumable" });
-    expect(runFlow).not.toHaveBeenCalled();
-  }, 60_000);
+      expect(result).toEqual({ state: "unresumable" });
+      expect(runFlow).not.toHaveBeenCalled();
+    },
+    60_000,
+  );
 });
 
 describe("resumeCrashedRun — redispatch (session-less retry_safe node)", () => {

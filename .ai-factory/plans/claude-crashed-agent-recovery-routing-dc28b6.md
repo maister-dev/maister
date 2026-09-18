@@ -924,7 +924,7 @@ Failure classification for the dispatch step:
 Exit criteria: RED 4 green; suites green; every consumer class below has been
 grepped and either updated or explicitly recorded as unaffected.
 
-- [ ] **T3.1 — Give the crash-recover intent an owner (Scope 6).**
+- [x] **T3.1 — Give the crash-recover intent an owner (Scope 6).**
   Files: `web/lib/reconcile.ts` (`classifyInner` `:379-390` and `:414-432`; the
   sweep dispatch `:1788-1815`).
   Two changes:
@@ -957,7 +957,7 @@ grepped and either updated or explicitly recorded as unaffected.
   assignmentId}`; `WARN [reconcile] running-with-idle-session {runId, sessionId}`
   plus the counter.
 
-- [ ] **T3.2 — Keep the cap-full path on the same door (Scope 5).**
+- [x] **T3.2 — Keep the cap-full path on the same door (Scope 5).**
   Files: `web/lib/scheduler.ts:583-600, :853, :1074`;
   `web/lib/runs/recover.ts:290-299`.
   The scheduler promotes a queued recover through `driveResume(id)` with **no
@@ -972,7 +972,7 @@ grepped and either updated or explicitly recorded as unaffected.
   Logging: `INFO [scheduler] promoted crashed recover {runId, assignmentId,
   arm}`.
 
-- [ ] **T3.3 — Fan `decision='crash_recover'` out to every consumer.**
+- [x] **T3.3 — Fan `decision='crash_recover'` out to every consumer.**
   Declare it as `CRASH_RECOVER_DECISION` in
   `web/lib/flows/graph/attempt-decisions.ts` — the pure module that exists
   precisely so the server-only writers and the pure counters share one
@@ -1030,6 +1030,26 @@ grepped and either updated or explicitly recorded as unaffected.
   Verify: one test per counter asserting a `crash_recover` row does not move it,
   and one asserting it DOES still move the operator-restart budget by zero.
   Logging: none beyond the existing timeline events.
+
+#### A third plan premise the code falsified (T3.1)
+
+The plan put the whole of T3.1 in the sweep's **`reattach`** arm. That arm only
+fires when a LIVE session exists, and the state a web death after the Phase-1
+commit actually leaves has **no** live session — so `classifyRunReconcile` took
+the `ai_coding` no-live-session branch and, past grace, **crashed the run again**,
+discarding the operator's decision. RED 4 reproduced exactly that.
+
+The committed intent therefore gets its own classifier arm — `recover`, ordered
+AFTER the grace guard so a live dispatch is never raced — and the sweep hands it
+to `driveResume` rather than re-implementing the evidence → close → dispatch
+ordering a second time. The `reattach` change is kept for the live-session case
+(A11) and now carries `{db, executionHosts}` plus the crash-resume signal.
+`crashRecoverPending` is computed in the sweep, so the classifier stays pure.
+
+Also confirmed rather than assumed (T3.3): all three `REVIEW_REWORK_CLAIM_DECISION`
+"active claim" readers go through `getActiveTakeover`, which filters
+`owner_user_id IS NOT NULL` and `ended_at IS NULL` — a closed `crash_recover` row
+carries neither, so it can never be read as a human claim.
 
 <!-- Commit checkpoint C5: tasks T3.1-T3.3 -->
 

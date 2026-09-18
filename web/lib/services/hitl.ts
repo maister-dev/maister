@@ -5237,6 +5237,9 @@ async function handleNodeInterruptResponse(args: {
   }
 
   // --- restart_node / restart_from ------------------------------------------
+  // ADR-175: the OPERATOR budget — one decision, deliberately. Widening this to
+  // `NON_CORRECTION_DECISIONS` would charge crashes to the operator's restart
+  // allowance. See the sibling guard in `node-interrupt.ts`.
   const restartCount = ledger.filter(
     (r: { decision: string | null }) =>
       r.decision === OPERATOR_INTERRUPT_DECISION,

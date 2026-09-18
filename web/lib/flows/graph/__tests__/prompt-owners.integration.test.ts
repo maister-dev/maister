@@ -3488,17 +3488,32 @@ describe("Flow prompt owners through the production graph driver", () => {
         }),
       ).resolves.toEqual({ state: "conflict" });
 
-      // No second click: the ordinary re-entry owns the committed intent.
+      // No second click: the reconcile sweep owns the committed intent. Age the
+      // claim past MAISTER_RECONCILE_GRACE_SECONDS first — inside grace a freshly
+      // claimed recover is deliberately protected from the sweep, so sweeping
+      // immediately would (correctly) skip it.
       continuation = startFlowContinuationWorker({
         db: database.db as unknown as Db,
         runtimeRoot: supervisor.runtimeRoot,
       });
-      await runReconcileSweep({
+      await database.pool.query(
+        "UPDATE runs SET resume_started_at = now() - interval '1 hour' WHERE id = $1",
+        [crashedRun.seeded.runId],
+      );
+      await database.pool.query(
+        "UPDATE node_attempts SET started_at = now() - interval '1 hour' WHERE run_id = $1",
+        [crashedRun.seeded.runId],
+      );
+      const sweep = await runReconcileSweep({
         db: database.db,
         executionHosts: createExecutionHosts({
           db: database.db as unknown as Db,
         }),
       });
+
+      // Classified and COUNTED, not silently skipped and not re-crashed.
+      expect(sweep.crashRecoverReentered).toBe(1);
+      expect(sweep.crashed).toBe(0);
       await expect
         .poll(
           async () => {

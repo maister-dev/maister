@@ -89,7 +89,7 @@ import {
   setMaterializationPlan,
   setSessionFallback,
 } from "./ledger";
-import { effectiveAttempts, operatorInterruptCount } from "./rework-baseline";
+import { effectiveAttempts, nonCorrectionAttemptCount } from "./rework-baseline";
 import {
   applyWorkspacePolicy,
   captureCheckpoint,
@@ -2929,9 +2929,10 @@ export async function runGraph(
       // e.g. approve at gateAttempt = maxLoops + 1) would be killed by its own
       // row. A rework that slips past the validate rule still dies here when
       // traversal returns to append visit maxLoops + 2 (the CONFIG backstop).
-      // ADR-161: operator restarts are excluded from the epoch count — see
-      // effectiveAttempts. Zero of them leaves the arithmetic unchanged.
-      const nodeOperatorRestarts = operatorInterruptCount(attempts, node.id);
+      // ADR-161 + ADR-175: operator restarts AND crash recovers are excluded
+      // from the epoch count — see effectiveAttempts. Zero of them leaves the
+      // arithmetic unchanged.
+      const nodeOperatorRestarts = nonCorrectionAttemptCount(attempts, node.id);
 
       if (
         node.rework &&
@@ -4590,7 +4591,7 @@ export async function runGraph(
         effectiveAttempts(
           nodeAttemptNumber,
           nodeReworkBaseline,
-          operatorInterruptCount(attempts, node.id),
+          nonCorrectionAttemptCount(attempts, node.id),
         ) > node.rework.maxLoops
       ) {
         // ADR-118: a loop node with `rework.onExhaustion` routes exhaustion via
