@@ -1886,6 +1886,20 @@ export const runs = pgTable(
       withTimezone: true,
       mode: "date",
     }),
+    // ADR-176: the per-run bound ADR-175 declined to pre-empt. `driveResume`
+    // deliberately returns `transient` without rolling back, which is correct
+    // against the sweep's <=60 s cadence and a hot loop against the ~1 s
+    // continuation worker. Both columns are reset in the SAME transaction that
+    // stamps `resume_started_at`, so every new intent starts from zero — the
+    // two repark release sites would otherwise strand a count into an
+    // unrelated future intent.
+    crashRecoverNextRetryAt: timestamp("crash_recover_next_retry_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    crashRecoverAttempts: integer("crash_recover_attempts")
+      .notNull()
+      .default(0),
     // Flow traversal coordination, separate from execution-host assignment and
     // prompt application. Every continuation write checks this renewable token.
     flowDriverToken: text("flow_driver_token"),
@@ -2040,6 +2054,12 @@ export const runs = pgTable(
     flowDriverClaim: check(
       "runs_flow_driver_claim_check",
       sql`(${t.flowDriverToken} IS NULL AND ${t.flowDriverLeaseExpiresAt} IS NULL) OR (${t.runKind} = 'flow' AND ${t.flowDriverToken} IS NOT NULL AND ${t.flowDriverLeaseExpiresAt} IS NOT NULL)`,
+    ),
+    // ADR-176: a negative budget would make the worker's `<` predicate serve a
+    // run forever, which is the unbounded retry the column exists to prevent.
+    crashRecoverAttemptsCheck: check(
+      "runs_crash_recover_attempts_check",
+      sql`${t.crashRecoverAttempts} >= 0`,
     ),
     idxFlowDriverLease: index("runs_flow_driver_lease_idx")
       .on(t.flowDriverLeaseExpiresAt, t.id)

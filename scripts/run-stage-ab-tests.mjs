@@ -26,6 +26,9 @@ export const laneSuites = {
     "lib/flows/graph/__tests__/gate-permission-result.integration.test.ts",
     "lib/flows/graph/__tests__/permission-result-failure.integration.test.ts",
     "lib/flows/graph/__tests__/driver-claim.integration.test.ts",
+    // ADR-176: the flow worker's crash-recover arm — the routed dispatch, the
+    // budget and the two new racers.
+    "lib/flows/graph/__tests__/crash-recover-continuation.integration.test.ts",
     "lib/scratch-runs/__tests__/prompt-owners.integration.test.ts",
     "lib/scratch-runs/__tests__/local-package-assistant.integration.test.ts",
     "lib/services/__tests__/gate-chat.integration.test.ts",

@@ -156,6 +156,8 @@ erDiagram
         timestamp checkpoint_at "when graceful checkpoint happened"
         timestamp keepalive_until "30min sliding window in NeedsInput"
         timestamp resume_started_at "Recover in-flight marker + reconcile grace anchor"
+        timestamp crash_recover_next_retry_at "Implemented ADR-176 0171: worker backoff deadline for the committed recover intent, nullable — NULL = eligible now"
+        int crash_recover_attempts "Implemented ADR-176 0171: per-run bound on automated crash-recover re-entry, NOT NULL DEFAULT 0, CHECK >= 0, cap 5"
         timestamp resume_requested_at "ADR-121 (0087): idle HITL answered, awaiting a slot (C3 FIFO key)"
         timestamp queue_admitted_at "ADR-121 (0087): auto-drain origin marker, NULL = manual/scratch/resume"
         text resume_target_step_id "node id retained at crash time for Recover; current_step_id is nulled on crash (0016)"

@@ -23,6 +23,7 @@ import {
   clearCrashRecoverMarker,
   closeCrashedNodeAttempts,
   resolveNodeResumeSessionId,
+  CRASH_RECOVER_BUDGET_RESET,
 } from "@/lib/runs/crash-recover";
 import { crashRunningRun } from "@/lib/runs/state-transitions";
 import { SETTLED_RUN_STATUSES } from "@/lib/runs/run-status-sets";
@@ -251,6 +252,12 @@ export async function resumeCrashedRun(
           status: "Pending",
           resumeStartedAt: at,
           currentStepId: resumeTarget,
+          // ADR-176 D4: the budget is INTENT-scoped and is reset in the same
+          // transaction that stamps the marker. Resetting here rather than at
+          // the five release sites is what makes a fresh intent always start
+          // from zero — two of those sites are reparks, which would otherwise
+          // strand a count into an unrelated future intent.
+          ...CRASH_RECOVER_BUDGET_RESET,
         })
         .where(and(eq(runs.id, runId), eq(runs.status, "Crashed")))
         .returning({ id: runs.id });
@@ -277,6 +284,8 @@ export async function resumeCrashedRun(
         status: "Running",
         resumeStartedAt: at,
         currentStepId: resumeTarget,
+        // ADR-176 D4: see the queued arm above — reset at the WRITE site.
+        ...CRASH_RECOVER_BUDGET_RESET,
       })
       .where(and(eq(runs.id, runId), eq(runs.status, "Crashed")))
       .returning({ id: runs.id });

@@ -39,6 +39,7 @@ import {
 } from "@/lib/instance-config";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { loadActiveRunSessionsByRunId } from "@/lib/runs/active-run-session";
+import { routeCrashRecover } from "@/lib/runs/crash-recover-route";
 import {
   isTerminalRunStatus,
   SETTLED_RUN_STATUSES,
@@ -225,6 +226,30 @@ export interface ReconcileDecision {
   reason: ReconcileReason;
 }
 
+// ADR-176 D1: the single mapping from the shared crash-recover route to this
+// classifier's vocabulary. Total, so neither arm can silently grow a case the
+// continuation worker does not also serve; `reattach` maps to the same
+// `live-session` reason the non-recover live arm returns, and `wait` to the
+// same `grace-window` skip, which is what keeps this refactor byte-identical.
+function crashRecoverClassification(
+  input: ReconcileInput,
+  liveSession: boolean,
+): ReconcileDecision {
+  const route = routeCrashRecover({
+    liveSession,
+    resumeStartedAt: input.resumeStartedAt,
+    latestAttemptStartedAt: input.latestAttemptStartedAt,
+    nowMs: input.nowMs,
+    graceSeconds: input.graceSeconds,
+  });
+
+  if (route === "reattach")
+    return { action: "reattach", reason: "live-session" };
+  if (route === "wait") return { action: "skip", reason: "grace-window" };
+
+  return { action: "recover", reason: "crash-recover-pending" };
+}
+
 // Pure (no db/clock): the §0.3 decision table, asserted in EXACT order. A
 // scratch or platform-agent run carries no compiled graph node, so when it
 // reaches the no-live-session branch its kind is FORCED to 'ai_coding'
@@ -405,6 +430,13 @@ function classifyInner(input: ReconcileInput): ReconcileDecision {
         : { action: "reobserve", reason: "agent-observer-gone" };
     }
 
+    // ADR-176 D1: a committed recover intent is routed by the SHARED decision
+    // the continuation worker also asks, so the two cannot hold different views
+    // of when `driveResume` is safe. Liveness outranks grace here exactly as it
+    // does in the helper, which is why this arm precedes the grace guard below.
+    if (input.crashRecoverPending)
+      return crashRecoverClassification(input, true);
+
     return { action: "reattach", reason: "live-session" };
   }
 
@@ -435,6 +467,19 @@ function classifyInner(input: ReconcileInput): ReconcileDecision {
     // grace-window-then-crash treatment as ai_coding.
     // Anchor = the MORE RECENT non-null of resume/latest-attempt. Within grace
     // (strict <) → skip; past grace (incl. both null) → crash.
+    // ADR-175: past grace with a committed crash-recover intent still unclaimed
+    // means the operator's Recover lost its dispatcher, NOT that the run is
+    // unrecoverable. Crashing it here is what made a recovered run loop: the
+    // click is discarded and the operator has to click again. Ordered AFTER the
+    // grace guard so a live dispatch in flight is never raced.
+    //
+    // ADR-176 D1: when the intent is committed, the grace-vs-recover split is
+    // the SHARED decision (`wait` <=> this classifier's `grace-window` skip),
+    // so the sweep and the continuation worker cannot disagree about when a
+    // dispatch may still be in flight. Reaching here means no live session.
+    if (input.crashRecoverPending)
+      return crashRecoverClassification(input, false);
+
     const anchorMs = mostRecentMs(
       input.resumeStartedAt,
       input.latestAttemptStartedAt,
@@ -445,15 +490,6 @@ function classifyInner(input: ReconcileInput): ReconcileDecision {
       (input.nowMs - anchorMs) / 1000 < input.graceSeconds
     ) {
       return { action: "skip", reason: "grace-window" };
-    }
-
-    // ADR-175: past grace with a committed crash-recover intent still unclaimed
-    // means the operator's Recover lost its dispatcher, NOT that the run is
-    // unrecoverable. Crashing it here is what made a recovered run loop: the
-    // click is discarded and the operator has to click again. Ordered AFTER the
-    // grace guard so a live dispatch in flight is never raced.
-    if (input.crashRecoverPending) {
-      return { action: "recover", reason: "crash-recover-pending" };
     }
 
     return { action: "crash", reason: "agent-session-gone" };
