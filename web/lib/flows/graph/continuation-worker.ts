@@ -89,6 +89,8 @@ export function startFlowContinuationWorker(input: {
               // second read of the row it just selected.
               resumeStartedAt: runs.resumeStartedAt,
               currentStepId: runs.currentStepId,
+              crashRecoverAttempts: runs.crashRecoverAttempts,
+              crashRecoverNextRetryAt: runs.crashRecoverNextRetryAt,
             })
             .from(runs)
             .innerJoin(
@@ -254,8 +256,28 @@ export function startFlowContinuationWorker(input: {
         // ADR-176: a committed recover intent is routed BEFORE the
         // WaitingOnChildren arm and always `continue`s, so it can never fall
         // through to the ordinary `runFlow` dispatch below.
-        if (candidate.status === "Running" && candidate.resumeStartedAt) {
-          await serveCrashRecover(candidate);
+        //
+        // The guard repeats arm C's ELIGIBILITY, not just its shape. A run can
+        // reach this loop through the ordinary evidence arm while still
+        // carrying the marker, and routing it here on shape alone would spend
+        // crash-recover budget on a candidate arm C had already refused — so a
+        // run past the cap would keep being served through the other arm and
+        // the bound would leak. Ineligible here means: behave exactly as this
+        // worker did before this arm existed, and let the sweep backstop it.
+        if (
+          candidate.status === "Running" &&
+          candidate.resumeStartedAt &&
+          candidate.currentStepId &&
+          candidate.crashRecoverAttempts <
+            CRASH_RECOVER_CONTINUATION_MAX_ATTEMPTS &&
+          (candidate.crashRecoverNextRetryAt === null ||
+            candidate.crashRecoverNextRetryAt.getTime() <= Date.now())
+        ) {
+          await serveCrashRecover({
+            id: candidate.id,
+            resumeStartedAt: candidate.resumeStartedAt,
+            currentStepId: candidate.currentStepId,
+          });
           continue;
         }
         if (candidate.status === "WaitingOnChildren") {
@@ -297,8 +319,9 @@ export function startFlowContinuationWorker(input: {
   // silent no-op.
   const serveCrashRecover = async (candidate: {
     id: string;
-    resumeStartedAt: Date | null;
-    currentStepId: string | null;
+    // Non-null by the caller's guard, which repeats arm C's eligibility.
+    resumeStartedAt: Date;
+    currentStepId: string;
   }): Promise<void> => {
     const hosts =
       input.executionHosts ?? createExecutionHosts({ db: input.db });
@@ -369,7 +392,7 @@ export function startFlowContinuationWorker(input: {
       await runFlow(candidate.id, {
         ...input,
         executionHosts: hosts,
-        crashResume: { targetStepId: candidate.currentStepId as string },
+        crashResume: { targetStepId: candidate.currentStepId },
         signal: controller.signal,
       });
 

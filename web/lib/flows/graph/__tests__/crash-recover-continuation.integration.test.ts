@@ -211,6 +211,7 @@ type SeedOpts = {
   assignmentState?: "active" | "released";
   withAssignment?: boolean;
   latestAttemptStartedAt?: Date | null;
+  openAttemptOnAssignment?: boolean;
 };
 
 async function seedCrashRecoverRun(opts: SeedOpts = {}): Promise<string> {
@@ -263,7 +264,7 @@ async function seedCrashRecoverRun(opts: SeedOpts = {}): Promise<string> {
       .set({ executionAssignmentId: assignmentId })
       .where(eq(schema.runs.id, runId));
   }
-  if (opts.latestAttemptStartedAt) {
+  if (opts.latestAttemptStartedAt || opts.openAttemptOnAssignment) {
     await db.insert(schema.nodeAttempts).values({
       id: randomUUID(),
       runId,
@@ -271,7 +272,14 @@ async function seedCrashRecoverRun(opts: SeedOpts = {}): Promise<string> {
       nodeType: "ai_coding",
       attempt: 1,
       status: "Running",
-      startedAt: opts.latestAttemptStartedAt,
+      startedAt:
+        opts.latestAttemptStartedAt ??
+        new Date(Date.now() - (GRACE_SECONDS + 30) * 1000),
+      // Binding the attempt to the ACTIVE assignment is what makes the run
+      // match the worker's ORDINARY evidence arm as well as arm C.
+      ...(opts.openAttemptOnAssignment
+        ? { executionAssignmentId: assignmentId }
+        : {}),
     });
   }
 
@@ -512,6 +520,37 @@ describe("flow continuation worker — crash-recover arm (ADR-176)", () => {
 
     expect(driveResumeMock.mock.calls.length).toBe(0);
     expect(runFlowMock.mock.calls.length).toBe(0);
+  }, 60_000);
+
+  // The bound must not LEAK through the worker's other arm. A run can reach the
+  // candidate set through the ordinary evidence arm (an open Running attempt on
+  // the ACTIVE assignment) while still carrying the recover marker. Routing it
+  // on shape alone would spend crash-recover budget on a candidate arm C had
+  // already refused, and a run past the cap would be served forever.
+  it("does not spend budget through the ordinary evidence arm once the cap is reached", async () => {
+    const runId = await seedCrashRecoverRun({
+      attempts: 5,
+      openAttemptOnAssignment: true,
+    });
+
+    await runWorkerUntil(() => false, 5_000);
+
+    expect(driveResumeMock.mock.calls.length).toBe(0);
+    expect((await runRow(runId)).attempts).toBe(5);
+    // It IS still a candidate through the ordinary arm, which is the point:
+    // ineligible for the crash-recover route means "behave as before this arm
+    // existed", not "disappear".
+    expect(runFlowMock.mock.calls.length).toBeGreaterThanOrEqual(1);
+  }, 60_000);
+
+  // The same run one below the cap takes the crash-recover route, so the case
+  // above is discriminating on the budget and not on the seed shape.
+  it("still routes the same shape through crash-recover below the cap", async () => {
+    await seedCrashRecoverRun({ attempts: 4, openAttemptOnAssignment: true });
+
+    await runWorkerUntil(() => driveResumeMock.mock.calls.length > 0);
+
+    expect(driveResumeMock.mock.calls.length).toBeGreaterThanOrEqual(1);
   }, 60_000);
 
   // D3/D4 — the two Scope-6 racers the worker adds. `claimFlowDriver`'s

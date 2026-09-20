@@ -398,6 +398,13 @@ already passed the SQL filter and the grace guard — a state that exists only
 after a web death. A throwing probe yields the candidate to the sweep and
 dispatches nothing.
 
+The budget counts **attempts, not rounds**. The worker's two slots both select
+the same head row and both dispatch — single-winner is `claimFlowDriver` inside
+`runFlow`, and the pre-dispatch stretch is idempotent by construction — so a
+failing round spends two attempts against the cap of five. The shared
+`crash_recover_next_retry_at` still removes the run from both slots' candidate
+sets until it expires, so the loop stays bounded and backed off.
+
 **Recovery-window table (normative).** Every reachable cell names its owner. The
 worker's cells all additionally require `execution_assignments.state = 'active'`
 and `crash_recover_attempts < 5`.

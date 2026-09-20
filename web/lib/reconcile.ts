@@ -465,8 +465,6 @@ function classifyInner(input: ReconcileInput): ReconcileDecision {
   if (kind === "ai_coding" || kind === "orchestrator") {
     // M36 (ADR-095): an orchestrator node is a live agent session — same
     // grace-window-then-crash treatment as ai_coding.
-    // Anchor = the MORE RECENT non-null of resume/latest-attempt. Within grace
-    // (strict <) → skip; past grace (incl. both null) → crash.
     // ADR-175: past grace with a committed crash-recover intent still unclaimed
     // means the operator's Recover lost its dispatcher, NOT that the run is
     // unrecoverable. Crashing it here is what made a recovered run loop: the
@@ -480,6 +478,8 @@ function classifyInner(input: ReconcileInput): ReconcileDecision {
     if (input.crashRecoverPending)
       return crashRecoverClassification(input, false);
 
+    // Anchor = the MORE RECENT non-null of resume/latest-attempt. Within grace
+    // (strict <) → skip; past grace (incl. both null) → crash.
     const anchorMs = mostRecentMs(
       input.resumeStartedAt,
       input.latestAttemptStartedAt,
