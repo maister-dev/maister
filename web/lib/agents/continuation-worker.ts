@@ -3,6 +3,8 @@ import "server-only";
 import type { Db } from "@/lib/execution-host/db";
 import type { ExecutionHosts } from "@/lib/execution-host/client";
 
+import { randomUUID } from "node:crypto";
+
 import {
   and,
   asc,
@@ -40,7 +42,7 @@ const log = pino({
 /** Accepted turns and pending choices are the queue. Each bounded pass enters
  * the ordinary cap claim and idempotent create/prompt/application paths. It
  * cannot mint authority from an event or keep a hung run ahead of its siblings.
- * Activation is held until the S2 owner gate is qualified.
+ * A single loop, unlike its two-slot siblings.
  */
 export function startAgentContinuationWorker(input: {
   db: Db;
@@ -53,6 +55,7 @@ export function startAgentContinuationWorker(input: {
   };
 }> {
   const controller = new AbortController();
+  const workerId = `agent-continuation-worker:${randomUUID()}`;
   const hosts = input.executionHosts ?? createExecutionHosts({ db: input.db });
   let reason: string | null = null;
   let stopped = false;
@@ -212,7 +215,7 @@ export function startAgentContinuationWorker(input: {
           continue;
         reason = isMaisterError(error) ? error.code : "service_failure";
         log.error(
-          { reason, runId: cursor },
+          { workerId, reason, runId: cursor },
           "agent-continuation-worker-degraded",
         );
         await runEventWakeBus.waitForProjection(1_000, controller.signal);
@@ -221,6 +224,10 @@ export function startAgentContinuationWorker(input: {
   };
   const running = serve();
   let shutdown: Promise<void> | undefined;
+
+  // Concurrency is 1 by construction here: a single loop, not the two slots
+  // its prompt-owner and flow siblings take from `projectionLimitsFromEnv`.
+  log.info({ workerId, concurrency: 1 }, "agent-continuation-worker-started");
 
   return {
     health: () => ({
@@ -232,6 +239,7 @@ export function startAgentContinuationWorker(input: {
         controller.abort();
         await running;
         stopped = true;
+        log.info({ workerId }, "agent-continuation-worker-stopped");
       })();
 
       return shutdown;

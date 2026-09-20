@@ -3,6 +3,8 @@ import "server-only";
 import type { Db } from "@/lib/execution-host/db";
 import type { RunFlowOptions } from "./runner-core";
 
+import { randomUUID } from "node:crypto";
+
 import {
   and,
   asc,
@@ -59,6 +61,7 @@ export function startFlowContinuationWorker(input: {
   };
 }> {
   const controller = new AbortController();
+  const workerId = `flow-continuation-worker:${randomUUID()}`;
   const failures = new Map<number, string>();
   let shutdownFailure: { error: unknown } | undefined;
   let stopped = false;
@@ -214,7 +217,10 @@ export function startFlowContinuationWorker(input: {
 
         failures.set(slot, reason);
         if (controller.signal.aborted) shutdownFailure ??= { error };
-        log.error({ slot, reason }, "flow-continuation-worker-degraded");
+        log.error(
+          { workerId, slot, reason },
+          "flow-continuation-worker-degraded",
+        );
         await runEventWakeBus.waitForProjection(1_000, controller.signal);
       }
     }
@@ -224,6 +230,11 @@ export function startFlowContinuationWorker(input: {
     (_, slot) => serve(slot),
   );
   let shutdown: Promise<void> | undefined;
+
+  log.info(
+    { workerId, concurrency: slots.length },
+    "flow-continuation-worker-started",
+  );
 
   return {
     health: () => ({
@@ -236,6 +247,7 @@ export function startFlowContinuationWorker(input: {
         await Promise.all(slots);
         if (shutdownFailure) throw shutdownFailure.error;
         stopped = true;
+        log.info({ workerId }, "flow-continuation-worker-stopped");
       })();
 
       return shutdown;

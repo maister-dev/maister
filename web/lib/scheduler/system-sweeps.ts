@@ -435,6 +435,24 @@ export async function runSystemSweep(): Promise<SystemSweepSummary> {
     log.error({ err: message }, "system_sweep digest trigger threw");
   }
 
+  try {
+    // Local durable-worker health, distinct from `platform-status`, which
+    // reports the REMOTE supervisor's. Imports only `lib/workers/health.ts`,
+    // which carries no domain graph — importing the composition root here
+    // would pull the flow runner into the scheduler bundle.
+    const { durableWorkersHealth } = await import("@/lib/workers/health");
+
+    log.info(
+      { workers: durableWorkersHealth() },
+      "system_sweep durable worker health",
+    );
+  } catch (err) {
+    const message = errorMessage(err);
+
+    errors.push(`durable worker health failed: ${message}`);
+    log.error({ err: message }, "system_sweep durable worker health threw");
+  }
+
   const summary = {
     digest,
     keepalive,

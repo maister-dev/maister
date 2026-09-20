@@ -1,5 +1,31 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+// The sweep's logger is module-scoped, so the only way to assert a LINE (as
+// opposed to the value behind it) is to own the pino factory for this file.
+const logLines = vi.hoisted(
+  () => [] as Array<{ payload: unknown; msg: unknown }>,
+);
+
+vi.mock("pino", () => {
+  const record =
+    (bucket: typeof logLines) =>
+    (payload: unknown, msg?: unknown): void => {
+      bucket.push({ payload, msg });
+    };
+  const logger = {
+    info: record(logLines),
+    error: record(logLines),
+    warn: record(logLines),
+    debug: record(logLines),
+    trace: record(logLines),
+    fatal: record(logLines),
+    child: () => logger,
+    level: "info",
+  };
+
+  return { default: () => logger };
+});
+
 const runSweepTickMock = vi.hoisted(() => vi.fn());
 const runReconcileSweepMock = vi.hoisted(() => vi.fn());
 const reconcileTerminalCostRollupsMock = vi.hoisted(() => vi.fn());
@@ -302,6 +328,44 @@ describe("scheduler system sweeps", () => {
     expect(runSyncRecoverySweepMock).toHaveBeenCalledTimes(1);
     expect(sweepEvaluationEvidenceMock).toHaveBeenCalledTimes(1);
     expect(runPlainAgentDirectoryGcSweepMock).toHaveBeenCalledTimes(1);
+  });
+
+  // ADR-176 / D3: local durable-worker health rides the sweep summary. The
+  // import is deliberately `lib/workers/health.ts` and NOT the composition
+  // root — the root pulls the flow runner, which in a partially-mocked suite
+  // like this one fails whole files as SKIPS rather than as errors.
+  it("logs local durable worker health once per tick, surfacing a degraded worker's reason", async () => {
+    const { writeDurableWorkerSlot } = await import("@/lib/workers/health");
+    const { runSystemSweep } = await import("../system-sweeps");
+
+    try {
+      writeDurableWorkerSlot("flowContinuation", {
+        stop: async () => {},
+        health: () => ({ state: "degraded", reason: "EXECUTOR_UNAVAILABLE" }),
+      });
+      logLines.length = 0;
+
+      const summary = await runSystemSweep();
+      const health = logLines.filter(
+        (line) => line.msg === "system_sweep durable worker health",
+      );
+
+      expect(health, "exactly one health line per tick").toHaveLength(1);
+      expect(health[0].payload).toEqual({
+        workers: {
+          promptOwner: { state: "stopped", reason: null },
+          flowContinuation: {
+            state: "degraded",
+            reason: "EXECUTOR_UNAVAILABLE",
+          },
+          agentContinuation: { state: "stopped", reason: null },
+        },
+      });
+      // Diagnostic only: a health read must never fail the tick.
+      expect(summary.errors).toEqual([]);
+    } finally {
+      writeDurableWorkerSlot("flowContinuation", undefined);
+    }
   });
 
   // Every arm is individually try/caught into `errors[]`, so a sweep that throws
