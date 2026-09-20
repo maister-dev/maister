@@ -25,7 +25,7 @@ import {
   summarizeDeliveryHistory,
 } from "@/lib/delivery-history-core";
 import { containmentAssert } from "@/lib/flows/graph/workspace-checkpoint";
-import { classifyGitError, redactUrl } from "@/lib/repo-source";
+import { redactUrl } from "@/lib/repo-source";
 import {
   installWorktreeProvenance,
   type MaisterProvenance,
@@ -37,6 +37,22 @@ import {
 
 const execFileAsync = promisify(execFile);
 
+// git's human-facing diagnostics are gettext-translated, and on macOS libintl
+// falls back to the system language when LANG/LC_ALL are unset — so on a
+// Russian-language host `git` reports "Не удалось прочитать из внешнего
+// репозитория", not "Could not read from remote repository". Every call site
+// that CLASSIFIES a failure by scanning that text (classifyGitError,
+// isNonFastForwardPush, the "already exists"/"not found" matchers) would then
+// silently key off the operator's machine language. Pinning LC_ALL is what
+// makes the text a stable signal — same reason hasConflictMarkers forces it.
+// Built per call, never snapshotted at module load: tests (and the config-persist
+// route) set HOME / GIT_CONFIG_GLOBAL on process.env AFTER this module is
+// imported, and a frozen copy would silently ignore them.
+const cLocaleGitEnv = (): NodeJS.ProcessEnv => ({
+  ...process.env,
+  LC_ALL: "C",
+});
+
 // Hardened env mirroring repo-source's network git: a missing credential helper
 // or unknown host key fails fast (no interactive prompt) instead of blocking
 // until the 60s timeout. Applied ONLY to the network push, not local git.
@@ -44,6 +60,7 @@ const NETWORK_GIT_ENV: NodeJS.ProcessEnv = {
   ...process.env,
   GIT_TERMINAL_PROMPT: "0",
   GIT_SSH_COMMAND: "ssh -o BatchMode=yes",
+  LC_ALL: "C",
 };
 
 const log = pino({
@@ -153,6 +170,7 @@ async function runGit(
   return execFileAsync("git", ["-C", repo, ...args], {
     signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
     maxBuffer: EXEC_MAX_BUFFER,
+    env: cLocaleGitEnv(),
   });
 }
 
@@ -1251,19 +1269,35 @@ export async function pullRemote(
     }
 
     log.info({ projectRepoPath: repo, remote: name, branch }, "pullRemote");
+
+    // `git pull --ff-only` IS `fetch` + `merge --ff-only`; running the two
+    // steps separately is what makes the contract's 409/503 split structural.
+    // WHICH STEP failed decides the code — the transport step (unreachable
+    // remote / auth, retryable 503) vs the local fast-forward (divergence,
+    // terminal 409) — instead of pattern-matching git's stderr, which is
+    // translated and so encoded the operator's machine language, not the
+    // failure. Splitting is behaviour-preserving: the explicit fetch updates
+    // the remote-tracking ref exactly as the implicit one did.
+    const pullFailure = (
+      err: unknown,
+      code: "EXECUTOR_UNAVAILABLE" | "CONFLICT",
+    ): MaisterError => {
+      const detail = redactUrl(errorText(err) || asError(err).message);
+
+      log.warn(
+        { projectRepoPath: repo, remote: name, branch, detail },
+        "pull failed",
+      );
+
+      return new MaisterError(code, `git pull failed: ${detail}`, {
+        cause: asError(err),
+      });
+    };
+
     try {
       await execFileAsync(
         "git",
-        [
-          "-C",
-          repo,
-          "pull",
-          "--ff-only",
-          "--no-rebase",
-          "--no-autostash",
-          name,
-          branch,
-        ],
+        ["-C", repo, "fetch", "--end-of-options", name, branch],
         {
           signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
           maxBuffer: EXEC_MAX_BUFFER,
@@ -1271,21 +1305,35 @@ export async function pullRemote(
         },
       );
     } catch (err) {
-      const detail = redactUrl(errorText(err) || asError(err).message);
-      const networkFailure =
-        classifyGitError(detail) !== "UNKNOWN" ||
-        asError(err).name === "AbortError";
+      throw pullFailure(err, "EXECUTOR_UNAVAILABLE");
+    }
 
-      log.warn(
-        { projectRepoPath: repo, remote: name, branch, detail },
-        "pull failed",
-      );
-      throw new MaisterError(
-        networkFailure ? "EXECUTOR_UNAVAILABLE" : "CONFLICT",
-        `git pull failed: ${detail}`,
+    try {
+      await execFileAsync(
+        "git",
+        [
+          "-C",
+          repo,
+          "merge",
+          "--ff-only",
+          "--no-autostash",
+          "--end-of-options",
+          "FETCH_HEAD",
+        ],
         {
-          cause: asError(err),
+          signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
+          maxBuffer: EXEC_MAX_BUFFER,
+          env: cLocaleGitEnv(),
         },
+      );
+    } catch (err) {
+      // A timed-out merge is "we do not know", never a divergence verdict —
+      // calling it terminal would tell an unattended caller not to retry.
+      throw pullFailure(
+        err,
+        asError(err).name === "AbortError"
+          ? "EXECUTOR_UNAVAILABLE"
+          : "CONFLICT",
       );
     }
   });

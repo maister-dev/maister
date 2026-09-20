@@ -56,7 +56,10 @@ function asError(err: unknown): Error {
 }
 
 // Hardened env so a missing credential / unknown host key fails fast instead of
-// hanging on an interactive prompt.
+// hanging on an interactive prompt. LC_ALL pins git's gettext-translated
+// diagnostics to English — classifyGitError reads this very stderr, so without
+// it the clone reason silently depends on the operator's machine language
+// (macOS libintl falls back to the system language when LANG is unset).
 function gitExecOptions(timeoutMs: number, signal?: AbortSignal) {
   const timeoutSignal = AbortSignal.timeout(timeoutMs);
 
@@ -67,6 +70,7 @@ function gitExecOptions(timeoutMs: number, signal?: AbortSignal) {
       ...process.env,
       GIT_TERMINAL_PROMPT: "0",
       GIT_SSH_COMMAND: "ssh -o BatchMode=yes",
+      LC_ALL: "C",
     },
   };
 }
