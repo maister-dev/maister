@@ -57,7 +57,7 @@ import {
 } from "@/test-support/durable-workers-ledger";
 import { mkdtempReal } from "@/test-support/worktree-test-root";
 
-const TERMINAL_DELAY_MS = 20_000;
+const TERMINAL_DELAY_MS = 60_000;
 const EVIDENCE_BUDGET_MS = 180_000;
 // Large enough that preparation reads several bounded pages, so the `applying`
 // window is observable from outside the process; small enough to stay cheap.

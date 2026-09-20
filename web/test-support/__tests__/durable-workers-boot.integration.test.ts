@@ -66,8 +66,11 @@ import { mkdtempReal } from "@/test-support/worktree-test-root";
 
 // The adapter holds its terminal response this long after streaming output.
 // The window has to outlast a SIGKILL plus the assertions around it, and stay
-// well inside the per-case budget.
-const TERMINAL_DELAY_MS = 20_000;
+// well inside the per-case budget. Sized for the PARALLEL integration lane,
+// not for an idle host: this suite runs among ~480 files there, and CPU
+// starvation between admission and the poll that notices it is what closes the
+// window early. 60 s costs ~40 s per row after the kill and buys that margin.
+const TERMINAL_DELAY_MS = 60_000;
 // Trap 3: the dead process's runtime-event stream claim holds for
 // RUNTIME_EVENT_CLAIM_LEASE_MS (30 s), so terminal evidence lands only after
 // one to three lease cycles. Never assert on a fixed short sleep.

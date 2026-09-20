@@ -110,7 +110,10 @@ export async function awaitOwnedPrompt(
   db: NodePgDatabase,
   ownerKind: OwnerKind,
   seenBefore: ReadonlySet<string>,
-  timeoutMs = 120_000,
+  // Admission itself is what starves in the parallel lane — the flow row landed
+  // in 33 s there while the agent and scratch rows exceeded 120 s. The budget is
+  // the lane's, not an idle host's.
+  timeoutMs = 360_000,
 ): Promise<PromptCommandRow> {
   return poll(
     async () =>

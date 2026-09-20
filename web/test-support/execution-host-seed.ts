@@ -3,6 +3,8 @@ import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
 import { randomUUID } from "node:crypto";
 
+import { sql } from "drizzle-orm";
+
 import * as fullSchema from "@/lib/db/schema";
 
 // Minimal rows for execution-host tests: one project, one run, one registered
@@ -58,21 +60,37 @@ export async function seedRun(
 ): Promise<string> {
   const runId = input.id ?? randomUUID();
 
-  await db.insert(schema.runs).values({
-    id: runId,
-    projectId: input.projectId || null,
-    runKind: input.runKind ?? "scratch",
-    status: input.status ?? "Running",
-    flowVersion: "scratch",
-    flowRevision: "manual",
-    agentWorkspace: input.agentWorkspace ?? null,
-    localPackageId: input.localPackageId ?? null,
-    contextMounts: input.contextMounts ?? null,
-    rootRunId: input.rootRunId ?? null,
-    workspaceMode: input.workspaceMode ?? null,
-    executionDataPlaneMode:
-      input.executionDataPlaneMode ?? "canonical_events_v1",
-  });
+  // RAW SQL, naming only the columns this helper actually sets.
+  //
+  // A Drizzle insert emits the table's WHOLE column list, so seeding through
+  // the schema binds every caller to the CURRENT shape of `runs`. Ten-plus
+  // suites replay a PARTIAL migration point (`startMainPostgresTestDbUpTo`)
+  // and then call this helper — against those databases the current shape does
+  // not exist yet, and the insert fails with `column "…" of relation "runs"
+  // does not exist`. Adding `crash_recover_next_retry_at` / `_attempts` in
+  // migration 0171 is what surfaced it; the next column on `runs` would do the
+  // same. Naming the columns makes this helper depend on the columns it uses
+  // rather than on every column the schema happens to declare.
+  await db.execute(sql`
+    INSERT INTO runs (
+      id, project_id, run_kind, status, flow_version, flow_revision,
+      agent_workspace, local_package_id, context_mounts, root_run_id,
+      workspace_mode, execution_data_plane_mode
+    ) VALUES (
+      ${runId},
+      ${input.projectId || null},
+      ${input.runKind ?? "scratch"},
+      ${input.status ?? "Running"},
+      'scratch',
+      'manual',
+      ${input.agentWorkspace ?? null},
+      ${input.localPackageId ?? null},
+      ${input.contextMounts ? JSON.stringify(input.contextMounts) : null}::jsonb,
+      ${input.rootRunId ?? null},
+      ${input.workspaceMode ?? null},
+      ${input.executionDataPlaneMode ?? "canonical_events_v1"}
+    )
+  `);
 
   return runId;
 }
