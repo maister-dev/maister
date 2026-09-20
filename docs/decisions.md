@@ -216,6 +216,8 @@ validate:docs` enforces stub ↔ body equality and the file bijection.
 | [ADR-172](#adr-172-desk-home-information-architecture-and-the-member-default-route) | Desk home information architecture and the member default route | Accepted; D1 partially superseded by ADR-174 | 2026-09-10 |
 | [ADR-173](#adr-173-user-notification-subscriptions-and-web-push-over-the-widened-outbound-webhook-engine) | User notification subscriptions and web push over the widened outbound-webhook engine | Accepted | 2026-09-10 |
 | [ADR-174](#adr-174-the-desk-renders-one-object-per-work-item) | The Desk renders one object per work item | Accepted | 2026-09-17 |
+| [ADR-175](#adr-175-operator-recover-of-a-crashed-agent-node-re-enters-the-flow-graph) | Operator Recover of a crashed agent node re-enters the flow graph | Accepted; amended by ADR-176 | 2026-09-18 |
+| [ADR-176](#adr-176-automated-crash-recover-re-entry--the-flow-continuation-worker-owns-the-committed-intent-under-a-bounded-per-run-budget) | Automated crash-recover re-entry — the flow continuation worker owns the committed intent under a bounded per-run budget | Accepted | 2026-09-21 |
 
 ---
 
@@ -1769,10 +1771,19 @@ Full record: [`decisions/adr-174.md`](decisions/adr-174.md)
 
 ### ADR-175: Operator Recover of a crashed agent node re-enters the flow graph
 
-**Status:** Accepted
+**Status:** Accepted; amended by ADR-176
 **Date:** 2026-09-18
 
 Full record: [`decisions/adr-175.md`](decisions/adr-175.md)
+
+---
+
+### ADR-176: Automated crash-recover re-entry — the flow continuation worker owns the committed intent under a bounded per-run budget
+
+**Status:** Accepted
+**Date:** 2026-09-21
+
+Full record: [`decisions/adr-176.md`](decisions/adr-176.md)
 
 ---
 
@@ -1895,3 +1906,11 @@ properties/lastAction` sets `nullable: true` beside an `allOf` with no sibling
   `execution_event_skips` in its own three snapshots so the chain head still
   matches `schema.ts` and `db:generate` stays clean. Widening the test to every
   entry needs those 33 generated first, which is its own piece of work (R9).
+- **`reconciliation-gc.md` Expectations exceeds the R5a cap (filed 2026-09-21,
+  ADR-176).** Its **Expectations** section carries 19 bullets against R5a's
+  "≤ 12 bullets. If a domain needs more, the boundary is wrong". Pre-dates this
+  branch: ADR-176 folded its new invariant INTO an existing bullet rather than
+  adding a 20th, so the count is unchanged. The boundary is the real question —
+  the file covers startup reconcile, the periodic sweep, operator Recover, the
+  cron GC route, preserve-then-prune and context-mount GC — so this is a split
+  decision, not a trim, and belongs to whoever next reworks that domain (R9).

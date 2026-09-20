@@ -317,8 +317,13 @@ stranded `Running` run into re-attach / re-dispatch / skip / `Crashed`. This is
 the **`Running → Crashed`** transition that did not previously exist (only
 `NeedsInput → Crashed` did, via `crashResumedRun`); it adds `crashRunningRun`
 (CAS `WHERE status='Running'`). The full classification table and the GC
-lifecycle live in [`reconciliation-gc.md`](reconciliation-gc.md). Four
-invariants bind it to the run machine:
+lifecycle live in [`reconciliation-gc.md`](reconciliation-gc.md). Since
+[ADR-176](../decisions/adr-176.md) the sweep is a **backstop** for the
+crash-recover state rather than its only re-entry: the flow continuation worker
+serves a committed recover intent on its ~1 s cadence, and the sweep still
+serves every candidate the worker yields (a failed liveness probe, an exhausted
+per-run budget, a run with no active assignment). Four invariants bind it to the
+run machine:
 
 1. **Allow-list `Running`-only.** Reconcile NEVER touches a non-`Running` row;
    `NeedsInput`/`NeedsInputIdle`/`HumanWorking`/terminal stay owned by the
@@ -1063,7 +1068,11 @@ already-inserted run) — never an orphan worktree or live ACP session.
 - **(Implemented)** Recover stamps `runs.resume_started_at` and flips
   `Crashed → Running` (cap free) or `Crashed → Pending` (cap full, 202)
   BEFORE any `createSession`; it re-admits through the global cap and never
-  over-spawns. See [`reconciliation-gc.md`](reconciliation-gc.md).
+  over-spawns; the intent it leaves MUST be re-entered by whichever of the flow
+  continuation worker (~1 s, bounded at 5 attempts) or the reconcile sweep
+  (≤ 60 s backstop) reaches it first, both routing through the one shared
+  `routeCrashRecover` decision ([ADR-176](../decisions/adr-176.md)). See
+  [`reconciliation-gc.md`](reconciliation-gc.md).
 - **(Designed)** Flow-run Recover is offered ONLY when the active
   `run_sessions` row has `acp_session_id IS NOT NULL` (via
   `loadActiveRunSession`); otherwise Discard is the sole

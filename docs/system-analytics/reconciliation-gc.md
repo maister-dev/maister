@@ -367,6 +367,52 @@ over-spawning, and the queued promotion reaches the same graph re-entry through
 is what makes the operation safe for an unattended caller. See
 [external-operations.md](external-operations.md).
 
+### Automated crash-recover re-entry (Implemented — ADR-176)
+
+The committed-intent arm above is no longer the sweep's alone. The **flow
+continuation worker** adopts the same state on its ~1 s idle cadence, and the
+sweep becomes its backstop rather than the only re-entry. The reason this could
+not be a predicate copy is the anchor-A26 fact recorded above: the crashed
+attempt is bound to the **retired** assignment epoch, so it satisfies none of the
+worker's three existing evidence arms and needed its own.
+
+Two things make the adoption safe, and both are ADR-176's decision:
+
+- **One shared routing decision.** `routeCrashRecover` in
+  `web/lib/runs/crash-recover-route.ts` is the single implementation of the
+  recover-vs-reattach choice, and `classifyRunReconcile` was refactored to call
+  it. A second copy would not merely drift — on a **live** session it would route
+  to `driveResume`, whose `closeCrashedNodeAttempts` closes an attempt the
+  session is still producing, and the re-prompt then double-spends that turn.
+  The sweep's arms, counters and observable behaviour are unchanged.
+- **A durable per-run budget.** `crash_recover_attempts` and
+  `crash_recover_next_retry_at` bound the worker's re-entries at 5 with
+  `min(2^n, 60)s` backoff, because `driveResume` deliberately returns `transient`
+  without rolling back and a 1 s cadence would otherwise hot-loop against an
+  already-failing supervisor. Reset happens at every claim-marker write site, so
+  each new intent starts from zero.
+
+Liveness is a probe, not a column: the worker calls the same
+`hosts.local().listSessions()` the sweep uses, but only for a candidate that has
+already passed the SQL filter and the grace guard — a state that exists only
+after a web death. A throwing probe yields the candidate to the sweep and
+dispatches nothing.
+
+**Recovery-window table (normative).** Every reachable cell names its owner. The
+worker's cells all additionally require `execution_assignments.state = 'active'`
+and `crash_recover_attempts < 5`.
+
+| `runs.status` | Live session? | Marker / mode | Owner | Action |
+| --- | --- | --- | --- | --- |
+| `Running` | no | `resume_started_at` set, past grace | flow continuation worker | `recover` → `driveResume`; the sweep would do the same ≤ 60 s later |
+| `Running` | **yes** | `resume_started_at` set | flow continuation worker | `reattach` → `runFlow(crashResume)`; `closeCrashedNodeAttempts` MUST NOT run |
+| `Running` | either | `resume_started_at` set, **inside** grace | neither | `wait` — a dispatch may be in flight; yield |
+| `Running` | probe threw | `resume_started_at` set | periodic sweep | worker yields and logs WARN; the sweep re-decides on its own tick |
+| `Running` | no | `crash_recover_attempts` = 5 | periodic sweep | worker stops serving, logs `flow-continuation-crash-recover-budget-exhausted` once; the unchanged `recover` arm still recovers it |
+| `Running` | any | `execution_assignment_id` IS NULL (pre-Stage-A row) | periodic sweep | the worker's inner join drops it; `driveResume` would refuse it anyway |
+| `Running` | any | assignment not `active` | periodic sweep | outside the worker's predicate |
+| `Running` | no | **no** `resume_started_at` | periodic sweep | the ordinary `crash` arm — unchanged; no committed intent exists to honour |
+
 ### Cron GC route (Implemented; compatibility wrapper Implemented)
 
 `GET`/`POST /api/cron/gc` runs the unified `system_sweep` service on demand,
@@ -573,6 +619,14 @@ row is already `Done` with a deadline, which is what
   the ACP `session/resume` call; a session-less node re-dispatches ONLY when its config is
   `retry_safe: true`; every other case is discard-only — and the crash-resume
   runner MUST claim single-winner via a CAS-clear of `resume_started_at`.
+  **(ADR-176)** The committed intent it leaves behind MUST be routed by the one
+  shared `routeCrashRecover` helper that the sweep and the flow continuation
+  worker both call — a live session MUST take `reattach` and MUST NEVER reach
+  `driveResume`, whose `closeCrashedNodeAttempts` would double-spend the live
+  turn — and the worker's re-entries MUST be bounded by
+  `crash_recover_attempts < 5` with `min(2^n, 60)s` backoff, both columns reset
+  in the same transaction as every `resume_started_at` write, after which the
+  unchanged sweep arm remains the backstop.
 - GC MUST select terminal candidates by the effective deadline
   `COALESCE(workspaces.scheduled_removal_at, runs.ended_at + MAISTER_GC_AGE_DAYS) <= now()`
   so pre-0015 terminal runs with null `scheduled_removal_at` are still
