@@ -3,7 +3,7 @@ import type { IsolationDriver } from "./process-isolation";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { openSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, rm, stat } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -56,9 +56,49 @@ export type RealWeb = {
   restart(overrides?: Partial<RealWebOptions>): Promise<RealWeb>;
 };
 
+// `web/.next` is ONE directory shared by every suite that builds a production
+// web, and the integration project runs files in parallel — so two concurrent
+// `next build`s would write the same output tree and serve each other's halves.
+// An exclusive directory lock (mkdir is atomic on POSIX) makes the build
+// one-at-a-time across processes; a lock whose owner died is reclaimed by age.
+const BUILD_LOCK_DIR = path.join(WEB_DIR, ".next.build-lock");
+const BUILD_LOCK_STALE_MS = 20 * 60 * 1000;
+const BUILD_LOCK_POLL_MS = 500;
+
+async function acquireBuildLock(): Promise<() => Promise<void>> {
+  for (;;) {
+    try {
+      await mkdir(BUILD_LOCK_DIR);
+
+      return async () => {
+        await rm(BUILD_LOCK_DIR, { recursive: true, force: true });
+      };
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+      const age = await stat(BUILD_LOCK_DIR)
+        .then((info) => Date.now() - info.mtimeMs)
+        .catch(() => 0);
+
+      if (age > BUILD_LOCK_STALE_MS)
+        await rm(BUILD_LOCK_DIR, { recursive: true, force: true });
+      else await new Promise((r) => setTimeout(r, BUILD_LOCK_POLL_MS));
+    }
+  }
+}
+
 // `next build` of the checked-out tree: the harness never serves a build it
 // did not make, so the evidence always belongs to the revision under test.
 export async function buildProductionWeb(logFile: string): Promise<string> {
+  const releaseBuildLock = await acquireBuildLock();
+
+  try {
+    return await runNextBuild(logFile);
+  } finally {
+    await releaseBuildLock();
+  }
+}
+
+async function runNextBuild(logFile: string): Promise<string> {
   const logFd = openSync(logFile, "a");
   // The build must not inherit the test runner's environment: Vitest sets
   // NODE_ENV=test and its worker markers, which change what Next builds.

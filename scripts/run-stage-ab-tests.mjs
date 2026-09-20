@@ -40,7 +40,13 @@ export const laneSuites = {
   // AT-16: one real production web (fresh `next build`, `server.ts`) under a
   // kernel isolation driver against a real supervisor — runs alone because
   // the build and both process trees own the host.
-  isolation: ["test-support/__tests__/execution-ab-isolation.integration.test.ts"],
+  isolation: [
+    "test-support/__tests__/execution-ab-isolation.integration.test.ts",
+    // P0-2: the three durable workers in the production boot. Same shape as
+    // AT-16 — `next build` plus two process trees — so the same serial slice.
+    "test-support/__tests__/durable-workers-boot.integration.test.ts",
+    "test-support/__tests__/durable-workers-concurrency.integration.test.ts",
+  ],
 };
 // The package directory each slice runs in.
 export const lanePackages = { supervisor: "supervisor", web: "web", isolation: "web" };
