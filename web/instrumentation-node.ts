@@ -92,6 +92,7 @@ export async function registerNodeRuntime(): Promise<void> {
     "ensureLocalExecutionHost",
     "recoverExecutionCommands",
     "startCanonicalProjectionWorker",
+    "startDurableWorkers",
     "sweepExpiredRuntimeObjects",
     "reportLegacyActiveRuns",
   ] as const) {
@@ -111,6 +112,18 @@ export async function registerNodeRuntime(): Promise<void> {
         );
 
         startCanonicalProjectionWorker();
+      } else if (step === "startDurableWorkers") {
+        // ADR-176: the flow continuation worker now also serves the
+        // crash-recover state that `runReconcileSweep()` below scans on every
+        // boot, so the two overlap by design. One winner is decided by the
+        // shared recover-vs-reattach routing and `claimFlowDriver`, never by
+        // which of them ticked first — so nothing here may reason from timing.
+        // The composition root is reached dynamically: it imports every domain
+        // registry, and a failure to compose must be logged into this loop's
+        // try/catch rather than abort boot.
+        const { startDurableWorkers } = await import("@/lib/workers/runtime");
+
+        startDurableWorkers();
       } else if (step === "sweepExpiredRuntimeObjects") {
         await hosts.sweepExpiredRuntimeObjects();
       } else {
@@ -199,16 +212,23 @@ export async function registerNodeRuntime(): Promise<void> {
   const { stopCanonicalProjectionWorker } = await import(
     "@/lib/execution-host/events/projection-runtime"
   );
+  const { stopDurableWorkers } = await import("@/lib/workers/runtime");
   const { beginDbShutdown, closeDb } = await import("@/lib/db/client");
   let draining: Promise<PromiseSettledResult<void>[]> | undefined;
 
   registerApplicationLifecycle({
     quiesce: () => {
+      // All four stops run concurrently, so the shutdown budget is the MAX,
+      // not the sum. A prompt-owner slot mid-application holds a renewed 30 s
+      // lease — longer than the 25 s drain — so the overrun branch below is
+      // reachable by construction, and taking it is correct: an unconfirmed
+      // claim release must fail shutdown and leave the claim to expire.
       draining ??= Promise.allSettled([
         stopSchedulerTimer(),
         stopRuntimeObjectRetentionTimer(),
         stopRuntimeEventConsumers(),
         stopCanonicalProjectionWorker(),
+        stopDurableWorkers(),
       ]);
     },
     drain: async () => {
