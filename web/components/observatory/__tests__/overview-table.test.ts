@@ -83,10 +83,28 @@ function table(
 
 function render(
   model: OverviewTableModel,
-  extra: { projectSlug?: string; liveLabel?: string | null } = {},
+  extra: {
+    projectSlug?: string;
+    liveLabel?: string | null;
+    current?: typeof current;
+  } = {},
 ): string {
+  const { current: override, ...rest } = extra;
+
   return renderToStaticMarkup(
-    createElement(OverviewTable, { current, labels, table: model, ...extra }),
+    createElement(OverviewTable, {
+      current: override ?? current,
+      labels,
+      table: model,
+      ...rest,
+    }),
+  );
+}
+
+/** Every `/runs` href the markup carries, unescaped. */
+function ledgerLinks(html: string): string[] {
+  return [...html.matchAll(/href="(\/runs\?[^"]*)"/g)].map((match) =>
+    match[1].replaceAll("&amp;", "&"),
   );
 }
 
@@ -146,8 +164,37 @@ describe("OverviewTable", () => {
     expect(html).toContain(labels.overview.platform);
     // Em dash in both task cells rather than a misleading zero.
     expect(html).toContain("—");
-    // The platform row's cells never carry a project param.
-    expect(html).toContain("/runs?kind=scratch&amp;from=2026-05-07");
+  });
+
+  // The Platform row counts `project_id IS NULL` runs and `/runs` is
+  // `INNER JOIN projects`, so no ledger URL can reproduce its cells — a link
+  // with no `project=` does not narrow to those runs, it WIDENS to every
+  // project's. AC4 is "the count equals the list it opens", so the cells open
+  // nothing, exactly like a per-flow sub-row's.
+  //
+  // The database half of this claim is pinned in
+  // `lib/queries/__tests__/runs-list.integration.test.ts`; this is the render
+  // half. Asserting the href SHAPE (as this suite first did) cannot tell a
+  // correct link from one that opens the wrong population.
+  it("does not link the Platform row's cells — the ledger cannot reach them", () => {
+    const html = render(
+      table({
+        rows: [],
+        platform: {
+          key: "__platform__",
+          identity: { kind: "platform" },
+          counts: counts({ runs: { scratch: 4 }, buckets: { ResultOnly: 3 } }),
+        },
+        totals: counts({ runs: { scratch: 4 }, buckets: { ResultOnly: 3 } }),
+      }),
+    );
+
+    // The row renders with its counts...
+    expect(html).toContain(labels.overview.platform);
+    expect(html).toContain(">4<");
+    expect(html).toContain(">3<");
+    // ...and not one of its cells is a ledger link.
+    expect(html).not.toContain("/runs?");
   });
 
   it("renders the empty state when the period holds no run", () => {
@@ -200,7 +247,7 @@ describe("OverviewTable", () => {
     );
 
     expect(html).toContain("bugfix");
-    expect(html).toContain(labels.overview.kind.scratch);
+    expect(html).toContain(labels.runKindName.scratch);
     // A run-kind sub-row narrows the ledger link to that kind.
     expect(html).toContain("kind=scratch&amp;bucket=Queued");
   });
@@ -251,6 +298,146 @@ describe("OverviewTable", () => {
     // that matches it, so it opens none rather than a wrong one.
     expect(html).toContain("bugfix");
     expect(html).not.toContain("bucket=Executing");
+  });
+
+  // D2 counts tasks by INTERVAL OVERLAP and runs by start, so a task whose only
+  // flow run started before the period and is still open is real work in this
+  // window with no run cell to show for it. A runs-only empty predicate deleted
+  // the table that carries the very number D2 adds.
+  it("keeps the table when the period holds tasks in work but no run started", () => {
+    const html = render(
+      table({
+        rows: [
+          {
+            key: "project:maister",
+            identity: {
+              kind: "project",
+              projectId: "p1",
+              projectSlug: "maister",
+              projectName: "MAIster",
+            },
+            counts: counts({ tasksInWork: 1 }),
+          },
+        ],
+        totals: counts({ tasksInWork: 1 }),
+      }),
+    );
+
+    expect(html).not.toContain(labels.overview.empty);
+    expect(html).toContain("<table");
+    expect(html).toContain(labels.overview.tasksInWork);
+    expect(html).toContain(">1<");
+  });
+
+  it("still shows the empty state when neither axis holds anything", () => {
+    const html = render(
+      table({
+        rows: [
+          {
+            key: "project:maister",
+            identity: {
+              kind: "project",
+              projectId: "p1",
+              projectSlug: "maister",
+              projectName: "MAIster",
+            },
+            counts: counts(),
+          },
+        ],
+        totals: counts(),
+      }),
+    );
+
+    expect(html).toContain(labels.overview.empty);
+    expect(html).not.toContain("<table");
+  });
+
+  // AC4 under a NARROWED bar. The read model applies `runKind` to every count,
+  // so a project row's buckets hold scratch runs alone — a link without
+  // `kind=scratch` opens every kind and answers a different number.
+  it("carries the selected run kind into every link the bar narrowed", () => {
+    const scratchOnly = parseObservatorySearchParams(
+      { runKind: "scratch" },
+      NOW,
+    ).current;
+    const html = render(
+      table({
+        rows: [
+          {
+            key: "project:maister",
+            identity: {
+              kind: "project",
+              projectId: "p1",
+              projectSlug: "maister",
+              projectName: "MAIster",
+            },
+            counts: counts({
+              runs: { scratch: 9 },
+              buckets: { Delivered: 6 },
+            }),
+          },
+        ],
+        totals: counts({ runs: { scratch: 9 }, buckets: { Delivered: 6 } }),
+      }),
+      { current: scratchOnly },
+    );
+    const links = ledgerLinks(html);
+
+    expect(links).toContain(
+      "/runs?project=maister&kind=scratch&bucket=Delivered&from=2026-05-07&to=2026-06-05",
+    );
+    expect(links).toContain(
+      "/runs?project=maister&kind=scratch&from=2026-05-07&to=2026-06-05",
+    );
+    // Not one link may reach a kind the bar excluded, and none may omit the
+    // kind altogether — an unkinded bucket link widens to all three.
+    expect(links.every((link) => link.includes("kind=scratch"))).toBe(true);
+  });
+
+  // The Flow column of a SCRATCH sub-row is 0 because the row holds no flow
+  // run. Linking it to `kind=flow` opened the project's flow runs — a non-zero
+  // list behind a zero cell.
+  it("does not link a run-kind sub-row's cells for the other kinds", () => {
+    const html = render(
+      table({
+        rows: [],
+        subRows: [
+          {
+            key: "kind:scratch",
+            identity: { kind: "runKind", runKind: "scratch" },
+            counts: counts({ runs: { scratch: 3 }, buckets: { Executing: 3 } }),
+          },
+        ],
+        totals: counts({ runs: { scratch: 3 }, buckets: { Executing: 3 } }),
+      }),
+      { projectSlug: "maister" },
+    );
+    const links = ledgerLinks(html);
+    // The run columns: exactly one link, and it is the row's own kind. A zero
+    // bucket cell may still link — an empty list IS its count — but a zero Flow
+    // cell linked to a non-empty flow list, which is the defect.
+    const runColumnLinks = links.filter((link) => !link.includes("bucket="));
+
+    expect(runColumnLinks).toEqual([
+      "/runs?project=maister&kind=scratch&from=2026-05-07&to=2026-06-05",
+    ]);
+    expect(links.every((link) => link.includes("kind=scratch"))).toBe(true);
+    expect(links).toContain(
+      "/runs?project=maister&kind=scratch&bucket=Executing&from=2026-05-07&to=2026-06-05",
+    );
+  });
+
+  // A project row under an unnarrowed bar is the one case where a bucket cell
+  // legitimately spans all three kinds.
+  it("leaves the bucket links unkinded when the bar selects every kind", () => {
+    const links = ledgerLinks(render(table()));
+
+    expect(links).toContain(
+      "/runs?project=maister&bucket=Delivered&from=2026-05-07&to=2026-06-05",
+    );
+    expect(links).toContain(
+      "/runs?project=maister&kind=flow&from=2026-05-07&to=2026-06-05",
+    );
   });
 
   it("renders RU bucket labels from the shared runBucket namespace", () => {
@@ -375,6 +562,8 @@ describe("Quality tables", () => {
     const html = renderToStaticMarkup(
       createElement(QualityProjectsTable, {
         labels,
+        period: current.period,
+        runKind: "all" as const,
         projects: [
           {
             projectId: "p1",
@@ -388,7 +577,9 @@ describe("Quality tables", () => {
 
     expect(html).toContain('data-testid="observatory-quality-projects"');
     expect(html).toContain("MAIster");
-    expect(html).toContain("/projects/maister/observatory?view=quality");
+    expect(html).toContain(
+      "/projects/maister/observatory?view=quality&amp;windowDays=30",
+    );
     expect(html).toContain("0.60");
     expect(html).toContain("0.83");
     expect(html).toContain("10m");

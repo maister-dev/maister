@@ -41,10 +41,19 @@ describe("observatory page contract", () => {
     expect(parsed.current.period.windowDays).toBe(365);
   });
 
-  it("treats absent, repeated, and invalid run-kind values as all", () => {
+  // A repeated param takes its FIRST value, exactly like every other field
+  // (`firstNonEmpty`). Resolving a repeated value to the default instead made
+  // two fields disagree with the rest of the bar, and let a repeated `view`
+  // defeat the drill-down default below — `parseView` returned a non-nullish
+  // "overview", so `defaultObservatoryView` never ran.
+  it("treats absent and invalid run-kind values as all, and a repeated one as its first", () => {
     expect(parseObservatorySearchParams({}).filters.runKind).toBe("all");
     expect(
-      parseObservatorySearchParams({ runKind: ["flow", "flow"] }).filters
+      parseObservatorySearchParams({ runKind: ["scratch", "agent"] }).filters
+        .runKind,
+    ).toBe("scratch");
+    expect(
+      parseObservatorySearchParams({ runKind: ["bogus", "flow"] }).filters
         .runKind,
     ).toBe("all");
     expect(
@@ -66,16 +75,30 @@ describe("observatory page contract", () => {
     expect(
       parseObservatorySearchParams({ view: "bogus" }, NOW).current.view,
     ).toBe("overview");
+    // First value, like every other field.
     expect(
       parseObservatorySearchParams({ view: ["cost", "quality"] }, NOW).current
         .view,
-    ).toBe("overview");
+    ).toBe("cost");
 
     for (const view of OBSERVATORY_VIEWS) {
       expect(parseObservatorySearchParams({ view }, NOW).current.view).toBe(
         view,
       );
     }
+  });
+
+  // The reason the short-circuit went: it resolved a repeated `view` to a
+  // non-nullish "overview", which BOTH ignored the views actually asked for and
+  // skipped `defaultObservatoryView` — landing a flow drill-down on a table its
+  // filters do not touch.
+  it("honours the first of a repeated view rather than resetting to overview", () => {
+    expect(
+      parseObservatorySearchParams(
+        { flowId: "aif", view: ["quality", "cost"] },
+        NOW,
+      ).current.view,
+    ).toBe("quality");
   });
 
   it("lands a flow-ledger drill-down link on quality when it names no view", () => {

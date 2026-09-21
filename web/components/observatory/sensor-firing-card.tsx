@@ -7,7 +7,6 @@ import { formatRateWithN } from "@/components/observatory/harness-format";
 import { FlowLedgerScope } from "@/components/observatory/flow-ledger-scope";
 import { MIN_GROUP_EXECUTIONS } from "@/lib/queries/observatory-core";
 import { observatoryDrilldownHref } from "@/lib/observatory/href";
-import { resolveObservatoryPeriod } from "@/lib/observatory/period";
 
 export function SensorFiringCard({
   firing,
@@ -109,9 +108,7 @@ export function SensorFiringCard({
                           {
                             flowId: group.flowId,
                             nodeId: group.nodeId,
-                            period:
-                              period ??
-                              resolveObservatoryPeriod({ now: new Date() }),
+                            period,
                             runKind,
                           },
                         )}

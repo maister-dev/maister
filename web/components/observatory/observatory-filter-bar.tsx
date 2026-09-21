@@ -9,6 +9,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
 
 import { buildObservatoryHref } from "@/lib/observatory/href";
+import { DELIVERY_RUN_KINDS } from "@/lib/observatory/run-kind";
 import { OBSERVATORY_PERIOD_PRESETS } from "@/lib/observatory/period";
 import { isObservatoryRunKind } from "@/lib/observatory/run-kind";
 
@@ -92,9 +93,35 @@ export function ObservatoryFilterBar({
     current.artifactDefId,
   ]);
 
+  // Every commit composes onto the ones still in flight.
+  //
+  // `current` is a SERVER prop: it only changes when a round-trip lands. A
+  // second control touched before then would otherwise build its URL from the
+  // pre-first-edit state and silently drop the first edit — and because the
+  // selects are uncontrolled and re-keyed on their effective value, the
+  // discarded one keeps SHOWING the reader's choice while the page is filtered
+  // by something else. Patch values are absolute rather than deltas, so
+  // replaying the merged patch onto whichever `current` is live is idempotent.
+  const inFlight = useRef<ObservatoryHrefPatch>({});
+  // The URL the server state represents. It changing is the ONLY evidence that
+  // a navigation landed — `pending` is not, because a transition whose scope
+  // schedules no state update settles before the page it asked for arrives.
+  const currentHref = buildObservatoryHref(pathname, current);
+
+  useEffect(() => {
+    // Either our patch arrived, or the reader went somewhere else entirely
+    // (Back, a heatmap drill-down). Both mean the accumulated patch is spent:
+    // replaying it onto the next edit would re-impose a filter the URL no
+    // longer carries.
+    inFlight.current = {};
+  }, [currentHref]);
+
   const commit = (patch: ObservatoryHrefPatch): void => {
+    const merged = { ...inFlight.current, ...patch };
+
+    inFlight.current = merged;
     startTransition(() => {
-      router.replace(buildObservatoryHref(pathname, current, patch), {
+      router.replace(buildObservatoryHref(pathname, current, merged), {
         scroll: false,
       });
     });
@@ -181,9 +208,11 @@ export function ObservatoryFilterBar({
           }
         >
           <option value="all">{labels.all}</option>
-          <option value="flow">{labels.agentization.flow}</option>
-          <option value="scratch">{labels.agentization.scratch}</option>
-          <option value="agent">{labels.agentization.agent}</option>
+          {DELIVERY_RUN_KINDS.map((kind) => (
+            <option key={kind} value={kind}>
+              {labels.runKindName[kind]}
+            </option>
+          ))}
         </select>
       </Field>
 
@@ -215,6 +244,7 @@ export function ObservatoryFilterBar({
             label={labels.flow}
             name="flowId"
             placeholder={labels.all}
+            uncommittedLabel={labels.uncommitted}
             value={current.flowId ?? ""}
             onCommit={(value) => commitText("flowId", value)}
             onDraft={(value) =>
@@ -226,6 +256,7 @@ export function ObservatoryFilterBar({
             label={labels.node}
             name="nodeId"
             placeholder={labels.all}
+            uncommittedLabel={labels.uncommitted}
             value={current.nodeId ?? ""}
             onCommit={(value) => commitText("nodeId", value)}
             onDraft={(value) =>
@@ -242,6 +273,7 @@ export function ObservatoryFilterBar({
             label={labels.artifactKind}
             name="artifactKind"
             placeholder={labels.all}
+            uncommittedLabel={labels.uncommitted}
             value={current.artifactKind ?? ""}
             onCommit={(value) => commitText("artifactKind", value)}
             onDraft={(value) =>
@@ -253,6 +285,7 @@ export function ObservatoryFilterBar({
             label={labels.artifactDefId}
             name="artifactDefId"
             placeholder={labels.all}
+            uncommittedLabel={labels.uncommitted}
             value={current.artifactDefId ?? ""}
             onCommit={(value) => commitText("artifactDefId", value)}
             onDraft={(value) =>
@@ -311,12 +344,19 @@ function Field({
  * reader is editing and survives the remounts a URL change causes; once no
  * draft is held, the field shows whatever the URL says, so a drill-down link
  * that sets `nodeId` elsewhere still updates it.
+ *
+ * A draft the URL does not carry is ANNOUNCED. The bar deliberately keeps such
+ * text on screen (the blur-then-tab sequence a view click causes would
+ * otherwise destroy it), but a field showing a value the page is not filtered
+ * by, with no signal, is a lie the reader cannot see — and the only way out is
+ * to focus and blur it. Text, never colour alone.
  */
 function TextField({
   draft,
   label,
   name,
   placeholder,
+  uncommittedLabel,
   value,
   onCommit,
   onDraft,
@@ -325,15 +365,19 @@ function TextField({
   label: string;
   name: string;
   placeholder: string;
+  uncommittedLabel: string;
   value: string;
   onCommit: (value: string) => void;
   onDraft: (value: string) => void;
 }): ReactElement {
   const shown = draft ?? value;
+  const uncommitted = shown.trim() !== value;
+  const hintId = `observatory-filter-${name}-uncommitted`;
 
   return (
     <Field label={label}>
       <input
+        aria-describedby={uncommitted ? hintId : undefined}
         className={INPUT_CLASS}
         name={name}
         placeholder={placeholder}
@@ -351,6 +395,15 @@ function TextField({
           onCommit(event.currentTarget.value.trim());
         }}
       />
+      {uncommitted ? (
+        <span
+          className="font-mono text-[10px] text-amber"
+          data-testid={hintId}
+          id={hintId}
+        >
+          {uncommittedLabel}
+        </span>
+      ) : null}
     </Field>
   );
 }

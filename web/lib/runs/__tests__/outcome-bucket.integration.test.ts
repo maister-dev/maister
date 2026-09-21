@@ -64,6 +64,23 @@ const WORKSPACE_VARIANTS = {
     promotionMode: "local_merge",
     removed: true,
   },
+  // The three promotion states ADR-177 argues cannot sit beside a `Done` run
+  // (a claim in flight and a finalize failure both leave the run in `Review`;
+  // ADR-141 `reopen` flips it back to `Review` as it writes `reopened`).
+  // Seeded anyway: "unreachable" was previously asserted by a test that
+  // compared a local constant with itself and never touched the classifier, so
+  // the fallthrough it relies on was undefined behaviour in practice. These
+  // rows PIN what the CASE actually returns, and a reordering that changes it
+  // fails here.
+  promotionClaiming: {
+    promotionState: "claiming",
+    promotionMode: "local_merge",
+  },
+  promotionFailed: { promotionState: "failed", promotionMode: "local_merge" },
+  promotionReopened: {
+    promotionState: "reopened",
+    promotionMode: "local_merge",
+  },
 } satisfies Record<string, WorkspaceSpec | null>;
 
 type VariantName = keyof typeof WORKSPACE_VARIANTS;
@@ -91,6 +108,9 @@ const EXPECTED: Record<
   NeedsInput: all("WaitingOnHuman"),
   NeedsInputIdle: all("WaitingOnHuman"),
   HumanWorking: all("WaitingOnHuman"),
+  // Beside `Review` / `Crashed` the three in-flight promotion states classify
+  // by status alone — which is the reachable half of the pair, and the half
+  // the ADR's own argument depends on.
   Review: {
     ...all("Review"),
     removedUnpromoted: "Abandoned",
@@ -114,37 +134,45 @@ const EXPECTED: Record<
     removedUnpromoted: "ResultOnly",
     // GC of a merged worktree does not undo the delivery it already made.
     removedAfterMerge: "Delivered",
+    // Not `ResultOnly` (promotion_state is neither NULL nor 'none') and not a
+    // PR arm, so all three fall through the refinements to the status map:
+    // `Done -> Delivered`. Documented, not endorsed — see UNREACHABLE.
+    promotionClaiming: "Delivered",
+    promotionFailed: "Delivered",
+    promotionReopened: "Delivered",
   },
 };
 
 /**
- * Cells this matrix deliberately does NOT seed, and why — listed rather than
- * skipped, so a future reader can tell "unreachable" from "forgotten".
+ * `Done` beside an in-flight promotion state: why ADR-177 D3's `Delivered` rule
+ * reads `promotion_state = 'done'` while the SQL lets these fall through.
  *
- * `promotion_state` carries five values; only `none` and `done` can sit beside
- * a `Done` run. A finalize failure leaves the run in `Review` with `failed`, a
- * claim in progress leaves it `Review` with `claiming`, and ADR-141 `reopen`
- * flips a `Done` run back to `Review` as it writes `reopened`. So the three are
- * unreachable next to `Done`, and beside `Review` they classify by status alone
- * (the `Review` row above already covers every promotion state).
+ * `promotion_state` carries five values; only `none` and `done` are expected
+ * beside a `Done` run. A finalize failure leaves the run in `Review` with
+ * `failed`, a claim in progress leaves it `Review` with `claiming`, and ADR-141
+ * `reopen` flips a `Done` run back to `Review` as it writes `reopened`.
+ *
+ * Nothing ENFORCES that — `workspaces.promotion_state` is a plain
+ * `text NOT NULL DEFAULT 'none'` with no CHECK, and no FK or trigger couples it
+ * to `runs.status`. So the three combinations are seeded above and their actual
+ * classification asserted, rather than asserted to be impossible: an
+ * unreachable-by-argument row that DOES appear must land somewhere explicit,
+ * and `Delivered` (the run is `Done`) is the answer this matrix pins.
  */
-const UNREACHABLE = [
+const UNREACHABLE_BY_ARGUMENT = [
   {
-    status: "Done",
-    promotionState: "claiming",
+    variant: "promotionClaiming",
     reason: "promotion claim in flight keeps the run in Review",
   },
   {
-    status: "Done",
-    promotionState: "failed",
+    variant: "promotionFailed",
     reason: "finalize failure leaves the run in Review",
   },
   {
-    status: "Done",
-    promotionState: "reopened",
+    variant: "promotionReopened",
     reason: "ADR-141 reopen flips the run back to Review",
   },
-] as const;
+] as const satisfies readonly { variant: VariantName; reason: string }[];
 
 function all(bucket: RunOutcomeBucket): Record<VariantName, RunOutcomeBucket> {
   return Object.fromEntries(
@@ -253,15 +281,22 @@ describe("runOutcomeBucketSql over real rows (ADR-177 D3)", () => {
     expect(actual.get(runId)).toBe("Abandoned");
   });
 
-  it("documents the promotion states that cannot sit beside a Done run", () => {
-    expect(UNREACHABLE.map((cell) => cell.promotionState)).toEqual([
-      "claiming",
-      "failed",
-      "reopened",
-    ]);
-    for (const cell of UNREACHABLE) {
-      expect(cell.reason.length).toBeGreaterThan(0);
+  it("lands a Done run on Delivered for every promotion state it should never carry", async () => {
+    const seeded = new Map<string, VariantName>();
+
+    for (const { variant } of UNREACHABLE_BY_ARGUMENT) {
+      seeded.set(await seedRun("Done", variant), variant);
     }
+
+    const actual = await readBuckets();
+
+    for (const [runId, variant] of seeded) {
+      // The point is that the CASE has an answer at all, and that it is the
+      // one the D3 table would give for a Done run. A row nobody expects must
+      // not vanish from a total or land in a column it contradicts.
+      expect(actual.get(runId), variant).toBe("Delivered");
+    }
+    expect(seeded.size).toBe(3);
   });
 });
 

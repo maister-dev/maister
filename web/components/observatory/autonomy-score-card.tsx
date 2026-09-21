@@ -4,6 +4,7 @@ import type { ObservatoryLabels } from "@/components/observatory/types";
 
 import clsx from "clsx";
 
+import { formatSeconds } from "@/components/observatory/harness-format";
 import { FlowLedgerScope } from "@/components/observatory/flow-ledger-scope";
 
 export function AutonomyScoreCard({
@@ -88,14 +89,4 @@ function Metric({
       <dd className="mt-1 text-sm font-semibold text-ink">{value}</dd>
     </div>
   );
-}
-
-function formatSeconds(value: number): string {
-  if (value < 60) return `${value}s`;
-
-  const minutes = Math.round(value / 60);
-
-  if (minutes < 60) return `${minutes}m`;
-
-  return `${Math.round(minutes / 60)}h`;
 }

@@ -67,20 +67,6 @@ export const BUCKET_BY_RUN_STATUS = {
   Abandoned: "Abandoned",
 } as const satisfies Record<RunStatusValue, RunOutcomeBucket>;
 
-/**
- * The settled set for the TASK-overlap rule (ADR-177 D2).
- *
- * Deliberately NOT `SETTLED_RUN_STATUSES` from `run-status-sets.ts`: that set is
- * the orchestrator child-accounting concern and includes `Crashed` and
- * `Review`, while for a TASK both still mean "in work" — a crashed run owes a
- * recover/discard decision and a Review run awaits promotion.
- */
-export const TASK_IN_WORK_SETTLED_STATUSES = [
-  "Done",
-  "Failed",
-  "Abandoned",
-] as const satisfies readonly RunStatusValue[];
-
 const OUTCOME_BUCKET_SET: ReadonlySet<string> = new Set(RUN_OUTCOME_BUCKETS);
 
 export function isRunOutcomeBucket(value: string): value is RunOutcomeBucket {
@@ -113,6 +99,28 @@ export function latestWorkspaceLateralSql(runAlias: string): SQL {
       LIMIT 1
     ) w ON true
   `;
+}
+
+/**
+ * Is this run SETTLED — i.e. does its outcome bucket sit in the settled five?
+ *
+ * The task-overlap rule (ADR-177 D2) closes a run's in-work interval exactly
+ * when the run stops being in flight, so it asks the D3 classifier rather than
+ * keeping its own status list. That list used to say `Review` and `Crashed` are
+ * never settled; D3 already says a `Review` / `Crashed` run whose workspace was
+ * REMOVED is `Abandoned` — historical evidence, the board's own rule. Two
+ * answers to one question is the drift this module exists to prevent, so there
+ * is now one: a task is in work while at least one of its flow runs is in an
+ * in-flight bucket, and a removed workspace closes that interval on both axes.
+ *
+ * Total by construction: `runOutcomeBucketSql` emits an arm for every
+ * `RUN_STATUS_VALUES` member, so the CASE is never NULL for a real row.
+ */
+export function runSettledSql(cols: RunOutcomeBucketColumns): SQL {
+  return sql`${runOutcomeBucketSql(cols)} IN (${sql.join(
+    SETTLED_OUTCOME_BUCKETS.map((bucket) => sql`${bucket}`),
+    sql`, `,
+  )})`;
 }
 
 /**

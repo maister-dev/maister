@@ -12,6 +12,10 @@ import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+(
+  globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
+).IS_REACT_ACT_ENVIRONMENT = true;
+
 const { replace } = vi.hoisted(() => ({ replace: vi.fn() }));
 
 vi.mock("next/navigation", () => ({
@@ -44,6 +48,23 @@ function render(params: Record<string, string> = {}, projects = true): void {
           : undefined,
       }),
     );
+  });
+}
+
+/**
+ * A genuinely fresh page, not just a re-render.
+ *
+ * Re-rendering the SAME bar with the same URL means "the round-trip has not
+ * landed yet", which is a different state: the bar deliberately keeps an
+ * uncommitted edit alive across it.
+ */
+function remount(): void {
+  act(() => root.unmount());
+  container.remove();
+  container = document.createElement("div");
+  document.body.appendChild(container);
+  act(() => {
+    root = createRoot(container);
   });
 }
 
@@ -211,6 +232,7 @@ describe("ObservatoryFilterBar", () => {
     );
 
     replace.mockClear();
+    remount();
     render({ view: "quality" });
 
     const flow = byName<HTMLInputElement>("flowId");
@@ -256,6 +278,62 @@ describe("ObservatoryFilterBar", () => {
     expect(byName<HTMLInputElement>("nodeId").value).toBe("draft-node");
   });
 
+  it("announces a draft the URL does not carry, and stops once it does", () => {
+    render({ view: "quality" });
+
+    const node = byName<HTMLInputElement>("nodeId");
+    const hint = () =>
+      container.querySelector(
+        '[data-testid="observatory-filter-nodeId-uncommitted"]',
+      );
+
+    expect(hint()).toBeNull();
+
+    act(() => {
+      setValue(node, "draft-node");
+      node.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    // Typed, not committed: the field shows text the page is NOT filtered by.
+    expect(hint()?.textContent).toBe(labels.uncommitted);
+    expect(
+      byName<HTMLInputElement>("nodeId").getAttribute("aria-describedby"),
+    ).toBe("observatory-filter-nodeId-uncommitted");
+
+    // Once the URL carries it, the value IS the filter and the hint goes.
+    render({ view: "quality", nodeId: "draft-node" });
+
+    expect(hint()).toBeNull();
+    expect(
+      byName<HTMLInputElement>("nodeId").getAttribute("aria-describedby"),
+    ).toBeNull();
+  });
+
+  it("keeps announcing a draft the view switch stranded", () => {
+    render({ view: "quality" });
+
+    const node = byName<HTMLInputElement>("nodeId");
+
+    act(() => {
+      setValue(node, "draft-node");
+      node.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    act(() =>
+      node.dispatchEvent(new FocusEvent("focusout", { bubbles: true })),
+    );
+    render({ view: "quality", nodeId: "draft-node" });
+    // The tab's href was built before that commit existed, so it lands without
+    // the param — the text survives (by design) and must say it is not applied.
+    render({ view: "harness" });
+
+    expect(byName<HTMLInputElement>("nodeId").value).toBe("draft-node");
+    expect(
+      container.querySelector(
+        '[data-testid="observatory-filter-nodeId-uncommitted"]',
+      )?.textContent,
+    ).toBe(labels.uncommitted);
+  });
+
   it("yields to a value that arrived from somewhere else", () => {
     render({ view: "quality" });
 
@@ -298,6 +376,80 @@ describe("ObservatoryFilterBar", () => {
     render({ view: "quality" });
     expect(container.querySelector('[name="flowId"]')).not.toBeNull();
     expect(container.querySelector('[name="artifactKind"]')).not.toBeNull();
+  });
+
+  // Two controls touched before the first round-trip lands. Every commit used
+  // to be built from the SERVER `current`, so the second one overwrote the
+  // first — and the first control, uncontrolled and re-keyed on a value that
+  // never changed, went on displaying the choice the page had just discarded.
+  it("composes a second change onto one still in flight", () => {
+    render();
+
+    // No re-render between these two: the server has not answered yet.
+    change(byName<HTMLSelectElement>("runKind"), "scratch");
+    expect(replace).toHaveBeenLastCalledWith(
+      "/observatory?view=overview&windowDays=30&runKind=scratch",
+      { scroll: false },
+    );
+
+    const preset = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent === labels.period.preset7,
+    );
+
+    act(() => preset?.click());
+
+    expect(replace).toHaveBeenLastCalledWith(
+      "/observatory?view=overview&windowDays=7&runKind=scratch",
+      { scroll: false },
+    );
+    // The control still shows what the reader picked, and now the URL agrees.
+    expect(byName<HTMLSelectElement>("runKind").value).toBe("scratch");
+  });
+
+  it("composes a third change onto two still in flight", () => {
+    render();
+
+    change(byName<HTMLSelectElement>("runKind"), "agent");
+    change(byName<HTMLSelectElement>("project"), "maister");
+    change(byName<HTMLInputElement>("from"), "2026-05-01");
+    change(byName<HTMLInputElement>("to"), "2026-05-31");
+
+    expect(replace).toHaveBeenLastCalledWith(
+      "/observatory?view=overview&from=2026-05-01&to=2026-05-31&runKind=agent&project=maister",
+      { scroll: false },
+    );
+  });
+
+  // Once the page the patch asked for has arrived, the patch is spent.
+  it("stops replaying a patch the URL already carries", () => {
+    render();
+    change(byName<HTMLSelectElement>("runKind"), "scratch");
+
+    // The round-trip lands...
+    render({ runKind: "scratch" });
+    // ...and the reader clears the kind again.
+    change(byName<HTMLSelectElement>("runKind"), "all");
+
+    expect(replace).toHaveBeenLastCalledWith(
+      "/observatory?view=overview&windowDays=30",
+      { scroll: false },
+    );
+  });
+
+  // A drill-down link or Back replaces the state wholesale. Re-imposing the
+  // filter the reader set a moment earlier would undo the link they clicked.
+  it("drops the accumulated patch when the reader navigates elsewhere", () => {
+    render();
+    change(byName<HTMLSelectElement>("runKind"), "scratch");
+
+    // A heatmap drill-down lands: a different view, no runKind.
+    render({ view: "quality", nodeId: "checks" });
+    change(byName<HTMLInputElement>("from"), "2026-05-01");
+
+    expect(replace).toHaveBeenLastCalledWith(
+      "/observatory?view=quality&windowDays=30&nodeId=checks",
+      { scroll: false },
+    );
   });
 
   it("preserves the current view in every commit", () => {

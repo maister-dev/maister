@@ -59,7 +59,7 @@ export function AgentizationPanel({
             className="rounded-md border border-line-soft bg-ivory px-3 py-2"
           >
             <h3 className="m-0 font-mono text-[10px] font-bold uppercase tracking-[0.08em] text-mute">
-              {text[bucket.kind]}
+              {labels.runKindName[bucket.kind]}
             </h3>
             <p className="mt-1 text-sm font-semibold text-ink">
               {formatNumber(locale, bucket.lines)} {text.lines.toLowerCase()}

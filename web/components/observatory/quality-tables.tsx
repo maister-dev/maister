@@ -3,9 +3,14 @@ import type {
   ObservatoryProjectSummary,
 } from "@/lib/queries/observatory";
 import type { ObservatoryLabels } from "@/components/observatory/types";
+import type { ObservatoryPeriod } from "@/lib/observatory/period";
+import type { ObservatoryRunKind } from "@/lib/observatory/run-kind";
 import type { ReactElement, ReactNode } from "react";
 
 import Link from "next/link";
+
+import { formatSeconds } from "@/components/observatory/harness-format";
+import { observatoryDrilldownHref } from "@/lib/observatory/href";
 
 // ADR-177 D6: `getPortfolioObservatory` has always computed `projects[]` and
 // `flows[]` and nothing rendered them. The Quality view is where they belong —
@@ -25,10 +30,15 @@ interface QualityRow {
 
 export function QualityProjectsTable({
   labels,
+  period,
   projects,
+  runKind,
 }: {
   labels: ObservatoryLabels;
+  /** ADR-177: the row link opens the SAME window the reader is looking at. */
+  period: ObservatoryPeriod;
   projects: readonly ObservatoryProjectSummary[];
+  runKind: ObservatoryRunKind;
 }): ReactElement {
   return (
     <QualityTable
@@ -39,7 +49,10 @@ export function QualityProjectsTable({
         name: (
           <Link
             className="underline-offset-2 hover:underline"
-            href={`/projects/${project.projectSlug}/observatory?view=quality`}
+            href={observatoryDrilldownHref(
+              `/projects/${project.projectSlug}/observatory`,
+              { period, runKind, view: "quality" },
+            )}
           >
             {project.projectName}
           </Link>
@@ -151,7 +164,7 @@ function QualityTable({
                   <Num value={String(row.retries)} />
                   <Num value={row.correctionRate.toFixed(2)} />
                   <Num value={row.autonomy.toFixed(2)} />
-                  <Num value={`${Math.round(row.waitSeconds / 60)}m`} />
+                  <Num value={formatSeconds(row.waitSeconds)} />
                 </tr>
               ))}
             </tbody>

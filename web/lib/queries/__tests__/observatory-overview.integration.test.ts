@@ -217,6 +217,79 @@ describe("getObservatoryOverview (ADR-177)", () => {
     expect(row.counts.tasksStarted).toBe(1);
   });
 
+  // ADR-177 D2 + D3, one rule. Before this, "settled" for a task was a second,
+  // hand-kept status list that said Review/Crashed are NEVER settled — so one
+  // crashed run nobody ever discarded kept its task in "in work" in every
+  // window, forever. D3 already calls a removed-workspace Review/Crashed run
+  // `Abandoned`; both axes now ask the same classifier.
+  it("closes a task's interval once its run's workspace is removed", async () => {
+    const parked = await seedTask(alpha);
+
+    // Crashed long before the window, worktree still present: the run owes a
+    // recover/discard decision, so the task IS still in work.
+    await seedRun({
+      project: alpha,
+      kind: "flow",
+      status: "Crashed",
+      taskId: parked,
+      startedAt: at("2026-01-10T09:00:00.000Z"),
+      endedAt: at("2026-01-11T09:00:00.000Z"),
+      workspace: { promotionState: "none" },
+    });
+
+    expect(rowFor(await overview(), alpha.slug).counts.tasksInWork).toBe(1);
+
+    // Discarded: the same run now counts in the Abandoned column, and the task
+    // stops being in work in a window its run never reached.
+    const discarded = await seedTask(alpha);
+
+    await seedRun({
+      project: alpha,
+      kind: "flow",
+      status: "Crashed",
+      taskId: discarded,
+      startedAt: at("2026-01-10T09:00:00.000Z"),
+      endedAt: at("2026-01-11T09:00:00.000Z"),
+      workspace: { promotionState: "none", removed: true },
+    });
+
+    const row = rowFor(await overview(), alpha.slug);
+
+    expect(row.counts.tasksInWork).toBe(1);
+    expect(row.counts.tasksStarted).toBe(0);
+  });
+
+  // `[started_at, settled_at)` overlaps `[since, until)` when
+  // `settled_at > since` — strictly. A run that settled AT the boundary belongs
+  // to the previous period, and `>=` let it count in both.
+  it("excludes a run that settled exactly at `since`", async () => {
+    const onBoundary = await seedTask(alpha);
+
+    await seedRun({
+      project: alpha,
+      kind: "flow",
+      status: "Done",
+      taskId: onBoundary,
+      startedAt: at("2026-04-01T09:00:00.000Z"),
+      endedAt: SINCE,
+    });
+
+    expect(rowFor(await overview(), alpha.slug).counts.tasksInWork).toBe(0);
+
+    const justInside = await seedTask(alpha);
+
+    await seedRun({
+      project: alpha,
+      kind: "flow",
+      status: "Done",
+      taskId: justInside,
+      startedAt: at("2026-04-01T09:00:00.000Z"),
+      endedAt: new Date(SINCE.getTime() + 1),
+    });
+
+    expect(rowFor(await overview(), alpha.slug).counts.tasksInWork).toBe(1);
+  });
+
   it("keeps the task columns flow-based when the run kind narrows to scratch", async () => {
     const task = await seedTask(alpha);
 

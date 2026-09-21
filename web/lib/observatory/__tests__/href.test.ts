@@ -105,16 +105,23 @@ describe("observatoryViewHref (ADR-177 D6)", () => {
       runKind: "flow",
     });
 
-  it("keeps the drill-down keys within Quality and Harness", () => {
-    for (const view of ["quality", "harness"] as const) {
-      const href = observatoryViewHref("/observatory", drilled(), view);
+  it("keeps every drill-down key on Quality, which owns them all", () => {
+    const href = observatoryViewHref("/observatory", drilled(), "quality");
 
-      expect(href).toContain(`view=${view}`);
-      expect(href).toContain("flowId=aif");
-      expect(href).toContain("nodeId=checks");
-      expect(href).toContain("artifactKind=log");
-      expect(href).toContain("artifactDefId=junit");
-    }
+    expect(href).toContain("view=quality");
+    expect(href).toContain("flowId=aif");
+    expect(href).toContain("nodeId=checks");
+    expect(href).toContain("artifactKind=log");
+    expect(href).toContain("artifactDefId=junit");
+  });
+
+  // D7 gives Harness flow and node but NOT the artifact pair, and its bar
+  // renders no artifact control. Carrying them over made the harness metrics
+  // narrow by an artifact the reader could neither see nor clear.
+  it("drops the artifact pair on the way to Harness and keeps flow and node", () => {
+    expect(observatoryViewHref("/observatory", drilled(), "harness")).toBe(
+      "/observatory?view=harness&windowDays=30&runKind=flow&flowId=aif&nodeId=checks",
+    );
   });
 
   it("drops them when leaving for Overview or Cost", () => {
@@ -219,5 +226,96 @@ describe("runsLedgerHref (ADR-177 D8)", () => {
       dateFrom: "2026-05-07",
       dateTo: "2026-06-05",
     });
+  });
+});
+
+// The tab href is only half the guard: a bookmark, a pasted link or a hand-
+// written URL never went through it. `parseObservatorySearchParams` is where
+// BOTH the applied filters and the rendered controls are derived, so a param
+// the view does not own has to die there.
+describe("view field ownership at parse (ADR-177 D7)", () => {
+  it("drops the artifact pair on Harness — no control renders it there", () => {
+    const parsed = parseObservatorySearchParams(
+      {
+        view: "harness",
+        flowId: "aif",
+        nodeId: "checks",
+        artifactKind: "log",
+        artifactDefId: "junit",
+      },
+      NOW,
+    );
+
+    expect(parsed.filters.artifactKind).toBeUndefined();
+    expect(parsed.filters.artifactDefId).toBeUndefined();
+    expect(parsed.current.artifactKind).toBeUndefined();
+    expect(parsed.current.artifactDefId).toBeUndefined();
+    // Flow and node ARE harness fields and stay applied.
+    expect(parsed.filters.flowId).toBe("aif");
+    expect(parsed.filters.nodeId).toBe("checks");
+  });
+
+  it("drops all four on Overview and Cost, which own none of them", () => {
+    for (const view of ["overview", "cost"] as const) {
+      const { filters, current } = parseObservatorySearchParams(
+        {
+          view,
+          flowId: "aif",
+          nodeId: "checks",
+          artifactKind: "log",
+          artifactDefId: "junit",
+        },
+        NOW,
+      );
+
+      expect(filters.flowId).toBeUndefined();
+      expect(filters.nodeId).toBeUndefined();
+      expect(filters.artifactKind).toBeUndefined();
+      expect(filters.artifactDefId).toBeUndefined();
+      expect(current.flowId).toBeUndefined();
+    }
+  });
+
+  it("keeps all four on Quality", () => {
+    const { filters } = parseObservatorySearchParams(
+      {
+        view: "quality",
+        flowId: "aif",
+        nodeId: "checks",
+        artifactKind: "log",
+        artifactDefId: "junit",
+      },
+      NOW,
+    );
+
+    expect(filters).toMatchObject({
+      flowId: "aif",
+      nodeId: "checks",
+      artifactKind: "log",
+      artifactDefId: "junit",
+    });
+  });
+
+  // D6's default is read from the RAW keys: a pre-view drill-down link carries
+  // an artifact key with no `view=` and must still land on Quality holding it.
+  it("still defaults a bare artifact link to Quality and keeps the key", () => {
+    const { current, filters } = parseObservatorySearchParams(
+      { artifactDefId: "junit" },
+      NOW,
+    );
+
+    expect(current.view).toBe("quality");
+    expect(filters.artifactDefId).toBe("junit");
+  });
+
+  it("re-serializes a Harness URL without the dropped params", () => {
+    const { current } = parseObservatorySearchParams(
+      { view: "harness", nodeId: "checks", artifactDefId: "junit" },
+      NOW,
+    );
+
+    expect(buildObservatoryHref("/observatory", current)).toBe(
+      "/observatory?view=harness&windowDays=30&nodeId=checks",
+    );
   });
 });

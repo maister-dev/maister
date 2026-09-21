@@ -28,10 +28,21 @@ export function OverviewTable({
   projectSlug,
   liveLabel,
 }: OverviewTableProps): ReactElement {
-  const rows = [...table.rows, ...table.subRows];
-  const isEmpty =
-    rows.length === 0 ||
-    DELIVERY_RUN_KINDS.every((kind) => table.totals.runs[kind] === 0);
+  // The Platform row is a rendered row like any other: an admin whose visible
+  // project set is empty but whose window holds project-less runs must see it,
+  // not an empty state.
+  const rowCount =
+    table.rows.length + table.subRows.length + (table.platform ? 1 : 0);
+  // BOTH axes, not just runs. D2's whole point is that tasks are states and
+  // runs are events: a task whose only flow run started before the period and
+  // is still open counts in `tasksInWork` while every run cell reads zero, and
+  // a runs-only predicate would delete the table that carries the number.
+  const hasRuns = DELIVERY_RUN_KINDS.some(
+    (kind) => table.totals.runs[kind] > 0,
+  );
+  const hasTasks =
+    table.totals.tasksInWork > 0 || table.totals.tasksStarted > 0;
+  const isEmpty = rowCount === 0 || (!hasRuns && !hasTasks);
 
   return (
     <section
@@ -103,7 +114,7 @@ export function OverviewTable({
                       index === 0 && "border-l border-line",
                     )}
                   >
-                    {labels.overview.kind[kind]}
+                    {labels.runKindName[kind]}
                   </th>
                 ))}
                 {IN_FLIGHT_OUTCOME_BUCKETS.map((bucket, index) => (
@@ -214,18 +225,49 @@ function Row({
   // RUNS by flow and kind, and tasks are not split at all (D2 counts them
   // per project, from flow runs only). A `0` there would read as "this flow
   // touched no tasks" rather than "this axis does not carry tasks".
-  const isPlatform = row.identity.kind === "platform";
   const hasTasks = row.identity.kind === "project";
   const slug =
     row.identity.kind === "project" ? row.identity.projectSlug : projectSlug;
-  // A run-kind sub-row narrows the ledger exactly (`kind=`), so its cells stay
-  // links. A FLOW sub-row does not: the ledger has no flow filter, so a link
-  // would open a list holding every flow's runs in that bucket — a count that
-  // disagrees with the cell it came from. AC4 says a cell's count equals the
-  // list it opens, so a flow sub-row's cells open nothing.
-  const kindFilter: DeliveryRunKind | undefined =
+  // AC4: a cell's count equals the list it opens. A cell is narrowed by THREE
+  // things at once — the row's own kind, the bar's selected kind, and (in the
+  // run columns) the column's kind — and the link has to carry all three or it
+  // opens a different population. A link the ledger answers with a different
+  // number is worse than no link at all.
+  //
+  // TWO row classes can never be reproduced there and so open nothing:
+  //
+  // - a FLOW sub-row: the ledger has no flow filter, so the list would hold
+  //   every flow's runs in that bucket;
+  // - the PLATFORM row: it counts `project_id IS NULL` runs, and the ledger is
+  //   `INNER JOIN projects`, so those runs are unreachable there. A link with
+  //   no `project=` does not narrow to them — it widens to every project.
+  //   Giving `/runs` a project-less mode is the fuller answer and is on the
+  //   backlog; until then the cells are plain numbers.
+  const rowKind: DeliveryRunKind | undefined =
     row.identity.kind === "runKind" ? row.identity.runKind : undefined;
-  const linkable = row.identity.kind !== "flow";
+  const selectedKind: DeliveryRunKind | undefined =
+    current.runKind === "all" ? undefined : current.runKind;
+  // A row and a selection that name different kinds count nothing at all; the
+  // breakdown query already filters by the selection, so this is a guard, not
+  // a state the page reaches today.
+  const kindConflict =
+    rowKind !== undefined &&
+    selectedKind !== undefined &&
+    rowKind !== selectedKind;
+  const linkable =
+    row.identity.kind !== "flow" &&
+    row.identity.kind !== "platform" &&
+    !kindConflict;
+  // A bucket cell spans every kind the row and the selection still allow.
+  const bucketKind = rowKind ?? selectedKind;
+  // A run-column cell is one kind by definition; it links only when the row
+  // and the selection both still admit that kind. On a scratch sub-row the
+  // Flow column is 0 BECAUSE it holds no flow runs — linking it to the
+  // project's flow runs would answer a question the cell never asked.
+  const columnLinkable = (kind: DeliveryRunKind): boolean =>
+    linkable &&
+    (rowKind === undefined || rowKind === kind) &&
+    (selectedKind === undefined || selectedKind === kind);
 
   return (
     <tr className="border-b border-line last:border-b-0">
@@ -252,9 +294,9 @@ function Row({
           key={kind}
           bordered={index === 0}
           href={
-            linkable
+            columnLinkable(kind)
               ? runsLedgerHref({
-                  projectSlug: isPlatform ? undefined : slug,
+                  projectSlug: slug,
                   period: current.period,
                   kind,
                 })
@@ -272,9 +314,9 @@ function Row({
             href={
               linkable
                 ? runsLedgerHref({
-                    projectSlug: isPlatform ? undefined : slug,
+                    projectSlug: slug,
                     period: current.period,
-                    kind: kindFilter,
+                    kind: bucketKind,
                     bucket,
                   })
                 : undefined
@@ -304,7 +346,7 @@ function RowName({
     return <span className="font-mono">{row.identity.flowRefId}</span>;
   }
   if (row.identity.kind === "runKind") {
-    return <span>{labels.overview.kind[row.identity.runKind]}</span>;
+    return <span>{labels.runKindName[row.identity.runKind]}</span>;
   }
 
   return (

@@ -9,6 +9,7 @@ import { isObservatoryRunKind } from "@/lib/observatory/run-kind";
 import {
   defaultObservatoryView,
   isObservatoryView,
+  observatoryViewOwns,
 } from "@/lib/observatory/views";
 
 export interface ObservatorySearchParams {
@@ -46,11 +47,10 @@ export function parseObservatorySearchParams(
   params: ObservatorySearchParams,
   now: Date = new Date(),
 ): ParsedObservatoryFilters {
-  const artifactDefId = firstNonEmpty(params.artifactDefId);
-  const artifactKind = firstNonEmpty(params.artifactKind);
-  const validArtifactKind = parseArtifactKind(artifactKind);
-  const flowId = firstNonEmpty(params.flowId);
-  const nodeId = firstNonEmpty(params.nodeId);
+  const requestedArtifactDefId = firstNonEmpty(params.artifactDefId);
+  const requestedArtifactKind = firstNonEmpty(params.artifactKind);
+  const requestedFlowId = firstNonEmpty(params.flowId);
+  const requestedNodeId = firstNonEmpty(params.nodeId);
   const project = firstNonEmpty(params.project);
   const runKind = parseRunKind(params.runKind);
   // ONE `now` feeds the period and every query's volatility check, so a page
@@ -61,9 +61,30 @@ export function parseObservatorySearchParams(
     from: firstNonEmpty(params.from),
     to: firstNonEmpty(params.to),
   });
+  // The default is read from the RAW keys: a pre-view drill-down link carries
+  // them with no `view=`, and it means Quality (D6).
   const view =
     parseView(params.view) ??
-    defaultObservatoryView({ artifactDefId, artifactKind, flowId, nodeId });
+    defaultObservatoryView({
+      artifactDefId: requestedArtifactDefId,
+      artifactKind: requestedArtifactKind,
+      flowId: requestedFlowId,
+      nodeId: requestedNodeId,
+    });
+  // D7 owns the fields per view, and a param the view does not own is dropped
+  // HERE — the one place both the applied `filters` and the rendered `current`
+  // are derived. Dropping it only in the tab href would still leave a pasted
+  // `?view=harness&artifactDefId=…` narrowing the harness metrics through a
+  // control that view never renders.
+  const owned = <T>(
+    key: Parameters<typeof observatoryViewOwns>[1],
+    value: T,
+  ) => (observatoryViewOwns(view, key) ? value : undefined);
+  const artifactDefId = owned("artifactDefId", requestedArtifactDefId);
+  const artifactKind = owned("artifactKind", requestedArtifactKind);
+  const validArtifactKind = parseArtifactKind(artifactKind);
+  const flowId = owned("flowId", requestedFlowId);
+  const nodeId = owned("nodeId", requestedNodeId);
 
   return {
     filters: {
@@ -90,12 +111,14 @@ export function parseObservatorySearchParams(
   };
 }
 
+// A repeated param takes its FIRST value, exactly like every other field here
+// (`firstNonEmpty`). Treating `?view=a&view=b` as "reset to the default" made
+// two fields disagree with the rest of the bar, and made a repeated `view`
+// skip the drill-down default below.
 function parseRunKind(
   value: ObservatorySearchParams["runKind"],
 ): ObservatoryRunKind {
-  if (Array.isArray(value)) return "all";
-
-  const normalized = value?.trim();
+  const normalized = firstNonEmpty(value);
 
   return normalized && isObservatoryRunKind(normalized) ? normalized : "all";
 }
@@ -103,9 +126,7 @@ function parseRunKind(
 function parseView(
   value: ObservatorySearchParams["view"],
 ): ObservatoryView | undefined {
-  if (Array.isArray(value)) return "overview";
-
-  const normalized = value?.trim();
+  const normalized = firstNonEmpty(value);
 
   if (!normalized) return undefined;
 

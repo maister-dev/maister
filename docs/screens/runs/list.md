@@ -40,9 +40,12 @@ where action availability is re-checked by the run/workbench APIs.
 ## Navigation
 
 - **Entry:** Active workspaces rail header **See all** (`/runs`), deep-linked
-  filters, every numeric run cell of the Observatory overview table
-  (**Implemented, ADR-177** — `?project=&from=&to=&kind=&bucket=`), and future
-  project/scheduler links.
+  filters, the linking run cells of the Observatory overview table
+  (**Implemented, ADR-177** — `?project=&from=&to=&kind=&bucket=`, written by
+  this screen's own `filtersToParams`), and future project/scheduler links. The
+  overview's per-flow sub-rows and its Platform row do NOT link here: this
+  screen has no flow filter, and its `INNER JOIN projects` cannot return a
+  project-less run.
 - **Row click:** flow and standalone agent rows open `/runs/{runId}`; scratch
   rows open `/scratch-runs/{runId}`.
 - **Project link:** opens `/projects/{slug}`.
@@ -75,7 +78,13 @@ flowchart TD
   matches the run.
 - **(Implemented, ADR-177)** The `bucket` filter reuses the Observatory's shared
   `runOutcomeBucketSql` fragment over the run's latest `workspaces` row, so a
-  count shown there equals `totalRows` here for the same params.
+  count shown there equals `totalRows` here for the same params. The lateral is
+  joined only when `bucket` is set — every other page load would otherwise pay
+  for a per-row subquery nothing reads.
+- **(Implemented, ADR-177)** `listRunsPage` is `INNER JOIN projects`, so a run
+  with `project_id IS NULL` (today: the Studio assistant scratch run, ADR-097)
+  is not reachable from this screen under any filter. A project-less mode is
+  Phase-2 backlog.
 - RBAC is embedded in the query: global admins read all non-archived projects;
   other users read only project-member rows.
 - No new write model or API route is introduced.

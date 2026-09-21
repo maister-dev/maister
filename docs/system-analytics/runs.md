@@ -121,10 +121,16 @@ have `project_members` visibility. Flow and standalone agent rows open
 **(Implemented, ADR-177)** The `bucket` predicate is the SAME `runOutcomeBucketSql`
 `CASE` fragment the Observatory overview groups by, over the SAME latest
 `workspaces` row (`ORDER BY created_at DESC, id ASC LIMIT 1` — the lateral this
-query already uses for `branch`). Consequently an Observatory cell's count equals
-this page's `totalRows` for the same `project` / `from` / `to` / `kind` /
-`bucket` params; the bucket rules themselves are tabulated once, in
+query already uses for `branch`; the COUNT query joins it only when `bucket` is
+set). Consequently an Observatory cell's count equals this page's `totalRows`
+for the same `project` / `from` / `to` / `kind` / `bucket` params; the bucket
+rules themselves are tabulated once, in
 [`observatory.md`](observatory.md) → "Overview read model".
+
+This reader is `INNER JOIN projects`, so a run with `project_id IS NULL` is
+outside it entirely — which is why the Observatory's Platform row renders its
+cells as plain numbers instead of links (see
+[`observatory.md`](observatory.md) → "Count = list").
 
 ## State machine — execution axis
 

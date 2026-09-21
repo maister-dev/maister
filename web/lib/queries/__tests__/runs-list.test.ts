@@ -3,10 +3,10 @@ import type { GlobalRole } from "@/lib/db/schema";
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  filtersToParams,
   listRunsPage,
   normalizeRunsListFilters,
 } from "@/lib/queries/runs-list";
+import { filtersToParams } from "@/lib/runs/list-params";
 
 function sqlDebugText(value: unknown): string {
   if (typeof value === "string") return value;

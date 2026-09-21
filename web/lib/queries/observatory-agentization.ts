@@ -126,6 +126,8 @@ export async function getProjectAgentization(
       runKind,
       runs: normalizedRuns,
       buckets: deliveryRows,
+      since,
+      until,
     }),
     funnel: rollupObservatoryFunnel({
       runKind,

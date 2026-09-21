@@ -14,6 +14,22 @@ export function formatRatioWithN(value: number, n: number): string {
   return `${value.toFixed(2)} (n=${n})`;
 }
 
+/**
+ * A wait/elapsed duration, in the Observatory's compact `s` / `m` / `h` form.
+ *
+ * Shared so the Autonomy Score card and the quality tables — which render the
+ * SAME `autonomy.waitSeconds` field — cannot round it two different ways.
+ */
+export function formatSeconds(value: number): string {
+  if (value < 60) return `${value}s`;
+
+  const minutes = Math.round(value / 60);
+
+  if (minutes < 60) return `${minutes}m`;
+
+  return `${Math.round(minutes / 60)}h`;
+}
+
 export function formatLift(
   lift: number | null,
   failedN: number,

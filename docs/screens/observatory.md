@@ -78,16 +78,27 @@ project-less run in the period and no `project=` filter in effect — a
 **Platform** row whose task cells are empty. Sub-rows leave their task cells
 empty too: the breakdown splits runs, not tasks.
 
+The table appears whenever the period holds work on EITHER axis. A period with
+tasks still in work but no run started inside it still renders — the tasks are
+the number that case exists to show. The empty state is for a period holding
+neither.
+
 The table does **not** drop columns responsively: it lives in one
 `overflow-x-auto` container with a `min-w-[…]`, so the page itself never scrolls
 horizontally and no `<th>`/`<td>` pair can fall out of step. A `live` band marks
 a table holding at least one in-flight run (the existing `volatile` convention).
 
-Every numeric run cell is a link into the ledger, filtered to exactly that cell.
-The exception is a per-flow sub-row on the project page: the ledger cannot filter
-by flow, so those cells stay plain numbers rather than opening a list whose count
-would differ (see [`../system-analytics/observatory.md`](../system-analytics/observatory.md)
-→ "Count = list").
+A numeric run cell is a link into the ledger, filtered to exactly that cell —
+**when the ledger can reproduce it.** The link carries every kind constraint the
+cell was counted under: the bar's selected run kind, the row's own kind, and the
+column's kind. Three classes stay plain numbers: a per-flow sub-row on the
+project page (the ledger has no flow filter); the **Platform** row (the ledger is
+`INNER JOIN projects`, so it can never return a project-less run — and a link
+without `project=` widens to every project instead of narrowing); and a cell
+whose constraints name different kinds, such as the Flow column of a `scratch`
+sub-row, which reads `0` precisely because the row holds no flow run. See
+[`../system-analytics/observatory.md`](../system-analytics/observatory.md)
+→ "Count = list".
 
 Below it sits the **compact cost strip**: the period token total, the top three
 models / runners / flows, and a link to the Cost view.
@@ -104,10 +115,20 @@ One client-owned bar, **no Apply button**. Fields by view:
 | Flow, Node | Quality, Harness |
 | Artifact kind, Artifact definition | Quality |
 
+That table is the FILTER contract, not just the render one: a param the view
+does not own is dropped when the URL is parsed, so a bookmark or a stale link
+cannot narrow the page through a control it does not show.
+
 Presets, selects and date inputs commit on `change`; free-text fields commit on
-blur or Enter. Clearing a field removes its param. The bar renders the
+blur or Enter. Clearing a field removes its param. Changing a second control
+before the first has come back keeps BOTH changes: each commit composes onto the
+edits still in flight, so a fast reader never watches one of their own choices
+disappear. The bar renders the
 **effective** period, so a clamped or dropped custom range is visible rather than
-silently ignored. The behavioral contract for this pattern lives in
+silently ignored. A free-text field whose text is NOT in the URL — typed but not
+committed, or stranded by the blur-then-tab sequence a view click causes — keeps
+its text (that is the point of mounting the bar once) and says so in a hint
+beside it, so the bar never shows a filter the page is not applying. The behavioral contract for this pattern lives in
 [`components.md`](components.md) → "Auto-apply filter bar".
 
 ### Existing regions
@@ -128,7 +149,7 @@ The project page also shows:
   taller adjacent card.
 
 For scratch or agent selection, flow-ledger panels show an explicit
-not-applicable state instead of relabeling flow-only values; **(Designed,
+not-applicable state instead of relabeling flow-only values; **(Implemented,
 ADR-177)** that state becomes the whole Quality and Harness view, and the Quality
 layout uses a responsive grid with `items-start` and no fixed aside, so an empty
 ledger is one short card rather than a viewport. The portfolio route does not
@@ -159,6 +180,9 @@ insufficient, never estimated.
 - **Pending** — a filter change is in flight. The bar sets `aria-busy` and shows
   a text-plus-color indicator until the server component has re-rendered; the
   previous content stays visible and nothing is cleared.
+- **Uncommitted draft** — a free-text field holds text the URL does not carry.
+  The value stays on screen and an accessible hint (`aria-describedby`) says it
+  is not applied; blur or Enter commits it.
 - **View × run kind not applicable** — with `runKind ∈ {scratch, agent}`, the
   Quality and Harness views render the flow-ledger not-applicable state as the
   **whole** view. Overview and Cost stay fully populated for those kinds.
@@ -188,11 +212,21 @@ the parity test requires matching key sets.
 names plus the tablist's accessible `label`),
 `observatory.period.*` (presets, from/to, clamped, pending), `observatory.overview.*`
 (title, column groups, project/platform/total, empty, live hint, open-in-ledger),
+`observatory.uncommitted` (the not-applied draft hint),
 `observatory.cost.byFlowTitle` + `observatory.cost.periodScoped` (replacing
-`costBreakdown.storedLifetime`), `observatory.quality.*`, `runsList.filters.{kind,bucket}` —
-and a **top-level `runBucket.*`** namespace with the ten D3 names, shared by the
-Observatory and the `/runs` ledger so the two never carry different words for one
-bucket.
+`costBreakdown.storedLifetime`), `observatory.quality.*`, `runsList.filters.{kind,bucket}`.
+
+Two **top-level** namespaces carry vocabulary more than one screen renders, so
+no two surfaces can end up with different words for one value:
+
+- **`runBucket.*`** — the ten D3 outcome names, read by the overview table and
+  the `/runs` ledger's outcome select.
+- **`runKind.*`** — `flow` / `scratch` / `agent`, read by the overview table's
+  Runs columns, the filter bar's run-kind select, the Agentization panel's
+  buckets, the By-flow cost card's flow-less pseudo-rows, and the `/runs`
+  ledger's kind select. It replaces the per-surface copies under
+  `observatory.overview.kind.*` and `observatory.agentization.*`, which had
+  already drifted in RU ("Флоу" vs "Flow", "Черновой" vs "Scratch").
 
 ## Linked artifacts
 

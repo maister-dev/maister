@@ -14,10 +14,10 @@ import { DELIVERY_RUN_KINDS } from "@/lib/observatory/run-kind";
 import {
   IN_FLIGHT_OUTCOME_BUCKETS,
   RUN_OUTCOME_BUCKETS,
-  TASK_IN_WORK_SETTLED_STATUSES,
   isRunOutcomeBucket,
   latestWorkspaceLateralSql,
   runOutcomeBucketSql,
+  runSettledSql,
 } from "@/lib/runs/outcome-bucket";
 import { isDeliveryRunKind } from "@/lib/observatory/run-kind";
 
@@ -110,6 +110,21 @@ type BreakdownRow = {
   bucket: string;
   run_count: string | number;
 };
+
+/**
+ * How many runs of these counts are still in flight?
+ *
+ * Derived from `IN_FLIGHT_OUTCOME_BUCKETS`, never from a hand-written sum: the
+ * volatility flag and the live band answer the same question, and a sixth
+ * in-flight bucket must not update one of them and silently under-count the
+ * other.
+ */
+export function inFlightTotal(counts: OverviewCounts): number {
+  return IN_FLIGHT_OUTCOME_BUCKETS.reduce(
+    (total, bucket) => total + counts.buckets[bucket],
+    0,
+  );
+}
 
 export function emptyOverviewCounts(): OverviewCounts {
   return {
@@ -217,9 +232,7 @@ export async function getObservatoryOverview(
     platform,
     subRows: buildSubRows(breakdownRows),
     totals,
-    volatile: IN_FLIGHT_OUTCOME_BUCKETS.some(
-      (bucket) => totals.buckets[bucket] > 0,
-    ),
+    volatile: inFlightTotal(totals) > 0,
   };
 }
 
@@ -364,9 +377,29 @@ async function selectRunGroups(
  * in-window ones: a task relaunched inside the period was taken into work when
  * its FIRST run started, which may be long before `since`.
  *
+ * "Settled" is asked of the D3 classifier (`runSettledSql`), not of a second
+ * status list — so a `Review` / `Crashed` run whose workspace was REMOVED
+ * closes its task's interval, exactly as it already counts in the `Abandoned`
+ * column. Without that, one discarded crash kept its task in "in work" in every
+ * future window, forever.
+ *
  * A settled run with no `ended_at` is treated as still open — we cannot prove
  * when it settled, and claiming it settled before `since` would silently drop
  * the task from the period.
+ *
+ * Interval arithmetic: `[started_at, settled_at)` overlaps `[since, until)`
+ * when `started_at < until AND settled_at > since`. Both bounds are strict —
+ * a run that settled exactly at `since` belongs to the PREVIOUS period, and
+ * `>=` would have let it count in both.
+ *
+ * KNOWN SCALING CHARACTERISTIC (ADR-059): the inner aggregate is deliberately
+ * unbounded in time, because `min(started_at)` has to see a task's whole
+ * history to know when it was taken into work. It therefore grows with the
+ * scoped projects' total flow-run count, not with the period — and it carries
+ * the latest-workspace lateral across that whole set, because the settled test
+ * reads `removed_at`. An index (or a `tasks.first_run_started_at` column)
+ * becomes an explicit migration task if volume proves the need; it is not one
+ * today.
  */
 async function selectTaskGroups(
   client: NodePgDatabase<typeof schema>,
@@ -375,10 +408,13 @@ async function selectTaskGroups(
 ): Promise<TaskGroupRow[]> {
   if (scope.length === 0) return [];
 
-  const settled = sql.join(
-    TASK_IN_WORK_SETTLED_STATUSES.map((status) => sql`${status}`),
-    sql`, `,
-  );
+  const settled = runSettledSql({
+    status: sql`r.status`,
+    promotionState: sql`w.promotion_state`,
+    promotionMode: sql`w.promotion_mode`,
+    prState: sql`w.pr_state`,
+    removedAt: sql`w.removed_at`,
+  });
   const result = await client.execute(sql`
     SELECT t.project_id,
            count(*) FILTER (WHERE t.in_work) AS tasks_in_work,
@@ -393,12 +429,13 @@ async function selectTaskGroups(
              bool_or(
                r.started_at < ${input.until}
                AND (
-                 r.status NOT IN (${settled})
+                 NOT (${settled})
                  OR r.ended_at IS NULL
-                 OR r.ended_at >= ${input.since}
+                 OR r.ended_at > ${input.since}
                )
              ) AS in_work
       FROM runs r
+      ${latestWorkspaceLateralSql("r")}
       WHERE r.run_kind = 'flow'
         AND r.task_id IS NOT NULL
         AND r.project_id IN (${idList(scope)})

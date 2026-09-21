@@ -11,13 +11,13 @@ import { NumberedPagination } from "@/components/navigation/numbered-pagination"
 import { ADAPTER_IDS } from "@/lib/acp-runners/adapter-support";
 import { requireActiveSession } from "@/lib/authz";
 import {
-  filtersToParams,
   listRunsPage,
   normalizeRunsListFilters,
   RUNS_LIST_KINDS,
   RUNS_LIST_SOURCES,
   RUNS_LIST_STATUSES,
 } from "@/lib/queries/runs-list";
+import { filtersToParams } from "@/lib/runs/list-params";
 import { RUN_OUTCOME_BUCKETS } from "@/lib/runs/outcome-bucket";
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
@@ -87,10 +87,11 @@ export default async function RunsPage({
   searchParams: SearchParams;
 }): Promise<ReactElement> {
   const user = await requireActiveSession();
-  const [params, t, tBucket, locale] = await Promise.all([
+  const [params, t, tBucket, tKind, locale] = await Promise.all([
     searchParams,
     getTranslations("runsList"),
     getTranslations("runBucket"),
+    getTranslations("runKind"),
     getLocale(),
   ]);
   const filters = normalizeRunsListFilters(params);
@@ -176,7 +177,7 @@ export default async function RunsPage({
           <option value="">{t("filters.allKinds")}</option>
           {RUNS_LIST_KINDS.map((kind) => (
             <option key={kind} value={kind}>
-              {kind}
+              {tKind(kind)}
             </option>
           ))}
         </FilterSelect>

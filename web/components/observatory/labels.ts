@@ -1,20 +1,26 @@
+import type { DeliveryRunKind } from "@/lib/observatory/run-kind";
 import type { getTranslations } from "next-intl/server";
 import type { ObservatoryLabels } from "@/components/observatory/types";
 import type { RunOutcomeBucket } from "@/lib/runs/outcome-bucket";
 
+import { DELIVERY_RUN_KINDS } from "@/lib/observatory/run-kind";
 import { RUN_OUTCOME_BUCKETS } from "@/lib/runs/outcome-bucket";
 
 type Translator = Awaited<ReturnType<typeof getTranslations>>;
 
 /**
- * `tBucket` is the TOP-LEVEL `runBucket` namespace, not an `observatory.*`
- * subtree: the `/runs` ledger renders the same ten names from the same keys,
- * and a second copy under `observatory.*` is how the two surfaces would end up
- * disagreeing about what "PR open" is called.
+ * `tBucket` and `tKind` are the TOP-LEVEL `runBucket` / `runKind` namespaces,
+ * not `observatory.*` subtrees: the `/runs` ledger renders the same ten bucket
+ * names and the same three kind names from the same keys, and a second copy
+ * under `observatory.*` is how two surfaces end up disagreeing about what
+ * "PR open" or "scratch" is called — which is exactly what happened while the
+ * filter bar read `agentization.*` ("Scratch") and the overview table read its
+ * own copy ("Черновой").
  */
 export function labelsFromTranslations(
   t: Translator,
   tBucket: Translator,
+  tKind: Translator,
 ): ObservatoryLabels {
   return {
     title: t("title"),
@@ -125,9 +131,6 @@ export function labelsFromTranslations(
       asOf: t("agentization.asOf"),
       insufficient: t("agentization.insufficient"),
       volatility: t("agentization.volatility"),
-      flow: t("agentization.flow"),
-      scratch: t("agentization.scratch"),
-      agent: t("agentization.agent"),
       trend: t("agentization.trend"),
       trendNoData: t("agentization.trendNoData"),
       trendValue: t("agentization.trendValue"),
@@ -181,11 +184,6 @@ export function labelsFromTranslations(
       runs: t("overview.runs"),
       inFlight: t("overview.inFlight"),
       settled: t("overview.settled"),
-      kind: {
-        flow: t("overview.kind.flow"),
-        scratch: t("overview.kind.scratch"),
-        agent: t("overview.kind.agent"),
-      },
       empty: t("overview.empty"),
       openInLedger: t("overview.openInLedger"),
     },
@@ -197,8 +195,12 @@ export function labelsFromTranslations(
       flowRuns: t("quality.flowRuns"),
       wait: t("quality.wait"),
     },
+    uncommitted: t("uncommitted"),
     bucket: Object.fromEntries(
       RUN_OUTCOME_BUCKETS.map((bucket) => [bucket, tBucket(bucket)]),
     ) as Record<RunOutcomeBucket, string>,
+    runKindName: Object.fromEntries(
+      DELIVERY_RUN_KINDS.map((kind) => [kind, tKind(kind)]),
+    ) as Record<DeliveryRunKind, string>,
   };
 }

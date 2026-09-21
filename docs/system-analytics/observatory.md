@@ -512,12 +512,20 @@ values, never the requested ones.
   their own kind.
 - **Tasks in work in the period**: a task with ≥ 1 `flow` run whose in-work
   interval `[started_at, settled_at)` overlaps the period, i.e.
-  `started_at < until AND (status ∉ {Done, Failed, Abandoned} OR ended_at IS
-NULL OR ended_at >= since)`. `Review` and `Crashed` carry an `ended_at` but are
-  **not** settled — a crashed run owes a recover/discard decision and a Review
-  run awaits promotion. The `ended_at IS NULL` arm keeps a settled run that
-  carries no end timestamp OPEN: we cannot prove when it settled, and claiming
-  it settled before `since` would silently drop the task from the period.
+  `started_at < until AND (NOT settled OR ended_at IS NULL OR ended_at >
+since)`. Both bounds are strict: a run that settled exactly at `since` belongs
+  to the PREVIOUS period, not to both.
+  **`settled` is the D3 classifier** (`runSettledSql` — the bucket `CASE`
+  tested against the settled five), never a second status list. So a `Review`
+  or `Crashed` run is in flight — a crashed run owes a recover/discard decision
+  and a Review run awaits promotion — until its workspace is REMOVED, which D3
+  already calls `Abandoned`; discarding the worktree closes the task's interval
+  on both axes at once. A hand-kept status list would have said "Review and
+  Crashed are never settled", and one crashed run nobody ever discarded would
+  have held its task in "in work" in every future window.
+  The `ended_at IS NULL` arm keeps a settled run that carries no end timestamp
+  OPEN: we cannot prove when it settled, and claiming it settled before `since`
+  would silently drop the task from the period.
 - **Tasks taken into work in the period**: tasks whose `min(runs.started_at)`
   over their flow runs falls inside the period. No new column: `tasks.status =
 'InFlight'` is written in the launching run's insert transaction
@@ -529,7 +537,8 @@ Worked examples, all with `now = 2026-06-05T12:00:00.000Z` and `windowDays=30`
 
 | Fixture | Runs counted | `tasksInWork` | `tasksStarted` |
 | --- | --- | --- | --- |
-| Task launched `2026-04-20`, its only flow run still `Review` (`ended_at 2026-04-25`) | 0 (started before `since`) | 1 (not settled → interval open) | 0 |
+| Task launched `2026-04-20`, its only flow run still `Review` (`ended_at 2026-04-25`), worktree present | 0 (started before `since`) | 1 (not settled → interval open) | 0 |
+| Same task, worktree REMOVED (D3: `Abandoned`) | 0 | 0 (settled at `ended_at`, before `since`) | 0 |
 | Task first launched `2026-05-20`, run still `Running` | 1 | 1 | 1 |
 | Task launched `2026-03-01`, run `Done` with `ended_at 2026-03-05` | 0 | 0 (settled before `since`) | 0 |
 | Task launched `2026-04-10`, first run `Failed 2026-04-12`, second run started `2026-05-21` and `Done 2026-05-30` | 1 (the second) | 1 (second run overlaps) | 0 (earliest start precedes `since`) |
@@ -538,8 +547,9 @@ Worked examples, all with `now = 2026-06-05T12:00:00.000Z` and `windowDays=30`
 ### Outcome buckets (D3)
 
 The classification is generated from `BUCKET_BY_RUN_STATUS` plus two refinement
-arms, emitted as ONE SQL `CASE` fragment (`runOutcomeBucketSql`) that both the
-overview `GROUP BY` and the `/runs` ledger `bucket` predicate use. Workspace
+arms, emitted as ONE SQL `CASE` fragment (`runOutcomeBucketSql`) that the
+overview `GROUP BY`, the `/runs` ledger `bucket` predicate, and — through
+`runSettledSql` — the D2 task-overlap rule all use. Workspace
 columns come from `latestWorkspaceLateralSql` — the newest `workspaces` row by
 `(created_at DESC, id ASC)`, the same row the ledger already reads its branch
 from.
@@ -565,6 +575,15 @@ twelfth run status a compile error rather than a silently mis-bucketed column,
 mirroring `STAGE_BY_RUN_STATUS`. The in-flight five equal `WORK_IN_FLIGHT_STAGES`
 by name, so the Desk and the Observatory never disagree on a word.
 
+The `Delivered` rule above reads `promotion_state = 'done'`, but the SQL does
+NOT gate on it: `workspaces.promotion_state` is a plain `text NOT NULL DEFAULT
+'none'` with no CHECK and no coupling to `runs.status`, so "a `Done` run never
+carries `claiming` / `failed` / `reopened`" is an argument about the promotion
+code, not a constraint. Those three combinations fall through the refinements to
+the status map and classify as `Delivered`; the D3 matrix seeds and asserts
+them, so a row nobody expects lands somewhere explicit instead of vanishing from
+a total.
+
 ### Rows and visibility (D4)
 
 Rows are the caller's visible projects (`getVisibleProjects`) sorted by name,
@@ -579,17 +598,38 @@ and `agent` sub-rows.
 
 ### Count = list
 
-Every numeric run cell links to `/runs?project=&from=&to=&kind=&bucket=` and its
-count MUST equal that page's `totalRows` for the same params. The guarantee has
-two halves: the same day-aligned bounds (D1) and the same bucket fragment (D3).
-Task cells link to the project board instead.
+A numeric run cell that links opens `/runs?project=&from=&to=&kind=&bucket=`,
+and its count MUST equal that page's `totalRows` for the same params. The
+guarantee has two halves: the same day-aligned bounds (D1) and the same bucket
+fragment (D3). The Observatory writes those param names by CALLING the ledger's
+own `filtersToParams` (`web/lib/runs/list-params.ts`). Task cells link to the
+project board instead.
 
-The one cell class that does NOT link is a **per-flow sub-row**: the ledger has
-no flow filter, so such a link would open a list holding every flow's runs in
-that bucket — a number that disagrees with the cell it came from. A cell whose
-count the ledger cannot reproduce opens nothing rather than a wrong list. The
-`scratch` / `agent` sub-rows link normally, because `kind=` narrows them
-exactly.
+**A cell links only when the ledger can reproduce it.** Two row classes cannot
+be, and render as plain numbers:
+
+- a **per-flow sub-row** — the ledger has no flow filter, so the link would open
+  a list holding every flow's runs in that bucket. The `scratch` / `agent`
+  sub-rows link normally, because `kind=` narrows them exactly;
+- the **Platform row** — it counts `project_id IS NULL` runs and
+  `listRunsPage` is `INNER JOIN projects`, so those runs are unreachable there.
+  A link carrying no `project=` does not narrow to them; it WIDENS to every
+  project's runs, which is the same defect in the other direction.
+
+**A cell's link carries every kind constraint the cell was counted under**, and
+there are three: the bar's selected `runKind`, the row's own kind (a `scratch` /
+`agent` sub-row), and — in the three Runs columns — the column's kind. The read
+model applies the selection to every count, so under `runKind=scratch` a project
+row's bucket cells hold scratch runs alone and a link without `kind=scratch`
+opens all three kinds. Where those constraints name DIFFERENT kinds the cell
+counts nothing, and it renders as a plain number rather than linking: the Flow
+column of a `scratch` sub-row reads `0` because the row holds no flow run, so a
+`kind=flow` link would put the project's whole flow list behind a zero.
+
+A cell whose count the ledger cannot reproduce opens nothing rather than a wrong
+list. The database half of the Platform claim is pinned in
+`lib/queries/__tests__/runs-list.integration.test.ts`; giving `/runs` a
+project-less mode would make those cells linkable and is Phase-2 backlog.
 
 ## Implemented: agentization and run-kind scope (ADR-134)
 
@@ -606,8 +646,12 @@ network call from a page request, write a row, or surface a portfolio headline.
 - **Agentization** is `(AI additions + AI deletions) / (repository additions +
   repository deletions)`. The secondary rate compares AI-attributed merge/PR
   delivery units with all target merge/PR units.
-- **Run-kind segment** is `all | flow | scratch | agent`. Invalid, absent, or
-  repeated query values resolve to `all`.
+- **Run-kind segment** is `all | flow | scratch | agent`. Invalid or absent
+  query values resolve to `all`; a REPEATED one takes its first value, like
+  every other Observatory param (`firstNonEmpty`). Resolving a repeat to the
+  default instead let a repeated `view=` return a non-nullish `overview` and so
+  defeat the drill-down default (D6), landing a flow/node/artifact link on a
+  table its filters do not touch.
 
 Each cached delivery reference also retains its own cleaned commit delta. A
 rebase/fast-forward root is deduplicated by its final target SHA for the
@@ -674,8 +718,12 @@ labels and states. The complete calculation and test contract are in
 - Delivery attribution (ADR-134) MUST classify by `run_kind` and agent
   identity without altering any underlying metric definition.
 - **(Implemented, ADR-177)** The shared `runOutcomeBucketSql` fragment MUST be the
-  only run-outcome classifier: the overview `GROUP BY` and the `/runs` `bucket`
-  predicate use it, and no second TS-side classification exists.
+  only run-outcome classifier: the overview `GROUP BY`, the `/runs` `bucket`
+  predicate and the D2 task-overlap rule (via `runSettledSql`) use it, and no
+  second TS-side or status-list classification exists.
+- **(Implemented, ADR-177)** An overview cell MUST render as a link only when
+  `/runs` can reproduce its exact population — never for a per-flow sub-row or
+  the Platform row.
 - **(Implemented, ADR-177)** `BUCKET_BY_RUN_STATUS` MUST be declared `satisfies
 Record<RunStatus, RunOutcomeBucket>`, so a new `runs.status` value is a compile
   error rather than an unbucketed run.
@@ -716,22 +764,53 @@ Record<RunStatus, RunOutcomeBucket>`, so a new `runs.status` value is a compile
   `Delivered` — an unscanned PR is not evidence of a merge.
 - **(Implemented, ADR-177)** A `Review` or `Crashed` run whose workspace carries
   `removed_at` buckets as `Abandoned`: the work product is gone and the run
-  cannot be relaunched from it.
+  cannot be relaunched from it. The SAME evidence closes its task's in-work
+  interval (D2 reads D3), so discarding a long-parked crash also drops its task
+  out of the task columns — intended, and the only thing that bounds a `Crashed`
+  interval, which is otherwise open forever.
 - **(Implemented, ADR-177)** A run with several `workspaces` rows classifies by the
   newest (`created_at DESC, id ASC`) — an older promoted row does not outvote a
   newer removed one.
 - **(Implemented, ADR-177)** Project-less runs are aggregated into the Platform row
   for global admins and are simply absent for everyone else; they never appear
-  inside a project row.
+  inside a project row. Their cells do not link: `/runs` is
+  `INNER JOIN projects` and cannot return them (see "Count = list").
+- **(Implemented, ADR-177)** The task-overlap aggregate is unbounded in time by
+  design — `min(runs.started_at)` must see a task's whole history to know when
+  it was taken into work — so its cost tracks the scoped projects' total
+  flow-run count, not the selected period, and it carries the latest-workspace
+  lateral over that whole set (the settled test reads `removed_at`). An index,
+  or a `tasks.first_run_started_at` column, becomes an explicit migration task
+  only if volume proves the need (ADR-059).
 - **(Implemented, ADR-177)** A requested period longer than 365 days is clamped by
   moving `since` forward; the filter bar renders the clamped values, so the page
   never implies it read data it did not.
 - **(Implemented, ADR-177)** Agentization over a period the `repo_delivery_rollups`
-  cache does not reach (`REPO_DELIVERY_WINDOW_DAYS = 365`) keeps its existing
-  "insufficient" state — the period never fabricates a denominator.
+  cache does not reach (`REPO_DELIVERY_WINDOW_DAYS = 365`) resolves to
+  "insufficient" — the period never fabricates a denominator. The rollup
+  verifies CONTIGUOUS bucket coverage of `[since, until)` before publishing a
+  rate, so a PARTLY covered custom range is insufficient too. The cache is a
+  ROLLING window that `repo_delivery_scan` deletes and rewrites on every pass,
+  so a custom range straddling its horizon returns only the covered tail;
+  reporting a rate over that tail would answer a different question from the one
+  the period asked. A leading gap, an interior hole and a short tail all read
+  the same.
 - **(Implemented, ADR-177)** `from > to` or an unparsable date is not an error: the
   custom range is dropped, the preset default applies, and the bar shows what was
   actually used.
+- **(Implemented, ADR-177)** The overview's empty state asks about BOTH axes.
+  Tasks are states and runs are events (D2), so a task whose only flow run
+  started before the period and is still open is real work in the window with no
+  run cell to show for it; a runs-only emptiness test would delete the table
+  carrying that number.
+- **(Implemented, ADR-177)** A drill-down param a view does not own is dropped at
+  parse (`parseObservatorySearchParams`), not merely left out of the tab href.
+  `filters` and `current` are both derived there, so an invisible filter cannot
+  survive a bookmark, a pasted URL or a stale link: the artifact pair reaches
+  only Quality, flow and node only Quality and Harness. Without it a
+  `?view=harness&artifactDefId=…` narrowed `loadObservatoryRows` behind a bar
+  that renders no artifact control, and `?view=overview&flowId=…` narrowed
+  `getCostSummary` behind one that renders no flow control.
 
 ## Linked artifacts
 

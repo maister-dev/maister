@@ -101,9 +101,6 @@ export interface ObservatoryAgentizationLabels {
   asOf: string;
   insufficient: string;
   volatility: string;
-  flow: string;
-  scratch: string;
-  agent: string;
   trend: string;
   trendNoData: string;
   trendValue: string;
@@ -161,7 +158,6 @@ export interface ObservatoryOverviewLabels {
   runs: string;
   inFlight: string;
   settled: string;
-  kind: Record<DeliveryRunKind, string>;
   empty: string;
   openInLedger: string;
 }
@@ -220,9 +216,13 @@ export interface ObservatoryLabels {
   period: ObservatoryPeriodLabels;
   overview: ObservatoryOverviewLabels;
   quality: ObservatoryQualityLabels;
-  // Top-level `runBucket.*`: the ledger renders the SAME ten names, so the two
-  // surfaces cannot end up with different words for one bucket.
+  /** Hint shown on a free-text field whose draft is not in the URL yet. */
+  uncommitted: string;
+  // Top-level `runBucket.*` / `runKind.*`: the ledger renders the SAME ten
+  // bucket names and the SAME three kind names, so no two surfaces can end up
+  // with different words for one value.
   bucket: Record<RunOutcomeBucket, string>;
+  runKindName: Record<DeliveryRunKind, string>;
 }
 
 export type ObservatorySummaryData = ObservatoryPortfolio | ObservatoryProject;
@@ -230,7 +230,7 @@ export type ObservatorySummaryData = ObservatoryPortfolio | ObservatoryProject;
 export interface ObservatoryDashboardProps {
   data: ObservatorySummaryData;
   labels: ObservatoryLabels;
-  period?: ObservatoryPeriod;
+  period: ObservatoryPeriod;
   projectSlug?: string;
   runKind?: ObservatoryRunKind;
 }
@@ -262,8 +262,9 @@ export interface CorrectionHeatmapProps {
   labels: ObservatoryLabels;
   nodes: readonly ObservatoryNodeSummary[];
   // ADR-177: a drill-down link must land on the Quality view of the SAME
-  // period, so every builder needs the effective bounds.
-  period?: ObservatoryPeriod;
+  // period, so every builder needs the effective bounds. REQUIRED — an
+  // optional period let a caller silently emit links to a different window.
+  period: ObservatoryPeriod;
   projectSlug?: string;
   runKind?: ObservatoryRunKind;
 }
@@ -277,7 +278,7 @@ export interface SensorFiringCardProps {
   firing: GateFiringRollup;
   neverFired: readonly NeverFiredFlag[];
   labels: ObservatoryLabels;
-  period?: ObservatoryPeriod;
+  period: ObservatoryPeriod;
   projectSlug?: string;
   runKind?: ObservatoryRunKind;
 }
@@ -305,6 +306,12 @@ export interface CostBreakdownCardProps {
   labels: ObservatoryLabels;
   locale: string;
   testId?: string;
+  /**
+   * Display names for keys that are not free-form ids. The By-flow breakdown
+   * carries `scratch` / `agent` pseudo-rows for the flow-less kinds (ADR-177
+   * D5); they are run kinds and read as such.
+   */
+  keyLabels?: Readonly<Record<string, string>>;
 }
 
 export interface CostKindBreakdownProps {

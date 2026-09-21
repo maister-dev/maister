@@ -27,9 +27,15 @@ import { NodeDrilldownTable } from "@/components/observatory/node-drilldown-tabl
 import { emptyOverviewTable } from "@/lib/queries/observatory-overview";
 import { ObservatorySummary } from "@/components/observatory/observatory-summary";
 import { SensorFiringCard } from "@/components/observatory/sensor-firing-card";
+import { resolveObservatoryPeriod } from "@/lib/observatory/period";
 import { SignalClusterList } from "@/components/observatory/signal-cluster-list";
 
 const labels = labelsForTest();
+// ADR-177: `period` is REQUIRED on every drill-down builder, so these renders
+// state the window they link to instead of inheriting a second clock.
+const period = resolveObservatoryPeriod({
+  now: new Date("2026-06-05T12:00:00.000Z"),
+});
 
 function portfolio(): ObservatoryPortfolio {
   return {
@@ -284,6 +290,7 @@ describe("Observatory harness cards", () => {
     const data = harness();
     const html = renderToStaticMarkup(
       createElement(SensorFiringCard, {
+        period,
         firing: data.firing,
         labels,
         neverFired: data.neverFired,
@@ -308,6 +315,7 @@ describe("Observatory harness cards", () => {
     const data = harness();
     const html = renderToStaticMarkup(
       createElement(SensorFiringCard, {
+        period,
         firing: data.firing,
         labels,
         neverFired: [],
@@ -320,6 +328,7 @@ describe("Observatory harness cards", () => {
   it("renders the firing empty state", () => {
     const html = renderToStaticMarkup(
       createElement(SensorFiringCard, {
+        period,
         firing: { groups: [], byKind: [] },
         labels,
         neverFired: [],
@@ -366,6 +375,7 @@ describe("Observatory harness cards", () => {
     const data = harness();
     const html = renderToStaticMarkup(
       createElement(SensorFiringCard, {
+        period,
         firing: data.firing,
         labels: ruLabels,
         neverFired: data.neverFired,
@@ -381,6 +391,7 @@ describe("Observatory components", () => {
   it("renders summary tiles, heatmap, signals, and artifacts", () => {
     const html = renderToStaticMarkup(
       createElement(ObservatorySummary, {
+        period,
         data: portfolio(),
         labels,
         projectSlug: "alpha",
@@ -410,6 +421,7 @@ describe("Observatory components", () => {
   it("renders heatmap empty state without layout-only text overflow", () => {
     const html = renderToStaticMarkup(
       createElement(CorrectionHeatmap, {
+        period,
         labels,
         nodes: [],
       }),
@@ -421,6 +433,7 @@ describe("Observatory components", () => {
   it("renders selected-kind flow-ledger scope as not applicable", () => {
     const html = renderToStaticMarkup(
       createElement(ObservatorySummary, {
+        period,
         data: portfolio(),
         labels,
         runKind: "scratch",
@@ -592,6 +605,7 @@ describe("Observatory components", () => {
   it("renders signal drill-down links for project scope", () => {
     const html = renderToStaticMarkup(
       createElement(SignalClusterList, {
+        period,
         labels,
         projectSlug: "alpha",
         signals: portfolio().topSignals,

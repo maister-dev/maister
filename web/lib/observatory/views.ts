@@ -38,3 +38,34 @@ export function defaultObservatoryView(params: {
     ? "quality"
     : "overview";
 }
+
+/** The flow-ledger drill-down keys, in the order every serializer writes them. */
+export const OBSERVATORY_DRILLDOWN_KEYS = [
+  "flowId",
+  "nodeId",
+  "artifactKind",
+  "artifactDefId",
+] as const;
+
+export type ObservatoryDrilldownKey =
+  (typeof OBSERVATORY_DRILLDOWN_KEYS)[number];
+
+/**
+ * D7's field-per-view table, as code: flow and node on Quality and Harness,
+ * artifact kind and definition on Quality alone.
+ *
+ * A param a view does not own is not a filter. `parseObservatorySearchParams`
+ * drops it, so a stale tab href, a bookmark or a hand-written URL cannot narrow
+ * a read model through a control the bar does not render — an invisible filter
+ * is a wrong number with no way to see why.
+ */
+export function observatoryViewOwns(
+  view: ObservatoryView,
+  key: ObservatoryDrilldownKey,
+): boolean {
+  if (key === "artifactKind" || key === "artifactDefId") {
+    return view === "quality";
+  }
+
+  return view === "quality" || view === "harness";
+}

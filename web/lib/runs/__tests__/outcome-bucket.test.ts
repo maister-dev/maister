@@ -7,7 +7,6 @@ import {
   IN_FLIGHT_OUTCOME_BUCKETS,
   RUN_OUTCOME_BUCKETS,
   SETTLED_OUTCOME_BUCKETS,
-  TASK_IN_WORK_SETTLED_STATUSES,
   isRunOutcomeBucket,
 } from "@/lib/runs/outcome-bucket";
 
@@ -74,17 +73,37 @@ describe("run outcome buckets (ADR-177 D3)", () => {
     expect(isRunOutcomeBucket("delivered")).toBe(false);
     expect(isRunOutcomeBucket("Promoted")).toBe(false);
   });
+});
 
-  it("keeps the task-overlap settled set distinct from the orchestrator one", () => {
-    // Review and Crashed are NOT settled for a task: a crashed run owes a
-    // recover/discard decision and a Review run awaits promotion.
-    expect(TASK_IN_WORK_SETTLED_STATUSES).toEqual([
-      "Done",
-      "Failed",
-      "Abandoned",
+describe("runSettledSql", () => {
+  // The task-overlap rule asks THIS, so what it compiles to is the contract:
+  // the bucket CASE tested against the settled five, with no second status
+  // list that could disagree with the columns the reader sees.
+  it("tests the bucket CASE against exactly the settled five", async () => {
+    const { runSettledSql } = await import("@/lib/runs/outcome-bucket");
+    const { sql } = await import("drizzle-orm");
+    const { PgDialect } = await import("drizzle-orm/pg-core");
+    const query = new PgDialect().sqlToQuery(
+      runSettledSql({
+        status: sql`r.status`,
+        promotionState: sql`w.promotion_state`,
+        promotionMode: sql`w.promotion_mode`,
+        prState: sql`w.pr_state`,
+        removedAt: sql`w.removed_at`,
+      }),
+    );
+
+    expect(query.sql).toContain("CASE");
+    expect(query.sql.trimEnd()).toMatch(/END IN \((\$\d+, )*\$\d+\)$/);
+    expect(query.params.slice(-SETTLED_OUTCOME_BUCKETS.length)).toEqual([
+      ...SETTLED_OUTCOME_BUCKETS,
     ]);
-    expect(TASK_IN_WORK_SETTLED_STATUSES).not.toContain("Review");
-    expect(TASK_IN_WORK_SETTLED_STATUSES).not.toContain("Crashed");
+    // The in-flight five are NOT part of the membership test.
+    for (const bucket of IN_FLIGHT_OUTCOME_BUCKETS) {
+      expect(query.params.slice(-SETTLED_OUTCOME_BUCKETS.length)).not.toContain(
+        bucket,
+      );
+    }
   });
 });
 

@@ -151,6 +151,29 @@ own task. Do not convert a bar to this pattern in passing.
   page.
 - **Clearing a field removes its param**, rather than writing an empty value —
   an empty param is a different URL for the same page.
+- **Compose each commit onto the edits still in flight.** The bar's view of the
+  current filters is a SERVER value: it does not change until a round-trip
+  lands. A second control touched before then, built from that stale value,
+  silently overwrites the first edit — and because these controls are
+  uncontrolled and re-keyed on their effective value, the discarded one keeps
+  DISPLAYING the reader's choice while the page is filtered by something else.
+  Accumulate the patch, and discard it the moment the URL the state represents
+  changes — that covers both the navigation landing and the reader leaving
+  through a link, after which replaying it would re-impose a filter they
+  dropped. Do NOT key that reset on the transition's pending flag: a transition
+  whose scope schedules no state update settles before the page it asked for
+  arrives.
+- **A param the current view does not own is not a filter.** Where the field set
+  varies by view (or tab, or mode), drop the unowned params where the URL is
+  PARSED, so the applied filters and the rendered controls come from one
+  ownership rule. Dropping them only when building the tab link leaves a
+  bookmark or a pasted URL narrowing the page through a control it never shows.
+- **A draft the URL does not carry must SAY so.** Keeping uncommitted text on
+  screen is right (see the mount rule below), but a field showing a value the
+  page is not filtered by, with no signal, is a lie the reader cannot see — and
+  the only way out of it is to focus and blur the field. Render a hint beside
+  any free-text field whose value differs from the URL's, wired with
+  `aria-describedby`. Text, never colour alone.
 - **Mount the bar once, above any view switch.** If the bar re-mounts when the
   view changes, text typed but not yet committed is lost.
 - **Every control has a visible `<label>`** (or, for a grouped control like a

@@ -6,7 +6,6 @@ import clsx from "clsx";
 
 import { FlowLedgerScope } from "@/components/observatory/flow-ledger-scope";
 import { observatoryDrilldownHref } from "@/lib/observatory/href";
-import { resolveObservatoryPeriod } from "@/lib/observatory/period";
 
 export function CorrectionHeatmap({
   labels,
@@ -50,7 +49,7 @@ export function CorrectionHeatmap({
                 {
                   flowId: node.flowId,
                   nodeId: node.nodeId,
-                  period: period ?? fallbackPeriod(),
+                  period,
                   runKind,
                 },
               )}
@@ -122,10 +121,4 @@ function Metric({
       <dd className="font-semibold text-ink">{value}</dd>
     </div>
   );
-}
-
-// A caller that renders the heatmap outside a page read (a fixture, a card in
-// isolation) still produces a valid link rather than one with no window at all.
-function fallbackPeriod() {
-  return resolveObservatoryPeriod({ now: new Date() });
 }

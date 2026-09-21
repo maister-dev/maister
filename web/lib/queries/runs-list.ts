@@ -204,26 +204,6 @@ export function normalizeRunsListFilters(
   };
 }
 
-/**
- * The ledger's URL vocabulary, owned here rather than by the page, so the
- * Observatory's drill-down builder writes the SAME param names (ADR-177 D8).
- */
-export function filtersToParams(filters: RunsListFilters): URLSearchParams {
-  const params = new URLSearchParams();
-
-  if (filters.projectSlug) params.set("project", filters.projectSlug);
-  if (filters.status) params.set("status", filters.status);
-  if (filters.source) params.set("source", filters.source);
-  if (filters.agent) params.set("agent", filters.agent);
-  if (filters.kind) params.set("kind", filters.kind);
-  if (filters.bucket) params.set("bucket", filters.bucket);
-  if (filters.dateFrom) params.set("from", filters.dateFrom);
-  if (filters.dateTo) params.set("to", filters.dateTo);
-  if (filters.page > 1) params.set("page", String(filters.page));
-
-  return params;
-}
-
 function coerceDate(value: Date | string): Date {
   return value instanceof Date ? value : new Date(value);
 }
@@ -412,7 +392,7 @@ function runsListCountQuery(args: {
     SELECT count(*) AS total_count
     FROM runs r
     INNER JOIN projects p ON p.id = r.project_id
-    ${latestWorkspaceLateralSql("r")}
+    ${args.filters.bucket ? latestWorkspaceLateralSql("r") : sql``}
     LEFT JOIN LATERAL (
       SELECT s.id
       FROM run_schedules s

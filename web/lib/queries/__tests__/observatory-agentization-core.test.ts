@@ -301,3 +301,114 @@ describe("Observatory funnel", () => {
     expect(result.throughput).toContainEqual({ key: "failed", count: 1 });
   });
 });
+
+// ADR-177 D1 introduced custom historical ranges. `REPO_DELIVERY_WINDOW_DAYS`
+// is a ROLLING 365 days that the scanner DELETEs and rewrites on every pass, so
+// a range reaching back past that horizon returns only its covered tail — and a
+// rate computed over nine cached days while claiming thirty is not a smaller
+// number, it is a different question answered.
+describe("agentization delivery-cache coverage (ADR-177 D1)", () => {
+  const run = {
+    id: "flow-run",
+    runKind: "flow" as const,
+    promotedHeadSha: "merge-sha",
+    mergeCommitSha: "merge-sha",
+    diffStat: { files: 1, additions: 4, deletions: 1 },
+    prNumber: null,
+    active: false,
+  };
+
+  /**
+   * `count` contiguous daily buckets, exactly as the scanner writes them.
+   *
+   * Two commits a day keeps every fixture above `MIN_GROUP_EXECUTIONS`, and
+   * `withRef` keeps `merge-sha` in ONE bucket only: either gate would otherwise
+   * null the rate on its own and the assertion would pass while proving
+   * nothing about coverage.
+   */
+  function days(from: string, count: number, withRef = true) {
+    const start = at(`${from}T00:00:00.000Z`).getTime();
+    const DAY = 24 * 60 * 60 * 1000;
+
+    return Array.from({ length: count }, (_unused, index) => ({
+      bucketStart: new Date(start + index * DAY),
+      bucketEnd: new Date(start + (index + 1) * DAY),
+      commits: 2,
+      mergePrUnits: 1,
+      additions: 10,
+      deletions: 2,
+      deliveryRefs:
+        withRef && index === 0
+          ? [{ sha: "merge-sha", parentCount: 2, runIds: ["flow-run"] }]
+          : [],
+      providerComplete: true,
+      fetchedAt: at("2026-07-04T01:00:00.000Z"),
+    }));
+  }
+
+  it("reports a fully covered period ready", () => {
+    const result = rollupAgentization({
+      runKind: "flow",
+      runs: [run],
+      buckets: days("2026-07-01", 3),
+      since: at("2026-07-01T00:00:00.000Z"),
+      until: at("2026-07-04T00:00:00.000Z"),
+    });
+
+    expect(result.availability).toBe("ready");
+    expect(result.lines.value).not.toBeNull();
+  });
+
+  it("refuses a rate for a period the cache only partly reaches", () => {
+    const result = rollupAgentization({
+      runKind: "flow",
+      runs: [run],
+      // The reader asked for thirty days; only the last three are cached.
+      buckets: days("2026-07-01", 3),
+      since: at("2026-06-04T00:00:00.000Z"),
+      until: at("2026-07-04T00:00:00.000Z"),
+    });
+
+    expect(result.availability).toBe("insufficient");
+    expect(result.lines.value).toBeNull();
+    expect(result.deliveryUnits.value).toBeNull();
+  });
+
+  it("refuses a rate for a HOLE in the middle of the period", () => {
+    const result = rollupAgentization({
+      runKind: "flow",
+      runs: [run],
+      // 07-01, 07-02, then a missing 07-03, then 07-04 and 07-05.
+      buckets: [...days("2026-07-01", 2), ...days("2026-07-04", 2, false)],
+      since: at("2026-07-01T00:00:00.000Z"),
+      until: at("2026-07-06T00:00:00.000Z"),
+    });
+
+    expect(result.availability).toBe("insufficient");
+    expect(result.lines.value).toBeNull();
+  });
+
+  it("refuses a rate when the cache stops before the period ends", () => {
+    const result = rollupAgentization({
+      runKind: "flow",
+      runs: [run],
+      buckets: days("2026-07-01", 2),
+      since: at("2026-07-01T00:00:00.000Z"),
+      until: at("2026-07-04T00:00:00.000Z"),
+    });
+
+    expect(result.availability).toBe("insufficient");
+  });
+
+  // The empty-project fallback rolls up with no bounds at all; it has no bucket
+  // to be incomplete about, and `fetchedAt === null` already answers for it.
+  it("verifies nothing when the caller states no period", () => {
+    const result = rollupAgentization({
+      runKind: "flow",
+      runs: [run],
+      buckets: days("2026-07-01", 3),
+    });
+
+    expect(result.availability).toBe("ready");
+  });
+});

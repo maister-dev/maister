@@ -253,6 +253,65 @@ describe("listRunsPage (integration, post-M42 schema)", () => {
 
     expect(cells?.Delivered).toBe(2);
   });
+
+  // ADR-177 D4/D8. The Platform row counts `project_id IS NULL` runs; this
+  // query is `INNER JOIN projects`. So NO ledger URL can reproduce a Platform
+  // cell — and a link with no `project=` does not narrow to those runs, it
+  // WIDENS to every project's. That is why the overview renders the Platform
+  // row's cells as plain numbers (pinned in `overview-table.test.ts`); this is
+  // the database fact the render decision rests on. Should `/runs` ever gain a
+  // project-less mode, THIS test is the one that has to change first.
+  it("cannot reach a project-less run, whatever the filters", async () => {
+    const project = await seedBucketProject();
+    const visible = await seedBucketRun(project, {
+      kind: "scratch",
+      status: "Done",
+    });
+    const platformRun = randomUUID();
+
+    await db.insert(schema.runs).values({
+      id: platformRun,
+      projectId: null,
+      runKind: "scratch",
+      status: "Done",
+      flowVersion: "scratch",
+      startedAt: BUCKET_STARTED_AT,
+      endedAt: BUCKET_STARTED_AT,
+    });
+
+    const table = await getObservatoryOverview(db as never, [], {
+      since: BUCKET_SINCE,
+      until: BUCKET_UNTIL,
+      runKind: "all",
+      includePlatform: true,
+      includeBreakdown: false,
+    });
+
+    // The overview counts it on the Platform row...
+    expect(table.platform?.counts.buckets.ResultOnly).toBe(1);
+
+    // ...and the ledger the cell would have opened cannot return it. Without a
+    // `project=`, the reader gets somebody else's run instead of this one.
+    const unscoped = await listRunsPage({
+      filters: filters({ kind: "scratch", bucket: "ResultOnly" }),
+      user: admin,
+    });
+
+    expect(unscoped.rows.map((row) => row.runId)).not.toContain(platformRun);
+    expect(unscoped.rows.map((row) => row.runId)).toContain(visible);
+
+    // And no project slug selects it either — it has none.
+    const scoped = await listRunsPage({
+      filters: filters({
+        projectSlug: project.slug,
+        kind: "scratch",
+        bucket: "ResultOnly",
+      }),
+      user: admin,
+    });
+
+    expect(scoped.rows.map((row) => row.runId)).not.toContain(platformRun);
+  });
 });
 
 // The overview's day-aligned 30-day preset for 2026-06-05T12:00Z, and the

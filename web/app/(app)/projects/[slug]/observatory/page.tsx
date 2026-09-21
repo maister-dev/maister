@@ -33,6 +33,7 @@ import { parseObservatorySearchParams } from "@/lib/observatory/filters";
 import { isFlowLedgerApplicable } from "@/lib/observatory/run-kind";
 import { reposRoot } from "@/lib/instance-config";
 import { formatProjectRepoPath } from "@/lib/project-path-display";
+import { inFlightTotal } from "@/lib/queries/observatory-overview";
 import {
   getNodeObservatoryDetail,
   getProjectObservatory,
@@ -64,14 +65,17 @@ export default async function ProjectObservatoryPage({
   if (role === null) notFound();
 
   const pathname = `/projects/${slug}/observatory`;
-  const [t, tBucket, locale] = await Promise.all([
+  const [t, tBucket, tKind, locale] = await Promise.all([
     getTranslations("observatory"),
     getTranslations("runBucket"),
+    getTranslations("runKind"),
     getLocale(),
   ]);
-  const labels = labelsFromTranslations(t, tBucket);
+  const labels = labelsFromTranslations(t, tBucket, tKind);
   const displayRepoPath = formatProjectRepoPath(project.repoPath, reposRoot());
-  const { filters, current } = parseObservatorySearchParams(await searchParams);
+  const parsed = parseObservatorySearchParams(await searchParams);
+  const { filters } = parsed;
+  const current = { ...parsed.current, project: undefined };
   const [observatory, board, brainIndexingAvailable] = await Promise.all([
     getProjectObservatory(project.id, filters),
     getBoardData(project.id),
@@ -118,7 +122,9 @@ export default async function ProjectObservatoryPage({
             labels={labels}
             liveLabel={
               observatory.overview.volatile
-                ? t("overview.liveHint", { count: inFlightCount(observatory) })
+                ? t("overview.liveHint", {
+                    count: inFlightTotal(observatory.overview.totals),
+                  })
                 : null
             }
             projectSlug={slug}
@@ -211,16 +217,6 @@ export default async function ProjectObservatoryPage({
   );
 }
 
-function inFlightCount(data: ObservatoryProject): number {
-  return (
-    data.overview.totals.buckets.Queued +
-    data.overview.totals.buckets.Executing +
-    data.overview.totals.buckets.WaitingOnHuman +
-    data.overview.totals.buckets.Review +
-    data.overview.totals.buckets.Crashed
-  );
-}
-
 function CostView({
   data,
   labels,
@@ -264,6 +260,7 @@ function CostView({
         />
         <CostBreakdownCard
           keyHeader={labels.costBreakdown.flowHeader}
+          keyLabels={labels.runKindName}
           labels={labels}
           locale={locale}
           rows={data.cost.byFlow}

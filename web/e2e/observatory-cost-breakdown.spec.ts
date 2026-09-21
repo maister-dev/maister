@@ -134,8 +134,12 @@ test.describe("Observatory cost breakdown (ADR-117)", () => {
     await expect(byRunner.getByText(RUNNER_A, { exact: true })).toBeVisible();
     await expect(byRunner.getByText(RUNNER_B, { exact: true })).toBeVisible();
     await expect(byModel.getByText("gpt-5", { exact: true })).toBeVisible();
-    // ADR-177 D5: flow-less kinds get their own pseudo-row.
-    await expect(byFlow.getByText("scratch", { exact: true })).toBeVisible();
+    // ADR-177 D5: flow-less kinds get their own pseudo-row, LABELLED — the
+    // card renders `keyLabels[key] ?? label`, so a pseudo-row shows the
+    // translated run-kind name while a real flow row falls back to its raw
+    // `flowRefId`. Asserting the bare key here would pin an untranslated cell
+    // that EN/RU parity forbids.
+    await expect(byFlow.getByText("Scratch", { exact: true })).toBeVisible();
     // The "stored lifetime" caveat is gone; the view states the period.
     await expect(
       page.getByText(/Token totals for the selected period/i),

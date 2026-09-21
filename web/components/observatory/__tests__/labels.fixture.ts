@@ -20,8 +20,8 @@ function translatorFor(namespace: Record<string, unknown>): Translator {
 
 // Derive test labels from the real EN catalog so the fixture can never drift
 // from the shipped message namespace (the previous hand-written copy did).
-// Pass another catalog's namespaces (e.g. ru.observatory, ru.runBucket) to
-// test RU labels.
+// Pass another catalog's namespaces (e.g. ru.observatory, ru.runBucket,
+// ru.runKind) to test RU labels.
 export function labelsForTest(
   namespace: Record<string, unknown> = en.observatory as Record<
     string,
@@ -31,9 +31,14 @@ export function labelsForTest(
     string,
     unknown
   >,
+  kindNamespace: Record<string, unknown> = en.runKind as Record<
+    string,
+    unknown
+  >,
 ): ObservatoryLabels {
   return labelsFromTranslations(
     translatorFor(namespace),
     translatorFor(bucketNamespace),
+    translatorFor(kindNamespace),
   );
 }

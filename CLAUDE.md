@@ -610,7 +610,11 @@ opencode/gemini/mimo are gated adapter families, cost/time guard enforcement
 shipped (ADR-101 + `maxDurationMinutes` watchdog), CI exists
 (`.github/workflows/ci.yml`); outbound webhooks (ADR-077) left earlier.)
 
-continuous background agents (Mγ: heartbeat daemons + crash-loop backoff —
+a project-less mode for the `/runs` ledger (`project=__platform__` →
+`project_id IS NULL` over a `LEFT JOIN projects`), so the Observatory's Platform
+row can drill down; today its cells are plain numbers because the ledger's
+`INNER JOIN projects` cannot return those runs (ADR-177 D8) · continuous
+background agents (Mγ: heartbeat daemons + crash-loop backoff —
 the M34 substrate covers catalog/triggers/one-shot runs) · Telegram /
 notifier consumers on the webhook primitive · durable orchestration · full
 Kanban (Done as drag-target / WIP limits / swim-lanes) · test-run UI button ·

@@ -1,6 +1,6 @@
 import type { ObservatoryLabels } from "@/components/observatory/types";
-import type { ObservatoryPortfolio } from "@/lib/queries/observatory";
 import type { ObservatorySearchParams } from "@/lib/observatory/filters";
+import type { ObservatoryPortfolio } from "@/lib/queries/observatory";
 import type { ReactElement } from "react";
 
 import { getLocale, getTranslations } from "next-intl/server";
@@ -25,6 +25,7 @@ import {
 import { requireSession } from "@/lib/authz";
 import { parseObservatorySearchParams } from "@/lib/observatory/filters";
 import { isFlowLedgerApplicable } from "@/lib/observatory/run-kind";
+import { inFlightTotal } from "@/lib/queries/observatory-overview";
 import { getPortfolioObservatory } from "@/lib/queries/observatory";
 import { getVisibleProjects } from "@/lib/queries/visible-projects";
 
@@ -42,9 +43,10 @@ export default async function ObservatoryPage({
   searchParams,
 }: PageProps): Promise<ReactElement> {
   const user = await requireSession();
-  const [t, tBucket, locale] = await Promise.all([
+  const [t, tBucket, tKind, locale] = await Promise.all([
     getTranslations("observatory"),
     getTranslations("runBucket"),
+    getTranslations("runKind"),
     getLocale(),
   ]);
   const { filters, current } = parseObservatorySearchParams(await searchParams);
@@ -52,7 +54,7 @@ export default async function ObservatoryPage({
     getPortfolioObservatory(user.id, user.role, filters),
     getVisibleProjects(user.id, user.role),
   ]);
-  const labels = labelsFromTranslations(t, tBucket);
+  const labels = labelsFromTranslations(t, tBucket, tKind);
   // The select's options come from their OWN read, not from `overview.rows`:
   // a `project=` filter narrows those rows to one, and sourcing the options
   // from them would strand the reader on the project they just picked.
@@ -102,7 +104,9 @@ export default async function ObservatoryPage({
             labels={labels}
             liveLabel={
               data.overview.volatile
-                ? t("overview.liveHint", { count: inFlightCount(data) })
+                ? t("overview.liveHint", {
+                    count: inFlightTotal(data.overview.totals),
+                  })
                 : null
             }
             table={data.overview}
@@ -130,7 +134,12 @@ export default async function ObservatoryPage({
               period={current.period}
               runKind={current.runKind}
             />
-            <QualityProjectsTable labels={labels} projects={data.projects} />
+            <QualityProjectsTable
+              labels={labels}
+              period={current.period}
+              projects={data.projects}
+              runKind={current.runKind}
+            />
           </div>
         ) : (
           <FlowLedgerNotApplicable labels={labels} />
@@ -172,16 +181,6 @@ export default async function ObservatoryPage({
         )
       ) : null}
     </>
-  );
-}
-
-function inFlightCount(data: ObservatoryPortfolio): number {
-  return (
-    data.overview.totals.buckets.Queued +
-    data.overview.totals.buckets.Executing +
-    data.overview.totals.buckets.WaitingOnHuman +
-    data.overview.totals.buckets.Review +
-    data.overview.totals.buckets.Crashed
   );
 }
 
@@ -273,6 +272,7 @@ function CostView({
         />
         <CostBreakdownCard
           keyHeader={labels.costBreakdown.flowHeader}
+          keyLabels={labels.runKindName}
           labels={labels}
           locale={locale}
           rows={data.cost.byFlow}

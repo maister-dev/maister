@@ -4,6 +4,10 @@ import type { ObservatoryView } from "@/lib/observatory/views";
 import type { ParsedObservatoryFilters } from "@/lib/observatory/filters";
 
 import { DEFAULT_OBSERVATORY_WINDOW_DAYS } from "@/lib/observatory/period";
+import {
+  OBSERVATORY_DRILLDOWN_KEYS,
+  observatoryViewOwns,
+} from "@/lib/observatory/views";
 
 // ADR-177 D6/D7/D8: every Observatory link is built here.
 //
@@ -30,15 +34,7 @@ export type ObservatoryHrefPatch = Partial<{
   artifactDefId: string | null;
 }>;
 
-/** The flow-ledger drill-down keys — dropped when leaving Quality/Harness. */
-const DRILLDOWN_KEYS = [
-  "flowId",
-  "nodeId",
-  "artifactKind",
-  "artifactDefId",
-] as const;
-
-type DrilldownKey = (typeof DRILLDOWN_KEYS)[number];
+type DrilldownKey = (typeof OBSERVATORY_DRILLDOWN_KEYS)[number];
 
 interface HrefState {
   view: ObservatoryView;
@@ -91,7 +87,7 @@ function serialize(state: HrefState): string {
   // two different URLs for one view.
   if (state.runKind !== "all") params.set("runKind", state.runKind);
   if (state.project) params.set("project", state.project);
-  for (const key of DRILLDOWN_KEYS) {
+  for (const key of OBSERVATORY_DRILLDOWN_KEYS) {
     const value = state[key];
 
     if (value) params.set(key, value);
@@ -125,18 +121,13 @@ function withPatch(state: HrefState, patch: ObservatoryHrefPatch): HrefState {
         : (next.windowDays ?? state.windowDays);
   }
   if (patch.project !== undefined) next.project = patch.project ?? undefined;
-  for (const key of DRILLDOWN_KEYS) {
+  for (const key of OBSERVATORY_DRILLDOWN_KEYS) {
     const value = patch[key];
 
     if (value !== undefined) next[key] = value ?? undefined;
   }
 
   return next;
-}
-
-/** Views that own the flow-ledger drill-down keys (ADR-177 D6). */
-function viewKeepsDrilldown(view: ObservatoryView): boolean {
-  return view === "quality" || view === "harness";
 }
 
 export function buildObservatoryHref(
@@ -148,18 +139,25 @@ export function buildObservatoryHref(
 }
 
 /**
- * A view tab's href. Leaving Quality/Harness drops the drill-down keys: they
- * mean nothing on the overview or cost view, and carrying them would make the
- * back-link land on a filtered page the reader never chose.
+ * A view tab's href. Every drill-down key the TARGET view does not own is
+ * dropped (D7): they mean nothing there, and carrying them would make the tab
+ * land on a page filtered by a control it does not render. Quality alone owns
+ * the artifact pair, so Quality → Harness drops it while keeping flow and node.
+ *
+ * `parseObservatorySearchParams` drops the same keys again on arrival — that is
+ * the guard for URLs this function never built; this keeps the URL itself
+ * honest about what the page is filtered by.
  */
 export function observatoryViewHref(
   pathname: string,
   current: ObservatoryCurrent,
   view: ObservatoryView,
 ): string {
-  const drop: ObservatoryHrefPatch = viewKeepsDrilldown(view)
-    ? {}
-    : Object.fromEntries(DRILLDOWN_KEYS.map((key) => [key, null]));
+  const drop = Object.fromEntries(
+    OBSERVATORY_DRILLDOWN_KEYS.filter(
+      (key) => !observatoryViewOwns(view, key),
+    ).map((key) => [key, null]),
+  ) as ObservatoryHrefPatch;
 
   return buildObservatoryHref(pathname, current, { ...drop, view });
 }

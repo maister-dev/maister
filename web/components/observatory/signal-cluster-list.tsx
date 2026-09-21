@@ -11,7 +11,6 @@ import { Chip } from "@heroui/react";
 
 import { FlowLedgerScope } from "@/components/observatory/flow-ledger-scope";
 import { observatoryDrilldownHref } from "@/lib/observatory/href";
-import { resolveObservatoryPeriod } from "@/lib/observatory/period";
 
 export function SignalClusterList({
   labels,
@@ -21,7 +20,8 @@ export function SignalClusterList({
   runKind,
 }: {
   labels: ObservatoryLabels;
-  period?: ObservatoryPeriod;
+  // Required for the same reason as CorrectionHeatmapProps.period (ADR-177).
+  period: ObservatoryPeriod;
   projectSlug?: string;
   signals: readonly SignalCluster[];
   runKind?: ObservatoryRunKind;
@@ -105,14 +105,14 @@ function drillDownHref(
   pathname: string,
   signal: SignalCluster,
   runKind: ObservatoryRunKind = "all",
-  period?: ObservatoryPeriod,
+  period: ObservatoryPeriod,
 ): string {
   return observatoryDrilldownHref(pathname, {
     artifactDefId: signal.drillDown.artifactDefId,
     artifactKind: signal.drillDown.artifactKind,
     flowId: signal.drillDown.flowId,
     nodeId: signal.drillDown.nodeId,
-    period: period ?? resolveObservatoryPeriod({ now: new Date() }),
+    period,
     runKind,
   });
 }
