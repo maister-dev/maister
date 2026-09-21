@@ -205,6 +205,32 @@ describe("OverviewTable", () => {
     expect(html).toContain("kind=scratch&amp;bucket=Queued");
   });
 
+  it("leaves sub-row task cells empty — the breakdown splits runs, not tasks", () => {
+    const html = render(
+      table({
+        rows: [],
+        subRows: [
+          {
+            key: "kind:scratch",
+            identity: { kind: "runKind", runKind: "scratch" },
+            // Task counts never reach a sub-row; a zero here would read as
+            // "this kind touched no tasks" rather than "no task axis".
+            counts: counts({ runs: { scratch: 3 } }),
+          },
+        ],
+        totals: counts({ runs: { scratch: 3 } }),
+      }),
+      { projectSlug: "maister" },
+    );
+    const firstRow = html.slice(html.indexOf("<tbody>"));
+
+    expect(firstRow).toContain("—");
+    // The board link belongs to a project row, never to a sub-row.
+    expect(firstRow.slice(0, firstRow.indexOf("/runs?"))).not.toContain(
+      'href="/projects/maister"',
+    );
+  });
+
   it("does not link a FLOW sub-row's cells — the ledger cannot filter by flow", () => {
     const html = render(
       table({

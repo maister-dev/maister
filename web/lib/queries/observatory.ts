@@ -806,8 +806,11 @@ export async function getPortfolioObservatory(
       since: period.since,
       until: period.until,
       runKind: filters.runKind ?? "all",
-      // D4: project-less runs carry no membership to scope by.
-      includePlatform: globalRole === "admin",
+      // D4: project-less runs carry no membership to scope by, so only a
+      // global admin reads them — and only while the reader has NOT narrowed
+      // to one project. A Platform row beside a single-project filter answers
+      // a question nobody asked.
+      includePlatform: globalRole === "admin" && scoped.length === 0,
       includeBreakdown: false,
     }),
   ]);

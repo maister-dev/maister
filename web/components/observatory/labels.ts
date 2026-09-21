@@ -164,7 +164,6 @@ export function labelsFromTranslations(
       preset7: t("period.preset7"),
       preset30: t("period.preset30"),
       preset90: t("period.preset90"),
-      custom: t("period.custom"),
       from: t("period.from"),
       to: t("period.to"),
       clamped: t("period.clamped"),

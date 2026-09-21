@@ -210,7 +210,12 @@ function Row({
 }): ReactElement {
   // D4: the Platform row aggregates project-less runs, which belong to no
   // board — its task cells stay empty rather than showing a misleading zero.
+  // Sub-rows are the same case for a different reason: the breakdown splits
+  // RUNS by flow and kind, and tasks are not split at all (D2 counts them
+  // per project, from flow runs only). A `0` there would read as "this flow
+  // touched no tasks" rather than "this axis does not carry tasks".
   const isPlatform = row.identity.kind === "platform";
+  const hasTasks = row.identity.kind === "project";
   const slug =
     row.identity.kind === "project" ? row.identity.projectSlug : projectSlug;
   // A run-kind sub-row narrows the ledger exactly (`kind=`), so its cells stay
@@ -235,12 +240,12 @@ function Row({
       </th>
       <Cell
         bordered
-        href={isPlatform || !slug ? undefined : `/projects/${slug}`}
-        value={isPlatform ? null : row.counts.tasksInWork}
+        href={hasTasks && slug ? `/projects/${slug}` : undefined}
+        value={hasTasks ? row.counts.tasksInWork : null}
       />
       <Cell
-        href={isPlatform || !slug ? undefined : `/projects/${slug}`}
-        value={isPlatform ? null : row.counts.tasksStarted}
+        href={hasTasks && slug ? `/projects/${slug}` : undefined}
+        value={hasTasks ? row.counts.tasksStarted : null}
       />
       {DELIVERY_RUN_KINDS.map((kind, index) => (
         <Cell

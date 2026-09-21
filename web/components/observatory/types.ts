@@ -143,7 +143,6 @@ export interface ObservatoryPeriodLabels {
   preset7: string;
   preset30: string;
   preset90: string;
-  custom: string;
   from: string;
   to: string;
   clamped: string;

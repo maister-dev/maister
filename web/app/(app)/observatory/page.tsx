@@ -53,6 +53,10 @@ export default async function ObservatoryPage({
     getVisibleProjects(user.id, user.role),
   ]);
   const labels = labelsFromTranslations(t, tBucket);
+  // The select's options come from their OWN read, not from `overview.rows`:
+  // a `project=` filter narrows those rows to one, and sourcing the options
+  // from them would strand the reader on the project they just picked.
+  //
   // D7: an unknown slug is dropped from the bar rather than shown as a
   // selection the page did not honour.
   const projectOptions = [...visibleProjects]

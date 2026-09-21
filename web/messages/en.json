@@ -1175,7 +1175,6 @@
       "preset7": "7d",
       "preset30": "30d",
       "preset90": "90d",
-      "custom": "Custom",
       "from": "From",
       "to": "To",
       "clamped": "Range clamped to 365 days",

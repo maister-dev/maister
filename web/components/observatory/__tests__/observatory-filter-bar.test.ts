@@ -227,6 +227,53 @@ describe("ObservatoryFilterBar", () => {
     );
   });
 
+  it("keeps the text across the blur-then-view-switch sequence a tab click causes", () => {
+    render({ view: "quality" });
+
+    const node = byName<HTMLInputElement>("nodeId");
+
+    act(() => {
+      setValue(node, "draft-node");
+      node.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(replace).not.toHaveBeenCalled();
+
+    // Clicking a view tab BLURS the field first, which commits...
+    act(() =>
+      node.dispatchEvent(new FocusEvent("focusout", { bubbles: true })),
+    );
+    expect(replace).toHaveBeenCalledWith(
+      "/observatory?view=quality&windowDays=30&nodeId=draft-node",
+      { scroll: false },
+    );
+    render({ view: "quality", nodeId: "draft-node" });
+
+    // ...and THEN the tab's own href lands, built by the server before that
+    // commit existed, so it carries no nodeId. Holding the draft only in the
+    // DOM loses the text here: the value change remounts the field empty.
+    render({ view: "harness" });
+
+    expect(byName<HTMLInputElement>("nodeId").value).toBe("draft-node");
+  });
+
+  it("yields to a value that arrived from somewhere else", () => {
+    render({ view: "quality" });
+
+    const node = byName<HTMLInputElement>("nodeId");
+
+    act(() => {
+      setValue(node, "mine");
+      node.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(byName<HTMLInputElement>("nodeId").value).toBe("mine");
+
+    // A heatmap drill-down sets the node this bar never committed — the URL
+    // is the state, so it wins and the stale draft goes.
+    render({ view: "quality", nodeId: "from-a-drilldown" });
+
+    expect(byName<HTMLInputElement>("nodeId").value).toBe("from-a-drilldown");
+  });
+
   it("does not re-commit a blur that changed nothing", () => {
     render({ view: "quality", nodeId: "checks" });
 

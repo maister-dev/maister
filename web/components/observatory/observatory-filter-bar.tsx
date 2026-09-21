@@ -6,7 +6,7 @@ import type { ObservatoryRunKind } from "@/lib/observatory/run-kind";
 import type { ReactElement, ReactNode } from "react";
 
 import { useRouter } from "next/navigation";
-import { useRef, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 
 import { buildObservatoryHref } from "@/lib/observatory/href";
 import { OBSERVATORY_PERIOD_PRESETS } from "@/lib/observatory/period";
@@ -44,6 +44,53 @@ export function ObservatoryFilterBar({
   // one place a ref belongs here: an event-time read, not render state.
   const fromRef = useRef<HTMLInputElement>(null);
   const toRef = useRef<HTMLInputElement>(null);
+  // Free-text DRAFTS, held in state rather than only in the DOM.
+  //
+  // A view tab is a `<Link>` whose href was built from the state the server
+  // last rendered, so clicking one blurs the field (committing the draft) and
+  // then navigates to a URL that does not carry it — the value round-trips
+  // out of existence and the field re-renders empty. Keeping the draft here
+  // means the text is still on screen to re-commit, which is what D7 promises
+  // by mounting the bar once above the view switch.
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  // What THIS bar last committed per field. A URL value we put there must not
+  // discard its own draft; a value that arrived from anywhere else (a heatmap
+  // drill-down, a pasted link) must.
+  const committed = useRef<Record<string, string>>({});
+  const textValues: Record<string, string> = {
+    flowId: current.flowId ?? "",
+    nodeId: current.nodeId ?? "",
+    artifactKind: current.artifactKind ?? "",
+    artifactDefId: current.artifactDefId ?? "",
+  };
+  const previousText = useRef(textValues);
+
+  useEffect(() => {
+    const foreign = Object.keys(textValues).filter(
+      (name) =>
+        textValues[name] !== previousText.current[name] &&
+        textValues[name] !== "" &&
+        textValues[name] !== committed.current[name],
+    );
+
+    previousText.current = textValues;
+    if (foreign.length === 0) return;
+
+    setDrafts((previous) => {
+      const next = { ...previous };
+
+      for (const name of foreign) delete next[name];
+
+      return next;
+    });
+    // `textValues` is rebuilt every render; the URL fields it reads are the
+    // real dependency.
+  }, [
+    current.flowId,
+    current.nodeId,
+    current.artifactKind,
+    current.artifactDefId,
+  ]);
 
   const commit = (patch: ObservatoryHrefPatch): void => {
     startTransition(() => {
@@ -51,6 +98,11 @@ export function ObservatoryFilterBar({
         scroll: false,
       });
     });
+  };
+  const commitText = (name: string, value: string): void => {
+    committed.current[name] = value;
+    setDrafts((previous) => ({ ...previous, [name]: value }));
+    commit({ [name]: value || null } as ObservatoryHrefPatch);
   };
   const commitRange = (): void =>
     commit({
@@ -159,18 +211,26 @@ export function ObservatoryFilterBar({
       {showDrilldown ? (
         <>
           <TextField
+            draft={drafts.flowId}
             label={labels.flow}
             name="flowId"
             placeholder={labels.all}
             value={current.flowId ?? ""}
-            onCommit={(value) => commit({ flowId: value || null })}
+            onCommit={(value) => commitText("flowId", value)}
+            onDraft={(value) =>
+              setDrafts((previous) => ({ ...previous, flowId: value }))
+            }
           />
           <TextField
+            draft={drafts.nodeId}
             label={labels.node}
             name="nodeId"
             placeholder={labels.all}
             value={current.nodeId ?? ""}
-            onCommit={(value) => commit({ nodeId: value || null })}
+            onCommit={(value) => commitText("nodeId", value)}
+            onDraft={(value) =>
+              setDrafts((previous) => ({ ...previous, nodeId: value }))
+            }
           />
         </>
       ) : null}
@@ -178,18 +238,26 @@ export function ObservatoryFilterBar({
       {isQuality ? (
         <>
           <TextField
+            draft={drafts.artifactKind}
             label={labels.artifactKind}
             name="artifactKind"
             placeholder={labels.all}
             value={current.artifactKind ?? ""}
-            onCommit={(value) => commit({ artifactKind: value || null })}
+            onCommit={(value) => commitText("artifactKind", value)}
+            onDraft={(value) =>
+              setDrafts((previous) => ({ ...previous, artifactKind: value }))
+            }
           />
           <TextField
+            draft={drafts.artifactDefId}
             label={labels.artifactDefId}
             name="artifactDefId"
             placeholder={labels.all}
             value={current.artifactDefId ?? ""}
-            onCommit={(value) => commit({ artifactDefId: value || null })}
+            onCommit={(value) => commitText("artifactDefId", value)}
+            onDraft={(value) =>
+              setDrafts((previous) => ({ ...previous, artifactDefId: value }))
+            }
           />
         </>
       ) : null}
@@ -236,37 +304,47 @@ function Field({
 }
 
 /**
- * Free text commits on blur or Enter, never per keystroke. `defaultValue`
- * rather than `value`: the field owns its own draft until the reader commits
- * it, which is what lets an uncommitted draft survive a view change.
+ * Free text commits on blur or Enter, never per keystroke — a commit per
+ * keystroke is a server round-trip per keystroke.
+ *
+ * Controlled by `draft ?? value`: the draft (component state) wins while the
+ * reader is editing and survives the remounts a URL change causes; once no
+ * draft is held, the field shows whatever the URL says, so a drill-down link
+ * that sets `nodeId` elsewhere still updates it.
  */
 function TextField({
+  draft,
   label,
   name,
   placeholder,
   value,
   onCommit,
+  onDraft,
 }: {
+  draft?: string;
   label: string;
   name: string;
   placeholder: string;
   value: string;
   onCommit: (value: string) => void;
+  onDraft: (value: string) => void;
 }): ReactElement {
+  const shown = draft ?? value;
+
   return (
     <Field label={label}>
       <input
-        key={`${name}:${value}`}
         className={INPUT_CLASS}
-        defaultValue={value}
         name={name}
         placeholder={placeholder}
         type="text"
+        value={shown}
         onBlur={(event) => {
           if (event.target.value.trim() !== value) {
             onCommit(event.target.value.trim());
           }
         }}
+        onChange={(event) => onDraft(event.target.value)}
         onKeyDown={(event) => {
           if (event.key !== "Enter") return;
           event.preventDefault();
