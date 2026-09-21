@@ -1771,7 +1771,7 @@ Full record: [`decisions/adr-174.md`](decisions/adr-174.md)
 
 ### ADR-175: Operator Recover of a crashed agent node re-enters the flow graph
 
-**Status:** Accepted; amended by ADR-176
+**Status:** Accepted; amended by ADR-176 and ADR-177
 **Date:** 2026-09-18
 
 Full record: [`decisions/adr-175.md`](decisions/adr-175.md)
@@ -1784,6 +1784,22 @@ Full record: [`decisions/adr-175.md`](decisions/adr-175.md)
 **Date:** 2026-09-21
 
 Full record: [`decisions/adr-176.md`](decisions/adr-176.md)
+
+---
+
+### ADR-177: Evidence-first crash classification
+
+**Status:** Implemented
+**Date:** 2026-09-21
+
+The reconcile sweep classifies a sessionless `Running` flow run from the current
+attempt's durable `session.prompt` evidence instead of from the grace window
+alone: still-arriving evidence is skipped, a host-reported lost turn crashes
+through one fenced boundary that also discharges the command, and a poisoned
+application surfaces as its own reason. Amends ADR-175 (Recover declines and
+supersedes a `turn_lost` result) and ADR-033.
+
+Full record: [`decisions/adr-177.md`](decisions/adr-177.md)
 
 ---
 

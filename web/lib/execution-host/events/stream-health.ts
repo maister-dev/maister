@@ -281,9 +281,23 @@ export async function runEventStreamHealthSweep(
   });
 }
 
-/** True when the event stream of the host holding this command is `lost`.
- * A prompt only terminalizes from an INGESTED terminal event, so a waiter on
- * such a host is waiting for evidence that cannot arrive. */
+/** True when the host holding this command has given up its event stream AND
+ * has no live one. A prompt only terminalizes from an INGESTED terminal event,
+ * so such a waiter is waiting for evidence that cannot arrive.
+ *
+ * A host can hold SEVERAL stream rows, and that is the normal shape after a
+ * restart: `degradeStalledStream` marks the stalled one `lost` terminally, and
+ * a host reconnecting under a NEW `stream_id` inserts a second row `active`
+ * beside it (`ingest.ts` — the insert is keyed on `(host, stream_id)` and only
+ * runs once no `active` row exists). This used to read ONE arbitrary row
+ * (`.limit(1)`, no `ORDER BY`, no state filter) and answer from it, so for such
+ * a host the result was a coin flip.
+ *
+ * That was survivable while the only caller yielded and retried. ADR-177 made
+ * the answer terminalize a run (`crash / stream-lost`), so it has to mean what
+ * it says: evidence cannot arrive only when NOTHING is flowing. An `active`
+ * stream disqualifies the impasse outright.
+ */
 export async function commandStreamLost(input: {
   db: Db;
   commandId: string;
@@ -298,10 +312,12 @@ export async function commandStreamLost(input: {
         executionCommands.executionHostId,
       ),
     )
-    .where(eq(executionCommands.id, input.commandId))
-    .limit(1);
+    .where(eq(executionCommands.id, input.commandId));
 
-  return rows[0]?.state === "lost";
+  return (
+    rows.some((row: { state: string }) => row.state === "lost") &&
+    !rows.some((row: { state: string }) => row.state === "active")
+  );
 }
 
 /** Streams this manager has given up on. Read by the command-impasse signal. */

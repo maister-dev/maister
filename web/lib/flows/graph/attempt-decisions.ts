@@ -20,10 +20,33 @@ export const OPERATOR_INTERRUPT_DECISION = "operator_interrupt";
 // charging it there would let crashes consume a reviewer's restart allowance.
 export const CRASH_RECOVER_DECISION = "crash_recover";
 
+// ADR-177: marks the attempt the shared crash boundary closed because the HOST
+// reported the turn lost (or because its evidence can never arrive, or its
+// application is poisoned). Distinct from `crash_recover`, which marks an
+// attempt an operator's Recover closed: this one is written at crash time, by
+// whichever writer got there first, and it is what makes both orders converge
+// on one row set. Like `crash_recover` it is deliberately NOT part of the
+// `MAISTER_MAX_OPERATOR_RESTARTS` budget — a host restart is not an operator
+// action.
+export const TURN_LOST_DECISION = "turn_lost";
+
 // The decisions that close an attempt WITHOUT it counting as a correction: the
 // attempt number advanced, but no automated iteration failed. Both counters and
 // the rework budget subtract this whole set, never one member of it.
 export const NON_CORRECTION_DECISIONS: readonly string[] = [
   OPERATOR_INTERRUPT_DECISION,
   CRASH_RECOVER_DECISION,
+  // ADR-177: a host restart is not an agent correction. The attempt counter
+  // advanced, but no automated iteration failed — the same reason the two above
+  // are here. Adding it to THIS constant is the whole fan-out: both Observatory
+  // correction counters and the rework budget subtract this set, never one
+  // member of it.
+  //
+  // `clusterRetrySignals` is deliberately NOT in that fan-out: it does not
+  // filter on `decision` at all, so `turn_lost` attempts DO reach the signal
+  // clusters. That is chosen, not inherited — a host that keeps restarting is a
+  // real operational signal, unlike a correction counter, which measures agent
+  // quality. The `CRASH` error-code normalization is what keeps that signal in
+  // its own cluster instead of contaminating genuine failures.
+  TURN_LOST_DECISION,
 ];

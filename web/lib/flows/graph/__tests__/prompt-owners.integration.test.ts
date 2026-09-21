@@ -3199,14 +3199,54 @@ describe("Flow prompt owners through the production graph driver", () => {
       [seeded.runId],
     );
 
-    const summary = await runReconcileSweep({
+    await runReconcileSweep({
       db: database.db,
       executionHosts: createExecutionHosts({
         db: database.db as unknown as Db,
       }),
     });
 
-    expect(summary.crashed).toBeGreaterThanOrEqual(1);
+    // ADR-177 removed the sweep's ability to manufacture a Crashed run in
+    // EITHER of this fixture's windows, and in both cases that is the contract
+    // working rather than a regression:
+    //
+    //   `before_apply`    the turn FINISHED and only its owner application is
+    //                     outstanding. Crashing there is precisely the "a run
+    //                     is crashed while its result is still on its way"
+    //                     defect ADR-177 exists to remove.
+    //   `before_terminal` the fixture kills the ADAPTER, so the host records an
+    //                     ORDINARY failure — `completeAsync`'s catch writes
+    //                     `rejected` for any errored turn. Only the `turn_lost`
+    //                     REASON marks a lost turn, and reading every rejection
+    //                     as one is what crashed healthy runs. The command here
+    //                     is left un-terminalized by the suppression trigger,
+    //                     so nothing settles it either.
+    //
+    // These cases are about RECOVER, not about how the run reached `Crashed`,
+    // so the fixture now produces that state directly — and asserts the sweep's
+    // (correct) refusal on the way, which is worth more than the old
+    // `crashed >= 1`.
+    //
+    // Read from the RUN, never from the sweep's `crashed` counter: that counter
+    // is sweep-WIDE, and by the time this fixture runs the file has seeded dozens
+    // of other runs in the same database, several of which this sweep crashes
+    // legitimately. A skip writes nothing at all, so `Running` is its signature.
+    const [afterSweep] = await database.db
+      .select({ status: runs.status })
+      .from(runs)
+      .where(eq(runs.id, seeded.runId));
+
+    expect(
+      afterSweep.status,
+      "ADR-177: neither window is a lost turn, so the sweep must not crash THIS run",
+    ).toBe("Running");
+
+    const { crashRunningRun } = await import("@/lib/runs/state-transitions");
+    const crashResult = await crashRunningRun(seeded.runId, "worktree-gone", {
+      db: database.db as unknown as Db,
+    });
+
+    expect(crashResult.ok).toBe(true);
     const [crashed] = await database.db
       .select()
       .from(runs)

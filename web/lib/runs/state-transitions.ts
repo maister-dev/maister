@@ -1338,7 +1338,19 @@ export type CrashReason =
   // M37 (ADR-098) T7.1: a Running child whose coordinator parent is gone.
   | "orphaned-child"
   // M37 (ADR-098) T7.1: a parked orchestrator with no resumable wake left.
-  | "orchestrator-stuck";
+  | "orchestrator-stuck"
+  // ADR-177: the host restarted mid-turn and reported the turn lost. The one
+  // crash reason that names a cause the manager PROVED rather than inferred
+  // from age — and the run stays recoverable, unlike the `Failed` a decoded
+  // lost turn produced before.
+  | "turn-lost"
+  // ADR-177: the holding host's event stream is `lost`, so the turn's evidence
+  // can never be ingested. An impasse, not a wait.
+  | "stream-lost"
+  // ADR-177: owner application is quarantined (`prompt_terminal_conflict`) or
+  // poisoned. ONE member, not `owner-poisoned:<reason>` — the union is closed;
+  // the sub-reason rides `node_attempts.error_code` and the structured log.
+  | "owner-poisoned";
 
 export async function crashRunningRun(
   runId: string,

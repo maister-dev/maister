@@ -412,7 +412,7 @@ sequenceDiagram
         else accepted with inflight:true
             REC->>REC: skip — the turn is still running on the host
         else accepted with no in-flight turn
-            REC->>LED: failed {turn_lost} — the run then follows the existing reconcile
+            REC->>LED: failed {turn_lost} — ADR-177: the attempt closes turn_lost and the run is Crashed, recoverable
         else 404
             REC->>LED: failed {receipt_missing} — an accepted row is never re-sent
         end

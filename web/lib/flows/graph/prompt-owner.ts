@@ -11,7 +11,12 @@ import pino from "pino";
 
 import { decodeGatePromptCompletion } from "./gate-prompt-completion";
 import { assertGatePermissionResult } from "./gate-permission-resume";
-import { createGateResult, markGateFailed, markGatePassed } from "./gate-store";
+import {
+  createGateResult,
+  markGateFailed,
+  markGatePassed,
+  markGateStale,
+} from "./gate-store";
 import { lockFlowPromptOwner } from "./prompt-owner-authority";
 import { prepareNodePrompt } from "./node-prompt-owner";
 import { prepareConsensusPrompt } from "./consensus/prompt-owner";
@@ -26,6 +31,11 @@ import {
   runSessions,
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import { isTurnLostError } from "@/lib/reconcile-evidence";
+import {
+  closeTurnLostAttempt,
+  TurnLostCasLost,
+} from "@/lib/runs/turn-lost-boundary";
 import {
   lockCurrentSessionAssignment,
   staleSessionBinding,
@@ -330,9 +340,17 @@ export const flowPromptOwnerAdapter = definePromptOwnerAdapter(
 
     if (ref.variant !== "gate_ai" && ref.variant !== "gate_skill")
       throw new PromptOwnerInvariantError("flow_owner_variant_unimplemented");
-    const completion = await decodeGatePromptCompletion({ db, ref, outcome });
-    const { verdict } = completion;
-    const passed = completion.status === "passed";
+    // ADR-177 T3.3, the gate half. A lost turn is not a verdict either: decoded
+    // it would fail the gate, and a FAILED gate is a real product outcome that
+    // sends the run to rework or blocks promotion — recording a host restart as
+    // one is worse than recording it as nothing. Same boundary, same row set.
+    const gateTurnLost =
+      outcome.state === "failed" && isTurnLostError(outcome.error);
+    const completion = gateTurnLost
+      ? null
+      : await decodeGatePromptCompletion({ db, ref, outcome });
+    const verdict = completion?.verdict;
+    const passed = completion?.status === "passed";
 
     return {
       apply: async (tx) => {
@@ -357,11 +375,70 @@ export const flowPromptOwnerAdapter = definePromptOwnerAdapter(
           .limit(1);
 
         if (!currentAttempt || !evaluation) return "superseded";
+        if (gateTurnLost) {
+          // The SAME preconditions as the verdict path below, minus only the
+          // ones that identify a VERDICT (flow revision, gate kind, prompt
+          // ordinal) — a lost turn produces none. Keeping `currentStepId ===
+          // nodeId` is not optional: without it this would crash a run whose
+          // cursor has already moved off the gate's node, which is a strictly
+          // weaker guard than the sibling arm it stands beside.
+          if (
+            run?.runKind !== "flow" ||
+            !["Running", "NeedsInput"].includes(run.status) ||
+            run.currentStepId !== currentAttempt.nodeId ||
+            currentAttempt.runId !== ref.runId ||
+            currentAttempt.executionAssignmentId !== ref.assignmentId ||
+            evaluation.runId !== ref.runId ||
+            evaluation.nodeAttemptId !== currentAttempt.id
+          )
+            return "superseded";
+          try {
+            await closeTurnLostAttempt(tx, {
+              runId: ref.runId,
+              nodeAttemptId: currentAttempt.id,
+              reason: "turn-lost",
+              fromStatuses: [run.status],
+              fromAttemptStatuses: [currentAttempt.status],
+              // Gates run AFTER the action persisted its completion on this
+              // same attempt, and that completion is the node's real result:
+              // it is preserved, not overwritten. Requiring it NULL here
+              // matched zero rows on every real lost gate turn.
+              admitCompletedAction: true,
+            });
+          } catch (error) {
+            // A lost CAS inside an owner apply is `superseded`, never a throw.
+            // Throwing rolls the application back and the layer retries until
+            // the command POISONS — turning a recoverable lost turn into a
+            // permanently stalled run.
+            if (error instanceof TurnLostCasLost) return "superseded";
+            throw error;
+          }
+          // The evaluation row is `running` from `createGateResult` and every
+          // other terminal gate path writes a terminal status. `stale` is the
+          // truthful one here: the host lost the turn, so the gate was
+          // INVALIDATED, not decided — recording `failed` would turn a
+          // supervisor restart into a product verdict that sends the run to
+          // rework or blocks promotion. Leaving it `running` is the shape
+          // `runGateStepGuarded` exists to prevent (`gates-exec.ts`).
+          await markGateStale(evaluation.id, tx);
+          log.warn(
+            {
+              runId: ref.runId,
+              nodeAttemptId: ref.nodeAttemptId,
+              gateId: ref.gateId,
+              evaluationId: ref.evaluationId,
+              commandId: command.id,
+            },
+            "owned-gate-turn-lost",
+          );
+
+          return "applied";
+        }
         if (
           run?.runKind !== "flow" ||
           !["Running", "NeedsInput"].includes(run.status) ||
           run.currentStepId !== currentAttempt.nodeId ||
-          run.flowRevisionId !== completion.flowRevisionId ||
+          run.flowRevisionId !== completion!.flowRevisionId ||
           currentAttempt.runId !== ref.runId ||
           currentAttempt.executionAssignmentId !== ref.assignmentId ||
           !["Running", "Succeeded"].includes(currentAttempt.status) ||
@@ -369,12 +446,12 @@ export const flowPromptOwnerAdapter = definePromptOwnerAdapter(
           evaluation.nodeAttemptId !== currentAttempt.id ||
           evaluation.gateId !== ref.gateId ||
           evaluation.promptOrdinal !== ref.promptOrdinal ||
-          evaluation.kind !== completion.gateKind ||
+          evaluation.kind !== completion!.gateKind ||
           evaluation.status !== "running"
         )
           return "superseded";
-        if (passed) await markGatePassed(evaluation.id, verdict, tx);
-        else await markGateFailed(evaluation.id, verdict, tx);
+        if (passed) await markGatePassed(evaluation.id, verdict!, tx);
+        else await markGateFailed(evaluation.id, verdict!, tx);
         log.info(
           {
             runId: ref.runId,

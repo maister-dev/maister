@@ -24,7 +24,7 @@ import type { ReconcileInput } from "@/lib/reconcile";
 
 import { describe, expect, it } from "vitest";
 
-import { classifyRunReconcile } from "@/lib/reconcile";
+import { classifyRunReconcile, mapReasonToCrashReason } from "@/lib/reconcile";
 
 const NOW = 1_700_000_000_000;
 const GRACE = 90;
@@ -747,5 +747,225 @@ describe("classifyRunReconcile — branch sync (ADR-141)", () => {
         }),
       ),
     ).toEqual({ action: "sync-recover", reason: "sync-orphaned-idle" });
+  });
+});
+
+// ─── ADR-177: evidence-first classification ────────────────────────────────
+//
+// The evidence arms sit between the ADR-175 crash-recover delegate and the
+// grace anchor, on the flow agent-node branch only. Every skip fires REGARDLESS
+// of grace — that is the point: a run whose result is still on its way must
+// never be crashed for being old.
+
+describe("classifyRunReconcile — ADR-177 evidence arms", () => {
+  // Past grace by a decade: any skip below can only be an evidence arm.
+  const pastGrace = { latestAttemptStartedAt: ago(600) };
+
+  it.each([
+    ["applied", "evidence-applied"],
+    ["applying", "evidence-pending"],
+    ["pending_application", "evidence-pending"],
+    ["pending_ingest", "evidence-pending"],
+    ["inflight", "evidence-inflight"],
+  ] as const)(
+    "%s past grace → skip / %s — a named writer still owes the next move",
+    (promptEvidence, reason) => {
+      expect(
+        classifyRunReconcile(input({ ...pastGrace, promptEvidence })),
+      ).toEqual({ action: "skip", reason });
+    },
+  );
+
+  it.each(["turn_lost", "quarantined", "poisoned"] as const)(
+    "%s past grace → crash — no writer is coming",
+    (promptEvidence) => {
+      expect(
+        classifyRunReconcile(input({ ...pastGrace, promptEvidence })).action,
+      ).toBe("crash");
+    },
+  );
+
+  it("turn_lost crashes with its OWN reason, not agent-session-gone", () => {
+    expect(
+      classifyRunReconcile(
+        input({ ...pastGrace, promptEvidence: "turn_lost" }),
+      ),
+    ).toEqual({ action: "crash", reason: "turn-lost" });
+  });
+
+  it.each(["quarantined", "poisoned"] as const)(
+    "%s crashes owner-poisoned — ONE CrashReason member, the sub-reason rides error_code",
+    (promptEvidence) => {
+      expect(
+        classifyRunReconcile(input({ ...pastGrace, promptEvidence })),
+      ).toEqual({ action: "crash", reason: "owner-poisoned" });
+    },
+  );
+
+  it.each([
+    "applied",
+    "applying",
+    "pending_application",
+    "pending_ingest",
+    "inflight",
+  ] as const)(
+    "%s INSIDE the grace window still skips — grace is not what decides here",
+    (promptEvidence) => {
+      // The reason differs from `grace-window`: the run is skipped because a
+      // writer owes the move, not because it is young. Conflating them is how
+      // the evidence arm would silently stop mattering once grace widened.
+      expect(
+        classifyRunReconcile(
+          input({ latestAttemptStartedAt: ago(1), promptEvidence }),
+        ).action,
+      ).toBe("skip");
+    },
+  );
+
+  it.each(["pending_ingest", "inflight"] as const)(
+    "%s on a host whose stream is LOST crashes stream-lost — the only bound",
+    (promptEvidence) => {
+      // These two are the classes whose evidence is still ON THE HOST. A dead
+      // stream makes it unreachable, so the wait becomes an impasse.
+      expect(
+        classifyRunReconcile(
+          input({
+            ...pastGrace,
+            promptEvidence,
+            promptEvidenceStreamLost: true,
+          }),
+        ),
+      ).toEqual({ action: "crash", reason: "stream-lost" });
+    },
+  );
+
+  it.each(["pending_application", "applying", "applied"] as const)(
+    "a LOST stream does NOT crash %s — that evidence is already in Postgres",
+    (promptEvidence) => {
+      // The writer that owes the next move reads the settled command from the
+      // database, not from the stream. Crashing here would discard a result
+      // that already landed — the exact failure the evidence arms exist to
+      // prevent, reintroduced by their own bound.
+      expect(
+        classifyRunReconcile(
+          input({
+            ...pastGrace,
+            promptEvidence,
+            promptEvidenceStreamLost: true,
+          }),
+        ).action,
+      ).toBe("skip");
+    },
+  );
+
+  it("promptEvidence `none` past grace → the UNCHANGED agent-session-gone path", () => {
+    // The no-evidence regression guard (RED 5, pure half). Green before this
+    // change and after: the grace window still governs the `none` path and
+    // nothing else.
+    expect(
+      classifyRunReconcile(input({ ...pastGrace, promptEvidence: "none" })),
+    ).toEqual({ action: "crash", reason: "agent-session-gone" });
+    expect(classifyRunReconcile(input(pastGrace))).toEqual({
+      action: "crash",
+      reason: "agent-session-gone",
+    });
+  });
+
+  it("`none` inside grace still skips grace-window", () => {
+    expect(
+      classifyRunReconcile(
+        input({ latestAttemptStartedAt: ago(1), promptEvidence: "none" }),
+      ),
+    ).toEqual({ action: "skip", reason: "grace-window" });
+  });
+
+  it.each(["scratch", "agent"] as const)(
+    "a %s run ignores prompt evidence entirely — the scope guard",
+    (runKind) => {
+      // Trap 7: those arms have their own owners (`markScratchCrashed`,
+      // `finalizeAgentRun`) and are deliberately not widened.
+      expect(
+        classifyRunReconcile(
+          input({
+            ...pastGrace,
+            runKind,
+            currentNodeKind: null,
+            promptEvidence: "turn_lost",
+          }),
+        ),
+      ).toEqual({ action: "crash", reason: "agent-session-gone" });
+    },
+  );
+
+  it("a LIVE session still wins over every evidence class", () => {
+    // Liveness is checked before this branch is reached at all; asserted here
+    // because an evidence arm placed one step too early would double-drive a
+    // node that is genuinely running.
+    expect(
+      classifyRunReconcile(
+        input({ ...pastGrace, liveSession: true, promptEvidence: "turn_lost" }),
+      ).action,
+    ).not.toBe("crash");
+  });
+
+  it("a committed crash-recover intent still wins over evidence (ADR-175 order)", () => {
+    expect(
+      classifyRunReconcile(
+        input({
+          ...pastGrace,
+          crashRecoverPending: true,
+          promptEvidence: "turn_lost",
+        }),
+      ).reason,
+    ).not.toBe("turn-lost");
+  });
+
+  it("a `cli` node reads no evidence — arm 9 is untouched", () => {
+    expect(
+      classifyRunReconcile(
+        input({
+          ...pastGrace,
+          currentNodeKind: "cli",
+          promptEvidence: "pending_ingest",
+        }),
+      ),
+    ).toEqual({ action: "crash", reason: "cli-not-retry-safe" });
+  });
+});
+
+describe("mapReasonToCrashReason — exhaustiveness (ADR-177 closes the silent default)", () => {
+  // Every reason `classifyInner` can return with `action: "crash"`. The switch
+  // ends in `default: return "agent-session-gone"`, so a member added without a
+  // `case` is recorded as the WRONG cause while a status-only assertion stays
+  // green. This is the check that makes that impossible.
+  const CRASH_REASONS = [
+    "worktree-gone",
+    "agent-session-gone",
+    "cli-not-retry-safe",
+    "orphaned-child",
+    "orphaned-orchestrator",
+    "orchestrator-stuck",
+    "turn-lost",
+    "stream-lost",
+    "owner-poisoned",
+  ] as const;
+
+  it("no crash reason falls through to the default", () => {
+    for (const reason of CRASH_REASONS) {
+      if (reason === "agent-session-gone") continue;
+      expect(
+        mapReasonToCrashReason(reason),
+        `${reason} is absorbed by the default and recorded as agent-session-gone`,
+      ).not.toBe("agent-session-gone");
+    }
+  });
+
+  it("distinct causes stay distinct, except the one documented merge", () => {
+    const mapped = CRASH_REASONS.map(mapReasonToCrashReason);
+    const duplicates = mapped.filter((v, i) => mapped.indexOf(v) !== i);
+
+    // `orphaned-child` and `orphaned-orchestrator` are ONE cause seen from two
+    // sides and deliberately share a member; nothing else may collapse.
+    expect(duplicates).toEqual(["orphaned-child"]);
   });
 });

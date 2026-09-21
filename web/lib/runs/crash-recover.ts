@@ -10,6 +10,7 @@ import { CRASH_RECOVER_DECISION } from "@/lib/flows/graph/attempt-decisions";
 import { decodeNodePromptCompletion } from "@/lib/flows/graph/node-prompt-owner";
 import { readPromptOutput } from "@/lib/execution-host/prompt-output";
 import { reconcilePromptCommand } from "@/lib/execution-host/prompt-reconciliation";
+import { isTurnLostError } from "@/lib/reconcile-evidence";
 import { resolveNodeResumeSessionId } from "@/lib/runs/node-resume-session";
 import { MaisterError } from "@/lib/errors";
 
@@ -70,7 +71,62 @@ async function evidenceAlreadyApplied(
   return row?.actionCompletion?.commandId === commandId;
 }
 
-export type CrashEvidenceOutcome = "applied" | "absent" | "quarantined";
+/** ADR-175's refusal to re-prompt from disagreeing evidence, preserved after
+ * ADR-177 started CLOSING the attempt at crash time.
+ *
+ * `openRunningAttempts` only sees `Running` attempts with a null `ended_at`.
+ * The `owner-poisoned` boundary closes the attempt `Reworked`, so by the time
+ * an operator clicks Recover there is no open attempt left and this function
+ * answered `absent` — which routes straight to a fresh dispatch. That silently
+ * undid the one thing the quarantine arm exists to guarantee: a turn whose
+ * receipt and terminal event DISAGREE must never be re-prompted, because
+ * nobody knows what the original turn actually did.
+ *
+ * So when no open attempt remains, the node's most recent CLOSED attempt is
+ * checked for a quarantined command before the caller is allowed to dispatch.
+ * The marker survives the boundary by design: it writes `application_state`
+ * without clearing `application_error`.
+ */
+async function quarantinedOnClosedAttempt(
+  db: Db,
+  input: { runId: string; nodeId: string },
+): Promise<CrashEvidenceOutcome> {
+  const [row] = await db
+    .select({ id: executionCommands.id })
+    .from(executionCommands)
+    .innerJoin(
+      nodeAttempts,
+      sql`${nodeAttempts.id} = ${executionCommands.ownerRef}->>'nodeAttemptId'`,
+    )
+    .where(
+      and(
+        eq(executionCommands.runId, input.runId),
+        eq(executionCommands.kind, "session.prompt"),
+        sql`${executionCommands.ownerRef}->>'variant' = 'node'`,
+        sql`${executionCommands.applicationError}->>'reason' = 'prompt_terminal_conflict'`,
+        eq(nodeAttempts.nodeId, input.nodeId),
+      ),
+    )
+    .orderBy(desc(executionCommands.createdAt))
+    .limit(1);
+
+  if (!row) return "absent";
+  log.warn(
+    { runId: input.runId, nodeId: input.nodeId, commandId: row.id },
+    "crash-recover: evidence-first {quarantined} on a CLOSED attempt — refusing to re-prompt a disagreeing turn",
+  );
+
+  return "quarantined";
+}
+
+export type CrashEvidenceOutcome =
+  | "applied"
+  | "absent"
+  | "quarantined"
+  // ADR-177: the crashed turn's evidence says the HOST lost it. Not a result,
+  // so it is declined rather than applied — and the caller routes it exactly
+  // like "absent": close the attempt, dispatch one fresh prompt.
+  | "turn-lost";
 
 // Another writer applied this command between the read and the write. Rolls the
 // handoff transaction back so the recover falls through to an ordinary
@@ -103,7 +159,7 @@ export async function applyCrashedTurnEvidence(
 ): Promise<CrashEvidenceOutcome> {
   const attempts = await openRunningAttempts(db, input);
 
-  if (attempts.length === 0) return "absent";
+  if (attempts.length === 0) return await quarantinedOnClosedAttempt(db, input);
 
   for (const attempt of attempts) {
     // Newest first, so a node re-prompted within one attempt reconciles the
@@ -176,6 +232,59 @@ export async function applyCrashedTurnEvidence(
 
     if (ref?.variant !== "node") continue;
     if (settled.state === "failed" && !settled.lastError) continue;
+
+    // ADR-177 D5. A lost turn is not the node's outcome — it is the absence of
+    // one. ADR-175's rule ("agreeing terminal evidence the owner never applied
+    // is applied first") reads it as agreeing evidence and would decode it into
+    // a failed node action; the graph then fails the node, `PRECONDITION` is not
+    // retryable, and `runs.status` lands `Failed` — which `isRunRecoverable`
+    // refuses. Recover would turn a recoverable run into a dead one.
+    //
+    // Declining is NOT enough. Left at `pending` the command strands
+    // `owner_unapplied` forever and `execution_commands_protected_evidence`
+    // then blocks deleting the run — and the sweep can never reach it, because
+    // the probe is attempt-scoped and this command belongs to the attempt the
+    // recover is about to close. So the obligation is discharged HERE, as
+    // `superseded`: the existing first-class disposition for "the obligation is
+    // met, the result was consciously not applied".
+    //
+    // `completion_applied_at` stays NULL. `execution_commands_application_shape_check`
+    // is an EQUIVALENCE — `(application_state = 'applied') = (completion_applied_at
+    // IS NOT NULL)` — so stamping it beside `superseded` is refused by the
+    // database. Retirement never reads it; `superseded` alone discharges.
+    if (isTurnLostError(settled.lastError)) {
+      const discharged = await db
+        .update(executionCommands)
+        .set({
+          applicationState: "superseded",
+          applicationClaimOwner: null,
+          applicationClaimExpiresAt: null,
+          applicationNextRetryAt: null,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(executionCommands.id, settled.id),
+            eq(executionCommands.applicationState, "pending"),
+            isNull(executionCommands.completionAppliedAt),
+          ),
+        )
+        .returning({ id: executionCommands.id });
+
+      log.warn(
+        {
+          runId: input.runId,
+          nodeId: input.nodeId,
+          nodeAttemptId: attempt.id,
+          commandId: settled.id,
+          outcome: "turn-lost",
+          discharged: discharged.length > 0,
+        },
+        "crash-recover: evidence-first {turn_lost} — declining a lost turn as a result and superseding it",
+      );
+
+      return "turn-lost";
+    }
 
     const [incarnation] = await db
       .select({ acpSessionId: runSessionIncarnations.acpSessionId })

@@ -710,6 +710,25 @@ components:
         errorCode:
           type: string
           nullable: true
+          description: |
+            Two writers emit this event and they put DIFFERENT vocabularies on
+            this field, so a consumer MUST treat it as an opaque string and
+            branch on the value, never on a presumed type. It is deliberately
+            NOT an `enum`: constraining it would break the second writer.
+
+            * `crashRunningRun` / `crashResumedRun` / `crashWaitingOnChildren`
+              (reconcile, GC, the ADR-177 lost-turn boundary) write a
+              **`CrashReason`**: `worktree-gone`, `agent-session-gone`,
+              `cli-not-retry-safe`, `orphaned-child`, `orchestrator-stuck`, and
+              — added by ADR-177 — `turn-lost` (the host reported the turn lost;
+              the run is recoverable), `stream-lost` (the holding host's event
+              stream is `lost`, so the pending evidence can never be ingested)
+              and `owner-poisoned` (the owner application is quarantined or
+              poisoned; the sub-reason rides `node_attempts.error_code`).
+            * The graph runner writes a **`MaisterError.code`** (in practice
+              `CRASH`) when a node action fails with that code.
+
+            `null` when the writer had no reason to record.
 
     DataRunAbandoned:
       type: object

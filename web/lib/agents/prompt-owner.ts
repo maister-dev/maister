@@ -10,11 +10,15 @@ import type { BoundClient } from "@/lib/execution-host/client";
 import type { ExecutionHostTransport } from "@/lib/execution-host/contracts";
 import type { PromptOwnerAdmission } from "@/lib/execution-host/ledger";
 import type { PromptOwner } from "@/lib/execution-host/prompt-owner-contract";
-import type { AgentFinalizationApplication } from "./finalization";
+import type {
+  AgentFinalizationApplication,
+  AgentTerminalOutcome,
+} from "./finalization";
 import type { AgentParkApplication } from "./park";
 import type {
   PreparedPromptOwner,
   PromptOwnerAdapter,
+  PromptOwnerOutcome,
   PromptOwnerRegistry,
 } from "@/lib/execution-host/prompt-owners";
 
@@ -58,6 +62,7 @@ import { nodeOutputMaxBytes } from "@/lib/instance-config";
 import { MaisterError } from "@/lib/errors";
 import { readPromptRequest } from "@/lib/execution-host/command-request";
 import { waitForPromptCompletion } from "@/lib/execution-host/deliverer";
+import { isTurnLostError } from "@/lib/reconcile-evidence";
 
 const log = pino({
   name: "agent-prompt-owner",
@@ -486,6 +491,43 @@ export async function supersedeAgentMessage(
   return "superseded";
 }
 
+/** ADR-177 T3.4 — which terminal status an agent turn produces.
+ *
+ * Extracted from the adapter because it is the whole of the decision and the
+ * adapter's `apply` is otherwise unreachable without a live launcher: inlined,
+ * the arm was one ternary that no test executed, and inverting it left the
+ * suite green.
+ *
+ * An agent run has ONE writer here, so it keeps this choke point rather than
+ * going through the flow boundary — `AgentTerminalOutcome` already admits
+ * `"Crashed"`. Note the outcome also SELECTS the CAS source set
+ * (`TERMINAL_CAS_SOURCE`): `Failed` admits `Running | NeedsInput` while
+ * `Crashed` additionally admits `NeedsInputIdle | Review`. That widening is
+ * intended — a host restart can strand a paused or reviewing agent run the
+ * same way — and it is asserted, not incidental.
+ *
+ * `Crashed` buys an agent run no new remedy: `isRunRecoverable` resolves the
+ * node kind from `resume_target_step_id`, which an agent run has none of, so it
+ * stays discard-only. What it buys is TRUTH — a host restart is not the agent
+ * failing — and parity with the flow path, so an operator reading two runs
+ * killed by one supervisor restart sees one story.
+ *
+ * The command reaches `applied` on every branch: the adapter returns
+ * `"applied"` and the application layer writes the disposition. That is the
+ * load-bearing half, because a command left `pending` strands `owner_unapplied`
+ * and blocks ever deleting the run.
+ */
+export function agentTerminalOutcomeFor(
+  succeeded: boolean,
+  outcome: PromptOwnerOutcome,
+): { outcome: AgentTerminalOutcome; reason?: string } {
+  if (succeeded) return { outcome: "Done" };
+  if (outcome.state === "failed" && isTurnLostError(outcome.error))
+    return { outcome: "Crashed", reason: "agent_turn_lost" };
+
+  return { outcome: "Failed", reason: "agent_prompt_failed" };
+}
+
 export const agentPromptOwner = definePromptOwnerAdapter(
   "agent_turn",
   async ({ db, owner, command, outcome }) => {
@@ -554,13 +596,14 @@ export const agentPromptOwner = definePromptOwnerAdapter(
         afterCommit: () => afterPersistentAgentPark(db, ref.runId, application),
       };
     }
+    const terminal = agentTerminalOutcomeFor(succeeded, outcome);
     const prepared = await prepareAgentRunFinalization(
       ref.runId,
-      succeeded ? "Done" : "Failed",
+      terminal.outcome,
       {
         db,
         finalOutput: finishSentinelOutput(sentinel, maxBytes),
-        ...(!succeeded ? { reason: "agent_prompt_failed" } : {}),
+        ...(terminal.reason ? { reason: terminal.reason } : {}),
       },
     );
     let application: AgentFinalizationApplication = { finalized: false };

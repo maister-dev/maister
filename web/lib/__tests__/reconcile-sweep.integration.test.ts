@@ -312,6 +312,7 @@ async function makeOpts(over: {
   worktreePaths?: string[];
   listSessions?: () => Promise<SupervisorSessionRecord[]>;
   deleteSession?: (sessionId: string) => Promise<void>;
+  getCommandReceipt?: (commandId: string) => Promise<unknown>;
   now?: () => Date;
 }) {
   const runFlow = vi.fn(async () => {});
@@ -335,6 +336,12 @@ async function makeOpts(over: {
 
   Object.assign(fake.transport, {
     listSessions,
+    // ADR-177: the evidence probe's ONLY host call. Overridden per case so the
+    // `accepted`-with-no-terminal-evidence window is exercised without a real
+    // supervisor; left alone the fake answers from its own command store.
+    ...(over.getCommandReceipt
+      ? { getCommandReceipt: over.getCommandReceipt }
+      : {}),
     ...(over.deleteSession
       ? {
           deleteSession: async (sessionId: string) => {
@@ -345,7 +352,7 @@ async function makeOpts(over: {
         }
       : {}),
   });
-  const { hosts } = await fakeExecutionHosts(db, { fake });
+  const { hosts, hostId } = await fakeExecutionHosts(db, { fake });
 
   return {
     opts: {
@@ -358,6 +365,7 @@ async function makeOpts(over: {
     runFlow,
     listWorktrees,
     hosts,
+    hostId,
     fake,
   };
 }
@@ -993,6 +1001,14 @@ describe("runReconcileSweep (integration)", () => {
       // ADR-175: and classifies the two crash-recover re-entry shapes.
       crashRecoverReentered: 0,
       runningIdleSession: 0,
+      // ADR-177: and classifies from durable command evidence. This assertion
+      // pins the WHOLE literal on purpose — a counter added to the summary
+      // without a zero in `ZERO_SUMMARY` is a silent zero on every skipped
+      // tick, so the expectation growing with the contract is the point of it.
+      evidencePending: 0,
+      evidenceApplied: 0,
+      turnLost: 0,
+      ownerPoisoned: 0,
     });
     expect((await readRun(orphan)).status).toBe("Running");
   }, 60_000);
@@ -1522,5 +1538,711 @@ describe("runReconcileSweep — workspace handle check (ADR-166 N6)", () => {
 
     expect(summary).toMatchObject({ handlesLost: 1, crashed: 0 });
     expect((await readRun(runId)).status).toBe("Running");
+  }, 60_000);
+});
+
+// ─── ADR-177: evidence-first crash classification ──────────────────────────
+//
+// The sweep classifies a sessionless `Running` flow agent node from the current
+// attempt's newest OWNED `session.prompt` evidence, and only falls back to the
+// grace window when there is no evidence at all.
+//
+// Every case here is past the 90 s grace **by backdating the attempt's
+// `started_at`**, never by waiting and never by shrinking
+// `MAISTER_RECONCILE_GRACE_SECONDS` — so a SKIP can only be the evidence arm
+// (the in-repo precedent is the `startedAt: Date.now() - 600_000` cases above).
+
+type SeededPrompt = { commandId: string; nodeAttemptId: string };
+
+// A `session.prompt` row owned by `nodeAttemptId`, in whatever evidence shape
+// the case needs. `request_schema` is deliberately v1 so
+// `execution_commands_request_v2_check` takes its short branch — this suite
+// asserts CLASSIFICATION, not canonical request identity.
+async function seedOwnedPrompt(
+  runId: string,
+  hostId: string,
+  overrides: Record<string, unknown> = {},
+  opts: { attemptStartedAt?: Date; nodeAttemptId?: string } = {},
+): Promise<SeededPrompt> {
+  const { mintAssignment } = await import("@/lib/execution-host/assignments");
+  const existing = await db
+    .select({
+      id: schema.executionAssignments.id,
+      epoch: schema.executionAssignments.epoch,
+    })
+    .from(schema.executionAssignments)
+    .where(eq(schema.executionAssignments.runId, runId));
+  const assignment =
+    existing[0] ??
+    (await db.transaction(async (tx) =>
+      mintAssignment(tx as never, { runId, hostId, reason: "launch" }),
+    ));
+  const assignmentId = (assignment as { id: string }).id;
+  const assignmentEpoch = (assignment as { epoch: number }).epoch;
+
+  let nodeAttemptId = opts.nodeAttemptId;
+
+  if (!nodeAttemptId) {
+    nodeAttemptId = randomUUID();
+    await db.insert(nodeAttempts).values({
+      id: nodeAttemptId,
+      runId,
+      nodeId: "implement",
+      nodeType: "ai_coding",
+      attempt: 1,
+      status: "Running",
+      executionAssignmentId: assignmentId,
+      actionPromptOrdinal: 0,
+      // Definitively OUTSIDE the grace window: a skip can only be evidence.
+      startedAt: opts.attemptStartedAt ?? new Date(Date.now() - 600_000),
+    });
+  }
+  const commandId = randomUUID();
+
+  await db.insert(executionCommands).values({
+    id: commandId,
+    runId,
+    executionAssignmentId: assignmentId,
+    executionHostId: hostId,
+    assignmentEpoch,
+    kind: "session.prompt",
+    targetSessionId: `sess-${runId.slice(0, 8)}`,
+    payload: {},
+    maxAttempts: 3,
+    ownerKind: "flow_node_attempt",
+    ownerRef: {
+      version: 1,
+      variant: "node",
+      nodeAttemptId,
+      promptOrdinal: 0,
+      runId,
+      runSessionId: randomUUID(),
+      incarnationId: randomUUID(),
+      assignmentId,
+      assignmentEpoch,
+    },
+    logicalOperationKey: `flow_node_attempt:node:${nodeAttemptId}:0`,
+    requestSchema: "maister.command.request.v1",
+    requestSha256: "a".repeat(64),
+    state: "accepted",
+    acceptedAt: new Date(Date.now() - 300_000),
+    ...overrides,
+  });
+
+  return { commandId, nodeAttemptId };
+}
+
+const TURN_LOST_NESTED = {
+  code: "PRECONDITION",
+  details: { reason: "turn_lost" },
+};
+// `foldReceipt`'s accepted-with-no-terminal fallback FLATTENS the reason
+// (`recovery.ts`), so a matcher keyed only on `details.reason` never fires on
+// this shape. Both are production-reachable; both must classify.
+const TURN_LOST_FLAT = { code: "ACP_PROTOCOL", reason: "turn_lost" };
+
+const SETTLED_TURN_LOST = (error: Record<string, unknown>) => ({
+  state: "failed" as const,
+  completedAt: new Date(Date.now() - 120_000),
+  lastError: error,
+});
+
+async function readCommand(commandId: string): Promise<any> {
+  const rows = await db
+    .select()
+    .from(executionCommands)
+    .where(eq(executionCommands.id, commandId));
+
+  return rows[0];
+}
+
+async function readAttempt(nodeAttemptId: string): Promise<any> {
+  const rows = await db
+    .select()
+    .from(nodeAttempts)
+    .where(eq(nodeAttempts.id, nodeAttemptId));
+
+  return rows[0];
+}
+
+async function markHostStreamLost(hostId: string): Promise<void> {
+  await db.insert(schema.executionEventStreams).values({
+    id: randomUUID(),
+    executionHostId: hostId,
+    streamId: `lost-${randomUUID().slice(0, 8)}`,
+    state: "lost",
+  });
+}
+
+describe("runReconcileSweep — evidence-first crash classification (ADR-177)", () => {
+  it("RED 1: a settled turn_lost past grace crashes turn-lost through ONE boundary — attempt closed, command discharged", async () => {
+    const runId = await seedRun({ acpSessionId: null });
+
+    await seedWorkspace(runId, "/worktrees/turn-lost");
+    const { opts, hostId } = await makeOpts({
+      worktreePaths: ["/worktrees/turn-lost"],
+      liveSessions: [],
+    });
+    const { commandId, nodeAttemptId } = await seedOwnedPrompt(
+      runId,
+      hostId,
+      SETTLED_TURN_LOST(TURN_LOST_NESTED),
+    );
+
+    const summary = await runReconcileSweep(opts);
+    const run = await readRun(runId);
+    const attempt = await readAttempt(nodeAttemptId);
+    const command = await readCommand(commandId);
+
+    expect(run.status).toBe("Crashed");
+    // On this HEAD the run IS Crashed — but as `agent-session-gone`, by age,
+    // with the attempt untouched and the command stranded. The three facts
+    // below are what the boundary adds, and what fails today.
+    expect(
+      run.resumeTargetStepId,
+      "the run must stay recoverable: crashRunningRun stamps resume_target_step_id",
+    ).toBe("implement");
+    expect(
+      {
+        status: attempt.status,
+        decision: attempt.decision,
+        errorCode: attempt.errorCode,
+      },
+      "the attempt must be CLOSED by the boundary: Reworked/turn_lost/CRASH (this HEAD leaves it Running with decision NULL)",
+    ).toEqual({
+      status: "Reworked",
+      decision: "turn_lost",
+      errorCode: "CRASH",
+    });
+    expect(attempt.endedAt).not.toBeNull();
+    expect(
+      {
+        applicationState: command.applicationState,
+        applied: command.completionAppliedAt !== null,
+      },
+      "the command must be discharged in the SAME transaction, or it strands owner_unapplied forever (C3)",
+    ).toEqual({ applicationState: "applied", applied: true });
+    expect(summary.turnLost).toBeGreaterThanOrEqual(1);
+  }, 60_000);
+
+  it("RED 1b: the FLAT turn_lost shape foldReceipt writes classifies identically", async () => {
+    const runId = await seedRun({ acpSessionId: null });
+
+    await seedWorkspace(runId, "/worktrees/turn-lost-flat");
+    const { opts, hostId } = await makeOpts({
+      worktreePaths: ["/worktrees/turn-lost-flat"],
+      liveSessions: [],
+    });
+    const { nodeAttemptId } = await seedOwnedPrompt(
+      runId,
+      hostId,
+      SETTLED_TURN_LOST(TURN_LOST_FLAT),
+    );
+
+    await runReconcileSweep(opts);
+    const attempt = await readAttempt(nodeAttemptId);
+
+    expect(
+      attempt.decision,
+      "a matcher keyed only on details.reason misses foldReceipt's flattened error",
+    ).toBe("turn_lost");
+  }, 60_000);
+
+  it("RED 2a: a settled-unapplied command past grace is SKIPPED (evidence-pending), not crashed", async () => {
+    const runId = await seedRun({ acpSessionId: null });
+
+    await seedWorkspace(runId, "/worktrees/pending-app");
+    const { opts, hostId } = await makeOpts({
+      worktreePaths: ["/worktrees/pending-app"],
+      liveSessions: [],
+    });
+
+    await seedOwnedPrompt(runId, hostId, {
+      state: "succeeded",
+      completedAt: new Date(Date.now() - 5_000),
+      result: { stopReason: "end_turn" },
+    });
+
+    const summary = await runReconcileSweep(opts);
+
+    expect(
+      (await readRun(runId)).status,
+      "the prompt-owner worker owes the next move within ~1s — crashing here discards a finished turn",
+    ).toBe("Running");
+    expect(summary.evidencePending).toBeGreaterThanOrEqual(1);
+    expect(summary.crashed).toBe(0);
+  }, 60_000);
+
+  it("RED 2b: an accepted command whose receipt says completed is SKIPPED (pending_ingest)", async () => {
+    const runId = await seedRun({ acpSessionId: null });
+
+    await seedWorkspace(runId, "/worktrees/pending-ingest");
+    const { opts, hostId } = await makeOpts({
+      worktreePaths: ["/worktrees/pending-ingest"],
+      liveSessions: [],
+      getCommandReceipt: async (commandId: string) => ({
+        commandId,
+        runId,
+        kind: "session.prompt",
+        assignmentEpoch: 1,
+        phase: "completed",
+        httpStatus: 200,
+        body: {},
+        receivedAt: new Date().toISOString(),
+        completedAt: new Date().toISOString(),
+        eventId: null,
+        inflight: false,
+      }),
+    });
+
+    await seedOwnedPrompt(runId, hostId);
+
+    const summary = await runReconcileSweep(opts);
+
+    expect((await readRun(runId)).status).toBe("Running");
+    expect(summary.evidencePending).toBeGreaterThanOrEqual(1);
+  }, 60_000);
+
+  it("RED 2c: an accepted command still in flight on the host is SKIPPED (evidence-inflight)", async () => {
+    const runId = await seedRun({ acpSessionId: null });
+
+    await seedWorkspace(runId, "/worktrees/inflight-evidence");
+    const { opts, hostId } = await makeOpts({
+      worktreePaths: ["/worktrees/inflight-evidence"],
+      liveSessions: [],
+      getCommandReceipt: async (commandId: string) => ({
+        commandId,
+        runId,
+        kind: "session.prompt",
+        assignmentEpoch: 1,
+        phase: "accepted",
+        httpStatus: 202,
+        body: {},
+        receivedAt: new Date().toISOString(),
+        completedAt: null,
+        eventId: null,
+        inflight: true,
+      }),
+    });
+
+    await seedOwnedPrompt(runId, hostId);
+
+    const summary = await runReconcileSweep(opts);
+
+    expect(
+      (await readRun(runId)).status,
+      "the turn is genuinely still running on the host — age is not evidence it died",
+    ).toBe("Running");
+    expect(summary.crashed).toBe(0);
+  }, 60_000);
+
+  it("a v2 accepted receipt proves nothing, so the GRACE rule still decides it", async () => {
+    // The composition guard for the `indeterminate` probe answer. Each link is
+    // pinned by a unit suite — the probe returns `indeterminate` for a v2
+    // accepted receipt, `indeterminate` classifies `none`, and `none` past
+    // grace crashes — but nothing pinned them TOGETHER, and the whole point of
+    // this arm is which of two sweep outcomes a real candidate reaches.
+    //
+    // Under the `pending_ingest` reading this case is `Running` with
+    // `evidencePending >= 1`: skipped regardless of grace, forever, by every
+    // sweep, with no writer that owes the next move. Since v2 IS the production
+    // request schema, that reading silently deleted the pre-ADR-177 safety net
+    // from the production path.
+    const runId = await seedRun({ acpSessionId: null });
+
+    await seedWorkspace(runId, "/worktrees/v2-indeterminate");
+    const { opts, hostId } = await makeOpts({
+      worktreePaths: ["/worktrees/v2-indeterminate"],
+      liveSessions: [],
+      getCommandReceipt: async (commandId: string) => ({
+        commandId,
+        runId,
+        kind: "session.prompt",
+        assignmentEpoch: 1,
+        phase: "accepted",
+        httpStatus: 202,
+        body: {},
+        receivedAt: new Date().toISOString(),
+        completedAt: null,
+        eventId: null,
+        // What `normalizeCommandReceiptV2` produces: the v2 wire shape has no
+        // liveness field, so this is hardcoded and means NOTHING here.
+        inflight: false,
+        evidenceV2: { receiptVersion: 2, commandId, phase: "accepted" },
+      }),
+    });
+
+    await seedOwnedPrompt(runId, hostId);
+
+    const summary = await runReconcileSweep(opts);
+
+    expect(
+      (await readRun(runId)).status,
+      "a receipt that proves nothing must leave the long-standing grace net in place",
+    ).toBe("Crashed");
+    expect(
+      summary.turnLost ?? 0,
+      "and it must never be read as PROOF of a lost turn in the other direction",
+    ).toBe(0);
+    expect(
+      summary.evidencePending ?? 0,
+      "claiming a writer owes the next move is what would skip this row forever",
+    ).toBe(0);
+  }, 60_000);
+
+  it("RED 2d: an APPLIED completion past grace is SKIPPED (evidence-applied) — the continuation worker owns it", async () => {
+    const runId = await seedRun({ acpSessionId: null });
+
+    await seedWorkspace(runId, "/worktrees/applied");
+    const { opts, hostId } = await makeOpts({
+      worktreePaths: ["/worktrees/applied"],
+      liveSessions: [],
+    });
+
+    await seedOwnedPrompt(runId, hostId, {
+      state: "succeeded",
+      completedAt: new Date(Date.now() - 5_000),
+      applicationState: "applied",
+      completionAppliedAt: new Date(Date.now() - 4_000),
+    });
+
+    const summary = await runReconcileSweep(opts);
+
+    expect((await readRun(runId)).status).toBe("Running");
+    expect(summary.evidenceApplied).toBeGreaterThanOrEqual(1);
+  }, 60_000);
+
+  it("RED 2e: pending evidence on a host whose event stream is LOST crashes stream-lost — the only bound", async () => {
+    const runId = await seedRun({ acpSessionId: null });
+
+    await seedWorkspace(runId, "/worktrees/stream-lost");
+    const { opts, hostId } = await makeOpts({
+      worktreePaths: ["/worktrees/stream-lost"],
+      liveSessions: [],
+    });
+    // An `accepted` row whose terminal event was never ingested: the evidence
+    // is still ON THE HOST, which is the only shape a dead stream can strand.
+    // (A settled-but-unapplied row is NOT stranded by it — that evidence is
+    // already in Postgres and its writer reads it from there.)
+    const { commandId, nodeAttemptId } = await seedOwnedPrompt(runId, hostId);
+
+    await markHostStreamLost(hostId);
+
+    await runReconcileSweep(opts);
+
+    expect((await readRun(runId)).status).toBe("Crashed");
+    expect(
+      (await readAttempt(nodeAttemptId)).decision,
+      "a stream that can never deliver the evidence is an impasse, not a wait",
+    ).toBe("turn_lost");
+    expect((await readCommand(commandId)).applicationState).toBe("applied");
+  }, 60_000);
+
+  // `commandStreamLost` asserted DIRECTLY, and deliberately so. Routing this
+  // through the sweep looked like a regression guard and was not: the old
+  // implementation read ONE arbitrary row, so its answer for a mixed host was
+  // undefined — a sweep-level case passed against the unfixed code on the first
+  // falsification run. What CAN be pinned is the contract itself, over every
+  // shape a host can be in. The old code could satisfy this only by luck.
+  const STREAM_SHAPES: Array<{
+    states: string[];
+    lost: boolean;
+    why: string;
+  }> = [
+    {
+      states: ["lost", "active"],
+      lost: false,
+      why: "a recovered host: evidence flows on the live stream",
+    },
+    { states: ["active"], lost: false, why: "healthy" },
+    { states: ["lost"], lost: true, why: "given up, nothing flowing" },
+    {
+      states: ["lost", "lost"],
+      lost: true,
+      why: "several dead streams, still nothing flowing",
+    },
+    {
+      states: ["lost", "closed"],
+      lost: true,
+      why: "a closed stream carries nothing either",
+    },
+  ];
+
+  it.each(STREAM_SHAPES)(
+    "commandStreamLost: $states -> $lost ($why)",
+    async ({ states, lost }) => {
+      const { commandStreamLost } = await import(
+        "@/lib/execution-host/events/stream-health"
+      );
+      const runId = await seedRun({ acpSessionId: null });
+
+      await seedWorkspace(runId, `/worktrees/sl-${randomUUID().slice(0, 8)}`);
+      const { hostId } = await makeOpts({ liveSessions: [] });
+      const { commandId } = await seedOwnedPrompt(runId, hostId);
+
+      for (const state of states) {
+        await db.insert(schema.executionEventStreams).values({
+          id: randomUUID(),
+          executionHostId: hostId,
+          streamId: `s-${randomUUID().slice(0, 8)}`,
+          state,
+        });
+      }
+
+      expect(await commandStreamLost({ db: db as never, commandId })).toBe(
+        lost,
+      );
+    },
+    60_000,
+  );
+
+  it("RED 4a: a poisoned application crashes owner-poisoned and keeps its diagnostic", async () => {
+    const runId = await seedRun({ acpSessionId: null });
+
+    await seedWorkspace(runId, "/worktrees/poisoned");
+    const { opts, hostId } = await makeOpts({
+      worktreePaths: ["/worktrees/poisoned"],
+      liveSessions: [],
+    });
+    const { commandId, nodeAttemptId } = await seedOwnedPrompt(runId, hostId, {
+      state: "failed",
+      completedAt: new Date(Date.now() - 5_000),
+      lastError: { code: "ACP_PROTOCOL" },
+      applicationState: "poisoned",
+      applicationError: {
+        reason: "owner_invariant",
+        phase: "apply",
+        causeCode: "x",
+      },
+    });
+
+    const summary = await runReconcileSweep(opts);
+
+    expect((await readRun(runId)).status).toBe("Crashed");
+    expect((await readAttempt(nodeAttemptId)).decision).toBe("turn_lost");
+    const command = await readCommand(commandId);
+
+    expect(command.applicationState).toBe("applied");
+    expect(
+      command.applicationError,
+      "the boundary must NOT null the poison diagnostic — an operator needs it",
+    ).not.toBeNull();
+    expect(summary.ownerPoisoned).toBeGreaterThanOrEqual(1);
+  }, 60_000);
+
+  it("RED 4b: a quarantined conflict found AFTER application still crashes owner-poisoned, never reads as healthy", async () => {
+    const runId = await seedRun({ acpSessionId: null });
+
+    await seedWorkspace(runId, "/worktrees/quarantined");
+    const { opts, hostId } = await makeOpts({
+      worktreePaths: ["/worktrees/quarantined"],
+      liveSessions: [],
+    });
+    // `quarantine()` writes applicationState = completionAppliedAt ? 'applied'
+    // : 'poisoned'. Keying the quarantine arm on 'poisoned' alone would let
+    // THIS row classify as `applied` → SKIP, hiding a disagreeing turn forever.
+    const { nodeAttemptId } = await seedOwnedPrompt(runId, hostId, {
+      state: "succeeded",
+      completedAt: new Date(Date.now() - 5_000),
+      applicationState: "applied",
+      completionAppliedAt: new Date(Date.now() - 4_000),
+      applicationError: {
+        reason: "prompt_terminal_conflict",
+        phase: "prepare",
+        causeCode: "x",
+      },
+    });
+
+    const summary = await runReconcileSweep(opts);
+
+    expect(
+      (await readRun(runId)).status,
+      "row 3 (quarantined) MUST precede row 5 (applied) in the derivation order",
+    ).toBe("Crashed");
+    expect((await readAttempt(nodeAttemptId)).decision).toBe("turn_lost");
+    expect(summary.ownerPoisoned).toBeGreaterThanOrEqual(1);
+  }, 60_000);
+
+  it("RED 5b: a run whose only command is still QUEUED derives `none` and keeps the grace/agent-session-gone path", async () => {
+    const runId = await seedRun({ acpSessionId: null });
+
+    await seedWorkspace(runId, "/worktrees/queued");
+    const { opts, hostId } = await makeOpts({
+      worktreePaths: ["/worktrees/queued"],
+      liveSessions: [],
+    });
+    const { nodeAttemptId } = await seedOwnedPrompt(runId, hostId, {
+      state: "queued",
+      acceptedAt: null,
+    });
+
+    const summary = await runReconcileSweep(opts);
+
+    // GREEN on this HEAD and after: the regression guard that the change does
+    // not move the no-evidence path.
+    expect((await readRun(runId)).status).toBe("Crashed");
+    expect(summary.crashed).toBeGreaterThanOrEqual(1);
+    const attempt = await readAttempt(nodeAttemptId);
+
+    expect(
+      attempt.decision,
+      "nothing was dispatched to lose — this is agent-session-gone, not turn-lost",
+    ).toBeNull();
+    expect(summary.turnLost ?? 0).toBe(0);
+  }, 60_000);
+
+  it("evidence is read from the CURRENT NODE's open attempt, not the run's newest (review fix)", async () => {
+    const runId = await seedRun({ acpSessionId: null });
+
+    await seedWorkspace(runId, "/worktrees/attempt-scope");
+    const { opts, hostId } = await makeOpts({
+      worktreePaths: ["/worktrees/attempt-scope"],
+      liveSessions: [],
+    });
+    // A lost turn on a CLOSED attempt of a DIFFERENT node. It is the run's
+    // newest row by `started_at`, so a run-scoped probe would classify from it
+    // — and the boundary, which resolves the open attempt at `current_step_id`,
+    // would then act somewhere else or not at all.
+    const stale = await seedOwnedPrompt(
+      runId,
+      hostId,
+      SETTLED_TURN_LOST(TURN_LOST_NESTED),
+      // NEWER than the current node's attempt (so a run-scoped probe would pick
+      // it) but still well past the 90 s grace (so the grace arm cannot be what
+      // decides this case).
+      { attemptStartedAt: new Date(Date.now() - 300_000) },
+    );
+
+    await db
+      .update(nodeAttempts)
+      .set({ nodeId: "build", status: "Succeeded", endedAt: new Date() })
+      .where(eq(nodeAttempts.id, stale.nodeAttemptId));
+    // The node the run is actually parked on, with no evidence of its own.
+    await db.insert(nodeAttempts).values({
+      id: randomUUID(),
+      runId,
+      nodeId: "implement",
+      nodeType: "ai_coding",
+      attempt: 2,
+      status: "Running",
+      actionPromptOrdinal: 0,
+      startedAt: new Date(Date.now() - 600_000),
+    });
+
+    const summary = await runReconcileSweep(opts);
+
+    // `none` for the current attempt → the unchanged grace path, NOT a
+    // turn-lost crash inherited from a closed attempt of another node.
+    expect((await readRun(runId)).status).toBe("Crashed");
+    expect(summary.turnLost ?? 0).toBe(0);
+    expect(summary.crashed).toBeGreaterThanOrEqual(1);
+  }, 60_000);
+
+  it("RED 5c: a SCRATCH run with a settled turn_lost command keeps its own arm — the evidence probe is flow-only", async () => {
+    const runId = await seedRun({
+      runKind: "scratch",
+      acpSessionId: null,
+      currentStepId: "dialog",
+    });
+
+    await seedWorkspace(runId, "/worktrees/scratch-lost");
+    const { opts, hostId } = await makeOpts({
+      worktreePaths: ["/worktrees/scratch-lost"],
+      liveSessions: [],
+    });
+    const { nodeAttemptId } = await seedOwnedPrompt(
+      runId,
+      hostId,
+      SETTLED_TURN_LOST(TURN_LOST_NESTED),
+    );
+
+    await runReconcileSweep(opts);
+
+    // Scope guard (trap 7): scratch keeps `markScratchCrashed`; the classifier
+    // arm is not widened to it. GREEN on this HEAD and after.
+    expect((await readRun(runId)).status).toBe("Crashed");
+    expect((await readAttempt(nodeAttemptId)).decision).toBeNull();
+  }, 60_000);
+
+  it("AC-D7.1: the probe is served by execution_commands_run_created_idx, not a sequential scan", async () => {
+    const runId = await seedRun({ acpSessionId: null });
+
+    await seedWorkspace(runId, "/worktrees/explain");
+    const { hostId } = await makeOpts({
+      worktreePaths: ["/worktrees/explain"],
+      liveSessions: [],
+    });
+    const { nodeAttemptId } = await seedOwnedPrompt(runId, hostId);
+
+    // D7's claim is "no migration AND no index" — the second half is a COST
+    // claim, so it is measured rather than asserted. `enable_seqscan = off`
+    // makes this deterministic on a fixture-sized table, where the planner
+    // would otherwise pick a sequential scan for two rows no matter what
+    // indexes exist; what it proves is that the index CAN serve this exact
+    // predicate-plus-sort, which is the thing in question.
+    await pool.query("SET enable_seqscan = off");
+    try {
+      const plan = await pool.query(
+        `EXPLAIN SELECT id FROM execution_commands
+           WHERE run_id = $1 AND kind = 'session.prompt'
+             AND owner_ref->>'variant' = 'node'
+             AND owner_ref->>'nodeAttemptId' = $2
+           ORDER BY created_at DESC LIMIT 1`,
+        [runId, nodeAttemptId],
+      );
+      const text = plan.rows.map((r: any) => r["QUERY PLAN"]).join("\n");
+
+      expect(
+        text,
+        "the leading column is the equality predicate and the second is the sort, so one run's commands are walked newest-first",
+      ).toContain("execution_commands_run_created_idx");
+      expect(text).not.toContain("Seq Scan on execution_commands");
+    } finally {
+      await pool.query("SET enable_seqscan = on");
+    }
+  }, 60_000);
+
+  it("RED 6: the boundary makes the command RETIREMENT-eligible — at Crashed, and again at Done", async () => {
+    const { classifyCommandRetirement } = await import(
+      "@/lib/execution-host/retirement"
+    );
+    const runId = await seedRun({ acpSessionId: null });
+
+    await seedWorkspace(runId, "/worktrees/retire");
+    const { opts, hostId } = await makeOpts({
+      worktreePaths: ["/worktrees/retire"],
+      liveSessions: [],
+    });
+    const { commandId } = await seedOwnedPrompt(
+      runId,
+      hostId,
+      SETTLED_TURN_LOST(TURN_LOST_NESTED),
+    );
+
+    await runReconcileSweep(opts);
+    const command = await readCommand(commandId);
+    const row = {
+      ...command,
+      runStatus: (await readRun(runId)).status,
+      terminalHostSequence: 1n,
+      ackConfirmedSequence: 1n,
+      terminalEventId: "evt-1",
+    };
+
+    // `Crashed` is NOT in RETAINED_RUN_STATUSES, so eligibility does not have
+    // to wait for a Recover to reach Done.
+    expect(
+      classifyCommandRetirement(row as never, {
+        now: new Date(Date.now() + 86_400_000),
+        graceMs: 0,
+      }),
+      "an unapplied command answers owner_unapplied forever and blocks deleting the run",
+    ).toBeNull();
+    expect(
+      classifyCommandRetirement({ ...row, runStatus: "Done" } as never, {
+        now: new Date(Date.now() + 86_400_000),
+        graceMs: 0,
+      }),
+    ).toBeNull();
   }, 60_000);
 });

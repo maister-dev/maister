@@ -248,6 +248,31 @@ generation checks in the following contract.
 
 ## Prompt owner and recovery windows (Implemented)
 
+### Terminal prompt state → run outcome (ADR-177, Implemented)
+
+A settled prompt command is durable evidence about a turn. This table is the
+complete mapping from that evidence to what the run does next; the reconcile
+sweep reads it for a `run_kind='flow'` agent node with no live session, and the
+full classification table with its writers lives in
+[`reconciliation-gc.md`](reconciliation-gc.md#evidence-classes-adr-177-implemented).
+
+| Terminal / pending prompt state | Run outcome | Attempt | Command |
+| --- | --- | --- | --- |
+| `succeeded`, applied | the graph advances | the owner's completion | `applied` |
+| `failed` (ordinary), applied | the node fails; `runs.status='Failed'` per the graph's own rules | `Failed`, `decision` NULL | `applied` |
+| `failed {turn_lost}` | `Crashed` (`turn-lost`) — **recoverable**, `resume_target_step_id` stamped | `Reworked`, `decision='turn_lost'`, `error_code='CRASH'` | `applied` |
+| quarantined (`prompt_terminal_conflict`) or `poisoned` | `Crashed` (`owner-poisoned`) | `Reworked`, `decision='turn_lost'`, `error_code='CRASH'` | `applied` |
+| pending (ingest / application / claim) or `inflight` | **unchanged** — the named writer owes the next move | open | unchanged |
+| `pending_ingest` or `inflight` on a host whose stream is `lost` | `Crashed` (`stream-lost`) | `Reworked`, `decision='turn_lost'` | `applied` |
+| `failed {turn_lost}`, settled-unapplied, found by Recover on a still-open attempt | Recover re-dispatches one fresh prompt | the crashed attempt is closed | `superseded`, `completion_applied_at` NULL |
+
+`turn_lost` is matched on the error **reason** — carried nested
+(`last_error.details.reason`, the ingested-terminal-event path) or flat
+(`last_error.reason`, the `foldReceipt` accepted-with-no-terminal fallback) —
+never on an HTTP status and never on the code, which is `PRECONDITION` on one
+path and `ACP_PROTOCOL` on the other. `error_code` on the attempt is normalized
+to `CRASH` so one root cause stays one Observatory cluster.
+
 ### Registered owner application engine (Implemented)
 
 Application modules construct a typed `PromptOwnerRegistry` and pass it to
@@ -1097,7 +1122,7 @@ Deferred inventory must cover ACP permission promises, prompt wait subscriptions
 - **PRM-02 (Implemented):** Retry reuses command ID, logical operation key, and canonical request digest so ACP is never invoked twice.
 - **PRM-03:** Progress and terminal events—not HTTP lifetime or a receipt alone—are lifecycle authority; the queryable receipt is agreeing evidence for reconciliation.
 - **PRM-04 (Implemented):** Every prompt command has one typed server-derived owner and idempotent terminal application across web restart; the production registry composed in `web/lib/workers/runtime.ts` MUST cover exactly the `PROMPT_OWNER_SHAPES` kind set, and a duplicate or missing kind MUST fail boot with `MaisterError("CONFIG")` before `prompt-owner-worker-started` is logged (`durable-workers-boot.integration.test.ts`).
-- **PRM-05:** A host restart finding an accepted command without a live turn terminalizes it as `turn_lost` without replaying prompt text.
+- **PRM-05 (Implemented):** A host restart finding an accepted command without a live turn terminalizes it as `turn_lost` without replaying prompt text. Since [ADR-177](../decisions/adr-177.md) the manager then gives that terminal state a named run outcome instead of letting it age into `agent-session-gone` or burn the run into an unrecoverable `Failed`: one fenced boundary, `applyTurnLostBoundary` (`web/lib/runs/turn-lost-boundary.ts`), closes the attempt `Reworked`/`decision='turn_lost'`/`error_code='CRASH'`, crashes the run `turn-lost` (so `resume_target_step_id` is stamped and Recover is offered), and discharges the command — all in ONE transaction. The command write is `applied` + `completion_applied_at`, single-winner on `completion_applied_at IS NULL`, and is SKIPPED when the row is already `applied`/`superseded` (reachable on the quarantine arm, where `quarantine()` stamped it before the conflict was found): an already-discharged command means the obligation is met, not that a race was lost. The guard that protects a REAL result is the attempt's `action_completion IS NULL`, not the command's. Proven by `web/lib/execution-host/__tests__/command-recovery.integration.test.ts` (a REAL supervisor SIGKILL + restart across three ingest orders, plus a worker-first cell driven by a live prompt-owner worker), `web/lib/__tests__/reconcile-sweep.integration.test.ts` (the seeded decision table, one case per class), `web/lib/runs/__tests__/turn-lost-boundary.integration.test.ts` (the three-sided transaction and every loser), `web/lib/runs/__tests__/crash-recover-turn-lost.integration.test.ts` (Recover's decline-and-discharge) and the pure `web/lib/__tests__/reconcile-evidence.test.ts` + `reconcile-classify.test.ts`.
 - **PRM-06 (Implemented):** Receipt and terminal event must agree on command, assignment, epoch, and outcome before owner mutation.
 - **PRM-07 (Implemented):** Session exit, crash, and cancellation terminalize accepted prompts before or atomically with terminal session evidence.
 - **PRM-08 (Implemented):** HITL pause, decision, checkpoint, and resume are durable/fenced and resume uses a new command and required incarnation.
@@ -1109,7 +1134,7 @@ Deferred inventory must cover ACP permission promises, prompt wait subscriptions
 ## Edge cases
 
 - **EDGE-PRM-01:** A lost admission or terminal acknowledgement reconciles by original command ID and never starts a second turn (`IT-PRM-02-ACK-LOSS`).
-- **EDGE-PRM-02:** A restarted host with an accepted non-live turn writes `turn_lost` and lets manager recovery choose checkpoint/resume (`IT-PRM-05`).
+- **EDGE-PRM-02 (Implemented):** A restarted host with an accepted non-live turn writes `turn_lost` and lets manager recovery choose checkpoint/resume (`IT-PRM-05`). The manager's choice is now explicit and order-independent (ADR-177): whichever of the reconcile sweep and the flow prompt owner reaches it first, both go through `applyTurnLostBoundary` and converge on ONE row set — run `Crashed`, attempt closed `turn_lost`, command `applied` — and an operator Recover then declines the lost turn as a result (it is not one), settles the stranded command `superseded`, and dispatches exactly one fresh prompt. Proven by `web/lib/execution-host/__tests__/command-recovery.integration.test.ts` (a REAL supervisor SIGKILL + restart across three ingest orders, plus a worker-first cell driven by a live prompt-owner worker), `web/lib/__tests__/reconcile-sweep.integration.test.ts` (the seeded decision table, one case per class), `web/lib/runs/__tests__/turn-lost-boundary.integration.test.ts` (the three-sided transaction and every loser), `web/lib/runs/__tests__/crash-recover-turn-lost.integration.test.ts` (Recover's decline-and-discharge) and the pure `web/lib/__tests__/reconcile-evidence.test.ts` + `reconcile-classify.test.ts`.
 - **EDGE-PRM-03:** Disagreeing terminal receipt/event outcomes are quarantined as `prompt_terminal_conflict` and owner application stops (`IT-PRM-06`).
 - A duplicate input/cancel/checkpoint uses the existing receipt and fence, and a stale epoch returns typed fenced evidence rather than a new side effect.
 - **EDGE-PRM-04:** If checkpoint or release wins the race with terminal publication, an open prompt wait remains pending instead of locally fencing the accepted command. Receipt evidence alone does not settle it; the exact canonical terminal command event settles the historical command, after which an agreeing receipt makes the result queryable (`IT-PRM-06`).

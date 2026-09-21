@@ -34,6 +34,8 @@ import {
   staleSessionBinding,
 } from "@/lib/execution-host/session-binding";
 import { agentMessageText } from "@/lib/run-transcript/agent-text";
+import { isTurnLostError } from "@/lib/reconcile-evidence";
+import { closeTurnLostAttempt } from "@/lib/runs/turn-lost-boundary";
 import { appendCapped } from "@/lib/flows/capped-text";
 import { isMaisterErrorCode } from "@/lib/errors-core";
 import { nodeOutputMaxBytes } from "@/lib/instance-config";
@@ -174,12 +176,22 @@ export async function prepareNodePrompt(input: {
 
   if (!incarnation)
     throw new PromptOwnerInvariantError("node_owner_incarnation_missing");
-  const completion = await decodeNodePromptCompletion({
-    commandId: command.id,
-    promptOrdinal: ref.promptOrdinal,
-    acpSessionId: incarnation.acpSessionId,
-    outcome,
-  });
+  // ADR-177 T3.3. A lost turn is NOT a result, so it must never be decoded into
+  // a `FlowActionCompletion`: the graph would fail the node, `PRECONDITION` is
+  // not in `RETRYABLE_ERROR_CODES` (and a flow author cannot add it), the
+  // traversal would break and `runs.status` would land `Failed` — which
+  // `isRunRecoverable` refuses. This branch is what makes the sweep's
+  // `evidence-applied` SKIP arm safe: it guarantees a lost turn never becomes
+  // an applied completion for the continuation worker to act on.
+  const turnLost = outcome.state === "failed" && isTurnLostError(outcome.error);
+  const completion = turnLost
+    ? null
+    : await decodeNodePromptCompletion({
+        commandId: command.id,
+        promptOrdinal: ref.promptOrdinal,
+        acpSessionId: incarnation.acpSessionId,
+        outcome,
+      });
 
   return {
     apply: async (tx) => {
@@ -206,6 +218,31 @@ export async function prepareNodePrompt(input: {
         attempt.actionCompletion !== null
       )
         return "superseded";
+      if (turnLost) {
+        // The SAME row set the reconcile sweep produces, written by whichever
+        // of the two got here first. Only the attempt close and the run crash:
+        // the owner-application layer writes the command's disposition from the
+        // value returned below, so writing it here would touch one row twice in
+        // one transaction.
+        await closeTurnLostAttempt(tx, {
+          runId: ref.runId,
+          nodeAttemptId: attempt.id,
+          reason: "turn-lost",
+          fromStatuses: [run.status],
+          fromAttemptStatuses: [attempt.status],
+        });
+        log.warn(
+          {
+            runId: ref.runId,
+            nodeAttemptId: ref.nodeAttemptId,
+            commandId: command.id,
+            promptOrdinal: ref.promptOrdinal,
+          },
+          "node-action-turn-lost",
+        );
+
+        return "applied";
+      }
       await tx
         .update(nodeAttempts)
         .set({ actionCompletion: completion })
@@ -216,7 +253,7 @@ export async function prepareNodePrompt(input: {
           nodeAttemptId: ref.nodeAttemptId,
           commandId: command.id,
           promptOrdinal: ref.promptOrdinal,
-          ok: completion.result.ok,
+          ok: completion!.result.ok,
         },
         "node-action-output-applied",
       );
