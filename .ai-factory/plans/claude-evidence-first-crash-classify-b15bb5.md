@@ -274,6 +274,31 @@ D3 step 1, T3.3, T3.4, T3.5) goes through ONE exported predicate,
 `details.reason` would silently never fire on the fallback path. This does not
 change any decision — it makes them implementable.
 
+### C18 — ⚠ D2's `stream-lost` row is internally inconsistent; narrowed to the two classes it actually describes
+
+D2 writes the bound as *"`pending_*` ∨ `inflight` ∧ `promptEvidenceStreamLost`
+→ CRASH `stream-lost`"* and justifies it as *"nobody — the evidence can never
+arrive"*. That justification is true of exactly two classes and false of the
+third `pending_*` member:
+
+| Class | Where the evidence is | Can a dead stream strand it? |
+| --- | --- | --- |
+| `pending_ingest` | on the host, terminal event never ingested | **yes** |
+| `inflight` | on the host, turn still running | **yes** |
+| `pending_application` | already INGESTED — that is what made the command settled | **no** — the prompt-owner worker claims it from Postgres |
+| `applying` | as above, a worker holds the claim | **no** |
+| `applied` | in the ledger | **no** |
+
+Applying the override to the whole skip set crashes runs whose result already
+landed — the precise failure the evidence arms exist to prevent, reintroduced by
+their own bound. Caught by a test of mine whose TITLE said the right thing while
+its assertion said the opposite, and passed: an override that wide made both
+readings green.
+
+**Narrowed to `pending_ingest` and `inflight`.** This is not a trade-off being
+reopened — it is D2's own stated reason applied consistently. The unit suite
+pins both directions (the two that crash, the three that must not).
+
 ### C17 — ⚠ DEVIATION from RQ4's slice allocation: the two "isolation" cases run in-process, and the reason is RQ4's own argument
 
 RQ4 sends two cases to the `isolation` slice — RED 3's worker-first order and
@@ -1012,14 +1037,14 @@ fails `typecheck` is not a deliverable).
 
 ### Phase 2 — The evidence probe and the classifier
 
-**T2.1 — `web/lib/reconcile-evidence.ts` (pure).** `PromptEvidenceClass` and
+**T2.1 — ✅ `web/lib/reconcile-evidence.ts` (pure).** `PromptEvidenceClass` and
 `classifyPromptEvidence(row, probe?)` implementing the **D1** derivation order as
 an exhaustive `satisfies` map. Pure — no `server-only`, no db — so the classifier
 unit suite can import it. Unit tests: one case per row of the D1 table plus the
 order-sensitivity case (settled `turn_lost` with `applicationState='pending'`
 resolves `turn_lost`, not `pending_application`).
 
-**T2.2 — The builder probe.** In the per-candidate enrichment block at
+**T2.2 — ✅ The builder probe.** In the per-candidate enrichment block at
 `reconcile.ts:1561-1601`, immediately beside the `crashRecoverPending` inline
 computation at `:1579-1582` (**A2c**) — so it inherits `PER_PASS_CONCURRENCY`
 and needs no new bounding. For a flow candidate with no live session on an agent
@@ -1030,7 +1055,7 @@ node: load the current attempt's newest owned `session.prompt` with the
 yields `pending_ingest`. Logging (standard): one INFO per candidate that actually
 probed, with `{runId, commandId, evidence, streamLost}`.
 
-**T2.3 — The classifier arms.** Insert the **D2** table into `classifyInner`
+**T2.3 — ✅ The classifier arms.** Insert the **D2** table into `classifyInner`
 **between arm 10a and arm 10b** (`reconcile.ts:478-483`, **A2**) — after the
 ADR-175 `crashRecoverPending` delegate, before the grace anchor. Arms 9 (`cli`)
 and 11 (gates) are untouched. New `ReconcileReason` members bring the union from
@@ -1038,13 +1063,13 @@ and 11 (gates) are untouched. New `ReconcileReason` members bring the union from
 `turn-lost`, `stream-lost`, `owner-poisoned`. **Extend the existing 51-case pure
 suite** rather than starting a new file.
 
-**T2.4 — Close the `CrashReason` gap (C6).** Add `turn-lost`, `stream-lost`,
+**T2.4 — ✅ Close the `CrashReason` gap (C6).** Add `turn-lost`, `stream-lost`,
 `owner-poisoned` to the union (`state-transitions.ts:1334`) and `case` arms to
 `mapReasonToCrashReason` (`reconcile.ts:603`). Add a unit assertion that every
 crash-classified `ReconcileReason` maps to a **distinct** `CrashReason` — an
 exhaustiveness check, so the `default:` can never silently absorb a new member.
 
-**T2.5 — Sweep counters.** `evidencePending`, `evidenceApplied`, `turnLost`,
+**T2.5 — ✅ Sweep counters.** `evidencePending`, `evidenceApplied`, `turnLost`,
 `ownerPoisoned` — added in **all three places** (**A2d**): the
 `ReconcileSweepSummary` interface (`:527-571`), `ZERO_SUMMARY` (`:573-588`), and
 the returned literal (`:2096-2111`). Missing any one is a silent zero.
@@ -1053,6 +1078,33 @@ One INFO line per tick that had a non-zero delta. **Verify:**
 existing ADR-175 ones, with no existing expectation loosened; and
 `web/lib/scheduler/__tests__/system-sweeps.test.ts:92` (which pins a summary
 literal) still compiles.
+
+**✅ PHASE 2 EXIT RECORD (2026-09-21).** **GREEN** — RED 2a/2b/2c/2d (all four
+skip arms) and RED 5b/5c now pass; RED 1, 1b, 2e, 4a, 4b and 6 stay red for
+their stated reason (the boundary does not exist yet), which is exactly the
+split this gate predicts. Full `test:unit`: **806 files / 8244 tests, 0
+failures**. `typecheck` clean. **AC-D7.1 recorded as a test**, not a one-off
+run: `EXPLAIN` under `enable_seqscan = off` names
+`execution_commands_run_created_idx` and no `Seq Scan` — deterministic on a
+fixture-sized table, where the planner would otherwise pick a sequential scan
+for two rows whatever indexes exist. **D7's negative acceptance**:
+`db:generate` reports *"No schema changes, nothing to migrate"* and
+`_journal.json` is untouched.
+
+**One existing expectation changed, classified OBSOLETE (not broken):**
+`reconcile-sweep.integration.test.ts`'s "zeroed summary when listSessions
+throws" pins the WHOLE `ReconcileSweepSummary` literal, so it grew by the four
+new zeros. That is the assertion working as designed — a counter added without
+a `ZERO_SUMMARY` entry is a silent zero on every skipped tick. No expectation
+was loosened.
+
+**REFACTOR done:** `classifyPromptEvidence` is ONE pure function serving the
+builder, the unit suite and the analytics table; the grace anchor still has
+exactly TWO copies (`reconcile.ts`, `crash-recover-route.ts`) — the probe reuses
+`latestAttemptRow` rather than adding a third read; the evidence arms are an
+exhaustive `satisfies Record<PromptEvidenceClass, …>` map, so a future member is
+a compile error; and the Phase-1 typed counter view was deleted now that the
+fields exist. Suites re-run after the refactor.
 
 **Phase 2 exit (GREEN → REFACTOR):**
 **GREEN** — RED 2 and RED 5's two halves green; RED 1/3/4/6 still red (the

@@ -1001,6 +1001,14 @@ describe("runReconcileSweep (integration)", () => {
       // ADR-175: and classifies the two crash-recover re-entry shapes.
       crashRecoverReentered: 0,
       runningIdleSession: 0,
+      // ADR-177: and classifies from durable command evidence. This assertion
+      // pins the WHOLE literal on purpose — a counter added to the summary
+      // without a zero in `ZERO_SUMMARY` is a silent zero on every skipped
+      // tick, so the expectation growing with the contract is the point of it.
+      evidencePending: 0,
+      evidenceApplied: 0,
+      turnLost: 0,
+      ownerPoisoned: 0,
     });
     expect((await readRun(orphan)).status).toBe("Running");
   }, 60_000);
@@ -1666,18 +1674,6 @@ async function markHostStreamLost(hostId: string): Promise<void> {
   });
 }
 
-// The four ADR-177 counters land on `ReconcileSweepSummary` in the classifier
-// phase. Reading them through this view keeps THIS phase's commit
-// typecheck-clean without weakening the assertion: an absent counter reads
-// `undefined`, and `toBeGreaterThanOrEqual(1)` fails on it exactly as it fails
-// on a zero. Replaced by direct property access once the fields exist.
-function counter(
-  summary: Awaited<ReturnType<typeof runReconcileSweep>>,
-  name: "evidencePending" | "evidenceApplied" | "turnLost" | "ownerPoisoned",
-): number | undefined {
-  return (summary as unknown as Record<string, number | undefined>)[name];
-}
-
 describe("runReconcileSweep — evidence-first crash classification (ADR-177)", () => {
   it("RED 1: a settled turn_lost past grace crashes turn-lost through ONE boundary — attempt closed, command discharged", async () => {
     const runId = await seedRun({ acpSessionId: null });
@@ -1726,7 +1722,7 @@ describe("runReconcileSweep — evidence-first crash classification (ADR-177)", 
       },
       "the command must be discharged in the SAME transaction, or it strands owner_unapplied forever (C3)",
     ).toEqual({ applicationState: "applied", applied: true });
-    expect(counter(summary, "turnLost")).toBeGreaterThanOrEqual(1);
+    expect(summary.turnLost).toBeGreaterThanOrEqual(1);
   }, 60_000);
 
   it("RED 1b: the FLAT turn_lost shape foldReceipt writes classifies identically", async () => {
@@ -1773,7 +1769,7 @@ describe("runReconcileSweep — evidence-first crash classification (ADR-177)", 
       (await readRun(runId)).status,
       "the prompt-owner worker owes the next move within ~1s — crashing here discards a finished turn",
     ).toBe("Running");
-    expect(counter(summary, "evidencePending")).toBeGreaterThanOrEqual(1);
+    expect(summary.evidencePending).toBeGreaterThanOrEqual(1);
     expect(summary.crashed).toBe(0);
   }, 60_000);
 
@@ -1804,7 +1800,7 @@ describe("runReconcileSweep — evidence-first crash classification (ADR-177)", 
     const summary = await runReconcileSweep(opts);
 
     expect((await readRun(runId)).status).toBe("Running");
-    expect(counter(summary, "evidencePending")).toBeGreaterThanOrEqual(1);
+    expect(summary.evidencePending).toBeGreaterThanOrEqual(1);
   }, 60_000);
 
   it("RED 2c: an accepted command still in flight on the host is SKIPPED (evidence-inflight)", async () => {
@@ -1859,7 +1855,7 @@ describe("runReconcileSweep — evidence-first crash classification (ADR-177)", 
     const summary = await runReconcileSweep(opts);
 
     expect((await readRun(runId)).status).toBe("Running");
-    expect(counter(summary, "evidenceApplied")).toBeGreaterThanOrEqual(1);
+    expect(summary.evidenceApplied).toBeGreaterThanOrEqual(1);
   }, 60_000);
 
   it("RED 2e: pending evidence on a host whose event stream is LOST crashes stream-lost — the only bound", async () => {
@@ -1870,11 +1866,11 @@ describe("runReconcileSweep — evidence-first crash classification (ADR-177)", 
       worktreePaths: ["/worktrees/stream-lost"],
       liveSessions: [],
     });
-    const { commandId, nodeAttemptId } = await seedOwnedPrompt(runId, hostId, {
-      state: "succeeded",
-      completedAt: new Date(Date.now() - 5_000),
-      result: { stopReason: "end_turn" },
-    });
+    // An `accepted` row whose terminal event was never ingested: the evidence
+    // is still ON THE HOST, which is the only shape a dead stream can strand.
+    // (A settled-but-unapplied row is NOT stranded by it — that evidence is
+    // already in Postgres and its writer reads it from there.)
+    const { commandId, nodeAttemptId } = await seedOwnedPrompt(runId, hostId);
 
     await markHostStreamLost(hostId);
 
@@ -1919,7 +1915,7 @@ describe("runReconcileSweep — evidence-first crash classification (ADR-177)", 
       command.applicationError,
       "the boundary must NOT null the poison diagnostic — an operator needs it",
     ).not.toBeNull();
-    expect(counter(summary, "ownerPoisoned")).toBeGreaterThanOrEqual(1);
+    expect(summary.ownerPoisoned).toBeGreaterThanOrEqual(1);
   }, 60_000);
 
   it("RED 4b: a quarantined conflict found AFTER application still crashes owner-poisoned, never reads as healthy", async () => {
@@ -1952,7 +1948,7 @@ describe("runReconcileSweep — evidence-first crash classification (ADR-177)", 
       "row 3 (quarantined) MUST precede row 5 (applied) in the derivation order",
     ).toBe("Crashed");
     expect((await readAttempt(nodeAttemptId)).decision).toBe("turn_lost");
-    expect(counter(summary, "ownerPoisoned")).toBeGreaterThanOrEqual(1);
+    expect(summary.ownerPoisoned).toBeGreaterThanOrEqual(1);
   }, 60_000);
 
   it("RED 5b: a run whose only command is still QUEUED derives `none` and keeps the grace/agent-session-gone path", async () => {
@@ -1980,7 +1976,7 @@ describe("runReconcileSweep — evidence-first crash classification (ADR-177)", 
       attempt.decision,
       "nothing was dispatched to lose — this is agent-session-gone, not turn-lost",
     ).toBeNull();
-    expect(counter(summary, "turnLost") ?? 0).toBe(0);
+    expect(summary.turnLost ?? 0).toBe(0);
   }, 60_000);
 
   it("RED 5c: a SCRATCH run with a settled turn_lost command keeps its own arm — the evidence probe is flow-only", async () => {
@@ -2007,6 +2003,44 @@ describe("runReconcileSweep — evidence-first crash classification (ADR-177)", 
     // arm is not widened to it. GREEN on this HEAD and after.
     expect((await readRun(runId)).status).toBe("Crashed");
     expect((await readAttempt(nodeAttemptId)).decision).toBeNull();
+  }, 60_000);
+
+  it("AC-D7.1: the probe is served by execution_commands_run_created_idx, not a sequential scan", async () => {
+    const runId = await seedRun({ acpSessionId: null });
+
+    await seedWorkspace(runId, "/worktrees/explain");
+    const { hostId } = await makeOpts({
+      worktreePaths: ["/worktrees/explain"],
+      liveSessions: [],
+    });
+    const { nodeAttemptId } = await seedOwnedPrompt(runId, hostId);
+
+    // D7's claim is "no migration AND no index" — the second half is a COST
+    // claim, so it is measured rather than asserted. `enable_seqscan = off`
+    // makes this deterministic on a fixture-sized table, where the planner
+    // would otherwise pick a sequential scan for two rows no matter what
+    // indexes exist; what it proves is that the index CAN serve this exact
+    // predicate-plus-sort, which is the thing in question.
+    await pool.query("SET enable_seqscan = off");
+    try {
+      const plan = await pool.query(
+        `EXPLAIN SELECT id FROM execution_commands
+           WHERE run_id = $1 AND kind = 'session.prompt'
+             AND owner_ref->>'variant' = 'node'
+             AND owner_ref->>'nodeAttemptId' = $2
+           ORDER BY created_at DESC LIMIT 1`,
+        [runId, nodeAttemptId],
+      );
+      const text = plan.rows.map((r: any) => r["QUERY PLAN"]).join("\n");
+
+      expect(
+        text,
+        "the leading column is the equality predicate and the second is the sort, so one run's commands are walked newest-first",
+      ).toContain("execution_commands_run_created_idx");
+      expect(text).not.toContain("Seq Scan on execution_commands");
+    } finally {
+      await pool.query("SET enable_seqscan = on");
+    }
   }, 60_000);
 
   it("RED 6: the boundary makes the command RETIREMENT-eligible — at Crashed, and again at Done", async () => {

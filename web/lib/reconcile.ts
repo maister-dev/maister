@@ -6,6 +6,7 @@ import type {
   ExecutionHosts,
   SupervisorSessionRecord,
 } from "@/lib/execution-host";
+import type { PromptEvidenceClass } from "@/lib/reconcile-evidence";
 import type { WorktreeInfo } from "@/lib/worktree";
 
 import { randomUUID } from "node:crypto";
@@ -31,6 +32,10 @@ import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { RUN_SYNC_TERMINAL_PHASES } from "@/lib/db/schema";
 import { resolveCurrentNodeContext } from "@/lib/flows/graph/current-node-kind";
+import {
+  NO_PROMPT_EVIDENCE,
+  resolvePromptEvidence,
+} from "@/lib/reconcile-evidence-db";
 import { listGraphOnlyCutoverRunIds } from "@/lib/queries/run-cutover";
 import { systemCloseActiveAssignmentsForRun } from "@/lib/assignments/service";
 import {
@@ -155,7 +160,24 @@ export type ReconcileReason =
   | "orchestrator-stuck"
   // M36 (ADR-095) T7.1: a parked orchestrator that is still waiting on
   // non-terminal children (or whose session is live) → leave it parked.
-  | "orchestrator-waiting";
+  | "orchestrator-waiting"
+  // ADR-177: the current attempt's owned prompt reached the ledger — the flow
+  // continuation worker drives the next node, so age proves nothing.
+  | "evidence-applied"
+  // ADR-177: a NAMED writer still owes the next move (the event consumer, the
+  // prompt-owner worker, or the worker holding the application claim).
+  | "evidence-pending"
+  // ADR-177: the host says the turn is still running. Not a dead session.
+  | "evidence-inflight"
+  // ADR-177: the host restarted mid-turn and reported the turn lost.
+  | "turn-lost"
+  // ADR-177: pending evidence on a host whose event stream is `lost` — nobody
+  // owes the next move, because it can never be ingested. The ONLY bound on
+  // the `evidence-pending` skip.
+  | "stream-lost"
+  // ADR-177: owner application is quarantined or poisoned. The sub-reason
+  // rides `node_attempts.error_code`, never a second `CrashReason` member.
+  | "owner-poisoned";
 
 export interface ReconcileInput {
   runStatus: string;
@@ -219,6 +241,16 @@ export interface ReconcileInput {
   // Default false — a fresh process has no observers, which is exactly the
   // state that needs recovery.
   agentObserverActive?: boolean;
+  // ADR-177: the classification of the current attempt's newest owned
+  // `session.prompt` command. Resolved by the caller (cheap SQL, plus ONE
+  // `GET /commands/{id}` receipt probe for an `accepted` row with no terminal
+  // evidence); the classifier stays pure. `none` for every non-flow run and for
+  // every arm other than the no-live-session agent branch.
+  promptEvidence?: PromptEvidenceClass;
+  // ADR-177: the host holding that command has an `execution_event_streams` row
+  // in state `lost`, so the pending evidence can never be ingested. The ONLY
+  // bound on `evidence-pending` — read from `commandStreamLost()`, never a timer.
+  promptEvidenceStreamLost?: boolean;
 }
 
 export interface ReconcileDecision {
@@ -478,6 +510,15 @@ function classifyInner(input: ReconcileInput): ReconcileDecision {
     if (input.crashRecoverPending)
       return crashRecoverClassification(input, false);
 
+    // ADR-177: evidence BEFORE the grace anchor. The grace window is a timer
+    // standing in for evidence; where evidence exists it answers directly, and
+    // only `none` falls through to the timer. An exhaustive `satisfies` map
+    // rather than an if-chain, so a future `PromptEvidenceClass` member is a
+    // compile error instead of a silent fall-through to `agent-session-gone`.
+    const evidence = evidenceClassification(input);
+
+    if (evidence) return evidence;
+
     // Anchor = the MORE RECENT non-null of resume/latest-attempt. Within grace
     // (strict <) → skip; past grace (incl. both null) → crash.
     const anchorMs = mostRecentMs(
@@ -497,6 +538,59 @@ function classifyInner(input: ReconcileInput): ReconcileDecision {
 
   // check / judge / guard / human / form / null → retry-safe graph re-dispatch.
   return { action: "redispatch", reason: "gate-redispatch" };
+}
+
+// ADR-177 D2. `null` means "this classifier has nothing to say" — the caller
+// falls through to the grace arms, which is the `none` path and the ONLY path
+// the grace window still governs.
+//
+// Every skip arm fires REGARDLESS of grace: a run whose result is still on its
+// way must never be crashed for being old. Every crash arm fires regardless of
+// grace too, for the mirror reason — waiting out a timer adds nothing once the
+// evidence says no writer is coming.
+const EVIDENCE_DECISIONS = {
+  none: null,
+  applied: { action: "skip", reason: "evidence-applied" },
+  applying: { action: "skip", reason: "evidence-pending" },
+  pending_application: { action: "skip", reason: "evidence-pending" },
+  pending_ingest: { action: "skip", reason: "evidence-pending" },
+  inflight: { action: "skip", reason: "evidence-inflight" },
+  turn_lost: { action: "crash", reason: "turn-lost" },
+  quarantined: { action: "crash", reason: "owner-poisoned" },
+  poisoned: { action: "crash", reason: "owner-poisoned" },
+} as const satisfies Record<PromptEvidenceClass, ReconcileDecision | null>;
+
+function evidenceClassification(
+  input: ReconcileInput,
+): ReconcileDecision | null {
+  // Scope guard: the flow agent-node arm only. `agent` and `scratch` runs reach
+  // this branch through their own kind mapping and keep their own owners.
+  if (input.runKind !== "flow") return null;
+  const decision = EVIDENCE_DECISIONS[input.promptEvidence ?? "none"];
+
+  if (!decision) return null;
+
+  // The only bound on the skip arms, and it is a state another sweep pass wrote
+  // — never a timer this one keeps.
+  //
+  // It applies to exactly the two classes whose evidence is still ON THE HOST:
+  // `pending_ingest` (the terminal event was never ingested) and `inflight`
+  // (the turn is still running there). A dead stream makes those unreachable.
+  //
+  // It deliberately does NOT apply to `pending_application`, `applying` or
+  // `applied`: for those the evidence has ALREADY been ingested and the writer
+  // that owes the next move reads it from Postgres, not from the stream. The
+  // stream's health cannot stall them, and crashing them would discard a result
+  // that already landed — the precise failure the evidence arms exist to
+  // prevent, reintroduced by their own bound.
+  if (
+    input.promptEvidenceStreamLost &&
+    (input.promptEvidence === "pending_ingest" ||
+      input.promptEvidence === "inflight")
+  )
+    return { action: "crash", reason: "stream-lost" };
+
+  return decision;
 }
 
 function mostRecentMs(a: Date | null, b: Date | null): number | null {
@@ -568,6 +662,19 @@ export interface ReconcileSweepSummary {
   // counter makes the classification visible to an operator rather than only to
   // a log grep. A subset of `reattached`.
   runningIdleSession: number;
+  // ADR-177: candidates SKIPPED this tick because a named writer still owes the
+  // next move (`evidence-pending` + `evidence-inflight`). Before the evidence
+  // arms existed these runs were CRASHED as `agent-session-gone`, so a non-zero
+  // reading here measures exactly what the grace timer used to discard.
+  evidencePending: number;
+  // ADR-177: candidates skipped because the turn's result already reached the
+  // ledger — the flow continuation worker drives the next node.
+  evidenceApplied: number;
+  // ADR-177: runs crashed through the shared boundary because the host reported
+  // the turn lost, or because its stream can never deliver the evidence.
+  turnLost: number;
+  // ADR-177: runs crashed because owner application is quarantined or poisoned.
+  ownerPoisoned: number;
 }
 
 const ZERO_SUMMARY: ReconcileSweepSummary = {
@@ -585,6 +692,10 @@ const ZERO_SUMMARY: ReconcileSweepSummary = {
   handlesLost: 0,
   crashRecoverReentered: 0,
   runningIdleSession: 0,
+  evidencePending: 0,
+  evidenceApplied: 0,
+  turnLost: 0,
+  ownerPoisoned: 0,
 };
 
 // ADR-121 (T15): a C2 admission claim (tasks.queue_claimed_at) is held only across
@@ -600,7 +711,12 @@ const TERMINAL_ASSIGNMENT_CLEANUP_STATUSES = [
   "Crashed",
 ] as const;
 
-function mapReasonToCrashReason(reason: ReconcileReason): CrashReason {
+// Exported for the exhaustiveness assertion in `reconcile-classify.test.ts`.
+// The `default` arm below is a silent absorber by design (only crash reasons
+// reach a crash dispatch), and a new member added without a `case` would be
+// recorded as `agent-session-gone` while every status-only test stayed green.
+// A unit check over the union is the only thing that closes that.
+export function mapReasonToCrashReason(reason: ReconcileReason): CrashReason {
   switch (reason) {
     case "worktree-gone":
       return "worktree-gone";
@@ -613,6 +729,17 @@ function mapReasonToCrashReason(reason: ReconcileReason): CrashReason {
       return "orphaned-child";
     case "orchestrator-stuck":
       return "orchestrator-stuck";
+    // ADR-177. These three exist so a lost turn, a dead stream and a poisoned
+    // application stop hiding inside `agent-session-gone`. The `default` below
+    // would have absorbed them silently — a run would still be `Crashed` and a
+    // test asserting only the status would still pass, while measuring nothing.
+    // `crashReasonExhaustiveness` in the unit suite is what keeps that closed.
+    case "turn-lost":
+      return "turn-lost";
+    case "stream-lost":
+      return "stream-lost";
+    case "owner-poisoned":
+      return "owner-poisoned";
     default:
       // Defensive: only crash reasons reach a crash dispatch.
       return "agent-session-gone";
@@ -836,18 +963,21 @@ async function reapAbandonedRunSessions(args: {
 
 // Latest node_attempts.started_at for a run (the grace anchor alongside
 // resume_started_at). ORDER BY started_at DESC LIMIT 1.
-async function latestAttemptStartedAt(
+// The run's newest ledger row. Its `startedAt` is the grace anchor and its `id`
+// is what scopes the ADR-177 evidence probe — one read serving both, rather
+// than two queries answering the same question.
+async function latestAttemptRow(
   db: Db,
   runId: string,
-): Promise<Date | null> {
+): Promise<{ id: string; startedAt: Date | null } | null> {
   const rows = await db
-    .select({ startedAt: nodeAttempts.startedAt })
+    .select({ id: nodeAttempts.id, startedAt: nodeAttempts.startedAt })
     .from(nodeAttempts)
     .where(eq(nodeAttempts.runId, runId))
     .orderBy(desc(nodeAttempts.startedAt))
     .limit(1);
 
-  return rows[0]?.startedAt ?? null;
+  return rows[0] ?? null;
 }
 
 // M36 (ADR-095 T7.1 / ADR-097): the SETTLED child statuses an orchestrator no
@@ -1502,6 +1632,10 @@ export async function runReconcileSweep(
   let reobserved = 0;
   let crashRecoverReentered = 0;
   let runningIdleSession = 0;
+  let evidencePending = 0;
+  let evidenceApplied = 0;
+  let turnLost = 0;
+  let ownerPoisoned = 0;
 
   await runWithConcurrency(candidates, PER_PASS_CONCURRENCY, async (cand) => {
     // M34: a null worktreePath is the no-workspace agent shape (none/
@@ -1541,10 +1675,33 @@ export async function runReconcileSweep(
     // Agent runs (and project-less assistant scratch runs) have no node_attempts
     // ledger — anchor the grace window on the run's own startedAt so a
     // just-spawned session is never crashed before it registers.
+    const latestAttempt =
+      cand.runKind === "agent" || cand.projectId == null
+        ? null
+        : await latestAttemptRow(db, cand.runId);
     const attemptStartedAt =
       cand.runKind === "agent" || cand.projectId == null
         ? cand.runStartedAt
-        : await latestAttemptStartedAt(db, cand.runId);
+        : (latestAttempt?.startedAt ?? null);
+
+    // ADR-177. Resolved HERE, beside the `crashRecoverPending` computation, so
+    // it inherits this loop's PER_PASS_CONCURRENCY and needs no bound of its
+    // own — and so the classifier keeps taking pure inputs.
+    //
+    // Gated to the candidate class that can actually carry a lost turn: a flow
+    // run, no live session, on an agent node. That gate is what keeps the ONE
+    // host call inside it per-rare-candidate rather than per-tick.
+    const wantsEvidence =
+      cand.runKind === "flow" &&
+      !live &&
+      !liveRunStep &&
+      (currentNodeKind === "ai_coding" || currentNodeKind === "orchestrator");
+    const promptEvidence = wantsEvidence
+      ? await resolvePromptEvidence(db, hosts.transport, {
+          runId: cand.runId,
+          nodeAttemptId: latestAttempt?.id ?? null,
+        })
+      : NO_PROMPT_EVIDENCE;
 
     // M36 (ADR-095) T7.1: orphan detection needs the parent's status; the
     // parked-orchestrator pass needs to know if any child is still pending.
@@ -1598,6 +1755,8 @@ export async function runReconcileSweep(
           cand.runKind === "agent" && live
             ? hasAgentSessionObserver(live.sessionId)
             : false,
+        promptEvidence: promptEvidence.evidence,
+        promptEvidenceStreamLost: promptEvidence.streamLost,
       },
       cand.runId,
     );
@@ -1848,6 +2007,12 @@ export async function runReconcileSweep(
           runFlow: (next: string) => void Promise.resolve(runFlow(next)),
         });
         crashed += 1;
+        // ADR-177: subsets of `crashed`, naming the cause the manager PROVED
+        // rather than inferred from age. `stream-lost` counts with `turnLost`
+        // because it takes the same boundary and produces the same row set —
+        // the difference is which writer failed to come, not what was written.
+        if (reason === "turn-lost" || reason === "stream-lost") turnLost += 1;
+        if (reason === "owner-poisoned") ownerPoisoned += 1;
         log.info({ runId: cand.runId, reason }, "reconcile: crashed");
 
         return;
@@ -2076,6 +2241,13 @@ export async function runReconcileSweep(
       }
       case "skip": {
         skipped += 1;
+        // ADR-177: these two are SUBSETS of `skipped`, not siblings of it. The
+        // whole point is that the run was NOT crashed, so it belongs in the
+        // skip total; the counters say WHY, which is the difference between a
+        // healthy hand-off and the silent discard this replaces.
+        if (reason === "evidence-pending" || reason === "evidence-inflight")
+          evidencePending += 1;
+        if (reason === "evidence-applied") evidenceApplied += 1;
         if (reason === "orphaned-human-working") {
           // Deliberately untouched — a person holds the worktree — but this
           // run now has no coordinator and only a human can settle it.
@@ -2108,6 +2280,10 @@ export async function runReconcileSweep(
     handlesLost,
     crashRecoverReentered,
     runningIdleSession,
+    evidencePending,
+    evidenceApplied,
+    turnLost,
+    ownerPoisoned,
   };
 
   log.info(summary, "reconcile sweep complete");
