@@ -72,7 +72,7 @@ async function seedProject(): Promise<string> {
 async function seedPlatformServer(args: {
   enabled: boolean;
   trust: string;
-  // ADR-177: the declared SLOTS are the keys of the `env` map.
+  // ADR-179: the declared SLOTS are the keys of the `env` map.
   env?: Record<string, string>;
 }): Promise<string> {
   const id = `srv-${randomUUID().slice(0, 8)}`;

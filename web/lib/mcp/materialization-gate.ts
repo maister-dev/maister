@@ -15,7 +15,7 @@ import {
   loadProjectMcpOverlays,
 } from "@/lib/mcp/binding-service";
 
-// ADR-129 (W-E) + ADR-177: the materialization gate makes platform
+// ADR-129 (W-E) + ADR-179: the materialization gate makes platform
 // `trust_status` load-bearing and unifies it with the exec-trust stdio gate and
 // the adapter transport gate into ONE structured withheld pass. An untrusted
 // platform MCP is VISIBLE in the hub/ledger but excluded from the executable set
@@ -111,7 +111,7 @@ export function partitionWithheldMcps(args: {
       continue;
     }
 
-    // ADR-177: codex-acp throws `invalidRequest` for `sse` while BUILDING the
+    // ADR-179: codex-acp throws `invalidRequest` for `sse` while BUILDING the
     // session config, so one unusable server fails `session/new` for the whole
     // session. An ADDITIONAL ref is dropped here; a REQUIRED one refuses the
     // launch earlier, at the precondition, before any workspace exists.
@@ -153,10 +153,10 @@ function overlaidMap(
   return next;
 }
 
-// ADR-129 (W-C), amended by ADR-177: apply per-binding overlays to the
+// ADR-129 (W-C), amended by ADR-179: apply per-binding overlays to the
 // materialized servers by replacing the VALUE for a key the target declares and
 // PRESERVING the key. The key is the SERVER's contract — renaming it (the
-// pre-ADR-177 behavior) meant the server never received the variable it reads.
+// pre-ADR-179 behavior) meant the server never received the variable it reads.
 // The ACP wire shape is unchanged and the execution host still resolves each
 // `env:NAME`. The overlay is re-validated against the server's declared slots
 // (defensive; unknown slot → CONFIG), so a stale binding cannot smuggle an
@@ -223,7 +223,7 @@ export async function mergeRunWithheldMcps(
   );
 }
 
-// ADR-129 + ADR-177: the ONE gate+overlay composition taken by all THREE launch
+// ADR-129 + ADR-179: the ONE gate+overlay composition taken by all THREE launch
 // surfaces — the flow node (`runner-graph.ts`), the standalone agent
 // (`agents/launch.ts`) and the scratch session (`scratch-runs/service.ts`). Do
 // not fork it (spec §13). Partitions the materialized MCP servers into the

@@ -24,7 +24,7 @@ function asError(err: unknown): Error {
 
 export const PACKAGE_MANIFEST_FILENAME = "maister-package.yaml";
 
-// ADR-177 (D34): the loader is the ONLY place that knows the legacy list form.
+// ADR-179 (D34): the loader is the ONLY place that knows the legacy list form.
 // `attach.ts` and Studio consume this type and see `mcps[].env` as a map,
 // always. The zod schema keeps the union so its output type stays honest about
 // what a FILE may contain; normalization happens once, here.

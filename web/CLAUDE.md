@@ -264,7 +264,7 @@ places with another. As of 2026-09-03 on `main` + ADR-165:
   `lib/runs/__tests__/dirty-resolution-race.integration.test.ts` pair, which
   flakes under parallel load and passes 4/4 in isolation.
 
-**Measured 2026-09-21 (ADR-177 branch, this Mac, load avg ~12-29 with other
+**Measured 2026-09-21 (ADR-179 branch, this Mac, load avg ~12-29 with other
 work in flight).** unit **809 files / 8276 tests, 0 failures**; integration
 **496 files / 4339 tests, 1 failure**. The one failure was
 `lib/execution-host/__tests__/deliverer.integration.test.ts` "D3: runtime-object

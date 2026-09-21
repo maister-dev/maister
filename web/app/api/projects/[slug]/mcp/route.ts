@@ -13,9 +13,9 @@ import {
 // M27/T-C5: project-scoped MCP collection. GET lists this project's MCPs
 // (capability_records source='project', kind='mcp'); POST creates one. RBAC =
 // manageCatalog (project admin), enforced by authorizeCatalogRouteProject — the
-// SAME helper the catalog caps routes use. ADR-177: values are whole-value
+// SAME helper the catalog caps routes use. ADR-179: values are whole-value
 // `literal | env:NAME`, validated by the ONE shared body schema (it replaced a
-// verbatim copy of the pre-ADR-177 key regex that lived here).
+// verbatim copy of the pre-ADR-179 key regex that lived here).
 
 const postBodySchema = projectMcpBodySchema;
 

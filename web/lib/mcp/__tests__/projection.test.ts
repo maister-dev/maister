@@ -44,7 +44,7 @@ describe("platformMcpRowToCapability (T-C3)", () => {
   });
 
   it("passes the stored env map through unchanged, literals included", () => {
-    // ADR-177: the row already stores the map, so this projection is identity.
+    // ADR-179: the row already stores the map, so this projection is identity.
     // A LITERAL survives — it is the operator's declaration that the value is
     // not a secret — while the value behind a REFERENCE stays on the host.
     const cap = platformMcpRowToCapability(

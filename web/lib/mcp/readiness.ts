@@ -33,7 +33,7 @@ export type McpReadinessResult = {
   readonly reasons: string[];
 };
 
-// ADR-177: presence comes from the HOST (`POST /diagnostics/env-refs`), not
+// ADR-179: presence comes from the HOST (`POST /diagnostics/env-refs`), not
 // from the fixed `GET /diagnostics.envRefs` catalog — that list enumerates
 // provider credentials, so every MCP referencing `env:GITHUB_TOKEN` was
 // falsely NotReady until an operator edited an unrelated supervisor variable.

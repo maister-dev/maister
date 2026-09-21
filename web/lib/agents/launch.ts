@@ -2657,7 +2657,7 @@ export async function resolveAgentProfileMcpServers(args: {
     agent: args.capabilityAgent as never,
   });
 
-  // ADR-130 (W-C/W-E) + ADR-177: the SAME shared gate+overlay pass as the flow
+  // ADR-130 (W-C/W-E) + ADR-179: the SAME shared gate+overlay pass as the flow
   // and scratch seams (spec §13). platform-trust, exec-trust and adapter
   // transport withholds are persisted to the run-level sink (agent runs carry no
   // node_attempts materialization_plan), then per-binding VALUE overlays apply

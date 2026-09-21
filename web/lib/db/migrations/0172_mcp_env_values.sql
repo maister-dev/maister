@@ -1,14 +1,14 @@
--- ADR-177: MCP configuration values become literal-or-reference MAPS.
+-- ADR-179: MCP configuration values become literal-or-reference MAPS.
 --
 -- `platform_mcp_servers` gains `env`/`headers` (Record<name, value>),
--- `bearer_token_env` and `description`; the two pre-ADR-177 name-list columns
+-- `bearer_token_env` and `description`; the two pre-ADR-179 name-list columns
 -- are dropped after backfill. `capability_records.material` for kind='mcp' is
 -- rewritten from its THREE legacy shapes (project rows, platform-from-YAML
 -- rows, package requirement rows) to the SAME map shape, which also gives a
 -- package TEMPLATE target the slots `resolveBindTarget` could not name before.
 --
 -- Two stored key spellings exist (`GITHUB_TOKEN` and `env:GITHUB_TOKEN`),
--- because the pre-ADR-177 key regex accepted both. Every derivation below
+-- because the pre-ADR-179 key regex accepted both. Every derivation below
 -- strips `^env:` on BOTH sides: a key that keeps the prefix becomes a map key
 -- no server reads.
 --

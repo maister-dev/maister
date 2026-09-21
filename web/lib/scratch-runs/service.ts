@@ -1071,7 +1071,7 @@ export async function* launchScratchRunStaged(
         await tx.insert(scratchAttachments).values(storedAttachments);
       });
     }
-    // ADR-177 (D17): scratch takes the SAME shared gate as the flow node and the
+    // ADR-179 (D17): scratch takes the SAME shared gate as the flow node and the
     // standalone agent. It did not before — `materializeCapabilityProfile`'s
     // output went straight to the create payload, so an untrusted platform
     // server was spawned, a project overlay was ignored, and a codex session

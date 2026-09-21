@@ -328,7 +328,7 @@ export const platformRuntimeSettings = pgTable("platform_runtime_settings", {
 });
 
 // Platform-scoped MCP capability catalog (M27/T-C2, ADR-067). Admin CRUD mirrors
-// platform_acp_runners (ADR-065). ADR-177: `env`/`headers` are
+// platform_acp_runners (ADR-065). ADR-179: `env`/`headers` are
 // `Record<name, value>` maps keyed by the name the SERVER reads, and each value
 // is whole-value `literal | env:NAME`. The value behind a REFERENCE is never
 // stored — the execution host resolves it. A LITERAL is the operator's
@@ -1540,12 +1540,12 @@ export const projectFlowRunnerDefaults = pgTable(
   }),
 );
 
-// ADR-130, amended by ADR-177: per-binding config overlay. Application replaces
+// ADR-130, amended by ADR-179: per-binding config overlay. Application replaces
 // the VALUE for a slot the target declares and PRESERVES the slot's name — the
 // name is the SERVER's contract. Validated against the target's declared slots
 // (the KEYS of its `env`/`headers` maps) at write AND materialization (unknown
 // slot -> CONFIG). A value uses the same `literal | env:NAME` grammar as a
-// server value; stored pre-ADR-177 rows stay valid unchanged.
+// server value; stored pre-ADR-179 rows stay valid unchanged.
 export type McpConfigOverlay = {
   envRemap?: Record<string, string>; // declared slot NAME -> literal | env:NAME
   headerRemap?: Record<string, string>; // declared slot NAME -> literal | env:NAME
@@ -1657,7 +1657,7 @@ export type RepoDeliveryRef = {
 // M27/T-C8 (§3.1, ADR-069): the capability set resolved at launch, frozen onto
 // the run so an edit/publish mid-run cannot mutate it. `flowOrigin` records
 // whether the resolved flow revision came from the authored bridge or git.
-// ADR-130, extended by ADR-177: an MCP excluded from the executable set.
+// ADR-130, extended by ADR-179: an MCP excluded from the executable set.
 // `reason` distinguishes the three withhold causes, applied in the order listed
 // so the STRONGEST refusal names the withhold; NEVER carries a secret value.
 // jsonb-only — widening the union takes no migration.

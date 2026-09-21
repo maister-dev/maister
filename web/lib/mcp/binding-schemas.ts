@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import { envRefSchema, mcpValueSchema } from "@/lib/mcp/value-grammar";
 
-// ADR-129, amended by ADR-177: request contracts for the project MCP binding
+// ADR-129, amended by ADR-179: request contracts for the project MCP binding
 // routes. The overlay replaces the VALUE for a slot the target declares and
 // keeps the slot's name, so a remap value uses the SAME `literal | env:NAME`
 // grammar as a server value (D32) — one validator for web, supervisor, manifest

@@ -93,9 +93,9 @@ describe("partitionWithheldMcps (W-E)", () => {
   });
 });
 
-// ADR-177: the third pass. It runs AFTER the two trust passes, so the strongest
+// ADR-179: the third pass. It runs AFTER the two trust passes, so the strongest
 // refusal names the withhold.
-describe("partitionWithheldMcps — adapter transport gate (ADR-177)", () => {
+describe("partitionWithheldMcps — adapter transport gate (ADR-179)", () => {
   const trusted = (name: string) => ({
     sourceByRef: new Map([[name, "platform"]]),
     platformTrustedByRef: new Map([[name, true]]),

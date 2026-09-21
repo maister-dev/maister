@@ -224,7 +224,7 @@ export interface HostAdminClient {
   diagnostics(opts?: {
     timeoutMs?: number;
   }): Promise<SupervisorDiagnosticsStatus>;
-  // ADR-177: host env-var PRESENCE by name — MCP readiness' only consumer.
+  // ADR-179: host env-var PRESENCE by name — MCP readiness' only consumer.
   // Accepts ANY number of names; the transport dedupes, chunks by the route's
   // cap and merges the answers in request order. Never returns a value.
   checkEnvRefs(

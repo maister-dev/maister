@@ -767,8 +767,8 @@ nodes:
   });
 });
 
-// ADR-177 (D27/D34/D18): the manifest value model at the ingestion seam.
-describe("package mcps[] value model (ADR-177)", () => {
+// ADR-179 (D27/D34/D18): the manifest value model at the ingestion seam.
+describe("package mcps[] value model (ADR-179)", () => {
   async function attachWithMcp(
     slug: string,
     mcpYaml: string,
@@ -880,7 +880,7 @@ describe("package mcps[] value model (ADR-177)", () => {
       rows[0]!.id,
     );
 
-    // Before ADR-177 this read the name-list field a template never wrote, so
+    // Before ADR-179 this read the name-list field a template never wrote, so
     // an overlay against a template could name no slot at all.
     expect(target?.slots.env.sort()).toEqual(["ATT_TOKEN", "GH_HOST"]);
   });

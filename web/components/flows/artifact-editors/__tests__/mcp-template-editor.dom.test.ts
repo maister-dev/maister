@@ -63,7 +63,7 @@ const CATALOG: PlatformMcpCatalogEntry[] = [
     command: "npx context7",
     args: [],
     url: null,
-    // ADR-177 (D28): a package is shareable, so the prefill must never copy a
+    // ADR-179 (D28): a package is shareable, so the prefill must never copy a
     // LITERAL into a template — `CONTEXT7_API_KEY` here is a literal and must
     // land as `env:CONTEXT7_API_KEY`, while an existing reference is kept.
     env: { CONTEXT7_API_KEY: "sk-literal", GH: "env:GH_TOKEN" },
@@ -178,7 +178,7 @@ describe("McpTemplateEditor apply", () => {
     expect(raw().value).toContain("id: context7");
   });
 
-  // ADR-177 (D28): the prefill NEVER writes a literal into a shareable package.
+  // ADR-179 (D28): the prefill NEVER writes a literal into a shareable package.
   it("converts a platform literal into env:<KEY> and copies a reference as-is", () => {
     const raw = applyCatalogEntry("context7");
 

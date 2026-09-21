@@ -10,7 +10,7 @@ import {
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
 
-// ADR-177 migration `0172_mcp_env_values`: the platform name-list columns and
+// ADR-179 migration `0172_mcp_env_values`: the platform name-list columns and
 // the THREE legacy `capability_records.material` shapes collapse into ONE map
 // shape. Seeded on the pre-migration schema and replayed, because a backfill
 // asserted only against post-migration writers proves nothing.
@@ -179,7 +179,7 @@ describe("migration 0172_mcp_env_values", () => {
     expect(row.headers).toEqual({});
   });
 
-  it("drops the two pre-ADR-177 name-list columns", async () => {
+  it("drops the two pre-ADR-179 name-list columns", async () => {
     const result = await db.execute(sql`
       SELECT column_name FROM information_schema.columns
       WHERE table_name = 'platform_mcp_servers'

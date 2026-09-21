@@ -16,12 +16,12 @@ import {
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
 
-// ADR-129 (W-C, T4.3), amended by ADR-177: the untouchable-invariant guard.
+// ADR-129 (W-C, T4.3), amended by ADR-179: the untouchable-invariant guard.
 // Project A and project B point the SAME env key at DIFFERENT sources; each
 // session gets its own source, and the seeded secret VALUE behind the reference
 // appears in NO DB row, response, or log fixture.
 //
-// ADR-177 adds the second half: a LITERAL value IS stored and returned — that is
+// ADR-179 adds the second half: a LITERAL value IS stored and returned — that is
 // D1 — so the literal sentinel must reach the materialized server and the
 // binding row, while the value behind a REFERENCE must not.
 

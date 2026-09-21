@@ -81,7 +81,7 @@ export function createLocalDirectTransport(): ExecutionHostTransport {
     diagnostics(opts) {
       return wire.checkSupervisorDiagnostics(opts);
     },
-    // ADR-177: the caller may pass any number of names; the ROUTE takes at most
+    // ADR-179: the caller may pass any number of names; the ROUTE takes at most
     // `ENV_REFS_MAX_PER_CALL`. De-duplicate first (so duplicates never consume
     // the budget), chunk, then merge back in REQUEST order — the route answers
     // in request order per chunk, but a caller must not depend on chunk

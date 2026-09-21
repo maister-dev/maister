@@ -1291,7 +1291,7 @@ export async function* launchRunStaged(
             capabilityRefId: capabilityRecords.capabilityRefId,
             source: capabilityRecords.source,
             agents: capabilityRecords.agents,
-            // ADR-177: the transport gate reads the winner's transport out of
+            // ADR-179: the transport gate reads the winner's transport out of
             // material, so a REQUIRED ref the adapter cannot speak refuses the
             // launch HERE — before a worktree or a run row exists.
             material: capabilityRecords.material,

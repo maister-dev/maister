@@ -16,9 +16,9 @@ import {
 // id; EVERY lookup is scoped to the project resolved from `slug`, so a row that
 // belongs to another project is invisible and yields 404 — the cross-project
 // isolation boundary. RBAC = manageCatalog (project admin), same helper as the
-// catalog caps routes. ADR-177: values are whole-value `literal | env:NAME`,
+// catalog caps routes. ADR-179: values are whole-value `literal | env:NAME`,
 // validated by the ONE shared body schema (it replaced a verbatim copy of the
-// pre-ADR-177 key regex that lived here).
+// pre-ADR-179 key regex that lived here).
 
 const patchBodySchema = projectMcpPatchSchema
   .extend({ enabled: z.boolean().optional() })

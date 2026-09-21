@@ -469,7 +469,7 @@ Exit criteria: every artifact below complete and internally consistent; `pnpm va
 | AC-15 | `mcp-template-editor.dom.test.ts` — a platform literal becomes `env:<KEY>`, a header name is sanitized (`X-Api-Key` → `X_API_KEY`), and the literal appears nowhere in the template. |
 | AC-16 | `key-value-rows.dom.test.ts` (14 cases) · `acp-runner-modal.test.ts` passes with a ZERO diff through the extraction. |
 | AC-17 | `i18n-parity.test.ts` green; every new key grepped for a consumer before commit; `readinessReasonsTitle` removed as an orphan. |
-| AC-18 | `pnpm validate:docs:all` green (14/14 + ERD current at 125 tables); no touched doc claims "names only" about MCP env or headers; ADR-177 status equal in record, stub and index row. |
+| AC-18 | `pnpm validate:docs:all` green (14/14 + ERD current at 125 tables); no touched doc claims "names only" about MCP env or headers; ADR-179 status equal in record, stub and index row. |
 
 ### Deviations from the plan, and why
 

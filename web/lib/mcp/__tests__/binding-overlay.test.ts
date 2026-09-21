@@ -46,7 +46,7 @@ describe("assertOverlayAgainstSlots (W-C)", () => {
     ).toThrow(MaisterError);
   });
 
-  // OBSOLETE under ADR-177 (D32): overlay values share the server grammar, so a
+  // OBSOLETE under ADR-179 (D32): overlay values share the server grammar, so a
   // literal is a legitimate override (a project pointing GH_HOST at its own
   // enterprise host needs no supervisor variable). Only a MALFORMED reference is
   // refused — that predicate is what this pair of cases now pins.

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-// ADR-177: the project MCP modal mirrors the platform one — same value model,
+// ADR-179: the project MCP modal mirrors the platform one — same value model,
 // same secret guard, same transport normalization. No dom suite existed for this
 // surface at all before (C14), so these are its first behavioural cases.
 //
@@ -123,7 +123,7 @@ function submittedBody(): Record<string, unknown> {
   ) as Record<string, unknown>;
 }
 
-describe("ProjectMcpModal — value model (ADR-177)", () => {
+describe("ProjectMcpModal — value model (ADR-179)", () => {
   it("WARNS on a literal under a secret-shaped key and still submits it (D9/D24)", () => {
     const node = mount();
 

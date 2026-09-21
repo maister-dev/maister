@@ -39,7 +39,7 @@ const SOURCE_PRECEDENCE: Record<string, number> = {
   "flow-package": 2,
 };
 
-// ADR-177: slots are the KEYS of the target's `env`/`headers` maps. `transport`
+// ADR-179: slots are the KEYS of the target's `env`/`headers` maps. `transport`
 // rides along because `bearerTokenEnv` is overridable only for an http/sse
 // target, and that has to hold at write AND at materialization.
 export type McpTargetSlots = {
@@ -140,7 +140,7 @@ export async function listPlatformBindCandidates(
     `),
   );
 
-  // ADR-177: a candidate advertises its SLOTS (the map keys) — the overlay
+  // ADR-179: a candidate advertises its SLOTS (the map keys) — the overlay
   // editor's datalist — not its values.
   return rows.map((r) => ({
     id: r.id,
@@ -152,7 +152,7 @@ export async function listPlatformBindCandidates(
   }));
 }
 
-// W-C, amended by ADR-177: config_overlay is validated against the target's
+// W-C, amended by ADR-179: config_overlay is validated against the target's
 // DECLARED slots. An unknown slot is a CONFIG (422); a VALUE uses the same
 // `literal | env:NAME` grammar as a server value, so only a malformed `env:`
 // value is refused. Pure — the sink's invariant lives here so both the write
@@ -272,7 +272,7 @@ export async function resolveBindTarget(
 
   if (!row) return null;
 
-  // ADR-177: slots come from the map KEYS, which is what finally gives a
+  // ADR-179: slots come from the map KEYS, which is what finally gives a
   // package TEMPLATE target its slots — it stored `env` as a map all along and
   // this resolver only ever read the name-list field.
   return {

@@ -2086,7 +2086,7 @@ async function materializeNodeCapabilities(
     supported: profile.supported,
     mcpServers: m.mcpServers,
     execTrust: loaded.execTrust,
-    // ADR-177: the transport gate's adapter. A REQUIRED ref the adapter cannot
+    // ADR-179: the transport gate's adapter. A REQUIRED ref the adapter cannot
     // use already refused this launch at the precondition; this pass drops the
     // ADDITIONAL ones.
     adapter: agent,

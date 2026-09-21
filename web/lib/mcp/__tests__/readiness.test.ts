@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 
 import { evaluateMcpReadiness } from "@/lib/mcp/readiness";
 
-// ADR-177: presence comes from the HOST (`POST /diagnostics/env-refs`), not from
+// ADR-179: presence comes from the HOST (`POST /diagnostics/env-refs`), not from
 // the fixed `GET /diagnostics.envRefs` catalog. `adapters` keeps the old
 // diagnostics shape because the adapter gate is unchanged.
 

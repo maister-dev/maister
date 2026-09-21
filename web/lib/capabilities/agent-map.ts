@@ -14,7 +14,7 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-// M27/T-C4 + ADR-177: transport-tagged. `stdio` carries command/args/env;
+// M27/T-C4 + ADR-179: transport-tagged. `stdio` carries command/args/env;
 // `sse`/`http` carry url/headers/bearerTokenEnv. `env` and `headers` are
 // `Record<name, value>` maps keyed by the name the SERVER reads; a value is
 // whole-value `literal | env:NAME` and the value behind a REFERENCE is resolved
@@ -98,7 +98,7 @@ function claudeSettingsModel(model: string | undefined): string | undefined {
   return trimmed;
 }
 
-// ADR-177: every source now stores ONE map shape (migration 0172 rewrote the
+// ADR-179: every source now stores ONE map shape (migration 0172 rewrote the
 // three legacy ones), so this is a typed read, not a shape negotiation.
 function valueMapOf(
   material: CapabilityMaterial,

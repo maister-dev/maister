@@ -48,7 +48,7 @@ describe("createBindingSchema", () => {
 });
 
 describe("mcpConfigOverlaySchema", () => {
-  // OBSOLETE under ADR-177 (D32): the overlay shares the server value grammar,
+  // OBSOLETE under ADR-179 (D32): the overlay shares the server value grammar,
   // so a literal is accepted and only a malformed reference is refused.
   it("accepts a LITERAL remap value", () => {
     expect(() =>

@@ -2,7 +2,7 @@
 // lib/acp-runners/runner-form.ts). NOT server-only — shared by the client admin
 // modal AND the server route handlers. No I/O — validation + body builders only.
 //
-// ADR-177: env/header entries are `Record<name, value>` maps keyed by the name
+// ADR-179: env/header entries are `Record<name, value>` maps keyed by the name
 // the SERVER reads, and each value is whole-value `literal | env:NAME` under
 // the ONE grammar in `value-grammar.ts`. A literal is accepted — it is the
 // operator's declaration that the value is not a secret, and the form warns
@@ -219,7 +219,7 @@ export function buildCreateBody(draft: McpServerDraft) {
 
 // ── Wire body schemas ────────────────────────────────────────────────────────
 // ONE definition per surface, built from the grammar module. These replaced the
-// four verbatim copies of the pre-ADR-177 key regex that lived in the route
+// four verbatim copies of the pre-ADR-179 key regex that lived in the route
 // files. Transport-specific requirements stay with `validateMcpServerDraft`;
 // the schemas own shape + grammar.
 
@@ -257,7 +257,7 @@ export const platformMcpPatchSchema = z
   .strict();
 
 // The live project route takes `id` (what `buildCreateBody` emits), not
-// `refId` — the OpenAPI said `refId` and was drift older than ADR-177.
+// `refId` — the OpenAPI said `refId` and was drift older than ADR-179.
 export const projectMcpBodySchema = z
   .object({
     id: z.string().min(1).regex(ID_RE),

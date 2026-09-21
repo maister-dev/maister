@@ -20,7 +20,7 @@ const r = (
   agents: agents as never,
 });
 
-// ADR-177: the same precondition now also refuses a REQUIRED ref whose
+// ADR-179: the same precondition now also refuses a REQUIRED ref whose
 // TRANSPORT the launch adapter cannot use. codex-acp throws `invalidRequest`
 // for `sse` while BUILDING the session config, so one such server fails
 // `session/new` for the whole session — refusing at launch, before any
@@ -32,7 +32,7 @@ const withTransport = (
   transport: "stdio" | "sse" | "http",
 ) => ({ ...r(refId, source, agents), material: { transport } });
 
-describe("firstAgentUnsupportedRequiredMcp — transport (ADR-177)", () => {
+describe("firstAgentUnsupportedRequiredMcp — transport (ADR-179)", () => {
   it("flags a required sse ref on a codex runner", () => {
     expect(
       firstAgentUnsupportedRequiredMcp(

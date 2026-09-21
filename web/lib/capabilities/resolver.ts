@@ -211,7 +211,7 @@ export function pinCatalogToSnapshot<
 // unresolved required ref is owned by the unknown-ref gate (CONFIG); skipped
 // here. Returns the first offending ref, or null when all required mcps resolve
 // to an agent-supporting winner.
-// ADR-177: the ref plus WHY, so the thrown message can name the cause. Two
+// ADR-179: the ref plus WHY, so the thrown message can name the cause. Two
 // reasons qualify — the winner's `supported_agents` exclude the agent, or its
 // TRANSPORT is one the adapter cannot use (codex + `sse`, which
 // `createMcpSeverConfig` throws on while building the session config, failing

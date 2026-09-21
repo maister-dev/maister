@@ -36,7 +36,7 @@ type McpTemplate = {
   command?: string;
   args?: string[];
   url?: string;
-  // ADR-177: the map form. The manifest schema still accepts the legacy
+  // ADR-179: the map form. The manifest schema still accepts the legacy
   // `string[]` of `env:NAME`, but Studio writes the map.
   env?: Record<string, string>;
   headers?: Record<string, string>;
@@ -53,7 +53,7 @@ function stemOf(fileName: string): string {
 }
 
 // Materialize a catalog row into a package-manifest MCP template. A package is
-// SHAREABLE, so a literal must never land in one (ADR-177 D28): an `env:NAME`
+// SHAREABLE, so a literal must never land in one (ADR-179 D28): an `env:NAME`
 // value is copied as-is, and a LITERAL is converted to a reference — env key
 // `K` becomes `env:K`, and a header name is uppercased with every
 // non-[A-Za-z0-9_] character replaced by `_` (and a leading digit prefixed) so

@@ -38,7 +38,7 @@ export const STUB_SESSIONS_DIR = path.resolve("e2e/.runtime/stub-sessions");
 export const STUB_HOST_KEY = "eh_e2e_stub_supervisor_0001";
 export const STUB_BOOT_ID = "0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0";
 
-// ADR-177: the fixed presence fixture for both e2e supervisors — deterministic,
+// ADR-179: the fixed presence fixture for both e2e supervisors — deterministic,
 // and small enough that a spec can reason about which refs are Ready.
 export const E2E_PRESENT_ENV_REFS = new Set(["PATH", "HOME", "E2E_MCP_TOKEN"]);
 
@@ -544,7 +544,7 @@ export function startStubSupervisor(): Promise<Server> {
       return;
     }
 
-    // ADR-177 (D26/T13): without this route EVERY platform MCP save would log a
+    // ADR-179 (D26/T13): without this route EVERY platform MCP save would log a
     // host WARN and store `Unknown`. The specs assert no readiness value, so a
     // missing route would pass silently — it is here so the lane exercises the
     // real path. The allow-list is deliberately small and fixed.

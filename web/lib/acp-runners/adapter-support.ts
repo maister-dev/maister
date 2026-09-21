@@ -215,7 +215,7 @@ export function getAdapterSupportById(
   return ADAPTER_SUPPORT.find((adapter) => adapter.id === adapterId);
 }
 
-// ADR-177: the accessor that makes `mcpTransports` load-bearing. It was dead
+// ADR-179: the accessor that makes `mcpTransports` load-bearing. It was dead
 // data with zero readers repo-wide, which is why the documented
 // "agent-unsupported transport" edge case was never implemented. An unknown
 // adapter falls back to every transport rather than none: withholding

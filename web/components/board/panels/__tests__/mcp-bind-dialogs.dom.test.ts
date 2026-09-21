@@ -146,7 +146,7 @@ describe("OverlayDialog.save (ADR-129 W-C — behavioral)", () => {
     expect(calls[0].body).toEqual({
       configOverlay: { envRemap: { GITHUB_TOKEN: "env:PROJ_A_TOKEN" } },
     });
-    // ADR-177: the KEY is the server's contract and is preserved; the VALUE is
+    // ADR-179: the KEY is the server's contract and is preserved; the VALUE is
     // what the overlay replaces.
     expect(
       Object.keys(

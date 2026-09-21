@@ -168,7 +168,7 @@ describe("platform MCP → capability_records projection (real postgres)", () =>
 
     expect(record.capabilityRefId).toBe("github");
     expect(record.material.command).toBe("github-mcp");
-    // ADR-177: the VALUE map, carried through. The value behind the reference
+    // ADR-179: the VALUE map, carried through. The value behind the reference
     // stays on the execution host; the literal is stored as declared.
     expect(record.material.env).toEqual({
       GITHUB_TOKEN: "env:GITHUB_TOKEN",

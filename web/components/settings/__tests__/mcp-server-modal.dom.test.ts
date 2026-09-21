@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-// ADR-177: the platform MCP modal's behaviour under the value model. The SSR
+// ADR-179: the platform MCP modal's behaviour under the value model. The SSR
 // suite beside this one covers which FIELDS render; these cases cover what the
 // form DOES — what reaches the request body, and what blocks submit.
 //
@@ -123,7 +123,7 @@ function submittedBody(): Record<string, unknown> {
   ) as Record<string, unknown>;
 }
 
-describe("McpServerModal — value model (ADR-177)", () => {
+describe("McpServerModal — value model (ADR-179)", () => {
   it("WARNS on a literal under a secret-shaped key and still submits it (D9/D24)", () => {
     const node = mount();
 

@@ -131,7 +131,7 @@ describe("materialization trust gate (W-E, real postgres)", () => {
         reason: "platform-untrusted",
         scope: "platform",
       },
-      // ADR-177: the third reason is part of the dedupe key like the other two.
+      // ADR-179: the third reason is part of the dedupe key like the other two.
       {
         refId: "legacy",
         transport: "sse",

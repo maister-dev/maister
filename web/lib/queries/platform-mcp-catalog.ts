@@ -7,7 +7,7 @@ import { platformMcpServers } from "@/lib/db/schema";
 
 // Client-safe projection of an admin-managed `platform_mcp_servers` row for the
 // MCP-template editor (M36 T2.5). Carries only catalog SHAPE — transport,
-// command/args/url and the env/header VALUE maps (ADR-177). A package is
+// command/args/url and the env/header VALUE maps (ADR-179). A package is
 // shareable, so the Studio editor never copies a literal into a template: a
 // reference is copied as-is and a literal is converted to `env:<KEY>` (D28).
 // (T2.1: provenance is display-only — `platform_mcp_server_id` is NOT

@@ -74,7 +74,7 @@ describe("ResolvedCapabilitySetPanel", () => {
           reason: "platform-untrusted",
           scope: "platform",
         },
-        // ADR-177: the third reason renders like the other two — a codex run
+        // ADR-179: the third reason renders like the other two — a codex run
         // that dropped an `sse` server must say so, not fall through blank.
         {
           refId: "legacy-sse",

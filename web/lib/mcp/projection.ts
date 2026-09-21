@@ -10,7 +10,7 @@ import { platformMcpServers } from "@/lib/db/schema";
 
 // M27/T-C3 (ADR-067): project the admin-managed `platform_mcp_servers` catalog
 // (T-C1) into the capability pipeline as `source='platform'` MCP capabilities,
-// replacing the legacy `.mcp.json` registry. ADR-177: the row already stores
+// replacing the legacy `.mcp.json` registry. ADR-179: the row already stores
 // `env`/`headers` VALUE maps under the shared grammar, so this projection is an
 // identity pass — a value behind an `env:NAME` reference still never leaves the
 // execution host.

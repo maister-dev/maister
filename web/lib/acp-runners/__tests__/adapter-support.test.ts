@@ -32,7 +32,7 @@ describe("adapter support descriptors", () => {
     }
   });
 
-  // ADR-177: the two VERIFIED adapter facts, read through the accessor that
+  // ADR-179: the two VERIFIED adapter facts, read through the accessor that
   // makes `mcpTransports` load-bearing. Not a per-adapter enumeration — the
   // other three carry an explicit unverified marker and pinning them here would
   // assert a guess.

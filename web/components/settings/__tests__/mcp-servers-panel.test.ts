@@ -81,7 +81,7 @@ describe("McpServersPanel", () => {
   });
 });
 
-// ADR-177 (D19): the reason travels to the operator, not just to the column.
+// ADR-179 (D19): the reason travels to the operator, not just to the column.
 describe("readiness reasons", () => {
   it("renders the reasons as the status chip's tooltip", () => {
     const markup = renderToStaticMarkup(

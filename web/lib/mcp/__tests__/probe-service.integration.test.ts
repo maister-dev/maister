@@ -96,7 +96,7 @@ describe("probe-service — D4 trust gate + no-secret cache", () => {
     );
 
     expect(request.transport).toBe("http");
-    // ADR-177: references travel UNRESOLVED and a literal travels verbatim.
+    // ADR-179: references travel UNRESOLVED and a literal travels verbatim.
     expect(request.env).toEqual({
       GH_TOKEN: "env:GH_TOKEN",
       FASTMCP_LOG_LEVEL: "ERROR",

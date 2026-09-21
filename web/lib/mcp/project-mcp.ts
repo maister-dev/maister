@@ -3,7 +3,7 @@
 // in the `material` jsonb. This module is the single mapping between an
 // `McpServerDraft` (validated by lib/mcp/mcp-form.ts, shared with the platform
 // admin surface) and that material — keeping the route handlers thin. NOT
-// server-only: no I/O here, only validation + shape builders. ADR-177: env and
+// server-only: no I/O here, only validation + shape builders. ADR-179: env and
 // header entries persist as `Record<name, value>` maps whose values are
 // whole-value `literal | env:NAME`, exactly like the platform projection; the
 // value behind a REFERENCE is resolved only on the execution host.
@@ -27,7 +27,7 @@ export type ProjectMcpMaterial = {
   headers: Record<string, string>;
   bearerTokenEnv?: string | null;
   supportedAgents: NonNullable<McpServerDraft["supportedAgents"]>;
-  // ADR-177 (D18): the write-time readiness cache. `composeProjectMcpHub` reads
+  // ADR-179 (D18): the write-time readiness cache. `composeProjectMcpHub` reads
   // it for non-platform entries — a write-only cache is not state.
   readiness?: { status: "Unknown" | "Ready" | "NotReady"; reasons: string[] };
 };

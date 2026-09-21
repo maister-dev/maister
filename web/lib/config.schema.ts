@@ -102,7 +102,7 @@ export const mcpCapabilitySchema = capabilityCommonSchema.extend({
   // M27/T-C4: transport. Absent ⇒ `stdio` (back-compat) — readers default via
   // `?? "stdio"`. `stdio` uses command/args/env; `sse`/`http` use
   // url/headers/bearerTokenEnv.
-  // ADR-177 (D31): env/header VALUES are carried as declared under the shared
+  // ADR-179 (D31): env/header VALUES are carried as declared under the shared
   // `literal | env:NAME` grammar — `maister.yaml` is the operator's own host
   // file, at the same trust level as `supervisor/.env`. Before the change they
   // were reduced to their NAMES here; `configuration.md` states the exposure a
@@ -1518,7 +1518,7 @@ export const packageManifestMcpSchema = z
     command: z.string().min(1).optional(),
     args: z.array(z.string()).optional(),
     url: z.string().min(1).optional(),
-    // ADR-177 (D4/D27): the legacy `string[]` of `env:NAME` stays accepted and
+    // ADR-179 (D4/D27): the legacy `string[]` of `env:NAME` stays accepted and
     // is normalized to `{ NAME: "env:NAME" }` at LOAD, so `attach.ts` and
     // Studio see ONE shape (`loadMaisterPackageManifest`). The union is kept
     // here rather than a `.transform` so the zod OUTPUT type stays honest about
@@ -1563,7 +1563,7 @@ export const packageManifestMcpSchema = z
       return;
     }
 
-    // ADR-177: `bearerTokenEnv` is http-only and is the ONE source of truth for
+    // ADR-179: `bearerTokenEnv` is http-only and is the ONE source of truth for
     // the Authorization header, so it cannot coexist with a declared row.
     if (mcp.transport === "stdio") {
       for (const field of ["headers", "bearerTokenEnv"] as const) {

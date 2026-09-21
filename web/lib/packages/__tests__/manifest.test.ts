@@ -56,7 +56,7 @@ describe("loadMaisterPackageManifest", () => {
       { id: "aif-bundle", path: "capability" },
     ]);
     expect(manifest.mcps[0]?.transport).toBe("http");
-    // ADR-177 (D34): the legacy list is folded to a map ONCE, at load, so
+    // ADR-179 (D34): the legacy list is folded to a map ONCE, at load, so
     // `attach.ts` and Studio see exactly one shape.
     expect(manifest.mcps[0]?.env).toEqual({ DOCS_TOKEN: "env:DOCS_TOKEN" });
     expect(manifest.restrictions[0]?.paths).toEqual(["docs/**"]);
@@ -117,7 +117,7 @@ describe("loadMaisterPackageManifest", () => {
     );
   });
 
-  // OBSOLETE under ADR-177 (D1/D4): a literal is accepted in the MAP form — it
+  // OBSOLETE under ADR-179 (D1/D4): a literal is accepted in the MAP form — it
   // is the operator's declaration that the value is not a secret. The LIST form
   // is still references-only (a bare list entry has no key to pair with, so it
   // must name a variable). Replaced by the four cases below.
@@ -137,7 +137,7 @@ describe("loadMaisterPackageManifest", () => {
     );
     const manifest = await loadMaisterPackageManifest(root);
 
-    // The pre-ADR-177 rule was uppercase-only and prefix-mandatory; the shared
+    // The pre-ADR-179 rule was uppercase-only and prefix-mandatory; the shared
     // grammar relaxes both.
     expect(manifest.mcps[0]?.env).toEqual({
       DOCS_TOKEN: "env:DOCS_TOKEN",

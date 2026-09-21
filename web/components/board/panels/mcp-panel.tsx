@@ -47,7 +47,7 @@ export type McpBindingView = {
   targetId: string;
   enabled: boolean;
   configOverlay: {
-    // ADR-177: declared slot NAME -> the VALUE this project uses for it
+    // ADR-179: declared slot NAME -> the VALUE this project uses for it
     // (`literal | env:NAME`). The slot's name is preserved on the wire.
     envRemap?: Record<string, string>;
     headerRemap?: Record<string, string>;
@@ -59,7 +59,7 @@ export type McpBindingView = {
 };
 
 // A platform server the project MAY connect (id === refId in this model).
-// ADR-177: it advertises its SLOTS — the keys of its `env`/`headers` maps —
+// ADR-179: it advertises its SLOTS — the keys of its `env`/`headers` maps —
 // which is what the overlay editor offers as a datalist. Never its values.
 export type PlatformCandidateView = {
   id: string;

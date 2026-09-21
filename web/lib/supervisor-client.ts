@@ -406,7 +406,7 @@ const SupervisorDiagnosticsSchema = z
   })
   .strict();
 
-// ADR-177: `POST /diagnostics/env-refs` — host env-var PRESENCE by name. The
+// ADR-179: `POST /diagnostics/env-refs` — host env-var PRESENCE by name. The
 // route answers in REQUEST order after de-duplication, one entry per DISTINCT
 // name, at most 64 per call. A value is never returned.
 const SupervisorEnvRefsSchema = z
@@ -807,7 +807,7 @@ export async function checkSupervisorDiagnostics(
   return { kind: "ready", diagnostics: parsed.data };
 }
 
-// ADR-177: one WIRE call — exactly `ENV_REFS_MAX_PER_CALL` names at most. The
+// ADR-179: one WIRE call — exactly `ENV_REFS_MAX_PER_CALL` names at most. The
 // de-duplication, chunking and merge live in the execution-host transport so
 // every caller may pass any number of names.
 export async function checkSupervisorEnvRefs(
@@ -909,7 +909,7 @@ export async function resolveModelSuggestions(
   return (await res.json()) as SupervisorModelCatalog;
 }
 
-// ADR-129 (W-F), amended by ADR-177: proxy an MCP health probe to the
+// ADR-129 (W-F), amended by ADR-179: proxy an MCP health probe to the
 // supervisor. `env`/`headers` are VALUE maps: an `env:NAME` reference travels
 // the wire UNRESOLVED and a literal travels verbatim, so the value behind a
 // reference never leaves the host. The exec-trust gate is enforced web-side

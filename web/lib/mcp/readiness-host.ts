@@ -10,7 +10,7 @@ import pino from "pino";
 import { executionHosts } from "@/lib/execution-host";
 import { referencedEnvNames } from "@/lib/mcp/value-grammar";
 
-// ADR-177 (D18): the ONE place the two host READS behind MCP readiness happen.
+// ADR-179 (D18): the ONE place the two host READS behind MCP readiness happen.
 // Shared by all three write-time cache sites — the platform routes, the project
 // MCP service, and package attach/upgrade ingestion — so a host failure degrades
 // the same way everywhere.

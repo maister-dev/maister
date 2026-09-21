@@ -67,7 +67,7 @@ describe("validateMcpServerDraft (T-C2)", () => {
   });
 
   it("ACCEPTS a literal value — the secret guard is a UI warning (D9)", () => {
-    // This replaces the pre-ADR-177 "rejects plaintext" case, which is obsolete:
+    // This replaces the pre-ADR-179 "rejects plaintext" case, which is obsolete:
     // a literal is the operator's declaration that the value is not a secret.
     const r = validateMcpServerDraft({
       id: "x",

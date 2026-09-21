@@ -1,4 +1,4 @@
-// ADR-177 (D17, owner 2026-09-21): a scratch launch takes the SAME shared gate
+// ADR-179 (D17, owner 2026-09-21): a scratch launch takes the SAME shared gate
 // as the flow node and the standalone agent. It did not before —
 // `materializeCapabilityProfile` output went straight to the create payload —
 // so an untrusted platform server was spawned, a project overlay was ignored,
@@ -235,7 +235,7 @@ async function withheldOf(runId: string) {
   return row?.withheld ?? [];
 }
 
-describe("scratch launch takes the shared MCP gate (ADR-177 D17)", () => {
+describe("scratch launch takes the shared MCP gate (ADR-179 D17)", () => {
   it("keeps a trusted server and carries its env VALUE map to the create payload", async () => {
     const runId = await launch(["trusted-stdio"]);
 
@@ -246,7 +246,7 @@ describe("scratch launch takes the shared MCP gate (ADR-177 D17)", () => {
   });
 
   it("withholds an UNTRUSTED platform server and persists the reason", async () => {
-    // Before ADR-177 this server reached `session/new`: scratch never took the
+    // Before ADR-179 this server reached `session/new`: scratch never took the
     // trust gate at all.
     const runId = await launch(["untrusted-stdio"]);
 
@@ -274,7 +274,7 @@ describe("scratch launch takes the shared MCP gate (ADR-177 D17)", () => {
 
   it("the local-package ASSISTANT launch is a proven non-path, not an exemption", async () => {
     // T16: a scope word comes from the seam. `gateAndOverlayMcpServers` has
-    // three call sites after ADR-177 — flow, agent, scratch. The assistant
+    // three call sites after ADR-179 — flow, agent, scratch. The assistant
     // launch is the fourth scratch-shaped launch and takes NO gate, because it
     // has no project: it cannot load bindings (`loadProjectMcpOverlays` keys on
     // projectId) and resolves no project catalog. Assert the reason rather than

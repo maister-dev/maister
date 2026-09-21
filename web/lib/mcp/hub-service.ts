@@ -44,7 +44,7 @@ export type HubServerEntry = {
   enabled: boolean;
   trust?: string;
   readiness?: string;
-  // ADR-177 (D19): why readiness is NotReady, rendered as the status chip's
+  // ADR-179 (D19): why readiness is NotReady, rendered as the status chip's
   // tooltip. A presence check whose reason is invisible is not actionable.
   readinessReasons?: string[];
   usedByCount?: number;
@@ -73,7 +73,7 @@ type CapabilityRow = {
     packageInstallId?: string;
     env?: Record<string, string>;
     lastProbe?: { status?: string } | null;
-    // ADR-177 (D18): the write-time readiness cache for project and package
+    // ADR-179 (D18): the write-time readiness cache for project and package
     // rows; platform rows keep theirs in their own columns.
     readiness?: { status?: string; reasons?: string[] } | null;
   } | null;

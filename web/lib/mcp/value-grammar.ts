@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-// ADR-177: THE grammar for every MCP configuration value — the platform row,
+// ADR-179: THE grammar for every MCP configuration value — the platform row,
 // the project row, the package manifest, the binding overlay, and the Studio
 // template editor. Before this module there were three `env:` grammars and four
 // verbatim copies of the MCP one, which is the defect shape this replaces.

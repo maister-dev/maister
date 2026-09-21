@@ -265,7 +265,7 @@ export interface TestSupervisorHandle {
   stop: () => Promise<void>;
 }
 
-// ADR-177: same fixed presence fixture as the stub supervisor.
+// ADR-179: same fixed presence fixture as the stub supervisor.
 const TEST_PRESENT_ENV_REFS = new Set(["PATH", "HOME", "E2E_MCP_TOKEN"]);
 
 function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown>> {
@@ -1148,7 +1148,7 @@ export async function startTestSupervisor(
       return;
     }
 
-    // ADR-177 (D26): mirrors the stub's route so both e2e supervisors answer the
+    // ADR-179 (D26): mirrors the stub's route so both e2e supervisors answer the
     // readiness path identically.
     if (method === "POST" && url === "/diagnostics/env-refs") {
       void readJsonBody(req).then((body) => {

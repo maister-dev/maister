@@ -212,7 +212,7 @@ export interface ExecutionHostTransport {
   diagnostics(opts?: {
     timeoutMs?: number;
   }): Promise<SupervisorDiagnosticsStatus>;
-  // ADR-177: host env-var PRESENCE by name, for MCP readiness. Accepts ANY
+  // ADR-179: host env-var PRESENCE by name, for MCP readiness. Accepts ANY
   // number of names — the transport dedupes, chunks by the route cap and merges
   // the answers back in request order. Never returns a value.
   checkEnvRefs(

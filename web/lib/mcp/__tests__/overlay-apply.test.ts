@@ -5,9 +5,9 @@ import { describe, expect, it } from "vitest";
 import { MaisterError } from "@/lib/errors";
 import { applyMcpOverlays } from "@/lib/mcp/materialization-gate";
 
-// ADR-129 (W-C), amended by ADR-177: the overlay replaces the VALUE for a key
+// ADR-129 (W-C), amended by ADR-179: the overlay replaces the VALUE for a key
 // the target declares and PRESERVES the key. The key is the SERVER's contract —
-// the pre-ADR-177 behavior renamed it, so the server never received the variable
+// the pre-ADR-179 behavior renamed it, so the server never received the variable
 // it reads. The ACP wire shape is unchanged and the execution host still
 // resolves each `env:NAME`. A remap targeting an undeclared slot is a CONFIG.
 

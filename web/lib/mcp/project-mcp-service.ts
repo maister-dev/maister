@@ -41,7 +41,7 @@ type RecordRow = {
 };
 
 // Read DTO returned by GET (list + item). Flattens the material so the client
-// modal can seed its form directly. ADR-177: a value is `literal | env:NAME`;
+// modal can seed its form directly. ADR-179: a value is `literal | env:NAME`;
 // the value behind a reference is never stored or returned.
 export type ProjectMcpDto = {
   id: string;
@@ -96,7 +96,7 @@ function db(injected?: ProjectMcpDb): ProjectMcpDb {
   return injected ?? (getDb() as unknown as ProjectMcpDb);
 }
 
-// ADR-177 (D18): project rows cache readiness at WRITE time, exactly like the
+// ADR-179 (D18): project rows cache readiness at WRITE time, exactly like the
 // platform rows do in their own columns. The host reads run BEFORE the write and
 // degrade to `Unknown`; `composeProjectMcpHub` and the DTO read this back, so it
 // is real state rather than a write-only field.

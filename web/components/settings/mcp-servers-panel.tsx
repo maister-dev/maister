@@ -118,7 +118,7 @@ export function McpServersPanel({ servers }: Props): ReactElement {
                     {server.supportedAgents.join(", ")}
                   </td>
                   <td className="px-4 py-3">
-                    {/* ADR-177 (D19): a presence check whose REASON is
+                    {/* ADR-179 (D19): a presence check whose REASON is
                         invisible is not actionable — `env ref missing: X` is
                         the whole point. Same tooltip pattern as the runner
                         readiness cell. */}

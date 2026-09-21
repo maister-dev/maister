@@ -139,7 +139,7 @@ type CapabilitySeed = {
   source: string;
   disabledAt?: Date | null;
   agents?: string[];
-  // ADR-177: the transport gate reads the winner's transport out of material,
+  // ADR-179: the transport gate reads the winner's transport out of material,
   // so the SEND site (services/runs selecting `material`) is what this covers —
   // the unit cases in required-mcp-agent-support.test.ts cover the predicate.
   material?: Record<string, unknown>;
@@ -330,7 +330,7 @@ beforeAll(async () => {
     aiCodingManifest("ReqMcpSupported", { mcps: { required: ["github"] } }),
     [{ capabilityRefId: "github", kind: "mcp", source: "project" }],
   );
-  // ADR-177: a REQUIRED ref whose TRANSPORT the launch adapter cannot use.
+  // ADR-179: a REQUIRED ref whose TRANSPORT the launch adapter cannot use.
   // These runs launch on `claude`, which accepts sse, so the offending pair is
   // expressed by declaring the server claude-only with an `sse` transport
   // (supported-agent) and — for the transport arm — by an http server the
@@ -501,7 +501,7 @@ describe("POST /api/runs — capability ref launch gate (M14 T1.4)", () => {
     expect(addWorktreeMock).toHaveBeenCalledTimes(1);
   });
 
-  // ADR-177: this pair pins the SEND site — that `material.transport` is
+  // ADR-179: this pair pins the SEND site — that `material.transport` is
   // actually selected and reaches the predicate. `claude` accepts sse, so both
   // launch; the refusal arm is covered at the unit level, where the adapter can
   // be varied.

@@ -199,7 +199,7 @@ export type FakeExecutionHost = {
   ): void;
   setHealth(health: HostHealth | null): void;
   setDiagnostics(status: SupervisorDiagnosticsStatus | null): void;
-  // ADR-177: script host env-var PRESENCE. A name not in the set reads absent,
+  // ADR-179: script host env-var PRESENCE. A name not in the set reads absent,
   // which is the real route's answer too.
   setPresentEnvRefs(names: readonly string[]): void;
   setPromptBehavior(

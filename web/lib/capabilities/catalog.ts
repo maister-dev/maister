@@ -99,7 +99,7 @@ function baseMaterial(c: ProjectCapabilityConfig): CapabilityMaterial {
       // (z.record(z.string(), z.unknown())) that nothing downstream reads, so
       // there is no reason to keep it (ISSUE 2).
       //
-      // ADR-177 (D31): `env`/`headers` VALUES are carried as declared under the
+      // ADR-179 (D31): `env`/`headers` VALUES are carried as declared under the
       // shared grammar. Rebuilt wholesale per upsert, so removing a key from
       // `maister.yaml` removes it from material (SET/CLEAR symmetry).
       return {
@@ -135,7 +135,7 @@ function baseMaterial(c: ProjectCapabilityConfig): CapabilityMaterial {
     case "agent_definition":
       return {};
     case "env_profile":
-      // NEVER store env values — only key names. Unlike MCP values (ADR-177),
+      // NEVER store env values — only key names. Unlike MCP values (ADR-179),
       // an env-profile value is not an operator-declared configuration value:
       // there is no form surface behind it and no reason to carry one.
       return {

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-// ADR-177 (D25): the shared key/value rows control. Behaviour only — a callback
+// ADR-179 (D25): the shared key/value rows control. Behaviour only — a callback
 // fired, a record shaped, a warning shown — never "renders without crashing".
 //
 // The runner modal's own suite is the other half of this contract: it passes

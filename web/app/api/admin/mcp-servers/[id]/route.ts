@@ -25,8 +25,8 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-// ADR-177: ONE body schema, built from the shared value grammar. It replaced a
-// verbatim copy of the pre-ADR-177 key regex that lived here (and in three
+// ADR-179: ONE body schema, built from the shared value grammar. It replaced a
+// verbatim copy of the pre-ADR-179 key regex that lived here (and in three
 // sibling route files). `trustStatus` is on it because platform trust is
 // load-bearing at materialization (ADR-129).
 const patchBodySchema = platformMcpPatchSchema.refine(

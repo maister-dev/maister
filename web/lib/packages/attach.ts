@@ -427,7 +427,7 @@ function isReadyFlowRevision(revision: {
 // never disables them — attach/detach own their lifecycle (ADR-088).
 const ATTACHMENT_ORIGIN = "package-attachment";
 
-// ADR-177 (D18): ONE chunked host read over the UNION of every template's
+// ADR-179 (D18): ONE chunked host read over the UNION of every template's
 // referenced names, issued BEFORE the transaction. Reads, not side effects: a
 // host failure yields `Unknown` for every row and the attach still commits.
 async function packageReadinessByRef(install: any): Promise<ReadinessByRef> {
@@ -479,7 +479,7 @@ function ingestionRecords(
   const records: Array<Record<string, unknown>> = [];
 
   for (const mcp of manifest.spec.mcps) {
-    // ADR-177 (D34): `env` is ALREADY a map here — the loader folded the legacy
+    // ADR-179 (D34): `env` is ALREADY a map here — the loader folded the legacy
     // `env:NAME` list once, so both manifest forms produce identical material.
     const env = { ...(mcp.env ?? {}) };
 
@@ -501,7 +501,7 @@ function ingestionRecords(
             origin: ATTACHMENT_ORIGIN,
             packageInstallId: install.id,
             requirement: true,
-            // A requirement declares SLOTS: the map keys. Since ADR-177 that is
+            // A requirement declares SLOTS: the map keys. Since ADR-179 that is
             // also what `resolveBindTarget` reads, so an overlay against a
             // requirement or a package TEMPLATE can finally name them.
             env,
@@ -554,7 +554,7 @@ function ingestionRecords(
   return records;
 }
 
-// ADR-177 (D18): the third write-time readiness cache site. The verdict arrives
+// ADR-179 (D18): the third write-time readiness cache site. The verdict arrives
 // PRECOMPUTED, keyed by ref — the two host reads happen in the public entry
 // points BEFORE `db.transaction`, so this function stays inside the tx without
 // doing I/O of its own.
@@ -828,7 +828,7 @@ export async function attachPackage(opts: {
 
   const manifest = manifestOf(install);
   const flowIds = manifest.spec.flows.map((f) => f.id);
-  // Host READS, before the transaction (ADR-177 D18).
+  // Host READS, before the transaction (ADR-179 D18).
   const readinessByRef = await packageReadinessByRef(install);
 
   const attached: AttachResult = await db.transaction(async (tx: any) => {
@@ -1093,7 +1093,7 @@ export async function upgradeAttachment(opts: {
     .from(packageInstalls)
     .where(eq(packageInstalls.id, att.packageInstallId));
 
-  // Host READS, before the transaction (ADR-177 D18). A version that DROPS a
+  // Host READS, before the transaction (ADR-179 D18). A version that DROPS a
   // reference re-caches as Ready here — the verdict is rebuilt, never merged.
   const readinessByRef = await packageReadinessByRef(next);
 

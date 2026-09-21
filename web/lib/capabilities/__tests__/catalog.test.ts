@@ -105,7 +105,7 @@ function captureLogger(): { logger: pino.Logger; sink: { lines: string[] } } {
 }
 
 describe("capabilityInputsFromConfig", () => {
-  // ADR-177 (D31): `maister.yaml` env/header VALUES are now CARRIED as declared
+  // ADR-179 (D31): `maister.yaml` env/header VALUES are now CARRIED as declared
   // — the file is the operator's own host file, at the same trust level as
   // `supervisor/.env`. `configuration.md` states the exposure a literal
   // accepts; a secret belongs behind an `env:NAME` reference, which is what the

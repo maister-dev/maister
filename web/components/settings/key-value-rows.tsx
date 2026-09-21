@@ -1,6 +1,6 @@
 "use client";
 
-// ADR-177 (D11/D25): the shared key/value rows control, EXTRACTED from the ACP
+// ADR-179 (D11/D25): the shared key/value rows control, EXTRACTED from the ACP
 // runner modal rather than written beside it — which is why its markup is the
 // runner modal's: the header-row add button with a plus glyph, per-row
 // `aria-label`led key/value inputs, and a trash-glyph remove button. Those are

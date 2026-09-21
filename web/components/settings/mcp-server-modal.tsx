@@ -237,7 +237,7 @@ export function McpServerModal({
   const bearerError = errorsByField.get("bearerTokenEnv") ?? null;
   // A required `sse` ref on a codex runner refuses the launch outright, and an
   // additional one is withheld — surface that at CREATE time rather than at the
-  // launch that fails (ADR-177).
+  // launch that fails (ADR-179).
   const sseOnCodex =
     form.transport === "sse" && form.supportedAgents.includes("codex");
 
