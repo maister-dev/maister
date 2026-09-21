@@ -121,6 +121,16 @@ export type E2EM23Fixture = {
   nodeId: string;
   scratchRunId: string;
   noCacheProjectSlug: string;
+  // ADR-177 overview coverage.
+  deliveredRunId: string;
+  prOpenRunId: string;
+  resultOnlyRunId: string;
+  failedRunId: string;
+  abandonedRunId: string;
+  crashedRunId: string;
+  pendingRunId: string;
+  platformScratchRunId: string;
+  thirdTaskId: string;
 };
 
 // M38 (ADR-103) decide/on_mismatch routing fixture: two launchable all-cli

@@ -516,7 +516,8 @@ Current Scope, these are **Implemented** today:
 - **Readiness gate** (M15): promotion gating over blocking gates + verdict
   calibration. → `readiness.md`
 - **Observatory** (M23): read-only Autonomy Score, correction-rate, signal
-  clusters. → `observatory.md`
+  clusters; overview table, period presets/custom range, URL views
+  (ADR-177). → `observatory.md`
 - **Scheduler** (M24): one polymorphic cron tick (`system_sweep | command |
 agent_tick | flow_run | run_schedule`); user-facing task cron schedules
   shipped (M28) → `run-schedules.md`, `scheduler.md`

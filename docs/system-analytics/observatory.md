@@ -30,7 +30,7 @@ Implemented surfaces are `web/lib/queries/observatory.ts`,
 - **Observatory scope** — the visible project set plus optional filters:
   `projectId`, `flowId`, `nodeId`, `artifactKind`, `artifactDefId`, and the
   Observatory period below. Scoping is by `runs.started_at`.
-- **Observatory period (Designed, ADR-177)** — the half-open UTC-day interval
+- **Observatory period (Implemented, ADR-177)** — the half-open UTC-day interval
   `[since, until)` every windowed read shares. Expressed in the URL either as a
   preset (`windowDays=7|30|90`, any other integer clamped to `1..365`) or as an
   inclusive custom range (`from=YYYY-MM-DD&to=YYYY-MM-DD`); `from`/`to` wins when
@@ -39,11 +39,11 @@ Implemented surfaces are `web/lib/queries/observatory.ts`,
   unparsable date drops the custom range and the preset default applies. The
   resolver takes an explicit `now` and produces whole UTC days, so a preset
   window starts at 00:00Z of its first day.
-- **Overview row (Designed, ADR-177)** — one aggregate row per visible project
+- **Overview row (Implemented, ADR-177)** — one aggregate row per visible project
   (plus a totals row, and on the project page one sub-row per `flows.flow_ref_id`
   and per flow-less run kind): tasks in work / taken into work, run counts per
   `run_kind`, and run counts per outcome bucket.
-- **Outcome bucket (Designed, ADR-177)** — the exactly-one classification of a
+- **Outcome bucket (Implemented, ADR-177)** — the exactly-one classification of a
   run into `Queued | Executing | WaitingOnHuman | Review | Crashed | Delivered |
 PrOpen | ResultOnly | Failed | Abandoned`. The in-flight five are
   `WORK_IN_FLIGHT_STAGES` (`web/lib/work/stage.ts`) by name; the settled five
@@ -51,7 +51,7 @@ PrOpen | ResultOnly | Failed | Abandoned`. The in-flight five are
   columns are read from the run's **latest** `workspaces` row (`ORDER BY
 created_at DESC, id ASC LIMIT 1`) — `workspaces.run_id` is not unique. Never
   persisted.
-- **Platform row (Designed, ADR-177)** — the overview row for runs with
+- **Platform row (Implemented, ADR-177)** — the overview row for runs with
   `project_id IS NULL` (today: the Studio assistant scratch run, ADR-097). Read
   only for a global `admin`, rendered only when it holds at least one run in the
   period, and its task cells are empty.
@@ -95,7 +95,7 @@ can still change.
 ## Cost dimension (ADR-087 cost accounting + ADR-101 budget + ADR-117 reconcile/runner)
 
 The cost dimension is read-only and groups derived token/cost rollups by
-project, Flow, and node. **(Designed, ADR-177)** Every cost read is scoped to the
+project, Flow, and node. **(Implemented, ADR-177)** Every cost read is scoped to the
 Observatory period by the joined `runs.started_at ∈ [since, until)` — cost is not
 a lifetime total. It does not read raw prompts, raw adapter lines, env
 values, or secret-bearing payloads. Its source inputs are:
@@ -136,9 +136,11 @@ token totals, two grouped breakdowns over the persisted rollup columns:
   `run_sessions.runner_snapshot` (not the catalog FK), so a deleted runner row
   never erases historical attribution. Cost with no matching `run_sessions` row
   buckets under `"unknown"`.
-- **`byFlow` (Designed, ADR-177)** — keyed by `flows.flow_ref_id` joined from
+- **`byFlow` (Implemented, ADR-177)** — keyed by `flows.flow_ref_id` joined from
   `run_cost_rollups.flow_id`, with `scratch` and `agent` pseudo-rows carrying the
-  flow-less kinds. Sorted like the other two (totalTokens desc, then key).
+  flow-less kinds, and an `"unknown"` row for a flow run whose `flows` row is
+  gone — attribution is never erased by a deleted catalog row. Sorted like the
+  other two (totalTokens desc, then key).
 
 **Conditional by-runner precision.** The multi-runner split is _exact_ only when
 a flow declares multiple logical sessions (distinct `sessionName` per node →
@@ -204,7 +206,7 @@ interface ObservatoryCostSummary {
   // projectCount, flowCount, nodeCount)…
   byModel: CostDimensionRow[]; // sorted by totalTokens desc, then key
   byRunner: CostDimensionRow[]; // sorted by totalTokens desc, then key
-  byFlow: CostDimensionRow[]; // (Designed, ADR-177) flow_ref_id + scratch/agent
+  byFlow: CostDimensionRow[]; // (Implemented, ADR-177) flow_ref_id + scratch/agent
 }
 ```
 
@@ -481,7 +483,7 @@ flowchart TD
   the WARN rung (no domain event), and MUST stay read-only (no actions, EN+RU
   labels).
 
-## Overview read model (Designed, ADR-177)
+## Overview read model (Implemented, ADR-177)
 
 The overview answers, for one period, **what was launched per project, where it
 is now, and what came out**. It is `getObservatoryOverview` in
@@ -510,9 +512,12 @@ values, never the requested ones.
   their own kind.
 - **Tasks in work in the period**: a task with ≥ 1 `flow` run whose in-work
   interval `[started_at, settled_at)` overlaps the period, i.e.
-  `started_at < until AND (status ∉ {Done, Failed, Abandoned} OR ended_at >=
-since)`. `Review` and `Crashed` carry an `ended_at` but are **not** settled — a
-  crashed run owes a recover/discard decision and a Review run awaits promotion.
+  `started_at < until AND (status ∉ {Done, Failed, Abandoned} OR ended_at IS
+NULL OR ended_at >= since)`. `Review` and `Crashed` carry an `ended_at` but are
+  **not** settled — a crashed run owes a recover/discard decision and a Review
+  run awaits promotion. The `ended_at IS NULL` arm keeps a settled run that
+  carries no end timestamp OPEN: we cannot prove when it settled, and claiming
+  it settled before `since` would silently drop the task from the period.
 - **Tasks taken into work in the period**: tasks whose `min(runs.started_at)`
   over their flow runs falls inside the period. No new column: `tasks.status =
 'InFlight'` is written in the launching run's insert transaction
@@ -564,8 +569,11 @@ by name, so the Desk and the Observatory never disagree on a word.
 
 Rows are the caller's visible projects (`getVisibleProjects`) sorted by name,
 plus a totals row. The **Platform row** aggregates `project_id IS NULL` runs and
-is read ONLY when the caller's `globalRole === "admin"`; it never widens the
-project scope of any other query and its task cells stay empty. On the project
+is read ONLY when the caller's `globalRole === "admin"` AND no `project=` filter
+is in effect — a Platform row beside a single-project view answers a question
+the reader did not ask. It never widens the project scope of any other query,
+and its task cells stay empty, as do every sub-row's: the breakdown splits runs
+by flow and kind, and tasks are counted per project only. On the project
 page the row is followed by one sub-row per `flows.flow_ref_id` plus `scratch`
 and `agent` sub-rows.
 
@@ -575,6 +583,13 @@ Every numeric run cell links to `/runs?project=&from=&to=&kind=&bucket=` and its
 count MUST equal that page's `totalRows` for the same params. The guarantee has
 two halves: the same day-aligned bounds (D1) and the same bucket fragment (D3).
 Task cells link to the project board instead.
+
+The one cell class that does NOT link is a **per-flow sub-row**: the ledger has
+no flow filter, so such a link would open a list holding every flow's runs in
+that bucket — a number that disagrees with the cell it came from. A cell whose
+count the ledger cannot reproduce opens nothing rather than a wrong list. The
+`scratch` / `agent` sub-rows link normally, because `kind=` narrows them
+exactly.
 
 ## Implemented: agentization and run-kind scope (ADR-134)
 
@@ -658,17 +673,17 @@ labels and states. The complete calculation and test contract are in
   never exceeds wall-clock run time.
 - Delivery attribution (ADR-134) MUST classify by `run_kind` and agent
   identity without altering any underlying metric definition.
-- **(Designed, ADR-177)** The shared `runOutcomeBucketSql` fragment MUST be the
+- **(Implemented, ADR-177)** The shared `runOutcomeBucketSql` fragment MUST be the
   only run-outcome classifier: the overview `GROUP BY` and the `/runs` `bucket`
   predicate use it, and no second TS-side classification exists.
-- **(Designed, ADR-177)** `BUCKET_BY_RUN_STATUS` MUST be declared `satisfies
+- **(Implemented, ADR-177)** `BUCKET_BY_RUN_STATUS` MUST be declared `satisfies
 Record<RunStatus, RunOutcomeBucket>`, so a new `runs.status` value is a compile
   error rather than an unbucketed run.
-- **(Designed, ADR-177)** The project-less (`project_id IS NULL`) group MUST be
+- **(Implemented, ADR-177)** The project-less (`project_id IS NULL`) group MUST be
   read only when the caller's `globalRole === "admin"`.
-- **(Designed, ADR-177)** The overview MUST issue a fixed number of queries
+- **(Implemented, ADR-177)** The overview MUST issue a fixed number of queries
   independent of the project count.
-- **(Designed, ADR-177)** Period helpers MUST take an explicit `now` and produce
+- **(Implemented, ADR-177)** Period helpers MUST take an explicit `now` and produce
   whole UTC days (`[startOfUtcDay(...), startOfUtcDay(...) + 1 day)`).
 
 ## Edge cases
@@ -696,25 +711,25 @@ Record<RunStatus, RunOutcomeBucket>`, so a new `runs.status` value is a compile
   revisions; a gate present in only one revision still appears, with its firing
   stats from the runs that declared it. A manifest that fails to parse skips
   that revision with a WARN and the coverage map omits it.
-- **(Designed, ADR-177)** A `Done` + `pull_request` run whose `pr_state` is NULL
+- **(Implemented, ADR-177)** A `Done` + `pull_request` run whose `pr_state` is NULL
   (the `pr_state_scan` job has not read it yet) buckets as `PrOpen`, not as
   `Delivered` — an unscanned PR is not evidence of a merge.
-- **(Designed, ADR-177)** A `Review` or `Crashed` run whose workspace carries
+- **(Implemented, ADR-177)** A `Review` or `Crashed` run whose workspace carries
   `removed_at` buckets as `Abandoned`: the work product is gone and the run
   cannot be relaunched from it.
-- **(Designed, ADR-177)** A run with several `workspaces` rows classifies by the
+- **(Implemented, ADR-177)** A run with several `workspaces` rows classifies by the
   newest (`created_at DESC, id ASC`) — an older promoted row does not outvote a
   newer removed one.
-- **(Designed, ADR-177)** Project-less runs are aggregated into the Platform row
+- **(Implemented, ADR-177)** Project-less runs are aggregated into the Platform row
   for global admins and are simply absent for everyone else; they never appear
   inside a project row.
-- **(Designed, ADR-177)** A requested period longer than 365 days is clamped by
+- **(Implemented, ADR-177)** A requested period longer than 365 days is clamped by
   moving `since` forward; the filter bar renders the clamped values, so the page
   never implies it read data it did not.
-- **(Designed, ADR-177)** Agentization over a period the `repo_delivery_rollups`
+- **(Implemented, ADR-177)** Agentization over a period the `repo_delivery_rollups`
   cache does not reach (`REPO_DELIVERY_WINDOW_DAYS = 365`) keeps its existing
   "insufficient" state — the period never fabricates a denominator.
-- **(Designed, ADR-177)** `from > to` or an unparsable date is not an error: the
+- **(Implemented, ADR-177)** `from > to` or an unparsable date is not an error: the
   custom range is dropped, the preset default applies, and the bar shows what was
   actually used.
 

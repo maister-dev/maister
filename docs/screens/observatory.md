@@ -6,7 +6,8 @@ Routes: `/observatory` and `/projects/{slug}/observatory`.
 
 Status: existing process/cost Observatory and the ADR-134 agentization,
 run-kind segment, funnel, and scope labels are Implemented. The ADR-177 overview
-table, period model, URL view axis, and auto-apply filter bar are **(Designed)**.
+table, period model, URL view axis, and auto-apply filter bar are
+**Implemented**.
 
 Sources: `web/app/(app)/observatory/page.tsx`,
 `web/app/(app)/projects/[slug]/observatory/page.tsx`, and
@@ -32,7 +33,7 @@ The project board links to its project Observatory. The portfolio route can
 narrow to a project; flow and node drill-down links preserve the current
 window and valid `runKind` segment.
 
-**(Designed, ADR-177)** Both routes carry a **view axis** in the URL:
+**(Implemented, ADR-177)** Both routes carry a **view axis** in the URL:
 `?view=overview|cost|quality|harness`, default `overview`. A link that carries
 `flowId`, `nodeId`, `artifactKind` or `artifactDefId` **without** `view` defaults
 to `quality`, so pre-existing drill-down links land where their filters apply.
@@ -56,7 +57,7 @@ flowchart LR
 
 ## Layout & regions
 
-Page order on both routes **(Designed, ADR-177)**: header → filter bar → view
+Page order on both routes **(Implemented, ADR-177)**: header → filter bar → view
 tabs → the selected view. The filter bar is mounted **once, above** the view
 switch, so text typed but not yet committed survives a view change.
 
@@ -67,23 +68,31 @@ switch, so text typed but not yet committed survives a view change.
 | Quality | correction tiles; per-project quality table; node heatmap; Autonomy Score; Signals; Artifacts | correction tiles; per-flow quality table; heatmap; Autonomy Score; Signals; Artifacts; node drill-down |
 | Harness | Sensor firing, Control effectiveness, Coverage map | same |
 
-### Overview table (Designed)
+### Overview table (Implemented)
 
 Column groups, left to right: **Project** · **Tasks** (in work, taken into work)
 · **Runs** (flow, scratch, agent) · **In flight** (queued, executing, waiting on
 human, review, crashed) · **Settled** (delivered, PR open, result only, failed,
 abandoned). Then a totals row, and — for a global admin with at least one
-project-less run in the period — a **Platform** row whose task cells are empty.
+project-less run in the period and no `project=` filter in effect — a
+**Platform** row whose task cells are empty. Sub-rows leave their task cells
+empty too: the breakdown splits runs, not tasks.
 
 The table does **not** drop columns responsively: it lives in one
 `overflow-x-auto` container with a `min-w-[…]`, so the page itself never scrolls
 horizontally and no `<th>`/`<td>` pair can fall out of step. A `live` band marks
 a table holding at least one in-flight run (the existing `volatile` convention).
 
+Every numeric run cell is a link into the ledger, filtered to exactly that cell.
+The exception is a per-flow sub-row on the project page: the ledger cannot filter
+by flow, so those cells stay plain numbers rather than opening a list whose count
+would differ (see [`../system-analytics/observatory.md`](../system-analytics/observatory.md)
+→ "Count = list").
+
 Below it sits the **compact cost strip**: the period token total, the top three
 models / runners / flows, and a link to the Cost view.
 
-### Filter bar (Designed)
+### Filter bar (Implemented)
 
 One client-owned bar, **no Apply button**. Fields by view:
 
@@ -145,7 +154,7 @@ No state has a reconcile, fetch, promotion, target, benchmark, A/B, or
 write-back action. Missing/ambiguous PR attribution or unavailable cache stays
 insufficient, never estimated.
 
-**(Designed, ADR-177)** Two additional states:
+**(Implemented, ADR-177)** Two additional states:
 
 - **Pending** — a filter change is in flight. The bar sets `aria-busy` and shows
   a text-plus-color indicator until the server component has re-rendered; the
@@ -162,7 +171,7 @@ repository scanner alone fetches and writes its cache; no public page API is
 introduced. See [`../system-analytics/observatory.md`](../system-analytics/observatory.md)
 and [`../system-analytics/scheduler.md`](../system-analytics/scheduler.md).
 
-**(Designed, ADR-177)** The overview adds `getObservatoryOverview`
+**(Implemented, ADR-177)** The overview adds `getObservatoryOverview`
 (`web/lib/queries/observatory-overview.ts`): two grouped SELECTs on the portfolio
 — runs by `(project_id, run_kind, bucket)` and tasks by `project_id` — plus one
 more on the project route for the per-flow / per-kind sub-rows. The query count is
@@ -175,7 +184,8 @@ route, no migration, no index.
 scope, freshness, insufficiency, volatility, kind, and not-applicable label;
 the parity test requires matching key sets.
 
-**(Designed, ADR-177)** New families: `observatory.views.*` (four view names),
+**(Implemented, ADR-177)** New families: `observatory.views.*` (the four view
+names plus the tablist's accessible `label`),
 `observatory.period.*` (presets, from/to, clamped, pending), `observatory.overview.*`
 (title, column groups, project/platform/total, empty, live hint, open-in-ledger),
 `observatory.cost.byFlowTitle` + `observatory.cost.periodScoped` (replacing

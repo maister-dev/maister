@@ -120,7 +120,7 @@ Two controls are intentionally **not** `Tabs`, but share its tokens:
   same `line` / `amber-soft` / `amber` / `ivory` tokens. Treat them as a toolbar
   toggle group, not page navigation.
 
-## Auto-apply filter bar (Designed — first consumer: Observatory)
+## Auto-apply filter bar (Implemented — first consumer: Observatory)
 
 A filter bar whose controls take effect the moment they change, with **no Apply
 button**. Locked by
@@ -137,6 +137,11 @@ own task. Do not convert a bar to this pattern in passing.
   `useTransition`.** `replace`, not `push`, so a slider of intermediate filter
   states does not fill the history stack; `scroll: false` so the page does not
   jump to the top on every keystroke-free change.
+  **Consequence, stated plainly:** because `replace` overwrites the current
+  history entry, Back does NOT step through previous filter states — it leaves
+  the page. That is the trade `replace` buys. A control that SHOULD be
+  history-navigable (a view tab, say) belongs in a `<Link>` instead, which
+  pushes; the Observatory's view tabs do exactly that.
 - **Commit on `change` for presets, selects and date inputs; on blur or Enter
   for free text.** A free-text field that committed per keystroke would issue one
   server round-trip per character.
@@ -148,9 +153,12 @@ own task. Do not convert a bar to this pattern in passing.
   an empty param is a different URL for the same page.
 - **Mount the bar once, above any view switch.** If the bar re-mounts when the
   view changes, text typed but not yet committed is lost.
-- **Every control has a visible `<label>`** (or an `aria-label` where the group
-  heading carries the name), and the bar keeps working without JavaScript
-  wherever the surface already had a GET form to fall back to.
+- **Every control has a visible `<label>`** (or, for a grouped control like a
+  preset track, a `<fieldset>` whose `<legend>` names the group).
+- **This pattern requires JavaScript.** It replaces a GET form rather than
+  enhancing one, so a surface that must work without JS keeps its form. The
+  Observatory is a read-only view where that trade is acceptable; weigh it
+  before adopting the pattern elsewhere.
 
 ### Where this is used
 
@@ -198,6 +206,6 @@ extraction; until then this convention is the contract.)
 - `Tabs` — `board/project-tabs.tsx`, `workbench/workbench-tabs.tsx`,
   `studio/package-tabs.tsx`, `runs/run-inspector.tsx`,
   `portfolio/density-toggle.tsx`, `observatory/observatory-views.tsx`.
-- Auto-apply filter bar — `observatory/observatory-filter-bar.tsx` (Designed).
+- Auto-apply filter bar — `observatory/observatory-filter-bar.tsx`.
 - Chip + Card conventions — used app-wide; see the source list above for
   representative examples.
