@@ -25,6 +25,7 @@ import {
   trustPackageRevision,
   upgradeAttachment,
 } from "@/lib/packages/attach";
+import { resolveBindTarget } from "@/lib/mcp/binding-service";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -108,11 +109,14 @@ beforeAll(async () => {
   });
 }, 180_000);
 
+// Temp package roots created by individual cases; removed with the shared ones.
+const dirsToClean: string[] = [];
+
 afterAll(async () => {
   if (originalHome === undefined) delete process.env.HOME;
   else process.env.HOME = originalHome;
   await testDatabase?.stop();
-  for (const dir of [homeDir, workspaceRoot, pkgV1, pkgV2]) {
+  for (const dir of [homeDir, workspaceRoot, pkgV1, pkgV2, ...dirsToClean]) {
     if (dir) await rm(dir, { recursive: true, force: true });
   }
 });
@@ -760,6 +764,207 @@ nodes:
       "att-protect",
       "skill-one",
     ]);
+  });
+});
+
+// ADR-177 (D27/D34/D18): the manifest value model at the ingestion seam.
+describe("package mcps[] value model (ADR-177)", () => {
+  async function attachWithMcp(
+    slug: string,
+    mcpYaml: string,
+    version: string,
+  ): Promise<{ projectId: string; installId: string }> {
+    const root = await mkdtemp(join(tmpdir(), `attach-mcpv-${slug}-`));
+
+    dirsToClean.push(root);
+    await mkdir(join(root, "flows/f"), { recursive: true });
+    await writeFile(join(root, "flows/f/flow.yaml"), FLOW_YAML("f"));
+    await writeFile(
+      join(root, "maister-package.yaml"),
+      `schemaVersion: 1\nname: mcpv-${slug}\nflows:\n  - { id: f, path: flows/f }\nmcps:\n${mcpYaml}`,
+    );
+
+    const install = await installPackageRevision({
+      source: root,
+      version,
+      trustStatus: "trusted_by_policy",
+      db,
+    });
+    const projectId = await seedProject(`mcpv-${slug}`);
+
+    await attachPackage({
+      projectId,
+      projectSlug: `mcpv-${slug}`,
+      packageInstallId: install.id,
+      workspaceRoot,
+      db,
+    });
+
+    return { projectId, installId: install.id };
+  }
+
+  async function mcpMaterial(
+    projectId: string,
+    refId: string,
+  ): Promise<Record<string, unknown>> {
+    const rows = await db
+      .select()
+      .from(schema.capabilityRecords)
+      .where(
+        and(
+          eq(schema.capabilityRecords.projectId, projectId),
+          eq(schema.capabilityRecords.capabilityRefId, refId),
+        ),
+      );
+
+    return rows[0]!.material as Record<string, unknown>;
+  }
+
+  it("produces IDENTICAL material from the legacy list and the map form", async () => {
+    const listPkg = await attachWithMcp(
+      "list",
+      `  - { id: m, transport: stdio, command: npx, env: ["env:ATT_TOKEN"] }\n`,
+      "mcpv-list/v1.0.0",
+    );
+    const mapPkg = await attachWithMcp(
+      "map",
+      `  - id: m\n    transport: stdio\n    command: npx\n    env:\n      ATT_TOKEN: env:ATT_TOKEN\n`,
+      "mcpv-map/v1.0.0",
+    );
+
+    const fromList = await mcpMaterial(listPkg.projectId, "m");
+    const fromMap = await mcpMaterial(mapPkg.projectId, "m");
+
+    expect(fromList.env).toEqual({ ATT_TOKEN: "env:ATT_TOKEN" });
+    expect(fromList.env).toEqual(fromMap.env);
+  });
+
+  it("lands headers + bearerTokenEnv in material, and caches readiness", async () => {
+    const { projectId } = await attachWithMcp(
+      "http",
+      `  - id: m\n    transport: http\n    url: "https://mcp.example.com"\n    headers:\n      X-Tenant: acme\n    bearerTokenEnv: env:MCPV_ABSENT_SENTINEL\n`,
+      "mcpv-http/v1.0.0",
+    );
+    const material = await mcpMaterial(projectId, "m");
+
+    expect(material.headers).toEqual({ "X-Tenant": "acme" });
+    expect(material.bearerTokenEnv).toBe("env:MCPV_ABSENT_SENTINEL");
+    // D18: the write-time cache exists on a package row too. The host is not
+    // reachable in this suite, so the honest verdict is Unknown — what matters
+    // is that the field is WRITTEN and readable, not which value it holds.
+    expect(material.readiness).toBeDefined();
+    expect((material.readiness as { status: string }).status).toMatch(
+      /Unknown|NotReady|Ready/,
+    );
+  });
+
+  it("gives a package TEMPLATE its slots — the C10 defect closes by construction", async () => {
+    const { projectId } = await attachWithMcp(
+      "slots",
+      `  - id: m\n    transport: stdio\n    command: npx\n    env:\n      ATT_TOKEN: env:ATT_TOKEN\n      GH_HOST: github.com\n`,
+      "mcpv-slots/v1.0.0",
+    );
+    const rows = await db
+      .select()
+      .from(schema.capabilityRecords)
+      .where(
+        and(
+          eq(schema.capabilityRecords.projectId, projectId),
+          eq(schema.capabilityRecords.capabilityRefId, "m"),
+        ),
+      );
+    const target = await resolveBindTarget(
+      { execute: (q: never) => db.execute(q) } as never,
+      projectId,
+      "package",
+      rows[0]!.id,
+    );
+
+    // Before ADR-177 this read the name-list field a template never wrote, so
+    // an overlay against a template could name no slot at all.
+    expect(target?.slots.env.sort()).toEqual(["ATT_TOKEN", "GH_HOST"]);
+  });
+
+  it("rebuilds material on upgrade — a dropped headers block leaves nothing behind (SET/CLEAR/re-SET)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "attach-mcpv-upg-"));
+
+    dirsToClean.push(root);
+    await mkdir(join(root, "flows/f"), { recursive: true });
+    await writeFile(join(root, "flows/f/flow.yaml"), FLOW_YAML("f"));
+
+    const manifest = (headers: boolean) =>
+      `schemaVersion: 1\nname: mcpv-upg\nflows:\n  - { id: f, path: flows/f }\nmcps:\n  - id: m\n    transport: http\n    url: "https://mcp.example.com"\n${
+        headers ? `    headers:\n      X-Tenant: acme\n` : ""
+      }`;
+
+    // SET
+    await writeFile(join(root, "maister-package.yaml"), manifest(true));
+    const v1 = await installPackageRevision({
+      source: root,
+      version: "mcpv-upg/v1.0.0",
+      trustStatus: "trusted_by_policy",
+      db,
+    });
+    const projectId = await seedProject("mcpv-upg");
+    const attached = await attachPackage({
+      projectId,
+      projectSlug: "mcpv-upg",
+      packageInstallId: v1.id,
+      workspaceRoot,
+      db,
+    });
+
+    expect(attached).not.toBeNull();
+    expect((await mcpMaterial(projectId, "m")).headers).toEqual({
+      "X-Tenant": "acme",
+    });
+
+    // CLEAR — the next version drops the block.
+    await writeFile(join(root, "maister-package.yaml"), manifest(false));
+    const v2 = await installPackageRevision({
+      source: root,
+      version: "mcpv-upg/v2.0.0",
+      trustStatus: "trusted_by_policy",
+      db,
+    });
+
+    // `upgradeAttachment` keys on the ATTACHMENT; without it, it returns null
+    // and does nothing — assert the result so a silent no-op cannot pass.
+    expect(
+      await upgradeAttachment({
+        projectId,
+        projectSlug: "mcpv-upg",
+        attachmentId: attached!.attachmentId,
+        packageInstallId: v2.id,
+        workspaceRoot,
+        db,
+      }),
+    ).toMatchObject({ upgraded: true });
+    // A write loop that skipped absent fields would leave the v1 header here.
+    expect((await mcpMaterial(projectId, "m")).headers).toEqual({});
+
+    // re-SET
+    await writeFile(join(root, "maister-package.yaml"), manifest(true));
+    const v3 = await installPackageRevision({
+      source: root,
+      version: "mcpv-upg/v3.0.0",
+      trustStatus: "trusted_by_policy",
+      db,
+    });
+
+    expect(
+      await upgradeAttachment({
+        projectId,
+        projectSlug: "mcpv-upg",
+        attachmentId: attached!.attachmentId,
+        packageInstallId: v3.id,
+        workspaceRoot,
+        db,
+      }),
+    ).toMatchObject({ upgraded: true });
+    expect((await mcpMaterial(projectId, "m")).headers).toEqual({
+      "X-Tenant": "acme",
+    });
   });
 });
 
