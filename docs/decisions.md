@@ -218,6 +218,7 @@ validate:docs` enforces stub ↔ body equality and the file bijection.
 | [ADR-174](#adr-174-the-desk-renders-one-object-per-work-item) | The Desk renders one object per work item | Accepted | 2026-09-17 |
 | [ADR-175](#adr-175-operator-recover-of-a-crashed-agent-node-re-enters-the-flow-graph) | Operator Recover of a crashed agent node re-enters the flow graph | Accepted; amended by ADR-176 | 2026-09-18 |
 | [ADR-176](#adr-176-automated-crash-recover-re-entry--the-flow-continuation-worker-owns-the-committed-intent-under-a-bounded-per-run-budget) | Automated crash-recover re-entry — the flow continuation worker owns the committed intent under a bounded per-run budget | Implemented | 2026-09-21 |
+| [ADR-178](#adr-178-observatory-overview-table-day-aligned-period-url-views-and-auto-apply-filters) | Observatory overview table, day-aligned period, URL views, and auto-apply filters | Implemented (2026-09-21) | 2026-09-21 |
 
 ---
 
@@ -1800,6 +1801,15 @@ application surfaces as its own reason. Amends ADR-175 (Recover declines and
 supersedes a `turn_lost` result) and ADR-033.
 
 Full record: [`decisions/adr-177.md`](decisions/adr-177.md)
+
+---
+
+### ADR-178: Observatory overview table, day-aligned period, URL views, and auto-apply filters
+
+**Status:** Implemented (2026-09-21)
+**Date:** 2026-09-21
+
+Full record: [`decisions/adr-178.md`](decisions/adr-178.md)
 
 ---
 

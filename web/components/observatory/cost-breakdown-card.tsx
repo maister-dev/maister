@@ -14,6 +14,7 @@ export function CostBreakdownCard({
   labels,
   locale,
   testId,
+  keyLabels,
 }: CostBreakdownCardProps): ReactElement {
   const cost = labels.costBreakdown;
 
@@ -57,7 +58,7 @@ export function CostBreakdownCard({
                   className="border-b border-line/60 last:border-b-0"
                 >
                   <td className="py-2 pr-3 font-mono text-xs text-ink">
-                    {dimensionRow.label}
+                    {keyLabels?.[dimensionRow.key] ?? dimensionRow.label}
                   </td>
                   <td className="py-2 pr-3 text-right font-mono text-xs text-body">
                     {formatTokens(locale, dimensionRow.inputTokens)}

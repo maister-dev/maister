@@ -1,8 +1,26 @@
+import type { DeliveryRunKind } from "@/lib/observatory/run-kind";
 import type { getTranslations } from "next-intl/server";
 import type { ObservatoryLabels } from "@/components/observatory/types";
+import type { RunOutcomeBucket } from "@/lib/runs/outcome-bucket";
 
+import { DELIVERY_RUN_KINDS } from "@/lib/observatory/run-kind";
+import { RUN_OUTCOME_BUCKETS } from "@/lib/runs/outcome-bucket";
+
+type Translator = Awaited<ReturnType<typeof getTranslations>>;
+
+/**
+ * `tBucket` and `tKind` are the TOP-LEVEL `runBucket` / `runKind` namespaces,
+ * not `observatory.*` subtrees: the `/runs` ledger renders the same ten bucket
+ * names and the same three kind names from the same keys, and a second copy
+ * under `observatory.*` is how two surfaces end up disagreeing about what
+ * "PR open" or "scratch" is called — which is exactly what happened while the
+ * filter bar read `agentization.*` ("Scratch") and the overview table read its
+ * own copy ("Черновой").
+ */
 export function labelsFromTranslations(
-  t: Awaited<ReturnType<typeof getTranslations>>,
+  t: Translator,
+  tBucket: Translator,
+  tKind: Translator,
 ): ObservatoryLabels {
   return {
     title: t("title"),
@@ -33,10 +51,7 @@ export function labelsFromTranslations(
     flowRuns: t("flowRuns"),
     flowLedgerOnly: t("flowLedgerOnly"),
     node: t("node"),
-    lookback: t("lookback"),
-    apply: t("apply"),
     all: t("all"),
-    days: t("days"),
     drillDown: t("drillDown"),
     latestAttempt: t("latestAttempt"),
     historicalAttempts: t("historicalAttempts"),
@@ -103,7 +118,8 @@ export function labelsFromTranslations(
       totalHeader: t("costBreakdown.totalHeader"),
       empty: t("costBreakdown.empty"),
       byKindTitle: t("costBreakdown.byKindTitle"),
-      storedLifetime: t("costBreakdown.storedLifetime"),
+      byFlowTitle: t("costBreakdown.byFlowTitle"),
+      flowHeader: t("costBreakdown.flowHeader"),
     },
     agentization: {
       title: t("agentization.title"),
@@ -115,9 +131,6 @@ export function labelsFromTranslations(
       asOf: t("agentization.asOf"),
       insufficient: t("agentization.insufficient"),
       volatility: t("agentization.volatility"),
-      flow: t("agentization.flow"),
-      scratch: t("agentization.scratch"),
-      agent: t("agentization.agent"),
       trend: t("agentization.trend"),
       trendNoData: t("agentization.trendNoData"),
       trendValue: t("agentization.trendValue"),
@@ -142,5 +155,52 @@ export function labelsFromTranslations(
       abandoned: t("funnel.abandoned"),
       unrecorded: t("funnel.unrecorded"),
     },
+    views: {
+      label: t("views.label"),
+      overview: t("views.overview"),
+      cost: t("views.cost"),
+      quality: t("views.quality"),
+      harness: t("views.harness"),
+    },
+    period: {
+      label: t("period.label"),
+      preset7: t("period.preset7"),
+      preset30: t("period.preset30"),
+      preset90: t("period.preset90"),
+      from: t("period.from"),
+      to: t("period.to"),
+      clamped: t("period.clamped"),
+      pending: t("period.pending"),
+    },
+    overview: {
+      title: t("overview.title"),
+      subtitle: t("overview.subtitle"),
+      project: t("overview.project"),
+      platform: t("overview.platform"),
+      total: t("overview.total"),
+      tasks: t("overview.tasks"),
+      tasksInWork: t("overview.tasksInWork"),
+      tasksStarted: t("overview.tasksStarted"),
+      runs: t("overview.runs"),
+      inFlight: t("overview.inFlight"),
+      settled: t("overview.settled"),
+      empty: t("overview.empty"),
+      openInLedger: t("overview.openInLedger"),
+    },
+    quality: {
+      projectsTitle: t("quality.projectsTitle"),
+      flowsTitle: t("quality.flowsTitle"),
+      project: t("quality.project"),
+      flow: t("quality.flow"),
+      flowRuns: t("quality.flowRuns"),
+      wait: t("quality.wait"),
+    },
+    uncommitted: t("uncommitted"),
+    bucket: Object.fromEntries(
+      RUN_OUTCOME_BUCKETS.map((bucket) => [bucket, tBucket(bucket)]),
+    ) as Record<RunOutcomeBucket, string>,
+    runKindName: Object.fromEntries(
+      DELIVERY_RUN_KINDS.map((kind) => [kind, tKind(kind)]),
+    ) as Record<DeliveryRunKind, string>,
   };
 }

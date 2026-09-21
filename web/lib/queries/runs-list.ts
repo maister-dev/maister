@@ -2,6 +2,7 @@ import "server-only";
 
 import type { AdapterId } from "@/lib/acp-runners/adapter-support";
 import type { GlobalRole, RunKind, RunStatus } from "@/lib/db/schema";
+import type { RunOutcomeBucket } from "@/lib/runs/outcome-bucket";
 import type { SQL } from "drizzle-orm";
 
 import { sql } from "drizzle-orm";
@@ -12,6 +13,12 @@ import {
   GRAPH_ONLY_CUTOVER_REASON,
   GRAPH_ONLY_CUTOVER_SOURCE,
 } from "@/lib/domain-events/cutover";
+import {
+  latestWorkspaceLateralSql,
+  runOutcomeBucketSql,
+  RUN_OUTCOME_BUCKETS,
+} from "@/lib/runs/outcome-bucket";
+import { dateStart, nextDateStart } from "@/lib/utc-day";
 
 export const RUNS_LIST_STATUSES = [
   "Pending",
@@ -37,10 +44,21 @@ export const RUNS_LIST_SOURCES = [
 
 export type RunsListSource = (typeof RUNS_LIST_SOURCES)[number];
 
+// ADR-178 D8: the ledger's run-kind filter. Spelled as its own allow-list so
+// the `oneOf` guard narrows the URL value before it reaches SQL.
+export const RUNS_LIST_KINDS = [
+  "flow",
+  "scratch",
+  "agent",
+] as const satisfies readonly RunKind[];
+
 export type RunsListFilters = {
   agent?: AdapterId;
+  // ADR-178 D8: the Observatory overview's drill-down params.
+  bucket?: RunOutcomeBucket;
   dateFrom?: string;
   dateTo?: string;
+  kind?: RunKind;
   page: number;
   projectSlug?: string;
   source?: RunsListSource;
@@ -179,6 +197,8 @@ export function normalizeRunsListFilters(
     status: oneOf(firstParam(params.status), RUNS_LIST_STATUSES),
     source: oneOf(firstParam(params.source), RUNS_LIST_SOURCES),
     agent: oneOf(firstParam(params.agent), ADAPTER_IDS),
+    kind: oneOf(firstParam(params.kind), RUNS_LIST_KINDS),
+    bucket: oneOf(firstParam(params.bucket), RUN_OUTCOME_BUCKETS),
     dateFrom: validDate(firstParam(params.from)),
     dateTo: validDate(firstParam(params.to)),
   };
@@ -190,18 +210,6 @@ function coerceDate(value: Date | string): Date {
 
 function coerceNullableDate(value: Date | string | null): Date | null {
   return value === null ? null : coerceDate(value);
-}
-
-function dateStart(value: string): Date {
-  return new Date(`${value}T00:00:00.000Z`);
-}
-
-function nextDateStart(value: string): Date {
-  const date = dateStart(value);
-
-  date.setUTCDate(date.getUTCDate() + 1);
-
-  return date;
 }
 
 function visibleProjectsPredicate(user: RunsListUser): SQL {
@@ -267,6 +275,12 @@ function buildRunPredicates(
   if (filters.source) {
     predicates.push(sourcePredicate(filters.source));
   }
+  if (filters.kind) {
+    predicates.push(sql`r.run_kind = ${filters.kind}`);
+  }
+  if (filters.bucket) {
+    predicates.push(sql`${ledgerBucketSql()} = ${filters.bucket}`);
+  }
   if (filters.dateFrom) {
     predicates.push(sql`r.started_at >= ${dateStart(filters.dateFrom)}`);
   }
@@ -275,6 +289,19 @@ function buildRunPredicates(
   }
 
   return predicates;
+}
+
+// ADR-178 D3: the SAME fragment the Observatory overview groups by, over the
+// SAME latest-workspace lateral — so a cell's count equals this page's
+// `totalRows` for identical params, by construction rather than by agreement.
+function ledgerBucketSql(): SQL {
+  return runOutcomeBucketSql({
+    status: sql`r.status`,
+    promotionState: sql`w.promotion_state`,
+    promotionMode: sql`w.promotion_mode`,
+    prState: sql`w.pr_state`,
+    removedAt: sql`w.removed_at`,
+  });
 }
 
 function visibleProjectOptionsQuery(user: RunsListUser): SQL {
@@ -329,13 +356,7 @@ function runsListQuery(args: {
     INNER JOIN projects p ON p.id = r.project_id
     LEFT JOIN tasks t ON t.id = r.task_id
     LEFT JOIN flows f ON f.id = r.flow_id
-    LEFT JOIN LATERAL (
-      SELECT w.branch
-      FROM workspaces w
-      WHERE w.run_id = r.id
-      ORDER BY w.created_at DESC, w.id ASC
-      LIMIT 1
-    ) w ON true
+    ${latestWorkspaceLateralSql("r")}
     LEFT JOIN run_cost_rollups c ON c.run_id = r.id
     LEFT JOIN LATERAL (
       SELECT de.occurred_at AS failed_at
@@ -371,6 +392,7 @@ function runsListCountQuery(args: {
     SELECT count(*) AS total_count
     FROM runs r
     INNER JOIN projects p ON p.id = r.project_id
+    ${args.filters.bucket ? latestWorkspaceLateralSql("r") : sql``}
     LEFT JOIN LATERAL (
       SELECT s.id
       FROM run_schedules s

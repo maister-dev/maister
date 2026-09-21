@@ -1,6 +1,7 @@
-// ADR-117: the portfolio + project Observatory cost tab renders a "By model"
+// ADR-117: the portfolio + project Observatory cost view renders a "By model"
 // and a "By runner" breakdown over the persisted run_cost_rollups jsonb columns,
-// including scratch-run cost. Gated: runs only when :3000 is free (Next 16
+// including scratch-run cost. ADR-178 moves it under `?view=cost` and adds a
+// "By flow" card. Gated: runs only when :3000 is free (Next 16
 // single-dev-server lock); static lint of the spec must always pass.
 
 import { randomUUID } from "node:crypto";
@@ -113,24 +114,36 @@ async function seedCostRuns(): Promise<{ projectSlug: string }> {
 }
 
 test.describe("Observatory cost breakdown (ADR-117)", () => {
-  test("portfolio cost tab shows by-model and by-runner rows incl. scratch cost", async ({
+  test("portfolio cost view shows by-model, by-runner and by-flow rows incl. scratch cost", async ({
     page,
   }) => {
     await seedCostRuns();
 
-    await page.goto("/observatory");
+    await page.goto("/observatory?view=cost");
 
     const byRunner = page.getByTestId("observatory-cost-by-runner");
     const byModel = page.getByTestId("observatory-cost-by-model");
+    const byFlow = page.getByTestId("observatory-cost-by-flow");
 
     await expect(byRunner).toBeVisible();
     await expect(byModel).toBeVisible();
+    await expect(byFlow).toBeVisible();
 
     // Both runner buckets render; the scratch run's runner (RUNNER_A) is summed
     // alongside the flow run's, so the by-runner card includes it.
     await expect(byRunner.getByText(RUNNER_A, { exact: true })).toBeVisible();
     await expect(byRunner.getByText(RUNNER_B, { exact: true })).toBeVisible();
     await expect(byModel.getByText("gpt-5", { exact: true })).toBeVisible();
+    // ADR-178 D5: flow-less kinds get their own pseudo-row, LABELLED — the
+    // card renders `keyLabels[key] ?? label`, so a pseudo-row shows the
+    // translated run-kind name while a real flow row falls back to its raw
+    // `flowRefId`. Asserting the bare key here would pin an untranslated cell
+    // that EN/RU parity forbids.
+    await expect(byFlow.getByText("Scratch", { exact: true })).toBeVisible();
+    // The "stored lifetime" caveat is gone; the view states the period.
+    await expect(
+      page.getByText(/Token totals for the selected period/i),
+    ).toBeVisible();
   });
 
   test("project cost section renders the breakdown tables", async ({
@@ -138,9 +151,10 @@ test.describe("Observatory cost breakdown (ADR-117)", () => {
   }) => {
     const { projectSlug } = await seedCostRuns();
 
-    await page.goto(`/projects/${projectSlug}/observatory`);
+    await page.goto(`/projects/${projectSlug}/observatory?view=cost`);
 
     await expect(page.getByTestId("observatory-cost-by-runner")).toBeVisible();
+    await expect(page.getByTestId("observatory-cost-by-flow")).toBeVisible();
     await expect(
       page
         .getByTestId("observatory-cost-by-runner")

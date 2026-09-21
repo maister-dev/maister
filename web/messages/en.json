@@ -972,7 +972,11 @@
       "from": "From",
       "to": "To",
       "apply": "Apply",
-      "reset": "Reset"
+      "reset": "Reset",
+      "kind": "Run kind",
+      "allKinds": "All kinds",
+      "bucket": "Outcome",
+      "allBuckets": "All outcomes"
     },
     "table": {
       "title": "Run history",
@@ -1039,10 +1043,8 @@
     "flowRuns": "Flow runs",
     "flowLedgerOnly": "Not applicable — flow ledger only.",
     "node": "Node",
-    "lookback": "Lookback",
-    "apply": "Apply",
     "all": "All",
-    "days": "days",
+    "uncommitted": "Not applied — press Enter",
     "drillDown": "Drill down",
     "latestAttempt": "Latest attempt",
     "historicalAttempts": "Latest attempt by run",
@@ -1054,8 +1056,6 @@
       "rework": "rework"
     },
     "cost": {
-      "tabsLabel": "Observatory dimensions",
-      "tab": "Cost",
       "title": "Cost",
       "subtitle": "Read-only token and resume-tax rollups by project, flow, and node.",
       "readOnly": "Read-only",
@@ -1065,7 +1065,8 @@
       "resumeTax": "Resume tax",
       "projects": "{count} projects",
       "flows": "{count} flows",
-      "nodes": "{count} nodes"
+      "nodes": "{count} nodes",
+      "periodScoped": "Token totals for the selected period."
     },
     "budget": {
       "title": "Budget pressure",
@@ -1088,7 +1089,8 @@
       "totalHeader": "Total",
       "empty": "No cost recorded in this window",
       "byKindTitle": "By run kind",
-      "storedLifetime": "Stored lifetime cost; lookback does not filter token rollups."
+      "byFlowTitle": "By flow",
+      "flowHeader": "Flow"
     },
     "agentization": {
       "title": "Agentization",
@@ -1100,9 +1102,6 @@
       "asOf": "As of",
       "insufficient": "Insufficient delivery evidence",
       "volatility": "Active runs may still ship delivery.",
-      "flow": "Flow",
-      "scratch": "Scratch",
-      "agent": "Agent",
       "trend": "Daily trend",
       "trendNoData": "No daily delivery evidence in this window.",
       "trendValue": "MAIster share",
@@ -1161,6 +1160,47 @@
       "withCapability": "with",
       "withoutCapability": "without",
       "noCapabilities": "No runs with a resolved capability set."
+    },
+    "views": {
+      "label": "Observatory views",
+      "overview": "Overview",
+      "cost": "Cost",
+      "quality": "Quality",
+      "harness": "Harness"
+    },
+    "period": {
+      "label": "Period",
+      "preset7": "7d",
+      "preset30": "30d",
+      "preset90": "90d",
+      "from": "From",
+      "to": "To",
+      "clamped": "Range clamped to 365 days",
+      "pending": "Updating…"
+    },
+    "overview": {
+      "title": "Launched work",
+      "subtitle": "What was launched in the period, where it is now, and what came out.",
+      "project": "Project",
+      "platform": "Platform",
+      "total": "Total",
+      "tasks": "Tasks",
+      "tasksInWork": "In work",
+      "tasksStarted": "Taken into work",
+      "runs": "Runs",
+      "inFlight": "In flight",
+      "settled": "Settled",
+      "empty": "No runs in this period.",
+      "liveHint": "live · {count} runs still active",
+      "openInLedger": "Open in the runs ledger"
+    },
+    "quality": {
+      "projectsTitle": "By project",
+      "flowsTitle": "By flow",
+      "project": "Project",
+      "flow": "Flow",
+      "flowRuns": "Flow runs",
+      "wait": "Wait"
     }
   },
   "scratch": {
@@ -4897,5 +4937,22 @@
     "triggerDigest": "A catch-up digest, at most twice a day",
     "triggersNote": "Deltas and digests only — never one notification per event.",
     "otherBrowsers": "$count other browser(s) registered"
+  },
+  "runKind": {
+    "flow": "Flow",
+    "scratch": "Scratch",
+    "agent": "Agent"
+  },
+  "runBucket": {
+    "Queued": "Queued",
+    "Executing": "Executing",
+    "WaitingOnHuman": "Waiting on a human",
+    "Review": "Review",
+    "Crashed": "Crashed",
+    "Delivered": "Delivered",
+    "PrOpen": "PR open",
+    "ResultOnly": "Result only",
+    "Failed": "Failed",
+    "Abandoned": "Abandoned"
   }
 }

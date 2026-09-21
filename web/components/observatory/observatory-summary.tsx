@@ -16,6 +16,7 @@ import { isFlowLedgerApplicable } from "@/lib/observatory/run-kind";
 export function ObservatorySummary({
   data,
   labels,
+  period,
   projectSlug,
   runKind = "all",
 }: ObservatoryDashboardProps): ReactElement {
@@ -26,8 +27,8 @@ export function ObservatorySummary({
   const correction = data.totals.correction;
 
   return (
-    <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
-      <section className="grid grid-cols-1 gap-4">
+    <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
+      <section className="grid grid-cols-1 items-start gap-4">
         <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
           <MetricTile
             label={`${labels.correctionRate} · ${labels.flowRuns}`}
@@ -46,14 +47,16 @@ export function ObservatorySummary({
         <CorrectionHeatmap
           labels={labels}
           nodes={data.nodes}
+          period={period}
           projectSlug={projectSlug}
           runKind={runKind}
         />
       </section>
-      <aside className="grid grid-cols-1 gap-4">
+      <aside className="grid grid-cols-1 items-start gap-4">
         <AutonomyScoreCard autonomy={data.totals.autonomy} labels={labels} />
         <SignalClusterList
           labels={labels}
+          period={period}
           projectSlug={projectSlug}
           runKind={runKind}
           signals={data.topSignals}

@@ -10,6 +10,7 @@ import { Pool } from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import * as schema from "@/lib/db/schema";
+import { withQueryCount } from "@/test-support/query-count";
 import { getProjectAgentization } from "@/lib/queries/observatory-agentization";
 import { getProjectObservatory } from "@/lib/queries/observatory";
 
@@ -160,32 +161,4 @@ async function seedBudgetEvent(
     payload: { reason },
     occurredAt: NOW,
   });
-}
-
-function withQueryCount(database: NodePgDatabase<typeof schema>): {
-  db: NodePgDatabase<typeof schema>;
-  count: () => number;
-} {
-  let statements = 0;
-
-  return {
-    db: new Proxy(database, {
-      get(target, prop, receiver) {
-        if (prop === "select") {
-          const select = Reflect.get(target, prop, receiver) as unknown as (
-            ...args: unknown[]
-          ) => unknown;
-
-          return (...args: unknown[]) => {
-            statements += 1;
-
-            return select.apply(target, args);
-          };
-        }
-
-        return Reflect.get(target, prop, receiver);
-      },
-    }) as NodePgDatabase<typeof schema>,
-    count: () => statements,
-  };
 }

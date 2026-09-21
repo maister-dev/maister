@@ -972,7 +972,11 @@
       "from": "С",
       "to": "По",
       "apply": "Применить",
-      "reset": "Сбросить"
+      "reset": "Сбросить",
+      "kind": "Тип run-а",
+      "allKinds": "Все типы",
+      "bucket": "Исход",
+      "allBuckets": "Все исходы"
     },
     "table": {
       "title": "История run-ов",
@@ -1039,10 +1043,8 @@
     "flowRuns": "Flow run-ы",
     "flowLedgerOnly": "Неприменимо — только flow ledger.",
     "node": "Нода",
-    "lookback": "Окно",
-    "apply": "Применить",
     "all": "Все",
-    "days": "дней",
+    "uncommitted": "Не применено — нажмите Enter",
     "drillDown": "Детали",
     "latestAttempt": "Последняя попытка",
     "historicalAttempts": "Последняя попытка по run-у",
@@ -1054,8 +1056,6 @@
       "rework": "доработка"
     },
     "cost": {
-      "tabsLabel": "Измерения Обсерватории",
-      "tab": "Стоимость",
       "title": "Стоимость",
       "subtitle": "Read-only rollup токенов и resume-tax по проектам, flow и узлам.",
       "readOnly": "Read-only",
@@ -1065,7 +1065,8 @@
       "resumeTax": "Resume tax",
       "projects": "{count} проектов",
       "flows": "{count} flow",
-      "nodes": "{count} узлов"
+      "nodes": "{count} узлов",
+      "periodScoped": "Итоги по токенам за выбранный период."
     },
     "budget": {
       "title": "Давление бюджета",
@@ -1088,7 +1089,8 @@
       "totalHeader": "Итого",
       "empty": "Нет затрат в этом окне",
       "byKindTitle": "По типу run-а",
-      "storedLifetime": "Накопленная сохранённая стоимость; окно не фильтрует token rollup-ы."
+      "byFlowTitle": "По флоу",
+      "flowHeader": "Флоу"
     },
     "agentization": {
       "title": "Агентизация",
@@ -1100,9 +1102,6 @@
       "asOf": "Данные на",
       "insufficient": "Недостаточно delivery-доказательств",
       "volatility": "Активные run-ы ещё могут доставить изменения.",
-      "flow": "Flow",
-      "scratch": "Scratch",
-      "agent": "Агент",
       "trend": "Дневной тренд",
       "trendNoData": "В этом окне нет достаточных дневных delivery-данных.",
       "trendValue": "Доля MAIster",
@@ -1161,6 +1160,47 @@
       "withCapability": "с",
       "withoutCapability": "без",
       "noCapabilities": "Нет запусков с зафиксированным набором возможностей."
+    },
+    "views": {
+      "label": "Разделы Обсерватории",
+      "overview": "Обзор",
+      "cost": "Стоимость",
+      "quality": "Качество",
+      "harness": "Оснастка"
+    },
+    "period": {
+      "label": "Период",
+      "preset7": "7д",
+      "preset30": "30д",
+      "preset90": "90д",
+      "from": "С",
+      "to": "По",
+      "clamped": "Диапазон урезан до 365 дней",
+      "pending": "Обновляется…"
+    },
+    "overview": {
+      "title": "Запущенная работа",
+      "subtitle": "Что запущено за период, где это сейчас и что вышло на выходе.",
+      "project": "Проект",
+      "platform": "Платформа",
+      "total": "Итого",
+      "tasks": "Задачи",
+      "tasksInWork": "В работе",
+      "tasksStarted": "Взято в работу",
+      "runs": "Run-ы",
+      "inFlight": "В полёте",
+      "settled": "Завершено",
+      "empty": "За этот период нет run-ов.",
+      "liveHint": "live · активных run-ов: {count}",
+      "openInLedger": "Открыть в журнале run-ов"
+    },
+    "quality": {
+      "projectsTitle": "По проектам",
+      "flowsTitle": "По флоу",
+      "project": "Проект",
+      "flow": "Флоу",
+      "flowRuns": "Run-ы флоу",
+      "wait": "Ожидание"
     }
   },
   "scratch": {
@@ -4897,5 +4937,22 @@
     "triggerDigest": "Сводка для наверстывания, не чаще двух раз в день",
     "triggersNote": "Только изменения и сводки — никогда по одному уведомлению на событие.",
     "otherBrowsers": "Зарегистрировано других браузеров: $count"
+  },
+  "runKind": {
+    "flow": "Флоу",
+    "scratch": "Черновой",
+    "agent": "Агент"
+  },
+  "runBucket": {
+    "Queued": "В очереди",
+    "Executing": "Выполняется",
+    "WaitingOnHuman": "Ждёт человека",
+    "Review": "На ревью",
+    "Crashed": "Сбой",
+    "Delivered": "Доставлено",
+    "PrOpen": "PR открыт",
+    "ResultOnly": "Только результат",
+    "Failed": "Ошибка",
+    "Abandoned": "Отменено"
   }
 }

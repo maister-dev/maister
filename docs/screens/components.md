@@ -120,6 +120,84 @@ Two controls are intentionally **not** `Tabs`, but share its tokens:
   same `line` / `amber-soft` / `amber` / `ivory` tokens. Treat them as a toolbar
   toggle group, not page navigation.
 
+## Auto-apply filter bar (Implemented — first consumer: Observatory)
+
+A filter bar whose controls take effect the moment they change, with **no Apply
+button**. Locked by
+[ADR-178](../decisions.md#adr-178-observatory-overview-table-day-aligned-period-url-views-and-auto-apply-filters)
+for the Observatory; other screens keep their GET-form bars until they get their
+own task. Do not convert a bar to this pattern in passing.
+
+### Rules
+
+- **The URL is the state.** Every control reads its value from the current search
+  params and writes back to them. No `useState` mirror of a committed filter, so
+  a deep link, a refresh and a back/forward all reproduce the same page.
+- **Commit with `router.replace(href, { scroll: false })` inside a
+  `useTransition`.** `replace`, not `push`, so a slider of intermediate filter
+  states does not fill the history stack; `scroll: false` so the page does not
+  jump to the top on every keystroke-free change.
+  **Consequence, stated plainly:** because `replace` overwrites the current
+  history entry, Back does NOT step through previous filter states — it leaves
+  the page. That is the trade `replace` buys. A control that SHOULD be
+  history-navigable (a view tab, say) belongs in a `<Link>` instead, which
+  pushes; the Observatory's view tabs do exactly that.
+- **Commit on `change` for presets, selects and date inputs; on blur or Enter
+  for free text.** A free-text field that committed per keystroke would issue one
+  server round-trip per character.
+- **Pending is visible and accessible.** While the transition is pending the bar
+  carries `aria-busy` and shows a text-plus-colour indicator (never colour
+  alone). The previous content stays on screen — a filter change never blanks the
+  page.
+- **Clearing a field removes its param**, rather than writing an empty value —
+  an empty param is a different URL for the same page.
+- **Compose each commit onto the edits still in flight.** The bar's view of the
+  current filters is a SERVER value: it does not change until a round-trip
+  lands. A second control touched before then, built from that stale value,
+  silently overwrites the first edit — and because these controls are
+  uncontrolled and re-keyed on their effective value, the discarded one keeps
+  DISPLAYING the reader's choice while the page is filtered by something else.
+  Accumulate the patch, and discard it the moment the URL the state represents
+  changes — that covers both the navigation landing and the reader leaving
+  through a link, after which replaying it would re-impose a filter they
+  dropped. Do NOT key that reset on the transition's pending flag: a transition
+  whose scope schedules no state update settles before the page it asked for
+  arrives.
+- **Anything else that builds a URL from the same state must read the pending
+  patch too.** A view tab, a "reset" link, a breadcrumb — if its href is built
+  from the server's copy of the filters, it is stale by construction and a click
+  on it silently discards whatever the reader just committed. Two clicks in one
+  gesture is the ordinary case, not a corner: clicking such a control BLURS the
+  focused field, which commits. Hold the patch as STATE, not only as a ref, or
+  those hrefs never re-render; own it above every consumer; and make the
+  provider mandatory rather than defaulting to "compose onto nothing", which is
+  the same invisible degradation in a new place.
+- **A param the current view does not own is not a filter.** Where the field set
+  varies by view (or tab, or mode), drop the unowned params where the URL is
+  PARSED, so the applied filters and the rendered controls come from one
+  ownership rule. Dropping them only when building the tab link leaves a
+  bookmark or a pasted URL narrowing the page through a control it never shows.
+- **A draft the URL does not carry must SAY so.** Keeping uncommitted text on
+  screen is right (see the mount rule below), but a field showing a value the
+  page is not filtered by, with no signal, is a lie the reader cannot see — and
+  the only way out of it is to focus and blur the field. Render a hint beside
+  any free-text field whose value differs from the URL's, wired with
+  `aria-describedby`. Text, never colour alone.
+- **Mount the bar once, above any view switch.** If the bar re-mounts when the
+  view changes, text typed but not yet committed is lost.
+- **Every control has a visible `<label>`** (or, for a grouped control like a
+  preset track, a `<fieldset>` whose `<legend>` names the group).
+- **This pattern requires JavaScript.** It replaces a GET form rather than
+  enhancing one, so a surface that must work without JS keeps its form. The
+  Observatory is a read-only view where that trade is acceptable; weigh it
+  before adopting the pattern elsewhere.
+
+### Where this is used
+
+- Observatory portfolio and project routes
+  (`web/components/observatory/observatory-filter-bar.tsx`) — period presets +
+  custom range, run kind, project, and the flow-ledger drill-down keys.
+
 ## Pill / Badge / count chip
 
 A small inline chip used for statuses, counts, lifecycle labels and metadata
@@ -159,6 +237,7 @@ extraction; until then this convention is the contract.)
 
 - `Tabs` — `board/project-tabs.tsx`, `workbench/workbench-tabs.tsx`,
   `studio/package-tabs.tsx`, `runs/run-inspector.tsx`,
-  `portfolio/density-toggle.tsx`.
+  `portfolio/density-toggle.tsx`, `observatory/observatory-views.tsx`.
+- Auto-apply filter bar — `observatory/observatory-filter-bar.tsx`.
 - Chip + Card conventions — used app-wide; see the source list above for
   representative examples.

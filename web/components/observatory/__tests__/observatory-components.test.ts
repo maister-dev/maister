@@ -24,15 +24,22 @@ import { ControlEffectivenessCard } from "@/components/observatory/control-effec
 import { CorrectionHeatmap } from "@/components/observatory/correction-heatmap";
 import { CoverageMapCard } from "@/components/observatory/coverage-map-card";
 import { NodeDrilldownTable } from "@/components/observatory/node-drilldown-table";
-import { ObservatoryFilters } from "@/components/observatory/observatory-filters";
+import { emptyOverviewTable } from "@/lib/queries/observatory-overview";
 import { ObservatorySummary } from "@/components/observatory/observatory-summary";
 import { SensorFiringCard } from "@/components/observatory/sensor-firing-card";
+import { resolveObservatoryPeriod } from "@/lib/observatory/period";
 import { SignalClusterList } from "@/components/observatory/signal-cluster-list";
 
 const labels = labelsForTest();
+// ADR-178: `period` is REQUIRED on every drill-down builder, so these renders
+// state the window they link to instead of inheriting a second clock.
+const period = resolveObservatoryPeriod({
+  now: new Date("2026-06-05T12:00:00.000Z"),
+});
 
 function portfolio(): ObservatoryPortfolio {
   return {
+    overview: emptyOverviewTable(),
     totals: {
       correction: {
         runCount: 2,
@@ -87,6 +94,7 @@ function portfolio(): ObservatoryPortfolio {
       nodeCount: 0,
       byModel: [],
       byRunner: [],
+      byFlow: [],
       byKind: [],
     },
     budget: {
@@ -282,6 +290,7 @@ describe("Observatory harness cards", () => {
     const data = harness();
     const html = renderToStaticMarkup(
       createElement(SensorFiringCard, {
+        period,
         firing: data.firing,
         labels,
         neverFired: data.neverFired,
@@ -297,7 +306,7 @@ describe("Observatory harness cards", () => {
     expect(html).toContain("— (n=2)");
     expect(html).toContain("never fired");
     expect(html).toContain(
-      "/projects/alpha/observatory?flowId=flow-1&amp;nodeId=checks&amp;runKind=all",
+      "/projects/alpha/observatory?view=quality&amp;windowDays=30&amp;flowId=flow-1&amp;nodeId=checks",
     );
     expect(html).toContain("command_check");
   });
@@ -306,6 +315,7 @@ describe("Observatory harness cards", () => {
     const data = harness();
     const html = renderToStaticMarkup(
       createElement(SensorFiringCard, {
+        period,
         firing: data.firing,
         labels,
         neverFired: [],
@@ -318,6 +328,7 @@ describe("Observatory harness cards", () => {
   it("renders the firing empty state", () => {
     const html = renderToStaticMarkup(
       createElement(SensorFiringCard, {
+        period,
         firing: { groups: [], byKind: [] },
         labels,
         neverFired: [],
@@ -364,6 +375,7 @@ describe("Observatory harness cards", () => {
     const data = harness();
     const html = renderToStaticMarkup(
       createElement(SensorFiringCard, {
+        period,
         firing: data.firing,
         labels: ruLabels,
         neverFired: data.neverFired,
@@ -379,6 +391,7 @@ describe("Observatory components", () => {
   it("renders summary tiles, heatmap, signals, and artifacts", () => {
     const html = renderToStaticMarkup(
       createElement(ObservatorySummary, {
+        period,
         data: portfolio(),
         labels,
         projectSlug: "alpha",
@@ -408,6 +421,7 @@ describe("Observatory components", () => {
   it("renders heatmap empty state without layout-only text overflow", () => {
     const html = renderToStaticMarkup(
       createElement(CorrectionHeatmap, {
+        period,
         labels,
         nodes: [],
       }),
@@ -416,25 +430,10 @@ describe("Observatory components", () => {
     expect(html).toContain("No node attempts in this window.");
   });
 
-  it("renders filter controls as GET inputs", () => {
-    const html = renderToStaticMarkup(
-      createElement(ObservatoryFilters, {
-        current: { flowId: "aif", nodeId: "checks", windowDays: 14 },
-        labels,
-      }),
-    );
-
-    expect(html).toContain('method="get"');
-    expect(html).toContain('name="flowId"');
-    expect(html).toContain('name="artifactKind"');
-    expect(html).toContain('name="artifactDefId"');
-    expect(html).toContain('name="runKind"');
-    expect(html).toContain('value="14"');
-  });
-
   it("renders selected-kind flow-ledger scope as not applicable", () => {
     const html = renderToStaticMarkup(
       createElement(ObservatorySummary, {
+        period,
         data: portfolio(),
         labels,
         runKind: "scratch",
@@ -606,6 +605,7 @@ describe("Observatory components", () => {
   it("renders signal drill-down links for project scope", () => {
     const html = renderToStaticMarkup(
       createElement(SignalClusterList, {
+        period,
         labels,
         projectSlug: "alpha",
         signals: portfolio().topSignals,
@@ -613,7 +613,7 @@ describe("Observatory components", () => {
     );
 
     expect(html).toContain(
-      "/projects/alpha/observatory?flowId=flow&amp;nodeId=checks&amp;runKind=all",
+      "/projects/alpha/observatory?view=quality&amp;windowDays=30&amp;flowId=flow&amp;nodeId=checks",
     );
     expect(html).toContain("access_token=[redacted] failed");
   });

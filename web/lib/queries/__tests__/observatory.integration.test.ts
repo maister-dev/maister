@@ -4,6 +4,7 @@ import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import * as schema from "@/lib/db/schema";
+import { withQueryCount } from "@/test-support/query-count";
 import {
   getNodeObservatoryDetail,
   getPortfolioObservatory,
@@ -218,6 +219,80 @@ describe("observatory read models", () => {
     ]);
   });
 
+  it("narrows the portfolio to a resolved project slug and keeps a whole scope for an unknown one (ADR-178 D7)", async () => {
+    await db.insert(schema.runs).values({
+      id: randomUUID(),
+      projectId: null,
+      runKind: "scratch",
+      status: "Running",
+      flowVersion: "scratch",
+      startedAt: NOW,
+    });
+
+    const whole = await getPortfolioObservatory(
+      randomUUID(),
+      "admin",
+      { now: NOW },
+      db,
+    );
+
+    expect(
+      whole.overview.rows.map((row) =>
+        row.identity.kind === "project" ? row.identity.projectSlug : row.key,
+      ),
+    ).toEqual(["observatory-hidden", "observatory-visible"]);
+    // D4: the project-less Studio scratch run is the admin's Platform row.
+    expect(whole.overview.platform).not.toBeNull();
+
+    const narrowed = await getPortfolioObservatory(
+      randomUUID(),
+      "admin",
+      { now: NOW, projectSlug: "observatory-visible" },
+      db,
+    );
+
+    expect(
+      narrowed.overview.rows.map((row) =>
+        row.identity.kind === "project" ? row.identity.projectSlug : row.key,
+      ),
+    ).toEqual(["observatory-visible"]);
+    // A Platform row beside a single-project view answers a question nobody
+    // asked, so the filter suppresses it.
+    expect(narrowed.overview.platform).toBeNull();
+
+    // An unknown slug is DROPPED — never a raw predicate that empties the page.
+    const unknown = await getPortfolioObservatory(
+      randomUUID(),
+      "admin",
+      { now: NOW, projectSlug: "no-such-project" },
+      db,
+    );
+
+    expect(unknown.overview.rows).toHaveLength(2);
+    expect(unknown.overview.platform).not.toBeNull();
+  });
+
+  it("never reads the project-less group for a non-admin (ADR-178 D4)", async () => {
+    await db.insert(schema.runs).values({
+      id: randomUUID(),
+      projectId: null,
+      runKind: "scratch",
+      status: "Running",
+      flowVersion: "scratch",
+      startedAt: NOW,
+    });
+
+    const asMember = await getPortfolioObservatory(
+      memberUserId,
+      "member",
+      { now: NOW },
+      db,
+    );
+
+    expect(asMember.overview.platform).toBeNull();
+    expect(asMember.overview.totals.runs.scratch).toBe(0);
+  });
+
   it("counts budget escalations and terminations from domain_events, window+project scoped", async () => {
     // Escalation (run paused for budget decision).
     await seedDomainEvent({
@@ -393,7 +468,16 @@ describe("observatory read models", () => {
     // queries are CONSTANT, not data-proportional — which is the property this
     // ceiling exists to protect. Keep it tight: it should be raised only
     // alongside a demonstrated constant, never to absorb a growing count.
-    expect(singleRun.queryCount).toBeLessThanOrEqual(21);
+    //
+    // Raised 21 → 24 by ADR-178: `getObservatoryOverview` adds exactly THREE
+    // grouped statements on the project path — runs by
+    // (project_id, run_kind, bucket), tasks by project, and the per-flow /
+    // per-kind breakdown. Constant by the same argument (the equality above
+    // holds at 8 runs), and pinned independently by the fixed-query-count case
+    // in observatory-overview.integration.test.ts. The helper counts `execute`
+    // as well as `select` now, and the delta is exactly 3 — so nothing
+    // pre-existing was hiding behind raw SQL.
+    expect(singleRun.queryCount).toBeLessThanOrEqual(24);
   });
 
   it("uses one eligible run population for correction and autonomy", async () => {
@@ -1174,33 +1258,5 @@ function attempt(
     status,
     errorCode: opts.errorCode,
     exitCode: opts.exitCode,
-  };
-}
-
-function withQueryCount(database: NodePgDatabase<typeof schema>): {
-  db: NodePgDatabase<typeof schema>;
-  count: () => number;
-} {
-  let statements = 0;
-
-  return {
-    db: new Proxy(database, {
-      get(target, prop, receiver) {
-        if (prop === "select") {
-          const select = Reflect.get(target, prop, receiver) as unknown as (
-            ...args: unknown[]
-          ) => unknown;
-
-          return (...args: unknown[]) => {
-            statements += 1;
-
-            return select.apply(target, args);
-          };
-        }
-
-        return Reflect.get(target, prop, receiver);
-      },
-    }) as NodePgDatabase<typeof schema>,
-    count: () => statements,
   };
 }

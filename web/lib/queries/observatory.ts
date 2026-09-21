@@ -11,7 +11,7 @@ import type {
   ObservatoryRunKind,
 } from "@/lib/observatory/run-kind";
 
-import { and, eq, gte, inArray, isNull, lte, type SQL } from "drizzle-orm";
+import { and, eq, gte, inArray, isNull, lt, type SQL } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
@@ -23,6 +23,12 @@ import {
   rollupAgentization,
   rollupObservatoryFunnel,
 } from "@/lib/queries/observatory-agentization-core";
+import { observatoryPeriodBounds } from "@/lib/observatory/period";
+import {
+  emptyOverviewTable,
+  getObservatoryOverview,
+  type OverviewTable,
+} from "@/lib/queries/observatory-overview";
 import { isDeliveryRunKind } from "@/lib/observatory/run-kind";
 import { requireRunProjectId } from "@/lib/runs/run-kind-invariants";
 import {
@@ -83,11 +89,17 @@ const log = pino({
 
 export interface ObservatoryFilters {
   now?: Date;
-  windowDays?: number;
+  // ADR-178 D1: the half-open UTC-day window every windowed read shares.
+  // Absent falls back to the 30-day day-aligned default derived from `now`.
+  since?: Date;
+  until?: Date;
   flowId?: string;
   nodeId?: string;
   artifactKind?: ArtifactKind;
   artifactDefId?: string;
+  // Candidate slug from the URL; narrows the portfolio scope only when it
+  // resolves against the caller's visible projects — never a raw predicate.
+  projectSlug?: string;
   runKind?: ObservatoryRunKind;
 }
 
@@ -160,6 +172,9 @@ export interface ObservatoryCostSummary {
   // columns, each sorted by totalTokens desc then key.
   byModel: CostDimensionRow[];
   byRunner: CostDimensionRow[];
+  // ADR-178 D5: keyed by `flows.flow_ref_id` for flow runs, with `scratch` and
+  // `agent` pseudo-rows carrying the flow-less kinds.
+  byFlow: CostDimensionRow[];
   byKind: CostKindRow[];
 }
 
@@ -187,6 +202,8 @@ export interface ObservatoryTotals {
 }
 
 export interface ObservatoryPortfolio {
+  // ADR-178 D2/D4: launched work per visible project, plus the Platform row.
+  overview: OverviewTable;
   totals: ObservatoryTotals;
   projects: ObservatoryProjectSummary[];
   flows: ObservatoryFlowSummary[];
@@ -200,6 +217,7 @@ export interface ObservatoryPortfolio {
 
 export interface ObservatoryProject {
   projectId: string;
+  overview: OverviewTable;
   totals: ObservatoryTotals;
   flows: ObservatoryFlowSummary[];
   nodes: ObservatoryNodeSummary[];
@@ -310,6 +328,7 @@ function emptyCostSummary(): ObservatoryCostSummary {
     nodeCount: 0,
     byModel: [],
     byRunner: [],
+    byFlow: [],
     byKind: emptyCostKinds(),
   };
 }
@@ -365,6 +384,64 @@ function foldCostDimension(
     );
 }
 
+/**
+ * ADR-178 D5. Unlike `byModel`/`byRunner`, which fold the per-key jsonb
+ * buckets, this folds the ROW totals: a flow-less run has no jsonb key to
+ * group by, so `scratch` and `agent` become pseudo-rows of their own.
+ */
+function foldCostByFlow(
+  rows: ReadonlyArray<{
+    runKind: string;
+    flowRefId: string | null;
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadTokens: number;
+    cacheCreationTokens: number;
+  }>,
+): CostDimensionRow[] {
+  const acc = new Map<
+    string,
+    {
+      inputTokens: number;
+      outputTokens: number;
+      cacheReadTokens: number;
+      cacheCreationTokens: number;
+    }
+  >();
+
+  for (const row of rows) {
+    const key =
+      row.runKind === "flow" ? (row.flowRefId ?? "unknown") : row.runKind;
+    const current = acc.get(key) ?? {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+    };
+
+    current.inputTokens += row.inputTokens;
+    current.outputTokens += row.outputTokens;
+    current.cacheReadTokens += row.cacheReadTokens;
+    current.cacheCreationTokens += row.cacheCreationTokens;
+    acc.set(key, current);
+  }
+
+  return [...acc.entries()]
+    .map(([key, totals]) => ({
+      key,
+      label: key,
+      ...totals,
+      totalTokens:
+        totals.inputTokens +
+        totals.outputTokens +
+        totals.cacheReadTokens +
+        totals.cacheCreationTokens,
+    }))
+    .sort(
+      (a, b) => b.totalTokens - a.totalTokens || a.key.localeCompare(b.key),
+    );
+}
+
 export async function getCostSummary(
   client: NodePgDatabase<typeof schema>,
   projectScope: readonly ProjectScopeRow[],
@@ -374,11 +451,21 @@ export async function getCostSummary(
 
   const projectIds = projectScope.map((project) => project.id);
 
+  // ADR-178 D5: cost is windowed by the RUN's start, like every other
+  // Observatory read — it is no longer a stored lifetime total.
+  const { since, until } = observatoryPeriodBounds(
+    filters,
+    filters.now ?? new Date(),
+  );
   const runCostConditions: SQL[] = [
     inArray(runCostRollups.projectId, projectIds),
+    gte(runs.startedAt, since),
+    lt(runs.startedAt, until),
   ];
   const nodeCostConditions: SQL[] = [
     inArray(nodeAttemptCostRollups.projectId, projectIds),
+    gte(runs.startedAt, since),
+    lt(runs.startedAt, until),
   ];
 
   if (filters.flowId) {
@@ -408,9 +495,11 @@ export async function getCostSummary(
         resumeCacheCreationTokens: runCostRollups.resumeCacheCreationTokens,
         byModel: runCostRollups.byModel,
         byRunner: runCostRollups.byRunner,
+        flowRefId: flows.flowRefId,
       })
       .from(runCostRollups)
       .innerJoin(runs, eq(runs.id, runCostRollups.runId))
+      .leftJoin(flows, eq(flows.id, runCostRollups.flowId))
       .where(and(...runCostConditions)),
     client
       .select({ nodeId: nodeAttemptCostRollups.nodeId })
@@ -455,6 +544,8 @@ export async function getCostSummary(
   log.debug(
     {
       projectCount: projectScope.length,
+      since,
+      until,
       runCostRowCount: runRows.length,
       nodeCostRowCount: nodeRows.length,
     },
@@ -475,6 +566,7 @@ export async function getCostSummary(
     nodeCount: nodesWithCost.size,
     byModel: foldCostDimension(runRows.map((row) => row.byModel)),
     byRunner: foldCostDimension(runRows.map((row) => row.byRunner)),
+    byFlow: foldCostByFlow(runRows),
     byKind:
       filters.runKind && filters.runKind !== "all"
         ? byKind.filter((row) => row.kind === filters.runKind)
@@ -572,14 +664,12 @@ async function getBudgetSummary(
   if (projectScope.length === 0) return emptyBudgetSummary();
 
   const projectIds = projectScope.map((project) => project.id);
-  const since = new Date(
-    now.getTime() - (filters.windowDays ?? 30) * 24 * 60 * 60 * 1000,
-  );
+  const { since, until } = observatoryPeriodBounds(filters, now);
 
   const conditions: SQL[] = [
     inArray(domainEvents.projectId, projectIds),
     gte(domainEvents.occurredAt, since),
-    lte(domainEvents.occurredAt, now),
+    lt(domainEvents.occurredAt, until),
     inArray(domainEvents.kind, ["run.escalated", "run.failed"]),
   ];
 
@@ -677,14 +767,24 @@ export async function getPortfolioObservatory(
   client: NodePgDatabase<typeof schema> = db(),
 ): Promise<ObservatoryPortfolio> {
   const now = filters.now ?? new Date();
-  const visibleProjects = await getVisibleProjects(client, userId, globalRole);
+  const allVisible = await getVisibleProjects(client, userId, globalRole);
+  // ADR-178 D7: an unknown `project` slug is DROPPED, never used as a raw
+  // predicate — the scope stays whole rather than silently emptying.
+  const scoped = filters.projectSlug
+    ? allVisible.filter((project) => project.slug === filters.projectSlug)
+    : [];
+  const visibleProjects = scoped.length > 0 ? scoped : allVisible;
+  const period = observatoryPeriodBounds(filters, now);
 
   log.debug(
     {
       projectCount: visibleProjects.length,
-      windowDays: filters.windowDays ?? 30,
+      projectSlug: filters.projectSlug,
+      projectSlugResolved: scoped.length > 0,
+      since: period.since,
+      until: period.until,
     },
-    "getPortfolioObservatory scope resolved",
+    "getPortfolioObservatory scope and period resolved",
   );
 
   const readModel = await loadObservatoryRows(
@@ -699,9 +799,20 @@ export async function getPortfolioObservatory(
     now,
     harnessNeverFiredMin(),
   );
-  const [cost, budget] = await Promise.all([
+  const [cost, budget, overview] = await Promise.all([
     getCostSummary(client, visibleProjects, filters),
     getBudgetSummary(client, visibleProjects, filters, now),
+    getObservatoryOverview(client, visibleProjects, {
+      since: period.since,
+      until: period.until,
+      runKind: filters.runKind ?? "all",
+      // D4: project-less runs carry no membership to scope by, so only a
+      // global admin reads them — and only while the reader has NOT narrowed
+      // to one project. A Platform row beside a single-project filter answers
+      // a question nobody asked.
+      includePlatform: globalRole === "admin" && scoped.length === 0,
+      includeBreakdown: false,
+    }),
   ]);
 
   log.info(
@@ -709,11 +820,12 @@ export async function getPortfolioObservatory(
       projectCount: portfolio.projects.length,
       runCount: portfolio.totals.correction.runCount,
       nodeCount: portfolio.nodes.length,
+      overviewRows: overview.rows.length + (overview.platform ? 1 : 0),
     },
     "getPortfolioObservatory aggregated",
   );
 
-  return { ...portfolio, cost, budget };
+  return { ...portfolio, cost, budget, overview };
 }
 
 export async function getProjectObservatory(
@@ -737,6 +849,13 @@ export async function getProjectObservatory(
     return emptyProject(projectId, now, filters.runKind ?? "all");
   }
 
+  const period = observatoryPeriodBounds(filters, now);
+
+  log.debug(
+    { projectId, since: period.since, until: period.until },
+    "getProjectObservatory period resolved",
+  );
+
   const readModel = await loadObservatoryRows(client, [project], filters, now);
   const portfolio = buildPortfolio(
     readModel,
@@ -744,7 +863,7 @@ export async function getProjectObservatory(
     now,
     harnessNeverFiredMin(),
   );
-  const [cost, budget, delivery] = await Promise.all([
+  const [cost, budget, delivery, overview] = await Promise.all([
     getCostSummary(client, [project], filters),
     getBudgetSummary(client, [project], filters, now),
     getProjectAgentization(client, {
@@ -752,6 +871,13 @@ export async function getProjectObservatory(
       mainBranch: project.mainBranch,
       filters: { ...filters, runKind: filters.runKind ?? "all" },
       now,
+    }),
+    getObservatoryOverview(client, [project], {
+      since: period.since,
+      until: period.until,
+      runKind: filters.runKind ?? "all",
+      includePlatform: false,
+      includeBreakdown: true,
     }),
   ]);
 
@@ -761,6 +887,7 @@ export async function getProjectObservatory(
       runCount: portfolio.totals.correction.runCount,
       nodeCount: portfolio.nodes.length,
       runKind: filters.runKind ?? "all",
+      overviewRows: overview.rows.length + overview.subRows.length,
       agentizationAvailability: delivery.agentization.availability,
       agentizationFetchedAt: delivery.agentization.fetchedAt,
     },
@@ -769,6 +896,7 @@ export async function getProjectObservatory(
 
   return {
     projectId,
+    overview,
     totals: portfolio.totals,
     flows: portfolio.flows,
     nodes: portfolio.nodes,
@@ -807,6 +935,13 @@ export async function getNodeObservatoryDetail(
   if (!project) {
     return emptyNodeDetail(projectId, nodeId);
   }
+
+  const period = observatoryPeriodBounds(filters, now);
+
+  log.debug(
+    { projectId, nodeId, since: period.since, until: period.until },
+    "getNodeObservatoryDetail period resolved",
+  );
 
   const readModel = await loadObservatoryRows(
     client,
@@ -951,13 +1086,12 @@ async function loadObservatoryRows(
   }
 
   const projectIds = projectScope.map((project) => project.id);
-  const since = new Date(
-    now.getTime() - (filters.windowDays ?? 30) * 24 * 60 * 60 * 1000,
-  );
+  const { since, until } = observatoryPeriodBounds(filters, now);
   const runPredicates: SQL[] = [
     inArray(runs.projectId, projectIds),
     eq(runs.runKind, "flow"),
     gte(runs.startedAt, since),
+    lt(runs.startedAt, until),
   ];
 
   if (filters.flowId) runPredicates.push(eq(runs.flowId, filters.flowId));
@@ -1086,6 +1220,8 @@ async function loadObservatoryRows(
 
   log.debug(
     {
+      since,
+      until,
       candidateRunCount: runIds.length,
       eligibleRunCount: effectiveRunIds.length,
       artifactFilterApplied,
@@ -1176,7 +1312,7 @@ function buildPortfolio(
   projectScope: readonly ProjectScopeRow[],
   now: Date,
   minExecutions: number,
-): Omit<ObservatoryPortfolio, "cost" | "budget"> {
+): Omit<ObservatoryPortfolio, "cost" | "budget" | "overview"> {
   const projectsById = new Map(
     projectScope.map((project) => [project.id, project]),
   );
@@ -1619,6 +1755,7 @@ function emptyProject(
 ): ObservatoryProject {
   return {
     projectId,
+    overview: emptyOverviewTable(),
     totals: {
       correction: rollupCorrectionMetrics({ runs: [], nodeAttempts: [] }),
       autonomy: rollupAutonomyMetrics({ now, runs: [], hitlRequests: [] }),

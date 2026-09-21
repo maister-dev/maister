@@ -1,3 +1,6 @@
+import type { ObservatoryLabels } from "@/components/observatory/types";
+import type { ObservatoryProject } from "@/lib/queries/observatory";
+import type { ObservatorySearchParams } from "@/lib/observatory/filters";
 import type { ReactElement } from "react";
 
 import { getLocale, getTranslations } from "next-intl/server";
@@ -13,8 +16,13 @@ import { CostKindBreakdown } from "@/components/observatory/cost-kind-breakdown"
 import { CoverageMapCard } from "@/components/observatory/coverage-map-card";
 import { labelsFromTranslations } from "@/components/observatory/labels";
 import { NodeDrilldownTable } from "@/components/observatory/node-drilldown-table";
-import { ObservatoryFilters } from "@/components/observatory/observatory-filters";
+import { ObservatoryFilterBar } from "@/components/observatory/observatory-filter-bar";
+import { ObservatoryFilterState } from "@/components/observatory/observatory-filter-state";
 import { ObservatorySummary } from "@/components/observatory/observatory-summary";
+import { ObservatoryViews } from "@/components/observatory/observatory-views";
+import { OverviewCostStrip } from "@/components/observatory/overview-cost-strip";
+import { OverviewTable } from "@/components/observatory/overview-table";
+import { QualityFlowsTable } from "@/components/observatory/quality-tables";
 import { SensorFiringCard } from "@/components/observatory/sensor-firing-card";
 import {
   FlowLedgerNotApplicable,
@@ -26,6 +34,7 @@ import { parseObservatorySearchParams } from "@/lib/observatory/filters";
 import { isFlowLedgerApplicable } from "@/lib/observatory/run-kind";
 import { reposRoot } from "@/lib/instance-config";
 import { formatProjectRepoPath } from "@/lib/project-path-display";
+import { inFlightTotal } from "@/lib/queries/observatory-overview";
 import {
   getNodeObservatoryDetail,
   getProjectObservatory,
@@ -35,14 +44,7 @@ import { getProjectBySlug } from "@/lib/queries/project";
 
 interface PageProps {
   params: Promise<{ slug: string }>;
-  searchParams: Promise<{
-    artifactDefId?: string | string[];
-    artifactKind?: string | string[];
-    flowId?: string | string[];
-    nodeId?: string | string[];
-    runKind?: string | string[];
-    windowDays?: string | string[];
-  }>;
+  searchParams: Promise<ObservatorySearchParams>;
 }
 
 export default async function ProjectObservatoryPage({
@@ -63,23 +65,29 @@ export default async function ProjectObservatoryPage({
 
   if (role === null) notFound();
 
-  const [t, locale] = await Promise.all([
+  const pathname = `/projects/${slug}/observatory`;
+  const [t, tBucket, tKind, locale] = await Promise.all([
     getTranslations("observatory"),
+    getTranslations("runBucket"),
+    getTranslations("runKind"),
     getLocale(),
   ]);
-  const labels = labelsFromTranslations(t);
+  const labels = labelsFromTranslations(t, tBucket, tKind);
   const displayRepoPath = formatProjectRepoPath(project.repoPath, reposRoot());
-  const { filters, current } = parseObservatorySearchParams(await searchParams);
+  const parsed = parseObservatorySearchParams(await searchParams);
+  const { filters } = parsed;
+  const current = { ...parsed.current, project: undefined };
   const [observatory, board, brainIndexingAvailable] = await Promise.all([
     getProjectObservatory(project.id, filters),
     getBoardData(project.id),
     isProjectBrainIndexingAvailable(project),
   ]);
-  const nodeDetail = current.nodeId
-    ? isFlowLedgerApplicable(current.runKind)
+  const nodeDetail =
+    current.view === "quality" &&
+    current.nodeId &&
+    isFlowLedgerApplicable(current.runKind)
       ? await getNodeObservatoryDetail(project.id, current.nodeId, filters)
-      : null
-    : null;
+      : null;
 
   return (
     <>
@@ -101,72 +109,87 @@ export default async function ProjectObservatoryPage({
         showBrain={brainIndexingAvailable}
         slug={slug}
       />
-      <ObservatoryFilters current={current} labels={labels} />
-      <section className="mb-6">
-        <AgentizationPanel
-          data={observatory.agentization}
+      {/* One owner for the edits still in flight, so a tab href carries them
+          (D7) — the bar is still mounted once, above the view switch. */}
+      <ObservatoryFilterState current={current} pathname={pathname}>
+        <ObservatoryFilterBar
+          current={current}
           labels={labels}
-          locale={locale}
+          pathname={pathname}
         />
-        <div className="mt-4">
-          <AutonomyFunnelCard
-            data={observatory.funnel}
+        <ObservatoryViews
+          current={current}
+          labels={labels}
+          pathname={pathname}
+        />
+      </ObservatoryFilterState>
+
+      {current.view === "overview" ? (
+        <>
+          <OverviewTable
+            current={current}
+            labels={labels}
+            liveLabel={
+              observatory.overview.volatile
+                ? t("overview.liveHint", {
+                    count: inFlightTotal(observatory.overview.totals),
+                  })
+                : null
+            }
+            projectSlug={slug}
+            table={observatory.overview}
+          />
+          <OverviewCostStrip
+            cost={observatory.cost}
+            current={current}
             labels={labels}
             locale={locale}
+            pathname={pathname}
           />
-        </div>
-      </section>
-      <ObservatorySummary
-        data={observatory}
-        labels={labels}
-        projectSlug={slug}
-        runKind={current.runKind}
-      />
-      <section className="mt-6" data-testid="observatory-cost">
-        <header className="mb-3">
-          <div className="flex items-center gap-2">
-            <h2 className="m-0 text-lg font-semibold text-ink">
-              {t("cost.title")}
-            </h2>
+          <section className="mt-4">
+            <AgentizationPanel
+              data={observatory.agentization}
+              labels={labels}
+              locale={locale}
+            />
+            <div className="mt-4">
+              <AutonomyFunnelCard
+                data={observatory.funnel}
+                labels={labels}
+                locale={locale}
+              />
+            </div>
+          </section>
+        </>
+      ) : null}
+
+      {current.view === "cost" ? (
+        <CostView data={observatory} labels={labels} locale={locale} t={t} />
+      ) : null}
+
+      {current.view === "quality" ? (
+        isFlowLedgerApplicable(current.runKind) ? (
+          <div className="grid grid-cols-1 items-start gap-4">
+            <ObservatorySummary
+              data={observatory}
+              labels={labels}
+              period={current.period}
+              projectSlug={slug}
+              runKind={current.runKind}
+            />
+            <QualityFlowsTable flows={observatory.flows} labels={labels} />
+            {nodeDetail ? (
+              <NodeDrilldownTable detail={nodeDetail} labels={labels} />
+            ) : null}
           </div>
-          <p className="mt-1 max-w-[72ch] text-sm text-mute">
-            {t("cost.subtitle")}
-          </p>
-        </header>
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-          <CostBreakdownCard
-            keyHeader={labels.costBreakdown.modelHeader}
-            labels={labels}
-            locale={locale}
-            rows={observatory.cost.byModel}
-            testId="observatory-cost-by-model"
-            title={labels.costBreakdown.byModelTitle}
-          />
-          <CostBreakdownCard
-            keyHeader={labels.costBreakdown.runnerHeader}
-            labels={labels}
-            locale={locale}
-            rows={observatory.cost.byRunner}
-            testId="observatory-cost-by-runner"
-            title={labels.costBreakdown.byRunnerTitle}
-          />
-        </div>
-        <div className="mt-4">
-          <CostKindBreakdown
-            labels={labels}
-            locale={locale}
-            rows={observatory.cost.byKind}
-          />
-        </div>
-        <BudgetSurfaceCard
-          budget={observatory.budget}
-          labels={labels}
-          locale={locale}
-        />
-      </section>
-      <section className="mt-6">
-        {isFlowLedgerApplicable(current.runKind) ? (
-          <>
+        ) : (
+          <FlowLedgerNotApplicable labels={labels} />
+        )
+      ) : null}
+
+      {current.view === "harness" ? (
+        isFlowLedgerApplicable(current.runKind) ? (
+          <section>
             <header className="mb-3">
               <h2 className="m-0 text-lg font-semibold text-ink">
                 {labels.harness.sectionTitle}
@@ -181,6 +204,7 @@ export default async function ProjectObservatoryPage({
                 firing={observatory.harness.firing}
                 labels={labels}
                 neverFired={observatory.harness.neverFired}
+                period={current.period}
                 projectSlug={slug}
                 runKind={current.runKind}
               />
@@ -193,16 +217,74 @@ export default async function ProjectObservatoryPage({
                 labels={labels}
               />
             </div>
-          </>
+          </section>
         ) : (
           <FlowLedgerNotApplicable labels={labels} />
-        )}
-      </section>
-      {nodeDetail ? (
-        <div className="mt-4">
-          <NodeDrilldownTable detail={nodeDetail} labels={labels} />
-        </div>
+        )
       ) : null}
     </>
+  );
+}
+
+function CostView({
+  data,
+  labels,
+  locale,
+  t,
+}: {
+  data: ObservatoryProject;
+  labels: ObservatoryLabels;
+  locale: string;
+  t: Awaited<ReturnType<typeof getTranslations>>;
+}): ReactElement {
+  return (
+    <section data-testid="observatory-cost">
+      <header className="mb-3">
+        <h2 className="m-0 text-lg font-semibold text-ink">
+          {t("cost.title")}
+        </h2>
+        <p className="mt-1 max-w-[72ch] text-sm text-mute">
+          {t("cost.subtitle")}
+        </p>
+        <p className="mt-1 max-w-[72ch] text-sm text-mute">
+          {t("cost.periodScoped")}
+        </p>
+      </header>
+      <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-2">
+        <CostBreakdownCard
+          keyHeader={labels.costBreakdown.modelHeader}
+          labels={labels}
+          locale={locale}
+          rows={data.cost.byModel}
+          testId="observatory-cost-by-model"
+          title={labels.costBreakdown.byModelTitle}
+        />
+        <CostBreakdownCard
+          keyHeader={labels.costBreakdown.runnerHeader}
+          labels={labels}
+          locale={locale}
+          rows={data.cost.byRunner}
+          testId="observatory-cost-by-runner"
+          title={labels.costBreakdown.byRunnerTitle}
+        />
+        <CostBreakdownCard
+          keyHeader={labels.costBreakdown.flowHeader}
+          keyLabels={labels.runKindName}
+          labels={labels}
+          locale={locale}
+          rows={data.cost.byFlow}
+          testId="observatory-cost-by-flow"
+          title={labels.costBreakdown.byFlowTitle}
+        />
+      </div>
+      <div className="mt-4">
+        <CostKindBreakdown
+          labels={labels}
+          locale={locale}
+          rows={data.cost.byKind}
+        />
+      </div>
+      <BudgetSurfaceCard budget={data.budget} labels={labels} locale={locale} />
+    </section>
   );
 }

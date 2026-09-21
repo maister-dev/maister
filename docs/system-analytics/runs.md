@@ -110,10 +110,27 @@ projects existing rows from `runs`, `projects`, optional `tasks`, `flows`,
 `workspaces`, `run_cost_rollups`, and the `run_schedules.last_run_id` link into
 a URL-filtered table.
 
-Filters are project, state, source, runner, and inclusive start-date range.
-Global admins see every non-archived project's runs; other users see only runs
-for projects where they have `project_members` visibility. Flow and standalone
-agent rows open `/runs/{runId}`; scratch rows open `/scratch-runs/{runId}`.
+Filters are project, state, source, runner, inclusive start-date range, and —
+**(Implemented, ADR-178)** — run kind (`kind=flow|scratch|agent`) and outcome bucket
+(`bucket=<D3 name>`). Both are narrowed by the existing `oneOf` allow-list guard
+in `normalizeRunsListFilters` before reaching SQL. Global admins see every
+non-archived project's runs; other users see only runs for projects where they
+have `project_members` visibility. Flow and standalone agent rows open
+`/runs/{runId}`; scratch rows open `/scratch-runs/{runId}`.
+
+**(Implemented, ADR-178)** The `bucket` predicate is the SAME `runOutcomeBucketSql`
+`CASE` fragment the Observatory overview groups by, over the SAME latest
+`workspaces` row (`ORDER BY created_at DESC, id ASC LIMIT 1` — the lateral this
+query already uses for `branch`; the COUNT query joins it only when `bucket` is
+set). Consequently an Observatory cell's count equals this page's `totalRows`
+for the same `project` / `from` / `to` / `kind` / `bucket` params; the bucket
+rules themselves are tabulated once, in
+[`observatory.md`](observatory.md) → "Overview read model".
+
+This reader is `INNER JOIN projects`, so a run with `project_id IS NULL` is
+outside it entirely — which is why the Observatory's Platform row renders its
+cells as plain numbers instead of links (see
+[`observatory.md`](observatory.md) → "Count = list").
 
 ## State machine — execution axis
 

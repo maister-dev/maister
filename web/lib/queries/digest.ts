@@ -60,7 +60,8 @@ export const NOW_TILE_HREFS = {
   crashed: "/work?stage=Crashed",
   decisions: "/inbox",
   events: "/activity",
-  tokens: "/observatory",
+  // ADR-178: the section root is the overview now; cost lives on its own view.
+  tokens: "/observatory?view=cost",
 } as const satisfies Record<NowTileId, string>;
 
 export interface NowTile {

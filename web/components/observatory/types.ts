@@ -13,7 +13,14 @@ import type {
   AgentizationSummary,
   ObservatoryFunnel,
 } from "@/lib/queries/observatory-agentization-core";
-import type { ObservatoryRunKind } from "@/lib/observatory/run-kind";
+import type {
+  DeliveryRunKind,
+  ObservatoryRunKind,
+} from "@/lib/observatory/run-kind";
+import type { ObservatoryPeriod } from "@/lib/observatory/period";
+import type { ParsedObservatoryFilters } from "@/lib/observatory/filters";
+import type { OverviewTable } from "@/lib/queries/observatory-overview";
+import type { RunOutcomeBucket } from "@/lib/runs/outcome-bucket";
 import type {
   CoverageFlow,
   GateFiringRollup,
@@ -80,7 +87,8 @@ export interface ObservatoryCostBreakdownLabels {
   totalHeader: string;
   empty: string;
   byKindTitle: string;
-  storedLifetime: string;
+  byFlowTitle: string;
+  flowHeader: string;
 }
 
 export interface ObservatoryAgentizationLabels {
@@ -93,9 +101,6 @@ export interface ObservatoryAgentizationLabels {
   asOf: string;
   insufficient: string;
   volatility: string;
-  flow: string;
-  scratch: string;
-  agent: string;
   trend: string;
   trendNoData: string;
   trendValue: string;
@@ -120,6 +125,50 @@ export interface ObservatoryFunnelLabels {
   crashed: string;
   abandoned: string;
   unrecorded: string;
+}
+
+export interface ObservatoryViewLabels {
+  label: string;
+  overview: string;
+  cost: string;
+  quality: string;
+  harness: string;
+}
+
+export interface ObservatoryPeriodLabels {
+  label: string;
+  preset7: string;
+  preset30: string;
+  preset90: string;
+  from: string;
+  to: string;
+  clamped: string;
+  pending: string;
+}
+
+export interface ObservatoryOverviewLabels {
+  title: string;
+  subtitle: string;
+  project: string;
+  platform: string;
+  total: string;
+  tasks: string;
+  tasksInWork: string;
+  tasksStarted: string;
+  runs: string;
+  inFlight: string;
+  settled: string;
+  empty: string;
+  openInLedger: string;
+}
+
+export interface ObservatoryQualityLabels {
+  projectsTitle: string;
+  flowsTitle: string;
+  project: string;
+  flow: string;
+  flowRuns: string;
+  wait: string;
 }
 
 export interface ObservatoryLabels {
@@ -151,10 +200,7 @@ export interface ObservatoryLabels {
   flowRuns: string;
   flowLedgerOnly: string;
   node: string;
-  lookback: string;
-  apply: string;
   all: string;
-  days: string;
   drillDown: string;
   latestAttempt: string;
   historicalAttempts: string;
@@ -166,6 +212,17 @@ export interface ObservatoryLabels {
   costBreakdown: ObservatoryCostBreakdownLabels;
   agentization: ObservatoryAgentizationLabels;
   funnel: ObservatoryFunnelLabels;
+  views: ObservatoryViewLabels;
+  period: ObservatoryPeriodLabels;
+  overview: ObservatoryOverviewLabels;
+  quality: ObservatoryQualityLabels;
+  /** Hint shown on a free-text field whose draft is not in the URL yet. */
+  uncommitted: string;
+  // Top-level `runBucket.*` / `runKind.*`: the ledger renders the SAME ten
+  // bucket names and the SAME three kind names, so no two surfaces can end up
+  // with different words for one value.
+  bucket: Record<RunOutcomeBucket, string>;
+  runKindName: Record<DeliveryRunKind, string>;
 }
 
 export type ObservatorySummaryData = ObservatoryPortfolio | ObservatoryProject;
@@ -173,6 +230,7 @@ export type ObservatorySummaryData = ObservatoryPortfolio | ObservatoryProject;
 export interface ObservatoryDashboardProps {
   data: ObservatorySummaryData;
   labels: ObservatoryLabels;
+  period: ObservatoryPeriod;
   projectSlug?: string;
   runKind?: ObservatoryRunKind;
 }
@@ -182,21 +240,31 @@ export interface ObservatoryNodeDrilldownProps {
   labels: ObservatoryLabels;
 }
 
-export interface ObservatoryFilterProps {
+export interface ObservatoryFilterBarProps {
   labels: ObservatoryLabels;
-  current: {
-    artifactDefId?: string;
-    artifactKind?: string;
-    flowId?: string;
-    nodeId?: string;
-    runKind?: ObservatoryRunKind;
-    windowDays: number;
-  };
+  current: ParsedObservatoryFilters["current"];
+  pathname: string;
+  /** Portfolio only — the project select's options, already visibility-scoped. */
+  projectOptions?: readonly { slug: string; name: string }[];
+}
+
+export interface OverviewTableProps {
+  table: OverviewTable;
+  labels: ObservatoryLabels;
+  current: ParsedObservatoryFilters["current"];
+  /** Portfolio: absent. Project page: the single project in scope. */
+  projectSlug?: string;
+  /** Composed by the page (RSC label DTOs stay data-only). */
+  liveLabel?: string | null;
 }
 
 export interface CorrectionHeatmapProps {
   labels: ObservatoryLabels;
   nodes: readonly ObservatoryNodeSummary[];
+  // ADR-178: a drill-down link must land on the Quality view of the SAME
+  // period, so every builder needs the effective bounds. REQUIRED — an
+  // optional period let a caller silently emit links to a different window.
+  period: ObservatoryPeriod;
   projectSlug?: string;
   runKind?: ObservatoryRunKind;
 }
@@ -210,6 +278,7 @@ export interface SensorFiringCardProps {
   firing: GateFiringRollup;
   neverFired: readonly NeverFiredFlag[];
   labels: ObservatoryLabels;
+  period: ObservatoryPeriod;
   projectSlug?: string;
   runKind?: ObservatoryRunKind;
 }
@@ -237,6 +306,12 @@ export interface CostBreakdownCardProps {
   labels: ObservatoryLabels;
   locale: string;
   testId?: string;
+  /**
+   * Display names for keys that are not free-form ids. The By-flow breakdown
+   * carries `scratch` / `agent` pseudo-rows for the flow-less kinds (ADR-178
+   * D5); they are run kinds and read as such.
+   */
+  keyLabels?: Readonly<Record<string, string>>;
 }
 
 export interface CostKindBreakdownProps {

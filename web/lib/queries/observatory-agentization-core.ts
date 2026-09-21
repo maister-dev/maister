@@ -111,6 +111,12 @@ export function rollupAgentization(input: {
   runKind: ObservatoryRunKind;
   runs: readonly ObservatoryAgentizationRun[];
   buckets: readonly ObservatoryDeliveryBucket[];
+  // ADR-178 D1: the period the rates claim to describe. Supplied by every
+  // windowed read; omitted only by the empty-project fallback, which has no
+  // bucket to be incomplete about. Same optional shape as
+  // `rollupObservatoryFunnel`'s bounds.
+  since?: Date;
+  until?: Date;
 }): AgentizationSummary {
   const selectedRuns = input.runs.filter((run) =>
     input.runKind === "all" ? true : run.runKind === input.runKind,
@@ -136,11 +142,17 @@ export function rollupAgentization(input: {
   const aiStats = sumRunStats(matches.map((match) => match.run));
   const linesDenominator = totals.additions + totals.deletions;
   const deliveryUnits = deliveryUnitCount(matches);
-  const lineRate = resolution.complete
+  // The denominator is only the period's delivery if the cache covers the whole
+  // period. `REPO_DELIVERY_WINDOW_DAYS` is a ROLLING 365 days pruned on every
+  // scan, so a custom range reaching back past that horizon returns the covered
+  // tail alone — a rate over nine days presented as a rate over thirty. Missing
+  // evidence reads exactly like an unmatched delivery ref does.
+  const complete = resolution.complete && coversPeriod(input.buckets, input);
+  const lineRate = complete
     ? rate(aiStats.lines, linesDenominator, totals.commits)
     : unavailableRate(aiStats.lines, linesDenominator);
   const deliveryRate =
-    totals.providerComplete && resolution.complete
+    totals.providerComplete && complete
       ? rate(deliveryUnits, totals.mergePrUnits, totals.mergePrUnits)
       : unavailableRate(deliveryUnits, totals.mergePrUnits);
   const fetchedAt = latestFetchedAt(input.buckets);
@@ -155,21 +167,54 @@ export function rollupAgentization(input: {
     fetchedAt,
     volatile: selectedRuns.some((run) => run.active),
     availability:
-      fetchedAt === null || lineRate.value === null || !resolution.complete
+      fetchedAt === null || lineRate.value === null || !complete
         ? "insufficient"
         : "ready",
   };
 }
 
+/**
+ * Do the cached buckets cover `[since, until)` without a gap?
+ *
+ * Walks them in start order rather than counting rows: the count test would be
+ * exact only for as long as a bucket is one day, and it would answer "covered"
+ * for a set that is the right size and the wrong span. Bounds absent (the
+ * empty-project fallback) means nothing to verify.
+ */
+function coversPeriod(
+  buckets: readonly ObservatoryDeliveryBucket[],
+  bounds: { since?: Date; until?: Date },
+): boolean {
+  if (!bounds.since || !bounds.until) return true;
+
+  const end = bounds.until.getTime();
+  let cursor = bounds.since.getTime();
+
+  for (const bucket of [...buckets].sort(
+    (left, right) => left.bucketStart.getTime() - right.bucketStart.getTime(),
+  )) {
+    if (cursor >= end) return true;
+    // A bucket starting after the cursor leaves the days between uncovered.
+    if (bucket.bucketStart.getTime() > cursor) return false;
+    cursor = Math.max(cursor, bucket.bucketEnd.getTime());
+  }
+
+  return cursor >= end;
+}
+
 export function rollupObservatoryFunnel(input: {
   runKind: ObservatoryRunKind;
   runs: readonly ObservatoryFunnelRun[];
+  // ADR-178 D1: the half-open run-start window. `until` is exclusive, so a run
+  // started at exactly the upper bound belongs to the NEXT period.
   since?: Date;
+  until?: Date;
 }): ObservatoryFunnel {
   const runs = input.runs.filter(
     (run) =>
       (input.runKind === "all" || run.runKind === input.runKind) &&
-      (input.since === undefined || run.startedAt >= input.since),
+      (input.since === undefined || run.startedAt >= input.since) &&
+      (input.until === undefined || run.startedAt < input.until),
   );
 
   return {

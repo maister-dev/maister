@@ -6139,6 +6139,17 @@ type M23FixtureRecord = {
   nodeId: string;
   scratchRunId: string;
   noCacheProjectSlug: string;
+  // ADR-178: one run per settled outcome bucket plus a queued one, and a
+  // project-less scratch run for the admin-only Platform row.
+  deliveredRunId: string;
+  prOpenRunId: string;
+  resultOnlyRunId: string;
+  failedRunId: string;
+  abandonedRunId: string;
+  crashedRunId: string;
+  pendingRunId: string;
+  platformScratchRunId: string;
+  thirdTaskId: string;
 };
 
 // --- M23 fixture: read-only Observatory metrics ----------------------------
@@ -6219,6 +6230,18 @@ async function seedM23Fixture(
     secondHitl: randomUUID(),
     firstArtifact: randomUUID(),
     secondArtifact: randomUUID(),
+    thirdTask: randomUUID(),
+    deliveredRun: randomUUID(),
+    prOpenRun: randomUUID(),
+    resultOnlyRun: randomUUID(),
+    failedRun: randomUUID(),
+    abandonedRun: randomUUID(),
+    crashedRun: randomUUID(),
+    pendingRun: randomUUID(),
+    platformScratchRun: randomUUID(),
+    deliveredWorkspace: randomUUID(),
+    prOpenWorkspace: randomUUID(),
+    abandonedWorkspace: randomUUID(),
   };
   const repoPath = `/tmp/maister-e2e/${ids.project}`;
 
@@ -6458,6 +6481,82 @@ async function seedM23Fixture(
     [ids.noCacheMember, ids.noCacheProject, userId],
   );
 
+  // ADR-178: one run per outcome bucket the overview table shows, a THIRD task
+  // launched inside the window (so `tasksStarted` is not equal to
+  // `tasksInWork`), and a project-less scratch run for the Platform row.
+  await pool.query(
+    // `stage` is left at its default: the overview's task columns derive from
+    // runs (D2) and never read it, so inventing a value the enum does not
+    // carry would only be noise.
+    `INSERT INTO tasks (id, project_id, number, title, prompt, flow_id, status)
+     VALUES ($1, $2, (SELECT COALESCE(MAX(number), 0) + 1 FROM tasks WHERE project_id = $2),
+       'E2E observatory third', 'observe third', $3, 'Done')`,
+    [ids.thirdTask, ids.project, ids.flow],
+  );
+  await pool.query(
+    `INSERT INTO runs
+       (id, task_id, project_id, flow_id, run_kind, status, flow_version,
+        started_at, ended_at)
+     VALUES
+       ($1, $9, $2, $3, 'flow', 'Done', 'v0.0.1',
+        now() - interval '20 hours', now() - interval '19 hours'),
+       ($4, null, $2, $3, 'flow', 'Done', 'v0.0.1',
+        now() - interval '18 hours', now() - interval '17 hours'),
+       ($5, null, $2, $3, 'flow', 'Done', 'v0.0.1',
+        now() - interval '16 hours', now() - interval '15 hours'),
+       ($6, null, $2, $3, 'flow', 'Failed', 'v0.0.1',
+        now() - interval '14 hours', now() - interval '13 hours'),
+       ($7, null, $2, $3, 'flow', 'Review', 'v0.0.1',
+        now() - interval '12 hours', now() - interval '11 hours'),
+       ($8, null, $2, $3, 'flow', 'Crashed', 'v0.0.1',
+        now() - interval '10 hours', now() - interval '9 hours'),
+       ($10, null, $2, $3, 'flow', 'Pending', 'v0.0.1',
+        now() - interval '8 hours', null)`,
+    [
+      ids.deliveredRun,
+      ids.project,
+      ids.flow,
+      ids.prOpenRun,
+      ids.resultOnlyRun,
+      ids.failedRun,
+      ids.abandonedRun,
+      ids.crashedRun,
+      ids.thirdTask,
+      ids.pendingRun,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO workspaces
+       (id, run_id, project_id, branch, worktree_path, parent_repo_path,
+        promotion_state, promotion_mode, pr_state, removed_at, removal_kind)
+     VALUES
+       ($1, $2, $3, 'maister/e2e-delivered', $4, $5, 'done', 'local_merge', null, null, null),
+       ($6, $7, $3, 'maister/e2e-pr-open', $8, $5, 'done', 'pull_request', 'open', null, null),
+       ($9, $10, $3, 'maister/e2e-abandoned', $11, $5, 'none', null, null, now(), 'drop')`,
+    [
+      ids.deliveredWorkspace,
+      ids.deliveredRun,
+      ids.project,
+      `${repoPath}-wt-delivered`,
+      repoPath,
+      ids.prOpenWorkspace,
+      ids.prOpenRun,
+      `${repoPath}-wt-pr-open`,
+      ids.abandonedWorkspace,
+      ids.abandonedRun,
+      `${repoPath}-wt-abandoned`,
+    ],
+  );
+  // ADR-097: the Studio assistant scratch run carries no project. Visible on
+  // the Platform row for a global admin only.
+  await pool.query(
+    `INSERT INTO runs
+       (id, project_id, run_kind, status, flow_version, started_at, ended_at)
+     VALUES ($1, null, 'scratch', 'Done', 'scratch',
+       now() - interval '6 hours', now() - interval '5 hours')`,
+    [ids.platformScratchRun],
+  );
+
   return {
     projectId: ids.project,
     projectSlug: M23_SLUG,
@@ -6465,6 +6564,15 @@ async function seedM23Fixture(
     nodeId: M23_NODE_ID,
     scratchRunId: ids.scratchRun,
     noCacheProjectSlug: M23_NO_CACHE_SLUG,
+    deliveredRunId: ids.deliveredRun,
+    prOpenRunId: ids.prOpenRun,
+    resultOnlyRunId: ids.resultOnlyRun,
+    failedRunId: ids.failedRun,
+    abandonedRunId: ids.abandonedRun,
+    crashedRunId: ids.crashedRun,
+    pendingRunId: ids.pendingRun,
+    platformScratchRunId: ids.platformScratchRun,
+    thirdTaskId: ids.thirdTask,
   };
 }
 

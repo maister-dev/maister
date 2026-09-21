@@ -7,13 +7,14 @@ import type {
 import type { ObservatoryFilters } from "@/lib/queries/observatory";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
-import { and, eq, gte, inArray, isNotNull, lte } from "drizzle-orm";
+import { and, eq, gte, inArray, isNotNull, lt } from "drizzle-orm";
 
 import * as schema from "@/lib/db/schema";
 import {
   rollupAgentization,
   rollupObservatoryFunnel,
 } from "@/lib/queries/observatory-agentization-core";
+import { observatoryPeriodBounds } from "@/lib/observatory/period";
 import { isDeliveryRunKind } from "@/lib/observatory/run-kind";
 
 export interface ProjectAgentizationSummary {
@@ -31,10 +32,11 @@ export async function getProjectAgentization(
   },
 ): Promise<ProjectAgentizationSummary> {
   const runKind = input.filters.runKind ?? "all";
-  const since = new Date(
-    input.now.getTime() -
-      (input.filters.windowDays ?? 30) * 24 * 60 * 60 * 1000,
-  );
+  // ADR-178 D1. Only the DELIVERY-BUCKET window moves to `[since, until)`:
+  // ADR-134's numerator matches promoted roots to buckets by SHA, so bounding
+  // the run rows by `started_at` too would drop a long-lived run whose merge
+  // landed inside the window while its commit stayed in the denominator.
+  const { since, until } = observatoryPeriodBounds(input.filters, input.now);
   const runConditions = [eq(schema.runs.projectId, input.projectId)];
 
   if (runKind !== "all") {
@@ -84,7 +86,7 @@ export async function getProjectAgentization(
           eq(schema.repoDeliveryRollups.projectId, input.projectId),
           eq(schema.repoDeliveryRollups.branch, input.mainBranch),
           gte(schema.repoDeliveryRollups.bucketStart, since),
-          lte(schema.repoDeliveryRollups.bucketStart, input.now),
+          lt(schema.repoDeliveryRollups.bucketStart, until),
         ),
       ),
   ]);
@@ -124,11 +126,14 @@ export async function getProjectAgentization(
       runKind,
       runs: normalizedRuns,
       buckets: deliveryRows,
+      since,
+      until,
     }),
     funnel: rollupObservatoryFunnel({
       runKind,
       runs: normalizedRuns,
       since,
+      until,
     }),
   };
 }

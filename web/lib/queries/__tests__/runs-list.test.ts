@@ -6,6 +6,7 @@ import {
   listRunsPage,
   normalizeRunsListFilters,
 } from "@/lib/queries/runs-list";
+import { filtersToParams } from "@/lib/runs/list-params";
 
 function sqlDebugText(value: unknown): string {
   if (typeof value === "string") return value;
@@ -26,7 +27,9 @@ describe("runs list query", () => {
   it("normalizes URL filters for the runs ledger", () => {
     const filters = normalizeRunsListFilters({
       agent: "claude",
+      bucket: "Delivered",
       from: "2026-06-01",
+      kind: "flow",
       page: "3",
       project: ["alpha", "ignored"],
       source: "scheduled",
@@ -36,12 +39,48 @@ describe("runs list query", () => {
 
     expect(filters).toEqual({
       agent: "claude",
+      bucket: "Delivered",
       dateFrom: "2026-06-01",
       dateTo: "2026-06-20",
+      kind: "flow",
       page: 3,
       projectSlug: "alpha",
       source: "scheduled",
       status: "Running",
+    });
+  });
+
+  it("drops unknown kind and bucket values instead of widening the query", () => {
+    expect(
+      normalizeRunsListFilters({ kind: "everything", bucket: "Promoted" }),
+    ).toEqual({ page: 1 });
+    // `Promoted` is a WorkStage, not an ADR-178 bucket — the ledger must not
+    // accept it just because it reads like one.
+    expect(normalizeRunsListFilters({ bucket: "delivered" })).toEqual({
+      page: 1,
+    });
+  });
+
+  it("round-trips kind and bucket through the shared param builder", () => {
+    const params = filtersToParams({
+      page: 1,
+      projectSlug: "alpha",
+      kind: "scratch",
+      bucket: "PrOpen",
+      dateFrom: "2026-05-07",
+      dateTo: "2026-06-05",
+    });
+
+    expect(params.toString()).toBe(
+      "project=alpha&kind=scratch&bucket=PrOpen&from=2026-05-07&to=2026-06-05",
+    );
+    expect(normalizeRunsListFilters(Object.fromEntries(params))).toEqual({
+      page: 1,
+      projectSlug: "alpha",
+      kind: "scratch",
+      bucket: "PrOpen",
+      dateFrom: "2026-05-07",
+      dateTo: "2026-06-05",
     });
   });
 
@@ -151,8 +190,11 @@ describe("runs list query", () => {
     });
 
     const queryTexts = execute.mock.calls.map((call) => sqlDebugText(call[0]));
+    // Both the page and the count query carry the workspace lateral now
+    // (ADR-178 D8 filters on its columns), so select the page query by the
+    // pagination clause only it has.
     const runsQueryText =
-      queryTexts.find((text) => text.includes("FROM workspaces w")) ?? "";
+      queryTexts.find((text) => text.includes("OFFSET")) ?? "";
     const countQueryText =
       queryTexts.find((text) => text.includes("count(*)")) ?? "";
 
@@ -165,5 +207,26 @@ describe("runs list query", () => {
     expect(runsQueryText).not.toContain("de.created_at AS failed_at");
     expect(countQueryText).toContain("LEFT JOIN LATERAL");
     expect(countQueryText).toContain("FROM run_schedules s");
+  });
+
+  it("gives the count query the same workspace lateral the bucket filter reads", async () => {
+    const execute = vi.fn().mockResolvedValue({ rows: [] });
+
+    await listRunsPage({
+      db: { execute },
+      filters: { page: 1, bucket: "Delivered", kind: "flow" },
+      pageSize: 25,
+      user: { id: "user-1", role: "admin" as GlobalRole },
+    });
+
+    const queryTexts = execute.mock.calls.map((call) => sqlDebugText(call[0]));
+    const countQueryText =
+      queryTexts.find((text) => text.includes("count(*)")) ?? "";
+
+    // Without the lateral, `w.promotion_state` in the predicate is a SQL error
+    // — and a count that disagrees with the page is worse than an error.
+    expect(countQueryText).toContain("FROM workspaces w");
+    expect(countQueryText).toContain("w.promotion_state");
+    expect(countQueryText).toContain("r.run_kind =");
   });
 });
