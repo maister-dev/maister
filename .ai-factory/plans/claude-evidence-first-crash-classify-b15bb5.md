@@ -498,7 +498,17 @@ function over a row + an optional probe result — unit-testable without Postgre
 | 6 | `applicationState = 'applying'` | `applying` | a worker holds the claim right now |
 | 7 | settled ∧ `lastError.details.reason = 'turn_lost'` | `turn_lost` | **before** `pending_application`: a settled lost turn is the boundary, not something to wait for. Safe because **D3** makes both writers produce one shape. |
 | 8 | settled (`succeeded \| failed`) ∧ `applicationState = 'pending'` | `pending_application` | the owner worker will apply it within ~1 s |
-| 9 | `state = 'accepted'`, no terminal evidence → probe `GET /commands/{id}` | `inflight` \| `pending_ingest` \| `turn_lost` \| `pending_ingest`* | the only HTTP call; one per rare candidate |
+| 9 | `state = 'accepted'`, no terminal evidence → probe `GET /commands/{id}` | `inflight` \| `pending_ingest` \| `turn_lost` \| `none`† \| `pending_ingest`* | the only HTTP call; one per rare candidate |
+
+† **C19** — a **v2** `accepted` receipt carries no liveness in EITHER direction
+(`receiptToResponse` drops the `inflight` argument for `requestVersion = 2`;
+`normalizeCommandReceiptV2` then hardcodes `false`), so the probe answers
+`indeterminate` and the class is `none`. Not `pending_ingest`: that class asserts
+a NAMED writer owes the next move and skips regardless of grace, and v2 is the
+production request schema — answering it would skip every production candidate
+forever. `none` is the one class that falls through to the grace anchor, which
+both refuses to crash a turn inside its window and keeps the long-standing
+`agent-session-gone` net for one past it.
 
 \* a `404` receipt is `receipt_missing` on the recovery path
 (`execution-hosts.md:415`), which `recoverExecutionCommands` already terminalizes.
@@ -1422,6 +1432,7 @@ during implementation and were corrected in `docs/decisions/adr-177.md`,
 | Recover settles the declined command `superseded` **with `completion_applied_at`** | `superseded`, `completion_applied_at` left **NULL** | `execution_commands_application_shape_check` is an EQUIVALENCE (**C15**) — the documented write is refused by the database. Retirement never reads the column |
 | the stream-lost bound covers **any `pending_*`** ∨ `inflight` | only `pending_ingest` ∨ `inflight` | **C18** — the other classes' evidence is already in Postgres, so a dead stream cannot stall them and crashing them would discard a landed result |
 | (unstated) | an already-`applied`/`superseded` command means the obligation is MET and the boundary rewrites nothing; `application_error` is PRESERVED | both found by tests; without the first, a quarantined-after-application row left the run `Running` forever |
+| the probe has **three** answers, and anything unproven is `pending_ingest` | a **fourth**, `indeterminate` → class `none`, for a v2 `accepted` receipt | **C19** — found by adversarial review, then by its own fix: proving a lost turn (rather than inferring one) moved the v2 shape to `pending_ingest`, which skips regardless of grace, so the production path silently lost the pre-ADR-177 safety net. `none` keeps it |
 
 Checked and found still TRUE, so untouched (R9): `docs/architecture.md` (its one
 reconcile sentence is about the recovery path in general), `error-taxonomy.md`

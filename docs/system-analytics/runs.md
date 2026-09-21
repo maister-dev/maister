@@ -349,7 +349,10 @@ run machine:
    (`turn-lost`, `owner-poisoned`, `stream-lost`) because no writer will ever
    come. The stream bound covers only those two classes — the others' evidence
    is already in Postgres, so a dead stream cannot stall them. The grace
-   window governs the `none` path and nothing else. Enforced by the classifier's
+   window governs the `none` path and nothing else — which is also where a
+   probe that proves nothing in EITHER direction lands (a **v2** `accepted`
+   receipt carries no liveness field), so that case keeps the pre-ADR-177
+   safety net instead of skipping forever. Enforced by the classifier's
    exhaustive `satisfies Record<PromptEvidenceClass, …>` map — a future member is
    a compile error, never a silent fall-through — and pinned by the
    `reconcile-classify` unit suite plus the `command-recovery` integration
@@ -389,7 +392,7 @@ cell with no arm is a defect, not a default.
 | `runs.status` | Prompt evidence | Arm | Who moves it next |
 | --- | --- | --- | --- |
 | `Running` (live session) | any | reattach / skip | the live driver, or `runFlow(crashResume)` on a committed intent |
-| `Running` (no session) | `none`, inside grace | SKIP `grace-window` | the dispatch that is still spinning up |
+| `Running` (no session) | `none`, inside grace | SKIP `grace-window` | the dispatch that is still spinning up — or, on an indeterminate probe, possibly nobody |
 | `Running` (no session) | `none`, past grace | CRASH `agent-session-gone` | an operator, via Recover |
 | `Running` (no session) | `applied` | SKIP `evidence-applied` | the flow continuation worker (~1 s) |
 | `Running` (no session) | `applying` / `pending_application` / `pending_ingest` | SKIP `evidence-pending` | the claim holder, the prompt-owner worker, or the event consumer |

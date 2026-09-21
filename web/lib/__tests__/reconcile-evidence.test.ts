@@ -162,14 +162,19 @@ describe("classifyPromptEvidence — a probe that proves nothing never crashes",
     );
   });
 
-  it.each(["completed", "pending_ingest", "unknown"] as const)(
-    "%s never crashes",
+  it("an INDETERMINATE probe defers to the grace rule rather than skipping", () => {
+    // A v2 accepted receipt carries no liveness in EITHER direction. Answering
+    // `pending_ingest` would skip unconditionally and strip the pre-ADR-177
+    // safety net from the production request schema; `none` is the one class
+    // that falls through to the grace anchor, so a long-dead turn still gets
+    // crashed and a fresh one is still protected by its window.
+    expect(classifyPromptEvidence(row(), "indeterminate")).toBe("none");
+  });
+
+  it.each(["completed", "pending_ingest", "unknown", "indeterminate"] as const)(
+    "%s never yields turn_lost",
     (probe) => {
-      expect(
-        ["inflight", "pending_ingest"].includes(
-          classifyPromptEvidence(row(), probe),
-        ),
-      ).toBe(true);
+      expect(classifyPromptEvidence(row(), probe)).not.toBe("turn_lost");
     },
   );
 });

@@ -20,6 +20,7 @@ import { describe, expect, it } from "vitest";
 
 import { normalizeCommandReceiptV2 } from "@/lib/execution-host/command-receipt";
 import { isTurnLostError } from "@/lib/reconcile-evidence";
+import { probeReceipt } from "@/lib/reconcile-evidence-db";
 
 // The v2 shape is strictly validated (`exactKeys` on both the receipt and its
 // terminal), which is the point: the assertions below are about what the REAL
@@ -91,5 +92,89 @@ describe("rejected is not synonymous with lost", () => {
     });
 
     expect(isTurnLostError(receipt.body)).toBe(true);
+  });
+});
+
+// The two suites above pin what the normalizer PRODUCES and what
+// `isTurnLostError` makes of it. Neither pins the step between them — the
+// mapping `probeReceipt` performs — and that step is where the defect lived.
+// Without these cases, restoring either wrong reading leaves the whole lane
+// green, which is exactly how both shipped the first time.
+function transportReturning(receipt: unknown) {
+  return {
+    getCommandReceipt: async () => receipt,
+  } as never;
+}
+
+describe("probeReceipt maps each receipt to what it actually PROVES", () => {
+  it("a v2 accepted receipt is INDETERMINATE, never a lost turn", async () => {
+    // `indeterminate` and not `pending_ingest`: the latter asserts a named
+    // writer owes the next move, and fires regardless of grace. Since v2 is the
+    // production request schema, answering it here would skip EVERY production
+    // candidate forever and silently delete the pre-ADR-177 safety net. `none`
+    // — what `indeterminate` classifies to — keeps the grace rule instead.
+    await expect(
+      probeReceipt(transportReturning(v2("accepted")), "c"),
+    ).resolves.toBe("indeterminate");
+  });
+
+  it("a rejected receipt with an ORDINARY error is pending_ingest", async () => {
+    await expect(
+      probeReceipt(
+        transportReturning(
+          v2("rejected", { code: "ACP_PROTOCOL", message: "adapter refused" }),
+        ),
+        "c",
+      ),
+    ).resolves.toBe("pending_ingest");
+  });
+
+  it("a rejected receipt naming turn_lost IS a lost turn", async () => {
+    await expect(
+      probeReceipt(
+        transportReturning(
+          v2("rejected", {
+            code: "PRECONDITION",
+            message: "turn lost",
+            details: { reason: "turn_lost" },
+          }),
+        ),
+        "c",
+      ),
+    ).resolves.toBe("turn_lost");
+  });
+
+  it("only a v1 accepted receipt may read its liveness field", async () => {
+    // v1 is the one shape where `inflight` means something, so it is the one
+    // shape from which a lost turn may be concluded without a terminal error.
+    const v1 = (inflight: boolean) => ({
+      phase: "accepted" as const,
+      inflight,
+      evidenceV2: false,
+      body: null,
+    });
+
+    await expect(probeReceipt(transportReturning(v1(true)), "c")).resolves.toBe(
+      "inflight",
+    );
+    await expect(
+      probeReceipt(transportReturning(v1(false)), "c"),
+    ).resolves.toBe("turn_lost");
+  });
+
+  it("an absent receipt and a throwing transport are both unknown, never a crash", async () => {
+    await expect(probeReceipt(transportReturning(null), "c")).resolves.toBe(
+      "unknown",
+    );
+    await expect(
+      probeReceipt(
+        {
+          getCommandReceipt: async () => {
+            throw new Error("connection reset");
+          },
+        } as never,
+        "c",
+      ),
+    ).resolves.toBe("unknown");
   });
 });

@@ -53,6 +53,12 @@ export type PromptReceiptProbe =
   | "completed"
   | "turn_lost"
   | "pending_ingest"
+  // The receipt exists but carries no liveness at all, so this arm has nothing
+  // to say in EITHER direction — a v2 receipt in `accepted`. Distinct from
+  // `pending_ingest`, which asserts a named writer owes the next move: here
+  // nobody is asserted, so the decision falls back to the pre-ADR-177 grace
+  // rule rather than to an unconditional skip.
+  | "indeterminate"
   | "unknown";
 
 const SETTLED_STATES = new Set(["succeeded", "failed", "fenced"]);
@@ -118,6 +124,13 @@ export function classifyPromptEvidence(
       return "inflight";
     case "turn_lost":
       return "turn_lost";
+    // `none` is deliberate: it is the ONE class that falls through to the grace
+    // anchor. A v2 receipt cannot tell a running turn from a lost one, so this
+    // arm declines to answer and the rule that governed before ADR-177 decides
+    // — which both refuses to crash a turn inside its grace window AND keeps
+    // the long-standing safety net for one that is past it.
+    case "indeterminate":
+      return "none";
     // A receipt that says `completed`, one that proves nothing terminal, and
     // equally one that did not answer: reconcile never invents a terminal
     // outcome from a missing or inconclusive receipt — the command-recovery

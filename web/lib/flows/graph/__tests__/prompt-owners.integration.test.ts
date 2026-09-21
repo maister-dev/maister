@@ -3199,48 +3199,54 @@ describe("Flow prompt owners through the production graph driver", () => {
       [seeded.runId],
     );
 
-    const summary = await runReconcileSweep({
+    await runReconcileSweep({
       db: database.db,
       executionHosts: createExecutionHosts({
         db: database.db as unknown as Db,
       }),
     });
 
-    // ADR-177 splits these two windows, and the split is the contract rather
-    // than an accident of this fixture.
+    // ADR-177 removed the sweep's ability to manufacture a Crashed run in
+    // EITHER of this fixture's windows, and in both cases that is the contract
+    // working rather than a regression:
     //
-    // `before_terminal` freezes the COMMAND's terminal columns, not the host's
-    // receipt — and the adapter really was killed — so the sweep's evidence
-    // probe asks the supervisor, is told the turn is gone, and crashes it
-    // `turn-lost` through the shared boundary. The attempt is therefore closed
-    // at CRASH time (`decision='turn_lost'`) instead of at Recover time
-    // (`crash_recover`); both are in `NON_CORRECTION_DECISIONS`, so nothing
-    // downstream moves.
+    //   `before_apply`    the turn FINISHED and only its owner application is
+    //                     outstanding. Crashing there is precisely the "a run
+    //                     is crashed while its result is still on its way"
+    //                     defect ADR-177 exists to remove.
+    //   `before_terminal` the fixture kills the ADAPTER, so the host records an
+    //                     ORDINARY failure — `completeAsync`'s catch writes
+    //                     `rejected` for any errored turn. Only the `turn_lost`
+    //                     REASON marks a lost turn, and reading every rejection
+    //                     as one is what crashed healthy runs. The command here
+    //                     is left un-terminalized by the suppression trigger,
+    //                     so nothing settles it either.
     //
-    // `before_apply` is the case ADR-177 exists to fix: the turn FINISHED, its
-    // agreeing evidence is ingested, and only the owner application is
-    // outstanding. The sweep now correctly DECLINES to crash it — crashing
-    // there is exactly the "a run is crashed while its result is still on its
-    // way" defect. Asserting that decline here is worth more than the old
-    // `crashed >= 1`, so it is asserted rather than skipped past.
-    if (options.window === "before_apply") {
-      expect(
-        summary.crashed,
-        "ADR-177: a finished turn whose result is still being applied must NOT be crashed for being old",
-      ).toBe(0);
-      // ADR-175's applied-evidence arm still needs a CRASHED run holding
-      // unapplied evidence. Since the sweep no longer manufactures that state,
-      // the fixture produces the population ADR-177 names instead: a run
-      // crashed for some OTHER reason while its evidence was still unapplied.
-      const { crashRunningRun } = await import("@/lib/runs/state-transitions");
-      const crashResult = await crashRunningRun(seeded.runId, "worktree-gone", {
-        db: database.db as unknown as Db,
-      });
+    // These cases are about RECOVER, not about how the run reached `Crashed`,
+    // so the fixture now produces that state directly — and asserts the sweep's
+    // (correct) refusal on the way, which is worth more than the old
+    // `crashed >= 1`.
+    //
+    // Read from the RUN, never from the sweep's `crashed` counter: that counter
+    // is sweep-WIDE, and by the time this fixture runs the file has seeded dozens
+    // of other runs in the same database, several of which this sweep crashes
+    // legitimately. A skip writes nothing at all, so `Running` is its signature.
+    const [afterSweep] = await database.db
+      .select({ status: runs.status })
+      .from(runs)
+      .where(eq(runs.id, seeded.runId));
 
-      expect(crashResult.ok).toBe(true);
-    } else {
-      expect(summary.crashed).toBeGreaterThanOrEqual(1);
-    }
+    expect(
+      afterSweep.status,
+      "ADR-177: neither window is a lost turn, so the sweep must not crash THIS run",
+    ).toBe("Running");
+
+    const { crashRunningRun } = await import("@/lib/runs/state-transitions");
+    const crashResult = await crashRunningRun(seeded.runId, "worktree-gone", {
+      db: database.db as unknown as Db,
+    });
+
+    expect(crashResult.ok).toBe(true);
     const [crashed] = await database.db
       .select()
       .from(runs)
@@ -3423,14 +3429,7 @@ describe("Flow prompt owners through the production graph driver", () => {
 
       expect(closed).toMatchObject({
         status: "Reworked",
-        // ADR-177: this run was crashed `turn-lost` (the host reported the turn
-        // gone), so the shared boundary closed the attempt at CRASH time.
-        // `closeCrashedNodeAttempts` then finds nothing open and Recover's
-        // `crash_recover` marker never lands — which changes nothing the
-        // contract depends on: the attempt IS closed, the graph appends a fresh
-        // one under the new epoch (asserted above), and both decisions are in
-        // `NON_CORRECTION_DECISIONS`.
-        decision: "turn_lost",
+        decision: "crash_recover",
       });
       expect(closed?.endedAt).not.toBeNull();
       expect(attempts).toHaveLength(2);

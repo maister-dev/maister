@@ -1836,6 +1836,60 @@ describe("runReconcileSweep — evidence-first crash classification (ADR-177)", 
     expect(summary.crashed).toBe(0);
   }, 60_000);
 
+  it("a v2 accepted receipt proves nothing, so the GRACE rule still decides it", async () => {
+    // The composition guard for the `indeterminate` probe answer. Each link is
+    // pinned by a unit suite — the probe returns `indeterminate` for a v2
+    // accepted receipt, `indeterminate` classifies `none`, and `none` past
+    // grace crashes — but nothing pinned them TOGETHER, and the whole point of
+    // this arm is which of two sweep outcomes a real candidate reaches.
+    //
+    // Under the `pending_ingest` reading this case is `Running` with
+    // `evidencePending >= 1`: skipped regardless of grace, forever, by every
+    // sweep, with no writer that owes the next move. Since v2 IS the production
+    // request schema, that reading silently deleted the pre-ADR-177 safety net
+    // from the production path.
+    const runId = await seedRun({ acpSessionId: null });
+
+    await seedWorkspace(runId, "/worktrees/v2-indeterminate");
+    const { opts, hostId } = await makeOpts({
+      worktreePaths: ["/worktrees/v2-indeterminate"],
+      liveSessions: [],
+      getCommandReceipt: async (commandId: string) => ({
+        commandId,
+        runId,
+        kind: "session.prompt",
+        assignmentEpoch: 1,
+        phase: "accepted",
+        httpStatus: 202,
+        body: {},
+        receivedAt: new Date().toISOString(),
+        completedAt: null,
+        eventId: null,
+        // What `normalizeCommandReceiptV2` produces: the v2 wire shape has no
+        // liveness field, so this is hardcoded and means NOTHING here.
+        inflight: false,
+        evidenceV2: { receiptVersion: 2, commandId, phase: "accepted" },
+      }),
+    });
+
+    await seedOwnedPrompt(runId, hostId);
+
+    const summary = await runReconcileSweep(opts);
+
+    expect(
+      (await readRun(runId)).status,
+      "a receipt that proves nothing must leave the long-standing grace net in place",
+    ).toBe("Crashed");
+    expect(
+      summary.turnLost ?? 0,
+      "and it must never be read as PROOF of a lost turn in the other direction",
+    ).toBe(0);
+    expect(
+      summary.evidencePending ?? 0,
+      "claiming a writer owes the next move is what would skip this row forever",
+    ).toBe(0);
+  }, 60_000);
+
   it("RED 2d: an APPLIED completion past grace is SKIPPED (evidence-applied) — the continuation worker owns it", async () => {
     const runId = await seedRun({ acpSessionId: null });
 

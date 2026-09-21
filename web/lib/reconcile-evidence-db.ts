@@ -148,10 +148,13 @@ function needsReceiptProbe(row: PromptEvidenceLookup): boolean {
  *    every `rejected` to `turn_lost` turned an ordinary failed turn — which the
  *    owner should apply as a failed node action — into a run crash.
  *
- * Anything this function cannot prove is `pending_ingest`, which SKIPS and
- * leaves the command to the recovery pass and the owner worker that own it.
+ * Nothing this function cannot prove ever returns `turn_lost`. It answers
+ * `pending_ingest` — which SKIPS, leaving the command to the recovery pass and
+ * the owner worker that own it — except for the one shape that asserts no
+ * writer at all, a v2 `accepted` receipt, which answers `indeterminate` and
+ * defers to the grace rule rather than skipping forever.
  */
-async function probeReceipt(
+export async function probeReceipt(
   transport: ExecutionHostTransport,
   commandId: string,
 ): Promise<PromptReceiptProbe> {
@@ -165,8 +168,20 @@ async function probeReceipt(
     if (receipt.phase === "completed") return "completed";
     if (receipt.phase === "accepted") {
       // Only the v1 shape carries liveness. `accepted` + `inflight:false` on v1
-      // IS the turn_lost signature; on v2 the same fields mean nothing.
-      if (receipt.evidenceV2) return "pending_ingest";
+      // IS the turn_lost signature; on v2 the same fields mean nothing, because
+      // `receiptToResponse` takes an `inflight` argument and DROPS it for
+      // `requestVersion === 2` — the v2 wire shape has no such field, and
+      // `normalizeCommandReceiptV2` then hardcodes `false`.
+      //
+      // So a v2 accepted receipt is `indeterminate`, not `pending_ingest`: an
+      // unconditional skip would strip the pre-ADR-177 safety net from the
+      // production path (v2 IS the production request schema) and leave a run
+      // whose terminal event never arrives waiting forever. Deferring to the
+      // grace rule refuses to crash a turn inside its window — which is the
+      // actual harm here, since the sweep snapshots sessions BEFORE loading
+      // candidates and a just-started turn can look session-less — while still
+      // crashing one that is long past it.
+      if (receipt.evidenceV2) return "indeterminate";
 
       return receipt.inflight ? "inflight" : "turn_lost";
     }
