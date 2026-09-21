@@ -32,9 +32,16 @@ vi.mock("@/lib/authz", () => ({
     mustChangePassword: false,
   })),
 }));
-// Deterministic supervisor diagnostics so the route's readiness recompute is
-// testable without a live supervisor: GITHUB_TOKEN present, others absent.
+// Deterministic host reads so the route's readiness recompute is testable
+// without a live supervisor. ADR-179 split them in two: `diagnostics()` still
+// carries the ADAPTER gate, while PRESENCE now comes from
+// `POST /diagnostics/env-refs` — GITHUB_TOKEN present, everything else absent.
+// `envRefsFails` lets one case make the presence read throw, which is the
+// degrade-to-Unknown path.
+let envRefsFails = false;
+
 vi.mock("@/lib/supervisor-client", () => ({
+  ENV_REFS_MAX_PER_CALL: 64,
   checkSupervisorDiagnostics: vi.fn(async () => ({
     kind: "ready",
     diagnostics: {
@@ -42,9 +49,17 @@ vi.mock("@/lib/supervisor-client", () => ({
       version: "1.0.0",
       checkedAt: "2026-06-13T00:00:00.000Z",
       adapters: [],
-      envRefs: [{ name: "GITHUB_TOKEN", present: true }],
+      envRefs: [],
     },
   })),
+  checkSupervisorEnvRefs: vi.fn(async (names: readonly string[]) => {
+    if (envRefsFails) throw new Error("fake host: env-refs unavailable");
+
+    return names.map((name) => ({
+      name,
+      present: name === "GITHUB_TOKEN",
+    }));
+  }),
 }));
 
 beforeAll(async () => {
@@ -112,7 +127,7 @@ describe("admin MCP server CRUD (real postgres)", () => {
         id,
         transport: "stdio",
         command: "github-mcp",
-        envKeys: ["env:GITHUB_TOKEN"],
+        env: { GITHUB_TOKEN: "env:GITHUB_TOKEN" },
       }),
     );
 
@@ -133,14 +148,30 @@ describe("admin MCP server CRUD (real postgres)", () => {
     expect(dupBody.code).toBe("CONFLICT");
   });
 
-  it("rejects a plaintext secret value (env:NAME only) with 422", async () => {
+  // ADR-179 (D24): the route ACCEPTS a literal — the secret guard is a UI
+  // warning, and this is the case that pins the route half of that decision.
+  it("ACCEPTS a literal value under a secret-shaped key (201)", async () => {
+    const { POST } = await import("../route");
+    const res = await POST(
+      postRequest({
+        id: `lit-${randomUUID().slice(0, 8)}`,
+        transport: "stdio",
+        command: "x",
+        env: { GITHUB_TOKEN: "sk-raw-secret-value" },
+      }),
+    );
+
+    expect(res.status).toBe(201);
+  });
+
+  it("rejects a MALFORMED env: value with 422", async () => {
     const { POST } = await import("../route");
     const res = await POST(
       postRequest({
         id: `bad-${randomUUID().slice(0, 8)}`,
         transport: "stdio",
         command: "x",
-        envKeys: ["sk-raw-secret-value"],
+        env: { GH: "env:1BAD" },
       }),
     );
     const body = (await res.json()) as { code?: string };
@@ -236,7 +267,7 @@ describe("admin MCP server CRUD (real postgres)", () => {
         id,
         transport: "stdio",
         command: "github-mcp",
-        envKeys: ["env:GITHUB_TOKEN"],
+        env: { GITHUB_TOKEN: "env:GITHUB_TOKEN" },
       }),
     );
 
@@ -252,7 +283,7 @@ describe("admin MCP server CRUD (real postgres)", () => {
       (rows[0] as { readinessReasons: string[] }).readinessReasons,
     ).toEqual([]);
 
-    await PATCH(patchRequest({ envKeys: ["env:MISSING_TOKEN"] }), {
+    await PATCH(patchRequest({ env: { GH: "env:MISSING_TOKEN" } }), {
       params: Promise.resolve({ id }),
     });
 
@@ -267,5 +298,58 @@ describe("admin MCP server CRUD (real postgres)", () => {
     expect(
       (rows[0] as { readinessReasons: string[] }).readinessReasons,
     ).toContain("env ref missing: MISSING_TOKEN");
+  });
+
+  it("a LITERAL value produces no readiness reason — it references nothing", async () => {
+    const { POST } = await import("../route");
+    const id = `lit-ready-${randomUUID().slice(0, 8)}`;
+
+    await POST(
+      postRequest({
+        id,
+        transport: "stdio",
+        command: "x",
+        env: { FASTMCP_LOG_LEVEL: "ERROR", GH_HOST: "github.com" },
+      }),
+    );
+
+    const [row] = await db
+      .select()
+      .from(platformMcpServers)
+      .where(eq(platformMcpServers.id, id));
+
+    expect((row as { readinessStatus: string }).readinessStatus).toBe("Ready");
+  });
+
+  it("degrades to Unknown and still COMMITS when the host env-ref read fails", async () => {
+    // The host reads are reads, not side effects: a dead host must not refuse
+    // the write. `Unknown` is the honest verdict, not a silent `Ready`.
+    const { POST } = await import("../route");
+    const id = `unk-${randomUUID().slice(0, 8)}`;
+
+    envRefsFails = true;
+    try {
+      const res = await POST(
+        postRequest({
+          id,
+          transport: "stdio",
+          command: "x",
+          env: { GH: "env:GITHUB_TOKEN" },
+        }),
+      );
+
+      expect(res.status).toBe(201);
+    } finally {
+      envRefsFails = false;
+    }
+
+    const [row] = await db
+      .select()
+      .from(platformMcpServers)
+      .where(eq(platformMcpServers.id, id));
+
+    expect((row as { readinessStatus: string }).readinessStatus).toBe(
+      "Unknown",
+    );
   });
 });

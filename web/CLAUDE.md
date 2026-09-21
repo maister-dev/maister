@@ -772,6 +772,14 @@ CRUD is admin-only and the page is reachable from the admin section of
 
 - ADR-065. (Filters are intentionally omitted — small N.)
 
+The `create | edit` modal's **key/value rows** live in
+`components/settings/key-value-rows.tsx` (ADR-179), extracted from the runner
+modal and shared with the platform MCP modal, the project MCP modal, the MCP
+binding-overlay dialog and the Studio MCP template editor. Its labels are PROPS
+rather than `useTranslations` calls, so each surface keeps its own i18n
+namespace; it exports `rowsFromRecord` / `recordFromRows` / `duplicateKeyIds`.
+Reach for it before hand-rolling another `Record<string, string>` editor.
+
 * **Tables are view-only.** No inline editing, row dropdowns, or row-level
   mutate buttons. Rows display data only.
 * **Edit lives in a popup or a dedicated edit page**, never inline. Popup =

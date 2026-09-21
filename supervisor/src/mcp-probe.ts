@@ -26,10 +26,6 @@ export type McpProbeRequest = {
   url?: string;
   headers?: Record<string, string>;
   bearerTokenEnv?: string;
-  // D33 cut-over window: still honoured for exactly one commit while the web
-  // probe path switches. Deleted with the strict schema removal.
-  envKeys?: string[];
-  headerKeys?: string[];
 };
 
 export type McpProbeResult = {
@@ -50,21 +46,6 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-// D33 cut-over window: fold a pre-ADR-179 NAME list into the map form. Both
-// stored spellings exist (`GITHUB_TOKEN` and `env:GITHUB_TOKEN`), so strip
-// first. Deleted with the strict schema removal.
-function legacyRefMap(
-  names: readonly string[] | undefined,
-): Record<string, string> {
-  return Object.fromEntries(
-    (names ?? []).map((raw) => {
-      const name = raw.startsWith("env:") ? raw.slice(4) : raw;
-
-      return [name, `env:${name}`];
-    }),
-  );
-}
-
 // Build the transport-appropriate SDK client transport. Exported so the "three
 // transports shaped correctly" contract is unit-testable.
 export function buildMcpTransport(req: McpProbeRequest): Transport {
@@ -75,17 +56,14 @@ export function buildMcpTransport(req: McpProbeRequest): Transport {
       env: {
         PATH: process.env.PATH ?? "",
         HOME: process.env.HOME ?? "",
-        ...resolveMcpMap({ ...legacyRefMap(req.envKeys), ...req.env }),
+        ...resolveMcpMap(req.env),
       },
       stderr: "ignore",
     });
   }
 
   const url = new URL(req.url ?? "");
-  const headers = resolveMcpHeaderRecord(
-    { ...legacyRefMap(req.headerKeys), ...req.headers },
-    req.bearerTokenEnv,
-  );
+  const headers = resolveMcpHeaderRecord(req.headers, req.bearerTokenEnv);
   const requestInit = { headers };
 
   return req.transport === "sse"

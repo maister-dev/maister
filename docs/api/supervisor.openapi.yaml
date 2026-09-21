@@ -2221,9 +2221,9 @@ components:
       description: |
         One gated MCP catalog entry on `POST /sessions`. `additionalProperties`
         is refused by the supervisor's strict Zod schema — including the two
-        pre-ADR-179 name-list fields the value maps replaced, whose presence
-        yields `409 PRECONDITION` with a message naming the offending path
-        (`mcpServers.<i>.<field>`).
+        pre-ADR-179 name-list fields the value maps replaced. Their presence
+        yields `409 PRECONDITION` whose message names the offending ENTRY and
+        the rejected key (`mcpServers.0: Unrecognized key(s) in object: '…'`).
       example:
         name: "github"
         transport: "http"

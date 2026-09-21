@@ -381,7 +381,7 @@ describe("resolveAgentProfileMcpServers (RD7)", () => {
           "agents", "enforceability", "selected_by_default", "selectable", "material")
        VALUES ($1, $2, 'github', 'mcp', 'GitHub', 'platform',
                '["claude","codex"]'::jsonb, 'enforced', true, true,
-               '{"command":"github-mcp","args":[],"envKeys":["GITHUB_TOKEN"],"config":{}}'::jsonb)`,
+               '{"command":"github-mcp","args":[],"env":{"GITHUB_TOKEN":"env:GITHUB_TOKEN"},"config":{}}'::jsonb)`,
       [randomUUID(), p],
     );
 

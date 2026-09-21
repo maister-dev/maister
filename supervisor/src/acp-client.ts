@@ -949,21 +949,6 @@ export async function createAcpConnection(
     "acp initialized",
   );
 
-  // D33 cut-over window: fold a pre-ADR-179 NAME list into the map form so this
-  // one commit still serves a web tier that has not switched yet. Both stored
-  // spellings exist (`GITHUB_TOKEN` and `env:GITHUB_TOKEN`), so strip first.
-  // Deleted with the strict schema removal.
-  const legacyRefMap = (
-    names: readonly string[] | undefined,
-  ): Record<string, string> =>
-    Object.fromEntries(
-      (names ?? []).map((raw) => {
-        const name = raw.startsWith("env:") ? raw.slice(4) : raw;
-
-        return [name, `env:${name}`];
-      }),
-    );
-
   // M27/T-C4 + ADR-179: build the transport-appropriate ACP McpServer. A value
   // is `literal | env:NAME`; the VALUE behind a reference is resolved HERE,
   // host-side, from process.env — never received from the web tier. stdio
@@ -975,10 +960,7 @@ export async function createAcpConnection(
         type: s.transport,
         name: s.name,
         url: s.url ?? "",
-        headers: resolveMcpHeaders(
-          { ...legacyRefMap(s.headerKeys), ...s.headers },
-          s.bearerTokenEnv,
-        ),
+        headers: resolveMcpHeaders(s.headers, s.bearerTokenEnv),
       };
     }
 
@@ -986,7 +968,7 @@ export async function createAcpConnection(
       name: s.name,
       command: s.command ?? "",
       args: s.args ?? [],
-      env: resolveMcpEnvVariables({ ...legacyRefMap(s.envKeys), ...s.env }),
+      env: resolveMcpEnvVariables(s.env),
     };
   });
 

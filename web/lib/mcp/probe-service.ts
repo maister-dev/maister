@@ -180,9 +180,9 @@ export async function resolveProbeTarget(
     );
   }
 
-  // ADR-177: every source stores ONE map shape now (migration 0172), so this is
-  // a straight read — the pre-ADR-177 `envKeys ?? Object.keys(env)` dual read is
-  // gone.
+  // ADR-179: every source stores ONE map shape now (migration 0172), so this is
+  // a straight read — the pre-ADR-179 dual read over the name-list field and
+  // the map is gone.
   return {
     request: {
       transport: m.transport,

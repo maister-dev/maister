@@ -248,11 +248,6 @@ const mcpServerFields = {
   url: z.string().url().max(2048).optional(),
   headers: mcpHeaderMapSchema.optional(),
   bearerTokenEnv: envRefSchema.optional(),
-  // D33 cut-over window: accepted and mapped for exactly one commit so the web
-  // tier, which still sends them, keeps working and every commit bisects green.
-  // Removed with the web wire switch.
-  envKeys: z.array(z.string().min(1).max(256)).max(64).optional(),
-  headerKeys: z.array(z.string().min(1).max(256)).max(64).optional(),
 } as const;
 
 type McpServerShape = {

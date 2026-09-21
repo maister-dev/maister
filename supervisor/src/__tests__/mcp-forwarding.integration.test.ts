@@ -200,4 +200,30 @@ describe("T4.5-C — supervisor forwards capability MCP servers to ACP adapter",
     expect(legacy?.type).toBe("sse");
     expect(legacy?.url).toBe("https://mcp.example.com/sse");
   });
+
+  it("REFUSES a body carrying a pre-ADR-179 name-list field, naming the path", async () => {
+    if (!booted) throw new Error("not booted");
+
+    // D12: no legacy acceptance at the branch tip. The one-commit D33 window
+    // where these were folded into the map is closed; a web tier that has not
+    // switched must fail loudly rather than silently sending nothing.
+    for (const field of ["envKeys", "headerKeys"]) {
+      const res = await createSession(booted, [
+        { name: "github", command: "github-mcp", [field]: ["GITHUB_TOKEN"] },
+      ]);
+
+      expect(res.status).toBe(409);
+
+      const body = res.body as { code?: string; message?: string };
+
+      expect(body.code).toBe("PRECONDITION");
+      // The message names the offending ENTRY and the rejected KEY, which is
+      // what makes a 409 from a strict schema actionable (C6: the supervisor
+      // has no 400). Zod reports an unrecognized key against the OBJECT's path,
+      // not the key's — so it reads `mcpServers.0: Unrecognized key(s) in
+      // object: 'envKeys'` rather than `mcpServers.0.envKeys`.
+      expect(body.message).toContain("mcpServers.0");
+      expect(body.message).toContain(field);
+    }
+  });
 });

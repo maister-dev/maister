@@ -289,7 +289,8 @@ source of truth for that header. Transport normalization is enforced by the
 schema, not silently applied: `stdio` refuses `url`/`headers`/`bearerTokenEnv`
 and `sse`/`http` refuse `command`/`args`/`env`. The two pre-ADR-179 name-list
 fields the value maps replaced are refused by the strict schema, whose 409
-message names the offending path (`mcpServers.<i>.<field>`).
+message names the offending ENTRY and the rejected key
+(`mcpServers.0: Unrecognized key(s) in object: '…'`).
 
 Resolution lives in `supervisor/src/mcp-values.ts` and is shared with
 `POST /mcp-probe`. It logs nothing: `POST /sessions` adds only the scalar

@@ -1,8 +1,13 @@
 # MCP configurator: env/header value model, transport gate, host env-ref readiness
 
 **Date:** 2026-09-21
-**Status:** Design — decisions D1–D12 taken with the owner on 2026-09-21; one
-confirmation pending in §11; implementation not started.
+**Status:** Shipped 2026-09-21 as [ADR-179](../decisions.md#adr-179). D1–D12 were
+taken with the owner on 2026-09-21; the §11 open point was confirmed the same day
+(overlay values use the shared grammar). Where this document and the ADR differ,
+the ADR is canonical: implementation added the ground truth this design did not
+have — the literal `env` channel already existed end-to-end, `capability_records.
+material` held three shapes rather than one, `evaluateMcpReadiness` had no
+project/package callers at all, and scratch launches bypassed the shared gate.
 **Touches:** ADR-070 (platform MCP catalog), ADR-129 (MCP management v2:
 overlay, readiness, probe), ADR-089 (facade literal env channel), ADR-088
 (package manifest `mcps[]`), ADR-166 (host admin surface), ADR-065 (runner

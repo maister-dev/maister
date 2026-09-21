@@ -86,13 +86,19 @@ describe("resolveCapabilityProfile local-first precedence (T-C7)", () => {
         kind: "mcp",
         source: "platform",
         id: "pf",
-        material: { command: "platform-cmd", envKeys: ["PLATFORM_KEY"] },
+        material: {
+          command: "platform-cmd",
+          env: { PLATFORM_KEY: "env:PLATFORM_KEY" },
+        },
       }),
       record({
         kind: "mcp",
         source: "project",
         id: "pj",
-        material: { command: "project-cmd", envKeys: ["PROJECT_KEY"] },
+        material: {
+          command: "project-cmd",
+          env: { PROJECT_KEY: "env:PROJECT_KEY" },
+        },
       }),
     ]);
 
@@ -101,7 +107,7 @@ describe("resolveCapabilityProfile local-first precedence (T-C7)", () => {
     expect(hit?.source).toBe("project");
     expect(hit?.material).toEqual({
       command: "project-cmd",
-      envKeys: ["PROJECT_KEY"],
+      env: { PROJECT_KEY: "env:PROJECT_KEY" },
     });
   });
 
