@@ -526,6 +526,13 @@ export async function driveResume(
       return { state: "resumed" };
     }
 
+    // ADR-177: `"turn-lost"` falls through to exactly this path, and that is
+    // deliberate rather than an omission. The host lost the turn, so there is
+    // nothing to apply and nothing to quarantine — the run needs one fresh
+    // prompt, which is what `"absent"` already means here. The declined
+    // command was discharged `superseded` inside the evidence call, so it does
+    // not strand once this attempt closes.
+    //
     // ADR-175 Scope 1. Close the attempt the crash left open, so the graph
     // appends a FRESH one under this epoch and admission passes by
     // construction. Its own transaction, after the evidence decision and before

@@ -58,6 +58,7 @@ import { nodeOutputMaxBytes } from "@/lib/instance-config";
 import { MaisterError } from "@/lib/errors";
 import { readPromptRequest } from "@/lib/execution-host/command-request";
 import { waitForPromptCompletion } from "@/lib/execution-host/deliverer";
+import { isTurnLostError } from "@/lib/reconcile-evidence";
 
 const log = pino({
   name: "agent-prompt-owner",
@@ -554,13 +555,31 @@ export const agentPromptOwner = definePromptOwnerAdapter(
         afterCommit: () => afterPersistentAgentPark(db, ref.runId, application),
       };
     }
+    // ADR-177 T3.4. An agent run has ONE writer here, so it keeps this choke
+    // point rather than going through the flow boundary — the change is the
+    // outcome argument, and `AgentTerminalOutcome` already admits "Crashed".
+    //
+    // `Crashed` buys an agent run no new remedy: `isRunRecoverable` resolves the
+    // node kind from `resume_target_step_id`, which an agent run has none of, so
+    // it stays discard-only. What it buys is TRUTH — a host restart is not the
+    // agent failing — and parity with the flow path, so an operator reading two
+    // runs killed by one supervisor restart sees one story.
+    //
+    // The command still reaches `applied` either way: this owner returns
+    // "applied" below and the application layer writes the disposition. That is
+    // the load-bearing half, because a command left `pending` strands
+    // `owner_unapplied` and blocks ever deleting the run.
+    const turnLost =
+      outcome.state === "failed" && isTurnLostError(outcome.error);
     const prepared = await prepareAgentRunFinalization(
       ref.runId,
-      succeeded ? "Done" : "Failed",
+      succeeded ? "Done" : turnLost ? "Crashed" : "Failed",
       {
         db,
         finalOutput: finishSentinelOutput(sentinel, maxBytes),
-        ...(!succeeded ? { reason: "agent_prompt_failed" } : {}),
+        ...(!succeeded
+          ? { reason: turnLost ? "agent_turn_lost" : "agent_prompt_failed" }
+          : {}),
       },
     );
     let application: AgentFinalizationApplication = { finalized: false };

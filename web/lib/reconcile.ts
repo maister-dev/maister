@@ -1637,6 +1637,34 @@ export async function runReconcileSweep(
   let turnLost = 0;
   let ownerPoisoned = 0;
 
+  // ADR-177: the evidence-driven crash reasons. They share ONE boundary because
+  // each of them owes the same three writes in one transaction.
+  const EVIDENCE_CRASH_REASONS = new Set<ReconcileReason>([
+    "turn-lost",
+    "stream-lost",
+    "owner-poisoned",
+  ]);
+  const evidenceCrash = async (
+    cand: { runId: string; currentStepId: string | null; status: string },
+    reason: ReconcileReason,
+  ): Promise<{ ok: boolean; reason?: string }> => {
+    if (!cand.currentStepId) return { ok: false, reason: "no-current-step" };
+    const { applyTurnLostBoundary } = await import(
+      "@/lib/runs/turn-lost-boundary"
+    );
+    const outcome = await applyTurnLostBoundary({
+      db,
+      runId: cand.runId,
+      nodeId: cand.currentStepId,
+      reason: mapReasonToCrashReason(reason),
+      fromStatuses: [cand.status],
+    });
+
+    return outcome === "applied"
+      ? { ok: true }
+      : { ok: false, reason: outcome };
+  };
+
   await runWithConcurrency(candidates, PER_PASS_CONCURRENCY, async (cand) => {
     // M34: a null worktreePath is the no-workspace agent shape (none/
     // repo_read) — there is no worktree to lose. A project-less assistant run
@@ -1965,11 +1993,22 @@ export async function runReconcileSweep(
           // pre-existing reason that is `Running`, unchanged; for a paused or
           // reviewing orphan it is the status the orphan arm saw. A run that
           // moved in between loses the CAS instead of being clobbered.
-          const crashResult = await crashRunningRun(
-            cand.runId,
-            mapReasonToCrashReason(reason),
-            { db, fromStatuses: [cand.status] },
-          );
+          //
+          // ADR-177: the three evidence-driven reasons go through the SHARED
+          // boundary instead, because they owe two more writes than a bare
+          // crash — closing the attempt and discharging the command — and
+          // because the flow prompt owner can reach the same state
+          // concurrently. `crashRunningRun` is still what flips the run inside
+          // that transaction, so every terminal side effect it owns (HITL
+          // close, sync-claim and assignment release, the `run.crashed` webhook
+          // and domain event) is inherited rather than re-implemented.
+          const crashResult = EVIDENCE_CRASH_REASONS.has(reason)
+            ? await evidenceCrash(cand, reason)
+            : await crashRunningRun(
+                cand.runId,
+                mapReasonToCrashReason(reason),
+                { db, fromStatuses: [cand.status] },
+              );
 
           if (!crashResult.ok) {
             // A concurrent transition moved the run after it was loaded — the

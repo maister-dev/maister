@@ -26,6 +26,8 @@ import {
   runSessions,
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import { isTurnLostError } from "@/lib/reconcile-evidence";
+import { closeTurnLostAttempt } from "@/lib/runs/turn-lost-boundary";
 import {
   lockCurrentSessionAssignment,
   staleSessionBinding,
@@ -330,9 +332,17 @@ export const flowPromptOwnerAdapter = definePromptOwnerAdapter(
 
     if (ref.variant !== "gate_ai" && ref.variant !== "gate_skill")
       throw new PromptOwnerInvariantError("flow_owner_variant_unimplemented");
-    const completion = await decodeGatePromptCompletion({ db, ref, outcome });
-    const { verdict } = completion;
-    const passed = completion.status === "passed";
+    // ADR-177 T3.3, the gate half. A lost turn is not a verdict either: decoded
+    // it would fail the gate, and a FAILED gate is a real product outcome that
+    // sends the run to rework or blocks promotion — recording a host restart as
+    // one is worse than recording it as nothing. Same boundary, same row set.
+    const gateTurnLost =
+      outcome.state === "failed" && isTurnLostError(outcome.error);
+    const completion = gateTurnLost
+      ? null
+      : await decodeGatePromptCompletion({ db, ref, outcome });
+    const verdict = completion?.verdict;
+    const passed = completion?.status === "passed";
 
     return {
       apply: async (tx) => {
@@ -357,11 +367,39 @@ export const flowPromptOwnerAdapter = definePromptOwnerAdapter(
           .limit(1);
 
         if (!currentAttempt || !evaluation) return "superseded";
+        if (gateTurnLost) {
+          if (
+            run?.runKind !== "flow" ||
+            !["Running", "NeedsInput"].includes(run.status) ||
+            currentAttempt.runId !== ref.runId ||
+            currentAttempt.executionAssignmentId !== ref.assignmentId
+          )
+            return "superseded";
+          await closeTurnLostAttempt(tx, {
+            runId: ref.runId,
+            nodeAttemptId: currentAttempt.id,
+            reason: "turn-lost",
+            fromStatuses: [run.status],
+            fromAttemptStatuses: [currentAttempt.status],
+          });
+          log.warn(
+            {
+              runId: ref.runId,
+              nodeAttemptId: ref.nodeAttemptId,
+              gateId: ref.gateId,
+              evaluationId: ref.evaluationId,
+              commandId: command.id,
+            },
+            "owned-gate-turn-lost",
+          );
+
+          return "applied";
+        }
         if (
           run?.runKind !== "flow" ||
           !["Running", "NeedsInput"].includes(run.status) ||
           run.currentStepId !== currentAttempt.nodeId ||
-          run.flowRevisionId !== completion.flowRevisionId ||
+          run.flowRevisionId !== completion!.flowRevisionId ||
           currentAttempt.runId !== ref.runId ||
           currentAttempt.executionAssignmentId !== ref.assignmentId ||
           !["Running", "Succeeded"].includes(currentAttempt.status) ||
@@ -369,12 +407,12 @@ export const flowPromptOwnerAdapter = definePromptOwnerAdapter(
           evaluation.nodeAttemptId !== currentAttempt.id ||
           evaluation.gateId !== ref.gateId ||
           evaluation.promptOrdinal !== ref.promptOrdinal ||
-          evaluation.kind !== completion.gateKind ||
+          evaluation.kind !== completion!.gateKind ||
           evaluation.status !== "running"
         )
           return "superseded";
-        if (passed) await markGatePassed(evaluation.id, verdict, tx);
-        else await markGateFailed(evaluation.id, verdict, tx);
+        if (passed) await markGatePassed(evaluation.id, verdict!, tx);
+        else await markGateFailed(evaluation.id, verdict!, tx);
         log.info(
           {
             runId: ref.runId,

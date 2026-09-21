@@ -894,15 +894,24 @@ describe("evidence-first classification vs a LIVE prompt-owner worker (ADR-177)"
     expect(prompts[0].applicationState).toBe("applied");
   }, 180_000);
 
-  // RED 2. The skip arm is only correct if it hands the run to a writer that
-  // actually finishes. Ingest is HELD so the sweep sees pending evidence past
-  // grace, then RELEASED so the owner applies — and the run continues.
-  it("RED 2 — held ingest is SKIPPED past grace, and the release lets the owner apply the turn", async () => {
-    const { flowPromptOwners } = await import("@/lib/flows/graph/prompt-owner");
-    const { startPromptOwnerWorker } = await import(
-      "@/lib/execution-host/prompt-owner-recovery"
-    );
-    const runId = await seedFlowGraphRun("a177-held-ingest");
+  // RED 2. A skip must not be a leak: the run has to SETTLE once the evidence
+  // changes, and settle through the boundary rather than by ageing out.
+  //
+  // What this case does NOT own, and why. Two earlier shapes were tried and
+  // both were wrong about the mechanism:
+  //   * holding INGEST does not produce `pending_ingest` — the probe asks the
+  //     HOST, so a restarted supervisor reports the lost turn however ingest is
+  //     held (that is the whole point of having a probe);
+  //   * a live host turn does not produce `evidence-inflight` either, because a
+  //     run with a live session record never reaches the evidence arms at all —
+  //     the pre-existing live-session guard skips it first, correctly.
+  // Reaching `evidence-inflight` needs a live host turn with NO live session
+  // record, which is a post-web-death state this harness cannot make. The
+  // seeded case in `reconcile-sweep.integration.test.ts` owns that arm with an
+  // injected receipt, deterministically. What is left here is the end-to-end
+  // half nothing else proves: skip, then settle, against a real host.
+  it("RED 2 — a run holding a live turn is not crashed past grace, and the SAME sweep settles it through the boundary once the host loses it", async () => {
+    const runId = await seedFlowGraphRun("a177-inflight");
     const assignment = await mint(runId);
     const client = await hosts.forAssignment(assignment);
     const created = await client.createSession(CREATE_PAYLOAD);
@@ -919,43 +928,28 @@ describe("evidence-first classification vs a LIVE prompt-owner worker (ADR-177)"
     );
 
     await untilState(handle.commandId, ["accepted"]);
-    // Hold ingest: the terminal event cannot reach the ledger, so the command
-    // stays `accepted` while the host itself knows the turn is over.
-    await projectionWorker.stop();
-    sup = await sup.restart();
 
-    await runReconcileSweep({ db });
-    const held = await adr177Rows(runId);
+    // The attempt is seeded an hour old, so the run is definitively OUTSIDE the
+    // 90 s grace — no wait, and no grace override. A skip here can only be the
+    // evidence arm.
+    const first = await runReconcileSweep({ db });
+    const live = await adr177Rows(runId);
 
     expect(
-      held.run.status,
-      "evidence is still arriving — a 90s-old attempt is not proof the run died",
+      live.run.status,
+      "the turn is still running — crashing it discards a turn that is still being paid for",
     ).toBe("Running");
-    expect(held.attempt.status).toBe("Running");
+    expect(live.attempt.status).toBe("Running");
+    expect(first.crashed).toBe(0);
 
-    // Release: the projector ingests the terminal event, the command settles,
-    // and the durable owner applies it.
-    projectionWorker = startProjectionWorker({
-      db,
-      projectors: canonicalProjectors,
-    });
+    // Not a leak: once the turn is genuinely lost the SAME sweep settles it.
+    sup = await sup.restart();
     await recoverExecutionCommands({ db, graceMs: 0 });
-    const worker = startPromptOwnerWorker({ db, owners: flowPromptOwners });
+    await runReconcileSweep({ db });
+    const settled = await adr177Rows(runId);
 
-    try {
-      await expect
-        .poll(
-          async () =>
-            (await getCommand(db, handle.commandId))?.applicationState,
-          { timeout: 30_000, interval: 250 },
-        )
-        .not.toBe("pending");
-    } finally {
-      await worker.stop();
-    }
-    expect(
-      (await getCommand(db, handle.commandId))?.state,
-      "the held evidence must arrive once the hold is lifted — otherwise the skip was a leak",
-    ).toBe("failed");
+    expect(settled.run.status).toBe("Crashed");
+    expect(settled.attempt.decision).toBe("turn_lost");
+    expect(settled.prompts[0].applicationState).toBe("applied");
   }, 180_000);
 });

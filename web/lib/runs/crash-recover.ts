@@ -10,6 +10,7 @@ import { CRASH_RECOVER_DECISION } from "@/lib/flows/graph/attempt-decisions";
 import { decodeNodePromptCompletion } from "@/lib/flows/graph/node-prompt-owner";
 import { readPromptOutput } from "@/lib/execution-host/prompt-output";
 import { reconcilePromptCommand } from "@/lib/execution-host/prompt-reconciliation";
+import { isTurnLostError } from "@/lib/reconcile-evidence";
 import { resolveNodeResumeSessionId } from "@/lib/runs/node-resume-session";
 import { MaisterError } from "@/lib/errors";
 
@@ -70,7 +71,14 @@ async function evidenceAlreadyApplied(
   return row?.actionCompletion?.commandId === commandId;
 }
 
-export type CrashEvidenceOutcome = "applied" | "absent" | "quarantined";
+export type CrashEvidenceOutcome =
+  | "applied"
+  | "absent"
+  | "quarantined"
+  // ADR-177: the crashed turn's evidence says the HOST lost it. Not a result,
+  // so it is declined rather than applied — and the caller routes it exactly
+  // like "absent": close the attempt, dispatch one fresh prompt.
+  | "turn-lost";
 
 // Another writer applied this command between the read and the write. Rolls the
 // handoff transaction back so the recover falls through to an ordinary
@@ -176,6 +184,59 @@ export async function applyCrashedTurnEvidence(
 
     if (ref?.variant !== "node") continue;
     if (settled.state === "failed" && !settled.lastError) continue;
+
+    // ADR-177 D5. A lost turn is not the node's outcome — it is the absence of
+    // one. ADR-175's rule ("agreeing terminal evidence the owner never applied
+    // is applied first") reads it as agreeing evidence and would decode it into
+    // a failed node action; the graph then fails the node, `PRECONDITION` is not
+    // retryable, and `runs.status` lands `Failed` — which `isRunRecoverable`
+    // refuses. Recover would turn a recoverable run into a dead one.
+    //
+    // Declining is NOT enough. Left at `pending` the command strands
+    // `owner_unapplied` forever and `execution_commands_protected_evidence`
+    // then blocks deleting the run — and the sweep can never reach it, because
+    // the probe is attempt-scoped and this command belongs to the attempt the
+    // recover is about to close. So the obligation is discharged HERE, as
+    // `superseded`: the existing first-class disposition for "the obligation is
+    // met, the result was consciously not applied".
+    //
+    // `completion_applied_at` stays NULL. `execution_commands_application_shape_check`
+    // is an EQUIVALENCE — `(application_state = 'applied') = (completion_applied_at
+    // IS NOT NULL)` — so stamping it beside `superseded` is refused by the
+    // database. Retirement never reads it; `superseded` alone discharges.
+    if (isTurnLostError(settled.lastError)) {
+      const discharged = await db
+        .update(executionCommands)
+        .set({
+          applicationState: "superseded",
+          applicationClaimOwner: null,
+          applicationClaimExpiresAt: null,
+          applicationNextRetryAt: null,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(executionCommands.id, settled.id),
+            eq(executionCommands.applicationState, "pending"),
+            isNull(executionCommands.completionAppliedAt),
+          ),
+        )
+        .returning({ id: executionCommands.id });
+
+      log.warn(
+        {
+          runId: input.runId,
+          nodeId: input.nodeId,
+          nodeAttemptId: attempt.id,
+          commandId: settled.id,
+          outcome: "turn-lost",
+          discharged: discharged.length > 0,
+        },
+        "crash-recover: evidence-first {turn_lost} — declining a lost turn as a result and superseding it",
+      );
+
+      return "turn-lost";
+    }
 
     const [incarnation] = await db
       .select({ acpSessionId: runSessionIncarnations.acpSessionId })
