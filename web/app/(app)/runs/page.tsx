@@ -11,11 +11,14 @@ import { NumberedPagination } from "@/components/navigation/numbered-pagination"
 import { ADAPTER_IDS } from "@/lib/acp-runners/adapter-support";
 import { requireActiveSession } from "@/lib/authz";
 import {
+  filtersToParams,
   listRunsPage,
   normalizeRunsListFilters,
+  RUNS_LIST_KINDS,
   RUNS_LIST_SOURCES,
   RUNS_LIST_STATUSES,
 } from "@/lib/queries/runs-list";
+import { RUN_OUTCOME_BUCKETS } from "@/lib/runs/outcome-bucket";
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
@@ -39,20 +42,6 @@ const STATUS_TONE: Record<RunsListRow["status"], string> = {
   WaitingOnChildren:
     "border-[color-mix(in_oklab,var(--accent-2)_35%,var(--line))] bg-[color-mix(in_oklab,var(--accent-2)_10%,transparent)] text-accent-2",
 };
-
-function filtersToParams(filters: RunsListFilters): URLSearchParams {
-  const params = new URLSearchParams();
-
-  if (filters.projectSlug) params.set("project", filters.projectSlug);
-  if (filters.status) params.set("status", filters.status);
-  if (filters.source) params.set("source", filters.source);
-  if (filters.agent) params.set("agent", filters.agent);
-  if (filters.dateFrom) params.set("from", filters.dateFrom);
-  if (filters.dateTo) params.set("to", filters.dateTo);
-  if (filters.page > 1) params.set("page", String(filters.page));
-
-  return params;
-}
 
 function pageHref(filters: RunsListFilters, page: number): string {
   const params = filtersToParams({ ...filters, page });
@@ -98,9 +87,10 @@ export default async function RunsPage({
   searchParams: SearchParams;
 }): Promise<ReactElement> {
   const user = await requireActiveSession();
-  const [params, t, locale] = await Promise.all([
+  const [params, t, tBucket, locale] = await Promise.all([
     searchParams,
     getTranslations("runsList"),
+    getTranslations("runBucket"),
     getLocale(),
   ]);
   const filters = normalizeRunsListFilters(params);
@@ -128,7 +118,7 @@ export default async function RunsPage({
 
       <form
         action="/runs"
-        className="grid gap-3 rounded-[14px] border border-line bg-paper px-4 py-4 shadow-[var(--shadow-sm)] md:grid-cols-[minmax(160px,1.1fr)_minmax(140px,0.8fr)_minmax(140px,0.8fr)_minmax(120px,0.7fr)_minmax(132px,0.65fr)_minmax(132px,0.65fr)_auto]"
+        className="grid gap-3 rounded-[14px] border border-line bg-paper px-4 py-4 shadow-[var(--shadow-sm)] md:grid-cols-[repeat(4,minmax(140px,1fr))] xl:grid-cols-[repeat(8,minmax(120px,1fr))_auto]"
       >
         <FilterSelect
           label={t("filters.project")}
@@ -175,6 +165,30 @@ export default async function RunsPage({
           {ADAPTER_IDS.map((adapter) => (
             <option key={adapter} value={adapter}>
               {adapter}
+            </option>
+          ))}
+        </FilterSelect>
+        <FilterSelect
+          label={t("filters.kind")}
+          name="kind"
+          value={filters.kind ?? ""}
+        >
+          <option value="">{t("filters.allKinds")}</option>
+          {RUNS_LIST_KINDS.map((kind) => (
+            <option key={kind} value={kind}>
+              {kind}
+            </option>
+          ))}
+        </FilterSelect>
+        <FilterSelect
+          label={t("filters.bucket")}
+          name="bucket"
+          value={filters.bucket ?? ""}
+        >
+          <option value="">{t("filters.allBuckets")}</option>
+          {RUN_OUTCOME_BUCKETS.map((bucket) => (
+            <option key={bucket} value={bucket}>
+              {tBucket(bucket)}
             </option>
           ))}
         </FilterSelect>
