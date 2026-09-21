@@ -29,8 +29,9 @@ backs off for recovery; it cannot authorize a fresh session. The existing
 observable resume fallback requires a definitive CHECKPOINT refusal, while
 workspace readoption requires the host's explicit invalid-handle refusal.
 A replacement retains its predecessor command and increments the create
-generation without advancing the Flow prompt ordinal. Global continuation
-worker activation remains part of the S2.12 deployment gate.
+generation without advancing the Flow prompt ordinal. The global continuation
+worker runs in the production web boot (see
+[Registered owner application engine](#registered-owner-application-engine-implemented)).
 
 Prompt admission waits for the exact active incarnation after a create ACK.
 Its wait budget includes the host-stream claim lease followed by the configured
@@ -92,8 +93,8 @@ namespaced logical key, and reuses the original ID/time and normalized request
 on a matching retry. Migration 0140 rejects incomplete v2 requests and changes
 to admitted identity. `readPromptRequest` verifies JCS bytes, SHA-256 and routing
 before returning the original request; legacy redacted/digest-only rows remain
-explicitly classified. Domain-specific callbacks and global activation are
-later S2 tasks.
+explicitly classified. Domain-specific callbacks are registered in the composed
+production registry.
 
 The shared `prompt-evidence` reducer is implemented for canonical prompt
 outcomes. The projector, admission reconciliation, recovery and waiter retain
@@ -117,8 +118,9 @@ terminal value as receipt v2. Large or private values retain that original
 payload in a verified immutable content object. The common reducer validates
 the original event ID, host stream and sequence before comparing terminal
 evidence. Late v2 events must match the old command's request digest and target
-session; they cannot change the current assignment. Production owner activation
-remains pending S2.12; this development path is not the S2 activation gate.
+session; they cannot change the current assignment. The production owner
+registry is composed and started at web boot; this development path exercises
+the same application engine.
 
 Keep `execution_commands.payload` as the existing allowlisted diagnostic projection. Add a **server-private** immutable `request_canonical_json` TEXT on the same ledger, with version and SHA-256. Store the exact JCS UTF-8 string for `{requestVersion, command:{id,kind,issuedAt}, fence, target:{hostSessionId}, payload}`; include every effect-affecting field, array order and frozen content/object references. Normalize optional fields once before storage. `issuedAt` and all generated IDs are created once and reused; no clock/random input during retry. Parsed request → strict schema → digest comparison precedes every dispatch. The host uses the same digest schema, including the URL target (not only envelope payload), before replaying a receipt.
 
@@ -250,9 +252,45 @@ generation checks in the following contract.
 
 Application modules construct a typed `PromptOwnerRegistry` and pass it to
 `createExecutionHosts` and `startPromptOwnerWorker`. Query/wait and the worker
-use the same application path. The default production registry remains inactive
-until the following domain adapters and their restart scenarios are complete;
-the engine tests do not substitute for that owner matrix.
+use the same application path.
+
+The **production registry is composed at one root**, `web/lib/workers/runtime.ts`,
+which `instrumentation-node.ts` reaches only through a dynamic
+`await import()`. The composition root never lives under
+`web/lib/execution-host/`: every domain registry imports that package, so a
+registry module placed inside it closes an import cycle at module load. It
+composes exactly five registries — `flowPromptOwners`, `consensusDraftPromptOwners`,
+`scratchPromptOwners`, `syncPromptOwners`, `gateChatPromptOwners` — covering the
+five `PromptOwnerSchema` kinds `flow_node_attempt`, `agent_turn`,
+`scratch_message`, `gate_chat` and `sync_resolution`.
+
+Three boot-time refusals keep that composition honest, and each is a
+`MaisterError("CONFIG")`:
+
+- **Uniqueness.** `createPromptOwnerRegistry` throws on a duplicate kind.
+  `agent_turn` is served by `consensusDraftPromptOwners`, which routes a
+  `consensus_draft` variant to draft preparation and every other variant to the
+  ordinary agent owner. Adding `agentPromptOwners` beside it is therefore a boot
+  failure **by design**, not an oversight — `agentPromptOwners` refuses
+  `consensus_draft`, so the pair cannot both be right.
+- **Completeness.** The composed key set is asserted against
+  `new Set(PROMPT_OWNER_SHAPES.map((shape) => shape.kind))`, mirroring the
+  projection registry's own check. The database CHECK derives from the same
+  shapes, so registry, schema and constraint cannot drift apart silently.
+- **Emptiness.** `startPromptOwnerWorker` refuses an empty registry, so a boot
+  order that starts the worker before the registry module resolves fails loudly
+  rather than running a worker that owns nothing.
+
+`startDurableWorkers()` and `stopDurableWorkers()` are the root's only exports
+besides the registry. Both are guarded by `isApplicationStopping()` and by three
+`Symbol.for("maister.durable-workers.*.v1")` process slots, so a double start
+returns the same three handles and a stop clears only slots this process still
+owns. A plain module-scoped variable is not sufficient: Next bundles
+instrumentation separately from the production server entrypoint, so the health
+reader and the composition root resolve different module instances of the same
+file. `web/lib/workers/health.ts` reads those slots and imports no domain
+module, which is what lets the scheduler's `system_sweep` summary report worker
+health without dragging the flow runner into its import graph.
 
 The worker selects due terminal request-v2 commands from `execution_commands`
 with `FOR UPDATE SKIP LOCKED`. Each free slot commits a unique claim before
@@ -342,8 +380,8 @@ failed nodes, rework context and the retry budget. Orchestrator park releases it
 assignment; the capacity-checked child-wake claim stores `action_resume` and
 advances the exact attempt ordinal before another prompt. Live wake, a crash
 after that claim and deferred capacity recovery are covered.
-Pre-prompt creation uses the durable intent described above. Global
-owner/continuation worker activation remains S2.12.
+Pre-prompt creation uses the durable intent described above. The owner and
+continuation workers run in the production web boot.
 
 An orchestrator child wake accepts a completed node or permission-resume owner
 only under the exact assignment that parked it. When that assignment consumed a
@@ -631,7 +669,7 @@ or terminal transition commit with the command application marker. Superseded
 authority can settle only its old message. Qualification includes production
 launcher death before terminal evidence and before application, a full pool,
 distinct live inputs, same-key retry and queue draining after process death.
-The global recovery worker remains gated by S2.12. See the
+The global recovery worker runs in the production web boot. See the
 [schema contract](../database-schema.md#agent_turns-implemented).
 
 ### Agent rework (Implemented)
@@ -702,9 +740,8 @@ closure in one transaction, without reclaiming a slot or sending another prompt.
 The same source proof protects owned-create admission and ACK, prompt admission
 and result application; a create must use the granted original ACP resume handle.
 
-The agent continuation worker (Implemented for the qualified paths above;
-activation held for S2.12) scans accepted turns and saved idle choices in run-ID
-order. It also discovers a Running launch assignment before its first turn is
+The agent continuation worker (Implemented; started at web boot) scans
+accepted turns and saved idle choices in run-ID order. It also discovers a Running launch assignment before its first turn is
 retained, and enters the ordinary original-input/create admission. Concurrent
 workers converge on one turn, create and prompt. It re-enters the same
 capacity claim after delayed receipt/canonical evidence, even without another
@@ -976,6 +1013,37 @@ crashes. Every P/H pair additionally tests released original evidence and a
 superseding successor separately. The union's exact persisted reference fields
 are defined in the [database contract](../database-schema.md#ab-stabilization-persistence-contract-designed).
 
+## Crash-recover marker contract (Implemented)
+
+`runs.resume_started_at` is the durable marker of a **committed recover intent**:
+an operator (or a queued-recover promotion) decided this run should re-enter, and
+that decision outlives the process that took it. [ADR-175](../decisions/adr-175.md)
+made the sweep honour it; [ADR-176](../decisions/adr-176.md) hands it to the flow
+continuation worker under a bounded per-run budget. Because two subsystems now
+read the same marker, its sites are enumerated here rather than rediscovered.
+
+| Column | Write sites (stamp a value) | Release sites (clear to NULL) | Read / predicate consumers |
+| --- | --- | --- | --- |
+| `resume_started_at` | `runs/recover.ts:253`, `runs/recover.ts:285` (the recover claim), `scheduler.ts:916` (`Pending → Running` promotion, whenever `isResume`) | `flows/graph/runner-graph.ts:2410` (CAS-clear on `crashResume`), `runs/crash-recover.ts:451` (`clearCrashRecoverMarker`), `runs/recover.ts:654`, `runs/state-transitions.ts:1376`, `runs/state-transitions.ts:1473` (the two reparks) | `reconcile.ts` classifier + its three candidate loaders, `scheduler.ts:556` (queued-recover promotion guard), `queries/inbox-context.ts:666` (`resumeCount` read model), and the flow continuation worker's crash-recover arm |
+| `crash_recover_next_retry_at` | the same three write sites (reset to `NULL`), plus `recordCrashRecoverContinuationOutcome` on a `transient` outcome | `recordCrashRecoverContinuationOutcome` on `resumed`, `redispatched` and `unresumable` | the worker's candidate predicate only |
+| `crash_recover_attempts` | the same three write sites (reset to `0`), plus `recordCrashRecoverContinuationOutcome` incrementing on `transient` | `recordCrashRecoverContinuationOutcome` on `resumed`, `redispatched` and `unresumable` | the worker's candidate predicate and its budget-exhausted log line |
+
+Line numbers are a convenience and drift with any edit to those files; the
+COUNTS are the contract — three write sites and five release sites — and a
+source-level guard fails the build if a write site ever stamps the marker
+without the reset beside it.
+
+**The budget is reset at every WRITE site, never by chasing release sites.** The
+two columns are zeroed in the **same transaction** that stamps
+`resume_started_at`. Three write sites are exhaustive; five release sites are
+not equivalent, because two of them are reparks — a repark that left a non-zero
+`crash_recover_attempts` behind would strand that count into an unrelated future
+intent and silently shorten its budget. Resetting at write makes every new intent
+start from zero regardless of how the previous one ended.
+
+`reattach`-routed re-entries write no budget at all: that arm is the sweep's
+pre-existing behaviour and carries no new bound.
+
 ## Command retirement and bounded retry policy (Implemented)
 
 Add an idempotent host-admin retirement-eligibility operation through ExecutionHosts, keyed by command ID plus request/outcome digest and eligibility generation. It conveys proof metadata, not a client assertion that time elapsed. Manager derives eligibility under command/owner/run locks; host checks its receipt phase, terminal event's ACK watermark and stored request/outcome identity. Record the host acknowledgment durably before either side removes recoverable evidence.
@@ -1028,14 +1096,14 @@ Deferred inventory must cover ACP permission promises, prompt wait subscriptions
 - **PRM-01:** `session.prompt` is accepted only after the host durably records its Stage A receipt and accepted event.
 - **PRM-02 (Implemented):** Retry reuses command ID, logical operation key, and canonical request digest so ACP is never invoked twice.
 - **PRM-03:** Progress and terminal events—not HTTP lifetime or a receipt alone—are lifecycle authority; the queryable receipt is agreeing evidence for reconciliation.
-- **PRM-04 (Implemented):** Every prompt command has one typed server-derived owner and idempotent terminal application across web restart.
+- **PRM-04 (Implemented):** Every prompt command has one typed server-derived owner and idempotent terminal application across web restart; the production registry composed in `web/lib/workers/runtime.ts` MUST cover exactly the `PROMPT_OWNER_SHAPES` kind set, and a duplicate or missing kind MUST fail boot with `MaisterError("CONFIG")` before `prompt-owner-worker-started` is logged (`durable-workers-boot.integration.test.ts`).
 - **PRM-05:** A host restart finding an accepted command without a live turn terminalizes it as `turn_lost` without replaying prompt text.
 - **PRM-06 (Implemented):** Receipt and terminal event must agree on command, assignment, epoch, and outcome before owner mutation.
 - **PRM-07 (Implemented):** Session exit, crash, and cancellation terminalize accepted prompts before or atomically with terminal session evidence.
 - **PRM-08 (Implemented):** HITL pause, decision, checkpoint, and resume are durable/fenced and resume uses a new command and required incarnation.
 - **PRM-09 (Implemented):** Cancellation reuses the command ledger and has one terminal prompt outcome despite retry or ACK loss.
 - **PRM-10:** Fencing happens before ACP and records a durable fenced receipt/audit event without owner mutation.
-- **PRM-11 (Implemented):** `{commandId}` remains queryable through Postgres after web or supervisor process restart.
+- **PRM-11 (Implemented):** `{commandId}` remains queryable through Postgres after web or supervisor process restart; `startDurableWorkers()` starts the three workers exactly once per process behind their `Symbol.for("maister.durable-workers.*.v1")` slots, `stopDurableWorkers()` is awaited inside the boot quiesce `Promise.allSettled` before the DB drain, and a claim release the worker cannot confirm MUST fail shutdown (`AggregateError: web workers could not drain`) and leave the durable claim to expire rather than be silently dropped.
 - **PRM-12 (Implemented):** Prompt receipt pruning waits for terminal ACK, owner application, terminal run, and replay grace.
 
 ## Edge cases

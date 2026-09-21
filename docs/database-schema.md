@@ -1465,6 +1465,20 @@ expression is wrong once `webhook_events.project_id` can be NULL — see
   resumeStartedAt?,              // (timestamptz, migration 0015) durable
                                  //   Recover in-flight marker + reconcile grace
                                  //   anchor; see below
+  crashRecoverNextRetryAt?,      // ADR-176 (timestamptz, migration 0171) NULL;
+                                 //   the flow continuation worker's backoff
+                                 //   deadline for this committed recover
+                                 //   intent. NULL = eligible now. Set only on a
+                                 //   `transient` outcome; min(2^n, 60)s.
+  crashRecoverAttempts,          // ADR-176 (integer NOT NULL DEFAULT 0,
+                                 //   migration 0171) CHECK >= 0. The per-run
+                                 //   bound on AUTOMATED crash-recover
+                                 //   re-entry (cap 5). BOTH columns are reset
+                                 //   in the SAME transaction that stamps
+                                 //   `resume_started_at` — at all three write
+                                 //   sites, never at the five release sites,
+                                 //   two of which are reparks that would
+                                 //   strand a count into an unrelated intent.
   resumeRequestedAt?,            // ADR-121 (timestamptz, migration 0087) NULL; set
                                  //   when an idle run's HITL is answered and it awaits
                                  //   a slot — the C3 admission FIFO key. The resume

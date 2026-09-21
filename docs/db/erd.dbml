@@ -2049,6 +2049,8 @@ table runs {
   started_at "timestamp with time zone" [not null, default: `now()`]
   ended_at "timestamp with time zone"
   resume_started_at "timestamp with time zone"
+  crash_recover_next_retry_at "timestamp with time zone"
+  crash_recover_attempts integer [not null, default: 0]
   flow_driver_token text
   flow_driver_lease_expires_at "timestamp with time zone"
   resume_requested_at "timestamp with time zone"
@@ -2082,6 +2084,7 @@ table runs {
 
   indexes {
     (project_id, status) [name: 'runs_project_status_idx']
+
 
     (flow_driver_lease_expires_at, id) [name: 'runs_flow_driver_lease_idx']
     (project_id, status, run_kind) [name: 'runs_project_status_kind_idx']

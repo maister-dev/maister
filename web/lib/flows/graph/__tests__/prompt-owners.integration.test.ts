@@ -9,7 +9,7 @@ import { readFile } from "node:fs/promises";
 import { execFile, fork, type ChildProcess } from "node:child_process";
 import path from "node:path";
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNotNull } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
@@ -3008,6 +3008,9 @@ describe("Flow prompt owners through the production graph driver", () => {
     crashedAttemptId: string;
     nodeAcpSessionId: string;
     crashedAssignmentId: string;
+    /** Drops the `before_terminal` evidence seam. Idempotent; a no-op for
+     * `before_apply`, which has no seam to drop. */
+    releaseTerminalEvidence: () => Promise<void>;
   };
 
   // Drives a real `ai_coding`/`judge` turn, kills the web driver in the named
@@ -3026,6 +3029,13 @@ describe("Flow prompt owners through the production graph driver", () => {
           prompt: `fixture-output:${JSON.stringify({
             bytes: 0,
             text: "original action",
+            // MEASURED, not assumed: after the driver is SIGKILLed the terminal
+            // evidence becomes visible ~30 s later regardless of this value,
+            // because the dead child's runtime-event stream claim gates ingest
+            // for RUNTIME_EVENT_CLAIM_LEASE_MS. Raising this to 90 s moved the
+            // measurement not at all (still 30.1 s), so the window these cases
+            // depend on is the LEASE, not this delay. Left at 30 s; the guard
+            // below is what protects the cases.
             terminalDelayMs: options.window === "before_terminal" ? 30_000 : 0,
           })}`,
           ...(nodeType === "judge" ? { schema: { type: "object" } } : {}),
@@ -3111,6 +3121,53 @@ describe("Flow prompt owners through the production graph driver", () => {
 
     if (!original) throw new Error("no owned node prompt was ever issued");
 
+    // The `before_terminal` seam — DETERMINISTIC, not a wall clock.
+    //
+    // Which arm Recover takes is decided by `applyCrashedTurnEvidence`, and it
+    // reads the INGESTED ledger, never the host: `reconcilePromptCommand` is
+    // called without `lookupReceipt`, so it returns before any host read.
+    // `reconcileStoredPromptEvidence` settles on exactly two pointers —
+    // `terminal_evidence_sha256`, else `terminal_event_id` resolved to its
+    // event. Hold those two at their (null) values for THIS command and the
+    // crashed turn can never appear finished, however slow the host is.
+    //
+    // Suppressing rather than PARKING is deliberate. A trigger that blocked on
+    // an advisory lock (the `before_apply` technique) would stall the shared
+    // ingest worker on an open transaction, and `reconcileStoredPromptEvidence`
+    // itself writes under `lockPrompt` once a terminal event exists — so the
+    // recover would have queued behind the very transaction the test was
+    // holding. Here the UPDATE still commits, one row affected, nothing waits.
+    //
+    // Scoped to the ONE crashed command id, so the turn Recover dispatches
+    // afterwards settles normally and the cases that wait for `Review` are
+    // untouched.
+    let releaseTerminalEvidence = async (): Promise<void> => {};
+
+    if (options.window === "before_terminal") {
+      const seam = `crash_recover_seam_${randomUUID().replaceAll("-", "")}`;
+
+      // Freeze the terminal surface COHERENTLY. Freezing only the event
+      // pointers left the receipt to land against a suppressed event, and
+      // `reconcileStoredPromptEvidence` correctly read that as
+      // `prompt_terminal_conflict` — quarantining the turn and answering
+      // `unresumable`. That is a real state, just not the one being simulated:
+      // a half-frozen row is a DISAGREEING turn, not a pre-terminal one. All
+      // five columns move together or the row stops being a shape production
+      // can produce.
+      await database.pool.query(
+        `CREATE FUNCTION ${seam}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.id = '${original.id}' THEN NEW.state := OLD.state; NEW.terminal_evidence_sha256 := OLD.terminal_evidence_sha256; NEW.terminal_event_id := OLD.terminal_event_id; NEW.receipt_evidence := OLD.receipt_evidence; NEW.completed_at := OLD.completed_at; END IF; RETURN NEW; END $$`,
+      );
+      await database.pool.query(
+        `CREATE TRIGGER ${seam} BEFORE UPDATE ON execution_commands FOR EACH ROW EXECUTE FUNCTION ${seam}()`,
+      );
+      releaseTerminalEvidence = async () => {
+        await database.pool.query(
+          `DROP TRIGGER IF EXISTS ${seam} ON execution_commands`,
+        );
+        await database.pool.query(`DROP FUNCTION IF EXISTS ${seam}()`);
+      };
+    }
+
     // Robustness, NOT a diagnosed fix. This helper was seen to time out ONCE at
     // the old 30 s budget during a family run, and the hypothesis was that
     // `pgrep` had raced the adapter's appearance so a one-shot kill never
@@ -3180,7 +3237,43 @@ describe("Flow prompt owners through the production graph driver", () => {
       crashedAttemptId: attempt.id,
       nodeAcpSessionId: session.acpSessionId as string,
       crashedAssignmentId: original.executionAssignmentId,
+      releaseTerminalEvidence,
     };
+  }
+
+  // ADR-175 gives Recover TWO arms and `applyCrashedTurnEvidence` picks between
+  // them: a turn the host already finished takes the applied-evidence
+  // continuation, which re-enters WITHOUT `crashResume` and therefore releases
+  // the intent marker (`4277a50c`); only a turn with no terminal evidence takes
+  // the crash-resume arm these cases are about. Nothing in the assertions below
+  // distinguishes the two, so an outlasted `before_terminal` window turns them
+  // into a test of the other arm — which is what "expected null not to be null"
+  // and the missing `session.create` actually were. Pin the arm.
+  //
+  // The window is ~30 s wide and fixed by the runtime-event stream-claim lease
+  // the dead driver still holds — NOT by the fixture's `terminalDelayMs`, which
+  // was measured to move it not at all. So this cannot be widened away; what it
+  // can do is make an outlasted window fail by NAME instead of as a confusing
+  // assertion mismatch three lines later.
+  async function assertCrashResumeArmIsUnderTest(runId: string): Promise<void> {
+    const [withEvidence] = await database.db
+      .select({ id: executionCommands.id })
+      .from(executionCommands)
+      .where(
+        and(
+          eq(executionCommands.runId, runId),
+          eq(executionCommands.kind, "session.prompt"),
+          isNotNull(executionCommands.terminalEvidenceSha256),
+        ),
+      );
+
+    expect(
+      withEvidence,
+      "the crashed turn ALREADY carries terminal evidence, so this recover takes " +
+        "the applied-evidence arm, not the crash-resume arm this case is about — " +
+        "the `before_terminal` window was outlasted; raise it rather than " +
+        "relaxing the assertions below",
+    ).toBeUndefined();
   }
 
   it("owner-flow-crash-recover: a crashed agent node recovers to a terminal state with one new prompt under the new epoch", async () => {
@@ -3193,6 +3286,8 @@ describe("Flow prompt owners through the production graph driver", () => {
       | undefined;
 
     try {
+      await assertCrashResumeArmIsUnderTest(crashedRun.seeded.runId);
+
       const result = await resumeCrashedRun(crashedRun.seeded.runId, {
         db: database.db,
         executionHosts: createExecutionHosts({
@@ -3299,6 +3394,9 @@ describe("Flow prompt owners through the production graph driver", () => {
       expect(closed?.endedAt).not.toBeNull();
       expect(attempts).toHaveLength(2);
     } finally {
+      // The seam only has to outlive the recover's evidence read; dropping it
+      // here keeps the trigger off `execution_commands` for the rest of the file.
+      await crashedRun.releaseTerminalEvidence();
       await continuation?.stop();
       await ownerWorker?.stop();
     }
@@ -3433,6 +3531,7 @@ describe("Flow prompt owners through the production graph driver", () => {
     );
 
     expect(ranked?.acpSessionId).toBe(substepHandle);
+    await assertCrashResumeArmIsUnderTest(crashedRun.seeded.runId);
 
     const result = await resumeCrashedRun(crashedRun.seeded.runId, {
       db: database.db,
@@ -3441,6 +3540,8 @@ describe("Flow prompt owners through the production graph driver", () => {
       }),
     });
 
+    // The recover has read the evidence state; the seam has done its job.
+    await crashedRun.releaseTerminalEvidence();
     expect(result).toEqual({ state: "resumed" });
     const [run] = await database.db
       .select()
@@ -3479,6 +3580,8 @@ describe("Flow prompt owners through the production graph driver", () => {
       | undefined;
 
     try {
+      await assertCrashResumeArmIsUnderTest(crashedRun.seeded.runId);
+
       // Stand in for a web death between the Phase-1 commit and the dispatch:
       // the durable row set is byte-identical, because the injected runFlow
       // is the LAST thing the arm does.
@@ -3522,10 +3625,6 @@ describe("Flow prompt owners through the production graph driver", () => {
       // claim past MAISTER_RECONCILE_GRACE_SECONDS first — inside grace a freshly
       // claimed recover is deliberately protected from the sweep, so sweeping
       // immediately would (correctly) skip it.
-      continuation = startFlowContinuationWorker({
-        db: database.db as unknown as Db,
-        runtimeRoot: supervisor.runtimeRoot,
-      });
       await database.pool.query(
         "UPDATE runs SET resume_started_at = now() - interval '1 hour' WHERE id = $1",
         [crashedRun.seeded.runId],
@@ -3544,6 +3643,17 @@ describe("Flow prompt owners through the production graph driver", () => {
       // Classified and COUNTED, not silently skipped and not re-crashed.
       expect(sweep.crashRecoverReentered).toBe(1);
       expect(sweep.crashed).toBe(0);
+
+      // The continuation worker starts only AFTER the sweep has been measured.
+      // Since ADR-176 it serves this same committed intent on its ~1 s idle
+      // wake, so starting it before the sweep let it win by design and the
+      // sweep counted zero — `expected +0 to be 1`. This case is about the
+      // SWEEP's arm (see the comment above); the worker is here only to carry
+      // the re-entered run to `Review`. The assertion is unchanged.
+      continuation = startFlowContinuationWorker({
+        db: database.db as unknown as Db,
+        runtimeRoot: supervisor.runtimeRoot,
+      });
       await expect
         .poll(
           async () => {
@@ -3558,6 +3668,7 @@ describe("Flow prompt owners through the production graph driver", () => {
         )
         .toBe("Review");
     } finally {
+      await crashedRun.releaseTerminalEvidence();
       await continuation?.stop();
     }
   }, 420_000);

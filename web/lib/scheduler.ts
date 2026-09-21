@@ -32,6 +32,7 @@ import {
 } from "@/lib/runs/state-transitions";
 import { getLatestAssignment } from "@/lib/execution-host/assignments";
 import { getHostById } from "@/lib/execution-host/hosts";
+import { CRASH_RECOVER_BUDGET_RESET } from "@/lib/runs/crash-recover";
 import { SLOT_HOLDING_RUN_STATUSES } from "@/lib/runs/run-status-sets";
 import {
   clearC2Claim,
@@ -909,7 +910,15 @@ export async function promoteNextPending(
             .update(runs)
             .set(
               isResume
-                ? { status: "Running", startedAt: now, resumeStartedAt: now }
+                ? {
+                    status: "Running",
+                    startedAt: now,
+                    resumeStartedAt: now,
+                    // ADR-176 D4: the THIRD claim-marker write site. A queued
+                    // recover promoted here starts a fresh intent, so its
+                    // per-run budget resets in the same transaction.
+                    ...CRASH_RECOVER_BUDGET_RESET,
+                  }
                 : { status: "Running", startedAt: now },
             )
             .where(and(eq(runs.id, runId), eq(runs.status, "Pending")))

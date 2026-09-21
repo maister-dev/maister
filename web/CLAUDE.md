@@ -432,6 +432,34 @@ objects when the case returns. Both of that spec's `rm` calls now carry
 `maxRetries`/`retryDelay`, the same remedy the sync-resolver temp-repo cleanup
 uses. Reach for that before calling a cleanup failure flaky.
 
+**Measured 2026-09-21 (ADR-176 branch, `--workers=2`, both runs on the same
+host back to back).** The three durable workers DO boot in this lane — the
+config runs `next dev`, which runs `instrumentation.ts` — and a direct `next
+dev` probe confirms all three start with all five owner kinds. **No e2e failure
+is attributable to them.** The two sets:
+
+- **branch** (4 failed, 4 flaky, 185 passed): `desk.spec.ts:205`,
+  `platform-agents-page.spec.ts:26`, `review-diff-scopes.spec.ts:99`,
+  `studio-ai-assistant.spec.ts:69`.
+- **master** (5 failed, 187 passed): `desk.spec.ts:205`,
+  `forked-package-loop.spec.ts:518`, `platform-agents-page.spec.ts:26`,
+  `review-diff-scopes.spec.ts:43`, `studio-ai-assistant.spec.ts:69`.
+
+Three fail in both. `forked-package-loop:518` is master-only here. The one
+branch-only entry is `review-diff-scopes:99` — but that FILE fails in both
+trees with the failing case trading places (`:43` on master, `:99` on the
+branch, and `:43` flaky-then-passing on the branch), and the whole file passes
+3/3 in isolation on the branch across three consecutive runs. It is
+load-sensitive, not worker-regressed.
+
+**`webServer.stdout` defaults to `"ignore"`, so this lane DISCARDS the dev
+server's structured logs.** Only its stderr is piped, which is why the
+`[WebServer]` lines you see are deprecation warnings and React noise while
+every pino INFO line — including `prompt-owner-worker-started` — is invisible.
+Absence of a log line here is not evidence the code did not run; verify with a
+direct `next dev` instead. Not changed here (it is an e2e-config change outside
+this branch's request), but it costs real diagnosis time.
+
 **Known-flaky:** `e2e/recursive-harness.spec.ts` fails roughly one run in three
 under the full parallel suite and passes in isolation. The test supervisor
 delegates SYNCHRONOUSLY inside its `sendPrompt` handler, so the supervisor's

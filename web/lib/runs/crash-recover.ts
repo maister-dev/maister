@@ -347,6 +347,99 @@ export async function closeCrashedNodeAttempts(
 // unrelated crash as an unclaimed recover intent — silently re-dispatching a
 // paid turn in place of the `Crashed` row an operator is supposed to decide on.
 //
+// ADR-176 D3 — the per-run bound on AUTOMATED crash-recover re-entry.
+//
+// `driveResume` deliberately returns `transient` for a fenced error and for
+// EXECUTOR_UNAVAILABLE, leaving the run `Running` and un-rolled-back so a
+// sweeper can retry. That is correct against the sweep's <= 60 s cadence. The
+// continuation worker wakes roughly every second on two slots and does host I/O
+// (`applyCrashedTurnEvidence`) before failing again, so without a bound a
+// supervisor outage becomes a hot retry loop against an already-failing
+// supervisor. ADR-175 named this boundary and declined to cross it; automating
+// the re-entry is what makes the bound this change's to supply.
+export const CRASH_RECOVER_CONTINUATION_MAX_ATTEMPTS = 5;
+
+/** The reset applied at every claim-marker WRITE site (D4). Exported as a
+ * spread so the three sites cannot disagree about what "fresh intent" means. */
+export const CRASH_RECOVER_BUDGET_RESET = {
+  crashRecoverAttempts: 0,
+  crashRecoverNextRetryAt: null,
+} as const;
+
+export type CrashRecoverContinuationOutcome =
+  | "resumed"
+  | "redispatched"
+  | "unresumable"
+  | "transient";
+
+/**
+ * Records what an automated re-entry produced.
+ *
+ * Only the `recover` route writes here. A `reattach` carries no new bound — it
+ * is the sweep's pre-existing behaviour, and charging it against the budget
+ * would let a healthy live session exhaust an allowance it never needed.
+ */
+export async function recordCrashRecoverContinuationOutcome(
+  db: Db,
+  runId: string,
+  outcome: CrashRecoverContinuationOutcome,
+): Promise<{ attempts: number; nextRetryAt: Date | null }> {
+  if (outcome !== "transient") {
+    // `unresumable` clears too: the run is terminal via `crashRunningRun`, and
+    // a clean row keeps a future unrelated crash unbiased.
+    const [cleared] = await db
+      .update(runs)
+      .set(CRASH_RECOVER_BUDGET_RESET)
+      .where(eq(runs.id, runId))
+      .returning({
+        attempts: runs.crashRecoverAttempts,
+        nextRetryAt: runs.crashRecoverNextRetryAt,
+      });
+
+    log.debug(
+      { runId, outcome, attempts: 0 },
+      "crash-recover: continuation budget cleared",
+    );
+
+    return {
+      attempts: cleared?.attempts ?? 0,
+      nextRetryAt: cleared?.nextRetryAt ?? null,
+    };
+  }
+
+  // Exponential, capped at 60 s — converging on the sweep's own honest cadence
+  // rather than backing off past the point where the sweep would have retried
+  // anyway. `clock_timestamp()` so the deadline is the database's, like every
+  // predicate that reads it.
+  const [updated] = await db
+    .update(runs)
+    .set({
+      crashRecoverAttempts: sql`${runs.crashRecoverAttempts} + 1`,
+      crashRecoverNextRetryAt: sql`clock_timestamp() + least(power(2, ${runs.crashRecoverAttempts} + 1), 60) * interval '1 second'`,
+    })
+    .where(eq(runs.id, runId))
+    .returning({
+      attempts: runs.crashRecoverAttempts,
+      nextRetryAt: runs.crashRecoverNextRetryAt,
+    });
+  const attempts = updated?.attempts ?? 0;
+
+  log.debug(
+    { runId, outcome, attempts, nextRetryAt: updated?.nextRetryAt ?? null },
+    "crash-recover: continuation retry scheduled",
+  );
+  // Poison-item policy: at the cap the worker stops serving this run and the
+  // unchanged reconcile arm remains its backstop. Logged ONCE, on the write
+  // that reaches the cap, not on every later pass that skips the row.
+  if (attempts === CRASH_RECOVER_CONTINUATION_MAX_ATTEMPTS)
+    log.info(
+      { runId, attempts },
+      "flow-continuation-crash-recover-budget-exhausted",
+    );
+
+  return { attempts, nextRetryAt: updated?.nextRetryAt ?? null };
+}
+
 // Called AFTER the re-entry returns, never before: while the dispatch is in
 // flight the marker is exactly what lets the sweep recover a web death.
 export async function clearCrashRecoverMarker(

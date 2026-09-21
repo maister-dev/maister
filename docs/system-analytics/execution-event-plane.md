@@ -1,6 +1,6 @@
 # Execution event plane
 
-**Status:** Implemented canonical Postgres authority, bounded referenced output, retained outbox/file accounting and autonomous projection (AB-01–04). The S1 release gate is in progress; durable command-owner reconciliation remains Designed in S2.
+**Status:** Implemented canonical Postgres authority, bounded referenced output, retained outbox/file accounting and autonomous projection (AB-01–04). The S1 release gate is in progress; durable command-owner reconciliation is Implemented — the prompt-owner recovery worker and the two continuation workers run in the production web boot (ADR-176).
 
 ## Purpose
 
@@ -312,6 +312,58 @@ identifiers; it does not skip the event or advance the cursor.
    artifact projector warns with the discriminant and advances instead. Transient item failures retry after 1, 2, 4, 8 s; fifth failure poisons. Backoff helper cap is 300 s for explicitly rearmed extended policies, not a claim that a five-attempt run reaches five minutes. Preserve attempts per intent/rearm generation. Service/DB unavailability records service health and reconnects; it does not poison every event based on failed reads.
 9. Poison never advances cursor or silently skips evidence. A bounded operator repair/rearm command must name consumer/run/event/expected cursor/error generation; it clears a repaired failure under CAS and logs audit metadata. Recovery remains visibly degraded until cleared.
 10. Shutdown stops new claims, aborts transport waits, finishes/rolls back ≤5 s DB work, releases only owned tokens and closes pools/timers in order. SIGKILL needs no cleanup: after lease expiry another instance claims from durable cursor. Two web instances cannot double-apply or strand another run.
+
+### Durable worker boot, quiesce and health (Implemented)
+
+Three durable workers share the projection worker's lifecycle and start beside
+it: **prompt-owner recovery**, **flow continuation** and **agent continuation**.
+`startDurableWorkers()` is the fifth step of the instrumentation isolated-step
+loop, immediately after `startCanonicalProjectionWorker`, reached through a
+dynamic `await import("@/lib/workers/runtime")` so a composition failure is
+logged into the same per-step try/catch and never aborts boot. Slot counts come
+from `projectionLimitsFromEnv().concurrency` for the prompt-owner and flow
+workers (2, env-capped at 2); the agent worker is a single loop. No environment
+variable gates any of the three — a half-activated owner is exactly the state the
+gate existed to prevent, so activation is all-or-nothing.
+
+Each worker occupies one `Symbol.for("maister.durable-workers.<name>.v1")`
+process slot. The interned-symbol key is load-bearing rather than stylistic:
+Next bundles instrumentation separately from the production server entrypoint,
+so `web/lib/workers/runtime.ts` (the writer) and `web/lib/workers/health.ts`
+(the reader, imported from the scheduler bundle) resolve different module
+instances of the same file and cannot share a module-scoped variable. Start is
+`??=` on the slot and refuses outright while `isApplicationStopping()`; stop
+clears a slot only while this process still owns it, so a double start yields
+the same three handles and a stop with nothing started resolves quietly.
+
+`stopDurableWorkers()` joins the existing boot quiesce `Promise.allSettled`
+**before** `drain` closes the database pool. The arithmetic matters: the server
+drains within 25 s, systemd allows 30 s, all three `stop()` calls run
+concurrently so the budget is the maximum and not the sum — and a prompt-owner
+slot mid-application holds a renewed 30 s lease, strictly longer than the drain.
+The overrun branch is therefore reachable by construction. It is also the
+correct branch: a claim release the worker cannot confirm MUST fail shutdown
+(`AggregateError: web workers could not drain`) and leave the durable claim to
+expire, never be dropped as if released.
+
+`durableWorkersHealth()` in `web/lib/workers/health.ts` reads the three slots and
+reports each worker's `health()` or `{state:'stopped', reason:null}` for an empty
+one. It imports no domain module — the composition root imports the health
+module, never the reverse — which is what lets `lib/scheduler/system-sweeps.ts`
+emit one structured line per `system_sweep` tick without dragging the flow runner
+into its import graph. This is local worker health and is deliberately distinct
+from `platform-status`, which reports the remote supervisor's.
+
+**The boot reconcile sweep overlaps every worker arm, by design.**
+`startDurableWorkers` lands in the isolated-step loop; `runReconcileSweep()` runs
+unconditionally afterwards, so on every boot both scan the same crash-recover
+state. That is not a correctness problem — the shared routing decision and
+`claimFlowDriver` pick exactly one winner — but it makes any *timing* argument
+about authorship false. The workers give ~1 s idle latency and the sweep remains
+a ≤ 60 s backstop; a test that must attribute an action to one of them
+discriminates by **evidence written only by that actor** (a
+`prompt-owner-worker:%` claim owner, or the worker's `workerId` on its re-entry
+log line), never by "the sweep has not ticked yet".
 
 Use the same scheduling primitives for command evidence reconciliation and owner application, with separate predicates and fairness indexes; do not conflate their status sets with event consumers. A transport retry budget may enter `reconciliation_required`, but canonical evidence arriving later still wakes reconciliation automatically. Manual rearm is needed for another exhausted outbound dispatch cycle, never to apply already durable successful evidence.
 

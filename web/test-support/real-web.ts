@@ -3,7 +3,7 @@ import type { IsolationDriver } from "./process-isolation";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { openSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -56,9 +56,80 @@ export type RealWeb = {
   restart(overrides?: Partial<RealWebOptions>): Promise<RealWeb>;
 };
 
+// `web/.next` is ONE directory shared by every suite that builds a production
+// web, and the integration project runs files in parallel — so two concurrent
+// `next build`s would write the same output tree and serve each other's halves.
+// An exclusive directory lock (mkdir is atomic on POSIX) makes the build
+// one-at-a-time across processes; a lock whose owner died is reclaimed by age.
+const BUILD_LOCK_DIR = path.join(WEB_DIR, ".next.build-lock");
+const BUILD_LOCK_STALE_MS = 20 * 60 * 1000;
+const BUILD_LOCK_POLL_MS = 500;
+
+async function acquireBuildLock(): Promise<() => Promise<void>> {
+  for (;;) {
+    try {
+      await mkdir(BUILD_LOCK_DIR);
+
+      return async () => {
+        await rm(BUILD_LOCK_DIR, { recursive: true, force: true });
+      };
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+      const age = await stat(BUILD_LOCK_DIR)
+        .then((info) => Date.now() - info.mtimeMs)
+        .catch(() => 0);
+
+      if (age > BUILD_LOCK_STALE_MS)
+        await rm(BUILD_LOCK_DIR, { recursive: true, force: true });
+      else await new Promise((r) => setTimeout(r, BUILD_LOCK_POLL_MS));
+    }
+  }
+}
+
+// Exactly ONE build per test-runner invocation, recorded inside the output tree
+// it produced.
+//
+// `web/.next` is a single shared directory. Serializing the builds is not
+// enough: a LATER build rewrites the tree a suite is already serving from, and
+// that web dies mid-request — observed as `real web exited before /login
+// answered` in two suites at once. Every caller in a run builds the same tree
+// from the same revision, so the first one builds and the rest reuse it.
+//
+// The invocation id is the vitest run's own (`vitest.workspace.ts` mints it
+// once and passes it to every worker), so a new run always rebuilds and a
+// stale tree is never served.
+const BUILD_STAMP_FILE = path.join(WEB_DIR, ".next", ".maister-lane-build");
+
+function laneBuildId(): string {
+  return process.env.MAISTER_TEST_WORKTREE_INVOCATION_ID ?? "no-invocation";
+}
+
 // `next build` of the checked-out tree: the harness never serves a build it
 // did not make, so the evidence always belongs to the revision under test.
 export async function buildProductionWeb(logFile: string): Promise<string> {
+  const releaseBuildLock = await acquireBuildLock();
+
+  try {
+    const stamp = await readFile(BUILD_STAMP_FILE, "utf8").catch(() => "");
+
+    if (stamp.trim() === laneBuildId()) {
+      const existing = (
+        await readFile(BUILD_ID_FILE, "utf8").catch(() => "")
+      ).trim();
+
+      if (existing) return existing;
+    }
+    const buildId = await runNextBuild(logFile);
+
+    await writeFile(BUILD_STAMP_FILE, laneBuildId(), "utf8");
+
+    return buildId;
+  } finally {
+    await releaseBuildLock();
+  }
+}
+
+async function runNextBuild(logFile: string): Promise<string> {
   const logFd = openSync(logFile, "a");
   // The build must not inherit the test runner's environment: Vitest sets
   // NODE_ENV=test and its worker markers, which change what Next builds.
