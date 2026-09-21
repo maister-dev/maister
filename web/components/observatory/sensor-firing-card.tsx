@@ -6,11 +6,14 @@ import Link from "next/link";
 import { formatRateWithN } from "@/components/observatory/harness-format";
 import { FlowLedgerScope } from "@/components/observatory/flow-ledger-scope";
 import { MIN_GROUP_EXECUTIONS } from "@/lib/queries/observatory-core";
+import { observatoryDrilldownHref } from "@/lib/observatory/href";
+import { resolveObservatoryPeriod } from "@/lib/observatory/period";
 
 export function SensorFiringCard({
   firing,
   labels,
   neverFired,
+  period,
   projectSlug,
   runKind = "all",
 }: SensorFiringCardProps): ReactElement {
@@ -78,11 +81,6 @@ export function SensorFiringCard({
               const flagged = neverFiredKeys.has(
                 `${group.flowId}::${group.nodeId}::${group.gateId}`,
               );
-              const nodeParams = new URLSearchParams({
-                flowId: group.flowId,
-                nodeId: group.nodeId,
-                runKind,
-              });
 
               return (
                 <tr key={groupKey} className="border-b border-line-soft">
@@ -106,7 +104,17 @@ export function SensorFiringCard({
                     {projectSlug ? (
                       <Link
                         className="text-amber hover:underline"
-                        href={`/projects/${projectSlug}/observatory?${nodeParams.toString()}`}
+                        href={observatoryDrilldownHref(
+                          `/projects/${projectSlug}/observatory`,
+                          {
+                            flowId: group.flowId,
+                            nodeId: group.nodeId,
+                            period:
+                              period ??
+                              resolveObservatoryPeriod({ now: new Date() }),
+                            runKind,
+                          },
+                        )}
                       >
                         {group.nodeId}
                       </Link>

@@ -14,9 +14,6 @@ export function CostKindBreakdown({
       <h3 className="m-0 text-sm font-semibold text-ink">
         {labels.costBreakdown.byKindTitle}
       </h3>
-      <p className="mt-1 text-xs text-mute">
-        {labels.costBreakdown.storedLifetime}
-      </p>
       <ul className="m-0 mt-3 grid list-none grid-cols-1 gap-2 p-0 sm:grid-cols-3">
         {rows.map((row) => (
           <li

@@ -1,8 +1,20 @@
 import type { getTranslations } from "next-intl/server";
 import type { ObservatoryLabels } from "@/components/observatory/types";
+import type { RunOutcomeBucket } from "@/lib/runs/outcome-bucket";
 
+import { RUN_OUTCOME_BUCKETS } from "@/lib/runs/outcome-bucket";
+
+type Translator = Awaited<ReturnType<typeof getTranslations>>;
+
+/**
+ * `tBucket` is the TOP-LEVEL `runBucket` namespace, not an `observatory.*`
+ * subtree: the `/runs` ledger renders the same ten names from the same keys,
+ * and a second copy under `observatory.*` is how the two surfaces would end up
+ * disagreeing about what "PR open" is called.
+ */
 export function labelsFromTranslations(
-  t: Awaited<ReturnType<typeof getTranslations>>,
+  t: Translator,
+  tBucket: Translator,
 ): ObservatoryLabels {
   return {
     title: t("title"),
@@ -33,10 +45,7 @@ export function labelsFromTranslations(
     flowRuns: t("flowRuns"),
     flowLedgerOnly: t("flowLedgerOnly"),
     node: t("node"),
-    lookback: t("lookback"),
-    apply: t("apply"),
     all: t("all"),
-    days: t("days"),
     drillDown: t("drillDown"),
     latestAttempt: t("latestAttempt"),
     historicalAttempts: t("historicalAttempts"),
@@ -103,7 +112,8 @@ export function labelsFromTranslations(
       totalHeader: t("costBreakdown.totalHeader"),
       empty: t("costBreakdown.empty"),
       byKindTitle: t("costBreakdown.byKindTitle"),
-      storedLifetime: t("costBreakdown.storedLifetime"),
+      byFlowTitle: t("costBreakdown.byFlowTitle"),
+      flowHeader: t("costBreakdown.flowHeader"),
     },
     agentization: {
       title: t("agentization.title"),
@@ -142,5 +152,54 @@ export function labelsFromTranslations(
       abandoned: t("funnel.abandoned"),
       unrecorded: t("funnel.unrecorded"),
     },
+    views: {
+      label: t("views.label"),
+      overview: t("views.overview"),
+      cost: t("views.cost"),
+      quality: t("views.quality"),
+      harness: t("views.harness"),
+    },
+    period: {
+      label: t("period.label"),
+      preset7: t("period.preset7"),
+      preset30: t("period.preset30"),
+      preset90: t("period.preset90"),
+      custom: t("period.custom"),
+      from: t("period.from"),
+      to: t("period.to"),
+      clamped: t("period.clamped"),
+      pending: t("period.pending"),
+    },
+    overview: {
+      title: t("overview.title"),
+      subtitle: t("overview.subtitle"),
+      project: t("overview.project"),
+      platform: t("overview.platform"),
+      total: t("overview.total"),
+      tasks: t("overview.tasks"),
+      tasksInWork: t("overview.tasksInWork"),
+      tasksStarted: t("overview.tasksStarted"),
+      runs: t("overview.runs"),
+      inFlight: t("overview.inFlight"),
+      settled: t("overview.settled"),
+      kind: {
+        flow: t("overview.kind.flow"),
+        scratch: t("overview.kind.scratch"),
+        agent: t("overview.kind.agent"),
+      },
+      empty: t("overview.empty"),
+      openInLedger: t("overview.openInLedger"),
+    },
+    quality: {
+      projectsTitle: t("quality.projectsTitle"),
+      flowsTitle: t("quality.flowsTitle"),
+      project: t("quality.project"),
+      flow: t("quality.flow"),
+      flowRuns: t("quality.flowRuns"),
+      wait: t("quality.wait"),
+    },
+    bucket: Object.fromEntries(
+      RUN_OUTCOME_BUCKETS.map((bucket) => [bucket, tBucket(bucket)]),
+    ) as Record<RunOutcomeBucket, string>,
   };
 }

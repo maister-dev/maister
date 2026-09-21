@@ -3,20 +3,25 @@
 import type { SignalCluster } from "@/lib/queries/observatory-signals";
 import type { ReactElement } from "react";
 import type { ObservatoryLabels } from "@/components/observatory/types";
+import type { ObservatoryPeriod } from "@/lib/observatory/period";
 import type { ObservatoryRunKind } from "@/lib/observatory/run-kind";
 
 import Link from "next/link";
 import { Chip } from "@heroui/react";
 
 import { FlowLedgerScope } from "@/components/observatory/flow-ledger-scope";
+import { observatoryDrilldownHref } from "@/lib/observatory/href";
+import { resolveObservatoryPeriod } from "@/lib/observatory/period";
 
 export function SignalClusterList({
   labels,
+  period,
   projectSlug,
   signals,
   runKind,
 }: {
   labels: ObservatoryLabels;
+  period?: ObservatoryPeriod;
   projectSlug?: string;
   signals: readonly SignalCluster[];
   runKind?: ObservatoryRunKind;
@@ -78,10 +83,12 @@ export function SignalClusterList({
               {projectSlug && signal.drillDown.nodeId ? (
                 <Link
                   className="mt-2 inline-flex text-xs font-semibold text-amber hover:underline"
-                  href={`/projects/${projectSlug}/observatory?${drillDownParams(
+                  href={drillDownHref(
+                    `/projects/${projectSlug}/observatory`,
                     signal,
                     runKind,
-                  )}`}
+                    period,
+                  )}
                 >
                   {labels.drillDown}
                 </Link>
@@ -94,21 +101,18 @@ export function SignalClusterList({
   );
 }
 
-function drillDownParams(
+function drillDownHref(
+  pathname: string,
   signal: SignalCluster,
   runKind: ObservatoryRunKind = "all",
+  period?: ObservatoryPeriod,
 ): string {
-  const params = new URLSearchParams();
-
-  if (signal.drillDown.flowId) params.set("flowId", signal.drillDown.flowId);
-  if (signal.drillDown.nodeId) params.set("nodeId", signal.drillDown.nodeId);
-  if (signal.drillDown.artifactKind) {
-    params.set("artifactKind", signal.drillDown.artifactKind);
-  }
-  if (signal.drillDown.artifactDefId) {
-    params.set("artifactDefId", signal.drillDown.artifactDefId);
-  }
-  params.set("runKind", runKind);
-
-  return params.toString();
+  return observatoryDrilldownHref(pathname, {
+    artifactDefId: signal.drillDown.artifactDefId,
+    artifactKind: signal.drillDown.artifactKind,
+    flowId: signal.drillDown.flowId,
+    nodeId: signal.drillDown.nodeId,
+    period: period ?? resolveObservatoryPeriod({ now: new Date() }),
+    runKind,
+  });
 }

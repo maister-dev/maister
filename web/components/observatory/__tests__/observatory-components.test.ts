@@ -24,7 +24,7 @@ import { ControlEffectivenessCard } from "@/components/observatory/control-effec
 import { CorrectionHeatmap } from "@/components/observatory/correction-heatmap";
 import { CoverageMapCard } from "@/components/observatory/coverage-map-card";
 import { NodeDrilldownTable } from "@/components/observatory/node-drilldown-table";
-import { ObservatoryFilters } from "@/components/observatory/observatory-filters";
+import { emptyOverviewTable } from "@/lib/queries/observatory-overview";
 import { ObservatorySummary } from "@/components/observatory/observatory-summary";
 import { SensorFiringCard } from "@/components/observatory/sensor-firing-card";
 import { SignalClusterList } from "@/components/observatory/signal-cluster-list";
@@ -33,6 +33,7 @@ const labels = labelsForTest();
 
 function portfolio(): ObservatoryPortfolio {
   return {
+    overview: emptyOverviewTable(),
     totals: {
       correction: {
         runCount: 2,
@@ -87,6 +88,7 @@ function portfolio(): ObservatoryPortfolio {
       nodeCount: 0,
       byModel: [],
       byRunner: [],
+      byFlow: [],
       byKind: [],
     },
     budget: {
@@ -297,7 +299,7 @@ describe("Observatory harness cards", () => {
     expect(html).toContain("— (n=2)");
     expect(html).toContain("never fired");
     expect(html).toContain(
-      "/projects/alpha/observatory?flowId=flow-1&amp;nodeId=checks&amp;runKind=all",
+      "/projects/alpha/observatory?view=quality&amp;windowDays=30&amp;flowId=flow-1&amp;nodeId=checks",
     );
     expect(html).toContain("command_check");
   });
@@ -414,22 +416,6 @@ describe("Observatory components", () => {
     );
 
     expect(html).toContain("No node attempts in this window.");
-  });
-
-  it("renders filter controls as GET inputs", () => {
-    const html = renderToStaticMarkup(
-      createElement(ObservatoryFilters, {
-        current: { flowId: "aif", nodeId: "checks", windowDays: 14 },
-        labels,
-      }),
-    );
-
-    expect(html).toContain('method="get"');
-    expect(html).toContain('name="flowId"');
-    expect(html).toContain('name="artifactKind"');
-    expect(html).toContain('name="artifactDefId"');
-    expect(html).toContain('name="runKind"');
-    expect(html).toContain('value="14"');
   });
 
   it("renders selected-kind flow-ledger scope as not applicable", () => {
@@ -613,7 +599,7 @@ describe("Observatory components", () => {
     );
 
     expect(html).toContain(
-      "/projects/alpha/observatory?flowId=flow&amp;nodeId=checks&amp;runKind=all",
+      "/projects/alpha/observatory?view=quality&amp;windowDays=30&amp;flowId=flow&amp;nodeId=checks",
     );
     expect(html).toContain("access_token=[redacted] failed");
   });
