@@ -650,3 +650,312 @@ describe("execution-command recovery (real supervisor)", () => {
     expect(new Set(states)).toEqual(new Set(["succeeded"]));
   }, 120_000);
 });
+
+// ─── ADR-177: evidence-first crash classification, against a REAL restart ───
+//
+// V3 above proves the LEDGER half of W4 (the host's own `turn_lost` terminal
+// survives a SIGKILL + restart). It cannot prove the RUN half: its row is a
+// SCRATCH run (`seedRun` defaults `run_kind`), so it is classified by the
+// scratch arm and never reaches the flow agent-node arm this contract edits.
+// The family below seeds the shape that arm requires — `run_kind='flow'`, a
+// pinned revision whose manifest carries an `ai_coding` node, and
+// `current_step_id` pointing at it — and asserts ONE terminal row set across
+// three ingest orders.
+
+const ADR177_MANIFEST = {
+  schemaVersion: 1,
+  name: "adr177",
+  nodes: [
+    {
+      id: "s1",
+      type: "ai_coding",
+      action: { prompt: "/work" },
+      transitions: { success: "s2" },
+    },
+    { id: "s2", type: "check", action: { command: "true" }, transitions: {} },
+  ],
+};
+
+let adr177FlowId: string | undefined;
+let adr177RevisionId: string | undefined;
+
+async function ensureAdr177Flow(): Promise<{
+  flowId: string;
+  flowRevisionId: string;
+}> {
+  if (adr177FlowId && adr177RevisionId)
+    return { flowId: adr177FlowId, flowRevisionId: adr177RevisionId };
+  adr177FlowId = randomUUID();
+  adr177RevisionId = randomUUID();
+  await db.insert(schema.flowRevisions).values({
+    id: adr177RevisionId,
+    flowRefId: "adr177",
+    source: "github.com/x/adr177",
+    versionLabel: "v1.0.0",
+    resolvedRevision: "cafebabe",
+    manifestDigest: "sha256:adr177",
+    manifest: ADR177_MANIFEST,
+    schemaVersion: 1,
+    installedPath: "/tmp/flows/adr177",
+    packageStatus: "Installed",
+  });
+  await db.insert(schema.flows).values({
+    id: adr177FlowId,
+    projectId: project.id,
+    flowRefId: "adr177",
+    source: "github.com/x/adr177",
+    version: "v1.0.0",
+    installedPath: "/tmp/flows/adr177",
+    manifest: ADR177_MANIFEST,
+    schemaVersion: 1,
+  });
+
+  return { flowId: adr177FlowId, flowRevisionId: adr177RevisionId };
+}
+
+// A run the flow agent-node arm actually classifies. `seedFlowRun` is reused
+// for the project/worktree spine, then promoted to a graph flow run.
+async function seedFlowGraphRun(name: string): Promise<string> {
+  const runId = await seedFlowRun(name);
+  const { flowId, flowRevisionId } = await ensureAdr177Flow();
+
+  await db
+    .update(schema.runs)
+    .set({
+      runKind: "flow",
+      flowId,
+      flowRevisionId,
+      currentStepId: "s1",
+    })
+    .where(eq(schema.runs.id, runId));
+
+  return runId;
+}
+
+async function adr177Rows(runId: string) {
+  const [run] = (await db
+    .select()
+    .from(schema.runs)
+    .where(eq(schema.runs.id, runId))) as Array<Record<string, any>>;
+  const [attempt] = (await db
+    .select()
+    .from(schema.nodeAttempts)
+    .where(eq(schema.nodeAttempts.runId, runId))) as Array<Record<string, any>>;
+  const prompts = (await listCommandsForRun(db, runId)).filter(
+    (row) => row.kind === "session.prompt",
+  );
+
+  return { run, attempt, prompts };
+}
+
+describe("evidence-first crash classification after a real supervisor restart (ADR-177)", () => {
+  // `preSettle` = the BOOT order (recovery before reconcile, which is what V3
+  // does and what `instrumentation-node.ts` does). `false` = the production
+  // TICK order, in which `runReconcileSweep` runs BEFORE
+  // `executionCommandReconcilePass` and the evidence is up to 60 s stale.
+  // `probeOnly` additionally stops ingestion, so the command is still
+  // `accepted` with no terminal event and the receipt probe is the ONLY path
+  // to the classification.
+  const CELLS = [
+    { name: "boot order (recovery first)", preSettle: true, probeOnly: false },
+    { name: "production tick order", preSettle: false, probeOnly: false },
+    { name: "probe-only (ingest held)", preSettle: false, probeOnly: true },
+  ] as const;
+
+  for (const cell of CELLS) {
+    it(`RED 1/3 — SIGKILL mid-prompt + restart, ${cell.name} → Crashed turn-lost, attempt closed, command discharged, recoverable`, async () => {
+      const runId = await seedFlowGraphRun(
+        `a177-${cell.name.replace(/[^a-z]/gi, "")}`,
+      );
+      const assignment = await mint(runId);
+      const client = await hosts.forAssignment(assignment);
+      const created = await client.createSession(CREATE_PAYLOAD);
+      const handle = await client.prompt(
+        created.hostSessionId,
+        { stepId: "s1", prompt: "hang" },
+        {
+          admitOwner: await seedNodePromptOwner(
+            db,
+            client,
+            created.hostSessionId,
+          ),
+        },
+      );
+
+      await untilState(handle.commandId, ["accepted"]);
+      if (cell.probeOnly) await projectionWorker.stop();
+      sup = await sup.restart();
+      if (cell.preSettle) await recoverExecutionCommands({ db, graceMs: 0 });
+
+      await runReconcileSweep({ db });
+      const { run, attempt, prompts } = await adr177Rows(runId);
+
+      // On this HEAD every cell fails here: with no evidence arm the sweep
+      // answers `agent-session-gone` by age, leaves the attempt Running with a
+      // NULL decision, and strands the command. With the owner worker running
+      // instead, the same restart lands `Failed` — which is NOT recoverable.
+      expect(run.status).toBe("Crashed");
+      expect(
+        run.resumeTargetStepId,
+        "a lost turn MUST stay recoverable — Failed is a dead end for the operator",
+      ).toBe("s1");
+      expect({
+        status: attempt.status,
+        decision: attempt.decision,
+        errorCode: attempt.errorCode,
+      }).toEqual({
+        status: "Reworked",
+        decision: "turn_lost",
+        errorCode: "CRASH",
+      });
+      expect(prompts).toHaveLength(1);
+      expect(prompts[0].applicationState).toBe("applied");
+      expect(
+        prompts[0].completionAppliedAt,
+        "applied exactly once, by whichever writer won the CAS",
+      ).not.toBeNull();
+      if (cell.probeOnly) {
+        projectionWorker = startProjectionWorker({
+          db,
+          projectors: canonicalProjectors,
+        });
+      }
+    }, 180_000);
+  }
+});
+
+describe("evidence-first classification vs a LIVE prompt-owner worker (ADR-177)", () => {
+  // RED 3, worker-first half. The other cells let the sweep reach the lost turn
+  // first; here the real flow prompt owner settles it first, which is the order
+  // production produces whenever the ~1s worker beats the 60s tick. Attribution
+  // is by AUTHORSHIP: the worker is the only applier running, and the sweep is
+  // not started until the command has left `pending`.
+  it("RED 3 — worker-first: the owner settles the lost turn before the sweep, and the terminal row set is IDENTICAL", async () => {
+    const { flowPromptOwners } = await import("@/lib/flows/graph/prompt-owner");
+    const { startPromptOwnerWorker } = await import(
+      "@/lib/execution-host/prompt-owner-recovery"
+    );
+    const runId = await seedFlowGraphRun("a177-worker-first");
+    const assignment = await mint(runId);
+    const client = await hosts.forAssignment(assignment);
+    const created = await client.createSession(CREATE_PAYLOAD);
+    const handle = await client.prompt(
+      created.hostSessionId,
+      { stepId: "s1", prompt: "hang" },
+      {
+        admitOwner: await seedNodePromptOwner(
+          db,
+          client,
+          created.hostSessionId,
+        ),
+      },
+    );
+
+    await untilState(handle.commandId, ["accepted"]);
+    sup = await sup.restart();
+    await recoverExecutionCommands({ db, graceMs: 0 });
+
+    const worker = startPromptOwnerWorker({ db, owners: flowPromptOwners });
+
+    try {
+      // The worker, not the sweep, is what moves the command off `pending`.
+      await expect
+        .poll(
+          async () =>
+            (await getCommand(db, handle.commandId))?.applicationState,
+          { timeout: 30_000, interval: 250 },
+        )
+        .not.toBe("pending");
+    } finally {
+      await worker.stop();
+    }
+    await runReconcileSweep({ db });
+    const { run, attempt, prompts } = await adr177Rows(runId);
+
+    // On this HEAD the owner decodes the lost turn into a failed node action,
+    // and the graph would terminalize the run `Failed` — unrecoverable. The
+    // boundary is what makes BOTH orders land on this one row set.
+    expect(run.status).toBe("Crashed");
+    expect(run.resumeTargetStepId).toBe("s1");
+    expect({
+      status: attempt.status,
+      decision: attempt.decision,
+      errorCode: attempt.errorCode,
+    }).toEqual({
+      status: "Reworked",
+      decision: "turn_lost",
+      errorCode: "CRASH",
+    });
+    expect(
+      attempt.actionCompletion,
+      "a lost turn is not a result — it must never be decoded onto the attempt",
+    ).toBeNull();
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0].applicationState).toBe("applied");
+  }, 180_000);
+
+  // RED 2. The skip arm is only correct if it hands the run to a writer that
+  // actually finishes. Ingest is HELD so the sweep sees pending evidence past
+  // grace, then RELEASED so the owner applies — and the run continues.
+  it("RED 2 — held ingest is SKIPPED past grace, and the release lets the owner apply the turn", async () => {
+    const { flowPromptOwners } = await import("@/lib/flows/graph/prompt-owner");
+    const { startPromptOwnerWorker } = await import(
+      "@/lib/execution-host/prompt-owner-recovery"
+    );
+    const runId = await seedFlowGraphRun("a177-held-ingest");
+    const assignment = await mint(runId);
+    const client = await hosts.forAssignment(assignment);
+    const created = await client.createSession(CREATE_PAYLOAD);
+    const handle = await client.prompt(
+      created.hostSessionId,
+      { stepId: "s1", prompt: "hang" },
+      {
+        admitOwner: await seedNodePromptOwner(
+          db,
+          client,
+          created.hostSessionId,
+        ),
+      },
+    );
+
+    await untilState(handle.commandId, ["accepted"]);
+    // Hold ingest: the terminal event cannot reach the ledger, so the command
+    // stays `accepted` while the host itself knows the turn is over.
+    await projectionWorker.stop();
+    sup = await sup.restart();
+
+    await runReconcileSweep({ db });
+    const held = await adr177Rows(runId);
+
+    expect(
+      held.run.status,
+      "evidence is still arriving — a 90s-old attempt is not proof the run died",
+    ).toBe("Running");
+    expect(held.attempt.status).toBe("Running");
+
+    // Release: the projector ingests the terminal event, the command settles,
+    // and the durable owner applies it.
+    projectionWorker = startProjectionWorker({
+      db,
+      projectors: canonicalProjectors,
+    });
+    await recoverExecutionCommands({ db, graceMs: 0 });
+    const worker = startPromptOwnerWorker({ db, owners: flowPromptOwners });
+
+    try {
+      await expect
+        .poll(
+          async () =>
+            (await getCommand(db, handle.commandId))?.applicationState,
+          { timeout: 30_000, interval: 250 },
+        )
+        .not.toBe("pending");
+    } finally {
+      await worker.stop();
+    }
+    expect(
+      (await getCommand(db, handle.commandId))?.state,
+      "the held evidence must arrive once the hold is lifted — otherwise the skip was a leak",
+    ).toBe("failed");
+  }, 180_000);
+});

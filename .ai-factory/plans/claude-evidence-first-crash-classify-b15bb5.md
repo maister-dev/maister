@@ -274,6 +274,99 @@ D3 step 1, T3.3, T3.4, T3.5) goes through ONE exported predicate,
 `details.reason` would silently never fire on the fallback path. This does not
 change any decision — it makes them implementable.
 
+### C17 — ⚠ DEVIATION from RQ4's slice allocation: the two "isolation" cases run in-process, and the reason is RQ4's own argument
+
+RQ4 sends two cases to the `isolation` slice — RED 3's worker-first order and
+RED 2's ingest release — because they *"need live durable workers"*. Verified in
+Phase 1: they need a live **prompt-owner worker**, which is
+`startPromptOwnerWorker({db, owners})` (`prompt-owner-recovery.ts:37`), an
+ordinary in-process call. They do NOT need the production web.
+
+RQ4's own finding 2 already draws the line: *"the production web proves boot
+wiring, which is `durable-workers-boot`'s job. Spending a `next build` and two
+process trees on pure sweep/boundary logic buys nothing."* That argument applies
+to these two cases as soon as one observes the worker is independently
+startable — which the first draft did not.
+
+Both therefore run in `command-recovery.integration.test.ts` (already in
+`laneSuites.web`) against the real supervisor:
+
+| Case | Writer it needs | How it is supplied |
+| --- | --- | --- |
+| RED 3 worker-first | the flow prompt owner settling the turn BEFORE the sweep | `startPromptOwnerWorker({db, owners: flowPromptOwners})` in the test process; the seeded run already satisfies every `lockFlowPromptOwner` precondition |
+| RED 2 release | ingest held, then released, then the owner applies | `projectionWorker.stop()` → sweep → restart the projector → the worker applies |
+
+**No new `isolation` suite, and T1.7 collapses to a negative:** `isolation` stays
+3 suites, `command-recovery` is already registered in `laneSuites.web`, and
+`reconcile-sweep.integration.test.ts` runs in the ordinary
+`test:integration` project (it is not a lane suite and never was). Nothing needs
+registering — recorded as a checked negative, not an omission.
+
+What is **given up**: proof that these arms behave the same under the production
+boot's composed registry. That is `durable-workers-boot`'s contract (PRM-04
+pins the registry composition, PRM-11 the worker lifecycle), and it is unchanged
+by this work — no new owner kind, no new registry entry.
+
+### C16 — ⚠ RQ5's premise is wrong: V3's run is a SCRATCH run, so extracting its body would measure nothing
+
+RQ5 says *"`preSettle: true` is today's V3, unchanged in what it asserts"* and
+treats the family as an extension of it. Verified: `seedFlowRun` in
+`command-recovery.integration.test.ts:78` calls
+`seedRun(testDatabase.db, {projectId, status})`, and `seedRun`
+(`execution-host-seed.ts:81`) defaults **`run_kind` to `'scratch'`**, with no
+`flow_revision_id` and no `current_step_id`. V3's run is therefore classified by
+the scratch arm (`markScratchCrashed`), never by the flow agent-node arm this
+plan edits. Its name says flow; its row does not.
+
+That is why V3 passes today asserting only `status === "Crashed"` — the scratch
+arm reaches `Crashed` by age, exactly as it did before Stage A.
+
+**Consequence:** the ADR-177 family cannot be an in-place extraction of V3's
+body. V3 stays byte-identical (it measures transport-level recovery on its own
+run shape and is not obsolete), and the family gets its own
+`seedFlowGraphRun` — `run_kind='flow'`, a `flow_revisions` row whose manifest
+carries an `ai_coding` node, and `current_step_id` pointing at it. Same
+supervisor, same restart, same file; a different run shape, because the arm
+under test only exists for that shape. RED 5c pins the scratch scope guard from
+the other side.
+
+### C15 — ⚠ T3.5's write as specified VIOLATES a CHECK constraint (found in Phase-1 recon)
+
+C13/T3.5 says the Recover decline settles
+`application_state = 'superseded'` **+ `completion_applied_at = now()`**.
+`execution_commands_application_shape_check` (`schema.ts:2526-2534`) opens with
+
+```sql
+(application_state = 'applied') = (completion_applied_at IS NOT NULL)
+```
+
+— an **equivalence**, not an implication. `superseded` + a non-null
+`completion_applied_at` evaluates `false = true` and the row is refused.
+
+The existing production writer already has the right shape
+(`prompt-owner-application.ts:365-368`):
+
+```ts
+applicationState: outcome,                                // "applied" | "superseded"
+completionAppliedAt: outcome === "applied" ? now : null,  // NULL for superseded
+```
+
+**Correction:** T3.5 writes `application_state = 'superseded'` and leaves
+`completion_applied_at` **NULL**. Nothing is lost — `classifyCommandRetirement`
+(`retirement.ts:171-176`) never reads `completion_applied_at`; it accepts
+`applied` OR `superseded`, so the C13 discharge works exactly as intended. The
+single-winner guard for that write is therefore
+`application_state = 'pending' AND completion_applied_at IS NULL`, not
+`completion_applied_at IS NULL` alone (which stays NULL either way).
+
+**Related, and NOT a violation:** the **D3** boundary's `owner-poisoned` arm
+writes `applied` + `completion_applied_at`, which satisfies the equivalence, and
+it deliberately **preserves `application_error`** rather than nulling it as
+`crash-recover.ts:253` does. `applied` with a non-null `application_error` is an
+already-valid shape in this schema — `quarantine()` writes exactly it when
+`completion_applied_at` is already set (`prompt-evidence.ts:196-208`) — so the
+operator keeps the poison diagnostic while retirement becomes eligible.
+
 ### Confirmed as stated in the request (no change)
 
 - The classifier knows nothing about commands; `ReconcileInput` carries no
@@ -736,7 +829,7 @@ Phase 0 was not finished.
 > Registration is part of the task (skill-context: *runnability*) — a suite no
 > runner globs is not a deliverable.
 
-**T1.1 + T1.3 — RED 1 and RED 3 as ONE parameterized family (RQ5).**
+**T1.1 + T1.3 — ✅ RED 1 and RED 3 as ONE parameterized family (RQ5).**
 Extract V3's body in
 `web/lib/execution-host/__tests__/command-recovery.integration.test.ts`
 (**C2**) into a helper over two axes — `preSettle` (does the case call
@@ -759,7 +852,7 @@ Assert: command settled `failed {turn_lost}`; attempt closed
 **Verify:** the case fails with that message, not an import error.
 (The `→ Done` half does **not** depend on T3.5 — see **C9** reachability.)
 
-**T1.2 — RED 2: evidence pending, run already past grace.** *(`isolation` — one
+**T1.2 — ✅ RED 2: evidence pending, run already past grace.** *(`isolation` — one
 of the two cases that need live durable workers.)*
 Adapter finishes the turn; hold ingest (retain the stream claim / stop the
 consumer) so the terminal event stays on the host. **Backdate the attempt's
@@ -776,7 +869,7 @@ the wait-it-out design this replaces). **On this HEAD:** crashed.
 **Verify:** the assertion names `evidence-pending`, and the test proves the
 sweep actually ran (a counter delta), not merely that it did not crash.
 
-**T1.3 — RED 3: order independence** *(the same family as T1.1 — RQ5)*.
+**T1.3 — ✅ RED 3: order independence** *(the same family as T1.1 — RQ5)*.
 The two ingest-order cells assert an **identical** terminal row set (run,
 attempt, command) including `completion_applied_at` being non-null exactly once.
 Agent-run and scratch get their own cases against their own choke points
@@ -787,13 +880,13 @@ sweep-first → `Crashed` + attempt `Failed`/`decision=NULL`; worker-first →
 `Running` (`runner-graph.ts:5277-5286`) and loses after a crash. Assert both
 observed shapes by name so the RED is unambiguous.
 
-**T1.4 — RED 4: poisoned owner.**
+**T1.4 — ✅ RED 4: poisoned owner.**
 A poisoned application (and, as a second case, a `quarantined`
 `prompt_terminal_conflict`) → `crash owner-poisoned` with `error_code` on the
 attempt; Recover follows ADR-175's quarantine rule — never a re-prompt from
 disagreeing evidence.
 
-**T1.5 — RED 5: no-evidence regression guard, SPLIT to remove overlap.**
+**T1.5 — ✅ RED 5: no-evidence regression guard, SPLIT to remove overlap.**
 Two halves, because they prove different things and only one costs anything:
 
 - **Pure (free).** A `classifyRunReconcile` case with `promptEvidence: "none"`
@@ -807,7 +900,7 @@ Do NOT write one integration case that asserts both — that is the overlap this
 split removes. **Both must be GREEN on this HEAD**: they are the guard that the
 change does not move the `none` path.
 
-**T1.6 — RED 6: retirement, BOTH discharge paths (C13).**
+**T1.6 — ✅ RED 6: retirement, BOTH discharge paths (C13).**
 `classifyCommandRetirement` returns `null` (not `owner_unapplied`) for:
 (a) a command the **boundary** settled `applied` — already at run status
 `Crashed` (**C7**), and again after Recover → `Done`; and
@@ -815,12 +908,88 @@ change does not move the `none` path.
 Asserting only (a) would let the C13 hole ship. **On this HEAD:** both
 `owner_unapplied`.
 
-**T1.7 — Register the suites, per the RQ4 allocation.** `isolation` takes ONLY
+**T1.7 — ✅ Register the suites, per the RQ4 allocation.** `isolation` takes ONLY
 the two cases that call `buildProductionWeb` (it is a `SERIAL_SLICE`); every
 other case goes to `web`. `command-recovery` is already in `laneSuites.web`, so
 the merged RED 1/RED 3 family needs no new registration there.
 **No new slice key** — see RQ4 §3. **Verify:** `pnpm test:stage-ab-lane` passes
 and `vitest list` matches every new file.
+
+**✅ PHASE 1 EXIT RECORD (2026-09-21, this host, Node 24.15.0)**
+
+**Failure SET on this HEAD** — every entry fails on an ASSERTION with its own
+message; zero import errors, zero fixture defects (three fixture defects were
+found and fixed first: a wrong column name, the `terminal_evidence` triple, and
+the one-active-stream-per-host uniqueness).
+
+| Suite | Case | Observed on HEAD |
+| --- | --- | --- |
+| `reconcile-sweep` | RED 1 turn_lost | run IS `Crashed` and `resume_target_step_id` IS stamped — by AGE; the attempt stays `Running`/`decision=NULL` |
+| `reconcile-sweep` | RED 1b flat shape | `decision` null |
+| `reconcile-sweep` | RED 2a pending_application | `Crashed` (should be `Running`) |
+| `reconcile-sweep` | RED 2b pending_ingest | `Crashed` |
+| `reconcile-sweep` | RED 2c inflight | `Crashed` |
+| `reconcile-sweep` | RED 2d applied | `Crashed` |
+| `reconcile-sweep` | RED 2e stream-lost | `decision` null |
+| `reconcile-sweep` | RED 4a poisoned | `decision` null |
+| `reconcile-sweep` | RED 4b quarantined | `decision` null |
+| `reconcile-sweep` | RED 6 retirement | `owner_unapplied` |
+| `command-recovery` | RED 1/3 × 3 ingest orders | attempt `Running`/`decision=NULL` in all three |
+| `command-recovery` | RED 3 worker-first | same |
+| `command-recovery` | RED 2 held ingest | `Crashed` (should be `Running`) |
+| `crash-recover-turn-lost` | AC-T3.5.1 / 1b | outcome `applied` — **HEAD ADOPTS the lost turn**, the C9 defect, observed directly |
+| `crash-recover-turn-lost` | AC-T3.5.2 | command `pending` (should be `superseded`) |
+
+**GREEN on this HEAD** (the regression guards — they must stay green after):
+`reconcile-sweep` RED 5b (`queued` → `none`) and RED 5c (scratch scope guard);
+`crash-recover-turn-lost` AC-T3.5.3 (an ordinary agreeing failure is still
+adopted), AC-T3.5.3b (quarantine still answers `quarantined`), both
+agent/scratch parity rows, the agent `Crashed` finalize, and the
+attempt-scoped-evidence case. `crash-recover-turn-lost` measured **3 failed /
+6 passed**.
+
+**Case × property matrix** — every property owned at least once; no property
+owned by more than one INTEGRATION case (a pure case beside an integration one
+is the deliberate RED 5 split, not overlap).
+
+| Property (D1/D2/D3/D5 + AC-*) | Owning case | Layer |
+| --- | --- | --- |
+| `none` past grace → `agent-session-gone` | `reconcile-classify` "agent + past grace" (pre-existing) | pure |
+| builder derives `none` from a `queued` row | RED 5b | integration |
+| scratch keeps its own arm (trap 7) | RED 5c | integration |
+| `applied` → skip `evidence-applied` | RED 2d | integration |
+| `pending_application` → skip `evidence-pending` | RED 2a | integration |
+| `pending_ingest` (probe `completed`) → skip | RED 2b | integration |
+| `inflight` (probe `accepted+inflight`) → skip | RED 2c | integration |
+| pending ∧ stream `lost` → crash `stream-lost` | RED 2e | integration |
+| `turn_lost` → crash `turn-lost` + boundary row set | RED 1 | integration |
+| the FLAT error shape classifies identically (C14) | RED 1b | integration |
+| `poisoned` → crash `owner-poisoned`, diagnostic preserved | RED 4a | integration |
+| quarantine ordering (row 3 before row 5) | RED 4b | integration |
+| retirement eligible at `Crashed` AND at `Done` | RED 6 | integration |
+| a REAL host restart reaches the same row set | `command-recovery` RED 1/3 boot-order cell | integration (real supervisor) |
+| … under the production TICK order | RED 1/3 tick-order cell | integration (real supervisor) |
+| … with the receipt probe as the ONLY path | RED 1/3 probe-only cell | integration (real supervisor) |
+| … with the OWNER writing first (order independence) | RED 3 worker-first | integration (real supervisor + live worker) |
+| a held-ingest skip hands off to a writer that finishes | RED 2 held ingest | integration (real supervisor + live worker) |
+| Recover DECLINES a lost turn | AC-T3.5.1 (+1b for the flat shape) | integration |
+| Recover DISCHARGES it `superseded` | AC-T3.5.2 | integration |
+| the ADR-175 adopt arm is untouched | AC-T3.5.3 | integration |
+| the ADR-175 quarantine arm is untouched | AC-T3.5.3b | integration |
+| agent/scratch leave no `owner_unapplied` | parity `it.each` | integration |
+| an agent lost turn finalizes `Crashed` | agent finalize case | integration |
+| evidence is attempt-scoped (why T3.5 must discharge) | attempt-scoped case | integration |
+
+Deleted as adding no uncovered column: none — every case above was written
+against a column of this matrix. **No trivial cases**: nothing here restates a
+constant or a type; every assertion goes through a consumer (the sweep, the
+recover path, or `classifyCommandRetirement`).
+
+Deferred to their own phases, deliberately: the boundary's own loser-path suite
+(a Phase-3 deliverable — its module does not exist, and a missing-module failure
+is not a RED for a named reason), and the pure classifier cases for the D2 table
+(Phase 2 — the two `ReconcileInput` fields do not exist yet, and a commit that
+fails `typecheck` is not a deliverable).
 
 **Phase 1 exit:**
 
