@@ -1024,9 +1024,14 @@ read the same marker, its sites are enumerated here rather than rediscovered.
 
 | Column | Write sites (stamp a value) | Release sites (clear to NULL) | Read / predicate consumers |
 | --- | --- | --- | --- |
-| `resume_started_at` | `runs/recover.ts:252`, `runs/recover.ts:278` (the recover claim), `scheduler.ts:912` (`Pending → Running` promotion, whenever `isResume`) | `flows/graph/runner-graph.ts:2410` (CAS-clear on `crashResume`), `runs/crash-recover.ts:358` (`clearCrashRecoverMarker`), `runs/recover.ts:645`, `runs/state-transitions.ts:1376`, `runs/state-transitions.ts:1473` (the two reparks) | `reconcile.ts` classifier + its three candidate loaders, `scheduler.ts:555` (queued-recover promotion guard), `queries/inbox-context.ts:666` (`resumeCount` read model), and the flow continuation worker's crash-recover arm |
+| `resume_started_at` | `runs/recover.ts:253`, `runs/recover.ts:285` (the recover claim), `scheduler.ts:916` (`Pending → Running` promotion, whenever `isResume`) | `flows/graph/runner-graph.ts:2410` (CAS-clear on `crashResume`), `runs/crash-recover.ts:451` (`clearCrashRecoverMarker`), `runs/recover.ts:654`, `runs/state-transitions.ts:1376`, `runs/state-transitions.ts:1473` (the two reparks) | `reconcile.ts` classifier + its three candidate loaders, `scheduler.ts:556` (queued-recover promotion guard), `queries/inbox-context.ts:666` (`resumeCount` read model), and the flow continuation worker's crash-recover arm |
 | `crash_recover_next_retry_at` | the same three write sites (reset to `NULL`), plus `recordCrashRecoverContinuationOutcome` on a `transient` outcome | `recordCrashRecoverContinuationOutcome` on `resumed`, `redispatched` and `unresumable` | the worker's candidate predicate only |
 | `crash_recover_attempts` | the same three write sites (reset to `0`), plus `recordCrashRecoverContinuationOutcome` incrementing on `transient` | `recordCrashRecoverContinuationOutcome` on `resumed`, `redispatched` and `unresumable` | the worker's candidate predicate and its budget-exhausted log line |
+
+Line numbers are a convenience and drift with any edit to those files; the
+COUNTS are the contract — three write sites and five release sites — and a
+source-level guard fails the build if a write site ever stamps the marker
+without the reset beside it.
 
 **The budget is reset at every WRITE site, never by chasing release sites.** The
 two columns are zeroed in the **same transaction** that stamps

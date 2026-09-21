@@ -217,7 +217,7 @@ validate:docs` enforces stub ↔ body equality and the file bijection.
 | [ADR-173](#adr-173-user-notification-subscriptions-and-web-push-over-the-widened-outbound-webhook-engine) | User notification subscriptions and web push over the widened outbound-webhook engine | Accepted | 2026-09-10 |
 | [ADR-174](#adr-174-the-desk-renders-one-object-per-work-item) | The Desk renders one object per work item | Accepted | 2026-09-17 |
 | [ADR-175](#adr-175-operator-recover-of-a-crashed-agent-node-re-enters-the-flow-graph) | Operator Recover of a crashed agent node re-enters the flow graph | Accepted; amended by ADR-176 | 2026-09-18 |
-| [ADR-176](#adr-176-automated-crash-recover-re-entry--the-flow-continuation-worker-owns-the-committed-intent-under-a-bounded-per-run-budget) | Automated crash-recover re-entry — the flow continuation worker owns the committed intent under a bounded per-run budget | Accepted | 2026-09-21 |
+| [ADR-176](#adr-176-automated-crash-recover-re-entry--the-flow-continuation-worker-owns-the-committed-intent-under-a-bounded-per-run-budget) | Automated crash-recover re-entry — the flow continuation worker owns the committed intent under a bounded per-run budget | Implemented | 2026-09-21 |
 
 ---
 
@@ -1780,7 +1780,7 @@ Full record: [`decisions/adr-175.md`](decisions/adr-175.md)
 
 ### ADR-176: Automated crash-recover re-entry — the flow continuation worker owns the committed intent under a bounded per-run budget
 
-**Status:** Accepted
+**Status:** Implemented
 **Date:** 2026-09-21
 
 Full record: [`decisions/adr-176.md`](decisions/adr-176.md)

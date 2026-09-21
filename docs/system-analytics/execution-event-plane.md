@@ -1,6 +1,6 @@
 # Execution event plane
 
-**Status:** Implemented canonical Postgres authority, bounded referenced output, retained outbox/file accounting and autonomous projection (AB-01–04). The S1 release gate is in progress; durable command-owner reconciliation remains Designed in S2.
+**Status:** Implemented canonical Postgres authority, bounded referenced output, retained outbox/file accounting and autonomous projection (AB-01–04). The S1 release gate is in progress; durable command-owner reconciliation is Implemented — the prompt-owner recovery worker and the two continuation workers run in the production web boot (ADR-176).
 
 ## Purpose
 
