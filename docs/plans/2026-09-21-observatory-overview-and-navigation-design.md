@@ -121,6 +121,11 @@ Every run falls into exactly one bucket. The in-flight buckets are
 | `Failed` | `status = Failed` |
 | `Abandoned` | `status = Abandoned`; **or** `Done` + `pull_request` + `pr_state = 'closed'` (closed without merge); **or** `Review` / `Crashed` with `workspaces.removed_at` set (the board's "historical evidence" rule in `deriveStage` / `deriveWorkStage`) |
 
+Workspace columns are read from the run's **latest** `workspaces` row (`ORDER BY
+created_at DESC, id ASC LIMIT 1`) — `workspaces.run_id` is not unique and the
+`/runs` ledger already selects the branch this way, so both surfaces read the
+same row.
+
 `Done` never coexists with `promotion_state ∈ {claiming, failed, reopened}`
 (a finalize failure leaves the run in `Review`; reopen flips it back to
 `Review`), so the table is total over reachable rows.
@@ -244,6 +249,9 @@ the existing `volatile` convention.
   dimension ("lifetime" statements), the ADR-134 panel table's Cost row,
   expectations; add the overview read model and the D3 table.
 - `docs/system-analytics/runs.md` — Runs ledger UI filter list.
+- `docs/screens/runs/list.md` — ledger filter list (`kind`, `bucket`).
+- `web/lib/queries/digest.ts` — the Desk `tokens` tile points at
+  `/observatory?view=cost` (its test pins the href list).
 - `docs/screens/components.md` — record the no-Apply filter bar as the
   reference pattern.
 - `docs/decisions.md` and `docs/decisions/adr-177.md` — this decision set.
