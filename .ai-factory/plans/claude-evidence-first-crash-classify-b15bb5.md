@@ -1256,19 +1256,98 @@ English fallback left in the RU file.
 
 ### Phase 5 — Falsification and lane green
 
-**T5.1 — Falsification.** Revert the evidence probe (T2.2/T2.3) → RED 2 must go
+**✅ T5.1 FALSIFICATION RESULT (2026-09-21).** Both reverts were applied behind a
+temporary env flag, measured, and reverted.
+
+**(a) Revert the classifier arms** (`evidenceClassification` returns `null`):
+**10 of the 13** ADR-177 sweep cases go red, each for its ORIGINAL stated reason
+— RED 2a/2b/2c/2d `expected 'Crashed' to be 'Running'`, RED 1/1b/2e/4a/4b
+`decision` null, RED 6 `owner_unapplied`. The three that stay green are exactly
+the ones that must: RED 5b and RED 5c (the no-evidence and scratch-scope guards,
+which do not depend on the arms) and AC-D7.1 (an `EXPLAIN`).
+
+**(b) Revert the owner-side boundary** (T3.3's `turnLost` forced false): the
+worker-first case goes red with `expected 'Running' to be 'Crashed'`.
+
+That second failure mode is worth reading carefully, because it is **C10 made
+visible**. Without T3.3 the owner DECODES the lost turn into an applied failed
+completion, so the sweep then classifies the run `applied` and SKIPS it — the
+run does not even reach a wrong terminal state, it reaches none, and in
+production the continuation worker would drive it to `Failed`. The
+`evidence-applied` skip arm is only correct because T3.3 exists, which is the
+precise reason commits 3 and 4 must land in one merge.
+
+**T5.1 — ✅ Falsification.** Revert the evidence probe (T2.2/T2.3) → RED 2 must go
 red **for the stated reason**; revert the owner-side boundary (T3.3) → RED 3's
 worker-first order must go red. Name the exact failing assertion for each; a
 revert that leaves a test green means the test proves nothing (project rule:
 *falsify every regression guard*).
 
-**T5.2 — Existing suites, no loosened expectations.** `reconcile-classify`,
+**✅ T5.2 RESULT (2026-09-21) — two expectations changed, BOTH classified
+OBSOLETE, none loosened.** The stage-AB `web` lane ran 32 suites / 438 cases and
+returned exactly two failures, both in `lib/flows/graph/__tests__/prompt-owners.integration.test.ts`'s
+ADR-175 `owner-flow-crash-recover` family:
+
+| Case | Old expectation | Classification |
+| --- | --- | --- |
+| `before_terminal` recover | the closed attempt carries `decision='crash_recover'` | **Obsolete.** The fixture kills the adapter and freezes the COMMAND's terminal columns — not the host's receipt — so the probe asks the real supervisor, is told the turn is gone, and the run is crashed `turn-lost`. The boundary therefore closes the attempt at CRASH time and Recover's `closeCrashedNodeAttempts` finds nothing left to mark. Everything the contract depends on still holds and is still asserted: the attempt IS closed, the graph appends a fresh attempt under the new epoch, exactly one new prompt is issued, and both decisions are in `NON_CORRECTION_DECISIONS`. |
+| `before_apply` recover | `summary.crashed >= 1` | **Obsolete, and it encoded the defect.** The turn FINISHED and only its owner application was outstanding — the exact state ADR-177's Context calls failure #1. The sweep now declines to crash it. The assertion is INVERTED rather than deleted (`crashed` must be `0`), so the improvement is pinned inside the ADR-175 suite; the fixture then produces the state ADR-175 needs the way ADR-177 says it is now reached — a run crashed for some OTHER reason while its evidence was unapplied. |
+
+Re-run after the fix: **5/5 green**, and the other three callers of that fixture
+were unaffected throughout. Other named suites, all green with no changed
+expectation: `reconcile-classify` (unit), `reconcile-sweep` (49),
+`command-recovery` (14, V3 byte-identical), `recover.integration` +
+`crash-recover-continuation` (31), agent + scratch `prompt-owners` (53),
+`state-transitions-crash` + `command-retirement` (15),
+`turn-lost-boundary` (7), `crash-recover-turn-lost` (9),
+`reconcile-evidence` + `turn-lost-accounting` (unit).
+
+⚠ **This surfaced a CONTRACT interaction, not just a test fix**, and it is now
+recorded in ADR-177 and `runs.md`: ADR-175's Scope-2 arm keeps its contract but
+loses its most common ENTRY PATH, because the sweep used to manufacture
+"`Crashed` while holding unapplied agreeing evidence" by crashing runs whose
+result was still arriving. It stays reachable through the population D5 already
+names, and through every row crashed before this ships.
+
+**T5.2 — ✅ Existing suites, no loosened expectations.** `reconcile-classify`,
 `reconcile-sweep`, both `prompt-owners` lanes (flow + agent),
 `durable-workers-boot`, `recover.integration`, `command-recovery`,
 `crash-recover-continuation`. For every changed expectation state **obsolete vs
 broken**; **C2** pre-classifies V3 as *under-specified* (extended, not changed).
 
-**T5.3 — Full gates on a quiet machine.**
+**T5.3 RESULTS (2026-09-21, this host, Node 24.15.0 via nvm — the homebrew
+default is 26.3.0, which this repo does not support):**
+
+| Gate | Result |
+| --- | --- |
+| `pnpm --filter maister-web test:unit` | **807 files / 8249 tests, 0 failures** |
+| `node scripts/run-stage-ab-tests.mjs web` | **32 suites / 438 tests** — 2 failures, both obsolete (T5.2), fixed and re-verified 5/5 |
+| `node scripts/run-stage-ab-tests.mjs isolation` | **3 suites / 15 tests, 0 failures** |
+| `pnpm --filter maister-web typecheck` | clean |
+| `pnpm --filter @maister/supervisor typecheck` | clean (and `supervisor/` has ZERO diff — this change is web-side only) |
+| `pnpm --filter maister-web lint` | **0 errors / 14 warnings** — the recorded baseline, unchanged |
+| `pnpm validate:docs:all` | green (458 mermaid blocks, 892 ADR anchors, 3475 links, 138 indexed files, `db:erd --check` current) |
+| `pnpm validate:contracts` | green (9 contracts + 5 adapter mirrors) |
+| `pnpm --filter maister-web db:generate` | **"No schema changes, nothing to migrate"** — D7's negative acceptance |
+| `pnpm --filter maister-web test:integration` (full lane) | **496 files / 4350 tests, 5 failures** — all four files classified below, none a regression |
+
+**The full-lane failures, classified by the project rule (re-run one file idle
+and compare name sets — memory: *integration lane load sensitivity*).** Load
+during the lane was 71-78 on 16 cores; re-runs were taken at load < 6 with zero
+vitest processes.
+
+| File | Full lane | Idle re-run | Verdict |
+| --- | --- | --- | --- |
+| `lib/execution-host/__tests__/deliverer.integration.test.ts` (D3) | ✕ | ✓ | **load-sensitive** — 2 files / 16 tests green |
+| `lib/execution-host/events/__tests__/projection-worker.integration.test.ts` (AT-03) | ✕ | ✓ | **load-sensitive** — same run |
+| `lib/agents/__tests__/prompt-owners.integration.test.ts` (`owner-agent-budget 'escalate' … 'before_terminal'`) | ✕ | ✓ | **load-sensitive** — 50 tests green, all 8 budget-source cells pass |
+| `test-support/__tests__/durable-workers-concurrency.integration.test.ts` (D2, E) | ✕ | ✓ in the `isolation` slice | **structural** — it is a `SERIAL_SLICES` suite that spawns TWO production web instances and is designed to own the host; the parallel `test:integration` lane is the one condition it cannot tolerate. It passed 3/3 suites / 15 tests when run as `run-stage-ab-tests.mjs isolation` minutes earlier |
+
+None of the five touches the reconcile classifier, the boundary, the prompt-owner
+turn-lost branches or the Recover arm. Every suite that DOES was run directly and
+is green.
+
+**T5.3 — ✅ Full gates on a quiet machine.**
 `pnpm --filter maister-web test:unit` · `test:integration` ·
 `node scripts/run-stage-ab-tests.mjs web` · `… isolation` ·
 `pnpm --filter maister-web typecheck` · `pnpm --filter @maister/supervisor typecheck` ·
@@ -1279,7 +1358,48 @@ broken**; **C2** pre-classifies V3 as *under-specified* (extended, not changed).
 Compare failure **SETS** against `master`, not counts. `pmset -g log` before
 attributing any timeout to the change. Grep each lane for `| N skipped`.
 
-**T5.4 — Playwright exposure.** `next dev` boots `instrumentation.ts`, so the
+**✅ T5.4 RESULT (2026-09-21, quiet host, `--workers=2` per the repo's own
+measurement that 4 oversaturates this Mac).** `pnpm exec tsx e2e/run.ts
+--workers=2`: **183 passed, 5 failed, 4 flaky, 1 did not run.**
+
+(An earlier attempt reported `No tests found` in 27 lines — `pnpm test:e2e --
+--workers=2` sends `--workers=2` THROUGH pnpm's `--`, where Playwright reads it
+as a spec filter. Invoke the runner directly. Not a test result.)
+
+| Failure | Attribution |
+| --- | --- |
+| `platform-agents-page.spec.ts:26` | **master** — named in `web/CLAUDE.md`'s measured master set |
+| `review-diff-scopes.spec.ts:43` | **master** — named there, at this exact line |
+| `studio-ai-assistant.spec.ts:69` | **master** — named there ("needs a real ACP turn from the test supervisor") |
+| `push-notifications.spec.ts:103` | **pre-existing, PROVEN by a control** (below) |
+| `work-table.spec.ts:97` | **pre-existing** — flaky-then-passing in isolation, same signature |
+
+Both unexpected entries are **strict-mode violations**: two DOM nodes match one
+`data-testid` (`notifications-panel`, `work-empty`). They were NOT written off as
+load — both fail deterministically in a 2-spec isolated run — so the branch's
+ENTIRE UI delta was reverted to `master`'s exact content
+(`git checkout master -- 'web/app/(app)/runs/[runId]/layout.tsx'
+web/messages/{en,ru}.json`) and the two specs re-run:
+
+| Tree | Result |
+| --- | --- |
+| UI delta reverted to master | EXIT=0, 10 passed, **1 flaky** — same duplication, on `push-notifications:218` |
+| UI delta restored (branch HEAD) | EXIT=0, 10 passed, **1 flaky** — same duplication, on `push-notifications:103` |
+
+Identical shape either way, with the bitten case MOVING between runs — the
+"traded places" pattern `web/CLAUDE.md` documents. The duplication is present
+with and without this change, so it is pre-existing and race-y; whether it reads
+as `failed` or `flaky` in the full lane is load. The mechanism agrees: this
+branch's whole UI delta is one `decisionLabel` arm on the run-detail layout plus
+two i18n keys, and neither spec renders the run timeline.
+
+`desk.spec.ts:205`, which IS in the documented master set, did not fail here —
+further evidence this set is load-shaped rather than change-shaped.
+
+**Nothing in the e2e lane is attributable to ADR-177.** Nothing quarantined, no
+spec weakened.
+
+**T5.4 — ✅ Playwright exposure.** `next dev` boots `instrumentation.ts`, so the
 e2e lane runs the sweep and the durable workers (the ADR-176 plan's C1). Run
 `pnpm --filter maister-web test:e2e` and fix or explicitly quarantine-with-reason
 anything the new arms disturb.
@@ -1292,11 +1412,29 @@ attributed to `master` by name with evidence.
 
 ### Phase 6 — As-built docs and plan close-out
 
-**T6.1** — Flip the Phase-0 placeholders to as-built: PRM-05 / EDGE-PRM-02 cite
+**✅ T6.2 TRUTH-PASS RECORD (2026-09-21).** Three Phase-0 statements became FALSE
+during implementation and were corrected in `docs/decisions/adr-177.md`,
+`reconciliation-gc.md`, `runs.md`, `execution-prompt-lifecycle.md` and
+`web.openapi.yaml`:
+
+| Phase-0 said | Shipped code does | Why |
+| --- | --- | --- |
+| Recover settles the declined command `superseded` **with `completion_applied_at`** | `superseded`, `completion_applied_at` left **NULL** | `execution_commands_application_shape_check` is an EQUIVALENCE (**C15**) — the documented write is refused by the database. Retirement never reads the column |
+| the stream-lost bound covers **any `pending_*`** ∨ `inflight` | only `pending_ingest` ∨ `inflight` | **C18** — the other classes' evidence is already in Postgres, so a dead stream cannot stall them and crashing them would discard a landed result |
+| (unstated) | an already-`applied`/`superseded` command means the obligation is MET and the boundary rewrites nothing; `application_error` is PRESERVED | both found by tests; without the first, a quarantined-after-application row left the run `Running` forever |
+
+Checked and found still TRUE, so untouched (R9): `docs/architecture.md` (its one
+reconcile sentence is about the recovery path in general), `error-taxonomy.md`
+(no new code), `docs/db/*` + `erd.dbml` (no schema change — `db:erd --check`
+green), `system-analytics/README.md` (no new analytics doc),
+`ExtPulseEventKind` (no new event kind), `deployment.md`/`configuration.md` (no
+new env var or deployment surface).
+
+**T6.1** — ✅ Flip the Phase-0 placeholders to as-built: PRM-05 / EDGE-PRM-02 cite
 the suites that passed them; the stage-ab matrix row `:859` cites RED 1/RED 3;
-S5.2's named scenario is marked green. **T6.2** — Re-read every Phase-0 doc
+S5.2's named scenario is marked green. **T6.2** — ✅ Re-read every Phase-0 doc
 against the shipped code (memory: *docs truth pass after milestones*) — ADRs,
-system-analytics, architecture prose, component diagrams. **T6.3** — Record the
+system-analytics, architecture prose, component diagrams. **T6.3** — ✅ Record the
 accepted residual windows in ADR-177.
 
 ---

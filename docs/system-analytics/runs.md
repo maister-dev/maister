@@ -344,9 +344,11 @@ run machine:
    anchor**: `applied` / `applying` / `pending_application` / `pending_ingest` /
    `inflight` SKIP **regardless of grace** (`evidence-applied`,
    `evidence-pending`, `evidence-inflight`) because a named writer still owes the
-   next move; `turn_lost`, `quarantined` / `poisoned`, and any pending class whose
-   host stream is `lost` CRASH **regardless of grace** (`turn-lost`,
-   `owner-poisoned`, `stream-lost`) because no writer will ever come. The grace
+   next move; `turn_lost`, `quarantined` / `poisoned`, and `pending_ingest` or
+   `inflight` on a host whose stream is `lost` CRASH **regardless of grace**
+   (`turn-lost`, `owner-poisoned`, `stream-lost`) because no writer will ever
+   come. The stream bound covers only those two classes — the others' evidence
+   is already in Postgres, so a dead stream cannot stall them. The grace
    window governs the `none` path and nothing else. Enforced by the classifier's
    exhaustive `satisfies Record<PromptEvidenceClass, …>` map — a future member is
    a compile error, never a silent fall-through — and pinned by the
@@ -367,10 +369,11 @@ run machine:
    one turn. **[ADR-177](../decisions/adr-177.md) names the one exception: a
    `turn_lost` result is NOT agreeing terminal evidence** — a lost turn is not the
    node's outcome, it is the absence of one. Recover declines it, settles the
-   stranded command `application_state='superseded'` with `completion_applied_at`
-   in the same transaction that closes the attempt (so retirement can still
-   discharge it instead of answering `owner_unapplied` forever), and dispatches
-   exactly one fresh prompt. Enforced by the `"turn-lost"` outcome value, which a
+   stranded command `application_state='superseded'` (with
+   `completion_applied_at` left NULL —
+   `execution_commands_application_shape_check` is an equivalence, and retirement
+   never reads that column) so it can still be discharged instead of answering
+   `owner_unapplied` forever, and dispatches exactly one fresh prompt. Enforced by the `"turn-lost"` outcome value, which a
    caller that does not handle it cannot compile against. A coordinator still waiting on children is handed back to its
    existing wait gate instead (`WaitingOnChildren`), which the success body
    reports as the committed `runStatus`. Recover re-admits through the global cap
@@ -391,12 +394,19 @@ cell with no arm is a defect, not a default.
 | `Running` (no session) | `applied` | SKIP `evidence-applied` | the flow continuation worker (~1 s) |
 | `Running` (no session) | `applying` / `pending_application` / `pending_ingest` | SKIP `evidence-pending` | the claim holder, the prompt-owner worker, or the event consumer |
 | `Running` (no session) | `inflight` | SKIP `evidence-inflight` | the host — the turn is still running |
-| `Running` (no session) | any pending class ∧ host stream `lost` | CRASH `stream-lost` | an operator, via Recover |
+| `Running` (no session) | `pending_ingest` or `inflight` ∧ host stream `lost` | CRASH `stream-lost` | an operator, via Recover |
 | `Running` (no session) | `turn_lost` | CRASH `turn-lost` via `applyTurnLostBoundary` | an operator, via Recover |
 | `Running` (no session) | `quarantined` / `poisoned` | CRASH `owner-poisoned` via `applyTurnLostBoundary` | an operator; Recover refuses to re-prompt from disagreeing evidence |
 | `Running`, committed recover intent | any | `recover` / `reattach` / `wait` (ADR-176 `routeCrashRecover`) | the flow continuation worker, else the sweep backstop |
 | `Crashed` | settled-unapplied `turn_lost` on a still-open attempt | Recover declines, supersedes, re-dispatches (ADR-177) | the fresh attempt |
 | `Crashed` | agreeing terminal evidence, unapplied | Recover applies it first, no second paid turn (ADR-175) | the graph |
+
+Since [ADR-177](../decisions/adr-177.md) the sweep no longer MANUFACTURES that
+last row: a `Running` run whose result is merely still being applied is skipped
+(`evidence-pending`), not crashed. The row is reached by a run crashed for some
+OTHER reason while its evidence was unapplied, and by every row crashed before
+that change shipped. ADR-175's arm is unchanged; the system just walks into it
+less often.
 
 The bound on every SKIP row is `commandStreamLost()` — the state
 `runEventStreamHealthSweep` writes — never a timer. A host whose stream is still

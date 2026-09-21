@@ -8778,11 +8778,11 @@ paths:
         agreeing terminal evidence, because a lost turn is not the node's
         outcome but the absence of one. Applying it would decode into a failed
         node action and terminalize the run `Failed`, which is not recoverable.
-        Recover therefore **declines** it and, in the SAME transaction that
-        closes the crashed attempt, settles the stranded command
-        `application_state='superseded'` with `completion_applied_at` — leaving
-        it `pending` would strand it `owner_unapplied` and block ever deleting
-        the run. One fresh `session.prompt` is then dispatched. The turn is
+        Recover therefore **declines** it and settles the stranded command
+        `application_state='superseded'` before re-dispatching — leaving it
+        `pending` would strand it `owner_unapplied` and block ever deleting the
+        run. `completion_applied_at` stays null: only `applied` may carry it.
+        One fresh `session.prompt` is then dispatched. The turn is
         matched on the settled command's error **reason** (`turn_lost`, carried
         either as `last_error.details.reason` or as `last_error.reason`), never
         on an HTTP status or on the error code. This is a semantics correction:

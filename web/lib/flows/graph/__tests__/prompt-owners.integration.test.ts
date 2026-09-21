@@ -3206,7 +3206,41 @@ describe("Flow prompt owners through the production graph driver", () => {
       }),
     });
 
-    expect(summary.crashed).toBeGreaterThanOrEqual(1);
+    // ADR-177 splits these two windows, and the split is the contract rather
+    // than an accident of this fixture.
+    //
+    // `before_terminal` freezes the COMMAND's terminal columns, not the host's
+    // receipt — and the adapter really was killed — so the sweep's evidence
+    // probe asks the supervisor, is told the turn is gone, and crashes it
+    // `turn-lost` through the shared boundary. The attempt is therefore closed
+    // at CRASH time (`decision='turn_lost'`) instead of at Recover time
+    // (`crash_recover`); both are in `NON_CORRECTION_DECISIONS`, so nothing
+    // downstream moves.
+    //
+    // `before_apply` is the case ADR-177 exists to fix: the turn FINISHED, its
+    // agreeing evidence is ingested, and only the owner application is
+    // outstanding. The sweep now correctly DECLINES to crash it — crashing
+    // there is exactly the "a run is crashed while its result is still on its
+    // way" defect. Asserting that decline here is worth more than the old
+    // `crashed >= 1`, so it is asserted rather than skipped past.
+    if (options.window === "before_apply") {
+      expect(
+        summary.crashed,
+        "ADR-177: a finished turn whose result is still being applied must NOT be crashed for being old",
+      ).toBe(0);
+      // ADR-175's applied-evidence arm still needs a CRASHED run holding
+      // unapplied evidence. Since the sweep no longer manufactures that state,
+      // the fixture produces the population ADR-177 names instead: a run
+      // crashed for some OTHER reason while its evidence was still unapplied.
+      const { crashRunningRun } = await import("@/lib/runs/state-transitions");
+      const crashResult = await crashRunningRun(seeded.runId, "worktree-gone", {
+        db: database.db as unknown as Db,
+      });
+
+      expect(crashResult.ok).toBe(true);
+    } else {
+      expect(summary.crashed).toBeGreaterThanOrEqual(1);
+    }
     const [crashed] = await database.db
       .select()
       .from(runs)
@@ -3389,7 +3423,14 @@ describe("Flow prompt owners through the production graph driver", () => {
 
       expect(closed).toMatchObject({
         status: "Reworked",
-        decision: "crash_recover",
+        // ADR-177: this run was crashed `turn-lost` (the host reported the turn
+        // gone), so the shared boundary closed the attempt at CRASH time.
+        // `closeCrashedNodeAttempts` then finds nothing open and Recover's
+        // `crash_recover` marker never lands — which changes nothing the
+        // contract depends on: the attempt IS closed, the graph appends a fresh
+        // one under the new epoch (asserted above), and both decisions are in
+        // `NON_CORRECTION_DECISIONS`.
+        decision: "turn_lost",
       });
       expect(closed?.endedAt).not.toBeNull();
       expect(attempts).toHaveLength(2);
