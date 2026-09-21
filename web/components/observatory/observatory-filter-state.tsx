@@ -12,7 +12,7 @@ import { buildObservatoryHref } from "@/lib/observatory/href";
 
 /**
  * The filter edits that have been committed but have not come back yet
- * (ADR-177 D7).
+ * (ADR-178 D7).
  *
  * `current` is a SERVER value: it only changes when a round-trip lands. Anything
  * that builds a URL from it alone — a second control, or a view tab whose

@@ -1,4 +1,4 @@
-// ADR-177 D3: the outcome-bucket matrix on real Postgres.
+// ADR-178 D3: the outcome-bucket matrix on real Postgres.
 //
 // The CASE fragment is generated from `BUCKET_BY_RUN_STATUS`, so the unit test
 // can only prove it is WELL-FORMED. What it classifies a real row as — and in
@@ -64,7 +64,7 @@ const WORKSPACE_VARIANTS = {
     promotionMode: "local_merge",
     removed: true,
   },
-  // The three promotion states ADR-177 argues cannot sit beside a `Done` run
+  // The three promotion states ADR-178 argues cannot sit beside a `Done` run
   // (a claim in flight and a finalize failure both leave the run in `Review`;
   // ADR-141 `reopen` flips it back to `Review` as it writes `reopened`).
   // Seeded anyway: "unreachable" was previously asserted by a test that
@@ -144,7 +144,7 @@ const EXPECTED: Record<
 };
 
 /**
- * `Done` beside an in-flight promotion state: why ADR-177 D3's `Delivered` rule
+ * `Done` beside an in-flight promotion state: why ADR-178 D3's `Delivered` rule
  * reads `promotion_state = 'done'` while the SQL lets these fall through.
  *
  * `promotion_state` carries five values; only `none` and `done` are expected
@@ -215,7 +215,7 @@ beforeEach(async () => {
   });
 });
 
-describe("runOutcomeBucketSql over real rows (ADR-177 D3)", () => {
+describe("runOutcomeBucketSql over real rows (ADR-178 D3)", () => {
   it("classifies every reachable run status x workspace shape per the D3 table", async () => {
     const expected = new Map<string, RunOutcomeBucket>();
 

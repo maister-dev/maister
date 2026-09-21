@@ -7,7 +7,7 @@ import {
   startOfUtcDay,
 } from "@/lib/utc-day";
 
-describe("utc-day helpers (ADR-177 D1)", () => {
+describe("utc-day helpers (ADR-178 D1)", () => {
   it("truncates a non-midnight instant to 00:00Z of its own UTC day", () => {
     expect(
       startOfUtcDay(new Date("2026-06-05T12:34:56.789Z")).toISOString(),

@@ -5,7 +5,7 @@
 Routes: `/observatory` and `/projects/{slug}/observatory`.
 
 Status: existing process/cost Observatory and the ADR-134 agentization,
-run-kind segment, funnel, and scope labels are Implemented. The ADR-177 overview
+run-kind segment, funnel, and scope labels are Implemented. The ADR-178 overview
 table, period model, URL view axis, and auto-apply filter bar are
 **Implemented**.
 
@@ -33,7 +33,7 @@ The project board links to its project Observatory. The portfolio route can
 narrow to a project; flow and node drill-down links preserve the current
 window and valid `runKind` segment.
 
-**(Implemented, ADR-177)** Both routes carry a **view axis** in the URL:
+**(Implemented, ADR-178)** Both routes carry a **view axis** in the URL:
 `?view=overview|cost|quality|harness`, default `overview`. A link that carries
 `flowId`, `nodeId`, `artifactKind` or `artifactDefId` **without** `view` defaults
 to `quality`, so pre-existing drill-down links land where their filters apply.
@@ -57,7 +57,7 @@ flowchart LR
 
 ## Layout & regions
 
-Page order on both routes **(Implemented, ADR-177)**: header → filter bar → view
+Page order on both routes **(Implemented, ADR-178)**: header → filter bar → view
 tabs → the selected view. The filter bar is mounted **once, above** the view
 switch, so text typed but not yet committed survives a view change.
 
@@ -153,7 +153,7 @@ The project page also shows:
 
 For scratch or agent selection, flow-ledger panels show an explicit
 not-applicable state instead of relabeling flow-only values; **(Implemented,
-ADR-177)** that state becomes the whole Quality and Harness view, and the Quality
+ADR-178)** that state becomes the whole Quality and Harness view, and the Quality
 layout uses a responsive grid with `items-start` and no fixed aside, so an empty
 ledger is one short card rather than a viewport. The portfolio route does not
 show agentization or the funnel.
@@ -169,7 +169,7 @@ stateDiagram-v2
     Volatile --> Ready: active runs terminal
     Ready --> FlowOnlyNA: scratch or agent segment on flow ledger
     FlowOnlyNA --> Ready: all or flow segment
-    Ready --> Pending: filter changed (aria-busy, ADR-177)
+    Ready --> Pending: filter changed (aria-busy, ADR-178)
     Pending --> Ready: server component re-rendered
     Loading --> ReadError: authorized read failure
 ```
@@ -178,7 +178,7 @@ No state has a reconcile, fetch, promotion, target, benchmark, A/B, or
 write-back action. Missing/ambiguous PR attribution or unavailable cache stays
 insufficient, never estimated.
 
-**(Implemented, ADR-177)** Two additional states:
+**(Implemented, ADR-178)** Two additional states:
 
 - **Pending** — a filter change is in flight. The bar sets `aria-busy` and shows
   a text-plus-color indicator until the server component has re-rendered; the
@@ -198,7 +198,7 @@ repository scanner alone fetches and writes its cache; no public page API is
 introduced. See [`../system-analytics/observatory.md`](../system-analytics/observatory.md)
 and [`../system-analytics/scheduler.md`](../system-analytics/scheduler.md).
 
-**(Implemented, ADR-177)** The overview adds `getObservatoryOverview`
+**(Implemented, ADR-178)** The overview adds `getObservatoryOverview`
 (`web/lib/queries/observatory-overview.ts`): two grouped SELECTs on the portfolio
 — runs by `(project_id, run_kind, bucket)` and tasks by `project_id` — plus one
 more on the project route for the per-flow / per-kind sub-rows. The query count is
@@ -211,7 +211,7 @@ route, no migration, no index.
 scope, freshness, insufficiency, volatility, kind, and not-applicable label;
 the parity test requires matching key sets.
 
-**(Implemented, ADR-177)** New families: `observatory.views.*` (the four view
+**(Implemented, ADR-178)** New families: `observatory.views.*` (the four view
 names plus the tablist's accessible `label`),
 `observatory.period.*` (presets, from/to, clamped, pending), `observatory.overview.*`
 (title, column groups, project/platform/total, empty, live hint, open-in-ledger),
@@ -234,7 +234,7 @@ no two surfaces can end up with different words for one value:
 ## Linked artifacts
 
 - [ADR-134](../decisions.md#adr-134-observatory-agentization-and-commit-provenance)
-- [ADR-177](../decisions.md#adr-177-observatory-overview-table-day-aligned-period-url-views-and-auto-apply-filters)
+- [ADR-178](../decisions.md#adr-178-observatory-overview-table-day-aligned-period-url-views-and-auto-apply-filters)
 - [`components.md`](components.md)
 - [`runs/list.md`](runs/list.md)
 - [`../system-analytics/observatory.md`](../system-analytics/observatory.md)

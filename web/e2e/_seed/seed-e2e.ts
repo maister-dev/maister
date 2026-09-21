@@ -6139,7 +6139,7 @@ type M23FixtureRecord = {
   nodeId: string;
   scratchRunId: string;
   noCacheProjectSlug: string;
-  // ADR-177: one run per settled outcome bucket plus a queued one, and a
+  // ADR-178: one run per settled outcome bucket plus a queued one, and a
   // project-less scratch run for the admin-only Platform row.
   deliveredRunId: string;
   prOpenRunId: string;
@@ -6481,7 +6481,7 @@ async function seedM23Fixture(
     [ids.noCacheMember, ids.noCacheProject, userId],
   );
 
-  // ADR-177: one run per outcome bucket the overview table shows, a THIRD task
+  // ADR-178: one run per outcome bucket the overview table shows, a THIRD task
   // launched inside the window (so `tasksStarted` is not equal to
   // `tasksInWork`), and a project-less scratch run for the Platform row.
   await pool.query(

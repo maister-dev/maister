@@ -1,4 +1,4 @@
-// ADR-177 D6: the Observatory's four URL views.
+// ADR-178 D6: the Observatory's four URL views.
 //
 // Pure and client-safe — the filter bar and the view tabs both build hrefs from
 // these, and the two page routes narrow `?view=` through the same allow-list.

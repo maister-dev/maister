@@ -6,7 +6,7 @@
 `web/components/observatory/*`, `web/lib/queries/observatory*.ts`
 · **Status:** Accepted (2026-09-21, owner) — implementation plan
 [`../../.ai-factory/plans/claude-observatory-layout-navigation-4d13e6.md`](../../.ai-factory/plans/claude-observatory-layout-navigation-4d13e6.md);
-ADR-177 is written in that plan's Phase 0.
+ADR-178 is written in that plan's Phase 0.
 
 Rewrites the layout half of [`../screens/observatory.md`](../screens/observatory.md)
 (§"Navigation", §"Layout & regions") and amends the cost-window statements in
@@ -254,7 +254,7 @@ the existing `volatile` convention.
   `/observatory?view=cost` (its test pins the href list).
 - `docs/screens/components.md` — record the no-Apply filter bar as the
   reference pattern.
-- `docs/decisions.md` and `docs/decisions/adr-177.md` — this decision set.
+- `docs/decisions.md` and `docs/decisions/adr-178.md` — this decision set.
 - `web/e2e/m23-observatory.spec.ts`,
   `web/e2e/observatory-cost-breakdown.spec.ts` — headings now live under
   `?view=…`.

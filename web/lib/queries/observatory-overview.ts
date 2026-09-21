@@ -22,7 +22,7 @@ import {
 import { isDeliveryRunKind } from "@/lib/observatory/run-kind";
 
 /**
- * The Observatory overview read model (ADR-177 D2/D3/D4).
+ * The Observatory overview read model (ADR-178 D2/D3/D4).
  *
  * Two grouped SELECTs — runs by `(project_id, run_kind, bucket)` and tasks by
  * `project_id` — plus one more for the project page's sub-rows. The count is

@@ -15,7 +15,7 @@ import { OBSERVATORY_PERIOD_PRESETS } from "@/lib/observatory/period";
 import { isObservatoryRunKind } from "@/lib/observatory/run-kind";
 
 /**
- * The auto-apply filter bar (ADR-177 D7) — the first in the app.
+ * The auto-apply filter bar (ADR-178 D7) — the first in the app.
  *
  * The URL is the state: every control writes back to it through
  * `router.replace(…, { scroll: false })` inside a transition, so there is no

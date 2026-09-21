@@ -10,7 +10,7 @@ import {
   isRunOutcomeBucket,
 } from "@/lib/runs/outcome-bucket";
 
-describe("run outcome buckets (ADR-177 D3)", () => {
+describe("run outcome buckets (ADR-178 D3)", () => {
   it("has exactly the ten D3 members, in-flight first", () => {
     expect(RUN_OUTCOME_BUCKETS).toEqual([
       "Queued",

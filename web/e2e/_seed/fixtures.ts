@@ -121,7 +121,7 @@ export type E2EM23Fixture = {
   nodeId: string;
   scratchRunId: string;
   noCacheProjectSlug: string;
-  // ADR-177 overview coverage.
+  // ADR-178 overview coverage.
   deliveredRunId: string;
   prOpenRunId: string;
   resultOnlyRunId: string;

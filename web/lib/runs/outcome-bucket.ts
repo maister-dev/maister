@@ -7,7 +7,7 @@ import { sql } from "drizzle-orm";
 import { RUN_STATUS_VALUES } from "@/lib/runs/run-status-values";
 
 /**
- * The ONE run-outcome classification (ADR-177 D3).
+ * The ONE run-outcome classification (ADR-178 D3).
  *
  * Every run falls into exactly one bucket. The in-flight five ARE
  * `WORK_IN_FLIGHT_STAGES` by name, so the Desk (ADR-172) and the Observatory
@@ -104,7 +104,7 @@ export function latestWorkspaceLateralSql(runAlias: string): SQL {
 /**
  * Is this run SETTLED — i.e. does its outcome bucket sit in the settled five?
  *
- * The task-overlap rule (ADR-177 D2) closes a run's in-work interval exactly
+ * The task-overlap rule (ADR-178 D2) closes a run's in-work interval exactly
  * when the run stops being in flight, so it asks the D3 classifier rather than
  * keeping its own status list. That list used to say `Review` and `Crashed` are
  * never settled; D3 already says a `Review` / `Crashed` run whose workspace was
@@ -124,7 +124,7 @@ export function runSettledSql(cols: RunOutcomeBucketColumns): SQL {
 }
 
 /**
- * The ADR-177 D3 `CASE` fragment, generated from `BUCKET_BY_RUN_STATUS` plus the
+ * The ADR-178 D3 `CASE` fragment, generated from `BUCKET_BY_RUN_STATUS` plus the
  * two refinements the status map cannot express. Generated rather than written
  * out so TS and SQL cannot drift.
  */

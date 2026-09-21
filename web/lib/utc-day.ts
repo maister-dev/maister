@@ -1,5 +1,5 @@
 // Whole-UTC-day arithmetic, shared by every surface that filters by calendar
-// day (ADR-177 D1). The `/runs` ledger and the Observatory period MUST agree on
+// day (ADR-178 D1). The `/runs` ledger and the Observatory period MUST agree on
 // these bounds or a drill-down count can never equal the list it opens.
 //
 // Deliberately NOT `server-only`: the period resolver is pure and is read by

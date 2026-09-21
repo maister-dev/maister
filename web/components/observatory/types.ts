@@ -261,7 +261,7 @@ export interface OverviewTableProps {
 export interface CorrectionHeatmapProps {
   labels: ObservatoryLabels;
   nodes: readonly ObservatoryNodeSummary[];
-  // ADR-177: a drill-down link must land on the Quality view of the SAME
+  // ADR-178: a drill-down link must land on the Quality view of the SAME
   // period, so every builder needs the effective bounds. REQUIRED — an
   // optional period let a caller silently emit links to a different window.
   period: ObservatoryPeriod;
@@ -308,7 +308,7 @@ export interface CostBreakdownCardProps {
   testId?: string;
   /**
    * Display names for keys that are not free-form ids. The By-flow breakdown
-   * carries `scratch` / `agent` pseudo-rows for the flow-less kinds (ADR-177
+   * carries `scratch` / `agent` pseudo-rows for the flow-less kinds (ADR-178
    * D5); they are run kinds and read as such.
    */
   keyLabels?: Readonly<Record<string, string>>;

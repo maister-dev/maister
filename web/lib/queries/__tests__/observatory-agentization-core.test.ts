@@ -302,12 +302,12 @@ describe("Observatory funnel", () => {
   });
 });
 
-// ADR-177 D1 introduced custom historical ranges. `REPO_DELIVERY_WINDOW_DAYS`
+// ADR-178 D1 introduced custom historical ranges. `REPO_DELIVERY_WINDOW_DAYS`
 // is a ROLLING 365 days that the scanner DELETEs and rewrites on every pass, so
 // a range reaching back past that horizon returns only its covered tail — and a
 // rate computed over nine cached days while claiming thirty is not a smaller
 // number, it is a different question answered.
-describe("agentization delivery-cache coverage (ADR-177 D1)", () => {
+describe("agentization delivery-cache coverage (ADR-178 D1)", () => {
   const run = {
     id: "flow-run",
     runKind: "flow" as const,

@@ -41,7 +41,7 @@ where action availability is re-checked by the run/workbench APIs.
 
 - **Entry:** Active workspaces rail header **See all** (`/runs`), deep-linked
   filters, the linking run cells of the Observatory overview table
-  (**Implemented, ADR-177** — `?project=&from=&to=&kind=&bucket=`, written by
+  (**Implemented, ADR-178** — `?project=&from=&to=&kind=&bucket=`, written by
   this screen's own `filtersToParams`), and future project/scheduler links. The
   overview's per-flow sub-rows and its Platform row do NOT link here: this
   screen has no flow filter, and its `INNER JOIN projects` cannot return a
@@ -62,7 +62,7 @@ flowchart TD
 
 1. **Header** - page title and short purpose text.
 2. **URL-backed filters** - project, state, source, runner, inclusive date
-   range, and — **(Implemented, ADR-177)** — run kind (`kind`) and outcome bucket
+   range, and — **(Implemented, ADR-178)** — run kind (`kind`) and outcome bucket
    (`bucket`). Applying filters submits a GET form, so the URL is shareable and
    the browser back button works.
 3. **Run history table** - recent runs first. Columns show run/task identity,
@@ -76,12 +76,12 @@ flowchart TD
 - `listRunsPage()` reads `runs`, `projects`, optional `tasks`, `flows`,
   `workspaces`, `run_cost_rollups`, and the schedule whose `last_run_id`
   matches the run.
-- **(Implemented, ADR-177)** The `bucket` filter reuses the Observatory's shared
+- **(Implemented, ADR-178)** The `bucket` filter reuses the Observatory's shared
   `runOutcomeBucketSql` fragment over the run's latest `workspaces` row, so a
   count shown there equals `totalRows` here for the same params. The lateral is
   joined only when `bucket` is set — every other page load would otherwise pay
   for a per-row subquery nothing reads.
-- **(Implemented, ADR-177)** `listRunsPage` is `INNER JOIN projects`, so a run
+- **(Implemented, ADR-178)** `listRunsPage` is `INNER JOIN projects`, so a run
   with `project_id IS NULL` (today: the Studio assistant scratch run, ADR-097)
   is not reachable from this screen under any filter. A project-less mode is
   Phase-2 backlog.

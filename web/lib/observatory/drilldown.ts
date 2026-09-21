@@ -5,7 +5,7 @@ import type { RunOutcomeBucket } from "@/lib/runs/outcome-bucket";
 import { filtersToParams } from "@/lib/runs/list-params";
 import { toUtcDateString } from "@/lib/utc-day";
 
-// ADR-177 D8: the overview's link into the `/runs` ledger.
+// ADR-178 D8: the overview's link into the `/runs` ledger.
 //
 // The param names come from the ledger's own `filtersToParams` — CALLED, not
 // copied, so the two cannot drift apart. What this adds is the translation

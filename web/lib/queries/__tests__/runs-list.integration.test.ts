@@ -106,7 +106,7 @@ describe("listRunsPage (integration, post-M42 schema)", () => {
     expect(ids).not.toContain(codexRun);
   });
 
-  it("filters by run kind (ADR-177 D8)", async () => {
+  it("filters by run kind (ADR-178 D8)", async () => {
     const project = await seedBucketProject();
     const flowRun = await seedBucketRun(project, {
       kind: "flow",
@@ -254,7 +254,7 @@ describe("listRunsPage (integration, post-M42 schema)", () => {
     expect(cells?.Delivered).toBe(2);
   });
 
-  // ADR-177 D4/D8. The Platform row counts `project_id IS NULL` runs; this
+  // ADR-178 D4/D8. The Platform row counts `project_id IS NULL` runs; this
   // query is `INNER JOIN projects`. So NO ledger URL can reproduce a Platform
   // cell — and a link with no `project=` does not narrow to those runs, it
   // WIDENS to every project's. That is why the overview renders the Platform

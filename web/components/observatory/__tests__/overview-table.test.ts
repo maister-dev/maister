@@ -1,4 +1,4 @@
-// ADR-177 D2/D3/D4/D8 — the overview table's render contract.
+// ADR-178 D2/D3/D4/D8 — the overview table's render contract.
 //
 // Every numeric run cell is a LINK into the ledger; the count and the list it
 // opens are the same number by construction (the SQL fragment), and this suite

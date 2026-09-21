@@ -517,7 +517,7 @@ Current Scope, these are **Implemented** today:
   calibration. → `readiness.md`
 - **Observatory** (M23): read-only Autonomy Score, correction-rate, signal
   clusters; overview table, period presets/custom range, URL views
-  (ADR-177). → `observatory.md`
+  (ADR-178). → `observatory.md`
 - **Scheduler** (M24): one polymorphic cron tick (`system_sweep | command |
 agent_tick | flow_run | run_schedule`); user-facing task cron schedules
   shipped (M28) → `run-schedules.md`, `scheduler.md`
@@ -613,7 +613,7 @@ shipped (ADR-101 + `maxDurationMinutes` watchdog), CI exists
 a project-less mode for the `/runs` ledger (`project=__platform__` →
 `project_id IS NULL` over a `LEFT JOIN projects`), so the Observatory's Platform
 row can drill down; today its cells are plain numbers because the ledger's
-`INNER JOIN projects` cannot return those runs (ADR-177 D8) · continuous
+`INNER JOIN projects` cannot return those runs (ADR-178 D8) · continuous
 background agents (Mγ: heartbeat daemons + crash-loop backoff —
 the M34 substrate covers catalog/triggers/one-shot runs) · Telegram /
 notifier consumers on the webhook primitive · durable orchestration · full

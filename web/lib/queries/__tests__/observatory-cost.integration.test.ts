@@ -206,7 +206,7 @@ describe("getCostSummary — model + runner breakdown", () => {
     ]);
   });
 
-  it("excludes a rollup whose run started before the window (ADR-177 D5)", async () => {
+  it("excludes a rollup whose run started before the window (ADR-178 D5)", async () => {
     const outside = new Date(Date.now() - 400 * 24 * 60 * 60 * 1000);
 
     await seedRollup({

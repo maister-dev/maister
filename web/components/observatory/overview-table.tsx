@@ -14,7 +14,7 @@ import {
 } from "@/lib/runs/outcome-bucket";
 
 /**
- * The Observatory overview table (ADR-177 D2/D3/D4).
+ * The Observatory overview table (ADR-178 D2/D3/D4).
  *
  * One scroll container, NO responsive column dropping: a table that hides
  * columns at a breakpoint has to keep a `<th>` and a `<td>` rule in step at

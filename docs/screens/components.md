@@ -124,7 +124,7 @@ Two controls are intentionally **not** `Tabs`, but share its tokens:
 
 A filter bar whose controls take effect the moment they change, with **no Apply
 button**. Locked by
-[ADR-177](../decisions.md#adr-177-observatory-overview-table-day-aligned-period-url-views-and-auto-apply-filters)
+[ADR-178](../decisions.md#adr-178-observatory-overview-table-day-aligned-period-url-views-and-auto-apply-filters)
 for the Observatory; other screens keep their GET-form bars until they get their
 own task. Do not convert a bar to this pattern in passing.
 

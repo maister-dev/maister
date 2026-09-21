@@ -7,7 +7,7 @@ function loadM23(): E2EM23Fixture {
 }
 
 test.describe("M23 Observatory", () => {
-  // ADR-177: the section opens on the overview table, and the flow ledger
+  // ADR-178: the section opens on the overview table, and the flow ledger
   // moved under `?view=quality`.
   test("the portfolio opens on the overview table with totals and the Platform row", async ({
     page,
@@ -174,7 +174,7 @@ test.describe("M23 Observatory", () => {
     ).toBeVisible();
   });
 
-  // ADR-177: the overview table is wider than a laptop viewport by design. The
+  // ADR-178: the overview table is wider than a laptop viewport by design. The
   // contract is that ITS container scrolls, never the page — a table that
   // pushes the shell sideways is the defect that "no responsive column
   // dropping" was chosen to avoid, and it is invisible in a class assertion.

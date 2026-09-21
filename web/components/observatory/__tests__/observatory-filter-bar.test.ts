@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-// ADR-177 D7 — the auto-apply filter bar. Every assertion pins an EXACT URL:
+// ADR-178 D7 — the auto-apply filter bar. Every assertion pins an EXACT URL:
 // a lenient `toContain` would pass while the bar silently dropped the period
 // or the view, which is precisely the defect this pattern can introduce.
 //
@@ -514,7 +514,7 @@ describe("ObservatoryFilterBar", () => {
   });
 });
 
-// ADR-177 D7/D6. A view tab is a `<Link>`, and its href used to be built by the
+// ADR-178 D7/D6. A view tab is a `<Link>`, and its href used to be built by the
 // SERVER from a `current` that predates anything the reader just committed. Two
 // clicks in one gesture — a period preset, then a tab — therefore lost the
 // period, because the tab's href was written before the preset existed. The bar

@@ -9,7 +9,7 @@ import {
   observatoryViewOwns,
 } from "@/lib/observatory/views";
 
-// ADR-177 D6/D7/D8: every Observatory link is built here.
+// ADR-178 D6/D7/D8: every Observatory link is built here.
 //
 // The URL is the state, so a link that drops the period silently changes what
 // the reader is looking at. One serializer, one param order — deterministic

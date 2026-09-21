@@ -6,7 +6,7 @@ import {
   toUtcDateString,
 } from "@/lib/utc-day";
 
-// ADR-177 D1. The Observatory period is a half-open interval of WHOLE UTC days.
+// ADR-178 D1. The Observatory period is a half-open interval of WHOLE UTC days.
 // Day alignment is what makes an overview cell's count equal the `/runs` list it
 // links to: that ledger filters by `dateStart`/`nextDateStart`, so a rolling
 // `now - N days` bound could never agree with it.
@@ -121,7 +121,7 @@ export function resolveObservatoryPeriod(
   const from = validDate(input.from);
   const to = validDate(input.to);
 
-  // Owner decision (ADR-177, resolved question 3): a half-present, unparsable
+  // Owner decision (ADR-178, resolved question 3): a half-present, unparsable
   // or inverted range is NOT an error — it is dropped and the preset applies.
   if (!from || !to || from > to)
     return presetPeriod(input.now, input.windowDays);

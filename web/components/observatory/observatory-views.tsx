@@ -9,7 +9,7 @@ import { useObservatoryFilterState } from "@/components/observatory/observatory-
 import { observatoryViewHref } from "@/lib/observatory/href";
 import { OBSERVATORY_VIEWS } from "@/lib/observatory/views";
 
-// ADR-177 D6: the view axis, as the shared `Tabs` primitive in href mode —
+// ADR-178 D6: the view axis, as the shared `Tabs` primitive in href mode —
 // URL state, so a view survives refresh and back/forward like every other
 // tab bar in the app. `Tabs` takes no hooks of its own, so these stay real
 // `<Link>`s (they PUSH, unlike the bar's filter commits) even though this

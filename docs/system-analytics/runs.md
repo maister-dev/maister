@@ -111,14 +111,14 @@ projects existing rows from `runs`, `projects`, optional `tasks`, `flows`,
 a URL-filtered table.
 
 Filters are project, state, source, runner, inclusive start-date range, and —
-**(Implemented, ADR-177)** — run kind (`kind=flow|scratch|agent`) and outcome bucket
+**(Implemented, ADR-178)** — run kind (`kind=flow|scratch|agent`) and outcome bucket
 (`bucket=<D3 name>`). Both are narrowed by the existing `oneOf` allow-list guard
 in `normalizeRunsListFilters` before reaching SQL. Global admins see every
 non-archived project's runs; other users see only runs for projects where they
 have `project_members` visibility. Flow and standalone agent rows open
 `/runs/{runId}`; scratch rows open `/scratch-runs/{runId}`.
 
-**(Implemented, ADR-177)** The `bucket` predicate is the SAME `runOutcomeBucketSql`
+**(Implemented, ADR-178)** The `bucket` predicate is the SAME `runOutcomeBucketSql`
 `CASE` fragment the Observatory overview groups by, over the SAME latest
 `workspaces` row (`ORDER BY created_at DESC, id ASC LIMIT 1` — the lateral this
 query already uses for `branch`; the COUNT query joins it only when `bucket` is

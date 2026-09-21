@@ -17,7 +17,7 @@ function current(params: Record<string, string> = {}) {
   return parseObservatorySearchParams(params, NOW).current;
 }
 
-describe("buildObservatoryHref (ADR-177 D7)", () => {
+describe("buildObservatoryHref (ADR-178 D7)", () => {
   it("serializes the effective period as a preset", () => {
     expect(buildObservatoryHref("/observatory", current())).toBe(
       "/observatory?view=overview&windowDays=30",
@@ -95,7 +95,7 @@ describe("buildObservatoryHref (ADR-177 D7)", () => {
   });
 });
 
-describe("observatoryViewHref (ADR-177 D6)", () => {
+describe("observatoryViewHref (ADR-178 D6)", () => {
   const drilled = () =>
     current({
       nodeId: "checks",
@@ -172,7 +172,7 @@ describe("observatoryDrilldownHref", () => {
   });
 });
 
-describe("runsLedgerHref (ADR-177 D8)", () => {
+describe("runsLedgerHref (ADR-178 D8)", () => {
   it("translates the half-open period into the ledger's inclusive day pair", () => {
     expect(periodToLedgerDates(current().period)).toEqual({
       from: "2026-05-07",
@@ -233,7 +233,7 @@ describe("runsLedgerHref (ADR-177 D8)", () => {
 // written URL never went through it. `parseObservatorySearchParams` is where
 // BOTH the applied filters and the rendered controls are derived, so a param
 // the view does not own has to die there.
-describe("view field ownership at parse (ADR-177 D7)", () => {
+describe("view field ownership at parse (ADR-178 D7)", () => {
   it("drops the artifact pair on Harness — no control renders it there", () => {
     const parsed = parseObservatorySearchParams(
       {

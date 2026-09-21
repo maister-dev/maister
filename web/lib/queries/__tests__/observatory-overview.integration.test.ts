@@ -1,4 +1,4 @@
-// ADR-177 D2/D3/D4: the overview read model on real Postgres.
+// ADR-178 D2/D3/D4: the overview read model on real Postgres.
 //
 // Everything this read model claims is a database fact — which runs fall in the
 // window, which task counts as "in work", which workspace row decides a bucket,
@@ -68,7 +68,7 @@ beforeEach(async () => {
   beta = await seedProject("beta");
 });
 
-describe("getObservatoryOverview (ADR-177)", () => {
+describe("getObservatoryOverview (ADR-178)", () => {
   it("counts runs by kind and by outcome bucket, per project and in the totals", async () => {
     await seedRun({ project: alpha, kind: "flow", status: "Running" });
     await seedRun({ project: alpha, kind: "flow", status: "Pending" });
@@ -217,7 +217,7 @@ describe("getObservatoryOverview (ADR-177)", () => {
     expect(row.counts.tasksStarted).toBe(1);
   });
 
-  // ADR-177 D2 + D3, one rule. Before this, "settled" for a task was a second,
+  // ADR-178 D2 + D3, one rule. Before this, "settled" for a task was a second,
   // hand-kept status list that said Review/Crashed are NEVER settled — so one
   // crashed run nobody ever discarded kept its task in "in work" in every
   // window, forever. D3 already calls a removed-workspace Review/Crashed run

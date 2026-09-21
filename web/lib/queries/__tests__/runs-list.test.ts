@@ -54,7 +54,7 @@ describe("runs list query", () => {
     expect(
       normalizeRunsListFilters({ kind: "everything", bucket: "Promoted" }),
     ).toEqual({ page: 1 });
-    // `Promoted` is a WorkStage, not an ADR-177 bucket — the ledger must not
+    // `Promoted` is a WorkStage, not an ADR-178 bucket — the ledger must not
     // accept it just because it reads like one.
     expect(normalizeRunsListFilters({ bucket: "delivered" })).toEqual({
       page: 1,
@@ -191,7 +191,7 @@ describe("runs list query", () => {
 
     const queryTexts = execute.mock.calls.map((call) => sqlDebugText(call[0]));
     // Both the page and the count query carry the workspace lateral now
-    // (ADR-177 D8 filters on its columns), so select the page query by the
+    // (ADR-178 D8 filters on its columns), so select the page query by the
     // pagination clause only it has.
     const runsQueryText =
       queryTexts.find((text) => text.includes("OFFSET")) ?? "";

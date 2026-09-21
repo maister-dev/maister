@@ -44,7 +44,7 @@ export const RUNS_LIST_SOURCES = [
 
 export type RunsListSource = (typeof RUNS_LIST_SOURCES)[number];
 
-// ADR-177 D8: the ledger's run-kind filter. Spelled as its own allow-list so
+// ADR-178 D8: the ledger's run-kind filter. Spelled as its own allow-list so
 // the `oneOf` guard narrows the URL value before it reaches SQL.
 export const RUNS_LIST_KINDS = [
   "flow",
@@ -54,7 +54,7 @@ export const RUNS_LIST_KINDS = [
 
 export type RunsListFilters = {
   agent?: AdapterId;
-  // ADR-177 D8: the Observatory overview's drill-down params.
+  // ADR-178 D8: the Observatory overview's drill-down params.
   bucket?: RunOutcomeBucket;
   dateFrom?: string;
   dateTo?: string;
@@ -291,7 +291,7 @@ function buildRunPredicates(
   return predicates;
 }
 
-// ADR-177 D3: the SAME fragment the Observatory overview groups by, over the
+// ADR-178 D3: the SAME fragment the Observatory overview groups by, over the
 // SAME latest-workspace lateral — so a cell's count equals this page's
 // `totalRows` for identical params, by construction rather than by agreement.
 function ledgerBucketSql(): SQL {

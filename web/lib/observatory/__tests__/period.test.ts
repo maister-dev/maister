@@ -4,7 +4,7 @@ import { resolveObservatoryPeriod } from "@/lib/observatory/period";
 
 const NOW = new Date("2026-06-05T12:00:00.000Z");
 
-describe("resolveObservatoryPeriod (ADR-177 D1)", () => {
+describe("resolveObservatoryPeriod (ADR-178 D1)", () => {
   it("defaults to a 30-day preset aligned to whole UTC days", () => {
     const period = resolveObservatoryPeriod({ now: NOW });
 

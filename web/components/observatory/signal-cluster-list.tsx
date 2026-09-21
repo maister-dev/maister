@@ -20,7 +20,7 @@ export function SignalClusterList({
   runKind,
 }: {
   labels: ObservatoryLabels;
-  // Required for the same reason as CorrectionHeatmapProps.period (ADR-177).
+  // Required for the same reason as CorrectionHeatmapProps.period (ADR-178).
   period: ObservatoryPeriod;
   projectSlug?: string;
   signals: readonly SignalCluster[];

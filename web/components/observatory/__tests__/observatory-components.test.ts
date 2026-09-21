@@ -31,7 +31,7 @@ import { resolveObservatoryPeriod } from "@/lib/observatory/period";
 import { SignalClusterList } from "@/components/observatory/signal-cluster-list";
 
 const labels = labelsForTest();
-// ADR-177: `period` is REQUIRED on every drill-down builder, so these renders
+// ADR-178: `period` is REQUIRED on every drill-down builder, so these renders
 // state the window they link to instead of inheriting a second clock.
 const period = resolveObservatoryPeriod({
   now: new Date("2026-06-05T12:00:00.000Z"),

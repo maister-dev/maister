@@ -219,7 +219,7 @@ describe("observatory read models", () => {
     ]);
   });
 
-  it("narrows the portfolio to a resolved project slug and keeps a whole scope for an unknown one (ADR-177 D7)", async () => {
+  it("narrows the portfolio to a resolved project slug and keeps a whole scope for an unknown one (ADR-178 D7)", async () => {
     await db.insert(schema.runs).values({
       id: randomUUID(),
       projectId: null,
@@ -272,7 +272,7 @@ describe("observatory read models", () => {
     expect(unknown.overview.platform).not.toBeNull();
   });
 
-  it("never reads the project-less group for a non-admin (ADR-177 D4)", async () => {
+  it("never reads the project-less group for a non-admin (ADR-178 D4)", async () => {
     await db.insert(schema.runs).values({
       id: randomUUID(),
       projectId: null,
@@ -469,7 +469,7 @@ describe("observatory read models", () => {
     // ceiling exists to protect. Keep it tight: it should be raised only
     // alongside a demonstrated constant, never to absorb a growing count.
     //
-    // Raised 21 → 24 by ADR-177: `getObservatoryOverview` adds exactly THREE
+    // Raised 21 → 24 by ADR-178: `getObservatoryOverview` adds exactly THREE
     // grouped statements on the project path — runs by
     // (project_id, run_kind, bucket), tasks by project, and the per-flow /
     // per-kind breakdown. Constant by the same argument (the equality above

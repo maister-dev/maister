@@ -194,7 +194,7 @@ describe("UT-ATN-12 the tile vocabulary", () => {
     }
   });
 
-  it("opens the Observatory cost view from the tokens tile (ADR-177)", () => {
+  it("opens the Observatory cost view from the tokens tile (ADR-178)", () => {
     expect(NOW_TILE_HREFS.tokens).toBe("/observatory?view=cost");
   });
 });

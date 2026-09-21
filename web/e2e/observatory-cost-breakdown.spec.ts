@@ -1,6 +1,6 @@
 // ADR-117: the portfolio + project Observatory cost view renders a "By model"
 // and a "By runner" breakdown over the persisted run_cost_rollups jsonb columns,
-// including scratch-run cost. ADR-177 moves it under `?view=cost` and adds a
+// including scratch-run cost. ADR-178 moves it under `?view=cost` and adds a
 // "By flow" card. Gated: runs only when :3000 is free (Next 16
 // single-dev-server lock); static lint of the spec must always pass.
 
@@ -134,7 +134,7 @@ test.describe("Observatory cost breakdown (ADR-117)", () => {
     await expect(byRunner.getByText(RUNNER_A, { exact: true })).toBeVisible();
     await expect(byRunner.getByText(RUNNER_B, { exact: true })).toBeVisible();
     await expect(byModel.getByText("gpt-5", { exact: true })).toBeVisible();
-    // ADR-177 D5: flow-less kinds get their own pseudo-row, LABELLED — the
+    // ADR-178 D5: flow-less kinds get their own pseudo-row, LABELLED — the
     // card renders `keyLabels[key] ?? label`, so a pseudo-row shows the
     // translated run-kind name while a real flow row falls back to its raw
     // `flowRefId`. Asserting the bare key here would pin an untranslated cell

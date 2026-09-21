@@ -111,7 +111,7 @@ export function rollupAgentization(input: {
   runKind: ObservatoryRunKind;
   runs: readonly ObservatoryAgentizationRun[];
   buckets: readonly ObservatoryDeliveryBucket[];
-  // ADR-177 D1: the period the rates claim to describe. Supplied by every
+  // ADR-178 D1: the period the rates claim to describe. Supplied by every
   // windowed read; omitted only by the empty-project fallback, which has no
   // bucket to be incomplete about. Same optional shape as
   // `rollupObservatoryFunnel`'s bounds.
@@ -205,7 +205,7 @@ function coversPeriod(
 export function rollupObservatoryFunnel(input: {
   runKind: ObservatoryRunKind;
   runs: readonly ObservatoryFunnelRun[];
-  // ADR-177 D1: the half-open run-start window. `until` is exclusive, so a run
+  // ADR-178 D1: the half-open run-start window. `until` is exclusive, so a run
   // started at exactly the upper bound belongs to the NEXT period.
   since?: Date;
   until?: Date;

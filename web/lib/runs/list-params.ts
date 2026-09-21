@@ -5,7 +5,7 @@ import type { RunsListFilters } from "@/lib/queries/runs-list";
 // Deliberately NOT inside `lib/queries/runs-list.ts`: that module is
 // `server-only`, and the Observatory's drill-down builder — which must write
 // exactly these param names for a cell's count to equal the list it opens
-// (ADR-177 D8) — has no business pulling a query module into its import graph.
+// (ADR-178 D8) — has no business pulling a query module into its import graph.
 // The `RunsListFilters` import is type-only, so nothing of the query module
 // survives to runtime here.
 

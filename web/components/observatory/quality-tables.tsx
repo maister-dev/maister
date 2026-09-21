@@ -12,7 +12,7 @@ import Link from "next/link";
 import { formatSeconds } from "@/components/observatory/harness-format";
 import { observatoryDrilldownHref } from "@/lib/observatory/href";
 
-// ADR-177 D6: `getPortfolioObservatory` has always computed `projects[]` and
+// ADR-178 D6: `getPortfolioObservatory` has always computed `projects[]` and
 // `flows[]` and nothing rendered them. The Quality view is where they belong —
 // correction pressure and autonomy side by side, per project or per flow.
 
@@ -35,7 +35,7 @@ export function QualityProjectsTable({
   runKind,
 }: {
   labels: ObservatoryLabels;
-  /** ADR-177: the row link opens the SAME window the reader is looking at. */
+  /** ADR-178: the row link opens the SAME window the reader is looking at. */
   period: ObservatoryPeriod;
   projects: readonly ObservatoryProjectSummary[];
   runKind: ObservatoryRunKind;

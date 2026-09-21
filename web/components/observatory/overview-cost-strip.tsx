@@ -8,7 +8,7 @@ import Link from "next/link";
 
 import { observatoryViewHref } from "@/lib/observatory/href";
 
-// ADR-177 D6: the overview's one-line cost answer, with the Cost view one
+// ADR-178 D6: the overview's one-line cost answer, with the Cost view one
 // click away. Tokens only — USD stays out (M51 non-goal).
 
 export interface OverviewCostStripProps {

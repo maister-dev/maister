@@ -89,7 +89,7 @@ const log = pino({
 
 export interface ObservatoryFilters {
   now?: Date;
-  // ADR-177 D1: the half-open UTC-day window every windowed read shares.
+  // ADR-178 D1: the half-open UTC-day window every windowed read shares.
   // Absent falls back to the 30-day day-aligned default derived from `now`.
   since?: Date;
   until?: Date;
@@ -172,7 +172,7 @@ export interface ObservatoryCostSummary {
   // columns, each sorted by totalTokens desc then key.
   byModel: CostDimensionRow[];
   byRunner: CostDimensionRow[];
-  // ADR-177 D5: keyed by `flows.flow_ref_id` for flow runs, with `scratch` and
+  // ADR-178 D5: keyed by `flows.flow_ref_id` for flow runs, with `scratch` and
   // `agent` pseudo-rows carrying the flow-less kinds.
   byFlow: CostDimensionRow[];
   byKind: CostKindRow[];
@@ -202,7 +202,7 @@ export interface ObservatoryTotals {
 }
 
 export interface ObservatoryPortfolio {
-  // ADR-177 D2/D4: launched work per visible project, plus the Platform row.
+  // ADR-178 D2/D4: launched work per visible project, plus the Platform row.
   overview: OverviewTable;
   totals: ObservatoryTotals;
   projects: ObservatoryProjectSummary[];
@@ -385,7 +385,7 @@ function foldCostDimension(
 }
 
 /**
- * ADR-177 D5. Unlike `byModel`/`byRunner`, which fold the per-key jsonb
+ * ADR-178 D5. Unlike `byModel`/`byRunner`, which fold the per-key jsonb
  * buckets, this folds the ROW totals: a flow-less run has no jsonb key to
  * group by, so `scratch` and `agent` become pseudo-rows of their own.
  */
@@ -451,7 +451,7 @@ export async function getCostSummary(
 
   const projectIds = projectScope.map((project) => project.id);
 
-  // ADR-177 D5: cost is windowed by the RUN's start, like every other
+  // ADR-178 D5: cost is windowed by the RUN's start, like every other
   // Observatory read — it is no longer a stored lifetime total.
   const { since, until } = observatoryPeriodBounds(
     filters,
@@ -768,7 +768,7 @@ export async function getPortfolioObservatory(
 ): Promise<ObservatoryPortfolio> {
   const now = filters.now ?? new Date();
   const allVisible = await getVisibleProjects(client, userId, globalRole);
-  // ADR-177 D7: an unknown `project` slug is DROPPED, never used as a raw
+  // ADR-178 D7: an unknown `project` slug is DROPPED, never used as a raw
   // predicate — the scope stays whole rather than silently emptying.
   const scoped = filters.projectSlug
     ? allVisible.filter((project) => project.slug === filters.projectSlug)

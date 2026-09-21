@@ -32,7 +32,7 @@ export async function getProjectAgentization(
   },
 ): Promise<ProjectAgentizationSummary> {
   const runKind = input.filters.runKind ?? "all";
-  // ADR-177 D1. Only the DELIVERY-BUCKET window moves to `[since, until)`:
+  // ADR-178 D1. Only the DELIVERY-BUCKET window moves to `[since, until)`:
   // ADR-134's numerator matches promoted roots to buckets by SHA, so bounding
   // the run rows by `started_at` too would drop a long-lived run whose merge
   // landed inside the window while its commit stayed in the denominator.

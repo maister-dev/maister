@@ -5,7 +5,7 @@ import type { NodePgDatabase } from "drizzle-orm/node-postgres";
  * Counts the statements a read model issues against one handle.
  *
  * The Observatory's contract is a FIXED query count regardless of project
- * count (ADR-134, ADR-177) — an N+1 there is invisible in every assertion
+ * count (ADR-134, ADR-178) — an N+1 there is invisible in every assertion
  * about the returned DTO, so it needs its own instrument. Both `select` and
  * `execute` are intercepted: a read model may use the query builder, raw SQL,
  * or both, and a count that only sees one of them silently under-reports.
