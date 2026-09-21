@@ -787,6 +787,25 @@ S4 rollback: before 0134, keep sources and all import checkpoints; stop maintena
 
 - [ ] **S5.2 — Real process death, partitions and denied roots (AT-16).** Owner Q; Depends: S1–S4 gates. Files: `web/test-support/real-supervisor.ts`, new real web/network/isolation harness, `web/test-support/pg-container.ts` integration usage, lifecycle tests. Includes the S4.1 finding: `orchestrator-resume-flow-child`, `shared-tree-auto-launch`, `flows/runner`, `hitl-hook-trip` and `evidence-readiness-all-blocking-kinds` integration suites reach the default `http://localhost:7777` peer and start none of their own, so they pass or fail with whatever dev supervisor happens to be running. Also includes the ADR-175 scenario: **SIGKILL an agent adapter mid-turn → reconcile `Crashed` → Operator Recover → the run reaches `Done`**, with exactly one new `session.prompt` under the new assignment epoch (and none when the crashed turn already produced agreeing terminal evidence). RED old implementation fails denied-root negative control/restart continuity; GREEN real startup/worker/owners complete acceptance matrix under process kill/restart and long partition. REFACTOR reusable setup/teardown, no production test flags. Logging: PID group/runtime/root-role/boot/case/outcome and safe traces. Acceptance: both roots disjoint and web access actually denied; no shared-dev DB/port, orphan process, or mock-supervisor substitution.
 
+  **Named scenario added by P1-5 (ADR-177, evidence-first crash classification).**
+  **Supervisor restart mid-turn → `turn_lost` explicit → Recover → `Done`.** A
+  real `sup.restart()` (SIGKILL of the process group, same runtime root, state
+  dir, port and adapter fixture) while an `ai_coding` prompt is `accepted`. The
+  run MUST reach `runs.status='Crashed'` with reason `turn-lost` — not
+  `agent-session-gone`, and never the `Failed` this HEAD produces, which
+  `isRunRecoverable` refuses — with the attempt closed
+  `Reworked`/`decision='turn_lost'`/`error_code='CRASH'`,
+  `resume_target_step_id` stamped, and the command discharged
+  `application_state='applied'`. `POST /recover` then reaches `Done` through
+  ADR-175 with **exactly one** new `session.prompt`. The scenario is
+  parameterized over `{preSettle} × {ingest order}`: `preSettle:true` is today's
+  V3 (it calls `recoverExecutionCommands` manually, the BOOT order);
+  `preSettle:false` reproduces the production TICK order, in which reconcile runs
+  BEFORE command recovery and the receipt probe is what makes the classification
+  correct. The two ingest orders assert an identical terminal row set, including
+  `completion_applied_at` being non-null exactly once — attributed by
+  **authorship, not timing**.
+
   **Named scenarios added by P0-2 (`06c984bc` ("feat(boot): start and quiesce the three durable workers"), ADR-176).** All run the production web over a fresh `next build` against a real supervisor: `durable-workers-boot` A/B/C (one parameterized control per owner family — flow, agent, scratch — each SIGKILLing the web while the prompt is accepted and asserting the durable owner applies it after restart), R1–R5 (registry composition and worker lifecycle), and `durable-workers-concurrency` D1 (live waiter + worker), D2 (two production web instances on one database), E (SIGTERM while a claim is HELD — released in the drain, or shutdown fails loudly and the claim expires by its lease). The ADR-176 crash-recover arm is covered separately by `crash-recover-continuation.integration.test.ts`, including the liveness regression guard that keeps `driveResume` away from a live session.
 
 - [ ] **S5.3 — Browser lifecycle and runtime/transport matrix.** Owner Q; Depends: S5.2 and S3 browser policy. Files: new dedicated Playwright real-supervisor config, lifecycle/content specs, CI/scripts, minimum Node/image qualification. Exercise launch→stream→HITL→checkpoint→resume→cancel/completion/history, each owner-visible reply and active MIME download after restarts. Run AT-17 on minimum 24.15, 24.19 and selected image with exact binary/dependency versions. Logging: scenario/revision/runtime/image/transport phase and result. Acceptance: browser outcomes come from real web/supervisor; default fake-peer E2E remains supporting regression only; no full-Node-24 claim from one passing patch.
@@ -856,7 +875,7 @@ All rows start **Planned / unverified**. Implementation fills exact test case, r
 | Full Stage A history incl >25 MiB logs | AT-11 | Original sources untouched, byte/hash/message/cost/artifact/session association equality through actual guarded migrations and mount removal | S4/S5 |
 | Import partial failure/resume/duplicates/source changes | AT-11 | Durable per-item/lane positions; identical replay no-op; changed/missing/ambiguous source blocks destruction | S4 |
 | Consistent backup/restore and old-writer refusal | AT-11, forward migration tests | Full multi-store restore works; old writers cannot create new invalid state; no manual SQL hash edits | S4 |
-| Real supervisor restart | AT-05/07/10/13/16 | Persistent host key/stream/receipts/objects; accepted lost turn explicit, no repeat ACP; owner state recovers | S5 |
+| Real supervisor restart | AT-05/07/10/13/16 — lost-turn classification evidence: `_TBD-PHASE-5_` (ADR-177 RED 1 / RED 3 family in `web/lib/execution-host/__tests__/command-recovery.integration.test.ts`, plus the worker-first order case in the `isolation` slice) | Persistent host key/stream/receipts/objects; accepted lost turn explicit, no repeat ACP; owner state recovers; **and the lost turn reaches a NAMED run outcome** — `Crashed`/`turn-lost`, attempt `turn_lost`, command discharged, Recover → `Done` — identical under both ingest orders | S5 |
 | Real web restart and simultaneous worker claims | AT-03/05/16 | Boot through production initialization, fair due work, no duplicate apply, no process-local continuation dependency | S5 |
 | Web runtime-root access denied | AT-16 | Negative control EACCES/ENOENT, supervisor positive control, lifecycle/history/object access succeeds through HTTP/PG | S5 |
 | V7b minimum runtime and image | AT-17 | Node 24.15.0 and 24.19.0 exact versions plus pinned image pass real native-stack replacement; diagnosed invalid-content-length captured in RED, not excused by a newer pass | S1/S5 |

@@ -708,25 +708,88 @@ For each run at reconcile time, gather: `run.status`, `run.runKind`,
 `run.acpSessionId`, `run.currentStepId`, the workspace `worktreePath`, the
 **node type of `currentStepId`** (from the run's pinned graph
 `flow_revisions.manifest`), `worktreeExists` (path ∈ `listWorktrees`),
-`liveSession` (`acpSessionId` ∈ live `listSessions` map). Then:
+`liveSession` (`acpSessionId` ∈ live `listSessions` map), and — for a
+`run_kind='flow'` candidate with no live session on an agent node — the
+**prompt evidence** of the current attempt's newest owned `session.prompt`
+command (ADR-177, see [Evidence classes](#evidence-classes-adr-177-implemented)).
+Then:
 
-| Run state | Condition | Action | Reason |
-|-----------|-----------|--------|--------|
-| status ∉ `{Running}` | any | **SKIP** | reconcile is **allow-list `Running`-only**; `NeedsInput`/`NeedsInputIdle`/`HumanWorking`/terminal owned by other sweeps |
-| `Running` | worktree MISSING | **CRASH** (`crashRunningRun`, reason `worktree-gone`) | the "runs vs `git worktree list`" check; cannot continue |
-| `Running`, `runKind='flow'` | worktree present, `liveSession` present | **RE-ATTACH** (`scheduleResumedSessionDrive`) or re-dispatch `runFlow` | live agent session with no attached runner (post web restart) — not crashed |
-| `Running`, `runKind='agent'` | worktree present, `liveSession` present, an in-process observer holds the host session | **SKIP** (reason `agent-observer-live`) | the run's single reader of its canonical stream is alive here — healthy |
-| `Running`, `runKind='scratch'` | worktree present, `liveSession` present | **SKIP** (reason `live-scratch-session`) | a scratch dialog between turns is healthy; its continuation owner is the next user message, and a continuation prompt it cannot satisfy would be crashed by the watchdog |
-| `Running`, `runKind='agent'` | worktree present, `liveSession` present, NO in-process observer | **RE-OBSERVE** (`reobserveAgentSession`, counted as `reobserved`) | an agent run has no continuation driver — its live path is ONE in-process observer (`consumeAgentSession`). A web restart, or an observer whose supervisor exhausted its retries, leaves a live session nobody reads; this arm used to classify RE-ATTACH and was then refused ("refusing reattach for non-flow run"), so the run held an unread session until it died and the sweep crashed it as `agent-session-gone`. The re-observe binds the run's ACTIVE assignment, writes NO run state, and yields on a fenced assignment |
-| `Running` | worktree present, no `acpSessionId` match but a LIVE session exists for this `(runId, currentStepId)` | **SKIP** (reason `live-session-by-step`) | an agent node's prompt is in-flight — `acp_session_id` persists only AFTER it returns, so the active `run_sessions` row's is still null; the node is genuinely running and must NOT be crashed (the bug this guards) or re-attached (double-drive) |
-| `Running` | worktree present, no live session, current node is a **retry-safe gate eval** (`check`/`judge`/`guard`/`human`/`form`/null — read-only) | **RE-DISPATCH** `runFlow` (CAS-guarded) | safe re-run of a read-only evaluation; avoids the forbidden false-positive crash on a gate executing between sessions |
-| `Running` | worktree present, no live session, current node is **`cli`** (arbitrary side effects, NOT retry-safe) | **CRASH** (`crashRunningRun`, reason `cli-not-retry-safe`) | CAS prevents concurrent runners, NOT re-run idempotency (Codex F4); a half-run `cli` may have partial file/network side effects — never silently re-run. Recoverable via an explicit Recover call **only** when the node config declares `retry_safe: true` (accepted-risk re-dispatch); otherwise discard-only. |
-| `Running` | worktree present, no live session, current node is **agent**, **recently started** (`resume_started_at` OR latest `node_attempts.started_at` within `MAISTER_RECONCILE_GRACE_SECONDS`) | **SKIP** (grace window) | a launch/recover is still spinning its ACP session up — do NOT crash an in-flight session |
-| `Running` | worktree present, no live session, current node is **agent**, **past grace** | **CRASH** (`crashRunningRun`, reason `agent-session-gone`) | recoverability computed at UI render from `acpSessionId` presence; auto-resume of a mid-turn agent is unsafe → an explicit Recover call (operator or token, never the reconciler itself) |
-| `Running`, `runKind='scratch'` | session gone, past grace | **CRASH** via `markScratchCrashed` (sets both `runs.status` and `scratchRuns.dialogStatus`) | scratch parity |
+The `Evidence` column is the ADR-177 discriminant. It is resolved for the flow
+agent-node arm only; every other row reads `—` and is classified exactly as it
+was before ADR-177.
+
+| Run state | Condition | Evidence | Action | Reason |
+|-----------|-----------|----------|--------|--------|
+| status ∉ `{Running}` | any | — | **SKIP** | reconcile is **allow-list `Running`-only**; `NeedsInput`/`NeedsInputIdle`/`HumanWorking`/terminal owned by other sweeps |
+| `Running` | worktree MISSING | — | **CRASH** (`crashRunningRun`, reason `worktree-gone`) | the "runs vs `git worktree list`" check; cannot continue |
+| `Running`, `runKind='flow'` | worktree present, `liveSession` present | — | **RE-ATTACH** (`scheduleResumedSessionDrive`) or re-dispatch `runFlow` | live agent session with no attached runner (post web restart) — not crashed |
+| `Running`, `runKind='agent'` | worktree present, `liveSession` present, an in-process observer holds the host session | — | **SKIP** (reason `agent-observer-live`) | the run's single reader of its canonical stream is alive here — healthy |
+| `Running`, `runKind='scratch'` | worktree present, `liveSession` present | — | **SKIP** (reason `live-scratch-session`) | a scratch dialog between turns is healthy; its continuation owner is the next user message, and a continuation prompt it cannot satisfy would be crashed by the watchdog |
+| `Running`, `runKind='agent'` | worktree present, `liveSession` present, NO in-process observer | — | **RE-OBSERVE** (`reobserveAgentSession`, counted as `reobserved`) | an agent run has no continuation driver — its live path is ONE in-process observer (`consumeAgentSession`). A web restart, or an observer whose supervisor exhausted its retries, leaves a live session nobody reads; this arm used to classify RE-ATTACH and was then refused ("refusing reattach for non-flow run"), so the run held an unread session until it died and the sweep crashed it as `agent-session-gone`. The re-observe binds the run's ACTIVE assignment, writes NO run state, and yields on a fenced assignment |
+| `Running` | worktree present, no `acpSessionId` match but a LIVE session exists for this `(runId, currentStepId)` | — | **SKIP** (reason `live-session-by-step`) | an agent node's prompt is in-flight — `acp_session_id` persists only AFTER it returns, so the active `run_sessions` row's is still null; the node is genuinely running and must NOT be crashed (the bug this guards) or re-attached (double-drive) |
+| `Running` | worktree present, no live session, current node is a **retry-safe gate eval** (`check`/`judge`/`guard`/`human`/`form`/null — read-only) | — (arm 9 reads no evidence) | **RE-DISPATCH** `runFlow` (CAS-guarded) | safe re-run of a read-only evaluation; avoids the forbidden false-positive crash on a gate executing between sessions |
+| `Running` | worktree present, no live session, current node is **`cli`** (arbitrary side effects, NOT retry-safe) | — (arm 9 reads no evidence) | **CRASH** (`crashRunningRun`, reason `cli-not-retry-safe`) | CAS prevents concurrent runners, NOT re-run idempotency (Codex F4); a half-run `cli` may have partial file/network side effects — never silently re-run. Recoverable via an explicit Recover call **only** when the node config declares `retry_safe: true` (accepted-risk re-dispatch); otherwise discard-only. |
+| `Running`, `runKind='flow'` | worktree present, no live session, current node is **agent**, the owner worker already applied the turn | `applied` | **SKIP** (reason `evidence-applied`) | ADR-177: the result is in the ledger; the flow continuation worker (~1 s) drives the next node. Fires **regardless of grace** |
+| `Running`, `runKind='flow'` | worktree present, no live session, current node is **agent**, a worker holds the application claim | `applying` | **SKIP** (reason `evidence-pending`) | ADR-177: the claim holder owns the follow-up. Fires **regardless of grace** |
+| `Running`, `runKind='flow'` | worktree present, no live session, current node is **agent**, the command is settled but unapplied | `pending_application` | **SKIP** (reason `evidence-pending`) | ADR-177: the prompt-owner worker (~1 s) owns the follow-up. Fires **regardless of grace** |
+| `Running`, `runKind='flow'` | worktree present, no live session, current node is **agent**, the receipt says `completed` but no terminal event is ingested | `pending_ingest` | **SKIP** (reason `evidence-pending`) | ADR-177: the event consumer owns the follow-up, once the dead stream claim expires. Also the answer for a probe that failed or 404'd — reconcile never invents a terminal outcome from a missing receipt. Fires **regardless of grace** |
+| `Running`, `runKind='flow'` | worktree present, no live session, current node is **agent**, the receipt says `accepted` + `inflight:true` | `inflight` | **SKIP** (reason `evidence-inflight`) | ADR-177: the host owns the follow-up — the turn is genuinely still running. Fires **regardless of grace** |
+| `Running`, `runKind='flow'` | any `pending_*` / `inflight` evidence **and** the holding host's `execution_event_streams` row is `lost` | `pending_*` ∧ stream `lost` | **CRASH** (`applyTurnLostBoundary`, reason `stream-lost`) | ADR-177: nobody owns the follow-up — the evidence can never be ingested. The ONLY bound on `evidence-pending`, read from `commandStreamLost()`, never from a timer |
+| `Running`, `runKind='flow'` | worktree present, no live session, current node is **agent**, the command settled `failed` with reason `turn_lost` | `turn_lost` | **CRASH** (`applyTurnLostBoundary`, reason `turn-lost`) | ADR-177: the host restarted mid-turn. One transaction closes the attempt `Reworked`/`decision='turn_lost'`/`error_code='CRASH'`, crashes the run, and marks the command `applied`. Recover is offered |
+| `Running`, `runKind='flow'` | worktree present, no live session, current node is **agent**, the application is quarantined or poisoned | `quarantined` ∨ `poisoned` | **CRASH** (`applyTurnLostBoundary`, reason `owner-poisoned`) | ADR-177: an operator owns the follow-up; Recover follows ADR-175's quarantine rule and never re-prompts from disagreeing evidence. The sub-reason rides `node_attempts.error_code` and the structured log field `applicationErrorReason` |
+| `Running` | worktree present, no live session, current node is **agent**, **recently started** (`resume_started_at` OR latest `node_attempts.started_at` within `MAISTER_RECONCILE_GRACE_SECONDS`) | `none` | **SKIP** (grace window) | a launch/recover is still spinning its ACP session up — do NOT crash an in-flight session |
+| `Running` | worktree present, no live session, current node is **agent**, **past grace** | `none` | **CRASH** (`crashRunningRun`, reason `agent-session-gone`) | recoverability computed at UI render from `acpSessionId` presence; auto-resume of a mid-turn agent is unsafe → an explicit Recover call (operator or token, never the reconciler itself) |
+| `Running`, `runKind='scratch'` | session gone, past grace | — | **CRASH** via `markScratchCrashed` (sets both `runs.status` and `scratchRuns.dialogStatus`) | scratch parity |
+
+### Evidence classes (ADR-177, Implemented)
+
+`PromptEvidenceClass` is derived by one pure function,
+`classifyPromptEvidence` (`web/lib/reconcile-evidence.ts`), over the current
+attempt's newest owned `session.prompt` row plus — for an `accepted` row with no
+terminal evidence — one `GET /commands/{id}` receipt probe. It is resolved in the
+sweep's per-candidate enrichment block, so the classifier itself stays pure.
+Every class names the writer that owes the next move and the shape the run ends
+in if that writer never comes.
+
+| Class | Derived from | Writer that owns the follow-up | Terminal shape |
+| --- | --- | --- | --- |
+| `none` | no owned prompt for this attempt, or the row is still `queued`/`delivering` | the deliverer (W1/W2) | falls through to the grace arms — `grace-window` inside, `agent-session-gone` past it |
+| `inflight` | receipt `accepted` + `inflight:true` | the host — the turn is running | none while it holds; `stream-lost` if the stream dies |
+| `pending_ingest` | receipt `completed`/`404`/unreachable, no ingested terminal event | the event consumer | none while it holds; `stream-lost` if the stream dies |
+| `pending_application` | command settled (`succeeded`/`failed`), `application_state='pending'` | the prompt-owner worker (~1 s) | none while it holds; `stream-lost` if the stream dies |
+| `applying` | `application_state='applying'` | the worker holding the application claim | none while it holds; `stream-lost` if the stream dies |
+| `applied` | `application_state ∈ {applied, superseded}` | the flow continuation worker (~1 s) | none — the graph advances |
+| `turn_lost` | settled with error reason `turn_lost` (nested `details.reason`, or flat `reason` from the `foldReceipt` fallback) | the ADR-177 boundary | `runs.status='Crashed'` (`turn-lost`), attempt `Reworked`/`decision='turn_lost'`/`error_code='CRASH'`, command `applied` — recoverable |
+| `quarantined` | `application_error.reason='prompt_terminal_conflict'` | an operator | `runs.status='Crashed'` (`owner-poisoned`), attempt closed, command `applied` |
+| `poisoned` | `application_state='poisoned'` | an operator | as `quarantined` |
+
+Order matters twice, and both are load-bearing rather than stylistic. The
+`quarantined` test precedes the `applied` test, because `quarantine()` writes
+`application_state = completion_applied_at ? "applied" : "poisoned"` — a conflict
+found *after* application would otherwise read as healthy. The `turn_lost` test
+precedes `pending_application`, because a settled lost turn is the boundary, not
+something to wait for.
+
+`turn_lost` is matched on the **reason**, never on an HTTP status and never on
+the error code: the code is `PRECONDITION` when the host committed a rejected
+receipt and `ACP_PROTOCOL` when the accepted-with-no-terminal fallback wrote it.
 ## Linked artifacts
 
-- Execution-host contract (ADR-166, Implemented): [`execution-hosts.md`](execution-hosts.md) — `recoverExecutionCommands()` runs before the resume/takeover/reconcile sweeps, the `system_sweep` pass adds the command-recovery + 7-day retention passes and the backstop that releases `active` assignments of runs with no owned driver (parked, review, crashed, terminal — never `Pending | Running | NeedsInput`), and the reconciler checks adopted handles read-only (`workspace-handle-lost` WARN on 404).
+- **Sweep pass order (`runSystemSweep`, `web/lib/scheduler/system-sweeps.ts`).**
+  `runSweepTick` (keep-alive) → `runReconcileSweep` → `runSyncRecoverySweep` →
+  `reconcileTerminalCostRollups` → `ensureLocalExecutionDataPlane` →
+  `runEventStreamHealthSweep` → `executionCommandReconcilePass`
+  (`recoverExecutionCommands`). `recoverExecutionCommands()` runs **before**
+  reconcile only at boot (`web/instrumentation-node.ts`, `{graceMs: 0}`); on the
+  periodic tick it runs **after** it, and a stream is marked `lost` later still.
+  Two consequences the ADR-177 design turns on: reconcile sees command evidence
+  up to one 60 s tick stale, so its receipt probe is load-bearing and cannot be
+  replaced by "recovery ran first"; and the
+  `runEventStreamHealthSweep → executionCommandReconcilePass` adjacency is itself
+  load-bearing, because `recoverExecutionCommands` reads the `lostStreamHostIds`
+  that the health pass wrote earlier in the same pass — which is why reordering
+  the sweep was considered and rejected (ADR-177, Alternatives).
+- Execution-host contract (ADR-166, Implemented): [`execution-hosts.md`](execution-hosts.md) — the `system_sweep` pass adds the command-recovery + 7-day retention passes and the backstop that releases `active` assignments of runs with no owned driver (parked, review, crashed, terminal — never `Pending | Running | NeedsInput`), and the reconciler checks adopted handles read-only (`workspace-handle-lost` WARN on 404).
 - ADRs: [ADR-033 Crash reconciliation model](../decisions.md#adr-033),
   [ADR-034 Crashed-run recovery semantics](../decisions.md#adr-034),
   [ADR-035 Graceful workspace GC (preserve-then-prune)](../decisions.md#adr-035),
@@ -756,7 +819,12 @@ For each run at reconcile time, gather: `run.status`, `run.runKind`,
   the crashed `node_attempts` row closed `Reworked`/`decision='crash_recover'`
   and exactly ONE new `session.prompt` command issued under the newly minted
   `execution_assignment_id` — and none at all when the crashed attempt already
-  carries agreeing terminal evidence, which is applied first.
+  carries agreeing terminal evidence, which is applied first. **ADR-177
+  exception:** a `turn_lost` result is not agreeing terminal evidence — a lost
+  turn is not the node's outcome. Recover declines it, settles the stranded
+  command `superseded` with `completion_applied_at` in the same transaction that
+  closes the attempt (so it can still be retired), and re-dispatches exactly one
+  fresh prompt.
 - A `Running` run left holding `runs.resume_started_at` with a non-null
   `current_step_id` MUST be re-entered by the reconcile sweep without a second
   operator action — through the `recover` classifier arm when no session is live,

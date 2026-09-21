@@ -8748,6 +8748,7 @@ paths:
         | recover target node | `acpSessionId` | node `retry_safe` | plan | result |
         | ------------------- | -------------- | ----------------- | ---- | ------ |
         | agent (`ai_coding`/`judge`/`orchestrator`) | present | ignored | `resume-agent` — graph re-entry at the target node, resuming the node's own ACP session | 200 resumed / 202 queued |
+        | agent, crashed attempt carries a settled-unapplied `turn_lost` command | present | ignored | `resume-agent` — the lost turn is **declined and superseded**, the attempt is closed, and exactly ONE fresh prompt is dispatched (ADR-177) | 200 resumed / 202 queued |
         | agent (`ai_coding`/`judge`/`orchestrator`) | null | ignored | `discard-only` | 409 |
         | session-less (`cli`/`check`/`guard`/`human`/`form`) | irrelevant | `true` | `redispatch` — re-run the node | 200 redispatched / 202 queued |
         | session-less | irrelevant | `false` (default) | `discard-only` | 409 |
@@ -8771,7 +8772,23 @@ paths:
         (ADR-175) Before any dispatch the crashed attempt's last
         `session.prompt` is reconciled: agreeing terminal evidence the owner
         never applied is applied first and the graph continues with **no second
-        paid turn**. A crashed `orchestrator` still waiting on children is
+        paid turn**.
+
+        (ADR-177) **A `turn_lost` result is the one exception** — it is not
+        agreeing terminal evidence, because a lost turn is not the node's
+        outcome but the absence of one. Applying it would decode into a failed
+        node action and terminalize the run `Failed`, which is not recoverable.
+        Recover therefore **declines** it and, in the SAME transaction that
+        closes the crashed attempt, settles the stranded command
+        `application_state='superseded'` with `completion_applied_at` — leaving
+        it `pending` would strand it `owner_unapplied` and block ever deleting
+        the run. One fresh `session.prompt` is then dispatched. The turn is
+        matched on the settled command's error **reason** (`turn_lost`, carried
+        either as `last_error.details.reason` or as `last_error.reason`), never
+        on an HTTP status or on the error code. This is a semantics correction:
+        no status code, request body or response schema changes.
+
+        A crashed `orchestrator` still waiting on children is
         handed back to its existing wait gate instead of being re-prompted —
         that answer is `200 {state:"resumed", runStatus:"WaitingOnChildren"}`.
 

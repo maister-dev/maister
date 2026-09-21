@@ -333,10 +333,25 @@ run machine:
    already `Abandoned` is the orphan of a cascade whose best-effort session
    teardown did not complete, and the sweep stops it (`orphanSessionsReaped`)
    without writing the row.
-2. **Grace guard.** A `Running` agent run with no live session is SKIPPED while
+2. **Grace guard — and it applies only when no command evidence exists**
+   (restated by [ADR-177](../decisions/adr-177.md); the guard itself is
+   unchanged). A `Running` agent run with no live session is SKIPPED while
    `runs.resume_started_at` OR the latest `node_attempts.started_at` is within
    `MAISTER_RECONCILE_GRACE_SECONDS` (default 90); only past grace is it
-   `Crashed`. This protects in-flight launches and Recovers.
+   `Crashed`. This protects in-flight launches and Recovers. For a
+   `run_kind='flow'` candidate the sweep first reads the current attempt's newest
+   owned `session.prompt` evidence, and **that decision precedes the grace
+   anchor**: `applied` / `applying` / `pending_application` / `pending_ingest` /
+   `inflight` SKIP **regardless of grace** (`evidence-applied`,
+   `evidence-pending`, `evidence-inflight`) because a named writer still owes the
+   next move; `turn_lost`, `quarantined` / `poisoned`, and any pending class whose
+   host stream is `lost` CRASH **regardless of grace** (`turn-lost`,
+   `owner-poisoned`, `stream-lost`) because no writer will ever come. The grace
+   window governs the `none` path and nothing else. Enforced by the classifier's
+   exhaustive `satisfies Record<PromptEvidenceClass, …>` map — a future member is
+   a compile error, never a silent fall-through — and pinned by the
+   `reconcile-classify` unit suite plus the `command-recovery` integration
+   family.
 3. **Retry-safety split.** No-live-session `check`/`judge` gate nodes
    re-dispatch (read-only, CAS-guarded no-op when a runner still holds the run);
    a `cli` node is `Crashed` (`cli-not-retry-safe`) and never auto-re-dispatched.
@@ -349,13 +364,45 @@ run machine:
    attempt the graph appends is bound to the newly minted assignment epoch and
    prompt admission passes by construction; agreeing terminal evidence from the
    crashed turn is applied BEFORE any dispatch, so a recover never pays twice for
-   one turn. A coordinator still waiting on children is handed back to its
+   one turn. **[ADR-177](../decisions/adr-177.md) names the one exception: a
+   `turn_lost` result is NOT agreeing terminal evidence** — a lost turn is not the
+   node's outcome, it is the absence of one. Recover declines it, settles the
+   stranded command `application_state='superseded'` with `completion_applied_at`
+   in the same transaction that closes the attempt (so retirement can still
+   discharge it instead of answering `owner_unapplied` forever), and dispatches
+   exactly one fresh prompt. Enforced by the `"turn-lost"` outcome value, which a
+   caller that does not handle it cannot compile against. A coordinator still waiting on children is handed back to its
    existing wait gate instead (`WaitingOnChildren`), which the success body
    reports as the committed `runStatus`. Recover re-admits through the global cap
    (a `Crashed` run already released its slot): slot-free resumes now, cap-full
    queues as `Pending` (202) and the scheduler resumes it on slot-free through
    the same door. `POST /api/runs/{runId}/discard` marks `Abandoned` and enters
    the GC countdown (no synchronous worktree removal).
+
+**Recovery window — `status × evidence → arm` (normative; ADR-177).** Every cell a
+`run_kind='flow'` agent node can be parked in, and the single arm that owns it. A
+cell with no arm is a defect, not a default.
+
+| `runs.status` | Prompt evidence | Arm | Who moves it next |
+| --- | --- | --- | --- |
+| `Running` (live session) | any | reattach / skip | the live driver, or `runFlow(crashResume)` on a committed intent |
+| `Running` (no session) | `none`, inside grace | SKIP `grace-window` | the dispatch that is still spinning up |
+| `Running` (no session) | `none`, past grace | CRASH `agent-session-gone` | an operator, via Recover |
+| `Running` (no session) | `applied` | SKIP `evidence-applied` | the flow continuation worker (~1 s) |
+| `Running` (no session) | `applying` / `pending_application` / `pending_ingest` | SKIP `evidence-pending` | the claim holder, the prompt-owner worker, or the event consumer |
+| `Running` (no session) | `inflight` | SKIP `evidence-inflight` | the host — the turn is still running |
+| `Running` (no session) | any pending class ∧ host stream `lost` | CRASH `stream-lost` | an operator, via Recover |
+| `Running` (no session) | `turn_lost` | CRASH `turn-lost` via `applyTurnLostBoundary` | an operator, via Recover |
+| `Running` (no session) | `quarantined` / `poisoned` | CRASH `owner-poisoned` via `applyTurnLostBoundary` | an operator; Recover refuses to re-prompt from disagreeing evidence |
+| `Running`, committed recover intent | any | `recover` / `reattach` / `wait` (ADR-176 `routeCrashRecover`) | the flow continuation worker, else the sweep backstop |
+| `Crashed` | settled-unapplied `turn_lost` on a still-open attempt | Recover declines, supersedes, re-dispatches (ADR-177) | the fresh attempt |
+| `Crashed` | agreeing terminal evidence, unapplied | Recover applies it first, no second paid turn (ADR-175) | the graph |
+
+The bound on every SKIP row is `commandStreamLost()` — the state
+`runEventStreamHealthSweep` writes — never a timer. A host whose stream is still
+`active` but whose consumer is wedged holds its run `Running`; that is the
+existing command-impasse signal's job, and it is recorded as an accepted residual
+in ADR-177.
 
 ### Flow-run `Review → Done` promotion (Implemented)
 
