@@ -50,8 +50,20 @@ vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
 // runFlow is invoked by promoteNextPending when a slot frees; mock it.
 const runFlowSpy = vi.fn(async (_id: string, _opts?: unknown) => undefined);
 
+// Arms runFlow to reject. The rejected promise is built HERE and deliberately
+// never routed through `runFlowSpy`'s return value: tinyspy attaches its own
+// settled-result handler to every promise a spy returns, which would mark the
+// rejection handled and make an unguarded fire-and-forget dispatch look safe.
+const runFlowRejection: { error: Error | null } = { error: null };
+
 vi.mock("@/lib/flows/runner", () => ({
-  runFlow: (id: string, opts?: unknown) => runFlowSpy(id, opts),
+  runFlow: (id: string, opts?: unknown) => {
+    const recorded = runFlowSpy(id, opts);
+
+    return runFlowRejection.error
+      ? Promise.reject(runFlowRejection.error)
+      : recorded;
+  },
 }));
 
 // The route dynamically imports getChildRuns immediately BEFORE the cascade, so
@@ -190,6 +202,7 @@ beforeEach(async () => {
   await db.delete(tasks);
   runFlowSpy.mockReset();
   runFlowSpy.mockResolvedValue(undefined);
+  runFlowRejection.error = null;
   childRunsHook.before = undefined;
   sessionRef.value = { user: { id: ownerId, role: "member" } };
 });
@@ -212,6 +225,46 @@ describe("POST /api/runs/{runId}/abandon", () => {
 
     // promoteNextPending freed the slot → the Pending run was driven.
     expect(runFlowSpy).toHaveBeenCalledWith(pendingId, expect.anything());
+  }, 60_000);
+
+  // The promoted dispatch is fire-and-forget, so nothing awaits it and the
+  // route's own try/catch below cannot see it fail. `runFlow` rejects for
+  // ordinary reasons — the promoted run's task row deleted under it, a
+  // PRECONDITION, a transport blip — and an unattended rejection escapes as a
+  // process-level unhandled rejection that in a Next.js server can take the
+  // process down. Abandoning must stay a 200 regardless.
+  it("catches a rejecting promoted runFlow instead of leaking an unhandled rejection", async () => {
+    const runId = await seedRun("HumanWorking");
+
+    await seedRun("Pending");
+
+    runFlowRejection.error = new Error("task not found for promoted run");
+
+    const unhandled: unknown[] = [];
+    const capture = (reason: unknown) => {
+      unhandled.push(reason);
+    };
+
+    process.on("unhandledRejection", capture);
+
+    try {
+      const res = await abandonPOST(req(runId), {
+        params: Promise.resolve({ runId }),
+      });
+
+      expect(res.status).toBe(200);
+      // WHICH row wins the promote is not this case's subject — only that a
+      // dispatch fired, so the rejection below is actually reached.
+      expect(runFlowSpy).toHaveBeenCalled();
+
+      // Let the discarded dispatch settle and give Node a turn to deliver
+      // `unhandledRejection` for it if nothing attached a handler.
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", capture);
+    }
   }, 60_000);
 
   it("abandons a NeedsInput run", async () => {

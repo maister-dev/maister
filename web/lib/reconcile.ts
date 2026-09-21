@@ -1462,23 +1462,10 @@ export async function runReconcileSweep(
       await mod.runFlow(runId, { ...runOpts, db, executionHosts: hosts });
     });
   // Both crash arms free a concurrency slot and promote the next queued run.
-  // The dispatch is deliberately fire-and-forget — the sweep must not wait on a
-  // paid turn — but `runFlow` rejects for ordinary reasons (a task deleted
-  // under it, a PRECONDITION, a transport blip), and a bare
-  // `void Promise.resolve(...)` turns every one of those into an UNHANDLED
-  // rejection that can take the process down. `promoteNextPending`'s own
-  // default catches; overriding it here dropped that. Mirrors the reattach
-  // dispatch below, which has always caught.
-  const promoteDispatch = (next: string) => {
-    void Promise.resolve()
-      .then(() => runFlow(next))
-      .catch((error: unknown) => {
-        log.error(
-          { runId: next, err: error },
-          "reconcile: promoted Flow dispatch failed",
-        );
-      });
-  };
+  // The dispatch is fire-and-forget — the sweep must not wait on a paid turn —
+  // so it is RETURNED, never `void`-ed: `promoteNextPending` owns the only
+  // catch, and a discarded promise is one it cannot reach.
+  const promoteDispatch = (next: string) => runFlow(next);
   const now = opts.now ?? (() => new Date());
   const graceSeconds = reconcileGraceSeconds();
 

@@ -345,7 +345,7 @@ describe("ADR-121 unified admission gate — C2 slot-free mint (T13)", () => {
     const res = await promoteNextPending({
       db,
       launchRun: launch.fn,
-      runFlow: (id) => runFlow.push(id),
+      runFlow: (id) => void runFlow.push(id),
     });
 
     expect(launch.calls).toEqual([taskId]);
@@ -401,7 +401,7 @@ describe("ADR-121 unified admission gate — C2 slot-free mint (T13)", () => {
     await promoteNextPending({
       db,
       launchRun: launch.fn,
-      runFlow: (id) => runFlow.push(id),
+      runFlow: (id) => void runFlow.push(id),
     });
 
     // Strict criticality: urgent C2 (400) preempts the normal C1 (200).
@@ -420,7 +420,7 @@ describe("ADR-121 unified admission gate — C2 slot-free mint (T13)", () => {
     await promoteNextPending({
       db,
       launchRun: launch.fn,
-      runFlow: (id) => runFlow.push(id),
+      runFlow: (id) => void runFlow.push(id),
     });
 
     expect(runFlow).toEqual([pending]);
@@ -483,7 +483,7 @@ describe("ADR-121 unified admission gate — C2 slot-free mint (T13)", () => {
     await promoteNextPending({
       db,
       launchRun: launch.fn,
-      runFlow: (id) => runFlow.push(id),
+      runFlow: (id) => void runFlow.push(id),
     });
 
     // edgeDrain off → urgent C2 is NOT pulled; the normal C1 still promotes.
@@ -668,7 +668,7 @@ describe("ADR-121 unified admission gate — C3 cap-safe resume ordering (T14)",
     await promoteNextPending({
       db,
       launchRun: launch.fn,
-      resumeRun: (id) => resumed.push(id),
+      resumeRun: (id) => void resumed.push(id),
     });
 
     // Same weight → classRank C3 (0) < C2 (2): the resume wins the slot.
@@ -690,7 +690,7 @@ describe("ADR-121 unified admission gate — C3 cap-safe resume ordering (T14)",
     await promoteNextPending({
       db,
       launchRun: launch.fn,
-      resumeRun: (id) => resumed.push(id),
+      resumeRun: (id) => void resumed.push(id),
     });
 
     expect(launch.calls).toEqual([urgent]);
@@ -722,7 +722,7 @@ describe("ADR-121 unified admission gate — C3 cap-safe resume ordering (T14)",
 
     const res = await promoteNextPending({
       db,
-      resumeRun: (id) => resumed.push(id),
+      resumeRun: (id) => void resumed.push(id),
     });
 
     expect(resumed).toEqual([]);
@@ -735,7 +735,7 @@ describe("ADR-121 unified admission gate — C3 cap-safe resume ordering (T14)",
     const idle = await seedIdleRun(projectId, "normal", new Date());
     const resumed: string[] = [];
 
-    await promoteNextPending({ db, resumeRun: (id) => resumed.push(id) });
+    await promoteNextPending({ db, resumeRun: (id) => void resumed.push(id) });
 
     expect(resumed).toEqual([idle]);
     const rows = await db
@@ -753,7 +753,7 @@ describe("ADR-121 unified admission gate — C3 cap-safe resume ordering (T14)",
     const idle = await seedIdleRun(projectId, "normal", new Date());
     const resumed: string[] = [];
 
-    await promoteNextPending({ db, resumeRun: (id) => resumed.push(id) });
+    await promoteNextPending({ db, resumeRun: (id) => void resumed.push(id) });
 
     expect(resumed).toEqual([idle]);
     expect(await statusOf(idle)).toBe("NeedsInput");
@@ -768,8 +768,8 @@ describe("ADR-121 unified admission gate — C3 cap-safe resume ordering (T14)",
     await promoteNextPending({
       db,
       pool: "agent",
-      startAgentRun: (id) => started.push(id),
-      resumeRun: (id) => resumed.push(id),
+      startAgentRun: (id) => void started.push(id),
+      resumeRun: (id) => void resumed.push(id),
     });
 
     expect(started).toEqual([idle]);
@@ -792,7 +792,7 @@ describe("ADR-121 unified admission gate — C3 cap-safe resume ordering (T14)",
     // A burst of slot-free events all firing the gate concurrently.
     await Promise.all(
       idleRuns.map(() =>
-        promoteNextPending({ db, resumeRun: (id) => resumed.push(id) }),
+        promoteNextPending({ db, resumeRun: (id) => void resumed.push(id) }),
       ),
     );
 
@@ -832,7 +832,7 @@ describe("ADR-121 unified admission gate — C3 cap-safe resume ordering (T14)",
 
     await Promise.all(
       idleRuns.map(() =>
-        promoteNextPending({ db, resumeRun: (id) => resumed.push(id) }),
+        promoteNextPending({ db, resumeRun: (id) => void resumed.push(id) }),
       ),
     );
 
@@ -907,7 +907,7 @@ describe("ADR-121 unified admission gate — C3 cap-safe resume ordering (T14)",
           promoteNextPending({
             db,
             pool: "agent",
-            startAgentRun: (id) => started.push(id),
+            startAgentRun: (id) => void started.push(id),
           }),
         ),
       );
@@ -938,8 +938,8 @@ describe("ADR-121 unified admission gate — C3 cap-safe resume ordering (T14)",
     const dispatched: string[] = [];
 
     await Promise.all([
-      promoteNextPending({ db, runFlow: (id) => dispatched.push(id) }),
-      promoteNextPending({ db, runFlow: (id) => dispatched.push(id) }),
+      promoteNextPending({ db, runFlow: (id) => void dispatched.push(id) }),
+      promoteNextPending({ db, runFlow: (id) => void dispatched.push(id) }),
     ]);
 
     // The status-guarded Pending→Running CAS admits the run once; the loser sees it
@@ -954,8 +954,8 @@ describe("ADR-121 unified admission gate — C3 cap-safe resume ordering (T14)",
     const resumed: string[] = [];
 
     await Promise.all([
-      promoteNextPending({ db, resumeRun: (id) => resumed.push(id) }),
-      promoteNextPending({ db, resumeRun: (id) => resumed.push(id) }),
+      promoteNextPending({ db, resumeRun: (id) => void resumed.push(id) }),
+      promoteNextPending({ db, resumeRun: (id) => void resumed.push(id) }),
     ]);
 
     expect(resumed).toEqual([idle]);

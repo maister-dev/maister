@@ -499,14 +499,20 @@ export async function tryStartRun(
   });
 }
 
+// A dispatch callback MAY hand back its promise: `promoteNextPending` attaches
+// the only catch (see `dispatch` below), so an override must RETURN what it
+// starts rather than discard it with `void` — a discarded rejection is one no
+// catch anywhere can reach.
+type DispatchFn = (runId: string) => void | Promise<void>;
+
 export type PromoteNextPendingOptions = {
   db?: Db;
-  runFlow?: (runId: string) => void;
-  resumeRun?: (runId: string) => void;
+  runFlow?: DispatchFn;
+  resumeRun?: DispatchFn;
   // M34: which budget pool to promote within (default flow — every
   // pre-existing caller frees a flow/scratch slot).
   pool?: SchedulerPool;
-  startAgentRun?: (runId: string) => void;
+  startAgentRun?: DispatchFn;
   // ADR-121 (T13, C2): the heavy fresh-Backlog-task launcher, dispatched OUTSIDE
   // the scheduler lock (worktree-first). Injectable for tests; defaults to the
   // real launchRun via dynamic import (services/runs imports this module — a
@@ -521,7 +527,7 @@ export type PromoteNextPendingOptions = {
 export type ReleaseSlotOnIdleOptions = {
   runId: string;
   db?: Db;
-  runFlow?: (runId: string) => void;
+  runFlow?: DispatchFn;
 };
 
 // ADR-175: the resume handle a queued promotion should carry. A run the recover
@@ -624,43 +630,28 @@ export async function promoteNextPending(
   // ALL callers (e.g. the discard route) without per-caller wiring. Dynamic
   // imports break the runner/recover import cycle (scheduler is imported by
   // both). Explicit opts.runFlow/opts.resumeRun (tests, abandon route) still win.
-  const runFlowFn =
+  const runFlowFn: DispatchFn =
     opts.runFlow ??
-    ((id: string) => {
-      void import("@/lib/flows/runner")
-        .then((m) => m.runFlow(id))
-        .catch((err: unknown) => {
-          log.error(
-            { err: (err as Error).message, promotedRunId: id },
-            "promoteNextPending default runFlow dispatch threw",
-          );
-        });
+    (async (id: string) => {
+      const m = await import("@/lib/flows/runner");
+
+      await m.runFlow(id);
     });
-  const resumeFn =
+  const resumeFn: DispatchFn =
     opts.resumeRun ??
-    ((id: string) => {
-      void import("@/lib/runs/recover")
-        .then((m) => m.driveResume(id))
-        .catch((err: unknown) => {
-          log.error(
-            { err: (err as Error).message, promotedRunId: id },
-            "promoteNextPending default resumeRun dispatch threw",
-          );
-        });
+    (async (id: string) => {
+      const m = await import("@/lib/runs/recover");
+
+      await m.driveResume(id);
     });
   // M34: agent-pool promotions dispatch the agent session starter — it
   // resumes via acpSessionId itself, so one dispatch fn covers both paths.
-  const startAgentFn =
+  const startAgentFn: DispatchFn =
     opts.startAgentRun ??
-    ((id: string) => {
-      void import("@/lib/agents/launch")
-        .then((m) => m.startAgentSession(id))
-        .catch((err: unknown) => {
-          log.error(
-            { err: (err as Error).message, promotedRunId: id },
-            "promoteNextPending default startAgentRun dispatch threw",
-          );
-        });
+    (async (id: string) => {
+      const m = await import("@/lib/agents/launch");
+
+      await m.startAgentSession(id);
     });
   // ADR-121 (T13, C2): the heavy fresh-Backlog-task launcher, dispatched OUTSIDE
   // the lock. Default uses the real launchRun via dynamic import (services/runs
@@ -1116,43 +1107,61 @@ export async function promoteNextPending(
     return { promotedRunId: null };
   }
 
+  // The dispatch is fire-and-forget by design — a freed slot must not block on
+  // a paid turn — so nothing awaits what the callback hands back, and a promise
+  // it returns carries no handler of its own. Without this catch an ordinary
+  // rejection (a task row deleted under the promoted run, a PRECONDITION, a
+  // transport blip) escapes as a process-level unhandled rejection that in a
+  // Next.js server can take the process down. Every override used to carry its
+  // own catch and three of them shipped without one; this is the single place
+  // that cannot be forgotten. Sync throws land here too — the callback runs in
+  // a microtask, so there is no caller frame left to receive them.
+  const dispatch = (fn: DispatchFn, runId: string, message: string) => {
+    const onFailure = (err: unknown) => {
+      log.error(
+        {
+          err: err instanceof Error ? err.message : String(err),
+          promotedRunId: runId,
+        },
+        message,
+      );
+    };
+
+    queueMicrotask(() => {
+      try {
+        // `fn` is called in THIS microtask, not a later one — callers assert on
+        // what the dispatch did as soon as `promoteNextPending` resolves.
+        // `Promise.resolve` hands back a native promise unchanged, so the catch
+        // lands on the dispatch's own promise without delaying it.
+        void Promise.resolve(fn(runId)).catch(onFailure);
+      } catch (err) {
+        onFailure(err);
+      }
+    });
+  };
+
   // decision.kind === "run" (C1 or C3): dispatch outside the lock.
   if (decision.isAgent) {
     log.info({ runId: decision.id }, "[scheduler] promoting queued agent run");
-    queueMicrotask(() => {
-      try {
-        startAgentFn(decision.id);
-      } catch (err) {
-        log.error(
-          { err: (err as Error).message, promotedRunId: decision.id },
-          "promoteNextPending startAgentRun dispatch failed",
-        );
-      }
-    });
+    dispatch(
+      startAgentFn,
+      decision.id,
+      "promoteNextPending startAgentRun dispatch failed",
+    );
   } else if (decision.isResume) {
     log.info({ runId: decision.id }, "[scheduler] promoting queued resume");
-    queueMicrotask(() => {
-      try {
-        resumeFn(decision.id);
-      } catch (err) {
-        log.error(
-          { err: (err as Error).message, promotedRunId: decision.id },
-          "promoteNextPending resumeRun dispatch failed",
-        );
-      }
-    });
+    dispatch(
+      resumeFn,
+      decision.id,
+      "promoteNextPending resumeRun dispatch failed",
+    );
   } else {
     log.info({ promotedRunId: decision.id }, "promoteNextPending → promoting");
-    queueMicrotask(() => {
-      try {
-        runFlowFn(decision.id);
-      } catch (err) {
-        log.error(
-          { err: (err as Error).message, promotedRunId: decision.id },
-          "promoteNextPending runFlow dispatch failed",
-        );
-      }
-    });
+    dispatch(
+      runFlowFn,
+      decision.id,
+      "promoteNextPending runFlow dispatch failed",
+    );
   }
 
   return { promotedRunId: decision.id };

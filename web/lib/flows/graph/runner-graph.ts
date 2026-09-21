@@ -5587,13 +5587,7 @@ async function promoteAfterExit(
 
     await promoteNextPending({
       db,
-      runFlow: (next) =>
-        void runFlow(next, nextOpts).catch((e) => {
-          log2.error(
-            { err: (e as Error).message },
-            "promoted runFlow failed (non-fatal)",
-          );
-        }),
+      runFlow: (next) => runFlow(next, nextOpts),
     });
   } catch (err) {
     log2.error(
