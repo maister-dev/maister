@@ -1884,6 +1884,64 @@ describe("runReconcileSweep — evidence-first crash classification (ADR-177)", 
     expect((await readCommand(commandId)).applicationState).toBe("applied");
   }, 60_000);
 
+  // `commandStreamLost` asserted DIRECTLY, and deliberately so. Routing this
+  // through the sweep looked like a regression guard and was not: the old
+  // implementation read ONE arbitrary row, so its answer for a mixed host was
+  // undefined — a sweep-level case passed against the unfixed code on the first
+  // falsification run. What CAN be pinned is the contract itself, over every
+  // shape a host can be in. The old code could satisfy this only by luck.
+  const STREAM_SHAPES: Array<{
+    states: string[];
+    lost: boolean;
+    why: string;
+  }> = [
+    {
+      states: ["lost", "active"],
+      lost: false,
+      why: "a recovered host: evidence flows on the live stream",
+    },
+    { states: ["active"], lost: false, why: "healthy" },
+    { states: ["lost"], lost: true, why: "given up, nothing flowing" },
+    {
+      states: ["lost", "lost"],
+      lost: true,
+      why: "several dead streams, still nothing flowing",
+    },
+    {
+      states: ["lost", "closed"],
+      lost: true,
+      why: "a closed stream carries nothing either",
+    },
+  ];
+
+  it.each(STREAM_SHAPES)(
+    "commandStreamLost: $states -> $lost ($why)",
+    async ({ states, lost }) => {
+      const { commandStreamLost } = await import(
+        "@/lib/execution-host/events/stream-health"
+      );
+      const runId = await seedRun({ acpSessionId: null });
+
+      await seedWorkspace(runId, `/worktrees/sl-${randomUUID().slice(0, 8)}`);
+      const { hostId } = await makeOpts({ liveSessions: [] });
+      const { commandId } = await seedOwnedPrompt(runId, hostId);
+
+      for (const state of states) {
+        await db.insert(schema.executionEventStreams).values({
+          id: randomUUID(),
+          executionHostId: hostId,
+          streamId: `s-${randomUUID().slice(0, 8)}`,
+          state,
+        });
+      }
+
+      expect(await commandStreamLost({ db: db as never, commandId })).toBe(
+        lost,
+      );
+    },
+    60_000,
+  );
+
   it("RED 4a: a poisoned application crashes owner-poisoned and keeps its diagnostic", async () => {
     const runId = await seedRun({ acpSessionId: null });
 
@@ -1977,6 +2035,53 @@ describe("runReconcileSweep — evidence-first crash classification (ADR-177)", 
       "nothing was dispatched to lose — this is agent-session-gone, not turn-lost",
     ).toBeNull();
     expect(summary.turnLost ?? 0).toBe(0);
+  }, 60_000);
+
+  it("evidence is read from the CURRENT NODE's open attempt, not the run's newest (review fix)", async () => {
+    const runId = await seedRun({ acpSessionId: null });
+
+    await seedWorkspace(runId, "/worktrees/attempt-scope");
+    const { opts, hostId } = await makeOpts({
+      worktreePaths: ["/worktrees/attempt-scope"],
+      liveSessions: [],
+    });
+    // A lost turn on a CLOSED attempt of a DIFFERENT node. It is the run's
+    // newest row by `started_at`, so a run-scoped probe would classify from it
+    // — and the boundary, which resolves the open attempt at `current_step_id`,
+    // would then act somewhere else or not at all.
+    const stale = await seedOwnedPrompt(
+      runId,
+      hostId,
+      SETTLED_TURN_LOST(TURN_LOST_NESTED),
+      // NEWER than the current node's attempt (so a run-scoped probe would pick
+      // it) but still well past the 90 s grace (so the grace arm cannot be what
+      // decides this case).
+      { attemptStartedAt: new Date(Date.now() - 300_000) },
+    );
+
+    await db
+      .update(nodeAttempts)
+      .set({ nodeId: "build", status: "Succeeded", endedAt: new Date() })
+      .where(eq(nodeAttempts.id, stale.nodeAttemptId));
+    // The node the run is actually parked on, with no evidence of its own.
+    await db.insert(nodeAttempts).values({
+      id: randomUUID(),
+      runId,
+      nodeId: "implement",
+      nodeType: "ai_coding",
+      attempt: 2,
+      status: "Running",
+      actionPromptOrdinal: 0,
+      startedAt: new Date(Date.now() - 600_000),
+    });
+
+    const summary = await runReconcileSweep(opts);
+
+    // `none` for the current attempt → the unchanged grace path, NOT a
+    // turn-lost crash inherited from a closed attempt of another node.
+    expect((await readRun(runId)).status).toBe("Crashed");
+    expect(summary.turnLost ?? 0).toBe(0);
+    expect(summary.crashed).toBeGreaterThanOrEqual(1);
   }, 60_000);
 
   it("RED 5c: a SCRATCH run with a settled turn_lost command keeps its own arm — the evidence probe is flow-only", async () => {

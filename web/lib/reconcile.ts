@@ -963,21 +963,18 @@ async function reapAbandonedRunSessions(args: {
 
 // Latest node_attempts.started_at for a run (the grace anchor alongside
 // resume_started_at). ORDER BY started_at DESC LIMIT 1.
-// The run's newest ledger row. Its `startedAt` is the grace anchor and its `id`
-// is what scopes the ADR-177 evidence probe — one read serving both, rather
-// than two queries answering the same question.
-async function latestAttemptRow(
+async function latestAttemptStartedAt(
   db: Db,
   runId: string,
-): Promise<{ id: string; startedAt: Date | null } | null> {
+): Promise<Date | null> {
   const rows = await db
-    .select({ id: nodeAttempts.id, startedAt: nodeAttempts.startedAt })
+    .select({ startedAt: nodeAttempts.startedAt })
     .from(nodeAttempts)
     .where(eq(nodeAttempts.runId, runId))
     .orderBy(desc(nodeAttempts.startedAt))
     .limit(1);
 
-  return rows[0] ?? null;
+  return rows[0]?.startedAt ?? null;
 }
 
 // M36 (ADR-095 T7.1 / ADR-097): the SETTLED child statuses an orchestrator no
@@ -1703,14 +1700,10 @@ export async function runReconcileSweep(
     // Agent runs (and project-less assistant scratch runs) have no node_attempts
     // ledger — anchor the grace window on the run's own startedAt so a
     // just-spawned session is never crashed before it registers.
-    const latestAttempt =
-      cand.runKind === "agent" || cand.projectId == null
-        ? null
-        : await latestAttemptRow(db, cand.runId);
     const attemptStartedAt =
       cand.runKind === "agent" || cand.projectId == null
         ? cand.runStartedAt
-        : (latestAttempt?.startedAt ?? null);
+        : await latestAttemptStartedAt(db, cand.runId);
 
     // ADR-177. Resolved HERE, beside the `crashRecoverPending` computation, so
     // it inherits this loop's PER_PASS_CONCURRENCY and needs no bound of its
@@ -1724,12 +1717,17 @@ export async function runReconcileSweep(
       !live &&
       !liveRunStep &&
       (currentNodeKind === "ai_coding" || currentNodeKind === "orchestrator");
-    const promptEvidence = wantsEvidence
-      ? await resolvePromptEvidence(db, hosts.transport, {
-          runId: cand.runId,
-          nodeAttemptId: latestAttempt?.id ?? null,
-        })
-      : NO_PROMPT_EVIDENCE;
+    const promptEvidence =
+      wantsEvidence && cand.currentStepId
+        ? await resolvePromptEvidence(db, hosts.transport, {
+            runId: cand.runId,
+            // The CURRENT NODE's open attempt, which is what the boundary will
+            // act on. Deliberately not `latestAttempt` (the run-scoped grace
+            // anchor): classifying from one attempt and writing to another is
+            // how a run ends up crashed for evidence that was never its own.
+            nodeId: cand.currentStepId,
+          })
+        : NO_PROMPT_EVIDENCE;
 
     // M36 (ADR-095) T7.1: orphan detection needs the parent's status; the
     // parked-orchestrator pass needs to know if any child is still pending.

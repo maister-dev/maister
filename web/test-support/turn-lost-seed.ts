@@ -86,6 +86,10 @@ export type SeededLostTurn = {
   commandId: string;
   assignmentId: string;
   assignmentEpoch: number;
+  /** Present only with `withSession` — the binding `lockFlowPromptOwner` needs. */
+  runSessionId?: string;
+  incarnationId?: string;
+  hostSessionId?: string;
 };
 
 export type SeedLostTurnInput = {
@@ -102,6 +106,10 @@ export type SeedLostTurnInput = {
   completionAppliedAt?: Date | null;
   commandState?: string;
   terminalEvidence?: boolean;
+  /** Seed the `run_sessions` + `run_session_incarnations` pair a prompt-owner
+   * adapter's `lockFlowPromptOwner` requires. Only the owner-side suites need
+   * it; the sweep never reads it. */
+  withSession?: boolean;
   /** `lost` is the ONLY bound on the `evidence-pending` skip arm (ADR-177). */
   streamState?: "observed" | "active" | "closed" | "lost";
 };
@@ -138,6 +146,32 @@ export async function seedLostTurn(
   const assignment = await db.transaction(async (tx) =>
     mintAssignment(tx as unknown as Db, { runId, hostId, reason: "launch" }),
   );
+  let runSessionId: string | undefined;
+  let incarnationId: string | undefined;
+  const hostSessionId = `sess-${runId.slice(0, 8)}`;
+
+  if (input.withSession) {
+    runSessionId = randomUUID();
+    incarnationId = randomUUID();
+    await db.insert(schema.runSessions).values({
+      id: runSessionId,
+      runId,
+      sessionName: "default",
+      executionAssignmentId: assignment.id,
+      hostSessionId,
+    });
+    await db.insert(schema.runSessionIncarnations).values({
+      id: incarnationId,
+      runSessionId,
+      runId,
+      executionAssignmentId: assignment.id,
+      assignmentEpoch: assignment.epoch,
+      executionHostId: hostId,
+      hostSessionId,
+      state: "active",
+      origin: "native",
+    });
+  }
   const nodeAttemptId = randomUUID();
 
   await db.insert(schema.nodeAttempts).values({
@@ -208,7 +242,7 @@ export async function seedLostTurn(
     executionHostId: hostId,
     assignmentEpoch: assignment.epoch,
     kind: "session.prompt",
-    targetSessionId: `sess-${runId.slice(0, 8)}`,
+    targetSessionId: hostSessionId,
     payload: {},
     maxAttempts: 3,
     ownerKind: "flow_node_attempt",
@@ -218,8 +252,8 @@ export async function seedLostTurn(
       nodeAttemptId,
       promptOrdinal: 0,
       runId,
-      runSessionId: randomUUID(),
-      incarnationId: randomUUID(),
+      runSessionId: runSessionId ?? randomUUID(),
+      incarnationId: incarnationId ?? randomUUID(),
       assignmentId: assignment.id,
       assignmentEpoch: assignment.epoch,
     },
@@ -263,6 +297,7 @@ export async function seedLostTurn(
     commandId,
     assignmentId: assignment.id,
     assignmentEpoch: assignment.epoch,
+    ...(runSessionId ? { runSessionId, incarnationId, hostSessionId } : {}),
   };
 }
 

@@ -7,6 +7,7 @@ import pino from "pino";
 
 import * as schemaModule from "@/lib/db/schema";
 import { TURN_LOST_DECISION } from "@/lib/flows/graph/attempt-decisions";
+import { resolveEvidenceAttemptId } from "@/lib/reconcile-evidence-db";
 import { crashRunningRun } from "@/lib/runs/state-transitions";
 import { MaisterError } from "@/lib/errors";
 
@@ -134,19 +135,10 @@ export async function applyTurnLostBoundary(input: {
   commandId?: string;
 }): Promise<TurnLostBoundaryResult> {
   const { db, runId, nodeId } = input;
-  const [attempt] = await db
-    .select({ id: nodeAttempts.id })
-    .from(nodeAttempts)
-    .where(
-      and(
-        eq(nodeAttempts.runId, runId),
-        eq(nodeAttempts.nodeId, nodeId),
-        eq(nodeAttempts.status, "Running"),
-        isNull(nodeAttempts.endedAt),
-      ),
-    )
-    .orderBy(desc(nodeAttempts.startedAt))
-    .limit(1);
+  // The SAME predicate the sweep classified from, imported rather than
+  // restated: a decision about attempt A must not become a write to attempt B.
+  const attemptId = await resolveEvidenceAttemptId(db, { runId, nodeId });
+  const attempt = attemptId ? { id: attemptId } : null;
 
   if (!attempt) {
     log.info(

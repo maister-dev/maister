@@ -11,6 +11,8 @@
 
 import type { Db } from "@/lib/execution-host/db";
 
+import { randomUUID } from "node:crypto";
+
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
@@ -24,6 +26,7 @@ import {
 import {
   seedLostTurn,
   seedTurnLostFlow,
+  TURN_LOST_NESTED_ERROR as TURN_LOST_NESTED,
   type SeededFlowGraph,
 } from "@/test-support/turn-lost-seed";
 
@@ -170,6 +173,116 @@ describe("applyTurnLostBoundary — the winner", () => {
     expect((await read(nodeAttempts, seeded.nodeAttemptId)).decision).toBe(
       "turn_lost",
     );
+  }, 60_000);
+});
+
+// ADR-177 T3.3, the gate half. Review found this branch shipped with NO test:
+// it writes to three tables (attempt, run, gate evaluation) and nothing
+// executed it. Driven here through the REAL adapter rather than a re-implementation.
+describe("the flow GATE owner refuses a lost turn (ADR-177 T3.3)", () => {
+  async function seedGate(overrides: Record<string, unknown> = {}) {
+    const seeded = await seed({ withSession: true, ...overrides });
+    const evaluationId = randomUUID();
+
+    await testDatabase.db.insert(schema.gateResults).values({
+      id: evaluationId,
+      runId: seeded.runId,
+      nodeAttemptId: seeded.nodeAttemptId,
+      gateId: "ci",
+      kind: "ai_judgment",
+      mode: "blocking",
+      status: "running",
+      promptOrdinal: 0,
+    });
+
+    return { ...seeded, evaluationId };
+  }
+
+  function gateOwner(seeded: Awaited<ReturnType<typeof seedGate>>) {
+    return {
+      kind: "flow_node_attempt" as const,
+      ref: {
+        version: 1 as const,
+        variant: "gate_ai" as const,
+        gateId: "ci",
+        evaluationId: seeded.evaluationId,
+        nodeAttemptId: seeded.nodeAttemptId,
+        promptOrdinal: 0,
+        runId: seeded.runId,
+        runSessionId: seeded.runSessionId!,
+        incarnationId: seeded.incarnationId!,
+        assignmentId: seeded.assignmentId,
+        assignmentEpoch: seeded.assignmentEpoch,
+      },
+    };
+  }
+
+  async function applyGate(
+    seeded: Awaited<ReturnType<typeof seedGate>>,
+    error: Record<string, unknown>,
+  ): Promise<string> {
+    const { flowPromptOwnerAdapter } = await import(
+      "@/lib/flows/graph/prompt-owner"
+    );
+    const command = await read(executionCommands, seeded.commandId);
+    const prepared = await flowPromptOwnerAdapter.prepare({
+      db,
+      owner: gateOwner(seeded) as never,
+      command,
+      outcome: { state: "failed", error } as never,
+      signal: AbortSignal.timeout(30_000),
+    } as never);
+
+    return testDatabase.db.transaction(async (tx) =>
+      prepared.apply(tx as never),
+    );
+  }
+
+  it("closes the attempt, crashes the run, and STALES the evaluation", async () => {
+    const seeded = await seedGate();
+
+    expect(await applyGate(seeded, { ...TURN_LOST_NESTED })).toBe("applied");
+    expect((await read(runs, seeded.runId)).status).toBe("Crashed");
+    expect((await read(nodeAttempts, seeded.nodeAttemptId)).decision).toBe(
+      "turn_lost",
+    );
+    // NOT `failed`: recording a host restart as a gate verdict would send the
+    // run to rework or block promotion on a decision no judge ever made. NOT
+    // left `running` either — that is the stuck shape `runGateStepGuarded`
+    // exists to prevent.
+    expect((await read(schema.gateResults, seeded.evaluationId)).status).toBe(
+      "stale",
+    );
+  }, 60_000);
+
+  it("an ordinary gate failure is untouched by this arm", async () => {
+    const seeded = await seedGate();
+
+    // Not a lost turn, so the arm must not fire. The verdict path needs a real
+    // decoded completion, which this fixture has no output for — asserting the
+    // run was NOT crashed is what separates the two arms.
+    await applyGate(seeded, { code: "SPAWN" }).catch(() => "threw");
+    expect(
+      (await read(runs, seeded.runId)).status,
+      "only a lost turn takes the crash branch",
+    ).toBe("Running");
+    expect(
+      (await read(nodeAttempts, seeded.nodeAttemptId)).decision,
+    ).toBeNull();
+  }, 60_000);
+
+  it("yields `superseded` when the run has moved off the gate's node", async () => {
+    const seeded = await seedGate();
+
+    await testDatabase.db
+      .update(runs)
+      .set({ currentStepId: "somewhere-else" })
+      .where(eq(runs.id, seeded.runId));
+
+    // The guard that review found missing: without `currentStepId === nodeId`
+    // this would crash a run whose cursor had already advanced.
+    expect(await applyGate(seeded, { ...TURN_LOST_NESTED })).toBe("superseded");
+    expect((await read(runs, seeded.runId)).status).toBe("Running");
   }, 60_000);
 });
 

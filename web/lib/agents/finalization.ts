@@ -100,7 +100,13 @@ export type AgentFinalizeOptions = {
   finalOutput?: RawNodeOutputPayload;
 };
 
-const TERMINAL_CAS_SOURCE: Record<AgentTerminalOutcome, Run["status"][]> = {
+// Exported so the ADR-177 outcome test can assert that choosing `Crashed` over
+// `Failed` WIDENS the admitted source statuses rather than narrowing them —
+// that widening rides on a one-argument change and is otherwise invisible.
+export const TERMINAL_CAS_SOURCE: Record<
+  AgentTerminalOutcome,
+  Run["status"][]
+> = {
   Done: ["Running", "NeedsInput"],
   Failed: ["Running", "NeedsInput"],
   // Crashed also admits a checkpointed (NeedsInputIdle) or reviewing agent

@@ -6,7 +6,7 @@ import type {
   PromptReceiptProbe,
 } from "./reconcile-evidence";
 
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import pino from "pino";
 
 import * as schemaModule from "@/lib/db/schema";
@@ -14,7 +14,10 @@ import { commandStreamLost } from "@/lib/execution-host/events/stream-health";
 import { classifyPromptEvidence } from "@/lib/reconcile-evidence";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { executionCommands } = schemaModule as unknown as Record<string, any>;
+const { executionCommands, nodeAttempts } = schemaModule as unknown as Record<
+  string,
+  any
+>;
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 type Db = any;
@@ -23,6 +26,43 @@ const log = pino({
   name: "reconcile-evidence",
   level: process.env.LOG_LEVEL ?? "info",
 });
+
+/** The attempt an evidence decision and its follow-up write must BOTH be about.
+ *
+ * ONE predicate, exported, because the sweep classifies from it and
+ * `applyTurnLostBoundary` acts on it. They used to resolve it differently — the
+ * probe took the run's newest `node_attempts` row (any node, any status) while
+ * the boundary took the open `Running` attempt at `current_step_id` — so a run
+ * whose newest attempt was closed, or was at another node, could be CLASSIFIED
+ * from attempt A and ACTED on at attempt B. The boundary re-resolves its own
+ * command, so evidence was never cross-applied; the failure mode was the
+ * boundary answering `not-claimed`, the sweep logging a lost CAS, and the run
+ * staying `Running` with nothing bounding the next tick.
+ *
+ * Deliberately NOT the grace anchor. That stays run-scoped (`latestAttemptRow`
+ * in `reconcile.ts`) because "how long since this run last did anything" is a
+ * different question from "which attempt owns the turn in flight".
+ */
+export async function resolveEvidenceAttemptId(
+  db: Db,
+  input: { runId: string; nodeId: string },
+): Promise<string | null> {
+  const [attempt] = await db
+    .select({ id: nodeAttempts.id })
+    .from(nodeAttempts)
+    .where(
+      and(
+        eq(nodeAttempts.runId, input.runId),
+        eq(nodeAttempts.nodeId, input.nodeId),
+        eq(nodeAttempts.status, "Running"),
+        isNull(nodeAttempts.endedAt),
+      ),
+    )
+    .orderBy(desc(nodeAttempts.startedAt))
+    .limit(1);
+
+  return attempt?.id ?? null;
+}
 
 export type PromptEvidenceLookup = {
   id: string;
@@ -117,14 +157,12 @@ export type ResolvedPromptEvidence = {
   evidence: PromptEvidenceClass;
   streamLost: boolean;
   commandId: string | null;
-  probed: boolean;
 };
 
 export const NO_PROMPT_EVIDENCE: ResolvedPromptEvidence = {
   evidence: "none",
   streamLost: false,
   commandId: null,
-  probed: false,
 };
 
 /** Resolve one candidate's prompt evidence for the reconcile classifier.
@@ -135,12 +173,14 @@ export const NO_PROMPT_EVIDENCE: ResolvedPromptEvidence = {
 export async function resolvePromptEvidence(
   db: Db,
   transport: ExecutionHostTransport,
-  input: { runId: string; nodeAttemptId: string | null },
+  input: { runId: string; nodeId: string },
 ): Promise<ResolvedPromptEvidence> {
-  if (!input.nodeAttemptId) return NO_PROMPT_EVIDENCE;
+  const nodeAttemptId = await resolveEvidenceAttemptId(db, input);
+
+  if (!nodeAttemptId) return NO_PROMPT_EVIDENCE;
   const row = await loadPromptEvidence(db, {
     runId: input.runId,
-    nodeAttemptId: input.nodeAttemptId,
+    nodeAttemptId,
   });
 
   if (!row) return NO_PROMPT_EVIDENCE;
@@ -149,7 +189,7 @@ export async function resolvePromptEvidence(
   const evidence = classifyPromptEvidence(row, probe);
 
   if (evidence === "none")
-    return { evidence, streamLost: false, commandId: row.id, probed };
+    return { evidence, streamLost: false, commandId: row.id };
 
   // The ONLY bound on the skip arms: the state `runEventStreamHealthSweep`
   // writes when this manager gives up on a host's stream. Never a timer.
@@ -168,5 +208,5 @@ export async function resolvePromptEvidence(
     );
   }
 
-  return { evidence, streamLost, commandId: row.id, probed };
+  return { evidence, streamLost, commandId: row.id };
 }

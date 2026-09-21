@@ -11,7 +11,12 @@ import pino from "pino";
 
 import { decodeGatePromptCompletion } from "./gate-prompt-completion";
 import { assertGatePermissionResult } from "./gate-permission-resume";
-import { createGateResult, markGateFailed, markGatePassed } from "./gate-store";
+import {
+  createGateResult,
+  markGateFailed,
+  markGatePassed,
+  markGateStale,
+} from "./gate-store";
 import { lockFlowPromptOwner } from "./prompt-owner-authority";
 import { prepareNodePrompt } from "./node-prompt-owner";
 import { prepareConsensusPrompt } from "./consensus/prompt-owner";
@@ -368,11 +373,20 @@ export const flowPromptOwnerAdapter = definePromptOwnerAdapter(
 
         if (!currentAttempt || !evaluation) return "superseded";
         if (gateTurnLost) {
+          // The SAME preconditions as the verdict path below, minus only the
+          // ones that identify a VERDICT (flow revision, gate kind, prompt
+          // ordinal) — a lost turn produces none. Keeping `currentStepId ===
+          // nodeId` is not optional: without it this would crash a run whose
+          // cursor has already moved off the gate's node, which is a strictly
+          // weaker guard than the sibling arm it stands beside.
           if (
             run?.runKind !== "flow" ||
             !["Running", "NeedsInput"].includes(run.status) ||
+            run.currentStepId !== currentAttempt.nodeId ||
             currentAttempt.runId !== ref.runId ||
-            currentAttempt.executionAssignmentId !== ref.assignmentId
+            currentAttempt.executionAssignmentId !== ref.assignmentId ||
+            evaluation.runId !== ref.runId ||
+            evaluation.nodeAttemptId !== currentAttempt.id
           )
             return "superseded";
           await closeTurnLostAttempt(tx, {
@@ -382,6 +396,14 @@ export const flowPromptOwnerAdapter = definePromptOwnerAdapter(
             fromStatuses: [run.status],
             fromAttemptStatuses: [currentAttempt.status],
           });
+          // The evaluation row is `running` from `createGateResult` and every
+          // other terminal gate path writes a terminal status. `stale` is the
+          // truthful one here: the host lost the turn, so the gate was
+          // INVALIDATED, not decided — recording `failed` would turn a
+          // supervisor restart into a product verdict that sends the run to
+          // rework or blocks promotion. Leaving it `running` is the shape
+          // `runGateStepGuarded` exists to prevent (`gates-exec.ts`).
+          await markGateStale(evaluation.id, tx);
           log.warn(
             {
               runId: ref.runId,
