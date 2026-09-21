@@ -40,7 +40,9 @@ where action availability is re-checked by the run/workbench APIs.
 ## Navigation
 
 - **Entry:** Active workspaces rail header **See all** (`/runs`), deep-linked
-  filters, and future project/scheduler links.
+  filters, every numeric run cell of the Observatory overview table
+  (**Designed, ADR-177** — `?project=&from=&to=&kind=&bucket=`), and future
+  project/scheduler links.
 - **Row click:** flow and standalone agent rows open `/runs/{runId}`; scratch
   rows open `/scratch-runs/{runId}`.
 - **Project link:** opens `/projects/{slug}`.
@@ -56,9 +58,10 @@ flowchart TD
 ## Layout & regions
 
 1. **Header** - page title and short purpose text.
-2. **URL-backed filters** - project, state, source, runner, and inclusive date
-   range. Applying filters submits a GET form, so the URL is shareable and the
-   browser back button works.
+2. **URL-backed filters** - project, state, source, runner, inclusive date
+   range, and — **(Designed, ADR-177)** — run kind (`kind`) and outcome bucket
+   (`bucket`). Applying filters submits a GET form, so the URL is shareable and
+   the browser back button works.
 3. **Run history table** - recent runs first. Columns show run/task identity,
    project, status, source, started time, duration, runner, and token total.
 4. **Pagination** - page-based previous/next controls, with page number in the
@@ -70,6 +73,9 @@ flowchart TD
 - `listRunsPage()` reads `runs`, `projects`, optional `tasks`, `flows`,
   `workspaces`, `run_cost_rollups`, and the schedule whose `last_run_id`
   matches the run.
+- **(Designed, ADR-177)** The `bucket` filter reuses the Observatory's shared
+  `runOutcomeBucketSql` fragment over the run's latest `workspaces` row, so a
+  count shown there equals `totalRows` here for the same params.
 - RBAC is embedded in the query: global admins read all non-archived projects;
   other users read only project-member rows.
 - No new write model or API route is introduced.
