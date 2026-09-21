@@ -649,6 +649,9 @@ export default async function RunDetailLayout({
       "exec-untrusted-stdio": t(
         "resolvedSet.withheldReason.execUntrustedStdio",
       ),
+      "agent-unsupported-transport": t(
+        "resolvedSet.withheldReason.agentUnsupportedTransport",
+      ),
     },
   };
 

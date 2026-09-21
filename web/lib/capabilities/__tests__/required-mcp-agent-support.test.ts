@@ -20,6 +20,66 @@ const r = (
   agents: agents as never,
 });
 
+// ADR-177: the same precondition now also refuses a REQUIRED ref whose
+// TRANSPORT the launch adapter cannot use. codex-acp throws `invalidRequest`
+// for `sse` while BUILDING the session config, so one such server fails
+// `session/new` for the whole session — refusing at launch, before any
+// worktree or run row exists, is the only place that helps.
+const withTransport = (
+  refId: string,
+  source: string,
+  agents: string[],
+  transport: "stdio" | "sse" | "http",
+) => ({ ...r(refId, source, agents), material: { transport } });
+
+describe("firstAgentUnsupportedRequiredMcp — transport (ADR-177)", () => {
+  it("flags a required sse ref on a codex runner", () => {
+    expect(
+      firstAgentUnsupportedRequiredMcp(
+        ["legacy"],
+        [withTransport("legacy", "platform", ["codex"], "sse")],
+        "codex",
+      ),
+    ).toMatchObject({
+      refId: "legacy",
+      reason: "unsupported-transport",
+      transport: "sse",
+    });
+  });
+
+  it("passes a required http ref on a codex runner", () => {
+    expect(
+      firstAgentUnsupportedRequiredMcp(
+        ["vendor"],
+        [withTransport("vendor", "platform", ["codex"], "http")],
+        "codex",
+      ),
+    ).toBeNull();
+  });
+
+  it("passes a required sse ref on a claude runner — claude accepts sse", () => {
+    expect(
+      firstAgentUnsupportedRequiredMcp(
+        ["legacy"],
+        [withTransport("legacy", "platform", ["claude"], "sse")],
+        "claude",
+      ),
+    ).toBeNull();
+  });
+
+  it("reports the AGENT reason first when both would apply", () => {
+    // `supported_agents` is the stronger statement: the operator said this
+    // server is not for codex at all.
+    expect(
+      firstAgentUnsupportedRequiredMcp(
+        ["legacy"],
+        [withTransport("legacy", "platform", ["claude"], "sse")],
+        "codex",
+      ),
+    ).toMatchObject({ reason: "unsupported-agent" });
+  });
+});
+
 describe("firstAgentUnsupportedRequiredMcp (T-C8b)", () => {
   it("returns null when there are no required refs", () => {
     expect(
@@ -38,7 +98,7 @@ describe("firstAgentUnsupportedRequiredMcp (T-C8b)", () => {
         [r("github", "project", ["codex"])],
         "claude",
       ),
-    ).toBe("github");
+    ).toMatchObject({ refId: "github", reason: "unsupported-agent" });
   });
 
   it("passes when the winner record supports the agent", () => {
@@ -63,7 +123,7 @@ describe("firstAgentUnsupportedRequiredMcp (T-C8b)", () => {
         ],
         "claude",
       ),
-    ).toBe("github");
+    ).toMatchObject({ refId: "github", reason: "unsupported-agent" });
   });
 
   it("skips an unresolved required ref (unknown-ref gate owns CONFIG)", () => {
@@ -86,7 +146,7 @@ describe("firstAgentUnsupportedRequiredMcp (T-C8b)", () => {
         [r("github", "platform", { codex: {} })],
         "claude",
       ),
-    ).toBe("github");
+    ).toMatchObject({ refId: "github", reason: "unsupported-agent" });
   });
 
   it("dedupes required refs", () => {

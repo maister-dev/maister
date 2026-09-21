@@ -2086,12 +2086,16 @@ async function materializeNodeCapabilities(
     supported: profile.supported,
     mcpServers: m.mcpServers,
     execTrust: loaded.execTrust,
+    // ADR-177: the transport gate's adapter. A REQUIRED ref the adapter cannot
+    // use already refused this launch at the precondition; this pass drops the
+    // ADDITIONAL ones.
+    adapter: agent,
   });
 
   if (overlaidRefs.length > 0) {
     logger.debug(
       { nodeId: node.id, overlaidRefs },
-      "[runner.graph] MCP config overlays applied (names only)",
+      "[runner.graph] MCP config overlays applied",
     );
   }
 

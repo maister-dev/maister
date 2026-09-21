@@ -328,20 +328,30 @@ export const platformRuntimeSettings = pgTable("platform_runtime_settings", {
 });
 
 // Platform-scoped MCP capability catalog (M27/T-C2, ADR-067). Admin CRUD mirrors
-// platform_acp_runners (ADR-065). Secrets are NEVER stored: env_keys/header_keys
-// are `env:NAME` references resolved supervisor-side, never plaintext values.
+// platform_acp_runners (ADR-065). ADR-177: `env`/`headers` are
+// `Record<name, value>` maps keyed by the name the SERVER reads, and each value
+// is whole-value `literal | env:NAME`. The value behind a REFERENCE is never
+// stored — the execution host resolves it. A LITERAL is the operator's
+// declaration that the value is not a secret.
 export const platformMcpServers = pgTable(
   "platform_mcp_servers",
   {
     id: text("id").primaryKey(),
+    description: text("description"),
     transport: text("transport", { enum: ["stdio", "sse", "http"] })
       .notNull()
       .default("stdio"),
     command: text("command"),
     args: jsonb("args").$type<string[]>().notNull().default([]),
-    envKeys: jsonb("env_keys").$type<string[]>().notNull().default([]),
+    env: jsonb("env").$type<Record<string, string>>().notNull().default({}),
     url: text("url"),
-    headerKeys: jsonb("header_keys").$type<string[]>().notNull().default([]),
+    headers: jsonb("headers")
+      .$type<Record<string, string>>()
+      .notNull()
+      .default({}),
+    // `env:NAME`, sse/http only; the host composes `Authorization: Bearer` and
+    // appends it LAST. Refused beside an `Authorization` header row.
+    bearerTokenEnv: text("bearer_token_env"),
     supportedAgents: jsonb("supported_agents")
       .$type<AdapterId[]>()
       .notNull()
@@ -1530,12 +1540,16 @@ export const projectFlowRunnerDefaults = pgTable(
   }),
 );
 
-// ADR-130: per-binding config overlay. Rewrites env/header/arg/url NAMES only —
-// NEVER a secret value. Validated against the target's declared slots at write
-// and materialization (unknown slot -> CONFIG).
+// ADR-130, amended by ADR-177: per-binding config overlay. Application replaces
+// the VALUE for a slot the target declares and PRESERVES the slot's name — the
+// name is the SERVER's contract. Validated against the target's declared slots
+// (the KEYS of its `env`/`headers` maps) at write AND materialization (unknown
+// slot -> CONFIG). A value uses the same `literal | env:NAME` grammar as a
+// server value; stored pre-ADR-177 rows stay valid unchanged.
 export type McpConfigOverlay = {
-  envRemap?: Record<string, string>; // slot NAME -> "env:OTHER_NAME"
-  headerRemap?: Record<string, string>; // slot NAME -> "env:OTHER_NAME"
+  envRemap?: Record<string, string>; // declared slot NAME -> literal | env:NAME
+  headerRemap?: Record<string, string>; // declared slot NAME -> literal | env:NAME
+  bearerTokenEnv?: string; // env:NAME; http/sse targets only
   argsOverride?: string[];
   urlOverride?: string;
 };
@@ -1643,12 +1657,17 @@ export type RepoDeliveryRef = {
 // M27/T-C8 (§3.1, ADR-069): the capability set resolved at launch, frozen onto
 // the run so an edit/publish mid-run cannot mutate it. `flowOrigin` records
 // whether the resolved flow revision came from the authored bridge or git.
-// ADR-130: an MCP excluded from the executable set. `reason` distinguishes the
-// two withhold causes; NEVER carries a secret value.
+// ADR-130, extended by ADR-177: an MCP excluded from the executable set.
+// `reason` distinguishes the three withhold causes, applied in the order listed
+// so the STRONGEST refusal names the withhold; NEVER carries a secret value.
+// jsonb-only — widening the union takes no migration.
 export type WithheldMcp = {
   refId: string;
   transport: "stdio" | "sse" | "http";
-  reason: "platform-untrusted" | "exec-untrusted-stdio";
+  reason:
+    | "platform-untrusted"
+    | "exec-untrusted-stdio"
+    | "agent-unsupported-transport";
   scope: string;
 };
 

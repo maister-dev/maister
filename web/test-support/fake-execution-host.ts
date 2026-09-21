@@ -199,6 +199,9 @@ export type FakeExecutionHost = {
   ): void;
   setHealth(health: HostHealth | null): void;
   setDiagnostics(status: SupervisorDiagnosticsStatus | null): void;
+  // ADR-177: script host env-var PRESENCE. A name not in the set reads absent,
+  // which is the real route's answer too.
+  setPresentEnvRefs(names: readonly string[]): void;
   setPromptBehavior(
     behavior: (ctx: PromptContext) => Promise<PromptResult>,
   ): void;
@@ -482,6 +485,7 @@ export function createFakeExecutionHost(
   >();
   let health: HostHealth | null = null;
   let diagnostics: SupervisorDiagnosticsStatus | null = null;
+  let presentEnvRefs = new Set<string>();
   let monotonicId = 0;
   let promptBehavior: (
     ctx: PromptContext,
@@ -940,6 +944,28 @@ export function createFakeExecutionHost(
           message: "fake: no diagnostics scripted",
         }
       );
+    },
+    // Rebuilt RULE-BY-RULE against the real route, not "whatever the caller
+    // needs": it REFUSES more than 64 names per call exactly as the supervisor's
+    // schema does, so a transport that forgot to chunk fails here instead of
+    // being certified correct by a lenient double. It answers in REQUEST order
+    // after de-duplication, and `present` is set membership — an unscripted
+    // name is absent, like an unset host variable.
+    async checkEnvRefs(names, opts) {
+      await record("checkEnvRefs", null, [names, opts]);
+      loseAdminResponse("checkEnvRefs");
+
+      if (names.length === 0 || names.length > 64) {
+        throw new MaisterError(
+          "EXECUTOR_UNAVAILABLE",
+          `fake host: names must be 1..64 per call (got ${names.length})`,
+        );
+      }
+
+      return [...new Set(names)].map((name) => ({
+        name,
+        present: presentEnvRefs.has(name),
+      }));
     },
     async platformStatus(opts) {
       await record("platformStatus", null, [opts]);
@@ -1974,6 +2000,9 @@ export function createFakeExecutionHost(
     setDiagnostics(next) {
       diagnostics = next;
     },
+    setPresentEnvRefs(names) {
+      presentEnvRefs = new Set(names);
+    },
     setPromptBehavior(behavior) {
       promptBehavior = behavior;
     },
@@ -2771,6 +2800,7 @@ export function memoryAdminClient(fake: FakeExecutionHost): HostAdminClient {
   return {
     health: (opts) => fake.transport.health(opts),
     diagnostics: (opts) => fake.transport.diagnostics(opts),
+    checkEnvRefs: (names, opts) => fake.transport.checkEnvRefs(names, opts),
     platformStatus: (opts) => fake.transport.platformStatus(opts),
     resolveModelSuggestions: (draft, opts) =>
       fake.transport.resolveModelSuggestions(draft, opts),

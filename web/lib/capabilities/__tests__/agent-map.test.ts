@@ -35,7 +35,7 @@ const githubRecord = record({
   material: {
     command: "github-mcp",
     args: [],
-    envKeys: ["GITHUB_TOKEN"],
+    env: { GITHUB_TOKEN: "env:GITHUB_TOKEN" },
     config: {},
   },
 });
@@ -58,7 +58,7 @@ const codexOnlyRecord = record({
   kind: "mcp",
   agents: ["codex"],
   enforceability: "instructed",
-  material: { command: "codex-only-mcp", args: [], envKeys: [], config: {} },
+  material: { command: "codex-only-mcp", args: [], env: {}, config: {} },
 });
 
 function claudeProfile() {
@@ -208,7 +208,7 @@ describe("mapProfileToAgentArtifacts", () => {
     expect(none.settingsLocal!.permissions.defaultMode).toBeUndefined();
   });
 
-  it("emits mcpServers from supported mcp entries with envKeys names only, no secret value (assertion 3, R-SECRET)", () => {
+  it("emits mcpServers carrying the env VALUE map, references unresolved (assertion 3, R-SECRET)", () => {
     const result = mapProfileToAgentArtifacts({
       profile: claudeProfile(),
       agent: "claude",
@@ -221,17 +221,17 @@ describe("mapProfileToAgentArtifacts", () => {
       transport: "stdio",
       command: "github-mcp",
       args: [],
-      envKeys: ["GITHUB_TOKEN"],
+      env: { GITHUB_TOKEN: "env:GITHUB_TOKEN" },
     });
 
     const serialized = JSON.stringify(result.mcpServers);
 
-    expect(serialized).toContain("GITHUB_TOKEN");
+    expect(serialized).toContain("env:GITHUB_TOKEN");
+    // The value behind the reference is resolved only on the execution host.
     expect(serialized).not.toContain(SECRET_VALUE);
-    expect(serialized).not.toContain("value");
   });
 
-  it("materializes sse/http mcp entries with url + headerKeys and no command (T-C4)", () => {
+  it("materializes sse/http mcp entries with url + headers + bearer and no command (T-C4)", () => {
     const profile = resolveCapabilityProfile({
       projectId: "project-1",
       executorAgent: "claude",
@@ -244,7 +244,8 @@ describe("mapProfileToAgentArtifacts", () => {
           material: {
             transport: "http",
             url: "https://mcp.example.com/sse",
-            headerKeys: ["MCP_AUTH"],
+            headers: { "X-Api-Key": "env:MCP_AUTH" },
+            bearerTokenEnv: "env:MCP_TOKEN",
           },
         }),
       ],
@@ -257,7 +258,8 @@ describe("mapProfileToAgentArtifacts", () => {
       name: "remote",
       transport: "http",
       url: "https://mcp.example.com/sse",
-      headerKeys: ["MCP_AUTH"],
+      headers: { "X-Api-Key": "env:MCP_AUTH" },
+      bearerTokenEnv: "env:MCP_TOKEN",
     });
   });
 

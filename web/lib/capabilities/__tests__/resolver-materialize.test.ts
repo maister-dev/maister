@@ -338,7 +338,7 @@ const LIVE_SECRET = "ghp_LIVE_SECRET_VALUE";
 const githubMaterial = {
   command: "github-mcp",
   args: [],
-  envKeys: ["GITHUB_TOKEN"],
+  env: { GITHUB_TOKEN: "env:GITHUB_TOKEN" },
   config: {},
 };
 
@@ -422,7 +422,10 @@ describe("materializeCapabilityProfile", () => {
       catalog: [
         record({
           capabilityRefId: "github",
-          material: { command: "github-mcp", envKeys: ["GITHUB_TOKEN"] },
+          material: {
+            command: "github-mcp",
+            env: { GITHUB_TOKEN: "env:GITHUB_TOKEN" },
+          },
         }),
       ],
     });
@@ -569,7 +572,7 @@ describe("materializeCapabilityProfile", () => {
       transport: "stdio",
       command: "github-mcp",
       args: [],
-      envKeys: ["GITHUB_TOKEN"],
+      env: { GITHUB_TOKEN: "env:GITHUB_TOKEN" },
     });
   });
 
@@ -613,7 +616,7 @@ describe("materializeCapabilityProfile", () => {
           material: {
             command: "github-mcp",
             args: [],
-            envKeys: ["GITHUB_TOKEN"],
+            env: { GITHUB_TOKEN: "env:GITHUB_TOKEN" },
             config: { token: CONFIG_SECRET, nested: { auth: CONFIG_SECRET } },
           },
         }),

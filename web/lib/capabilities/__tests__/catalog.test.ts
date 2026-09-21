@@ -105,7 +105,12 @@ function captureLogger(): { logger: pino.Logger; sink: { lines: string[] } } {
 }
 
 describe("capabilityInputsFromConfig", () => {
-  it("normalizes project and platform capabilities without env secret values", () => {
+  // ADR-177 (D31): `maister.yaml` env/header VALUES are now CARRIED as declared
+  // — the file is the operator's own host file, at the same trust level as
+  // `supervisor/.env`. `configuration.md` states the exposure a literal
+  // accepts; a secret belongs behind an `env:NAME` reference, which is what the
+  // reference here is.
+  it("normalizes project and platform capabilities, carrying declared values", () => {
     const inputs = capabilityInputsFromConfig({
       ...emptyCapabilities(),
       mcps: [
@@ -114,7 +119,7 @@ describe("capabilityInputsFromConfig", () => {
           kind: "mcp",
           source: "project",
           command: "github-mcp",
-          env: { GITHUB_TOKEN: "raw-token" },
+          env: { GITHUB_TOKEN: "env:GITHUB_TOKEN", GH_HOST: "ghe.example" },
           agents: ["claude", "codex"],
           enforceability: "enforced",
           selected_by_default: true,
@@ -138,9 +143,9 @@ describe("capabilityInputsFromConfig", () => {
     ).toEqual(["platform:mcp:platform-fs", "project:mcp:project-github"]);
     expect(inputs[1].material).toMatchObject({
       command: "github-mcp",
-      envKeys: ["GITHUB_TOKEN"],
+      env: { GITHUB_TOKEN: "env:GITHUB_TOKEN", GH_HOST: "ghe.example" },
+      headers: {},
     });
-    expect(JSON.stringify(inputs)).not.toContain("raw-token");
   });
 
   it("omits the mcp config blob from material — config can carry secret values (ISSUE 2)", () => {

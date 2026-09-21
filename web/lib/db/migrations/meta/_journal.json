@@ -1177,6 +1177,13 @@
       "when": 1789943168941,
       "tag": "0171_crash_recover_continuation_retry",
       "breakpoints": true
+    },
+    {
+      "idx": 172,
+      "version": "7",
+      "when": 1790016407278,
+      "tag": "0172_mcp_env_values",
+      "breakpoints": true
     }
   ]
 }

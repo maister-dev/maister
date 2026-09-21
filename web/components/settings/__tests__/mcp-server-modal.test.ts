@@ -17,15 +17,18 @@ import {
 
 const httpServer: McpServerRow = {
   id: "remote",
+  description: "Vendor MCP",
   transport: "http",
   command: null,
   args: [],
-  envKeys: [],
+  env: {},
   url: "https://mcp.example.com/sse",
-  headerKeys: ["MCP_AUTH"],
+  headers: { "X-Api-Key": "env:MCP_AUTH" },
+  bearerTokenEnv: "env:MCP_TOKEN",
   supportedAgents: ["claude"],
   trustStatus: "untrusted",
   readinessStatus: "Unknown",
+  readinessReasons: [],
   enabled: true,
 };
 
@@ -42,9 +45,11 @@ describe("McpServerModal", () => {
     expect(markup).toContain("createMcpTitle");
     expect(markup).toContain("fieldMcpId");
     expect(markup).toContain("fieldTransport");
-    // stdio default → command + envKeys fields, not url.
+    expect(markup).toContain("fieldDescription");
+    // stdio default → command + env rows, not url/headers/bearer.
     expect(markup).toContain("fieldCommand");
-    expect(markup).toContain("fieldEnvKeys");
+    expect(markup).toContain("fieldEnv");
+    expect(markup).not.toContain("fieldBearerTokenEnv");
     expect(markup).toContain("fieldSupportedAgents");
   });
 
@@ -61,8 +66,10 @@ describe("McpServerModal", () => {
     expect(markup).toContain("editMcpTitle");
     expect(markup).toContain("deleteMcp");
     expect(markup).toContain("fieldUrl");
-    expect(markup).toContain("fieldHeaderKeys");
+    expect(markup).toContain("fieldHeaders");
+    expect(markup).toContain("fieldBearerTokenEnv");
     expect(markup).toContain("https://mcp.example.com/sse");
+    expect(markup).toContain("env:MCP_TOKEN");
     expect(markup).toContain("remote");
   });
 });

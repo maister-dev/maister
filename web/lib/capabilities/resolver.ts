@@ -13,6 +13,10 @@ import { createHash } from "node:crypto";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import pino from "pino";
 
+import {
+  mcpTransportsForAdapter,
+  type AdapterId,
+} from "@/lib/acp-runners/adapter-support";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
@@ -207,19 +211,31 @@ export function pinCatalogToSnapshot<
 // unresolved required ref is owned by the unknown-ref gate (CONFIG); skipped
 // here. Returns the first offending ref, or null when all required mcps resolve
 // to an agent-supporting winner.
+// ADR-177: the ref plus WHY, so the thrown message can name the cause. Two
+// reasons qualify — the winner's `supported_agents` exclude the agent, or its
+// TRANSPORT is one the adapter cannot use (codex + `sse`, which
+// `createMcpSeverConfig` throws on while building the session config, failing
+// `session/new` for the whole session).
+export type UnsupportedRequiredMcp = {
+  refId: string;
+  reason: "unsupported-agent" | "unsupported-transport";
+  transport?: "stdio" | "sse" | "http";
+};
+
 export function firstAgentUnsupportedRequiredMcp(
   requiredMcpRefs: readonly string[],
   mcpRecords: ReadonlyArray<{
     capabilityRefId: string;
     source: string;
     agents: CapabilityCatalogRecord["agents"];
+    material?: { transport?: string } | null;
   }>,
   agent: CapabilityAgent,
   // ADR-129 (W-B): a binding redirects which record is the effective winner; a
   // disabled/misconfigured binding makes the ref unresolvable (skipped here — the
   // CONFIG gate owns that), so this gate never flags a ref it cannot resolve.
   mcpBindings?: readonly McpBindingInput[],
-): string | null {
+): UnsupportedRequiredMcp | null {
   if (requiredMcpRefs.length === 0) return null;
 
   const bindings = bindingByRef(mcpBindings);
@@ -240,7 +256,24 @@ export function firstAgentUnsupportedRequiredMcp(
     const winner = pickMcpWinner(records, bindings.get(ref));
 
     if (!winner) continue;
-    if (!supportsAgent(winner.record.agents, agent)) return ref;
+    if (!supportsAgent(winner.record.agents, agent)) {
+      return { refId: ref, reason: "unsupported-agent" };
+    }
+
+    const transport = winner.record.material?.transport;
+
+    if (
+      transport &&
+      !mcpTransportsForAdapter(agent as AdapterId).includes(
+        transport as "stdio" | "sse" | "http",
+      )
+    ) {
+      return {
+        refId: ref,
+        reason: "unsupported-transport",
+        transport: transport as "stdio" | "sse" | "http",
+      };
+    }
   }
 
   return null;

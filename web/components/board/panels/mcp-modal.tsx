@@ -13,6 +13,13 @@ import clsx from "clsx";
 
 import { useModalFocusTrap } from "@/components/board/panels/use-modal-focus-trap";
 import {
+  KeyValueRows,
+  recordFromRows,
+  rowsFromRecord,
+  type KeyValueRow,
+} from "@/components/settings/key-value-rows";
+import { secretShapedKey } from "@/lib/mcp/value-grammar";
+import {
   MCP_AGENTS,
   MCP_TRANSPORTS,
   buildCreateBody,
@@ -29,14 +36,18 @@ import {
 export interface ProjectMcpRow {
   id: string;
   mcpId: string;
+  description: string | null;
   transport: McpTransport;
   command: string | null;
   args: string[];
-  envKeys: string[];
+  env: Record<string, string>;
   url: string | null;
-  headerKeys: string[];
+  headers: Record<string, string>;
+  bearerTokenEnv: string | null;
   supportedAgents: McpAgent[];
   enabled: boolean;
+  readinessStatus?: "Unknown" | "Ready" | "NotReady";
+  readinessReasons?: string[];
 }
 
 export interface ProjectMcpModalProps {
@@ -49,12 +60,14 @@ export interface ProjectMcpModalProps {
 
 type FormState = {
   id: string;
+  description: string;
   transport: McpTransport;
   command: string;
   argsText: string;
-  envKeysText: string;
+  envRows: KeyValueRow[];
   url: string;
-  headerKeysText: string;
+  headerRows: KeyValueRow[];
+  bearerTokenEnv: string;
   supportedAgents: McpAgent[];
   enabled: boolean;
 };
@@ -76,12 +89,14 @@ function seedForm(mode: "create" | "edit", server?: ProjectMcpRow): FormState {
   if (mode === "edit" && server) {
     return {
       id: server.mcpId,
+      description: server.description ?? "",
       transport: server.transport,
       command: server.command ?? "",
       argsText: server.args.join(" "),
-      envKeysText: server.envKeys.join(", "),
+      envRows: rowsFromRecord(server.env),
       url: server.url ?? "",
-      headerKeysText: server.headerKeys.join(", "),
+      headerRows: rowsFromRecord(server.headers),
+      bearerTokenEnv: server.bearerTokenEnv ?? "",
       supportedAgents: [...server.supportedAgents],
       enabled: server.enabled,
     };
@@ -89,12 +104,14 @@ function seedForm(mode: "create" | "edit", server?: ProjectMcpRow): FormState {
 
   return {
     id: "",
+    description: "",
     transport: "stdio",
     command: "",
     argsText: "",
-    envKeysText: "",
+    envRows: [],
     url: "",
-    headerKeysText: "",
+    headerRows: [],
+    bearerTokenEnv: "",
     supportedAgents: [...MCP_AGENTS],
     enabled: true,
   };
@@ -103,12 +120,14 @@ function seedForm(mode: "create" | "edit", server?: ProjectMcpRow): FormState {
 function toDraft(form: FormState): McpServerDraft {
   return {
     id: form.id,
+    description: form.description || null,
     transport: form.transport,
     command: form.command || null,
     args: tokens(form.argsText),
-    envKeys: tokens(form.envKeysText),
+    env: recordFromRows(form.envRows),
     url: form.url || null,
-    headerKeys: tokens(form.headerKeysText),
+    headers: recordFromRows(form.headerRows),
+    bearerTokenEnv: form.bearerTokenEnv || null,
     supportedAgents: form.supportedAgents,
     enabled: form.enabled,
   };
@@ -162,6 +181,36 @@ export function ProjectMcpModal({
   const draft = toDraft(form);
   const validation = validateMcpServerDraft(draft);
   const isStdio = form.transport === "stdio";
+  const errorsByField = new Map(
+    validation.ok ? [] : validation.errors.map((e) => [e.field, e.message]),
+  );
+  const bearerError = errorsByField.get("bearerTokenEnv") ?? null;
+  const sseOnCodex =
+    form.transport === "sse" && form.supportedAgents.includes("codex");
+
+  function rowError(kind: "env" | "headers", row: KeyValueRow): string | null {
+    if (row.key.trim() === "" && row.value === "") return null;
+
+    return (
+      errorsByField.get(`${kind}.${row.key.trim()}`) ??
+      (row.key.trim() === "" ? (errorsByField.get(`${kind}.`) ?? null) : null)
+    );
+  }
+
+  // D9: a warning, never a refusal, and only for a LITERAL — a reference
+  // carries no secret.
+  function rowWarning(
+    kind: "env" | "headers",
+    row: KeyValueRow,
+  ): string | null {
+    const key = row.key.trim();
+
+    if (key === "" || row.value.startsWith("env:")) return null;
+
+    return secretShapedKey(kind === "env" ? "env" : "header", key)
+      ? t("secretShapedWarning")
+      : null;
+  }
 
   function patchForm(patch: Partial<FormState>): void {
     setForm((current) => ({ ...current, ...patch }));
@@ -301,6 +350,19 @@ export function ProjectMcpModal({
           </label>
 
           <label className="flex flex-col gap-1.5">
+            <span className={fieldLabel}>{t("fieldDescription")}</span>
+            <input
+              autoComplete="off"
+              className={inputClass}
+              disabled={busy}
+              spellCheck={false}
+              type="text"
+              value={form.description}
+              onChange={(e) => patchForm({ description: e.target.value })}
+            />
+          </label>
+
+          <label className="flex flex-col gap-1.5">
             <span className={fieldLabel}>{t("fieldTransport")}</span>
             <select
               className={inputClass}
@@ -312,10 +374,15 @@ export function ProjectMcpModal({
             >
               {MCP_TRANSPORTS.map((transport) => (
                 <option key={transport} value={transport}>
-                  {transport}
+                  {transport === "sse" ? t("transportSseLegacy") : transport}
                 </option>
               ))}
             </select>
+            {sseOnCodex ? (
+              <span className="font-mono text-[10px] text-amber" role="note">
+                {t("sseCodexNotice")}
+              </span>
+            ) : null}
           </label>
 
           {isStdio ? (
@@ -344,22 +411,22 @@ export function ProjectMcpModal({
                   onChange={(e) => patchForm({ argsText: e.target.value })}
                 />
               </label>
-              <label className="flex flex-col gap-1.5">
-                <span className={fieldLabel}>{t("fieldEnvKeys")}</span>
-                <input
-                  autoComplete="off"
-                  className={inputClass}
-                  disabled={busy}
-                  placeholder="env:GITHUB_TOKEN"
-                  spellCheck={false}
-                  type="text"
-                  value={form.envKeysText}
-                  onChange={(e) => patchForm({ envKeysText: e.target.value })}
-                />
-                <span className="font-mono text-[10px] text-mute">
-                  {t("secretRefHint")}
-                </span>
-              </label>
+              <KeyValueRows
+                disabled={busy}
+                errorFor={(row) => rowError("env", row)}
+                labels={{
+                  title: t("fieldEnv"),
+                  hint: t("valueGrammarHint"),
+                  key: t("fieldEnvKey"),
+                  value: t("fieldEnvValue"),
+                  add: t("addEnv"),
+                  remove: t("removeEnv"),
+                }}
+                rows={form.envRows}
+                testId="project-mcp-env-rows"
+                warningFor={(row) => rowWarning("env", row)}
+                onChange={(envRows) => patchForm({ envRows })}
+              />
             </>
           ) : (
             <>
@@ -376,23 +443,46 @@ export function ProjectMcpModal({
                 />
               </label>
               <label className="flex flex-col gap-1.5">
-                <span className={fieldLabel}>{t("fieldHeaderKeys")}</span>
+                <span className={fieldLabel}>{t("fieldBearerTokenEnv")}</span>
                 <input
+                  aria-invalid={bearerError ? true : undefined}
                   autoComplete="off"
                   className={inputClass}
                   disabled={busy}
-                  placeholder="env:MCP_AUTH"
+                  placeholder="env:MCP_TOKEN"
                   spellCheck={false}
                   type="text"
-                  value={form.headerKeysText}
+                  value={form.bearerTokenEnv}
                   onChange={(e) =>
-                    patchForm({ headerKeysText: e.target.value })
+                    patchForm({ bearerTokenEnv: e.target.value })
                   }
                 />
-                <span className="font-mono text-[10px] text-mute">
-                  {t("secretRefHint")}
-                </span>
+                {bearerError ? (
+                  <span className="font-mono text-[10px] text-rose-400">
+                    {bearerError}
+                  </span>
+                ) : (
+                  <span className="font-mono text-[10px] text-mute">
+                    {t("bearerTokenEnvHint")}
+                  </span>
+                )}
               </label>
+              <KeyValueRows
+                disabled={busy}
+                errorFor={(row) => rowError("headers", row)}
+                labels={{
+                  title: t("fieldHeaders"),
+                  hint: t("valueGrammarHint"),
+                  key: t("fieldHeaderName"),
+                  value: t("fieldHeaderValue"),
+                  add: t("addHeader"),
+                  remove: t("removeHeader"),
+                }}
+                rows={form.headerRows}
+                testId="project-mcp-header-rows"
+                warningFor={(row) => rowWarning("headers", row)}
+                onChange={(headerRows) => patchForm({ headerRows })}
+              />
             </>
           )}
 

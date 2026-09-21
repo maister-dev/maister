@@ -48,9 +48,26 @@ describe("createBindingSchema", () => {
 });
 
 describe("mcpConfigOverlaySchema", () => {
-  it("rejects a raw (non-env:) remap value", () => {
+  // OBSOLETE under ADR-177 (D32): the overlay shares the server value grammar,
+  // so a literal is accepted and only a malformed reference is refused.
+  it("accepts a LITERAL remap value", () => {
     expect(() =>
       mcpConfigOverlaySchema.parse({ envRemap: { TOKEN: "raw-value" } }),
+    ).not.toThrow();
+  });
+
+  it("rejects a malformed env: remap value", () => {
+    expect(() =>
+      mcpConfigOverlaySchema.parse({ envRemap: { TOKEN: "env:1BAD" } }),
+    ).toThrow();
+  });
+
+  it("accepts a bearerTokenEnv override and refuses a literal one", () => {
+    expect(() =>
+      mcpConfigOverlaySchema.parse({ bearerTokenEnv: "env:PROJ_A_TOKEN" }),
+    ).not.toThrow();
+    expect(() =>
+      mcpConfigOverlaySchema.parse({ bearerTokenEnv: "tok-1" }),
     ).toThrow();
   });
 

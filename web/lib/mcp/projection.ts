@@ -10,9 +10,10 @@ import { platformMcpServers } from "@/lib/db/schema";
 
 // M27/T-C3 (ADR-067): project the admin-managed `platform_mcp_servers` catalog
 // (T-C1) into the capability pipeline as `source='platform'` MCP capabilities,
-// replacing the legacy `.mcp.json` registry. The downstream upsert
-// (`upsertCapabilitiesFromConfig`) reduces `env` to NAME-only `envKeys`
-// (`redactedEnv`), so secret VALUES never reach `capability_records`.
+// replacing the legacy `.mcp.json` registry. ADR-177: the row already stores
+// `env`/`headers` VALUE maps under the shared grammar, so this projection is an
+// identity pass — a value behind an `env:NAME` reference still never leaves the
+// execution host.
 type Db = {
   select: () => {
     from: <TTable extends PgTable>(
@@ -21,25 +22,9 @@ type Db = {
   };
 };
 
+// Still read by `lib/brain/openai-compatible.ts` for its own provider ref.
 export function stripEnvPrefix(ref: string): string {
   return ref.startsWith("env:") ? ref.slice(4) : ref;
-}
-
-// NAME references → an `env`/`headers` map keyed by the var/header NAME →
-// `env:NAME` reference. The downstream `redactedEnv` keeps only the NAMES, so
-// no secret VALUE ever reaches `capability_records`.
-function refsToMap(
-  keys: readonly string[] | undefined,
-): Record<string, string> {
-  const map: Record<string, string> = {};
-
-  for (const key of keys ?? []) {
-    const name = stripEnvPrefix(key);
-
-    map[name] = `env:${name}`;
-  }
-
-  return map;
 }
 
 // Map a stored row to the capability-config shape the resolver/materializer
@@ -63,7 +48,8 @@ export function platformMcpRowToCapability(
     return {
       ...base,
       url: row.url ?? undefined,
-      headers: refsToMap(row.headerKeys),
+      headers: { ...(row.headers ?? {}) },
+      bearerTokenEnv: row.bearerTokenEnv ?? undefined,
     };
   }
 
@@ -71,7 +57,7 @@ export function platformMcpRowToCapability(
     ...base,
     command: row.command ?? undefined,
     args: row.args ?? [],
-    env: refsToMap(row.envKeys),
+    env: { ...(row.env ?? {}) },
   };
 }
 

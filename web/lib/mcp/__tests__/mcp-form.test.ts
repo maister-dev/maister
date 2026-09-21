@@ -13,7 +13,7 @@ describe("validateMcpServerDraft (T-C2)", () => {
       id: "github",
       transport: "stdio",
       command: "github-mcp",
-      envKeys: ["env:GITHUB_TOKEN"],
+      env: { GITHUB_TOKEN: "env:GITHUB_TOKEN" },
     });
 
     expect(r.ok).toBe(true);
@@ -24,7 +24,8 @@ describe("validateMcpServerDraft (T-C2)", () => {
       id: "remote",
       transport: "http",
       url: "https://mcp.example.com/sse",
-      headerKeys: ["env:MCP_AUTH"],
+      headers: { "X-Api-Key": "env:MCP_AUTH" },
+      bearerTokenEnv: "env:MCP_TOKEN",
     });
 
     expect(r.ok).toBe(true);
@@ -65,16 +66,94 @@ describe("validateMcpServerDraft (T-C2)", () => {
     if (!r.ok) expect(r.errors.some((e) => e.field === "transport")).toBe(true);
   });
 
-  it("rejects an invalid env key reference (no plaintext)", () => {
+  it("ACCEPTS a literal value — the secret guard is a UI warning (D9)", () => {
+    // This replaces the pre-ADR-177 "rejects plaintext" case, which is obsolete:
+    // a literal is the operator's declaration that the value is not a secret.
     const r = validateMcpServerDraft({
       id: "x",
       transport: "stdio",
       command: "x",
-      envKeys: ["sk-plaintext-secret-value"],
+      env: { GITHUB_TOKEN: "ghp_literal", FASTMCP_LOG_LEVEL: "ERROR" },
+    });
+
+    expect(r.ok).toBe(true);
+  });
+
+  // WIRING only — the grammar table itself is asserted once, in
+  // value-grammar.test.ts.
+  it("rejects a malformed env: value, naming the offending key", () => {
+    const r = validateMcpServerDraft({
+      id: "x",
+      transport: "stdio",
+      command: "x",
+      env: { GH: "env:1BAD" },
     });
 
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.errors.some((e) => e.field === "envKeys")).toBe(true);
+    if (!r.ok) expect(r.errors.some((e) => e.field === "env.GH")).toBe(true);
+  });
+
+  it("rejects a literal header value carrying CR/LF", () => {
+    const r = validateMcpServerDraft({
+      id: "x",
+      transport: "http",
+      url: "https://mcp.example.com",
+      headers: {
+        "X-Tenant": `a${String.fromCharCode(13)}${String.fromCharCode(10)}X: 1`,
+      },
+    });
+
+    expect(r.ok).toBe(false);
+    if (!r.ok)
+      expect(r.errors.some((e) => e.field === "headers.X-Tenant")).toBe(true);
+  });
+
+  it("rejects a row whose value has no key", () => {
+    const r = validateMcpServerDraft({
+      id: "x",
+      transport: "stdio",
+      command: "x",
+      env: { "": "orphan" },
+    });
+
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors.some((e) => e.field === "env.")).toBe(true);
+  });
+
+  it("accepts a key with an EMPTY value as an empty literal", () => {
+    const r = validateMcpServerDraft({
+      id: "x",
+      transport: "stdio",
+      command: "x",
+      env: { OPTIONAL_FLAG: "" },
+    });
+
+    expect(r.ok).toBe(true);
+  });
+
+  it("accepts bearerTokenEnv on http and refuses it beside an Authorization row", () => {
+    expect(
+      validateMcpServerDraft({
+        id: "x",
+        transport: "http",
+        url: "https://mcp.example.com",
+        bearerTokenEnv: "env:MCP_TOKEN",
+      }).ok,
+    ).toBe(true);
+
+    const conflict = validateMcpServerDraft({
+      id: "x",
+      transport: "http",
+      url: "https://mcp.example.com",
+      headers: { authorization: "Basic abc" },
+      bearerTokenEnv: "env:MCP_TOKEN",
+    });
+
+    expect(conflict.ok).toBe(false);
+    if (!conflict.ok)
+      expect(conflict.errors.some((e) => e.field === "bearerTokenEnv")).toBe(
+        true,
+      );
   });
 
   it("rejects an empty supportedAgents list", () => {
@@ -109,15 +188,18 @@ describe("buildMcpServerFields (T-C2)", () => {
       transport: "stdio",
       command: "run",
       args: ["--flag"],
-      envKeys: ["env:T"],
+      env: { T: "env:T" },
       url: "https://leftover.example.com",
-      headerKeys: ["env:LEFTOVER"],
+      headers: { "X-Leftover": "env:LEFTOVER" },
+      bearerTokenEnv: "env:LEFTOVER_TOKEN",
     });
 
     expect(f.command).toBe("run");
     expect(f.args).toEqual(["--flag"]);
+    expect(f.env).toEqual({ T: "env:T" });
     expect(f.url).toBeNull();
-    expect(f.headerKeys).toEqual([]);
+    expect(f.headers).toEqual({});
+    expect(f.bearerTokenEnv).toBeNull();
   });
 
   it("normalizes off-transport fields away for http", () => {
@@ -125,17 +207,19 @@ describe("buildMcpServerFields (T-C2)", () => {
       id: "x",
       transport: "http",
       url: "https://mcp.example.com",
-      headerKeys: ["env:AUTH"],
+      headers: { "X-Api-Key": "env:AUTH" },
+      bearerTokenEnv: "env:MCP_TOKEN",
       command: "leftover",
       args: ["--leftover"],
-      envKeys: ["env:LEFTOVER"],
+      env: { LEFTOVER: "env:LEFTOVER" },
     });
 
     expect(f.url).toBe("https://mcp.example.com");
-    expect(f.headerKeys).toEqual(["env:AUTH"]);
+    expect(f.headers).toEqual({ "X-Api-Key": "env:AUTH" });
+    expect(f.bearerTokenEnv).toBe("env:MCP_TOKEN");
     expect(f.command).toBeNull();
     expect(f.args).toEqual([]);
-    expect(f.envKeys).toEqual([]);
+    expect(f.env).toEqual({});
   });
 
   it("buildCreateBody carries the id + defaults agents/enabled", () => {

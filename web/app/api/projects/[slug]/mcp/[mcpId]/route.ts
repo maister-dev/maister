@@ -3,9 +3,9 @@ import "server-only";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
-import { ADAPTER_IDS } from "@/lib/acp-runners/adapter-support";
 import { authorizeCatalogRouteProject } from "@/lib/catalog/route-auth";
 import { catalogErrorResponse } from "@/lib/catalog/route-errors";
+import { projectMcpPatchSchema } from "@/lib/mcp/mcp-form";
 import {
   deleteProjectMcp,
   getProjectMcp,
@@ -16,27 +16,12 @@ import {
 // id; EVERY lookup is scoped to the project resolved from `slug`, so a row that
 // belongs to another project is invisible and yields 404 — the cross-project
 // isolation boundary. RBAC = manageCatalog (project admin), same helper as the
-// catalog caps routes. Secrets are env:NAME refs only.
+// catalog caps routes. ADR-177: values are whole-value `literal | env:NAME`,
+// validated by the ONE shared body schema (it replaced a verbatim copy of the
+// pre-ADR-177 key regex that lived here).
 
-const envKeyRefSchema = z
-  .string()
-  .regex(
-    /^(env:)?[A-Za-z_][A-Za-z0-9_]*$/,
-    "secret must be env:NAME, not a value",
-  );
-
-const patchBodySchema = z
-  .object({
-    transport: z.enum(["stdio", "sse", "http"]).optional(),
-    command: z.string().min(1).nullable().optional(),
-    args: z.array(z.string()).optional(),
-    envKeys: z.array(envKeyRefSchema).optional(),
-    url: z.string().url().nullable().optional(),
-    headerKeys: z.array(envKeyRefSchema).optional(),
-    supportedAgents: z.array(z.enum(ADAPTER_IDS)).min(1).optional(),
-    enabled: z.boolean().optional(),
-  })
-  .strict()
+const patchBodySchema = projectMcpPatchSchema
+  .extend({ enabled: z.boolean().optional() })
   .refine((body) => Object.keys(body).length > 0, {
     message: "no fields to update",
   });

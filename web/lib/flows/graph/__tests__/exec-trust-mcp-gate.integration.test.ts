@@ -93,7 +93,7 @@ async function seedRun(execTrust: FlowRevisionExecTrust) {
     material: {
       command: "github-mcp",
       args: [],
-      envKeys: ["GITHUB_TOKEN"],
+      env: { GITHUB_TOKEN: "env:GITHUB_TOKEN" },
       config: {},
     },
   });
@@ -156,6 +156,6 @@ describe("runGraph — stdio MCP spawn gated on flow_revisions.exec_trust (T-C8b
 
     expect(github).toBeDefined();
     expect(github?.transport).toBe("stdio");
-    expect(github?.envKeys).toContain("GITHUB_TOKEN");
+    expect(github?.env).toEqual({ GITHUB_TOKEN: "env:GITHUB_TOKEN" });
   }, 60_000);
 });

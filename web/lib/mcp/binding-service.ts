@@ -10,6 +10,7 @@ import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
 import { MaisterError } from "@/lib/errors";
+import { classifyMcpValue } from "@/lib/mcp/value-grammar";
 
 // ADR-129 (W-A/W-B/W-C): data layer for project_mcp_bindings. A binding maps a
 // capability ref to a concrete MCP target within one project. `project_id` is
@@ -38,7 +39,14 @@ const SOURCE_PRECEDENCE: Record<string, number> = {
   "flow-package": 2,
 };
 
-export type McpTargetSlots = { env: string[]; header: string[] };
+// ADR-177: slots are the KEYS of the target's `env`/`headers` maps. `transport`
+// rides along because `bearerTokenEnv` is overridable only for an http/sse
+// target, and that has to hold at write AND at materialization.
+export type McpTargetSlots = {
+  env: string[];
+  header: string[];
+  transport?: "stdio" | "sse" | "http";
+};
 
 export type McpBindingDto = {
   id: string;
@@ -111,8 +119,8 @@ export type PlatformBindCandidate = {
   transport: string;
   trustStatus: string;
   enabled: boolean;
-  envKeys: string[];
-  headerKeys: string[];
+  envSlots: string[];
+  headerSlots: string[];
 };
 
 export async function listPlatformBindCandidates(
@@ -123,29 +131,32 @@ export async function listPlatformBindCandidates(
     transport: string;
     trust_status: string;
     enabled: boolean;
-    env_keys: string[] | null;
-    header_keys: string[] | null;
+    env: Record<string, string> | null;
+    headers: Record<string, string> | null;
   }>(
     await db(injected).execute(sql`
-      SELECT id, transport, trust_status, enabled, env_keys, header_keys
+      SELECT id, transport, trust_status, enabled, env, headers
       FROM platform_mcp_servers ORDER BY id ASC
     `),
   );
 
+  // ADR-177: a candidate advertises its SLOTS (the map keys) — the overlay
+  // editor's datalist — not its values.
   return rows.map((r) => ({
     id: r.id,
     transport: r.transport,
     trustStatus: r.trust_status,
     enabled: r.enabled,
-    envKeys: r.env_keys ?? [],
-    headerKeys: r.header_keys ?? [],
+    envSlots: Object.keys(r.env ?? {}),
+    headerSlots: Object.keys(r.headers ?? {}),
   }));
 }
 
-// W-C: config_overlay is validated against the target's DECLARED slots. An
-// unknown slot or a non-`env:` remap value is a CONFIG (422). Pure — the sink's
-// invariant lives here so both the write path and the materialization defensive
-// re-check share it.
+// W-C, amended by ADR-177: config_overlay is validated against the target's
+// DECLARED slots. An unknown slot is a CONFIG (422); a VALUE uses the same
+// `literal | env:NAME` grammar as a server value, so only a malformed `env:`
+// value is refused. Pure — the sink's invariant lives here so both the write
+// path and the materialization defensive re-check share it.
 export function assertOverlayAgainstSlots(
   overlay: McpConfigOverlay,
   slots: McpTargetSlots,
@@ -153,34 +164,40 @@ export function assertOverlayAgainstSlots(
   const envSet = new Set(slots.env.map(bareSlot));
   const headerSet = new Set(slots.header.map(bareSlot));
 
-  for (const [slot, value] of Object.entries(overlay.envRemap ?? {})) {
-    if (!envSet.has(bareSlot(slot))) {
-      throw new MaisterError(
-        "CONFIG",
-        `overlay envRemap references unknown env slot "${slot}"`,
-      );
-    }
-    if (!ENV_REF.test(value)) {
-      throw new MaisterError(
-        "CONFIG",
-        `overlay envRemap value for "${slot}" must be env:NAME, not a value`,
-      );
+  for (const [kind, remap, known] of [
+    ["envRemap", overlay.envRemap, envSet],
+    ["headerRemap", overlay.headerRemap, headerSet],
+  ] as const) {
+    for (const [slot, value] of Object.entries(remap ?? {})) {
+      if (!known.has(bareSlot(slot))) {
+        throw new MaisterError(
+          "CONFIG",
+          `overlay ${kind} references unknown ${
+            kind === "envRemap" ? "env" : "header"
+          } slot "${slot}"`,
+        );
+      }
+      if (classifyMcpValue(value) === "malformed-env-ref") {
+        throw new MaisterError(
+          "CONFIG",
+          `overlay ${kind} value for "${slot}" must be a literal or env:NAME`,
+        );
+      }
     }
   }
 
-  for (const [slot, value] of Object.entries(overlay.headerRemap ?? {})) {
-    if (!headerSet.has(bareSlot(slot))) {
-      throw new MaisterError(
-        "CONFIG",
-        `overlay headerRemap references unknown header slot "${slot}"`,
-      );
-    }
-    if (!ENV_REF.test(value)) {
-      throw new MaisterError(
-        "CONFIG",
-        `overlay headerRemap value for "${slot}" must be env:NAME, not a value`,
-      );
-    }
+  if (overlay.bearerTokenEnv === undefined) return;
+
+  if (!ENV_REF.test(overlay.bearerTokenEnv)) {
+    throw new MaisterError("CONFIG", "overlay bearerTokenEnv must be env:NAME");
+  }
+  // The field does not exist on a stdio server, so an overlay that sets it is
+  // pointing at the wrong target rather than expressing an override.
+  if (slots.transport === "stdio") {
+    throw new MaisterError(
+      "CONFIG",
+      "overlay bearerTokenEnv is only valid for an http or sse target",
+    );
   }
 }
 
@@ -202,13 +219,14 @@ export async function resolveBindTarget(
 ): Promise<ResolvedBindTarget | null> {
   if (targetKind === "platform") {
     const result = await database.execute(sql`
-      SELECT id, env_keys, header_keys, enabled, trust_status
+      SELECT id, env, headers, transport, enabled, trust_status
       FROM platform_mcp_servers WHERE id = ${targetId} LIMIT 1
     `);
     const row = rowsOf<{
       id: string;
-      env_keys: string[] | null;
-      header_keys: string[] | null;
+      env: Record<string, string> | null;
+      headers: Record<string, string> | null;
+      transport: "stdio" | "sse" | "http";
       enabled: boolean;
       trust_status: string;
     }>(result)[0];
@@ -221,7 +239,11 @@ export async function resolveBindTarget(
 
     return {
       refId: row.id,
-      slots: { env: row.env_keys ?? [], header: row.header_keys ?? [] },
+      slots: {
+        env: Object.keys(row.env ?? {}),
+        header: Object.keys(row.headers ?? {}),
+        transport: row.transport,
+      },
       bindableAsExecutable: row.enabled && trusted,
       reason: !row.enabled
         ? "platform MCP is disabled"
@@ -241,16 +263,24 @@ export async function resolveBindTarget(
   `);
   const row = rowsOf<{
     capability_ref_id: string;
-    material: { envKeys?: string[]; headerKeys?: string[] } | null;
+    material: {
+      env?: Record<string, string>;
+      headers?: Record<string, string>;
+      transport?: "stdio" | "sse" | "http";
+    } | null;
   }>(result)[0];
 
   if (!row) return null;
 
+  // ADR-177: slots come from the map KEYS, which is what finally gives a
+  // package TEMPLATE target its slots — it stored `env` as a map all along and
+  // this resolver only ever read the name-list field.
   return {
     refId: row.capability_ref_id,
     slots: {
-      env: row.material?.envKeys ?? [],
-      header: row.material?.headerKeys ?? [],
+      env: Object.keys(row.material?.env ?? {}),
+      header: Object.keys(row.material?.headers ?? {}),
+      transport: row.material?.transport,
     },
     bindableAsExecutable: true,
   };

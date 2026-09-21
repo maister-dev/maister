@@ -26,6 +26,8 @@ import {
   type InstallResult,
 } from "@/lib/flows";
 import { loadFlowManifest } from "@/lib/config";
+import { evaluateMcpReadiness } from "@/lib/mcp/readiness";
+import { loadMcpReadinessContext } from "@/lib/mcp/readiness-host";
 import { resolvePackageSource } from "@/lib/packages/install";
 import { redactUrl } from "@/lib/repo-source";
 
@@ -425,6 +427,51 @@ function isReadyFlowRevision(revision: {
 // never disables them — attach/detach own their lifecycle (ADR-088).
 const ATTACHMENT_ORIGIN = "package-attachment";
 
+// ADR-177 (D18): ONE chunked host read over the UNION of every template's
+// referenced names, issued BEFORE the transaction. Reads, not side effects: a
+// host failure yields `Unknown` for every row and the attach still commits.
+async function packageReadinessByRef(install: any): Promise<ReadinessByRef> {
+  const manifest = manifestOf(install);
+  const templates = manifest.spec.mcps.map(
+    (mcp: {
+      id: string;
+      env?: Record<string, string>;
+      headers?: Record<string, string>;
+      bearerTokenEnv?: string | null;
+      transport?: "stdio" | "http";
+      command?: string;
+      url?: string;
+    }) => mcp,
+  );
+
+  if (templates.length === 0) return new Map();
+
+  const context = await loadMcpReadinessContext(templates, {
+    packageInstallId: install.id,
+  });
+
+  return new Map(
+    templates.map((mcp) => {
+      const readiness = evaluateMcpReadiness(
+        {
+          transport: mcp.transport ?? "stdio",
+          command: mcp.command ?? null,
+          url: mcp.url ?? null,
+          env: mcp.env,
+          headers: mcp.headers,
+          bearerTokenEnv: mcp.bearerTokenEnv ?? null,
+        },
+        context,
+      );
+
+      return [
+        mcp.id,
+        { status: readiness.status, reasons: readiness.reasons },
+      ] as const;
+    }),
+  );
+}
+
 function ingestionRecords(
   manifest: PackageInstallManifest,
   install: any,
@@ -432,9 +479,9 @@ function ingestionRecords(
   const records: Array<Record<string, unknown>> = [];
 
   for (const mcp of manifest.spec.mcps) {
-    const env: Record<string, string> = {};
-
-    for (const ref of mcp.env ?? []) env[ref.slice("env:".length)] = ref;
+    // ADR-177 (D34): `env` is ALREADY a map here — the loader folded the legacy
+    // `env:NAME` list once, so both manifest forms produce identical material.
+    const env = { ...(mcp.env ?? {}) };
 
     // ADR-129 (D3): an entry with NO implementation is a REQUIREMENT, not a
     // template. It is marked `requirement: true` so materialization skips it (it
@@ -454,7 +501,11 @@ function ingestionRecords(
             origin: ATTACHMENT_ORIGIN,
             packageInstallId: install.id,
             requirement: true,
-            envKeys: (mcp.env ?? []).map((ref) => ref.slice("env:".length)),
+            // A requirement declares SLOTS: the map keys. Since ADR-177 that is
+            // also what `resolveBindTarget` reads, so an overlay against a
+            // requirement or a package TEMPLATE can finally name them.
+            env,
+            headers: {},
             recommendedPlatformServerId: mcp.recommendedPlatformServerId,
           }
         : {
@@ -465,6 +516,10 @@ function ingestionRecords(
             args: mcp.args ?? [],
             env,
             url: mcp.url,
+            // Rebuilt wholesale per ingestion, so a version that DROPS these
+            // leaves no stale entry behind (SET/CLEAR symmetry).
+            headers: { ...(mcp.headers ?? {}) },
+            bearerTokenEnv: mcp.bearerTokenEnv ?? null,
             recommendedPlatformServerId: mcp.recommendedPlatformServerId,
           },
     });
@@ -499,13 +554,32 @@ function ingestionRecords(
   return records;
 }
 
+// ADR-177 (D18): the third write-time readiness cache site. The verdict arrives
+// PRECOMPUTED, keyed by ref — the two host reads happen in the public entry
+// points BEFORE `db.transaction`, so this function stays inside the tx without
+// doing I/O of its own.
+export type ReadinessByRef = ReadonlyMap<
+  string,
+  { status: "Unknown" | "Ready" | "NotReady"; reasons: string[] }
+>;
+
 async function writeIngestionRecords(
   tx: any,
   projectId: string,
   install: any,
+  readinessByRef: ReadinessByRef = new Map(),
 ): Promise<number> {
   const manifest = manifestOf(install);
-  const records = ingestionRecords(manifest, install);
+  const records = ingestionRecords(manifest, install).map((record) => {
+    const readiness = readinessByRef.get(record.capabilityRefId as string);
+
+    return readiness && record.kind === "mcp"
+      ? {
+          ...record,
+          material: { ...(record.material as object), readiness },
+        }
+      : record;
+  });
 
   if (records.length === 0) return 0;
 
@@ -626,6 +700,7 @@ async function wireMembers(
     workspaceRoot?: string;
     roleRefs?: readonly string[];
     install: any;
+    readinessByRef?: ReadinessByRef;
     signal?: AbortSignal;
   },
 ): Promise<{ memberFlows: InstallResult[]; capImportRowIds: string[] }> {
@@ -669,7 +744,12 @@ async function wireMembers(
     capImportRowIds.push(installed.importRowId);
   }
 
-  await writeIngestionRecords(tx, opts.projectId, opts.install);
+  await writeIngestionRecords(
+    tx,
+    opts.projectId,
+    opts.install,
+    opts.readinessByRef,
+  );
 
   const flowRowIds = memberFlows.map((m) => m.flowRowId);
 
@@ -748,6 +828,8 @@ export async function attachPackage(opts: {
 
   const manifest = manifestOf(install);
   const flowIds = manifest.spec.flows.map((f) => f.id);
+  // Host READS, before the transaction (ADR-177 D18).
+  const readinessByRef = await packageReadinessByRef(install);
 
   const attached: AttachResult = await db.transaction(async (tx: any) => {
     // Name pre-guard (ADR-132 §c): a fork's cut shares its upstream's
@@ -824,6 +906,7 @@ export async function attachPackage(opts: {
       workspaceRoot: opts.workspaceRoot,
       roleRefs: opts.roleRefs,
       install,
+      readinessByRef,
       signal: opts.signal,
     });
 
@@ -1010,6 +1093,10 @@ export async function upgradeAttachment(opts: {
     .from(packageInstalls)
     .where(eq(packageInstalls.id, att.packageInstallId));
 
+  // Host READS, before the transaction (ADR-177 D18). A version that DROPS a
+  // reference re-caches as Ready here — the verdict is rebuilt, never merged.
+  const readinessByRef = await packageReadinessByRef(next);
+
   await db.transaction(async (tx: any) => {
     if (previous) await deleteIngestionRecords(tx, opts.projectId, previous);
 
@@ -1029,6 +1116,7 @@ export async function upgradeAttachment(opts: {
       projectSlug: opts.projectSlug,
       workspaceRoot: opts.workspaceRoot,
       install: next,
+      readinessByRef,
       signal: opts.signal,
     });
     const flowRowIds = memberFlows.map((m) => m.flowRowId);

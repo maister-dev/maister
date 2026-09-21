@@ -54,9 +54,12 @@ async function seedPlatform(args: {
   const id = `srv-${randomUUID().slice(0, 8)}`;
 
   await db.execute(sql`
-    INSERT INTO platform_mcp_servers (id, transport, command, url, env_keys, enabled, trust_status)
+    INSERT INTO platform_mcp_servers (id, transport, command, url, env, headers,
+                                      bearer_token_env, enabled, trust_status)
     VALUES (${id}, ${args.transport}, 'npx', 'https://x/mcp',
-            ${JSON.stringify(["env:GH_TOKEN"])}::jsonb, true, ${args.trust})
+            ${JSON.stringify({ GH_TOKEN: "env:GH_TOKEN", FASTMCP_LOG_LEVEL: "ERROR" })}::jsonb,
+            ${JSON.stringify({ "X-Tenant": "acme" })}::jsonb,
+            'env:MCP_TOKEN', true, ${args.trust})
   `);
 
   return id;
@@ -79,7 +82,7 @@ describe("probe-service — D4 trust gate + no-secret cache", () => {
     ).rejects.toMatchObject({ code: "CONFIG" });
   });
 
-  it("allows an untrusted-source HTTP MCP (no local exec) and resolves NAMES only", async () => {
+  it("allows an untrusted-source HTTP MCP (no local exec) and sends maps UNRESOLVED", async () => {
     const projectId = await seedProject();
     const serverId = await seedPlatform({
       transport: "http",
@@ -93,8 +96,14 @@ describe("probe-service — D4 trust gate + no-secret cache", () => {
     );
 
     expect(request.transport).toBe("http");
-    // env NAMES only — never a value.
-    expect(request.envKeys).toEqual(["GH_TOKEN"]);
+    // ADR-177: references travel UNRESOLVED and a literal travels verbatim.
+    expect(request.env).toEqual({
+      GH_TOKEN: "env:GH_TOKEN",
+      FASTMCP_LOG_LEVEL: "ERROR",
+    });
+    expect(request.headers).toEqual({ "X-Tenant": "acme" });
+    // The bearer ref is forwarded as a NAME; the host composes the header.
+    expect(request.bearerTokenEnv).toBe("env:MCP_TOKEN");
     expect(JSON.stringify(request)).not.toContain(SECRET);
   });
 

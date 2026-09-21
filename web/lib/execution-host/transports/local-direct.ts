@@ -81,6 +81,28 @@ export function createLocalDirectTransport(): ExecutionHostTransport {
     diagnostics(opts) {
       return wire.checkSupervisorDiagnostics(opts);
     },
+    // ADR-177: the caller may pass any number of names; the ROUTE takes at most
+    // `ENV_REFS_MAX_PER_CALL`. De-duplicate first (so duplicates never consume
+    // the budget), chunk, then merge back in REQUEST order — the route answers
+    // in request order per chunk, but a caller must not depend on chunk
+    // boundaries.
+    async checkEnvRefs(names, opts) {
+      const distinct = [...new Set(names)];
+      const presence = new Map<string, boolean>();
+
+      for (let i = 0; i < distinct.length; i += wire.ENV_REFS_MAX_PER_CALL) {
+        const chunk = distinct.slice(i, i + wire.ENV_REFS_MAX_PER_CALL);
+
+        for (const ref of await wire.checkSupervisorEnvRefs(chunk, opts)) {
+          presence.set(ref.name, ref.present);
+        }
+      }
+
+      return distinct.map((name) => ({
+        name,
+        present: presence.get(name) ?? false,
+      }));
+    },
     platformStatus(opts) {
       return wire.checkSupervisorHealth(opts);
     },

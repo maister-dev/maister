@@ -38,10 +38,6 @@ function rowsOf<T>(result: { rows?: unknown[] }): T[] {
   return (result.rows ?? []) as T[];
 }
 
-function bare(k: string): string {
-  return k.startsWith("env:") ? k.slice(4) : k;
-}
-
 export type ProbeTargetInput =
   | { refId: string }
   | { targetKind: BindingTargetKind; targetId: string };
@@ -99,13 +95,15 @@ export async function resolveProbeTarget(
       transport: "stdio" | "sse" | "http";
       command: string | null;
       args: string[] | null;
-      env_keys: string[] | null;
+      env: Record<string, string> | null;
       url: string | null;
-      header_keys: string[] | null;
+      headers: Record<string, string> | null;
+      bearer_token_env: string | null;
       trust_status: string;
     }>(
       await database.execute(sql`
-        SELECT transport, command, args, env_keys, url, header_keys, trust_status
+        SELECT transport, command, args, env, url, headers, bearer_token_env,
+               trust_status
         FROM platform_mcp_servers WHERE id = ${targetId} LIMIT 1
       `),
     )[0];
@@ -134,9 +132,12 @@ export async function resolveProbeTarget(
         transport: row.transport,
         command: row.command ?? undefined,
         args: row.args ?? [],
-        envKeys: (row.env_keys ?? []).map(bare),
+        env: row.env ?? {},
         url: row.url ?? undefined,
-        headerKeys: (row.header_keys ?? []).map(bare),
+        headers: row.headers ?? {},
+        ...(row.bearer_token_env
+          ? { bearerTokenEnv: row.bearer_token_env }
+          : {}),
       },
       cache: { kind: "platform", id: targetId },
     };
@@ -148,10 +149,10 @@ export async function resolveProbeTarget(
       transport?: "stdio" | "sse" | "http";
       command?: string | null;
       args?: string[];
-      envKeys?: string[];
       env?: Record<string, string>;
       url?: string | null;
-      headerKeys?: string[];
+      headers?: Record<string, string>;
+      bearerTokenEnv?: string | null;
       requirement?: boolean;
     } | null;
   }>(
@@ -179,16 +180,18 @@ export async function resolveProbeTarget(
     );
   }
 
-  const envKeys = (m.envKeys ?? Object.keys(m.env ?? {})).map(bare);
-
+  // ADR-177: every source stores ONE map shape now (migration 0172), so this is
+  // a straight read — the pre-ADR-177 `envKeys ?? Object.keys(env)` dual read is
+  // gone.
   return {
     request: {
       transport: m.transport,
       command: m.command ?? undefined,
       args: m.args ?? [],
-      envKeys,
+      env: m.env ?? {},
       url: m.url ?? undefined,
-      headerKeys: (m.headerKeys ?? []).map(bare),
+      headers: m.headers ?? {},
+      ...(m.bearerTokenEnv ? { bearerTokenEnv: m.bearerTokenEnv } : {}),
     },
     cache: { kind: "capability", id: targetId },
   };

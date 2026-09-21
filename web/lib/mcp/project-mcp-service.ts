@@ -11,6 +11,8 @@ import pino from "pino";
 import { getDb } from "@/lib/db/client";
 import { MaisterError } from "@/lib/errors";
 import { validateMcpServerDraft } from "@/lib/mcp/mcp-form";
+import { evaluateMcpReadiness } from "@/lib/mcp/readiness";
+import { loadMcpReadinessContext } from "@/lib/mcp/readiness-host";
 import {
   buildProjectMcpMaterial,
   materialToDraft,
@@ -39,19 +41,24 @@ type RecordRow = {
 };
 
 // Read DTO returned by GET (list + item). Flattens the material so the client
-// modal can seed its form directly. Secrets are NAME-only references.
+// modal can seed its form directly. ADR-177: a value is `literal | env:NAME`;
+// the value behind a reference is never stored or returned.
 export type ProjectMcpDto = {
   id: string;
   mcpId: string;
+  description: string | null;
   transport: McpServerDraft["transport"];
   command: string | null;
   args: string[];
-  envKeys: string[];
+  env: Record<string, string>;
   url: string | null;
-  headerKeys: string[];
+  headers: Record<string, string>;
+  bearerTokenEnv: string | null;
   supportedAgents: McpAgent[];
   selectable: boolean;
   enabled: boolean;
+  readinessStatus: "Unknown" | "Ready" | "NotReady";
+  readinessReasons: string[];
 };
 
 const log = pino({
@@ -69,20 +76,43 @@ function toDto(row: RecordRow): ProjectMcpDto {
   return {
     id: row.id,
     mcpId: row.capability_ref_id,
+    description: draft.description,
     transport: draft.transport,
     command: draft.command,
     args: draft.args,
-    envKeys: draft.envKeys,
+    env: draft.env,
     url: draft.url,
-    headerKeys: draft.headerKeys,
+    headers: draft.headers,
+    bearerTokenEnv: draft.bearerTokenEnv,
     supportedAgents: draft.supportedAgents,
     selectable: row.selectable,
     enabled: row.disabled_at === null,
+    readinessStatus: row.material.readiness?.status ?? "Unknown",
+    readinessReasons: row.material.readiness?.reasons ?? [],
   };
 }
 
 function db(injected?: ProjectMcpDb): ProjectMcpDb {
   return injected ?? (getDb() as unknown as ProjectMcpDb);
+}
+
+// ADR-177 (D18): project rows cache readiness at WRITE time, exactly like the
+// platform rows do in their own columns. The host reads run BEFORE the write and
+// degrade to `Unknown`; `composeProjectMcpHub` and the DTO read this back, so it
+// is real state rather than a write-only field.
+async function withCachedReadiness(
+  material: ProjectMcpMaterial,
+  refId: string,
+): Promise<ProjectMcpMaterial> {
+  const readiness = evaluateMcpReadiness(
+    material,
+    await loadMcpReadinessContext([material], { refId }),
+  );
+
+  return {
+    ...material,
+    readiness: { status: readiness.status, reasons: readiness.reasons },
+  };
 }
 
 function assertValidDraft(draft: McpServerDraft): void {
@@ -158,7 +188,10 @@ export async function createProjectMcp(
 
   const database = db(injected);
   const recordId = randomUUID();
-  const material = buildProjectMcpMaterial(draft);
+  const material = await withCachedReadiness(
+    buildProjectMcpMaterial(draft),
+    draft.id,
+  );
   const agentsJson = JSON.stringify(material.supportedAgents);
   const materialJson = JSON.stringify(material);
 
@@ -198,12 +231,14 @@ export async function createProjectMcp(
 }
 
 export type ProjectMcpPatch = {
+  description?: string | null;
   transport?: McpServerDraft["transport"];
   command?: string | null;
   args?: string[];
-  envKeys?: string[];
+  env?: Record<string, string>;
   url?: string | null;
-  headerKeys?: string[];
+  headers?: Record<string, string>;
+  bearerTokenEnv?: string | null;
   supportedAgents?: McpAgent[];
   enabled?: boolean;
 };
@@ -222,18 +257,23 @@ export async function updateProjectMcp(
   const base = materialToDraft(current.capability_ref_id, current.material);
   const nextDraft: McpServerDraft = {
     id: current.capability_ref_id,
+    description: patch.description ?? base.description,
     transport: patch.transport ?? base.transport,
     command: patch.command ?? base.command,
     args: patch.args ?? base.args,
-    envKeys: patch.envKeys ?? base.envKeys,
+    env: patch.env ?? base.env,
     url: patch.url ?? base.url,
-    headerKeys: patch.headerKeys ?? base.headerKeys,
+    headers: patch.headers ?? base.headers,
+    bearerTokenEnv: patch.bearerTokenEnv ?? base.bearerTokenEnv,
     supportedAgents: patch.supportedAgents ?? base.supportedAgents,
   };
 
   assertValidDraft(nextDraft);
 
-  const material = buildProjectMcpMaterial(nextDraft);
+  const material = await withCachedReadiness(
+    buildProjectMcpMaterial(nextDraft),
+    current.capability_ref_id,
+  );
   const agentsJson = JSON.stringify(material.supportedAgents);
   const materialJson = JSON.stringify(material);
   // Enablement only changes when `enabled` is in the patch; an unrelated field

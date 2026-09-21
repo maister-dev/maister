@@ -15,6 +15,7 @@ export type ResolvedCapabilitySetLabels = {
   withheldReason: {
     "platform-untrusted": string;
     "exec-untrusted-stdio": string;
+    "agent-unsupported-transport": string;
   };
 };
 

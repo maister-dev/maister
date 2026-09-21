@@ -3,21 +3,20 @@ import "server-only";
 import { eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
-import { z } from "zod";
 
 import { requireGlobalRole } from "@/lib/authz";
-import { ADAPTER_IDS } from "@/lib/acp-runners/adapter-support";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import {
   buildMcpServerFields,
+  platformMcpPatchSchema,
   validateMcpServerDraft,
   type McpServerDraft,
 } from "@/lib/mcp/mcp-form";
 import { evaluateMcpReadiness } from "@/lib/mcp/readiness";
+import { loadMcpReadinessContext } from "@/lib/mcp/readiness-host";
 import { loadMcpUsageReferences } from "@/lib/mcp/usage";
-import { executionHosts } from "@/lib/execution-host";
 
 const { platformMcpServers } = schemaModule as unknown as Record<string, any>;
 
@@ -26,32 +25,14 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-const envKeyRefSchema = z
-  .string()
-  .regex(
-    /^(env:)?[A-Za-z_][A-Za-z0-9_]*$/,
-    "secret must be env:NAME, not a value",
-  );
-
-const patchBodySchema = z
-  .object({
-    transport: z.enum(["stdio", "sse", "http"]).optional(),
-    command: z.string().min(1).nullable().optional(),
-    args: z.array(z.string()).optional(),
-    envKeys: z.array(envKeyRefSchema).optional(),
-    url: z.string().url().nullable().optional(),
-    headerKeys: z.array(envKeyRefSchema).optional(),
-    supportedAgents: z.array(z.enum(ADAPTER_IDS)).min(1).optional(),
-    enabled: z.boolean().optional(),
-    // ADR-129: platform trust is load-bearing at materialization.
-    trustStatus: z
-      .enum(["untrusted", "trusted", "trusted_by_policy"])
-      .optional(),
-  })
-  .strict()
-  .refine((body) => Object.keys(body).length > 0, {
-    message: "no fields to update",
-  });
+// ADR-177: ONE body schema, built from the shared value grammar. It replaced a
+// verbatim copy of the pre-ADR-177 key regex that lived here (and in three
+// sibling route files). `trustStatus` is on it because platform trust is
+// load-bearing at materialization (ADR-129).
+const patchBodySchema = platformMcpPatchSchema.refine(
+  (body) => Object.keys(body).length > 0,
+  { message: "no fields to update" },
+);
 
 type RouteParams = { params: Promise<{ id: string }> };
 
@@ -151,9 +132,14 @@ export async function PATCH(
         current.transport) as McpServerDraft["transport"],
       command: parsed.data.command ?? (current.command as string | null),
       args: parsed.data.args ?? (current.args as string[]),
-      envKeys: parsed.data.envKeys ?? (current.envKeys as string[]),
+      description:
+        parsed.data.description ?? (current.description as string | null),
+      env: parsed.data.env ?? (current.env as Record<string, string>),
       url: parsed.data.url ?? (current.url as string | null),
-      headerKeys: parsed.data.headerKeys ?? (current.headerKeys as string[]),
+      headers:
+        parsed.data.headers ?? (current.headers as Record<string, string>),
+      bearerTokenEnv:
+        parsed.data.bearerTokenEnv ?? (current.bearerTokenEnv as string | null),
       supportedAgents:
         parsed.data.supportedAgents ??
         (current.supportedAgents as McpServerDraft["supportedAgents"]),
@@ -181,8 +167,10 @@ export async function PATCH(
     }
 
     const fields = buildMcpServerFields(nextDraft);
-    const diagnostics = await executionHosts.local().diagnostics();
-    const readiness = evaluateMcpReadiness(fields, diagnostics);
+    const readiness = evaluateMcpReadiness(
+      fields,
+      await loadMcpReadinessContext([fields], { serverId: id }),
+    );
 
     await db
       .update(platformMcpServers)

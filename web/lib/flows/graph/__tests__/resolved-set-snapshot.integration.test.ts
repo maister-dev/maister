@@ -158,7 +158,7 @@ async function seedTwoScopeGithub(projectId: string): Promise<void> {
       material: {
         command: "frozen-cmd",
         args: [],
-        envKeys: ["FROZEN_TOKEN"],
+        env: { FROZEN_TOKEN: "env:FROZEN_TOKEN" },
         config: {},
       },
     },
@@ -176,7 +176,7 @@ async function seedTwoScopeGithub(projectId: string): Promise<void> {
       material: {
         command: "live-cmd",
         args: [],
-        envKeys: ["LIVE_TOKEN"],
+        env: { LIVE_TOKEN: "env:LIVE_TOKEN" },
         config: {},
       },
     },
@@ -245,7 +245,7 @@ describe("runGraph — pins capability materialization to the launch snapshot (T
     expect(github).toBeDefined();
     // The launch snapshot froze github@flow-package; the runner must NOT pick up
     // the higher-precedence project record that appeared after launch.
-    expect(github?.envKeys).toContain("FROZEN_TOKEN");
-    expect(github?.envKeys ?? []).not.toContain("LIVE_TOKEN");
+    expect(Object.keys(github?.env ?? {})).toContain("FROZEN_TOKEN");
+    expect(Object.keys(github?.env ?? {})).not.toContain("LIVE_TOKEN");
   }, 60_000);
 });

@@ -406,6 +406,28 @@ const SupervisorDiagnosticsSchema = z
   })
   .strict();
 
+// ADR-177: `POST /diagnostics/env-refs` — host env-var PRESENCE by name. The
+// route answers in REQUEST order after de-duplication, one entry per DISTINCT
+// name, at most 64 per call. A value is never returned.
+const SupervisorEnvRefsSchema = z
+  .object({
+    refs: z.array(
+      z
+        .object({
+          name: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/),
+          present: z.boolean(),
+        })
+        .strict(),
+    ),
+  })
+  .strict();
+
+export type SupervisorEnvRefPresence = z.infer<
+  typeof SupervisorEnvRefsSchema
+>["refs"][number];
+
+export const ENV_REFS_MAX_PER_CALL = 64;
+
 export type {
   PlatformStatus,
   PlatformUnavailableReason,
@@ -785,6 +807,57 @@ export async function checkSupervisorDiagnostics(
   return { kind: "ready", diagnostics: parsed.data };
 }
 
+// ADR-177: one WIRE call — exactly `ENV_REFS_MAX_PER_CALL` names at most. The
+// de-duplication, chunking and merge live in the execution-host transport so
+// every caller may pass any number of names.
+export async function checkSupervisorEnvRefs(
+  names: readonly string[],
+  opts: { timeoutMs?: number } = {},
+): Promise<SupervisorEnvRefPresence[]> {
+  const url = `${baseUrl()}/diagnostics/env-refs`;
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(),
+    opts.timeoutMs ?? DEFAULT_DIAGNOSTICS_TIMEOUT_MS,
+  );
+
+  // Names only — never a value, and never the map they came from.
+  logger.debug({ url, count: names.length }, "checkSupervisorEnvRefs");
+
+  let res: Response;
+
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      cache: "no-store",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ names }),
+      signal: controller.signal,
+    });
+  } catch (err) {
+    throw networkErrorToMaister(err, "checkSupervisorEnvRefs");
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  if (!res.ok) {
+    const message = await readErrorMessage(res, `supervisor ${res.status}`);
+
+    throw new MaisterError("EXECUTOR_UNAVAILABLE", message);
+  }
+
+  const parsed = SupervisorEnvRefsSchema.safeParse(await res.json());
+
+  if (!parsed.success) {
+    throw new MaisterError(
+      "EXECUTOR_UNAVAILABLE",
+      `malformed env-refs response: ${parsed.error.message}`,
+    );
+  }
+
+  return parsed.data.refs;
+}
+
 export async function listSessions(): Promise<SupervisorSessionRecord[]> {
   const url = `${baseUrl()}/sessions`;
 
@@ -836,16 +909,19 @@ export async function resolveModelSuggestions(
   return (await res.json()) as SupervisorModelCatalog;
 }
 
-// ADR-129 (W-F): proxy a NAMES-only MCP health probe to the supervisor. The
-// exec-trust gate is enforced web-side BEFORE this call; the supervisor resolves
-// env/header values from process.env and never returns a secret.
+// ADR-129 (W-F), amended by ADR-177: proxy an MCP health probe to the
+// supervisor. `env`/`headers` are VALUE maps: an `env:NAME` reference travels
+// the wire UNRESOLVED and a literal travels verbatim, so the value behind a
+// reference never leaves the host. The exec-trust gate is enforced web-side
+// BEFORE this call.
 export type SupervisorMcpProbeRequest = {
   transport: "stdio" | "sse" | "http";
   command?: string;
   args?: string[];
-  envKeys?: string[];
+  env?: Record<string, string>;
   url?: string;
-  headerKeys?: string[];
+  headers?: Record<string, string>;
+  bearerTokenEnv?: string;
 };
 
 export type SupervisorMcpProbeResult = {

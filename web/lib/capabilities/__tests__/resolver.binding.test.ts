@@ -169,7 +169,7 @@ describe("firstAgentUnsupportedRequiredMcp — binding-aware (W-B)", () => {
         "claude",
         [binding("github", "platform", "srv-1")],
       ),
-    ).toBe("github");
+    ).toMatchObject({ refId: "github", reason: "unsupported-agent" });
   });
 
   it("skips a disabled-bound required ref (unresolvable → owned by the CONFIG gate)", () => {
@@ -190,6 +190,6 @@ describe("firstAgentUnsupportedRequiredMcp — binding-aware (W-B)", () => {
         [rec("github", "project", ["codex"])],
         "claude",
       ),
-    ).toBe("github");
+    ).toMatchObject({ refId: "github", reason: "unsupported-agent" });
   });
 });

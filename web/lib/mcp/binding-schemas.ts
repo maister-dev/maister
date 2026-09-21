@@ -1,20 +1,20 @@
 import { z } from "zod";
 
-// ADR-129: request contracts for the project MCP binding routes. The overlay
-// carries NAME-only remaps (env:NAME); args/url are non-secret overrides. Every
-// schema is `.strict()` so a body cannot smuggle an unknown field.
+import { envRefSchema, mcpValueSchema } from "@/lib/mcp/value-grammar";
 
-const envRef = z
-  .string()
-  .regex(
-    /^env:[A-Za-z_][A-Za-z0-9_]*$/,
-    "secret must be env:NAME, not a value",
-  );
+// ADR-129, amended by ADR-177: request contracts for the project MCP binding
+// routes. The overlay replaces the VALUE for a slot the target declares and
+// keeps the slot's name, so a remap value uses the SAME `literal | env:NAME`
+// grammar as a server value (D32) — one validator for web, supervisor, manifest
+// and overlay. `args`/`url` are non-secret overrides; `bearerTokenEnv` is
+// `env:NAME` and only for an http/sse target (checked against the target's
+// slots). Every schema is `.strict()` so a body cannot smuggle an unknown field.
 
 export const mcpConfigOverlaySchema = z
   .object({
-    envRemap: z.record(envRef).optional(),
-    headerRemap: z.record(envRef).optional(),
+    envRemap: z.record(mcpValueSchema).optional(),
+    headerRemap: z.record(mcpValueSchema).optional(),
+    bearerTokenEnv: envRefSchema.optional(),
     argsOverride: z.array(z.string()).optional(),
     urlOverride: z.string().url().optional(),
   })

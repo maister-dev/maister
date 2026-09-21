@@ -7,6 +7,7 @@ import { useMemo, useState } from "react";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 import { CodeEditor } from "@/components/flows/code-editor";
+import { isEnvRef } from "@/lib/mcp/value-grammar";
 
 export interface McpTemplateEditorLabels {
   prefillHeading: string;
@@ -35,7 +36,11 @@ type McpTemplate = {
   command?: string;
   args?: string[];
   url?: string;
-  env?: string[];
+  // ADR-177: the map form. The manifest schema still accepts the legacy
+  // `string[]` of `env:NAME`, but Studio writes the map.
+  env?: Record<string, string>;
+  headers?: Record<string, string>;
+  bearerTokenEnv?: string;
   description?: string;
   recommendedPlatformServerId?: string;
 };
@@ -47,19 +52,45 @@ function stemOf(fileName: string): string {
   return base.replace(/\.(ya?ml|json)$/i, "") || "mcp";
 }
 
-// Materialize a catalog row into a package-manifest MCP template. SECRETS NEVER
-// CROSS: only the env/header var NAMES become `env:NAME` references (T2.1). The
-// platform catalog's `sse` transport is mapped to the package schema's `http`
-// (the package DSL admits only `stdio | http`). ADR-129 (D3): the source server
-// id IS now persisted as `recommendedPlatformServerId` — the match hint the
-// project MCP hub pre-selects when binding this ref.
+// Materialize a catalog row into a package-manifest MCP template. A package is
+// SHAREABLE, so a literal must never land in one (ADR-177 D28): an `env:NAME`
+// value is copied as-is, and a LITERAL is converted to a reference — env key
+// `K` becomes `env:K`, and a header name is uppercased with every
+// non-[A-Za-z0-9_] character replaced by `_` (and a leading digit prefixed) so
+// the generated name always satisfies the env-name regex. The platform
+// catalog's `sse` transport is mapped to the package schema's `http` (the
+// package DSL admits only `stdio | http`). ADR-129 (D3): the source server id
+// IS persisted as `recommendedPlatformServerId` — the match hint the project
+// MCP hub pre-selects when binding this ref.
+function envNameForHeader(header: string): string {
+  const upper = header.toUpperCase().replace(/[^A-Za-z0-9_]/g, "_");
+
+  return /^[0-9]/.test(upper) ? `_${upper}` : upper;
+}
+
+function templateEnv(entry: PlatformMcpCatalogEntry): Record<string, string> {
+  const out: Record<string, string> = {};
+
+  for (const [key, value] of Object.entries(entry.env ?? {})) {
+    out[key] = isEnvRef(value) ? value : `env:${key}`;
+  }
+  for (const [name, value] of Object.entries(entry.headers ?? {})) {
+    const key = envNameForHeader(name);
+
+    out[key] = isEnvRef(value) ? value : `env:${key}`;
+  }
+  if (entry.bearerTokenEnv) {
+    out[envNameForHeader("bearer_token")] = entry.bearerTokenEnv;
+  }
+
+  return out;
+}
+
 function materialize(
   entry: PlatformMcpCatalogEntry,
   fileName: string,
 ): McpTemplate {
-  const envNames = [...entry.envKeys, ...entry.headerKeys].map((key) =>
-    key.startsWith("env:") ? key : `env:${key}`,
-  );
+  const env = templateEnv(entry);
 
   if (entry.transport === "stdio") {
     return {
@@ -67,7 +98,7 @@ function materialize(
       transport: "stdio",
       command: entry.command ?? "",
       ...(entry.args.length > 0 ? { args: entry.args } : {}),
-      ...(envNames.length > 0 ? { env: envNames } : {}),
+      ...(Object.keys(env).length > 0 ? { env } : {}),
       description: entry.id,
       recommendedPlatformServerId: entry.id,
     };
@@ -77,7 +108,7 @@ function materialize(
     id: stemOf(fileName),
     transport: "http",
     url: entry.url ?? "",
-    ...(envNames.length > 0 ? { env: envNames } : {}),
+    ...(Object.keys(env).length > 0 ? { env } : {}),
     description: entry.id,
     recommendedPlatformServerId: entry.id,
   };

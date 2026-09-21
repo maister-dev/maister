@@ -22247,13 +22247,17 @@ components:
         MCP server. `env`/`headers` values are whole-value
         `literal | env:NAME` (`McpValue`); a LITERAL is accepted. Normalization
         is by transport, as on the platform body.
-      required: [refId, transport]
+      required: [id, transport]
       additionalProperties: false
       properties:
-        refId:
+        id:
           type: string
           minLength: 1
-          description: Capability ref id — must be unique within the project.
+          description: |
+            Capability ref id — must be unique within the project. (Spelled
+            `refId` in this spec before ADR-177; the route has always taken
+            `id`, and the response DTO still carries both `id` (row id) and
+            `mcpId` (the ref).)
         transport: { $ref: "#/components/schemas/McpTransport" }
         command:
           type: string
