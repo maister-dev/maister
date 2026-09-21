@@ -163,6 +163,15 @@ own task. Do not convert a bar to this pattern in passing.
   dropped. Do NOT key that reset on the transition's pending flag: a transition
   whose scope schedules no state update settles before the page it asked for
   arrives.
+- **Anything else that builds a URL from the same state must read the pending
+  patch too.** A view tab, a "reset" link, a breadcrumb — if its href is built
+  from the server's copy of the filters, it is stale by construction and a click
+  on it silently discards whatever the reader just committed. Two clicks in one
+  gesture is the ordinary case, not a corner: clicking such a control BLURS the
+  focused field, which commits. Hold the patch as STATE, not only as a ref, or
+  those hrefs never re-render; own it above every consumer; and make the
+  provider mandatory rather than defaulting to "compose onto nothing", which is
+  the same invisible degradation in a new place.
 - **A param the current view does not own is not a filter.** Where the field set
   varies by view (or tab, or mode), drop the unowned params where the URL is
   PARSED, so the applied filters and the rendered controls come from one

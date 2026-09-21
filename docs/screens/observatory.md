@@ -123,7 +123,10 @@ Presets, selects and date inputs commit on `change`; free-text fields commit on
 blur or Enter. Clearing a field removes its param. Changing a second control
 before the first has come back keeps BOTH changes: each commit composes onto the
 edits still in flight, so a fast reader never watches one of their own choices
-disappear. The bar renders the
+disappear. The view tabs read the same in-flight patch, so clicking one right
+after a filter change — or clicking one WHILE a text field is focused, which
+blurs and commits it — lands on the new view with that change applied, not
+merely displayed. The bar renders the
 **effective** period, so a clamped or dropped custom range is visible rather than
 silently ignored. A free-text field whose text is NOT in the URL — typed but not
 committed, or stranded by the blur-then-tab sequence a view click causes — keeps

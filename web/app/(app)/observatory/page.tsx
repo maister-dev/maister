@@ -12,6 +12,7 @@ import { CostKindBreakdown } from "@/components/observatory/cost-kind-breakdown"
 import { CoverageMapCard } from "@/components/observatory/coverage-map-card";
 import { labelsFromTranslations } from "@/components/observatory/labels";
 import { ObservatoryFilterBar } from "@/components/observatory/observatory-filter-bar";
+import { ObservatoryFilterState } from "@/components/observatory/observatory-filter-state";
 import { ObservatorySummary } from "@/components/observatory/observatory-summary";
 import { ObservatoryViews } from "@/components/observatory/observatory-views";
 import { OverviewCostStrip } from "@/components/observatory/overview-cost-strip";
@@ -85,17 +86,21 @@ export default async function ObservatoryPage({
         </p>
       </header>
 
-      <ObservatoryFilterBar
-        current={barCurrent}
-        labels={labels}
-        pathname={PATHNAME}
-        projectOptions={projectOptions}
-      />
-      <ObservatoryViews
-        current={barCurrent}
-        labels={labels}
-        pathname={PATHNAME}
-      />
+      {/* One owner for the edits still in flight, so a tab href carries them
+          (D7) — the bar is still mounted once, above the view switch. */}
+      <ObservatoryFilterState current={barCurrent} pathname={PATHNAME}>
+        <ObservatoryFilterBar
+          current={barCurrent}
+          labels={labels}
+          pathname={PATHNAME}
+          projectOptions={projectOptions}
+        />
+        <ObservatoryViews
+          current={barCurrent}
+          labels={labels}
+          pathname={PATHNAME}
+        />
+      </ObservatoryFilterState>
 
       {current.view === "overview" ? (
         <>

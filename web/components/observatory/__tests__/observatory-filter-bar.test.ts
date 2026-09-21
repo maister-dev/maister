@@ -25,6 +25,8 @@ vi.mock("next/navigation", () => ({
 }));
 
 import { ObservatoryFilterBar } from "@/components/observatory/observatory-filter-bar";
+import { ObservatoryFilterState } from "@/components/observatory/observatory-filter-state";
+import { ObservatoryViews } from "@/components/observatory/observatory-views";
 import { labelsForTest } from "@/components/observatory/__tests__/labels.fixture";
 import { parseObservatorySearchParams } from "@/lib/observatory/filters";
 
@@ -39,13 +41,19 @@ function render(params: Record<string, string> = {}, projects = true): void {
 
   act(() => {
     root.render(
-      createElement(ObservatoryFilterBar, {
+      // The pending-patch owner sits above the bar on both routes; composing
+      // edits is its job, so the bar cannot be exercised without it.
+      createElement(ObservatoryFilterState, {
         current,
-        labels,
         pathname: "/observatory",
-        projectOptions: projects
-          ? [{ slug: "maister", name: "MAIster" }]
-          : undefined,
+        children: createElement(ObservatoryFilterBar, {
+          current,
+          labels,
+          pathname: "/observatory",
+          projectOptions: projects
+            ? [{ slug: "maister", name: "MAIster" }]
+            : undefined,
+        }),
       }),
     );
   });
@@ -249,7 +257,12 @@ describe("ObservatoryFilterBar", () => {
     );
   });
 
-  it("keeps the text across the blur-then-view-switch sequence a tab click causes", () => {
+  // A tab click no longer strands a committed value — it carries it (see the
+  // shared-pending-patch suite below). This pins the case that REMAINS: a
+  // navigation the bar did not build, such as Back or a drill-down link, which
+  // lands a URL without the value. The text stays on screen, because the bar is
+  // mounted once, and says it is not applied.
+  it("keeps the text when a navigation the bar did not build drops it", () => {
     render({ view: "quality" });
 
     const node = byName<HTMLInputElement>("nodeId");
@@ -270,9 +283,9 @@ describe("ObservatoryFilterBar", () => {
     );
     render({ view: "quality", nodeId: "draft-node" });
 
-    // ...and THEN the tab's own href lands, built by the server before that
-    // commit existed, so it carries no nodeId. Holding the draft only in the
-    // DOM loses the text here: the value change remounts the field empty.
+    // ...and THEN a navigation the bar did not build lands without the nodeId.
+    // Holding the draft only in the DOM loses the text here: the value change
+    // remounts the field empty.
     render({ view: "harness" });
 
     expect(byName<HTMLInputElement>("nodeId").value).toBe("draft-node");
@@ -309,7 +322,7 @@ describe("ObservatoryFilterBar", () => {
     ).toBeNull();
   });
 
-  it("keeps announcing a draft the view switch stranded", () => {
+  it("keeps announcing a draft a foreign navigation stranded", () => {
     render({ view: "quality" });
 
     const node = byName<HTMLInputElement>("nodeId");
@@ -322,8 +335,8 @@ describe("ObservatoryFilterBar", () => {
       node.dispatchEvent(new FocusEvent("focusout", { bubbles: true })),
     );
     render({ view: "quality", nodeId: "draft-node" });
-    // The tab's href was built before that commit existed, so it lands without
-    // the param — the text survives (by design) and must say it is not applied.
+    // A navigation the bar did not build lands without the param — the text
+    // survives (by design) and must say it is not applied.
     render({ view: "harness" });
 
     expect(byName<HTMLInputElement>("nodeId").value).toBe("draft-node");
@@ -497,6 +510,132 @@ describe("ObservatoryFilterBar", () => {
     // The preset group is a fieldset with its own legend.
     expect(container.querySelector("fieldset > legend")?.textContent).toBe(
       labels.period.label,
+    );
+  });
+});
+
+// ADR-177 D7/D6. A view tab is a `<Link>`, and its href used to be built by the
+// SERVER from a `current` that predates anything the reader just committed. Two
+// clicks in one gesture — a period preset, then a tab — therefore lost the
+// period, because the tab's href was written before the preset existed. The bar
+// and the tabs now read one pending patch, so the href composes it.
+describe("view tabs and the bar share the pending patch", () => {
+  function renderNav(params: Record<string, string> = {}): void {
+    const { current } = parseObservatorySearchParams(params, NOW);
+
+    act(() => {
+      root.render(
+        createElement(ObservatoryFilterState, {
+          current,
+          pathname: "/observatory",
+          children: [
+            createElement(ObservatoryFilterBar, {
+              key: "bar",
+              current,
+              labels,
+              pathname: "/observatory",
+              projectOptions: [{ slug: "maister", name: "MAIster" }],
+            }),
+            createElement(ObservatoryViews, {
+              key: "views",
+              current,
+              labels,
+              pathname: "/observatory",
+            }),
+          ],
+        }),
+      );
+    });
+  }
+
+  function tabHref(view: string): string {
+    return (
+      container
+        .querySelector(`[data-testid="observatory-view-${view}"]`)
+        ?.getAttribute("href") ?? "<<no tab>>"
+    );
+  }
+
+  it("starts with tab hrefs that mirror the URL", () => {
+    renderNav();
+
+    expect(tabHref("harness")).toBe("/observatory?view=harness&windowDays=30");
+  });
+
+  it("carries a preset committed a moment earlier into every tab href", () => {
+    renderNav();
+
+    const preset = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent === labels.period.preset7,
+    );
+
+    // No re-render after this: the server has not answered yet, which is
+    // exactly when a tab click used to discard the preset.
+    act(() => preset?.click());
+
+    expect(tabHref("harness")).toBe("/observatory?view=harness&windowDays=7");
+    expect(tabHref("cost")).toBe("/observatory?view=cost&windowDays=7");
+  });
+
+  it("carries a run kind and a project committed before the click", () => {
+    renderNav();
+
+    change(byName<HTMLSelectElement>("runKind"), "scratch");
+    change(byName<HTMLSelectElement>("project"), "maister");
+
+    expect(tabHref("cost")).toBe(
+      "/observatory?view=cost&windowDays=30&runKind=scratch&project=maister",
+    );
+  });
+
+  // The blur-then-tab sequence: clicking a tab blurs the field, which COMMITS.
+  it("carries a text filter the tab click itself committed", () => {
+    renderNav({ view: "quality" });
+
+    const node = byName<HTMLInputElement>("nodeId");
+
+    act(() => {
+      setValue(node, "checks");
+      node.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+    });
+
+    expect(tabHref("harness")).toBe(
+      "/observatory?view=harness&windowDays=30&nodeId=checks",
+    );
+  });
+
+  // Harness does not own the artifact pair (D7), so a pending artifact filter
+  // must NOT ride along — the drop wins over the pending patch.
+  it("still drops a pending filter the target view does not own", () => {
+    renderNav({ view: "quality" });
+
+    const artifact = byName<HTMLInputElement>("artifactKind");
+
+    act(() => {
+      setValue(artifact, "log");
+      artifact.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+    });
+
+    expect(tabHref("quality")).toContain("artifactKind=log");
+    expect(tabHref("harness")).toBe("/observatory?view=harness&windowDays=30");
+  });
+
+  it("stops carrying the patch once the round-trip lands", () => {
+    renderNav();
+
+    const preset = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent === labels.period.preset7,
+    );
+
+    act(() => preset?.click());
+    expect(tabHref("harness")).toBe("/observatory?view=harness&windowDays=7");
+
+    // The server answers; the patch is spent, and the reader goes elsewhere.
+    renderNav({ windowDays: "7" });
+    renderNav({ view: "quality", nodeId: "from-a-drilldown" });
+
+    expect(tabHref("harness")).toBe(
+      "/observatory?view=harness&windowDays=30&nodeId=from-a-drilldown",
     );
   });
 });

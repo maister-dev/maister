@@ -152,6 +152,13 @@ export function observatoryViewHref(
   pathname: string,
   current: ObservatoryCurrent,
   view: ObservatoryView,
+  /**
+   * Filter edits committed but not yet reflected by `current`. A tab href built
+   * without them drops whatever the reader changed in the moment before the
+   * click — a period preset, most often, because a preset and a tab are two
+   * clicks in the same gesture.
+   */
+  pending: ObservatoryHrefPatch = {},
 ): string {
   const drop = Object.fromEntries(
     OBSERVATORY_DRILLDOWN_KEYS.filter(
@@ -159,7 +166,9 @@ export function observatoryViewHref(
     ).map((key) => [key, null]),
   ) as ObservatoryHrefPatch;
 
-  return buildObservatoryHref(pathname, current, { ...drop, view });
+  // Pending first: the drop has to win over a pending artifact key, or a
+  // committed artifact filter would ride into a view that cannot show it.
+  return buildObservatoryHref(pathname, current, { ...pending, ...drop, view });
 }
 
 /**

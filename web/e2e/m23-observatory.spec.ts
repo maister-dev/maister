@@ -236,23 +236,71 @@ test.describe("M23 Observatory", () => {
     }
   });
 
-  test("an uncommitted draft survives a view switch", async ({ page }) => {
+  // The blur-then-tab sequence, in a real browser — the one place jsdom cannot
+  // answer, because it is the browser that decides whether the blur's state
+  // update flushes before the click navigates. Clicking a tab blurs the field,
+  // which COMMITS; the tab href has to carry that commit or the reader lands on
+  // a view filtered by nothing, holding text the page is not using.
+  test("a tab click commits the typed filter and carries it into the new view", async ({
+    page,
+  }) => {
     await page.goto("/observatory?view=quality");
 
     const node = page.getByRole("textbox", { name: "Node" });
 
     // Typed, never committed: no blur, no Enter.
-    await node.fill("draft-node");
+    //
+    // RETRY the fill until React holds it. `fill` only sets the DOM value, and
+    // `goto` resolves on load — which in Next dev is well before hydration, so
+    // an early keystroke reaches the DOM and nothing else. The hint renders
+    // from component state alone, so its appearance is the proof. Without this
+    // the test raced hydration and failed about a quarter of the time, once
+    // taking a full page navigation on the click.
+    await expect(async () => {
+      await node.fill("draft-node");
+      await expect(
+        page.getByTestId("observatory-filter-nodeId-uncommitted"),
+      ).toBeVisible({ timeout: 500 });
+    }).toPass({ timeout: 20_000 });
     await expect(page).not.toHaveURL(/nodeId=/);
 
     await page.getByRole("tab", { name: "Harness" }).click();
     await expect(page).toHaveURL(/view=harness/);
 
-    // The bar is mounted ONCE above the view switch, so the draft is still
-    // there to commit.
+    // The commit rode along, so the field is not merely still on screen (the
+    // bar is mounted once) — the page is actually filtered by it, and the
+    // not-applied hint is gone.
+    await expect(page).toHaveURL(/nodeId=draft-node/);
     await expect(page.getByRole("textbox", { name: "Node" })).toHaveValue(
       "draft-node",
     );
+    await expect(
+      page.getByTestId("observatory-filter-nodeId-uncommitted"),
+    ).toHaveCount(0);
+  });
+
+  // Two clicks in one gesture, the common case: a period preset and then a
+  // tab. The tab href used to be built by the server before the preset existed.
+  test("a period committed a moment before a tab click is not lost", async ({
+    page,
+  }) => {
+    await page.goto("/observatory?view=overview&windowDays=30");
+
+    // Prove hydration on a preset we are NOT racing, and let it land. Doing
+    // this with the raced preset instead would close the very window the test
+    // exists to open.
+    await expect(async () => {
+      await page.getByRole("button", { name: "7d" }).click();
+      await expect(page).toHaveURL(/windowDays=7/, { timeout: 500 });
+    }).toPass({ timeout: 20_000 });
+
+    // Now the real gesture: a preset and a tab, back to back, with no wait for
+    // the preset's round-trip. The tab's href predates it by construction.
+    await page.getByRole("button", { name: "90d" }).click();
+    await page.getByRole("tab", { name: "Harness" }).click();
+
+    await expect(page).toHaveURL(/view=harness/);
+    await expect(page).toHaveURL(/windowDays=90/);
   });
 
   test("a project with no cache and no usable repository renders read-only insufficient evidence", async ({

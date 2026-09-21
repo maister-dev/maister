@@ -17,6 +17,7 @@ import { labelsForTest } from "@/components/observatory/__tests__/labels.fixture
 import { OverviewCostStrip } from "@/components/observatory/overview-cost-strip";
 import { OverviewTable } from "@/components/observatory/overview-table";
 import { ObservatoryViews } from "@/components/observatory/observatory-views";
+import { ObservatoryFilterState } from "@/components/observatory/observatory-filter-state";
 import {
   QualityFlowsTable,
   QualityProjectsTable,
@@ -520,10 +521,14 @@ describe("OverviewCostStrip", () => {
 describe("ObservatoryViews", () => {
   it("renders four href tabs and marks the active one", () => {
     const html = renderToStaticMarkup(
-      createElement(ObservatoryViews, {
+      createElement(ObservatoryFilterState, {
         current: parseObservatorySearchParams({ view: "cost" }, NOW).current,
-        labels,
         pathname: "/observatory",
+        children: createElement(ObservatoryViews, {
+          current: parseObservatorySearchParams({ view: "cost" }, NOW).current,
+          labels,
+          pathname: "/observatory",
+        }),
       }),
     );
 

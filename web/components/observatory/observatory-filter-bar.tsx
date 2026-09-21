@@ -9,6 +9,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
 
 import { buildObservatoryHref } from "@/lib/observatory/href";
+import { useObservatoryFilterState } from "@/components/observatory/observatory-filter-state";
 import { DELIVERY_RUN_KINDS } from "@/lib/observatory/run-kind";
 import { OBSERVATORY_PERIOD_PRESETS } from "@/lib/observatory/period";
 import { isObservatoryRunKind } from "@/lib/observatory/run-kind";
@@ -102,24 +103,14 @@ export function ObservatoryFilterBar({
   // discarded one keeps SHOWING the reader's choice while the page is filtered
   // by something else. Patch values are absolute rather than deltas, so
   // replaying the merged patch onto whichever `current` is live is idempotent.
-  const inFlight = useRef<ObservatoryHrefPatch>({});
-  // The URL the server state represents. It changing is the ONLY evidence that
-  // a navigation landed — `pending` is not, because a transition whose scope
-  // schedules no state update settles before the page it asked for arrives.
-  const currentHref = buildObservatoryHref(pathname, current);
-
-  useEffect(() => {
-    // Either our patch arrived, or the reader went somewhere else entirely
-    // (Back, a heatmap drill-down). Both mean the accumulated patch is spent:
-    // replaying it onto the next edit would re-impose a filter the URL no
-    // longer carries.
-    inFlight.current = {};
-  }, [currentHref]);
+  //
+  // The patch is owned ABOVE this bar, because the view tabs build their hrefs
+  // from it too — see `observatory-filter-state.tsx`.
+  const { commit: mergePending } = useObservatoryFilterState();
 
   const commit = (patch: ObservatoryHrefPatch): void => {
-    const merged = { ...inFlight.current, ...patch };
+    const merged = mergePending(patch);
 
-    inFlight.current = merged;
     startTransition(() => {
       router.replace(buildObservatoryHref(pathname, current, merged), {
         scroll: false,
