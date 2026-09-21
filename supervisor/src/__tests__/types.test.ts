@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import {
   AdoptWorkspacePayloadSchema,
+  EnvRefsRequestSchema,
   errorBody,
   LEGACY_SESSION_PATH_FIELDS,
   legacySessionPathField,
+  McpProbeRequestSchema,
+  McpServerInputSchema,
   SendPromptRequestSchema,
   StartSessionRequestSchema,
   SupervisorDiagnosticsResponseSchema,
@@ -868,5 +871,241 @@ describe("httpStatusForCode", () => {
     expect(httpStatusForCode("ACP_PROTOCOL")).toBe(500);
     expect(httpStatusForCode("CHECKPOINT")).toBe(500);
     expect(httpStatusForCode("CRASH")).toBe(500);
+  });
+});
+
+// ADR-179: the MCP field set is shared by `POST /sessions` mcpServers[] and
+// `POST /mcp-probe`. Nothing pinned it before (C5: the two schemas had already
+// drifted), so these cases are the seam contract for both.
+
+const httpServer = {
+  name: "github",
+  transport: "http",
+  url: "https://api.githubcopilot.com/mcp/",
+} as const;
+
+const stdioServer = {
+  name: "filesystem",
+  transport: "stdio",
+  command: "npx",
+} as const;
+
+describe("McpServerInputSchema (ADR-179)", () => {
+  it("accepts env and headers value maps", () => {
+    expect(
+      McpServerInputSchema.safeParse({
+        ...stdioServer,
+        env: { GITHUB_TOKEN: "env:GITHUB_TOKEN", FASTMCP_LOG_LEVEL: "ERROR" },
+      }).success,
+    ).toBe(true);
+
+    expect(
+      McpServerInputSchema.safeParse({
+        ...httpServer,
+        headers: { "X-Tenant": "acme" },
+        bearerTokenEnv: "env:GITHUB_TOKEN",
+      }).success,
+    ).toBe(true);
+  });
+
+  it("rejects a malformed env: value under its own key path", () => {
+    const result = McpServerInputSchema.safeParse({
+      ...stdioServer,
+      env: { GH: "env:1BAD" },
+    });
+
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.issues[0]?.path).toEqual(["env", "GH"]);
+  });
+
+  it("rejects bearerTokenEnv on stdio", () => {
+    const result = McpServerInputSchema.safeParse({
+      ...stdioServer,
+      bearerTokenEnv: "env:GITHUB_TOKEN",
+    });
+
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.issues[0]?.path).toEqual(["bearerTokenEnv"]);
+  });
+
+  it("rejects bearerTokenEnv beside an Authorization header, case-insensitively", () => {
+    for (const headerName of [
+      "Authorization",
+      "authorization",
+      "AUTHORIZATION",
+    ]) {
+      const result = McpServerInputSchema.safeParse({
+        ...httpServer,
+        headers: { [headerName]: "Basic abc" },
+        bearerTokenEnv: "env:GITHUB_TOKEN",
+      });
+
+      expect(result.success).toBe(false);
+      if (result.success) continue;
+      expect(result.error.issues[0]?.path).toEqual(["bearerTokenEnv"]);
+    }
+  });
+
+  it("rejects bearerTokenEnv that is not an env:NAME reference", () => {
+    expect(
+      McpServerInputSchema.safeParse({ ...httpServer, bearerTokenEnv: "tok-1" })
+        .success,
+    ).toBe(false);
+  });
+
+  it("rejects a header name that is not an RFC 7230 token", () => {
+    expect(
+      McpServerInputSchema.safeParse({
+        ...httpServer,
+        headers: { "X Tenant": "acme" },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects a literal header value carrying CR/LF or a control character", () => {
+    const CR = String.fromCharCode(13);
+    const LF = String.fromCharCode(10);
+    const NUL = String.fromCharCode(0);
+    const DEL = String.fromCharCode(127);
+
+    for (const bad of [
+      `a${CR}${LF}X-Evil: 1`,
+      `a${LF}b`,
+      `a${NUL}b`,
+      `a${DEL}b`,
+    ]) {
+      expect(
+        McpServerInputSchema.safeParse({
+          ...httpServer,
+          headers: { "X-Tenant": bad },
+        }).success,
+      ).toBe(false);
+    }
+
+    // A tab and the printable range stay legal field-values.
+    expect(
+      McpServerInputSchema.safeParse({
+        ...httpServer,
+        headers: { "X-Tenant": `a${String.fromCharCode(9)}b ~` },
+      }).success,
+    ).toBe(true);
+  });
+
+  it("rejects an env key that is not an environment variable name", () => {
+    expect(
+      McpServerInputSchema.safeParse({
+        ...stdioServer,
+        env: { "1BAD": "x" },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects more than 64 entries in either map", () => {
+    const big = Object.fromEntries(
+      Array.from({ length: 65 }, (_, i) => [`K_${i}`, "v"]),
+    );
+
+    expect(
+      McpServerInputSchema.safeParse({ ...stdioServer, env: big }).success,
+    ).toBe(false);
+  });
+
+  it("refuses the other transport's fields rather than carrying both", () => {
+    expect(
+      McpServerInputSchema.safeParse({
+        ...stdioServer,
+        url: "https://example.com",
+      }).success,
+    ).toBe(false);
+
+    expect(
+      McpServerInputSchema.safeParse({ ...httpServer, command: "npx" }).success,
+    ).toBe(false);
+  });
+});
+
+describe("McpProbeRequestSchema (ADR-179)", () => {
+  it("shares the field set minus `name`", () => {
+    expect(
+      McpProbeRequestSchema.safeParse({
+        transport: "stdio",
+        command: "npx",
+        env: { GITHUB_TOKEN: "env:GITHUB_TOKEN" },
+      }).success,
+    ).toBe(true);
+
+    expect(
+      McpProbeRequestSchema.safeParse({
+        transport: "http",
+        url: "https://mcp.example.com/v1",
+        headers: { "X-Tenant": "acme" },
+        bearerTokenEnv: "env:MCP_TOKEN",
+      }).success,
+    ).toBe(true);
+  });
+
+  it("rejects `name` — the probe body is the field set minus it", () => {
+    expect(
+      McpProbeRequestSchema.safeParse({
+        transport: "stdio",
+        command: "npx",
+        name: "filesystem",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("applies the same bearer rules", () => {
+    expect(
+      McpProbeRequestSchema.safeParse({
+        transport: "stdio",
+        command: "npx",
+        bearerTokenEnv: "env:MCP_TOKEN",
+      }).success,
+    ).toBe(false);
+
+    expect(
+      McpProbeRequestSchema.safeParse({
+        transport: "http",
+        url: "https://mcp.example.com/v1",
+        headers: { Authorization: "Basic abc" },
+        bearerTokenEnv: "env:MCP_TOKEN",
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe("EnvRefsRequestSchema (ADR-179)", () => {
+  const names = (n: number) => Array.from({ length: n }, (_, i) => `NAME_${i}`);
+
+  it("accepts 1..64 names", () => {
+    expect(EnvRefsRequestSchema.safeParse({ names: ["PATH"] }).success).toBe(
+      true,
+    );
+    expect(EnvRefsRequestSchema.safeParse({ names: names(64) }).success).toBe(
+      true,
+    );
+  });
+
+  it("refuses 0 and 65 (strictly outside on both sides)", () => {
+    expect(EnvRefsRequestSchema.safeParse({ names: [] }).success).toBe(false);
+    expect(EnvRefsRequestSchema.safeParse({ names: names(65) }).success).toBe(
+      false,
+    );
+  });
+
+  it("refuses a name that is not an environment variable name", () => {
+    for (const bad of ["BAD NAME", "1BAD", "a-b", ""]) {
+      expect(EnvRefsRequestSchema.safeParse({ names: [bad] }).success).toBe(
+        false,
+      );
+    }
+  });
+
+  it("refuses unknown properties", () => {
+    expect(
+      EnvRefsRequestSchema.safeParse({ names: ["PATH"], values: true }).success,
+    ).toBe(false);
   });
 });

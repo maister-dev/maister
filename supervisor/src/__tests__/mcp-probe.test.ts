@@ -6,13 +6,14 @@ import { dirname, join } from "node:path";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   buildMcpTransport,
   probeMcpServer,
   type McpProbeRequest,
 } from "../mcp-probe";
+import { resolveMcpHeaderRecord, resolveMcpMap } from "../mcp-values";
 
 // ADR-129 (W-F): real MCP initialize handshake with deferred-release teardown.
 
@@ -89,7 +90,7 @@ describe("buildMcpTransport — three transports shaped correctly", () => {
       transport: "stdio",
       command: "npx",
       args: ["-y", "server"],
-      envKeys: ["FOO"],
+      env: { FOO: "env:FOO" },
     });
 
     expect(t).toBeInstanceOf(StdioClientTransport);
@@ -99,7 +100,7 @@ describe("buildMcpTransport — three transports shaped correctly", () => {
     const t = buildMcpTransport({
       transport: "http",
       url: "https://mcp.example/mcp",
-      headerKeys: ["Authorization"],
+      headers: { "X-Tenant": "acme" },
     });
 
     expect(t).toBeInstanceOf(StreamableHTTPClientTransport);
@@ -112,5 +113,50 @@ describe("buildMcpTransport — three transports shaped correctly", () => {
     });
 
     expect(t).toBeInstanceOf(SSEClientTransport);
+  });
+});
+
+// ADR-179: the probe resolves on the host exactly as the ACP path does. The
+// transport objects hide their requestInit, so assert through the shared
+// resolver the builder calls — the join is pinned by the schema sharing one
+// field set (types.test.ts) plus these value semantics.
+describe("probe header resolution (ADR-179)", () => {
+  const OWNED = "MCP_PROBE_HEADER_SENTINEL";
+
+  afterEach(() => {
+    delete process.env[OWNED];
+  });
+
+  it("resolves a reference, passes a literal, and composes Authorization LAST", () => {
+    process.env[OWNED] = "tok-probe";
+
+    expect(
+      resolveMcpHeaderRecord(
+        { "X-Tenant": "acme", "X-Key": `env:${OWNED}` },
+        `env:${OWNED}`,
+      ),
+    ).toEqual({
+      "X-Tenant": "acme",
+      "X-Key": "tok-probe",
+      Authorization: "Bearer tok-probe",
+    });
+  });
+
+  it("emits no Authorization header without bearerTokenEnv", () => {
+    expect(
+      Object.keys(resolveMcpHeaderRecord({ "X-Tenant": "acme" }, undefined)),
+    ).toEqual(["X-Tenant"]);
+  });
+
+  it("resolves the stdio env map the same way", () => {
+    process.env[OWNED] = "env-probe";
+
+    expect(
+      resolveMcpMap({
+        A: `env:${OWNED}`,
+        B: "literal",
+        C: "env:MCP_PROBE_ABSENT_SENTINEL",
+      }),
+    ).toEqual({ A: "env-probe", B: "literal", C: "" });
   });
 });

@@ -431,8 +431,8 @@ returned, and the route logs only a `{ count }` line — never a name.**
 | Rule | Value |
 | ---- | ----- |
 | Name pattern | `^[A-Za-z_][A-Za-z0-9_]*$` |
-| Count | 1..64 (after the caller de-duplicates); 0 or 65 → `409 PRECONDITION` |
-| Ordering | `refs` mirrors **request order**, not sorted |
+| Count | 1..64 per call; 0 or 65 → `409 PRECONDITION` |
+| Ordering | `refs` mirrors **request order**, one entry per DISTINCT name, not sorted |
 | Relationship to `GET /diagnostics.envRefs` | none — that is a fixed catalog for runner readiness; `MAISTER_DIAGNOSTIC_ENV_REFS` does not affect this route |
 
 The web tier calls it through `HostAdminClient.checkEnvRefs(names)`, which

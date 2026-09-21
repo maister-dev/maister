@@ -379,9 +379,9 @@ paths:
         runner-readiness source.
 
         **Ordering.** `refs` is returned in REQUEST order after de-duplication —
-        not sorted. The caller (`HostAdminClient.checkEnvRefs`) dedupes, chunks
-        by the 64-name cap and merges in request order, so a caller may pass any
-        number of names.
+        not sorted, and one entry per DISTINCT name. The caller
+        (`HostAdminClient.checkEnvRefs`) dedupes, chunks by the 64-name cap and
+        merges in request order, so a caller may pass any number of names.
 
         **Identifiers.** `names[]` is `body-controlled` and allow-listed by
         `^[A-Za-z_][A-Za-z0-9_]*$`; it names no run, session, workspace, or
@@ -404,7 +404,7 @@ paths:
         "409":
           description: |
             Malformed body (Zod rejection → `PRECONDITION`): an empty list, more
-            than 64 names after de-duplication, or a name failing the regex.
+            than 64 names, or a name failing the regex.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
@@ -2258,8 +2258,9 @@ components:
             pattern: '^[A-Za-z_][A-Za-z0-9_]*$'
             maxLength: 256
           description: |
-            Environment-variable NAMES to check on this host. De-duplicated by
-            the caller; more than 64 after de-duplication is refused.
+            Environment-variable NAMES to check on this host. At most 64 per
+            call; the host de-duplicates before answering, so `refs` may be
+            shorter than `names`.
       example:
         names: ["GITHUB_TOKEN", "MCP_AUTH", "PATH"]
     EnvRefsResponse:

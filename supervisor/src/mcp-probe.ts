@@ -5,9 +5,12 @@ import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
-// ADR-129 (W-F): a real MCP `initialize` handshake against a target server. The
-// web tier sends NAMES only (`envKeys`/`headerKeys`); the supervisor resolves
-// their VALUES from `process.env` — a value never crosses the wire or a log.
+import { resolveMcpHeaderRecord, resolveMcpMap } from "./mcp-values.js";
+
+// ADR-129 (W-F) + ADR-179: a real MCP `initialize` handshake against a target
+// server. The web tier sends `env`/`headers` VALUE maps; a `literal` is used as
+// written and an `env:NAME` reference is resolved HERE from `process.env` — the
+// value behind a reference never crosses the wire or a log.
 // Deferred-release: `transport.close()` (SDK: SIGTERM → grace → SIGKILL) runs on
 // EVERY path (success, handshake error, timeout, spawn error) in `finally`.
 
@@ -19,8 +22,13 @@ export type McpProbeRequest = {
   transport: "stdio" | "sse" | "http";
   command?: string;
   args?: string[];
-  envKeys?: string[];
+  env?: Record<string, string>;
   url?: string;
+  headers?: Record<string, string>;
+  bearerTokenEnv?: string;
+  // D33 cut-over window: still honoured for exactly one commit while the web
+  // probe path switches. Deleted with the strict schema removal.
+  envKeys?: string[];
   headerKeys?: string[];
 };
 
@@ -42,24 +50,23 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-// Resolve env-var NAMES → { NAME: value } from the supervisor's process.env.
-// NAMES come from the web tier; VALUES are read here, never transmitted.
-function resolveNames(
+// D33 cut-over window: fold a pre-ADR-179 NAME list into the map form. Both
+// stored spellings exist (`GITHUB_TOKEN` and `env:GITHUB_TOKEN`), so strip
+// first. Deleted with the strict schema removal.
+function legacyRefMap(
   names: readonly string[] | undefined,
 ): Record<string, string> {
-  const out: Record<string, string> = {};
+  return Object.fromEntries(
+    (names ?? []).map((raw) => {
+      const name = raw.startsWith("env:") ? raw.slice(4) : raw;
 
-  for (const raw of names ?? []) {
-    const name = raw.startsWith("env:") ? raw.slice(4) : raw;
-
-    out[name] = process.env[name] ?? "";
-  }
-
-  return out;
+      return [name, `env:${name}`];
+    }),
+  );
 }
 
-// Build the transport-appropriate SDK client transport from a NAMES-only request.
-// Exported so the "three transports shaped correctly" contract is unit-testable.
+// Build the transport-appropriate SDK client transport. Exported so the "three
+// transports shaped correctly" contract is unit-testable.
 export function buildMcpTransport(req: McpProbeRequest): Transport {
   if (req.transport === "stdio") {
     return new StdioClientTransport({
@@ -68,14 +75,17 @@ export function buildMcpTransport(req: McpProbeRequest): Transport {
       env: {
         PATH: process.env.PATH ?? "",
         HOME: process.env.HOME ?? "",
-        ...resolveNames(req.envKeys),
+        ...resolveMcpMap({ ...legacyRefMap(req.envKeys), ...req.env }),
       },
       stderr: "ignore",
     });
   }
 
   const url = new URL(req.url ?? "");
-  const headers = resolveNames(req.headerKeys);
+  const headers = resolveMcpHeaderRecord(
+    { ...legacyRefMap(req.headerKeys), ...req.headers },
+    req.bearerTokenEnv,
+  );
   const requestInit = { headers };
 
   return req.transport === "sse"

@@ -28,6 +28,7 @@ import {
   toolCallSignature,
   WRITE_KINDS,
 } from "./guardrail-hooks";
+import { resolveMcpEnvVariables, resolveMcpHeaders } from "./mcp-values";
 import { modelCatalogCache } from "./model-catalog/cache";
 import { harvestSessionModels } from "./model-catalog/harvest";
 import {
@@ -948,19 +949,36 @@ export async function createAcpConnection(
     "acp initialized",
   );
 
-  // M27/T-C4: build the transport-appropriate ACP McpServer. Secret VALUES are
-  // resolved here, supervisor-side, from process.env by NAME — never received
-  // from the web tier (envKeys/headerKeys carry NAMES only).
+  // D33 cut-over window: fold a pre-ADR-179 NAME list into the map form so this
+  // one commit still serves a web tier that has not switched yet. Both stored
+  // spellings exist (`GITHUB_TOKEN` and `env:GITHUB_TOKEN`), so strip first.
+  // Deleted with the strict schema removal.
+  const legacyRefMap = (
+    names: readonly string[] | undefined,
+  ): Record<string, string> =>
+    Object.fromEntries(
+      (names ?? []).map((raw) => {
+        const name = raw.startsWith("env:") ? raw.slice(4) : raw;
+
+        return [name, `env:${name}`];
+      }),
+    );
+
+  // M27/T-C4 + ADR-179: build the transport-appropriate ACP McpServer. A value
+  // is `literal | env:NAME`; the VALUE behind a reference is resolved HERE,
+  // host-side, from process.env — never received from the web tier. stdio
+  // entries stay UNTAGGED: claude-agent-acp silently DROPS a server carrying an
+  // explicit `type:"stdio"` (the ACP v2 shape) and the supervisor imports v1.
   const acpMcpServers: acp.McpServer[] = (args.mcpServers ?? []).map((s) => {
     if (s.transport === "sse" || s.transport === "http") {
       return {
         type: s.transport,
         name: s.name,
         url: s.url ?? "",
-        headers: (s.headerKeys ?? []).map((k) => ({
-          name: k,
-          value: process.env[k] ?? "",
-        })),
+        headers: resolveMcpHeaders(
+          { ...legacyRefMap(s.headerKeys), ...s.headers },
+          s.bearerTokenEnv,
+        ),
       };
     }
 
@@ -968,17 +986,7 @@ export async function createAcpConnection(
       name: s.name,
       command: s.command ?? "",
       args: s.args ?? [],
-      // Literal `env` entries (server-generated secrets, M34) win over
-      // same-named process.env lookups.
-      env: [
-        ...(s.envKeys ?? [])
-          .filter((k) => !(k in (s.env ?? {})))
-          .map((k) => ({ name: k, value: process.env[k] ?? "" })),
-        ...Object.entries(s.env ?? {}).map(([name, value]) => ({
-          name,
-          value,
-        })),
-      ],
+      env: resolveMcpEnvVariables({ ...legacyRefMap(s.envKeys), ...s.env }),
     };
   });
 
