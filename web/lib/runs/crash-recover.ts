@@ -71,6 +71,54 @@ async function evidenceAlreadyApplied(
   return row?.actionCompletion?.commandId === commandId;
 }
 
+/** ADR-175's refusal to re-prompt from disagreeing evidence, preserved after
+ * ADR-177 started CLOSING the attempt at crash time.
+ *
+ * `openRunningAttempts` only sees `Running` attempts with a null `ended_at`.
+ * The `owner-poisoned` boundary closes the attempt `Reworked`, so by the time
+ * an operator clicks Recover there is no open attempt left and this function
+ * answered `absent` — which routes straight to a fresh dispatch. That silently
+ * undid the one thing the quarantine arm exists to guarantee: a turn whose
+ * receipt and terminal event DISAGREE must never be re-prompted, because
+ * nobody knows what the original turn actually did.
+ *
+ * So when no open attempt remains, the node's most recent CLOSED attempt is
+ * checked for a quarantined command before the caller is allowed to dispatch.
+ * The marker survives the boundary by design: it writes `application_state`
+ * without clearing `application_error`.
+ */
+async function quarantinedOnClosedAttempt(
+  db: Db,
+  input: { runId: string; nodeId: string },
+): Promise<CrashEvidenceOutcome> {
+  const [row] = await db
+    .select({ id: executionCommands.id })
+    .from(executionCommands)
+    .innerJoin(
+      nodeAttempts,
+      sql`${nodeAttempts.id} = ${executionCommands.ownerRef}->>'nodeAttemptId'`,
+    )
+    .where(
+      and(
+        eq(executionCommands.runId, input.runId),
+        eq(executionCommands.kind, "session.prompt"),
+        sql`${executionCommands.ownerRef}->>'variant' = 'node'`,
+        sql`${executionCommands.applicationError}->>'reason' = 'prompt_terminal_conflict'`,
+        eq(nodeAttempts.nodeId, input.nodeId),
+      ),
+    )
+    .orderBy(desc(executionCommands.createdAt))
+    .limit(1);
+
+  if (!row) return "absent";
+  log.warn(
+    { runId: input.runId, nodeId: input.nodeId, commandId: row.id },
+    "crash-recover: evidence-first {quarantined} on a CLOSED attempt — refusing to re-prompt a disagreeing turn",
+  );
+
+  return "quarantined";
+}
+
 export type CrashEvidenceOutcome =
   | "applied"
   | "absent"
@@ -111,7 +159,7 @@ export async function applyCrashedTurnEvidence(
 ): Promise<CrashEvidenceOutcome> {
   const attempts = await openRunningAttempts(db, input);
 
-  if (attempts.length === 0) return "absent";
+  if (attempts.length === 0) return await quarantinedOnClosedAttempt(db, input);
 
   for (const attempt of attempts) {
     // Newest first, so a node re-prompted within one attempt reconciles the

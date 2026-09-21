@@ -255,6 +255,40 @@ describe("the flow GATE owner refuses a lost turn (ADR-177 T3.3)", () => {
     );
   }, 60_000);
 
+  it("a gate whose PARENT ACTION already completed still stales and crashes", async () => {
+    // The production shape, and the one the first version of this suite missed:
+    // gates run AFTER the action persists `action_completion` on the SAME
+    // attempt (`runner-graph.ts` — "Run pre_finish.gates after the action
+    // succeeds"). The close guard used to require `action_completion IS NULL`,
+    // so a real lost gate turn matched zero rows, threw, and the owner retried
+    // until the command poisoned — a permanent stall, while the fixture without
+    // a completion passed happily.
+    const seeded = await seedGate();
+
+    await testDatabase.db
+      .update(nodeAttempts)
+      .set({
+        actionCompletion: {
+          version: 1,
+          commandId: seeded.commandId,
+          promptOrdinal: 0,
+          result: { ok: true, stdout: "action done", vars: {} },
+          originalOutput: { kind: "sentinel", text: "done", truncated: false },
+        },
+      })
+      .where(eq(nodeAttempts.id, seeded.nodeAttemptId));
+
+    expect(await applyGate(seeded, { ...TURN_LOST_NESTED })).toBe("applied");
+    expect((await read(runs, seeded.runId)).status).toBe("Crashed");
+    expect((await read(schema.gateResults, seeded.evaluationId)).status).toBe(
+      "stale",
+    );
+    expect(
+      (await read(nodeAttempts, seeded.nodeAttemptId)).actionCompletion,
+      "the action's own result is NOT discarded by a lost gate turn",
+    ).not.toBeNull();
+  }, 60_000);
+
   it("an ordinary gate failure is untouched by this arm", async () => {
     const seeded = await seedGate();
 
@@ -343,6 +377,79 @@ describe("applyTurnLostBoundary — every loser writes NOTHING", () => {
       "the attempt close is inside the same transaction as the run crash — one rolls both back",
     ).toBe("Running");
     expect((await read(nodeAttempts, seeded.nodeAttemptId)).endedAt).toBeNull();
+  }, 60_000);
+
+  it("refuses when the node moved to a DIFFERENT attempt since classification (Codex review)", async () => {
+    // The interleaving: the sweep classifies lost attempt A, and before the
+    // write lands a Recover closes A and opens attempt B at the same node.
+    // Re-deriving "the open attempt" would hand A's diagnosis to B and mark B's
+    // healthy in-flight command applied. The classified identity is carried, so
+    // the write refuses a moved target instead.
+    const a = await seed();
+
+    await testDatabase.db
+      .update(nodeAttempts)
+      .set({ status: "Reworked", endedAt: new Date() })
+      .where(eq(nodeAttempts.id, a.nodeAttemptId));
+    const bId = randomUUID();
+
+    await testDatabase.db.insert(nodeAttempts).values({
+      id: bId,
+      runId: a.runId,
+      nodeId: "implement",
+      nodeType: "ai_coding",
+      attempt: 2,
+      status: "Running",
+      executionAssignmentId: a.assignmentId,
+      actionPromptOrdinal: 0,
+      startedAt: new Date(),
+    });
+    // B's OWN in-flight prompt. Without it the boundary yields for lack of a
+    // command and the case passes for the wrong reason — measured: the first
+    // version of this test stayed green with the identity check disabled.
+    const bCommandId = randomUUID();
+
+    await testDatabase.db.insert(executionCommands).values({
+      id: bCommandId,
+      runId: a.runId,
+      executionAssignmentId: a.assignmentId,
+      executionHostId: hostId,
+      assignmentEpoch: a.assignmentEpoch,
+      kind: "session.prompt",
+      targetSessionId: `sess-b-${bId.slice(0, 8)}`,
+      payload: {},
+      maxAttempts: 3,
+      ownerKind: "flow_node_attempt",
+      ownerRef: {
+        version: 1,
+        variant: "node",
+        nodeAttemptId: bId,
+        promptOrdinal: 0,
+        runId: a.runId,
+        runSessionId: randomUUID(),
+        incarnationId: randomUUID(),
+        assignmentId: a.assignmentId,
+        assignmentEpoch: a.assignmentEpoch,
+      },
+      logicalOperationKey: `flow_node_attempt:node:${bId}:0`,
+      requestSchema: "maister.command.request.v1",
+      requestSha256: "d".repeat(64),
+      state: "accepted",
+      acceptedAt: new Date(),
+    });
+
+    expect(
+      await boundary({ runId: a.runId, expectedAttemptId: a.nodeAttemptId }),
+    ).toBe("not-claimed");
+    expect((await read(runs, a.runId)).status).toBe("Running");
+    expect(
+      (await read(nodeAttempts, bId)).status,
+      "attempt B is a different turn and must be left entirely alone",
+    ).toBe("Running");
+    expect(
+      (await read(executionCommands, bCommandId)).applicationState,
+      "B's healthy in-flight command must never be marked applied by A's diagnosis",
+    ).toBe("pending");
   }, 60_000);
 
   it("an attempt with no owned prompt yields rather than crashing on thin evidence", async () => {

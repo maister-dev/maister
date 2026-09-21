@@ -214,6 +214,67 @@ describe("Recover and a lost turn (ADR-177 D5)", () => {
   }, 60_000);
 });
 
+describe("the quarantine refusal survives the attempt close (Codex review)", () => {
+  // ADR-177's `owner-poisoned` boundary CLOSES the attempt. `openRunningAttempts`
+  // only sees open `Running` rows, so Recover then answered `absent` and routed
+  // straight to a fresh dispatch — silently undoing the one guarantee the
+  // quarantine arm exists for: a turn whose receipt and terminal event DISAGREE
+  // must never be re-prompted, because nobody knows what it actually did.
+  it("a quarantined command on a CLOSED attempt still refuses the re-prompt", async () => {
+    const seeded = await seedCrashed({ applicationState: "poisoned" });
+
+    await testDatabase.db
+      .update(executionCommands)
+      .set({
+        applicationError: {
+          reason: "prompt_terminal_conflict",
+          phase: "prepare",
+          causeCode: "x",
+        },
+      })
+      .where(eq(executionCommands.id, seeded.commandId));
+    // Exactly what the boundary leaves behind.
+    await testDatabase.db
+      .update(nodeAttempts)
+      .set({
+        status: "Reworked",
+        decision: "turn_lost",
+        endedAt: new Date(),
+      })
+      .where(eq(nodeAttempts.id, seeded.nodeAttemptId));
+    const assignmentId = await mintResume(seeded.runId);
+
+    expect(
+      await applyCrashedTurnEvidence(db, {
+        runId: seeded.runId,
+        nodeId: "implement",
+        assignmentId,
+      }),
+      "`absent` here routes to a fresh dispatch and re-prompts a disagreeing turn",
+    ).toBe("quarantined");
+  }, 60_000);
+
+  it("a CLOSED attempt with no quarantine still answers absent", async () => {
+    // The negative: closing an attempt must not start refusing ordinary
+    // recovers. Without this the fix would block every re-dispatch.
+    const seeded = await seedCrashed();
+
+    await testDatabase.db
+      .update(nodeAttempts)
+      .set({ status: "Reworked", decision: "turn_lost", endedAt: new Date() })
+      .where(eq(nodeAttempts.id, seeded.nodeAttemptId));
+    const assignmentId = await mintResume(seeded.runId);
+
+    expect(
+      await applyCrashedTurnEvidence(db, {
+        runId: seeded.runId,
+        nodeId: "implement",
+        assignmentId,
+      }),
+    ).toBe("absent");
+  }, 60_000);
+});
+
 describe("agent and scratch leave no owner_unapplied command (ADR-177 D4)", () => {
   it.each(["agent", "scratch"] as const)(
     "a %s run whose turn was lost still discharges its command",

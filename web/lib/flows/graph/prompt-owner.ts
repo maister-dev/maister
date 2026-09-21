@@ -32,7 +32,10 @@ import {
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import { isTurnLostError } from "@/lib/reconcile-evidence";
-import { closeTurnLostAttempt } from "@/lib/runs/turn-lost-boundary";
+import {
+  closeTurnLostAttempt,
+  TurnLostCasLost,
+} from "@/lib/runs/turn-lost-boundary";
 import {
   lockCurrentSessionAssignment,
   staleSessionBinding,
@@ -389,13 +392,27 @@ export const flowPromptOwnerAdapter = definePromptOwnerAdapter(
             evaluation.nodeAttemptId !== currentAttempt.id
           )
             return "superseded";
-          await closeTurnLostAttempt(tx, {
-            runId: ref.runId,
-            nodeAttemptId: currentAttempt.id,
-            reason: "turn-lost",
-            fromStatuses: [run.status],
-            fromAttemptStatuses: [currentAttempt.status],
-          });
+          try {
+            await closeTurnLostAttempt(tx, {
+              runId: ref.runId,
+              nodeAttemptId: currentAttempt.id,
+              reason: "turn-lost",
+              fromStatuses: [run.status],
+              fromAttemptStatuses: [currentAttempt.status],
+              // Gates run AFTER the action persisted its completion on this
+              // same attempt, and that completion is the node's real result:
+              // it is preserved, not overwritten. Requiring it NULL here
+              // matched zero rows on every real lost gate turn.
+              admitCompletedAction: true,
+            });
+          } catch (error) {
+            // A lost CAS inside an owner apply is `superseded`, never a throw.
+            // Throwing rolls the application back and the layer retries until
+            // the command POISONS — turning a recoverable lost turn into a
+            // permanently stalled run.
+            if (error instanceof TurnLostCasLost) return "superseded";
+            throw error;
+          }
           // The evaluation row is `running` from `createGateResult` and every
           // other terminal gate path writes a terminal status. `stale` is the
           // truthful one here: the host lost the turn, so the gate was

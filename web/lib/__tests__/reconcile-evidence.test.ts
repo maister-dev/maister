@@ -152,6 +152,28 @@ describe("classifyPromptEvidence — the D1 derivation, in order", () => {
   });
 });
 
+describe("classifyPromptEvidence — a probe that proves nothing never crashes", () => {
+  // Codex adversarial review. `turn_lost` is the only probe answer that can
+  // terminalize a run, so the classifier must never reach it from a signal the
+  // receipt did not actually carry.
+  it("an inconclusive probe reads pending_ingest, not turn_lost", () => {
+    expect(classifyPromptEvidence(row(), "pending_ingest")).toBe(
+      "pending_ingest",
+    );
+  });
+
+  it.each(["completed", "pending_ingest", "unknown"] as const)(
+    "%s never crashes",
+    (probe) => {
+      expect(
+        ["inflight", "pending_ingest"].includes(
+          classifyPromptEvidence(row(), probe),
+        ),
+      ).toBe(true);
+    },
+  );
+});
+
 describe("classifyPromptEvidence — the two load-bearing orderings", () => {
   it("a conflict found AFTER application reads quarantined, not applied", () => {
     // `quarantine()` writes applicationState = completionAppliedAt ? 'applied'

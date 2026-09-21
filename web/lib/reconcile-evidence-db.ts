@@ -11,7 +11,10 @@ import pino from "pino";
 
 import * as schemaModule from "@/lib/db/schema";
 import { commandStreamLost } from "@/lib/execution-host/events/stream-health";
-import { classifyPromptEvidence } from "@/lib/reconcile-evidence";
+import {
+  classifyPromptEvidence,
+  isTurnLostError,
+} from "@/lib/reconcile-evidence";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { executionCommands, nodeAttempts } = schemaModule as unknown as Record<
@@ -129,6 +132,25 @@ function needsReceiptProbe(row: PromptEvidenceLookup): boolean {
   );
 }
 
+/** A lost turn must be AFFIRMATIVELY proven by the receipt, never inferred from
+ * the absence of a signal. Two ways the earlier "anything not completed and not
+ * inflight is lost" reading was wrong, both reachable in production:
+ *
+ * 1. **v2 receipts carry no liveness.** `normalizeCommandReceiptV2` hardcodes
+ *    `inflight: false` because the v2 wire shape has no such field, and v2's
+ *    phase enum includes `accepted`. An accepted v2 receipt for a turn that is
+ *    still running therefore looked exactly like a lost one — and the sweep
+ *    snapshots live sessions BEFORE loading candidates, so a session that
+ *    started after the snapshot has no liveness cover either. That crashed a
+ *    healthy turn and threw away the result it was about to produce.
+ * 2. **`rejected` is the ordinary failure phase too.** The supervisor's
+ *    `completeAsync` catch writes `rejected` for any turn that errored. Mapping
+ *    every `rejected` to `turn_lost` turned an ordinary failed turn — which the
+ *    owner should apply as a failed node action — into a run crash.
+ *
+ * Anything this function cannot prove is `pending_ingest`, which SKIPS and
+ * leaves the command to the recovery pass and the owner worker that own it.
+ */
 async function probeReceipt(
   transport: ExecutionHostTransport,
   commandId: string,
@@ -140,12 +162,19 @@ async function probeReceipt(
     // terminalizes. Reconcile hands it back as `unknown` rather than inventing
     // a terminal outcome from an absent receipt.
     if (!receipt) return "unknown";
-    if (receipt.inflight) return "inflight";
     if (receipt.phase === "completed") return "completed";
+    if (receipt.phase === "accepted") {
+      // Only the v1 shape carries liveness. `accepted` + `inflight:false` on v1
+      // IS the turn_lost signature; on v2 the same fields mean nothing.
+      if (receipt.evidenceV2) return "pending_ingest";
 
-    // `accepted` + `inflight:false` IS the turn_lost signature; a `rejected`
-    // receipt carries the reason in its body.
-    return "turn_lost";
+      return receipt.inflight ? "inflight" : "turn_lost";
+    }
+
+    // `rejected`: the host refused or the turn errored. Only the turn_lost
+    // REASON distinguishes the two, and an ordinary failure belongs to the
+    // owner, not to a crash.
+    return isTurnLostError(receipt.body) ? "turn_lost" : "pending_ingest";
   } catch {
     // A probe that could not answer is not evidence. `unknown` yields
     // `pending_ingest`, which SKIPS — a transport blip must never crash a run.
@@ -157,12 +186,17 @@ export type ResolvedPromptEvidence = {
   evidence: PromptEvidenceClass;
   streamLost: boolean;
   commandId: string | null;
+  /** The attempt this classification is ABOUT. Carried to the writer so it
+   * acts on the row that was classified rather than on whatever the same
+   * lookup returns a moment later. */
+  nodeAttemptId: string | null;
 };
 
 export const NO_PROMPT_EVIDENCE: ResolvedPromptEvidence = {
   evidence: "none",
   streamLost: false,
   commandId: null,
+  nodeAttemptId: null,
 };
 
 /** Resolve one candidate's prompt evidence for the reconcile classifier.
@@ -189,7 +223,7 @@ export async function resolvePromptEvidence(
   const evidence = classifyPromptEvidence(row, probe);
 
   if (evidence === "none")
-    return { evidence, streamLost: false, commandId: row.id };
+    return { evidence, streamLost: false, commandId: row.id, nodeAttemptId };
 
   // The ONLY bound on the skip arms: the state `runEventStreamHealthSweep`
   // writes when this manager gives up on a host's stream. Never a timer.
@@ -208,5 +242,5 @@ export async function resolvePromptEvidence(
     );
   }
 
-  return { evidence, streamLost, commandId: row.id };
+  return { evidence, streamLost, commandId: row.id, nodeAttemptId };
 }

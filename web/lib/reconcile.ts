@@ -1644,6 +1644,7 @@ export async function runReconcileSweep(
   const evidenceCrash = async (
     cand: { runId: string; currentStepId: string | null; status: string },
     reason: ReconcileReason,
+    classified: { nodeAttemptId: string | null; commandId: string | null },
   ): Promise<{ ok: boolean; reason?: string }> => {
     if (!cand.currentStepId) return { ok: false, reason: "no-current-step" };
     const { applyTurnLostBoundary } = await import(
@@ -1655,6 +1656,13 @@ export async function runReconcileSweep(
       nodeId: cand.currentStepId,
       reason: mapReasonToCrashReason(reason),
       fromStatuses: [cand.status],
+      // The identity this tick CLASSIFIED. Without it the boundary re-derives
+      // the attempt, and a Recover landing in between would hand A's diagnosis
+      // to B's healthy in-flight turn.
+      ...(classified.nodeAttemptId
+        ? { expectedAttemptId: classified.nodeAttemptId }
+        : {}),
+      ...(classified.commandId ? { commandId: classified.commandId } : {}),
     });
 
     return outcome === "applied"
@@ -2001,7 +2009,7 @@ export async function runReconcileSweep(
           // close, sync-claim and assignment release, the `run.crashed` webhook
           // and domain event) is inherited rather than re-implemented.
           const crashResult = EVIDENCE_CRASH_REASONS.has(reason)
-            ? await evidenceCrash(cand, reason)
+            ? await evidenceCrash(cand, reason, promptEvidence)
             : await crashRunningRun(
                 cand.runId,
                 mapReasonToCrashReason(reason),

@@ -41,13 +41,18 @@ export type PromptEvidenceRow = {
   terminalEvidenceSha256: string | null;
 };
 
-/** What `GET /commands/{id}` said, reduced to the four answers that matter.
- * `unknown` covers a 404, a network failure and a timeout alike: a probe that
- * did not answer is NOT evidence, so it can never produce a crash. */
+/** What `GET /commands/{id}` said, reduced to the answers that matter.
+ *
+ * `turn_lost` is the ONLY one that can crash a run, so the probe must PROVE it
+ * rather than infer it from a missing signal. `pending_ingest` is the explicit
+ * "the receipt exists but proves nothing terminal" answer — a v2 receipt (which
+ * carries no liveness field) or a `rejected` receipt for an ordinary failure.
+ * `unknown` covers a 404, a network failure and a timeout alike. Both skip. */
 export type PromptReceiptProbe =
   | "inflight"
   | "completed"
   | "turn_lost"
+  | "pending_ingest"
   | "unknown";
 
 const SETTLED_STATES = new Set(["succeeded", "failed", "fenced"]);
@@ -113,10 +118,12 @@ export function classifyPromptEvidence(
       return "inflight";
     case "turn_lost":
       return "turn_lost";
-    // A receipt that says `completed`, and equally one that did not answer:
-    // reconcile never invents a terminal outcome from a missing receipt — the
-    // command-recovery pass owns that.
+    // A receipt that says `completed`, one that proves nothing terminal, and
+    // equally one that did not answer: reconcile never invents a terminal
+    // outcome from a missing or inconclusive receipt — the command-recovery
+    // pass owns that.
     case "completed":
+    case "pending_ingest":
     case "unknown":
     default:
       return "pending_ingest";

@@ -63,6 +63,19 @@ export async function closeTurnLostAttempt(
     /** The attempt statuses the close admits. Default `Running` — the gate and
      * permission-resume paths can legitimately sit at `NeedsInput`. */
     fromAttemptStatuses?: readonly string[];
+    /** Admit an attempt that already carries `action_completion`.
+     *
+     * The ACTION path must NOT: a completion means a writer applied a real
+     * result between the classification and this write, that result IS the
+     * node's outcome, and crashing over it would discard a paid turn.
+     *
+     * The GATE path must: gates run AFTER the action persists its completion on
+     * the SAME attempt (`runner-graph.ts` — "Run pre_finish.gates after the
+     * action succeeds"), so requiring NULL there matches zero rows on EVERY
+     * real lost gate turn. That threw, the owner retried, and the command
+     * poisoned — a permanent stall. The gate's protection against acting on the
+     * wrong row is its evaluation identity, checked by the caller. */
+    admitCompletedAction?: boolean;
   },
 ): Promise<void> {
   const closed = await tx
@@ -86,10 +99,9 @@ export async function closeTurnLostAttempt(
           ...(input.fromAttemptStatuses ?? ["Running"]),
         ]),
         isNull(nodeAttempts.endedAt),
-        // A completion already on the attempt means a writer applied a real
-        // result between the read and this write. That result is the node's
-        // outcome; overwriting it with a crash would discard a paid turn.
-        isNull(nodeAttempts.actionCompletion),
+        ...(input.admitCompletedAction
+          ? []
+          : [isNull(nodeAttempts.actionCompletion)]),
       ),
     )
     .returning({ id: nodeAttempts.id });
@@ -130,14 +142,39 @@ export async function applyTurnLostBoundary(input: {
   reason: CrashReason;
   /** The status the caller CLASSIFIED the run in. Default `Running`. */
   fromStatuses?: readonly string[];
-  /** Already-resolved command id (the owner side knows it); otherwise the
-   * attempt's newest owned prompt is looked up. */
+  /** The attempt the CALLER classified. Re-deriving it here is not the same
+   * thing: between the sweep's classification and this write a Recover can
+   * close attempt A and open attempt B at the same node, and a fresh lookup
+   * would then close B and mark B's healthy in-flight command applied using
+   * A's diagnosis. Passing it makes the write refuse a moved target. */
+  expectedAttemptId?: string;
+  /** The command the caller classified, for the same reason. */
   commandId?: string;
 }): Promise<TurnLostBoundaryResult> {
   const { db, runId, nodeId } = input;
   // The SAME predicate the sweep classified from, imported rather than
   // restated: a decision about attempt A must not become a write to attempt B.
   const attemptId = await resolveEvidenceAttemptId(db, { runId, nodeId });
+
+  if (
+    attemptId &&
+    input.expectedAttemptId &&
+    attemptId !== input.expectedAttemptId
+  ) {
+    log.info(
+      {
+        runId,
+        nodeId,
+        reason: input.reason,
+        classified: input.expectedAttemptId,
+        current: attemptId,
+        outcome: "not-claimed",
+      },
+      "turn-lost boundary: the node moved to another attempt since classification — yielding",
+    );
+
+    return "not-claimed";
+  }
   const attempt = attemptId ? { id: attemptId } : null;
 
   if (!attempt) {
