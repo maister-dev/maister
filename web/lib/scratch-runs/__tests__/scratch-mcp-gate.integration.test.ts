@@ -37,6 +37,10 @@ import {
 
 const execFileAsync = promisify(execFile);
 const USER_ID = "scratch-mcp-gate-user";
+// A literal an operator declared non-secret. It is legitimately stored and
+// materialized — but a WITHHELD record is an audit row, not a config, and
+// carries no value at all (ADR-129: `{refId, transport, reason, scope}`).
+const LITERAL_SENTINEL = "lit-9f3a";
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
 vi.mock("@/lib/authz", () => ({
@@ -175,6 +179,8 @@ beforeAll(async () => {
     id: "untrusted-stdio",
     transport: "stdio",
     trust: "untrusted",
+    // A LITERAL, so the withheld record can be asserted not to carry it.
+    env: { GH_HOST: LITERAL_SENTINEL },
   });
   await seedPlatformMcp({ id: "legacy-sse", transport: "sse" });
 }, 180_000);
@@ -247,12 +253,16 @@ describe("scratch launch takes the shared MCP gate (ADR-177 D17)", () => {
     expect(mcpServersOfLastCreate().map((s) => s.name)).not.toContain(
       "untrusted-stdio",
     );
-    expect(await withheldOf(runId)).toEqual([
+    const withheld = await withheldOf(runId);
+
+    expect(withheld).toEqual([
       expect.objectContaining({
         refId: "untrusted-stdio",
         reason: "platform-untrusted",
       }),
     ]);
+    // AC-06: the withheld sink names the ref and the reason, never a value.
+    expect(JSON.stringify(withheld)).not.toContain(LITERAL_SENTINEL);
   });
 
   it("keeps an sse server for a claude runner — claude accepts sse", async () => {

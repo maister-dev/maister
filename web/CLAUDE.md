@@ -263,6 +263,18 @@ places with another. As of 2026-09-03 on `main` + ADR-165:
 - **integration** — 0 failures, except the two-case
   `lib/runs/__tests__/dirty-resolution-race.integration.test.ts` pair, which
   flakes under parallel load and passes 4/4 in isolation.
+
+**Measured 2026-09-21 (ADR-177 branch, this Mac, load avg ~12-29 with other
+work in flight).** unit **809 files / 8276 tests, 0 failures**; integration
+**496 files / 4339 tests, 1 failure**. The one failure was
+`lib/execution-host/__tests__/deliverer.integration.test.ts` "D3: runtime-object
+reserve, upload, and delete use the assignment-bound command ledger" — a NEW
+name, not the documented `dirty-resolution-race` pair. Classified load-sensitive,
+not a regression: it passes 4/4 in four consecutive idle runs, and the branch's
+entire `lib/execution-host/` diff is 72 lines of PURE INSERTION (a `checkEnvRefs`
+method on the transport, the admin client, the index re-export and the fake)
+touching nothing in the runtime-object or deliverer path. Add it to the
+load-sensitive set rather than the regression set if it recurs.
 - **e2e** — **1 pre-existing failure in 1 spec file**, enumerated below,
   plus one known-flaky spec. Ports 3100/7788 and the `maister_e2e` database are
   shared across worktrees; kill both ports before a run. Before filing an e2e

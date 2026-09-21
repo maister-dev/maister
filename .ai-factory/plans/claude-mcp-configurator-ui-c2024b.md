@@ -443,3 +443,52 @@ Exit criteria: every artifact below complete and internally consistent; `pnpm va
 ## Unresolved questions
 
 Нет — все открытые вопросы закрыты владельцем (2026-09-21). План готов к `/aif-implement`.
+
+---
+
+## Implementation record (2026-09-21)
+
+### Acceptance criteria — where each is proven
+
+| AC | Evidence |
+|---|---|
+| AC-01 | `supervisor/src/__tests__/mcp-values.test.ts` (literal verbatim incl. a `${X}` literal, `env:NAME` from `process.env`, unset → `""`) + `mcp-forwarding.integration.test.ts` env-map case through the recording adapter. |
+| AC-02 | `web/lib/mcp/__tests__/value-grammar.test.ts` (the table, asserted once) + one wiring case each in `mcp-form.test.ts`, `supervisor/src/__tests__/types.test.ts`, `admin-mcp-crud.integration.test.ts`, the project MCP route suite, and `mcp-server-modal.dom.test.ts`. |
+| AC-03 | `mcp-values.test.ts` (appended LAST, `"Bearer "` when unset) · `types.test.ts` (both sides refuse the `Authorization` pair, case-insensitively) · `mcp-forwarding` http case · `mcp-server-modal.dom.test.ts` blocks submit. |
+| AC-04 | `value-grammar.test.ts` (CR/LF/NUL/DEL refused, tab and printable accepted) · `types.test.ts` · `mcp-form.test.ts`. |
+| AC-05 | `overlay-apply.test.ts` rewritten (`Object.keys` unchanged; literal accepted; bearer http/sse-only) · `binding-overlay.test.ts` and `binding-schemas.test.ts` flipped (obsolete, not broken) · `binding-service.integration.test.ts` · `mcp-bind-dialogs.dom.test.ts`. |
+| AC-06 | `commands.integration.test.ts` — a LITERAL sentinel in `env`/`headers` plus a bearer ref, asserted absent from `execution_commands.payload` (which keeps only `mcpServerCount`) · `scratch-mcp-gate.integration.test.ts` asserts the literal is absent from `runs.withheld_mcps` · `overlay-secret-invariant.integration.test.ts` keeps the reference sentinel absent and now asserts the literal IS present where D1 says it must be. |
+| AC-07 | `readiness.test.ts` (presence independent of `diagnostics.envRefs`; a literal never flags; `Unknown` when presence is null) · `admin-mcp-crud.integration.test.ts` (Ready / NotReady-with-reason / literal-no-reason / degrade-to-Unknown-and-commit) · `mcp-servers-panel.test.ts` renders the reasons. |
+| AC-08 | Project rows: `project-mcp-service` cache asserted through the DTO. Package rows: `attach.integration.test.ts` asserts `material.readiness` is written at ingestion and that an upgrade REBUILDS material (SET → CLEAR → re-SET). |
+| AC-09 | `supervisor/src/__tests__/env-refs.integration.test.ts` — 64 accepted / 65 refused / 0 refused, request order after de-duplication, malformed name refused, and the sentinel VALUE absent from the response bytes. |
+| AC-10 | `migration-0172-mcp-env-values.integration.test.ts` — both stored key spellings, all three material shapes, template values untouched, columns dropped, overlay row byte-identical. |
+| AC-11 | `materialization-gate.test.ts` (codex+sse withheld, claude+sse kept, `platform-untrusted` wins, no adapter = no gate) · `trust-gate.integration.test.ts` (the reason persists and the dedupe key is `(refId, reason)`). |
+| AC-12 | `required-mcp-agent-support.test.ts` (adapter varied) · `route.capability-refs.integration.test.ts` pins the SEND site — that `material.transport` is selected and reaches the predicate. |
+| AC-13 | `scratch-mcp-gate.integration.test.ts` — trust, transport and overlay through the shared gate, plus the assistant launch asserted as a proven non-path by call-site count. |
+| AC-14 | `manifest.test.ts` (list and map produce identical `env`; literal accepted; lowercase names; headers/bearer rules) · `attach.integration.test.ts` (identical material from both forms). |
+| AC-15 | `mcp-template-editor.dom.test.ts` — a platform literal becomes `env:<KEY>`, a header name is sanitized (`X-Api-Key` → `X_API_KEY`), and the literal appears nowhere in the template. |
+| AC-16 | `key-value-rows.dom.test.ts` (14 cases) · `acp-runner-modal.test.ts` passes with a ZERO diff through the extraction. |
+| AC-17 | `i18n-parity.test.ts` green; every new key grepped for a consumer before commit; `readinessReasonsTitle` removed as an orphan. |
+| AC-18 | `pnpm validate:docs:all` green (14/14 + ERD current at 125 tables); no touched doc claims "names only" about MCP env or headers; ADR-177 status equal in record, stub and index row. |
+
+### Deviations from the plan, and why
+
+1. **`readinessReasonsTitle` (Task 27) was not shipped.** The tooltip renders the
+   reasons themselves, so the key had no render site. A key nothing consumes is
+   an orphan, not a deliverable.
+2. **The supervisor's D33 window closed in commit 7, not commit 3.** Task 13's
+   sub-bullet was missed; the Task 29 sweep caught it. Every commit still
+   bisects green, but the branch tip only satisfied D12 after commit 7.
+3. **C6's predicted refusal message was wrong.** Zod reports an unrecognized key
+   against the object's path, so it reads `mcpServers.0: Unrecognized key(s) in
+   object: 'envKeys'`, not `mcpServers.0.envKeys`. The test and the two docs
+   assert what the code emits.
+4. **The project MCP route body key is `id`, not `refId`.** The OpenAPI said
+   `refId`; the route has always taken `id`. Drift older than this work, fixed
+   in the spec rather than the route.
+5. **Task 19's scratch cases live in a new file** (`scratch-mcp-gate.integration.test.ts`)
+   rather than an existing one, to avoid perturbing `scratch-placement`'s serial
+   Q1–Q5 ordering. Same directory, as the plan specified.
+6. **Tasks 24–26's UI work landed in commit 3, its tests in commit 6.** Dropping
+   the name-list columns from `schema.ts` does not compile while the modals still
+   read them, so the surfaces had to move with the model.
