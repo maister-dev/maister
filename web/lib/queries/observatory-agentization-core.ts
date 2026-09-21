@@ -164,12 +164,16 @@ export function rollupAgentization(input: {
 export function rollupObservatoryFunnel(input: {
   runKind: ObservatoryRunKind;
   runs: readonly ObservatoryFunnelRun[];
+  // ADR-177 D1: the half-open run-start window. `until` is exclusive, so a run
+  // started at exactly the upper bound belongs to the NEXT period.
   since?: Date;
+  until?: Date;
 }): ObservatoryFunnel {
   const runs = input.runs.filter(
     (run) =>
       (input.runKind === "all" || run.runKind === input.runKind) &&
-      (input.since === undefined || run.startedAt >= input.since),
+      (input.since === undefined || run.startedAt >= input.since) &&
+      (input.until === undefined || run.startedAt < input.until),
   );
 
   return {

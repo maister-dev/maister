@@ -4,6 +4,7 @@ import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import * as schema from "@/lib/db/schema";
+import { withQueryCount } from "@/test-support/query-count";
 import {
   getNodeObservatoryDetail,
   getPortfolioObservatory,
@@ -1174,33 +1175,5 @@ function attempt(
     status,
     errorCode: opts.errorCode,
     exitCode: opts.exitCode,
-  };
-}
-
-function withQueryCount(database: NodePgDatabase<typeof schema>): {
-  db: NodePgDatabase<typeof schema>;
-  count: () => number;
-} {
-  let statements = 0;
-
-  return {
-    db: new Proxy(database, {
-      get(target, prop, receiver) {
-        if (prop === "select") {
-          const select = Reflect.get(target, prop, receiver) as unknown as (
-            ...args: unknown[]
-          ) => unknown;
-
-          return (...args: unknown[]) => {
-            statements += 1;
-
-            return select.apply(target, args);
-          };
-        }
-
-        return Reflect.get(target, prop, receiver);
-      },
-    }) as NodePgDatabase<typeof schema>,
-    count: () => statements,
   };
 }

@@ -38,6 +38,7 @@ afterAll(async () => {
 beforeEach(async () => {
   await db.delete(schema.runCostRollups);
   await db.delete(schema.runs);
+  await db.delete(schema.flows);
   await db.delete(schema.projects);
 
   projectId = randomUUID();
@@ -61,26 +62,48 @@ function bucket(input: number) {
   };
 }
 
+async function seedFlow(flowRefId: string): Promise<string> {
+  const id = randomUUID();
+
+  await db.insert(schema.flows).values({
+    id,
+    projectId,
+    flowRefId,
+    source: `https://example.invalid/${flowRefId}`,
+    version: "v1.0.0",
+    installedPath: `/flows/${flowRefId}`,
+    manifest: { schemaVersion: 1, name: flowRefId, nodes: [] },
+    schemaVersion: 1,
+  });
+
+  return id;
+}
+
 async function seedRollup(opts: {
   runKind?: "flow" | "scratch" | "agent";
   input: number;
   byModel?: Record<string, Record<string, number>>;
   byRunner?: Record<string, Record<string, number>>;
+  flowId?: string;
+  startedAt?: Date;
 }): Promise<string> {
   const runId = randomUUID();
+  const startedAt = opts.startedAt ?? new Date();
 
   await db.insert(schema.runs).values({
     id: runId,
     projectId,
     status: "Done",
     runKind: opts.runKind ?? "flow",
+    flowId: opts.flowId ?? null,
     flowVersion: "v1.0.0",
-    startedAt: new Date(),
-    endedAt: new Date(),
+    startedAt,
+    endedAt: startedAt,
   });
   await db.insert(schema.runCostRollups).values({
     runId,
     projectId,
+    flowId: opts.flowId ?? null,
     inputTokens: opts.input,
     sourceEventCount: 1,
     byModel: opts.byModel ?? {},
@@ -181,6 +204,76 @@ describe("getCostSummary — model + runner breakdown", () => {
         totalTokens: 7,
       },
     ]);
+  });
+
+  it("excludes a rollup whose run started before the window (ADR-177 D5)", async () => {
+    const outside = new Date(Date.now() - 400 * 24 * 60 * 60 * 1000);
+
+    await seedRollup({
+      input: 999,
+      startedAt: outside,
+      byModel: { "model-old": bucket(999) },
+      byRunner: { "claude/old": bucket(999) },
+    });
+    await seedRollup({
+      input: 7,
+      byModel: { "model-a": bucket(7) },
+      byRunner: { "claude/sonnet": bucket(7) },
+    });
+
+    const cost = await getCostSummary(db, scope(), {});
+
+    expect(cost.inputTokens).toBe(7);
+    expect(cost.byModel.map((row) => row.key)).toEqual(["model-a"]);
+    expect(cost.byRunner.map((row) => row.key)).toEqual(["claude/sonnet"]);
+    expect(cost.byKind.map((row) => [row.kind, row.totalTokens])).toEqual([
+      ["flow", 7],
+      ["scratch", 0],
+      ["agent", 0],
+    ]);
+
+    // An explicit window that DOES reach the old run sees both again.
+    const wide = await getCostSummary(db, scope(), {
+      since: new Date(outside.getTime() - 1000),
+      until: new Date(Date.now() + 24 * 60 * 60 * 1000),
+    });
+
+    expect(wide.inputTokens).toBe(1006);
+  });
+
+  it("breaks cost down by flow ref, with scratch and agent pseudo-rows", async () => {
+    const bugfix = await seedFlow("bugfix");
+    const specKit = await seedFlow("spec-kit");
+
+    await seedRollup({ input: 100, flowId: bugfix });
+    await seedRollup({ input: 25, flowId: bugfix });
+    await seedRollup({ input: 60, flowId: specKit });
+    await seedRollup({ runKind: "scratch", input: 40 });
+    await seedRollup({ runKind: "agent", input: 40 });
+
+    const cost = await getCostSummary(db, scope(), {});
+
+    expect(cost.byFlow.map((row) => [row.key, row.totalTokens])).toEqual([
+      ["bugfix", 125],
+      ["spec-kit", 60],
+      // Equal totals fall back to the key, so `agent` precedes `scratch`.
+      ["agent", 40],
+      ["scratch", 40],
+    ]);
+  });
+
+  it("buckets a flow run whose flow row is gone under 'unknown'", async () => {
+    await seedRollup({ input: 11 });
+
+    const cost = await getCostSummary(db, scope(), {});
+
+    expect(cost.byFlow.map((row) => [row.key, row.totalTokens])).toEqual([
+      ["unknown", 11],
+    ]);
+  });
+
+  it("returns an empty byFlow for a project with no cost rows", async () => {
+    expect((await getCostSummary(db, scope(), {})).byFlow).toEqual([]);
   });
 
   it("is read-only: it never writes or mutates rollup rows (D4 / §272)", async () => {
