@@ -360,6 +360,59 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SupervisorDiagnosticsResponse"
+  /diagnostics/env-refs:
+    post:
+      tags: [health]
+      summary: Check host environment-variable PRESENCE by name (Implemented — ADR-179)
+      description: |
+        Answers, for each requested environment-variable NAME, whether this host
+        has a non-empty value for it. **Presence only — a value is never
+        returned, logged, or echoed.** `present` is
+        `Boolean(process.env[name])`, so an empty string reads as absent,
+        consistent with the `envRefs` block of `GET /diagnostics`.
+
+        Powers MCP readiness (`evaluateMcpReadiness`): the web tier collects the
+        names referenced by `env:NAME` values across an MCP row's `env`,
+        `headers` and `bearerTokenEnv`, asks this route, and caches the verdict.
+        A literal value references nothing and contributes no name.
+        `GET /diagnostics.envRefs` is a different, fixed list and stays the
+        runner-readiness source.
+
+        **Ordering.** `refs` is returned in REQUEST order after de-duplication —
+        not sorted. The caller (`HostAdminClient.checkEnvRefs`) dedupes, chunks
+        by the 64-name cap and merges in request order, so a caller may pass any
+        number of names.
+
+        **Identifiers.** `names[]` is `body-controlled` and allow-listed by
+        `^[A-Za-z_][A-Za-z0-9_]*$`; it names no run, session, workspace, or
+        path. Unauthenticated, the same posture as `GET /diagnostics`
+        (ADR-166). ADR-179 records the resulting presence oracle as an accepted
+        exposure bounded by the count cap and the name regex, closed by Stage D
+        host auth.
+      operationId: checkSupervisorEnvRefs
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EnvRefsRequest" }
+      responses:
+        "200":
+          description: Presence verdict per requested name, in request order.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvRefsResponse" }
+        "409":
+          description: |
+            Malformed body (Zod rejection → `PRECONDITION`): an empty list, more
+            than 64 names after de-duplication, or a name failing the regex.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+        default:
+          description: Unhandled supervisor error.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
   /workspaces/adopt:
     post:
       tags: [execution-host]
@@ -1341,39 +1394,20 @@ paths:
         `close()` (SIGTERM → ~2s grace → SIGKILL) in a `finally`.
 
         **Identifiers & secrets.** Every body field is probe config
-        (`body-controlled`), NAMES only — `envKeys`/`headerKeys` are
-        environment-variable NAME references resolved server-side from
-        `process.env`. The supervisor NEVER returns or logs a secret value. The
-        exec-trust gate is enforced **web-side** before this call (this route
-        executes what it is told, inside the trust boundary).
+        (`body-controlled`). `env` and `headers` are `Record<name, value>` maps
+        whose values are whole-value `literal | env:NAME` (ADR-179); a reference
+        travels the wire UNRESOLVED and is resolved here from `process.env`,
+        while a literal travels verbatim. `bearerTokenEnv` is an `env:NAME`
+        composed into `Authorization: Bearer <value>` LAST. The supervisor NEVER
+        returns or logs the value behind a reference. The exec-trust gate is
+        enforced **web-side** before this call (this route executes what it is
+        told, inside the trust boundary).
       operationId: probeMcpServer
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              required: [transport]
-              properties:
-                transport: { type: string, enum: [stdio, sse, http] }
-                command:
-                  type: string
-                  description: Required when `transport=stdio`.
-                args:
-                  type: array
-                  items: { type: string }
-                envKeys:
-                  type: array
-                  items: { type: string }
-                  description: Env-var NAME references (stdio). Resolved from `process.env`.
-                url:
-                  type: string
-                  description: Required when `transport=sse`/`http`.
-                headerKeys:
-                  type: array
-                  items: { type: string }
-                  description: Header NAME references (sse/http). Resolved from `process.env`.
+            schema: { $ref: "#/components/schemas/McpProbeRequest" }
             examples:
               stdio:
                 summary: Probe a stdio MCP
@@ -1381,7 +1415,14 @@ paths:
                   transport: stdio
                   command: npx
                   args: ["-y", "@modelcontextprotocol/server-filesystem", "."]
-                  envKeys: []
+                  env: { FASTMCP_LOG_LEVEL: "ERROR" }
+              http:
+                summary: Probe an authenticated http MCP
+                value:
+                  transport: http
+                  url: "https://mcp.example.com/v1"
+                  headers: { "X-Tenant": "acme" }
+                  bearerTokenEnv: "env:MCP_TOKEN"
       responses:
         "200":
           description: Probe completed (ok true/false; never a secret).
@@ -2104,6 +2145,147 @@ components:
         through allow-listed provisioners and overwrites the legacy `executor`
         shape before spawning. `executor` stays required temporarily for
         backward compatibility.
+    McpValue:
+      type: string
+      maxLength: 4096
+      description: |
+        A whole-value MCP configuration value (ADR-179): either a LITERAL, or an
+        `env:NAME` reference matching `^env:[A-Za-z_][A-Za-z0-9_]*$` that the
+        host resolves to `process.env[NAME] ?? ""`. There is no interpolation —
+        a literal containing `${X}` reaches the server unchanged. A value that
+        starts with `env:` and fails the regex is refused `409 PRECONDITION`.
+      example: "env:GITHUB_TOKEN"
+    McpServerFields:
+      type: object
+      description: |
+        The field set shared by `POST /sessions` `mcpServers[]` and
+        `POST /mcp-probe`. Normalization is by transport on both sides of the
+        wire: `stdio` refuses `url`/`headers`/`bearerTokenEnv`, and `sse`/`http`
+        refuse `command`/`args`/`env`. `sse` is legacy — deprecated by MCP
+        2025-03-26 and absent from the ACP v2 schema — and still accepted.
+      properties:
+        transport:
+          type: string
+          enum: [stdio, sse, http]
+          default: stdio
+        command:
+          type: string
+          maxLength: 1024
+          description: Required when `transport=stdio`.
+        args:
+          type: array
+          maxItems: 64
+          items: { type: string }
+        env:
+          type: object
+          maxProperties: 64
+          additionalProperties: { $ref: "#/components/schemas/McpValue" }
+          description: |
+            Child-process environment for a `stdio` server, keyed by the name
+            the SERVER reads (`^[A-Za-z_][A-Za-z0-9_]*$`). Also the ADR-089
+            channel for server-generated credentials that exist in no
+            `process.env` (the per-launch ephemeral agent token on the `maister`
+            facade entry) — same trust channel as `executor.env`.
+        url:
+          type: string
+          maxLength: 2048
+          description: Required when `transport=sse`/`http`.
+        headers:
+          type: object
+          maxProperties: 64
+          additionalProperties: { $ref: "#/components/schemas/McpValue" }
+          description: |
+            HTTP headers for an `sse`/`http` server, keyed by an RFC 7230 token
+            (`^[!#$%&'*+.^_\x60|~0-9A-Za-z-]+$`). A LITERAL value is held to the
+            RFC 7230 field-value alphabet, so CR/LF is refused here rather than
+            discovered as a runtime request failure.
+        bearerTokenEnv:
+          type: string
+          description: |
+            An `env:NAME` reference (`sse`/`http` only) composed by the host into
+            `Authorization: Bearer <value>` and appended LAST. Declaring it
+            alongside an `Authorization` header row is refused
+            `409 PRECONDITION` — the MCP authorization spec fixes one source of
+            truth for that header.
+    McpServerInput:
+      allOf:
+        - type: object
+          required: [name]
+          properties:
+            name:
+              type: string
+              minLength: 1
+              maxLength: 128
+              description: Capability ref id, the server's name on the ACP wire.
+        - $ref: "#/components/schemas/McpServerFields"
+      description: |
+        One gated MCP catalog entry on `POST /sessions`. `additionalProperties`
+        is refused by the supervisor's strict Zod schema — including the two
+        pre-ADR-179 name-list fields the value maps replaced, whose presence
+        yields `409 PRECONDITION` with a message naming the offending path
+        (`mcpServers.<i>.<field>`).
+      example:
+        name: "github"
+        transport: "http"
+        url: "https://api.githubcopilot.com/mcp/"
+        headers:
+          X-GitHub-Api-Version: "2022-11-28"
+        bearerTokenEnv: "env:GITHUB_TOKEN"
+    McpProbeRequest:
+      allOf:
+        - $ref: "#/components/schemas/McpServerFields"
+      description: |
+        The `POST /mcp-probe` body — the same field set as `McpServerInput`
+        minus `name`. Strict: unknown properties yield `409 PRECONDITION`.
+      example:
+        transport: "stdio"
+        command: "npx"
+        args: ["-y", "@modelcontextprotocol/server-github"]
+        env:
+          GITHUB_TOKEN: "env:GITHUB_TOKEN"
+          FASTMCP_LOG_LEVEL: "ERROR"
+    EnvRefsRequest:
+      type: object
+      additionalProperties: false
+      required: [names]
+      properties:
+        names:
+          type: array
+          minItems: 1
+          maxItems: 64
+          items:
+            type: string
+            pattern: '^[A-Za-z_][A-Za-z0-9_]*$'
+            maxLength: 256
+          description: |
+            Environment-variable NAMES to check on this host. De-duplicated by
+            the caller; more than 64 after de-duplication is refused.
+      example:
+        names: ["GITHUB_TOKEN", "MCP_AUTH", "PATH"]
+    EnvRefsResponse:
+      type: object
+      additionalProperties: false
+      required: [refs]
+      properties:
+        refs:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [name, present]
+            properties:
+              name: { type: string }
+              present:
+                type: boolean
+                description: |
+                  `Boolean(process.env[name])` — an empty string reads as
+                  absent. The VALUE is never returned.
+          description: One entry per requested name, in REQUEST order after de-duplication.
+      example:
+        refs:
+          - { name: "GITHUB_TOKEN", present: true }
+          - { name: "MCP_AUTH", present: false }
+          - { name: "PATH", present: true }
     StartSessionRequest:
       type: object
       required: [executionWorkspaceId, stepId, executor]
@@ -2201,6 +2383,17 @@ components:
           maxItems: 32
           items:
             $ref: "#/components/schemas/RuntimeObjectOutputBinding"
+        mcpServers:
+          type: array
+          maxItems: 64
+          items: { $ref: "#/components/schemas/McpServerInput" }
+          description: |
+            (ADR-070 / ADR-129 / ADR-179 — Implemented.) The gated, overlaid MCP
+            catalog entries this session may use, already filtered web-side by
+            trust, exec-trust and the adapter transport gate. Entries carry
+            `env`/`headers` VALUE maps whose references travel UNRESOLVED; the
+            host resolves them from `process.env`. The generated `maister`
+            facade entry is appended by the caller after gating.
         adapterLaunch:
           $ref: "#/components/schemas/AdapterLaunch"
         resumeSessionId:

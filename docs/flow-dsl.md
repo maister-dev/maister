@@ -306,6 +306,20 @@ nodes:
 See `config.schema.ts:flowYamlV1Schema` (`mcps?` field) and
 [`system-analytics/flow-studio.md`](system-analytics/flow-studio.md).
 
+The requirement is a ref-id list; the MCP server it resolves to carries its own
+configuration. In a **package manifest** (`maister-package.yaml`), an `mcps[]`
+template entry declares that configuration: `env` as the legacy `env:NAME`
+string list (normalized at load to a map) or a `Record<name, value>` map, plus
+optional `headers: Record<name, value>` and `bearerTokenEnv` (`env:NAME`, http
+only). Every value is whole-value `literal | env:NAME` under the shared grammar
+in [`configuration.md`](configuration.md) (ADR-179).
+
+A required MCP ref whose transport the launch adapter cannot use refuses the
+launch with `EXECUTOR_UNAVAILABLE` before any workspace is created — `codex`
+cannot use `sse`. An ADDITIONAL ref is withheld with the persisted reason
+`agent-unsupported-transport` instead. See
+[`system-analytics/mcp-management.md`](system-analytics/mcp-management.md).
+
 For long-living ACP sessions (`slash-in-existing` mode), every AI node that
 reuses the session MUST share the same resolved `profileDigest`. On digest
 mismatch, the runner either starts a fresh session at a Flow-declared session

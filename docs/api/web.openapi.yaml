@@ -13063,10 +13063,12 @@ paths:
       tags: [mcp-management, admin]
       summary: (M27) List platform MCP servers
       description: |
-        (M27 — Designed.) Admin-only (`requireGlobalRole("admin")`). Returns
-        the full `platform_mcp_servers` catalog with trust, readiness, and
-        enabled state. Secret values are NEVER returned — `env_keys` contains
-        env-var NAME strings only; actual values are resolved supervisor-side.
+        (M27 — Implemented.) Admin-only (`requireGlobalRole("admin")`). Returns
+        the full `platform_mcp_servers` catalog with trust, readiness (status
+        and reasons), and enabled state. `env`/`headers` are value maps under
+        `McpValue`: a LITERAL is returned as stored, and an `env:NAME` reference
+        is returned as the reference — the value behind it is resolved only on
+        the execution host and is NEVER returned.
       operationId: getAdminMcpServers
       responses:
         "200":
@@ -13094,9 +13096,11 @@ paths:
                             "@modelcontextprotocol/server-filesystem",
                             "/workspace",
                           ]
-                        envKeys: []
+                        env: { FASTMCP_LOG_LEVEL: "ERROR" }
                         url: null
-                        headerKeys: []
+                        headers: {}
+                        bearerTokenEnv: null
+                        description: "Filesystem access under /workspace"
                         supportedAgents: [claude, codex]
                         trustStatus: trusted
                         readinessStatus: Ready
@@ -13110,13 +13114,18 @@ paths:
       tags: [mcp-management, admin]
       summary: (M27) Create a platform MCP server
       description: |
-        (M27 — Designed.) Admin-only. Creates a `platform_mcp_servers` row.
+        (M27 — Implemented.) Admin-only. Creates a `platform_mcp_servers` row.
         Mirrors the `POST /api/admin/acp-runners` pattern (ADR-065).
 
-        **Secret constraint:** all env var values and header values MUST be
-        supplied as `env:NAME` references (pattern `^env:[A-Za-z_][A-Za-z0-9_]*$`).
-        Actual secret values are NEVER accepted, stored, or echoed. Only the
-        NAME portion is stored in `env_keys`/`header_keys`.
+        **Value grammar (ADR-179):** every `env`/`headers` value is whole-value
+        `literal | env:NAME` (`McpValue`). A LITERAL is accepted and stored —
+        it is the operator's declaration that the value is not a secret, and the
+        form warns inline under a secret-shaped key. Only a value that STARTS
+        with `env:` and fails `^env:[A-Za-z_][A-Za-z0-9_]*$` is refused
+        (`422 CONFIG`). The value behind a reference is resolved on the
+        execution host and is never stored or echoed. Readiness is recomputed
+        from host env-ref presence before the write; a host failure yields
+        `Unknown` and the write still commits.
 
         A duplicate `id` returns `409` (via `onConflictDoNothing().returning()`,
         never a raw 500).
@@ -13139,16 +13148,20 @@ paths:
                       "@modelcontextprotocol/server-filesystem",
                       "/workspace",
                     ]
-                  envKeys: ["env:SOME_KEY"]
+                  env:
+                    GITHUB_TOKEN: "env:SOME_KEY"
+                    FASTMCP_LOG_LEVEL: "ERROR"
                   supportedAgents: [claude]
                   enabled: true
-              sse-server:
-                summary: Create an SSE MCP server
+              http-server:
+                summary: Create an authenticated HTTP MCP server
                 value:
-                  id: my-sse-server
-                  transport: sse
-                  url: "https://mcp.example.com/sse"
-                  headerKeys: ["env:MY_SERVER_TOKEN"]
+                  id: my-http-server
+                  description: "Vendor MCP, bearer auth"
+                  transport: http
+                  url: "https://mcp.example.com/v1"
+                  headers: { "X-Tenant": "acme" }
+                  bearerTokenEnv: "env:MY_SERVER_TOKEN"
                   supportedAgents: [claude, codex]
                   enabled: true
       responses:
@@ -13184,11 +13197,13 @@ paths:
       tags: [mcp-management, admin]
       summary: (M27) Update a platform MCP server
       description: |
-        (M27 — Designed.) Admin-only. Mutates transport, command, args,
-        envKeys, url, headerKeys, supportedAgents, or enabled. At least one
-        field required. Disabling while active usage references exist is refused
-        (`409 CONFLICT`, mirrors `assertCanDisable`). Secret values must remain
-        `env:NAME` references.
+        (M27 — Implemented.) Admin-only. Mutates description, transport,
+        command, args, env, url, headers, bearerTokenEnv, supportedAgents, or
+        enabled. At least one field required. Disabling while active usage
+        references exist is refused (`409 CONFLICT`, mirrors
+        `assertCanDisable`). Values are whole-value `literal | env:NAME`
+        (`McpValue`, ADR-179); readiness is recomputed from host env-ref
+        presence on every write.
       operationId: patchAdminMcpServer
       parameters:
         - name: id
@@ -13212,27 +13227,27 @@ paths:
                 args:
                   type: array
                   items: { type: string }
-                envKeys:
-                  type: array
+                description:
+                  type: string
+                  nullable: true
+                  description: Free-text operator note shown beside the row.
+                env:
+                  allOf: [{ $ref: "#/components/schemas/McpEnvMap" }]
                   description: |
-                    Env-var NAME references for stdio transport (`env:NAME` or
-                    bare `NAME`). Replaces the stored set. Ignored for sse/http.
-                  items:
-                    type: string
-                    pattern: "^(env:)?[A-Za-z_][A-Za-z0-9_]*$"
+                    Replaces the stored env map for stdio transport. Ignored for
+                    sse/http.
                 url:
                   type: string
                   nullable: true
                   description: Required when `transport=sse` or `transport=http`. Ignored for stdio.
-                headerKeys:
-                  type: array
+                headers:
+                  allOf: [{ $ref: "#/components/schemas/McpHeaderMap" }]
                   description: |
-                    HTTP header NAME references for sse/http transport
-                    (`env:NAME` or bare `NAME`). Replaces the stored set.
+                    Replaces the stored header map for sse/http transport.
                     Ignored for stdio.
-                  items:
-                    type: string
-                    pattern: "^(env:)?[A-Za-z_][A-Za-z0-9_]*$"
+                bearerTokenEnv:
+                  allOf: [{ $ref: "#/components/schemas/McpBearerTokenEnv" }]
+                  nullable: true
                 supportedAgents:
                   type: array
                   items:
@@ -13629,7 +13644,7 @@ paths:
                         transport: stdio
                         command: npx
                         args: ["-y", "@modelcontextprotocol/server-filesystem"]
-                        envKeys: []
+                        env: {}
                         supportedAgents: [claude, codex]
                     proposed:
                       - refId: my-build-tool
@@ -21443,6 +21458,54 @@ components:
         `stdio` — spawns a local subprocess; `command` required; gated by
         `exec_trust` of the owning revision.
         `sse` / `http` — connects to a remote endpoint; `url` required.
+        `sse` is **legacy**: deprecated by MCP 2025-03-26 and absent from the
+        ACP v2 schema. It stays creatable and is labelled `sse (legacy)` in the
+        UI. `codex` cannot use it — a REQUIRED `sse` ref on a codex runner
+        refuses launch (`EXECUTOR_UNAVAILABLE` 503) and an ADDITIONAL one is
+        withheld `agent-unsupported-transport` (ADR-179).
+
+    McpValue:
+      type: string
+      description: |
+        (ADR-179 — Implemented.) A whole-value MCP configuration value: either a
+        LITERAL, or an `env:NAME` reference matching
+        `^env:[A-Za-z_][A-Za-z0-9_]*$` that the execution host resolves to
+        `process.env[NAME] ?? ""`. There is no interpolation — a literal
+        containing `${X}` reaches the server unchanged. A value that starts with
+        `env:` and fails the regex is refused `422 CONFIG` naming the field
+        (`env.<key>`, `headers.<name>`, `bearerTokenEnv`). A LITERAL value is
+        the operator's declaration that the value is not a secret; the form
+        warns inline under a secret-shaped key and the route accepts it. The
+        value behind a REFERENCE is never stored, returned, streamed, or logged.
+        A LITERAL header value is additionally held to the RFC 7230 field-value
+        alphabet, so CR/LF is refused at write.
+
+    McpEnvMap:
+      type: object
+      maxProperties: 64
+      additionalProperties: { $ref: "#/components/schemas/McpValue" }
+      description: |
+        (ADR-179) Child-process environment for a `stdio` server, keyed by the
+        name the SERVER reads (`^[A-Za-z_][A-Za-z0-9_]*$`). Ignored for
+        `sse`/`http`.
+
+    McpHeaderMap:
+      type: object
+      maxProperties: 64
+      additionalProperties: { $ref: "#/components/schemas/McpValue" }
+      description: |
+        (ADR-179) HTTP headers for an `sse`/`http` server, keyed by an RFC 7230
+        token (`^[!#$%&'*+.^_\x60|~0-9A-Za-z-]+$`). Ignored for `stdio`.
+
+    McpBearerTokenEnv:
+      type: string
+      pattern: "^env:[A-Za-z_][A-Za-z0-9_]*$"
+      description: |
+        (ADR-179) An `env:NAME` reference (`sse`/`http` only) that the execution
+        host composes into `Authorization: Bearer <value>` and appends LAST.
+        Setting it alongside an `Authorization` header row is refused
+        `422 CONFIG` — the MCP authorization spec fixes one source of truth for
+        that header. Normalized away for `stdio`.
 
     LocalPackage:
       type: object
@@ -22024,14 +22087,15 @@ components:
     PlatformMcpServer:
       type: object
       description: |
-        (M27) A `platform_mcp_servers` row. Secret values are NEVER included
-        — `envKeys` and `headerKeys` list only the env-var NAME strings.
+        (M27; value model ADR-179) A `platform_mcp_servers` row. `env` and
+        `headers` are `Record<name, value>` maps under `McpValue`; the value
+        behind an `env:NAME` reference is never stored or returned.
       required:
         - id
         - transport
         - args
-        - envKeys
-        - headerKeys
+        - env
+        - headers
         - supportedAgents
         - trustStatus
         - readinessStatus
@@ -22049,23 +22113,19 @@ components:
         args:
           type: array
           items: { type: string }
-        envKeys:
-          type: array
-          items: { type: string }
-          description: |
-            Env-var NAME strings (`env:NAME` without the prefix) that the
-            supervisor resolves from the host environment. Values are NEVER
-            stored or returned.
+        env: { $ref: "#/components/schemas/McpEnvMap" }
         url:
           type: string
           nullable: true
           description: Endpoint URL for `sse`/`http` transport. Null for stdio.
-        headerKeys:
-          type: array
-          items: { type: string }
-          description: |
-            HTTP header NAME strings whose values are resolved supervisor-side
-            from `env:NAME` references.
+        headers: { $ref: "#/components/schemas/McpHeaderMap" }
+        bearerTokenEnv:
+          allOf: [{ $ref: "#/components/schemas/McpBearerTokenEnv" }]
+          nullable: true
+        description:
+          type: string
+          nullable: true
+          description: Free-text operator note shown beside the row.
         supportedAgents:
           type: array
           items: { type: string, enum: [claude, codex, gemini, opencode, mimo] }
@@ -22078,6 +22138,11 @@ components:
         readinessReasons:
           type: array
           items: { type: string }
+          description: |
+            (ADR-179) Why readiness is `NotReady` — e.g.
+            `env ref missing: GITHUB_TOKEN` from the host env-ref presence
+            check, or an unavailable supported-agent adapter. Rendered as a
+            tooltip on the status chip. A LITERAL value never produces a reason.
         enabled: { type: boolean }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
@@ -22085,9 +22150,13 @@ components:
     PlatformMcpServerBody:
       type: object
       description: |
-        (M27) Request body for creating a platform MCP server. Secret values
-        MUST be supplied as `env:NAME` references (`^env:[A-Za-z_][A-Za-z0-9_]*$`).
-        Plain secret values are refused with `422 CONFIG`.
+        (M27; value model ADR-179) Request body for creating a platform MCP
+        server. `env`/`headers` values are whole-value `literal | env:NAME`
+        (`McpValue`); a LITERAL is accepted, and only a value that starts with
+        `env:` and fails the reference regex is refused `422 CONFIG`.
+        Normalization is by transport: `stdio` drops
+        `url`/`headers`/`bearerTokenEnv`, `sse`/`http` drop
+        `command`/`args`/`env`.
       required: [id, transport]
       additionalProperties: false
       properties:
@@ -22095,6 +22164,10 @@ components:
           type: string
           minLength: 1
           description: Unique platform-scoped id for this MCP server.
+        description:
+          type: string
+          nullable: true
+          description: Free-text operator note shown beside the row.
         transport: { $ref: "#/components/schemas/McpTransport" }
         command:
           type: string
@@ -22104,29 +22177,15 @@ components:
           type: array
           items: { type: string }
           default: []
-        envKeys:
-          type: array
-          description: |
-            Env-var NAME references for stdio transport. Each entry is an
-            `env:NAME` reference or a bare `NAME`; plain secret values are
-            refused (`422 CONFIG`). Only the NAME is stored; values resolve
-            supervisor-side. Ignored for sse/http.
-          items:
-            type: string
-            pattern: "^(env:)?[A-Za-z_][A-Za-z0-9_]*$"
+        env: { $ref: "#/components/schemas/McpEnvMap" }
         url:
           type: string
           nullable: true
           description: Required when `transport=sse` or `transport=http`. Null/omitted for stdio.
-        headerKeys:
-          type: array
-          description: |
-            HTTP header NAME references for sse/http transport. Each entry is
-            an `env:NAME` reference or a bare `NAME`; values resolve
-            supervisor-side and are never stored. Ignored for stdio.
-          items:
-            type: string
-            pattern: "^(env:)?[A-Za-z_][A-Za-z0-9_]*$"
+        headers: { $ref: "#/components/schemas/McpHeaderMap" }
+        bearerTokenEnv:
+          allOf: [{ $ref: "#/components/schemas/McpBearerTokenEnv" }]
+          nullable: true
         supportedAgents:
           type: array
           items: { type: string, enum: [claude, codex, gemini, opencode, mimo] }
@@ -22138,16 +22197,17 @@ components:
     ProjectMcpServer:
       type: object
       description: |
-        (M27) A project-scoped MCP server capability record (`capability_records`
-        row with `kind=mcp`, `source=project`). Secret values are NEVER
-        included — only env-var NAME strings are returned.
+        (M27; value model ADR-179) A project-scoped MCP server capability record
+        (`capability_records` row with `kind=mcp`, `source=project`). `env` and
+        `headers` are `Record<name, value>` maps under `McpValue`; the value
+        behind an `env:NAME` reference is never stored or returned.
       required:
         - id
         - refId
         - transport
         - args
-        - envKeys
-        - headerKeys
+        - env
+        - headers
         - supportedAgents
         - createdAt
       properties:
@@ -22162,16 +22222,18 @@ components:
         args:
           type: array
           items: { type: string }
-        envKeys:
-          type: array
-          items: { type: string }
-          description: Env-var NAME strings. Values are resolved supervisor-side.
+        env: { $ref: "#/components/schemas/McpEnvMap" }
         url:
           type: string
           nullable: true
-        headerKeys:
-          type: array
-          items: { type: string }
+        headers: { $ref: "#/components/schemas/McpHeaderMap" }
+        bearerTokenEnv:
+          allOf: [{ $ref: "#/components/schemas/McpBearerTokenEnv" }]
+          nullable: true
+        description:
+          type: string
+          nullable: true
+          description: Free-text operator note shown beside the row.
         supportedAgents:
           type: array
           items: { type: string, enum: [claude, codex, gemini, opencode, mimo] }
@@ -22181,8 +22243,10 @@ components:
     ProjectMcpServerBody:
       type: object
       description: |
-        (M27) Request body for creating a project-scoped MCP server. Secret
-        values MUST be `env:NAME` references.
+        (M27; value model ADR-179) Request body for creating a project-scoped
+        MCP server. `env`/`headers` values are whole-value
+        `literal | env:NAME` (`McpValue`); a LITERAL is accepted. Normalization
+        is by transport, as on the platform body.
       required: [refId, transport]
       additionalProperties: false
       properties:
@@ -22198,19 +22262,18 @@ components:
           type: array
           items: { type: string }
           default: []
-        env:
-          type: object
-          additionalProperties:
-            type: string
-            pattern: "^env:[A-Za-z_][A-Za-z0-9_]*$"
+        env: { $ref: "#/components/schemas/McpEnvMap" }
         url:
           type: string
           description: Required when `transport=sse` or `transport=http`.
-        headers:
-          type: object
-          additionalProperties:
-            type: string
-            pattern: "^env:[A-Za-z_][A-Za-z0-9_]*$"
+        headers: { $ref: "#/components/schemas/McpHeaderMap" }
+        bearerTokenEnv:
+          allOf: [{ $ref: "#/components/schemas/McpBearerTokenEnv" }]
+          nullable: true
+        description:
+          type: string
+          nullable: true
+          description: Free-text operator note shown beside the row.
         supportedAgents:
           type: array
           items: { type: string, enum: [claude, codex, gemini, opencode, mimo] }
@@ -22222,7 +22285,7 @@ components:
         (M27) One winner in the capability resolution result set.
         Produced by `selectedRecords` after applying project > platform >
         flow-package precedence. Secret values are NEVER included.
-      required: [refId, scope, transport, args, envKeys, supportedAgents]
+      required: [refId, scope, transport, args, env, supportedAgents]
       properties:
         refId:
           type: string
@@ -22238,16 +22301,14 @@ components:
         args:
           type: array
           items: { type: string }
-        envKeys:
-          type: array
-          items: { type: string }
-          description: Env-var NAME strings resolved supervisor-side.
+        env: { $ref: "#/components/schemas/McpEnvMap" }
         url:
           type: string
           nullable: true
-        headerKeys:
-          type: array
-          items: { type: string }
+        headers: { $ref: "#/components/schemas/McpHeaderMap" }
+        bearerTokenEnv:
+          allOf: [{ $ref: "#/components/schemas/McpBearerTokenEnv" }]
+          nullable: true
         supportedAgents:
           type: array
           items: { type: string, enum: [claude, codex, gemini, opencode, mimo] }
@@ -22255,23 +22316,34 @@ components:
       type: object
       additionalProperties: false
       description: |
-        (ADR-129 — Implemented.) Per-project binding overlay. Rewrites env/header/arg/url
-        NAMES only — the ACP `mcpServers` wire shape is unchanged and the supervisor
-        still resolves values from `process.env`. NO secret VALUE is ever stored.
-        Every remap value MUST be an `env:NAME` reference. Unknown slot → `CONFIG` (422).
+        (ADR-129, amended by ADR-179 — Implemented.) Per-project binding
+        overlay. Application replaces the **VALUE** for a key the target
+        declares and **preserves the KEY** — the key is the server's contract.
+        The ACP `mcpServers` wire shape is unchanged and the execution host
+        still resolves references from `process.env`. Slots are the KEYS of the
+        target's `env`/`headers` maps, validated at write AND at
+        materialization; an unknown slot is `CONFIG` (422). Overlay values use
+        the same `McpValue` grammar as server values, so a project may point a
+        key at a different host variable or at a plain literal.
       properties:
         envRemap:
           type: object
-          additionalProperties:
-            type: string
-            pattern: "^env:[A-Za-z_][A-Za-z0-9_]*$"
-          description: Map of the target's declared env slot NAME → `env:OTHER_NAME`.
+          additionalProperties: { $ref: "#/components/schemas/McpValue" }
+          description: |
+            Map of a declared env slot NAME → the VALUE this project should use
+            for it. The key is preserved on the wire.
         headerRemap:
           type: object
-          additionalProperties:
-            type: string
-            pattern: "^env:[A-Za-z_][A-Za-z0-9_]*$"
-          description: Map of the target's declared header slot NAME → `env:OTHER_NAME`.
+          additionalProperties: { $ref: "#/components/schemas/McpValue" }
+          description: |
+            Map of a declared header slot NAME → the VALUE this project should
+            use for it. The key is preserved on the wire.
+        bearerTokenEnv:
+          allOf: [{ $ref: "#/components/schemas/McpBearerTokenEnv" }]
+          description: |
+            Replaces the target's `bearerTokenEnv`. Accepted only for an
+            http/sse target (`CONFIG` 422 otherwise), at write and at
+            materialization.
         argsOverride:
           type: array
           items: { type: string }

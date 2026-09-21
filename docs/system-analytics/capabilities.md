@@ -87,9 +87,11 @@ sources, cross-project capability promotion, codex enforced mapping
   highest-precedence "local" tier (`permissions.allow` = the node `tools`
   allow-list; `permissions.defaultMode` maps `permissionMode`
   ask→default / allow→bypassPermissions / deny→plan; `null` when neither applies).
-  `mcpServers` carries env-var **names only** (`envKeys`) and is delivered over ACP
-  `newSession params.mcpServers`, resolved name→value supervisor-side from
-  `process.env` — secrets never reach the worktree, the wire, or the DB (no
+  `mcpServers` carries `env`/`headers` VALUE maps (ADR-179) delivered over ACP
+  `newSession params.mcpServers`; an `env:NAME` reference travels UNRESOLVED and
+  is resolved on the execution host from `process.env`, while a literal — the
+  operator's declaration that the value is not a secret — travels as written. The
+  value behind a reference never reaches the worktree, the wire, or the DB (no
   `.mcp.json`, no `adapterLaunch.env` secret values). The ONLY adapter-specific
   knowledge in the codebase. claude is materialized; codex returns empty
   (`{ settingsLocal: null, mcpServers: [], skills: [] }`, `instructed`-only at
@@ -365,12 +367,13 @@ These are the steady-state invariants the materialization code MUST satisfy
   that names no `capability_records` row in the project registry MUST be refused
   with `MaisterError("CONFIG")` at BOTH project-register and run-launch, using the
   same ref-id map builder (closes the `config.ts:745` carve-b stub).
-- A secret value (env-profile value OR an MCP-server credential) MUST NEVER appear
-  in the materialized `.maister/capabilities/**` tree, in `settings.local.json`, in
+- The value behind a reference (an env-profile `env:NAME` OR an MCP-server
+  `env:NAME` credential) MUST NEVER appear in the materialized
+  `.maister/capabilities/**` tree, in `settings.local.json`, in
   `materialization_plan`, on the web→supervisor wire, in logs/SSE, or in any UI
-  payload; it MUST reach the adapter ONLY by env-var NAME — carried as
-  `mcpServers[].envKeys` over ACP `newSession` and resolved name→value
-  supervisor-side from `process.env` (no `.mcp.json`, no `adapterLaunch.env` secret
+  payload; it MUST reach the adapter ONLY as the reference itself — carried in
+  the `mcpServers[].env`/`headers` maps over ACP `newSession` and resolved on the
+  execution host from `process.env` (no `.mcp.json`, no `adapterLaunch.env` secret
   values).
 - `node_attempts.materialization_plan` MUST be written **write-once** (`IS NULL`
   guard) inside the SAME `db.transaction` as `markNodeRunning`, before
@@ -435,11 +438,11 @@ These are the steady-state invariants the materialization code MUST satisfy
   unsupported class throws `MaisterError("CONFIG")`; an `instructed`/`off` class
   on an unsupporting agent is downgraded to the handoff (instructions only), never
   silently dropped.
-- **Secret never in worktree** → an MCP server's credential is delivered as an env
-  NAME (`mcpServers[].envKeys=["GITHUB_TOKEN"]`) over ACP `newSession`, resolved to
-  its value only inside the supervisor's `process.env` at spawn; a grep of the
-  worktree, the web→supervisor wire payload, the ledger, and the UI for the literal
-  returns absent (standing regression).
+- **Secret never in worktree** → an MCP server's credential is delivered as a
+  reference (`mcpServers[].env = {"GITHUB_TOKEN": "env:GITHUB_TOKEN"}`) over ACP
+  `newSession`, resolved to its value only inside the supervisor's `process.env`
+  at spawn; a grep of the worktree, the web→supervisor wire payload, the ledger,
+  and the UI for that value returns absent (standing regression).
 - **Untrusted import carrying `setup.sh`** → `installCapabilityRevision` records
   `trustStatus='untrusted'` and does NOT run the script; a sentinel the script
   would write is absent until an explicit trust-confirm + setup run.

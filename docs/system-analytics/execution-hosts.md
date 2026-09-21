@@ -122,7 +122,11 @@ released_at IS NULL`; a released row stays as history) with `kind ∈
   inside its own claim. That re-check runs under the run row lock, so two
   concurrent lazy mints reuse one row instead of superseding.
   `HostAdminClient` (`executionHosts.local()`) serves health/diagnostics/
-  admin surfaces.
+  admin surfaces, including `checkEnvRefs(names)` over
+  `POST /diagnostics/env-refs` (ADR-179) — host env-var PRESENCE by name, never
+  a value. It accepts any number of names: it de-duplicates, chunks by the
+  route's 64-name cap, and merges the answers back in REQUEST order. MCP
+  readiness is its only consumer.
 
 ## State machine — host registration
 

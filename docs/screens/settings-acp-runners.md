@@ -79,6 +79,14 @@ Env override rows accept literal values. For example, a Claude runner may store
 `ANTHROPIC_MODEL -> env:CLAUDE_CODE_MODEL` to make the supervisor resolve
 `CLAUDE_CODE_MODEL` from its own process environment.
 
+The rows are rendered by the shared `KeyValueRows` control
+(`web/components/settings/key-value-rows.tsx`), extracted from this modal in
+ADR-179 and reused unchanged here. Its labels are passed as props, so this
+surface keeps its own `settings` strings and its behavior is identical. The same
+control now backs the platform MCP modal ([`mcps.md`](mcps.md)), the project MCP
+modal, the MCP overlay dialog, and the Studio MCP template editor — and those
+surfaces use the same `literal | env:NAME` grammar this one has always used.
+
 ## States
 
 ```mermaid
@@ -117,7 +125,8 @@ readiness text, env override labels, validation errors, and actions.
 ## Linked artifacts
 
 - ADR: [ADR-065](../decisions.md#adr-065) — platform ACP runner catalog and
-  admin CRUD pattern.
+  admin CRUD pattern; [ADR-179](../decisions.md#adr-179) — the key/value rows
+  control extracted from this modal and shared with the MCP surfaces.
 - Behavior: [`../system-analytics/acp-runners.md`](../system-analytics/acp-runners.md),
   [`../system-analytics/executors.md`](../system-analytics/executors.md).
 - API: [`../api/web.openapi.yaml`](../api/web.openapi.yaml),

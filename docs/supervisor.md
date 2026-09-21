@@ -268,6 +268,34 @@ Contract: `StartSessionRequest.contextMounts` in
 [`flow-dsl.md`](flow-dsl.md) §`settings.context_repos`. Kill switch
 `MAISTER_CONTEXT_MOUNT_ENABLED`: [`configuration.md`](configuration.md).
 
+**MCP servers on the session wire (Implemented — ADR-179).** `mcpServers[]`
+carries the gated, overlaid catalog entries this session may use. Each entry is
+`{ name, transport }` plus, for `stdio`, `command`/`args`/`env`, and for
+`sse`/`http`, `url`/`headers`/`bearerTokenEnv`. `env` and `headers` are
+`Record<name, value>` maps keyed by the name the SERVER reads, and every value
+is **whole-value** `literal | env:NAME`:
+
+- a LITERAL is passed verbatim and never interpolated — `${X}` reaches the
+  server unchanged;
+- `env:NAME` (matching `^env:[A-Za-z_][A-Za-z0-9_]*$`) resolves on this host to
+  `process.env[NAME] ?? ""`;
+- a value that starts with `env:` and fails that regex is `409 PRECONDITION`.
+
+`bearerTokenEnv` is an `env:NAME` accepted only on `sse`/`http`; the supervisor
+composes `Authorization: Bearer <resolved value>` and appends it **LAST**, after
+every declared header. Declaring it alongside an `Authorization` header row
+(case-insensitive) is `409 PRECONDITION` — the MCP authorization spec fixes one
+source of truth for that header. Transport normalization is enforced by the
+schema, not silently applied: `stdio` refuses `url`/`headers`/`bearerTokenEnv`
+and `sse`/`http` refuse `command`/`args`/`env`. The two pre-ADR-179 name-list
+fields the value maps replaced are refused by the strict schema, whose 409
+message names the offending path (`mcpServers.<i>.<field>`).
+
+Resolution lives in `supervisor/src/mcp-values.ts` and is shared with
+`POST /mcp-probe`. It logs nothing: `POST /sessions` adds only the scalar
+`mcpServerCount` to its existing log line, and no key name, value, or map is
+ever written to a log, an event, or a response.
+
 (Resume is NOT a CLI argument: when `resumeSessionId` is set the supervisor
 restores the prior conversation via the ACP `session/resume` protocol call —
 see the "Checkpoint + Resume lifecycle" section below.)
@@ -357,7 +385,8 @@ only, never values.
 
 Diagnostics logs include `adapter`, binary source, executable path if known,
 exit code, and a bounded stderr tail only. They must not include env values,
-provider tokens, generated config bodies, or raw ACP frames.
+provider tokens, generated config bodies, raw ACP frames, or any MCP `env` /
+`headers` map — neither its values nor its key names.
 
 #### Capability adapter support matrix (Implemented snapshot + designed native activation)
 
@@ -378,6 +407,46 @@ Responses:
 | `409`  | `{ "code": "PRECONDITION", "message": "<zod path>: <issue>" }`      | Body failed Zod validation.                                                                                                                                                                                                                                                                                          |
 | `500`  | `{ "code": "SPAWN", "message": "spawn <bin> failed: ENOENT" }`      | Low-level spawn failed despite readiness: ENOENT, EACCES, first-run state failure, or OOM at fork.                                                                                                                                                                                                                   |
 | `503`  | `{ "code": "EXECUTOR_UNAVAILABLE", "message": "..." }`              | Runner, adapter, env-ref, or checkpoint strategy is not launchable before spawn: adapter unsupported, binary diagnostics unavailable, required env ref missing, unsupported provider or permission policy, or supervisor readiness failure. Web-tier translation: `MaisterError("EXECUTOR_UNAVAILABLE")` → HTTP 503. |
+
+### `POST /diagnostics/env-refs` _(Implemented — ADR-179)_
+
+Presence check for host environment-variable **names**. Unauthenticated, same
+posture as `GET /diagnostics`.
+
+```bash
+curl -s -XPOST localhost:7777/diagnostics/env-refs \
+  -H 'content-type: application/json' \
+  -d '{"names":["PATH","NOPE_SENTINEL"]}'
+```
+
+```json
+{ "refs": [{ "name": "PATH", "present": true },
+           { "name": "NOPE_SENTINEL", "present": false }] }
+```
+
+`present` is `Boolean(process.env[name])`, so an empty string reads as absent —
+consistent with the `envRefs` block of `GET /diagnostics`. **The value is never
+returned, and the route logs only a `{ count }` line — never a name.**
+
+| Rule | Value |
+| ---- | ----- |
+| Name pattern | `^[A-Za-z_][A-Za-z0-9_]*$` |
+| Count | 1..64 (after the caller de-duplicates); 0 or 65 → `409 PRECONDITION` |
+| Ordering | `refs` mirrors **request order**, not sorted |
+| Relationship to `GET /diagnostics.envRefs` | none — that is a fixed catalog for runner readiness; `MAISTER_DIAGNOSTIC_ENV_REFS` does not affect this route |
+
+The web tier calls it through `HostAdminClient.checkEnvRefs(names)`, which
+accepts any number of names: it de-duplicates, chunks by the 64 cap, and merges
+the answers back in request order. It powers MCP readiness — the names come from
+the `env:NAME` values across a server's `env`, `headers` and `bearerTokenEnv`, so
+a literal value contributes nothing. Any failure of this call (unreachable,
+timeout, 5xx) yields readiness `Unknown` on the web side; it never blocks the
+write that triggered it.
+
+The route is a presence oracle for host environment-variable names. ADR-179
+records that as an accepted exposure, bounded by the count cap and the name
+regex and returning no values, closed together with `GET /diagnostics` by Stage D
+host auth.
 
 ### `POST /workspaces/adopt` _(Implemented — ADR-166)_
 

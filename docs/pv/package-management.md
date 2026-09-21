@@ -118,7 +118,7 @@ flows:
   - { id: aif-init,    path: flows/init }
 capabilities:
   - { id: aif-bundle, path: capability }
-mcps: []                         # MCP server templates: {id, transport, command|url, env (env:NAME refs only), description}
+mcps: []                         # MCP server templates: {id, transport, command|url, env, headers?, bearerTokenEnv?, description}
 ```
 
 Contract rules (enforced by the loader, P1):
@@ -128,6 +128,11 @@ Contract rules (enforced by the loader, P1):
   subpath (no `..`/absolute).
 - `mcps[]` ships **templates**, never secrets: env values are `env:NAME`
   references only (existing provider-config convention).
+  _2026-09-21 — superseded in part by [ADR-179](../decisions.md#adr-179): manifest
+  values now use the shared `literal | env:NAME` grammar (a literal is accepted,
+  and Studio's prefill converts a platform literal into a reference so a template
+  never ships one), and `headers` / `bearerTokenEnv` join `env`. This document
+  stays as the historical P1 design record; `../configuration.md` is canonical._
 - New content kinds (e.g. `platform_agents`, restriction sets) arrive via a
   `schemaVersion` bump when their consuming milestone lands — nothing is
   reserved speculatively.

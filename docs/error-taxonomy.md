@@ -259,9 +259,14 @@ HTTPS_AUTH | NOT_FOUND | NETWORK | UNKNOWN`. The classification logic +
 >
 > - **Platform MCP delete of unknown id** — `DELETE` or `PATCH` against an unknown `mcp-servers/{id}` → `PRECONDITION` (409) (mirrors the runner-CRUD unknown-id guard).
 >
-> **`EXECUTOR_UNAVAILABLE` new call site (Designed):**
+> **`EXECUTOR_UNAVAILABLE` new call site (Implemented):**
 >
-> - **Required MCP agent-unsupported (strict)** — a REQUIRED MCP cannot materialize because the resolved agent does not support it → `EXECUTOR_UNAVAILABLE` (503). Non-REQUIRED (additional) MCP absence is non-fatal.
+> - **Required MCP agent-unsupported (strict)** — a REQUIRED MCP cannot materialize because the resolved agent does not support it → `EXECUTOR_UNAVAILABLE` (503), thrown by `firstAgentUnsupportedRequiredMcp` at the launch precondition, BEFORE a worktree or a run row exists. Two reasons qualify (ADR-179): the server's `supported_agents` exclude the agent, or the server's **transport** is not in `mcpTransportsForAdapter(agent)` (codex + `sse`). Non-REQUIRED (additional) MCP absence is non-fatal — an additional ref is withheld instead, with a reason persisted into `runs.withheld_mcps` (`platform-untrusted` | `exec-untrusted-stdio` | `agent-unsupported-transport`).
+>
+> **`CONFIG` new call sites (Implemented — ADR-179):**
+>
+> - **Malformed MCP value** — an `env`/`headers` value or `bearerTokenEnv` that STARTS with `env:` and fails `^env:[A-Za-z_][A-Za-z0-9_]*$` → `CONFIG` (422) naming the field (`env.<key>`, `headers.<name>`, `bearerTokenEnv`). Applies to the platform and project MCP bodies, the binding overlay, and the package manifest. A LITERAL value is ACCEPTED — the secret guard is a UI warning, never a refusal. The supervisor mirrors the refusal as `PRECONDITION` (409). A literal header value carrying CR, LF, or another control character is refused the same way.
+> - **Bearer/`Authorization` conflict** — `bearerTokenEnv` set alongside an `Authorization` header row (case-insensitive) → `CONFIG` (422) on field `bearerTokenEnv`; the supervisor mirrors it as `PRECONDITION` (409). The MCP authorization spec fixes one source of truth for that header.
 
 > **The platform-user + project-member admin surface (ADR-062) reuses existing codes and adds none** ([ADR-008](decisions.md#adr-008-typed-error-taxonomy-maistererror) closed union). New call sites for `CONFIG` (invalid body/Zod — HTTP 422), `CONFLICT` (duplicate email, duplicate member, raced CAS — HTTP 409), `PRECONDITION` (hard-delete of referenced/non-pending user, add nonexistent user, self-delete — HTTP 409), and `UNAUTHORIZED` (role gate — HTTP 403) are noted in the relevant rows above.
 
