@@ -14,6 +14,7 @@ import clsx from "clsx";
 import { useModalFocusTrap } from "@/components/board/panels/use-modal-focus-trap";
 import {
   KeyValueRows,
+  duplicateKeyIds,
   recordFromRows,
   rowsFromRecord,
   type KeyValueRow,
@@ -188,8 +189,21 @@ export function ProjectMcpModal({
   const sseOnCodex =
     form.transport === "sse" && form.supportedAgents.includes("codex");
 
+  const duplicateEnvIds = duplicateKeyIds(form.envRows);
+  const duplicateHeaderIds = duplicateKeyIds(form.headerRows);
+  // A duplicate key is not visible to `validateMcpServerDraft` — the map has
+  // already collapsed it — so submit is blocked here instead.
+  const hasBlockingRow =
+    (isStdio ? duplicateEnvIds.size : duplicateHeaderIds.size) > 0;
+
   function rowError(kind: "env" | "headers", row: KeyValueRow): string | null {
     if (row.key.trim() === "" && row.value === "") return null;
+
+    // Every colliding row is flagged, so the author sees the pair rather than
+    // losing one value to last-wins at serialization.
+    const duplicates = kind === "env" ? duplicateEnvIds : duplicateHeaderIds;
+
+    if (duplicates.has(row.id)) return t("duplicateKey");
 
     return (
       errorsByField.get(`${kind}.${row.key.trim()}`) ??
@@ -560,9 +574,9 @@ export function ProjectMcpModal({
             <button
               className={clsx(
                 "touch-manipulation rounded-lg border border-amber bg-amber px-3.5 py-2 font-mono text-[11px] font-semibold tracking-[0.02em] text-white hover:bg-amber-2",
-                (busy || !validation.ok) && "opacity-60",
+                (busy || !validation.ok || hasBlockingRow) && "opacity-60",
               )}
-              disabled={busy || !validation.ok}
+              disabled={busy || !validation.ok || hasBlockingRow}
               type="button"
               onClick={() => void submit()}
             >

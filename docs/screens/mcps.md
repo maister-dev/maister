@@ -104,10 +104,13 @@ mirrors the `studio` namespace keys (`trust`, `needsTrust`, `usedBy`). The
 ADR-179 fields add `settings.fieldDescription`, `fieldHeaders` /
 `fieldHeaderName` / `fieldHeaderValue` / `addHeader` / `removeHeader`,
 `fieldBearerTokenEnv` + `bearerTokenEnvHint`, `valueGrammarHint`,
-`secretShapedWarning`, `transportSseLegacy` and `readinessReasonsTitle`, and
-reuse `fieldEnv` / `fieldEnvKey` / `fieldEnvValue` / `addEnv` / `removeEnv` from
-the runner modal; the retired name-list labels and `secretRefHint` are gone from
-both catalogs. EN + RU parity is gated.
+`secretShapedWarning`, `duplicateKey`, `transportSseLegacy` and
+`sseCodexNotice`, and reuse `fieldEnv` / `fieldEnvKey` / `fieldEnvValue` /
+`addEnv` / `removeEnv` from the runner modal; the retired name-list labels and
+the `settings`/`mcpPanel` copies of `secretRefHint` are gone from both
+catalogs (the `webhooks` copy is a different key with its own consumer). The
+readiness tooltip renders the REASONS themselves, so it needs no label of its
+own. EN + RU parity is gated.
 
 ## Linked artifacts
 

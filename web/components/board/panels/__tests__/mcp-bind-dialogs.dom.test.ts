@@ -115,7 +115,7 @@ describe("MatchDialog.bind (ADR-129 T6.2 — behavioral)", () => {
 });
 
 describe("OverlayDialog.save (ADR-129 W-C — behavioral)", () => {
-  it("PATCHes the binding overlay with env:NAME references only, then closes", async () => {
+  it("PATCHes the binding overlay, preserving the slot NAME, then closes", async () => {
     stubFetch();
     const onClose = vi.fn();
     const onDone = vi.fn();
@@ -146,9 +146,112 @@ describe("OverlayDialog.save (ADR-129 W-C — behavioral)", () => {
     expect(calls[0].body).toEqual({
       configOverlay: { envRemap: { GITHUB_TOKEN: "env:PROJ_A_TOKEN" } },
     });
-    // The secret invariant: only the env:NAME reference is sent, never a value.
-    expect(JSON.stringify(calls[0].body)).toContain("env:PROJ_A_TOKEN");
+    // ADR-177: the KEY is the server's contract and is preserved; the VALUE is
+    // what the overlay replaces.
+    expect(
+      Object.keys(
+        (calls[0].body as { configOverlay: { envRemap: object } }).configOverlay
+          .envRemap,
+      ),
+    ).toEqual(["GITHUB_TOKEN"]);
     expect(onDone).toHaveBeenCalledTimes(1);
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends a bearerTokenEnv override for an http/sse target", async () => {
+    stubFetch();
+    const binding: McpBindingView = {
+      refId: "remote",
+      targetKind: "platform",
+      targetId: "remote",
+      enabled: true,
+      configOverlay: {},
+      recommendedHint: null,
+    };
+
+    mount(
+      createElement(OverlayDialog, {
+        slug: "proj",
+        binding,
+        slots: { env: [], header: [], transport: "http" },
+        onClose: vi.fn(),
+        onDone: vi.fn(),
+      }),
+    );
+
+    const bearer = findByTestId("mcp-overlay-bearer") as HTMLInputElement;
+    const setter = Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      "value",
+    )!.set!;
+
+    act(() => {
+      setter.call(bearer, "env:PROJ_A_TOKEN");
+      bearer.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    await clickAndSettle(findByTestId("mcp-overlay-save"));
+
+    expect(calls[0].body).toEqual({
+      configOverlay: { bearerTokenEnv: "env:PROJ_A_TOKEN" },
+    });
+  });
+
+  it("hides the bearer override for a stdio target — the field does not exist there", async () => {
+    stubFetch();
+
+    mount(
+      createElement(OverlayDialog, {
+        slug: "proj",
+        binding: {
+          refId: "github",
+          targetKind: "platform",
+          targetId: "github",
+          enabled: true,
+          configOverlay: {},
+          recommendedHint: null,
+        },
+        slots: { env: ["GITHUB_TOKEN"], header: [], transport: "stdio" },
+        onClose: vi.fn(),
+        onDone: vi.fn(),
+      }),
+    );
+
+    expect(
+      document.body.querySelector('[data-testid="mcp-overlay-bearer"]'),
+    ).toBeNull();
+  });
+
+  it("warns on a LITERAL under a secret-shaped slot without blocking the save", async () => {
+    stubFetch();
+
+    mount(
+      createElement(OverlayDialog, {
+        slug: "proj",
+        binding: {
+          refId: "github",
+          targetKind: "platform",
+          targetId: "github",
+          enabled: true,
+          // D32: overlay values share the server grammar, so a literal is a
+          // legitimate override — warned, never refused.
+          configOverlay: { envRemap: { GITHUB_TOKEN: "ghp_literal" } },
+          recommendedHint: null,
+        },
+        slots: { env: ["GITHUB_TOKEN"], header: [], transport: "stdio" },
+        onClose: vi.fn(),
+        onDone: vi.fn(),
+      }),
+    );
+
+    expect(document.body.querySelector('[role="note"]')?.textContent).toBe(
+      "secretShapedWarning",
+    );
+
+    await clickAndSettle(findByTestId("mcp-overlay-save"));
+
+    expect(calls[0].body).toEqual({
+      configOverlay: { envRemap: { GITHUB_TOKEN: "ghp_literal" } },
+    });
   });
 });

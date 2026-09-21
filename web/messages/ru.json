@@ -1883,7 +1883,7 @@
     "secretShapedWarning": "Похоже на учётные данные. Литерал сохраняется и виден читателям каталога — используйте env:ИМЯ.",
     "transportSseLegacy": "sse (устаревший)",
     "sseCodexNotice": "Codex не умеет sse: для запусков codex сервер будет исключён.",
-    "readinessReasonsTitle": "Почему не готов"
+    "duplicateKey": "Дублирующийся ключ"
   },
   "brain": {
     "title": "Мозг проекта",
@@ -3492,8 +3492,8 @@
     "secretShapedWarning": "Похоже на учётные данные. Литерал сохраняется и виден читателям каталога — используйте env:ИМЯ.",
     "transportSseLegacy": "sse (устаревший)",
     "sseCodexNotice": "Codex не умеет sse: для запусков codex сервер будет исключён.",
-    "readinessReasonsTitle": "Почему не готов",
-    "overlayBearer": "Переопределение bearer-токена (env)"
+    "overlayBearer": "Переопределение bearer-токена (env)",
+    "duplicateKey": "Дублирующийся ключ"
   },
   "tokens": {
     "title": "API-токены",

@@ -1883,7 +1883,7 @@
     "secretShapedWarning": "This looks like a credential. A literal is stored and shown to catalog readers — use env:NAME instead.",
     "transportSseLegacy": "sse (legacy)",
     "sseCodexNotice": "Codex cannot use sse: this server will be withheld from codex runs.",
-    "readinessReasonsTitle": "Why not ready"
+    "duplicateKey": "Duplicate key"
   },
   "brain": {
     "title": "Project Brain",
@@ -3492,8 +3492,8 @@
     "secretShapedWarning": "This looks like a credential. A literal is stored and shown to catalog readers — use env:NAME instead.",
     "transportSseLegacy": "sse (legacy)",
     "sseCodexNotice": "Codex cannot use sse: this server will be withheld from codex runs.",
-    "readinessReasonsTitle": "Why not ready",
-    "overlayBearer": "Bearer token env override"
+    "overlayBearer": "Bearer token env override",
+    "duplicateKey": "Duplicate key"
   },
   "tokens": {
     "title": "API tokens",

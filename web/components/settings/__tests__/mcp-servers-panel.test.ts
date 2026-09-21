@@ -80,3 +80,28 @@ describe("McpServersPanel", () => {
     expect(markup).toContain("mcpEmpty");
   });
 });
+
+// ADR-177 (D19): the reason travels to the operator, not just to the column.
+describe("readiness reasons", () => {
+  it("renders the reasons as the status chip's tooltip", () => {
+    const markup = renderToStaticMarkup(
+      createElement(McpServersPanel, {
+        servers: [stdioServer],
+        isAdmin: true,
+      } as never),
+    );
+
+    expect(markup).toContain("env ref missing: GITHUB_TOKEN");
+  });
+
+  it("falls back to the status when there is no reason", () => {
+    const markup = renderToStaticMarkup(
+      createElement(McpServersPanel, {
+        servers: [httpServer],
+        isAdmin: true,
+      } as never),
+    );
+
+    expect(markup).toContain('title="Unknown"');
+  });
+});
