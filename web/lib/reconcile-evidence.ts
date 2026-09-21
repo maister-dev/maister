@@ -44,7 +44,11 @@ export type PromptEvidenceRow = {
 /** What `GET /commands/{id}` said, reduced to the four answers that matter.
  * `unknown` covers a 404, a network failure and a timeout alike: a probe that
  * did not answer is NOT evidence, so it can never produce a crash. */
-export type PromptReceiptProbe = "inflight" | "completed" | "turn_lost" | "unknown";
+export type PromptReceiptProbe =
+  | "inflight"
+  | "completed"
+  | "turn_lost"
+  | "unknown";
 
 const SETTLED_STATES = new Set(["succeeded", "failed", "fenced"]);
 const PRE_DISPATCH_STATES = new Set(["queued", "delivering"]);
@@ -86,7 +90,10 @@ export function classifyPromptEvidence(
   if (row.applicationError?.reason === "prompt_terminal_conflict")
     return "quarantined";
   if (row.applicationState === "poisoned") return "poisoned";
-  if (row.applicationState === "applied" || row.applicationState === "superseded")
+  if (
+    row.applicationState === "applied" ||
+    row.applicationState === "superseded"
+  )
     return "applied";
   if (row.applicationState === "applying") return "applying";
 

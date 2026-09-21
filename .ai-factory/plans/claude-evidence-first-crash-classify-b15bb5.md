@@ -733,23 +733,36 @@ checked negative, not an omission.
 A new `decision` value and new `CrashReason` members are enum additions. Every
 consumer class:
 
-- [ ] **Decision readers** — `attempt-decisions.ts`, `observatory-core.ts:245,259`,
-      `rework-baseline.ts:51`, `ledger.ts:653-654`, `layout.tsx:877`,
-      `hitl.ts:5253` (assert unaffected), `node-interrupt.ts:583` (assert unaffected).
-- [ ] **`CrashReason` readers** — `state-transitions.ts:1334`,
-      `reconcile.ts:603` (**C6**), plus a grep for every `switch` over it.
-- [ ] **`ReconcileReason` readers** — the sweep's summary aggregation and any
-      UI/log that renders the reason.
-- [ ] **Read models** — the run timeline (`layout.tsx`); the board and portfolio
-      read models branch on `runs.status`, which is unchanged (`Crashed` already
-      exists), so they need **no** change. Assert this with a grep, don't assume.
-- [ ] **Scheduler / cap** — `Crashed` already frees a slot; the boundary must call
-      the same `promoteNextPending` follow-up the other crash paths do (**D3** step 3).
-- [ ] **Sweeps** — no new run status, so no candidate filter changes.
-- [ ] **Guards** — the new classifier arms are an **allow-list** over
-      `PromptEvidenceClass`, written as an exhaustive
-      `satisfies Record<PromptEvidenceClass, …>` map so a future member is a
-      compile error, never a silent fall-through.
+- [x] **Decision readers** — grep over `web/{lib,app,components}` (excluding
+      tests) returns EXACTLY nine files: `attempt-decisions.ts` (the definition),
+      `ledger.ts` (re-export — `TURN_LOST_DECISION` added so the server-side
+      import surface stays complete), `rework-baseline.ts` and
+      `observatory-core.ts` (both read the SET, so the one-line addition is the
+      whole fan-out — pinned by AC-T4.1.1/.2 through the consumers),
+      `layout.tsx` (arm added + both catalogs), `hitl.ts` and `node-interrupt.ts`
+      (allow-list of ONE, deliberately unchanged — pinned by AC-T4.1.3 as a
+      NEGATIVE regression), `crash-recover.ts` and `turn-lost-boundary.ts` (the
+      writers). No reader was missed.
+- [x] **`CrashReason` readers** — grep returns `state-transitions.ts` (the
+      union + the two writers), `reconcile.ts` (`mapReasonToCrashReason`, the
+      only `switch`) and `turn-lost-boundary.ts` (a parameter). The `switch` is
+      closed by the exhaustiveness assertion, which is what makes the silent
+      `default` harmless.
+- [x] **`ReconcileReason` readers** — grep returns only `reconcile.ts` itself:
+      the union, `ReconcileDecision`, `mapReasonToCrashReason`, and the sweep's
+      own dispatch/counters. Nothing outside the module renders the reason, so
+      the six new members reach no UI.
+- [x] **Read models** — `board.ts` branches on `runs.status` (`Crashed` already
+      a column) and never on the reason; the portfolio does the same. Verified by
+      grep, not assumed. Only the run timeline needed an arm.
+- [x] **Scheduler / cap** — the boundary's arm runs inside the sweep's existing
+      crash dispatch, which already calls `promoteNextPending` after
+      `systemCloseActiveAssignmentsForRun`. Inherited, not re-implemented.
+- [x] **Sweeps** — no new run status, so no candidate filter changed.
+- [x] **Guards** — `EVIDENCE_DECISIONS` is
+      `satisfies Record<PromptEvidenceClass, ReconcileDecision | null>`, so a
+      future member is a compile error rather than a silent fall-through to
+      `agent-session-gone`.
 
 ---
 
@@ -1121,7 +1134,7 @@ after refactoring — a refactor that is not re-measured is a hope.
 
 ### Phase 3 — The shared crash boundary
 
-**T3.1 — `web/lib/runs/turn-lost-boundary.ts`.** `applyTurnLostBoundary()` per
+**T3.1 — ✅ `web/lib/runs/turn-lost-boundary.ts`.** `applyTurnLostBoundary()` per
 **D3**: claim → one transaction (attempt close + `crashRunningRun` +
 `applied`/`completion_applied_at`) → post-commit `promoteNextPending`. Returns a
 discriminated result (`"applied" | "not-claimed" | "lost-cas"`); the two
@@ -1129,16 +1142,16 @@ non-applying results write nothing and log INFO. Unit + integration tests for
 the loser path specifically — an empty attempt-guard result must roll the whole
 transaction back, never half-apply.
 
-**T3.2 — Wire the reconcile `turn-lost` / `owner-poisoned` arms** to T3.1 instead
+**T3.2 — ✅ Wire the reconcile `turn-lost` / `owner-poisoned` arms** to T3.1 instead
 of a bare `crashRunningRun`.
 
-**T3.3 — Wire the flow node prompt owner and the gate owner.** A failed host
+**T3.3 — ✅ Wire the flow node prompt owner and the gate owner.** A failed host
 result whose `details.reason === 'turn_lost'` (matched on the settled command's
 `lastError`, never on HTTP status — trap 2, v1 **and** v2 payloads via
 `commandReceiptPayloadV2`) routes to T3.1 instead of an ordinary failed node
 action. Everything else on those paths is unchanged.
 
-**T3.4 — Agent and scratch owners (D4 as revised; gated on the Phase-0 answer).**
+**T3.4 — ✅ Agent and scratch owners (D4 as revised; gated on the Phase-0 answer).**
 NOT the shared boundary. Agent: `finalizeAgentRun(runId, "Crashed", …)` instead
 of `"Failed"` when the settled command's `details.reason === 'turn_lost'` —
 `AgentTerminalOutcome` already admits `"Crashed"` (`finalization.ts:75`).
@@ -1150,7 +1163,7 @@ both owners already apply it, this task is the one-argument change and its test.
 **Verify:** `classifyCommandRetirement` returns `null` for an agent run and a
 scratch run whose turn was lost — the same assertion RED 6 makes for flow.
 
-**T3.5 — Make Recover refuse to adopt a lost turn as a result, AND discharge it (C9 + C13).**
+**T3.5 — ✅ Make Recover refuse to adopt a lost turn as a result, AND discharge it (C9 + C13).**
 `applyCrashedTurnEvidence` (`crash-recover.ts:169-178`, the post-`settled`
 filter chain) gains one arm: a settled command whose
 `lastError.details.reason === 'turn_lost'` returns a new `"turn-lost"` outcome
@@ -1200,7 +1213,7 @@ signature, not re-derived at each call site. Re-run the suites after refactoring
 
 ### Phase 4 — Accounting and surfacing
 
-**T4.1 — `turn_lost` joins `NON_CORRECTION_DECISIONS`** (`attempt-decisions.ts`),
+**T4.1 — ✅ `turn_lost` joins `NON_CORRECTION_DECISIONS`** (`attempt-decisions.ts`),
 with the comment explaining why a host restart is not a correction. Assert the
 fan-out: both Observatory counters, the rework budget, and — as a *negative*
 regression — that `MAISTER_MAX_OPERATOR_RESTARTS` is unchanged (**C5**).
@@ -1224,11 +1237,11 @@ a negative regression, and the only one that would catch a careless widening of
 is not a test — it asserts the line above it. Every AC here goes through the
 consumer.
 
-**T4.2 — Timeline label.** `decisionLabel` arm (A13) + `decisionTurnLost` in
+**T4.2 — ✅ Timeline label.** `decisionLabel` arm (A13) + `decisionTurnLost` in
 **both** `web/messages/en.json` and `web/messages/ru.json` (A14). **Verify:** the
 key exists in both catalogs; a missing RU key renders the raw token.
 
-**T4.3 — Walk the consumer fanout checklist** above and record each line as
+**T4.3 — ✅ Walk the consumer fanout checklist** above and record each line as
 checked-with-evidence (a grep result or a test), including the negatives.
 
 **Phase 4 exit (GREEN → REFACTOR):**

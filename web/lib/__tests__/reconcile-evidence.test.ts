@@ -28,7 +28,10 @@ function row(overrides: Partial<PromptEvidenceRow> = {}): PromptEvidenceRow {
   };
 }
 
-const TURN_LOST_NESTED = { code: "PRECONDITION", details: { reason: "turn_lost" } };
+const TURN_LOST_NESTED = {
+  code: "PRECONDITION",
+  details: { reason: "turn_lost" },
+};
 const TURN_LOST_FLAT = { code: "ACP_PROTOCOL", reason: "turn_lost" };
 
 describe("isTurnLostError — both production shapes, neither code", () => {
@@ -48,7 +51,10 @@ describe("isTurnLostError — both production shapes, neither code", () => {
     expect(isTurnLostError({ code: "PRECONDITION" })).toBe(false);
     expect(isTurnLostError({ code: "ACP_PROTOCOL" })).toBe(false);
     expect(
-      isTurnLostError({ code: "ACP_PROTOCOL", details: { reason: "receipt_missing" } }),
+      isTurnLostError({
+        code: "ACP_PROTOCOL",
+        details: { reason: "receipt_missing" },
+      }),
     ).toBe(false);
   });
 
@@ -83,7 +89,9 @@ describe("classifyPromptEvidence — the D1 derivation, in order", () => {
 
   it("row 4: application_state poisoned → poisoned", () => {
     expect(
-      classifyPromptEvidence(row({ state: "failed", applicationState: "poisoned" })),
+      classifyPromptEvidence(
+        row({ state: "failed", applicationState: "poisoned" }),
+      ),
     ).toBe("poisoned");
   });
 
@@ -108,15 +116,17 @@ describe("classifyPromptEvidence — the D1 derivation, in order", () => {
     ["nested", TURN_LOST_NESTED],
     ["flat", TURN_LOST_FLAT],
   ])("row 7: a settled %s turn_lost → turn_lost", (_shape, lastError) => {
-    expect(
-      classifyPromptEvidence(row({ state: "failed", lastError })),
-    ).toBe("turn_lost");
+    expect(classifyPromptEvidence(row({ state: "failed", lastError }))).toBe(
+      "turn_lost",
+    );
   });
 
   it.each(["succeeded", "failed", "fenced"])(
     "row 8: a settled %s row the owner has not applied → pending_application",
     (state) => {
-      expect(classifyPromptEvidence(row({ state }))).toBe("pending_application");
+      expect(classifyPromptEvidence(row({ state }))).toBe(
+        "pending_application",
+      );
     },
   );
 
@@ -182,13 +192,24 @@ describe("classifyPromptEvidence — totality", () => {
       classifyPromptEvidence(row(), "inflight"),
       classifyPromptEvidence(row(), "completed"),
       classifyPromptEvidence(row({ state: "failed" })),
-      classifyPromptEvidence(row({ state: "failed", applicationState: "applying" })),
-      classifyPromptEvidence(row({ state: "failed", applicationState: "applied" })),
-      classifyPromptEvidence(row({ state: "failed", lastError: TURN_LOST_FLAT })),
       classifyPromptEvidence(
-        row({ state: "failed", applicationError: { reason: "prompt_terminal_conflict" } }),
+        row({ state: "failed", applicationState: "applying" }),
       ),
-      classifyPromptEvidence(row({ state: "failed", applicationState: "poisoned" })),
+      classifyPromptEvidence(
+        row({ state: "failed", applicationState: "applied" }),
+      ),
+      classifyPromptEvidence(
+        row({ state: "failed", lastError: TURN_LOST_FLAT }),
+      ),
+      classifyPromptEvidence(
+        row({
+          state: "failed",
+          applicationError: { reason: "prompt_terminal_conflict" },
+        }),
+      ),
+      classifyPromptEvidence(
+        row({ state: "failed", applicationState: "poisoned" }),
+      ),
     ]);
 
     // A class nothing can produce is a dead arm in the decision table — and a

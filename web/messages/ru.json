@@ -2315,6 +2315,7 @@
     "decisionApprove": "Одобрить",
     "decisionRework": "Вернуть на доработку",
     "decisionCrashRecover": "Восстановлен после сбоя",
+    "decisionTurnLost": "Ход потерян — хост перезапущен",
     "reworking": "Доработка",
     "liveRefresh": "SSE refresh",
     "inputTokens": "Входные токены",

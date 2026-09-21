@@ -24,10 +24,7 @@ import type { ReconcileInput } from "@/lib/reconcile";
 
 import { describe, expect, it } from "vitest";
 
-import {
-  classifyRunReconcile,
-  mapReasonToCrashReason,
-} from "@/lib/reconcile";
+import { classifyRunReconcile, mapReasonToCrashReason } from "@/lib/reconcile";
 
 const NOW = 1_700_000_000_000;
 const GRACE = 90;
@@ -790,7 +787,9 @@ describe("classifyRunReconcile — ADR-177 evidence arms", () => {
 
   it("turn_lost crashes with its OWN reason, not agent-session-gone", () => {
     expect(
-      classifyRunReconcile(input({ ...pastGrace, promptEvidence: "turn_lost" })),
+      classifyRunReconcile(
+        input({ ...pastGrace, promptEvidence: "turn_lost" }),
+      ),
     ).toEqual({ action: "crash", reason: "turn-lost" });
   });
 

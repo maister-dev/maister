@@ -649,11 +649,15 @@ export async function endActiveTakeover(runId: string, db?: Db): Promise<void> {
 // ADR-175 (`crash_recover`): marks an attempt closed by an operator Recover of a
 // crashed agent node, so the graph re-dispatches it as a fresh attempt under the
 // newly minted assignment epoch.
+// ADR-177 (`turn_lost`): marks an attempt closed by the shared crash boundary
+// because the HOST reported the turn lost — written at crash time by whichever
+// writer got there first, not by an operator.
 export {
   CRASH_RECOVER_DECISION,
   NON_CORRECTION_DECISIONS,
   OPERATOR_INTERRUPT_DECISION,
   REVIEW_REWORK_CLAIM_DECISION,
+  TURN_LOST_DECISION,
 } from "@/lib/flows/graph/attempt-decisions";
 
 export async function getActiveTakeover(
