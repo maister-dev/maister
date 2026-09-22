@@ -137,6 +137,36 @@ registrar reads `GET /health` and applies this policy under a
 `SELECT … FOR UPDATE` of the single non-retired local row. Transitions carry
 the log marker they emit.
 
+### Health stream capability (Designed — P0-7)
+
+`GET /health` without `includeStream`, or with the one literal value `false`,
+retains the pre-P0-7 response byte shape so an older strict web can register a
+newer supervisor. A new web calls `GET /health?includeStream=true`. An older
+supervisor ignores that unknown query key and returns the legacy body; absence
+of `stream` therefore means unsupported/unknown, never caught up. Empty,
+repeated, or non-literal values are `409 PRECONDITION` with
+`details.reason="health_query_invalid"`. An opt-in storage failure is `503
+EXECUTOR_UNAVAILABLE`; the host must not omit the block and impersonate an old
+binary.
+
+The additive block is
+`{streamId,headSequence,unacknowledgedCount,retainedCount,pressured,oldestUnacknowledgedAgeMs}`.
+`headSequence` is the last committed sequence (`next_sequence - 1`), encoded as
+a canonical nonnegative decimal string bounded by signed BIGINT, and is `null`
+only for a never-written stream. Purging ACKed rows cannot reduce it. Counts and
+age are safe nonnegative integers, `unacknowledgedCount <= retainedCount`, and
+age is `null` exactly at zero backlog. Age comes from the oldest row after the
+logical ACK boundary, not from raw `acknowledged_at`: lazy ACK ranges update the
+stream boundary without rewriting every event. A backwards host wall clock is
+reported as age zero with a diagnostic warning.
+
+The supervisor producer rejects unknown output fields. The web consumer keeps
+known-field validation but passes unknown response/stream fields for forward
+compatibility. This tolerance is confined to health; command envelopes remain
+strict. The health read is one bounded SQLite statement using the stream
+counter/budget rows and the existing `(stream_id, sequence_sort_key)` replay
+index. It decodes no event body and reads no runtime file.
+
 ```mermaid
 stateDiagram-v2
     [*] --> none

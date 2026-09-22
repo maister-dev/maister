@@ -218,11 +218,13 @@ flowchart TD
 
 ### Periodic reconcile sweep (Implemented)
 
-A `globalThis`-singleton timer
-(`setInterval(...).unref()`, `MAISTER_RECONCILE_SWEEP_INTERVAL_SECONDS`,
-default 60) re-runs the same classification on a cadence. This is the
-sanctioned recovery poll (heartbeat + reconcile), NOT a banned live-path
-transition poll — the live path stays ACP-notification-driven.
+The seeded `system_sweep.default` scheduler job runs the same classification on
+the unified scheduler clock every 60 seconds. This is the sanctioned recovery
+poll (heartbeat + reconcile), NOT a banned live-path transition poll — the live
+path stays ACP-notification-driven. The retired
+`MAISTER_RECONCILE_SWEEP_INTERVAL_SECONDS` and
+`MAISTER_KEEPALIVE_SWEEP_INTERVAL_SECONDS` values are ignored with a boot WARN;
+there is no independent in-process reconcile or keepalive timer.
 
 The cadence also retries the bounded Plan-review handoff repair described above.
 It has no supervisor side effect: a ready graph wake calls `runFlow()` and an

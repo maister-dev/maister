@@ -167,6 +167,35 @@ is a runbook of its own: [§14](#14-stage-b-execution-data-cut-over-upgrade-from
 a plain `db:migrate` on such an installation stops at `0135` by design. See
 [execution data cutover](system-analytics/execution-data-cutover.md).
 
+### Scheduler clock
+
+Periodic recovery is available only while the unified scheduler clock ticks.
+For the supported single-box systemd install, set this explicitly in
+`/etc/maister/maister.env`:
+
+```dotenv
+MAISTER_SCHEDULER_TIMER_ENABLED=true
+MAISTER_SCHEDULER_TICK_INTERVAL_SECONDS=60
+```
+
+An unset timer also defaults to the fallback when no cron token is configured,
+but the explicit line makes deployment ownership reviewable. For multiple web
+instances or an operator-owned external scheduler, configure instead:
+
+```dotenv
+MAISTER_SCHEDULER_TIMER_ENABLED=false
+MAISTER_CRON_TOKEN=<random-server-only-secret>
+```
+
+Call `GET` or `POST /api/cron/tick` every minute with
+`X-Maister-Cron-Token`. Database claims/leases serialize due work across web
+instances. Never place the token in a URL or log. A configured token proves
+only that the route is enabled; verify advancing `system_sweep.default` and
+`domain_event_dispatch.default` attempt timestamps on `/admin/scheduler`.
+Explicit false without a token is `missing_tick` and logs a WARN naming both
+configuration variables. In that state recovery, checkpoint cleanup and
+parked-parent wakes do not run.
+
 Apply migrations and seed the first admin:
 
 ```bash
@@ -284,6 +313,13 @@ and `/opt/maister/supervisor` respectively. Their explicit `PATH` includes
 `/opt/maister/supervisor/.env` (seed it from `supervisor/.env.sample`). Runtime
 data roots and host storage limits belong to the supervisor. Edit the unit
 `PATH=` / paths if your layout differs.
+
+After starting the units, open `/admin/scheduler` and confirm the clock card
+shows `fallback_timer` and recent successful core-job attempts. External-clock
+installs should invoke one authenticated tick, then confirm the durable attempt
+timestamp. If the card reports `missing_tick`, correct the EnvironmentFile and
+restart `maister-web`; restarting without an actual external invocation does
+not repair the clock.
 
 The main process receives SIGTERM and drains its work before exiting. Both
 units use `KillMode=mixed`: systemd sends the initial signal to the main process

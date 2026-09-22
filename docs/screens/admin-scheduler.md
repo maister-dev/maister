@@ -49,6 +49,13 @@ flowchart TD
 ## Layout & regions
 
 - **Header** — admin eyebrow, page title, and concise scheduler purpose.
+- **Scheduler clock** — the first standalone card shows resolved driver,
+  fallback interval, cron-token presence, local process tick state/outcome and
+  overlap totals. It always shows durable last/next activity for
+  `system_sweep.default` and `domain_event_dispatch.default`, even when the
+  general job list is capped. Process counters are labeled as reset-on-restart;
+  durable attempts are cluster evidence. Missing, disabled, overdue,
+  never-observed and partial/failure states are explicit.
 - **Engine jobs** — full-width view-only table over `scheduler_jobs` plus last
   `scheduler_job_runs` attempt. The table shows job id, kind, target summary,
   cadence, next run, enabled/disabled state, failure count, last attempt
@@ -75,6 +82,8 @@ flowchart TD
   display path, correlated run/project identifiers, timestamps, rescue result,
   and sanitized error/result codes. It has no re-arm, delete, or arbitrary-path
   action; only global admins can call the backing API.
+- **Brain index queue** — retains queue state only. Clock configuration and
+  guidance do not live inside this card.
 
 ## States
 

@@ -125,6 +125,57 @@ the consumer's two silent reconnect paths — a failed post-ACK watermark record
 and a lost or changed claim — now log and record instead of retrying every 2 s
 in complete silence.
 
+### Lag versus stall (Designed — P0-7)
+
+Lag is computed observability and is never an `execution_event_streams.state`
+or a reason to degrade a stream. Stall/lost retains the repair-first authority
+above. Duplicate traffic may advance `last_seen_at`, so no lag formula uses
+silence as progress. With a known empty cursor represented as `-1` internally,
+all sequence arithmetic uses bigint and serializes as canonical decimal strings:
+
+- ingest distance = `hostHead - last_received_sequence`;
+- manager gap distance = `last_received_sequence - last_contiguous_sequence`;
+- ACK-confirmation distance = `last_contiguous_sequence - last_ack_confirmed_sequence`;
+- projection backlog = `max(accepted run_sequence) - consumer.last_run_sequence`.
+
+The accepted horizon filters `ingest_disposition='accepted' AND run_sequence IS
+NOT NULL`, matching projector work. A first event at sequence zero behind a null
+cursor is backlog one. Distances describe sequence positions rather than an
+exact missing-row count when a sequence gap exists. Missing host telemetry,
+inconsistent manager watermarks, a cached host head behind the manager, and
+identity replacement are `unknown`, never zero or a clamped healthy value.
+
+Projection candidates are all non-terminal runs with registered consumers,
+including parked runs. Their horizons use the `(run_id, run_sequence)` index;
+the read model orders the complete eligible population by backlog with stable
+run/consumer tie-breakers before returning top 20 and exact totals. Current
+host attribution comes only from the active execution assignment. Unassigned
+runs remain visible as unattributed; historical ownership is not guessed.
+Poisoned consumers are queried separately, including terminal runs, with stable
+20-row pagination and the event/cursor/error-generation needed by the existing
+rearm command.
+
+The default warning threshold is backlog greater than 100 for at least 120 s
+(`MAISTER_EVENT_STREAM_LAG_SECONDS`) while a manager watermark advances in
+three consecutive, fresh `system_sweep` observations for the same
+host/stream/boot identity. `last_served_at` is informational only because a
+claim updates it. Projection age tracks whether the maximum attributed backlog
+over the full population remained above threshold; it does not claim that the
+same consumer was behind throughout. At streak three one
+`runtime-event-stream-lagging` WARN opens an incident. A complete sample with
+both host and projection lanes at or below 100 clears it and emits one
+`runtime-event-stream-lag-recovered` INFO. No sequence progress while backlog
+remains is `not_advancing`, not recovery. Missing/stale sources reset the streak
+and preserve an open incident; lost/closed or identity replacement resets it
+without a recovered claim.
+
+The observer persists bounded versioned evidence inside the existing terminal
+`system_sweep` attempt summary. It does not write stream error/state/readiness
+or run state. Observer failures are diagnostic errors only: they do not enter
+the sweep's failure bundle, increment consecutive scheduler failures, or
+disable recovery work. The admin read is read-only and cannot advance a streak
+or emit transitions.
+
 ## Process flows
 
 ```mermaid
