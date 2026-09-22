@@ -1,4 +1,4 @@
-import type { Browser, Page } from "@playwright/test";
+import type { Browser, Page, Response } from "@playwright/test";
 
 import { randomUUID } from "node:crypto";
 
@@ -8,6 +8,25 @@ import { withE2EDb } from "./_seed/db";
 import { loadFixtures, type E2EUserFixture } from "./_seed/fixtures";
 
 const EMPTY_STORAGE = { cookies: [], origins: [] };
+
+// The admin refusal is served by a middleware REWRITE carrying status 403
+// (`proxy.ts`). Chromium intermittently reports the navigation that PRODUCES
+// such a document — and the one that LEAVES it — as net::ERR_ABORTED even
+// though the response arrived, so a bare `goto` around this seam is flaky in
+// both directions. Retry once; a genuine refusal failure still surfaces on the
+// status assertion that follows.
+async function gotoAcrossRewrite(
+  page: Page,
+  path: string,
+): Promise<Response | null> {
+  try {
+    return await page.goto(path);
+  } catch (error) {
+    if (!String(error).includes("ERR_ABORTED")) throw error;
+
+    return await page.goto(path);
+  }
+}
 
 async function loginAs(browser: Browser, user: E2EUserFixture): Promise<Page> {
   const context = await browser.newContext({ storageState: EMPTY_STORAGE });
@@ -141,16 +160,9 @@ test("authenticated member receives an HTTP 403 with no platform diagnostics", a
   const page = await loginAs(browser, loadFixtures().users.memberCandidate);
 
   try {
-    const response = await page.goto("/admin/execution-host");
-
-    expect(response?.status()).toBe(403);
-    await expect(
-      page.getByRole("heading", { name: "Admin access required" }),
-    ).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Hosts" })).toHaveCount(0);
-
-    // D6 negative: a member DOES get the coarse platform summary, and it is
-    // never a link into the diagnostics page — in either rail state.
+    // D6 negative FIRST: a member DOES get the coarse platform summary, and it
+    // is never a link into the diagnostics page — in either rail state. Asserted
+    // before the refusal so the test never navigates off the rewritten document.
     await page.goto("/");
     await expect(page.getByTestId("rail-nav-executionHost")).toHaveCount(0);
     await expect(
@@ -163,6 +175,14 @@ test("authenticated member receives an HTTP 403 with no platform diagnostics", a
 
     await expect(collapsed).toBeVisible();
     await expect(collapsed).not.toHaveAttribute("href", /.*/);
+
+    const response = await gotoAcrossRewrite(page, "/admin/execution-host");
+
+    expect(response?.status()).toBe(403);
+    await expect(
+      page.getByRole("heading", { name: "Admin access required" }),
+    ).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Hosts" })).toHaveCount(0);
   } finally {
     await page.context().close();
   }
@@ -208,7 +228,7 @@ test("a live-demoted admin session loses access before diagnostic reads", async 
         user.id,
       ]);
     });
-    const denied = await page.goto("/admin/execution-host");
+    const denied = await gotoAcrossRewrite(page, "/admin/execution-host");
 
     expect(denied?.status()).toBe(403);
     await expect(
