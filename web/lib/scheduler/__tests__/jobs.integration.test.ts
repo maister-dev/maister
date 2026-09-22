@@ -12,6 +12,30 @@ import {
   vi,
 } from "vitest";
 
+const logLines = vi.hoisted(
+  () => [] as Array<{ level: string; payload: unknown; msg: unknown }>,
+);
+
+vi.mock("pino", () => {
+  const record =
+    (level: string) =>
+    (payload: unknown, msg?: unknown): void => {
+      logLines.push({ level, payload, msg });
+    };
+  const logger = {
+    info: record("info"),
+    error: record("error"),
+    warn: record("warn"),
+    debug: record("debug"),
+    trace: record("trace"),
+    fatal: record("fatal"),
+    child: () => logger,
+    level: "info",
+  };
+
+  return { default: () => logger };
+});
+
 import * as schema from "@/lib/db/schema";
 import {
   claimDueJobs,
@@ -60,6 +84,7 @@ beforeAll(async () => {
 
 afterEach(async () => {
   runSystemSweepMock.mockReset();
+  logLines.length = 0;
   await db.delete(schema.agentSchedules);
   await db.delete(schema.schedulerJobRuns);
   await db.delete(schema.schedulerJobs);
@@ -71,6 +96,121 @@ afterAll(async () => {
 });
 
 describe("scheduler job SQL integration", () => {
+  it("publishes a lag transition only after the terminal result CAS", async () => {
+    const summary = {
+      bundleErrors: [],
+      executionObservability: {
+        schemaVersion: 1,
+        attemptId: "observation-attempt",
+        observerId: "observer-1",
+        sampledAt: "2026-09-22T12:00:00.000Z",
+        quality: "complete",
+        errors: [],
+        stream: {
+          attemptId: "observation-attempt",
+          observerId: "observer-1",
+          sampledAt: "2026-09-22T12:00:00.000Z",
+          identity: {
+            executionHostId: "host-1",
+            streamId: "stream-1",
+            bootId: "boot-1",
+          },
+          streamState: "active",
+          watermarks: {
+            received: "10",
+            contiguous: "10",
+            acknowledged: "10",
+          },
+          hostBacklog: {
+            status: "available",
+            unacknowledgedCount: 101,
+            oldestUnacknowledgedAgeMs: 120_000,
+          },
+          projectionBacklog: { status: "available", maximumBacklog: "0" },
+          previousSampleId: "prior-attempt",
+          projectionOverThresholdSince: null,
+          streak: 3,
+          incidentOpen: true,
+          verdict: "lagging",
+          transition: "lagging",
+        },
+        consumers: {
+          status: "available",
+          total: 0,
+          maximumBacklog: "0",
+          top: [],
+        },
+        poison: { status: "available", total: 0, rows: [] },
+        commands: { status: "available", impasse: 0 },
+        workers: { status: "available", states: {} },
+      },
+    };
+
+    runSystemSweepMock.mockResolvedValueOnce(summary);
+    const succeededTick = await runSchedulerTick({ jobKind: "system_sweep" });
+
+    expect(succeededTick.succeededCount).toBe(1);
+    expect(
+      logLines.filter((line) => line.msg === "runtime-event-stream-lagging"),
+    ).toEqual([expect.objectContaining({ level: "warn" })]);
+
+    logLines.length = 0;
+    await requestSchedulerJobNow({
+      jobId: DEFAULT_SYSTEM_SWEEP_JOB_ID,
+      now: new Date(),
+      db: schedulerDb,
+    });
+    runSystemSweepMock.mockResolvedValueOnce({
+      ...summary,
+      executionObservability: {
+        ...summary.executionObservability,
+        stream: {
+          ...summary.executionObservability.stream,
+          hostBacklog: {
+            status: "available",
+            unacknowledgedCount: 0,
+            oldestUnacknowledgedAgeMs: null,
+          },
+          streak: 0,
+          incidentOpen: false,
+          verdict: "clear",
+          transition: "recovered",
+        },
+      },
+    });
+    const recoveredTick = await runSchedulerTick({ jobKind: "system_sweep" });
+
+    expect(recoveredTick.succeededCount).toBe(1);
+    expect(
+      logLines.filter(
+        (line) => line.msg === "runtime-event-stream-lag-recovered",
+      ),
+    ).toEqual([expect.objectContaining({ level: "info" })]);
+
+    logLines.length = 0;
+    await requestSchedulerJobNow({
+      jobId: DEFAULT_SYSTEM_SWEEP_JOB_ID,
+      now: new Date(),
+      db: schedulerDb,
+    });
+    runSystemSweepMock.mockImplementationOnce(async () => {
+      await db
+        .update(schema.schedulerJobRuns)
+        .set({ leaseExpiresAt: new Date(0) })
+        .where(isNotNull(schema.schedulerJobRuns.leaseExpiresAt));
+
+      return summary;
+    });
+    const fencedTick = await runSchedulerTick({ jobKind: "system_sweep" });
+
+    expect(fencedTick.skippedCount).toBe(1);
+    expect(
+      logLines.filter((line) =>
+        String(line.msg).startsWith("runtime-event-stream-lag"),
+      ),
+    ).toHaveLength(0);
+  });
+
   it("seeds an active project scan, claims its database project id, and re-enables it after unarchive", async () => {
     const now = new Date("2026-06-05T10:00:00.000Z");
     const projectId = randomUUID();

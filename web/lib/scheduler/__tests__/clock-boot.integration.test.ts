@@ -1,4 +1,4 @@
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -111,6 +111,26 @@ describe("scheduler clock in a production web", () => {
     expect(log).toContain("MAISTER_RECONCILE_SWEEP_INTERVAL_SECONDS");
     expect(log).toContain("MAISTER_KEEPALIVE_SWEEP_INTERVAL_SECONDS");
     expect(log.match(/scheduler interval variable ignored/g)).toHaveLength(2);
+  });
+
+  it("refuses production boot for an invalid lag threshold", async () => {
+    const logFile = path.join(root, "invalid-lag.log");
+
+    await expect(
+      startRealWeb({
+        databaseUrl: database.container.getConnectionUri(),
+        supervisorUrl: supervisor.url,
+        runtimeRoot,
+        worktreesRoot,
+        logFile,
+        env: { MAISTER_EVENT_STREAM_LAG_SECONDS: "invalid" },
+      }),
+    ).rejects.toThrow(/real web exited before/);
+    const log = await readFile(logFile, "utf8");
+
+    expect(log).toContain(
+      "MAISTER_EVENT_STREAM_LAG_SECONDS must be a canonical positive integer",
+    );
   });
 
   it("records durable job activity when an external clock invokes the route", async () => {

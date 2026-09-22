@@ -550,6 +550,7 @@ Reason tokens (`SupervisorErrorBody.details.reason`, contract in
 | `workspace_rejected`  | adopt path failed a kind rule (`details.rule ∈ relative_path, parent_segment, not_found, outside_roots, symlink_escape, gitdir_mismatch, not_a_repo, repo_path_mismatch, inside_state_dir, outside_workspace`; `details.mount` names a rejected `contextMounts[]` entry) | `PRECONDITION` passed through                     |
 | `legacy_field`        | a legacy path field after the strict flip (`details.field` names it)                                                                                                                                                                      | `PRECONDITION` passed through                     |
 | `missing_envelope`    | no envelope after the strict flip                                                                                                                                                                              | `PRECONDITION` passed through                     |
+| `health_query_invalid` | `/health` receives an empty, repeated, or non-literal `includeStream` value                                                                                                                                    | fix the probe query; no retry                     |
 
 ### Web-minted `details.reason` tokens (Implemented — ADR-166)
 
@@ -593,6 +594,7 @@ or epoch), `ACP_PROTOCOL` (integrity disagreement), or
 `event_sequence_invalid`, `event_identity_conflict`, `event_stream_mismatch`,
 `event_schema_invalid`, `stale_assignment_epoch`, `event_redaction_failed`,
 `event_payload_oversize`, `event_payload_unstorable`, `event_outbox_backpressure`,
+`health_query_invalid`,
 `data_plane_unsupported`, `command_invariant_conflict`,
 `runtime_object_not_found`, `runtime_object_missing`,
 `runtime_object_range_invalid`, `runtime_object_integrity_mismatch`, `runtime_object_retained` (manager-internal),

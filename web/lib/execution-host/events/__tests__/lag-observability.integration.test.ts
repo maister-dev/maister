@@ -370,13 +370,24 @@ describe("execution lag observability across the real host and manager stores", 
       attemptId: "lag-attempt-lost",
       observerId: "lag-observer-lost",
       model: lostModel,
-      previous: recovered.stream,
+      previous: recovered.stream
+        ? {
+            ...recovered.stream,
+            incidentOpen: true,
+            verdict: "lagging",
+          }
+        : null,
       workers: {},
       impasse: 1,
       lagAgeMs: 0,
     });
 
-    expect(lostObservation.stream).toBeNull();
+    expect(lostObservation.stream).toMatchObject({
+      streamState: "lost",
+      verdict: "inactive",
+      incidentOpen: false,
+      transition: "reset",
+    });
 
     await database.db.execute(sql`
       INSERT INTO execution_event_streams (

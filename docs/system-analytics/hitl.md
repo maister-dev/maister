@@ -1010,12 +1010,13 @@ boolean | enum | array`; unknown type refused with `CONFIG` at Flow
   HITL intents (`hitl_requests.response IS NOT NULL AND respondedAt
 IS NULL` joined to `runs.status='NeedsInput'`) are recovered on web
   boot via `web/lib/runs/resume-recovery.ts:runResumeRecoverySweep`.
-  The sweep runs in `web/instrumentation-node.ts` BEFORE the keep-alive
-  sweeper and either re-schedules `scheduleResumedSessionDrive`
+  The sweep runs in `web/instrumentation-node.ts` before the scheduler timer
+  starts and either re-schedules `scheduleResumedSessionDrive`
   against a live supervisor session OR atomically rolls the run back
   to `NeedsInputIdle` (status-guarded; intent preserved). Supervisor
-  5xx during recovery → skip-this-boot, the keep-alive sweeper's
-  24 h TTL is the long-term safety net. Always-on, no flag.
+  5xx during recovery → skip-this-boot; the scheduler-owned `system_sweep`
+  keep-alive pass applies the 24 h TTL as the long-term safety net. Always-on,
+  no flag.
 - **(Implemented — checkpoint/resume Codex review fix #3)** Every resume-driver
   terminal transition (`completeResumedStepAndHandoff` last-step
   `Review`, `failResumedRun`, `crashResumedRun`) calls

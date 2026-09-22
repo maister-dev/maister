@@ -44,6 +44,7 @@ const runPlainAgentDirectoryGcSweepMock = vi.hoisted(() => vi.fn());
 const ensureLocalExecutionDataPlaneMock = vi.hoisted(() => vi.fn());
 const collectExecutionEventLagMock = vi.hoisted(() => vi.fn());
 const platformStatusMock = vi.hoisted(() => vi.fn());
+const executionCommandReconcilePassMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/runs/keepalive-sweeper", () => ({
   runSweepTick: runSweepTickMock,
@@ -88,20 +89,7 @@ vi.mock("@/lib/execution-host", () => ({
   executionHosts: {
     local: () => ({ platformStatus: platformStatusMock }),
   },
-  executionCommandReconcilePass: vi.fn(async () => ({
-    commands: {
-      scanned: 0,
-      redelivered: 0,
-      orphaned: 0,
-      folded: 0,
-      turnLost: 0,
-      skippedInFlight: 0,
-      errors: [],
-    },
-    assignmentsReleased: 0,
-    commandsPruned: 0,
-    legacy: { candidates: 0, runIds: [] },
-  })),
+  executionCommandReconcilePass: executionCommandReconcilePassMock,
 }));
 vi.mock("@/lib/db/client", () => ({ getDb: () => ({}) }));
 vi.mock("@/lib/execution-host/events/lag-read-model", () => ({
@@ -232,6 +220,21 @@ describe("scheduler system sweeps", () => {
       sessions: [],
     });
     collectExecutionEventLagMock.mockReset();
+    executionCommandReconcilePassMock.mockReset().mockResolvedValue({
+      commands: {
+        scanned: 0,
+        redelivered: 0,
+        orphaned: 0,
+        folded: 0,
+        turnLost: 0,
+        skippedInFlight: 0,
+        impasse: 0,
+        errors: [],
+      },
+      assignmentsReleased: 0,
+      commandsPruned: 0,
+      legacy: { candidates: 0, runIds: [] },
+    });
   });
 
   it("runs every cleanup service once as part of the canonical system sweep", async () => {
@@ -410,6 +413,26 @@ describe("scheduler system sweeps", () => {
       errors: ["lag_collection_failed"],
       stream: null,
     });
+  });
+
+  it("records an unknown impasse when command reconciliation fails", async () => {
+    executionCommandReconcilePassMock.mockRejectedValueOnce(
+      new Error("command query failed"),
+    );
+    const { runSystemSweep } = await import("../system-sweeps");
+
+    const summary = await runSystemSweep({
+      executionObservation: {
+        attemptId: "attempt-current",
+        observerId: "observer-b",
+        previous: null,
+      },
+    });
+
+    expect(summary.errors).toContain(
+      "execution-host reconcile pass failed: command query failed",
+    );
+    expect(summary.executionObservability?.commands.impasse).toBeNull();
   });
 
   // Every arm is individually try/caught into `errors[]`, so a sweep that throws

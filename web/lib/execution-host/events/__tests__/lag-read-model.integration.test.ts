@@ -9,6 +9,7 @@ import {
   collectExecutionEventLag,
   executionConsumerLagQuery,
 } from "@/lib/execution-host/events/lag-read-model";
+import { createExecutionObservability } from "@/lib/execution-host/events/lag-observation";
 import {
   seedLocalHost,
   seedProject,
@@ -28,12 +29,13 @@ describe("execution event lag read model", () => {
   let database: StartedPostgresTestDb;
   let health: PlatformStatus;
   let runIds: string[];
+  let projectId: string;
 
   beforeAll(async () => {
     database = await startMainPostgresTestDb({
       databaseName: "execution_event_lag_read_model",
     });
-    const projectId = await seedProject(database.db);
+    projectId = await seedProject(database.db);
     const host = await seedLocalHost(database.db, { bootId: BOOT_ID });
 
     await database.db.execute(sql`
@@ -265,6 +267,7 @@ describe("execution event lag read model", () => {
       displayed: 20,
       truncated: 5,
       maximumBacklog: "48",
+      diagnosticCount: 0,
     });
     expect(model.consumers.top.map((row) => row.backlog)).toEqual(
       Array.from({ length: 20 }, (_, index) => String(48 - index * 2)),
@@ -297,6 +300,46 @@ describe("execution event lag read model", () => {
       acceptedWithoutTimestamp: 1,
       oldestAcceptedAgeMs: 60_000,
     });
+  });
+
+  it("reports a cursor ahead of its accepted horizon instead of clamping it healthy", async () => {
+    await database.db.execute(sql`
+      UPDATE execution_event_consumers
+      SET last_run_sequence = 101
+      WHERE run_id = ${runIds[0]}
+        AND consumer_name = 'run_projection_v1'
+    `);
+
+    try {
+      const model = await collectExecutionEventLag({
+        db: database.db,
+        health,
+        now: NOW,
+      });
+      const diagnostic = model.consumers.diagnostics.find(
+        (row) => row.runId === runIds[0],
+      );
+
+      expect(model.consumers.diagnosticCount).toBe(1);
+      expect(diagnostic).toMatchObject({
+        backlog: null,
+        diagnostic: "cursor_ahead_of_horizon",
+        runHorizonSequence: "100",
+        lastRunSequence: "101",
+      });
+      expect(
+        model.consumers.byHost.find(
+          (row) => row.executionHostId === model.streams[0]?.executionHostId,
+        )?.diagnosticCount,
+      ).toBe(1);
+    } finally {
+      await database.db.execute(sql`
+        UPDATE execution_event_consumers
+        SET last_run_sequence = 100
+        WHERE run_id = ${runIds[0]}
+          AND consumer_name = 'run_projection_v1'
+      `);
+    }
   });
 
   it("paginates poison independently and keeps the exact total", async () => {
@@ -346,4 +389,133 @@ describe("execution event lag read model", () => {
 
     expect(plan).toMatch(/execution_events_run_sequence_(?:idx|uq)/);
   });
+
+  it("qualifies the populated read model budget over 50k runs and 1k active runs", async () => {
+    await database.pool.query(
+      `INSERT INTO runs (
+         id, project_id, run_kind, status, flow_version, flow_revision,
+         execution_data_plane_mode
+       )
+       SELECT
+         'lag-perf-run-' || LPAD(sequence::text, 6, '0'),
+         $1,
+         'scratch',
+         CASE WHEN sequence <= 1000 THEN 'Running' ELSE 'Done' END,
+         'scratch',
+         'manual',
+         'canonical_events_v1'
+       FROM generate_series(1, 50000) AS sequence
+       ON CONFLICT (id) DO NOTHING`,
+      [projectId],
+    );
+    await database.pool.query(
+      `INSERT INTO execution_events (
+         id, source, source_key, run_id, event_type, payload_schema,
+         occurred_at, received_at, run_sequence, ingest_disposition
+       )
+       SELECT
+         'lag-perf-event-' || LPAD(sequence::text, 6, '0'),
+         'manager',
+         'lag-perf-source-' || sequence::text,
+         'lag-perf-run-' || LPAD(sequence::text, 6, '0'),
+         'session.update',
+         'maister.test.v1',
+         $1,
+         $1,
+         sequence * 100,
+         'accepted'
+       FROM generate_series(1, 1000) AS sequence
+       ON CONFLICT (id) DO NOTHING`,
+      [NOW],
+    );
+    await database.pool.query(
+      `INSERT INTO execution_event_consumers (
+         consumer_name, run_id, last_run_sequence, state, last_served_at
+       )
+       SELECT
+         consumer_name,
+         'lag-perf-run-' || LPAD(sequence::text, 6, '0'),
+         0,
+         'ready',
+         $1
+       FROM generate_series(1, 1000) AS sequence
+       CROSS JOIN (VALUES ('run_projection_v1'), ('audit_projection_v1')) AS consumers(consumer_name)
+       ON CONFLICT (consumer_name, run_id) DO NOTHING`,
+      [NOW],
+    );
+    await database.pool.query("ANALYZE runs");
+    await database.pool.query("ANALYZE execution_events");
+    await database.pool.query("ANALYZE execution_event_consumers");
+
+    const collectorSamples: number[] = [];
+    const observationSamples: number[] = [];
+
+    for (let sampleIndex = 0; sampleIndex < 20; sampleIndex += 1) {
+      const startedAt = performance.now();
+      const model = await collectExecutionEventLag({
+        db: database.db,
+        health,
+        now: NOW,
+      });
+      const collectedAt = performance.now();
+
+      createExecutionObservability({
+        attemptId: `perf-${sampleIndex}`,
+        observerId: "perf-observer",
+        model,
+        previous: null,
+        workers: {},
+        impasse: 0,
+        lagAgeMs: 120_000,
+        maxSampleGapMs: 120_000,
+      });
+      collectorSamples.push(collectedAt - startedAt);
+      observationSamples.push(performance.now() - startedAt);
+    }
+
+    const p95 = (samples: number[]): number =>
+      [...samples].sort((left, right) => left - right)[
+        Math.ceil(samples.length * 0.95) - 1
+      ]!;
+    const finalModel = await collectExecutionEventLag({
+      db: database.db,
+      health,
+      now: NOW,
+    });
+
+    expect(finalModel.consumers.eligiblePopulation).toBe(1025);
+    expect(finalModel.consumers.totalConsumers).toBe(2025);
+    expect(finalModel.consumers.maximumBacklog).toBe("100000");
+    expect(p95(collectorSamples)).toBeLessThanOrEqual(250);
+    expect(p95(observationSamples)).toBeLessThanOrEqual(1_000);
+
+    const explained = await database.db.execute(
+      sql`EXPLAIN (ANALYZE, BUFFERS) ${executionConsumerLagQuery()}`,
+    );
+    const plan = explained.rows
+      .map((row) => String(row["QUERY PLAN"]))
+      .join("\n");
+
+    expect(plan).toMatch(/execution_events_run_sequence_(?:idx|uq)/);
+  }, 300_000);
+
+  it("cancels a blocked analytics read at the two-second SQL budget", async () => {
+    const blocker = await database.pool.connect();
+
+    try {
+      await blocker.query("BEGIN");
+      await blocker.query(
+        "LOCK TABLE execution_event_consumers IN ACCESS EXCLUSIVE MODE",
+      );
+      const startedAt = performance.now();
+
+      await expect(
+        collectExecutionEventLag({ db: database.db, health, now: NOW }),
+      ).rejects.toThrow(/statement timeout|canceling statement/i);
+      expect(performance.now() - startedAt).toBeLessThan(2_500);
+    } finally {
+      await blocker.query("ROLLBACK");
+      blocker.release();
+    }
+  }, 10_000);
 });

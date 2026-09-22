@@ -42,8 +42,7 @@ import {
 import { ADAPTER_IDS, type AdapterId } from "@/lib/acp-runners/adapter-support";
 import { contextMountsToWire } from "@/lib/context-mounts/types";
 import { MaisterError, type MaisterErrorCode } from "@/lib/errors";
-import { LAG_BACKLOG_THRESHOLD } from "@/lib/execution-host/events/lag";
-import { eventStreamLagSeconds } from "@/lib/instance-config";
+import { isHostBacklogLagEligible } from "@/lib/execution-host/events/lag";
 
 const logger = pino({
   name: "supervisor-client",
@@ -733,7 +732,7 @@ function isAbortError(err: unknown): boolean {
 }
 
 export async function checkSupervisorHealth(
-  opts: { timeoutMs?: number } = {},
+  opts: { timeoutMs?: number; lagAgeMs?: number } = {},
 ): Promise<PlatformStatus> {
   const url = `${baseUrl()}/health?includeStream=true`;
   const controller = new AbortController();
@@ -795,8 +794,7 @@ export async function checkSupervisorHealth(
     status:
       stream === undefined || stream.oldestUnacknowledgedAgeMs === null
         ? ("unknown" as const)
-        : stream.unacknowledgedCount > Number(LAG_BACKLOG_THRESHOLD) &&
-            stream.oldestUnacknowledgedAgeMs >= eventStreamLagSeconds() * 1_000
+        : isHostBacklogLagEligible(stream, opts.lagAgeMs ?? 120_000)
           ? ("behind" as const)
           : ("clear" as const),
     sampledAt: parsed.data.checkedAt,

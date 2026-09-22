@@ -1,21 +1,38 @@
 import type { ReactElement, ReactNode } from "react";
 import type { AdminExecutionHostStatus } from "@/lib/execution-host/admin-status";
 
-import { getTranslations } from "next-intl/server";
+import { getLocale, getTranslations } from "next-intl/server";
 import Link from "next/link";
 import clsx from "clsx";
 
 import { formatProjectionRearmCommand } from "@/lib/execution-host/admin-status";
 
-function time(value: string | null, missing: string): string {
-  return value ? new Date(value).toLocaleString() : missing;
+function time(value: string | null, missing: string, locale: string): string {
+  return value
+    ? new Intl.DateTimeFormat(locale, {
+        dateStyle: "medium",
+        timeStyle: "medium",
+        timeZone: "UTC",
+      }).format(new Date(value))
+    : missing;
 }
 
 function duration(value: number | null, missing: string): string {
   if (value === null) return missing;
   if (value < 1_000) return `${value}ms`;
 
-  return `${Math.round(value / 1_000)}s`;
+  const seconds = Math.floor(value / 1_000);
+  const hours = Math.floor(seconds / 3_600);
+  const minutes = Math.floor((seconds % 3_600) / 60);
+  const remainder = seconds % 60;
+
+  return [
+    hours > 0 ? `${hours}h` : null,
+    minutes > 0 ? `${minutes}m` : null,
+    remainder > 0 || (hours === 0 && minutes === 0) ? `${remainder}s` : null,
+  ]
+    .filter((part): part is string => part !== null)
+    .join(" ");
 }
 
 function Badge({
@@ -65,7 +82,12 @@ export async function ExecutionHostStatus({
 }: {
   status: AdminExecutionHostStatus;
 }): Promise<ReactElement> {
-  const t = await getTranslations("adminExecutionHost");
+  const [t, locale] = await Promise.all([
+    getTranslations("adminExecutionHost"),
+    getLocale(),
+  ]);
+  const formatTime = (value: string | null, missing: string): string =>
+    time(value, missing, locale);
   const observation = status.latestSweep?.observation;
 
   return (
@@ -113,7 +135,7 @@ export async function ExecutionHostStatus({
                   </td>
                   <td className="px-3 py-3">{host.version ?? "—"}</td>
                   <td className="px-5 py-3">
-                    {time(host.lastSeenAt, t("missing"))}
+                    {formatTime(host.lastSeenAt, t("missing"))}
                   </td>
                 </tr>
               ))}
@@ -136,9 +158,19 @@ export async function ExecutionHostStatus({
               <tr>
                 <th className="px-5 py-3">{t("fields.stream")}</th>
                 <th className="px-3 py-3">{t("fields.state")}</th>
-                <th className="px-3 py-3">{t("fields.watermarks")}</th>
+                <th className="px-3 py-3">
+                  {t("fields.watermarks")}
+                  <div className="mt-1 text-[10px] font-normal normal-case">
+                    {t("streams.watermarkLegend")}
+                  </div>
+                </th>
                 <th className="px-3 py-3">{t("fields.hostHead")}</th>
-                <th className="px-3 py-3">{t("fields.lag")}</th>
+                <th className="px-3 py-3">
+                  {t("fields.lag")}
+                  <div className="mt-1 text-[10px] font-normal normal-case">
+                    {t("streams.lagLegend")}
+                  </div>
+                </th>
                 <th className="px-3 py-3">{t("fields.pressure")}</th>
                 <th className="px-3 py-3">{t("fields.claim")}</th>
                 <th className="px-5 py-3">{t("fields.error")}</th>
@@ -174,7 +206,7 @@ export async function ExecutionHostStatus({
                       {observation
                         ? t("streams.observationMeta", {
                             observer: observation.observerId,
-                            sampledAt: time(
+                            sampledAt: formatTime(
                               observation.sampledAt,
                               t("missing"),
                             ),
@@ -218,7 +250,7 @@ export async function ExecutionHostStatus({
                   <td className="px-3 py-3 font-mono text-xs">
                     {stream.claimOwner ?? "—"}
                     <div className="mt-1 text-mute">
-                      {time(stream.claimExpiresAt, t("missing"))}
+                      {formatTime(stream.claimExpiresAt, t("missing"))}
                     </div>
                   </td>
                   <td className="px-5 py-3 font-mono text-xs">
@@ -273,7 +305,12 @@ export async function ExecutionHostStatus({
                     {consumer.consumerName} · {consumer.state}
                   </td>
                   <td className="px-3 py-3 font-mono font-semibold">
-                    {consumer.backlog}
+                    {consumer.backlog ?? "—"}
+                    {consumer.diagnostic ? (
+                      <div className="mt-1 text-[10px] text-danger">
+                        {t(`consumers.diagnostics.${consumer.diagnostic}`)}
+                      </div>
+                    ) : null}
                   </td>
                   <td className="px-3 py-3 font-mono text-xs">
                     {consumer.lastRunSequence ?? "null"} /{" "}
@@ -297,6 +334,22 @@ export async function ExecutionHostStatus({
             runs: status.lag.consumers.eligiblePopulation,
           })}
         </p>
+        {status.lag.consumers.diagnosticCount > 0 ? (
+          <div className="border-t border-danger/20 bg-danger/5 px-5 py-3 text-xs text-danger">
+            {t("consumers.diagnosticCount", {
+              count: status.lag.consumers.diagnosticCount,
+            })}
+            {status.lag.consumers.diagnostics.map((consumer) => (
+              <div
+                key={`diagnostic:${consumer.runId}:${consumer.consumerName}`}
+                className="mt-1 font-mono"
+              >
+                {consumer.runId} · {consumer.consumerName} ·{" "}
+                {t(`consumers.diagnostics.${consumer.diagnostic}`)}
+              </div>
+            ))}
+          </div>
+        ) : null}
       </Panel>
 
       <Panel subtitle={t("poison.subtitle")} title={t("poison.title")}>
@@ -384,7 +437,7 @@ export async function ExecutionHostStatus({
               {observation
                 ? t("workers.latestSweepMeta", {
                     observer: observation.observerId,
-                    sampledAt: time(observation.sampledAt, t("missing")),
+                    sampledAt: formatTime(observation.sampledAt, t("missing")),
                   })
                 : t("missing")}
             </span>
@@ -445,7 +498,7 @@ export async function ExecutionHostStatus({
           <p className="border-t border-line px-5 py-3 text-xs text-mute">
             {observation
               ? t("commands.latestSweep", {
-                  sampledAt: time(observation.sampledAt, t("missing")),
+                  sampledAt: formatTime(observation.sampledAt, t("missing")),
                 })
               : t("missing")}
           </p>
@@ -464,7 +517,7 @@ export async function ExecutionHostStatus({
             </Badge>
             <p className="mt-3 text-mute">
               {t("clock.last", {
-                value: time(
+                value: formatTime(
                   status.schedulerClock.health.lastFinishedAt,
                   t("missing"),
                 ),
@@ -481,7 +534,7 @@ export async function ExecutionHostStatus({
       </div>
 
       <p className="font-mono text-[10px] text-mute">
-        {t("sampledAt", { value: time(status.sampledAt, t("missing")) })}
+        {t("sampledAt", { value: formatTime(status.sampledAt, t("missing")) })}
       </p>
     </div>
   );

@@ -25,6 +25,7 @@ import { LeftRailNav } from "@/components/chrome/left-rail-nav";
 import {
   PlatformStatusDot,
   PlatformStatusPill,
+  platformStatusLabel,
 } from "@/components/chrome/platform-status";
 import { buildLeftRailSections } from "@/components/chrome/left-rail-sections";
 import { RailCollapse } from "@/components/chrome/rail-collapse";
@@ -171,6 +172,11 @@ export async function LeftRail({
   const tPortfolio = await getTranslations("portfolio");
   const tGc = await getTranslations("gc");
   const tStatus = await getTranslations("status");
+  const platformLabels = {
+    ready: tStatus("supervisorReady"),
+    behind: tStatus("supervisorBehind"),
+    unavailable: tStatus("supervisorUnavailable"),
+  };
   const locale = await getLocale();
   const nowMs = Date.now();
   const activeCount =
@@ -400,14 +406,7 @@ export async function LeftRail({
       <div className="mt-auto flex shrink-0 flex-col items-center gap-2 pb-4">
         {userRole === "admin" ? (
           <Link
-            aria-label={tStatus(
-              platformStatus.kind === "ready" &&
-                platformStatus.lag?.status === "behind"
-                ? "supervisorBehind"
-                : platformStatus.kind === "ready"
-                  ? "supervisorReady"
-                  : "supervisorUnavailable",
-            )}
+            aria-label={platformStatusLabel(platformStatus, platformLabels)}
             className="inline-flex h-9 w-9 items-center justify-center rounded-[10px] border border-line bg-paper"
             data-testid="rail-platform-status-collapsed"
             href="/admin/execution-host"
@@ -554,11 +553,7 @@ export async function LeftRail({
       <div className="mt-auto flex shrink-0 flex-col gap-2 border-t border-line pb-4 pt-3">
         <PlatformStatusPill
           className="px-0.5 font-mono text-[10px]"
-          labels={{
-            ready: tStatus("supervisorReady"),
-            behind: tStatus("supervisorBehind"),
-            unavailable: tStatus("supervisorUnavailable"),
-          }}
+          labels={platformLabels}
           status={platformStatus}
           {...(userRole === "admin" ? { href: "/admin/execution-host" } : {})}
         />

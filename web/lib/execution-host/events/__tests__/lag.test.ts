@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  calculateConsumerBacklog,
   calculateStreamLag,
+  isHostBacklogLagEligible,
 } from "@/lib/execution-host/events/lag";
 
 describe("execution event lag arithmetic", () => {
@@ -21,11 +21,11 @@ describe("execution event lag arithmetic", () => {
       diagnostics: [],
     });
     expect(
-      calculateConsumerBacklog({
-        runHorizonSequence: "0",
-        lastRunSequence: null,
-      }),
-    ).toBe("1");
+      isHostBacklogLagEligible(
+        { unacknowledgedCount: 101, oldestUnacknowledgedAgeMs: 120_000 },
+        120_000,
+      ),
+    ).toBe(true);
   });
 
   it("preserves signed-BIGINT precision for every distance", () => {
@@ -73,18 +73,18 @@ describe("execution event lag arithmetic", () => {
     });
   });
 
-  it("treats an empty run horizon as caught up and rejects noncanonical input", () => {
+  it("requires both a backlog above the threshold and the configured age", () => {
     expect(
-      calculateConsumerBacklog({
-        runHorizonSequence: null,
-        lastRunSequence: null,
-      }),
-    ).toBe("0");
-    expect(() =>
-      calculateConsumerBacklog({
-        runHorizonSequence: "01",
-        lastRunSequence: null,
-      }),
-    ).toThrow(/canonical/);
+      isHostBacklogLagEligible(
+        { unacknowledgedCount: 100, oldestUnacknowledgedAgeMs: 120_000 },
+        120_000,
+      ),
+    ).toBe(false);
+    expect(
+      isHostBacklogLagEligible(
+        { unacknowledgedCount: 101, oldestUnacknowledgedAgeMs: 119_999 },
+        120_000,
+      ),
+    ).toBe(false);
   });
 });

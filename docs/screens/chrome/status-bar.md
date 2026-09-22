@@ -1,7 +1,7 @@
 # Status bar
 
 - **Type:** chrome (persistent footer, every `(app)` screen).
-- **Status:** Implemented (WI-3 — the single supervisor-status source).
+- **Status:** Implemented (WI-3 — persistent supervisor-status source).
 - **Source:** `web/components/chrome/status-bar.tsx`.
 
 ## JTBD
@@ -27,8 +27,8 @@ a new tab.
 Left: the supervisor pill (`PlatformStatusPill`), the host origin
 (`localhost:3000`), and the supervisor version when ready. Right: the
 attention-stream liveness pill with its reconnect action, then outbound Docs
-and GitHub links. After WI-3 this is the **only** place supervisor status is
-shown — it was removed from the top nav and the left rail.
+and GitHub links. Admins also receive the same request-cached coarse status in
+the left rail as a direct diagnostics link.
 
 ## States
 

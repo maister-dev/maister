@@ -177,7 +177,7 @@ describe("reduceLagObservation", () => {
       verdict: "lagging" as const,
     };
     const unavailable = reduceLagObservation({
-      sample: sample({ quality: "partial" }),
+      sample: sample({ quality: "partial", identity: null }),
       previous: open,
       lagAgeMs: 120_000,
     });
@@ -195,6 +195,8 @@ describe("reduceLagObservation", () => {
     expect(unavailable).toMatchObject({
       verdict: "unknown",
       incidentOpen: true,
+      identity,
+      transition: null,
     });
     expect(replaced).toMatchObject({
       verdict: "reset",
@@ -206,6 +208,25 @@ describe("reduceLagObservation", () => {
       incidentOpen: false,
       transition: "reset",
     });
+  });
+
+  it("derives freshness from the configured scheduler cadence", () => {
+    const previous = firstAboveThreshold();
+    const withinCadence = reduceLagObservation({
+      sample: sample({ sampledAt: "2026-09-22T12:10:00.000Z" }),
+      previous,
+      lagAgeMs: 120_000,
+      maxSampleGapMs: 600_000,
+    });
+    const beyondCadence = reduceLagObservation({
+      sample: sample({ sampledAt: "2026-09-22T12:10:00.001Z" }),
+      previous,
+      lagAgeMs: 120_000,
+      maxSampleGapMs: 600_000,
+    });
+
+    expect(withinCadence.verdict).not.toBe("unknown");
+    expect(beyondCadence.verdict).toBe("unknown");
   });
 
   it("qualifies projection-only backlog after its sustained age while optional host telemetry is unsupported", () => {
@@ -223,6 +244,33 @@ describe("reduceLagObservation", () => {
     });
 
     expect(projection).toMatchObject({ verdict: "observing", streak: 1 });
+  });
+
+  it("does not recover an open incident from inconsistent projection evidence", () => {
+    const open = {
+      ...firstAboveThreshold(),
+      incidentOpen: true,
+      verdict: "lagging" as const,
+    };
+    const unknownProjection = reduceLagObservation({
+      sample: sample({
+        watermarks: { received: "201", contiguous: "201", acknowledged: "201" },
+        hostBacklog: {
+          status: "available",
+          unacknowledgedCount: 0,
+          oldestUnacknowledgedAgeMs: null,
+        },
+        projectionBacklog: { status: "unavailable" },
+      }),
+      previous: open,
+      lagAgeMs: 120_000,
+    });
+
+    expect(unknownProjection).toMatchObject({
+      incidentOpen: true,
+      transition: null,
+    });
+    expect(unknownProjection.verdict).not.toBe("clear");
   });
 
   it("accepts only the supported bounded persisted contract", () => {

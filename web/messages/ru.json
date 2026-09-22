@@ -3052,13 +3052,19 @@
       "empty": "Потоки событий ещё не наблюдались.",
       "observation": "вердикт последнего sweep",
       "observationMeta": "{observer}, выборка {sampledAt}",
-      "unacked": "не ACK на хосте"
+      "unacked": "не ACK на хосте",
+      "watermarkLegend": "R получено · C непрерывно · A подтверждено ACK",
+      "lagLegend": "H→M хост до менеджера · G разрыв · A подтверждение ACK"
     },
     "consumers": {
       "title": "Потребители проекций",
       "subtitle": "Наибольший backlog незавершённых прогонов. Итоги охватывают всю допустимую выборку.",
       "unattributed": "без привязки",
-      "count": "Показано {shown} из {total} потребителей для {runs} допустимых прогонов."
+      "count": "Показано {shown} из {total} потребителей для {runs} допустимых прогонов.",
+      "diagnosticCount": "Несогласованных курсоров потребителей: {count}.",
+      "diagnostics": {
+        "cursor_ahead_of_horizon": "курсор опережает горизонт запуска"
+      }
     },
     "poison": {
       "title": "Отравленные потребители",
@@ -3154,6 +3160,7 @@
       "nextRun": "Следующий запуск",
       "disabled": "отключена",
       "missingJob": "отсутствует",
+      "overdue": "просрочено",
       "driver": {
         "fallback_timer": "Fallback timer",
         "external_tick": "Ожидается внешний tick",
@@ -3194,24 +3201,6 @@
         "manual": "вручную",
         "event": "событие",
         "chunker_upgrade": "обновление chunker"
-      },
-      "clock": {
-        "tickPath": "Tick route",
-        "interval": "Интервал fallback",
-        "cronToken": "Cron token",
-        "configured": "задан",
-        "missing": "не задан",
-        "guidanceLabel": "Драйвер",
-        "driver": {
-          "fallback_timer": "Fallback timer",
-          "external_tick": "Нужен внешний tick",
-          "missing_tick": "Tick не настроен"
-        },
-        "guidance": {
-          "fallback_timer": "Web-процесс вызывает {path} каждые {seconds}с.",
-          "external_tick": "Вызывайте {path} внешним cron; fallback timer выключен.",
-          "missing_tick": "Задайте MAISTER_CRON_TOKEN для внешнего cron или MAISTER_SCHEDULER_TIMER_ENABLED=true для single-box инсталляции."
-        }
       }
     },
     "reconciliation": {

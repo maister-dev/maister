@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { eventStreamLagSeconds } from "@/lib/instance-config";
+import {
+  configuredEventStreamLagAgeMs,
+  eventStreamLagSeconds,
+  initializeEventStreamLagConfig,
+} from "@/lib/instance-config";
 
 const ENV_NAME = "MAISTER_EVENT_STREAM_LAG_SECONDS";
 let saved: string | undefined;
@@ -20,6 +24,14 @@ describe("eventStreamLagSeconds", () => {
     expect(eventStreamLagSeconds()).toBe(120);
     process.env[ENV_NAME] = "121";
     expect(eventStreamLagSeconds()).toBe(121);
+  });
+
+  it("initializes the runtime threshold once as milliseconds", () => {
+    process.env[ENV_NAME] = "121";
+
+    expect(initializeEventStreamLagConfig()).toBe(121_000);
+    process.env[ENV_NAME] = "invalid-after-boot";
+    expect(configuredEventStreamLagAgeMs()).toBe(121_000);
   });
 
   it.each(["", "0", "-1", "1.5", "01", " 120", "120s"])(

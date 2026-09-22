@@ -48,7 +48,8 @@ export type ExecutionConsumerLag = Readonly<{
   executionHostId: string | null;
   runHorizonSequence: string | null;
   lastRunSequence: string | null;
-  backlog: string;
+  backlog: string | null;
+  diagnostic: "cursor_ahead_of_horizon" | null;
   lastServedAt: string | null;
   serviceAgeMs: number | null;
   state: "ready" | "retrying" | "poisoned";
@@ -60,6 +61,7 @@ export type ConsumerLagHostAggregate = Readonly<{
   executionHostId: string | null;
   consumerCount: number;
   maximumBacklog: string;
+  diagnosticCount: number;
 }>;
 
 export type PoisonedExecutionConsumer = Readonly<{
@@ -92,8 +94,10 @@ export type ExecutionEventLagReadModel = Readonly<{
     displayed: number;
     truncated: number;
     maximumBacklog: string;
+    diagnosticCount: number;
     byHost: readonly ConsumerLagHostAggregate[];
     top: readonly ExecutionConsumerLag[];
+    diagnostics: readonly ExecutionConsumerLag[];
   }>;
   poison: Readonly<{
     total: number;

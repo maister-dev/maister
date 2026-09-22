@@ -168,6 +168,10 @@ both host and projection lanes at or below 100 clears it and emits one
 remains is `not_advancing`, not recovery. Missing/stale sources reset the streak
 and preserve an open incident; lost/closed or identity replacement resets it
 without a recovered claim.
+Fresh means the sample gap is positive and no greater than twice the configured
+`system_sweep.default` cadence (with the 120 s default floor). A lost/closed
+stream or complete identity replacement closes an open incident with
+`runtime-event-stream-lag-reset` INFO; it does not claim recovery.
 
 The observer persists bounded versioned evidence inside the existing terminal
 `system_sweep` attempt summary. It does not write stream error/state/readiness
@@ -180,8 +184,10 @@ Qualification uses the real supervisor outbox and real PostgreSQL. It creates
 more than 100 host events through ordinary checkpoint commands, advances the
 production consumer in bounded passes, holds and releases a real projection
 cursor, and then invokes the unchanged two-pass stall detector. The collector
-test includes 50,000 accepted events, requires the indexed horizon plan, and
-caps the complete read below two seconds on the qualification host.
+test includes 50,000 runs (1,000 non-terminal), two consumers per populated
+active run, a separate 50,000-event history, and 20 warm samples. It requires
+the indexed horizon plan, collector p95 at or below 250 ms, complete
+observation p95 below one second, and a two-second SQL statement timeout.
 
 ## Process flows
 

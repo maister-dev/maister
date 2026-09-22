@@ -34,6 +34,10 @@ import {
 } from "@/lib/queries/scheduler";
 import { listWorkspaceReconciliationFindings } from "@/lib/queries/workspace-reconciliation-findings";
 import { FILTERABLE_SCHEDULER_JOB_KINDS } from "@/lib/scheduler/job-catalog";
+import {
+  DEFAULT_DOMAIN_EVENT_DISPATCH_JOB_ID,
+  DEFAULT_SYSTEM_SWEEP_JOB_ID,
+} from "@/lib/scheduler/jobs";
 
 const STATES = ["active", "disabled"] as const;
 
@@ -197,7 +201,14 @@ export default async function AdminSchedulerPage({
         </div>
       </header>
 
-      <SchedulerClockCard clock={clock} coreJobs={coreClockRows} />
+      <SchedulerClockCard
+        clock={clock}
+        coreJobIds={[
+          DEFAULT_SYSTEM_SWEEP_JOB_ID,
+          DEFAULT_DOMAIN_EVENT_DISPATCH_JOB_ID,
+        ]}
+        coreJobs={coreClockRows}
+      />
       <SchedulerJobsTable
         filters={{
           jobKind: jobKind ?? "all",

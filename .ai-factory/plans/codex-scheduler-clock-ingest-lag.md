@@ -17,7 +17,7 @@ Verified source: `7201d0607acc032c9c883a02df716cc9da4f5abf` (the supplied diagno
 
 ## Roadmap Linkage
 
-Milestone: none newly assigned.
+Milestone: completed M24 maintenance amendment (P0-6/P0-7, 2026-09-22).
 Rationale: this is the explicitly supplied execution-seam diagnosis P0-6/P0-7, related to Stage A/B stabilization and ADR-167 D8. It does not complete S5.2, P0-3, ADR-177 or a broader roadmap milestone. `.ai-factory/ROADMAP.md` and the stabilization plan remain outside this plan's edit ownership.
 
 ## Outcome and boundaries
@@ -203,7 +203,7 @@ Literal member HTTP 403 needs an explicit response mechanism: existing pages thr
 
 ### D7. Additive index migration and JSON compatibility
 
-Add `scheduler_job_runs_job_claimed_idx` on `(job_id, claimed_at DESC, id DESC)` to `web/lib/db/schema.ts`. The existing job-only index does not support the ordered prior-attempt lookup without sorting growing history. Keep the existing indexes; removing one is unrelated optimization. The query must order by both keys, exclude the current attempt and inspect the immediately previous row, rather than filtering out failed/reaped attempts and fabricating continuity.
+Add `scheduler_job_runs_job_claimed_idx` with physical ascending keys `(job_id, claimed_at, id)` to `web/lib/db/schema.ts`; PostgreSQL serves the production `(claimed_at DESC, id DESC)` lookup with a backward index scan. The existing job-only index does not support the ordered prior-attempt lookup without sorting growing history. Keep the existing indexes; removing one is unrelated optimization. The query must order by both keys, exclude the current attempt and inspect the immediately previous row, rather than filtering out failed/reaped attempts and fabricating continuity.
 
 At this revision the latest main migration is `0172`; the candidate is `0173_scheduler_observation_lookup`. Recheck the journal at implementation/integration time and use the next free number, updating references together. This plan does not reserve a number across worktrees. Generate SQL, `_journal.json` and the corresponding snapshot using the existing Drizzle workflow; never rewrite applied migrations or hand-invent a snapshot. Update `docs/database-schema.md`, `docs/db/scheduler-domain.md` and regenerate ERD/DBML through `db:erd` as required by its check. No new table, column, SQLite migration, Brain migration, backfill, enum/state or writer-version floor is justified.
 

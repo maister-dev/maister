@@ -19,6 +19,13 @@ import { ALL_SCHEDULER_JOB_KINDS } from "@/lib/scheduler/job-catalog";
 export type SchedulerJobKind = DbSchedulerJobKind;
 
 export const SCHEDULER_JOB_KINDS = ALL_SCHEDULER_JOB_KINDS;
+export const TERMINAL_SCHEDULER_JOB_RUN_STATUSES = [
+  "Succeeded",
+  "Failed",
+  "Skipped",
+] as const satisfies readonly SchedulerJobRunStatus[];
+export type TerminalSchedulerJobRunStatus =
+  (typeof TERMINAL_SCHEDULER_JOB_RUN_STATUSES)[number];
 
 export type ClaimedSchedulerJob = {
   id: string;
@@ -28,6 +35,7 @@ export type ClaimedSchedulerJob = {
   target: Record<string, unknown>;
   previousNextRunAt: Date;
   nextRunAt: Date;
+  cadenceIntervalSeconds: number;
   leaseExpiresAt: Date;
 };
 
@@ -109,6 +117,7 @@ type SchedulerRow = {
   target: Record<string, unknown> | null;
   previous_next_run_at: Date | string;
   next_run_at: Date | string;
+  cadence_interval_seconds: number;
   lease_expires_at: Date | string;
 };
 
@@ -783,6 +792,7 @@ export async function claimDueJobs(
         j.target,
         candidate.next_run_at AS previous_next_run_at,
         j.next_run_at,
+        j.cadence_interval_seconds,
         j.lease_expires_at
     ),
     inserted AS (
@@ -1047,6 +1057,7 @@ function toClaimedSchedulerJob(row: SchedulerRow): ClaimedSchedulerJob {
     target: row.target ?? {},
     previousNextRunAt: coerceDate(row.previous_next_run_at),
     nextRunAt: coerceDate(row.next_run_at),
+    cadenceIntervalSeconds: row.cadence_interval_seconds,
     leaseExpiresAt: coerceDate(row.lease_expires_at),
   };
 }

@@ -95,9 +95,11 @@ Expanded mode, top to bottom:
    links to `/settings` (the platform runner catalog) and the popover shows a
    "Configure in Settings" cue; for non-admins it is information-only (the
    `title` is the keyboard/SR fallback — non-admin chips are not focusable).
-   Supervisor status is **not** here (it lives once in the footer,
-   [`status-bar.md`](status-bar.md)).
-4. **Launch** — primary launch button + hint, with a Cmd/Ctrl+K shortcut
+   The admin-only platform status pill below this region links to
+   `/admin/execution-host`; it reuses the layout's cached health sample.
+4. **Platform status** — admin-only ready/behind/unavailable pill linking to
+   execution-host diagnostics. Members do not receive the link or a DB read.
+5. **Launch** — primary launch button + hint, with a Cmd/Ctrl+K shortcut
    ([`launch-dialog.md`](launch-dialog.md)).
 
 ### Collapse / icon rail (Implemented — Phase B)
@@ -125,7 +127,9 @@ Collapsed mode order:
    itself shows only the affordance and count, not duplicate narrow text rows.
 3. **Runners readiness flyout** — one icon opens the same adapter readiness rows
    as expanded mode.
-4. **Compact launch** — the `+` control opens the existing
+4. **Platform status dot** — admin-only, with the same accessible status label
+   and `/admin/execution-host` link as the expanded pill.
+5. **Compact launch** — the `+` control opens the existing
    [`launch-dialog.md`](launch-dialog.md).
 
 ### Mobile drawer (Implemented — UI completion batch)

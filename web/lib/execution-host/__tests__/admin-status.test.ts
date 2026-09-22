@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MaisterError } from "@/lib/errors";
 import {
   formatProjectionRearmCommand,
+  parsePoisonCursorSearchParams,
   requireAdminExecutionHostStatus,
 } from "@/lib/execution-host/admin-status";
 
@@ -29,6 +30,28 @@ describe("execution host admin boundary", () => {
       requireAdminExecutionHostStatus({ db: { execute } as never }),
     ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
     expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("accepts only a complete, singular poison pagination cursor", () => {
+    expect(parsePoisonCursorSearchParams({})).toBeUndefined();
+    expect(
+      parsePoisonCursorSearchParams({
+        poisonRun: "run-1",
+        poisonConsumer: "consumer-1",
+      }),
+    ).toEqual({ runId: "run-1", consumerName: "consumer-1" });
+
+    for (const params of [
+      { poisonRun: "run-1" },
+      { poisonConsumer: "consumer-1" },
+      { poisonRun: ["run-1"], poisonConsumer: "consumer-1" },
+      { poisonRun: "", poisonConsumer: "consumer-1" },
+      { poisonRun: "x".repeat(257), poisonConsumer: "consumer-1" },
+    ]) {
+      expect(() => parsePoisonCursorSearchParams(params)).toThrow(
+        expect.objectContaining({ code: "PRECONDITION" }),
+      );
+    }
   });
 
   it("formats all five current-evidence arguments with shell-safe quoting", () => {

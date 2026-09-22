@@ -96,6 +96,13 @@ checks this readiness after auth/project/Flow/runner validation and
 before `git worktree add` or DB writes. On unavailable supervisor it
 returns `503 EXECUTOR_UNAVAILABLE` and leaves the task in `Backlog`.
 
+`GET /health?includeStream=true` negotiates an additive `stream` block with
+`streamId`, `headSequence`, `unacknowledgedCount`, `retainedCount`, `pressured`,
+and `oldestUnacknowledgedAgeMs`. Omission or the literal `false` keeps the
+legacy response for rolling upgrades. Empty, repeated, and non-literal values
+return `409 PRECONDITION {reason: health_query_invalid}`. A negotiated snapshot
+read failure returns `503`; it is never disguised as an older host.
+
 ### `POST /sessions`
 
 Start a new agent process. Returns immediately after the child has been

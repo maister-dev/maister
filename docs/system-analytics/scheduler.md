@@ -234,7 +234,7 @@ flowchart TD
     Budget -- no --> Skip[Skipped or queued per kind]
     Budget -- yes --> Handle[run job handler]
     Handle --> Summary[record attempt result]
-    Summary --> Resp{any attempt failed?}
+    Summary --> Resp{any attempt failed or skipped?}
     Resp -- no --> R200[200 tick summary]
     Resp -- yes --> R207[207 partial tick summary]
 ```
@@ -398,6 +398,10 @@ flowchart TD
   a streak WARNs with length one; settlement INFO reports the final streak.
   Full tick telemetry is process-local. Durable per-job activity is cluster
   evidence from `scheduler_job_runs`, never relabeled as an entire tick.
+  A returned tick is `partial` when at least one claimed attempt is `Failed` or
+  `Skipped` (including a routine PRECONDITION skip), `completed` when all
+  attempts succeed, `failed` when the tick throws, and `maintenance_noop` when
+  the upgrade fence prevents claims.
 - The card MUST always include `system_sweep.default` and
   `domain_event_dispatch.default` last/next/status rows independently of the
   capped general list. Missing, disabled, overdue, never-run and failed states

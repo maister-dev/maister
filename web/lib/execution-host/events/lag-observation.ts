@@ -6,9 +6,13 @@ import type {
   PoisonedExecutionConsumer,
 } from "@/types/execution-host-observability";
 
-import { LAG_BACKLOG_THRESHOLD, LAG_CONSECUTIVE_SWEEPS } from "./lag";
+import {
+  isHostBacklogLagEligible,
+  LAG_BACKLOG_THRESHOLD,
+  LAG_CONSECUTIVE_SWEEPS,
+} from "./lag";
 
-const MAX_SAMPLE_GAP_MS = 120_000;
+const DEFAULT_MAX_SAMPLE_GAP_MS = 120_000;
 const MAX_OBSERVATION_BYTES = 65_536;
 const CANONICAL_SEQUENCE = /^(0|[1-9][0-9]{0,18})$/;
 
@@ -98,7 +102,7 @@ export type ExecutionObservabilitySummary = Readonly<{
   commands: Readonly<
     {
       status: ObservationSourceStatus;
-      impasse: number;
+      impasse: number | null;
     } & Partial<OpenExecutionCommands>
   >;
   workers: Readonly<{
@@ -172,9 +176,7 @@ function backlogState(
   const sampledAtMs = Date.parse(sample.sampledAt);
   const hostEligible =
     sample.hostBacklog.status === "available" &&
-    sample.hostBacklog.unacknowledgedCount > Number(LAG_BACKLOG_THRESHOLD) &&
-    sample.hostBacklog.oldestUnacknowledgedAgeMs !== null &&
-    sample.hostBacklog.oldestUnacknowledgedAgeMs >= lagAgeMs;
+    isHostBacklogLagEligible(sample.hostBacklog, lagAgeMs);
   const projectionEligible =
     projectionSince !== null &&
     sampledAtMs - Date.parse(projectionSince) >= lagAgeMs;
@@ -214,6 +216,7 @@ export function reduceLagObservation(
     sample: LagObservationSample;
     previous: LagStreamObservation | null;
     lagAgeMs: number;
+    maxSampleGapMs?: number;
   }>,
 ): LagStreamObservation {
   const { sample, previous } = input;
@@ -239,16 +242,6 @@ export function reduceLagObservation(
     };
   }
 
-  if (previous !== null && !identityMatches) {
-    return {
-      ...base,
-      streak: 0,
-      incidentOpen: false,
-      verdict: "reset",
-      transition: previous.incidentOpen ? "reset" : null,
-    };
-  }
-
   if (previous === null) {
     return {
       ...base,
@@ -259,11 +252,35 @@ export function reduceLagObservation(
     };
   }
 
+  if (sample.quality !== "complete") {
+    return {
+      ...base,
+      identity: previous.identity,
+      projectionOverThresholdSince: null,
+      streak: 0,
+      incidentOpen: previous.incidentOpen,
+      verdict: "unknown",
+      transition: null,
+    };
+  }
+
+  if (!identityMatches) {
+    return {
+      ...base,
+      streak: 0,
+      incidentOpen: false,
+      verdict: "reset",
+      transition: previous.incidentOpen ? "reset" : null,
+    };
+  }
+
   const sampleGapMs =
     Date.parse(sample.sampledAt) - Date.parse(previous.sampledAt);
-  const isFresh = sampleGapMs > 0 && sampleGapMs <= MAX_SAMPLE_GAP_MS;
+  const isFresh =
+    sampleGapMs > 0 &&
+    sampleGapMs <= (input.maxSampleGapMs ?? DEFAULT_MAX_SAMPLE_GAP_MS);
 
-  if (sample.quality !== "complete" || !isFresh) {
+  if (!isFresh) {
     return {
       ...base,
       projectionOverThresholdSince: null,
@@ -400,7 +417,10 @@ export function boundExecutionObservability(
   return withoutRows;
 }
 
-function selectedStream(model: ExecutionEventLagReadModel) {
+function selectedStream(
+  model: ExecutionEventLagReadModel,
+  previous: LagStreamObservation | null,
+) {
   return (
     model.streams.find(
       (stream) =>
@@ -408,6 +428,11 @@ function selectedStream(model: ExecutionEventLagReadModel) {
         stream.hostTelemetryStatus === "available",
     ) ??
     model.streams.find((stream) => stream.streamState === "active") ??
+    model.streams.find(
+      (stream) =>
+        previous?.identity?.executionHostId === stream.executionHostId &&
+        previous.identity.streamId === stream.streamId,
+    ) ??
     null
   );
 }
@@ -419,11 +444,12 @@ export function createExecutionObservability(
     model: ExecutionEventLagReadModel;
     previous: LagStreamObservation | null;
     workers: Readonly<Record<string, DurableWorkerState>>;
-    impasse: number;
+    impasse: number | null;
     lagAgeMs: number;
+    maxSampleGapMs?: number;
   }>,
 ): ExecutionObservabilitySummary {
-  const stream = selectedStream(input.model);
+  const stream = selectedStream(input.model, input.previous);
   const identity =
     stream !== null && stream.hostBootId !== null
       ? {
@@ -449,10 +475,13 @@ export function createExecutionObservability(
   const hostAggregate = input.model.consumers.byHost.find(
     (aggregate) => aggregate.executionHostId === stream?.executionHostId,
   );
-  const projectionBacklog: LagObservationSample["projectionBacklog"] = {
-    status: "available",
-    maximumBacklog: hostAggregate?.maximumBacklog ?? "0",
-  };
+  const projectionBacklog: LagObservationSample["projectionBacklog"] =
+    (hostAggregate?.diagnosticCount ?? 0) > 0
+      ? { status: "unavailable" }
+      : {
+          status: "available",
+          maximumBacklog: hostAggregate?.maximumBacklog ?? "0",
+        };
   const streamObservation =
     stream === null
       ? null
@@ -474,10 +503,14 @@ export function createExecutionObservability(
           },
           previous: input.previous,
           lagAgeMs: input.lagAgeMs,
+          maxSampleGapMs: input.maxSampleGapMs,
         });
   const errors = (stream?.lag.diagnostics ?? []).map(
     (diagnostic) => `stream:${diagnostic}`,
   );
+
+  if (input.model.consumers.diagnosticCount > 0)
+    errors.push("consumer:cursor_ahead_of_horizon");
   const quality: ExecutionObservabilitySummary["quality"] =
     stream === null || identity === null
       ? "unavailable"
@@ -526,8 +559,9 @@ export function createUnavailableExecutionObservability(
     previous: LagStreamObservation | null;
     errorCode: string;
     workers: Readonly<Record<string, DurableWorkerState>>;
-    impasse: number;
+    impasse: number | null;
     lagAgeMs: number;
+    maxSampleGapMs?: number;
   }>,
 ): ExecutionObservabilitySummary {
   const stream = input.previous
@@ -545,6 +579,7 @@ export function createUnavailableExecutionObservability(
         },
         previous: input.previous,
         lagAgeMs: input.lagAgeMs,
+        maxSampleGapMs: input.maxSampleGapMs,
       })
     : null;
 

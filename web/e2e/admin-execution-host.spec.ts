@@ -31,85 +31,107 @@ test("admin sees event-plane diagnostics, repair evidence, and both rail links",
   const runId = loadFixtures().runId;
   const eventId = randomUUID();
   const generation = randomUUID();
-  const consumer = "e2e_projection_poison";
+  const consumer = `e2e_projection_poison_${randomUUID()}`;
 
   await withE2EDb(async (pool) => {
-    await pool.query(
-      `INSERT INTO execution_events (
-         id, source, source_key, run_id, event_type, payload_schema,
-         occurred_at, received_at, run_sequence, ingest_disposition
-       ) VALUES ($1, 'manager', $2, $3, 'session.update', 'maister.e2e.v1',
-                 clock_timestamp(), clock_timestamp(), 0, 'accepted')
-       ON CONFLICT (id) DO NOTHING`,
-      [eventId, `admin-lag-${eventId}`, runId],
-    );
-    await pool.query(
-      `INSERT INTO execution_event_consumers (
-         consumer_name, run_id, last_run_sequence, state, poison_event_id,
-         last_error, last_served_at
-       ) VALUES ($1, $2, NULL, 'poisoned', $3, $4::jsonb, clock_timestamp())
-       ON CONFLICT (consumer_name, run_id) DO UPDATE SET
-         state = 'poisoned', poison_event_id = EXCLUDED.poison_event_id,
-         last_error = EXCLUDED.last_error`,
-      [
-        consumer,
-        runId,
-        eventId,
-        JSON.stringify({
+    const client = await pool.connect();
+
+    try {
+      await client.query("BEGIN");
+      await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [runId]);
+      await client.query(
+        `INSERT INTO execution_events (
+           id, source, source_key, run_id, event_type, payload_schema,
+           occurred_at, received_at, run_sequence, ingest_disposition
+         )
+         SELECT $1, 'manager', $2, $3, 'session.update', 'maister.e2e.v1',
+                clock_timestamp(), clock_timestamp(),
+                COALESCE(MAX(run_sequence), -1) + 1, 'accepted'
+         FROM execution_events
+         WHERE run_id = $3`,
+        [eventId, `admin-lag-${eventId}`, runId],
+      );
+      await client.query(
+        `INSERT INTO execution_event_consumers (
+           consumer_name, run_id, last_run_sequence, state, poison_event_id,
+           last_error, last_served_at
+         ) VALUES ($1, $2, NULL, 'poisoned', $3, $4::jsonb, clock_timestamp())`,
+        [
+          consumer,
+          runId,
           eventId,
-          errorGeneration: generation,
-          reason: "e2e_projection_failure",
-        }),
-      ],
-    );
+          JSON.stringify({
+            eventId,
+            errorGeneration: generation,
+            reason: "e2e_projection_failure",
+          }),
+        ],
+      );
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   });
 
-  await page.goto("/admin/execution-host");
-  await expect(
-    page.getByRole("heading", { name: "Execution host", level: 1 }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("heading", { name: "Event streams" }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("heading", { name: "Projection consumers" }),
-  ).toBeVisible();
-  await expect(page.getByText("e2e_projection_failure")).toBeVisible();
-  await expect(
-    page.getByText(
-      `pnpm --filter maister-web execution:projection:rearm --consumer '${consumer}' --run '${runId}' --event '${eventId}' --cursor 'null' --error-generation '${generation}'`,
-      { exact: true },
-    ),
-  ).toBeVisible();
+  try {
+    await page.goto("/admin/execution-host");
+    await expect(
+      page.getByRole("heading", { name: "Execution host", level: 1 }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Event streams" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Projection consumers" }),
+    ).toBeVisible();
+    await expect(page.getByText("e2e_projection_failure")).toBeVisible();
+    await expect(
+      page.getByText(
+        `pnpm --filter maister-web execution:projection:rearm --consumer '${consumer}' --run '${runId}' --event '${eventId}' --cursor 'null' --error-generation '${generation}'`,
+        { exact: true },
+      ),
+    ).toBeVisible();
 
-  await expect(page.getByTestId("rail-nav-executionHost")).toHaveAttribute(
-    "href",
-    "/admin/execution-host",
-  );
-  await page.getByTestId("rail-collapse-toggle").click();
-  await expect(
-    page.getByTestId("rail-platform-status-collapsed"),
-  ).toHaveAttribute("href", "/admin/execution-host");
+    await expect(page.getByTestId("rail-nav-executionHost")).toHaveAttribute(
+      "href",
+      "/admin/execution-host",
+    );
+    await page.getByTestId("rail-collapse-toggle").click();
+    await expect(
+      page.getByTestId("rail-platform-status-collapsed"),
+    ).toHaveAttribute("href", "/admin/execution-host");
 
-  await context.addCookies([
-    {
-      name: "NEXT_LOCALE",
-      value: "ru",
-      url: page.url(),
-    },
-  ]);
-  await page.reload();
-  await expect(
-    page.getByRole("heading", { name: "Хост исполнения", level: 1 }),
-  ).toBeVisible();
+    await context.addCookies([
+      {
+        name: "NEXT_LOCALE",
+        value: "ru",
+        url: page.url(),
+      },
+    ]);
+    await page.reload();
+    await expect(
+      page.getByRole("heading", { name: "Хост исполнения", level: 1 }),
+    ).toBeVisible();
 
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.getByTestId("mobile-rail-toggle").click();
-  await expect(
-    page
-      .getByTestId("mobile-rail-drawer")
-      .getByTestId("rail-nav-executionHost"),
-  ).toHaveAttribute("href", "/admin/execution-host");
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.getByTestId("mobile-rail-toggle").click();
+    await expect(
+      page
+        .getByTestId("mobile-rail-drawer")
+        .getByTestId("rail-nav-executionHost"),
+    ).toHaveAttribute("href", "/admin/execution-host");
+  } finally {
+    await withE2EDb(async (pool) => {
+      await pool.query(
+        "DELETE FROM execution_event_consumers WHERE consumer_name = $1 AND run_id = $2",
+        [consumer, runId],
+      );
+      await pool.query("DELETE FROM execution_events WHERE id = $1", [eventId]);
+    });
+  }
 });
 
 test("authenticated member receives an HTTP 403 with no platform diagnostics", async ({

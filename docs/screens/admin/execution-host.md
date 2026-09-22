@@ -56,6 +56,12 @@ only the supported local host is contacted. Current projection ownership comes
 from active assignments. The chrome summary uses the request-cached `/health`
 sample only and makes no consumer/history query.
 
+Authorization is checked twice on purpose. `proxy.ts` re-reads the current user
+before React starts streaming so a denied navigation receives a literal HTTP
+403. The page calls `requireGlobalRole("admin")` again immediately before the
+detailed read, closing a role-change race. Next.js `experimental.authInterrupts`
+enables the page-level `forbidden()` response.
+
 ## Acceptance
 
 - Admin direct and client navigation render all panels in EN and RU.

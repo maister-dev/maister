@@ -21,6 +21,8 @@ type SchedulerTimerState = {
   retiredEnvWarned: boolean;
 };
 
+// v1 survives HMR without retiredEnvWarned, so reusing it would skip the
+// shape initialization and make the retirement warning nondeterministic.
 const TIMER_GLOBAL_KEY = Symbol.for("maister.scheduler-timer.v2");
 
 const log = pino({

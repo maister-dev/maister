@@ -124,6 +124,7 @@ const DEFAULT_ASSISTANT_ACTIVITY_SILENT_AFTER_SECONDS = 180;
 const DEFAULT_ASSISTANT_ACTIVITY_STALLED_AFTER_SECONDS = 900;
 const DEFAULT_EVENT_STREAM_LAG_SECONDS = 120;
 const MAX_SAFE_MILLISECOND_SECONDS = Math.floor(Number.MAX_SAFE_INTEGER / 1000);
+let initializedEventStreamLagAgeMs = DEFAULT_EVENT_STREAM_LAG_SECONDS * 1_000;
 
 // M18 Phase 2 (§3.2, Codex F1): a durable `claiming` promotion claim older than
 // this window is considered abandoned (crashed mid-promote) and is reclaimable
@@ -258,6 +259,16 @@ export function eventStreamLagSeconds(): number {
   }
 
   return parsed;
+}
+
+export function initializeEventStreamLagConfig(): number {
+  initializedEventStreamLagAgeMs = eventStreamLagSeconds() * 1_000;
+
+  return initializedEventStreamLagAgeMs;
+}
+
+export function configuredEventStreamLagAgeMs(): number {
+  return initializedEventStreamLagAgeMs;
 }
 
 export function costReconcileLookbackHours(): number {

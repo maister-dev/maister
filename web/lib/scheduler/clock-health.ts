@@ -29,9 +29,6 @@ export type SchedulerClockHealth = {
   processId: number;
   observedAt: string;
   activeCount: number;
-  active: Array<
-    Pick<SchedulerTickInvocation, "invocationId" | "source" | "startedAt">
-  >;
   lastStarted: Pick<
     SchedulerTickInvocation,
     "invocationId" | "source" | "startedAt"
@@ -44,7 +41,7 @@ export type SchedulerClockHealth = {
 
 type ClockHealthState = Omit<
   SchedulerClockHealth,
-  "observedAt" | "activeCount" | "active"
+  "observedAt" | "activeCount"
 > & {
   active: Map<string, SchedulerTickInvocation>;
 };
@@ -127,13 +124,6 @@ export function getSchedulerClockHealth(
     processId: state.processId,
     observedAt: now.toISOString(),
     activeCount: state.active.size,
-    active: [...state.active.values()].map(
-      ({ invocationId, source, startedAt }) => ({
-        invocationId,
-        source,
-        startedAt,
-      }),
-    ),
     lastStarted: state.lastStarted ? { ...state.lastStarted } : null,
     lastCompleted: state.lastCompleted ? { ...state.lastCompleted } : null,
     skippedOverlapCurrentStreak: state.skippedOverlapCurrentStreak,

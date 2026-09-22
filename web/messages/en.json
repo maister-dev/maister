@@ -3052,13 +3052,19 @@
       "empty": "No event streams have been observed.",
       "observation": "last sweep verdict",
       "observationMeta": "{observer}, sampled {sampledAt}",
-      "unacked": "host unACKed"
+      "unacked": "host unACKed",
+      "watermarkLegend": "R received · C contiguous · A ACK-confirmed",
+      "lagLegend": "H→M host to manager · G gap · A ACK confirmation"
     },
     "consumers": {
       "title": "Projection consumers",
       "subtitle": "Top backlog across non-terminal runs. The totals cover the complete eligible population.",
       "unattributed": "unattributed",
-      "count": "Showing {shown} of {total} consumers across {runs} eligible runs."
+      "count": "Showing {shown} of {total} consumers across {runs} eligible runs.",
+      "diagnosticCount": "{count} consumer cursor inconsistencies require investigation.",
+      "diagnostics": {
+        "cursor_ahead_of_horizon": "cursor ahead of run horizon"
+      }
     },
     "poison": {
       "title": "Poisoned consumers",
@@ -3154,6 +3160,7 @@
       "nextRun": "Next run",
       "disabled": "disabled",
       "missingJob": "missing",
+      "overdue": "overdue",
       "driver": {
         "fallback_timer": "Fallback timer",
         "external_tick": "External tick expected",
@@ -3194,24 +3201,6 @@
         "manual": "manual",
         "event": "event",
         "chunker_upgrade": "chunker upgrade"
-      },
-      "clock": {
-        "tickPath": "Tick route",
-        "interval": "Fallback interval",
-        "cronToken": "Cron token",
-        "configured": "configured",
-        "missing": "missing",
-        "guidanceLabel": "Driver",
-        "driver": {
-          "fallback_timer": "Fallback timer",
-          "external_tick": "External tick expected",
-          "missing_tick": "No tick configured"
-        },
-        "guidance": {
-          "fallback_timer": "The web process calls {path} every {seconds}s.",
-          "external_tick": "Call {path} from external cron; fallback timer is off.",
-          "missing_tick": "Set MAISTER_CRON_TOKEN for an external cron caller or MAISTER_SCHEDULER_TIMER_ENABLED=true for single-box installs."
-        }
       }
     },
     "reconciliation": {

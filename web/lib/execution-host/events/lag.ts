@@ -29,6 +29,20 @@ function nonnegativeDistance(a: bigint, b: bigint): string {
   return (a > b ? a - b : 0n).toString();
 }
 
+export function isHostBacklogLagEligible(
+  input: Readonly<{
+    unacknowledgedCount: number;
+    oldestUnacknowledgedAgeMs: number | null;
+  }>,
+  lagAgeMs: number,
+): boolean {
+  return (
+    input.unacknowledgedCount > Number(LAG_BACKLOG_THRESHOLD) &&
+    input.oldestUnacknowledgedAgeMs !== null &&
+    input.oldestUnacknowledgedAgeMs >= lagAgeMs
+  );
+}
+
 export function calculateStreamLag(
   input: Readonly<{
     headSequence: string | null;
@@ -57,16 +71,4 @@ export function calculateStreamLag(
         : nonnegativeDistance(contiguous, acknowledged),
     diagnostics,
   };
-}
-
-export function calculateConsumerBacklog(
-  input: Readonly<{
-    runHorizonSequence: string | null;
-    lastRunSequence: string | null;
-  }>,
-): string {
-  return nonnegativeDistance(
-    parseSequence(input.runHorizonSequence),
-    parseSequence(input.lastRunSequence),
-  );
 }

@@ -20,6 +20,13 @@ export async function registerNodeRuntime(): Promise<void> {
   const { assertSupportedNode } = await import("../runtime/node-version");
 
   assertSupportedNode(process.versions.node);
+  const { initializeEventStreamLagConfig } = await import(
+    "@/lib/instance-config"
+  );
+
+  // Operator configuration is validated before any recoverable boot step so
+  // an invalid lag threshold refuses the process instead of breaking /health.
+  initializeEventStreamLagConfig();
   const { projectionLimitsFromEnv } = await import(
     "@/lib/execution-host/events/projection-limits"
   );

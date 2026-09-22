@@ -31,7 +31,9 @@ type ConsumerQueryRow = {
   eligible_population: number;
   total_consumers: number;
   maximum_backlog: string;
+  diagnostic_count: number;
   top_rows: ConsumerJsonRow[];
+  diagnostic_rows: ConsumerJsonRow[];
   by_host: ConsumerHostJsonRow[];
 };
 
@@ -42,7 +44,8 @@ type ConsumerJsonRow = {
   executionHostId: string | null;
   runHorizonSequence: string | null;
   lastRunSequence: string | null;
-  backlog: string;
+  backlog: string | null;
+  diagnostic: ExecutionConsumerLag["diagnostic"];
   lastServedAt: string | null;
   state: ExecutionConsumerLag["state"];
   nextRetryAt: string | null;
@@ -53,6 +56,7 @@ type ConsumerHostJsonRow = {
   executionHostId: string | null;
   consumerCount: number;
   maximumBacklog: string;
+  diagnosticCount: number;
 };
 
 type StreamQueryRow = {
@@ -146,11 +150,20 @@ export function executionConsumerLagQuery(): SQL {
         h.execution_host_id,
         h.run_horizon_sequence,
         c.last_run_sequence,
-        GREATEST(
-          COALESCE(h.run_horizon_sequence, -1)::numeric
-            - COALESCE(c.last_run_sequence, -1)::numeric,
-          0
-        ) AS backlog,
+        -- Cast before subtracting so the -1 empty-horizon sentinel and an
+        -- extreme BIGINT cursor cannot overflow signed BIGINT arithmetic.
+        CASE
+          WHEN COALESCE(c.last_run_sequence, -1)::numeric
+            > COALESCE(h.run_horizon_sequence, -1)::numeric THEN NULL
+          ELSE COALESCE(h.run_horizon_sequence, -1)::numeric
+            - COALESCE(c.last_run_sequence, -1)::numeric
+        END AS backlog,
+        CASE
+          WHEN COALESCE(c.last_run_sequence, -1)::numeric
+            > COALESCE(h.run_horizon_sequence, -1)::numeric
+          THEN 'cursor_ahead_of_horizon'
+          ELSE NULL
+        END AS diagnostic,
         c.last_served_at,
         c.state,
         c.next_retry_at
@@ -168,13 +181,29 @@ export function executionConsumerLagQuery(): SQL {
         ORDER BY n.started_at DESC, n.id DESC
         LIMIT 1
       ) latest_attempt ON true
-      ORDER BY c.backlog DESC, c.run_id, c.consumer_name
+      ORDER BY c.backlog DESC NULLS LAST, c.run_id, c.consumer_name
       LIMIT ${CONSUMER_LIMIT + 1}
+    ), diagnostic_rows AS MATERIALIZED (
+      SELECT
+        c.*,
+        latest_attempt.error_code AS latest_node_error_code
+      FROM consumer_lag c
+      LEFT JOIN LATERAL (
+        SELECT n.error_code
+        FROM node_attempts n
+        WHERE n.run_id = c.run_id
+        ORDER BY n.started_at DESC, n.id DESC
+        LIMIT 1
+      ) latest_attempt ON true
+      WHERE c.diagnostic IS NOT NULL
+      ORDER BY c.run_id, c.consumer_name
+      LIMIT ${CONSUMER_LIMIT}
     ), host_aggregates AS (
       SELECT
         execution_host_id,
         COUNT(*)::int AS consumer_count,
-        COALESCE(MAX(backlog), 0)::text AS maximum_backlog
+        COALESCE(MAX(backlog), 0)::text AS maximum_backlog,
+        COUNT(*) FILTER (WHERE diagnostic IS NOT NULL)::int AS diagnostic_count
       FROM consumer_lag
       GROUP BY execution_host_id
     )
@@ -182,6 +211,7 @@ export function executionConsumerLagQuery(): SQL {
       (SELECT COUNT(*)::int FROM eligible_runs) AS eligible_population,
       (SELECT COUNT(*)::int FROM consumer_lag) AS total_consumers,
       COALESCE((SELECT MAX(backlog)::text FROM consumer_lag), '0') AS maximum_backlog,
+      (SELECT COUNT(*)::int FROM consumer_lag WHERE diagnostic IS NOT NULL) AS diagnostic_count,
       COALESCE((
         SELECT jsonb_agg(
           jsonb_build_object(
@@ -192,6 +222,7 @@ export function executionConsumerLagQuery(): SQL {
             'runHorizonSequence', t.run_horizon_sequence::text,
             'lastRunSequence', t.last_run_sequence::text,
             'backlog', t.backlog::text,
+            'diagnostic', t.diagnostic,
             'lastServedAt', t.last_served_at,
             'state', t.state,
             'nextRetryAt', t.next_retry_at,
@@ -202,9 +233,28 @@ export function executionConsumerLagQuery(): SQL {
       COALESCE((
         SELECT jsonb_agg(
           jsonb_build_object(
+            'consumerName', d.consumer_name,
+            'runId', d.run_id,
+            'runStatus', d.run_status,
+            'executionHostId', d.execution_host_id,
+            'runHorizonSequence', d.run_horizon_sequence::text,
+            'lastRunSequence', d.last_run_sequence::text,
+            'backlog', d.backlog::text,
+            'diagnostic', d.diagnostic,
+            'lastServedAt', d.last_served_at,
+            'state', d.state,
+            'nextRetryAt', d.next_retry_at,
+            'latestNodeErrorCode', d.latest_node_error_code
+          ) ORDER BY d.run_id, d.consumer_name
+        ) FROM diagnostic_rows d
+      ), '[]'::jsonb) AS diagnostic_rows,
+      COALESCE((
+        SELECT jsonb_agg(
+          jsonb_build_object(
             'executionHostId', h.execution_host_id,
             'consumerCount', h.consumer_count,
-            'maximumBacklog', h.maximum_backlog
+            'maximumBacklog', h.maximum_backlog,
+            'diagnosticCount', h.diagnostic_count
           ) ORDER BY h.execution_host_id NULLS FIRST
         ) FROM host_aggregates h
       ), '[]'::jsonb) AS by_host
@@ -447,6 +497,7 @@ export async function collectExecutionEventLag(input: {
   now?: Date;
   poisonAfter?: { runId: string; consumerName: string };
   logger?: Logger;
+  preferredStream?: { executionHostId: string; streamId: string } | null;
 }): Promise<ExecutionEventLagReadModel> {
   const startedAt = performance.now();
   const sampledAt = input.now ?? new Date();
@@ -457,9 +508,45 @@ export async function collectExecutionEventLag(input: {
       await tx.execute(
         sql`SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY`,
       );
+      await tx.execute(sql`SET LOCAL statement_timeout = '2000ms'`);
       const streamResult = await tx.execute<StreamQueryRow>(
         executionStreamsQuery(),
       );
+      const preferredStreamRows =
+        input.preferredStream &&
+        !streamResult.rows.some(
+          (row) =>
+            row.execution_host_id === input.preferredStream?.executionHostId &&
+            row.stream_id === input.preferredStream.streamId,
+        )
+          ? await tx.execute<StreamQueryRow>(sql`
+              SELECT
+                1::int AS total_count,
+                s.id AS stream_row_id,
+                s.execution_host_id,
+                h.host_key,
+                h.display_name,
+                h.readiness,
+                h.readiness_reason,
+                h.last_seen_at AS host_last_seen_at,
+                h.last_boot_id AS host_boot_id,
+                s.stream_id,
+                s.state AS stream_state,
+                s.last_received_sequence::text,
+                s.last_contiguous_sequence::text,
+                s.last_ack_confirmed_sequence::text,
+                s.last_seen_at AS stream_last_seen_at,
+                s.last_error,
+                s.claim_owner,
+                s.claim_expires_at,
+                s.last_boot_id
+              FROM execution_event_streams s
+              INNER JOIN execution_hosts h ON h.id = s.execution_host_id
+              WHERE s.execution_host_id = ${input.preferredStream.executionHostId}
+                AND s.stream_id = ${input.preferredStream.streamId}
+              LIMIT 1
+            `)
+          : null;
       const consumerResult = await tx.execute<ConsumerQueryRow>(
         executionConsumerLagQuery(),
       );
@@ -486,15 +573,22 @@ export async function collectExecutionEventLag(input: {
 
       return {
         sampledAt: sampledAt.toISOString(),
-        streams: streamResult.rows.map((row) => mapStream(row, input.health)),
+        streams: [
+          ...streamResult.rows,
+          ...(preferredStreamRows?.rows ?? []),
+        ].map((row) => mapStream(row, input.health)),
         consumers: {
           eligiblePopulation: consumer.eligible_population,
           totalConsumers: consumer.total_consumers,
           displayed: topRows.length,
           truncated: Math.max(0, consumer.total_consumers - topRows.length),
           maximumBacklog: consumer.maximum_backlog,
+          diagnosticCount: consumer.diagnostic_count,
           byHost: consumer.by_host.map((row): ConsumerLagHostAggregate => row),
           top: topRows.map((row) => mapConsumer(row, sampledAt)),
+          diagnostics: consumer.diagnostic_rows.map((row) =>
+            mapConsumer(row, sampledAt),
+          ),
         },
         poison: {
           total: poison.total_count,

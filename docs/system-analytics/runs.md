@@ -1361,7 +1361,7 @@ effectively locked until some other run terminates.
 ### Resume-recovery sweep (boot-time, Codex review fix #2)
 
 `web/instrumentation-node.ts` runs `runResumeRecoverySweep()` once on Node
-runtime boot, BEFORE the keep-alive sweeper. The sweep catches HITL
+runtime boot, before the scheduler timer starts. The sweep catches HITL
 intents stranded across a web-process restart between the `/respond`
 202 (`state: "resume-in-progress"`) response and the in-process
 `queueMicrotask` driver attaching. The durable shape that flags a
@@ -1374,7 +1374,7 @@ whose ACTIVE `run_sessions` row carries a non-null `acp_session_id`
 |------------------------------------------------|--------|
 | Live (`listSessions` returns matching record) | Re-schedule `scheduleResumedSessionDrive` against the live session — driver takes ownership. |
 | Gone (`listSessions` ok but no match) | Atomic `rollbackResumedRun` to `NeedsInputIdle` (status-guarded). `hitl_requests.response` stays in place — operator's same-payload retry on `/respond` re-enters the standard resume path. |
-| Supervisor 5xx / network failure | Skip the candidate this boot. Pass 2 of the keep-alive sweeper (TTL → `Abandoned`) is the long-term safety net. |
+| Supervisor 5xx / network failure | Skip the candidate this boot. Pass 2 of the scheduler-owned `system_sweep` keep-alive pass (TTL → `Abandoned`) is the long-term safety net. |
 
 Always-on, no feature flag. Idempotent — a second invocation finds no
 matching rows.

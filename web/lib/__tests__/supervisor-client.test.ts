@@ -57,6 +57,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks();
   delete process.env.MAISTER_SUPERVISOR_URL;
+  delete process.env.MAISTER_EVENT_STREAM_LAG_SECONDS;
 });
 
 // ADR-166 (strict): the create is an enveloped, handle-form command.
@@ -384,6 +385,27 @@ describe("checkSupervisorHealth", () => {
         sampledAt: readyHealth.checkedAt,
       },
     });
+  });
+
+  it("uses the injected lag threshold without reading invalid runtime env", async () => {
+    process.env.MAISTER_EVENT_STREAM_LAG_SECONDS = "invalid";
+    const health = {
+      ...readyHealth,
+      stream: {
+        streamId: "1d243f70-235f-47bd-804b-33aa3c8c78db",
+        headSequence: "100",
+        unacknowledgedCount: 101,
+        retainedCount: 101,
+        pressured: false,
+        oldestUnacknowledgedAgeMs: 120_000,
+      },
+    };
+
+    mockOnce(new Response(JSON.stringify(health), { status: 200 }));
+
+    await expect(
+      checkSupervisorHealth({ lagAgeMs: 121_000 }),
+    ).resolves.toMatchObject({ lag: { status: "clear" } });
   });
 
   it("keeps known stream fields strict and the baseline parser isolated", async () => {

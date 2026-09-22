@@ -38,11 +38,9 @@ export default auth(async (req) => {
       return NextResponse.redirect(new URL("/login", nextUrl));
     }
 
-    const { hasExecutionHostAdminAccess } = await import(
-      "@/lib/execution-host/admin-access"
-    );
+    const { hasActiveGlobalRoleById } = await import("@/lib/authz");
 
-    if (!(await hasExecutionHostAdminAccess(userId))) {
+    if (!(await hasActiveGlobalRoleById(userId, "admin"))) {
       return NextResponse.rewrite(
         new URL(EXECUTION_HOST_DENIED_PATH, nextUrl),
         { status: 403 },

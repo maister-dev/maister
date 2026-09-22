@@ -47,7 +47,7 @@ import {
 } from "@/lib/notifications/digest-trigger";
 import { runSweepTick } from "@/lib/runs/keepalive-sweeper";
 import { runSyncRecoverySweep } from "@/lib/runs/sync-recovery";
-import { eventStreamLagSeconds } from "@/lib/instance-config";
+import { configuredEventStreamLagAgeMs } from "@/lib/instance-config";
 import { durableWorkersHealth } from "@/lib/workers/health";
 
 export type GcCompatibilitySummary = {
@@ -114,6 +114,7 @@ export type SystemSweepInput = Readonly<{
     attemptId: string;
     observerId: string;
     previous: LagStreamObservation | null;
+    maxSampleGapMs?: number;
   }>;
 }>;
 
@@ -414,14 +415,15 @@ export async function runSystemSweep(
         health,
         now: sampledAt,
         logger: log,
+        preferredStream: observationInput.previous?.identity ?? null,
       });
 
       executionObservability = createExecutionObservability({
         ...observationInput,
         model,
         workers: workerHealth,
-        impasse: executionHost?.commands.impasse ?? 0,
-        lagAgeMs: eventStreamLagSeconds() * 1_000,
+        impasse: executionHost?.commands.impasse ?? null,
+        lagAgeMs: configuredEventStreamLagAgeMs(),
       });
     } catch (err) {
       const message = errorMessage(err);
@@ -440,8 +442,8 @@ export async function runSystemSweep(
         sampledAt: sampledAt.toISOString(),
         errorCode: "lag_collection_failed",
         workers: workerHealth,
-        impasse: executionHost?.commands.impasse ?? 0,
-        lagAgeMs: eventStreamLagSeconds() * 1_000,
+        impasse: executionHost?.commands.impasse ?? null,
+        lagAgeMs: configuredEventStreamLagAgeMs(),
       });
     }
   }

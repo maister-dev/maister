@@ -1,11 +1,11 @@
 import type { SchedulerClockStatus } from "@/types/scheduler";
 
-import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("next-intl", () => ({
-  useTranslations: () => (key: string) => key,
+vi.mock("next-intl/server", () => ({
+  getLocale: async () => "en-US",
+  getTranslations: async () => (key: string) => key,
 }));
 
 import { SchedulerClockCard } from "@/components/admin/scheduler-clock-card";
@@ -31,14 +31,15 @@ const clock: SchedulerClockStatus = {
 };
 
 describe("SchedulerClockCard", () => {
-  it("keeps both core jobs visible when the general scheduler list is unrelated", () => {
+  it("keeps both core jobs visible and marks an enabled overdue job", async () => {
     const markup = renderToStaticMarkup(
-      createElement(SchedulerClockCard, {
+      await SchedulerClockCard({
         clock,
+        coreJobIds: ["system_sweep.default", "domain_event_dispatch.default"],
         coreJobs: [
           {
             id: "system_sweep.default",
-            nextRunAt: "2026-09-22T10:01:00.000Z",
+            nextRunAt: "2026-09-22T09:59:30.000Z",
             disabledAt: null,
             lastStartedAt: "2026-09-22T09:59:00.000Z",
             lastFinishedAt: "2026-09-22T09:59:01.000Z",
@@ -55,5 +56,7 @@ describe("SchedulerClockCard", () => {
     expect(markup).toContain("missingJob");
     expect(markup).toContain("SYSTEM_SWEEP_FAILED");
     expect(markup).toContain("42");
+    expect(markup).toContain("overdue");
+    expect(markup).toContain("Sep 22, 2026");
   });
 });

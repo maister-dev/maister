@@ -1,5 +1,3 @@
-"use client";
-
 import type {
   SchedulerClockDriver,
   SchedulerClockStatus,
@@ -7,7 +5,7 @@ import type {
 } from "@/types/scheduler";
 import type { ReactElement } from "react";
 
-import { useTranslations } from "next-intl";
+import { getLocale, getTranslations } from "next-intl/server";
 import clsx from "clsx";
 
 const DRIVER_TONE: Record<SchedulerClockDriver, string> = {
@@ -18,23 +16,30 @@ const DRIVER_TONE: Record<SchedulerClockDriver, string> = {
     "border-[color-mix(in_oklab,var(--danger)_35%,var(--line))] bg-[color-mix(in_oklab,var(--danger)_10%,transparent)] text-danger",
 };
 
-function time(value: string | null, never: string): string {
-  return value ? new Date(value).toLocaleString() : never;
+function time(value: string | null, never: string, locale: string): string {
+  return value
+    ? new Intl.DateTimeFormat(locale, {
+        dateStyle: "medium",
+        timeStyle: "medium",
+        timeZone: "UTC",
+      }).format(new Date(value))
+    : never;
 }
 
-export function SchedulerClockCard({
+export async function SchedulerClockCard({
   clock,
   coreJobs,
+  coreJobIds,
 }: {
   clock: SchedulerClockStatus;
   coreJobs: SchedulerCoreJobClockRow[];
-}): ReactElement {
-  const t = useTranslations("adminScheduler.clockCard");
+  coreJobIds: readonly string[];
+}): Promise<ReactElement> {
+  const [t, locale] = await Promise.all([
+    getTranslations("adminScheduler.clockCard"),
+    getLocale(),
+  ]);
   const jobsById = new Map(coreJobs.map((job) => [job.id, job]));
-  const coreIds = [
-    "system_sweep.default",
-    "domain_event_dispatch.default",
-  ] as const;
 
   return (
     <section className="rounded-[14px] border border-line bg-paper shadow-[var(--shadow-sm)]">
@@ -79,7 +84,7 @@ export function SchedulerClockCard({
             {t("lastStarted")}
           </dt>
           <dd className="mt-1 text-sm text-ink">
-            {time(clock.health.lastStartedAt, t("never"))}
+            {time(clock.health.lastStartedAt, t("never"), locale)}
           </dd>
         </div>
         <div>
@@ -87,7 +92,7 @@ export function SchedulerClockCard({
             {t("lastFinished")}
           </dt>
           <dd className="mt-1 text-sm text-ink">
-            {time(clock.health.lastFinishedAt, t("never"))}
+            {time(clock.health.lastFinishedAt, t("never"), locale)}
           </dd>
         </div>
         <div>
@@ -158,13 +163,20 @@ export function SchedulerClockCard({
             </tr>
           </thead>
           <tbody>
-            {coreIds.map((id) => {
+            {coreJobIds.map((id) => {
               const job = jobsById.get(id);
               const durationMs =
                 job?.lastStartedAt && job.lastFinishedAt
                   ? new Date(job.lastFinishedAt).getTime() -
                     new Date(job.lastStartedAt).getTime()
                   : null;
+
+              const overdue =
+                job !== undefined &&
+                job.disabledAt === null &&
+                job.nextRunAt !== null &&
+                new Date(job.nextRunAt).getTime() <
+                  new Date(clock.health.observedAt).getTime();
 
               return (
                 <tr key={id} className="border-t border-line">
@@ -175,7 +187,7 @@ export function SchedulerClockCard({
                       : (job?.lastStatus ?? t("missingJob"))}
                   </td>
                   <td className="px-3 py-3">
-                    {time(job?.lastFinishedAt ?? null, t("never"))}
+                    {time(job?.lastFinishedAt ?? null, t("never"), locale)}
                   </td>
                   <td className="px-3 py-3">
                     {durationMs === null ? t("never") : `${durationMs}ms`}
@@ -184,7 +196,14 @@ export function SchedulerClockCard({
                     {job?.lastErrorCode ?? "—"}
                   </td>
                   <td className="px-5 py-3">
-                    {time(job?.nextRunAt ?? null, t("never"))}
+                    <span>
+                      {time(job?.nextRunAt ?? null, t("never"), locale)}
+                    </span>
+                    {overdue ? (
+                      <span className="ml-2 rounded-full border border-danger/30 bg-danger/10 px-2 py-0.5 font-mono text-[10px] font-semibold text-danger">
+                        {t("overdue")}
+                      </span>
+                    ) : null}
                   </td>
                 </tr>
               );

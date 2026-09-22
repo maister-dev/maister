@@ -10,17 +10,29 @@ import { sql } from "drizzle-orm";
 
 import { requireGlobalRole } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
+import { MaisterError } from "@/lib/errors";
 import { collectExecutionEventLag } from "@/lib/execution-host/events/lag-read-model";
 import { parseExecutionObservability } from "@/lib/execution-host/events/lag-observation";
 import { getPlatformStatus } from "@/lib/execution-host/platform-status";
 import { getSchedulerClockStatus } from "@/lib/queries/scheduler";
-import { DEFAULT_SYSTEM_SWEEP_JOB_ID } from "@/lib/scheduler/jobs";
+import {
+  DEFAULT_SYSTEM_SWEEP_JOB_ID,
+  TERMINAL_SCHEDULER_JOB_RUN_STATUSES,
+} from "@/lib/scheduler/jobs";
 import { durableWorkersHealth } from "@/lib/workers/health";
 
 const HOST_LIMIT = 20;
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const CURSOR = /^(0|[1-9][0-9]{0,18})$/;
+const POISON_CURSOR_MAX_LENGTH = 256;
+
+function terminalSchedulerAttemptStatusSql() {
+  return sql.join(
+    TERMINAL_SCHEDULER_JOB_RUN_STATUSES.map((status) => sql`${status}`),
+    sql`, `,
+  );
+}
 
 type AdminStatusDb = Db;
 
@@ -121,7 +133,7 @@ async function latestSweepObservation(db: AdminStatusDb) {
     SELECT id, status, claimed_at, finished_at, summary
     FROM scheduler_job_runs
     WHERE job_id = ${DEFAULT_SYSTEM_SWEEP_JOB_ID}
-      AND status IN ('Succeeded', 'Failed', 'Skipped')
+      AND status IN (${terminalSchedulerAttemptStatusSql()})
     ORDER BY claimed_at DESC, id DESC
     LIMIT 1
   `);
@@ -140,6 +152,30 @@ async function latestSweepObservation(db: AdminStatusDb) {
     observation,
     observationStatus: observation ? "available" : "unsupported",
   } as const;
+}
+
+export function parsePoisonCursorSearchParams(
+  params: Record<string, string | string[] | undefined>,
+): { runId: string; consumerName: string } | undefined {
+  const runId = params.poisonRun;
+  const consumerName = params.poisonConsumer;
+
+  if (runId === undefined && consumerName === undefined) return undefined;
+  if (
+    typeof runId !== "string" ||
+    typeof consumerName !== "string" ||
+    runId.length === 0 ||
+    consumerName.length === 0 ||
+    runId.length > POISON_CURSOR_MAX_LENGTH ||
+    consumerName.length > POISON_CURSOR_MAX_LENGTH
+  ) {
+    throw new MaisterError(
+      "PRECONDITION",
+      "poison pagination requires one non-empty poisonRun and poisonConsumer value",
+    );
+  }
+
+  return { runId, consumerName };
 }
 
 export async function getAdminExecutionHostStatus(

@@ -190,7 +190,7 @@ there is no `gc_state` enum column.
 
 Runs once on Node boot from `web/instrumentation-node.ts`, AFTER the two
 existing recovery sweeps (`runResumeRecoverySweep`,
-`runTakeoverReturnRecoverySweep`) and BEFORE the keep-alive sweeper.
+`runTakeoverReturnRecoverySweep`) and before the scheduler timer starts.
 
 Before the `Running`-only crash classifier, this same startup call repairs
 ADR-137 Plan-review graph handoffs. It examines only current-step,

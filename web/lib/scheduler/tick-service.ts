@@ -22,8 +22,10 @@ import {
   renewSchedulerJobAttemptLease,
   requestSchedulerJobNow,
   schedulerAttemptTimeoutSeconds,
+  TERMINAL_SCHEDULER_JOB_RUN_STATUSES,
   type ClaimedSchedulerJob,
   type SchedulerJobKind,
+  type TerminalSchedulerJobRunStatus,
 } from "@/lib/scheduler/jobs";
 import { runEvaluationDispatchTick } from "@/lib/evaluations/dispatcher/tick";
 import { runEvaluationSuiteScanTick } from "@/lib/evaluations/suites";
@@ -58,7 +60,7 @@ export type SchedulerTickJobSummary = {
   jobId: string;
   attemptId: string;
   jobKind: SchedulerJobKind;
-  status: "Succeeded" | "Failed" | "Skipped";
+  status: TerminalSchedulerJobRunStatus;
   errorCode?: string;
   errorMessage?: string;
 };
@@ -408,6 +410,10 @@ async function runSystemSweepWithLease(
         attemptId: job.attemptId,
         observerId: SCHEDULER_OBSERVER_ID,
         previous,
+        maxSampleGapMs: Math.max(
+          120_000,
+          2 * job.cadenceIntervalSeconds * 1_000,
+        ),
       },
     });
 
@@ -428,7 +434,9 @@ function previousExecutionObservation(
 ): LagStreamObservation | null {
   if (
     previous === null ||
-    !["Succeeded", "Failed", "Skipped"].includes(previous.status)
+    !TERMINAL_SCHEDULER_JOB_RUN_STATUSES.some(
+      (status) => status === previous.status,
+    )
   )
     return null;
 

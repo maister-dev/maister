@@ -65,7 +65,10 @@ vi.mock("@/lib/authz", () => ({
   requireProjectAction: mocks.requireProjectAction,
 }));
 vi.mock("@/lib/db/client", () => ({ getDb: () => fakeDb }));
-vi.mock("@/lib/instance-config", () => ({ runtimeRoot: mocks.runtimeRoot }));
+vi.mock("@/lib/instance-config", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/instance-config")>()),
+  runtimeRoot: mocks.runtimeRoot,
+}));
 vi.mock("@/lib/scratch-runs/events", () => ({
   sendScratchPromptAndProjectEvents: mocks.sendScratchPromptAndProjectEvents,
   normalizeScratchPrompt: (p: string) => p,

@@ -218,7 +218,11 @@ web/lib/supervisor-client ──HTTP──► supervisor/src/http-api  ──►
 
 - ✅ Route Handler (`app/api/.../route.ts`) imports from `lib/*`.
 - ✅ Server Action (`app/.../actions.ts`) imports from `lib/*`.
-- ✅ `lib/supervisor-client.ts` imports `lib/errors.ts` only (HTTP wire format).
+- ✅ `lib/supervisor-client.ts` imports the wire error taxonomy and client-safe
+  execution-host lag predicate only; it does not import DB or domain services.
+- ✅ `proxy.ts` may dynamically import `lib/authz.ts` for the execution-host
+  admin route's DB-authoritative pre-stream 403. Pages repeat authorization
+  immediately before detailed reads.
 - ✅ `lib/flows.ts` imports `lib/errors.ts`, `lib/atomic.ts`,
   `lib/config.ts`, `lib/db/*`.
 - ✅ `lib/executors.ts` imports `lib/errors.ts`, `lib/db/*`.
@@ -301,6 +305,10 @@ affected editor e2e (`m27-flow-editor.spec.ts` precedent).
   SQLite outbox and the manager ingests canonical Postgres rows. Next.js
   `app/api/runs/[id]/stream/route.ts` replays those rows exclusively after
   `lastEventId`; host log files are never a browser or projector authority.
+- **Scheduler and event observability:** `lib/scheduler/` owns the one periodic
+  clock and its fenced attempt summaries. `lib/execution-host/events/` owns
+  sequence arithmetic and bounded Postgres read models; host head/backlog enter
+  only through the negotiated supervisor health contract.
 - **State transitions:** driven by **ACP notifications** (live path) and
   **artifact presence** (durable path, e.g. `needs-input.json`). Never by
   `fs.watch`, `chokidar`, or polling on the web tier. The state machine
