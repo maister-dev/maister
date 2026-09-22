@@ -314,9 +314,14 @@ async function promoteAfterResumeTerminal(
     const { promoteNextPending } = await import("@/lib/scheduler");
     const { runFlow } = await import("@/lib/flows/runner");
 
+    // RETURN the dispatch rather than `void`-ing it: the promoted turn is
+    // fire-and-forget, so the try/catch below never sees it fail, and a
+    // discarded promise is one `promoteNextPending`'s catch cannot reach
+    // either. `runFlow` rejects for ordinary reasons (a task deleted under the
+    // promoted run, a PRECONDITION, a transport blip).
     await promoteNextPending({
       db,
-      runFlow: (next) => void runFlow(next, { db }),
+      runFlow: (next) => runFlow(next, { db }),
     });
   } catch (err) {
     log.error(

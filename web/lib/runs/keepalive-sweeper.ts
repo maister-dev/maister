@@ -732,17 +732,7 @@ async function promoteAfterTimeoutKill(db: Db): Promise<void> {
 
     await promoteNextPending({
       db,
-      runFlow: (next: string) => {
-        void runFlow(next).catch((err: unknown) =>
-          log.error(
-            {
-              err: err instanceof Error ? err.message : String(err),
-              runId: next,
-            },
-            "watchdog-promoted runFlow dispatch failed",
-          ),
-        );
-      },
+      runFlow: (next: string) => runFlow(next),
     });
   } catch (err) {
     log.error(

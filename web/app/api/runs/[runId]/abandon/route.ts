@@ -239,7 +239,10 @@ export async function POST(
       try {
         await promoteNextPending({
           db,
-          runFlow: (next: string) => void runFlow(next, { db }),
+          // RETURN the dispatch rather than `void`-ing it: the promoted turn is
+          // fire-and-forget, so the catch below never sees it fail, and a
+          // discarded promise is one `promoteNextPending`'s catch cannot reach.
+          runFlow: (next: string) => runFlow(next, { db }),
         });
       } catch (err) {
         log.error(

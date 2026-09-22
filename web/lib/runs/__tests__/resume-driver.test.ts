@@ -514,6 +514,48 @@ describe("runResumedSession — promoteNextPending on terminal transitions (Code
     // scheduler has nothing useful to do here.
     expect(promoteNextPendingSpy).not.toHaveBeenCalled();
   });
+
+  // The promoted dispatch is fire-and-forget: nothing here awaits it, so the
+  // enclosing try/catch can never see it fail. `promoteNextPending` owns the
+  // one catch that can — but only over what the override HANDS BACK. A
+  // `void runFlow(...)` discards the promise before the scheduler ever sees
+  // it, and every ordinary rejection (a task row deleted under the promoted
+  // run, a PRECONDITION, a transport blip) then escapes as a process-level
+  // unhandled rejection.
+  it("hands the promoted dispatch back to the scheduler instead of discarding it", async () => {
+    streamSessionSpy.mockReturnValue(asyncIter([]));
+    sendPromptSpy.mockRejectedValueOnce(
+      new MaisterError("ACP_PROTOCOL", "bad message"),
+    );
+    crashResumedRunSpy.mockResolvedValue({ ok: true });
+    // What the scheduler promoted cannot start: loadRun throws for a run whose
+    // task row is gone (runner-core.ts:200).
+    runFlowSpy.mockRejectedValue(
+      new MaisterError("PRECONDITION", "task not found for run run-2"),
+    );
+
+    let dispatched: unknown;
+
+    promoteNextPendingSpy.mockImplementation(
+      async (opts: { runFlow?: (next: string) => unknown }) => {
+        dispatched = opts.runFlow?.("run-2");
+
+        return { promotedRunId: "run-2" };
+      },
+    );
+
+    await runResumedSession({
+      runId: "run-1",
+      supervisorSessionId: "sup-2",
+      acpSessionId: "acp-1",
+      stepId: "review",
+      db: fakeDb,
+    });
+
+    expect(runFlowSpy).toHaveBeenCalledWith("run-2", expect.anything());
+    expect(dispatched).toBeInstanceOf(Promise);
+    await expect(dispatched).rejects.toThrow("task not found for run run-2");
+  });
 });
 
 describe("runResumedSession — graph-only completion handoff", () => {

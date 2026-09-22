@@ -103,7 +103,7 @@ describe("promoteNextPending priority ordering (ADR-121 C1)", () => {
     const promoted: string[] = [];
     const res = await promoteNextPending({
       db,
-      runFlow: (id) => promoted.push(id),
+      runFlow: (id) => void promoted.push(id),
     });
 
     expect(res.promotedRunId).toBe(highRun);
@@ -125,5 +125,50 @@ describe("promoteNextPending priority ordering (ADR-121 C1)", () => {
 
     expect(res.promotedRunId).toBe(older);
     expect(await statusOf(newer)).toBe("Pending");
+  });
+
+  // The dispatch is fire-and-forget by design — a freed slot must not block on
+  // a paid turn — so nothing awaits what the callback hands back, and an
+  // unattended rejection escapes as a process-level unhandled rejection that in
+  // a Next.js server can take the process down. `runFlow` rejects for ordinary
+  // reasons (a task row deleted under the promoted run, a PRECONDITION, a
+  // transport blip). One catch here covers every call site; an override cannot
+  // be trusted to remember its own, and three of them did not.
+  it("catches a rejecting dispatch instead of leaking an unhandled rejection", async () => {
+    const projectId = await seedProject();
+
+    await seedPendingRun(projectId, "normal", new Date());
+
+    const dispatched: string[] = [];
+    const unhandled: unknown[] = [];
+    const capture = (reason: unknown) => {
+      unhandled.push(reason);
+    };
+
+    process.on("unhandledRejection", capture);
+
+    try {
+      const res = await promoteNextPending({
+        db,
+        runFlow: (id) => {
+          dispatched.push(id);
+
+          return Promise.reject(new Error(`task not found for run ${id}`));
+        },
+      });
+
+      // Earlier cases in this file leave their losers Pending, so WHICH row
+      // wins is not this case's subject — only that a dispatch fired at all.
+      expect(res.promotedRunId).not.toBeNull();
+      expect(dispatched).toHaveLength(1);
+
+      // Let the discarded dispatch settle and give Node a turn to deliver
+      // `unhandledRejection` for it if nothing attached a handler.
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", capture);
+    }
   });
 });
