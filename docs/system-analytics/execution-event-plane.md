@@ -268,9 +268,19 @@ The transcript v2 consumer replays existing canonical history into the same
 message sequence keys while persisting only fixed-size coalescing pointers per
 run/attempt in `run_transcript_states`. A tool-key index resolves one prior tool
 message. Text/result concatenation occurs in PostgreSQL, so applying a chunk
-does not download an ever-growing message into the worker. Scratch dialogs
-retain their existing transcript owner, which also owns user-message ordering;
-the canonical transcript worker must not overwrite scratch message positions.
+does not download an ever-growing message into the worker.
+
+S5.2 P1 amendment (Designed until qualified): scratch reply content also belongs
+to this durable consumer. A request-local stream must not write the same reply.
+Scratch user/notice appends take the same allocator lock, bootstrap above existing
+message positions, and reset coalescing at user-turn boundaries. Scratch prompt
+completion is deferred until the transcript cursor covers its terminal evidence;
+only then may the next user turn be admitted. Replay commits content and cursor
+atomically, including after a web SIGKILL. Existing messages are retained; this
+change does not rewind an already committed consumer cursor or claim to repair
+reply content omitted by older binaries. Such existing missing content requires
+an explicit, run-scoped projection repair, never an automatic history rewrite.
+No persistent column or wire contract is added.
 
 `run_messages` now has a SECOND, non-projector writer: the flow dispatcher
 records each dispatched prompt as a `user` row (TRC-05). Sequence allocation is

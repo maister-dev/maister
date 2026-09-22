@@ -580,6 +580,50 @@ describe("project-less rows are invisible to project-scoped queries (ADR-097)", 
 // --- T5.9: launch + turn at a real local-package working dir ----------------
 
 describe("launchLocalPackageAssistant + a turn (ADR-097 T5.7)", () => {
+  it("scratch hook_trip appends a system notice and never escalates to NeedsInput", async () => {
+    const pkg = await createLocalPackage({
+      name: `hook-notice-${randomUUID().slice(0, 8)}`,
+      createdBy: userId,
+      db: db as never,
+    });
+    const sessionId = await lockLocalPackage(pkg.id, "hook-notice");
+
+    supervisorMock.streamSession.mockImplementation(async function* () {
+      yield {
+        type: "session.hook_trip",
+        sessionId: "sup-1",
+        monotonicId: 1,
+        rule: "path_guard",
+        lifecycle: "pre_tool_call",
+        disposition: "deny",
+        toolCall: { title: "Edit file" },
+      };
+    });
+    const result = await launchLocalPackageAssistant({
+      body: { localPackageId: pkg.id, sessionId, prompt: "check" },
+      userId,
+    });
+    const rows = await db
+      .select()
+      .from(scratchMessages)
+      .where(eq(scratchMessages.runId, result.runId));
+    const notices = rows
+      .filter((row) => row.role === "system")
+      .map((row) => parseScratchMessageContent("system", row.content));
+
+    expect(notices).toContainEqual({
+      kind: "hook_trip",
+      rule: "path_guard",
+      disposition: "deny",
+    });
+    expect(
+      notices.filter((notice) => notice?.kind === "hook_trip"),
+    ).toHaveLength(1);
+    const [run] = await db.select().from(runs).where(eq(runs.id, result.runId));
+
+    expect(["NeedsInput", "NeedsInputIdle"]).not.toContain(run.status);
+  });
+
   it("launches read-only and applies a streamed structured action in place", async () => {
     const pkg = await createLocalPackage({
       name: `assistant-launch-${randomUUID().slice(0, 8)}`,

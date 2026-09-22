@@ -179,6 +179,11 @@ function laneBuildId(): string {
 // `next build` of the checked-out tree: the harness never serves a build it
 // did not make, so the evidence always belongs to the revision under test.
 export async function buildProductionWeb(logFile: string): Promise<string> {
+  const startedAt = Date.now();
+  const invocation = invocationFromEnvironment();
+
+  if (!invocation)
+    throw new Error("production build requires a test invocation");
   const releaseBuildLock = await acquireBuildLock();
 
   try {
@@ -196,6 +201,11 @@ export async function buildProductionWeb(logFile: string): Promise<string> {
 
       if (build.invocationId === laneBuildId() && build.revision === revision) {
         await verifyProductionWebBuild(build);
+        logInvocation(invocation, "production-build-reused", {
+          pid: process.pid,
+          buildId: build.buildId,
+          durationMs: Date.now() - startedAt,
+        });
 
         return build.buildId;
       }
@@ -209,6 +219,12 @@ export async function buildProductionWeb(logFile: string): Promise<string> {
     };
 
     await writeFile(BUILD_STAMP_FILE, JSON.stringify(build), "utf8");
+    logInvocation(invocation, "production-build-complete", {
+      pid: process.pid,
+      buildId,
+      revision,
+      durationMs: Date.now() - startedAt,
+    });
 
     return buildId;
   } finally {

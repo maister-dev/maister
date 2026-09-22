@@ -2,7 +2,11 @@ import "server-only";
 
 import type { Db } from "./db";
 import type { BoundClient } from "./client";
-import type { CreateSessionPayload, ExecutionHostTransport } from "./contracts";
+import type {
+  CommandReceipt,
+  CreateSessionPayload,
+  ExecutionHostTransport,
+} from "./contracts";
 import type { CreateSessionResult } from "@/lib/supervisor-client";
 import type { ExecutionCommand } from "@/lib/db/schema";
 import type { SessionCreateOwner } from "./create-intent";
@@ -28,7 +32,7 @@ import {
 } from "./deliverer";
 import { applyCreateAck } from "./create-ack";
 import { issueCommand } from "./ledger";
-import { requeueDelivering } from "./commands";
+import { casTransition, markFailed, requeueDelivering } from "./commands";
 import { ensureSessionOutputIntents } from "./session-output-intents";
 import { isReadoptableWorkspaceError } from "./adoption";
 import { staleSessionBinding } from "./session-binding";
@@ -266,6 +270,88 @@ export async function createOwnedSession(input: {
       throw storedFailure(current);
     if (current.nextAttemptAt && current.nextAttemptAt.getTime() > Date.now())
       throw new SessionCreatePending(current.id);
+    if (current.attempts > 0) {
+      let receipt: CommandReceipt | null;
+
+      try {
+        receipt = await transport.getCommandReceipt(current.id);
+      } catch (error) {
+        if (!isMaisterError(error) || error.code !== "EXECUTOR_UNAVAILABLE")
+          throw error;
+        throw new SessionCreatePending(current.id, error);
+      }
+      if (receipt) {
+        if (
+          receipt.commandId !== current.id ||
+          receipt.runId !== current.runId ||
+          receipt.kind !== "session.create" ||
+          receipt.assignmentEpoch !== current.assignmentEpoch
+        )
+          throw createIntentError("create_receipt_identity");
+        if (receipt.phase === "accepted")
+          throw new SessionCreatePending(current.id);
+        if (receipt.phase === "rejected") {
+          await db.transaction(async (tx) => {
+            await assertOwner(tx);
+            await markFailed(tx, current.id, current.attempts, receipt.body, {
+              logger,
+            });
+          });
+          [original] = await db
+            .select()
+            .from(executionCommands)
+            .where(eq(executionCommands.id, current.id));
+          if (!original) throw createIntentError("create_command_missing");
+          continue;
+        }
+        const result = ResultSchema.safeParse(receipt.body);
+
+        if (receipt.httpStatus !== 201 || !result.success)
+          throw createIntentError("create_receipt_result");
+        const bindingDisposition = await db.transaction(async (tx) => {
+          await assertOwner(tx);
+          const settled = await casTransition(
+            tx,
+            current.id,
+            ["queued", "delivering"],
+            current.attempts,
+            {
+              state: "succeeded",
+              result: result.data,
+              completedAt: new Date(),
+              deliveringSince: null,
+              nextAttemptAt: null,
+            },
+            { logger },
+          );
+
+          if (!settled.changed) throw new SessionCreatePending(current.id);
+
+          return apply(tx, result.data);
+        });
+
+        logger.info(
+          {
+            commandId: current.id,
+            runId: current.runId,
+            assignmentEpoch: current.assignmentEpoch,
+            bindingDisposition,
+          },
+          "owned-create-receipt-folded",
+        );
+
+        // A dead incarnation cannot become active again, but that does not
+        // erase the host's committed create receipt. Match deliverCommand's
+        // historical ACK semantics: commit evidence before yielding authority.
+        if (bindingDisposition === "stale")
+          throw staleSessionBinding(
+            current.runId,
+            current.executionAssignmentId,
+          );
+
+        return resultValue(result.data);
+      }
+    }
     if (current.state === "delivering") {
       await db.transaction(async (tx) => {
         await assertOwner(tx);

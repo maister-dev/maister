@@ -1,7 +1,10 @@
 import "server-only";
 
 import type { ExecutionAssignment, ExecutionHost } from "@/lib/db/schema";
-import type { PreparedPermissionHandoff } from "@/lib/flows/graph/permission-resume";
+import type {
+  PreparedPermissionHandoff,
+  PreparedUndeliveredPermission,
+} from "@/lib/flows/graph/permission-resume";
 import type {
   ExecutionHostTransport,
   PlacementReason,
@@ -32,6 +35,7 @@ import {
   authorizeNodePermissionResume,
   authorizeNodePermissionResult,
   authorizeNodePermissionContinuation,
+  consumeUndeliveredFlowPermission,
 } from "@/lib/flows/graph/permission-resume";
 import { capForPool, countLiveRuns, takeSchedulerLock } from "@/lib/scheduler";
 import { admitCompletedAgentResume } from "@/lib/agents/resume";
@@ -275,6 +279,7 @@ export async function markResumed(
   runId: string,
   opts: StateTransitionOptions & {
     permissionResult?: PreparedPermissionHandoff;
+    undeliveredPermission?: PreparedUndeliveredPermission;
   } = {},
 ): Promise<StateTransitionResult> {
   const db = opts.db ?? getDb();
@@ -301,6 +306,12 @@ export async function markResumed(
       }
 
       // The resume is a new driver generation: mint inside the claim.
+      if (opts.undeliveredPermission)
+        await consumeUndeliveredFlowPermission(
+          tx,
+          runId,
+          opts.undeliveredPermission,
+        );
       const assignment = await mintForClaim(tx, runId, "resume", opts);
 
       if (assignment) {

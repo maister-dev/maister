@@ -19,6 +19,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import * as fullSchema from "@/lib/db/schema";
 import { appendRunMessage } from "@/lib/execution-host/events/run-message-store";
+import { appendScratchMessage } from "@/lib/scratch-runs/messages";
 import { projectTranscriptEvent } from "@/lib/execution-host/events/transcript-projector";
 import {
   startMainPostgresTestDb,
@@ -127,6 +128,82 @@ async function messagesFor(seeded: Seeded) {
 }
 
 describe("run_messages allocation", () => {
+  it("S52 scratch allocator preserves retained positions and separates subsequent replies", async () => {
+    const seeded = await seedRun();
+
+    await db
+      .update(schema.runs)
+      .set({ runKind: "scratch" })
+      .where(eq(schema.runs.id, seeded.runId));
+    await db.insert(schema.runMessages).values({
+      id: randomUUID(),
+      runId: seeded.runId,
+      nodeAttemptId: null,
+      sequence: 7,
+      role: "assistant",
+      content: "retained reply",
+      supervisorEventId: "40",
+    });
+    const first = await db.transaction((tx) =>
+      appendScratchMessage(tx as never, {
+        runId: seeded.runId,
+        role: "user",
+        content: "new question",
+      }),
+    );
+
+    expect(first.sequence).toBe(8);
+    const event = {
+      id: randomUUID(),
+      source: "host",
+      runId: seeded.runId,
+      eventType: "session.update",
+      payloadSchema: "maister.session.update.v1",
+      payload: {
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "new answer" },
+        },
+      },
+      runSequence: 41n,
+      ingestDisposition: "accepted",
+    } as never;
+
+    await db.transaction((tx) => projectTranscriptEvent(tx as never, event));
+    const second = await db.transaction((tx) =>
+      appendScratchMessage(tx as never, {
+        runId: seeded.runId,
+        role: "user",
+        content: "follow-up",
+      }),
+    );
+
+    expect(second.sequence).toBe(10);
+    await db.transaction((tx) =>
+      projectTranscriptEvent(
+        tx as never,
+        { ...(event as object), runSequence: 42n } as never,
+      ),
+    );
+    const rows = await db
+      .select({
+        sequence: schema.runMessages.sequence,
+        role: schema.runMessages.role,
+        content: schema.runMessages.content,
+      })
+      .from(schema.runMessages)
+      .where(eq(schema.runMessages.runId, seeded.runId))
+      .orderBy(schema.runMessages.sequence);
+
+    expect(rows).toEqual([
+      { sequence: 7, role: "assistant", content: "retained reply" },
+      { sequence: 8, role: "user", content: "new question" },
+      { sequence: 9, role: "assistant", content: "new answer" },
+      { sequence: 10, role: "user", content: "follow-up" },
+      { sequence: 11, role: "assistant", content: "new answer" },
+    ]);
+  });
+
   // IT-TRC-10. Without a shared lock both writers read the same
   // `next_sequence` and the second insert dies on the unique key.
   //

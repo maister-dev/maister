@@ -82,7 +82,9 @@ export async function projectTranscriptEvent(
 ): Promise<boolean> {
   if (
     event.eventType !== "session.update" &&
-    !RESET_EVENTS.has(event.eventType)
+    !RESET_EVENTS.has(event.eventType) &&
+    event.eventType !== "session.command" &&
+    event.eventType !== "session.created"
   )
     return false;
   const [run] = await tx
@@ -93,8 +95,17 @@ export async function projectTranscriptEvent(
 
   if (!run)
     throw new ExecutionEventProjectionError("transcript run is missing", true);
-  // Scratch owns interleaved user/assistant positions and its own projector.
-  if (run.kind === "scratch") return false;
+  const scratchBoundary =
+    run.kind === "scratch" &&
+    (event.eventType === "session.command" ||
+      event.eventType === "session.created");
+
+  if (
+    event.eventType !== "session.update" &&
+    !RESET_EVENTS.has(event.eventType) &&
+    !scratchBoundary
+  )
+    return false;
   const nodeAttemptId =
     typeof event.payload?.nodeAttemptId === "string"
       ? event.payload.nodeAttemptId
@@ -124,10 +135,14 @@ export async function projectTranscriptEvent(
   const id = transcriptStateId(event.runId, nodeAttemptId);
   const state = await lockTranscriptState(tx, event.runId, nodeAttemptId);
 
-  if (RESET_EVENTS.has(event.eventType)) {
+  if (RESET_EVENTS.has(event.eventType) || scratchBoundary) {
     await tx
       .update(runTranscriptStates)
-      .set({ openTextSequence: null, openThoughtSequence: null })
+      .set({
+        openTextSequence: null,
+        openThoughtSequence: null,
+        ...(scratchBoundary ? { usageSequence: null } : {}),
+      })
       .where(eq(runTranscriptStates.id, id));
 
     return false;

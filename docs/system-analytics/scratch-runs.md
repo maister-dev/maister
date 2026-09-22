@@ -410,6 +410,25 @@ secret material.
 | `scratch_run.capabilities.materialized` | INFO | `runId`, selected ids by kind, profile digest, downgrade count |
 | `scratch_run.workspace_groups.query_failed` | WARN | project ids or run ids involved, error code/message only |
 
+### S5.2 durable reply ownership (Designed until qualified)
+
+The production partition control P1 exposed a lost reply after web death: the
+command owner completed, but the request-local transcript writer was gone.
+Reply text, thoughts, tool updates and usage must have one durable canonical
+writer. User messages and local notices, including Studio Flow assistant action
+results, share its allocator lock. Completion
+waits for the transcript cursor through terminal command evidence before
+unlocking a subsequent turn. See the [event-plane ownership contract](execution-event-plane.md).
+P1 and a subsequent-turn control must preserve one reply per command and ordered
+user/assistant rows across restart; disabling durable scratch projection must
+restore P1's missing-result failure.
+
+Deploy this ownership change with the old web instances stopped before the new
+instances start. Mixed versions would retain the old request-local reply writer
+beside the new canonical writer and are not qualified. Retained messages remain
+in place; this change does not rewind cursors or repair previously skipped
+history automatically.
+
 ## Expectations
 
 - Scratch launch MUST select an effective platform ACP runner and MUST NOT

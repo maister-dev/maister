@@ -320,7 +320,11 @@ export async function resumeRun(
       const result = await markResumed(runId, {
         db: tx,
         placement: { host: placementHost, transport: hosts.transport },
-        ...(permissionResult ? { permissionResult } : {}),
+        ...(permissionResult?.kind === "not_received"
+          ? { undeliveredPermission: permissionResult }
+          : permissionResult
+            ? { permissionResult }
+            : {}),
         ...(opts.recordSuccessAudit
           ? { recordSuccessAudit: opts.recordSuccessAudit }
           : {}),
@@ -367,7 +371,10 @@ export async function resumeRun(
 
     return {
       ok: true,
-      runStatus: permissionResult ? "Running" : "NeedsInput",
+      runStatus:
+        permissionResult && permissionResult.kind !== "not_received"
+          ? "Running"
+          : "NeedsInput",
       newSupervisorSessionId: null,
       acpSessionId: runRow.acpSessionId,
       assignmentId,

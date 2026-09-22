@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { LocalPackage } from "@/lib/db/schema";
+import type { Db as ExecutionDb } from "@/lib/execution-host/db";
 
 import { randomUUID } from "node:crypto";
 
@@ -16,7 +17,7 @@ import {
 } from "./protocol";
 
 import * as schema from "@/lib/db/schema";
-import { nextScratchMessageSequence } from "@/lib/scratch-runs/messages";
+import { appendScratchMessage } from "@/lib/scratch-runs/messages";
 
 type Db = any;
 
@@ -263,23 +264,13 @@ async function insertActionResultMessage(args: {
   runId: string;
   result: FlowActionResultPayload;
 }): Promise<void> {
-  const sequenceRows: Array<{ sequence: number }> = await args.db
-    .select({ sequence: scratchMessages.sequence })
-    .from(scratchMessages)
-    .where(eq(scratchMessages.runId, args.runId));
-  const sequence = nextScratchMessageSequence(
-    sequenceRows.map((row) => row.sequence),
+  await args.db.transaction((tx: ExecutionDb) =>
+    appendScratchMessage(tx, {
+      runId: args.runId,
+      role: "system",
+      content: encodeFlowActionResultPayload(args.result),
+    }),
   );
-
-  await args.db.insert(scratchMessages).values({
-    id: randomUUID(),
-    runId: args.runId,
-    sequence,
-    role: "system",
-    content: encodeFlowActionResultPayload(args.result),
-    supervisorEventId: null,
-    createdAt: new Date(),
-  });
 }
 
 function visibleAssistantText(

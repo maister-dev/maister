@@ -1,6 +1,6 @@
 # Implementation Plan: Close S5.2 — process death, partitions and denied roots
 
-Created: 2026-09-22. Status: **Implementing; T01–T02 and T04–T07 complete; T03 local baseline verified, remote preflight pending; T08 in progress. Qualification pending.**
+Created: 2026-09-22. Status: **Implementing; T01–T02 and T04–T12 complete; T03 local baseline verified, hosted preflight pending; T13 wiring implemented, hosted run pending; T14 broad web regression in progress.**
 Branch: none (existing detached worktree preserved).
 Planning HEAD: `c4216cd532c9fe7df2ca38c6045bea23ed54e8fa`.
 User-supplied qualification baseline: local `master @ 1056c5c1`.
@@ -592,7 +592,7 @@ Linux process enumeration and hosted Intel qualification remain T14/T13 gates.
 
 ### Phase 2 — partitions and missing process-death windows
 
-- [ ] **T08 — Implement reusable proxy and B1–B4 fixture barriers.** Files:
+- [x] **T08 — Implement reusable proxy and B1–B4 fixture barriers.** Files:
   `supervisor-fault-proxy.ts`, `fault-barriers.ts`, existing test-support ledger
   helpers as needed, new partition/death suites. Reuse production HTTP formats;
   HTTP-aware selectors, complete SSE-frame parsing, backpressure, bidirectional
@@ -606,7 +606,7 @@ Linux process enumeration and hosted Intel qualification remain T14/T13 gates.
   production test hooks. Logging: selector, reached evidence, disposition,
   upstream/downstream closure and bounded safe traces. Depends: T07.
 
-- [ ] **T09 — P1/P2 RED → GREEN at production boot.** Files: partition suite;
+- [x] **T09 — P1/P2 RED → GREEN at production boot.** Files: partition suite;
   only if a genuine RED requires it, owning
   `web/lib/execution-host/{deliverer,recovery,prompt-owner-application}.ts`
   or their actual called seam (confirm filename before editing). Follow P1/P2
@@ -617,7 +617,7 @@ Linux process enumeration and hosted Intel qualification remain T14/T13 gates.
   production retry budgets and typed uncertainty. Logging: retry exhaustion,
   receipt/terminal digest, boot/claim writer and one application. Depends: T08.
 
-- [ ] **T10 — P3/P4 RED → GREEN at production boot.** Files: partition suite;
+- [x] **T10 — P3/P4 RED → GREEN at production boot.** Files: partition suite;
   conditional root-cause edits only in owning event consumer/projector and
   command-settlement/fencing seams. Exercise both replay and live cuts, partial
   frame discard and explicit duplicate subcontrol. N+1 must be established by
@@ -627,7 +627,7 @@ Linux process enumeration and hosted Intel qualification remain T14/T13 gates.
   Restore mutations before regression. Logging: cursor/high-water/frame IDs,
   last-seen before/after, epoch snapshot and actual writer. Depends: T09.
 
-- [ ] **T11 — Close missing death windows D1–D4.** Files: new process-death
+- [x] **T11 — Close missing death windows D1–D4.** Files: new process-death
   suite, reusable T08 barriers and existing seed/ledger helpers. Implement the
   D1–D4 windows, including D2a/D2b, exactly; keep ADR-175/177 families intact.
   D1 uses actual production sweep/response paths; a past keepalive scheduling
@@ -650,11 +650,11 @@ fix cycle. Commit C3.
 
 ### Phase 3 — suite closure, CI and qualified status
 
-- [ ] **T12 — Close S4.1's five-suite finding with exact transport proof.**
+- [x] **T12 — Close S4.1's five-suite finding with exact transport proof.**
   Files: `web/lib/runs/__tests__/shared-tree-auto-launch.integration.test.ts`
   plus parent-plan S5.2 text; other four suites only if regression requires it.
   Bounded planning inspection found task-less roots, early
-  `!parent.taskId` skip in `web/lib/runs/auto-launch.ts:311`, mocked
+  `!parent.taskId` skip in `web/lib/domain-events/auto-launch.ts:311`, mocked
   `tryStartRun`, mocked merge/stat and git-range artifacts. These paths avoid
   the transport. Add minimal `fakeExecutionHosts` wiring and an explicit
   no-real-transport spy covering all cases; leave the real default-URL guard
@@ -859,3 +859,340 @@ the default-URL guard, relaxing epoch checks, fabricating terminal outcomes,
 skipping AT cases or calling an unavailable driver successful. If CI runtime,
 60-minute budget, parent-death reachability or exact fault-window evidence is
 unproven, retain S5.2 as open with that precise missing gate.
+
+### S5.2 P4 concrete response window (2026-09-22 specification amendment)
+
+P4 holds the first operator `POST /sessions/{id}/checkpoint` response after
+host commit. A second ordinary node interrupt parks the observed attempt;
+answering that interrupt with `restart_node` / `workspacePolicy=keep` mints
+N+1. Hold N+1's first prompt before forwarding, snapshot current authority and
+install a scoped domain-write audit, then release the original checkpoint ACK
+while its 30-second request is still alive. Require the original web handler's
+409 CONFLICT and zero current run/session/attempt writes. Old attempt closure
+and historical command receipt settlement are permitted. Release successor
+prompt and complete it through the controlled ACP fixture. A response arriving
+after its HTTP deadline is not a passing stale-response control. This uses the
+existing checkpoint contract, not an unqualified delayed session-create ACK.
+
+### Phase 2 execution evidence in progress
+
+D1 RED (`maister-ab-isolation-63wVxV/vitest.json`): the production cron path
+correctly reaches NeedsInputIdle after the missing-session checkpoint, but
+`prepareFlowPermissionResult` treats a definitively absent input receipt as
+permanently pending even when the source prompt has agreed host `turn_lost`
+evidence. Freeze the narrow missing-input recovery contract in
+`execution-prompt-lifecycle.md`: verify absence and source terminal identity,
+recheck source/HITL/input under the existing resume claim, archive the old
+delivery identity and use existing unanswered-permission authorization. Never
+convert unavailable lookup to absence or manufacture successful input evidence.
+Add that negative receipt-availability subcontrol to D1; preserve the existing
+successful-input/historical-output handoff families and run their regressions.
+
+D2b RED (report `maister-ab-isolation-63wVxV/vitest.json`): the owning create
+driver re-sends the already committed request after ACK loss instead of probing
+the retained receipt. The host deduplicates it, but the frozen receipt-fold
+control correctly rejects the second POST. Before retrying an attempted owned
+create, query its exact receipt: a confirmed 404 permits the original request;
+unavailable/accepted evidence defers; completed 201 with matching command/run/
+kind/epoch and a valid create result settles command plus binding under the
+existing owner lock, without another POST. Rejected evidence retains the
+existing refusal/replacement semantics. No payload rebuild or new intent.
+
+Scratch writer inventory amendment: the Studio Flow assistant's action-result
+system notice (`web/lib/studio/flow-assistant/turn.ts`) also writes this same
+transcript scope. It must use the shared allocator. The existing follow-up edit
+integration case exposed a sequence collision when its notice bypassed that
+allocator; preserve its assertions and correct the remaining writer.
+
+Harness contract amendment after the first 12-control execution: supervisor
+death may reset an upstream SSE connection; forward that reset without classifying
+it as a proxy defect. A single-shot client's early close remains a defect unless
+the test subsequently records its owned-process kill. D3 needs a persistent
+`hold-responses` barrier for the exact object: each upload retry is observed and
+held until explicit release, including across individual HTTP deadlines. Bound
+retained response bytes and count. This does not relax single-shot ACK controls.
+D1 requests the existing authenticated `POST /api/cron/gc` scheduler entrypoint
+after the unavailable permission response and again after supervisor restart;
+the scheduler owns the claim and calls the production keepalive pass. Production
+does not start the legacy standalone 30-second sweeper. No new timer, reducer
+invocation or permission deadline is introduced. Only the run's scheduling
+deadline is arranged; the actual checkpoint route remains the reached witness.
+L1 reads the prompt V2 receipt's `terminal.result.stopReason`; D2b waits for the
+durable create command settlement separately from the session binding witness.
+
+- Initial production controls: B4/P2/P3-live/P3-replay passed; P1 was RED on the
+  missing assistant reply after SIGKILL (command application itself succeeded).
+  Report: `/private/tmp/maister-s52-20260922/maister-ab-isolation-tbYMtB/vitest.json`,
+  invocation `7d19a3f8-65c0-4a70-81be-d443e5dc5818`, 4/5, 310.74 s, zero cleanup leaks.
+- Root cause: scratch's request-local reply writer dies with web; the canonical
+  transcript worker skipped scratch. The SDD amendment gives reply content to
+  the durable worker, shares its allocator with user/notice writes and gates
+  completion on its cursor. No schema/API change; historical cursors are not rewound.
+- First fix verification: missing reply and exact claim-owner audit passed;
+  P2 and both P3 cases passed. Added subsequent-turn assertion incorrectly
+  expected HTTP 200 rather than the route's existing 202 and failed there.
+  Corrected to the documented 202 without relaxing transcript/application checks.
+  Report: `maister-ab-isolation-N8J8E8/vitest.json` under the same evidence root,
+  invocation `ee6c8b8f-a948-4b82-b6d0-3ba2dd016a6e`; gate remains open.
+- New D1/D2a/D2b/D3/D4/L1 and concrete P4 controls are registered but not yet
+  qualified. A first combined launch was refused before spawning tests because
+  local one-minute load was 12.24 (required <8). No result is inferred from it.
+
+- Third death-matrix run: D2a, D4, L1, D3 and D1 passed; D2b remained RED
+  because receipt folding rolled back historical command success when the
+  recovered incarnation was already dead. Preserve existing `deliverCommand`
+  semantics: commit valid receipt evidence, then yield a stale binding outside
+  that transaction; never reactivate a dead incarnation. Evidence:
+  `maister-ab-isolation-0r3iCG/vitest.json`, invocation
+  `d539994d-b4da-41f5-9d72-62d624acc329`, zero process leaks. D1 includes a
+  blocked-input-receipt negative control before its successful resume.
+- Scratch owning regressions: `maister-ab-isolation-zA6j9W/vitest.json`,
+  invocation `4338320a-8d0c-4096-b3be-80db420036b2`: 33/33 real-Postgres
+  integration cases, zero cleanup leaks. Seven assertions formerly attached
+  to the removed request-local writer now live in `transcript.integration.test.ts`
+  (six canonical projection/cursor cases) and the existing local-package
+  assistant suite (one hook notice case). The remaining parser/service unit
+  controls pass 27/27; unchanged dialog controls passed 10/10 in the original
+  owning-unit run. No behavior assertion was quarantined.
+
+- First complete new matrix GREEN: `maister-ab-isolation-58K2NR/vitest.json`,
+  invocation `d6c93a21-5a70-401b-9415-97f377dc22de`: all 12 controls, zero
+  skipped cases/errors/process leaks. P2 exercised its real budgets in 184.49 s.
+  Final refactor strengthens P4 with current-incarnation audit and explicit
+  handler ordering, D1 with a preflight/commit input-generation race and exact
+  resumed-owner application audit, and B4 with an HTTP-only hold proving that
+  the independent seal event can still publish the catalogue. These additions
+  and the deliberate mutation controls remain to be qualified before C3.
+
+Phase-2 verification queue (not completion evidence):
+`phase2-owning-regression.log` runs the existing Flow/agent owner and permission
+families serially. The older create-budget fixture expects five sends after a
+lost ACK but exposes the committed receipt; receipt-first recovery now folds
+that receipt. Keep the five-attempt budget assertion by moving that fixture's
+four unknown transport failures before host acceptance, with real receipt 404s;
+D2b owns the committed-receipt window. The first owning run confirmed exactly
+`owner-flow-create: unknown outcomes beyond the delivery budget keep one create`
+failed (57/58 Flow-owner cases passed). The fixture now injects before host
+acceptance; rerun remains required. The other owning suites are still running. The uncommitted fault-negative
+experiment is prepared at `/private/tmp/maister-s52-20260922/falsify-faults.py`:
+one disabled action per scenario, source backups plus byte-for-byte restoration,
+followed by restored qualification. Do not run it concurrently with another lane.
+
+- Owning web-lane regression completed: `maister-ab-isolation-giJNAh/vitest.json`,
+  invocation `0ba9e515-64ed-4de6-a218-a7774274e58c`, 148/149 passed, zero
+  process leaks, 2508.86 s. The serial runner mode is named `isolation`, but
+  these six files are **in-process web evidence**, not production-boot proof.
+  Exact failure: `owner-flow-create: unknown outcomes beyond the delivery budget
+  keep one create` (expected attempts 5, committed-receipt fold used 1).
+  The corrected pre-acceptance fixture preserves the original five-attempt
+  assertion and is pending its focused rerun. Agent owners 50/50, permission
+  resume 9/9, permission-result failures 23/23, gate permission result 3/3 and
+  gate permission resume 6/6 passed. Latest fixture lint and web typecheck pass.
+- Corrected create-budget fixture GREEN: `focused-create-budget-Ngs7W6/vitest.json`,
+  invocation `55d60b13-27c9-4017-90c4-46990bd7258c`, exit 0, one selected case
+  passed, 57 explicitly filtered cases, zero process/container leaks. This is
+  focused web-lane evidence, not a successful complete A/B lane. The full
+  required lane will run again at T14. Production matrix rerun waits for host
+  load <8; the measured one-minute load exceeded 30 after the owning run.
+
+T13a local preparation during the quiet-host wait: added the independent
+`execution-ab-preflight.integration.test.ts` (real denied/allowed reads and
+migrated main/brain PostgreSQL), the checksum-pinned
+`scripts/setup-isolation-ci-runtime.sh`, and the mandatory Intel preflight job.
+This prerequisite is explicitly scheduled before the fault qualification in
+T03; the full production lane is added in T13b. Shell syntax, workflow parsing,
+runner pin/budget and unchanged Ubuntu Node matrix checks pass. Local preflight
+execution and hosted evidence remain open; do not mark T03/T13 complete.
+
+- Required-case discovery guard RED → GREEN: the prior report validator accepted
+  an I1-only passing suite with I2–I4 absent. `required-cases-red.log` records
+  `Missing expected exception`; `required-cases-green.log` records all 8 runner
+  checks passing. The frozen per-file manifest now rejects missing or duplicate
+  required titles in addition to skipped/failed cases. The 28-control Phase-1
+  report and 12-control first matrix report pass the new manifest check.
+  The independent I-CI preflight title is also required whenever that suite runs.
+- `pnpm validate:docs` passes with the local tsx IPC permission it requires;
+  `phase2-docs-unsandboxed.log` confirms links, indexes and the unchanged
+  125-table generated ERD. The initial sandbox EPERM is environment evidence,
+  not a documentation defect.
+
+- I-CI local preflight GREEN (not hosted qualification):
+  `maister-ab-isolation-6JUdMt/vitest.json`, invocation
+  `001b3a6b-13e0-4862-95da-f75d3d8cc5d1`, Darwin/ARM64 Node 24.15.0,
+  real sandbox-exec EPERM plus readable controls and migrated real PostgreSQL,
+  2.98 s, zero process/container leaks. The Intel-only installer rejects local
+  ARM with an explicit diagnostic before any download or runtime change.
+- Strengthened matrix: `maister-ab-isolation-tOymjU/vitest.json`, invocation
+  `d5c582cf-ffaa-45ba-b7de-f2f552518c93`, 11/12 passed, zero leaks, 421.60 s.
+  B4's independent-SSE control, P3's direct exclusive-cursor assertion, P4's
+  current-incarnation audit and D1's input-generation race passed. P1 timed out
+  waiting for B2 at the same 30-second boundary as the dead web's stream claim;
+  logs show claim-lost reconnects, then canonical replay/application as teardown
+  releases the barrier. Its observation deadline is now 90 seconds to include
+  lease expiry plus reconnect, still requiring a real `pg_locks` waiter. No
+  production lease, retry budget or state assertion changed. Retry pending.
+
+- CI preflight committed independently as `921da874`; hosted execution remains
+  pending. T13b now wires the complete serial slice with a bounded execution
+  window and a five-minute cleanup/upload reserve; its report validator checks
+  every required case. Build, suite and cleanup durations are emitted separately.
+- T12 owning verification: five named S4.1 suites passed 40/40, zero leaks,
+  `maister-ab-isolation-C8rFcs/vitest.json`, invocation
+  `f7bbaade-3b91-4407-b7c3-cb320f84d0f3`. These are web/in-process controls.
+  `shared-tree-auto-launch` seeds no parent task and mocks scheduler launch;
+  the discovery guard is `web/lib/domain-events/auto-launch.ts`. It now installs
+  `fakeExecutionHosts` and refuses all actual local-direct transport calls with
+  the default URL unset. Eager construction of an unused transport is harmless.
+  Falsification injected a health call inside the normal caught promotion path:
+  the EARLY run.review control failed the exact never-called assertion despite
+  the catch. `s41-transport-falsification.log` records RED; byte-for-byte restored
+  source passed all five shared-tree controls in `s41-shared-tree-restored.log`.
+- Linux helper compatibility: `linux-helper-smoke.log`, Node 24.19.0 Linux ARM64
+  disposable container, exact invocation ownership and argv-decoy sibling
+  exclusion passed; parent-death watchdog terminated its child in 527 ms without
+  a sweep. Both deliberate process groups were reaped. This qualifies helpers,
+  not the S5.3 Linux filesystem driver or hosted Intel CI.
+
+- Full serial web unit gate exposed two in-scope fixture regressions:
+  `phase3-web-unit.log` has eight failed scratch route assertions and 35 DOM
+  setup failures (`TypeError: The URL must be of scheme file`). The route tests'
+  fake DB did not implement the shared allocator; their existing HTTP assertions
+  are preserved with the allocator boundary supplied by the fixture, while the
+  allocator remains covered against real PostgreSQL. Both route files pass
+  17/17 in `scratch-route-unit-restored.log`. Vite 5's browser asset transform
+  rewrote `new URL(resource, import.meta.url)` in the shared invocation helper;
+  explicit `node:url` `NodeURL` keeps these as filesystem resources, including
+  the reciprocal worktree-root import. The representative DOM suite passes
+  9/9 in `dom-setup-restored.log`; full web unit rerun is pending. These were
+  introduced regressions, not a baseline exemption or quarantine.
+
+- Restored full web unit gate GREEN: `phase3-web-unit-restored.log`, Node
+  24.15.0, serial, 815/815 files and 8,386/8,386 tests, exit 0. No DOM setup
+  failure or scratch route assertion remains. The 17/17 focused scratch route
+  result and the real-Postgres allocator/transcript results retain separate
+  responsibility; no assertions were deleted or relaxed.
+
+- Supervisor unit gate GREEN: `phase3-supervisor-unit.log`, Node 24.15.0,
+  serial, 43/43 files and 407/407 tests, exit 0, 19.80 s. Supervisor A/B is
+  running before the production retry while the quiet-host queue stays paused;
+  no production stack overlaps these prerequisite checks.
+
+- Supervisor A/B gate GREEN: `maister-ab-supervisor-FRnRf6/vitest.json`,
+  invocation `4e3e6a2b-c2ff-41e7-83f8-c2e411433951`, 106/106 cases in
+  10/10 files, exit 0, zero leaks, total runner duration 17.678 s. The full
+  supervisor integration inventory also passed 232/232 cases in 25/25 files:
+  `maister-ab-supervisor-JqNLLo/vitest.json`, invocation
+  `68c7ff99-6c74-4854-affc-2f6fa71d3896`, exit 0, zero leaks, 19.608 s.
+  Both run the real supervisor package on Darwin ARM64/Node 24.15.0; these
+  are supervisor-lane evidence, not web production qualification.
+
+- The Phase-1 DOM compatibility correction is committed as `7566ba10`.
+  Post-fix web typecheck passes (`phase3-web-typecheck-restored.log`).
+  `phase3-web-ab-serial.log` now runs the complete `laneSuites.web` inventory
+  through the runner's serial mode while the production queue is paused.
+  Its report label is `isolation` only to select the existing serial pool;
+  every file in this run is web/in-process evidence. The host remained above
+  the agreed load <8 prerequisite for production-boot qualification.
+
+- Complete web A/B inventory GREEN in serial execution:
+  `maister-ab-isolation-wA8ncn/vitest.json`, invocation
+  `c4899dcf-7407-40da-b105-8ed9421f52d6`, exit 0, zero failed/skipped/todo
+  cases and zero runtime errors or process/container leaks. This is the entire
+  `laneSuites.web` inventory using the serial runner mode; it is web/in-process
+  evidence. Total runner time 2,987.540 s (49.79 min), cleanup 0.841 s.
+  Flow owners passed 58/58 and agent owners 50/50; the ADR-177 family passed
+  14/14 and crash-recover continuation 17/17. The earlier create-budget failure
+  is now closed in the complete owning suite, not only a focused rerun.
+
+- **Final positive production matrix (2026-09-22):** `phase2-matrix-final.log`,
+  `maister-ab-isolation-j0yQeG/vitest.json`, invocation
+  `62d02e70-180c-4a35-abff-6c1049f9eb4c`: **12/12**, two files, exit 0,
+  no skips/runtime errors/process or container leaks; 430.239 s including cleanup
+  (351 ms). Native macOS ARM64 / Node 24.15.0, HEAD `7566ba10` plus this phase's
+  working tree; build `xlndErUsp0gM03yDBjc6E` (40.586 s). Started at load 7.724,
+  lid open, isolated from other test lanes. P1's reached-writer wait is 90 s to
+  include the unchanged 30 s stream lease; it passed in 36.597 s. P2 exhausted
+  the real production budget in 183.567 s. Fault/guard falsifications remain
+  the phase-exit gate; this is local production evidence, not hosted CI proof.
+
+- **Fault-witness SDD amendment before correction (2026-09-22):** disabling
+  P1's ACK cut still passed in the first mutation run: the later receipt probe
+  also occurs after acknowledged admission. Retain that probe for the reached
+  recovery window, but require a separate real downstream response-close witness
+  with `headersSent=false` and `writableFinished=false` before web death. Expose
+  bounded, read-only close observations from the proxy; never infer delivery
+  from the configured action name. Falsify by replacing cut with release. P4's
+  test-level cleanup must preserve its original assertion when an unreleased
+  barrier independently makes cleanup fail; use Vitest's per-test teardown
+  hook rather than a throwing finally block. No production change is required.
+
+- **Fault-disable matrix:** `phase2-fault-falsifications.log`,
+  `maister-ab-isolation-BqixHS/vitest.json`, invocation
+  `0bdacfa9-6da2-446c-af08-2925b5649bd7`: expected lane exit 1; all four
+  temporarily mutated files restored byte-for-byte (`fault-mutations-*.json`).
+  B4 failed its reached database waiter; P2 failed `P2-receipts: block-receipts
+  was never reached`; P3-live/replay failed the reconnect witness; D2a/D2b/D4
+  failed their respective reached request/ACK barriers; D3 failed the terminated
+  backend disappearance witness; L1 observed `end_turn` instead of `cancelled`;
+  D1 observed HTTP 200 instead of the required unavailable-host 503. P1's
+  unexpected pass and P4's masked assertion prompted the preceding narrow
+  witness/teardown correction and are not accepted falsification evidence.
+
+- **Corrected P1/P4 falsification:** `phase2-fault-p1-p4.log`,
+  `maister-ab-isolation-hHwbir/vitest.json`, invocation
+  `380b3835-9785-4b69-a42b-7a5bc5a618c7`: both selected cases failed at the
+  intended assertions, exit 1, zero cleanup leaks, 62.553 s. P1 with ACK release
+  failed **“P1 dropped ACK sends no downstream response”** (actual headers and
+  completed response true); P4 with early release failed **“old handler remains
+  pending at its held ACK”**. The per-test hook retains that assertion alongside
+  the independent unresolved-barrier cleanup failure. Four unselected cases
+  were filtered only for this mutation experiment, not treated as a green lane.
+  `fault-p1-p4-restored.json` records exact restoration; scoped lint and web
+  typecheck pass. Full restored isolation remains pending.
+
+- **Product-guard falsifications, independently restored:** each selected test
+  ran against a fresh production build; filtered siblings are not lane passes.
+  All three invocations exited 1 for the named assertion with zero cleanup leaks.
+  `guard-{cursor,stale-owner,input-generation}-restored.json` hashes match the
+  current sources. No mutation remains.
+
+  | Disabled guard | Exact failing observation | Evidence under the external S5.2 directory |
+  | --- | --- | --- |
+  | Exclusive reconnect cursor (`afterSequence + 1`) | P3-live: **“reconnect uses the committed exclusive cursor”**, actual 7 versus required 6 | `phase2-guard-cursor.log`, `maister-ab-isolation-pWazm5/vitest.json`; invocation `906966af-0fac-4538-8605-593c5fd3cc05`, 63.624 s |
+  | Current running-attempt precondition (`requireRunning: false`) | P4: **“stale evidence cannot mutate current owner state”**, successor snapshot changed | `phase2-guard-stale-owner.log`, `maister-ab-isolation-yqlr4l/vitest.json`; invocation `6533960e-d793-4a0d-b20c-993f120bd41b`, 56.238 s |
+  | Permission input-generation equality | D1: raced generation accepted HTTP 202 instead of required 409 | `phase2-guard-input-generation.log`, `maister-ab-isolation-7b1jSW/vitest.json`; invocation `bcc3d005-33c5-42ef-bf53-6293828bd764`, 72.614 s |
+
+- **Final static boundary checks:** `phase3-docs-final.log` and
+  `phase3-contracts-final.log` pass. The documentation check needed its normal
+  tsx IPC socket outside the shell sandbox; its initial EPERM was environmental,
+  and the authorized rerun completed. Schema/migration paths and
+  `supervisor/src/main.ts` / `web/server.ts` have no diff from execution base
+  `c4216cd5`. `qualified-source-sha256.json` records the 53 changed source/config
+  files at restored qualification HEAD `7566ba10` plus the implementation tree.
+
+- **Full restored isolation gate:** new package script
+  `pnpm --filter maister-web test:integration:isolation`,
+  `phase3-isolation-full-restored.log`, `maister-ab-isolation-B4QR4S/vitest.json`,
+  invocation `19274cea-53f9-4083-841c-c2c39abca4cc`: **40/40 across all six
+  required files**, exit 0, no skips/todos/runtime errors, zero process/container
+  leaks. Total 836.089 s (13.93 min), cleanup 448 ms, one production build.
+  Native macOS ARM64 / Node 24.15.0; start load 7.095, lid open. Partitions 6/6,
+  deaths 6/6, cleanup 13/13, durable boot 8/8, concurrency 3/3, original isolation
+  I1–I4 4/4. This is measured local qualification, not hosted Intel CI evidence.
+  The explicit duplicate-injection mutation and remaining broad web inventory
+  complete the local phase-exit checks; source hashes will be checked again
+  after that last deliberate proxy mutation is restored.
+
+- **Explicit duplicate injection and final restoration:** removing only the
+  second write of the selected SSE frame failed P3-live's **“the duplicate frame
+  classified by production ingest”** witness, rather than a setup assertion.
+  `phase2-fault-duplicate.log`, `maister-ab-isolation-suU7ae/vitest.json`,
+  invocation `9742e83c-377d-4b28-a077-9d772d584efa`, expected exit 1, zero leaks.
+  `fault-duplicate-restored.json` and a full manifest comparison confirm all 53
+  source/config hashes restored. The owning partition suite then passed **6/6**
+  with exit 0 and zero skips/errors/leaks in 299.009 s:
+  `phase2-partitions-final-restored.log`,
+  `maister-ab-isolation-6WcruW/vitest.json`, invocation
+  `7e05d1b9-e179-46b5-8ccf-12a61c552bc4`. T08–T11 are complete. Their owning web
+  A/B, web unit, supervisor A/B/unit/integration and full 40-case isolation gates
+  are recorded above; T14's remaining broad web inventory is a separate final gate.

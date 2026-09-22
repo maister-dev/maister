@@ -183,6 +183,8 @@ pnpm clean    # remove .next
 pnpm build    # remove .next, then next build
 pnpm start    # next start (after build)
 pnpm lint     # eslint --fix
+pnpm test:integration:ab        # in-process A/B acceptance, real supervisor/Postgres
+pnpm test:integration:isolation # serial production boot, real sandbox driver, invocation cleanup
 pnpm install-package          # ADR-088: install a multi-flow package (all flows + bundle)
 pnpm validate-authored-flow   # validate a portable authored Flow package dir
 pnpm import-flow-package-draft # import a package as an inert authored draft

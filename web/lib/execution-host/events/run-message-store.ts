@@ -36,8 +36,8 @@ export function transcriptStateId(
 }
 
 /**
- * Take the scope's allocator row `FOR UPDATE`, creating it at sequence 0 when
- * the scope is new.
+ * Take the scope's allocator row `FOR UPDATE`, initializing it after retained
+ * messages (or at sequence 0 for an empty scope).
  *
  * TRC-10. `run_messages` is uniquely keyed `(run_id, node_attempt_id,
  * sequence)`, and until prompts were recorded the transcript projector was the
@@ -55,7 +55,12 @@ export async function lockTranscriptState(
 
   await tx
     .insert(runTranscriptStates)
-    .values({ id, runId, nodeAttemptId })
+    .values({
+      id,
+      runId,
+      nodeAttemptId,
+      nextSequence: sql`(SELECT COALESCE(MAX(sequence) + 1, 0) FROM run_messages WHERE run_id = ${runId} AND node_attempt_id IS NOT DISTINCT FROM ${nodeAttemptId})`,
+    })
     .onConflictDoNothing();
 
   const [state] = await tx

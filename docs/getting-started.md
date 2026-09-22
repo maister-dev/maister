@@ -163,6 +163,8 @@ typecheck          # tsc --noEmit
 test               # vitest unit + integration
 test:unit          # unit only (fast)
 test:integration   # spins up Postgres via testcontainers (slower)
+test:integration:ab # in-process web A/B acceptance with real supervisor/Postgres
+test:integration:isolation # serial production boot, real sandbox driver, owned roots/processes
 test:e2e           # Playwright (authed UI specs — see note below)
 db:generate        # generate a Drizzle migration from lib/db/schema.ts
 db:migrate         # apply MAIN-lineage migrations against $DB_URL

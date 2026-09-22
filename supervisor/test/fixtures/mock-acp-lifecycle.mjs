@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-import { randomUUID } from "node:crypto";
-import { open, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { appendFile, open, writeFile } from "node:fs/promises";
 import { Readable, Writable } from "node:stream";
 
 import * as acp from "@agentclientprotocol/sdk";
@@ -17,6 +17,9 @@ let hangPermission = false;
 let exitDelayMs = 0;
 let emitUsage = false;
 let supportsResume = false;
+let invocationLog;
+let controlledPrompt = false;
+let releasePrompt;
 const outputWrites = [];
 const sizedOutputWrites = [];
 
@@ -46,6 +49,11 @@ for (let i = 0; i < args.length; i += 1) {
     emitUsage = true;
   } else if (arg === "--supports-resume") {
     supportsResume = true;
+  } else if (arg === "--invocation-log") {
+    invocationLog = args[++i];
+    if (!invocationLog) throw new Error("--invocation-log requires a path");
+  } else if (arg === "--controlled-prompt") {
+    controlledPrompt = true;
   } else if (arg === "--write-env") {
     outputWrites.push({ envName: args[++i], content: args[++i] });
   } else if (arg === "--write-env-bytes") {
@@ -117,10 +125,27 @@ class LifecycleAgent {
   }
 
   async cancel() {
-    /* no-op */
+    if (controlledPrompt && releasePrompt) releasePrompt("cancelled");
   }
 
   async prompt(params) {
+    // Install the release before publishing the reached witness to the test.
+    const held = controlledPrompt ? new Promise((resolve) => {
+      if (releasePrompt) throw new Error("controlled prompt already owns the adapter");
+      releasePrompt = (value) => { releasePrompt = undefined; resolve(value); };
+    }) : undefined;
+    if (invocationLog) {
+      await appendFile(invocationLog, `${JSON.stringify({
+        pid: process.pid,
+        sessionId: params.sessionId,
+        method: "session/prompt",
+        requestSha256: createHash("sha256").update(JSON.stringify(params)).digest("hex"),
+      })}\n`);
+    }
+    if (controlledPrompt) {
+      const outcome = await held;
+      if (outcome === "cancelled") return { stopReason: "cancelled" };
+    }
     // Exercise real ACP framing without putting megabyte arguments in argv.
     const fixtureText = params.prompt.find(
       (block) => block.type === "text",
@@ -321,5 +346,7 @@ process.on("SIGTERM", () => setTimeout(() => process.exit(143), exitDelayMs));
 process.on("SIGINT", () => process.exit(130));
 // Lifecycle tests release this barrier only after prompt receipt completion.
 if (controlledExit) process.on("SIGUSR2", () => process.exit(exitCode));
+// A test-owned adapter barrier. No elapsed delay opens the completion window.
+if (controlledPrompt) process.on("SIGUSR1", () => releasePrompt?.("complete"));
 
 setInterval(() => {}, 1 << 30);

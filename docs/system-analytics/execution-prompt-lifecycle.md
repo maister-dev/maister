@@ -10,6 +10,27 @@ owner application. A prompt is a durable command whose authoritative lifecycle
 is canonical event plus receipt; a local wait or HTTP response is an optional
 optimization and cannot decide a run transition.
 
+### S5.2 host death before permission input (Designed until D1 qualification)
+
+A response stored while the supervisor is dead can have an exhausted historical
+`session.input` command but no host receipt. After checkpointing the missing
+session, a confirmed receipt 404 plus agreed canonical/receipt `turn_lost`
+evidence for the exact source prompt permits the existing unanswered-permission
+resume path. Unreachable receipt lookup remains retryable 503; it never counts
+as absence. No successful input receipt is fabricated and the old command stays
+historical. Before authorizing the new assignment, the capacity/run transaction
+locks and rechecks the exact HITL source/response, failed input generation and
+source terminal digest, then archives the missing input identity in `_audit`
+and removes only its `_delivery` marker. Existing node/gate resume authorization
+still checks the released source assignment, current visit and ACP handle. A
+racing response or changed terminal evidence refuses the claim. Existing
+delivered-input result handoffs keep their stricter receipt/checkpoint proofs.
+
+No migration, new HTTP status or permission timer is required. D1 proves both
+unavailable-receipt refusal and confirmed-missing recovery at production boot;
+the owning permission integration family retains successful-input and stale
+generation controls.
+
 ### Creation before prompt admission
 
 Flow node and AI/skill gate creation stores `execution_commands.create_intent`
@@ -20,6 +41,14 @@ has one command per assignment/create generation. Recovery reads that command
 before running the payload factory again; a manager restart does not authorize
 another session. The Flow continuation worker discovers these creates even
 when the first prompt does not exist yet, using the same traversal lease.
+
+S5.2 receipt-first retry amendment (Designed until D2b qualification): an
+attempted owned create probes its exact receipt before another POST. Confirmed
+404 permits reissue of the same stored envelope; transport uncertainty or an
+accepted receipt defers. A completed 201 with matching command/run/kind/epoch
+and a validated create result commits command settlement and binding under the
+current owner lock, without re-sending. A rejected receipt uses the existing
+definitive-refusal policy. Receipt lookup never reconstructs launch inputs.
 
 The live ACK, recovered receipt and canonical `session.created` all check the
 creator command against the current node visit/evaluation and newest admitted
@@ -86,8 +115,8 @@ sequenceDiagram
 
 ## Immutable requests, outcomes and command authority
 
-The S2.1 storage/admission foundation is implemented but not yet active for
-production prompt callers. `issueOwnedPrompt` runs the domain's admission
+The immutable storage/admission contract is active for production prompt
+callers. `issueOwnedPrompt` runs the domain's admission
 callback and routing checks in one transaction, locks before looking up the
 namespaced logical key, and reuses the original ID/time and normalized request
 on a matching retry. Migration 0140 rejects incomplete v2 requests and changes
@@ -109,7 +138,7 @@ a legacy receipt with no target cannot attach to a newly created session.
 Host SQLite v10 additionally stores the JCS v2 request digest, original host
 key and accepted/terminal stream positions, preserving null metadata on legacy
 upgrade. SQLite v11 separately records the public wire version; legacy rows
-keep version 1. The S2.2 development path accepts explicit request-v2 envelopes,
+keep version 1. The production path accepts explicit request-v2 envelopes,
 returns strict public receipt v2, and seals original ACP responses with immutable
 command-output range manifests. The internal Web reader checks original bytes,
 routing and retained contiguous event spans without using message projections.
@@ -219,8 +248,9 @@ request digest, cumulative attempts and the observed maximum. One successful
 CAS opens three additional sends without resetting attempt history or request
 identity. Acknowledged, terminal, quarantined or stale repair requests cannot
 rearm. Its caller must hold the existing operator/domain repair authorization;
-this increment adds no public repair route. Receipt/event settlement still
-leaves owner application pending until the S2 owner adapters are activated.
+this increment adds no public repair route. Receipt/event settlement schedules
+application by the registered production owner adapter; the durable worker
+reclaims pending application after the original caller exits.
 
 ## Session create and ACP binding fences (Implemented)
 
@@ -1169,3 +1199,9 @@ Deferred inventory must cover ACP permission promises, prompt wait subscriptions
 - [Sessions](sessions.md), [runs](runs.md), [HITL](hitl.md), and [scratch runs](scratch-runs.md) own callers and their state transitions.
 - [Supervisor OpenAPI](../api/supervisor.openapi.yaml) and [host event AsyncAPI](../api/async/execution-host-events.asyncapi.yaml) define admission, receipt, and terminal contracts.
 - `IT-*` and `CT-*` labels are specification scenario IDs; the [stabilization owner matrix](../../.ai-factory/plans/stage-ab-stabilization.md#d2-prompt-owner-and-recovery-windows) records which durable per-owner cases are executed.
+
+S5.2 create receipt-fold qualification also preserves the existing historical
+ACK rule: a valid completed receipt settles the command even if lifecycle
+projection has already marked its incarnation dead. A stale binding disposition
+is raised only after that evidence commits; the receipt never reactivates or
+replaces a dead/successor binding.

@@ -21,6 +21,8 @@ import {
 
 import {
   executionCommands,
+  executionEvents,
+  executionEventConsumers,
   runMessages,
   runSessionIncarnations,
   runSessions,
@@ -31,11 +33,13 @@ import {
   createPromptOwnerRegistry,
   definePromptOwnerAdapter,
   PromptOwnerInvariantError,
+  PromptOwnerDeferred,
 } from "@/lib/execution-host/prompt-owners";
 import {
   lockCurrentSessionAssignment,
   staleSessionBinding,
 } from "@/lib/execution-host/session-binding";
+import { CANONICAL_PROJECTION_CONSUMERS } from "@/lib/execution-host/events/projection-consumers";
 import { MaisterError } from "@/lib/errors";
 
 const log = pino({
@@ -249,6 +253,31 @@ export async function prepareScratchPrompt(input: {
 
       if (run?.runKind !== "scratch" || run.status !== "Running")
         return "superseded";
+      if (outcome.state === "succeeded") {
+        const [terminal] = await tx
+          .select({ sequence: executionEvents.runSequence })
+          .from(executionEvents)
+          .where(eq(executionEvents.id, command.terminalEventId ?? ""));
+        const [transcript] = await tx
+          .select({ sequence: executionEventConsumers.lastRunSequence })
+          .from(executionEventConsumers)
+          .where(
+            and(
+              eq(executionEventConsumers.runId, ref.runId),
+              eq(
+                executionEventConsumers.consumerName,
+                CANONICAL_PROJECTION_CONSUMERS.transcript,
+              ),
+            ),
+          );
+
+        if (
+          terminal?.sequence == null ||
+          transcript?.sequence == null ||
+          transcript.sequence < terminal.sequence
+        )
+          throw new PromptOwnerDeferred("scratch_transcript_pending");
+      }
       const dialogStatus = await applyScratchPromptCompletion(tx, ref.runId);
 
       log.info(

@@ -103,8 +103,124 @@ type PermissionResultPreflight =
   | PreparedPermissionResult
   | PreparedPermissionContinuation
   | PreparedPermissionRejection
+  | PreparedUndeliveredPermission
   | Readonly<{ kind: "pending"; reason: string }>
   | null;
+
+export type PreparedUndeliveredPermission = Readonly<{
+  kind: "not_received";
+  runId: string;
+  hitlRequestId: string;
+  sourceJson: string;
+  responseJson: string;
+  inputCommandId: string;
+  inputSnapshot: string;
+  sourceCommandId: string;
+  terminalEvidenceSha256: string;
+}>;
+
+function inputGeneration(command: ExecutionCommand): string {
+  return canonicalCommandJson({
+    id: command.id,
+    runId: command.runId,
+    kind: command.kind,
+    assignmentId: command.executionAssignmentId,
+    epoch: command.assignmentEpoch,
+    hostId: command.executionHostId,
+    target: command.targetSessionId,
+    payload: command.payload,
+    state: command.state,
+    attempts: command.attempts,
+    lastError: command.lastError,
+  });
+}
+
+function isLostPrompt(command: ExecutionCommand): boolean {
+  return (
+    command.kind === "session.prompt" &&
+    command.state === "failed" &&
+    command.lastError?.code === "PRECONDITION" &&
+    typeof command.lastError.details === "object" &&
+    command.lastError.details !== null &&
+    "reason" in command.lastError.details &&
+    command.lastError.details.reason === "turn_lost" &&
+    command.requestSha256 !== null &&
+    command.terminalEvidenceSha256 !== null &&
+    command.applicationError?.reason !== "prompt_terminal_conflict"
+  );
+}
+
+/** Consume a confirmed missing delivery only inside the ordinary resume claim.
+ * The historical failed input remains evidence; it is never marked delivered. */
+export async function consumeUndeliveredFlowPermission(
+  tx: Db,
+  runId: string,
+  prepared: PreparedUndeliveredPermission,
+): Promise<void> {
+  const [hitl] = await tx
+    .select()
+    .from(hitlRequests)
+    .where(eq(hitlRequests.id, prepared.hitlRequestId))
+    .for("update");
+  const [input] = await tx
+    .select()
+    .from(executionCommands)
+    .where(eq(executionCommands.id, prepared.inputCommandId))
+    .for("update");
+  const [source] = await tx
+    .select()
+    .from(executionCommands)
+    .where(eq(executionCommands.id, prepared.sourceCommandId))
+    .for("update");
+
+  if (
+    prepared.runId !== runId ||
+    !hitl ||
+    hitl.runId !== runId ||
+    hitl.respondedAt !== null ||
+    canonicalCommandJson(hitl.schema) !== prepared.sourceJson ||
+    canonicalCommandJson(hitl.response) !== prepared.responseJson ||
+    !input ||
+    input.state !== "failed" ||
+    inputGeneration(input) !== prepared.inputSnapshot ||
+    !source ||
+    source.runId !== runId ||
+    !isLostPrompt(source) ||
+    source.terminalEvidenceSha256 !== prepared.terminalEvidenceSha256
+  )
+    throw new PromptOwnerInvariantError("permission_missing_input_generation");
+  const { _delivery, ...response } = hitl.response as Record<string, unknown>;
+  const priorAudit =
+    typeof response._audit === "object" && response._audit !== null
+      ? response._audit
+      : {};
+
+  await tx
+    .update(hitlRequests)
+    .set({
+      response: {
+        ...response,
+        _audit: {
+          ...priorAudit,
+          notReceivedInput: {
+            commandId: input.id,
+            sourceCommandId: source.id,
+            terminalEvidenceSha256: source.terminalEvidenceSha256,
+          },
+        },
+      },
+    })
+    .where(eq(hitlRequests.id, hitl.id));
+  log.info(
+    {
+      runId,
+      hitlRequestId: hitl.id,
+      inputCommandId: input.id,
+      sourceCommandId: source.id,
+    },
+    "permission-input-confirmed-not-received",
+  );
+}
 
 /** Historical input evidence and full output are read before capacity/run
  * locks. Missing evidence cannot authorize a replacement paid turn.
@@ -180,7 +296,43 @@ export async function prepareFlowPermissionResult(
   if (isRefusedPermissionDelivery(input)) return null;
   const receipt = await transport.getCommandReceipt(input.id);
 
-  if (!receipt) return { kind: "pending", reason: "input_receipt_missing" };
+  if (!receipt) {
+    if (
+      input.state !== "failed" ||
+      input.lastError?.code !== "EXECUTOR_UNAVAILABLE"
+    )
+      return { kind: "pending", reason: "input_receipt_missing" };
+    const evidence = await reconcilePromptCommand({
+      db,
+      commandId: source.data.flowPrompt.commandId,
+      signal: AbortSignal.timeout(30_000),
+      lookupReceipt: (id) => transport.getCommandReceipt(id),
+    });
+    const command = evidence.command;
+
+    if (evidence.disposition !== "settled" || !isLostPrompt(command))
+      return { kind: "pending", reason: "input_receipt_missing" };
+    if (
+      command.runId !== runId ||
+      command.executionHostId !== input.executionHostId ||
+      command.executionAssignmentId !== input.executionAssignmentId ||
+      command.assignmentEpoch !== input.assignmentEpoch ||
+      command.targetSessionId !== input.targetSessionId
+    )
+      throw new PromptOwnerInvariantError("permission_missing_input_source");
+
+    return {
+      kind: "not_received",
+      runId,
+      hitlRequestId: hitl.id,
+      sourceJson: canonicalCommandJson(hitl.schema),
+      responseJson: canonicalCommandJson(response),
+      inputCommandId: input.id,
+      inputSnapshot: inputGeneration(input),
+      sourceCommandId: command.id,
+      terminalEvidenceSha256: command.terminalEvidenceSha256!,
+    };
+  }
   if (
     receipt.commandId !== input.id ||
     receipt.runId !== runId ||
