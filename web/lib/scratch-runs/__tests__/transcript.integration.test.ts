@@ -10,6 +10,7 @@ import * as schema from "@/lib/db/schema";
 import { runMessages, runs } from "@/lib/db/schema";
 import { projectExecutionEvents } from "@/lib/execution-host/events/projector";
 import { canonicalTranscriptProjector } from "@/lib/execution-host/events/transcript-projector";
+import { scratchNoticeResumeOffset } from "@/lib/scratch-runs/events";
 import { appendScratchMessage } from "@/lib/scratch-runs/messages";
 import { parseScratchMessageContent } from "@/lib/scratch-runs/transcript";
 import {
@@ -253,4 +254,54 @@ it("assigns gap-free unique sequences to a burst of projected events", async () 
 
   expect(rows.map((row) => row.sequence)).toEqual([1, 2, 3, 4, 5, 6, 7]);
   expect(rows.filter((row) => row.role === "tool")).toHaveLength(6);
+});
+
+// C1: `run_messages.supervisor_event_id` holds the supervisor's per-session
+// `monotonicId` on notice rows and the manager's `run_sequence` on projected
+// reply rows. The SSE cursor addresses the FORMER, and the supervisor drops
+// every event at or below it, so a cursor read across both spaces eats the
+// opening events of the next turn.
+describe("scratch notice resume offset", () => {
+  it("ignores canonical reply sequences that overtake the supervisor cursor", async () => {
+    const runId = await seedRun();
+
+    await db.transaction((tx) =>
+      appendScratchMessage(tx, {
+        runId,
+        role: "system",
+        content: "permission notice",
+        supervisorEventId: "2",
+      }),
+    );
+    await appendEvents(
+      runId,
+      [
+        textChunk("a"),
+        textChunk("b"),
+        textChunk("c"),
+        textChunk("d"),
+        textChunk("e"),
+        textChunk("f"),
+        textChunk("g"),
+      ],
+      1,
+    );
+    await consume(runId);
+
+    const projected = (await messages(runId)).filter(
+      (row) => row.role === "assistant",
+    );
+
+    expect(projected).toHaveLength(1);
+    expect(projected[0].supervisorEventId).toBe("7");
+    expect(await scratchNoticeResumeOffset(db, runId)).toBe(2);
+  });
+
+  it("streams from the start when only projected replies exist", async () => {
+    const runId = await seedRun();
+
+    await appendEvents(runId, [textChunk("a"), textChunk("b")], 1);
+    await consume(runId);
+    expect(await scratchNoticeResumeOffset(db, runId)).toBeUndefined();
+  });
 });

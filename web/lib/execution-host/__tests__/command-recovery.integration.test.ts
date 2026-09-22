@@ -42,6 +42,10 @@ import {
   readRuntimeObjectContent,
 } from "@/lib/execution-host/runtime-objects";
 import { runReconcileSweep } from "@/lib/reconcile";
+import { isTurnLostError } from "@/lib/reconcile-evidence";
+import { defaultTransport } from "@/lib/execution-host/default-transport";
+import { UNKNOWN_OUTCOME_DETAIL } from "@/lib/execution-host/contracts";
+import { MaisterError } from "@/lib/errors";
 import {
   seedProjectRow,
   seedRun,
@@ -952,4 +956,131 @@ describe("evidence-first classification vs a LIVE prompt-owner worker (ADR-177)"
     expect(settled.attempt.decision).toBe("turn_lost");
     expect(settled.prompts[0].applicationState).toBe("applied");
   }, 180_000);
+});
+
+// D2c (S5.2). The window BETWEEN D2a and D2b: the host wrote its `accepted`
+// receipt and then died before the turn finished. `accepted` + `inflight:false`
+// is the turn_lost signature (`contracts.ts`), and the supervisor settles such
+// a receipt only when the SAME command id is re-sent — which `session.create`,
+// absent from `RESTARTABLE_OBJECT_KINDS`, answers turn_lost rather than with a
+// session. The driver therefore reissues the stored bytes under a new
+// generation, exactly as D2a does one step earlier. The lost turn is staged
+// through the transport (a request lost in flight, then the restarted host's
+// receipt); the reissue itself goes to the REAL supervisor, so "one logical
+// session" is observed and not assumed.
+describe("owned create after a host restart on an accepted receipt (D2c)", () => {
+  it("reissues one new generation from the stored bytes and binds one session", async () => {
+    const runId = await seedFlowGraphRun("d2c");
+    const assignment = await mint(runId);
+    const nodeAttemptId = randomUUID();
+
+    await db.insert(schema.nodeAttempts).values({
+      id: nodeAttemptId,
+      runId,
+      nodeId: "s1",
+      nodeType: "ai_coding",
+      attempt: 1,
+      status: "Running",
+      executionAssignmentId: assignment.id,
+      actionPromptOrdinal: 0,
+    });
+    const owner = {
+      variant: "node",
+      nodeAttemptId,
+      promptOrdinal: 0,
+    } as const;
+    const base = defaultTransport();
+    const creates = async () =>
+      (await listCommandsForRun(db, runId)).filter(
+        (row) => row.kind === "session.create",
+      );
+    // W2 with the request lost in flight: one attempt is spent, the row stays
+    // `delivering`, and the manager never learns the outcome.
+    const stranding = await createExecutionHosts({
+      db,
+      transport: {
+        ...base,
+        createSession: async () => {
+          throw new MaisterError(
+            "EXECUTOR_UNAVAILABLE",
+            "connection lost mid-create",
+            { details: { transport: UNKNOWN_OUTCOME_DETAIL } },
+          );
+        },
+      },
+    }).forAssignment(assignment);
+
+    await stranding.ensureWorkspace();
+    let prepared = 0;
+
+    await expect(
+      stranding.createOwnedSession(owner, async () => {
+        prepared += 1;
+
+        return { ...CREATE_PAYLOAD, nodeAttemptId };
+      }),
+    ).rejects.toBeTruthy();
+    const [admitted] = await creates();
+
+    expect(admitted).toMatchObject({ state: "queued", attempts: 1 });
+    expect(prepared).toBe(1);
+    expect(await runSessionRow(runId)).toBeNull();
+    // The driver re-enters once the delivery backoff has elapsed.
+    await db
+      .update(schema.executionCommands)
+      .set({ nextAttemptAt: null })
+      .where(eq(schema.executionCommands.id, admitted.id));
+
+    const reentered = await createExecutionHosts({
+      db,
+      transport: {
+        ...base,
+        getCommandReceipt: async (commandId: string) =>
+          commandId === admitted.id
+            ? {
+                commandId,
+                runId,
+                kind: "session.create" as const,
+                assignmentEpoch: admitted.assignmentEpoch,
+                phase: "accepted" as const,
+                httpStatus: 202,
+                body: {},
+                receivedAt: new Date().toISOString(),
+                completedAt: null,
+                eventId: null,
+                // The host restarted: the receipt survived, the turn did not.
+                inflight: false,
+              }
+            : base.getCommandReceipt(commandId),
+      },
+    }).forAssignment(assignment);
+    const result = await reentered.createOwnedSession(owner, async () => {
+      throw new Error("a reissue must reuse the stored create bytes");
+    });
+    const rows = await creates();
+    const lost = rows.find((row) => row.id === admitted.id)!;
+    const reissued = rows.find((row) => row.id !== admitted.id)!;
+
+    expect(rows).toHaveLength(2);
+    expect(lost.state).toBe("failed");
+    expect(
+      isTurnLostError(lost.lastError),
+      "the driver must record WHY the original create was abandoned",
+    ).toBe(true);
+    expect(reissued.state).toBe("succeeded");
+    expect(reissued.createIntent).toMatchObject({
+      generation: 1,
+      supersedesCommandId: admitted.id,
+    });
+    expect((await runSessionRow(runId))?.hostSessionId).toBe(
+      result.hostSessionId,
+    );
+
+    const live = (await hosts.local().listSessions()).filter(
+      (session) => session.runId === runId && session.status === "live",
+    );
+
+    expect(live).toHaveLength(1);
+    expect(live[0].sessionId).toBe(result.hostSessionId);
+  }, 120_000);
 });

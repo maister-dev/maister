@@ -4,7 +4,7 @@ import type { ScratchDialogStatus } from "@/lib/db/schema";
 
 import { randomUUID } from "node:crypto";
 
-import { eq } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import pino from "pino";
 
 import {
@@ -307,10 +307,29 @@ async function persistPermissionRequest(args: {
   }
 }
 
-// Canonical run sequences also key scratch notices. Start the live permission /
-// lifecycle observer after retained transcript history; reply content itself is
-// owned by the durable canonical transcript cursor, independently of this stack.
-async function lastProjectedEventId(
+// `supervisor_event_id` carries TWO number spaces on a scratch run. The
+// canonical projector stamps `execution_events.run_sequence` on the reply rows
+// it owns; the notices below stamp the supervisor's per-session `monotonicId`.
+// Only the latter addresses the SSE stream, and the supervisor drops every
+// event whose id is <= the cursor — replay AND live alike — so a cursor taken
+// across both spaces eats the opening events of a follow-up turn, a dropped
+// `session.permission_request` among them. Role discriminates the writers: the
+// canonical projector only ever inserts `assistant` / `tool`. Reply content
+// itself is owned by the durable canonical transcript cursor, independently of
+// this stack; this offset only starts the live permission / lifecycle observer
+// after retained notice history.
+//
+// INVARIANT this rests on: a run with no notice row has no offset and replays
+// the host's retained buffer from the start, which must be a no-op. It is,
+// because every event this consumer ACTS on also writes a notice row —
+// `session.permission_request` and `session.hook_trip` — so their absence
+// proves none occurred, and the only other dialog-status events
+// (`session.exited` / `session.crashed`, see `projectSupervisorEventToScratch`)
+// are terminal, after which no further turn is sent through the session.
+// Adding a dialog-status event that writes NO notice row breaks this.
+const NOTICE_MESSAGE_ROLES = ["user", "system"];
+
+export async function scratchNoticeResumeOffset(
   db: DbClientLike,
   runId: string,
 ): Promise<number | undefined> {
@@ -320,7 +339,13 @@ async function lastProjectedEventId(
         supervisorEventId: scratchMessages.supervisorEventId,
       })
       .from(scratchMessages)
-      .where(eq(scratchMessages.runId, runId));
+      .where(
+        and(
+          eq(scratchMessages.runId, runId),
+          isNull(scratchMessages.nodeAttemptId),
+          inArray(scratchMessages.role, NOTICE_MESSAGE_ROLES),
+        ),
+      );
     const maxId = rows.reduce<number | undefined>((current, row) => {
       if (!row.supervisorEventId) return current;
       const parsed = Number.parseInt(row.supervisorEventId, 10);
@@ -359,7 +384,7 @@ function startScratchEventConsumer(args: {
     try {
       // Resume after the last event we already projected so a follow-up prompt
       // does not re-stream (and re-persist) the whole session history.
-      const lastEventId = await lastProjectedEventId(args.db, args.runId);
+      const lastEventId = await scratchNoticeResumeOffset(args.db, args.runId);
 
       for await (const event of args.execution.admin.streamSession(
         args.sessionId,
