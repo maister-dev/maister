@@ -390,6 +390,9 @@ exists. Both directions are matrix-tested. See [`branch-sync.md`](branch-sync.md
   [`reconciliation-gc.md`](reconciliation-gc.md), and
   [`branch-sync.md`](branch-sync.md) (the `sync` lifecycle op + promotion double
   fence).
+- Designed successor for the git actions (ADR-181): [`workbench-git.md`](workbench-git.md)
+  — one status-independent policy, publish under a public name, update, PR
+  before promotion, discard, re-attach; archive/drop stay here.
 - Source: `web/lib/workbench-lifecycle/*`,
   `web/components/workbench/lifecycle-actions.tsx`,
   `web/lib/worktree.ts`.

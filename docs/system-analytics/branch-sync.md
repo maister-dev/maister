@@ -229,6 +229,9 @@ sequenceDiagram
   [scheduler](scheduler.md), [workbench-lifecycle](workbench-lifecycle.md),
   [tasks](tasks.md), [external-operations](external-operations.md),
   [error taxonomy](../error-taxonomy.md).
+- Designed generalisation (ADR-181): [`workbench-git.md`](workbench-git.md) —
+  `sync` admitted from every parked status with `onto: target | base | published`;
+  the AI resolver stays `Review`-only.
 - Source: `web/lib/runs/sync-target.ts`, `web/lib/runs/pr-adapter.ts`,
   `web/lib/runs/state-transitions.ts`, `web/lib/reconcile.ts`,
   `web/lib/scheduler/handlers/pr-state-scan.ts`, `web/lib/worktree.ts`.

@@ -542,6 +542,9 @@ metadata fails closed.
   [`workbench-lifecycle.md`](workbench-lifecycle.md) (snapshot, export, and
   handoff operations), and [`branch-sync.md`](branch-sync.md) (PR-state reads,
   sync push, resolver-backed `ai_rebase_merge`).
+- Designed consumers (ADR-181): [`workbench-git.md`](workbench-git.md) —
+  refspec publish `internal:public` with an explicit-SHA lease, PR open with
+  `draft`, PR finalize outside promotion.
 - Source: `web/lib/repo-source.ts`; **(Implemented)** `web/lib/worktree.ts`
   (`pushBranch`), `web/lib/runs/pr-adapter.ts`; **(Implemented)**
   `web/lib/worktree.ts` (`listRemotes`, `headCommit`, branch collision helpers,
