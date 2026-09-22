@@ -870,7 +870,7 @@ below passed.
 
 ### Phase 4 — Wiring, as-built docs, lane re-qualification
 
-- [ ] **T4.1 — deployment touchpoints.** `supervisor/.env.sample` — remove the
+- [x] **T4.1 — deployment touchpoints.** `supervisor/.env.sample` — remove the
       `[shared]` keep-alive block (`:77-79`), add `MAISTER_PERMISSION_MAX_HOURS=24`
       with a comment naming the web-side owner. `.env.example:301-309` — re-scope
       the comment block to web-only; add the cap in the supervisor section.
@@ -884,7 +884,7 @@ below passed.
       left; the new var appears in all three supervisor-facing samples; zero
       compose diffs.
 
-- [ ] **T4.2 — Stage A/B lane re-qualification, the two lanes run SEPARATELY.**
+- [x] **T4.2 — Stage A/B lane re-qualification, the two lanes run SEPARATELY.**
       (Owner decision.) `pnpm --filter @maister/supervisor test:integration:ab` and
       `pnpm --filter maister-web test:integration:ab` are **two distinct runs on a
       quiet machine, never concurrent**, each compared against its own `master`
@@ -897,7 +897,7 @@ below passed.
       `pmset -g log` checked before attributing any timeout; each lane grepped for
       `| N skipped`.
 
-- [ ] **T4.3 — as-built sweep + gates.** Re-derive the contract-surface list from
+- [x] **T4.3 — as-built sweep + gates.** Re-derive the contract-surface list from
       the actual diff and reconcile against the Phase-0 table. `pnpm validate:docs`,
       `pnpm validate:contracts`, `pnpm lint`. Update `CLAUDE.md:696`.
       **AC**: the derived list equals the planned list, or every difference is
@@ -961,6 +961,26 @@ parked, not that a query ran.
 
 Each is run and its failure recorded. RED 2's falsification is the one that cannot
 run inside the lane (D11) — ad hoc, raised timeout, elapsed time recorded.
+
+**Run 2026-09-22. Every falsification applied, ran, and failed for its stated
+reason; the tree was restored after each.**
+
+| # | Revert | Control | Observed failure |
+|---|---|---|---|
+| 1 | the cap timer rejects again | RED 1 | `expected 'session.crashed' to be 'session.exited'` |
+| 2 | shutdown purges before SIGTERM | RED 3 | the child's log contains `producer-output-incomplete` |
+| 3 | drop the D4 branch | RED 4a | `expected 410 to be 202` |
+| 4 | command-only boundary | RED 7 | `expected 'unproven' to match { boundary: 'terminal' }` |
+| 5 | remove D13's arm | RED 9 | `expected 'NeedsInput' to be 'NeedsInputIdle'` |
+| RED 2 (ad hoc) | host reads `MAISTER_KEEPALIVE_MINUTES` again AND rejects | RED 2 | `expected 410 to be 200` after **70 130 ms** of continuous real activity bumps |
+
+**Falsification 4 had to be run twice, and the first run is the warning worth
+keeping**: the patch script's anchor no longer matched (`eslint --fix` had
+reflowed the line), the `AssertionError` scrolled past in the combined output,
+and the control "passed its falsification" against UNPATCHED code. A
+falsification that does not apply is indistinguishable from a control that
+cannot fail. Verify the patch landed — `grep` for the marker — before reading
+the result.
 
 The D2 escalation window is an accepted residual and deliberately has **no**
 control — do not add one, and do not let a control assert a clean park there.

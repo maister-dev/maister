@@ -911,7 +911,7 @@ All rows start **Planned / unverified**. Implementation fills exact test case, r
 | Real web restart and simultaneous worker claims | AT-03/05/16 | Boot through production initialization, fair due work, no duplicate apply, no process-local continuation dependency | S5 |
 | Web runtime-root access denied | AT-16 | Negative control EACCES/ENOENT, supervisor positive control, lifecycle/history/object access succeeds through HTTP/PG | S5 |
 | V7b minimum runtime and image | AT-17 | Node 24.15.0 and 24.19.0 exact versions plus pinned image pass real native-stack replacement; diagnosed invalid-content-length captured in RED, not excused by a newer pass | S1/S5 |
-| Single-host lifecycle regression | Real AT-16 + browser lane | Launch, replay, HITL, idle checkpoint/resume, cancellation, completion, history and artifact download remain coherent without Stage C features | Every release/S5 |
+| Single-host lifecycle regression | Real AT-16 + browser lane; **the permission deadline is covered by ADR-180's named S5.3 scenario — green 2026-09-22**: `supervisor/src/__tests__/permission-cap.integration.test.ts` (4/4) and `web/lib/__tests__/permission-deadline.integration.test.ts` (7/7, including the blocking preflight), each re-run against its own falsification | Launch, replay, HITL, idle checkpoint/resume, cancellation, completion, history and artifact download remain coherent without Stage C features. The HITL half is now explicit: an active operator's answer is delivered rather than killing the agent, and a checkpointed session's answer resumes instead of failing the run | Every release/S5 |
 
 ## Risk register and completion conditions
 
