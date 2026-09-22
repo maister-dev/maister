@@ -217,4 +217,40 @@ describe("RunInspector", () => {
     // Both the normal (promote) and danger (drop) actions render as items.
     expect(html.split('data-testid="run-inspector-action"').length - 1).toBe(2);
   });
+
+  // ADR-181 D16 (RED 12): the Actions tab lists only href-bearing items, every
+  // one of them a link — the inert `<span>` label an action without a target
+  // used to render is gone. A disabled item keeps its reason beside the link.
+  it("lists only actions with a target, each as a link, disabled ones with their reason", () => {
+    const html = renderToStaticMarkup(
+      createElement(RunInspector, {
+        runId: "run-1",
+        labels: LABELS,
+        facts: [],
+        changeSummary: null,
+        actions: [
+          {
+            id: "exportBranch",
+            label: "Publish",
+            href: "/runs/run-1?git=publish",
+          },
+          {
+            id: "update",
+            label: "Update",
+            href: "/runs/run-1?git=update",
+            disabled: true,
+            disabledReason: "Another operation owns the worktree",
+          },
+          { id: "stop", label: "Terminate", href: null },
+        ],
+      }),
+    );
+
+    expect(html.split('data-testid="run-inspector-action"').length - 1).toBe(2);
+    expect(html).toContain('href="/runs/run-1?git=publish"');
+    expect(html).toContain('href="/runs/run-1?git=update"');
+    expect(html).toContain("Another operation owns the worktree");
+    expect(html).not.toContain("Terminate");
+    expect(html).not.toMatch(/<span[^>]*>Publish<\/span>/);
+  });
 });

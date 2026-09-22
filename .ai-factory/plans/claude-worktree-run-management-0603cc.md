@@ -375,6 +375,36 @@ record.
   no second `worktree add`; it re-stamps provenance and writes the row. Any
   other directory stays `worktree_path_occupied`, untouched. RED 17 gains the
   mid-flight hold, the adoption retry and the foreign-directory refusal.
+- **C32 — "keeps its signature" cannot hold as written.** The rail, cards and
+  inspector need the widened id set, and the legacy input lacks the facts that
+  decide it. `deriveWorkbenchLifecycleActions` stays as a re-export of the ONE
+  predicate (`lib/workbench-git/policy.ts`). Its input keeps every legacy field
+  and gains OPTIONAL facts: `worktreePresent`, `busy`, `promotionState`,
+  `publishedBranch`, `hasRemote`, `prUrl`, `prState`, `updateSupported`,
+  `reattachSource`. A git-probed fact left `null`/`undefined` means "not
+  probed" and never hides an action. Consequently `policy.test.ts` migrates
+  (contract moved: a usable parked worktree now also admits commit, discard
+  and update, per ADR-181 D1), and `service.test.ts`'s exact
+  `preserveWorktree` argument gains `archivePush` (D17).
+- **C33 — test ids.** The plan's `git-panel-<section>` and `git-panel-<action>`
+  collide on `update` and `reattach`. Sections are `git-panel-section-<s>`,
+  buttons `git-panel-action-<id>`, and the run-detail host button is
+  `workbench-git-open`.
+- **C34 — the inspector lists only href-bearing items.** Each renders as a
+  link; a disabled one keeps its reason text. `deriveInspectorActions` computes
+  `href` through one shared `gitPanelHref` (the rail uses the same helper) for
+  the git ids, plus `handoffBranch` → publish. `stop | archive | drop |
+  promote | recover` have no deep link and drop out of the list; their controls
+  live on the page. The inspector id set widens with `discardChanges | update |
+  openPr | finalizePr | reattach`. `run-inspector.test.ts`'s two href-less
+  fixtures migrate (contract moved), and so does the rail's `menu-exportBranch`
+  absence assertion (G4 names that absence the defect).
+- **C35 — the panel pre-fills from the server.** `GitStateResponse` gains
+  `suggestedPublicBranch` and `prDefaults` (OpenAPI updated in this phase). The
+  PR body's run link uses the request origin: no public-URL setting exists for
+  the web, and this plan adds no env var. RED 7's "update-from-published brings
+  a remote push back" step moves to RED 14, because it needs Phase 2's
+  `onto:"published"`.
 - **Token set (final, T0.1).** Service refusals: `public_name_fixed`,
   `public_branch_template_invalid` (400 `CONFIG`), `clean_worktree`,
   `dirty_worktree`, `not_published`, `published_remote_not_origin`,
@@ -1214,7 +1244,7 @@ Export dialog on flow, agent and scratch run detail; `git-state` served only by 
 route; `Failed` listed on portfolio / project list / rail / Backlog card; the
 `HumanWorking` owner sees the git set on the run detail; refactor gate passed.
 
-- [ ] **T1.0 — RED battery (Phase 1).** Write RED 1–13 (§Test plan) and confirm each
+- [x] **T1.0 — RED battery (Phase 1).** Write RED 1–13 (§Test plan) and confirm each
       fails on this tree for its stated reason. Runnability: unit files under
       `lib/**/__tests__/*.test.ts` and `components/**/__tests__/*.dom.test.ts`
       (`.tsx` is NOT collected — `review-panel.test.ts:24-30`); integration files

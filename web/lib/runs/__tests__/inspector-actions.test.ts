@@ -136,4 +136,54 @@ describe("deriveInspectorActions", () => {
     expect(actions.exportBranch.disabledReason).toBe("removed-workspace");
     expect(actions.drop.enabled).toBe(false);
   });
+
+  // ADR-181 D16 (RED 12): every git action carries its deep link into the run
+  // git panel; the inspector lists only href-bearing items, so an action with no
+  // target is simply absent rather than rendered as inert text.
+  it("links every git action into the run's git panel section", () => {
+    const actions = byId(
+      deriveInspectorActions(input({ runStatus: "Failed" })),
+    );
+
+    expect(actions.snapshotCommit.href).toBe("/runs/run-1?git=tree");
+    expect(actions.exportBranch.href).toBe("/runs/run-1?git=publish");
+    expect(actions.handoffBranch.href).toBe("/runs/run-1?git=publish");
+    expect(actions.discardChanges.href).toBe("/runs/run-1?git=tree");
+    expect(actions.update.href).toBe("/runs/run-1?git=update");
+    expect(actions.openPr.href).toBe("/runs/run-1?git=pr");
+    expect(actions.finalizePr.href).toBe("/runs/run-1?git=pr");
+    expect(actions.reattach.href).toBe("/runs/run-1?git=reattach");
+    expect(actions.promote.href).toBeNull();
+  });
+
+  it("links a scratch run's git actions to the scratch detail", () => {
+    const actions = byId(
+      deriveInspectorActions(
+        input({
+          runKind: "scratch",
+          runStatus: "Review",
+          scratchDialogStatus: "Done",
+        }),
+      ),
+    );
+
+    expect(actions.exportBranch.href).toBe("/scratch-runs/run-1?git=publish");
+  });
+
+  it("opens the git set to the rework-claim owner on the run detail", () => {
+    const owner = byId(
+      deriveInspectorActions(
+        input({
+          runStatus: "HumanWorking",
+          reworkClaimOwnerUserId: "user-1",
+          viewerUserId: "user-1",
+        }),
+      ),
+    );
+
+    expect(owner.exportBranch.enabled).toBe(true);
+    expect(owner.discardChanges.enabled).toBe(true);
+    expect(owner.update.enabled).toBe(true);
+    expect(owner.archive.enabled).toBe(false);
+  });
 });

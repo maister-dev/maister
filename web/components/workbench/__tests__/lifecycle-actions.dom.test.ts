@@ -32,8 +32,15 @@ vi.mock("next-intl", async () => {
 
 const refreshMock = vi.fn();
 
+let searchParams = new URLSearchParams();
+
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: refreshMock }),
+  useSearchParams: () => searchParams,
+}));
+
+vi.mock("@/components/feedback/feedback-provider", () => ({
+  useFeedback: () => ({ success: vi.fn(), error: vi.fn() }),
 }));
 
 vi.mock("next/link", () => ({
@@ -181,6 +188,7 @@ function metadataResponse(dirty = false): Response {
 beforeEach(() => {
   setupActEnvironment();
   refreshMock.mockReset();
+  searchParams = new URLSearchParams();
   vi.restoreAllMocks();
   Object.defineProperty(navigator, "clipboard", {
     configurable: true,
@@ -654,5 +662,270 @@ describe("WorkbenchLifecycleActions rail menu", () => {
         body: JSON.stringify({ name: "new name" }),
       }),
     );
+  });
+});
+
+// ADR-181 D16 (RED 12): the run detail opens the git panel where it opened the
+// Export dialog, and every git action on the rail/cards is a DEEP LINK into it
+// — never a blind mutation from a menu (a publish needs a name, an update an
+// `onto`).
+describe("ADR-181 — git panel hosting and rail deep links", () => {
+  function gitStateResponse(): Response {
+    return jsonResponse({
+      runId: "run-1",
+      runKind: "flow",
+      runStatus: "Failed",
+      internalBranch: "maister/run-1",
+      publicBranch: null,
+      publishedRemote: null,
+      publishedAt: null,
+      suggestedPublicBranch: "feature/KEY-7-x",
+      upstream: null,
+      remotes: ["origin"],
+      worktreePresent: true,
+      workspaceRemoved: false,
+      head: "a".repeat(40),
+      targetHead: "b".repeat(40),
+      dirty: { tracked: 0, untracked: 0 },
+      unpushedCommits: null,
+      aheadBehind: { base: null, target: null, published: null },
+      publishedRemoteHead: null,
+      remoteReachable: true,
+      pr: null,
+      busy: null,
+      hasActiveAssignment: false,
+      hasLiveSharedSibling: false,
+      reattachSources: { local: null, published: null, archive: null },
+      rescueRefs: [],
+      actions: [],
+      prDefaults: null,
+      commands: { checkout: [], restoreRescue: null },
+      warnings: [],
+    });
+  }
+
+  it("opens the git panel from the run detail and reads git-state, not handoff-metadata", async () => {
+    const fetchMock = vi.fn<FetchLike>(async () => gitStateResponse());
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    const container = document.createElement("div");
+    const root = createRoot(container);
+
+    document.body.appendChild(container);
+    roots.push(root);
+    act(() => {
+      root.render(
+        createElement(WorkbenchLifecycleActions, {
+          runId: "run-1",
+          runKind: "flow",
+          actions: ["archive", "drop", "exportBranch", "snapshotCommit"],
+          variant: "detail",
+        }),
+      );
+    });
+
+    await click(byTestId(document.body, "workbench-git-open"));
+    await flushPromises();
+
+    expect(
+      document.body.querySelector('[data-testid="git-panel"]'),
+    ).not.toBeNull();
+    expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual([
+      "/api/runs/run-1/git-state",
+    ]);
+  });
+
+  it("opens the panel on load when the URL names a git section", async () => {
+    searchParams = new URLSearchParams("git=publish");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<FetchLike>(async () => gitStateResponse()),
+    );
+
+    const container = document.createElement("div");
+    const root = createRoot(container);
+
+    document.body.appendChild(container);
+    roots.push(root);
+    act(() => {
+      root.render(
+        createElement(WorkbenchLifecycleActions, {
+          runId: "run-1",
+          runKind: "flow",
+          actions: ["exportBranch"],
+          variant: "detail",
+        }),
+      );
+    });
+    await flushPromises();
+
+    expect(
+      document.body.querySelector('[data-testid="git-panel-section-publish"]'),
+    ).not.toBeNull();
+  });
+
+  it("renders every git action on the rail as a link into the run's git panel", async () => {
+    renderMenu({
+      runKind: "flow",
+      runHref: "/runs/run-1",
+      actions: [
+        "archive",
+        "drop",
+        "exportBranch",
+        "snapshotCommit",
+        "discardChanges",
+        "update",
+        "openPr",
+        "finalizePr",
+        "reattach",
+      ],
+    });
+
+    await click(byTestId(document.body, "rail-menu-trigger"));
+
+    const sheet = byTestId(document.body, "rail-action-sheet");
+    const expected: Record<string, string> = {
+      snapshotCommit: "/runs/run-1?git=tree",
+      discardChanges: "/runs/run-1?git=tree",
+      exportBranch: "/runs/run-1?git=publish",
+      update: "/runs/run-1?git=update",
+      openPr: "/runs/run-1?git=pr",
+      finalizePr: "/runs/run-1?git=pr",
+      reattach: "/runs/run-1?git=reattach",
+    };
+
+    for (const [id, href] of Object.entries(expected)) {
+      const item = sheet.querySelector(`[data-testid="menu-${id}"]`);
+
+      expect(item?.tagName).toBe("A");
+      expect(item?.getAttribute("href")).toBe(href);
+    }
+  });
+
+  it("deep-links a scratch run's git actions to the scratch detail", async () => {
+    renderMenu({
+      runKind: "scratch",
+      runHref: "/scratch-runs/run-1",
+      actions: ["archive", "exportBranch"],
+    });
+
+    await click(byTestId(document.body, "rail-menu-trigger"));
+
+    expect(
+      byTestId(document.body, "menu-exportBranch").getAttribute("href"),
+    ).toBe("/scratch-runs/run-1?git=publish");
+  });
+});
+
+// ADR-181 D17 (RED 13): archive/drop show what exists on no remote before the
+// destructive op, and "Publish, then archive" archives only after the publish
+// answered 200.
+describe("ADR-181 — unpushed-work guard on archive", () => {
+  function unpushedState(): Response {
+    return jsonResponse({
+      runId: "run-1",
+      runKind: "flow",
+      runStatus: "Failed",
+      internalBranch: "maister/run-1",
+      publicBranch: "feature/KEY-7-x",
+      publishedRemote: "origin",
+      publishedAt: new Date().toISOString(),
+      suggestedPublicBranch: "feature/KEY-7-x",
+      upstream: { remote: "origin", branch: "feature/KEY-7-x" },
+      remotes: ["origin"],
+      worktreePresent: true,
+      workspaceRemoved: false,
+      head: "a".repeat(40),
+      targetHead: "b".repeat(40),
+      dirty: { tracked: 1, untracked: 1 },
+      unpushedCommits: 2,
+      aheadBehind: {
+        base: null,
+        target: null,
+        published: { ahead: 2, behind: 0 },
+      },
+      publishedRemoteHead: "c".repeat(40),
+      remoteReachable: true,
+      pr: null,
+      busy: null,
+      hasActiveAssignment: false,
+      hasLiveSharedSibling: false,
+      reattachSources: { local: null, published: null, archive: null },
+      rescueRefs: [],
+      actions: [],
+      prDefaults: null,
+      commands: { checkout: [], restoreRescue: null },
+      warnings: [],
+    });
+  }
+
+  it("names the unpushed commits and dirty files, then publishes before archiving", async () => {
+    const fetchMock = vi.fn<FetchLike>(async (input) =>
+      String(input).endsWith("/git-state")
+        ? unpushedState()
+        : jsonResponse({ ok: true }),
+    );
+
+    vi.stubGlobal("fetch", fetchMock);
+    renderActions(["archive", "drop", "exportBranch"]);
+
+    await click(findButton(document.body, "workbenchLifecycle.action.archive"));
+    await flushPromises();
+
+    const guard = byTestId(document.body, "lifecycle-unpushed");
+
+    expect(textOf(guard)).toContain("2");
+    await click(byTestId(document.body, "lifecycle-publish-then-remove"));
+    await flushPromises();
+
+    const posted = fetchMock.mock.calls
+      .filter(([, init]) => init?.method === "POST")
+      .map(([url, init]) => [
+        String(url),
+        JSON.parse(String(init?.body ?? "{}")),
+      ]);
+
+    expect(posted.map(([url]) => url)).toEqual([
+      "/api/runs/run-1/export-branch",
+      "/api/runs/run-1/archive",
+    ]);
+    expect(posted[0][1]).toMatchObject({
+      remote: "origin",
+      snapshotDirty: true,
+    });
+  });
+
+  it("does not archive when the publish is refused", async () => {
+    const fetchMock = vi.fn<FetchLike>(async (input) => {
+      const url = String(input);
+
+      if (url.endsWith("/git-state")) return unpushedState();
+      if (url.endsWith("/export-branch")) {
+        return jsonResponse(
+          {
+            code: "CONFLICT",
+            message: "x",
+            pushRejected: "non_fast_forward",
+            canForce: true,
+          },
+          { status: 409 },
+        );
+      }
+
+      return jsonResponse({ ok: true });
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+    renderActions(["archive", "drop", "exportBranch"]);
+
+    await click(findButton(document.body, "workbenchLifecycle.action.archive"));
+    await flushPromises();
+    await click(byTestId(document.body, "lifecycle-publish-then-remove"));
+    await flushPromises();
+
+    expect(
+      fetchMock.mock.calls.some(([url]) => String(url).endsWith("/archive")),
+    ).toBe(false);
   });
 });

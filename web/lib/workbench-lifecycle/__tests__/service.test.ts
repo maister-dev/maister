@@ -763,4 +763,54 @@ describe("workbench lifecycle service", () => {
     );
     expect(result).toMatchObject({ ok: true, workspaceRemoved: true });
   });
+
+  // ADR-181 D17 (RED 13): operator archive/drop honour MAISTER_GC_ARCHIVE_PUSH
+  // exactly like the GC preserve path — today they pass nothing, so the knob
+  // silently never applies to an operator removal.
+  describe("archive push knob", () => {
+    const original = process.env.MAISTER_GC_ARCHIVE_PUSH;
+
+    function restore(): void {
+      if (original === undefined) delete process.env.MAISTER_GC_ARCHIVE_PUSH;
+      else process.env.MAISTER_GC_ARCHIVE_PUSH = original;
+    }
+
+    it.each([
+      ["true", true],
+      ["false", false],
+      [undefined, false],
+    ] as const)(
+      "archive passes archivePush=%s → %s into preservation",
+      async (env, expected) => {
+        try {
+          if (env === undefined) delete process.env.MAISTER_GC_ARCHIVE_PUSH;
+          else process.env.MAISTER_GC_ARCHIVE_PUSH = env;
+          const d = deps(context());
+
+          await archiveWorkbench("run-1", { deps: d });
+
+          expect(d.preserveWorktree).toHaveBeenCalledWith(
+            expect.objectContaining({ archivePush: expected }),
+          );
+        } finally {
+          restore();
+        }
+      },
+    );
+
+    it("drop passes the same knob into preservation", async () => {
+      try {
+        process.env.MAISTER_GC_ARCHIVE_PUSH = "true";
+        const d = deps(context());
+
+        await dropWorkbench("run-1", { deps: d });
+
+        expect(d.preserveWorktree).toHaveBeenCalledWith(
+          expect.objectContaining({ archivePush: true }),
+        );
+      } finally {
+        restore();
+      }
+    });
+  });
 });

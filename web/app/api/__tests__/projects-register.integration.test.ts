@@ -651,6 +651,37 @@ describe("POST /api/projects — maister.yaml bootstrap (integration)", () => {
     expect(installFlowPlugin).toHaveBeenCalled();
   });
 
+  // ADR-181 (RED 5): project.public_branch_template materializes at
+  // registration with SET/CLEAR symmetry — a present value is stored, an
+  // absent one is the column default (never a stale previous value).
+  it("stores project.public_branch_template when the manifest sets it", async () => {
+    currentConfig = {
+      ...seedConfig,
+      project: {
+        ...seedConfig.project,
+        public_branch_template: "wip/{task_key}-a{attempt}",
+      },
+    };
+
+    const res = await POST(req({ target: "ignored" }));
+
+    expect(res.status).toBe(201);
+    const rows = await projectRows("saga-proj");
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].publicBranchTemplate).toBe("wip/{task_key}-a{attempt}");
+  });
+
+  it("stores the default template when the manifest omits the key", async () => {
+    const res = await POST(req({ target: "ignored" }));
+
+    expect(res.status).toBe(201);
+    const rows = await projectRows("saga-proj");
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].publicBranchTemplate).toBe("feature/{task_key}-{slug}");
+  });
+
   it("fails CONFIG when a present maister.yaml is invalid (no DB-default fallback)", async () => {
     currentConfigError = new MaisterError("CONFIG", "bad manifest");
 

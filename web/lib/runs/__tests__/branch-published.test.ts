@@ -25,6 +25,7 @@ describe("isBranchPublished", () => {
     expect(
       await isBranchPublished({
         prUrl: "https://github.com/x/y/pull/1",
+        publishedBranch: null,
         repo: "/repo",
         branch: "maister/x",
       }),
@@ -36,6 +37,7 @@ describe("isBranchPublished", () => {
 
     await isBranchPublished({
       prUrl: "https://github.com/x/y/pull/1",
+      publishedBranch: null,
       repo: "/repo",
       branch: "maister/x",
     });
@@ -43,11 +45,33 @@ describe("isBranchPublished", () => {
     expect(branchHasUpstream).not.toHaveBeenCalled();
   });
 
+  // ADR-181 D7 (RED 8): a branch published under a public name without a PR
+  // counts as published — `workspaces.published_*` is the record, read BEFORE
+  // the upstream probe (a recovered or re-attached worktree may lack the config).
+  it("is TRUE for a recorded publication with no PR and no upstream", async () => {
+    vi.mocked(branchHasUpstream).mockResolvedValue(false);
+
+    expect(
+      await isBranchPublished({
+        prUrl: null,
+        publishedBranch: "feature/ABC-1-x",
+        repo: "/repo",
+        branch: "maister/x",
+      }),
+    ).toBe(true);
+    expect(branchHasUpstream).not.toHaveBeenCalled();
+  });
+
   it("falls back to the upstream tracking ref when there is no PR", async () => {
     vi.mocked(branchHasUpstream).mockResolvedValue(true);
 
     expect(
-      await isBranchPublished({ prUrl: null, repo: "/repo", branch: "b" }),
+      await isBranchPublished({
+        prUrl: null,
+        publishedBranch: null,
+        repo: "/repo",
+        branch: "b",
+      }),
     ).toBe(true);
     expect(branchHasUpstream).toHaveBeenCalledWith("/repo", "b");
   });
@@ -56,7 +80,12 @@ describe("isBranchPublished", () => {
     vi.mocked(branchHasUpstream).mockResolvedValue(false);
 
     expect(
-      await isBranchPublished({ prUrl: null, repo: "/repo", branch: "b" }),
+      await isBranchPublished({
+        prUrl: null,
+        publishedBranch: null,
+        repo: "/repo",
+        branch: "b",
+      }),
     ).toBe(false);
   });
 
@@ -66,7 +95,12 @@ describe("isBranchPublished", () => {
     vi.mocked(branchHasUpstream).mockRejectedValue(new Error("git exploded"));
 
     await expect(
-      isBranchPublished({ prUrl: null, repo: "/repo", branch: "b" }),
+      isBranchPublished({
+        prUrl: null,
+        publishedBranch: null,
+        repo: "/repo",
+        branch: "b",
+      }),
     ).rejects.toThrow("git exploded");
   });
 });

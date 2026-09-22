@@ -764,6 +764,81 @@ describe("ADR-160 rework return + release (integration)", () => {
     await s.cleanup();
   });
 
+  // ADR-181 D7 (RED 8): once the branch is PUBLISHED under a public name, the
+  // operator's pushes land on `<published_remote>/<published_branch>`, not on
+  // `<remote>/<internal branch>`. The ingest must fast-forward from the
+  // recorded publication.
+  it("fast-forwards from the published public branch when a publication is recorded", async () => {
+    const s = await seed();
+
+    await claimAs(s);
+
+    const remote = await mkdtemp(path.join(tmpdir(), "rwc-remote-pub-"));
+    const publicBranch = `feature/rwc-${randomUUID().slice(0, 8)}`;
+
+    await execFileAsync("git", ["init", "--bare", remote]);
+    await execFileAsync("git", [
+      "-C",
+      s.parentRepo,
+      "remote",
+      "add",
+      "origin",
+      remote,
+    ]);
+    await execFileAsync("git", [
+      "-C",
+      s.worktreePath,
+      "push",
+      "--set-upstream",
+      "origin",
+      `refs/heads/${s.branch}:refs/heads/${publicBranch}`,
+    ]);
+    await db
+      .update(workspaces)
+      .set({
+        publishedBranch: publicBranch,
+        publishedRemote: "origin",
+        publishedAt: new Date(),
+      })
+      .where(eq(workspaces.runId, s.runId));
+
+    const clone = await mkdtemp(path.join(tmpdir(), "rwc-clone-pub-"));
+
+    await execFileAsync("git", ["clone", "-b", publicBranch, remote, clone]);
+    await execFileAsync("git", [
+      "-C",
+      clone,
+      "config",
+      "user.email",
+      "t@t.dev",
+    ]);
+    await execFileAsync("git", ["-C", clone, "config", "user.name", "T"]);
+    await writeFile(path.join(clone, "laptop.txt"), "pushed from a laptop\n");
+    await execFileAsync("git", ["-C", clone, "add", "."]);
+    await execFileAsync("git", ["-C", clone, "commit", "-m", "laptop"]);
+    await execFileAsync("git", ["-C", clone, "push", "origin", publicBranch]);
+
+    const laptopSha = (
+      await execFileAsync("git", ["-C", clone, "rev-parse", "HEAD"])
+    ).stdout.trim();
+
+    const res = await returnPOST(returnReq(s.runId, { remote: "origin" }), {
+      params: Promise.resolve({ runId: s.runId }),
+    });
+
+    expect(res.status).toBe(200);
+    expect((await res.json()).fastForwarded).toBe(true);
+    expect(
+      (
+        await execFileAsync("git", ["-C", s.worktreePath, "rev-parse", "HEAD"])
+      ).stdout.trim(),
+    ).toBe(laptopSha);
+
+    await rm(clone, { recursive: true, force: true });
+    await rm(remote, { recursive: true, force: true });
+    await s.cleanup();
+  });
+
   it("refuses an unknown remote against the server-derived allow-list", async () => {
     const s = await seed();
 
