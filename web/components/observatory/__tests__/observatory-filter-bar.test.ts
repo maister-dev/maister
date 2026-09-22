@@ -6,6 +6,7 @@
 //
 // jsdom rather than Playwright because this is the lane CI runs.
 
+import type { ComponentProps } from "react";
 import type { Root } from "react-dom/client";
 
 import { act, createElement } from "react";
@@ -40,22 +41,22 @@ function render(params: Record<string, string> = {}, projects = true): void {
   const { current } = parseObservatorySearchParams(params, NOW);
 
   act(() => {
-    root.render(
-      // The pending-patch owner sits above the bar on both routes; composing
-      // edits is its job, so the bar cannot be exercised without it.
-      createElement(ObservatoryFilterState, {
+    // The pending-patch owner sits above the bar on both routes; composing
+    // edits is its job, so the bar cannot be exercised without it.
+    const props: ComponentProps<typeof ObservatoryFilterState> = {
+      current,
+      pathname: "/observatory",
+      children: createElement(ObservatoryFilterBar, {
         current,
+        labels,
         pathname: "/observatory",
-        children: createElement(ObservatoryFilterBar, {
-          current,
-          labels,
-          pathname: "/observatory",
-          projectOptions: projects
-            ? [{ slug: "maister", name: "MAIster" }]
-            : undefined,
-        }),
+        projectOptions: projects
+          ? [{ slug: "maister", name: "MAIster" }]
+          : undefined,
       }),
-    );
+    };
+
+    root.render(createElement(ObservatoryFilterState, props));
   });
 }
 
@@ -524,27 +525,27 @@ describe("view tabs and the bar share the pending patch", () => {
     const { current } = parseObservatorySearchParams(params, NOW);
 
     act(() => {
-      root.render(
-        createElement(ObservatoryFilterState, {
-          current,
-          pathname: "/observatory",
-          children: [
-            createElement(ObservatoryFilterBar, {
-              key: "bar",
-              current,
-              labels,
-              pathname: "/observatory",
-              projectOptions: [{ slug: "maister", name: "MAIster" }],
-            }),
-            createElement(ObservatoryViews, {
-              key: "views",
-              current,
-              labels,
-              pathname: "/observatory",
-            }),
-          ],
-        }),
-      );
+      const props: ComponentProps<typeof ObservatoryFilterState> = {
+        current,
+        pathname: "/observatory",
+        children: [
+          createElement(ObservatoryFilterBar, {
+            key: "bar",
+            current,
+            labels,
+            pathname: "/observatory",
+            projectOptions: [{ slug: "maister", name: "MAIster" }],
+          }),
+          createElement(ObservatoryViews, {
+            key: "views",
+            current,
+            labels,
+            pathname: "/observatory",
+          }),
+        ],
+      };
+
+      root.render(createElement(ObservatoryFilterState, props));
     });
   }
 

@@ -5,6 +5,7 @@
 // pins the other half: that the link actually carries project, kind, bucket and
 // the day bounds.
 
+import type { ComponentProps } from "react";
 import type { OverviewTable as OverviewTableModel } from "@/lib/queries/observatory-overview";
 
 import { createElement } from "react";
@@ -520,16 +521,17 @@ describe("OverviewCostStrip", () => {
 
 describe("ObservatoryViews", () => {
   it("renders four href tabs and marks the active one", () => {
-    const html = renderToStaticMarkup(
-      createElement(ObservatoryFilterState, {
+    const props: ComponentProps<typeof ObservatoryFilterState> = {
+      current: parseObservatorySearchParams({ view: "cost" }, NOW).current,
+      pathname: "/observatory",
+      children: createElement(ObservatoryViews, {
         current: parseObservatorySearchParams({ view: "cost" }, NOW).current,
+        labels,
         pathname: "/observatory",
-        children: createElement(ObservatoryViews, {
-          current: parseObservatorySearchParams({ view: "cost" }, NOW).current,
-          labels,
-          pathname: "/observatory",
-        }),
       }),
+    };
+    const html = renderToStaticMarkup(
+      createElement(ObservatoryFilterState, props),
     );
 
     for (const view of ["overview", "cost", "quality", "harness"]) {
