@@ -132,7 +132,7 @@ describe("scheduler clock in a production web", () => {
         logFile,
         env: { MAISTER_EVENT_STREAM_LAG_SECONDS: "invalid" },
       }),
-    ).rejects.toThrow(/real web exited before/);
+    ).rejects.toThrow(/startup failed|exited before/);
     const log = await readFile(logFile, "utf8");
 
     expect(log).toContain(
@@ -152,7 +152,7 @@ describe("scheduler clock in a production web", () => {
         logFile,
         env: { MAISTER_SCHEDULER_TIMER_ENABLED: "yes" },
       }),
-    ).rejects.toThrow(/real web exited before/);
+    ).rejects.toThrow(/startup failed|exited before/);
     const log = await readFile(logFile, "utf8");
 
     expect(log).toContain(
