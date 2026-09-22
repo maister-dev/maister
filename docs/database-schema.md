@@ -2890,13 +2890,24 @@ protocol, not a Flow gate.
              | 'missing_axes' | 'unknown_axes',
   verdict: 'agree' | 'disagree',            // invalid parse/schema rows persist as disagree
   axes (jsonb),                             // declared material axis -> boolean
-  disagreements (jsonb),                    // bounded array of { axis, claim, counterEvidence }
+  disagreements (jsonb),                    // legacy array or v1 { version, rows, truncated, textBounds? }
   confidence?,                              // numeric 0..1 when present; advisory only
   rawOutputArtifactId?,                     // optional artifact ref for bounded raw evidence
   errorCode?,                               // one of MaisterErrorCode literals when spawn/parser failed
   createdAt
 }
 ```
+
+P0-5 v2 (Designed) writes a version-1 envelope into existing JSONB for new
+cells and reads both it and historical arrays. The envelope's `truncated`
+records the verifier input cut; old arrays have **unknown** truncation state.
+The SQL column has no array-only CHECK (`0070`), and later migrations do not
+add one. Input/decision/debate evidence uses existing artifact rows; the
+strict execution-command owner-ref CHECK and node-attempt action-resume CHECK
+are unchanged. No migration, snapshot, journal, table, index or ERD edit is
+required for this JSON-only change. Do not deploy an old array-only reader
+beside an envelope writer. Roll back by retaining the compatibility reader or
+restoring a pre-change backup while stopped; do not flatten evidence in place.
 
 UNIQUE `(nodeAttemptId, round, verifierKey, targetKey)` makes crash recovery
 replay-safe: a resumed consensus node reuses already persisted verifier rows and

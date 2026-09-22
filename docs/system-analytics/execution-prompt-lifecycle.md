@@ -898,6 +898,28 @@ used before. While that application is still pending it raises the typed
 fail-closed disagreement. Postgres additionally freezes an admitted command's
 owner reference, so one cell's paid output cannot be re-pointed at its sibling.
 
+#### P0-5 v2 input evidence and pending control (Designed)
+
+Before verifier/synthesis prompt enqueue, the current-owner admission path
+records a deterministic `:input` artifact keyed by its verdict/synthesis ID.
+Versioned JSON contains the exact attempt/round/generation, source artifact or
+HITL request ID, bounded input digest and byte bounds. It contains no duplicate
+draft body. Re-entry compares rather than overwrites this evidence; an orphan
+preparation cannot be mistaken for an applied cell. On application, read only
+the matching generation's preparation; the command's verified canonical
+request proves the prompt value/digest delivered to the host. The redacted
+command projection intentionally holds only byte/count summaries. The strict
+owner-ref JSONB CHECK from migration 0140 is unchanged. Historical commands
+without input evidence remain readable with unknown truncation metadata.
+
+`ConsensusGenerationPending` passes both graph catches as a control-flow yield:
+the node stays Running, the owner worker applies the result, and the production
+continuation worker re-enters the graph. Bounded owner-application poison still
+ends in ADR-177's owner-poisoned crash. A replayed immutable verdict cell is
+never rewritten to add metadata. A non-`end_turn` draft with retained text has
+an atomically applied partial artifact and Failed child status; the parent
+records an unpaid `draft_partial` cell rather than opening a verifier command.
+
 ### Consensus synthesis generation (Implemented)
 
 Synthesis belongs to a node attempt, its round and the synthesis source that
@@ -915,6 +937,16 @@ non-`end_turn` synthesis output records the generation's failure evidence
 instead of an empty plan, and the node fails on its existing `PRECONDITION`
 path. A generation whose artifact already exists is refused at admission, so a
 re-entering driver adopts the applied output rather than paying again.
+
+P0-5 v2 (Designed) replaces that empty-output PRECONDITION outcome with a typed
+applied-incomplete generation and `CRASH` reason
+`consensus_synthesis_incomplete`, carrying the actual stop reason and
+synthesis ID. The generation artifact retains partial text and input/output
+bounds. Explicit Recover is available only when the latest failed attempt has
+that matching applied witness and no quarantined terminal conflict. It mints a
+fresh node attempt and generation, after checking quarantine **before** the
+redispatch branch; it never resumes the synthesis substep as an ACP node
+session. Missing, stale and mismatched witnesses have no new recovery arm.
 
 ### Consensus draft agent turn (Implemented)
 

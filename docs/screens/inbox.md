@@ -216,6 +216,16 @@ resolution. EN + RU parity is required.
 - Clearing the last consensus HITL updates `decisions` through the existing inbox
   count path.
 
+P0-5 v2 (Designed): the expanded consensus card labels partial drafts with
+actual stop reason, keeps unavailable slots disabled without shifting
+`pick-draft-N` numbering, and separates `technicalFailures[]` from material
+criticism in EN/RU. Every bounded excerpt is labeled and has a usable full-
+text artifact link. Draft links use the child run ID and the round debate link
+uses the parent run ID; the round debate row exists at HITL creation. A human
+may pick partial text; synthesis carries the partial label and reason. Old
+HITL payloads with absent additive fields remain readable. The response API's
+allowed decisions and authorization remain unchanged.
+
 ## Budget-breach acceptance criteria
 
 - The card shows the progress block in both full-source and degraded states

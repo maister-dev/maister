@@ -789,3 +789,15 @@ coordinator as `run_collect`'s `resultFailure.reason`. It is a **payload field,
 not an error code** — the run's own failure is a plain `CONFIG`, and
 `run.failed.reason` carries `result_missing` / `result_invalid`. See
 [`system-analytics/run-results.md`](system-analytics/run-results.md).
+
+### Consensus P0-5 v2 error amendment (Designed, 2026-09-23)
+
+| Reason | Code and durable outcome | Operator path |
+| --- | --- | --- |
+| `consensus_generation_pending` | `PRECONDITION`-typed internal yield only; node stays Running while an owned verifier/synthesis application remains pending | No failed-node or manual retry action; production owner and continuation workers re-drive, or ADR-177 poison terminates |
+| `consensus_no_draft_available` | `CRASH` when every draft has no retained text, with child terminal reasons | Recover only according to existing attempt evidence; do not label partial text as unavailable |
+| `consensus_synthesis_incomplete` | `CRASH`, node Failed and run Crashed; `details` carry real `stopReason` and `synthesisId`, with retained partial generation text | Recover only for the exact latest applied, non-quarantined witness; fresh node attempt and generation |
+
+An applied empty/non-`end_turn` synthesis is not an empty successful plan and
+is not an ordinary `PRECONDITION` node failure. No new `MaisterError` code or
+run-level error column is introduced.

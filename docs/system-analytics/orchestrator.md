@@ -254,6 +254,27 @@ sequenceDiagram
     Note over R: concurrent manual-resume + event-resume converge to one (CONFLICT on the loser)
 ```
 
+#### Early settlement and post-park catch-up (Designed, P0-5 v2)
+
+The child event consumer and the coordinator post-park path use one pending-child
+query and one CAS wake helper for both `orchestrator` and `consensus` parents.
+After the `WaitingOnChildren` park commits and the original driver claim is
+released, the runner checks once: zero pending children permits only the
+current node/latest attempt's `WaitingOnChildren → Running` CAS. An event seen
+while a coordinator parent is still Running emits a structured WARN; catch-up
+owns that wake. The consumer and catch-up may overlap, but the CAS grants one
+winner. Preserve the consumer's orchestrator HITL/fail-fast exceptions, parent-
+wide pending count, capacity deferral and terminal/cancellation guards.
+
+A successful consensus wake is durable in the existing Running status, current
+NeedsInput attempt, `wait_resume` assignment and released source assignment
+with `waiting_on_children`. The continuation worker selects and revalidates
+that tuple after claim release, including a parent with no verifier command
+and a parked parent with a deferred resume marker. A stale node/attempt or
+second racer cannot dispatch. Death between park commit and the one-shot
+catch-up remains a reconcile window; no new polling worker or DB field is
+introduced. See [consensus protocol](consensus.md#p0-5-v2-execution-contract-designed-acceptance-before-implemented).
+
 ### (d) cancel / abandon cascade down the run-tree (Implemented)
 
 Stopping, abandoning, or dropping an orchestrator run cascades to its children in

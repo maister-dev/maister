@@ -402,6 +402,16 @@ run machine:
    the same door. `POST /api/runs/{runId}/discard` marks `Abandoned` and enters
    the GC countdown (no synchronous worktree removal).
 
+**Consensus incomplete-synthesis extension (Designed, P0-5 v2).** The
+backend and run-page Recover capability share one exact-latest-attempt witness:
+`node_attempts.error_code = CRASH`, applied incomplete synthesis generation
+with `consensus_synthesis_incomplete`, matching run/node/attempt/synthesis ID,
+and no quarantined terminal conflict on that attempt's consensus-owned
+commands. The recovery driver checks the witness and quarantine before any
+fresh redispatch. Eligible Recover makes a new node attempt and synthesis ID.
+Missing/stale/mismatched evidence has no consensus-specific recovery arm;
+ADR-177 owner poison remains distinct. No broad auto-retry or run error column.
+
 **Recovery window — `status × evidence → arm` (normative; ADR-177).** Every cell a
 `run_kind='flow'` agent node can be parked in, and the single arm that owns it. A
 cell with no arm is a defect, not a default.
