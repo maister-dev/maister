@@ -47,6 +47,8 @@ const ITEM: HitlItem = {
   hitlRequestId: "h1",
   runId: "run-7",
   kind: "human",
+  answerState: "open",
+  storedResponse: null,
   assignmentId: null,
   assignmentStatus: null,
   assignmentActionKind: null,

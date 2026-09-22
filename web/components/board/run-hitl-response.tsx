@@ -1,6 +1,10 @@
 "use client";
 
 import type { HitlOption } from "@/lib/queries/hitl";
+import type {
+  HitlAnswerState,
+  HitlStoredResponse,
+} from "@/lib/hitl-response-contract";
 import type { ReactElement } from "react";
 import type {
   ReviewSchema,
@@ -14,7 +18,7 @@ import type {
 } from "@/lib/runs/budget-breach-fork";
 
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useTranslations } from "next-intl";
 
 import {
@@ -27,9 +31,12 @@ import {
 } from "@/components/board/hitl-decision-controls";
 import { requestPendingHitlFocus } from "@/components/board/pending-hitl-focus-restorer";
 import { ConfirmDialog } from "@/components/feedback/confirm-dialog";
+import { useOptionalFeedback } from "@/components/feedback/feedback-provider";
 import {
   isStaleViewErrorCode,
+  resolveHitlErrorMessage,
   resolveUiErrorMessageKey,
+  type HitlErrorMessage,
 } from "@/lib/ui-error-message";
 
 type ReviewFeedbackPreview = {
@@ -68,6 +75,8 @@ export interface RunHitlResponseProps {
     | "node_interrupt"
     | "decision_request";
   options: HitlOption[];
+  answerState: HitlAnswerState;
+  storedResponse: HitlStoredResponse | null;
   availableOptions?: BudgetBreachAvailableOption[];
   // ADR-161: the server-owned interrupt matrix, passed straight through.
   nodeInterrupt?: NodeInterruptOptionMatrixView | null;
@@ -90,6 +99,8 @@ export function RunHitlResponse({
   hitlRequestId,
   kind,
   options,
+  answerState,
+  storedResponse,
   availableOptions,
   nodeInterrupt,
   budgetProgress,
@@ -104,9 +115,73 @@ export function RunHitlResponse({
 }: RunHitlResponseProps): ReactElement {
   const t = useTranslations("run");
   const router = useRouter();
+  const feedback = useOptionalFeedback();
   const [pending, startTransition] = useTransition();
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const submissionOrdinal = useRef(0);
+  const [busyRequestKey, setBusyRequestKey] = useState<string | null>(null);
+  const [errorState, setErrorState] = useState<{
+    requestKey: string;
+    message: string | null;
+  } | null>(null);
+  const [refusal, setRefusal] = useState<{
+    requestKey: string;
+    descriptor: HitlErrorMessage;
+  } | null>(null);
+  const [diagnosticState, setDiagnosticState] = useState<{
+    requestKey: string;
+    code: string | null;
+  } | null>(null);
+  const [localAnswer, setLocalAnswer] = useState<{
+    requestKey: string;
+    payload: HitlStoredResponse | null;
+    reconciling: boolean;
+  } | null>(null);
+  const requestKey = `${runId}:${hitlRequestId}`;
+  const busy = busyRequestKey === requestKey;
+  const error =
+    refusal?.requestKey === requestKey
+      ? t(refusal.descriptor.key, refusal.descriptor.values)
+      : errorState?.requestKey === requestKey
+        ? errorState.message
+        : null;
+  const diagnostic =
+    diagnosticState?.requestKey === requestKey ? diagnosticState.code : null;
+
+  function setError(message: string | null): void {
+    setRefusal(null);
+    setErrorState({ requestKey, message });
+  }
+
+  function setDiagnostic(code: string | null): void {
+    setDiagnosticState({ requestKey, code });
+  }
+  const activeRequestKey = useRef(requestKey);
+  const storedActionRef = useRef<HTMLButtonElement | null>(null);
+
+  activeRequestKey.current = requestKey;
+  const currentAnswer =
+    localAnswer?.requestKey === requestKey ? localAnswer : null;
+  const isStored = answerState === "answer_stored" || currentAnswer !== null;
+  const schemaObject =
+    schema !== null && typeof schema === "object"
+      ? (schema as Record<string, unknown>)
+      : null;
+  const canReplaySubmittedAnswer =
+    kind === "permission" ||
+    kind === "form" ||
+    kind === "agent_question" ||
+    (kind === "human" &&
+      schemaObject?.review !== true &&
+      schemaObject?.kind !== "consensus" &&
+      schemaObject?.kind !== "consensus_resolution");
+  const retryPayload =
+    answerState === "answer_stored"
+      ? storedResponse
+      : (currentAnswer?.payload ?? null);
+
+  useEffect(() => {
+    if (currentAnswer !== null && !busy) storedActionRef.current?.focus();
+  }, [currentAnswer, busy]);
   const [json, setJson] = useState("{}");
   const [formValues, setFormValues] = useState<Record<string, string>>({});
   const [comments, setComments] = useState("");
@@ -135,16 +210,42 @@ export function RunHitlResponse({
   // A refusal that means this card no longer reflects the run. Leaving it as
   // rendered hands the operator live-looking buttons on a request the server
   // will keep refusing, which is how a stale permission card outlives its run.
-  function reportError(code: unknown): void {
-    setError(errorMessage(code));
+  function reportError(
+    body: {
+      code?: unknown;
+      details?: { reason?: unknown; causeCode?: unknown } | null;
+    },
+    submissionId = `${requestKey}:${++submissionOrdinal.current}`,
+  ): void {
+    const descriptor = resolveHitlErrorMessage({
+      ...body,
+      answerState: isStored ? "answer_stored" : "open",
+    });
+    const message = t(descriptor.key, descriptor.values);
 
-    if (isStaleViewErrorCode(code)) {
+    setRefusal({ requestKey, descriptor });
+    setDiagnostic(descriptor.causeCode ?? null);
+
+    if (body.code === "HITL_TIMEOUT") {
+      feedback?.error({ message, mutationId: `hitl-terminal:${submissionId}` });
+    }
+
+    if (
+      body.details?.reason === "permission_resume_in_flight" ||
+      body.details?.reason === "option_mismatch"
+    ) {
+      setLocalAnswer({ requestKey, payload: null, reconciling: true });
+    }
+
+    if (isStaleViewErrorCode(body.code)) {
       startTransition(() => router.refresh());
     }
   }
 
   async function post(payload: Record<string, unknown>): Promise<void> {
-    setBusy(true);
+    const submissionId = `${requestKey}:${++submissionOrdinal.current}`;
+
+    setBusyRequestKey(requestKey);
     setError(null);
 
     try {
@@ -160,11 +261,49 @@ export function RunHitlResponse({
       if (!res.ok) {
         const data = (await res.json().catch(() => null)) as {
           code?: string;
+          details?: { reason?: string; causeCode?: string };
         } | null;
 
-        reportError(data?.code);
+        if (activeRequestKey.current !== requestKey) return;
+
+        if (
+          data?.code === "EXECUTOR_UNAVAILABLE" &&
+          data.details?.reason === "delivery_unavailable"
+        ) {
+          setLocalAnswer({
+            requestKey,
+            payload: canReplaySubmittedAnswer
+              ? (payload as HitlStoredResponse)
+              : null,
+            reconciling: !canReplaySubmittedAnswer,
+          });
+        }
+        reportError(data ?? {}, submissionId);
 
         return;
+      }
+
+      const accepted = (await res.json().catch(() => null)) as {
+        state?: string;
+      } | null;
+
+      if (activeRequestKey.current !== requestKey) return;
+
+      if (
+        res.status === 202 &&
+        [
+          "resume-in-progress",
+          "delivery-in-progress",
+          "resume-queued",
+        ].includes(accepted?.state ?? "")
+      ) {
+        setLocalAnswer({
+          requestKey,
+          payload: canReplaySubmittedAnswer
+            ? (payload as HitlStoredResponse)
+            : null,
+          reconciling: !canReplaySubmittedAnswer,
+        });
       }
 
       if (onRespond) {
@@ -177,16 +316,17 @@ export function RunHitlResponse({
         startTransition(() => router.refresh());
       }
     } catch {
-      setError(errorMessage("EXECUTOR_UNAVAILABLE"));
+      if (activeRequestKey.current === requestKey)
+        setError(t("deliveryUnconfirmed"));
     } finally {
-      setBusy(false);
+      setBusyRequestKey((current) => (current === requestKey ? null : current));
     }
   }
 
   async function previewReviewRework(
     response: Record<string, unknown>,
   ): Promise<void> {
-    setBusy(true);
+    setBusyRequestKey(requestKey);
     setError(null);
 
     try {
@@ -203,7 +343,7 @@ export function RunHitlResponse({
         | null;
 
       if (!res.ok || body === null || !("feedback" in body)) {
-        reportError(body?.code);
+        reportError(body ?? {});
 
         return;
       }
@@ -212,7 +352,7 @@ export function RunHitlResponse({
     } catch {
       setError(errorMessage("EXECUTOR_UNAVAILABLE"));
     } finally {
-      setBusy(false);
+      setBusyRequestKey((current) => (current === requestKey ? null : current));
     }
   }
 
@@ -496,48 +636,134 @@ export function RunHitlResponse({
     planReviewApprovalBlocked: t("planReviewApprovalBlocked"),
   };
 
+  const specialized =
+    kind === "budget_breach" ||
+    kind === "infra_recovery" ||
+    kind === "hook_trip" ||
+    kind === "node_interrupt" ||
+    kind === "decision_request" ||
+    reviewSchema !== null ||
+    consensusHitl !== null;
+  const decisionControls = (
+    <HitlDecisionControls
+      availableOptions={availableOptions}
+      budgetBranchName={budgetBranchName}
+      budgetCeiling={budgetCeiling}
+      budgetDropWorkspace={budgetDropWorkspace}
+      budgetParkMode={budgetParkMode}
+      budgetProgress={budgetProgress}
+      claimStage={claimStage}
+      comments={comments}
+      compact={compact}
+      criticality={criticality}
+      disabled={disabled || isStored}
+      error={isStored ? null : error}
+      formValues={formValues}
+      jsonValue={json}
+      kind={kind}
+      labels={labels}
+      nodeInterrupt={nodeInterrupt}
+      options={options}
+      reviewCounts={reviewCounts}
+      reviewSchema={reviewSchema}
+      schema={schema}
+      onBudgetAbandon={handleBudgetAbandon}
+      onBudgetBranchNameChange={setBudgetBranchName}
+      onBudgetCeilingChange={setBudgetCeiling}
+      onBudgetDropWorkspaceChange={setBudgetDropWorkspace}
+      onBudgetPark={handleBudgetPark}
+      onBudgetParkModeChange={setBudgetParkMode}
+      onBudgetRaise={handleBudgetRaise}
+      onBudgetRestart={handleBudgetRestart}
+      onCommentsChange={setComments}
+      onDecision={handleDecision}
+      onFormFieldChange={handleFormFieldChange}
+      onJsonChange={setJson}
+      onNodeInterrupt={(payload) => void post(payload)}
+      onOption={(optionId) => void post({ optionId })}
+      onSendBack={handleSendBack}
+      onSubmitForm={submitForm}
+      onSubmitJson={submitJson}
+    />
+  );
+
+  if (isStored) {
+    const savedOption =
+      retryPayload && "optionId" in retryPayload
+        ? options.find((option) => option.optionId === retryPayload.optionId)
+        : null;
+    const validPayload =
+      retryPayload !== null && (kind !== "permission" || savedOption !== null);
+    const reconciling =
+      currentAnswer?.reconciling && answerState !== "answer_stored";
+
+    return (
+      <div
+        className="grid gap-2 rounded-lg border border-line bg-ivory p-3"
+        data-testid="hitl-answer-stored"
+      >
+        <p aria-live="polite" className="text-sm text-ink-2">
+          {t("answerSaved")}
+        </p>
+        {savedOption ? (
+          <p className="font-semibold text-ink">{savedOption.label}</p>
+        ) : null}
+        {retryPayload && "response" in retryPayload ? (
+          <pre className="whitespace-pre-wrap text-xs text-ink-2">
+            {JSON.stringify(retryPayload.response)}
+          </pre>
+        ) : null}
+        {!validPayload && !reconciling ? (
+          <p className="text-xs text-mute" role="status">
+            {retryPayload && "optionId" in retryPayload
+              ? t("savedInvalidOption")
+              : t("savedNoReplay")}
+          </p>
+        ) : null}
+        {error ? (
+          <p className="text-sm text-[var(--status-red)]" role="alert">
+            {error}
+          </p>
+        ) : null}
+        {diagnostic ? (
+          <p className="text-xs text-mute">
+            {t("errorDiagnostic")}: <code>{diagnostic}</code>
+          </p>
+        ) : null}
+        {specialized ? decisionControls : null}
+        <div className="flex gap-2">
+          {canAct && validPayload && !reconciling ? (
+            <button
+              ref={storedActionRef}
+              disabled={busy || pending}
+              type="button"
+              onClick={() => void post(retryPayload as Record<string, unknown>)}
+            >
+              {t("retryDelivery")}
+            </button>
+          ) : null}
+          {reconciling ? (
+            <button
+              ref={storedActionRef}
+              type="button"
+              onClick={() => router.refresh()}
+            >
+              {t("refreshAnswer")}
+            </button>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <>
-      <HitlDecisionControls
-        availableOptions={availableOptions}
-        budgetBranchName={budgetBranchName}
-        budgetCeiling={budgetCeiling}
-        budgetDropWorkspace={budgetDropWorkspace}
-        budgetParkMode={budgetParkMode}
-        budgetProgress={budgetProgress}
-        claimStage={claimStage}
-        comments={comments}
-        compact={compact}
-        criticality={criticality}
-        disabled={disabled}
-        error={error}
-        formValues={formValues}
-        jsonValue={json}
-        kind={kind}
-        labels={labels}
-        nodeInterrupt={nodeInterrupt}
-        options={options}
-        reviewCounts={reviewCounts}
-        reviewSchema={reviewSchema}
-        schema={schema}
-        onBudgetAbandon={handleBudgetAbandon}
-        onBudgetBranchNameChange={setBudgetBranchName}
-        onBudgetCeilingChange={setBudgetCeiling}
-        onBudgetDropWorkspaceChange={setBudgetDropWorkspace}
-        onBudgetPark={handleBudgetPark}
-        onBudgetParkModeChange={setBudgetParkMode}
-        onBudgetRaise={handleBudgetRaise}
-        onBudgetRestart={handleBudgetRestart}
-        onCommentsChange={setComments}
-        onDecision={handleDecision}
-        onFormFieldChange={handleFormFieldChange}
-        onJsonChange={setJson}
-        onNodeInterrupt={(payload) => void post(payload)}
-        onOption={(optionId) => void post({ optionId })}
-        onSendBack={handleSendBack}
-        onSubmitForm={submitForm}
-        onSubmitJson={submitJson}
-      />
+      {decisionControls}
+      {diagnostic ? (
+        <p className="text-xs text-mute">
+          {t("errorDiagnostic")}: <code>{diagnostic}</code>
+        </p>
+      ) : null}
       {pendingReviewRework ? (
         <ConfirmDialog
           body={t("reviewPreviewBody", {

@@ -22,6 +22,7 @@ function render(pendingHitl: PendingHitl): string {
       pendingHitl,
       pending: false,
       onAnswer: () => {},
+      onRefresh: () => {},
     }),
   );
 }
@@ -31,6 +32,8 @@ describe("ScratchPermissionPanel", () => {
     const html = render({
       hitlRequestId: "h1",
       kind: "permission",
+      answerState: "open",
+      storedResponse: null,
       prompt: "Allow file write?",
       schema: null,
       options: [
@@ -49,6 +52,8 @@ describe("ScratchPermissionPanel", () => {
     const html = render({
       hitlRequestId: "h2",
       kind: "form",
+      answerState: "open",
+      storedResponse: null,
       prompt: "Fill the form",
       schema: {},
       options: [],

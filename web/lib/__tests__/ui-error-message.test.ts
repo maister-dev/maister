@@ -15,7 +15,6 @@ describe("UI error-message resolver", () => {
     "CRASH",
     "CONFLICT",
     "CONFIG",
-    "EXECUTOR_UNAVAILABLE",
     "FLOW_INSTALL",
     "ACP_PROTOCOL",
     "CHECKPOINT",
@@ -29,6 +28,13 @@ describe("UI error-message resolver", () => {
   ])("maps known code %s to its run translation key", (code) => {
     expect(resolveUiErrorMessageKey(code)).toBe(`error.${code}`);
     expect(isMaisterErrorCode(code)).toBe(true);
+  });
+
+  it("uses a neutral fallback for non-HITL executor failures", () => {
+    expect(isMaisterErrorCode("EXECUTOR_UNAVAILABLE")).toBe(true);
+    expect(resolveUiErrorMessageKey("EXECUTOR_UNAVAILABLE")).toBe(
+      "error.EXECUTOR_UNAVAILABLE_UNKNOWN",
+    );
   });
 
   it.each([undefined, null, "NOT_A_CODE", 503, { code: "CRASH" }])(

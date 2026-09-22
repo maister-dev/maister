@@ -654,7 +654,7 @@ first point where existing assertions are repaired.
 
 ### Phase 2 — reason rendering and stored-answer interaction
 
-- [ ] **Task 8: Add RED U1/U2/S1 and replay interaction coverage.**
+- [x] **Task 8: Add RED U1/U2/S1 and replay interaction coverage.**
   Depends on 5–7. Use per-file `// @vitest-environment jsdom`, existing React
   DOM helpers, real EN/RU message catalogs and actual components. Test each
   table row, unknown reason/code, cause detail isolation, network ambiguity,
@@ -665,7 +665,7 @@ first point where existing assertions are repaired.
   Rerender stale same-request props and new request ids. Retry must POST the
   captured/read public payload exactly once; another choice cannot be sent.
   Logging: none in component tests except useful assertion diagnostics.
-- [ ] **Task 9: Implement the shared resolver and remove the dead map.**
+- [x] **Task 9: Implement the shared resolver and remove the dead map.**
   Depends on 8. Update `ui-error-message.ts`, `messages/en.json`,
   `messages/ru.json`, `dialog.ts` error helpers, and production consumers.
   Delete `hitl-actions.tsx` and migrate its stale-view test coverage to the
@@ -673,7 +673,7 @@ first point where existing assertions are repaired.
   browser logs. Acceptance: U1 green for both locales and unknown input;
   code/unknown-reason fallback remains localized. Scratch S1's POST acceptance
   belongs to Task 11, not this resolver-only slice.
-- [ ] **Task 10: Implement read-only states in board/inbox/run cards.**
+- [x] **Task 10: Implement read-only states in board/inbox/run cards.**
   Depends on 7–9. Update `RunHitlResponse`, both `HitlPanel` mounts, every
   `web/app/(app)/runs/[runId]/layout.tsx` card mount and any actual production
   consumer found by import search. Set stored state before callback/refresh,
@@ -681,7 +681,7 @@ first point where existing assertions are repaired.
   payload, honor canAct/busy and existing completed/rework paths. Logging:
   none on render; no automatic retry loop. Acceptance: U2/replay DOM tests
   green; no count decrement on pending 202/503.
-- [ ] **Task 11: Implement equivalent scratch state and error presentation.**
+- [x] **Task 11: Implement equivalent scratch state and error presentation.**
   Depends on 7–10. Update `scratch-conversation.tsx`,
   `scratch-permission-panel.tsx` and scratch DTO typing; local accepted state
   survives loadDetail, saved retries use the stored payload, terminal refusal

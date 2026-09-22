@@ -1805,6 +1805,8 @@ export default async function RunDetailLayout({
                           kind={detail.pendingHitl.kind}
                           nodeInterrupt={detail.pendingHitl.nodeInterrupt}
                           options={detail.pendingHitl.options}
+                          answerState={detail.pendingHitl.answerState}
+                          storedResponse={detail.pendingHitl.storedResponse}
                           reviewCounts={reviewGateCounts}
                           runId={detail.runId}
                           schema={detail.pendingHitl.schema}
@@ -1833,6 +1835,8 @@ export default async function RunDetailLayout({
                       kind={detail.pendingHitl.kind}
                       nodeInterrupt={detail.pendingHitl.nodeInterrupt}
                       options={detail.pendingHitl.options}
+                      answerState={detail.pendingHitl.answerState}
+                      storedResponse={detail.pendingHitl.storedResponse}
                       reviewCounts={reviewGateCounts}
                       runId={detail.runId}
                       schema={detail.pendingHitl.schema}
@@ -1898,6 +1902,8 @@ export default async function RunDetailLayout({
                 kind={pendingHitl.kind}
                 nodeInterrupt={pendingHitl.nodeInterrupt}
                 options={pendingHitl.options}
+                answerState={pendingHitl.answerState}
+                storedResponse={pendingHitl.storedResponse}
                 reviewCounts={
                   pendingHitl.kind === "human" ? reviewGateCounts : null
                 }

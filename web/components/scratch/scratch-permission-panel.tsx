@@ -3,7 +3,7 @@
 import type { ScratchDetail } from "@/lib/scratch-runs/dialog";
 import type { KeyboardEvent, ReactElement } from "react";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import clsx from "clsx";
 
@@ -16,6 +16,7 @@ export interface ScratchPermissionPanelProps {
   pendingHitl: NonNullable<ScratchDetail["pendingHitl"]>;
   pending: boolean;
   onAnswer: (payload: Record<string, unknown>) => void;
+  onRefresh: () => void;
 }
 
 // The live HITL surface for a scratch run (M35 T3.2): a binary permission
@@ -26,10 +27,24 @@ export function ScratchPermissionPanel({
   pendingHitl,
   pending,
   onAnswer,
+  onRefresh,
 }: ScratchPermissionPanelProps): ReactElement {
   const t = useTranslations("scratch");
+  const tRun = useTranslations("run");
   const [hitlJson, setHitlJson] = useState("{}");
   const [parseError, setParseError] = useState<string | null>(null);
+  const previousAnswerState = useRef(pendingHitl.answerState);
+  const storedActionRef = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    if (
+      previousAnswerState.current === "open" &&
+      pendingHitl.answerState === "answer_stored"
+    ) {
+      storedActionRef.current?.focus();
+    }
+    previousAnswerState.current = pendingHitl.answerState;
+  }, [pendingHitl.answerState]);
 
   function submitJson(): void {
     try {
@@ -47,6 +62,65 @@ export function ScratchPermissionPanel({
 
     event.preventDefault();
     if (!pending) submitJson();
+  }
+
+  if (pendingHitl.answerState === "answer_stored") {
+    const saved = pendingHitl.storedResponse;
+    const chosen =
+      saved && "optionId" in saved
+        ? pendingHitl.options.find(
+            (option) => option.optionId === saved.optionId,
+          )
+        : null;
+    const canRetry =
+      saved !== null && (pendingHitl.kind !== "permission" || chosen !== null);
+
+    return (
+      <section
+        className={`${shell} p-3`}
+        data-testid="scratch-permission-panel"
+      >
+        <p className="mb-2 text-[13px] text-ink">{pendingHitl.prompt}</p>
+        <p aria-live="polite" className="text-[12px] text-ink-2">
+          {tRun("answerSaved")}
+        </p>
+        {chosen ? (
+          <p className="mt-2 font-semibold text-ink">{chosen.label}</p>
+        ) : null}
+        {saved && "response" in saved ? (
+          <pre className="mt-2 whitespace-pre-wrap text-xs text-ink-2">
+            {JSON.stringify(saved.response)}
+          </pre>
+        ) : null}
+        {!canRetry ? (
+          <>
+            <p className="mt-2 text-xs text-mute">
+              {saved && "optionId" in saved
+                ? tRun("savedInvalidOption")
+                : tRun("savedNoReplay")}
+            </p>
+            <button
+              ref={storedActionRef}
+              className="mt-2 rounded border border-line px-3 py-1.5 text-sm"
+              type="button"
+              onClick={onRefresh}
+            >
+              {tRun("refreshAnswer")}
+            </button>
+          </>
+        ) : (
+          <button
+            ref={storedActionRef}
+            className="mt-2 rounded border border-amber px-3 py-1.5 text-sm disabled:opacity-60"
+            disabled={pending}
+            type="button"
+            onClick={() => onAnswer(saved as Record<string, unknown>)}
+          >
+            {tRun("retryDelivery")}
+          </button>
+        )}
+      </section>
+    );
   }
 
   return (

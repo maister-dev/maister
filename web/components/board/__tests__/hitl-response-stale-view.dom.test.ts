@@ -24,7 +24,6 @@ vi.mock("next-intl", () => ({
     `${namespace}.${key}`,
 }));
 
-import { HitlActions } from "@/components/board/hitl-actions";
 import { RunHitlResponse } from "@/components/board/run-hitl-response";
 
 const PERMISSION_OPTIONS = [
@@ -83,25 +82,11 @@ function renderRunHitlResponse(): void {
         runId: "run-1",
         hitlRequestId: "hitl-1",
         kind: "permission",
+        answerState: "open",
+        storedResponse: null,
         options: PERMISSION_OPTIONS,
         schema: null,
         canAct: true,
-      }),
-    ),
-  );
-}
-
-function renderHitlActions(): void {
-  act(() =>
-    root.render(
-      createElement(HitlActions, {
-        runId: "run-1",
-        hitlRequestId: "hitl-1",
-        kind: "permission",
-        options: PERMISSION_OPTIONS,
-        canAct: true,
-        snoozeLabel: "snooze",
-        reviewLabel: "review",
       }),
     ),
   );
@@ -145,25 +130,6 @@ describe("RunHitlResponse — stale-view re-sync on a refused response", () => {
   it("keeps the current view for an incomplete answer", async () => {
     respondsWith(422, "NEEDS_INPUT");
     renderRunHitlResponse();
-    await clickOption("allow-once");
-
-    expect(router.refresh).not.toHaveBeenCalled();
-  });
-});
-
-describe("HitlActions — stale-view re-sync on a refused response", () => {
-  it("refreshes the board card when the answer is refused as CONFLICT", async () => {
-    respondsWith(409, "CONFLICT");
-    renderHitlActions();
-    await clickOption("allow-with-updates");
-
-    expect(router.refresh).toHaveBeenCalled();
-    expect(container.textContent).toContain("apiErrors.CONFLICT");
-  });
-
-  it("keeps the board card for a retryable supervisor outage", async () => {
-    respondsWith(503, "EXECUTOR_UNAVAILABLE");
-    renderHitlActions();
     await clickOption("allow-once");
 
     expect(router.refresh).not.toHaveBeenCalled();

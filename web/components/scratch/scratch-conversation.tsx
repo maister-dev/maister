@@ -9,8 +9,9 @@ import type { AdapterId } from "@/lib/acp-runners/adapter-support";
 import type { ProjectCapabilityCatalogEntry } from "@/lib/capabilities/project-catalog";
 import type { RunningLiveCommand } from "@/lib/capabilities/running-catalog";
 import type { ReactElement } from "react";
+import type { HitlErrorMessage } from "@/lib/ui-error-message";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import clsx from "clsx";
 
@@ -24,6 +25,7 @@ import {
   attachmentSummary,
   canCompose,
   errorText,
+  hitlErrorText,
 } from "@/lib/scratch-runs/dialog";
 import { buildRunningCommandCatalog } from "@/lib/capabilities/running-catalog";
 import { getAdapterSupportById } from "@/lib/acp-runners/adapter-support";
@@ -107,10 +109,23 @@ export function ScratchConversation({
 }): ReactElement {
   const locale = useLocale();
   const t = useTranslations("scratch");
+  const tRun = useTranslations("run");
   const [detail, setDetail] = useState<ScratchDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [hitlError, setHitlError] = useState<
+    | { runId: string; descriptor: HitlErrorMessage }
+    | { runId: string; key: "deliveryUnconfirmed" }
+    | null
+  >(null);
+  const activeRunId = useRef(runId);
+
+  activeRunId.current = runId;
+  const [localAnswer, setLocalAnswer] = useState<{
+    requestKey: string;
+    payload: NonNullable<ScratchDetail["pendingHitl"]>["storedResponse"];
+  } | null>(null);
   const [detailRevision, setDetailRevision] = useState(0);
   const [commandCatalog, setCommandCatalog] = useState<
     ProjectCapabilityCatalogEntry[]
@@ -132,18 +147,23 @@ export function ScratchConversation({
     try {
       const response = await fetch(`/api/scratch-runs/${runId}`);
 
+      if (activeRunId.current !== runId) return;
+
       if (!response.ok) {
         setError(t(errorText(await response.json().catch(() => null))));
 
         return;
       }
 
-      setDetail((await response.json()) as ScratchDetail);
+      const nextDetail = (await response.json()) as ScratchDetail;
+
+      if (activeRunId.current !== runId) return;
+      setDetail(nextDetail);
       setDetailRevision((current) => current + 1);
     } catch {
-      setError(t("errorGeneric"));
+      if (activeRunId.current === runId) setError(t("errorGeneric"));
     } finally {
-      setLoading(false);
+      if (activeRunId.current === runId) setLoading(false);
     }
   }, [runId]);
 
@@ -445,8 +465,10 @@ export function ScratchConversation({
   const answerHitl = useCallback(
     async (payload: Record<string, unknown>): Promise<void> => {
       if (!detail?.pendingHitl) return;
+      const requestKey = `${runId}:${detail.pendingHitl.hitlRequestId}`;
+
       setPendingAction("hitl");
-      setError(null);
+      setHitlError(null);
 
       try {
         const response = await fetch(
@@ -459,20 +481,82 @@ export function ScratchConversation({
         );
 
         if (!response.ok) {
-          setError(t(errorText(await response.json().catch(() => null))));
+          const body = await response.json().catch(() => null);
+
+          if (activeRunId.current !== runId) return;
+          const descriptor = hitlErrorText(body);
+
+          setHitlError({ runId, descriptor });
+          if (body?.details?.reason === "delivery_unavailable") {
+            setLocalAnswer({
+              requestKey,
+              payload: payload as NonNullable<
+                ScratchDetail["pendingHitl"]
+              >["storedResponse"],
+            });
+          }
+          if (
+            body?.details?.reason === "option_mismatch" ||
+            body?.details?.reason === "permission_resume_in_flight"
+          ) {
+            setLocalAnswer({ requestKey, payload: null });
+            await loadDetail();
+          }
+          if (response.status === 410) await loadDetail();
 
           return;
         }
 
+        const accepted = await response.json().catch(() => null);
+
+        if (activeRunId.current !== runId) return;
+
+        if (
+          response.status === 202 &&
+          [
+            "resume-in-progress",
+            "delivery-in-progress",
+            "resume-queued",
+          ].includes(accepted?.state)
+        ) {
+          setLocalAnswer({
+            requestKey,
+            payload: payload as NonNullable<
+              ScratchDetail["pendingHitl"]
+            >["storedResponse"],
+          });
+        }
         await loadDetail();
       } catch {
-        setError(t("errorGeneric"));
+        if (activeRunId.current === runId)
+          setHitlError({ runId, key: "deliveryUnconfirmed" });
       } finally {
-        setPendingAction(null);
+        if (activeRunId.current === runId) setPendingAction(null);
       }
     },
     [detail?.pendingHitl, loadDetail, runId],
   );
+
+  const visiblePendingHitl =
+    detail?.run.id === runId && detail.pendingHitl
+      ? localAnswer?.requestKey ===
+        `${runId}:${detail.pendingHitl.hitlRequestId}`
+        ? {
+            ...detail.pendingHitl,
+            answerState: "answer_stored" as const,
+            storedResponse:
+              detail.pendingHitl.answerState === "answer_stored"
+                ? detail.pendingHitl.storedResponse
+                : localAnswer.payload,
+          }
+        : detail.pendingHitl
+      : null;
+  const visibleHitlError =
+    hitlError?.runId === runId
+      ? "descriptor" in hitlError
+        ? tRun(hitlError.descriptor.key, hitlError.descriptor.values)
+        : tRun(hitlError.key)
+      : null;
 
   if (loading && !detail) {
     return (
@@ -572,12 +656,13 @@ export function ScratchConversation({
         />
       )}
 
-      {detail.pendingHitl ? (
+      {visiblePendingHitl ? (
         <div className="min-w-0 border-t border-line-soft px-4 py-3">
           <ScratchPermissionPanel
             pending={pendingAction === "hitl"}
-            pendingHitl={detail.pendingHitl}
+            pendingHitl={visiblePendingHitl}
             onAnswer={(payload) => void answerHitl(payload)}
+            onRefresh={() => void loadDetail()}
           />
         </div>
       ) : null}
@@ -588,9 +673,9 @@ export function ScratchConversation({
         </div>
       ) : null}
 
-      {error ? (
+      {visibleHitlError || error ? (
         <div className="mx-4 mt-3 min-w-0 rounded-lg border border-[#d9534f]/40 bg-[#d9534f]/10 px-3 py-2 text-[12px] leading-[1.5] text-[#d9534f]">
-          {error}
+          {visibleHitlError ?? error}
         </div>
       ) : null}
 
