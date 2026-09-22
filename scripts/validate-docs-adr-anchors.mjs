@@ -66,143 +66,251 @@ function changedDocsFiles() {
     .map((f) => join(repoRoot, f));
 }
 
-// Build the set of valid `#adr-…` anchors from decisions.md headers.
-const headingRe = /^#{2,6}\s+(ADR-\d+:.*)$/gm;
-const validAnchors = new Set();
-const knownAdrNumbers = new Set();
-const hubStubs = new Map(); // num -> { title, status }
-{
-  const src = readFileSync(decisionsPath, "utf8");
-  let m;
-  while ((m = headingRe.exec(src)) !== null) {
-    const heading = m[1];
-    validAnchors.add(slugify(heading));
-    const num = /ADR-(\d+)/.exec(heading);
-    if (num) knownAdrNumbers.add(num[1]);
-  }
-  const stubRe =
-    /^### ADR-(\d{3}): ([^\n]+)\n\n\*\*Status:\*\* ([^\n]+)$/gm;
-  while ((m = stubRe.exec(src)) !== null) {
-    hubStubs.set(m[1], { title: m[2], status: m[3] });
-  }
+
+// --- ADR index table (exported for scripts/validate-docs-adr-anchors.test.mjs) ---
+// The hub opens with an index table, one row per ADR, and carries a `### ADR-NNN:`
+// stub section per ADR further down. Those are two surfaces that must agree, and
+// nothing used to compare them: ADR-177's row was silently lost in a renumber
+// while its stub, its body file and their title/status all stayed consistent, so
+// every existing check passed.
+
+// A row cell may contain an ESCAPED pipe — ADR-069's title carries
+// `` `version_binding` (pinned\|latest) `` — so a plain split("|") would read one
+// row as five cells and report a phantom failure. Split on unescaped pipes only,
+// then unescape.
+export function splitTableRow(line) {
+  return line
+    .split(/(?<!\\)\|/)
+    .map((cell) => cell.replaceAll("\\|", "|").trim());
 }
 
-// --- Hub ↔ body-file contract (F2 split of decisions.md) ---------------------
-// Every `### ADR-NNN:` hub stub must have `docs/decisions/adr-NNN.md`; every
-// body file must have a hub stub; body `# ADR-NNN: <title>` and `**Status:**`
-// must match the stub verbatim (the body is the source — edit it first, then
-// mirror the stub). Runs in every mode (cheap, and stub/body drift must never
-// slip through a changed-files run that touched only one side.)
-const contractFailures = [];
-{
-  const decisionsDir = join(docsRoot, "decisions");
-  const bodyFiles = new Set(
-    readdirSync(decisionsDir).filter((f) => /^adr-\d{3}\.md$/.test(f)),
-  );
+export function parseAdrIndexRows(src) {
+  const rows = new Map();
+  for (const line of src.split("\n")) {
+    if (!/^\|\s*\[ADR-\d+\]/.test(line)) continue;
+    const cells = splitTableRow(line);
+    // ['', link, title, status, date, '']
+    const link = cells[1] ?? "";
+    const m = /^\[ADR-(\d+)\]\(#([^)]+)\)$/.exec(link);
+    if (!m) continue;
+    rows.set(m[1], {
+      anchor: m[2],
+      title: cells[2] ?? "",
+      status: cells[3] ?? "",
+      date: cells[4] ?? "",
+    });
+  }
+  return rows;
+}
 
-  for (const [num, stub] of hubStubs) {
-    const fileName = `adr-${num}.md`;
-    if (!bodyFiles.has(fileName)) {
-      contractFailures.push(
-        `hub stub ADR-${num} has no body file docs/decisions/${fileName}`,
+export function parseAdrStubs(src) {
+  const stubs = new Map();
+  const re =
+    /^### ADR-(\d+): ([^\n]+)\n\n\*\*Status:\*\* ([^\n]+)(?:\n\*\*Date:\*\* ([^\n]+))?$/gm;
+  let m;
+  while ((m = re.exec(src)) !== null) {
+    stubs.set(m[1], { title: m[2], status: m[3], date: m[4] ?? null });
+  }
+  return stubs;
+}
+
+// Title, date and anchor are compared; STATUS DELIBERATELY IS NOT. The row's
+// status column is an ABBREVIATION of the stub's, on purpose — ADR-053's stub
+// status is a whole paragraph with links, its row reads
+// "Accepted _(partially superseded)_". Ten rows abbreviate this way today, so
+// asserting equality would either force unreadable table cells or encode a
+// "is a summary of" rule. Presence and identity are what a renumber breaks.
+export function checkAdrIndexRows(src) {
+  const stubs = parseAdrStubs(src);
+  const rows = parseAdrIndexRows(src);
+  const failures = [];
+
+  for (const num of stubs.keys()) {
+    if (!rows.has(num)) {
+      failures.push(
+        `ADR-${num} has a \`### ADR-${num}:\` stub but no row in the index table`,
       );
+    }
+  }
+  for (const num of rows.keys()) {
+    if (!stubs.has(num)) {
+      failures.push(
+        `ADR-${num} has an index-table row but no \`### ADR-${num}:\` stub`,
+      );
+    }
+  }
+  for (const [num, stub] of stubs) {
+    const row = rows.get(num);
+    if (!row) continue;
+    if (row.title !== stub.title) {
+      failures.push(
+        `ADR-${num}: index-row title differs from the stub ("${row.title}" vs "${stub.title}")`,
+      );
+    }
+    if (stub.date !== null && row.date !== stub.date) {
+      failures.push(
+        `ADR-${num}: index-row date differs from the stub ("${row.date}" vs "${stub.date}")`,
+      );
+    }
+    const want = slugify(`ADR-${num}: ${stub.title}`);
+    if (row.anchor !== want) {
+      failures.push(
+        `ADR-${num}: index-row anchor "#${row.anchor}" does not slugify from the stub heading (expected "#${want}")`,
+      );
+    }
+  }
+  return failures;
+}
+
+function main() {
+  // Build the set of valid `#adr-…` anchors from decisions.md headers.
+  const headingRe = /^#{2,6}\s+(ADR-\d+:.*)$/gm;
+  const validAnchors = new Set();
+  const knownAdrNumbers = new Set();
+  const hubStubs = new Map(); // num -> { title, status }
+  {
+    const src = readFileSync(decisionsPath, "utf8");
+    let m;
+    while ((m = headingRe.exec(src)) !== null) {
+      const heading = m[1];
+      validAnchors.add(slugify(heading));
+      const num = /ADR-(\d+)/.exec(heading);
+      if (num) knownAdrNumbers.add(num[1]);
+    }
+    const stubRe =
+      /^### ADR-(\d{3}): ([^\n]+)\n\n\*\*Status:\*\* ([^\n]+)$/gm;
+    while ((m = stubRe.exec(src)) !== null) {
+      hubStubs.set(m[1], { title: m[2], status: m[3] });
+    }
+  }
+
+  // --- Hub ↔ body-file contract (F2 split of decisions.md) ---------------------
+  // Every `### ADR-NNN:` hub stub must have `docs/decisions/adr-NNN.md`; every
+  // body file must have a hub stub; body `# ADR-NNN: <title>` and `**Status:**`
+  // must match the stub verbatim (the body is the source — edit it first, then
+  // mirror the stub). Runs in every mode (cheap, and stub/body drift must never
+  // slip through a changed-files run that touched only one side.)
+  const contractFailures = [];
+  {
+    const decisionsDir = join(docsRoot, "decisions");
+    const bodyFiles = new Set(
+      readdirSync(decisionsDir).filter((f) => /^adr-\d{3}\.md$/.test(f)),
+    );
+
+    for (const [num, stub] of hubStubs) {
+      const fileName = `adr-${num}.md`;
+      if (!bodyFiles.has(fileName)) {
+        contractFailures.push(
+          `hub stub ADR-${num} has no body file docs/decisions/${fileName}`,
+        );
+        continue;
+      }
+      bodyFiles.delete(fileName);
+      const body = readFileSync(join(decisionsDir, fileName), "utf8");
+      const titleM = /^# ADR-(\d{3}): ([^\n]+)$/m.exec(body);
+      const statusM = /^\*\*Status:\*\* ([^\n]+)$/m.exec(body);
+      if (!titleM || titleM[2] !== stub.title) {
+        contractFailures.push(
+          `docs/decisions/${fileName}: title differs from the hub stub ("${titleM?.[2] ?? "<missing>"}" vs "${stub.title}")`,
+        );
+      }
+      // Body statuses point at the hub (`../decisions.md#adr-…`); stub statuses
+      // link in-file (`#adr-…`). Normalize before comparing.
+      const bodyStatus = (statusM?.[1] ?? "<missing>").replaceAll(
+        "../decisions.md#",
+        "#",
+      );
+      if (bodyStatus !== stub.status) {
+        contractFailures.push(
+          `docs/decisions/${fileName}: **Status:** differs from the hub stub ("${bodyStatus}" vs "${stub.status}")`,
+        );
+      }
+    }
+    for (const orphan of bodyFiles) {
+      contractFailures.push(
+        `docs/decisions/${orphan} has no matching ADR stub in decisions.md`,
+      );
+    }
+
+    // Fourth surface: the index table. Runs in every mode like the rest of the
+    // contract — a renumber edits the table and the stubs in separate hunks, so
+    // a changed-files run that touched only one side must not let them drift.
+    contractFailures.push(...checkAdrIndexRows(readFileSync(decisionsPath, "utf8")));
+  }
+
+  if (contractFailures.length > 0) {
+    console.error(
+      `validate-docs-adr-anchors: ${contractFailures.length} hub/body contract violation(s):`,
+    );
+    for (const f of contractFailures) console.error(`  ${f}`);
+    return 2;
+  }
+
+  // Match markdown links pointing at a decisions.md ADR anchor, from any doc, plus
+  // in-file `(#adr-…)` links inside decisions.md itself (the index table).
+  //   [label](path/to/decisions.md#adr-063-…)   |   [label](#adr-063-…)
+  const linkRe = /\]\((?:[^()#]*\bdecisions\.md)?#(adr-[a-z0-9-]+)\)/gi;
+
+  const targets = wantAll ? walkMd(docsRoot) : changedDocsFiles();
+  if (targets.length === 0) {
+    console.log("validate-docs-adr-anchors: no docs/*.md changes detected");
+    return 0;
+  }
+
+  const failures = [];
+  let checked = 0;
+
+  for (const file of targets) {
+    let src;
+    try {
+      src = readFileSync(file, "utf8");
+    } catch {
       continue;
     }
-    bodyFiles.delete(fileName);
-    const body = readFileSync(join(decisionsDir, fileName), "utf8");
-    const titleM = /^# ADR-(\d{3}): ([^\n]+)$/m.exec(body);
-    const statusM = /^\*\*Status:\*\* ([^\n]+)$/m.exec(body);
-    if (!titleM || titleM[2] !== stub.title) {
-      contractFailures.push(
-        `docs/decisions/${fileName}: title differs from the hub stub ("${titleM?.[2] ?? "<missing>"}" vs "${stub.title}")`,
-      );
-    }
-    // Body statuses point at the hub (`../decisions.md#adr-…`); stub statuses
-    // link in-file (`#adr-…`). Normalize before comparing.
-    const bodyStatus = (statusM?.[1] ?? "<missing>").replaceAll(
-      "../decisions.md#",
-      "#",
-    );
-    if (bodyStatus !== stub.status) {
-      contractFailures.push(
-        `docs/decisions/${fileName}: **Status:** differs from the hub stub ("${bodyStatus}" vs "${stub.status}")`,
-      );
-    }
-  }
-  for (const orphan of bodyFiles) {
-    contractFailures.push(
-      `docs/decisions/${orphan} has no matching ADR stub in decisions.md`,
-    );
-  }
-}
+    let m;
+    while ((m = linkRe.exec(src)) !== null) {
+      const anchor = m[1].toLowerCase();
+      checked += 1;
+      const bare = /^adr-(\d+)$/.exec(anchor);
 
-if (contractFailures.length > 0) {
+      // Bare `#adr-NNN` is the repo's citation shorthand — accept it as long as
+      // ADR-NNN exists. A full-title anchor `#adr-NNN-<slug>` must match a header
+      // slug exactly (this is what catches a missing ADR or a number squatting a
+      // header with a different title).
+      if (bare ? knownAdrNumbers.has(bare[1]) : validAnchors.has(anchor)) {
+        continue;
+      }
+      const line = src.slice(0, m.index).split("\n").length;
+      const num = /^adr-(\d+)/.exec(anchor);
+      const hint =
+        num && !knownAdrNumbers.has(num[1])
+          ? `ADR-${num[1]} has no \`### ADR-${num[1]}: …\` header in decisions.md`
+          : `no ADR header slugifies to this anchor (wrong title/number?)`;
+      failures.push({ file: relative(repoRoot, file), line, anchor, hint });
+    }
+  }
+
+  if (failures.length === 0) {
+    console.log(
+      `validate-docs-adr-anchors: ${checked} ADR anchor link(s) resolved across ${targets.length} file(s); ${hubStubs.size} hub stub(s) ↔ body files in sync`,
+    );
+    return 0;
+  }
+
+  console.error(`validate-docs-adr-anchors: ${failures.length} broken ADR anchor(s):`);
+  for (const f of failures) {
+    console.error(`  ${f.file}:${f.line}  -> #${f.anchor}`);
+    console.error(`    ${f.hint}`);
+  }
   console.error(
-    `validate-docs-adr-anchors: ${contractFailures.length} hub/body contract violation(s):`,
+    `\nFix the links above (or add the missing ADR to docs/decisions.md) and re-run ` +
+      `\`pnpm validate:docs\`. To check every file regardless of git status, run ` +
+      `\`pnpm validate:docs:all\`.`,
   );
-  for (const f of contractFailures) console.error(`  ${f}`);
-  process.exit(2);
+  return 2;
+
 }
 
-// Match markdown links pointing at a decisions.md ADR anchor, from any doc, plus
-// in-file `(#adr-…)` links inside decisions.md itself (the index table).
-//   [label](path/to/decisions.md#adr-063-…)   |   [label](#adr-063-…)
-const linkRe = /\]\((?:[^()#]*\bdecisions\.md)?#(adr-[a-z0-9-]+)\)/gi;
-
-const targets = wantAll ? walkMd(docsRoot) : changedDocsFiles();
-if (targets.length === 0) {
-  console.log("validate-docs-adr-anchors: no docs/*.md changes detected");
-  process.exit(0);
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  process.exit(main());
 }
-
-const failures = [];
-let checked = 0;
-
-for (const file of targets) {
-  let src;
-  try {
-    src = readFileSync(file, "utf8");
-  } catch {
-    continue;
-  }
-  let m;
-  while ((m = linkRe.exec(src)) !== null) {
-    const anchor = m[1].toLowerCase();
-    checked += 1;
-    const bare = /^adr-(\d+)$/.exec(anchor);
-
-    // Bare `#adr-NNN` is the repo's citation shorthand — accept it as long as
-    // ADR-NNN exists. A full-title anchor `#adr-NNN-<slug>` must match a header
-    // slug exactly (this is what catches a missing ADR or a number squatting a
-    // header with a different title).
-    if (bare ? knownAdrNumbers.has(bare[1]) : validAnchors.has(anchor)) {
-      continue;
-    }
-    const line = src.slice(0, m.index).split("\n").length;
-    const num = /^adr-(\d+)/.exec(anchor);
-    const hint =
-      num && !knownAdrNumbers.has(num[1])
-        ? `ADR-${num[1]} has no \`### ADR-${num[1]}: …\` header in decisions.md`
-        : `no ADR header slugifies to this anchor (wrong title/number?)`;
-    failures.push({ file: relative(repoRoot, file), line, anchor, hint });
-  }
-}
-
-if (failures.length === 0) {
-  console.log(
-    `validate-docs-adr-anchors: ${checked} ADR anchor link(s) resolved across ${targets.length} file(s); ${hubStubs.size} hub stub(s) ↔ body files in sync`,
-  );
-  process.exit(0);
-}
-
-console.error(`validate-docs-adr-anchors: ${failures.length} broken ADR anchor(s):`);
-for (const f of failures) {
-  console.error(`  ${f.file}:${f.line}  -> #${f.anchor}`);
-  console.error(`    ${f.hint}`);
-}
-console.error(
-  `\nFix the links above (or add the missing ADR to docs/decisions.md) and re-run ` +
-    `\`pnpm validate:docs\`. To check every file regardless of git status, run ` +
-    `\`pnpm validate:docs:all\`.`,
-);
-process.exit(2);
