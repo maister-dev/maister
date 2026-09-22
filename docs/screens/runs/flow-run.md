@@ -295,6 +295,9 @@ this screen owns only the surface. All copy comes from the `run` namespace.
   (`rebase` / `merge`, defaulting to the project `sync_strategy_default`), a
   resolver-runner select (defaulting through the sync-runner chain), a **push**
   toggle, and a "resolve conflicts with AI agent" checkbox **default ON**.
+  (ADR-181 — Designed) This inline dialog is removed: `review-sync-open` and
+  the drift card's Sync branch open the run git panel's Update section
+  (`?git=update`, [`git-panel.md`](git-panel.md)).
 - **Sync-in-progress panel** — while an attempt runs it shows the durable
   `run_sync_attempts` phase (`starting → rebasing → agent_running → verifying →
   pushing`), resolved server-side by `buildRunSyncPanelData`. It is TEXT ONLY —
@@ -310,6 +313,20 @@ this screen owns only the surface. All copy comes from the `run` namespace.
   `ai_rebase_merge`, the promote dialog gains an **auto-finalize after resolve**
   checkbox, **default OFF** (two-step default: a resolved conflict returns the run
   to `Review` for a clean re-promote; checked finalizes to `Done` best-effort).
+
+## Run git panel (Designed — ADR-181)
+
+For every parked run — `Review | Crashed | Failed | Done | Abandoned`, and
+`HumanWorking` for the open rework claim's owner — the lifecycle actions open
+the run git panel ([`git-panel.md`](git-panel.md)). It covers commit,
+discard, publish under a public branch name, update onto base / target /
+published, open and finalize a PR, and re-attach a removed worktree. It
+replaces the Export dialog and absorbs the review panel's Sync branch dialog.
+Promote, the readiness and drift chips and the ahead/behind chip stay on the
+review panel. A `Failed` run stays listed wherever a `Crashed` one is — the
+portfolio, the project workspace list, the rail and the board's Backlog card
+menu — so its git actions are reachable without knowing its URL. Behavior:
+[`../../system-analytics/workbench-git.md`](../../system-analytics/workbench-git.md).
 
 ## Budget-breach panel
 

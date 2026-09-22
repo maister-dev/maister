@@ -290,6 +290,11 @@ as implicit `owner` of every project.
   syncRunnerId?,                 // ADR-141 (Implemented, migration 0106): nullable text
                                  //   FK -> platform_acp_runners.id ON DELETE SET NULL;
                                  //   resolver runner default (null = inherit)
+  publicBranchTemplate,          // ADR-181 (Designed — migration 0179): text NOT NULL
+                                 //   DEFAULT 'feature/{task_key}-{slug}'; the name a
+                                 //   published run branch carries on the remote
+                                 //   (placeholders {task_key} {slug} {attempt});
+                                 //   mirrored as project.public_branch_template
   createdAt, archivedAt?
 }
 ```
@@ -2246,7 +2251,9 @@ numerator.
   lifecycleOperationName?         // (text, migration 0032)
                                  //   archive | drop | exportBranch |
                                  //   snapshotCommit | handoffBranch |
-                                 //   sync (ADR-141, Implemented; TS-only 6th op)
+                                 //   sync (ADR-141, Implemented; TS-only 6th op) |
+                                 //   discardChanges | reattach | prOpen | prFinalize
+                                 //   (ADR-181, Designed; TS-only, no CHECK)
   lifecycleOperationLeaseExpiresAt?, // ADR-148 (Implemented, migration 0116)
   lifecycleOperationExpectedRunStatus?, // fenced finalization status
   archivedCommit?,                // exact preservation snapshot/head evidence
@@ -2254,6 +2261,12 @@ numerator.
                                  // legacy_unknown
   removalKind?                    // archive | drop | discard | retention_gc |
                                  // reconciliation | legacy; required when removedAt
+  publishedBranch?,               // ADR-181 (Designed — migration 0179): the public
+                                 //   name the internal branch carries on the remote
+  publishedRemote?,               // ADR-181 (Designed — migration 0179): the remote
+  publishedAt?                    // ADR-181 (Designed — migration 0179): written only
+                                 //   after a successful push; the three are co-null
+                                 //   (workspaces_published_shape_check)
 }
 ```
 

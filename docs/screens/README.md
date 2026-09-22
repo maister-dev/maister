@@ -43,6 +43,7 @@ docs/screens/
     flow-run.md      # /runs/:runId flow/agent run landing surface
     scratch-run.md   # /scratch-runs/:runId conversation-first surface
     run-inspector.md # shared right sidebar for run info + actions
+    git-panel.md     # shared run git panel (commit/discard/publish/update/PR/reattach)
     workbench.md     # shared Files/Diff/Evidence/Timeline workbench
   projects/          # project onboarding + settings surfaces
     project-board.md # /projects/:slug board + card editing
@@ -205,6 +206,7 @@ flowchart TD
 | [`runs/flow-run.md`](runs/flow-run.md) | Flow run detail | `/runs/{runId}` | Implemented (refinement ongoing) |
 | [`runs/scratch-run.md`](runs/scratch-run.md) | Scratch run detail | `/scratch-runs/{runId}` | Implemented |
 | [`runs/run-inspector.md`](runs/run-inspector.md) | Run inspector block | shared | Implemented |
+| [`runs/git-panel.md`](runs/git-panel.md) | Run git panel block (commit, discard, publish under a public name, update, PR, reattach) | shared (`?git=<section>`) | Designed (ADR-181) |
 | [`runs/workbench.md`](runs/workbench.md) | Run workbench block | shared | Implemented (Timeline/Evidence tabs + collapsible Files/Diff) |
 | [`components.md`](components.md) | Shared UI primitives (Tabs, chips/badges, card shells) | shared | Implemented |
 

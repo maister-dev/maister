@@ -627,7 +627,7 @@ components:
 
     DataRunPromoted:
       type: object
-      description: "`run.promoted` — promotion succeeded."
+      description: "`run.promoted` — promotion succeeded. (ADR-181 — Designed) Also emitted when a PR-backed run is finalized to Done from Crashed, Failed or Abandoned; that payload carries `source: pr_finalize`."
       required: [mode, target, pullRequestUrl]
       additionalProperties: false
       properties:
@@ -642,6 +642,10 @@ components:
           format: uri
           nullable: true
           description: PR/MR URL for `pull_request` mode; `null` for `local_merge`.
+        source:
+          type: string
+          enum: [pr_finalize]
+          description: "(ADR-181 — Designed) Present only on a finalize from Crashed, Failed or Abandoned (`POST /api/runs/{runId}/pr/finalize`): no readiness was asserted — the operator's click was the decision. Absent on every `promoteRun` promotion, including a finalize from Review."
 
     DataRunPrMerged:
       type: object

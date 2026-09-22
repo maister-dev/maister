@@ -72,6 +72,7 @@ contract:
 | `fileView=preview\|source` | Files | Preview/source mode for the selected file. |
 | `diffFile=<repo-relative-path>` | Diff | Selected changed file in the Diff tab. This must not trigger source-file reads. |
 | `diffview=split\|unified` | Diff | Diff renderer mode. |
+| `git=tree\|publish\|update\|pr\|reattach` | Git panel | (ADR-181 — Designed) Opens the run git panel at that section ([`git-panel.md`](git-panel.md)). Card, rail and inspector menu items link here instead of mutating. Invalid values open the default section. |
 | `diffbody=rich\|raw` | Diff | Selected-file rendering mode inside the per-file diff: rich rendered/highlighted view or raw source view. It must not replace the file renderer with a raw unified patch dump. |
 | `diffFiles=shown\|hidden` | Diff | Changed-file tree visibility. The tree is rooted at project-relative paths and includes an in-place file-name filter. The default is `shown`; hiding the tree keeps the selected file body visible. |
 | `scope=run\|review\|since-last-review\|last-node\|uncommitted` | Diff / inspector | Diff and change-summary scope. `review` is the current Flow-review source and is selected by `wb=review`. |
@@ -193,7 +194,7 @@ Consensus evidence uses the existing Evidence tab and artifact routes:
 - Deep links and file/diff query params continue to work when the Evidence tab
   contains consensus artifacts.
 
-## Lifecycle operations (Designed)
+## Lifecycle operations (Implemented; git panel Designed — ADR-181)
 
 The workbench's `web/components/workbench/lifecycle-actions.tsx` renders the
 run's lifecycle operations (surfaced in the inspector Actions tab —
@@ -206,6 +207,14 @@ claiming/done, and `promoteRun` refuses while a `sync` claim is active). The
 matrix and claim semantics are canonical in
 [`../../system-analytics/workbench-lifecycle.md`](../../system-analytics/workbench-lifecycle.md)
 and [`../../system-analytics/branch-sync.md`](../../system-analytics/branch-sync.md).
+
+(ADR-181 — Designed) On the run detail the lifecycle actions open the **run
+git panel** ([`git-panel.md`](git-panel.md)) where they opened the Export
+dialog. The panel's operations take the same slot — `discardChanges`,
+`reattach`, `prOpen` and `prFinalize` join the op names; publish reuses
+`exportBranch` and update reuses `sync`. The slot then fences against a live
+promotion claim in both directions. Behavior:
+[`../../system-analytics/workbench-git.md`](../../system-analytics/workbench-git.md).
 
 ## Data & APIs
 

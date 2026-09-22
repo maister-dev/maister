@@ -1,0 +1,1832 @@
+# Run git panel — status-independent worktree git operations, public branch names, PR before promotion (ADR-181)
+
+**Branch**: `claude/worktree-run-management-0603cc` (this worktree; the plan file is
+named after the branch so `/aif-implement` finds it)
+**Base**: `master` @ `c36ff5b1` + `65b1a8e5` (docs(adr-181), the branch's only commit —
+1 ahead / 0 behind)
+**Created**: 2026-09-22 · **Refined**: 2026-09-22 (`/aif-improve` pass 1 — 8 additions, 7
+improvements, 2 dependency fixes, 3 removals; corrections C14–C16 added)
+**ADR**: ADR-181 (Accepted → Implemented at T4.3). No new ADR. **Migration `0173`
+reserved** (journal max is `idx 172`, `when 1790016407278`; the new entry must be
+strictly greater).
+**Contract**: `docs/decisions/adr-181.md` (frozen) + `docs/system-analytics/workbench-git.md`
+(Designed → Implemented). Nothing below reopens a decision recorded there; every
+"D" is an implementation refinement the ADR leaves open, or a correction of a
+premise the code refutes (§Ground truth).
+
+## Goal
+
+One git panel per run over one status-independent policy and one lazy read model,
+so an operator on a server installation (no host shell) can commit, discard,
+publish under a public branch name, update from base / target / their own remote
+pushes, open a PR before any promotion, finalize a PR-backed run, and re-attach a
+removed worktree — in every parked status (`Review | Crashed | Failed | Done |
+Abandoned`, plus `HumanWorking` for the rework-claim owner). The three defects that
+hide the ADR-160 carve-out are fixed, `Failed` is listed as a parked workbench, and
+the scratch promote modes the UI already offers are honoured by the server.
+
+## Settings
+
+- **Testing**: yes. TDD, **RED → GREEN → REFACTOR**, real seams: policy matrices in
+  the `unit` project; publish / update / discard / reattach against **real git**
+  (bare remote + parent repo + run worktree, the `real-git.integration.test.ts`
+  shape); DB-backed controls on real Postgres (`test-support/pg-container.ts`, the
+  only Testcontainers constructor); the provider boundary mocked at
+  `node:child_process`/`fetch` (the `pr-adapter.test.ts` idiom) and at the service
+  seam (`promote-pr.test.ts`); panel/dialog states in jsdom (`*.dom.test.ts`, per-file
+  `// @vitest-environment jsdom`); one authed Playwright smoke. No trivial controls
+  (shape/constant/presence assertions); minimal overlap (§Test plan audit).
+- **Logging**: verbose, structured pino through the module loggers already present
+  in `web/lib/worktree.ts`, `web/lib/workbench-lifecycle/service.ts`,
+  `web/lib/runs/sync-target.ts`, `web/lib/runs/promote.ts` — same field
+  conventions (`runId`, `workspaceId`, `op`, `remote`, `branch`, `publicBranch`,
+  `sha`, `leaseSha`, `outcome`, `latencyMs`). DEBUG: every git argv (URLs through
+  `redactUrl`); INFO: each completed operation and each name resolution
+  (`source: upstream | request | template`); WARN: non-fast-forward / lease
+  refusals, `ls-remote` unreachable, template fallback; ERROR: unexpected git
+  failure. Never a token, never a credentialed URL. Level is the existing web
+  logger configuration — **no new knob**.
+- **Docs**: yes — mandatory checkpoint. **SDD**: Phase 0 freezes every contract
+  surface (OpenAPI, ERD, taxonomy, configuration, screens, RU manual) BEFORE code;
+  Phase 4 re-derives the surface list from the diff.
+- **Migration**: one — `0173_*` (SQL + `_journal.json` + `0173_snapshot.json`), ERD
+  regenerated (`pnpm --filter maister-web db:erd`), `drizzle-kit generate` reports
+  "No schema changes" afterwards (schema.ts is the fourth leg).
+  If `master` gains a `0173` before this branch merges, the triple is regenerated as
+  `0174` in the rebase session (renumber pass), never edited in place.
+
+## Roadmap Linkage
+
+**Milestone**: `none`
+**Rationale**: the only open roadmap milestone is M51 ("See everything", a read-only
+visibility layer); ADR-181 is workbench operability. A roadmap entry is proposed in
+the questions (Q6) and belongs to `/aif-roadmap`, not this plan.
+
+---
+
+## Ground truth — verified, and sixteen corrections
+
+Everything the request cites was re-read on this branch (`65b1a8e5` = `master`
+`c36ff5b1` + docs). The mechanism is as stated. The following premises are refined
+or refuted by the code; the plan is built on the corrected ones.
+
+### Verified as stated (abridged; line drifts in C13)
+
+| # | Fact | Evidence |
+|---|---|---|
+| G1 | Policy gates only on status + `hasWorkspace` + `!workspaceRemoved` | `web/lib/workbench-lifecycle/policy.ts:74-80` (`WORKTREE_ACTION_STATUSES`, module-local, NOT exported), `:141-175` (branch order: HumanWorking carve-out → stop arm → status → row → removed → worktree arm) |
+| G2 | The carve-out is dead in production | `service.ts:179` `requireActiveSession: () => Promise<{ id: string } | void>`; `:1980-1984` awaits and DISCARDS the user; `portfolio.ts:278-281` hard-codes `claimOwnerUserId: null, viewerUserId: null`; `layout.tsx:1226-1240` passes neither field to `deriveInspectorActions` (`lib/runs/inspector-actions.ts:152-153` defaults them to `null`) |
+| G3 | `Failed` is invisible | `portfolio.ts:77-90` `ACTIVE_RUN_STATUSES` (no `Failed`), consumers `:396`, `:946`, `lib/queries/project.ts:358`, `app/api/attention/stream/route.ts:149`; `board.ts:100-102` `Failed|Abandoned → Backlog`; `queries/board.ts:696` Backlog rows become `BacklogCard` (`:100-142`, no `lifecycleActions`) while `FlightCard` carries them (`:190`, filled `:811-818`) |
+| G4 | Rail never offers export; export dialog never snapshots; worktree-gone sticks | `lifecycle-actions.tsx:189-215` `railMenuItems` (early return after stop items, then archive/drop only); `:656` `snapshotDirty: false`; `:872-893` Push/Handoff `disabled` while `metadata === null`; `service.ts:990-1042` `getWorkbenchHandoffMetadata` → `statusPorcelain` (`worktree.ts:2856-2889`) throws `CONFLICT` on a vanished path; `reconcile.ts:388-391` is a pure classifier — `crashRunningRun` (`state-transitions.ts:1394-1400`) writes `runs` only, so the row keeps `removed_at IS NULL` and a stale `worktree_path` |
+| G5 | Inspector Actions tab is inert | `run-inspector.tsx:203-222` renders `<span>` when `href` is absent; `layout.tsx:1240-1245` never sets `href` although `inspector-actions.ts:69-92` already computes `endpoint`/`method` |
+| G6 | Export pushes the internal name, no upstream, records nothing | `worktree.ts:959-1009` `pushBranch` — argv `push [--force-with-lease] [--set-upstream] --end-of-options <remote> <branch>` (`:977` opt-in only, no caller sets it), **no refspec**; `service.ts:1485-1590` `exportWorkbenchBranch` writes no DB column; `branch-published.ts:21-28` `prUrl != null || branchHasUpstream()` |
+| G7 | Sync is Review-only, target-only, leases on the internal name | `sync-target.ts:174-212` six `PRECONDITION` arms (`:175` status); `:710-713` `targetBranch = workspace.targetBranch ?? project.mainBranch ?? "main"`; `:732-741` `remoteShaBefore = remoteBranchHead({remote:"origin", branch})`; `:1076` `shouldPush = input.push ?? published`; `worktree.ts:3866-3922` `forceWithLeasePush` lease `refs/heads/${branch}:${expectedSha ?? ""}` (`:3873`), remote **hard-coded `origin`** (`:3889-3891`) |
+| G8 | PR is a promotion | `promote.ts:606-611` Review guard; `:1378-1386` push `origin`/internal, no upstream; `:1391-1398` `createOrUpdatePr` args, no `draft`; `:1413-1419` `prTitle`/`prBody`; `pr-adapter.ts:31-38` `CreateOrUpdatePrArgs` (`remote` declared, never read); `:605-624` `selectPrAdapter` (github/gitlab/gitea/gitverse, `generic → PRECONDITION`); `:172-199` gh list-by-head/base then reuse |
+| G9 | `finalizePullRequest` writes | `promote.ts:1421-1674`: fence `:1426-1452`; sibling flip `:1520-1555`; `runs` `:1557-1571` (`Done`, `promotedHeadSha`, `mergeCommitSha: null`); `workspaces` `:1576-1592` (`promotionState:"done"`, `promotedAt`, `scheduledRemovalAt`, `prUrl`, `prNumber`, `promotionLane`); events `:1594-1636` |
+| G10 | Scratch promote refuses two of the three UI modes | `promote.ts:1751-1757`; `scratch-inspector-actions.tsx:96-98`; target `:1785` `input.targetBranch ?? scratch.baseBranch`; scratch `workspaces` rows carry no base/target (`scratch-runs/service.ts:926-933`), only `scratch_runs` does (`schema.ts:5099-5101`) |
+| G11 | `pr_state_scan` needs no change for a non-scratch `pr_url` | `pr-state-scan.ts:288-296` |
+| G12 | Rework-claim ingest and reopen assume remote name = internal name | `rework-claim-ingest.ts:82` `` `${remote}/${args.branch}` ``; `reopen.ts:158-188` (`ORIGIN` const, `createLocalBranchAt` + `addWorktreeForBranch`), and `:236-246` **clears `archived_*`**, re-stamps no provenance |
+| G13 | Preservation and the archive knob | `gc/preserve.ts:63` `maister/archive/<runId>`, `:104-127` `archivePush` only pushes when true; `instance-config.ts:271-275` `gcArchivePush()`; `archiveWorkbenchForCtx`/`removeWorkbenchForCtx` never pass it; reconciler `workspace-reconciler.ts:656-668` INSERTS a row only when none exists |
+
+### C1 — the lifecycle op name `discard` is taken; the new op is `discardChanges`
+
+`web/app/api/runs/[runId]/discard/route.ts` → `discardWorkbench` →
+`removeWorkbench(runId, "discard")` (`service.ts:1317-1322`) is the crashed-run
+**workspace removal**, and `"discard"` is already a member of both op-name unions
+(`schema.ts:4596-4605`, `service.ts:80-91`). ADR-181 §11's TS-only value `discard`
+would alias a different operation. **The new op is `discardChanges`** (route
+`discard-changes` as the ADR already names it). Recorded as a dated, non-direction
+amendment on ADR-181 (T0.7) and in `workbench-git.md` Domain entities / Route
+contracts.
+
+### C2 — `{task_key}` has no column to read
+
+`tasks` has `number` (`schema.ts:1404`) and `title` (`:1405`) but no `task_key`; the
+human key is `projects.task_key` (`:228`) + `-` + `tasks.number`, composed at every
+consumer (`queries/board.ts:416-419`, `queries/activity.ts:303`). The template
+resolver JOINs `projects`; `run-<8hex>` covers the task-less run. `{attempt}` has no
+`runs` column either: for a flow run it is the `attempt-N` suffix the internal
+branch already carries (`services/runs.ts:1474-1476`), `1` for agent and scratch.
+
+### C3 — the sync conflict path does not restore
+
+The mechanical `agent:false` abort (`sync-target.ts:1024-1043`) calls
+`abortSyncOperation` only; `restoreWorktreeToCommit` (`worktree.ts:3776`) is used on
+the **resolver** failure path. ADR-181 D5's "ALWAYS aborts and restores the
+pre-operation SHA" is therefore a code change (T2.1), not a re-wire.
+
+### C4 — `Failed` is already admitted by the policy and already absent from the counters
+
+`WORKTREE_ACTION_STATUSES` (`policy.ts:74-80`) contains `Failed`; the visibility gap
+is `ACTIVE_RUN_STATUSES` + the board's `BacklogCard`, not the policy.
+`decisions.ts:175-215` sums HITL + promotable (`Review` only,
+`ext-activity/promotable.ts:29`) + crashed (`decision-sources.ts:149`
+`eq(runs.status,"Crashed")`) + flagged — `Failed` counts nowhere today, so ADR-181
+D2's "stays OUT" is a **guard control** (RED 3), not a change. Likewise
+`lib/work/stage.ts:85` maps `Failed → "Ready"` by ADR-170 design and is untouched.
+
+### C5 — `run.promoted` is a webhook-only event; `attribution.source` has one value
+
+`webhooks/taxonomy.ts:19` lists `run.promoted`; `domain-events/taxonomy.ts` has no
+such kind (`run.done` is emitted both ways, `promote.ts:1607-1636`).
+`PromoteRunInput.attribution` (`promote.ts:92`) is `{ source: "auto_promotion";
+laneClass }` and only writes `promotion_lane`. ADR-181's `source:"pr_finalize"`
+needs a home: **D12** puts it on the `attribution` union (no `laneClass`,
+`promotion_lane` stays `null`), on the `run.promoted` webhook `data.source`
+(additive AsyncAPI field), and on the INFO log line.
+
+### C6 — no push primitive can push a refspec or lease against a different remote name
+
+`pushBranch` has no refspec; `forceWithLeasePush` hard-codes `origin` and the local
+name; `remoteBranchHead` (`worktree.ts:1658-1693`) is the only `ls-remote` helper
+and takes the remote-side name as `branch`; `remoteTrackingBranchHead` (`:1703-1739`)
+builds `refs/remotes/<remote>/<branch>`; `branchHasUpstream` (`:3837-3851`) reads the
+configured upstream but **discards the resolved name**. **D4** collapses these into
+one push primitive with `remoteBranch` + explicit-SHA lease + `setUpstream`, and adds
+`branchUpstream()` that returns `{remote, branch} | null`.
+
+### C7 — `reopen` and `reattach` are not the same write
+
+`reopen.ts:236-246` clears `archived_at` / `archived_branch`; ADR-181 §8 keeps
+`archived_*` as history. The shared helper (**D10**) revives the worktree only;
+each caller owns its `workspaces` write.
+
+### C8 — `pr_state` is not written by finalize, and root `CLAUDE.md` §8 will be false
+
+`finalizePullRequest` never writes `pr_state` (it stays `NULL` until `pr_state_scan`),
+which is why finalize is admitted at `pr_state ∈ {NULL, open, merged}`. Root
+`CLAUDE.md:437-440` asserts `pr_url`/`pr_state` are "written ONLY by the
+`pr_state_scan` job" — `POST /pr` becomes a second writer of `pr_url`/`pr_number`
+and the FIRST writer of `pr_state='open'`; the paragraph is amended in T4.3.
+
+### C9 — the git-identity edge case is unreachable on commit and rescue
+
+`workspace_git_identity_invalid` is raised only by `gc/preserve.ts:70-83`
+(`git var GIT_AUTHOR_IDENT`). Snapshot commits use `commitIdentityArgs`
+(`worktree.ts:1500-1511`), which supplies `user.name=maister` /
+`user.email=noreply@maister.local` when unset — they cannot fail on identity. The
+rescue snapshot (**D8**) uses the same helper, so `workbench-git.md`'s edge case is
+re-worded as-built in T0.7 (identity failure belongs to the archive preserve path).
+
+### C10 — no task write on promotion; the board derives `Done`
+
+`promote.ts` contains no `update(tasks)`; `tasks.status` is flipped to `InFlight` at
+launch (`services/runs.ts:1880-1886`) and `Done` is derived by `deriveStage` from the
+latest run. PR finalize from `Crashed|Failed|Abandoned` therefore mirrors
+`finalizePullRequest` exactly and writes no task row.
+
+### C11 — `docs/configuration.md` already documents fields the loader rejects
+
+`:322-323` list `project.repo_path` and `project.default_branch`; `projectBlockSchema`
+(`config.schema.ts:190-196`) accepts `name | main_branch | branch_prefix | promotion |
+default_runner` and is not `.strict()`, so unknown keys are silently stripped. This is
+the section the new `public_branch_template` row lands in → **R9 TODO** (T0.8), not
+fixed in passing.
+
+### C12 — `docs/screens/runs/workbench.md:196` carries a stale `(Designed)` tag
+
+"Lifecycle operations (Designed)" describes shipped behaviour. The section is the one
+the panel replaces, so it is rewritten and retagged in T0.5 (in scope, not a
+drive-by).
+
+### C13 — line drifts (request → actual)
+
+| Request | Actual | What |
+|---|---|---|
+| `layout.tsx:1231` | `:1226` call, `:1231` the `hasWorkspace` line, `:1512-1521` the `<WorkbenchLifecycleActions>` render | inspector vs lifecycle render sites |
+| `board.ts:67-70`, `:97-101` | `:66-69`, `:100-102` | `TERMINAL_FAILED_STATUSES`, Failed→Backlog |
+| `decision-sources.ts:91-107` | `:91-106`; filter `:149` | Crashed source |
+| `lifecycle-actions.tsx:189-216` | `:189-215` | rail menu |
+| `worktree.ts:2876-2890` | `:2856-2889` | `statusPorcelain` |
+| `sync-target.ts:730-733`, `:1017-1038` | `:710-713`, `:1024-1043` | target resolution, mechanical abort |
+| `promote.ts:1547-1592`, `:1497-1520` | `:1421-1674` (fn), `:1576-1592` (workspaces write), `:1520-1555` (sibling flip) | finalize |
+| `pr-adapter.ts:643-663` | `:605-624` | provider dispatch |
+| `pr-state-scan.ts:289-297` | `:288-296` | candidate predicate |
+
+Also: `run.ts:808-815` computes `hasWorkspace: Boolean(row.workspaceId)` while
+`layout.tsx:1231` uses `Boolean(detail.worktreePath)` after `run.ts:502` defaulted it
+to the project repo path — the same page disagrees with itself (fixed by D2/D3).
+
+### C14 — parked runs keep an `active` execution assignment; the ADR's assignment arm would disable `Crashed`
+
+`releaseAssignmentForRun` (`execution-host/assignments.ts:240-272`) is called by the
+graph's `Review` flip (`runner-graph.ts:~5522`, `run_terminal`), by `failed`
+(`state-transitions.ts:921`), checkpoint (`:192`), waiting-on-children (`:440`),
+park, stop and agent finalization — but **not** by `crashRunningRun`
+(`state-transitions.ts:1364-1412`) nor `markAbandoned` (`:1155`). A `Crashed` (and an
+abandoned-by-TTL) run therefore keeps `execution_assignments.state = 'active'` until
+a recover re-entry supersedes it — by ADR-166 design: the retained driver generation
+is what the recover CAS fences against. Read literally, ADR-181 D1's "no active
+`execution_assignments` row" refuses every action on the ADR's primary case.
+**Re-derived**: a parked status IS the no-live-writer witness — every re-entry
+(resolver, recover, rework return, interrupt restart) flips `runs.status` inside its
+CAS before it touches the tree — so the arm is implied by the status class and is
+not an admission condition; `git-state` reports `hasActiveAssignment` as
+information. Recorded as an ADR-181 amendment (T0.7); RED 1 pins "`Crashed` with an
+active row is admitted". Q11 offers the alternative (release on crash), not
+recommended.
+
+### C15 — route error bodies drop `details`
+
+`workbench-lifecycle/route-utils.ts:38-66` `errorPayload` forwards a top-level
+`reason` for exactly two tokens (`workspace_preservation_failed`,
+`workspace_git_identity_invalid`) plus `pushRejected`/`canForce`/`retryHint`, and
+never `err.details`; the `sync` route's own `errorResponse` (`sync/route.ts:52-67`)
+returns `{code, message}`. Every `details.reason` the panel branches on would be
+lost. The established client-facing shape is `MaisterErrorBody.details`
+(`web.openapi.yaml`, `additionalProperties: true`; ADR-093/132/149 precedent:
+`{reason: "upstream_moved"}`, `{reason: "edit_lock_not_held"}`), already forwarded by
+`rework-claim/return/route.ts:99-105`. **D24** widens both formatters additively; the
+top-level `reason` enum is untouched.
+
+### C16 — the e2e Gitea stub cannot be reached
+
+`parseGiteaRemote` (`pr-adapter.ts:293-350`) derives `apiBase: https://${host}` —
+the scheme is forced and the port dropped, so a `http://127.0.0.1:<port>/…` stub is
+never called. The e2e provider is a **fake `gh` executable** on the web server's
+PATH (T4.1); the adapter is not changed.
+
+### C17–C25 — found during `/aif-implement` Phase 0 (2026-09-22/23)
+
+Each is either decided by text the ADR already fixes, or was put to the owner
+(Q12). Every one is recorded as an ADR-181 amendment in T0.7 where it touches the
+record.
+
+- **C17 — the ext sync route shares the core.** `api/v1/ext/runs/sync/route.ts`
+  calls the same `syncRunTarget`, and `operations.openapi.yaml` documents
+  `status='Review'` eligibility. Moving `assertSyncEligible`'s status arm to the D1
+  predicate would silently widen the ext API, which ADR-181 Consequences fixes as
+  unchanged. `SyncRunInput` gains `admission: "workbench" | "review"`; the web
+  route passes `workbench`, the ext route `review` (the old arm, verbatim). The ext
+  response is an explicit projection (`{runId, attemptId, outcome, behind,
+  pushed}`), so `conflictedFiles` never reaches it. RED 14 gains the ext case.
+- **C18 — `reused` needs the adapter.** `PrResult` is `{url, number}`; only the
+  adapter knows whether `findOpenPr` returned an existing PR (a `pr_url` pre-image
+  misses a PR opened outside MAIster, and would then claim the operator's
+  title/draft were applied — the honesty rule). `PrResult` gains `reused: boolean`;
+  T3.1's "`PrResult` unchanged" is superseded.
+- **C19 — policy refusals carry a token.** `requireActionAllowed` throws a bare
+  `PRECONDITION` today. It now carries `details.reason` = the disabled reason in
+  snake_case (the closed set in C28, e.g. `worktree_missing`, `pr_closed` — one
+  vocabulary, mechanically transformed; three tokens coincide with the service
+  refusals `not_published`, `no_reattach_source`, `pr_missing`/`pr_closed` by
+  construction), and `busy` is `CONFLICT` (the analytics edge case "another op holds the slot →
+  `CONFLICT`"), every other reason `PRECONDITION`.
+- **C20 — paths in responses.** No new response carries a worktree path except the
+  copyable restore command. `git -C <worktree> restore --source=<ref> -- .` keeps
+  its `-C`: a path-free restore pasted into the parent checkout would overwrite
+  the parent's files. Precedent: `CheckoutContext` (ADR-160) already hands members
+  the real path for copying. `reattach` answers `{ok, runId, source, head}`; the
+  panel re-reads `git-state`.
+- **C21 — `promotion_hold` gates auto-promotion only.** `promote.ts:619-639`
+  checks it only when `attribution.source === "auto_promotion"` (ADR-126: "stop
+  new auto-promotions"); a human `promoteRun` ignores it. "Fenced exactly as
+  promotion is" therefore means a human finalize ignores it too. D12's
+  `promotion_hold → PRECONDITION` fence and RED 20's case are dropped.
+- **C22 — finalize's status allow-list is ADR-181 D6's.** D6 admits finalize from
+  `Review` (via `promoteRun`) and `Crashed | Failed | Abandoned`; the D1 "whole
+  set" wording and the analytics table's `HumanWorking`-owner and `Done` cells
+  over-state it. The policy disables `finalizePr` on `Done` (`unsupported-status`:
+  already finalized) and for the `HumanWorking` owner (`human-owned`: a status
+  change while the claim is open, the same reasoning that keeps
+  `archive | drop | stop` refused). RED 1's owner set loses `finalizePr`.
+- **C23 — manual promotion requires `reviewedTargetCommit`.** `promote.ts:747-752`
+  refuses every non-auto promotion without it ("never promote blind"). Owner answer
+  Q12 (a): `POST /pr/finalize` takes `{reviewedTargetCommit?, allowTargetDrift?}`,
+  forwarded to `promoteRun` from `Review`. Either field outside `Review` is 400
+  `CONFIG` (never accepted-and-dropped). `git-state` gains `targetHead` (the local
+  target ref SHA the panel rendered), and the panel offers "Finalize anyway" on
+  the drift refusal.
+- **C24 — Open PR needs the publication on `origin`.** gh/glab run in the parent
+  repo and resolve `--head` in the base repository, and
+  `promotePullRequestSideEffect` pushes to `origin`. A branch published to another
+  remote → `PRECONDITION` `published_remote_not_origin` ("publish to origin
+  first"); cross-repository (fork) PRs are out of scope.
+- **C25 — sync's settle and recovery assumed `Review`.** `settleAttempt`
+  (`sync-target.ts:548-553`) stamps `runs.review_entered_at` whenever HEAD moved,
+  which restarts the auto-promotion grace window. Outside `Review` that would be
+  false, so the stamp moves into the UPDATE's `WHERE status = 'Review'`. T2.1 also
+  re-derives every stale-sync-claim recovery arm for the non-`Review` parked
+  statuses (the recovery-window table is normative). This includes
+  `releaseSyncClaimOnTerminal` (`state-transitions.ts:81-140`), whose `name='sync'`
+  fence rests on "a sync can only ever be claimed by a `Review` run"
+  (`sync-target.ts:761-762`). The new argument is: the claim tx re-validates the
+  run under its row lock, so the sync holding the slot was admitted for the run's
+  pre-terminal status and is exactly the one the terminalization cancels.
+- **C26 — one writer per worktree includes promotion.** Promotion takes the
+  PROMOTION claim, not the lifecycle slot. `claimLifecycleOperation`
+  (`service.ts:2380-2446`) never reads `promotion_state`, and `promoteRun`'s
+  reverse fence (`promote.ts:789-798`) refuses only a live `sync` claim. So a
+  discard or reattach could run inside a worktree a `rebase_merge` promotion is
+  rebasing. D20's invariant is closed in both directions, under the same
+  `workspaces` row lock: `claimLifecycleOperation` refuses a live
+  (non-`canReclaim`) promotion claim with `CONFLICT`, and the reverse fence refuses
+  ANY live lifecycle claim. The `ai_rebase_merge` delegation already releases its
+  promotion claim before calling sync (`promote.ts:936-939`), so nothing
+  legitimate holds both. In the policy, a live promotion claim is `busy`, and
+  `promotion_state = 'done'` disables `update` with the new reason `promoted`
+  (sync's forward fence `sync-target.ts:778-783` refuses it; reopen is the
+  designed way back). The policy input carries `busy` and `promotionState` as
+  facts computed by the D1a loader (the pure predicate takes no clock).
+- **C27 — a different PR clears the old PR's lifecycle fields.** When Open PR
+  records a `pr_url` that differs from the stored one, the previous PR's ADR-140
+  fields (`pr_has_conflicts`, `pr_merged_at`, `pr_merge_commit_sha`) are reset to
+  `NULL` in the same UPDATE (null = unknown until scanned). Otherwise a new PR
+  would inherit the old one's merge or conflict evidence. A reused PR with the same
+  url keeps them.
+- **C28 — the policy covers sync's shape arms.** `update` is refused by
+  `assertSyncEligible` for a scratch run, an orchestrator child, a shared tree
+  and a launched evaluation participant (`sync-target.ts:184-207`). The policy
+  would otherwise enable a button the server always refuses. The shape arms are
+  extracted as a pure `syncShapeRefusal(run)`, consumed by both the D1a loader
+  (`updateShapeOk`) and `assertSyncEligible`. A refusal disables `update` with
+  the new reason `unsupported-run`. Likewise `openPr` without a publication is
+  disabled `not-published`, and `reattach` on a usable worktree is disabled
+  `worktree-present` or, with no source, `no-reattach-source`. The closed
+  reason set is `live-workbench | human-owned | missing-workspace |
+  removed-workspace | worktree-missing | worktree-present | busy |
+  unsupported-status | unsupported-run | promoted | no-remote | not-published |
+  no-reattach-source | pr-missing | pr-closed`.
+- **C29 — an unknown run is 409 on the lifecycle family today.**
+  `loadLifecycleContext` throws a bare `PRECONDITION` (`service.ts:2070-2072`), so
+  archive/drop/discard answer 409 although their spec already documents 404.
+  D19's "unknown run → 404" is met at the one shared loader: the throw carries
+  `details.reason: "run_not_found"`, and `route-utils` maps that token to 404.
+  This brings the existing family-A routes in line with their spec, and the token
+  is inert on the ext token paths (same code, same `PRECONDITION`).
+- **C30 — the handoff branch keeps a UI.** The handoff form (remote + handoff
+  name, `GET handoff-metadata` + `POST handoff-branch`) lives INSIDE the Export
+  dialog today (`lifecycle-actions.tsx` footer). Removing the dialog would
+  silently remove handoff, which the plan says stays. The form moves unchanged
+  into the panel's Publish section as a secondary **Handoff branch…** action;
+  `loadMetadata` survives for it. T1.R's orphan list loses `loadMetadata`.
+- **C31 — reattach's crash window vs the reconciler's removal arm.**
+  `processTrustedCandidate` (`gc/workspace-reconciler.ts:595-630`) REMOVES a
+  worktree whose matching row has `removed_at` set
+  (`removed_already_removed_workspace`), without reading the workspace lifecycle
+  claim. It would therefore delete a reattach's freshly added worktree, both
+  mid-flight (between `worktree add` and the DB write) and after a crash. The
+  arm reads the claim first: a live claim (any op) → hold and retry; a stale or
+  failed `reattach` claim → complete the reattach (`removed_at` /
+  `scheduled_removal_at` → NULL, claim released, finding `workspace_reattached`);
+  otherwise the existing removal. Symmetrically, a reattach RETRY that finds a
+  directory which is a registered worktree of the parent repo, on the internal
+  branch, whose provenance names this run (its own crashed attempt) adopts it:
+  no second `worktree add`; it re-stamps provenance and writes the row. Any
+  other directory stays `worktree_path_occupied`, untouched. RED 17 gains the
+  mid-flight hold, the adoption retry and the foreign-directory refusal.
+- **Token set (final, T0.1).** Service refusals: `public_name_fixed`,
+  `public_branch_template_invalid` (400 `CONFIG`), `clean_worktree`,
+  `dirty_worktree`, `not_published`, `published_remote_not_origin`,
+  `publish_stale`, `target_branch_unknown`, `provider_unsupported`,
+  `agent_requires_review`, `base_branch_unknown`, `pr_missing`, `pr_closed`,
+  `target_drift` (added at `promote.ts`'s drift throw; `isTargetDriftResponse`
+  prefers it over its message match), `review_only_field` (400),
+  `no_reattach_source`, `worktree_path_occupied`, `run_not_found` (404). Policy
+  refusals: C19 over C28's set. Redocly baseline: `master` already carries 8
+  `nullable-type-sibling` errors and 46 warnings (unrelated schemas; R9 TODO
+  (c) in T0.8). The T0.1 AC therefore reads "no new Redocly error or warning" and
+  `validate:contracts` green.
+
+---
+
+## Decisions
+
+### D1 — One predicate, one module: `web/lib/workbench-git/policy.ts`
+
+Pure, no I/O. Input is the fact set the ADR names, nothing more:
+
+```
+WorkbenchGitPolicyInput = {
+  runKind: "flow" | "scratch" | "agent";
+  runStatus: RunStatusValue | (string & {});      // unknown admits nothing
+  scratchDialogStatus: string | null;              // stop arm only (existing rule)
+  viewerUserId: string | null;
+  claimOwnerUserId: string | null;                 // open review_rework_claim owner
+  workspace: null | {
+    removedAt: Date | null;
+    worktreePresent: boolean;                      // fs.stat by the read model
+    lifecycleOp: { state; name; leaseExpiresAt } | null;
+    prUrl: string | null; prState: "open"|"merged"|"closed"|null;
+    publishedBranch: string | null;
+    hasRemote: boolean;
+  };
+  hasLiveSharedSibling: boolean;                 // a shared-tree sibling in SLOT_HOLDING_RUN_STATUSES
+  reattachSources: { local: boolean; published: boolean; archive: boolean };
+}
+WorkbenchGitActionId = "snapshotCommit" | "discardChanges" | "exportBranch" | "update"
+  | "openPr" | "finalizePr" | "reattach" | "archive" | "drop" | "stop"
+  // ADR names → code ids: commit→snapshotCommit, discard→discardChanges, publish→exportBranch
+WorkbenchGitDisabledReason = "live-workbench" | "human-owned" | "missing-workspace"
+  | "removed-workspace" | "worktree-missing" | "busy" | "unsupported-status"
+  | "no-remote" | "pr-missing" | "pr-closed"
+```
+
+- **Status axis is an exhaustive map** `STATUS_CLASS satisfies Record<RunStatusValue,
+  "live" | "parked" | "human">` (`Pending | Running | NeedsInput | NeedsInputIdle |
+  WaitingOnChildren → live`, `HumanWorking → human`, `Review | Crashed | Failed | Done
+  | Abandoned → parked`); a twelfth status is a compile error, an unknown runtime
+  string admits nothing. `WORKTREE_ACTION_STATUSES` is derived from this map and
+  **exported** — one source for the policy, `deriveWorkbenchLifecycleActions`,
+  `assertSyncEligible` (T2.1) and the finalize allow-list (T3.3).
+- **Order** is the `workbench-git.md` flowchart verbatim: live → none; `HumanWorking`
+  → owner (both ids real strings and equal — keep `ownsOpenReworkClaim`'s
+  `undefined === undefined` guard, `policy.ts:118-139`) gets the full git set incl.
+  `discardChanges` and `update`, never `archive | drop | stop` (`human-owned`); parked →
+  row? → usable? (`removedAt IS NULL AND worktreePresent`) → busy? → all; not usable
+  → only `reattach`, and only if a source resolves (else `removed-workspace` for all;
+  `worktree-missing` is the reason shown on the others when the row is not removed
+  but the path is gone).
+- `busy` = `lifecycleOp.state === "claiming"` with an unexpired lease
+  (`canReclaimLifecycle`'s rule, `service.ts:540-559`, exported for reuse) **or**
+  `hasLiveSharedSibling` (a parked allocator root whose shared tree a live child
+  still writes — `countUnsettledSharedSiblings`, `promote.ts:39`). The ADR's
+  execution-assignment arm is NOT an admission condition (C14): a parked status is
+  the witness that no driver owns the tree; `hasActiveAssignment` is reported by
+  `git-state` only.
+- `finalizePr` additionally needs `prUrl` (`pr-missing`) and `prState !== "closed"`
+  (`pr-closed`); `openPr`/`publish`/`update(onto:published)` need `hasRemote`
+  (`no-remote`) — the server re-checks each with the real remote list.
+- `deriveWorkbenchLifecycleActions` keeps its signature (six callers) and is
+  re-implemented on top of this predicate; `WorkbenchLifecycleActionId` widens to
+  the full git set (`snapshotCommit | discardChanges | update | openPr | finalizePr
+  | reattach` beside `stop | archive | drop | exportBranch`) and `ACTION_ORDER` is
+  extended. **One vocabulary**: policy ids = DTO ids = UI ids = testids = i18n keys
+  (patch `2026-09-21-17.09`: two vocabularies for one closed set); op names are a
+  separate mapping — `exportBranch→exportBranch`, `snapshotCommit→snapshotCommit`,
+  `update→sync`, `discardChanges→discardChanges`, `openPr→prOpen`,
+  `finalizePr→prFinalize`, `reattach→reattach`. The 101-line matrix test stays
+  green unchanged except the carve-out file (§Assertion migration).
+
+### D1a — One fact loader: `web/lib/workbench-git/facts.ts`
+
+The predicate is pure; `loadWorkbenchGitFacts({ run, workspace, viewerUserId, db })`
+is the ONE place its inputs are assembled — `claimOwnerUserId` through
+`openReworkClaimOwnerUserId` (D2), `hasLiveSharedSibling` through
+`countUnsettledSharedSiblings`, `hasActiveAssignment` (informational) through
+`getActiveAssignment` (`execution-host/assignments.ts:63`), `worktreePresent` through
+`worktreePresence`, `reattachSources` (three git reads, computed only when the row is
+not usable), the lifecycle slot and PR fields from the `workspaces` row. Four
+callers, one loader: `loadContext` (`service.ts:2040+`, so `requireActionAllowed` at
+`:395-440` gates the mutating ops), the `git-state` read model (D3), `syncRunTarget`
+admission (D9 — `viewerUserId = input.actor.type === "user" ? input.actor.id :
+null`), and `finalizePullRequestRun` (D12). No caller re-derives a fact the loader
+already returns (patch `2026-09-21-15.45`: DRY by question).
+
+### D2 — The carve-out opens: viewer and claim owner reach every read model
+
+- `WorkbenchLifecycleDeps.requireActiveSession: () => Promise<{ id: string }>`
+  (drop `| void`); the default impl returns the authz user. The six
+  `sessionUser?.id ?? null` sites become `sessionUser.id`.
+- The claim-owner predicate at `service.ts:2117-2121` (`getActiveTakeover` +
+  `decision === REVIEW_REWORK_CLAIM_DECISION`) is extracted to
+  `web/lib/runs/rework-claim.ts` as `openReworkClaimOwnerUserId(runId, db)` and
+  called by `loadContext`, `getRunDetail` and the run-detail layout — **one question,
+  one function**.
+- `lifecycleActionsForWorkspace` (`portfolio.ts:263-285`) gains explicit
+  `claimOwnerUserId` / `viewerUserId` parameters; the rail, portfolio and board
+  callers pass `null, null` with the ADR-160 comment (no `HumanWorking` actions off
+  the run detail) — their behaviour is unchanged and RED 2 asserts it.
+- `getRunDetail` is `cache()`-wrapped and keyed on `runId` alone (`run.ts:437`), so a
+  viewer-dependent projection cannot live inside it: it returns the FACTS
+  (`workspaceId`, `removedAt`, `archivedBranch`, `worktreePresent`, `claimOwnerUserId`
+  from the shared predicate) and keeps the viewer-less `lifecycleActions` for
+  non-detail consumers; the run-detail layout (which has the viewer,
+  `layout.tsx:345`) derives both the lifecycle actions and the
+  `deriveInspectorActions` input with `lifecycleActionsForViewer(facts, viewerUserId)`
+  — the same policy call, one level up.
+- `hasWorkspace` is `workspaceId != null` on both `run.ts:812` and `layout.tsx:1231`
+  (the `worktreePath` fallback at `run.ts:502` stays for display, it no longer feeds
+  a policy).
+
+### D3 — `git-state`: one route, ~10 git calls, degrades field-wise, never in an RSC
+
+`web/lib/workbench-git/read-model.ts` `loadGitState(runId, viewer)` and
+`GET /api/runs/{runId}/git-state` (family A route, `recoverRun` = member — the
+response class is branch names, SHAs, **counts** and ref names; no file paths, no
+diff bodies, so it stays below `readRepoFiles`).
+
+```
+GitStateResponse = {
+  runId, runKind, runStatus,
+  internalBranch, publicBranch, publishedRemote, publishedAt,
+  upstream: { remote, branch } | null,           // git config branch.<internal>.{remote,merge}
+  remotes: string[],
+  worktreePresent, workspaceRemoved, head: sha | null,
+  dirty: { tracked: number; untracked: number },
+  unpushedCommits: number | null,                // ahead of <publishedRemote>/<publicBranch>
+  aheadBehind: { base, target, published }: ({ahead, behind} | null) each,
+  publishedRemoteHead: sha | null, remoteReachable: boolean,   // ls-remote, best effort
+  pr: { url, number, state, hasConflicts } | null,
+  busy: { name, claimedAt } | null,
+  hasActiveAssignment,                           // informational only (C14)
+  hasLiveSharedSibling,
+  reattachSources: { local: sha|null; published: sha|null; archive: sha|null },
+  rescueRefs: [{ ref, sha, createdAt }],
+  actions: WorkbenchGitAction[],                 // D1 output
+  commands: { checkout: string[]; restoreRescue: string | null },
+  warnings: string[]                             // sub-reads that degraded to null
+}
+```
+
+- Base/target for `flow|agent` come from `workspaces.base_branch/target_branch`; for
+  `scratch` from `scratch_runs.base_branch/target_branch` (the `workspaces` row has
+  none — G10). Counts reuse `aheadBehindCounts` (`worktree.ts:3564-3607`), presence
+  is one `fs.stat`, rescue refs one `for-each-ref refs/maister/rescue/<runId>/`.
+- **Network**: one `ls-remote` of the public name (existing `remoteBranchHead`,
+  `NETWORK_GIT_ENV`, its 60 s cap) reported as `publishedRemoteHead`; a failure sets
+  `remoteReachable:false` and a warning — never a route error. `unpushedCommits`
+  and `aheadBehind.published` are computed against the **tracking ref** (kept fresh
+  by publish/update); `publishedRemoteHead !== tracking head` is what the panel
+  renders as "the remote moved — update from published". (Q3 offers the no-network
+  variant.)
+- Fetched by the panel on open, after every action, and debounced on the run SSE
+  tick — the `node-transcript-panel.tsx:70-115` pattern (no SWR in this repo).
+  `getRunDetail` and the layout never call it.
+- When the worktree is absent, worktree-scoped reads are skipped (`dirty`, `head`
+  null) and repo-scoped ones still run (`reattachSources`, `pr`, `rescueRefs`).
+
+### D4 — Publish: one push primitive, refspec + upstream + explicit-SHA lease
+
+`pushBranch` (`worktree.ts:959`) becomes the single push primitive:
+
+```
+PushBranchArgs = { projectRepoPath; remote; branch; remoteBranch?: string;
+  setUpstream?: boolean; force?: boolean; leaseSha?: string | null }
+// argv: push [--force-with-lease=refs/heads/<remoteBranch>:<leaseSha|''>] [--set-upstream]
+//       --end-of-options <remote> refs/heads/<branch>:refs/heads/<remoteBranch ?? branch>
+```
+
+`forceWithLeasePush` (`:3866`) and `pushWithLease` (`sync-target.ts:283`) become
+thin wrappers (`remote`, `remoteBranch` threaded), so sync and publish share the
+lease code path. `remoteTrackingBranchHead` / `remoteBranchExists` gain an optional
+`remoteBranch`; `branchUpstream(repo, branch): { remote; branch } | null` is new
+(`rev-parse --symbolic-full-name <b>@{upstream}` → `refs/remotes/<r>/<b>`);
+`branchHasUpstream` is re-expressed as `branchUpstream(...) !== null`.
+
+`exportWorkbenchBranch` (`service.ts:1485-1590`) is the publish operation (op
+`exportBranch`), extended:
+
+1. `requireActionAllowed` → D1 `publish`.
+2. **Name** (the `publishBranchName` core, also used by `promotePullRequestSideEffect`
+   — D11): (a) `branchUpstream(internal)` whose `remote === args.remote` → its branch;
+   a request `branchName` that differs is refused `PRECONDITION`
+   `details.reason:"public_name_fixed"` (loud, per the no-silent-defaults rule; the UI
+   hides the field when an upstream exists); (b) `args.branchName` through
+   `branchNameSchema`; (c) D5 template. `workspaces.published_branch` is a
+   consistency witness only — a mismatch with the upstream logs WARN and the upstream
+   wins.
+3. Claim `exportBranch`; optional snapshot commit (unchanged).
+4. `leaseSha = remoteBranchHead({remote, branch: public})` — captured **before** the
+   push, the ADR-141 property.
+5. `pushBranch({branch: internal, remoteBranch: public, setUpstream: true, force,
+   leaseSha: force ? leaseSha : undefined})`. Non-force non-fast-forward →
+   `GitPushRejectedError` (`CONFLICT`, `pushRejected:"non_fast_forward"`,
+   `canForce:true`); a stale lease on the forced retry is the same classification
+   (`isNonFastForwardPush` matches "stale info"), local branch kept.
+6. **After** the push: `recordPublished(workspaceId, { remote, branch: public, at })` —
+   the ONE writer of `published_branch`, `published_remote`, `published_at`, under
+   the lifecycle CAS; the same helper runs after sync's push (D9) and promotion's
+   push (D11), so a public-name push is never left unrecorded (patch
+   `2026-09-18-16.45`: a marker released by one of three arms); finalize the claim.
+7. Result gains `publishedBranch`, `publishedRemote`, `publishedRef`
+   (`<remote>/<public>`), `nameSource: "upstream"|"request"|"template"`; `pushedRef`
+   is kept equal to `publishedRef` for the existing callers.
+
+Crash between 5 and 6: the retry resolves the same name from the now-set upstream,
+`ls-remote` returns the pushed SHA, the push is a no-op, step 6 records — idempotent
+by construction (ADR Consequences), pinned by RED 7.
+
+### D5 — Template rendering and transliteration (`web/lib/workbench-git/public-branch-name.ts`)
+
+`renderPublicBranchName(template, { taskKey, title, attempt, runId })`:
+
+- `{task_key}` → `<projects.task_key>-<tasks.number>` or `run-<runId.slice(0,8)>`;
+  `{attempt}` → C2; `{slug}` → `transliterate(title)` (fixed table: `а→a б→b в→v г→g
+  д→d е→e ё→yo ж→zh з→z и→i й→y к→k л→l м→m н→n о→o п→p р→r с→s т→t у→u ф→f х→kh
+  ц→ts ч→ch ш→sh щ→shch ъ→'' ы→y ь→'' э→e ю→yu я→ya`, upper-case rows likewise;
+  every other non-ASCII code point dropped), lower-cased, `[^a-z0-9]+` → `-`,
+  trimmed, sliced to 40, trimmed again; when empty the surrounding separators
+  collapse (`feature/ABC-12-` → `feature/ABC-12`).
+- Unknown placeholder, empty result, or a rendered name failing `branchNameSchema` →
+  `MaisterError("CONFIG")` `details.reason:"public_branch_template_invalid"`; the
+  dialog falls back to the editable field pre-filled with `{task_key}` alone.
+- The template itself is validated at YAML parse and at registration (`allowed
+  placeholders only; at least one placeholder`) — validation on the action path, not
+  only on preview.
+
+### D6 — Migration `0173` and the YAML ↔ DB round-trip
+
+```sql
+ALTER TABLE workspaces ADD COLUMN published_branch text,
+                       ADD COLUMN published_remote text,
+                       ADD COLUMN published_at timestamptz;
+ALTER TABLE workspaces ADD CONSTRAINT workspaces_published_shape_check
+  CHECK ((published_branch IS NULL) = (published_remote IS NULL)
+     AND (published_branch IS NULL) = (published_at IS NULL));
+ALTER TABLE projects ADD COLUMN public_branch_template text NOT NULL
+  DEFAULT 'feature/{task_key}-{slug}';
+```
+
+- Additive; no live data moves; the constant default IS the intended value for every
+  pre-migration project (no "looks populated" trap: the template is a policy, not a
+  per-row computed marker). The co-nullity CHECK is the same shape discipline as
+  `workspaces_lifecycle_claim_shape_check` (`schema.ts:4719`). Generated by
+  `drizzle-kit generate` from `schema.ts` (never hand-edited); rationale header in
+  the `0171/0172` style.
+- `maister.yaml`: `project.public_branch_template?: string` on `projectBlockSchema`
+  (`config.schema.ts:190-196`, D5 validation); registration
+  (`app/api/projects/route.ts:402-418`) maps it (absent → column default);
+  `serializeProjectConfig` (`yaml-writeback.ts:135-168`) emits it, omitted when equal
+  to the default, like `branch_prefix`; the bootstrap at `route.ts:178-200` leaves it
+  absent (default).
+- **Round-trip controls (RED 5)**: SET (YAML value → column), CLEAR (YAML without the
+  key → column = default), re-SET, and the reverse (column default → key omitted;
+  non-default → key emitted, `maisterYamlV2Schema.parse` round-trips). There is **no
+  live YAML→DB re-sync for an already-registered project** today (`branch_prefix`
+  has the same shape); the plan does not add one. The settings panel shows the
+  template read-only beside `branch_prefix` (`settings-panel.tsx:121-130`); editing is
+  Q1.
+
+### D7 — Every "remote name = local name" reader moves to `published_*`
+
+| Consumer | Today | After |
+|---|---|---|
+| `isBranchPublished` (`branch-published.ts:21-28`) | `prUrl != null \|\| branchHasUpstream()` | `prUrl != null \|\| publishedBranch != null \|\| branchHasUpstream()` — new arg `publishedBranch`; **no `.catch`** on the live sync path (header comment kept) |
+| sync push (`sync-target.ts:732-741`, `:1094-1108`) | `remoteBranchHead(origin, internal)` / `pushWithLease(internal)` | `remote = published_remote ?? "origin"`, `remoteBranch = published_branch ?? internal` for both the lease capture and the push, then `recordPublished` |
+| rework-claim ingest (`rework-claim-ingest.ts:70-93`) | `fetch <remote>` + `merge --ff-only <remote>/<internal>` | when `published_*` set: fetch `published_remote`, tracking ref `<published_remote>/<published_branch>`; else unchanged; the body-controlled `remote` stays allow-listed against `listRemotes` |
+| reopen revival (`reopen.ts:158-188`) | `origin/<internal>` | the D10 helper (local → published → archive) |
+| `promotePullRequestSideEffect` (`promote.ts:1378-1398`) | push `origin`/internal, PR head = internal | the D4 core (public name, upstream, `published_*`) and D11 core |
+| verify gate `HEAD is not on <branch>` (`sync-target.ts:237-245`) | internal | **unchanged** — the worktree is always on the internal branch |
+
+### D8 — Discard-changes is preserve-first and index-safe (op `discardChanges`)
+
+`discardWorkbenchChanges(runId)` in `web/lib/workbench-git/service.ts`, route
+`POST /api/runs/{runId}/discard-changes` (family A, body `{}` strict, authz
+`promoteRun` in deps):
+
+1. D1 `discardChanges`; `statusPorcelain` empty → `PRECONDITION` `details.reason:
+   "clean_worktree"` (the existing reason `isCleanWorkbenchPrecondition` matches).
+2. Claim `discardChanges`.
+3. **Rescue** without touching the real index: `GIT_INDEX_FILE=<tmp>` `git add -A` →
+   `write-tree` → `commit-tree <tree> -p HEAD -m "maister: rescue <runId> #<n>"` with
+   `commitIdentityArgs` (C9) → `update-ref refs/maister/rescue/<runId>/<n> <sha>`;
+   `n = max(existing) + 1` from `for-each-ref`. New helpers in `worktree.ts`:
+   `writeRescueRef({worktreePath, runId}) → {ref, sha}`, `listRescueRefs`.
+4. `reset --hard HEAD` then `clean -fd` (no `-x`: ignored files are not the
+   operator's work).
+5. Result `{ rescueRef, sha, restoreCommand: "git -C <wt> restore --source=<ref> --
+   ." }`; `git-state` lists the refs.
+
+The rescue ref is the point of no return: a crash after step 3 and before 4 leaves
+the tree dirty and the ref written; the retry writes `#n+1` (a second ref, never a
+lost one — the ADR's idempotence). Rescue refs are repo refs, untouched by `git
+worktree remove`, `branch -D` (`worktree.ts:517-530` deletes `refs/heads/*` only) and
+the preserve path; lifetime is Q10.
+
+### D9 — Update is the ADR-141 core with `onto`, admitted by D1, restoring on conflict
+
+`POST /api/runs/{runId}/sync` body (`sync/route.ts:22-28`, `.strict()`) gains
+`onto: z.enum(["target","base","published"]).optional()` (default `target`).
+`syncRunTarget`:
+
+- **Admission**: `assertSyncEligible` (`sync-target.ts:174-212`) replaces its `:175`
+  status arm with the D1 predicate (`update` enabled for the viewer), keeping the
+  run-kind / parent / shared / lineage / removed arms (RED 14 asserts those five
+  still refuse after the status arm moves — patch `2026-09-21-21.55`). `agent:true` with
+  `runs.status !== "Review"` → `PRECONDITION` `details.reason:"agent_requires_review"`
+  (the resolver's `Review → Running` CAS is the only path that changes status).
+  **Default**: `agent ?? (status === "Review")` — the ADR-141 default (resolver ON)
+  is preserved in `Review`; every other status defaults to mechanical. The panel
+  always sends `agent` explicitly.
+- **Ref by `onto`**: `target` — unchanged (`workspaces.target_branch ??
+  project.main_branch`, fetched from `origin` and fast-forwarded locally);
+  `base` — `workspaces.base_branch` (null → `PRECONDITION` `base_branch_unknown`),
+  same fetch + local ff-update as target; `published` — requires `published_*`
+  (else `PRECONDITION` `not_published`), `fetchRemote(published_remote)`, ref
+  `refs/remotes/<published_remote>/<published_branch>`. `run_sync_attempts.target_ref`
+  records the chosen ref string (`<branch>` or `<remote>/<public>`); `target_sha`
+  its SHA.
+- **Conflict**: `abortSyncOperation` **and** `restoreWorktreeToCommit(headShaBefore)`
+  (C3), then `abortAttempt` with `conflictedFiles`; the 200 body gains
+  `conflictedFiles: string[]` (additive on `SyncRunResponse`). The resolver branch
+  (`:936-1022`) is untouched.
+- **Push**: D7 row — lease captured on the public name before the fetch, refspec
+  `internal:public`, default `push ?? published` unchanged; `recordPublished` after a
+  successful push (D4).
+- **Errors**: the route's own `errorResponse` (`sync/route.ts:52-67`) forwards
+  `details` (D24); its status mapping (422 on shape) is unchanged.
+- The ReviewPanel's sync dialog (`review-panel.tsx:403-530`) is removed; its
+  `review-sync-open` opens the panel's Update section. `review-ahead-behind`,
+  `review-sync-in-progress`, promote and the readiness/drift chips stay.
+
+### D10 — Reattach re-creates the worktree; reopen shares the revival, not the write
+
+`reattachWorkbench(runId)` (op `reattach`, authz `recoverRun`, route
+`POST /api/runs/{runId}/reattach`, family A, body `{}`):
+
+1. D1 `reattach` (the row exists, is NOT usable, a source resolves). A directory
+   already at `worktree_path` → `CONFLICT` `details.reason:"worktree_path_occupied"`,
+   **before any git call**, nothing removed.
+2. Claim `reattach`.
+3. `reviveWorktreeForWorkspace({ parentRepoPath, worktreePath, branch,
+   publishedRemote, publishedBranch, archivedBranch })` in `web/lib/runs/revive-worktree.ts`
+   → `{ source: "local" | "published" | "archive"; head }`:
+   local `localBranchHead` → else `fetchRemote(published_remote)` +
+   `createLocalBranchAt(branch, <remote>/<public>)` + `branch --set-upstream-to`
+   (so D4(a) holds on the next publish) → else `createLocalBranchAt(branch,
+   archived_branch)` → `addWorktreeForBranch` (`worktree.ts:3945`).
+   No source → `PRECONDITION` `details.reason:"no_reattach_source"`.
+4. Provenance v2 from DB facts: `installWorktreeProvenance({worktreePath, metadata:
+   { version: 2, runId, parentRepoPath, projectId, branch, workspaceKind: run_kind,
+   createdAt: workspaces.created_at, task?: "<key>-<n>", flow?:
+   "<flowRefId>@<runs.flow_revision>" }})` (the `services/runs.ts:1522-1538` shape).
+   A provenance failure removes the just-added worktree (compensation, as
+   `addWorktree` does at `worktree.ts:259`) and rethrows.
+5. **Only then** `UPDATE workspaces SET removed_at = NULL, scheduled_removal_at =
+   NULL` (`archived_*` kept); finalize the claim.
+
+`reopenRun` (`reopen.ts:158-188`) calls the same helper and keeps its own writes
+(`promotionState:"reopened"`, clears `archived_*` — C7). Crash between 4 and 5: the
+worktree exists with valid provenance while the row says removed — the workspace
+reconciler's sweep gains the arm "row exists, `removed_at IS NOT NULL`, worktree
+present with matching provenance → null `removed_at`/`scheduled_removal_at`,
+finding `workspace_reattached`" (today it only INSERTS when no row exists,
+`workspace-reconciler.ts:656-668`; RED 17 pins the new arm).
+
+### D11 — Open PR is a claim-fenced core shared with `pull_request` promotion
+
+`openPullRequest(runId, input, ctx)` in `web/lib/workbench-git/service.ts` (op
+`prOpen`), route `POST /api/runs/{runId}/pr` (inline authz as `sync` does: `requireActiveSession`
+→ body → `runProjectId` → `requireProjectAction(projectId,"promoteRun")`; body
+`{ title?: string(≤256), body?: string(≤65536), draft?: boolean, targetBranch?:
+branchNameSchema }` strict; errors through `workbench-lifecycle/route-utils.ts` —
+400 on shape, `details` forwarded, D24):
+
+1. D1 `openPr`. Dirty tree → `PRECONDITION` `dirty_worktree` naming commit and
+   discard. Not published → `PRECONDITION` `not_published`. Published head
+   (`remoteBranchHead(published_remote, published_branch)`) ≠ local `HEAD` →
+   `PRECONDITION` `publish_stale` ("publish first").
+2. Target = `input.targetBranch ?? workspaces.target_branch ?? project.main_branch`,
+   validated by the same rule `promoteWorkspaceRun` applies to `input.targetBranch`
+   (extracted into `resolvePromotionTarget` if it is not already a function — one
+   rule, two callers; RED 19 asserts a target promotion would refuse is refused here
+   too).
+3. Provider: `project.repo_url ?? readRemoteOrigin`, `project.provider ??
+   detectProvider`, `selectPrAdapter` + `preflight` (`promote.ts:1362-1374`,
+   extracted to the core); `generic` → `PRECONDITION` exactly as promotion.
+4. Claim `prOpen`; `createOrUpdatePr({ repoPath, remote: published_remote,
+   sourceBranch: published_branch, targetBranch, title, body, draft })`. `PrAdapter`
+   gains `draft` (gh/glab `--draft` on create; gitea/gitverse `title = "WIP: " +
+   title` — the lookup `findOpenPr` matches head/base only, so a `WIP:` PR is still
+   found). An existing open PR for the same head/base is returned **untouched**
+   (title/body/draft are never patched — unchanged adapter semantics, documented).
+5. **After** provider success: `UPDATE workspaces SET pr_url, pr_number, pr_state =
+   'open', target_branch = <target>` (so finalize and `repo_delivery_scan` read the
+   PR's real base); `runs.status` unchanged; finalize the claim.
+6. Result `{ ok, url, number, state: "open", reused: boolean, draft }`.
+
+Server defaults when the body omits them: `title = "<task_key>: <task title>"`
+(`"<internal branch>"` for a task-less run), `body = "<run link>\n\nPublished
+<public> → <target> (run <id>)."` — the UI pre-fills the same. Failure table in D19.
+`promotePullRequestSideEffect` (`promote.ts:1342-1411`) is re-based on the D4 core
+(publish under the public name) + this core (open/find), then finalizes — so a
+Review-run `promoteRun(pull_request)` and the panel's publish → openPr → finalize
+converge on identical rows.
+
+### D12 — Finalize is `finalizePullRequest` extracted, under the promotion claim
+
+`finalizePullRequestRun(runId, ctx)` (op `prFinalize`), route
+`POST /api/runs/{runId}/pr/finalize` (inline authz, body `{}`, errors through
+route-utils — D24):
+
+- D1 `finalizePr` (`pr_url` set, `pr_state ∈ {NULL, open, merged}`; `closed` →
+  `PRECONDITION` `pr_closed`; missing → `pr_missing`).
+- **From `Review`**: `promoteRun(runId, { mode: "pull_request" }, ctx)` — readiness,
+  target drift and the ADR-126 gates apply unchanged; with the branch already
+  published and the PR already open, the re-based side effect is a no-op push + a
+  found PR + finalize.
+- **From `Crashed | Failed | Abandoned`** (allow-list, exhaustive over the D1
+  `parked` class minus `Review|Done`): mint the promotion claim with the existing
+  CAS (`canReclaim`, `promote.ts:176-196`; `promotion_state='claiming'`,
+  `promotionMode:'pull_request'`, `targetBranch = workspaces.target_branch`,
+  `promotionOwnerUserId`) in the `FlowClaim` shape (`promote.ts:1324-1334`:
+  `resolvedMode = responseMode = promotionMode = "pull_request"`, `resolvedTarget =
+  workspaces.target_branch ?? project.main_branch`, `policy =
+  deliveryPolicyFromLegacyPromotionMode("pull_request")`, `baseCommit =
+  workspaces.base_commit`), fenced exactly as promotion is — an active `sync` claim
+  (`:788-799`) → `CONFLICT`, `runs.promotion_hold` (`:620`) → `PRECONDITION`
+  `promotion_hold`, unsettled shared siblings (`countUnsettledSharedSiblings`,
+  `:652`) → `CONFLICT` — then call the extracted `finalizePullRequest({ runId, ctx, db, claim, pr: {url, number},
+  sourceHead, promotionLane: null, attribution: { source: "pr_finalize" } })` where
+  `sourceHead = remoteBranchHead(published)`; when the worktree is usable it must
+  equal local `HEAD` (`publish_stale` otherwise), so `promoted_head_sha` is what the
+  operator reviewed. The extracted function keeps every write of
+  `promote.ts:1421-1674`: the attempt fence, the shared-tree sibling flip
+  (`:1520-1555`, `Review` siblings only — a no-op from a non-Review root, still
+  executed by the shared path), `runs` (`Done`, `endedAt`, `promotedHeadSha`,
+  `mergeCommitSha: null`, `diffStat: null`), `workspaces` (`promotionState:"done"`,
+  `promotedAt`, `scheduledRemovalAt = now + gcAgeDays`, `prUrl`, `prNumber`,
+  `promotionLane`), `systemCloseActiveAssignmentsForRun` (M13 human assignments —
+  not execution assignments, C14), `run.promoted` webhook,
+  `run.done` webhook + domain event per settled run, `recordPrArtifact` after commit.
+  `run_kind` is dispatched **before** routing: a scratch run additionally sets
+  `scratch_runs.dialog_status = 'Done'` and `target_branch` (`promote.ts:1942-1949`).
+- **Attribution** (C5): `PromoteRunInput.attribution` union gains
+  `{ source: "pr_finalize" }`; `promotion_lane` stays `null`; `isUnattendedPromotion`
+  returns false for it; the `run.promoted` webhook `data` gains optional
+  `source: "pr_finalize"` (AsyncAPI additive); the INFO line carries it.
+- No slot is held by any admitted status (`SLOT_HOLDING_RUN_STATUSES`), so no
+  slot-release call; no `tasks` write (C10). Response is `PromoteRunResult`.
+
+### D13 — Scratch: three modes, target from `scratch_runs`
+
+`promoteScratchRun` (`promote.ts:1744`) drops the `:1751-1757` refusal:
+`local_merge` unchanged; `rebase_merge` runs the workspace-run rebase+merge side
+effect with `targetBranch = scratch.targetBranch ?? scratch.baseBranch` (the
+existing target lock `:1784-1792` stays); `pull_request` = D4 core + D11 core +
+D12 finalize (scratch arm) with the same target. The scratch launch insert
+(`scratch-runs/service.ts:926-933`) is **not** widened — the cores take
+`targetBranch` from the caller; `git-state` reads scratch base/target from
+`scratch_runs` (D3). The scratch inspector keeps its `<select>` (now honoured) and
+hosts the panel through `WorkbenchLifecycleActions` (`scratch-inspector-actions.tsx:75`).
+`pr_state_scan` keeps `run_kind <> 'scratch'` (ADR text; Q5) — a scratch PR opened
+standalone shows its chip as "open (not tracked)" and finalizes manually.
+
+### D14 — `Failed` fan-out: every consumer, decided
+
+| Consumer | Change |
+|---|---|
+| `ACTIVE_RUN_STATUSES` (`portfolio.ts:77-90`) | `+ "Failed"`; pinned by a direct unit assertion (none exists — `run-status-sets.test.ts:9-14` style) |
+| portfolio `:396`, `:946`; `queries/project.ts:358` | inherit: portfolio grid, project workspace list, rail list a `Failed` workbench |
+| `RAIL_TTL_STATUSES` (`portfolio.ts:100`) | unchanged — no TTL countdown on `Failed` |
+| `app/api/attention/stream/route.ts:149,183` | inherits as a **change-scan predicate only** (refresh ticks, no count); accepted; RED 3 asserts `decisions.count` unchanged |
+| `queries/board.ts` | `BacklogCard` gains `latestRun: { id, kind, status, lifecycleActions }` when the latest run is `Failed \| Abandoned` (or `Review \| Crashed` with a removed workspace — `board.ts:88-90`) **and** the worktree is usable; `TaskCard` renders `<WorkbenchLifecycleActions variant="menu">` from it |
+| `decisions.ts` / `decision-sources.ts:149` | **unchanged**; guard control |
+| `lib/work/stage.ts:85` | unchanged (`Failed → Ready`, ADR-170) |
+| scheduler / caps / sweeps / GC | unchanged — `Failed` holds no slot and is not `DISPOSABLE` |
+| `deriveWorkbenchLifecycleActions` | already admits `Failed` (C4) |
+| `docs/screens/*`, RU manual | the Backlog card menu and the portfolio row documented (T0.5, T0.6) |
+
+Worktree presence for cards: the board/portfolio queries call one helper
+`worktreePresence(paths: string[]) → Map<path, boolean>` (bounded `Promise.all` of
+`fs.stat`, only rows with `removed_at IS NULL`, one page) so "usable" has one
+definition on every surface; it is a stat, not git state (ADR D3 stands).
+
+### D15 — Lifecycle op names
+
+Both unions (`schema.ts:4596-4605`, `service.ts:80-91`) gain
+`"discardChanges" | "reattach" | "prOpen" | "prFinalize"`; `publish` reuses
+`exportBranch`, `update` reuses `sync`. The column is plain `text`
+(`workspaces_lifecycle_claim_shape_check` is name-agnostic) — no migration for the
+names. The `docs/db/runs-domain.md:253` comment lists the full set.
+
+### D16 — Surfaces
+
+- **`WorkbenchGitPanel`** (`web/components/workbench/git-panel.tsx`, client) —
+  sections, in order: header (internal branch, public-name chip with `nameSource`,
+  PR chip with state, busy chip from `busy`), **Tree** (dirty counts; Commit →
+  existing snapshot dialog; Discard → shared destructive confirmation showing the
+  rescue ref + copyable restore command), **Publish** (remote select from `remotes`,
+  name field pre-filled by the template — hidden when `upstream` exists, force
+  checkbox shown only after a `non_fast_forward` refusal), **Update** (`onto`
+  select with per-option ahead/behind, strategy, push toggle default = published,
+  AI-resolver toggle rendered only when `runStatus === "Review"`), **PR** (Open PR
+  dialog: title/body/draft/target pre-filled; Finalize button; chip), **Reattach**
+  (rendered instead of the rest when `!worktreePresent`; lists resolvable sources),
+  **Commands** (copyable checkout and restore lines, the `checkoutContext` strings).
+  Every button is enabled from `actions[]`; a disabled one carries the reason's
+  tooltip. Every completed mutation → shared feedback provider + re-fetch
+  `git-state` + `router.refresh()`. Errors branch on `MaisterError.code` and
+  `details.reason` only (EN/RU copy under `workbenchGit.errors.*`).
+- **Hosting**: `WorkbenchLifecycleActions variant="detail"` opens the panel where it
+  opened the Export dialog (`lifecycle-actions.tsx:524-526`, `:646-660`); the Export
+  dialog, `loadMetadata` and the `GET handoff-metadata` call are removed from the
+  component (the route stays for the handoff-branch dialog until it is folded — see
+  Out of scope). Flow, agent and scratch run detail get it through the same
+  component; `layout.tsx:1512-1521` passes the D2 facts.
+- **Cards and rail**: `railMenuItems` emits every enabled git action id
+  (`snapshotCommit | discardChanges | exportBranch | update | openPr | finalizePr |
+  reattach`) as **deep links** (`/runs/<id>?git=<section>` — the run detail's URL
+  state contract, `docs/screens/runs/workbench.md:63`), never blind mutations from a
+  card (a publish needs a name, an update an `onto`). `menu-<item>` testids as today
+  (`lifecycle-actions.tsx:945`).
+- **Inspector Actions tab**: `layout.tsx:1240-1245` sets `href` = the same deep link
+  for every lifecycle item; `run-inspector.tsx:203-222` lists **only** href-bearing
+  items (the `<span>` fallback is deleted); `inspector-actions.ts` `endpoint`/`method`
+  stay for the API consumers.
+- **i18n**: action labels extend the existing `workbenchLifecycle.action.*` (one
+  copy of the closed action set — patch `2026-09-21-17.09`); panel-only copy
+  (sections, dialogs, disabled reasons, commands, PR chip states) lives under
+  `workbenchGit.*`; EN + RU (parity enforced by `lib/__tests__/i18n-parity.test.ts`)
+  + a named-key suite `lib/__tests__/i18n-workbench-git-keys.test.ts` in the existing
+  per-surface style.
+- **Typed input survives a refresh**: the Open PR form, the publish name field and
+  the commit message are rendered outside the `git-state` refresh boundary and keep
+  their state across a refetch tick (patch `2026-09-17-12.25`: a conditional unmount
+  discarded an unsent answer); RED 12 asserts it.
+- **Testids**: `git-panel`, `git-panel-<section>`, `git-panel-<action>`,
+  `git-panel-busy`, `git-panel-pr-chip`, `git-panel-name`, `git-panel-force`.
+
+### D17 — Unpushed-work guard and the archive knob
+
+The Archive and Drop confirmations (`lifecycle-actions.tsx`) fetch `git-state` on
+open and render `unpushedCommits` + `dirty` counts with two primaries: "Publish,
+then archive/drop" (runs publish first, the destructive op only after its 200) and
+"Archive/drop anyway". Server side, `archiveWorkbenchForCtx` and
+`removeWorkbenchForCtx` pass `archivePush: gcArchivePush()` into `prepareWorkspaceRemoval`
+→ `preserveWorktree` (today they pass nothing → `false`), so operator archive/drop
+honour `MAISTER_GC_ARCHIVE_PUSH` exactly like GC; the configuration row's "Used by"
+widens (T0.4). The archive ref stays local by default.
+
+### D18 — Identifiers per route
+
+| Route | Identifier | Source | Handling |
+|---|---|---|---|
+| all | `runId` | `url-param` | the only trusted locator; project/workspace/branch/paths/remote/PR derived by DB lookup (`server-state`) |
+| all | viewer | `auth-context` | `requireActiveSession` → `requireProjectAction(projectId,…)` with `projectId` from the run row |
+| `export-branch` | `remote` | `body-controlled` | allow-listed against `listRemotes` (existing `PRECONDITION`) |
+| `export-branch` | `branchName` | `body-controlled` | `branchNameSchema`; used only as a remote ref name in argv after `--end-of-options`; refused when an upstream fixes the name |
+| `export-branch` | `commitMessage`, `snapshotDirty`, `force` | `body-controlled` | existing bounds |
+| `sync` | `onto`, `strategy`, `agent`, `push` | `body-controlled` | closed enums / booleans; `runnerId` validated against the runner catalog (existing) |
+| `pr` | `targetBranch` | `body-controlled` | `branchNameSchema` + the promotion target rule (D11 step 2); passed to gh/glab via `assertSafeBranchRefs` |
+| `pr` | `title`, `body`, `draft` | `body-controlled` | length-bounded strings, boolean; never interpreted |
+| `pr/finalize`, `discard-changes`, `reattach`, `git-state` | — | — | **no body fields**; strict `{}` |
+
+No body field names a filesystem path component, a project, a workspace or a PR.
+
+### D19 — Two-phase commit and crash windows per mutating operation
+
+Every operation runs under the lifecycle claim (`claimLifecycleOperation`, `FOR
+UPDATE`, lease = `promotionClaimTimeoutSeconds()`); git/provider effects run OUTSIDE
+any DB transaction; the durable record is the AFTER-side write. Retryability follows
+the existing rule: `EXECUTOR_UNAVAILABLE` leaves the claim `claiming`
+(`markLifecycleClaimFailed`, `service.ts:662-692`), typed refusals finalize it
+`failed`.
+
+| Op | Before the effect | Effect (point of no return) | After | Crash between effect and after → retry |
+|---|---|---|---|---|
+| publish | claim; name; `ls-remote` lease | `git push … internal:public` | `published_*`; release | upstream now set → same name; push no-op; record |
+| discard | claim | rescue ref (`update-ref`) then `reset --hard` + `clean -fd` | release | second rescue ref; reset idempotent |
+| update | attempt row + sync claim (one tx) | fetch, rebase/merge, verify, optional lease push | `settleAttempt` | existing ADR-141 recovery (safety net + sweep of stale `sync` claims) |
+| reattach | claim; occupied-path check | `worktree add` + provenance | `removed_at = NULL` | reconciler `workspace_reattached` arm (D10) |
+| openPr | claim; publish-stale check | provider create (or find) | `pr_url/pr_number/pr_state/target_branch` | found by head/base; recorded |
+| finalize | promotion claim (CAS) | — (DB-only; one tx) | — | claim CAS: superseded → `CONFLICT` |
+
+Failure classification (shared): body shape → 400 on every new route (route-utils;
+`sync` keeps its 422); `PRECONDITION`/`CONFLICT` → 409 (the payload carries
+`details` incl. `details.reason`, plus `pushRejected`, `canForce`, `retryHint`,
+through the widened `errorPayload` — D24); `EXECUTOR_UNAVAILABLE` → 503, claim
+retryable; `UNAUTHORIZED` → 403; unknown run → 404. Both directions are reasoned:
+"effect succeeded, DB write failed" is the retry column above; "effect failed" never
+writes the AFTER-side row. No deferred is created by any of these paths (no
+supervisor call, no ACP request), so the deferred-release rule has no consumer here
+— stated, not assumed.
+
+### D20 — Lock scope = invariant scope; the racer is designed from the invariant
+
+Invariant: **one writer per worktree at a time**. Lock: the per-workspace lifecycle
+slot taken under `SELECT … FOR UPDATE` on that `workspaces` row (existing). Every new
+op takes it before its first git command; `prFinalize` takes the promotion claim
+(same row, CAS on `promotion_attempt_id`) and is fenced against an active `sync`
+claim exactly as `promoteRun` is. RED 11: two racers that could both violate the
+property (`publish` vs `discard` on one workspace, real Postgres, the winner's git
+effect uncommitted while the loser is parked at the `FOR UPDATE`), asserted at the
+service layer with the second call resolving `MaisterError("CONFLICT")` — and a
+guard-disabled control showing both would have run without the claim.
+
+### D21 — No new background automation
+
+`pr_state_scan` keeps its progress cursor, batch, lease headroom and skip semantics;
+`POST /pr` only widens its candidate population (RED 23 proves a `Failed`-run PR is
+scanned). No timer, sweep or consumer is added; the reconciler gains one arm (D10)
+inside its existing sweep.
+
+### D22 — SOLID / KISS / DRY rulings (checkable)
+
+| Ruling | Verdict | Why |
+|---|---|---|
+| One push primitive (`pushBranch` with `remoteBranch`/`leaseSha`/`setUpstream`) used by publish, sync and promotion | **merge** | one question: "put this branch on the remote under that name, safely" |
+| Name resolution (`publishBranchName`) shared by export and `promotePullRequestSideEffect` | **merge** | one question |
+| PR open core shared by `/pr` and `pull_request` promotion | **merge** | one question; keeps `pr_url` semantics identical |
+| `finalizePullRequest` extracted, two callers | **merge** | already one function; extraction only |
+| `reviveWorktreeForWorkspace` shared by reopen and reattach | **merge** | the revival is one question; the row write is two (C7) — callers keep their own writes |
+| `openReworkClaimOwnerUserId` shared by service and read models | **merge** | one predicate, three readers |
+| `discardWorkbenchChanges` vs `discardWorkbench` | **NOT merged** | different questions (reset a tree vs remove a workspace) |
+| `reattach` vs `reopen` | **NOT merged** | reopen changes run status and promotion state |
+| Scratch launch insert widened with base/target | **NOT done** | the cores take the target from the caller; surgical |
+| SRP | `policy.ts` decides, `read-model.ts` observes, `service.ts` mutates, `public-branch-name.ts` renders; no module imports a higher one | keeps each unit testable in the `unit` project |
+| KISS | no new `runs.status`, no new `MaisterError` code, no new env var, no new table, no SWR | each rejected with a reason recorded here |
+
+### D23 — Authorization from data class; positive grants; adversarial budget
+
+- `git-state` → `recoverRun` (member): branch names, SHAs, counts, ref names —
+  the same class the run header and `review-ahead-behind` already show to members;
+  conflict **paths** (`conflictedFiles`) come back only from `sync`, which is
+  `promoteRun`, matching today's response class. All mutating routes → `promoteRun`,
+  except `reattach` → `recoverRun` (it restores state, mutates no branch content —
+  the same floor as archive/drop).
+- One **positive** control per new grant (member 200) beside the viewer 403, per
+  route (RED 10, 19, 20).
+- Adversarial review is budgeted for **every fix cycle** of this branch (the owner's
+  pipeline: `/aif-verify` → `/aif-review` → codex adversarial review → fix confirmed
+  findings), with the publish/force/PR-open paths named as the irreversible-effect
+  surfaces to attack.
+
+### D24 — Error bodies carry `details`; the top-level `reason` enum is untouched
+
+`errorPayload` (`route-utils.ts:38-66`) gains `...(err.details ? { details:
+err.details } : {})` — the `rework-claim/return/route.ts:99-105` shape — and the
+`sync` route's `errorResponse` (`sync/route.ts:52-67`) the same line. The five new
+routes format errors through route-utils (400 on body shape, 409/503 as today). The
+UI branches on `code` + `details.reason` only; `MaisterErrorBody.details` is already
+`additionalProperties: true` in the spec, and the two-value top-level `reason` enum
+and the `pushRejected` enum are not touched. Every 409 in T0.1 documents its
+`details.reason` token(s). Never a server-only handle in `details` (existing rule).
+
+---
+
+## Contract surfaces → spec files
+
+| Surface | Change | Spec file(s) |
+|---|---|---|
+| `GET /api/runs/{runId}/git-state` | new | `docs/api/web.openapi.yaml` (+ `components/schemas/GitStateResponse`); `docs/system-analytics/workbench-git.md` Route contracts |
+| `POST /api/runs/{runId}/discard-changes` | new | same; op name `discardChanges` |
+| `POST /api/runs/{runId}/pr` | new | same (+ `OpenPrBody`, `OpenPrResponse`) |
+| `POST /api/runs/{runId}/pr/finalize` | new | same (response `PromoteRunResponse`) |
+| `POST /api/runs/{runId}/reattach` | new | same |
+| `POST /api/runs/{runId}/export-branch` | body `+ branchName`; response `+ publishedBranch/publishedRemote/publishedRef/nameSource` | `web.openapi.yaml:9208-9290` (inline body, `additionalProperties: false`) |
+| `POST /api/runs/{runId}/sync` | body `+ onto`; response `+ conflictedFiles` | `web.openapi.yaml:6529-6622`, `SyncRunResponse:19560` |
+| Error bodies (`export-branch`, `sync`, the five new routes) | `details` forwarded (additive; `MaisterErrorBody.details` is already `additionalProperties: true`); top-level `reason` enum untouched — D24 | `web.openapi.yaml` `MaisterErrorBody` description; per-route `details.reason` documentation |
+| `run.promoted` webhook payload | `+ data.source: "pr_finalize"` (optional) | `docs/api/async/outbound-webhooks.asyncapi.yaml` (`:630` description; payload schema) |
+| `workspaces.published_branch/remote/at`, `projects.public_branch_template` | migration `0173` | `web/lib/db/migrations/0173_*.sql` + journal + snapshot; `docs/db/erd.dbml` (regenerated); `docs/db/runs-domain.md:222-254` (+ PROJECTS stub `:94-97`); `docs/db/projects-domain.md:25`; `docs/database-schema.md:2183-2239`, `:265-295` |
+| `maister.yaml` `project.public_branch_template` | new optional key | `docs/configuration.md:231-238` (example), `:318-329` (table); `web/lib/config.schema.ts:190-196`; `web/lib/packages/yaml-writeback.ts:118-168` |
+| `MAISTER_GC_ARCHIVE_PUSH` | new consumer (operator archive/drop) | `docs/configuration.md:1146` (Used by); no `.env.example`/compose change (host-run, ADR-023; compose passes env wholesale) |
+| Error cells | `PRECONDITION`, `CONFLICT`, `CONFIG`, `EXECUTOR_UNAVAILABLE` gain `Also (Implemented, ADR-181): …` clauses with the `details.reason` tokens `public_name_fixed`, `public_branch_template_invalid`, `clean_worktree`, `dirty_worktree`, `not_published`, `publish_stale`, `agent_requires_review`, `base_branch_unknown`, `pr_missing`, `pr_closed`, `no_reattach_source`, `worktree_path_occupied` | `docs/error-taxonomy.md:43-52` |
+| Lifecycle op names | `+ discardChanges \| reattach \| prOpen \| prFinalize` (TS-only) | `docs/db/runs-domain.md:253`; `docs/system-analytics/workbench-lifecycle.md` matrix; `workbench-git.md` Domain entities |
+| Policy / read model / operations | Designed → Implemented, as-built | `docs/system-analytics/workbench-git.md` (Expectations stay at 12 — edit in place, each names its enforcer); `workbench-lifecycle.md:53,69,131,147-159,243,270`; `branch-sync.md` (`onto`, restore, public-name lease); `git-integration.md:242,299,360` (+ a `### Publish, discard, re-attach (Implemented, ADR-181)` topical section — room: 9 bullets); `scratch-runs.md:292`; `workspaces.md:188,333,552`; `attention.md` unchanged (cited) |
+| Screens | new `docs/screens/runs/git-panel.md` + README row `:202-206`; `flow-run.md:260`, `scratch-run.md`, `run-inspector.md`, `workbench.md:196` (retag, C12); board card menu in `projects/*` | `docs/screens/**` |
+| RU manual | operator paths: publish / update / PR / discard / reattach; the Failed card | `docs/ru/manual/07-review.md:7,18`; `05-tasks-runs.md:39,62` |
+| ADR | Amendments list (C1, C2, C9, C12); status Accepted → Implemented at T4.3 (record + stub `decisions.md:1838-1843` + index row `:225`) | `docs/decisions/adr-181.md`, `docs/decisions.md` |
+| Root agent contract | §7 workbench bullet `:382-384` (+ panel ops), §8 `:437-440` (C8) | `CLAUDE.md` |
+
+**No** new `runs.status` · **No** new `MaisterError` code · **No** new env var ·
+**No** ext API / MCP change · **No** supervisor change.
+
+## Commit plan
+
+Eight commits, one per phase boundary, RED before GREEN in every code phase:
+
+1. `docs(workbench-git): freeze the ADR-181 contracts (OpenAPI, ERD, taxonomy, screens, RU)` — after T0.1–T0.8
+2. `test(workbench-git): RED — parked runs have no git path` — after T1.0
+3. `feat(workbench-git): git panel, git-state, publish under a public name, discard, Failed visibility, carve-out` — after T1.1–T1.R
+4. `test(workbench-git): RED — update is Review-only, removed worktrees are dead ends` — after T2.0
+5. `feat(workbench-git): update onto base|target|published; re-attach a removed worktree` — after T2.1–T2.R
+6. `test(workbench-git): RED — a PR is a promotion` — after T3.0
+7. `feat(workbench-git): open a PR before promotion, finalize from any parked status, scratch promote modes` — after T3.1–T3.R
+8. `docs(workbench-git): ADR-181 Implemented — as-built sweep, e2e smoke, live PR check` — after T4.1–T4.4
+
+No AI co-author trailer (owner rule). Merge to `master` with `--no-ff` after `/aif-verify` → `/aif-review` → codex adversarial review → confirmed findings fixed.
+
+---
+
+## Phases
+
+Four phases, each landing green on the exact tree (`pnpm --filter maister-web test`,
+`pnpm lint` at the 0-errors baseline for changed files, `pnpm typecheck`,
+`pnpm validate:docs`, `pnpm validate:contracts`). RED controls are written first in
+every code phase and committed before the GREEN work. Task ids are the plan's task
+list (no TaskCreate tool is available in this session).
+
+### Phase 0 — SDD freeze (docs only; no code)
+
+**Exit criteria**: every contract surface in the table above exists as `(ADR-181 —
+Designed)` text, internally consistent with the ADR and with each other;
+`pnpm validate:docs` green (Mermaid, ADR bijection, links, indexes, ERD check —
+the ERD check stays green because no schema changes yet);
+`npx @redocly/cli lint docs/api/web.openapi.yaml` zero errors;
+`npx @asyncapi/cli validate docs/api/async/outbound-webhooks.asyncapi.yaml` zero
+errors; `pnpm validate:contracts` green.
+
+- [x] **T0.1 — OpenAPI.** `docs/api/web.openapi.yaml`: five new paths under
+      `/api/runs/{runId}/` — `git-state` (GET, `GitStateResponse` in
+      `components/schemas`, D3 field list, 200/401/403/404), `discard-changes`
+      (POST `{}`, 200 `{rescueRef, sha, restoreCommand}`, 409 `clean_worktree`),
+      `pr` (POST `OpenPrBody`, 200 `OpenPrResponse`, 409 reasons, 422, 503),
+      `pr/finalize` (POST `{}`, 200 `PromoteRunResponse`, 409 `pr_closed|pr_missing`),
+      `reattach` (POST `{}`, 200 `{worktreePath, source}`, 409
+      `no_reattach_source|worktree_path_occupied`); extend `export-branch` body
+      (`:9227-9246`, `+ branchName`) and response (`+ publishedBranch,
+      publishedRemote, publishedRef, nameSource`); extend `sync` body (`:6556-6576`,
+      `+ onto`) and `SyncRunResponse` (`:19560`, `+ conflictedFiles`). Summaries
+      `(ADR-181 — Designed) …`; every 4xx/5xx `$ref MaisterErrorBody`; example
+      payloads for each 200.
+      **AC**: redocly zero errors; every `details.reason` token in D-table appears
+      in exactly one response description under `details` (the top-level `reason`
+      enum is untouched — D24); body-shape errors are 400 on the five new routes;
+      no path outside `/api/runs/{runId}/`.
+- [x] **T0.2 — ERD + DB narrative + AsyncAPI.** `docs/db/runs-domain.md:222-254`
+      WORKSPACES gains `text published_branch "ADR-181 (0173)"`, `text
+      published_remote`, `timestamp published_at`; `:253` op-name comment lists the
+      four new names; PROJECTS stub `:94-97` + `docs/db/projects-domain.md:25`
+      gain `text public_branch_template "default 'feature/{task_key}-{slug}' (ADR-181,
+      0173)"`; `docs/database-schema.md:2183-2239` and `:265-295` add the columns
+      with `(Designed — migration 0173)`; the journal/snapshot triple rule at
+      `:2078-2085` is cited, not restated. `docs/api/async/outbound-webhooks.asyncapi.yaml`
+      `run.promoted` payload gains optional `source` (`enum: [pr_finalize]`),
+      description at `:630` updated.
+      **AC**: Mermaid parses; `db:erd --check` still green (no schema change yet);
+      asyncapi validate zero errors; the migration number `0173` is written once, in
+      the ERD comments and this plan only (no `pre-0173` prose).
+- [x] **T0.3 — Error taxonomy.** `docs/error-taxonomy.md:45,50,51,52` cells gain
+      `Also (Implemented, ADR-181): …` clauses naming the `details.reason` tokens of
+      D-table and the HTTP mapping (409 / 400 / 503) per route family.
+      **AC**: no new row; the four codes' "Where thrown" cells name the new
+      modules (`workbench-git/{service,read-model,public-branch-name}.ts`).
+- [x] **T0.4 — Configuration.** `docs/configuration.md`: example line near `:237`
+      (`public_branch_template: feature/{task_key}-{slug}`), optional-field row at
+      `:318-329` (placeholders, transliteration, ≤40, fallback, `CONFIG` on invalid),
+      `:1146` `MAISTER_GC_ARCHIVE_PUSH` "Used by" widened to "GC preserve **and**
+      operator archive/drop (ADR-181)". No `.env.example` / compose change —
+      recorded as a decision (host-run, ADR-023; no new knob).
+      **AC**: row padding matches neighbours; the pre-existing `repo_path` /
+      `default_branch` drift (`:322-323`) is NOT touched here (T0.8).
+- [x] **T0.5 — Screens.** New `docs/screens/runs/git-panel.md` (README template
+      `screens/README.md:57-81`: header · JTBD · roles · navigation incl. the
+      `?git=<section>` deep link · layout/regions per D16 · `stateDiagram-v2` of
+      the panel states (loading, usable, busy, worktree-missing, published,
+      pr-open, pr-closed) · Data & APIs (all seven routes) · i18n `workbenchGit` ·
+      linked artifacts); README row at `:202-206`; `flow-run.md:260` and
+      `scratch-run.md` gain the panel and the Backlog/portfolio `Failed` row;
+      `run-inspector.md` Actions tab = href-only; `workbench.md:196` rewritten as
+      "Lifecycle operations (Implemented)" naming the panel (C12); the board card
+      menu in the project board screen doc.
+      **AC**: `validate-docs-indexes` green (README row present); every screen doc
+      links `workbench-git.md` for behaviour (R7) and restates none of it.
+- [x] **T0.6 — RU manual.** `docs/ru/manual/07-review.md` gains the panel walk-through
+      (commit → publish under a public name → open PR → finalize; update from base /
+      target / your own pushes; discard with the rescue ref) after `:18`;
+      `05-tasks-runs.md:39` (run page) and `:62` (statuses: a `Failed` run stays
+      listed with its git actions).
+      **AC**: Russian operator prose only (R8), UI strings match the `ru.json` keys
+      T1.11 will add (listed in the doc as a checklist for T4.3).
+      **RU string checklist (T1.11 ships exactly these; T4.3 verifies):**
+      `workbenchLifecycle.action.exportBranch` = «Опубликовать» (was «Экспорт»),
+      `.snapshotCommit` = «Коммит» (unchanged), `.discardChanges` = «Отменить
+      изменения», `.update` = «Обновить», `.openPr` = «Открыть PR», `.finalizePr` =
+      «Завершить по PR», `.reattach` = «Вернуть рабочую копию»; `workbenchGit.title` =
+      «Git-панель», `workbenchGit.section.tree` = «Рабочее дерево»,
+      `workbenchGit.section.update` = «Обновление». The manual promises a
+      confirmation before a finalize outside `Review` (the shared destructive
+      confirmation, T3.5).
+- [x] **T0.7 — ADR-181 amendments + `workbench-git.md` refinements.** Dated
+      `**Amendments:**` list on `docs/decisions/adr-181.md` (non-direction): action and op
+      name `discardChanges` (C1); the execution-assignment arm is implied by the
+      parked status and is not an admission condition (C14); `{task_key}` composed from `projects.task_key` +
+      `tasks.number`, `{attempt}` from the branch suffix (C2); identity edge case
+      is the preserve path (C9); reattach/reopen row-write split (C7).
+      `workbench-git.md`: Domain entities + Route contracts say `discardChanges`;
+      Edge cases: git-identity bullet re-worded, `worktree_path_occupied`,
+      `public_name_fixed`, `publish_stale`, `agent_requires_review` added (Edge
+      cases are uncapped); Expectations **edited in place, still 12**, each bullet
+      naming its enforcer (policy test, claim CAS, CHECK, route test); the read-model
+      field list matches `GitStateResponse`; the network best-effort rule (D3) stated.
+      **AC**: bullet count 12; every `MaisterError("…")` in Edge cases appears in
+      T0.3; `pnpm validate:docs` green.
+- [x] **T0.8 — R9 TODOs.** `docs/decisions.md` TODO section: (a) `configuration.md:322-323`
+      documents `project.repo_path`/`project.default_branch` which
+      `projectBlockSchema` rejects (C11); (b) `docs/db/runs-domain.md` WORKSPACES
+      block is already missing `archived_commit`, `preservation_outcome`,
+      `removal_kind`, `lifecycle_operation_lease_expires_at`,
+      `lifecycle_operation_expected_run_status` (found while adding the ADR-181
+      columns; left alone). Each names file, date, and "left alone because R9".
+      **AC**: two entries; no unrelated section edited. **As built:** five —
+      (a), (b) plus `promotion.remote` documented Implemented but unread, the Redocly
+      baseline (eight `nullable-type-sibling`, not two), and `DataRunPromoted`
+      forbidding fields the emitter sends.
+
+**Commit 1** — `docs(workbench-git): freeze the ADR-181 contracts (OpenAPI, ERD, taxonomy, screens, RU)`
+
+### Phase 1 — Panel, git-state, commit / discard / publish, visibility, carve-out
+
+**Exit criteria**: RED 1–13 green; full web suite green; the panel replaces the
+Export dialog on flow, agent and scratch run detail; `git-state` served only by its
+route; `Failed` listed on portfolio / project list / rail / Backlog card; the
+`HumanWorking` owner sees the git set on the run detail; refactor gate passed.
+
+- [ ] **T1.0 — RED battery (Phase 1).** Write RED 1–13 (§Test plan) and confirm each
+      fails on this tree for its stated reason. Runnability: unit files under
+      `lib/**/__tests__/*.test.ts` and `components/**/__tests__/*.dom.test.ts`
+      (`.tsx` is NOT collected — `review-panel.test.ts:24-30`); integration files
+      `*.integration.test.ts` (`vitest.workspace.ts:84-88`); confirm each new path is
+      matched (`vitest list --project <p>`). New shared fixture
+      `web/test-support/git-remote-fixture.ts` (`initRepoWithBareRemote`,
+      `addRunWorktree`, `advanceRemoteBranch`) lifted from
+      `real-git.integration.test.ts:78-103` / `sync-target.integration.test.ts:142-200`
+      (the first three suites keep their local copies until T1.R folds them).
+      **AC**: 13 controls, each red with a distinct failure; none uses `expect.poll`
+      (`web/CLAUDE.md:250-256`); route suites load their module in `beforeAll`.
+
+**Commit 2** — `test(workbench-git): RED — parked runs have no git path`
+
+- [ ] **T1.1 — Migration `0173` + schema.** `schema.ts`: `workspaces` `+
+      publishedBranch/publishedRemote/publishedAt` (after `:4665`) + the co-nullity
+      CHECK; `projects` `+ publicBranchTemplate` (after `:191`); the two op-name
+      unions (D15). `pnpm --filter maister-web db:generate` → `0173_<name>.sql` +
+      journal entry (`when > 1790016407278`) + `0173_snapshot.json`; rationale
+      header in the `0171/0172` style; `pnpm --filter maister-web db:erd` regenerates
+      `docs/db/erd.dbml`.
+      **AC**: RED 5 (journal integrity + co-nullity CHECK refuses a half-null row,
+      real Postgres) green; a second `db:generate` reports "No schema changes";
+      `db:erd --check` green; `migration-journal-integrity` suite green.
+- [ ] **T1.2 — `maister.yaml` field + registration + write-back.**
+      `config.schema.ts:190-196` `public_branch_template` (D5 validation, `CONFIG`
+      with `public_branch_template_invalid`); `app/api/projects/route.ts:402-418`
+      maps it (absent → column default); `yaml-writeback.ts:118-168`
+      `SerializeProjectInput.publicBranchTemplate` emitted unless default;
+      `persist-config.ts:163-172` passes it; `settings-panel.tsx:121-130` read-only
+      row + `board.publicBranchTemplate(Desc)` keys (EN/RU).
+      **AC**: RED 5 round-trip (SET / CLEAR / re-SET, and column → YAML omit/emit)
+      green; an invalid template refuses registration with `CONFIG` before any row
+      is written.
+- [ ] **T1.3 — Git primitives (`web/lib/worktree.ts`).** `pushBranch` per D4
+      (`remoteBranch`, `leaseSha`, `setUpstream`, refspec after `--end-of-options`);
+      `forceWithLeasePush` and `sync-target.ts:283` `pushWithLease` become wrappers
+      taking `remote`/`remoteBranch`; `branchUpstream(repo, branch)`;
+      `remoteTrackingBranchHead` / `remoteBranchExists` `+ remoteBranch?`;
+      `writeRescueRef` (temp `GIT_INDEX_FILE`, `write-tree`, `commit-tree` with
+      `commitIdentityArgs`, `update-ref`), `listRescueRefs`, `nextRescueIndex`;
+      `worktreePresence(paths)`; every new call goes through `runGit` (local) or
+      `NETWORK_GIT_ENV` (network) with `--end-of-options`, URLs through `redactUrl`.
+      **AC**: RED 7 (refspec + upstream config + lease + non-FF + stale lease +
+      no-op re-push), RED 9 (rescue ref content incl. untracked, real index
+      untouched) green at the primitive level; `worktree-sync.test.ts` and
+      `real-git.integration.test.ts:336` (force-with-lease retry) green with the
+      wrappers.
+- [ ] **T1.4 — Policy module.** `web/lib/workbench-git/policy.ts` per D1 (exhaustive
+      `STATUS_CLASS`, exported `WORKTREE_ACTION_STATUSES`, `canReclaimLifecycle`
+      exported from the service and reused, the widened `WorkbenchLifecycleActionId`
+      + `ACTION_ORDER`); `deriveWorkbenchLifecycleActions` re-based on it; op-name
+      unions (D15). Pure — depends on nothing in T1.3.
+      **AC**: RED 1 green (status × viewer × workspace-state × busy matrix; unknown
+      status admits nothing; a `Crashed` run with an `active` execution-assignment
+      row is admitted (C14); a live shared sibling → `busy`; `HumanWorking` owner
+      gets `snapshotCommit, discardChanges, exportBranch, update, openPr, finalizePr,
+      reattach` and never `archive|drop|stop`);
+      `policy.test.ts` matrix unchanged and green; the carve-out file migrated
+      (§Assertion migration).
+- [ ] **T1.5 — The carve-out opens.** `service.ts:179` type → `Promise<{id}>`,
+      `:1980-1984` returns the user, six `?? null` sites simplified;
+      `openReworkClaimOwnerUserId` extracted to `lib/runs/rework-claim.ts` and used by
+      `loadContext` (`:2117-2121`), `getRunDetail` (`run.ts:808`), `layout.tsx:1226`;
+      `lifecycleActionsForWorkspace` (`portfolio.ts:263`) takes explicit
+      viewer/owner; `hasWorkspace = workspaceId != null` on both detail sites;
+      `getRunDetail` returns facts and the layout derives the viewer-dependent
+      actions with `lifecycleActionsForViewer` (D2 — `cache()` keyed on `runId`).
+      **AC**: RED 2 green (real DB: a `HumanWorking` run with an open rework claim
+      → the owner's run detail lists the git set, another member's lists
+      `human-owned`, the board/rail/portfolio list none); the falsification "revert
+      `:1980-1984`" turns RED 2 red again.
+- [ ] **T1.5b — Fact loader.** `web/lib/workbench-git/facts.ts`
+      `loadWorkbenchGitFacts` per D1a (claim owner, live shared sibling, informational
+      active assignment, presence, lazy reattach sources, slot + PR fields), wired
+      into `loadContext`/`requireActionAllowed` (`service.ts:395-440`, `:2040+`).
+      After T1.3 (presence/sources) and T1.5 (predicate). T1.7, T1.8, T1.9, T2.1 and
+      T3.3 consume it.
+      **AC**: RED 1's integration twin (real DB: the loader's facts for a `Crashed`
+      run with an active assignment, a shared root with a live child, a removed row
+      with a published source) feed the predicate to the expected sets; no second
+      fact derivation exists (grep control: `countUnsettledSharedSiblings` and
+      `openReworkClaimOwnerUserId` are called from the loader only, outside their
+      original modules).
+- [ ] **T1.6 — Public branch name.** `web/lib/workbench-git/public-branch-name.ts`
+      per D5 (`renderPublicBranchName`, `transliterate`, `validatePublicBranchTemplate`);
+      the `{task_key}` loader JOINs `projects` (C2).
+      **AC**: RED 6 green (Cyrillic → Latin table incl. `щ→shch`, `ё→yo`; 40-char
+      cap; empty slug collapses separators; `run-<8hex>`; `{attempt}` from the
+      branch suffix; unknown placeholder / invalid result → `CONFIG`).
+- [ ] **T1.7 — Publish + the `published_*` readers.** `exportWorkbenchBranch`
+      (`service.ts:1485-1590`) per D4 (name core, lease before push, refspec +
+      upstream, `published_*` after, result fields); `export-branch/route.ts:16-29`
+      body `+ branchName`; `isBranchPublished` (`branch-published.ts`) `+
+      publishedBranch`, no `.catch`; `rework-claim-ingest.ts:70-93` tracking ref
+      from `published_*`; `sync-target.ts:724-741` and `:1094-1108` lease/push on the
+      public name; `promotePullRequestSideEffect` (`promote.ts:1378-1386`) pushes
+      through the name core (public name, upstream, `published_*`) — its PR head
+      becomes the public name in the same change so the branch stays coherent;
+      `recordPublished` is the ONE writer of `published_*` (publish, sync's push,
+      promotion's push — D4).
+      **AC**: RED 7 (service level: three name sources; `public_name_fixed`;
+      `published_*` written after the push; crash-window retry idempotent) and
+      RED 8 (`isBranchPublished` order; ingest fast-forwards from
+      `<published_remote>/<published_branch>`) green; `promote-pr.test.ts` migrated
+      (push args now carry the public name and `setUpstream`); `rework-claim.integration.test.ts:725`
+      still green for an unpublished branch.
+- [ ] **T1.8 — Discard-changes.** `web/lib/workbench-git/service.ts`
+      `discardWorkbenchChanges` per D8; route `app/api/runs/[runId]/discard-changes/route.ts`
+      (family A, `errorResponse` from `workbench-lifecycle/route-utils.ts`, whose
+      `errorPayload` now forwards `details` — D24; `routes.test.ts` gains the
+      passthrough case and the `sync` route's `errorResponse` gets the same line).
+      **AC**: RED 9 green (rescue ref holds tracked + untracked changes; tree clean
+      after; clean tree → 409 `clean_worktree`; the ref survives `dropWorkbench`;
+      viewer 403 / member 200).
+- [ ] **T1.9 — `git-state`.** `web/lib/workbench-git/read-model.ts` `loadGitState`
+      per D3 (scratch base/target from `scratch_runs`; field-wise degradation with
+      `warnings`; `ls-remote` best-effort); route `git-state/route.ts` (GET, family A
+      with `recoverRun` in the deps). `getRunDetail` and the layout are asserted NOT
+      to import it.
+      **AC**: RED 10 green (usable / removed / `worktree-gone` with `removed_at IS
+      NULL` → `worktreePresent:false` and only `reattach` enabled; unreachable remote
+      → `remoteReachable:false` + 200; member 200 / viewer 403; a grep control that
+      `read-model.ts` is imported only by the route and the component tests).
+- [ ] **T1.10 — `Failed` visibility.** `portfolio.ts:77-90` `+ "Failed"`; pin it
+      with a unit assertion; `queries/board.ts` `BacklogCard.latestRun` (+ `worktreePath` added to the
+      run-row select at `:549-551`) + the `worktreePresence` helper
+      (`web/lib/workbench-git/presence.ts`, D14); `TaskCard` renders the menu; attention stream
+      accepted (D14 row); decision sources untouched.
+      **AC**: RED 3 (portfolio / project list / rail list a `Failed` run; no TTL
+      chip; `decisions.count` unchanged; `listCrashedForProjects` excludes it) and
+      RED 4 (Backlog card DTO carries `lifecycleActions` only when the latest run's
+      worktree is usable) green; `portfolio.integration.test.ts` counts migrated.
+- [ ] **T1.11 — Panel (Phase-1 sections) + hosting + menus + inspector + i18n.**
+      `git-panel.tsx` (header, Tree, Publish, Commands; Update/PR/Reattach sections
+      render disabled placeholders until Phases 2–3), the `git-state` fetch pattern
+      (`node-transcript-panel.tsx:70-115`), `lifecycle-actions.tsx` hosts it and
+      drops the Export dialog + `loadMetadata`; `railMenuItems` deep links;
+      `layout.tsx:1240-1245` `href`; `run-inspector.tsx:203-222` href-only;
+      `?git=<section>` URL state; labels in `workbenchLifecycle.action.*`, panel copy
+      in `workbenchGit.*`, EN + RU + key suite; dialogs keep typed input across a
+      refresh (D16).
+      **AC**: RED 12 green (jsdom: busy → all disabled with reason; dirty → Commit +
+      Discard enabled; unpublished → name field pre-filled from the template;
+      published → chip + hidden name field; `non_fast_forward` → force checkbox
+      appears; worktree-missing → only Reattach; inspector renders zero `<span>`
+      actions; rail menu emits deep links; a typed PR title survives a `git-state`
+      refresh tick); `i18n-parity` green; `lifecycle-actions.dom.test.ts`
+      migrated (export dialog cases → panel cases).
+- [ ] **T1.12 — Unpushed-work guard + archive knob.** Archive/Drop dialogs fetch
+      `git-state`, render counts and the two primaries (D17);
+      `archiveWorkbenchForCtx` / `removeWorkbenchForCtx` pass
+      `archivePush: gcArchivePush()`.
+      **AC**: RED 13 green (`preserveWorktree` receives `archivePush:true` when the
+      env is `"true"`, `false` otherwise; the dialog shows `unpushedCommits` and runs
+      publish before archive on the first primary).
+- [ ] **T1.R — REFACTOR gate (Phase 1).** Suite green; re-read the diff against D22:
+      fold the three hand-rolled bare-remote fixtures onto
+      `git-remote-fixture.ts`; remove orphans this change created (the Export
+      dialog's helpers, `loadMetadata`, the `| void`); no behaviour change, zero test
+      edits across the refactor.
+      **AC**: `pnpm --filter maister-web test` green before and after; `pnpm lint`
+      0 errors on changed files (`git status` checked before staging — it is
+      `eslint --fix`); `pnpm typecheck` clean.
+
+**Commit 3** — `feat(workbench-git): git panel, git-state, publish under a public name, discard, Failed visibility, carve-out`
+
+### Phase 2 — Update + reattach
+
+**Exit criteria**: RED 14–17 green; full web suite green; the ReviewPanel sync
+dialog is gone; a `Failed` run updates onto base / target / published and re-attaches
+after drop; refactor gate passed.
+
+- [ ] **T2.0 — RED battery (Phase 2).** RED 14–17, red on the Phase-1 tree.
+      **AC**: as T1.0.
+
+**Commit 4** — `test(workbench-git): RED — update is Review-only, removed worktrees are dead ends`
+
+- [ ] **T2.1 — `sync` gains `onto`, admission, restore.** `sync/route.ts:22-28`
+      `+ onto`; `sync-target.ts`: `assertSyncEligible:175` → D1 predicate;
+      `agent` default and `agent_requires_review`; ref resolution per `onto`
+      (`:710-713` becomes a `resolveSyncRef(onto)`), `target_ref`/`target_sha`;
+      conflict path `+ restoreWorktreeToCommit(headShaBefore)` and
+      `conflictedFiles` in the outcome; the resolver branch untouched; the route's
+      `errorResponse` forwards `details` (D24); `recordPublished` after a public-name
+      push (D4).
+      **AC**: RED 14 (three `onto` values on real git; `base_branch_unknown`;
+      `not_published`; `target_ref` records `<remote>/<public>`; `agent:true`
+      outside `Review` → 409; the other five eligibility arms still refuse; the
+      `Review` default still launches the resolver — existing
+      `sync-target.integration.test.ts` cases green), RED 15 (conflict →
+      `HEAD === headShaBefore`, tree clean, `outcome:"conflict"` with paths; a
+      `Failed` run may update), RED 16 (push after update leases and pushes the
+      public name and records `published_*`) green; `sync-target.integration.test.ts:33-41` spy sites updated.
+- [ ] **T2.2 — Reattach + revival helper + reconciler arm.**
+      `lib/runs/revive-worktree.ts` per D10; `reattachWorkbench` + route
+      `reattach/route.ts` (family A, `recoverRun`); `reopen.ts:158-188` re-based on
+      the helper (own writes kept); provenance v2 rebuilt from DB;
+      `workspace-reconciler.ts` `workspace_reattached` arm.
+      **AC**: RED 17 green (local → published (upstream re-set) → archive sources;
+      provenance file present and parseable; `removed_at`/`scheduled_removal_at`
+      null only after `worktree add`; `archived_*` kept; no source → 409; occupied
+      path → 409 and the directory untouched; reopen still clears `archived_*`;
+      the reconciler restores a re-attached-but-unrecorded row); `reopen.integration.test.ts`
+      green unchanged.
+- [ ] **T2.3 — Panel Update + Reattach sections; ReviewPanel sync dialog removed.**
+      `review-panel.tsx:403-530` deleted, `review-sync-open` → panel deep link;
+      `git-panel.tsx` Update (`onto` with per-option ahead/behind, strategy, push,
+      resolver toggle only in `Review`) and Reattach.
+      **AC**: RED 12 extension green (Update section states; resolver toggle absent
+      outside `Review`; Reattach lists sources); `review-panel.test.ts:293-324`
+      migrated (obsolete → deleted, chip cases kept); `run-sync.spec.ts` testids
+      re-pointed at the panel (`review-sync-*` → `git-panel-update-*`).
+- [ ] **T2.R — REFACTOR gate (Phase 2).** As T1.R; verify `resolveSyncRef` is the
+      only place that maps `onto` to a ref.
+
+**Commit 5** — `feat(workbench-git): update onto base|target|published; re-attach a removed worktree`
+
+### Phase 3 — PR before promotion + scratch modes
+
+**Exit criteria**: RED 18–23 green; full web suite green; `promoteRun(pull_request)`
+and the panel's publish → open PR → finalize converge on identical rows; scratch
+honours its three modes; refactor gate passed.
+
+- [ ] **T3.0 — RED battery (Phase 3).** RED 18–23, red on the Phase-2 tree.
+      **AC**: as T1.0; the provider boundary is mocked at `node:child_process` /
+      `fetch` (RED 18) and at the service seam (RED 19–22).
+
+**Commit 6** — `test(workbench-git): RED — a PR is a promotion`
+
+- [ ] **T3.1 — `PrAdapter.draft`.** `pr-adapter.ts:31-38` `+ draft?: boolean`;
+      gh `:201-220` and glab `:262-279` add `--draft`; gitea/gitverse `:459-464`
+      map `draft` to a `WIP: ` title prefix; `PrResult` unchanged.
+      **AC**: RED 18 green (argv contains `--draft` exactly when requested; Gitea
+      body title prefixed; `findOpenPr` still matches by head/base; no token in any
+      thrown message); `pr-adapter.test.ts` contract header updated.
+- [ ] **T3.2 — Open-PR core + `/pr` route + promotion re-base.**
+      `workbench-git/service.ts` `openPullRequest` per D11 (`resolvePromotionTarget`
+      extracted from `promoteWorkspaceRun`; provider resolution extracted from
+      `promote.ts:1362-1374`); route `pr/route.ts` (inline authz; errors through
+      route-utils — 400 on shape, `details` forwarded);
+      `promotePullRequestSideEffect` re-based on the core.
+      **AC**: RED 19 green (opens from the public name to the resolved target;
+      writes `pr_url/pr_number/pr_state='open'/target_branch`; `runs.status`
+      unchanged; reuse by head/base; `dirty_worktree`, `not_published`,
+      `publish_stale`, out-of-policy target, `generic` provider → 409; provider 5xx
+      → 503 with the claim `claiming`; viewer 403 / member 200);
+      `promote-pr.test.ts` migrated (createOrUpdatePr args: public head, `draft`).
+- [ ] **T3.3 — Finalize extracted + `/pr/finalize`.** `finalizePullRequest`
+      (`promote.ts:1421-1674`) exported with the D12 signature (`attribution`,
+      `run_kind` arm for scratch); `finalizePullRequestRun` (claim for
+      `Crashed|Failed|Abandoned` via `canReclaim` in the `FlowClaim` shape, with the
+      `sync`, `promotion_hold` and unsettled-sibling fences — D12; `Review` →
+      `promoteRun`); route `pr/finalize/route.ts` (inline authz, route-utils errors); `attribution` union
+      `+ {source:"pr_finalize"}`; `run.promoted` webhook `data.source`.
+      **AC**: RED 20 green (from `Failed`: `runs` Done + `promoted_head_sha` =
+      published head + `merge_commit_sha` null; `workspaces` `promotion_state='done'`,
+      `promoted_at`, `scheduled_removal_at`, `promotion_lane` null; webhook pair
+      `["run.promoted","run.done"]` with `data.source:"pr_finalize"`; domain
+      `run.done` with `parentRunId`; from `Review` the readiness refusal is observed
+      through `promoteRun`; `pr_closed` / `pr_missing` / `promotion_hold` → 409;
+      unsettled shared siblings → 409 `CONFLICT`; one step further: `pr_state_scan`
+      then marks the PR `merged` and `repo_delivery_scan` closes the loop
+      (`merge_commit_sha` set); `publish_stale` when
+      the worktree is usable and behind; two concurrent finalizes → one `CONFLICT`;
+      shared-tree `Review` siblings flipped by the extracted path);
+      `promote-service.test.ts:632-639` pair ordering still green.
+- [ ] **T3.4 — Scratch modes.** `promoteScratchRun` per D13 (`:1751-1757` removed;
+      `rebase_merge` and `pull_request` arms with the scratch target).
+      **AC**: RED 22 green (both modes admitted; `local_merge` byte-identical;
+      target = `scratch_runs.target_branch ?? base_branch`; an explicit foreign
+      target still refused); `promote-service.test.ts` scratch refusal case
+      classified obsolete and replaced.
+- [ ] **T3.5 — Panel PR section + scratch.** Open-PR dialog (title/body/draft/target
+      pre-filled from `task_key`, title, run link), Finalize, chip states
+      (`open` / `merged` / `closed` / `not tracked` for scratch); the scratch
+      `<select>` (`scratch-inspector-actions.tsx:96-98`) unchanged and now honoured.
+      **AC**: RED 12 extension green (PR section states; Finalize disabled with
+      `pr-closed` tooltip; Open PR hidden until published); RED 23 (integration:
+      `pr_state_scan` picks a `Failed`-run PR, `:373`-style eligibility case) green
+      with **no** scan code change.
+- [ ] **T3.R — REFACTOR gate (Phase 3).** As T1.R; verify the promotion `pull_request`
+      path contains no second push or PR-lookup implementation (one core each).
+
+**Commit 7** — `feat(workbench-git): open a PR before promotion, finalize from any parked status, scratch promote modes`
+
+### Phase 4 — e2e smoke, manual live check, as-built truth pass, lane re-qualification
+
+- [ ] **T4.1 — e2e smoke.** Seed `seedWorkbenchGitFixture` in `e2e/_seed/seed-e2e.ts`:
+      a project with a bare remote (the `provisionM27Repo:5166-5191` shape), a
+      task, a run inserted `Failed` with a real worktree carrying an uncommitted
+      change, `provider: "github"` and a `repo_url` that is never contacted. The
+      provider boundary is a **fake `gh` executable** (`e2e/_seed/bin/gh`, a node
+      script: `--version` → ok; `pr list --head … --base … --json …` → the in-memory
+      list; `pr create …` → prints a URL and records `{head, base, title, draft}` in a
+      state file under the fixture dir so the spec can read it), prepended to `PATH`
+      with `GH_TOKEN` set in the webServer env (`playwright.config.ts:101-120`). C16
+      is why it is not a Gitea stub.
+      Spec `e2e/workbench-git.spec.ts` (added to `AUTHED_SPEC`, `:47-48`): the
+      `Failed` run is visible on `/projects` and the board's Backlog card menu →
+      run detail → Commit (dialog, `waitForResponse` on `/snapshot-commit`) →
+      Publish (name pre-filled `feature/<KEY>-<n>-<slug>`, `waitForResponse` on
+      `/export-branch`, then `git -C <remote> rev-parse refs/heads/<public>` equals
+      the worktree HEAD) → Open PR (`/pr` 200, chip `open`, the fake recorded one
+      create with `head = <public>` and the chosen `draft`) → Finalize
+      (`/pr/finalize` 200) → status `Done` on the run header and the board.
+      `--workers=2`.
+      **AC**: passes twice on a quiet host; no `networkidle`; every assertion waits
+      on the specific response; the fake `gh` recorded exactly one create.
+- [ ] **T4.2 — Manual live check (owner-executed, recorded).** Against a real
+      remote: `gh pr create --draft` (github), `glab mr create --draft` (gitlab), and
+      the Gitea family `WIP:` prefix on the owner's Gitea/GitVerse instance —
+      draft flag honoured, dedup finds the PR on a second Open PR, finalize marks
+      `Done`, `pr_state_scan` sees `open` → `merged` after a merge. Results (provider,
+      version, outcome) recorded in the commit body of Commit 8 and in
+      `workbench-git.md` Linked artifacts as the ADR-049-style manual evidence line.
+      **AC**: three providers listed with a version and an outcome; any gap becomes
+      an Edge-case bullet, not a silent pass.
+- [ ] **T4.3 — As-built docs truth pass + status flips.** Re-derive the contract
+      surface list from `git diff master...HEAD` and reconcile with the Phase-0
+      table (every difference explained in the commit body);
+      `workbench-git.md` → **Implemented** (every Expectation re-verified against
+      code and naming its enforcer; Route contracts = the served routes;
+      `(Designed)` tags removed); `workbench-lifecycle.md`, `branch-sync.md`,
+      `git-integration.md`, `scratch-runs.md`, `workspaces.md` as-built deltas;
+      OpenAPI summaries `(ADR-181 — Implemented)`; ERD comments;
+      `docs/error-taxonomy.md`, `docs/configuration.md`, screens, RU checked against
+      the shipped `ru.json` keys; ADR-181 `**Status:** Implemented` in the record,
+      the stub (`decisions.md:1840`) and the index row (`:225`); root `CLAUDE.md`
+      §7 `:382-384` (+ `discard-changes | git-state | pr | pr/finalize | reattach`,
+      public branch names) and §8 `:437-440` (C8). Gates: `pnpm validate:docs`,
+      `pnpm validate:contracts`, redocly, asyncapi.
+      **AC**: no `(Designed)` tag remains for ADR-181 surfaces; the three-way ADR
+      bijection passes; no `M-NN` token in any new sentence (R6).
+- [ ] **T4.4 — Lanes green, by name.** Quiet host, ports 3100/7788 freed:
+      `pnpm --filter maister-web test:unit`, `test:integration` (~25 min; the two
+      `prompt-owners` files dominate), `pnpm --filter @maister/supervisor test`
+      (untouched — must still be green), `pnpm --filter maister-web test:e2e
+      --workers=2`; failure sets compared **by name** against a `master` run on the
+      same host; `| N skipped` grepped in every lane; `pmset -g log` read before
+      attributing a timeout.
+      **AC**: unit and integration 0 failures beyond the documented load-sensitive
+      names (`dirty-resolution-race` pair, `deliverer` D3), each re-run idle and
+      green 4/4 when hit; e2e set ⊆ the documented `master` set + zero new names;
+      `pnpm lint` 0 errors on changed files; `pnpm typecheck` clean; `git status`
+      clean of `eslint --fix` collateral.
+
+**Commit 8** — `docs(workbench-git): ADR-181 Implemented — as-built sweep, e2e smoke, live PR check`
+
+---
+
+## Refactor gates (the R in RED → GREEN → REFACTOR)
+
+`T1.R`, `T2.R`, `T3.R` are first-class tasks: each runs after its phase is green,
+changes no behaviour, and is bounded by three questions — **DRY by question, not by
+shape** (D22); **orphans this change created** are removed, pre-existing dead code
+is left alone (root `CLAUDE.md`); **the suite is the invariant** — a refactor that
+needs a test edited is not a refactor.
+
+## Test plan
+
+### Controls (23 + e2e, disjoint)
+
+| # | Control | Lane / file | Fails on this tree because |
+|---|---|---|---|
+| RED 1 | policy matrix: status × viewer × usable/removed/missing × busy; unknown status; `HumanWorking` owner full set, non-owner `human-owned`; `Crashed` with an active execution assignment admitted (C14); live shared sibling → busy | unit `lib/workbench-git/__tests__/policy.test.ts` | module absent |
+| RED 2 | production deps return the user; `getRunDetail` / layout actions for the claim owner; board/rail/portfolio still none | integration `lib/workbench-lifecycle/__tests__/carve-out-production.integration.test.ts` | `viewerUserId` always null |
+| RED 3 | `ACTIVE_RUN_STATUSES` pins `Failed`; portfolio, project list, rail list a `Failed` run without TTL; `decisions.count` and `listCrashedForProjects` unchanged | unit `lib/queries/__tests__/active-run-statuses.test.ts` + integration `portfolio.integration.test.ts` case | `Failed` absent |
+| RED 4 | Backlog card DTO carries `lifecycleActions` iff the latest run's worktree is usable | integration `lib/queries/__tests__/board-failed-card.integration.test.ts` | `BacklogCard` has no such field |
+| RED 5 | migration triple + co-nullity CHECK; YAML SET/CLEAR/re-SET; column → YAML omit/emit; invalid template → `CONFIG` | integration `lib/db/__tests__/migration-0173.integration.test.ts`, unit `lib/packages/__tests__/yaml-writeback.test.ts` cases | columns/field absent |
+| RED 6 | template rendering + transliteration + cap + collapse + fallback + `CONFIG` | unit `lib/workbench-git/__tests__/public-branch-name.test.ts` | module absent |
+| RED 7 | publish: refspec, upstream config, `published_*`, name order incl. `public_name_fixed`, non-FF → `canForce`, explicit-SHA lease, stale lease keeps local, crash-window retry no-op; one step further: publish again is a no-op and update-from-published brings a remote push back | integration `lib/workbench-git/__tests__/publish.integration.test.ts` (real git + bare remote) | pushes internal name, no upstream, no record |
+| RED 8 | `isBranchPublished` reads `published_branch` before the upstream probe; ingest fast-forwards from the published ref | unit `branch-published.test.ts` case + integration `rework-claim.integration.test.ts` case | internal name assumed |
+| RED 9 | rescue ref holds tracked + untracked, real index untouched, tree clean after, clean tree 409, ref survives drop; restoring from the rescue ref reproduces the bytes | integration `lib/workbench-git/__tests__/discard.integration.test.ts` | route/service absent |
+| RED 10 | `git-state`: usable / removed / worktree-gone DTOs; unreachable remote → 200; member 200, viewer 403; not imported by RSC modules | route integration `app/api/runs/[runId]/git-state/__tests__/route.integration.test.ts` | route absent |
+| RED 11 | racer: publish vs discard on one workspace → one `CONFLICT`; guard-disabled control shows both run | integration `lib/workbench-git/__tests__/lifecycle-race.integration.test.ts` | ops absent |
+| RED 12 | panel states (busy, dirty, unpublished, published+chip, non-FF force, worktree-missing → Reattach only; later: Update/PR sections); inspector href-only; rail deep links; a typed PR title survives a refresh tick | jsdom `components/workbench/__tests__/git-panel.dom.test.ts`, `run-inspector.dom.test.ts` | component absent; `<span>` fallback present |
+| RED 13 | archive/drop pass `archivePush` from the env; dialog shows unpushed counts and publishes first | unit `service.test.ts` case + jsdom `lifecycle-actions.dom.test.ts` case | `archivePush` never passed |
+| RED 14 | `onto` ×3 on real git; `base_branch_unknown`; `not_published`; `target_ref`; `agent_requires_review`; Review default still launches the resolver; the other five eligibility arms still refuse | integration `sync-target.integration.test.ts` new cases | `onto` unknown (422), status gate |
+| RED 15 | conflict restores `headShaBefore`, clean tree, paths returned; a `Failed` run updates | integration same file | no restore; Review-only |
+| RED 16 | post-update push leases and pushes the public name and records `published_*` | integration same file | internal name |
+| RED 17 | reattach: three sources, upstream re-set, provenance v2, DB nulls after add, `archived_*` kept, no source 409, occupied path 409 untouched, reopen unchanged, reconciler `workspace_reattached`; publish after reattach uses the re-set upstream | integration `lib/workbench-git/__tests__/reattach.integration.test.ts` + `workspace-reconciler.integration.test.ts` case | route absent; reconciler has no arm |
+| RED 18 | adapter `draft`: gh/glab argv, Gitea `WIP:`, dedup by head/base, no token leak | unit `pr-adapter.test.ts` cases | no `draft` |
+| RED 19 | `/pr`: open from the public name, rows written, status unchanged, reuse, five 409 reasons, 503 keeps the claim, viewer 403 / member 200 | route + service integration `app/api/runs/[runId]/pr/__tests__/route.integration.test.ts` | route absent |
+| RED 20 | `/pr/finalize` from `Failed` (rows + events + attribution), from `Review` (readiness through `promoteRun`), `pr_closed`, `pr_missing`, `publish_stale`, concurrent finalize, shared-tree siblings; `promotion_hold`; unsettled siblings → CONFLICT; one step further: scan → `merged`, delivery scan closes the loop | integration `lib/workbench-git/__tests__/pr-finalize.integration.test.ts` | route absent; finalize private |
+| RED 21 | `promoteRun(pull_request)` from `Review` publishes the public name + reuses the open PR (rows identical to the panel path; `published_*` recorded) | unit `promote-pr.test.ts` migrated cases | internal name, no upstream |
+| RED 22 | scratch `rebase_merge` and `pull_request` admitted; `local_merge` unchanged; target from `scratch_runs`; foreign target refused | unit `promote-service.test.ts` cases | `:1751-1757` refusal |
+| RED 23 | `pr_state_scan` scans a `Failed`-run PR | integration `pr-state-scan.integration.test.ts` case | guard — passes on this tree; kept as the widened-population proof |
+| e2e | Failed visible → commit → publish → open PR (fake `gh`) → finalize → Done | `e2e/workbench-git.spec.ts` (authed) | nothing exists |
+
+**Overlap audit**: RED 7 owns the push semantics (RED 16 asserts only the name
+choice after an update; RED 21 only that promotion reuses the same rows); RED 10
+owns `git-state` (RED 12 mocks it); RED 20 owns finalize rows (RED 22 only the
+scratch admission); RED 23 asserts no code and is labelled a guard. **No trivial
+controls**: none asserts a constant, a type or a field's mere presence — RED 3's
+pin of the status array is the one deliberate literal assertion, justified because
+four query modules consume it and nothing else would go red.
+
+**Assertion style**: outcome, not shape — RED 7 reads `git config branch.<internal>.merge`
+and `ls-remote` on the bare remote rather than the push argv; RED 9 restores from
+the rescue ref and diffs the file bytes; RED 17 parses the provenance file; RED 20
+asserts the webhook pair and the domain row, not the emitter's call count.
+
+### Falsification (each run and recorded, tree restored after)
+
+| # | Revert | Control that must fail | Expected observation |
+|---|---|---|---|
+| 1 | `requireActiveSession` discards the user again | RED 2 | owner sees `human-owned` |
+| 2 | `lifecycleActionsForWorkspace` hard-codes `null, null` again | RED 2 (detail path) | `getRunDetail.lifecycleActions` empty |
+| 3 | drop `"Failed"` from `ACTIVE_RUN_STATUSES` | RED 3 | run absent from `activeWorkspaces` |
+| 4 | push without `--set-upstream` / refspec | RED 7 | `branch.<internal>.merge` unset; remote branch named `<internal>` |
+| 5 | capture the lease AFTER the push | RED 7 (stale-lease case) | remote head overwritten |
+| 6 | `isBranchPublished` without the `publishedBranch` arm | RED 8 | published-without-PR reads unpublished |
+| 7 | reset before `update-ref` | RED 9 | rescue ref absent or empty |
+| 8 | remove the claim from `discardWorkbenchChanges` | RED 11 | both racers succeed |
+| 9 | remove `restoreWorktreeToCommit` from the conflict path | RED 15 | HEAD ≠ `headShaBefore` |
+| 10 | null `removed_at` before `worktree add` | RED 17 | row usable, path missing |
+| 11 | drop the reconciler arm | RED 17 (crash case) | row stays removed |
+| 12 | `draft` ignored | RED 18 | no `--draft` / no `WIP:` |
+| 13 | finalize writes rows before the fence check | RED 20 (concurrent) | two `Done` writes |
+| 14 | re-add the scratch refusal | RED 22 | 409 |
+| 15 | drop `recordPublished` from sync's push arm | RED 16 | `published_*` null after a public-name push |
+| 16 | re-add the execution-assignment admission arm | RED 1 | `Crashed` admits nothing |
+| 17 | drop `details` from `errorPayload` | RED 9 / RED 19 | the client sees `code` only, no `details.reason` |
+
+Verify each patch landed (`grep` the marker) before reading the result — a
+falsification that did not apply is indistinguishable from a control that cannot
+fail (patch `2026-09-22`, ADR-180 plan).
+
+### Assertion migration (in scope, per phase)
+
+| File | What changes | Classification |
+|---|---|---|
+| `lib/workbench-lifecycle/__tests__/policy-rework-claim-carve-out.test.ts:42-58` | owner now gets the full git set (projected: `exportBranch` still the only lifecycle id enabled) — extend, not weaken | obsolete expectation of "export only" at the git level |
+| `lib/runs/__tests__/inspector-actions.test.ts:87-130` | inputs gain viewer/owner; items gain `href` | contract moved |
+| `components/workbench/__tests__/lifecycle-actions.dom.test.ts` | Export dialog cases → panel cases; `handoff-metadata` fetch cases deleted | obsolete (dialog removed) |
+| `app/api/runs/[runId]/workbench-lifecycle/__tests__/routes.test.ts:193-299` | `exportWorkbenchBranch` arg object gains `branchName` | contract moved |
+| same file, `errorPayload` cases | error bodies now carry `details` (D24) | contract moved |
+| `lib/workbench-lifecycle/__tests__/real-git.integration.test.ts:314,336` | export push assertions read the public name + upstream | broken by the change — fixed |
+| `lib/runs/__tests__/sync-target.integration.test.ts:33-41` spies, status cases | spy sites; `onto`; non-Review admission | contract moved |
+| `lib/runs/__tests__/promote-pr.test.ts` | push args (`remoteBranch`, `setUpstream`), `createOrUpdatePr` head = public, `draft` | contract moved |
+| `lib/runs/__tests__/pr-adapter.test.ts:19-37` header | `draft` added to the contract | contract moved |
+| `lib/runs/__tests__/branch-published.test.ts` | new argument | contract moved |
+| `lib/runs/__tests__/promote-service.test.ts` scratch refusal | admitted now | obsolete → replaced by RED 22 |
+| `components/runs/__tests__/review-panel.test.ts:293-324` | sync dialog gone | obsolete → deleted; chip cases kept |
+| `lib/queries/__tests__/portfolio.integration.test.ts:400,457,590` | `activeWorkspaces` counts include `Failed` | contract moved |
+| `e2e/run-sync.spec.ts` | `review-sync-*` testids → `git-panel-update-*` | contract moved |
+| `e2e/m27-workbench-lifecycle.spec.ts:27-37` | "Export" button → "Publish" in the panel | contract moved |
+
+Every migrated assertion carries its classification in the commit body; none is
+loosened.
+
+### Existing suites that must stay green without loosened expectations
+
+`policy.test.ts`, `service.test.ts`, `race.test.ts`, `handoff.test.ts`,
+`real-git.integration.test.ts`, `sync-target.integration.test.ts`,
+`dirty-resolution-race.integration.test.ts` (known load-flaky pair),
+`rework-claim.integration.test.ts`, `reopen.integration.test.ts`, `preserve.test.ts`,
+`workspace-reconciler.integration.test.ts`, `promote-service.test.ts`,
+`promote-pr.test.ts`, `pr-adapter*.test.ts`, `pr-state-scan.integration.test.ts`,
+`decisions.integration.test.ts`, `decision-sources.test.ts`,
+`decision-surface-single-source.test.ts`, `run-status-sets.test.ts`,
+`work-stage` suites, `inspector-actions.test.ts`, `run-continuation-actions.test.ts`,
+`i18n-parity.test.ts`, `migration-journal-integrity`, `openapi`/contract suites,
+the whole supervisor suite (untouched).
+
+### Lane hygiene
+
+- Quiet machine; sets compared by **name** against a `master` run; `pmset -g log`
+  before attributing a timeout; `grep '| N skipped'` per lane (a module-scope call
+  into a partially mocked module fails whole files as SKIPS).
+- `pnpm <script> -- <args>` leaks the `--`; pass vitest file lists without it; in
+  zsh use `${=FILES}` for word splitting.
+- Ports 3100/7788 and `maister_e2e` are shared across worktrees; free them first;
+  `--workers=2`; no `networkidle`; diagnose the FIRST e2e attempt.
+- Integration lane ≈ 25 min; `sequence 0 / duplicate` every 2 s during the
+  `prompt-owners` files is normal.
+
+---
+
+## Traps
+
+1. **`discard` is taken** (C1): route `/discard` and op name `discard` mean workspace
+   removal. Never reuse either; the new op is `discardChanges` / `discard-changes`.
+2. **`--set-upstream` with a refspec writes `branch.<internal>.merge =
+   refs/heads/<public>`**: every helper keyed by the LOCAL name must take
+   `remoteBranch` (D4/D7); the sync verify gate's `HEAD is not on <branch>` stays on
+   the internal name.
+3. **`isBranchPublished` on the live sync path has no `.catch`** by design
+   (`branch-published.ts:16-19`) — keep it; panel rendering degrades on its own.
+4. **`finalizePullRequest` extraction must keep the fence (`:1426-1452`), the
+   sibling flip (`:1520-1555`) and `mergeCommitSha: null`**; `pr_state` is never
+   written by finalize.
+5. **`git-state` is ~10 git calls + one network call**: own route, lazy, never in
+   `getRunDetail`/layout; a grep control enforces it (RED 10).
+6. **`deriveInspectorActions` got `Boolean(detail.worktreePath)` with the repo-path
+   fallback** (`run.ts:502`) — feed it `workspaceId != null` and the real presence.
+7. **`deriveStage` sends `Failed` (and `Abandoned`) to Backlog**; the card menu
+   comes from the latest run's workspace facts, never from `tasks.status`.
+8. **Scratch base/target live on `scratch_runs`** (`:5099-5101`), not `workspaces`;
+   the scratch `workspaces` insert is not widened.
+9. **`.tsx` test files are silently uncollected** (`vitest.workspace.ts:52-65`);
+   jsdom suites are `*.dom.test.ts` with the per-file pragma; route suites load the
+   module in `beforeAll`.
+10. **`pnpm lint` is `eslint --fix`** and mutates the tree — `git status` before
+    staging. Node ≥ 24.15 < 25 (26 hangs the AB lane).
+11. **Migrations are generated** (`drizzle-kit generate`); the triple is SQL +
+    journal + snapshot; `db:erd` regenerates `erd.dbml` or `validate:docs` is red;
+    journal `when` strictly increasing.
+12. **Gitea/GitVerse draft is version-dependent** and the provider boundary is
+    mocked in CI — T4.2 is the only live evidence; record versions.
+13. **Child-process env**: git goes through `runGit` (`cLocaleGitEnv`) or
+    `NETWORK_GIT_ENV` (`GIT_TERMINAL_PROMPT=0`, BatchMode SSH); never a third env
+    builder; URLs through `redactUrl`; ADR-153's allow-list governs agent processes
+    (untouched here).
+14. **`git stash` is shared across worktrees** — WIP commit, or
+    `git stash push -u -m "<tag>"` + `apply <sha>`, never bare `pop`.
+15. **`workbench-git.md` Expectations is at 12** (R5a cap; not in a gated group) —
+    edit in place, never add; `branch-sync.md` and `attention.md` likewise at 12.
+16. **`run.promoted` has no domain-event kind** — emit it through
+    `emitWebhookEvent` only; the AsyncAPI payload change is additive.
+17. **The attention stream reuses `ACTIVE_RUN_STATUSES` as a change-scan
+    predicate** (`route.ts:149,183`) — `Failed` joining it adds refresh ticks, never
+    a count; RED 3 pins `decisions.count`.
+18. **`addWorktreeForBranch` never fetches and maps "already exists" to
+    `PRECONDITION`** — the occupied-path `CONFLICT` check runs before it (D10).
+19. **`parseGiteaRemote` forces `https://` and drops the port** (C16) — the e2e
+    provider is a fake `gh` on PATH, never a local Gitea.
+20. **`errorPayload` forwards two `reason` tokens and no `details`** (C15) — D24
+    widens it; the top-level `reason` enum stays two values; the UI reads
+    `details.reason`.
+21. **`crashRunningRun` and `markAbandoned` keep the execution assignment `active`**
+    (C14) — never gate a parked run on it; the status class is the witness.
+
+---
+
+## Out of scope
+
+- AI resolver outside `Review`; relaunch from a run branch; per-file discard;
+  ext API / MCP exposure of push/PR; Bitbucket; a task-level PR entity; auto-`Done`
+  on external merge; widening `pr_state_scan` to scratch (Q5); rescue-ref GC (Q10).
+- The `handoff-branch` dialog and `GET handoff-metadata` route stay as they are
+  (the panel replaces the Export dialog only); folding handoff into the panel is a
+  separate, smaller change.
+- Re-syncing `docs/configuration.md:322-323`'s phantom `repo_path`/`default_branch`
+  rows (T0.8 TODO) and the pre-existing WORKSPACES ERD gaps (T0.8 TODO).
+- Editing `public_branch_template` from the settings UI (Q1).
+
+## Follow-ups
+
+None. Everything above ships in this plan; the two R9 TODOs are recorded defects,
+not deferred work of this change.
+
+---
+
+## Unresolved questions (batch — ALL answered 2026-09-22, see Resolved questions)
+
+1. **Шаблон публичного имени редактировать в UI?** (a) только через `maister.yaml`
+   + read-only строка в настройках (как `branch_prefix`), per-run поле `branchName`
+   закрывает срочную нужду — минимум кода, буква ADR соблюдена; (b) добавить в
+   `PATCH /settings` + запись в `maister.yaml` (сегодня PATCH yaml не пишет —
+   новая проводка). **Рекомендую (a)**: серверная установка без shell всё равно
+   правит yaml через git, а (b) — отдельная мелкая задача после.
+2. **`finalizePr` при удалённом worktree** (Abandoned после GC): (a) по ADR D1 —
+   сначала `reattach`, потом finalize (один предикат, один клик лишний); (b)
+   допускать finalize без worktree, если `pr_url` есть (head берём с remote).
+   **Рекомендую (a)** — не размывать предикат; (b) можно ослабить позже одной
+   строкой в policy.
+3. **`git-state` и сеть**: (a) один best-effort `ls-remote` опубликованной ветки
+   при каждом открытии панели (таймаут 60 с существующий, `remoteReachable:false`
+   при ошибке) — панель честно показывает «remote ушёл вперёд»; (b) без сети,
+   только tracking-ref (быстрее, но «ваши пуши с ноутбука» не видны до Update).
+   **Рекомендую (a)**.
+4. **Меню карточек/рейла**: deep-link в панель (`?git=<section>`), без слепых
+   мутаций с карточки. Подтвердить. **Рекомендую да** — publish без имени и update
+   без `onto` с карточки не имеют смысла.
+5. **`pr_state_scan` для scratch**: (a) оставить `run_kind <> 'scratch'` (текст
+   ADR; scratch-PR через `promote(pull_request)` финализируется сразу, standalone
+   Open PR показывает «open (not tracked)»); (b) убрать фильтр — scratch PR
+   отслеживаются. **Рекомендую (a)** в этом плане; (b) — однострочный follow-up,
+   если standalone Open PR на scratch окажется нужным.
+6. **ROADMAP**: завести веху (например «M52. Run git panel», ADR-181, миграция
+   0173) через `/aif-roadmap`, или без записи (план ссылается на ADR)?
+   **Рекомендую завести** — есть ADR, миграция и 8 коммитов, это веха.
+7. **Ветка**: остаёмся на `claude/worktree-run-management-0603cc` (файл плана назван
+   по ветке, как у шести предыдущих планов) или создать `feature/run-git-panel` от
+   неё? **Рекомендую остаться**.
+8. **Co-nullity CHECK на `published_*`** (три колонки либо все NULL, либо все
+   заданы): включить в миграцию 0173 (рекомендую, дисциплина как у
+   `lifecycle_claim_shape_check`) или строго «nullable» по тексту ADR?
+9. **Дефолт `agent` для Update вне Review** — механический (ADR: резолвер только в
+   Review); в Review дефолт остаётся ON (ADR-141). Подтвердить, что панель всегда
+   шлёт `agent` явно и legacy-вызовы без `agent` вне Review не 409, а идут
+   механически. **Рекомендую да**.
+10. **Срок жизни rescue-ref** (`refs/maister/rescue/<runId>/<n>`): (a) не чистить
+    в этом плане (репозиторные ref-ы, копятся); (b) удалять вместе с
+    `maister/archive/<runId>` в retention GC. **Рекомендую (a)** сейчас +
+    отдельная GC-политика, чтобы не расширять сweep в этом плане.
+
+## Resolved questions
+
+| # | Question | Answer (owner, 2026-09-22) | Where it landed |
+|---|---|---|---|
+| 1 | Public-name template editing | **(a)**: `maister.yaml` only + read-only settings row beside `branch_prefix`; per-run `branchName` covers the urgent case | D6, T1.2, Out of scope |
+| 2 | `finalizePr` with a removed worktree | **(a)**: reattach first; the predicate is not widened | D1, D12 |
+| 3 | `git-state` and the network | **(a)**: one best-effort `ls-remote` of the public name per read; `remoteReachable:false` on failure | D3, T1.9, RED 10 |
+| 4 | Card / rail menus | **yes**: deep links into the panel (`?git=<section>`), never blind mutations from a card | D16, T1.11, RED 12 |
+| 5 | `pr_state_scan` for scratch | **(a)**: keep `run_kind <> 'scratch'`; a standalone scratch PR shows "open (not tracked)" | D13, T3.5 |
+| 6 | ROADMAP milestone | **create one** — via `/aif-roadmap` after implementation (not edited by this plan) | Roadmap Linkage |
+| 7 | Branch | **stay** on `claude/worktree-run-management-0603cc` | header |
+| 8 | Co-nullity CHECK on `published_*` | **include** in `0173` | D6, T1.1, RED 5 |
+| 9 | `agent` default outside `Review` | **mechanical**; `agent ?? (status === "Review")`; the panel always sends `agent`; legacy calls without `agent` outside `Review` run mechanically, never 409 | D9, T2.1, RED 14 |
+| 10 | Rescue-ref lifetime | **(a)**: not collected in this plan | D8, Out of scope |
+| 12 | C23 — finalize from `Review` and `reviewedTargetCommit` | **(a)**: body `{reviewedTargetCommit?, allowTargetDrift?}`, forwarded to `promoteRun` from `Review` only (400 outside); `git-state.targetHead`; "Finalize anyway" on drift | C23, D12, T0.1, T3.3, T3.5 |
+| 11 | C14 — the execution-assignment arm on parked runs | **(a)**: not an admission condition; a parked status is the witness; `hasActiveAssignment` informational; ADR-181 amendment | C14, D1 (busy arm), D1a, T0.7, RED 1, falsification 16, trap 21 |

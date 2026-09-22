@@ -6568,6 +6568,26 @@ paths:
         (`parent_run_id IS NULL`), `workspace_mode <> 'shared'`, not an experiment
         member. Mutually exclusive with promotion and every other lifecycle op
         (double fence).
+
+        **(ADR-181 — Designed) Update.** The `status='Review'` arm is replaced
+        by the workbench git policy (`update`): every parked status
+        (`Review | Crashed | Failed | Done | Abandoned`, and `HumanWorking` for
+        the open rework claim's owner) is admitted, while the run-kind,
+        top-level, shared-tree, experiment-member and removed-workspace arms
+        still refuse. `onto` picks the ref: `target` (default — the promotion
+        target, fetched from `origin` and fast-forwarded locally, as before),
+        `base` (`workspaces.base_branch`, same fetch and fast-forward), or
+        `published` (`<published_remote>/<published_branch>` after
+        `git fetch <published_remote>` — how the operator's own pushes come
+        back). `run_sync_attempts.target_ref` records the chosen ref. A conflict
+        ALWAYS aborts and restores the pre-operation SHA unless `agent=true` AND
+        the run is `Review`; `agent=true` in any other status is refused.
+        `agent` defaults to `true` in `Review` (ADR-141, unchanged) and to
+        `false` everywhere else. The push after an update leases and pushes the
+        PUBLIC name (`refs/heads/<internal>:refs/heads/<published_branch>`)
+        and re-records the publication. The ext twin
+        (`POST /api/v1/ext/runs/sync`) keeps `status='Review'` eligibility and
+        has no `onto`.
       operationId: syncRun
       parameters:
         - name: runId
@@ -6582,13 +6602,23 @@ paths:
               type: object
               additionalProperties: false
               properties:
+                onto:
+                  type: string
+                  enum: [target, base, published]
+                  default: target
+                  description: |
+                    (ADR-181 — Designed) The ref to rebase or merge onto:
+                    the promotion target, the recorded base branch, or the
+                    published remote branch.
                 strategy:
                   type: string
                   enum: [rebase, merge]
                   description: Overrides `projects.sync_strategy_default`.
                 agent:
                   type: boolean
-                  description: When true (default) launch the AI resolver on conflict; when false abort with `outcome:"conflict"`.
+                  description: |
+                    When true launch the AI resolver on conflict; when false abort with `outcome:"conflict"`.
+                    (ADR-181 — Designed) Defaults to true in `Review` only, false in every other status; `true` outside `Review` is refused (`agent_requires_review`).
                 push:
                   type: boolean
                   description: Overrides the auto push-iff-published policy.
@@ -6601,6 +6631,9 @@ paths:
             Mechanical sync completed. `outcome` = `synced` (branch rebased and
             optionally pushed), `noop` (already up to date), or `conflict`
             (`agent=false`, aborted cleanly). Run stays `Review`.
+            (ADR-181 — Designed) The run keeps whatever parked status it had;
+            on `conflict` the worktree is back at the pre-operation SHA and
+            `conflictedFiles` lists the conflicting paths.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SyncRunResponse" }
@@ -6626,11 +6659,20 @@ paths:
             claim is active, the run-kind concurrency cap is reached, or the
             force-with-lease push was rejected (branch moved remotely; the local
             rebase result is kept). Both map to HTTP 409 via `httpStatusForCode`.
+            (ADR-181 — Designed) The error body now carries `details`;
+            `details.reason` on `PRECONDITION`: `agent_requires_review`,
+            `base_branch_unknown` (`onto:"base"` with no recorded base branch),
+            `not_published` (`onto:"published"` on an unpublished branch),
+            `dirty_worktree`, or a workbench git policy refusal
+            (`live_workbench`, `human_owned`, `missing_workspace`,
+            `removed_workspace`, `worktree_missing`, `unsupported_status`,
+            `unsupported_run`, `promoted`); `CONFLICT` with
+            `details.reason: busy`.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "422":
-          description: Body validation failed (bad `strategy`/`runnerId`).
+          description: Body validation failed (bad `onto`/`strategy`/`runnerId`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -9283,7 +9325,7 @@ paths:
   /api/runs/{runId}/export-branch:
     post:
       tags: [runs]
-      summary: Implemented — push a workbench branch for local handoff
+      summary: Implemented; (ADR-181 — Designed) publish the run branch under its public name
       description: |
         Pushes the server-owned run branch to the selected remote. Dirty
         worktrees require `snapshotDirty=true` and a non-empty `commitMessage`;
@@ -9293,6 +9335,23 @@ paths:
         `pushRejected=non_fast_forward` and `canForce=true`; retrying with
         `force=true` uses `git push --force-with-lease`. Successful responses
         include the pushed ref and two non-chained checkout commands.
+
+        **(ADR-181 — Designed) Publish.** Admitted by the workbench git policy
+        (`exportBranch`) in every parked status. The internal branch stays the
+        run's identity; the push is the refspec
+        `refs/heads/<internal>:refs/heads/<public>` with `--set-upstream`, after
+        `--end-of-options`. The public name resolves in this order: (a) the
+        internal branch's existing upstream on the same remote — a request
+        `branchName` that differs is refused (`public_name_fixed`); (b) the
+        request `branchName`; (c) the project template
+        `projects.public_branch_template` (default
+        `feature/{task_key}-{slug}`). The lease is an explicit SHA captured by
+        `ls-remote` of the public name BEFORE the push — on the forced retry a
+        moved remote is the same non-fast-forward classification and the local
+        branch is kept. Only after the push succeeds are
+        `workspaces.published_branch`, `published_remote` and `published_at`
+        recorded; a crash in between is idempotent on retry (the upstream now
+        fixes the same name, the push is a no-op, the record is written).
       operationId: exportRunWorkbenchBranch
       parameters:
         - name: runId
@@ -9310,6 +9369,14 @@ paths:
                 remote:
                   type: string
                   default: origin
+                branchName:
+                  type: string
+                  minLength: 1
+                  maxLength: 255
+                  description: |
+                    (ADR-181 — Designed) Public branch name override (validated
+                    by `branchNameSchema`; used only as a remote ref name).
+                    Omitted: the upstream, else the project template, decides.
                 snapshotDirty:
                   type: boolean
                   default: false
@@ -9335,26 +9402,80 @@ paths:
                     pushedRef,
                     snapshotCreated,
                     checkoutCommands,
+                    publishedBranch,
+                    publishedRemote,
+                    publishedRef,
+                    nameSource,
                   ]
                 properties:
                   ok: { type: boolean, enum: [true] }
                   runId: { type: string }
-                  branch: { type: string }
+                  branch:
+                    type: string
+                    description: The internal branch (the run's identity; never renamed).
                   remote: { type: string }
-                  pushedRef: { type: string }
+                  pushedRef:
+                    type: string
+                    description: Equal to `publishedRef` (kept for existing callers).
                   snapshotCreated: { type: boolean }
                   checkoutCommands:
                     type: array
                     items: { type: string }
+                    description: Fetch and track the PUBLIC branch (`<remote>/<publishedBranch>`).
+                  publishedBranch:
+                    type: string
+                    description: (ADR-181 — Designed) The name the branch carries on the remote.
+                  publishedRemote:
+                    type: string
+                    description: (ADR-181 — Designed) The remote it was published to.
+                  publishedRef:
+                    type: string
+                    description: (ADR-181 — Designed) `<publishedRemote>/<publishedBranch>`.
+                  nameSource:
+                    type: string
+                    enum: [upstream, request, template]
+                    description: (ADR-181 — Designed) Which rule chose the public name.
+              example:
+                ok: true
+                runId: 7c9e6679-7425-40de-944b-e07fc1f90ae7
+                branch: maister/task-3f2a9c1e-5b7d-4e8a-9f0b-2c4d6e8a1b3c/attempt-2
+                remote: origin
+                pushedRef: origin/feature/ABC-12-fix-login-redirect
+                snapshotCreated: false
+                checkoutCommands:
+                  - git -C /srv/repos/app fetch origin feature/ABC-12-fix-login-redirect
+                  - git -C /srv/repos/app switch --track origin/feature/ABC-12-fix-login-redirect
+                publishedBranch: feature/ABC-12-fix-login-redirect
+                publishedRemote: origin
+                publishedRef: origin/feature/ABC-12-fix-login-redirect
+                nameSource: template
         "400":
-          description: Invalid body.
+          description: |
+            Invalid body (`CONFIG`), or (ADR-181 — Designed) the project
+            template rendered no valid branch name (`CONFIG` with
+            `details.reason: public_branch_template_invalid` — send an explicit
+            `branchName`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: "(ADR-181 — Designed) Unknown run (`details.reason: run_not_found`)."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "409":
-          description: Live state, missing/removed workspace, missing remote, dirty worktree without snapshot consent, lifecycle claim race, or non-fast-forward push conflict.
+          description: |
+            Live state, missing/removed workspace, missing remote, dirty worktree without snapshot consent, lifecycle claim race, or non-fast-forward push conflict.
+            (ADR-181 — Designed) `details.reason` on `PRECONDITION`:
+            `public_name_fixed` (an upstream already fixes the public name and
+            the request named another), `dirty_worktree`, or a workbench git
+            policy refusal (`live_workbench`, `human_owned`,
+            `missing_workspace`, `removed_workspace`, `worktree_missing`,
+            `unsupported_status`, `no_remote`); `CONFLICT` with
+            `details.reason: busy`. The non-fast-forward refusal keeps its
+            top-level `pushRejected` / `canForce`.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -9550,6 +9671,428 @@ paths:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "503":
           description: Remote branch existence check or push failed transiently.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/runs/{runId}/git-state:
+    get:
+      tags: [runs]
+      summary: (ADR-181 — Designed) Read a run worktree's git state for the git panel
+      description: |
+        Requires project membership at `member` or above
+        (`requireProjectAction("recoverRun")`). The response class is branch
+        names, SHAs, counts and ref names — no tracked-file paths and no diff
+        bodies — the same class the run header and the Review panel's
+        ahead/behind chip already show a member. `runId` is the only locator;
+        project, workspace, branches, remotes and PR identity are derived from
+        server state. Lazy: the git panel fetches it on open, after every action
+        and debounced on the run's SSE tick; no page RSC computes it.
+
+        Degrades field by field, never as a route error: a sub-read that fails
+        returns its field `null` (or empty) and names it in `warnings`. When the
+        worktree is absent, worktree-scoped reads (`head`, `dirty`,
+        `unpushedCommits`, `aheadBehind`) are skipped and repo-scoped reads
+        (`reattachSources`, `pr`, `rescueRefs`) still run. At most one network
+        call is made: a best-effort `ls-remote` of the published branch
+        (`publishedRemoteHead`; a failure sets `remoteReachable:false`).
+        `unpushedCommits` and `aheadBehind.published` are measured against the
+        local tracking ref `refs/remotes/<publishedRemote>/<publicBranch>`.
+        `actions` is the workbench git policy's output for the requesting
+        viewer (ADR-181 D1).
+      operationId: getRunGitState
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Git state resolved; degraded sub-reads are listed in `warnings`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GitStateResponse" }
+              example:
+                runId: 7c9e6679-7425-40de-944b-e07fc1f90ae7
+                runKind: flow
+                runStatus: Failed
+                internalBranch: maister/task-3f2a9c1e-5b7d-4e8a-9f0b-2c4d6e8a1b3c/attempt-2
+                publicBranch: feature/ABC-12-fix-login-redirect
+                publishedRemote: origin
+                publishedAt: "2026-09-22T10:15:00Z"
+                upstream:
+                  remote: origin
+                  branch: feature/ABC-12-fix-login-redirect
+                remotes: [origin]
+                worktreePresent: true
+                workspaceRemoved: false
+                head: 3f5c9d2a8b1e4f6a7c0d2e4f6a8b0c1d3e5f7a9b
+                targetHead: 9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a3f2e1d0c
+                dirty: { tracked: 1, untracked: 2 }
+                unpushedCommits: 1
+                aheadBehind:
+                  base: { ahead: 4, behind: 0 }
+                  target: { ahead: 4, behind: 2 }
+                  published: { ahead: 1, behind: 0 }
+                publishedRemoteHead: 1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b
+                remoteReachable: true
+                pr: null
+                busy: null
+                hasActiveAssignment: true
+                hasLiveSharedSibling: false
+                reattachSources: { local: null, published: null, archive: null }
+                rescueRefs: []
+                actions:
+                  - { id: stop, enabled: false, disabledReason: unsupported-status }
+                  - { id: archive, enabled: true, disabledReason: null }
+                  - { id: drop, enabled: true, disabledReason: null }
+                  - { id: exportBranch, enabled: true, disabledReason: null }
+                  - { id: snapshotCommit, enabled: true, disabledReason: null }
+                  - { id: discardChanges, enabled: true, disabledReason: null }
+                  - { id: update, enabled: true, disabledReason: null }
+                  - { id: openPr, enabled: true, disabledReason: null }
+                  - { id: finalizePr, enabled: false, disabledReason: pr-missing }
+                  - { id: reattach, enabled: false, disabledReason: worktree-present }
+                commands:
+                  checkout:
+                    - git -C /srv/repos/app fetch origin feature/ABC-12-fix-login-redirect
+                    - git -C /srv/repos/app switch --track origin/feature/ABC-12-fix-login-redirect
+                  restoreRescue: null
+                warnings: []
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: |
+            Unknown run (`PRECONDITION` with `details.reason: run_not_found`,
+            mapped to 404).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/runs/{runId}/discard-changes:
+    post:
+      tags: [runs]
+      summary: (ADR-181 — Designed) Rescue, then discard a parked worktree's uncommitted changes
+      description: |
+        Requires `member` (`requireProjectAction("promoteRun")`) and a strict
+        empty body. Admitted by the workbench git policy (`discardChanges`) and
+        run under the workspace lifecycle claim, op name `discardChanges`. This
+        is NOT `POST /api/runs/{runId}/discard`, which removes a crashed run's
+        workspace.
+
+        Preserve-first: the dirty tree (tracked + untracked, honouring
+        `.gitignore`) is written as a detached commit through a temporary index
+        — the worktree's real index is never touched — to
+        `refs/maister/rescue/<runId>/<n>` (`n` = the next free index), and only
+        then does the service run `git reset --hard HEAD` followed by
+        `git clean -fd` (ignored files are kept). The rescue ref is
+        repository-scoped and survives archive and drop. A crash between the
+        ref and the reset leaves the tree dirty; the retry writes `<n+1>` and
+        never loses a ref.
+      operationId: discardRunWorkbenchChanges
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+      responses:
+        "200":
+          description: Changes rescued, then discarded; the tree is clean at `HEAD`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DiscardChangesResponse" }
+              example:
+                ok: true
+                runId: 7c9e6679-7425-40de-944b-e07fc1f90ae7
+                rescueRef: refs/maister/rescue/7c9e6679-7425-40de-944b-e07fc1f90ae7/1
+                sha: 5e4d3c2b1a0f9e8d7c6b5a4f3e2d1c0b9a8f7e6d
+                restoreCommand: git -C /srv/maister/worktrees/app/7c9e6679 restore --source=refs/maister/rescue/7c9e6679-7425-40de-944b-e07fc1f90ae7/1 -- .
+        "400":
+          description: Body is not an empty object (`CONFIG`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: "Unknown run (`details.reason: run_not_found`)."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "409":
+          description: |
+            `PRECONDITION` with `details.reason`: `clean_worktree` (nothing to
+            discard), or a workbench git policy refusal (`live_workbench`,
+            `human_owned`, `missing_workspace`, `removed_workspace`,
+            `worktree_missing`, `unsupported_status`). `CONFLICT` with
+            `details.reason: busy` — another lifecycle operation, a promotion
+            or a live shared-tree sibling owns the worktree, or the lifecycle
+            claim was lost to a racing operation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "503":
+          description: |
+            Transient git failure (`EXECUTOR_UNAVAILABLE`); the lifecycle claim
+            stays retryable.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/runs/{runId}/pr:
+    post:
+      tags: [runs]
+      summary: (ADR-181 — Designed) Open or find the provider PR for a published run branch
+      description: |
+        Requires `member` (`requireActiveSession` → body →
+        `requireProjectAction(<run project>, "promoteRun")`). Opens — or finds
+        by head/base — the provider pull/merge request from the published
+        branch (`workspaces.published_branch` on `origin`) to `targetBranch`
+        (default `workspaces.target_branch`, else the project main branch)
+        through the ADR-049 `PrAdapter` (`gh --draft`, `glab --draft`; the
+        Gitea family maps `draft` to a `WIP: ` title prefix because its API
+        has no draft flag). An existing open PR for the same head/base is
+        returned UNTOUCHED — `reused: true`, and the request's `title`, `body`
+        and `draft` were not applied.
+
+        Writes `workspaces.pr_url`, `pr_number`, `pr_state='open'` and
+        `target_branch` only AFTER the provider answered, and changes NO run
+        status; when the returned PR differs from the stored `pr_url`, the
+        previous PR's `pr_has_conflicts`, `pr_merged_at` and
+        `pr_merge_commit_sha` are cleared in the same write. `pr_state_scan`
+        tracks the PR from then on for every non-scratch run. Omitted `title`
+        and `body` default to `"<task key>: <task title>"` (the internal branch
+        for a task-less run) and a body naming the published branch, the
+        target and the run.
+      operationId: openRunPullRequest
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OpenPrBody" }
+      responses:
+        "200":
+          description: PR opened, or an existing open PR for the same head/base returned.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OpenPrResponse" }
+              example:
+                ok: true
+                runId: 7c9e6679-7425-40de-944b-e07fc1f90ae7
+                url: https://github.com/acme/app/pull/42
+                number: 42
+                state: open
+                reused: false
+                draft: true
+                targetBranch: main
+        "400":
+          description: Body shape invalid (`CONFIG`) — unknown field, over-long `title`/`body`, or an invalid `targetBranch` name.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: Unknown run.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "409":
+          description: |
+            `PRECONDITION` with `details.reason`: `dirty_worktree` (commit or
+            discard first), `not_published` (publish first),
+            `published_remote_not_origin` (the branch is published to another
+            remote — publish to `origin` first), `publish_stale` (the published
+            head differs from the local `HEAD` — publish first),
+            `target_branch_unknown` (the target does not resolve to a commit —
+            the same rule `promoteRun` applies to a `targetBranch` override),
+            `provider_unsupported` (a `generic` provider, or the provider CLI or
+            token is missing — exactly as `pull_request` promotion refuses), or
+            a workbench git policy refusal (`live_workbench`, `human_owned`,
+            `missing_workspace`, `removed_workspace`, `worktree_missing`,
+            `unsupported_status`, `no_remote`). `CONFLICT` with
+            `details.reason: busy`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "503":
+          description: |
+            Provider API or CLI failed transiently (`EXECUTOR_UNAVAILABLE`); no
+            PR fields are written and the lifecycle claim stays retryable.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/runs/{runId}/pr/finalize:
+    post:
+      tags: [runs]
+      summary: (ADR-181 — Designed) Finalize a PR-backed run to Done
+      description: |
+        Requires `member` (`requireActiveSession` → body →
+        `requireProjectAction(<run project>, "promoteRun")`). Admitted while
+        `workspaces.pr_url` is set and `pr_state` is `NULL`, `open` or
+        `merged`, from `Review | Crashed | Failed | Abandoned` only.
+
+        - From `Review` it IS `promoteRun(mode: "pull_request")`: readiness,
+          the target-drift gate and every other promotion gate apply unchanged.
+          `reviewedTargetCommit` (the target head the panel rendered —
+          `git-state.targetHead`) is required there, and `allowTargetDrift`
+          is the explicit "Finalize anyway" override.
+        - From `Crashed | Failed | Abandoned` there is no graph readiness to
+          assert — the operator's click is the decision. Under the promotion
+          claim (fenced against a live lifecycle claim and against unsettled
+          shared-tree siblings, exactly as promotion is) the run goes `Done`
+          with `promotion_state='done'`, `promoted_head_sha` = the published
+          head (which must equal the local `HEAD`), `merge_commit_sha` null,
+          the GC schedule, and the `run.promoted` + `run.done` events,
+          attributed `source: pr_finalize`. `reviewedTargetCommit` and
+          `allowTargetDrift` are refused outside `Review`.
+
+        An externally merged PR is surfaced by `pr_state_scan` and finalized
+        manually; promotion stays manual by default.
+      operationId: finalizeRunPullRequest
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FinalizePrBody" }
+      responses:
+        "200":
+          description: Run finalized to `Done`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PromoteRunResponse" }
+              example:
+                ok: true
+                mode: pull_request
+                pullRequestUrl: https://github.com/acme/app/pull/42
+                prNumber: 42
+        "400":
+          description: |
+            Body shape invalid (`CONFIG`), or `reviewedTargetCommit` /
+            `allowTargetDrift` sent for a run that is not `Review`
+            (`details.reason: review_only_field`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: Unknown run.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "409":
+          description: |
+            `PRECONDITION` with `details.reason`: `pr_missing`, `pr_closed`,
+            `publish_stale`, `target_drift` (from `Review`: the target
+            advanced since the panel rendered it — re-read or finalize anyway),
+            or a workbench git policy refusal (`human_owned` — never while a
+            rework claim is open, `unsupported_status` — e.g. already `Done`,
+            `live_workbench`, `missing_workspace`, `removed_workspace`,
+            `worktree_missing`); from `Review` also every refusal
+            `promoteRun` gives (readiness not ready, missing
+            `reviewedTargetCommit`). `CONFLICT`: a live sync or other lifecycle
+            claim, unsettled shared-tree siblings, a concurrent promotion, or a
+            promotion superseded by a stale-claim reclaim.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "503":
+          description: |
+            The published head could not be read from the remote, or (from
+            `Review`) the promotion's push or provider call failed transiently
+            (`EXECUTOR_UNAVAILABLE`); the run is unchanged and retryable.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/runs/{runId}/reattach:
+    post:
+      tags: [runs]
+      summary: (ADR-181 — Designed) Re-create a removed or vanished run worktree
+      description: |
+        Requires `member` (`requireProjectAction("recoverRun")` — it restores
+        state and mutates no branch content, the same floor as archive and
+        drop) and a strict empty body. Admitted only while the workspace row
+        exists and is NOT usable (`removed_at` set, or the path is gone) and a
+        source resolves, tried in order: the local internal branch, else
+        `<published_remote>/<published_branch>` (fetched; the internal branch
+        is re-created at its head with its upstream re-set), else
+        `archived_branch`. Runs under the lifecycle claim, op name `reattach`.
+        A directory already present at the worktree path is refused before
+        any git call and left untouched.
+
+        `git worktree add` (existing branch, no `-b`) is followed by the
+        provenance v2 stamp rebuilt from DB facts; only then are `removed_at`
+        and `scheduled_removal_at` cleared. `archived_*` stays as history. A
+        crash between the stamp and the DB write is reconstructed by the
+        workspace reconciler (finding `workspace_reattached`).
+      operationId: reattachRunWorkbench
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+      responses:
+        "200":
+          description: Worktree re-created and the workspace usable again.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReattachResponse" }
+              example:
+                ok: true
+                runId: 7c9e6679-7425-40de-944b-e07fc1f90ae7
+                source: published
+                head: 1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b
+        "400":
+          description: Body is not an empty object (`CONFIG`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: "Unknown run (`details.reason: run_not_found`)."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "409":
+          description: |
+            `PRECONDITION` with `details.reason`: `no_reattach_source` (the
+            branch is gone locally and on the published remote, and there is no
+            archive ref), or a workbench git policy refusal (`worktree_present`
+            — the worktree is still usable, `live_workbench`, `human_owned`,
+            `missing_workspace`, `unsupported_status`). `CONFLICT` with
+            `details.reason`: `worktree_path_occupied` (a directory already
+            exists at the worktree path; nothing was removed) or `busy`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "503":
+          description: |
+            Fetching the published branch or `git worktree add` failed
+            transiently (`EXECUTOR_UNAVAILABLE`); the row stays removed and the
+            claim retryable.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -19637,10 +20180,11 @@ components:
     SyncRunResponse:
       type: object
       description: (ADR-141 — Implemented) Result of a branch sync.
-      # Every field is always present — `SyncRunOutcome` types all four non-null
-      # — so the ext twin (`ExtRunSyncResult`) requires the same set plus its
-      # echoed `runId`.
-      required: [attemptId, outcome, behind, pushed]
+      # Every field is always present — `SyncRunOutcome` types all of them
+      # non-null. The ext twin (`ExtRunSyncResult`) is an explicit projection:
+      # the original four plus its echoed `runId`, never `conflictedFiles`
+      # (ADR-181 left the ext surface unchanged).
+      required: [attemptId, outcome, behind, pushed, conflictedFiles]
       additionalProperties: false
       properties:
         attemptId:
@@ -19659,6 +20203,386 @@ components:
         pushed:
           type: boolean
           description: Whether the branch was force-with-lease pushed.
+        conflictedFiles:
+          type: array
+          items: { type: string }
+          description: |
+            (ADR-181 — Designed) Repository-relative paths that conflicted,
+            captured before the abort. Non-empty only for `outcome:"conflict"`;
+            the worktree is back at its pre-operation SHA.
+    GitStateResponse:
+      type: object
+      description: |
+        (ADR-181 — Designed) The lazy git read model of one run worktree,
+        served only by `GET /api/runs/{runId}/git-state`. Every field is always
+        present; a degraded sub-read is `null` (or empty) and named in
+        `warnings`.
+      additionalProperties: false
+      required:
+        - runId
+        - runKind
+        - runStatus
+        - internalBranch
+        - publicBranch
+        - publishedRemote
+        - publishedAt
+        - upstream
+        - remotes
+        - worktreePresent
+        - workspaceRemoved
+        - head
+        - targetHead
+        - dirty
+        - unpushedCommits
+        - aheadBehind
+        - publishedRemoteHead
+        - remoteReachable
+        - pr
+        - busy
+        - hasActiveAssignment
+        - hasLiveSharedSibling
+        - reattachSources
+        - rescueRefs
+        - actions
+        - commands
+        - warnings
+      properties:
+        runId: { type: string, format: uuid }
+        runKind: { type: string, enum: [flow, scratch, agent] }
+        runStatus:
+          type: string
+          enum:
+            [
+              Pending,
+              Running,
+              NeedsInput,
+              NeedsInputIdle,
+              HumanWorking,
+              WaitingOnChildren,
+              Review,
+              Crashed,
+              Failed,
+              Done,
+              Abandoned,
+            ]
+        internalBranch:
+          type: string
+          nullable: true
+          description: "`workspaces.branch`; null when the run has no workspace row."
+        publicBranch:
+          type: string
+          nullable: true
+          description: "`workspaces.published_branch` — the name on the remote; null until published."
+        publishedRemote:
+          type: string
+          nullable: true
+        publishedAt:
+          type: string
+          format: date-time
+          nullable: true
+        upstream:
+          type: object
+          nullable: true
+          description: |
+            The internal branch's configured upstream
+            (`branch.<internal>.remote` / `.merge`); after a publish it names the
+            public branch. Null when none is configured.
+          required: [remote, branch]
+          additionalProperties: false
+          properties:
+            remote: { type: string }
+            branch: { type: string }
+        remotes:
+          type: array
+          items: { type: string }
+        worktreePresent:
+          type: boolean
+          description: The worktree path exists on disk.
+        workspaceRemoved:
+          type: boolean
+          description: "`workspaces.removed_at` is set."
+        head:
+          type: string
+          nullable: true
+          description: Worktree `HEAD`; null when the worktree is absent.
+        targetHead:
+          type: string
+          nullable: true
+          description: |
+            The local target ref's commit (`workspaces.target_branch`, else the
+            project main branch; for scratch `scratch_runs.target_branch ??
+            base_branch`). Sent back as `reviewedTargetCommit` by Finalize from
+            `Review`.
+        dirty:
+          type: object
+          nullable: true
+          description: Porcelain counts; null when the worktree is absent.
+          required: [tracked, untracked]
+          additionalProperties: false
+          properties:
+            tracked: { type: integer, minimum: 0 }
+            untracked: { type: integer, minimum: 0 }
+        unpushedCommits:
+          type: integer
+          minimum: 0
+          nullable: true
+          description: |
+            Commits on `HEAD` not on the published tracking ref; null while
+            unpublished or when the worktree is absent.
+        aheadBehind:
+          type: object
+          required: [base, target, published]
+          additionalProperties: false
+          properties:
+            base: { $ref: "#/components/schemas/GitAheadBehind" }
+            target: { $ref: "#/components/schemas/GitAheadBehind" }
+            published: { $ref: "#/components/schemas/GitAheadBehind" }
+        publishedRemoteHead:
+          type: string
+          nullable: true
+          description: |
+            `ls-remote` of the public branch (the one network read, best
+            effort). Differing from the tracking ref means the remote moved —
+            update from `published`.
+        remoteReachable:
+          type: boolean
+          description: False when the `ls-remote` failed; true when it succeeded or was not needed.
+        pr:
+          type: object
+          nullable: true
+          description: The workspace PR fields; null when no `pr_url` is recorded.
+          required: [url, number, state, hasConflicts]
+          additionalProperties: false
+          properties:
+            url: { type: string, format: uri }
+            number: { type: integer, minimum: 1, nullable: true }
+            state:
+              type: string
+              enum: [open, merged, closed, null]
+              nullable: true
+              description: "`pr_state`; null = never scanned (scratch PRs are never scanned)."
+            hasConflicts: { type: boolean, nullable: true }
+        busy:
+          type: object
+          nullable: true
+          description: |
+            The operation that owns the worktree right now — a live lifecycle
+            claim (its op name) or a live promotion claim (`promotion`). Null
+            when free.
+          required: [name, claimedAt]
+          additionalProperties: false
+          properties:
+            name: { type: string }
+            claimedAt: { type: string, format: date-time, nullable: true }
+        hasActiveAssignment:
+          type: boolean
+          description: |
+            Informational only — a parked run may keep its `active`
+            `execution_assignments` row (a crash does not release it); it is
+            not an admission condition.
+        hasLiveSharedSibling:
+          type: boolean
+          description: A shared-tree child still writes this allocator's tree (the policy reports `busy`).
+        reattachSources:
+          type: object
+          description: |
+            The commit each re-attach source resolves to. Computed only while
+            the workspace is not usable; all three null otherwise.
+          required: [local, published, archive]
+          additionalProperties: false
+          properties:
+            local: { type: string, nullable: true }
+            published: { type: string, nullable: true }
+            archive: { type: string, nullable: true }
+        rescueRefs:
+          type: array
+          description: The run's `refs/maister/rescue/<runId>/<n>` refs, newest first.
+          items:
+            type: object
+            required: [ref, sha, createdAt]
+            additionalProperties: false
+            properties:
+              ref: { type: string }
+              sha: { type: string }
+              createdAt: { type: string, format: date-time }
+        actions:
+          type: array
+          items: { $ref: "#/components/schemas/WorkbenchGitAction" }
+        commands:
+          type: object
+          required: [checkout, restoreRescue]
+          additionalProperties: false
+          properties:
+            checkout:
+              type: array
+              items: { type: string }
+              description: Fetch and track the public branch; empty while unpublished.
+            restoreRescue:
+              type: string
+              nullable: true
+              description: |
+                Restores the newest rescue ref into the worktree
+                (`git -C <worktree> restore --source=<ref> -- .`); null when there
+                is no rescue ref or no worktree.
+        warnings:
+          type: array
+          description: The fields whose read degraded to null/empty.
+          items:
+            type: string
+            enum:
+              - head
+              - targetHead
+              - dirty
+              - upstream
+              - remotes
+              - aheadBehind.base
+              - aheadBehind.target
+              - aheadBehind.published
+              - unpushedCommits
+              - publishedRemoteHead
+              - reattachSources
+              - rescueRefs
+    GitAheadBehind:
+      type: object
+      nullable: true
+      description: (ADR-181 — Designed) Commit counts of `HEAD` against one ref; null when the ref does not resolve or the worktree is absent.
+      required: [ahead, behind]
+      additionalProperties: false
+      properties:
+        ahead: { type: integer, minimum: 0 }
+        behind: { type: integer, minimum: 0 }
+    WorkbenchGitAction:
+      type: object
+      description: |
+        (ADR-181 — Designed) One entry of the workbench git policy's output.
+        The ids are the one vocabulary shared by the policy, this DTO, the UI
+        test ids and the i18n keys.
+      required: [id, enabled, disabledReason]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          enum:
+            - stop
+            - archive
+            - drop
+            - exportBranch
+            - snapshotCommit
+            - discardChanges
+            - update
+            - openPr
+            - finalizePr
+            - reattach
+        enabled: { type: boolean }
+        disabledReason:
+          type: string
+          nullable: true
+          description: Null exactly when `enabled`.
+          enum:
+            - live-workbench
+            - human-owned
+            - missing-workspace
+            - removed-workspace
+            - worktree-missing
+            - worktree-present
+            - busy
+            - unsupported-status
+            - unsupported-run
+            - promoted
+            - no-remote
+            - not-published
+            - no-reattach-source
+            - pr-missing
+            - pr-closed
+            - null
+    DiscardChangesResponse:
+      type: object
+      description: (ADR-181 — Designed) Result of a preserve-first discard.
+      required: [ok, runId, rescueRef, sha, restoreCommand]
+      additionalProperties: false
+      properties:
+        ok: { type: boolean, enum: [true] }
+        runId: { type: string }
+        rescueRef:
+          type: string
+          description: "`refs/maister/rescue/<runId>/<n>`."
+        sha:
+          type: string
+          description: The rescue commit (parent = the pre-discard `HEAD`).
+        restoreCommand:
+          type: string
+          description: "`git -C <worktree> restore --source=<rescueRef> -- .`"
+    OpenPrBody:
+      type: object
+      description: (ADR-181 — Designed) Open-PR request; every field optional.
+      additionalProperties: false
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 256
+        body:
+          type: string
+          maxLength: 65536
+        draft:
+          type: boolean
+          default: false
+        targetBranch:
+          type: string
+          minLength: 1
+          maxLength: 255
+          description: Validated by `branchNameSchema`; must resolve to a commit, like a `promoteRun` target override.
+    OpenPrResponse:
+      type: object
+      description: (ADR-181 — Designed) Result of opening (or finding) the PR.
+      required: [ok, runId, url, number, state, reused, draft, targetBranch]
+      additionalProperties: false
+      properties:
+        ok: { type: boolean, enum: [true] }
+        runId: { type: string }
+        url: { type: string, format: uri }
+        number: { type: integer, minimum: 1 }
+        state: { type: string, enum: [open] }
+        reused:
+          type: boolean
+          description: |
+            True when an open PR for the same head/base already existed and was
+            returned untouched — the request's `title`, `body` and `draft` were
+            NOT applied.
+        draft:
+          type: boolean
+          description: Whether THIS request created the PR as a draft (false when `reused`).
+        targetBranch: { type: string }
+    FinalizePrBody:
+      type: object
+      description: |
+        (ADR-181 — Designed) Finalize request. Both fields are meaningful only
+        for a `Review` run (they are forwarded to `promoteRun`); sent for any
+        other status they are refused with `CONFIG`
+        (`details.reason: review_only_field`).
+      additionalProperties: false
+      properties:
+        reviewedTargetCommit:
+          type: string
+          minLength: 7
+          maxLength: 64
+          description: The target head the panel rendered (`git-state.targetHead`).
+        allowTargetDrift:
+          type: boolean
+          description: Explicit "Finalize anyway" override of the target-drift gate.
+    ReattachResponse:
+      type: object
+      description: (ADR-181 — Designed) Result of re-attaching a worktree.
+      required: [ok, runId, source, head]
+      additionalProperties: false
+      properties:
+        ok: { type: boolean, enum: [true] }
+        runId: { type: string }
+        source:
+          type: string
+          enum: [local, published, archive]
+          description: The source the worktree was re-created from.
+        head: { type: string }
     ReopenRunResponse:
       type: object
       description: (ADR-141 — Implemented) Result of a reopen.
@@ -20676,6 +21600,13 @@ components:
             the discriminator that separates a lock refusal from a stale-CAS
             refusal, since both surface as 409 `CONFLICT`.
             Never a server-only handle.
+            (ADR-181 — Designed) Every run workbench route (the lifecycle routes
+            and the git panel's `export-branch`, `sync`, `git-state`,
+            `discard-changes`, `pr`, `pr/finalize`, `reattach`) forwards
+            `details`; the git panel branches on `code` + `details.reason`
+            only. A workbench git policy refusal carries the policy's disabled
+            reason in snake_case (`busy` is `CONFLICT`, every other reason
+            `PRECONDITION`); the top-level `reason` enum above is unchanged.
             HITL respond errors refine this open object to the bounded
             `HitlRespondDetails` contract; unrelated error details remain open.
 
