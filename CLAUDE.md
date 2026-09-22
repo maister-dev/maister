@@ -134,7 +134,11 @@ HITL lifecycle:
   response respawns a fresh adapter and restores context via the ACP
   `session/resume` call on `acp_session_id`. The resume round-trip is
   exercised in CI via a mock ACP adapter; live-agent resume was verified in
-  the M0 spike, not yet in CI.
+  the M0 spike, not yet in CI. **The deadline has exactly one owner**
+  (ADR-180): the web's keep-alive window. The host keeps only an absolute
+  `MAISTER_PERMISSION_MAX_HOURS` cap, whose expiry runs the SAME graceful
+  teardown — never a reject, which would SIGKILL the agent and turn the
+  operator's answer into a terminal failure.
 
 **Do not** introduce `fs.watch`, `chokidar`, or polling for state
 transitions. The live path is ACP notifications (kernel-level fd events
@@ -692,8 +696,11 @@ executors.
 5. ⚠ **Cache-creation cost per respawn** (~$0.28 of cache_creation
    tokens on each cross-process resume — cache key does NOT survive
    process boundary even within 5-min Anthropic prompt-cache TTL). The
-   30-min keep-alive in §1 is cost-saving, not just UX. Surface
-   `MAISTER_KEEPALIVE_MINUTES` env var for ops tuning.
+   keep-alive window in §1 is cost-saving, not just UX.
+   `MAISTER_KEEPALIVE_MINUTES` is the ops lever — and since ADR-180 it is a
+   **web** variable with exactly one owner: the supervisor no longer reads it
+   and keeps only an absolute `MAISTER_PERMISSION_MAX_HOURS` cap (default 24)
+   whose expiry performs the same graceful checkpoint, never a reject.
 
 **Remaining loose ends**:
 

@@ -155,6 +155,9 @@ export const REASON_TOKENS = [
   "workspace_rejected",
   "legacy_field",
   "missing_envelope",
+  // ADR-180: the host parked the session with its deferreds cancelled, so a
+  // late answer RESUMES it instead of failing the run. Rides the unchanged 410.
+  "session_checkpointed",
 ] as const;
 export type ReasonToken = (typeof REASON_TOKENS)[number];
 

@@ -776,6 +776,11 @@ open: activity pings would otherwise hold `keepalive_until` in the future
 forever, so a session the host already parked would never reach
 `NeedsInputIdle` and the 24 h `Abandoned` rule could never reach it either.
 
+Four paths now write `NeedsInput → NeedsInputIdle` — the sweeper's keep-alive
+arm, its checkpointed arm, the flow driver's `markCheckpointedFromExit`, and the
+race-window answer — and they are safe because all four go through
+`idleFromNeedsInput`'s CAS (Implemented — ADR-180).
+
 ## Form schema versioning
 
 Every form payload includes a required `schemaVersion: integer`.

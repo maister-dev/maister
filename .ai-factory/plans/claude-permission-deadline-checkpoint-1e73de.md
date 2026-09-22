@@ -815,7 +815,7 @@ below passed.
 **Exit criteria**: RED 2/4/7/8/9 green; **full web suite green**
 (`pnpm --filter maister-web test`); refactor gate passed.
 
-- [ ] **T3.1 — the evidence boundary.** `permission-handoff-evidence.ts:63-116` per
+- [x] **T3.1 — the evidence boundary.** `permission-handoff-evidence.ts:63-116` per
       D5: nullable `checkpoint`, alternate terminal-event boundary selected with
       `.limit(2)` requiring **exactly one** match, `unproven` preserved, and the
       resolved order carrying `boundary: "command" | "terminal"`. Update the four
@@ -834,7 +834,7 @@ below passed.
       still parks/pends as before; every migrated assertion carries its
       obsolete/broken classification in the commit body.
 
-- [ ] **T3.2 — the race-window branch + its token.** `hitl.ts`: the
+- [x] **T3.2 — the race-window branch + its token.** `hitl.ts`: the
       `session_checkpointed` branch per D4, placed **before** the noop-idempotent
       check at `:1520-1545`. Reuse the idle branch verbatim (`:1211-1345`) — no
       second resume path (D14). Append the token to
@@ -844,7 +844,7 @@ below passed.
       enum — no spec edit); the respond route suite loads its module in
       `beforeAll`, not lazily in a test (`web/CLAUDE.md:233-256`).
 
-- [ ] **T3.3 — the keepalive-independent park (D13).** A second targeted candidate
+- [x] **T3.3 — the keepalive-independent park (D13).** A second targeted candidate
       query in Pass 1 with **its own `LIMIT`**: `NeedsInput` runs whose active
       session holds a `checkpointed` incarnation, independent of `keepalive_until`.
       Calls the same `markCheckpointed`.
@@ -852,7 +852,7 @@ below passed.
       an `OR` widening the existing one); `checkpointed` only — an `exited` or
       `crashed` incarnation is not selected; no new index and no migration.
 
-- [ ] **T3.4 — writer reconciliation.** Record in a code comment and in `hitl.md`
+- [x] **T3.4 — writer reconciliation.** Record in a code comment and in `hitl.md`
       that four paths now perform `NeedsInput → NeedsInputIdle` (sweeper keepalive
       arm, sweeper checkpointed arm, `markCheckpointedFromExit`, the D4 branch) and
       that they are safe because all four share `idleFromNeedsInput`'s CAS (C2).
@@ -860,7 +860,7 @@ below passed.
       **AC**: the comment names all four and the CAS; `hitl.md` says the same in
       one sentence; no new status guard introduced.
 
-- [ ] **T3.R — REFACTOR gate (web).** Same contract as T2.R, plus: verify the four
+- [x] **T3.R — REFACTOR gate (web).** Same contract as T2.R, plus: verify the four
       evidence consumers did not each grow their own copy of the boundary
       selection — one function, four callers (D14).
       **AC**: `pnpm --filter maister-web test` green before and after with zero

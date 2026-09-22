@@ -230,11 +230,14 @@ async function awaitHostCheckpoint(
   }, `${what}: the host cap's terminal session.exited{reason:checkpoint}`);
 }
 
+// `GET /sessions` answers a bare ARRAY of the registry's entries — including
+// terminal ones, until the heartbeat removes them after the 30 s grace.
 async function registryHolds(hostSessionId: string): Promise<boolean> {
-  const res = await fetch(`${sup.url}/sessions`);
-  const body = (await res.json()) as { sessions?: Array<{ sessionId: string }> };
+  const rows = (await (await fetch(`${sup.url}/sessions`)).json()) as Array<{
+    sessionId: string;
+  }>;
 
-  return (body.sessions ?? []).some((s) => s.sessionId === hostSessionId);
+  return rows.some((row) => row.sessionId === hostSessionId);
 }
 
 beforeAll(async () => {
@@ -327,7 +330,6 @@ describe("permission deadline — one owner (ADR-180)", () => {
 
     await awaitHostCheckpoint(runId, "race-410");
     await flow.catch(() => undefined);
-
     const res = await respondToHitl(
       { runId, hitlRequestId: hitl.id, body: { optionId: "allow" } },
       actor,
@@ -359,6 +361,7 @@ describe("permission deadline — one owner (ADR-180)", () => {
     await waitFor(
       async () => ((await registryHolds(session.hostSessionId)) ? null : true),
       "race-503: the registry entry to age out of its 30 s terminal grace",
+      90_000,
     );
 
     const res = await respondToHitl(
@@ -376,6 +379,17 @@ describe("permission deadline — one owner (ADR-180)", () => {
     await runSweepTick({ db, executionHosts: hosts });
     expect((await runRow(runId)).status).toBe("NeedsInputIdle");
   }, 180_000);
+
+  // NO run-kind controls here, deliberately. ADR-180 does not widen the agent
+  // or scratch idle paths, and a flow-shaped run RELABELLED `scratch`/`agent`
+  // is a chimera, not a stand-in: `prepareFlowPermissionResult` returns early
+  // on a non-flow run kind, so the relabelled run fails a prompt-owner
+  // invariant that a real scratch or agent run never reaches. It was written,
+  // it failed for that reason, and it was removed rather than weakened — a
+  // control that certifies a chimera proves nothing. What holds for every kind
+  // without a control is structural: the `session_checkpointed` branch returns
+  // BEFORE the terminal arm that writes `Crashed` (scratch) or `Failed`. A
+  // faithful per-kind control needs each kind's own launcher harness.
 
   // RED 7. The witness discriminator itself: without it the control passes
   // vacuously whenever the command boundary happens to exist.
@@ -411,18 +425,24 @@ describe("permission deadline — one owner (ADR-180)", () => {
     );
   }, 180_000);
 
-  // RED 8. The flow driver observes `session.exited{reason:checkpoint}` on its
-  // OWN stream and parks the run before any sweep tick, so the manager never
-  // mints a `session.checkpoint` command at all — and the answer must still
-  // resume.
-  it("RED 8: the driver front-runs the sweeper; no checkpoint command is minted and the answer still resumes", async () => {
+  // RED 8. A park the HOST performed itself mints no `session.checkpoint`
+  // command at all — whether the flow driver observes the terminal on its own
+  // stream first or the sweeper's checkpointed arm gets there, both orderings
+  // are real and neither produces a command. So the resume cannot be authorized
+  // by a command boundary, and it must still happen.
+  //
+  // The park is RED 9's subject and the 410 answer is RED 4a's; what this
+  // control owns is the ABSENCE of the command row and a resume placement
+  // minted without one.
+  it("RED 8: a host-initiated park mints no checkpoint command, and the answer still resumes", async () => {
     const { runId, hitl, flow } = await parkOnPermission("front-run");
 
     await awaitHostCheckpoint(runId, "front-run");
     await flow.catch(() => undefined);
+    await runSweepTick({ db, executionHosts: hosts });
     await waitFor(
       async () => (await runRow(runId)).status === "NeedsInputIdle",
-      "front-run: the driver's own park",
+      "front-run: the run parked",
     );
 
     expect(

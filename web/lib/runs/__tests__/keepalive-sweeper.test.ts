@@ -45,10 +45,24 @@ type FakeRow = {
 const state: {
   pass1: FakeRow[];
   pass2: FakeRow[];
+  // ADR-180 pass 1b: runs whose active session already holds a `checkpointed`
+  // incarnation. Its own query, so its own seed — it is NOT an `OR` on pass 1.
+  checkpointed: string[];
   selectCount: number;
-} = { pass1: [], pass2: [], selectCount: 0 };
+} = { pass1: [], pass2: [], checkpointed: [], selectCount: 0 };
 
 const fakeDb = {
+  selectDistinct: () => ({
+    from: () => ({
+      innerJoin: () => ({
+        innerJoin: () => ({
+          where: () => ({
+            limit: async () => state.checkpointed.map((id) => ({ id })),
+          }),
+        }),
+      }),
+    }),
+  }),
   select: () => ({
     from: () => ({
       where: () => ({
@@ -106,6 +120,7 @@ function boundClientFor(runId: string) {
 beforeEach(async () => {
   state.pass1 = [];
   state.pass2 = [];
+  state.checkpointed = [];
   state.selectCount = 0;
   forRunSpy.mockReset();
   forRunSpy.mockImplementation(async (runId: string) => boundClientFor(runId));
@@ -212,5 +227,49 @@ describe("keepalive-sweeper pass 1 — checkpoint under the run's assignment (K1
     expect(forRunSpy).not.toHaveBeenCalled();
     expect(checkpointSpy).not.toHaveBeenCalled();
     expect(markCheckpointedSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ADR-180 D13: the second, keepalive-independent arm. It is a POSITIVE
+// witness — `run_session_incarnations.state='checkpointed'` — and it never
+// touches the host: the session is already parked, so there is nothing to
+// checkpoint, only a run row to move through the shared CAS.
+describe("keepalive-sweeper pass 1b — the keepalive-independent park", () => {
+  it("parks a checkpointed candidate through markCheckpointed without calling the host", async () => {
+    state.pass1 = [];
+    state.checkpointed = ["run-parked"];
+
+    const r = (await runSweepTick({ db: fakeDb })) as { idledCount: number };
+
+    expect(r.idledCount).toBe(1);
+    expect(markCheckpointedSpy).toHaveBeenCalledWith(
+      "run-parked",
+      expect.anything(),
+    );
+    expect(forRunSpy).not.toHaveBeenCalled();
+    expect(checkpointSpy).not.toHaveBeenCalled();
+    expect(releaseSlotOnIdleSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("a lost CAS is not counted and frees no slot — another writer already parked it", async () => {
+    state.checkpointed = ["run-parked"];
+    markCheckpointedSpy.mockResolvedValue({
+      ok: false,
+      reason: "status-guard-mismatch",
+    });
+
+    const r = (await runSweepTick({ db: fakeDb })) as { idledCount: number };
+
+    expect(r.idledCount).toBe(0);
+    expect(releaseSlotOnIdleSpy).not.toHaveBeenCalled();
+  });
+
+  it("runs as its own query: an empty keepalive pass does not suppress it", async () => {
+    state.pass1 = [];
+    state.checkpointed = ["run-parked"];
+
+    const r = (await runSweepTick({ db: fakeDb })) as { idledCount: number };
+
+    expect(r.idledCount).toBe(1);
   });
 });

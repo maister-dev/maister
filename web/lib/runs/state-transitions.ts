@@ -195,6 +195,15 @@ async function idleFromNeedsInput(db: Db, runId: string): Promise<boolean> {
   });
 }
 
+// ADR-180: FOUR paths now perform NeedsInput → NeedsInputIdle — the sweeper's
+// keep-alive arm, the sweeper's checkpointed arm (`runPass1Checkpointed`), the
+// flow driver's `markCheckpointedFromExit` when it sees
+// `session.exited{reason:"checkpoint"}` on its own stream, and the HITL
+// response service's race-window branch. They are safe because all four go
+// through `idleFromNeedsInput`'s CAS below. The invariant is not "one writer"
+// but "every writer shares the CAS": a writer that bypassed it could double-park
+// a run that had already moved on.
+//
 // M8 D3 / D5: NeedsInput → NeedsInputIdle on keep-alive expiry. The
 // sweeper calls this AFTER the supervisor has acknowledged the graceful
 // checkpoint (or after the supervisor was found to be no longer holding

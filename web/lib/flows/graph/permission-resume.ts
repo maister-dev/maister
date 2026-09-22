@@ -34,6 +34,7 @@ import {
 import { decodeNodePromptCompletion } from "./node-prompt-owner";
 
 import {
+  isCheckpointedPermissionInputReceipt,
   isPermissionResultCommand,
   isPermissionCheckpointInterruption,
   isRejectedPermissionInputReceipt,
@@ -181,6 +182,11 @@ export async function prepareFlowPermissionResult(
     receipt.assignmentEpoch !== input.assignmentEpoch
   )
     throw new PromptOwnerInvariantError("permission_result_receipt_identity");
+  // ADR-180: the delivery was refused because the session was PARKED, not
+  // because the answer expired. There is nothing to reconstruct — the stored
+  // intent is re-issued and re-delivered by the resumed session — so the
+  // ordinary resume claim applies and this preflight has no opinion.
+  if (isCheckpointedPermissionInputReceipt(receipt)) return null;
   const rejected = isRejectedPermissionInputReceipt(receipt);
 
   if (
@@ -236,14 +242,28 @@ export async function prepareFlowPermissionResult(
   if (
     !checkpoint ||
     checkpoint.result?.sessionId !== source.data.supervisorSessionId
-  )
-    return { kind: "pending", reason: "source_checkpoint_pending" };
-  const order = await permissionCheckpointOrder(db, command, checkpoint);
+  ) {
+    // A host-initiated park (ADR-180) mints no command at all. The grant's
+    // `checkpointCommandId` is a DB-constrained string, so this path still
+    // cannot hand the result forward — but it can stop CLAIMING a checkpoint
+    // is still coming when the terminal witness already proves it happened.
+    const witnessed = await permissionCheckpointOrder(db, command, null);
 
-  if (order === "unproven")
+    return {
+      kind: "pending",
+      reason:
+        witnessed === "unproven"
+          ? "source_checkpoint_pending"
+          : "source_checkpoint_uncommanded",
+    };
+  }
+  const resolved = await permissionCheckpointOrder(db, command, checkpoint);
+
+  if (resolved === "unproven")
     return { kind: "pending", reason: "source_checkpoint_order_unproven" };
   const interrupted =
-    order === "after_checkpoint" && isPermissionCheckpointInterruption(command);
+    resolved.order === "after_checkpoint" &&
+    isPermissionCheckpointInterruption(command);
   const prepared: PreparedPermissionEvidence = {
     hitlRequestId: hitl.id,
     sourceJson: canonicalCommandJson(hitl.schema),

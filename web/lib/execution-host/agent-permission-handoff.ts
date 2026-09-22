@@ -247,9 +247,9 @@ export async function readCheckpointSource(
     checkpoint.assignmentEpoch !== prior.epoch
   )
     throw new PromptOwnerInvariantError("agent_permission_checkpoint_identity");
-  const order = await permissionCheckpointOrder(db, command, checkpoint);
+  const resolved = await permissionCheckpointOrder(db, command, checkpoint);
 
-  if (order === "unproven")
+  if (resolved === "unproven")
     return { kind: "pending", reason: "checkpoint_order_unproven" };
   const halt =
     source.kind === "hook_trip" ? await findAgentPromptHalt(db, command) : null;
@@ -327,7 +327,7 @@ export async function readCheckpointSource(
         input?.receiptEvidence &&
         isRejectedPermissionInputReceipt(input.receiptEvidence)
           ? "rejected"
-          : (order === "after_checkpoint" || halt !== null) &&
+          : (resolved.order === "after_checkpoint" || halt !== null) &&
               isPermissionCheckpointInterruption(command)
             ? "continue"
             : "result",
