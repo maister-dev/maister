@@ -337,17 +337,17 @@ Phase 2 exit: full supervisor unit/integration and web unit/integration projects
 
 ### Phase 3 — Operator read surface
 
-- [ ] **T10. Build the admin read model and authorization boundary.**
+- [x] **T10. Build the admin read model and authorization boundary.**
   - Files: new `web/lib/execution-host/admin-status.ts`, `web/app/(app)/admin/execution-host/page.tsx`, localized forbidden boundary, `web/next.config.mjs` only for the qualified `authInterrupts` option; new `web/lib/execution-host/__tests__/admin-status.integration.test.ts` and `web/e2e/admin-execution-host.spec.ts`, its explicit `AUTHED_SPEC` inclusion and production HTTP403 case using existing real-web support.
   - Compose the D6 page data after the DB-authoritative global admin check. Read-only service functions are independently testable. No admin API/mutation route is needed. Use bounded URL poison pagination and explicit data-class gating. Display current DB metrics alongside timestamped last-sweep classification, without pretending they are one atomic host+Postgres snapshot.
   - Logging: existing auth refusal/debug conventions; typed collector failure at the server boundary, no render spam. Acceptance: admin positive access, member/viewer denial, live demotion, unknown older host, host-down manager evidence, literal member HTTP403 in production. Depends: T6/T9.
 
-- [ ] **T11. Render all diagnostics and wire safe chrome navigation.**
+- [x] **T11. Render all diagnostics and wire safe chrome navigation.**
   - Files: new `web/components/admin/execution-host-status.tsx`, existing `web/components/chrome/platform-status.tsx`, `status-bar.tsx`, `left-rail.tsx`, `left-rail-sections.ts`, `left-rail-route.ts`, `web/app/(app)/layout.tsx` as needed to pass the authoritative role; `web/types/platform-status.ts`, `web/lib/execution-host/platform-status.ts`; EN/RU catalogs.
   - Render every D6 panel and the exact safe rearm command. Add the single summarized lag field within the selected cheap status policy; keep ready/launch behavior unchanged. Admin link is discoverable in rail and status pill; non-admin coarse status contains no privileged details. Reuse one request-cached health result across both surfaces.
   - Logging: none for ordinary presentation; render failures use existing boundaries. Acceptance: L3, nullable/partial states, mobile/collapsed rail, no heavy query from chrome and no extra health request per component. Depends: T10.
 
-- [ ] **T12. Qualify browser coverage and reconcile screen contracts.**
+- [x] **T12. Qualify browser coverage and reconcile screen contracts.**
   - Files: new `web/e2e/admin-execution-host.spec.ts`, `admin-scheduler.spec.ts`, `web/playwright.config.ts` explicit `AUTHED_SPEC` alternatives; `docs/screens/admin/execution-host.md`, `docs/screens/README.md`, `docs/screens/admin-scheduler.md`, `docs/screens/chrome/left-rail.md`, `docs/screens/chrome/status-bar.md`, `docs/system-analytics/test-infrastructure.md`.
   - Follow the screen template (header/JTBD/roles/navigation/layout/states/data/i18n/links), index the new page and update the IA map. The requested new admin subdirectory does not justify moving existing screen docs or breaking their links.
   - Rerun the browser scenarios authored RED in T6/T10/T11: admin render, poison command values, actual member response status/no leaked data, links in both rail modes, and EN/RU copy. Verify Playwright lists both specs in the existing `authed` project; no unauthenticated accidental execution. Amend any newly discovered requirement/spec/test before fixing code.

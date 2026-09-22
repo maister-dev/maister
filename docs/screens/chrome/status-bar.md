@@ -13,12 +13,14 @@ live runs can proceed.
 ## Roles & capabilities
 
 No role gate — the footer renders for every authenticated user. It shows status
-only; it exposes no mutation.
+only; it exposes no mutation. The same coarse behind/unknown field is safe for
+every role; only an admin receives a link to execution-host diagnostics.
 
 ## Navigation
 
-Exits only: the **Docs** and **GitHub** links open external destinations in a
-new tab. No in-app navigation originates here.
+The platform pill links admins to `/admin/execution-host`; it remains plain text
+for other roles. The **Docs** and **GitHub** links open external destinations in
+a new tab.
 
 ## Layout & regions
 
@@ -33,6 +35,10 @@ shown — it was removed from the top nav and the left rail.
 ```mermaid
 stateDiagram-v2
     [*] --> Ready: supervisor reachable
+    Ready --> Behind: health sample has old host backlog above threshold
+    Behind --> Ready: backlog clears
+    Ready --> UnknownLag: older host omits stream telemetry
+    UnknownLag --> Ready: supported telemetry appears
     [*] --> Unavailable: network or timeout or http or malformed
     Ready --> Unavailable: health check fails
     Unavailable --> Ready: health check recovers
@@ -42,7 +48,8 @@ stateDiagram-v2
 
 `getPlatformStatus()` (`lib/supervisor-client.ts`, a cached
 `checkSupervisorHealth`) — the same value the layout passes to the rail launch
-hint. No client polling.
+hint. The lag decoration uses only that health response; it does not invoke the
+Postgres lag collector. No client polling.
 
 `AttentionLiveRefresh` owns one `GET /api/attention/stream` connection in this
 persistent footer. Its ticks refresh the shared sidebar counters and the current
@@ -50,8 +57,9 @@ page, including Inbox; see [attention behavior](../../system-analytics/attention
 
 ## i18n
 
-`status` namespace (`supervisorReady`, `supervisorUnavailable`, `supervisor`,
-`docs`), plus the `run.stream*` liveness labels.
+`status` namespace (`supervisorReady`, `supervisorBehind`,
+`supervisorUnavailable`, `supervisor`, `docs`), plus the `run.stream*`
+liveness labels.
 
 ## Linked artifacts
 

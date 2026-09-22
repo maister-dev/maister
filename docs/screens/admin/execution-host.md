@@ -2,7 +2,7 @@
 
 - **Type:** screen (global admin).
 - **Route:** `/admin/execution-host`.
-- **Status:** Designed (P0-7).
+- **Status:** Implemented (P0-7, 2026-09-22).
 - **Source:** `web/app/(app)/admin/execution-host/page.tsx`,
   `web/components/admin/execution-host-status.tsx`.
 
@@ -15,11 +15,14 @@ scheduler clock is running.
 
 ## Roles and navigation
 
-`requireGlobalRole("admin")` executes before the detailed collector. A global
-admin receives the page. An authenticated member/viewer receives literal HTTP
-403 with no diagnostic payload. Anonymous access keeps the existing login
-boundary. The admin left rail and the admin form of the platform-status pill
-link here; non-admins receive only the coarse health-only lag decoration.
+The request proxy performs a fresh DB-authoritative active-admin lookup before
+the route can stream, and `requireGlobalRole("admin")` rechecks the same policy
+before the detailed collector. A global admin receives the page. An
+authenticated member/viewer, including a live-demoted prior admin session,
+receives literal HTTP 403 with no diagnostic payload. Anonymous access keeps
+the existing login boundary. The admin left rail and the admin form of the
+platform-status pill link here; non-admins receive only the coarse health-only
+lag decoration.
 
 The scheduler panel links to `/admin/scheduler`; run rows link to authorized run
 details. There is no API or mutation route for this screen.
@@ -42,10 +45,10 @@ details. There is no API or mutation route for this screen.
 ## States and data
 
 The RSC renders live, host-down-with-manager-evidence, unsupported-old-host,
-partial/stale, empty, loading and typed error states. Ready and behind may be
-true together; lag never disables launch. Responsive tables remain readable at
-narrow widths, and every colored state has text. EN/RU catalogs have identical
-keys.
+partial/stale and empty states; route failures use the existing app error
+boundary. Ready and behind may be true together; lag never disables launch.
+Tables scroll within their panels at narrow widths, and every colored state has
+text. EN/RU catalogs have identical keys.
 
 Host health is sampled separately from one read-only Postgres observation and
 is not presented as an atomic snapshot. Historical hosts are paged diagnostics;
@@ -62,3 +65,6 @@ sample only and makes no consumer/history query.
   produces no unsafe command.
 - Expanded, collapsed and mobile rail links work and do not add a second host
   request or a heavy database query.
+- Playwright owns the admin, member, live-demotion, EN/RU and three rail-mode
+  cases in `admin-execution-host.spec.ts`; the explicit `AUTHED_SPEC` entry
+  keeps the file out of the unauthenticated project.

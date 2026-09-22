@@ -48,6 +48,7 @@ const PREFIXES: Array<[string, RailSectionId | null]> = [
   ["/agents", "agents"],
   ["/mcps", "mcps"],
   ["/admin/users", "users"],
+  ["/admin/execution-host", "executionHost"],
   ["/admin/scheduler", "scheduler"],
   ["/settings", "settings"],
   ["/settings/evaluations", "settings"],
@@ -55,7 +56,9 @@ const PREFIXES: Array<[string, RailSectionId | null]> = [
   // is the decided answer rather than an omission.
   ["/account", null],
   ["/account/password", null],
-  // No page of its own; only `/admin/users` and `/admin/scheduler` exist.
+  ["/access-denied", null],
+  ["/access-denied/execution-host", null],
+  // The admin index itself has no page of its own.
   ["/admin", null],
   // Outside the app shell entirely.
   ["/login", null],

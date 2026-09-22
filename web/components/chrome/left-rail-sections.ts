@@ -10,6 +10,7 @@ type RailNavigationLabelKey =
   | "observatory"
   | "projects"
   | "scheduler"
+  | "executionHost"
   | "settings"
   | "studio"
   | "users"
@@ -59,6 +60,12 @@ export function buildLeftRailSections(
       id: "users",
       label: label("users"),
       href: "/admin/users",
+      ready: true,
+    },
+    {
+      id: "executionHost",
+      label: label("executionHost"),
+      href: "/admin/execution-host",
       ready: true,
     },
     {

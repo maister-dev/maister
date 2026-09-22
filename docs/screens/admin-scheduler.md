@@ -31,6 +31,8 @@ The hidden nav item is convenience only. The route and
 
 - **Entry:** the admin block of the [left rail](chrome/left-rail.md), alongside
   Users, MCPs, and Settings.
+- **Related diagnostics:** the execution-host page links back here from its
+  clock summary; see [`admin/execution-host.md`](admin/execution-host.md).
 - **Within:** Engine job filters stay URL-synchronized; "New job" and per-row
   edit open the scheduler job modal.
 - **Exit:** Task schedule rows link to the owning project schedule tab

@@ -136,6 +136,7 @@
     "settings": "Settings",
     "users": "Users",
     "scheduler": "Scheduler",
+    "executionHost": "Execution host",
     "board": "Board",
     "activity": "Activity",
     "observatory": "Observatory",
@@ -789,6 +790,7 @@
     "hostUnavailable": "Host unavailable",
     "supervisor": "supervisor",
     "supervisorReady": "Supervisor ready",
+    "supervisorBehind": "Event ingest behind",
     "supervisorUnavailable": "Supervisor unavailable",
     "docs": "Docs",
     "poc": "POC · single-host"
@@ -3029,6 +3031,92 @@
       "admin": "admin",
       "member": "member",
       "viewer": "viewer"
+    }
+  },
+  "adminExecutionHost": {
+    "eyebrow": "Admin",
+    "title": "Execution host",
+    "subtitle": "Current host, event-stream, projection, worker, and command evidence in one operator view.",
+    "missing": "unavailable",
+    "yes": "yes",
+    "no": "no",
+    "sampledAt": "Current data sampled {value}",
+    "hosts": {
+      "title": "Hosts",
+      "subtitle": "Durable manager registration remains visible when the supervisor is unavailable.",
+      "empty": "No execution hosts are registered."
+    },
+    "streams": {
+      "title": "Event streams",
+      "subtitle": "Manager watermarks and the separately sampled host head. Lag never changes stream state.",
+      "empty": "No event streams have been observed.",
+      "observation": "last sweep verdict",
+      "observationMeta": "{observer}, sampled {sampledAt}",
+      "unacked": "host unACKed"
+    },
+    "consumers": {
+      "title": "Projection consumers",
+      "subtitle": "Top backlog across non-terminal runs. The totals cover the complete eligible population.",
+      "unattributed": "unattributed",
+      "count": "Showing {shown} of {total} consumers across {runs} eligible runs."
+    },
+    "poison": {
+      "title": "Poisoned consumers",
+      "subtitle": "Terminal and active runs are listed independently from the backlog table.",
+      "empty": "No poisoned projection consumers.",
+      "incomplete": "Current failure evidence is incomplete; no repair command can be issued safely.",
+      "count": "{total} poisoned consumers",
+      "next": "Next page"
+    },
+    "workers": {
+      "title": "Durable workers",
+      "subtitle": "Current process health and the latest persisted scheduler observation.",
+      "current": "Current process",
+      "latestSweep": "Latest scheduler sweep",
+      "latestSweepMeta": "{observer}, sampled {sampledAt}"
+    },
+    "commands": {
+      "title": "Open commands",
+      "subtitle": "Current manager counts plus the latest scheduler impasse observation.",
+      "latestSweep": "Impasse sampled {sampledAt}"
+    },
+    "clock": {
+      "title": "Scheduler clock",
+      "subtitle": "The recovery clock that owns event-plane observation.",
+      "last": "Last completed tick: {value}",
+      "open": "Open scheduler diagnostics"
+    },
+    "fields": {
+      "host": "Host",
+      "readiness": "Readiness",
+      "reason": "Reason",
+      "boot": "Boot ID",
+      "version": "Version",
+      "capabilities": "Capabilities",
+      "lastSeen": "Last seen",
+      "stream": "Stream",
+      "state": "State",
+      "watermarks": "Manager R/C/A",
+      "hostHead": "Host head",
+      "lag": "Lag H→M/G/A",
+      "pressure": "Pressured",
+      "claim": "Claim",
+      "error": "Last error",
+      "run": "Run",
+      "consumer": "Consumer",
+      "backlog": "Backlog",
+      "cursor": "Cursor / horizon",
+      "served": "Last served age",
+      "nodeError": "Node error",
+      "open": "Open",
+      "accepted": "Accepted",
+      "oldest": "Oldest accepted",
+      "impasse": "Last impasse"
+    },
+    "forbidden": {
+      "title": "Admin access required",
+      "body": "Execution-host diagnostics contain platform-wide operational metadata.",
+      "back": "Return to the desk"
     }
   },
   "adminScheduler": {

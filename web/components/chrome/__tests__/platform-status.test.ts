@@ -21,6 +21,7 @@ describe("platform status presentation", () => {
     expect(
       platformStatusLabel(status, {
         ready: "Ready",
+        behind: "Behind",
         unavailable: "Unavailable",
       }),
     ).toBe("Ready");
@@ -37,9 +38,37 @@ describe("platform status presentation", () => {
     expect(
       platformStatusLabel(status, {
         ready: "Ready",
+        behind: "Behind",
         unavailable: "Unavailable",
       }),
     ).toBe("Unavailable");
     expect(platformStatusDotClass(status)).toContain("bg-red-500");
+  });
+
+  it("decorates an aged host backlog without changing readiness", () => {
+    const status = {
+      kind: "ready" as const,
+      health: {
+        status: "ready" as const,
+        version: "0.0.1",
+        uptimeMs: 12,
+        checkedAt: "2026-09-22T12:00:00.000Z",
+        sessions: { live: 1, exited: 0, crashed: 0 },
+      },
+      lag: {
+        scope: "host_backlog" as const,
+        status: "behind" as const,
+        sampledAt: "2026-09-22T12:00:00.000Z",
+      },
+    };
+
+    expect(
+      platformStatusLabel(status, {
+        ready: "Ready",
+        behind: "Behind",
+        unavailable: "Unavailable",
+      }),
+    ).toBe("Behind");
+    expect(platformStatusDotClass(status)).toContain("bg-amber");
   });
 });
