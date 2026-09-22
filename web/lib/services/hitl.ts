@@ -948,11 +948,13 @@ async function handlePermissionResponse(
       throw new MaisterError(
         "CONFLICT",
         "permission was superseded by a checkpoint pause",
+        { details: { reason: "not_awaiting_input" } },
       );
     if (TERMINAL_RUN_STATUS.has(lockedRun.status)) {
       throw new MaisterError(
         "CONFLICT",
         `run is terminal (${lockedRun.status}); cannot respond`,
+        { details: { reason: "not_awaiting_input" } },
       );
     }
     if (lockedHitl.respondedAt) {
@@ -964,7 +966,9 @@ async function handlePermissionResponse(
           runStatus: lockedRun.status as string,
         } as const;
       }
-      throw new MaisterError("CONFLICT", "hitl request already delivered");
+      throw new MaisterError("CONFLICT", "hitl request already delivered", {
+        details: { reason: "already_delivered" },
+      });
     }
     const stored = lockedHitl.response as { optionId?: string } | null;
 
@@ -972,6 +976,7 @@ async function handlePermissionResponse(
       throw new MaisterError(
         "CONFLICT",
         `permission already claimed with optionId="${stored.optionId}"; refusing to overwrite with "${optionId}"`,
+        { details: { reason: "option_mismatch" } },
       );
     }
     // Queue the delivery command inside this claim tx (D5 ordering): the row
@@ -1014,6 +1019,7 @@ async function handlePermissionResponse(
       throw new MaisterError(
         "CONFLICT",
         `run is not awaiting this response (status=${lockedRun.status}); cannot respond`,
+        { details: { reason: "not_awaiting_input" } },
       );
     }
 
@@ -1192,13 +1198,20 @@ async function handlePermissionResponse(
           branch: "idle",
           phase: "resume-retryable",
           code: r.code,
+          details: { reason: "delivery_unavailable" },
           latencyMs: Date.now() - startedAt,
         },
         "resume spawn failed — caller may retry",
       );
 
       return NextResponse.json(
-        { code: r.code, message: r.message, terminal: false },
+        {
+          code: r.code,
+          message:
+            "Your answer is saved and will be delivered when the run resumes.",
+          details: { reason: "delivery_unavailable" },
+          terminal: false,
+        },
         { status: 503 },
       );
     }
@@ -1691,17 +1704,22 @@ async function handlePermissionResponse(
           hitlRequestId,
           kind: "permission",
           phase: "terminal-410",
+          details: { reason: "agent_session_ended" },
           latencyMs: Date.now() - startedAt,
         },
         runRow.runKind === "scratch"
-          ? "permission deferred expired — scratch run transitioned to Crashed"
-          : "permission deferred expired — run transitioned to Failed",
+          ? "agent session ended before delivery — scratch run transitioned to Crashed"
+          : "agent session ended before delivery — run transitioned to Failed",
       );
 
       return NextResponse.json(
         {
           code: "HITL_TIMEOUT",
-          message: "permission window expired before response was delivered",
+          message:
+            runRow.runKind === "scratch"
+              ? "The agent session ended before your answer arrived. Recover the run or relaunch it."
+              : "The agent session ended before your answer arrived. Relaunch the run.",
+          details: { reason: "agent_session_ended" },
         },
         { status: 410 },
       );
@@ -1714,15 +1732,18 @@ async function handlePermissionResponse(
           hitlRequestId,
           kind: "permission",
           phase: "retry-503",
+          details: { reason: "delivery_unavailable" },
           latencyMs: Date.now() - startedAt,
         },
-        "supervisor unreachable — response retryable",
+        "answer stored — delivery unavailable",
       );
 
       return NextResponse.json(
         {
           code: "EXECUTOR_UNAVAILABLE",
-          message: "supervisor unreachable; retry the response",
+          message:
+            "Your answer is saved and will be delivered when the run resumes.",
+          details: { reason: "delivery_unavailable" },
         },
         { status: 503 },
       );
@@ -2584,6 +2605,7 @@ async function handlePlanReviewDecisionResponse(
       {
         runId,
         hitlRequestId,
+        details: { reason: "delivery_unavailable" },
         err: err instanceof Error ? err.message : String(err),
       },
       "plan-review final answer input write failed — retryable",
@@ -2592,7 +2614,9 @@ async function handlePlanReviewDecisionResponse(
     return NextResponse.json(
       {
         code: "EXECUTOR_UNAVAILABLE",
-        message: "could not persist plan-review input; retry",
+        message:
+          "Your answer is saved and will be delivered when the run resumes.",
+        details: { reason: "delivery_unavailable" },
       },
       { status: 503 },
     );
@@ -2821,6 +2845,7 @@ async function handlePlanReviewParentResponse(
       {
         runId,
         hitlRequestId,
+        details: { reason: "delivery_unavailable" },
         err: err instanceof Error ? err.message : String(err),
       },
       "plan-review parent input write failed — retryable",
@@ -2829,7 +2854,9 @@ async function handlePlanReviewParentResponse(
     return NextResponse.json(
       {
         code: "EXECUTOR_UNAVAILABLE",
-        message: "could not persist plan-review input; retry",
+        message:
+          "Your answer is saved and will be delivered when the run resumes.",
+        details: { reason: "delivery_unavailable" },
       },
       { status: 503 },
     );
@@ -2900,6 +2927,7 @@ async function handleFormHumanResponse(
     throw new MaisterError(
       "CONFLICT",
       `run is terminal (${runRow.status}); cannot respond`,
+      { details: { reason: "not_awaiting_input" } },
     );
   }
 
@@ -3021,6 +3049,7 @@ async function handleFormHumanResponse(
       throw new MaisterError(
         "CONFLICT",
         `run is terminal (${lockedRun.status}); cannot respond`,
+        { details: { reason: "not_awaiting_input" } },
       );
     }
     // Idempotent recovery (already-delivered / same-payload re-claim) is exempt
@@ -3045,13 +3074,16 @@ async function handleFormHumanResponse(
           assignmentClaim,
         } as const;
       }
-      throw new MaisterError("CONFLICT", "hitl request already delivered");
+      throw new MaisterError("CONFLICT", "hitl request already delivered", {
+        details: { reason: "already_delivered" },
+      });
     }
     if (lockedHitl.response !== null && lockedHitl.response !== undefined) {
       if (!payloadsEqual(lockedHitl.response, responseToStore)) {
         throw new MaisterError(
           "CONFLICT",
           "hitl request already claimed with a different response payload",
+          { details: { reason: "option_mismatch" } },
         );
       }
 
@@ -3079,6 +3111,7 @@ async function handleFormHumanResponse(
       throw new MaisterError(
         "CONFLICT",
         `run is not awaiting this response (status=${lockedRun.status}); cannot respond`,
+        { details: { reason: "not_awaiting_input" } },
       );
     }
 
@@ -3232,6 +3265,7 @@ async function handleFormHumanResponse(
       {
         runId,
         hitlRequestId,
+        details: { reason: "delivery_unavailable" },
         err: err instanceof Error ? err.message : String(err),
       },
       "input artifact write failed — retryable",
@@ -3240,7 +3274,9 @@ async function handleFormHumanResponse(
     return NextResponse.json(
       {
         code: "EXECUTOR_UNAVAILABLE",
-        message: "could not persist input artifact; retry",
+        message:
+          "Your answer is saved and will be delivered when the run resumes.",
+        details: { reason: "delivery_unavailable" },
       },
       { status: 503 },
     );

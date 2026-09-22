@@ -7,6 +7,7 @@ import { z } from "zod";
 import { requireActiveSession } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import { isMaisterError, MaisterError } from "@/lib/errors";
+import { publicHitlRespondError } from "@/lib/hitl-response-error";
 import { respondToHitl } from "@/lib/services/hitl";
 
 const log = pino({
@@ -45,16 +46,20 @@ function errorResponse(
 ): NextResponse {
   if (isMaisterError(err)) {
     const status = httpStatusForCode(err.code);
+    const body = publicHitlRespondError(err);
 
     log.warn(
-      { ...ctx, code: err.code, message: err.message, status },
+      {
+        ...ctx,
+        code: err.code,
+        message: err.message,
+        status,
+        details: body.details,
+      },
       "respond error",
     );
 
-    return NextResponse.json(
-      { code: err.code, message: err.message },
-      { status },
-    );
+    return NextResponse.json(body, { status });
   }
   const message = err instanceof Error ? err.message : String(err);
 

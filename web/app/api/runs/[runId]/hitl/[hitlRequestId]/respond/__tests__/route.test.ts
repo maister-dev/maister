@@ -33,6 +33,7 @@ import {
   workspaces as workspacesTable,
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import { hasFlowPermissionResume } from "@/lib/flows/graph/permission-resume";
 
 vi.mock("@/lib/review-comments/feedback-packet", () => ({
   assertReviewFeedbackPresent: vi.fn(),
@@ -449,6 +450,7 @@ beforeEach(async () => {
     evaluation_participants: [],
   };
   dbState.updates = [];
+  vi.mocked(hasFlowPermissionResume).mockResolvedValue(false);
   deliverPermissionSpy.mockReset();
   deliverPermissionSpy.mockImplementation(async () => ({ ok: true }));
   prepareInputSpy.mockReset();
@@ -701,6 +703,24 @@ async function invokePost(runId: string, hitlRequestId: string, body: unknown) {
 }
 
 describe("HITL respond route — kind=permission", () => {
+  it("serializes the resume-owned claim reason without private throw context", async () => {
+    const { runId, hitlRequestId } = seedPermissionRow();
+
+    vi.mocked(hasFlowPermissionResume).mockResolvedValueOnce(true);
+    const response = await invokePost(runId, hitlRequestId, {
+      optionId: "allow",
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(body).toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "permission_resume_in_flight" },
+    });
+    expect(body.details).toEqual({ reason: "permission_resume_in_flight" });
+    expect(deliverPermissionSpy).not.toHaveBeenCalled();
+  });
+
   it("happy two-phase: stores response, delivers, marks respondedAt; returns 200", async () => {
     const { runId, hitlRequestId } = seedPermissionRow();
 
@@ -919,6 +939,12 @@ describe("HITL respond route — kind=permission", () => {
     const res = await invokePost(runId, hitlRequestId, { optionId: "allow" });
 
     expect(res.status).toBe(410);
+    expect(await res.json()).toEqual({
+      code: "HITL_TIMEOUT",
+      message:
+        "The agent session ended before your answer arrived. Relaunch the run.",
+      details: { reason: "agent_session_ended" },
+    });
     expect(dbState.tables.runs[0].status).toBe("Failed");
     expect(dbState.tables.hitl_requests[0].respondedAt).toBeInstanceOf(Date);
   });
@@ -935,6 +961,12 @@ describe("HITL respond route — kind=permission", () => {
     const res = await invokePost(runId, hitlRequestId, { optionId: "allow" });
 
     expect(res.status).toBe(410);
+    expect(await res.json()).toEqual({
+      code: "HITL_TIMEOUT",
+      message:
+        "The agent session ended before your answer arrived. Recover the run or relaunch it.",
+      details: { reason: "agent_session_ended" },
+    });
     expect(dbState.tables.runs[0].status).toBe("Crashed");
     expect(dbState.tables.scratch_runs[0]).toMatchObject({
       dialogStatus: "Crashed",
@@ -953,6 +985,12 @@ describe("HITL respond route — kind=permission", () => {
     const res = await invokePost(runId, hitlRequestId, { optionId: "allow" });
 
     expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({
+      code: "EXECUTOR_UNAVAILABLE",
+      message:
+        "Your answer is saved and will be delivered when the run resumes.",
+      details: { reason: "delivery_unavailable" },
+    });
     expect(dbState.tables.runs[0].status).toBe("NeedsInput");
     expect(dbState.tables.hitl_requests[0].respondedAt).toBeNull();
     expect(dbState.tables.hitl_requests[0].response).toEqual({
@@ -981,6 +1019,10 @@ describe("HITL respond route — kind=permission", () => {
     });
 
     expect(second.status).toBe(409);
+    expect(await second.json()).toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "option_mismatch" },
+    });
     expect(deliverPermissionSpy).toHaveBeenCalledTimes(1);
   });
 

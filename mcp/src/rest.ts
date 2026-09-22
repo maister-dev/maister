@@ -48,3 +48,44 @@ export async function restResponseToToolError(res: Response): Promise<{
     };
   }
 }
+
+export async function hitlRespondToolError(res: Response): Promise<{
+  isError: true;
+  status: number;
+  code: string;
+  message: string;
+  publicBody?: Record<string, unknown>;
+}> {
+  const raw = await res.text();
+
+  try {
+    const parsed: unknown = JSON.parse(raw);
+
+    if (
+      parsed !== null &&
+      typeof parsed === "object" &&
+      !Array.isArray(parsed) &&
+      typeof (parsed as Record<string, unknown>).code === "string" &&
+      typeof (parsed as Record<string, unknown>).message === "string"
+    ) {
+      const publicBody = parsed as Record<string, unknown>;
+
+      return {
+        isError: true,
+        status: res.status,
+        code: publicBody.code as string,
+        message: publicBody.message as string,
+        publicBody,
+      };
+    }
+  } catch {
+    // Fall through to the existing upstream-error presentation.
+  }
+
+  return {
+    isError: true,
+    status: res.status,
+    code: "UPSTREAM",
+    message: res.statusText || raw.slice(0, 200),
+  };
+}

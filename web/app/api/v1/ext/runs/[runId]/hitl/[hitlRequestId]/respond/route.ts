@@ -2,10 +2,12 @@ import "server-only";
 
 import { and, eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
+import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
+import { publicHitlRespondError } from "@/lib/hitl-response-error";
 import { isReviewSchema } from "@/lib/flows/hitl-validate";
 import { respondToHitl } from "@/lib/services/hitl";
 import {
@@ -24,6 +26,10 @@ type Db = any;
 const ENDPOINT = "POST /api/v1/ext/runs/[runId]/hitl/[hitlRequestId]/respond";
 const SCOPE = "hitl:respond";
 const HUMAN_SCOPE = "hitl:respond:human";
+const log = pino({
+  name: "ext-hitl-respond",
+  level: process.env.LOG_LEVEL ?? "info",
+});
 
 function isHumanOnlyHitlKind(kind: string | undefined): boolean {
   return kind === "human" || kind === "agent_question";
@@ -197,11 +203,20 @@ export async function POST(
               : err.code === "NEEDS_INPUT"
                 ? 422
                 : httpStatusForExtCode(err.code);
+          const responseBody = publicHitlRespondError(err);
 
-          return NextResponse.json(
-            { code: err.code, message: err.message },
-            { status },
+          log.warn(
+            {
+              runId,
+              hitlRequestId,
+              code: err.code,
+              status,
+              details: responseBody.details,
+            },
+            "respond error",
           );
+
+          return NextResponse.json(responseBody, { status });
         }
 
         throw err;

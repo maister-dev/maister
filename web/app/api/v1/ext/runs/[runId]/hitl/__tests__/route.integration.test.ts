@@ -1198,6 +1198,72 @@ describe("POST /api/v1/ext/runs/[runId]/hitl/[hitlRequestId]/respond", () => {
     });
 
     expect(res2.status).toBe(409);
+    expect(await res2.json()).toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "already_delivered" },
+    });
+  });
+
+  it("carries the resume-owned refusal reason through the external route", async () => {
+    const { projectId, flowId } = await seedProject(
+      `ext-hitl-resume-${randomUUID().slice(0, 8)}`,
+    );
+    const { runId } = await seedRun(projectId, flowId, "NeedsInput");
+    const hitlRequestId = await seedHitlRequest(runId, "permission");
+
+    await fakeExecutionHosts(db, { runId });
+    const [run] = await (db as any)
+      .select()
+      .from(schema.runs)
+      .where(eq(schema.runs.id, runId));
+
+    expect(run.executionAssignmentId).toEqual(expect.any(String));
+    await (db as any).insert(schema.nodeAttempts).values({
+      id: randomUUID(),
+      runId,
+      nodeId: "step-1",
+      nodeType: "ai_coding",
+      attempt: 1,
+      status: "Running",
+      startedAt: new Date(),
+      executionAssignmentId: run.executionAssignmentId,
+      actionPromptOrdinal: 1,
+      actionResume: {
+        version: 1,
+        kind: "permission",
+        sourceCommandId: randomUUID(),
+        sourceAssignmentId: randomUUID(),
+        assignmentId: run.executionAssignmentId,
+        promptOrdinal: 1,
+        resumeSessionId: "acp-1",
+        hitlRequestId,
+        sourceRequestId: "req-1",
+        optionId: "approve",
+      },
+    });
+    const token = await issueToken(
+      { projectId, name: "responder-token", createdByUserId: null },
+      db,
+    );
+
+    await (db as any)
+      .update(schema.projectTokens)
+      .set({ scopes: ["hitl:respond"] })
+      .where(eq(schema.projectTokens.id, token.tokenId));
+    const response = await POST(
+      makePostRequest(runId, hitlRequestId, token.secret, {
+        optionId: "approve",
+      }),
+      {
+        params: Promise.resolve({ runId, hitlRequestId }),
+      },
+    );
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "permission_resume_in_flight" },
+    });
   });
 
   it("returns 422 (bad response) for invalid payload", async () => {

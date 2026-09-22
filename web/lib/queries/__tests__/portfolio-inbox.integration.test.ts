@@ -34,6 +34,7 @@ vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
 let getCrossProjectHitlInbox: typeof import("@/lib/queries/portfolio").getCrossProjectHitlInbox;
 let getHitlInbox: typeof import("@/lib/queries/hitl").getHitlInbox;
 let getInboxCardContext: typeof import("@/lib/queries/inbox-context").getInboxCardContext;
+let getRunDetail: typeof import("@/lib/queries/run").getRunDetail;
 
 beforeAll(async () => {
   testDatabase = await startMainPostgresTestDb({
@@ -46,6 +47,7 @@ beforeAll(async () => {
   ({ getCrossProjectHitlInbox } = await import("@/lib/queries/portfolio"));
   ({ getHitlInbox } = await import("@/lib/queries/hitl"));
   ({ getInboxCardContext } = await import("@/lib/queries/inbox-context"));
+  ({ getRunDetail } = await import("@/lib/queries/run"));
 }, 180_000);
 
 afterAll(async () => {
@@ -303,6 +305,89 @@ describe("getCrossProjectHitlInbox (M17 P5, integration)", () => {
     await db.delete(schema.projectMembers);
     await db.delete(schema.projects);
     await db.delete(schema.users);
+  });
+
+  it("projects a claimed permission on project, global and run reads until delivery", async () => {
+    const admin = await createAdminUser("admin-stored@test.com");
+    const projectId = await createProject("Stored answer");
+    const flowId = await createFlow(projectId);
+    const runnerId = await createExecutor();
+    const taskId = await createTask(projectId, flowId, "Stored answer");
+    const runId = await createRun(projectId, taskId, flowId, runnerId);
+
+    await createWorkspace(runId, projectId);
+    await createHitlRequest("stored-answer", runId, "permission", null, {
+      options: [{ optionId: "allow", label: "Allow" }],
+      supervisorSessionId: "private-session",
+    });
+    expect((await getHitlInbox(projectId)).items[0]).toMatchObject({
+      answerState: "open",
+      storedResponse: null,
+    });
+
+    for (const response of [
+      {},
+      false,
+      0,
+      null,
+      { _delivery: { commandId: "private-command" } },
+    ]) {
+      await pool.query(
+        "UPDATE hitl_requests SET response = $1::jsonb WHERE id = $2",
+        [JSON.stringify(response), "stored-answer"],
+      );
+      expect((await getHitlInbox(projectId)).items[0]).toMatchObject({
+        answerState: "answer_stored",
+        storedResponse: null,
+      });
+    }
+    await pool.query(
+      "UPDATE hitl_requests SET response = $1::jsonb WHERE id = $2",
+      [
+        JSON.stringify({
+          optionId: "allow",
+          _delivery: { commandId: "private-command" },
+        }),
+        "stored-answer",
+      ],
+    );
+
+    const project = await getHitlInbox(projectId);
+    const global = await getCrossProjectHitlInbox(admin, "admin");
+    const run = await getRunDetail(runId);
+
+    for (const item of [
+      project.items[0],
+      global.items[0],
+      run?.pendingHitls[0],
+    ]) {
+      expect(item).toMatchObject({
+        answerState: "answer_stored",
+        storedResponse: { optionId: "allow" },
+      });
+      expect(JSON.stringify(item)).not.toContain("private-command");
+    }
+    expect(project.count).toBe(1);
+    expect(global.count).toBe(1);
+
+    await db
+      .update(schema.runs)
+      .set({ status: "Running" })
+      .where(eq(schema.runs.id, runId));
+    expect((await getHitlInbox(projectId)).items[0].answerState).toBe(
+      "answer_stored",
+    );
+    expect(
+      (await getCrossProjectHitlInbox(admin, "admin")).items[0].answerState,
+    ).toBe("answer_stored");
+
+    await pool.query(
+      "UPDATE hitl_requests SET responded_at = now() WHERE id = $1",
+      ["stored-answer"],
+    );
+    expect((await getHitlInbox(projectId)).count).toBe(0);
+    expect((await getCrossProjectHitlInbox(admin, "admin")).count).toBe(0);
+    expect((await getRunDetail(runId))?.pendingHitls).toEqual([]);
   });
 
   it("admin sees ALL pending HITL items across all projects with schema, criticality, projectSlug, projectName", async () => {

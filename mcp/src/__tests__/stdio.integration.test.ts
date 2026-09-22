@@ -54,6 +54,18 @@ describe("MCP stdio wire contract", () => {
         authorization: req.headers.authorization,
         body: JSON.parse(Buffer.concat(chunks).toString("utf8")),
       });
+      if (req.url?.includes("/hitl/") && req.url.endsWith("/respond")) {
+        res.writeHead(409, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({
+            code: "CONFLICT",
+            message: "already owned",
+            details: { reason: "permission_resume_in_flight" },
+          }),
+        );
+
+        return;
+      }
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ triageStatus: "triaged" }));
     });
@@ -138,6 +150,29 @@ describe("MCP stdio wire contract", () => {
     } finally {
       await unauthenticated.close();
     }
+  });
+
+  it("preserves the complete HITL refusal body through callTool", async () => {
+    const result = await client.callTool({
+      name: "hitl_respond",
+      arguments: {
+        runId: "run-1",
+        hitlRequestId: "hitl-1",
+        optionId: "allow",
+      },
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content).toEqual([
+      {
+        type: "text",
+        text: JSON.stringify({
+          code: "CONFLICT",
+          message: "already owned",
+          details: { reason: "permission_resume_in_flight" },
+        }),
+      },
+    ]);
   });
 
   it("rejects an unknown tool before reaching REST", async () => {

@@ -19,6 +19,10 @@ import type { DeliveryPolicy } from "@/lib/runs/delivery-policy";
 import type { ExecutionPolicy } from "@/lib/runs/execution-policy";
 import type { SettingsNodeView } from "@/lib/flows/settings-view";
 import type { HitlOption } from "@/lib/queries/hitl";
+import type {
+  HitlAnswerState,
+  HitlStoredResponse,
+} from "@/lib/hitl-response-contract";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type { RunnerResolutionWarning } from "@/lib/acp-runners/resolve";
 import type {
@@ -43,6 +47,7 @@ import { alias } from "drizzle-orm/pg-core";
 import { cache } from "react";
 import pino from "pino";
 
+import { projectHitlAnswer } from "@/lib/hitl-answer-view";
 import { isMaisterErrorCode } from "@/lib/errors-core";
 import { getDb } from "@/lib/db/client";
 import {
@@ -130,6 +135,8 @@ function db(): NodePgDatabase<typeof schema> {
 export interface RunPendingHitl {
   hitlRequestId: string;
   kind: HitlRequest["kind"];
+  answerState: HitlAnswerState;
+  storedResponse: HitlStoredResponse | null;
   assignmentId: string | null;
   assignmentStatus: Assignment["status"] | null;
   assignmentActionKind: Assignment["actionKind"] | null;
@@ -578,6 +585,9 @@ export const getRunDetail = cache(async function getRunDetail(
       stepId: hitlRequests.stepId,
       prompt: hitlRequests.prompt,
       rawSchema: hitlRequests.schema,
+      response: hitlRequests.response,
+      responseIsNotNull: sql<boolean>`${hitlRequests.response} is not null`,
+      humanConfidence: hitlRequests.humanConfidence,
       criticality: hitlRequests.criticality,
       dirtyResolution: hitlRequests.dirtyResolution,
     })
@@ -655,6 +665,14 @@ export const getRunDetail = cache(async function getRunDetail(
     return {
       hitlRequestId: pending.id,
       kind: pending.kind,
+      ...projectHitlAnswer({
+        kind: pending.kind,
+        schema: pending.rawSchema,
+        response: pending.response,
+        responseIsNotNull: pending.responseIsNotNull,
+        respondedAt: null,
+        confidence: pending.humanConfidence,
+      }),
       assignmentId: assignment?.id ?? null,
       assignmentStatus: assignment?.status ?? null,
       assignmentActionKind: assignment?.actionKind ?? null,

@@ -613,7 +613,7 @@ first point where existing assertions are repaired.
 
 ### Phase 1 — make wire and read models truthful before client changes
 
-- [ ] **Task 4: Add RED W1/W2/R1 and DTO-side U3.** Depends on 1–3.
+- [x] **Task 4: Add RED W1/W2/R1 and DTO-side U3.** Depends on 1–3.
   Extend the existing web respond route test, ext HITL route integration test,
   MCP dispatch/stdio tests and real Postgres board/inbox tests listed below.
   Drive a resume-owned claim through real service/route paths for W1, not only
@@ -625,7 +625,7 @@ first point where existing assertions are repaired.
   project/global/run/scratch reads, counts and removal. Record intended RED
   assertions; unrelated fixture/auth failures are not RED proof. Logging:
   capture safe code/reason/request-id evidence, never credentials.
-- [ ] **Task 5: Add public response contracts and route/service details.**
+- [x] **Task 5: Add public response contracts and route/service details.**
   Depends on 4. Create the small contract/serializer modules, label claim
   throws and terminal/delivery-unavailable bodies in `hitl.ts`, and apply the
   serializer in both respond routes. Add ext refusal logging locally (the
@@ -633,14 +633,14 @@ first point where existing assertions are repaired.
   Logging: warn with runId, hitlRequestId, code, status, details.reason; service
   delivery logs use the same public reason and existing latency context.
   Acceptance: W1 web/ext and W2 green, no supervisor/transition diff.
-- [ ] **Task 6: Preserve errors through the complete MCP response.**
+- [x] **Task 6: Preserve errors through the complete MCP response.**
   Depends on 5. Update `mcp/src/rest.ts`, `tools.ts` dispatch result and
   `main.ts` hitl_respond failure rendering as required by D6; reuse existing
   MCP harness. Preserve JSON body equality and `isError:true` at the outer
   tool result, as well as success 202 states and existing auth behavior.
   Logging: tool/status/reason only. Acceptance: W1 real callTool evidence
   green; unrelated tool error tests unchanged.
-- [ ] **Task 7: Project stored answer state on every required read path.**
+- [x] **Task 7: Project stored answer state on every required read path.**
   Depends on 4–5. Add `hitl-answer-view.ts`; wire `queries/hitl.ts`,
   `queries/portfolio.ts`, `queries/run.ts`, scratch GET and explicit ext DTOs.
   Preserve existing permissions/redaction/specialized claims. Include read

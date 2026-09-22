@@ -1,7 +1,7 @@
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 
 import { type AuthContext, resolveAuthHeader } from "./auth";
-import { callExt, restResponseToToolError } from "./rest";
+import { callExt, hitlRespondToolError, restResponseToToolError } from "./rest";
 
 export type ToolSpec = {
   description: string;
@@ -750,7 +750,13 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
 
 type DispatchResult =
   | { isError?: false; [key: string]: unknown }
-  | { isError: true; status: number; code?: string; message?: string };
+  | {
+      isError: true;
+      status: number;
+      code?: string;
+      message?: string;
+      publicBody?: Record<string, unknown>;
+    };
 
 export async function dispatchTool(opts: {
   name: string;
@@ -783,6 +789,8 @@ export async function dispatchTool(opts: {
   }
 
   if (!res.ok) {
+    if (name === "hitl_respond") return hitlRespondToolError(res);
+
     return restResponseToToolError(res);
   }
 

@@ -59,7 +59,9 @@ import {
 import { runFlow } from "@/lib/flows/runner";
 import { runSweepTick } from "@/lib/runs/keepalive-sweeper";
 import { bumpKeepalive } from "@/lib/runs/state-transitions";
+import { getHitlInbox } from "@/lib/queries/hitl";
 import { respondToHitl, type HitlActor } from "@/lib/services/hitl";
+import { resolveHitlErrorMessage } from "@/lib/ui-error-message";
 import { seedAgentRun } from "@/test-support/agent-run-seed";
 import { addWorktree, initRepo } from "@/test-support/git-fixture";
 import { seedGraphRun } from "@/test-support/graph-run-seed";
@@ -170,6 +172,30 @@ async function answered(runId: string): Promise<boolean> {
   const rows = await hitlRows(runId);
 
   return rows.length > 0 && rows.every((row) => row.respondedAt !== null);
+}
+
+async function failedEvents(
+  runId: string,
+): Promise<Array<Record<string, any>>> {
+  return (await db
+    .select()
+    .from(schema.domainEvents)
+    .where(
+      and(
+        eq(schema.domainEvents.runId, runId),
+        eq(schema.domainEvents.kind, "run.failed"),
+      ),
+    )) as Array<Record<string, any>>;
+}
+
+async function publicStoredAnswer(
+  runId: string,
+  hitlId: string,
+): Promise<unknown> {
+  const run = await runRow(runId);
+  const inbox = await getHitlInbox(run.projectId, { db: db as any });
+
+  return inbox.items.find((item) => item.hitlRequestId === hitlId);
 }
 
 // The ORIGINAL permission row: the agent resume grant lives on it, while the
@@ -423,6 +449,14 @@ describe("permission deadline — one owner (ADR-180)", () => {
 
     expect(res.status).toBe(202);
     expect(await res.json()).toMatchObject({ state: "resume-in-progress" });
+    const stored = await publicStoredAnswer(runId, hitl.id);
+
+    if (stored) {
+      expect(stored).toMatchObject({
+        answerState: "answer_stored",
+        storedResponse: { optionId: "allow" },
+      });
+    }
     // The resumed session re-issues the permission and the driver delivers
     // the stored answer against it: the OUTCOME, not just the 202.
     await waitFor(
@@ -433,6 +467,7 @@ describe("permission deadline — one owner (ADR-180)", () => {
 
     expect(after.status).not.toBe("Failed");
     expect(after.status).not.toBe("Crashed");
+    expect(await failedEvents(runId)).toHaveLength(0);
   }, 180_000);
 
   // RED 4b. After the grace the registry entry is gone: the answer is a
@@ -462,6 +497,21 @@ describe("permission deadline — one owner (ADR-180)", () => {
     );
 
     expect(res.status).toBe(503);
+    const body = await res.json();
+
+    expect(body).toEqual({
+      code: "EXECUTOR_UNAVAILABLE",
+      message:
+        "Your answer is saved and will be delivered when the run resumes.",
+      details: { reason: "delivery_unavailable" },
+    });
+    expect(resolveHitlErrorMessage(body)).toEqual({
+      key: "errorReasons.delivery_unavailable",
+    });
+    expect(await publicStoredAnswer(runId, hitl.id)).toMatchObject({
+      answerState: "answer_stored",
+      storedResponse: { optionId: "allow" },
+    });
     expect((await runRow(runId)).status).not.toBe("Failed");
 
     // The operator's tab is still alive, so only the checkpointed arm can
@@ -480,11 +530,14 @@ describe("permission deadline — one owner (ADR-180)", () => {
     );
 
     expect(retry.status).toBe(202);
+    expect(JSON.stringify(await retry.json())).toContain("resume");
     await waitFor(
       async () => (await answered(runId)) || null,
       "race-503: the retried answer delivered to the resumed session",
     );
     expect((await runRow(runId)).status).not.toBe("Failed");
+    expect(await failedEvents(runId)).toHaveLength(0);
+    expect(await publicStoredAnswer(runId, hitl.id)).toBeUndefined();
   }, 180_000);
 
   // NO run-kind controls here, deliberately. ADR-180 does not widen the agent
