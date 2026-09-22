@@ -270,7 +270,7 @@ run/attempt in `run_transcript_states`. A tool-key index resolves one prior tool
 message. Text/result concatenation occurs in PostgreSQL, so applying a chunk
 does not download an ever-growing message into the worker.
 
-S5.2 P1 amendment (Designed until qualified): scratch reply content also belongs
+S5.2 P1 amendment (implemented; hosted CI qualification pending): scratch reply content also belongs
 to this durable consumer. A request-local stream must not write the same reply.
 Scratch user/notice appends take the same allocator lock, bootstrap above existing
 message positions, and reset coalescing at user-turn boundaries. Scratch prompt

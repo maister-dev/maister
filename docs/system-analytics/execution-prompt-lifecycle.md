@@ -10,7 +10,7 @@ owner application. A prompt is a durable command whose authoritative lifecycle
 is canonical event plus receipt; a local wait or HTTP response is an optional
 optimization and cannot decide a run transition.
 
-### S5.2 host death before permission input (Designed until D1 qualification)
+### S5.2 host death before permission input (implemented; hosted CI qualification pending)
 
 A response stored while the supervisor is dead can have an exhausted historical
 `session.input` command but no host receipt. After checkpointing the missing
@@ -42,10 +42,24 @@ before running the payload factory again; a manager restart does not authorize
 another session. The Flow continuation worker discovers these creates even
 when the first prompt does not exist yet, using the same traversal lease.
 
-S5.2 receipt-first retry amendment (Designed until D2b qualification): an
+S5.2 receipt-first retry amendment (implemented; hosted CI qualification pending): an
 attempted owned create probes its exact receipt before another POST. Confirmed
-404 permits reissue of the same stored envelope; transport uncertainty or an
-accepted receipt defers. A completed 201 with matching command/run/kind/epoch
+404 permits reissue of the same stored envelope; transport uncertainty defers.
+An **accepted** receipt splits on `inflight`, and the split is the whole
+specification of this window: `inflight: true` means the live host incarnation
+still owns the turn, so the driver defers to it. `inflight: false` means the
+host restarted between writing the receipt and finishing the turn — the
+turn_lost signature. Nothing advances such a receipt: the supervisor settles it
+only when the SAME command id is re-sent, and `session.create` is not a
+restartable object kind, so a re-send answers turn_lost rather than a session.
+The driver therefore records the lost turn on the original command and
+authorizes a replacement generation from the stored bytes, the same answer the
+no-receipt window gets one step earlier. This is safe precisely because an
+accepted-but-unfinished create returned no session id to fold and a restarted
+host holds no live adapter to orphan. The replacement is bounded by the same
+generation ceiling as the definitive-refusal arms above it, so a host that keeps
+losing the turn ends in a terminal create failure rather than an unbounded
+sequence of sessions. A completed 201 with matching command/run/kind/epoch
 and a validated create result commits command settlement and binding under the
 current owner lock, without re-sending. A rejected receipt uses the existing
 definitive-refusal policy. Receipt lookup never reconstructs launch inputs.

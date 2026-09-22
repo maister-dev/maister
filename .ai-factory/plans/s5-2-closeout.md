@@ -81,7 +81,7 @@ do not create a duplicate S5.2 domain document or a parallel source of truth.
 | `POST /sessions/{id}/prompts`, `ImmutablePromptRequestV2`, `PromptAccepted` | URL host-session ID must equal immutable target; envelope command/run/assignment/epoch and request digest are observed, never rewritten by proxy. **202 is admission, not terminal success.** | P1/P2; `docs/api/supervisor.openapi.yaml`, `docs/supervisor.md`, `execution-prompt-lifecycle.md`. |
 | `GET /commands/{commandId}`, `CommandReceiptV2` | Exact URL command ID. **200** receipt preserves nested body/error and identity; **404** means no receipt, unlike timeout/reset/unavailability. A network fault must not be forged as 404 or a terminal rejection. | P2, D2; same supervisor OpenAPI and prompt lifecycle. |
 | `GET /runtime-events`, `POST /runtime-events/ack` | Exclusive decimal `Last-Event-ID`; same stable stream ID; ACK `throughSequence` never exceeds canonical contiguous prefix. Preserve real frame IDs/bytes; only explicit duplicate action may replay an identical frame. | P3; supervisor OpenAPI, `docs/api/async/execution-host-events.asyncapi.yaml`, `execution-event-plane.md`. |
-| `POST /sessions`, `CreateSessionCommand` | Original `create_intent` bytes and command ID; **201** creates one logical host session. No-receipt reissue and committed-receipt fold are distinct windows, specified below. | D2/D4/P4; supervisor OpenAPI, `execution-hosts.md`, `execution-prompt-lifecycle.md`. |
+| `POST /sessions`, `CreateSessionCommand` | Original `create_intent` bytes and command ID; **201** creates one logical host session. No-receipt reissue, accepted-receipt lost turn and committed-receipt fold are three distinct windows, specified below. | D2/D4/P4; supervisor OpenAPI, `execution-hosts.md`, `execution-prompt-lifecycle.md`. |
 | `POST /sessions/{id}/checkpoint` | Server-bound host session; **200**/idempotent checkpoint, **404** definitive absent session, **409 FENCED** stale authority, **503 EXECUTOR_UNAVAILABLE** retryable failure. A reset is a transport failure, not an observed wire 503. | D1; supervisor OpenAPI + `docs/system-analytics/{sessions,hitl,reconciliation-gc}.md`. |
 | `POST /api/runs/{runId}/hitl/{hitlRequestId}/respond` | URL IDs validated against server run/HITL rows; authenticated user from Auth.js; body `optionId` must belong to stored permission choices. **503 EXECUTOR_UNAVAILABLE** preserves stored response and null `responded_at`; idle resume is **202**, same completed response is idempotent **200**. | D1; `docs/api/web.openapi.yaml`, `docs/error-taxonomy.md`, `hitl.md`, `runs.md`. Do not require private error details the route does not serialize. |
 | Runtime-object upload/metadata/seal events | Object/intent/generation/host identity from actual production upload; sealed host bytes do not imply manager catalogue commit. | B4; supervisor OpenAPI, `execution-runtime-objects.md`, existing event schema. |
@@ -115,8 +115,13 @@ Preserve migration history: `0131`, `0137_execution_projection_workers`,
 `0140_immutable_command_requests`, `0146_flow_session_create_intents`,
 `0154_agent_owned_create`, `0159_mandatory_prompt_owner` and later committed
 migrations remain unchanged. Test audit tables/functions/triggers belong only to
-the disposable database, are uniquely named per case and explicitly dropped;
-they are not application migrations or production write paths.
+the disposable database; they are not application migrations or production
+write paths. As built, their ISOLATION comes from that database rather than
+from their names: each fault fixture and each isolation case starts its own
+Testcontainers database and destroys it on close, so a stable name
+(`s52_application_audit`, `s52_object_audit`) cannot collide across cases and
+lets the controls read it directly. Barrier-owned triggers, which DO share a
+case's database, are named per barrier and dropped in `finally`.
 
 T02 records `no migration` in the spec checklist; T14 compares schema, migration
 SQL, journal and snapshots to the execution base and requires no unintended
@@ -201,10 +206,12 @@ use the real supervisor URL and are separately attributed. Observe one stable
 `hostKey`, with boot ID changing only on an actual supervisor restart.
 Never proxy SQLite or host filesystem operations.
 
-Use a typed selector `{caseId, commandId, route, assignmentEpoch}` (or
-`objectId`/`streamId` for those protocols), an explicit action type, and
-explicit operations `arm`, `awaitReached`, `release`, `cut`, `assertDrained`,
-`close`. Capture an auto-minted command ID from its durable row/envelope before
+Use a typed selector — as built, `{caseId, method, path, commandId, eventType,
+objectId, sequence, assignmentEpoch, streamId}` — an explicit action type
+(`hold-request`, `hold-response`, `hold-responses`, `drop-responses`,
+`block-receipts`, `hold-events`, `cut-frame`, `duplicate-frame`), and explicit
+operations `arm`, `awaitReached`, `release`, `cut`, `ownedProcessKilled`,
+`assertDrained`, `close`. Capture an auto-minted command ID from its durable row/envelope before
 forwarding it; never reconstruct it from timing. Pass unselected traffic
 unchanged. Keep bounded metadata/frame buffers and redact bodies/secrets.
 
@@ -260,7 +267,7 @@ implementation; final evidence replaces Planned without changing the contract.
 | --- | --- | --- | --- |
 | **P1: ACK dropped after host commit → web SIGKILL + restart → exactly one result, no duplicate session.prompt** | B1 reached; drop ACK; SIGKILL web PGID after committed acceptance, restart same DB/roots through production boot; release target event hold to settle. | isolation; `web/test-support/__tests__/execution-ab-partitions.integration.test.ts`, P1 | Original immutable command/request, exactly one host ACP effect and one domain result/application. RED target: second `session.prompt` or lost result. Preserve AT-07's parent-plan sentence: “Unknown remains recoverable through web restart; reconnect yields one correct result and no duplicate prompt”. |
 | **P2: receipts unavailable beyond the 5× budget, then evidence resumes** | Persistent ACK loss plus route-specific hold of `GET /commands/{id}` across dispatch retries; hold this command's accepted **and** terminal SSE evidence so neither can acknowledge/settle it early. Keep health, unrelated commands and unrelated SSE flowing. Await actual lookup exhaustion and persisted reconciliation state before release. | isolation; `web/test-support/__tests__/execution-ab-partitions.integration.test.ts`, P2 | `transport_state=unknown` during uncertainty; exhausted command has `state=queued`, `transport_state=reconciliation_required`, never fabricated failure; release yields agreeing receipt/canonical evidence and one application. Five receipt attempts are **per dispatch**, separate from the current three-dispatch prompt budget. Record both counters and actual deadlines; an arrival is not exhaustion. Sibling health/receipt control remains available. RED target: fabricated failure or unknown stuck after evidence returns. |
-| **P3: cut SSE mid-replay and mid-live** (two named subcases) | Record high-water at stream open; cut both upstream and downstream after selected frame or selected partial frame. Replay frame ≤ frozen high-water; live frame > it. Reconnect from last fully committed exclusive cursor. Explicitly inject one previously forwarded complete frame for the duplicate subcontrol. | isolation; `web/test-support/__tests__/execution-ab-partitions.integration.test.ts`, P3 replay and P3 live | No missing canonical sequence, partial frame never ingested, duplicate recorded as duplicate without another effect, monotone committed/consumer watermarks and advanced `last_seen_at`. A clean exclusive reconnect alone is not duplicate evidence. RED target: gap, replayed effect or unadvanced watermark. Budget each subcase ≥90 s, accounting for 30 s claims and 250 ms reconnect floor; waits prove rows/frames, not log timing. |
+| **P3: cut SSE mid-replay and mid-live** (two named subcases) | Record high-water at stream open; cut both upstream and downstream after selected frame or selected partial frame. Replay frame ≤ frozen high-water; live frame > it. Reconnect from last fully committed exclusive cursor. Explicitly inject one previously forwarded complete frame for the duplicate subcontrol. | isolation; `web/test-support/__tests__/execution-ab-partitions.integration.test.ts`, P3 replay and P3 live | No missing canonical sequence, partial frame never ingested, duplicate classified as `duplicate` by production ingest (log evidence — `execution_events.ingest_disposition` carries no `duplicate` value) and durably proved by the absence of a second row for that sequence, without another effect, monotone committed/consumer watermarks and advanced `last_seen_at`. A clean exclusive reconnect alone is not duplicate evidence. RED target: gap, replayed effect or unadvanced watermark. Budget each subcase ≥90 s, accounting for 30 s claims and 250 ms reconnect floor; waits prove rows/frames, not log timing. |
 | **P4: delayed old response arrives after successor epoch** | Hold epoch N response on a still-live downstream request; prove N+1 committed via ordinary operator/production path; capture successor authority/domain fields before release. Use B2 to distinguish canonical arrival from owner application where needed. | isolation; `web/test-support/__tests__/execution-ab-partitions.integration.test.ts`, P4 | Prove the late body reaches its intended handler before the unchanged request deadline, not merely a write to an aborted socket. N settles fenced/historically only; no stale-authored change to N+1 assignment/session/incarnation/domain owner fields; successor produces its own result once. RED target: current-owner write from N evidence (EVT-05 / ADR-167 D4). |
 
 Each P case additionally asserts its fault actually occurred, that the barrier
@@ -306,6 +313,7 @@ both. Existing accepted controls must still pass the final regression gates.
 | Supervisor restart during NeedsInput — checkpoint/idle | Durable permission + NeedsInput; kill owned host before checkpoint succeeds; hold checkpoint traffic at a reached route barrier while exercising the unavailable-host response, then restart same host root and release. | isolation; **new** `web/test-support/__tests__/execution-ab-process-death.integration.test.ts`, D1 | Production proof required: respond while unavailable returns 503 EXECUTOR_UNAVAILABLE, stored option survives and `responded_at` stays null; checkpoint transport unavailability retains NeedsInput. After restart, definitive missing-session checkpoint permits NeedsInputIdle/released assignment; idle retry resumes through 202 and eventually records delivery/continuation. Observe checkpoint handle and epoch. No arbitrary typed-error pass, new deadline or UI behavior. |
 | Supervisor restart during session create — W2, before host effect | Hold original create **before forwarding**; prove durable create intent and absent host receipt; kill/restart host, terminate the blocked attempt and release for production retry. | isolation; **new** `web/test-support/__tests__/execution-ab-process-death.integration.test.ts`, D2a | Production proof required: owning driver reissues original intent/ID once, host creates one logical session, binding committed once. Generic reconciliation must not manufacture private create payload. Existing web `command-recovery.integration.test.ts:202` ACK-write error lacks restart. |
 | Supervisor restart during session create — W2, after host commit | B1 holds committed create ACK; direct matching receipt/intent witness, restart host with same root, drop old ACK. | isolation; **new** `web/test-support/__tests__/execution-ab-process-death.integration.test.ts`, D2b | Existing receipt is folded into the original binding; **no extra create is required** to obtain a new ACK. One logical session/intent, one binding application; do not demand that a dead pre-restart adapter remains live. Recovery path must match stored receipt rather than blindly reissue. |
+| Supervisor restart during session create — W2, receipt accepted, turn unfinished | Strand the create with the request lost in flight (one spent attempt, no manager-side outcome), then re-enter against the restarted host's `accepted` receipt with `inflight: false`. | web; **new** `web/lib/execution-host/__tests__/command-recovery.integration.test.ts`, D2c | The lost turn is recorded on the original command and ONE replacement generation is issued from the stored bytes (`generation: 1`, `supersedesCommandId` = original), which the real host answers with exactly one live session and one binding. `preparePayload` is never called again. The split is on `inflight`: a live incarnation still owning the turn defers instead. |
 | Postgres connection loss during projection | B3: committed consumer claim, identified backend blocked at its domain write; terminate that backend. | isolation; **new** `web/test-support/__tests__/execution-ab-process-death.integration.test.ts`, D3; retain web `web/lib/execution-host/events/__tests__/projection-worker.integration.test.ts:163,201` | Existing tests prove failed **shutdown cleanup**, not loss during apply. Add exact production control: effect/cursor rollback together, original failure visible, successor claim retries and projects once without new event. Preserve cleanup tests' EXECUTOR_UNAVAILABLE/retained-claim assertions. |
 | Web death between create ACK and first prompt | Create ACK and binding committed; proxy holds first prompt before upstream forwarding. Kill web group, then restart. | isolation; **new** `web/test-support/__tests__/execution-ab-process-death.integration.test.ts`, D4 | Production proof required. Same create intent/session recovered, zero host prompts at death, one prompt/application after restart. Existing `web/lib/flows/graph/__tests__/prompt-owners.integration.test.ts:1015` before_admission/before_effect/**before_ack** windows do not prove this post-ACK window. |
 
@@ -319,8 +327,11 @@ history and object readback. Add **L1 active cancellation**, isolation/productio
 boot, in `execution-ab-process-death.integration.test.ts`: hold an accepted live
 ACP turn, use the ordinary authenticated scratch interrupt route, observe fenced
 cancel ACK `cancelled: true`, canonical terminal `stopReason=cancelled` and one
-owner application; release the adapter barrier and prove no late successful
-overwrite, then send one subsequent turn through the same live session. Existing
+owner application; signal the adapter after settlement and prove the
+applied terminal, its evidence and its single application are unchanged — a
+late SUCCESSFUL overwrite is not provable at this seam, because one ACP prompt
+yields exactly one response — then send one subsequent turn through the same
+live session. Existing
 `deliverer.integration.test.ts:281` cancels after its prompt completed and checks
 only a boolean; `scratch-runs/__tests__/scratch-placement.integration.test.ts:292`
 Q2 uses a fake host. Those retain their narrower coverage and do not substitute
@@ -1034,7 +1045,9 @@ execution and hosted evidence remain open; do not mark T03/T13 complete.
   lease expiry plus reconnect, still requiring a real `pg_locks` waiter. No
   production lease, retry budget or state assertion changed. Retry pending.
 
-- CI preflight committed independently as `921da874`; hosted execution remains
+Commit SHAs in this evidence record name the tree that was ACTUALLY qualified, before this branch was rebased onto master on 2026-09-22. `(now `<sha>`)` gives the post-rebase equivalent, which is a different tree with the same content; the original is reachable through the reflog only. Mapping: `6d38d7dd`→`4e419308`, `8ca540f1`→`1da3e205`, `921da874`→`b1e07863`, `7566ba10`→`1651f6c8`, `c191e3dc`→`259f6ae5`, `9f8ecdff`→`1495108f`.
+
+- CI preflight committed independently as `921da874` (now `b1e07863`); hosted execution remains
   pending. T13b now wires the complete serial slice with a bounded execution
   window and a five-minute cleanup/upload reserve; its report validator checks
   every required case. Build, suite and cleanup durations are emitted separately.
@@ -1088,7 +1101,7 @@ execution and hosted evidence remain open; do not mark T03/T13 complete.
   Both run the real supervisor package on Darwin ARM64/Node 24.15.0; these
   are supervisor-lane evidence, not web production qualification.
 
-- The Phase-1 DOM compatibility correction is committed as `7566ba10`.
+- The Phase-1 DOM compatibility correction is committed as `7566ba10` (now `1651f6c8`).
   Post-fix web typecheck passes (`phase3-web-typecheck-restored.log`).
   `phase3-web-ab-serial.log` now runs the complete `laneSuites.web` inventory
   through the runner's serial mode while the production queue is paused.
@@ -1110,7 +1123,7 @@ execution and hosted evidence remain open; do not mark T03/T13 complete.
   `maister-ab-isolation-j0yQeG/vitest.json`, invocation
   `62d02e70-180c-4a35-abff-6c1049f9eb4c`: **12/12**, two files, exit 0,
   no skips/runtime errors/process or container leaks; 430.239 s including cleanup
-  (351 ms). Native macOS ARM64 / Node 24.15.0, HEAD `7566ba10` plus this phase's
+  (351 ms). Native macOS ARM64 / Node 24.15.0, HEAD `7566ba10` (now `1651f6c8`) plus this phase's
   working tree; build `xlndErUsp0gM03yDBjc6E` (40.586 s). Started at load 7.724,
   lid open, isolated from other test lanes. P1's reached-writer wait is 90 s to
   include the unchanged 30 s stream lease; it passed in 36.597 s. P2 exhausted
@@ -1170,7 +1183,7 @@ execution and hosted evidence remain open; do not mark T03/T13 complete.
   and the authorized rerun completed. Schema/migration paths and
   `supervisor/src/main.ts` / `web/server.ts` have no diff from execution base
   `c4216cd5`. `qualified-source-sha256.json` records the 53 changed source/config
-  files at restored qualification HEAD `7566ba10` plus the implementation tree.
+  files at restored qualification HEAD `7566ba10` (now `1651f6c8`) plus the implementation tree.
 
 - **Full restored isolation gate:** new package script
   `pnpm --filter maister-web test:integration:isolation`,
@@ -1199,7 +1212,7 @@ execution and hosted evidence remain open; do not mark T03/T13 complete.
   A/B, web unit, supervisor A/B/unit/integration and full 40-case isolation gates
   are recorded above; T14's remaining broad web inventory is a separate final gate.
 
-- **Phase 2 commit:** `c191e3dc` (`test(execution-host): qualify production
+- **Phase 2 commit:** `c191e3dc` (now `259f6ae5`) (`test(execution-host): qualify production
   partitions and death windows`) records T08–T11, their product fixes and
   qualification evidence. The remaining broad web inventory runs on that
   committed source plus the already-qualified T12 test wiring; production
@@ -1216,7 +1229,7 @@ execution and hosted evidence remain open; do not mark T03/T13 complete.
   `maister-ab-isolation-JYlNmS/vitest.json`, invocation
   `39d2108e-802b-4055-b4b6-08e2d5afd1c0`: **3,939/3,939 tests in 463/463 files**,
   exit 0, no skips/todos/runtime errors, zero process/container leaks, 1,681.864 s
-  (28.03 min), cleanup 569 ms. Source `c191e3dc` plus the T12 test wiring; native
+  (28.03 min), cleanup 569 ms. Source `c191e3dc` (now `259f6ae5`) plus the T12 test wiring; native
   Darwin ARM64 / Node 24.15.0, serial, start load 4.897 with lid open. All five
   S4.1 suites, retained-history allocator, scratch placement and transcript
   projection passed. No baseline exception remains in the final result.

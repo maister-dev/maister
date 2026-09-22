@@ -1171,11 +1171,18 @@ assignments. A choice changed after the read invalidates the claim.
   ACP prompt. The HITL audit retains the original delivery/source identities and
   adds `resultHandoffAssignmentId`; it does not claim a reissued request.
 - Missing or non-completed input receipts and incomplete output are retryable
-  refusals before the capacity claim. A lost ACK alone never authorizes a new
-  prompt. The old prompt owner remains fenced after release. A checkpoint event
-  arriving after that release need not update the live incarnation projection;
-  cleanup validates the exact acknowledged checkpoint command before skipping
-  the historical session.
+  refusals before the capacity claim, UNLESS the absence is itself proven. The
+  one proven case is a host-confirmed missing input receipt whose delivery
+  failed `EXECUTOR_UNAVAILABLE` and whose SOURCE prompt reconciles to a settled
+  lost turn under the same run, host, assignment, epoch and target session:
+  that is not a refusal but a `not_received` outcome, consumed inside the
+  resume claim, which withdraws the undelivered intent and re-delivers the
+  stored answer to the resumed session. The run stays `NeedsInput` throughout;
+  no new prompt is authorized and no evidence is manufactured.
+- A lost ACK alone never authorizes a new prompt. The old prompt owner remains
+  fenced after release. A checkpoint event arriving after that release need not
+  update the live incarnation projection; cleanup validates the exact
+  acknowledged checkpoint command before skipping the historical session.
 
 Repeated or gate permission checkpoints remain outside this implemented node
 path. The table below describes the pre-owner resume path retained during the
