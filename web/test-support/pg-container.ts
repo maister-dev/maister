@@ -12,6 +12,13 @@ import pino from "pino";
 import { Pool } from "pg";
 import { getContainerRuntimeClient } from "testcontainers";
 
+import {
+  INVOCATION_CONTAINER_LABEL,
+  invocationFromEnvironment,
+  registerContainerAllocation,
+  registerContainer,
+} from "./process-invocation";
+
 import * as mainSchema from "@/lib/db/schema";
 
 const MAIN_MIGRATIONS_FOLDER = "./lib/db/migrations";
@@ -170,12 +177,26 @@ async function startPostgresContainer(
   lane: TestDatabaseLane,
   startedAt: number,
 ): Promise<StartedPostgreSqlContainer> {
+  const invocation = invocationFromEnvironment();
+
+  if (invocation) await registerContainerAllocation(invocation);
   try {
-    return await new PostgreSqlContainer(PGVECTOR_IMAGE)
+    const container = await new PostgreSqlContainer(PGVECTOR_IMAGE)
       .withDatabase(options.databaseName)
       .withUsername("test")
       .withPassword("test")
+      .withLabels(
+        invocation ? { [INVOCATION_CONTAINER_LABEL]: invocation.id } : {},
+      )
       .start();
+
+    try {
+      if (invocation) await registerContainer(invocation, container.getId());
+    } catch (error) {
+      await throwAfterCleanup(lane, error, { container });
+    }
+
+    return container;
   } catch (cause) {
     throw createDockerUnavailableError(
       lane,

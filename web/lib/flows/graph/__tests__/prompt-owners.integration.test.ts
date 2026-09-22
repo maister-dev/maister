@@ -1302,16 +1302,16 @@ describe("Flow prompt owners through the production graph driver", () => {
         ...real,
         createSession: async (envelope, options) => {
           sent.push(JSON.stringify(envelope));
-          const result = await real.createSession(envelope, options);
-
+          // No host effect exists yet: real receipt probes return 404 until
+          // the fifth delivery. Committed lost ACKs are covered by D2b.
           if (sent.length <= 4)
             throw new MaisterError(
               "EXECUTOR_UNAVAILABLE",
-              "injected loss after real create receipt",
+              "injected unknown delivery before host acceptance",
               { details: { transport: UNKNOWN_OUTCOME_DETAIL } },
             );
 
-          return result;
+          return real.createSession(envelope, options);
         },
       },
     });

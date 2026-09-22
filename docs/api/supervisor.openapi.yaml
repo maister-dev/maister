@@ -891,8 +891,8 @@ paths:
         command id; duplicate delivery never starts a second ACP turn.
         Explicit requestVersion 2 additionally binds target.hostSessionId to
         the URL and returns CommandReceiptV2 from the receipt read. A command
-        cannot change wire version on replay. Production owner activation is
-        held until the S2 gate; legacy callers retain the original wire shape.
+        cannot change wire version on replay. Production startup activates durable
+        prompt owners; legacy callers retain the original wire shape.
       operationId: acceptSessionPrompt
       parameters:
         - $ref: "#/components/parameters/SessionId"

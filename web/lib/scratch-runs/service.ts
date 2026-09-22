@@ -100,7 +100,7 @@ import {
   type LaunchProgressEvent,
 } from "@/lib/runs/launch-progress";
 import {
-  nextScratchMessageSequence,
+  appendScratchMessage,
   userScratchMessageDraft,
 } from "@/lib/scratch-runs/messages";
 import { cleanupLocalPackageAssistantMaterialization } from "@/lib/scratch-runs/local-package-materialization";
@@ -145,7 +145,6 @@ const {
   runSessions,
   scratchAttachments,
   scratchCapabilityProfiles,
-  scratchMessages,
   scratchRuns,
   tasks,
   workspaces,
@@ -815,10 +814,7 @@ export async function* launchScratchRunStaged(
   const name = args.body.name?.trim() || scratchNameFallback(args.body.prompt);
   const messageId = hasInitialPrompt ? randomUUID() : null;
   const initialMessage = hasInitialPrompt
-    ? userScratchMessageDraft({
-        sequence: 1,
-        content: rawPrompt,
-      })
+    ? userScratchMessageDraft({ content: rawPrompt })
     : null;
   const validatedAttachments = validateScratchAttachments(
     args.body.attachments,
@@ -956,14 +952,11 @@ export async function* launchScratchRunStaged(
       });
 
       if (initialMessage && messageId) {
-        await tx.insert(scratchMessages).values({
+        await appendScratchMessage(tx, {
           id: messageId,
           runId,
-          sequence: initialMessage.sequence,
-          role: initialMessage.role,
+          role: "user",
           content: initialMessage.content,
-          supervisorEventId: initialMessage.supervisorEventId ?? null,
-          createdAt: now,
         });
       }
       const metadataAttachments = validatedAttachments.map(
@@ -1574,7 +1567,7 @@ export async function* launchLocalPackageAssistantStaged(
   const name = pkg.name ? `${pkg.name} assistant` : scratchNameFallback(prompt);
   const messageId = hasInitialPrompt ? randomUUID() : null;
   const initialMessage = hasInitialPrompt
-    ? userScratchMessageDraft({ sequence: 1, content: rawPrompt })
+    ? userScratchMessageDraft({ content: rawPrompt })
     : null;
 
   // Before the run row commits, every materialization failure needs an explicit
@@ -1666,14 +1659,11 @@ export async function* launchLocalPackageAssistantStaged(
       });
 
       if (initialMessage && messageId) {
-        await tx.insert(scratchMessages).values({
+        await appendScratchMessage(tx, {
           id: messageId,
           runId,
-          sequence: initialMessage.sequence,
-          role: initialMessage.role,
+          role: "user",
           content: initialMessage.content,
-          supervisorEventId: initialMessage.supervisorEventId ?? null,
-          createdAt: now,
         });
       }
       await tx.insert(scratchCapabilityProfiles).values({
@@ -2099,15 +2089,10 @@ async function appendScratchUserMessage(args: {
         hostSessionId: activeSession?.hostSessionId ?? null,
       });
 
-      const sequenceRows: Array<{ sequence: number }> = await tx
-        .select({ sequence: scratchMessages.sequence })
-        .from(scratchMessages)
-        .where(eq(scratchMessages.runId, args.runId));
-      const sequence = nextScratchMessageSequence(
-        sequenceRows.map((row) => row.sequence),
-      );
-      const message = userScratchMessageDraft({
-        sequence,
+      const { sequence } = await appendScratchMessage(tx, {
+        id: messageId,
+        runId: args.runId,
+        role: "user",
         content: args.body.content,
       });
       const now = new Date();
@@ -2116,15 +2101,6 @@ async function appendScratchUserMessage(args: {
         worktreePath: workspace.worktreePath,
       });
 
-      await tx.insert(scratchMessages).values({
-        id: messageId,
-        runId: args.runId,
-        sequence: message.sequence,
-        role: message.role,
-        content: message.content,
-        supervisorEventId: message.supervisorEventId ?? null,
-        createdAt: now,
-      });
       const metadataAttachments = attachments.map(metadataAttachmentRow);
       const storedAttachments = storedAttachmentValues({
         metadataAttachments,

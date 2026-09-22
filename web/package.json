@@ -15,6 +15,7 @@
     "test:unit": "vitest run --project unit --passWithNoTests",
     "test:integration": "vitest run --project integration --passWithNoTests",
     "test:integration:ab": "node ../scripts/run-stage-ab-tests.mjs web",
+    "test:integration:isolation": "node ../scripts/run-stage-ab-tests.mjs isolation",
     "test:watch": "vitest --project unit",
     "test:e2e": "tsx e2e/run.ts",
     "test:e2e:live": "tsx e2e/run.ts --config playwright.live.config.ts",

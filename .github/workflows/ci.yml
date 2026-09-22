@@ -127,6 +127,88 @@ jobs:
           path: /tmp/maister-ab-*/vitest.json
           if-no-files-found: error
 
+  execution-isolation:
+    name: A/B isolation (macOS Intel, Node 24.19.0)
+    runs-on: macos-15-intel
+    timeout-minutes: 60
+    env:
+      NODE_OPTIONS: --dns-result-order=ipv4first
+      MAISTER_TEST_DOCKER_PROBE_TIMEOUT_MS: "30000"
+    steps:
+      - name: Record runner and evidence location
+        shell: bash
+        run: |
+          evidence_dir="$RUNNER_TEMP/maister-isolation-evidence"
+          mkdir -p "$evidence_dir"
+          echo "MAISTER_TEST_EVIDENCE_DIR=$evidence_dir" >> "$GITHUB_ENV"
+          echo "S52_JOB_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"
+          printf 'commit=%s\nimage=%s\nimage_version=%s\narchitecture=%s\nrun_url=%s\n' \
+            "$GITHUB_SHA" "$ImageOS" "$ImageVersion" "$RUNNER_ARCH" \
+            "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > "$evidence_dir/runner.txt"
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.3.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.19.0
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm runtime:check
+      - name: Provision pinned isolated container runtime
+        timeout-minutes: 15
+        shell: bash
+        run: |
+          set -o pipefail
+          bash scripts/setup-isolation-ci-runtime.sh 2>&1 | tee "$MAISTER_TEST_EVIDENCE_DIR/runtime-setup.log"
+          echo "runtime_ready_seconds=$(( $(date +%s) - S52_JOB_STARTED_AT ))" >> "$MAISTER_TEST_EVIDENCE_DIR/timing.txt"
+      - name: Prove filesystem driver and Testcontainers before production build
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -o pipefail
+          node --input-type=module -e 'import {runStageAbLane} from "./scripts/run-stage-ab-tests.mjs"; await runStageAbLane({slice:"isolation",files:["test-support/__tests__/execution-ab-preflight.integration.test.ts"]});' 2>&1 | tee "$MAISTER_TEST_EVIDENCE_DIR/preflight.log"
+          echo "preflight_complete_seconds=$(( $(date +%s) - S52_JOB_STARTED_AT ))" >> "$MAISTER_TEST_EVIDENCE_DIR/timing.txt"
+      - name: Run the complete production isolation slice
+        timeout-minutes: 40
+        shell: bash
+        run: |
+          set -o pipefail
+          elapsed=$(( $(date +%s) - S52_JOB_STARTED_AT ))
+          remaining=$(( 3300 - elapsed ))
+          printf 'suite_start_seconds=%s\nremaining_suite_budget_seconds=%s\n' "$elapsed" "$remaining" >> "$MAISTER_TEST_EVIDENCE_DIR/timing.txt"
+          if test "$remaining" -le 0; then
+            echo "No isolation budget remains before the cleanup and upload reserve" >&2
+            exit 1
+          fi
+          gtimeout --signal=TERM --kill-after=30s "${remaining}s" pnpm --filter maister-web test:integration:isolation 2>&1 | tee "$MAISTER_TEST_EVIDENCE_DIR/isolation.log"
+          echo "isolation_complete_seconds=$(( $(date +%s) - S52_JOB_STARTED_AT ))" >> "$MAISTER_TEST_EVIDENCE_DIR/timing.txt"
+      - name: Upload actual isolation reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: execution-isolation-reports
+          path: ${{ runner.temp }}/maister-isolation-evidence/**/vitest.json
+          if-no-files-found: error
+      - name: Preserve isolation diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: execution-isolation-diagnostics
+          path: ${{ runner.temp }}/maister-isolation-evidence/
+          if-no-files-found: error
+      - name: Stop the job-owned container runtime
+        if: always()
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          runtime_dir="$RUNNER_TEMP/maister-isolation-runtime"
+          if test -x "$runtime_dir/bin/colima" && test -d "$runtime_dir/colima/maister-s52"; then
+            COLIMA_HOME="$runtime_dir/colima" "$runtime_dir/bin/colima" --profile maister-s52 delete --force
+          fi
+          echo "isolation_job_elapsed_seconds=$(( $(date +%s) - S52_JOB_STARTED_AT ))"
+
   execution-image:
     name: Production image transport and shutdown
     runs-on: ubuntu-latest

@@ -1,10 +1,10 @@
 import "server-only";
 
-import type { ScratchDialogStatus, ScratchMessageRole } from "@/lib/db/schema";
+import type { ScratchDialogStatus } from "@/lib/db/schema";
 
 import { randomUUID } from "node:crypto";
 
-import { eq } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import pino from "pino";
 
 import {
@@ -17,16 +17,11 @@ import { createHitlRequest } from "@/lib/runs/hitl-create";
 import { getDb } from "@/lib/db/client";
 import { waitForPromptIncarnation } from "@/lib/execution-host/prompt-incarnation";
 import * as schemaModule from "@/lib/db/schema";
-import { nextScratchMessageSequence } from "@/lib/scratch-runs/messages";
+import { appendScratchMessage } from "@/lib/scratch-runs/messages";
 import { runStatusForDialogStatus } from "@/lib/scratch-runs/state";
 import {
   encodeHookTripPayload,
   encodePermissionPayload,
-  encodeThoughtPayload,
-  encodeToolPayload,
-  encodeUsagePayload,
-  interpretScratchUpdate,
-  type ScratchToolStatus,
 } from "@/lib/scratch-runs/transcript";
 import {
   type PromptContentBlock,
@@ -153,10 +148,9 @@ type MinimalSupervisorEvent =
       phase: "accepted" | "completed";
     };
 
-// Dialog-status / HITL side effects only. Message content is produced by the
-// stateful consumer below (it must coalesce streamed chunks and tool-call
-// lifecycles, which a pure per-event mapper cannot do). `session.line` carries
-// the raw ACP JSON-RPC transport frames and is intentionally not projected.
+// Dialog-status / HITL side effects only. The autonomous canonical transcript
+// projector coalesces reply chunks and tool lifecycles; this request observer
+// retains permission and hook notices. Raw `session.line` frames are not shown.
 export function projectSupervisorEventToScratch(
   event: MinimalSupervisorEvent,
 ): ScratchSupervisorEventProjection {
@@ -182,45 +176,15 @@ export function projectSupervisorEventToScratch(
 async function appendScratchMessageRow(args: {
   db: DbClientLike;
   runId: string;
-  role: ScratchMessageRole;
+  role: "system";
   content: string;
   supervisorEventId?: string;
 }): Promise<string> {
-  const sequenceRows: Array<{ sequence: number }> = await args.db
-    .select({ sequence: scratchMessages.sequence })
-    .from(scratchMessages)
-    .where(eq(scratchMessages.runId, args.runId));
-  const sequence = nextScratchMessageSequence(
-    sequenceRows.map((row) => row.sequence),
-  );
-  const id = randomUUID();
-
-  await args.db.insert(scratchMessages).values({
-    id,
-    runId: args.runId,
-    sequence,
-    role: args.role,
-    content: args.content,
-    supervisorEventId: args.supervisorEventId ?? null,
-    createdAt: new Date(),
-  });
-
-  return id;
-}
-
-async function updateScratchMessageRow(args: {
-  db: DbClientLike;
-  messageId: string;
-  content: string;
-  supervisorEventId: string;
-}): Promise<void> {
-  await args.db
-    .update(scratchMessages)
-    .set({
-      content: args.content,
-      supervisorEventId: args.supervisorEventId,
-    })
-    .where(eq(scratchMessages.id, args.messageId));
+  return (
+    await args.db.transaction((tx: DbClientLike) =>
+      appendScratchMessage(tx, args),
+    )
+  ).id;
 }
 
 async function applyDialogStatus(args: {
@@ -343,194 +307,29 @@ async function persistPermissionRequest(args: {
   }
 }
 
-type ToolRowState = {
-  id: string;
-  name: string;
-  toolKind: string;
-  status: ScratchToolStatus;
-  arg: string;
-  rawInput: unknown;
-  result: string;
-};
+// `supervisor_event_id` carries TWO number spaces on a scratch run. The
+// canonical projector stamps `execution_events.run_sequence` on the reply rows
+// it owns; the notices below stamp the supervisor's per-session `monotonicId`.
+// Only the latter addresses the SSE stream, and the supervisor drops every
+// event whose id is <= the cursor — replay AND live alike — so a cursor taken
+// across both spaces eats the opening events of a follow-up turn, a dropped
+// `session.permission_request` among them. Role discriminates the writers: the
+// canonical projector only ever inserts `assistant` / `tool`. Reply content
+// itself is owned by the durable canonical transcript cursor, independently of
+// this stack; this offset only starts the live permission / lifecycle observer
+// after retained notice history.
+//
+// INVARIANT this rests on: a run with no notice row has no offset and replays
+// the host's retained buffer from the start, which must be a no-op. It is,
+// because every event this consumer ACTS on also writes a notice row —
+// `session.permission_request` and `session.hook_trip` — so their absence
+// proves none occurred, and the only other dialog-status events
+// (`session.exited` / `session.crashed`, see `projectSupervisorEventToScratch`)
+// are terminal, after which no further turn is sent through the session.
+// Adding a dialog-status event that writes NO notice row breaks this.
+const NOTICE_MESSAGE_ROLES = ["user", "system"];
 
-// Per-turn coalescing buffers. Streamed assistant/thought text arrives as many
-// chunks (often empty) and tool calls arrive as a `tool_call` followed by
-// several `tool_call_update`s sharing a toolCallId — these are merged into a
-// single message row each. The consumer is serialized, so this in-memory state
-// is race-free.
-function createTranscriptProjector(args: { db: DbClientLike; runId: string }) {
-  let openText: { id: string; text: string } | null = null;
-  let openThought: { id: string; text: string } | null = null;
-  let usageRow: { id: string } | null = null;
-  const toolsByCallId = new Map<string, ToolRowState>();
-
-  function resetOpenText(): void {
-    openText = null;
-    openThought = null;
-  }
-
-  async function handleUpdate(
-    update: unknown,
-    supervisorEventId: string,
-  ): Promise<void> {
-    const interpreted = interpretScratchUpdate(update);
-
-    if (!interpreted) return;
-
-    switch (interpreted.kind) {
-      case "text": {
-        openThought = null;
-        if (openText) {
-          openText.text += interpreted.text;
-          await updateScratchMessageRow({
-            db: args.db,
-            messageId: openText.id,
-            content: openText.text,
-            supervisorEventId,
-          });
-        } else {
-          const id = await appendScratchMessageRow({
-            db: args.db,
-            runId: args.runId,
-            role: "assistant",
-            content: interpreted.text,
-            supervisorEventId,
-          });
-
-          openText = { id, text: interpreted.text };
-        }
-
-        return;
-      }
-      case "thought": {
-        openText = null;
-        if (openThought) {
-          openThought.text += interpreted.text;
-          await updateScratchMessageRow({
-            db: args.db,
-            messageId: openThought.id,
-            content: encodeThoughtPayload(openThought.text),
-            supervisorEventId,
-          });
-        } else {
-          const text = interpreted.text;
-          const id = await appendScratchMessageRow({
-            db: args.db,
-            runId: args.runId,
-            role: "system",
-            content: encodeThoughtPayload(text),
-            supervisorEventId,
-          });
-
-          openThought = { id, text };
-        }
-
-        return;
-      }
-      case "tool_call": {
-        resetOpenText();
-        const state: Omit<ToolRowState, "id"> = {
-          name: interpreted.name,
-          toolKind: interpreted.toolKind,
-          status: interpreted.status,
-          arg: interpreted.arg,
-          rawInput: interpreted.rawInput,
-          result: interpreted.result,
-        };
-        const id = await appendScratchMessageRow({
-          db: args.db,
-          runId: args.runId,
-          role: "tool",
-          content: encodeToolPayload(state),
-          supervisorEventId,
-        });
-
-        toolsByCallId.set(interpreted.toolCallId, { id, ...state });
-
-        return;
-      }
-      case "tool_update": {
-        const existing = toolsByCallId.get(interpreted.toolCallId);
-
-        if (!existing) {
-          const state: Omit<ToolRowState, "id"> = {
-            name: interpreted.name ?? "tool",
-            toolKind: interpreted.toolKind ?? "other",
-            status: interpreted.status ?? "pending",
-            arg: interpreted.arg ?? "",
-            rawInput: interpreted.rawInput ?? null,
-            result: interpreted.result ?? "",
-          };
-          const id = await appendScratchMessageRow({
-            db: args.db,
-            runId: args.runId,
-            role: "tool",
-            content: encodeToolPayload(state),
-            supervisorEventId,
-          });
-
-          toolsByCallId.set(interpreted.toolCallId, { id, ...state });
-
-          return;
-        }
-
-        if (interpreted.name) existing.name = interpreted.name;
-        if (interpreted.toolKind) existing.toolKind = interpreted.toolKind;
-        if (interpreted.status) existing.status = interpreted.status;
-        if (interpreted.arg && !existing.arg) existing.arg = interpreted.arg;
-        if (interpreted.rawInput !== undefined) {
-          existing.rawInput = interpreted.rawInput;
-        }
-        if (interpreted.result) {
-          existing.result = existing.result
-            ? `${existing.result}\n${interpreted.result}`
-            : interpreted.result;
-        }
-        await updateScratchMessageRow({
-          db: args.db,
-          messageId: existing.id,
-          content: encodeToolPayload(existing),
-          supervisorEventId,
-        });
-
-        return;
-      }
-      case "usage": {
-        const content = encodeUsagePayload(interpreted.used, interpreted.size);
-
-        if (usageRow) {
-          await updateScratchMessageRow({
-            db: args.db,
-            messageId: usageRow.id,
-            content,
-            supervisorEventId,
-          });
-        } else {
-          const id = await appendScratchMessageRow({
-            db: args.db,
-            runId: args.runId,
-            role: "system",
-            content,
-            supervisorEventId,
-          });
-
-          usageRow = { id };
-        }
-
-        return;
-      }
-    }
-  }
-
-  return { handleUpdate, resetOpenText };
-}
-
-// The supervisor's per-session event log is monotonic and shared across every
-// prompt of the session. `streamSession` WITHOUT a `Last-Event-ID` replays the
-// log from the start — so a follow-up turn re-projected every prior thought and
-// assistant chunk, accumulating duplicated text in the transcript ("repeats all
-// previous + new"). Resume from the highest event id we already projected.
-async function lastProjectedEventId(
+export async function scratchNoticeResumeOffset(
   db: DbClientLike,
   runId: string,
 ): Promise<number | undefined> {
@@ -540,7 +339,13 @@ async function lastProjectedEventId(
         supervisorEventId: scratchMessages.supervisorEventId,
       })
       .from(scratchMessages)
-      .where(eq(scratchMessages.runId, runId));
+      .where(
+        and(
+          eq(scratchMessages.runId, runId),
+          isNull(scratchMessages.nodeAttemptId),
+          inArray(scratchMessages.role, NOTICE_MESSAGE_ROLES),
+        ),
+      );
     const maxId = rows.reduce<number | undefined>((current, row) => {
       if (!row.supervisorEventId) return current;
       const parsed = Number.parseInt(row.supervisorEventId, 10);
@@ -572,21 +377,14 @@ function startScratchEventConsumer(args: {
 }) {
   const abort = new AbortController();
   let permissionPersistFailure: { reason: string } | null = null;
-  const projector = createTranscriptProjector({
-    db: args.db,
-    runId: args.runId,
-  });
 
-  // Events are projected sequentially: each write commits before the next event
-  // is read. Sequence allocation is read-modify-write (appendScratchMessageRow),
-  // so concurrent appends would all read the same max and collide on
-  // scratch_messages_run_sequence_uq. Sequential projection also preserves
-  // monotonic transcript order and keeps the coalescing buffers race-free.
+  // Permission and lifecycle effects remain sequential. Reply projection runs
+  // autonomously and shares the message allocator with these local notices.
   const done = (async () => {
     try {
       // Resume after the last event we already projected so a follow-up prompt
       // does not re-stream (and re-persist) the whole session history.
-      const lastEventId = await lastProjectedEventId(args.db, args.runId);
+      const lastEventId = await scratchNoticeResumeOffset(args.db, args.runId);
 
       for await (const event of args.execution.admin.streamSession(
         args.sessionId,
@@ -602,7 +400,6 @@ function startScratchEventConsumer(args: {
               event,
               execution: args.execution,
             });
-            projector.resetOpenText();
           } catch (err) {
             if (!permissionPersistFailure) {
               permissionPersistFailure = {
@@ -637,12 +434,8 @@ function startScratchEventConsumer(args: {
         }
 
         try {
-          if (event.type === "session.update") {
-            await projector.handleUpdate(
-              event.update,
-              String(event.monotonicId),
-            );
-          } else {
+          // Reply content belongs to the autonomous canonical projector.
+          if (event.type !== "session.update") {
             const projection = projectSupervisorEventToScratch(event);
 
             if (projection.dialogStatus) {

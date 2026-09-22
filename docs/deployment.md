@@ -122,7 +122,9 @@ The supported single-host layout in this guide keeps `/opt/maister` for both
 because the two units run as the same `maister` user; the AT-16 qualification
 (`web/test-support/__tests__/execution-ab-isolation.integration.test.ts`)
 runs them on disjoint private roots with only the worktrees root shared and the
-web denied the supervisor's root at the kernel. What must stay true when the
+web denied the supervisor's root at the kernel. This macOS proof uses distinct
+sandbox security contexts, not distinct Unix users. The shipped same-user,
+shared-root layout does not enforce that isolation boundary. What must stay true when the
 roots differ: the supervisor identity must still read the web's runtime root
 where read-only context mounts are materialized (ADR-157) and write the
 shared worktrees root; `MAISTER_WORKSPACE_ROOTS` must list every root the web
@@ -694,6 +696,17 @@ Rollback: before `0134`, restore the step-2 snapshot set as one fenced
 installation and restart the old release. After `0134`/`0135` the default is
 forward repair; a downgrade restores Postgres, host state and sources
 together, never one side of the set.
+
+## 15. Durable scratch reply projection (S5.2)
+
+**Non-rolling.** Stop every old web instance before starting the new ones.
+This release moves scratch reply content off the request-local writer onto the
+canonical transcript projector; mixed versions would run BOTH writers against
+the same run, which is not a qualified configuration. Retained messages stay in
+place — the change rewinds no cursor and does not repair previously skipped
+history. Supervisor and database need no coordinated step. See
+[scratch runs](system-analytics/scratch-runs.md) and the
+[event-plane ownership contract](system-analytics/execution-event-plane.md).
 
 ## Running the MCP facade
 

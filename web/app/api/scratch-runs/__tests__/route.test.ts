@@ -29,6 +29,36 @@ const mocks = vi.hoisted(() => ({
   worktreesRoot: vi.fn(),
 }));
 
+// These route controls use an in-memory DB seam. Allocator locking, retained
+// history and concurrent sequence claims are covered with real PostgreSQL in
+// run-message-allocation.integration.test.ts and transcript.integration.test.ts.
+vi.mock(
+  "@/lib/execution-host/events/run-message-store",
+  async (importOriginal) => {
+    const actual =
+      await importOriginal<
+        typeof import("@/lib/execution-host/events/run-message-store")
+      >();
+
+    return {
+      ...actual,
+      lockTranscriptState: async (
+        _tx: unknown,
+        runId: string,
+        nodeAttemptId: string | null,
+      ) => ({
+        id: actual.transcriptStateId(runId, nodeAttemptId),
+        runId,
+        nodeAttemptId,
+        nextSequence: 1,
+        openTextSequence: null,
+        openThoughtSequence: null,
+        usageSequence: null,
+      }),
+    };
+  },
+);
+
 type InsertCall = { table: unknown; values: unknown };
 type UpdateCall = { table: unknown; values: unknown };
 type FakeDb = {

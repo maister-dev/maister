@@ -2137,6 +2137,12 @@ export async function fakeExecutionHosts(
   const { ingestRuntimeEvent } = await import(
     "@/lib/execution-host/events/ingest"
   );
+  const { canonicalTranscriptProjector } = await import(
+    "@/lib/execution-host/events/transcript-projector"
+  );
+  const { projectExecutionEvents } = await import(
+    "@/lib/execution-host/events/projector"
+  );
   const { projectCanonicalRuntimeObjects } = await import(
     "@/lib/execution-host/events/runtime-object-projector"
   );
@@ -2453,6 +2459,11 @@ export async function fakeExecutionHosts(
           db,
           runId: envelope.fence.runId,
         });
+      await projectExecutionEvents({
+        db,
+        runId: envelope.fence.runId,
+        projector: canonicalTranscriptProjector,
+      });
       await Promise.all([
         projectCanonicalPromptCommands({
           db,

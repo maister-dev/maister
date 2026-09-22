@@ -410,6 +410,26 @@ secret material.
 | `scratch_run.capabilities.materialized` | INFO | `runId`, selected ids by kind, profile digest, downgrade count |
 | `scratch_run.workspace_groups.query_failed` | WARN | project ids or run ids involved, error code/message only |
 
+### S5.2 durable reply ownership (implemented; hosted CI qualification pending)
+
+The production partition control P1 exposed a lost reply after web death: the
+command owner completed, but the request-local transcript writer was gone.
+Reply text, thoughts, tool updates and usage must have one durable canonical
+writer. User messages and local notices, including Studio Flow assistant action
+results, share its allocator lock. Completion
+waits for the transcript cursor through terminal command evidence before
+unlocking a subsequent turn. See the [event-plane ownership contract](execution-event-plane.md).
+P1 and a subsequent-turn control must preserve one reply per command and ordered
+user/assistant rows across restart; disabling durable scratch projection must
+restore P1's missing-result failure.
+
+Deploy this ownership change with the old web instances stopped before the new
+instances start (operator steps: [deployment](../deployment.md) §15). Mixed
+versions would retain the old request-local reply writer beside the new
+canonical writer and are not qualified. Retained messages remain
+in place; this change does not rewind cursors or repair previously skipped
+history automatically.
+
 ## Expectations
 
 - Scratch launch MUST select an effective platform ACP runner and MUST NOT
@@ -544,9 +564,12 @@ messages.
 - SSE contract: [`../api/async/web-runs.asyncapi.yaml`](../api/async/web-runs.asyncapi.yaml).
 - DB references: [`../db/runs-domain.md`](../db/runs-domain.md),
   [`../database-schema.md`](../database-schema.md).
-- **Reused by (Implemented, ADR-078):** gate-chat at HITL pauses reuses this
-  chat/projector substrate (`web/lib/scratch-runs/events.ts` table-agnostic seam)
-  bound to `gate_chat_messages`; see [`hitl.md`](hitl.md) §Gate-chat.
+- **Parallel to (Implemented, ADR-078):** gate-chat at HITL pauses is the same
+  CHAT SHAPE bound to `gate_chat_messages`, but it does not share this module:
+  it owns `web/lib/services/gate-chat.ts` and its own prompt owner. The
+  table-agnostic projector factory that once joined them was removed when
+  scratch reply projection moved onto the canonical transcript projector; see
+  [`hitl.md`](hitl.md) §Gate-chat.
 - Source areas: `web/app/api/scratch-runs/*`,
   `web/components/scratch/*`, `web/lib/scratch-runs/*`,
   `web/lib/capabilities/*`, `web/lib/queries/portfolio.ts`,

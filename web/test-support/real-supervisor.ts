@@ -1,18 +1,20 @@
-import { execFile, spawn, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import {
-  mkdir,
-  mkdtemp,
-  readFile,
-  realpath,
-  writeFile,
-} from "node:fs/promises";
-import { openSync } from "node:fs";
+import { mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
+import { closeSync, openSync } from "node:fs";
 import { createRequire } from "node:module";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+
+import {
+  FIXTURE_WATCHDOG,
+  fixtureProcessEnvironment,
+  invocationFromEnvironment,
+  registerRoot,
+} from "./process-invocation";
+import { retryFixtureStart, startOwnedFixture } from "./owned-fixture";
 
 // ADR-166 T3.1: a REAL supervisor child for web integration tests — the
 // production `supervisor/src/main.ts` boot (host state store, fences,
@@ -35,7 +37,6 @@ const FIXTURES_DIR = path.join(SUPERVISOR_DIR, "test", "fixtures");
 
 export const DEFAULT_FIXTURE = "mock-acp-lifecycle.mjs";
 
-const ORPHAN_GRACE_MS = 3_000;
 const LOG_TAIL_BYTES = 16 * 1024;
 
 export type RealSupervisorOptions = {
@@ -137,7 +138,7 @@ async function waitForHealth(
   url: string,
   timeoutMs: number,
   exited: Promise<number | null>,
-): Promise<void> {
+): Promise<{ bootId: string; hostKey: string }> {
   const deadline = Date.now() + timeoutMs;
   let done = false;
 
@@ -150,9 +151,24 @@ async function waitForHealth(
         `real supervisor exited before /health answered (${url})`,
       );
     try {
-      const res = await fetch(`${url}/health`, { cache: "no-store" });
+      const res = await fetch(`${url}/health`, {
+        cache: "no-store",
+        signal: AbortSignal.timeout(2_000),
+      });
 
-      if (res.ok) return;
+      if (res.ok) {
+        const body = (await res.json()) as {
+          host: { bootId: string; hostKey: string };
+        };
+
+        if (
+          typeof body.host?.bootId !== "string" ||
+          typeof body.host.hostKey !== "string"
+        )
+          throw new Error("supervisor health has no host/boot identity");
+
+        return body.host;
+      }
     } catch {
       /* not up yet */
     }
@@ -164,56 +180,19 @@ async function waitForHealth(
 }
 
 // Every live pid in the process group (the group id equals the leader's pid).
-function groupMembers(pgid: number): Promise<number[]> {
-  return new Promise((resolve) => {
-    execFile("pgrep", ["-g", String(pgid)], (err, stdout) => {
-      // pgrep exits 1 when nothing matches.
-      if (err) {
-        resolve([]);
-
-        return;
-      }
-      resolve(
-        stdout
-          .split("\n")
-          .map((line) => Number.parseInt(line.trim(), 10))
-          .filter((pid) => Number.isFinite(pid)),
-      );
-    });
-  });
-}
-
-function signalGroup(pgid: number, signal: NodeJS.Signals): void {
-  try {
-    process.kill(-pgid, signal);
-  } catch (err) {
-    // ESRCH: the group is already empty.
-    if ((err as NodeJS.ErrnoException).code !== "ESRCH") throw err;
-  }
-}
-
-async function assertGroupEmpty(pgid: number): Promise<void> {
-  const deadline = Date.now() + ORPHAN_GRACE_MS;
-  let survivors = await groupMembers(pgid);
-
-  while (survivors.length > 0 && Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, 100));
-    survivors = await groupMembers(pgid);
-  }
-  if (survivors.length === 0) return;
-
-  signalGroup(pgid, "SIGKILL");
-  throw new Error(
-    `real supervisor (pgid ${pgid}) left orphaned processes after kill: ${survivors.join(", ")} — SIGKILLed`,
-  );
-}
-
 export async function startRealSupervisor(
   options: RealSupervisorOptions = {},
 ): Promise<RealSupervisor> {
+  const invocation = invocationFromEnvironment();
+
+  if (!invocation)
+    throw new Error("real supervisor fixture requires a test invocation");
   const runtimeRoot =
     options.runtimeRoot ??
     (await realpath(await mkdtemp(path.join(tmpdir(), "eh-web-rt-"))));
+
+  if (!options.runtimeRoot)
+    await registerRoot(invocation, runtimeRoot, "supervisor");
   const stateDir =
     options.stateDir ?? path.join(runtimeRoot, ".maister", "execution-host");
   const workspaceRoots = options.workspaceRoots ?? [runtimeRoot];
@@ -221,7 +200,10 @@ export async function startRealSupervisor(
   const url = `http://127.0.0.1:${port}`;
   const logFile =
     options.logFile ??
-    path.join(runtimeRoot, `supervisor-${randomUUID().slice(0, 8)}.log`);
+    path.join(
+      invocation.directory,
+      `supervisor-${randomUUID().slice(0, 8)}.log`,
+    );
   const fixturePath = resolveFixture(options.fixture ?? DEFAULT_FIXTURE);
   const wrapper = await writeAdapterWrapper(
     runtimeRoot,
@@ -241,6 +223,7 @@ export async function startRealSupervisor(
     MAISTER_SHUTDOWN_GRACE_MS: "1000",
     MAISTER_KILL_GRACE_MS: "500",
     ...options.env,
+    ...(await fixtureProcessEnvironment(invocation)),
   };
 
   // The child must not inherit the vitest marker: `main.ts` only boots when
@@ -256,7 +239,7 @@ export async function startRealSupervisor(
   // leads its own process group so `kill()` reaches the adapters it spawns.
   const child: ChildProcess = spawn(
     process.execPath,
-    ["--import", TSX_LOADER, SUPERVISOR_MAIN],
+    ["--import", FIXTURE_WATCHDOG, "--import", TSX_LOADER, SUPERVISOR_MAIN],
     {
       cwd: SUPERVISOR_DIR,
       env,
@@ -264,33 +247,22 @@ export async function startRealSupervisor(
       detached: true,
     },
   );
-  const pid = child.pid ?? -1;
-  const exited = new Promise<number | null>((resolve) => {
-    child.once("exit", (code) => resolve(code));
+
+  closeSync(logFd);
+
+  const owned = await startOwnedFixture({
+    invocation,
+    child,
+    role: "supervisor",
+    root: runtimeRoot,
+    logFile,
+    bootId: `starting:${child.pid ?? -1}`,
+    killGraceMs: 10_000,
+    ready: async (exited: Promise<number | null>) =>
+      (await waitForHealth(url, options.startTimeoutMs ?? 60_000, exited))
+        .bootId,
   });
-  const leaderGone = () => child.exitCode !== null || child.signalCode !== null;
-
-  try {
-    await waitForHealth(url, options.startTimeoutMs ?? 60_000, exited);
-  } catch (err) {
-    if (pid > 0) signalGroup(pid, "SIGKILL");
-    throw err;
-  }
-
-  const kill = async (signal: NodeJS.Signals = "SIGKILL") => {
-    if (!leaderGone()) {
-      signalGroup(pid, signal);
-      await Promise.race([
-        exited,
-        new Promise<void>((r) => setTimeout(r, 10_000)),
-      ]);
-      if (!leaderGone()) {
-        signalGroup(pid, "SIGKILL");
-        await exited;
-      }
-    }
-    await assertGroupEmpty(pid);
-  };
+  const { pid, exited, kill } = owned;
 
   const handle: RealSupervisor = {
     url,
@@ -305,33 +277,13 @@ export async function startRealSupervisor(
     exited,
     kill,
     stop: () => kill("SIGTERM"),
-    async logTail(maxBytes = LOG_TAIL_BYTES) {
-      try {
-        const content = await readFile(logFile, "utf8");
-
-        return content.slice(-maxBytes);
-      } catch (err) {
-        return `<log unreadable: ${err instanceof Error ? err.message : String(err)}>`;
-      }
-    },
+    logTail: (maxBytes = LOG_TAIL_BYTES) => owned.logTail(maxBytes),
     restart: async (overrides = {}) => {
       await kill("SIGKILL");
-      // The kernel may hold the port briefly after a SIGKILL — retry the bind.
-      let last: unknown;
 
-      for (let attempt = 0; attempt < 20; attempt += 1) {
-        try {
-          return await startRealSupervisor({
-            ...handle.options,
-            ...overrides,
-            logFile,
-          });
-        } catch (err) {
-          last = err;
-          await new Promise((r) => setTimeout(r, 250));
-        }
-      }
-      throw last;
+      return retryFixtureStart(() =>
+        startRealSupervisor({ ...handle.options, ...overrides, logFile }),
+      );
     },
   };
 

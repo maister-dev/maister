@@ -2,7 +2,11 @@ import "server-only";
 
 import type { Db } from "./db";
 import type { BoundClient } from "./client";
-import type { CreateSessionPayload, ExecutionHostTransport } from "./contracts";
+import type {
+  CommandReceipt,
+  CreateSessionPayload,
+  ExecutionHostTransport,
+} from "./contracts";
 import type { CreateSessionResult } from "@/lib/supervisor-client";
 import type { ExecutionCommand } from "@/lib/db/schema";
 import type { SessionCreateOwner } from "./create-intent";
@@ -28,7 +32,7 @@ import {
 } from "./deliverer";
 import { applyCreateAck } from "./create-ack";
 import { issueCommand } from "./ledger";
-import { requeueDelivering } from "./commands";
+import { casTransition, markFailed, requeueDelivering } from "./commands";
 import { ensureSessionOutputIntents } from "./session-output-intents";
 import { isReadoptableWorkspaceError } from "./adoption";
 import { staleSessionBinding } from "./session-binding";
@@ -36,6 +40,7 @@ import { asHostSessionId } from "./types";
 
 import { executionCommands, gateResults, nodeAttempts } from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
+import { isTurnLostError } from "@/lib/reconcile-evidence";
 import { isMaisterErrorCode } from "@/lib/errors-core";
 
 export type OwnedSessionOptions = Readonly<{
@@ -111,6 +116,24 @@ export async function createOwnedSession(input: {
     return latestOwnedCreate(tx, authority);
   });
   let replacement: CreateSessionPayload | undefined;
+  const failAndReload = async (
+    commandId: string,
+    attempts: number,
+    error: Record<string, unknown>,
+  ): Promise<ExecutionCommand> => {
+    await db.transaction(async (tx) => {
+      await assertOwner(tx);
+      await markFailed(tx, commandId, attempts, error, { logger });
+    });
+    const [reloaded] = await db
+      .select()
+      .from(executionCommands)
+      .where(eq(executionCommands.id, commandId));
+
+    if (!reloaded) throw createIntentError("create_command_missing");
+
+    return reloaded;
+  };
 
   for (;;) {
     if (original?.state === "failed") {
@@ -160,6 +183,14 @@ export async function createOwnedSession(input: {
           ...envelope.payload,
           executionWorkspaceId: await client.ensureWorkspace({ force: true }),
         };
+      } else if (isTurnLostError(original.lastError) && intent.generation < 2) {
+        // D2c. A create whose turn the host lost bound no session, so the
+        // original intent bytes are reissued once under a new generation —
+        // the same answer D2a gives one step earlier, when no receipt exists.
+        // The stored workspace handle rides along unchanged, as it does on the
+        // CHECKPOINT arm: if the restarted host no longer honours it, the
+        // readoption arm above catches the refusal on the next generation.
+        replacement = { ...envelope.payload };
       } else throw failure;
       logger.warn(
         {
@@ -266,6 +297,96 @@ export async function createOwnedSession(input: {
       throw storedFailure(current);
     if (current.nextAttemptAt && current.nextAttemptAt.getTime() > Date.now())
       throw new SessionCreatePending(current.id);
+    if (current.attempts > 0) {
+      let receipt: CommandReceipt | null;
+
+      try {
+        receipt = await transport.getCommandReceipt(current.id);
+      } catch (error) {
+        if (!isMaisterError(error) || error.code !== "EXECUTOR_UNAVAILABLE")
+          throw error;
+        throw new SessionCreatePending(current.id, error);
+      }
+      if (receipt) {
+        if (
+          receipt.commandId !== current.id ||
+          receipt.runId !== current.runId ||
+          receipt.kind !== "session.create" ||
+          receipt.assignmentEpoch !== current.assignmentEpoch
+        )
+          throw createIntentError("create_receipt_identity");
+        if (receipt.phase === "accepted") {
+          // D2c. `accepted` + `inflight:false` is a host restart between the
+          // receipt write and the turn (`contracts.ts`). The supervisor settles
+          // such a receipt only when the SAME command id is re-sent, and
+          // `session.create` is not in `RESTARTABLE_OBJECT_KINDS`, so a re-send
+          // answers turn_lost, never a session. Record the lost turn and let
+          // the loop authorize a fresh generation: an accepted-but-unfinished
+          // create returned no session id to fold, and the restarted host holds
+          // no live adapter to orphan.
+          if (receipt.inflight) throw new SessionCreatePending(current.id);
+          original = await failAndReload(current.id, current.attempts, {
+            code: "ACP_PROTOCOL",
+            reason: "turn_lost",
+          });
+          continue;
+        }
+        if (receipt.phase === "rejected") {
+          original = await failAndReload(
+            current.id,
+            current.attempts,
+            receipt.body,
+          );
+          continue;
+        }
+        const result = ResultSchema.safeParse(receipt.body);
+
+        if (receipt.httpStatus !== 201 || !result.success)
+          throw createIntentError("create_receipt_result");
+        const bindingDisposition = await db.transaction(async (tx) => {
+          await assertOwner(tx);
+          const settled = await casTransition(
+            tx,
+            current.id,
+            ["queued", "delivering"],
+            current.attempts,
+            {
+              state: "succeeded",
+              result: result.data,
+              completedAt: new Date(),
+              deliveringSince: null,
+              nextAttemptAt: null,
+            },
+            { logger },
+          );
+
+          if (!settled.changed) throw new SessionCreatePending(current.id);
+
+          return apply(tx, result.data);
+        });
+
+        logger.info(
+          {
+            commandId: current.id,
+            runId: current.runId,
+            assignmentEpoch: current.assignmentEpoch,
+            bindingDisposition,
+          },
+          "owned-create-receipt-folded",
+        );
+
+        // A dead incarnation cannot become active again, but that does not
+        // erase the host's committed create receipt. Match deliverCommand's
+        // historical ACK semantics: commit evidence before yielding authority.
+        if (bindingDisposition === "stale")
+          throw staleSessionBinding(
+            current.runId,
+            current.executionAssignmentId,
+          );
+
+        return resultValue(result.data);
+      }
+    }
     if (current.state === "delivering") {
       await db.transaction(async (tx) => {
         await assertOwner(tx);

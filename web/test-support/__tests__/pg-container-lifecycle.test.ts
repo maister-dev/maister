@@ -19,6 +19,10 @@ vi.mock("@testcontainers/postgresql", () => {
       return this;
     }
 
+    withLabels(): this {
+      return this;
+    }
+
     start(): Promise<never> {
       return mocks.start();
     }

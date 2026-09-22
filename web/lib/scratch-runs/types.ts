@@ -94,7 +94,6 @@ export type ScratchLaunchInput = z.infer<typeof scratchLaunchInputSchema>;
 export type ScratchMessageInput = z.infer<typeof scratchMessageInputSchema>;
 
 export type ScratchMessageDraft = {
-  sequence: number;
   role: ScratchMessageRole;
   content: string;
   supervisorEventId?: string;
