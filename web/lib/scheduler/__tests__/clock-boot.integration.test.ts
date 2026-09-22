@@ -1,6 +1,7 @@
 import { mkdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 
+import { sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
@@ -17,7 +18,12 @@ import {
   startRealWeb,
   type RealWeb,
 } from "@/test-support/real-web";
-import { seedAdmin, WORKER_ADMIN } from "@/test-support/durable-workers-seed";
+import {
+  seedAdmin,
+  seedMember,
+  WORKER_ADMIN,
+  WORKER_MEMBER,
+} from "@/test-support/durable-workers-seed";
 import { mkdtempReal } from "@/test-support/worktree-test-root";
 
 describe("scheduler clock in a production web", () => {
@@ -48,6 +54,7 @@ describe("scheduler clock in a production web", () => {
       fixtureArgs: ["--hang"],
     });
     await seedAdmin(database.db);
+    await seedMember(database.db);
     await buildProductionWeb(path.join(root, "next-build.log"));
   }, 900_000);
 
@@ -133,6 +140,59 @@ describe("scheduler clock in a production web", () => {
     );
   });
 
+  it("refuses production boot for an invalid scheduler clock setting", async () => {
+    const logFile = path.join(root, "invalid-clock.log");
+
+    await expect(
+      startRealWeb({
+        databaseUrl: database.container.getConnectionUri(),
+        supervisorUrl: supervisor.url,
+        runtimeRoot,
+        worktreesRoot,
+        logFile,
+        env: { MAISTER_SCHEDULER_TIMER_ENABLED: "yes" },
+      }),
+    ).rejects.toThrow(/real web exited before/);
+    const log = await readFile(logFile, "utf8");
+
+    expect(log).toContain(
+      "MAISTER_SCHEDULER_TIMER_ENABLED must be the literal true or false when set",
+    );
+    // The refusal must precede the durable workers, not follow them.
+    expect(log).not.toContain("prompt-owner-worker-started");
+  });
+
+  it("E1: a member is refused the execution-host page with a literal 403", async () => {
+    const current = await start("member-403", {
+      MAISTER_SCHEDULER_TIMER_ENABLED: undefined,
+      MAISTER_CRON_TOKEN: undefined,
+    });
+    const cookie = await signInWithCredentials(current.url, WORKER_MEMBER);
+    const page = await fetch(`${current.url}/admin/execution-host`, {
+      headers: { cookie },
+      redirect: "manual",
+    });
+    const html = await page.text();
+
+    expect(page.status).toBe(403);
+    // Assert on DTO CONTENT, not on panel labels: the i18n catalog ships with
+    // every page, so `adminExecutionHost.streams.title` is in the payload of a
+    // refusal too and would make a label assertion pass for the wrong reason.
+    expect(html).not.toContain("hostKey");
+    expect(html).not.toContain("readinessReason");
+    expect(html).not.toContain("execution:projection:rearm");
+
+    const admin = await signInWithCredentials(current.url, WORKER_ADMIN);
+
+    expect(
+      (
+        await fetch(`${current.url}/admin/execution-host`, {
+          headers: { cookie: admin },
+        })
+      ).status,
+    ).toBe(200);
+  });
+
   it("records durable job activity when an external clock invokes the route", async () => {
     const token = "scheduler-clock-production-test";
     const current = await start("external", {
@@ -146,7 +206,24 @@ describe("scheduler clock in a production web", () => {
       headers: { "X-Maister-Cron-Token": token },
     });
 
-    expect([200, 207]).toContain(tick.status);
+    expect(tick.status).toBe(200);
+    expect(await current.logTail()).not.toContain(
+      "scheduler fallback timer started",
+    );
+
+    // The point of an external clock is that the DURABLE rows advance, so
+    // assert the observed attempt rather than accepting any terminal status.
+    const attempts = await database.db.execute(sql`
+      SELECT status, finished_at FROM scheduler_job_runs
+      WHERE job_id = 'system_sweep.default'
+      ORDER BY claimed_at DESC, id DESC LIMIT 1
+    `);
+    const sweep = attempts.rows[0] as
+      | { status: string; finished_at: string | null }
+      | undefined;
+
+    expect(sweep?.status).toBe("Succeeded");
+    expect(sweep?.finished_at).not.toBeNull();
 
     const cookie = await signInWithCredentials(current.url, WORKER_ADMIN);
     const page = await fetch(`${current.url}/admin/scheduler`, {
@@ -158,6 +235,6 @@ describe("scheduler clock in a production web", () => {
     expect(html).toContain("External tick expected");
     expect(html).toContain("system_sweep.default");
     expect(html).toContain("domain_event_dispatch.default");
-    expect(html).toMatch(/Succeeded|Failed/);
+    expect(html).toContain("Succeeded");
   });
 }, 1_200_000);

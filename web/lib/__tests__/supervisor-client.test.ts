@@ -20,6 +20,7 @@ import {
   checkSupervisorDiagnostics,
   checkSupervisorHealth,
   createSessionEnveloped,
+  ExecutionHostIdentitySchema,
   listSessions,
   resolveModelSuggestions,
   streamSession,
@@ -292,9 +293,14 @@ describe("checkSupervisorHealth", () => {
     sessions: { live: 1, exited: 2, crashed: 3 },
   };
 
+  // The pre-P0-7 parser VERBATIM (`git show master:web/lib/supervisor-client.ts`
+  // -> SupervisorHealthSchema): `host` optional, no `stream`, `.strict()`. The
+  // identity member is reused from production rather than re-typed so this
+  // fixture cannot drift away from the parser it stands in for.
   const baselineStrictHealthSchema = z
     .object({
       status: z.literal("ready"),
+      host: ExecutionHostIdentitySchema.optional(),
       version: z.string().min(1),
       uptimeMs: z.number().int().nonnegative(),
       checkedAt: z.string().datetime(),
@@ -321,6 +327,16 @@ describe("checkSupervisorHealth", () => {
       },
     });
     expect(fetchSpy).toHaveBeenCalledWith(
+      "http://supervisor:7777/health?includeStream=false",
+      expect.objectContaining({ method: "GET" }),
+    );
+  });
+
+  it("asks for the stream only when the caller opts in", async () => {
+    mockOnce(new Response(JSON.stringify(readyHealth), { status: 200 }));
+    await checkSupervisorHealth({ includeStream: true });
+
+    expect(fetchSpy).toHaveBeenLastCalledWith(
       "http://supervisor:7777/health?includeStream=true",
       expect.objectContaining({ method: "GET" }),
     );
@@ -406,6 +422,56 @@ describe("checkSupervisorHealth", () => {
     await expect(
       checkSupervisorHealth({ lagAgeMs: 121_000 }),
     ).resolves.toMatchObject({ lag: { status: "clear" } });
+  });
+
+  it("reports a fully acknowledged host as clear, not unknown", async () => {
+    const health = {
+      ...readyHealth,
+      stream: {
+        streamId: "1d243f70-235f-47bd-804b-33aa3c8c78db",
+        headSequence: "42",
+        unacknowledgedCount: 0,
+        retainedCount: 8,
+        pressured: false,
+        oldestUnacknowledgedAgeMs: null,
+      },
+    };
+
+    mockOnce(new Response(JSON.stringify(health), { status: 200 }));
+
+    await expect(checkSupervisorHealth()).resolves.toMatchObject({
+      kind: "ready",
+      lag: {
+        scope: "host_backlog",
+        status: "clear",
+        sampledAt: readyHealth.checkedAt,
+      },
+    });
+  });
+
+  it("lets the pre-P0-7 parser accept a real new-host legacy body", async () => {
+    const legacyBodyFromNewHost = {
+      ...readyHealth,
+      host: {
+        hostKey: "1d243f70-235f-47bd-804b-33aa3c8c78db",
+        bootId: "2f6a1c58-0a1e-4a9b-9f0a-2b7c6d4e5f10",
+        protocolVersion: 1,
+      },
+    };
+
+    expect(
+      baselineStrictHealthSchema.safeParse(legacyBodyFromNewHost).success,
+    ).toBe(true);
+
+    mockOnce(
+      new Response(JSON.stringify(legacyBodyFromNewHost), { status: 200 }),
+    );
+
+    await expect(checkSupervisorHealth()).resolves.toMatchObject({
+      kind: "ready",
+      health: { host: legacyBodyFromNewHost.host },
+      lag: { scope: "host_backlog", status: "unknown" },
+    });
   });
 
   it("keeps known stream fields strict and the baseline parser isolated", async () => {

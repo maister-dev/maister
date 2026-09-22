@@ -230,7 +230,7 @@ async function querySchedulerStatusRows(input: {
       SELECT status, started_at, finished_at, error_code
       FROM scheduler_job_runs
       WHERE job_id = j.id
-      ORDER BY claimed_at DESC
+      ORDER BY claimed_at DESC, id DESC
       LIMIT 1
     ) r ON true
     WHERE ${input.predicate}

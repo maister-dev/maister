@@ -74,11 +74,11 @@ export function schedulerTickFinished(
   invocation: SchedulerTickInvocation,
   outcome: SchedulerTickOutcome,
   now: Date = new Date(),
-): void {
+): SchedulerCompletedTick | null {
   const state = globalState();
   const owned = state.active.get(invocation.invocationId);
 
-  if (!owned) return;
+  if (!owned) return null;
   state.active.delete(invocation.invocationId);
   state.lastCompleted = {
     invocationId: owned.invocationId,
@@ -88,6 +88,8 @@ export function schedulerTickFinished(
     durationMs: Math.max(0, performance.now() - owned.monotonicStartedAt),
     outcome,
   };
+
+  return state.lastCompleted;
 }
 
 export function noteSchedulerTimerOverlap(): {

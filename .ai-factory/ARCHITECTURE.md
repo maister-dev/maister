@@ -218,11 +218,16 @@ web/lib/supervisor-client ──HTTP──► supervisor/src/http-api  ──►
 
 - ✅ Route Handler (`app/api/.../route.ts`) imports from `lib/*`.
 - ✅ Server Action (`app/.../actions.ts`) imports from `lib/*`.
-- ✅ `lib/supervisor-client.ts` imports the wire error taxonomy and client-safe
-  execution-host lag predicate only; it does not import DB or domain services.
+- ✅ `lib/supervisor-client.ts` imports the wire error taxonomy plus a small set
+  of client-safe pure modules (the execution-host lag predicate and default,
+  adapter support, context mounts, runtime-object response shapes); it does not
+  import DB or domain services.
 - ✅ `proxy.ts` may dynamically import `lib/authz.ts` for the execution-host
-  admin route's DB-authoritative pre-stream 403. Pages repeat authorization
-  immediately before detailed reads.
+  admin route's DB-authoritative pre-stream 403. That rewrite is what sets the
+  literal status: `forbidden()` alone renders the boundary at 200 on a
+  production build. Pages authorize again immediately BEFORE any detailed read
+  — and before parsing request input, so an unauthorized caller learns nothing
+  from a refusal.
 - ✅ `lib/flows.ts` imports `lib/errors.ts`, `lib/atomic.ts`,
   `lib/config.ts`, `lib/db/*`.
 - ✅ `lib/executors.ts` imports `lib/errors.ts`, `lib/db/*`.

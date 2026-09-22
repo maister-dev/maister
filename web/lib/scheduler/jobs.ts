@@ -852,13 +852,14 @@ export async function recordJobAttemptStarted(input: {
   return rowsOf<UpdatedAttemptRow>(result).length > 0;
 }
 
-export async function loadPreviousSchedulerAttempt(input: {
+// Exported so the migration test can EXPLAIN the query production actually
+// runs: an index proven against a hand-written lookalike proves nothing about
+// the CTE + row-value predicate below.
+export function previousSchedulerAttemptQuery(input: {
   jobId: string;
   currentAttemptId: string;
-  db?: SchedulerDb;
-}): Promise<PreviousSchedulerAttempt | null> {
-  const db = input.db ?? (getDb() as unknown as SchedulerDb);
-  const result = await db.execute(sql`
+}): SQL {
+  return sql`
     WITH current_attempt AS (
       SELECT claimed_at, id
       FROM scheduler_job_runs
@@ -877,7 +878,16 @@ export async function loadPreviousSchedulerAttempt(input: {
       AND (previous.claimed_at, previous.id) < (current.claimed_at, current.id)
     ORDER BY previous.claimed_at DESC, previous.id DESC
     LIMIT 1
-  `);
+  `;
+}
+
+export async function loadPreviousSchedulerAttempt(input: {
+  jobId: string;
+  currentAttemptId: string;
+  db?: SchedulerDb;
+}): Promise<PreviousSchedulerAttempt | null> {
+  const db = input.db ?? (getDb() as unknown as SchedulerDb);
+  const result = await db.execute(previousSchedulerAttemptQuery(input));
   const row = rowsOf<PreviousAttemptRow>(result)[0];
 
   if (row === undefined) return null;

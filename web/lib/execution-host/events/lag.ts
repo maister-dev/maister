@@ -8,6 +8,9 @@ const CANONICAL_SEQUENCE = /^(0|[1-9][0-9]{0,18})$/;
 
 export const LAG_BACKLOG_THRESHOLD = 100n;
 export const LAG_CONSECUTIVE_SWEEPS = 3;
+export const DEFAULT_EVENT_STREAM_LAG_SECONDS = 120;
+export const DEFAULT_EVENT_STREAM_LAG_AGE_MS =
+  DEFAULT_EVENT_STREAM_LAG_SECONDS * 1_000;
 
 function parseSequence(value: string | null): bigint {
   if (value === null) return -1n;

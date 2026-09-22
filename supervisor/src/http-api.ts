@@ -1374,12 +1374,26 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
         stream = hostState.runtimeEventHealthSnapshot();
       } catch (cause) {
         logger.warn({ err: cause }, "runtime-event-health-snapshot-failed");
+        // The block is never omitted — an opt-in failure must not impersonate
+        // an older host (D5). Storage itself is available (checked above), so
+        // the reason distinguishes a telemetry fault from one needing repair:
+        // readiness probes ask for the legacy shape and never reach here.
+        const storageBroken =
+          cause instanceof HostRuntimeEventError &&
+          cause.reason === "runtime_storage_unavailable";
+
         throw new SupervisorError(
           "EXECUTOR_UNAVAILABLE",
-          "runtime event health snapshot requires storage repair",
+          storageBroken
+            ? "runtime event health snapshot requires storage repair"
+            : "runtime event health snapshot is unavailable",
           {
             cause,
-            details: { reason: "runtime_storage_unavailable" },
+            details: {
+              reason: storageBroken
+                ? "runtime_storage_unavailable"
+                : "stream_health_unavailable",
+            },
           },
         );
       }

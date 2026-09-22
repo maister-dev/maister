@@ -155,6 +155,34 @@ const revisionSummary = {
   failed: 0,
 };
 
+function emptyLagModel() {
+  return {
+    sampledAt: "2026-09-22T12:00:00.000Z",
+    streams: [],
+    consumers: {
+      eligiblePopulation: 0,
+      totalConsumers: 0,
+      displayed: 0,
+      truncated: 0,
+      maximumBacklog: "0",
+      diagnosticCount: 0,
+      byHost: [],
+      top: [],
+      diagnostics: [],
+    },
+    poison: { total: 0, displayed: 0, nextAfter: null, rows: [] },
+    commands: {
+      total: 0,
+      queued: 0,
+      delivering: 0,
+      accepted: 0,
+      acceptedWithoutTimestamp: 0,
+      oldestAcceptedAt: null,
+      oldestAcceptedAgeMs: null,
+    },
+  };
+}
+
 describe("scheduler system sweeps", () => {
   beforeEach(() => {
     vi.resetModules();
@@ -219,7 +247,12 @@ describe("scheduler system sweeps", () => {
       health: null,
       sessions: [],
     });
-    collectExecutionEventLagMock.mockReset();
+    // A DEFAULT model. With `mockReset()` alone the collector resolved
+    // `undefined`, every later `createExecutionObservability` threw a
+    // TypeError into `errors[]`, and cases asserting a null impasse passed
+    // because the whole summary had degraded — not because the arm they
+    // targeted failed.
+    collectExecutionEventLagMock.mockReset().mockResolvedValue(emptyLagModel());
     executionCommandReconcilePassMock.mockReset().mockResolvedValue({
       commands: {
         scanned: 0,
@@ -431,6 +464,18 @@ describe("scheduler system sweeps", () => {
 
     expect(summary.errors).toContain(
       "execution-host reconcile pass failed: command query failed",
+    );
+    // The collector itself SUCCEEDED here, so the summary must not have
+    // degraded through the collector-failure path: only the impasse count is
+    // unknown. Without this the case passed on a TypeError from an undefined
+    // model, which is a different failure entirely.
+    expect(
+      summary.errors.some((error) =>
+        error.startsWith("execution observability unavailable"),
+      ),
+    ).toBe(false);
+    expect(summary.executionObservability?.errors).not.toContain(
+      "lag_collection_failed",
     );
     expect(summary.executionObservability?.commands.impasse).toBeNull();
   });

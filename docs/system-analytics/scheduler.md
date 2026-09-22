@@ -215,6 +215,37 @@ stateDiagram-v2
     Disabled --> [*]
 ```
 
+### Clock lifecycle (Implemented — P0-6, 2026-09-22)
+
+The driver is resolved once at boot from two variables and is then visible on
+`/admin/scheduler`. An invalid `MAISTER_SCHEDULER_TIMER_ENABLED` refuses boot
+with `CONFIG` — validated alongside the lag threshold BEFORE the durable
+workers start, so a misconfigured process never reaches a half-started state.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Resolve: boot reads MAISTER_SCHEDULER_TIMER_ENABLED<br/>and MAISTER_CRON_TOKEN
+    Resolve --> FallbackTimer: unset + no token<br/>or literal true
+    Resolve --> ExternalTick: literal false + token present
+    Resolve --> MissingTick: literal false + no token
+    Resolve --> RefusedBoot: any other value (CONFIG)
+
+    FallbackTimer --> TickRunning: interval fires and no tick is active
+    FallbackTimer --> OverlapSkipped: interval fires while a tick is active
+    OverlapSkipped --> OverlapSkipped: streak grows, WARN emitted once
+    OverlapSkipped --> TickRunning: running tick finishes<br/>streak settled with ITS OWN completion (INFO)
+    TickRunning --> FallbackTimer: completed / partial / failed / maintenance_noop
+
+    ExternalTick --> TickRunning: POST /api/cron/tick with the token
+    MissingTick --> [*]: boot WARN names both variables; no tick ever fires
+```
+
+Each invocation is paired by id: `schedulerTickStarted` mints it,
+`schedulerTickFinished` closes it and returns that invocation's outcome to the
+caller that started it. Nothing reads the process-wide "last completed" tick to
+describe a tick it ran, because a concurrent cron invocation may have finished
+in between.
+
 ## Process flows
 
 ### Authorized tick
@@ -444,15 +475,20 @@ executionObservability = {
 }
 ```
 
-Each source reports `available | unsupported | unavailable` with a safe reason
-code. One runtime parser owns this JSON for scheduler/admin readers; unsupported
-older/newer schemas render unavailable and restart qualification. The member is
-capped at 64 KiB UTF-8 JSON. If detail rows are dropped, identity, comparison
-state, exact totals and `truncated=true` remain. Raw event/error bodies, prompts,
+Each source reports a safe `available | unsupported | unavailable` status; the
+top-level `errors[]` carries the reason codes. One runtime parser owns this JSON
+for scheduler/admin readers; unsupported older/newer schemas render unavailable
+and restart qualification. The member is capped at 64 KiB UTF-8 JSON. If detail
+rows are dropped, identity, comparison state, exact totals and a numeric
+`truncated` count of the dropped rows remain; a summary still over the cap after
+the row lists are emptied is refused rather than persisted. Raw event/error bodies, prompts,
 paths and commands never enter history.
 
 The immediately preceding attempt for `system_sweep.default` is selected by
-`job_id`, ordered `(claimed_at DESC, id DESC)`, excluding the current row. It
+`job_id`, ordered `(claimed_at DESC, id DESC)`, strictly before the current
+row's own `(claimed_at, id)`. Reading it is telemetry, not a precondition: a
+failure logs `scheduler-previous-attempt-read-failed` and the sweep proceeds
+with no prior observation rather than failing the attempt. It
 must be terminal and carry a supported observation; failed/reaped/missing
 attempts break continuity rather than being skipped. Transition logs publish
 only after the current terminal-result CAS succeeds. The sampled summary log is

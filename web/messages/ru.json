@@ -3072,7 +3072,8 @@
       "empty": "Отравленных потребителей проекций нет.",
       "incomplete": "Текущих данных ошибки недостаточно для безопасной команды ремонта.",
       "count": "Отравленных потребителей: {total}",
-      "next": "Следующая страница"
+      "next": "Следующая страница",
+      "first": "Первая страница"
     },
     "workers": {
       "title": "Долговечные воркеры",
@@ -3096,21 +3097,21 @@
       "host": "Хост",
       "readiness": "Готовность",
       "reason": "Причина",
-      "boot": "Boot ID",
+      "boot": "Идентификатор запуска",
       "version": "Версия",
       "capabilities": "Возможности",
       "lastSeen": "Последнее наблюдение",
       "stream": "Поток",
       "state": "Состояние",
-      "watermarks": "Watermark R/C/A",
+      "watermarks": "Отметки менеджера R/C/A",
       "hostHead": "Голова хоста",
-      "lag": "Lag H→M/G/A",
+      "lag": "Отставание H→M/G/A",
       "pressure": "Давление",
-      "claim": "Claim",
+      "claim": "Захват",
       "error": "Последняя ошибка",
       "run": "Прогон",
       "consumer": "Потребитель",
-      "backlog": "Backlog",
+      "backlog": "Очередь",
       "cursor": "Курсор / горизонт",
       "served": "Возраст обслуживания",
       "nodeError": "Ошибка узла",
@@ -3123,6 +3124,48 @@
       "title": "Требуется доступ администратора",
       "body": "Диагностика хоста исполнения содержит операционные метаданные всей платформы.",
       "back": "Вернуться на рабочий стол"
+    },
+    "panelUnavailable": "Эту панель прочитать не удалось. Остальные панели ниже актуальны.",
+    "readiness": {
+      "unknown": "Неизвестно",
+      "ready": "Готов",
+      "unavailable": "Недоступен"
+    },
+    "streamState": {
+      "observed": "Наблюдается",
+      "active": "Активен",
+      "closed": "Закрыт",
+      "lost": "Потерян"
+    },
+    "telemetryStatus": {
+      "available": "Снято с хоста",
+      "unsupported": "Не сообщается",
+      "unavailable": "Хост недоступен",
+      "stale": "Устаревшая выборка"
+    },
+    "consumerState": {
+      "ready": "Готов",
+      "retrying": "Повтор",
+      "poisoned": "Отравлен"
+    },
+    "workerState": {
+      "running": "Работает",
+      "degraded": "Деградировал",
+      "stopped": "Остановлен"
+    },
+    "verdict": {
+      "observing": "Наблюдение",
+      "lagging": "Отставание",
+      "not_advancing": "Не продвигается",
+      "clear": "Чисто",
+      "unknown": "Неизвестно",
+      "inactive": "Неактивен",
+      "reset": "Сброс"
+    },
+    "driver": {
+      "fallback_timer": "Внутренний таймер",
+      "external_tick": "Внешний tick",
+      "missing_tick": "Часов нет"
     }
   },
   "adminScheduler": {
@@ -3141,7 +3184,7 @@
       "title": "Часы планировщика",
       "subtitle": "Локальная телеметрия процесса и долговечная активность двух критичных задач восстановления.",
       "interval": "Интервал fallback",
-      "cronToken": "Cron token",
+      "cronToken": "Токен cron",
       "configured": "задан",
       "missing": "не задан",
       "lastStarted": "Последнее начало",
@@ -3162,7 +3205,7 @@
       "missingJob": "отсутствует",
       "overdue": "просрочено",
       "driver": {
-        "fallback_timer": "Fallback timer",
+        "fallback_timer": "Внутренний таймер",
         "external_tick": "Ожидается внешний tick",
         "missing_tick": "Tick не настроен"
       },
@@ -3176,6 +3219,13 @@
         "fallback_timer": "Этот процесс запускает tick каждые {seconds}с. Счётчики процесса сбрасываются при рестарте.",
         "external_tick": "Вызывайте {path} внешним cron и проверяйте долговечные времена критичных задач ниже.",
         "missing_tick": "Задайте MAISTER_CRON_TOKEN для внешнего вызова или включите fallback timer."
+      },
+      "jobStatus": {
+        "Claimed": "Захвачена",
+        "Running": "Выполняется",
+        "Succeeded": "Успешно",
+        "Failed": "Ошибка",
+        "Skipped": "Пропущена"
       }
     },
     "brainQueue": {

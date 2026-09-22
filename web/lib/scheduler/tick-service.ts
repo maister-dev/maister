@@ -8,6 +8,7 @@ import { isMaisterError } from "@/lib/errors";
 import {
   schedulerTickFinished,
   schedulerTickStarted,
+  type SchedulerCompletedTick,
   type SchedulerTickSource,
 } from "@/lib/scheduler/clock-health";
 import { upgradeMaintenanceEngaged } from "@/lib/maintenance/upgrade-fence";
@@ -68,6 +69,9 @@ export type SchedulerTickJobSummary = {
 type RunSchedulerTickInput = {
   jobKind?: SchedulerJobKind;
   source?: SchedulerTickSource;
+  // D1: hands the caller the completion of the invocation IT started, so a
+  // concurrent cron tick finishing first cannot be attributed to this one.
+  onCompleted?: (tick: SchedulerCompletedTick | null) => void;
 };
 
 const log = pino({
@@ -106,11 +110,11 @@ export async function runSchedulerTick(
         ? "partial"
         : "completed";
 
-    schedulerTickFinished(invocation, outcome);
+    input.onCompleted?.(schedulerTickFinished(invocation, outcome));
 
     return result.summary;
   } catch (err) {
-    schedulerTickFinished(invocation, "failed");
+    input.onCompleted?.(schedulerTickFinished(invocation, "failed"));
     throw err;
   }
 }
@@ -194,10 +198,24 @@ async function runClaimedJob(
   try {
     switch (job.jobKind) {
       case "system_sweep": {
-        const previous = await loadPreviousSchedulerAttempt({
-          jobId: job.id,
-          currentAttemptId: job.attemptId,
-        });
+        // D5: this is a TELEMETRY read on the recovery path. A failure here
+        // must not fail the attempt — that would count toward `disabled_at`
+        // and skip the sweep entirely, disabling recovery because its own
+        // observability could not be read.
+        let previous: Awaited<ReturnType<typeof loadPreviousSchedulerAttempt>> =
+          null;
+
+        try {
+          previous = await loadPreviousSchedulerAttempt({
+            jobId: job.id,
+            currentAttemptId: job.attemptId,
+          });
+        } catch (error) {
+          log.warn(
+            { jobId: job.id, attemptId: job.attemptId, err: error },
+            "scheduler-previous-attempt-read-failed",
+          );
+        }
         const priorObservation = previousExecutionObservation(previous);
         const systemSweepSummary = await runSystemSweepWithLease(
           job,

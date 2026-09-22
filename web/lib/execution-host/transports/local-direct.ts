@@ -115,6 +115,7 @@ export function createLocalDirectTransport(
       return wire.checkSupervisorHealth({
         ...opts,
         lagAgeMs: options.lagAgeMs,
+        includeStream: true,
       });
     },
     resolveModelSuggestions(draft, opts) {

@@ -8,6 +8,11 @@ import type { ReactElement } from "react";
 import { getLocale, getTranslations } from "next-intl/server";
 import clsx from "clsx";
 
+import {
+  formatDuration,
+  formatInstant,
+} from "@/components/admin/observability-format";
+
 const DRIVER_TONE: Record<SchedulerClockDriver, string> = {
   external_tick: "border-amber-line bg-amber-soft text-amber",
   fallback_timer:
@@ -15,16 +20,6 @@ const DRIVER_TONE: Record<SchedulerClockDriver, string> = {
   missing_tick:
     "border-[color-mix(in_oklab,var(--danger)_35%,var(--line))] bg-[color-mix(in_oklab,var(--danger)_10%,transparent)] text-danger",
 };
-
-function time(value: string | null, never: string, locale: string): string {
-  return value
-    ? new Intl.DateTimeFormat(locale, {
-        dateStyle: "medium",
-        timeStyle: "medium",
-        timeZone: "UTC",
-      }).format(new Date(value))
-    : never;
-}
 
 export async function SchedulerClockCard({
   clock,
@@ -58,6 +53,9 @@ export async function SchedulerClockCard({
             DRIVER_TONE[clock.driver],
           )}
         >
+          <span aria-hidden>
+            {clock.driver === "missing_tick" ? "✗ " : "✓ "}
+          </span>
           {t(`driver.${clock.driver}`)}
         </span>
       </div>
@@ -84,7 +82,7 @@ export async function SchedulerClockCard({
             {t("lastStarted")}
           </dt>
           <dd className="mt-1 text-sm text-ink">
-            {time(clock.health.lastStartedAt, t("never"), locale)}
+            {formatInstant(clock.health.lastStartedAt, t("never"), locale)}
           </dd>
         </div>
         <div>
@@ -92,7 +90,7 @@ export async function SchedulerClockCard({
             {t("lastFinished")}
           </dt>
           <dd className="mt-1 text-sm text-ink">
-            {time(clock.health.lastFinishedAt, t("never"), locale)}
+            {formatInstant(clock.health.lastFinishedAt, t("never"), locale)}
           </dd>
         </div>
         <div>
@@ -100,9 +98,7 @@ export async function SchedulerClockCard({
             {t("duration")}
           </dt>
           <dd className="mt-1 text-sm text-ink">
-            {clock.health.lastDurationMs === null
-              ? t("never")
-              : `${Math.round(clock.health.lastDurationMs)}ms`}
+            {formatDuration(clock.health.lastDurationMs, t("never"))}
           </dd>
         </div>
         <div>
@@ -174,7 +170,6 @@ export async function SchedulerClockCard({
               const overdue =
                 job !== undefined &&
                 job.disabledAt === null &&
-                job.nextRunAt !== null &&
                 new Date(job.nextRunAt).getTime() <
                   new Date(clock.health.observedAt).getTime();
 
@@ -184,20 +179,30 @@ export async function SchedulerClockCard({
                   <td className="px-3 py-3">
                     {job?.disabledAt
                       ? t("disabled")
-                      : (job?.lastStatus ?? t("missingJob"))}
+                      : job?.lastStatus
+                        ? t(`jobStatus.${job.lastStatus}`)
+                        : t("missingJob")}
                   </td>
                   <td className="px-3 py-3">
-                    {time(job?.lastFinishedAt ?? null, t("never"), locale)}
+                    {formatInstant(
+                      job?.lastFinishedAt ?? null,
+                      t("never"),
+                      locale,
+                    )}
                   </td>
                   <td className="px-3 py-3">
-                    {durationMs === null ? t("never") : `${durationMs}ms`}
+                    {formatDuration(durationMs, t("never"))}
                   </td>
                   <td className="px-3 py-3 font-mono text-xs">
                     {job?.lastErrorCode ?? "—"}
                   </td>
                   <td className="px-5 py-3">
                     <span>
-                      {time(job?.nextRunAt ?? null, t("never"), locale)}
+                      {formatInstant(
+                        job?.nextRunAt ?? null,
+                        t("never"),
+                        locale,
+                      )}
                     </span>
                     {overdue ? (
                       <span className="ml-2 rounded-full border border-danger/30 bg-danger/10 px-2 py-0.5 font-mono text-[10px] font-semibold text-danger">

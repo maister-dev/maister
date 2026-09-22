@@ -37,18 +37,25 @@ stateDiagram-v2
     [*] --> Ready: supervisor reachable
     Ready --> Behind: health sample has old host backlog above threshold
     Behind --> Ready: backlog clears
-    Ready --> UnknownLag: older host omits stream telemetry
-    UnknownLag --> Ready: supported telemetry appears
+    Ready --> UnknownLag: host omits stream telemetry
+    UnknownLag --> Ready: telemetry block present
     [*] --> Unavailable: network or timeout or http or malformed
     Ready --> Unavailable: health check fails
     Unavailable --> Ready: health check recovers
 ```
 
+`unknown` means the host reported no stream block at all — a pre-P0-7
+supervisor, or one whose telemetry snapshot failed. A host that DOES report,
+with nothing outstanding, reads `clear`: the block's age is null exactly at zero
+backlog, and that is the healthy steady state, not an absence of information.
+
 ## Data & APIs
 
-`getPlatformStatus()` (`lib/supervisor-client.ts`, a cached
-`checkSupervisorHealth`) — the same value the layout passes to the rail launch
-hint. The lag decoration uses only that health response; it does not invoke the
+`getPlatformStatus()` (`lib/execution-host/platform-status.ts`, a cached
+`executionHosts.local().platformStatus()` over `checkSupervisorHealth`) — the
+same value the layout passes to the rail launch hint. It is the ONLY caller
+that opts into the host's stream block; readiness probes deliberately do not,
+so a telemetry fault can never refuse a launch. The lag decoration uses only that health response; it does not invoke the
 Postgres lag collector. No client polling.
 
 `AttentionLiveRefresh` owns one `GET /api/attention/stream` connection in this

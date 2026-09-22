@@ -128,8 +128,9 @@ HITL lifecycle:
 - The response route never flips `runs.status` back to `Running`; the
   runner owns `NeedsInput -> Running`.
 - The idle checkpoint path (`NeedsInput -> NeedsInputIdle -> resume`) is
-  implemented (M8): the web keep-alive sweeper idles `NeedsInput` rows past
-  `keepalive_until`, the supervisor's real `POST /sessions/:id/checkpoint`
+  implemented (M8): the scheduler-owned `system_sweep` keep-alive pass idles
+  `NeedsInput` rows past `keepalive_until` (its standalone timer was retired in
+  P0-6), the supervisor's real `POST /sessions/:id/checkpoint`
   cancels open permission deferreds and SIGTERMs the agent, and a stored HITL
   response respawns a fresh adapter and restores context via the ACP
   `session/resume` call on `acp_session_id`. The resume round-trip is

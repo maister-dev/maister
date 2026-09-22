@@ -148,6 +148,21 @@ test("authenticated member receives an HTTP 403 with no platform diagnostics", a
       page.getByRole("heading", { name: "Admin access required" }),
     ).toBeVisible();
     await expect(page.getByRole("heading", { name: "Hosts" })).toHaveCount(0);
+
+    // D6 negative: a member DOES get the coarse platform summary, and it is
+    // never a link into the diagnostics page — in either rail state.
+    await page.goto("/");
+    await expect(page.getByTestId("rail-nav-executionHost")).toHaveCount(0);
+    await expect(
+      page.getByTestId("rail-platform-status").first(),
+    ).toBeVisible();
+    await expect(page.getByTestId("rail-platform-status-link")).toHaveCount(0);
+
+    await page.getByTestId("rail-collapse-toggle").click();
+    const collapsed = page.getByTestId("rail-platform-status-collapsed");
+
+    await expect(collapsed).toBeVisible();
+    await expect(collapsed).not.toHaveAttribute("href", /.*/);
   } finally {
     await page.context().close();
   }

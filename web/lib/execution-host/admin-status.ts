@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { Logger } from "pino";
 import type { Db } from "@/lib/execution-host/db";
 import type { ExecutionObservabilitySummary } from "@/lib/execution-host/events/lag-observation";
 import type { ExecutionEventLagReadModel } from "@/types/execution-host-observability";
@@ -7,6 +8,7 @@ import type { SchedulerClockStatus } from "@/types/scheduler";
 import type { DurableWorkerState } from "@/lib/workers/health";
 
 import { sql } from "drizzle-orm";
+import pino from "pino";
 
 import { requireGlobalRole } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
@@ -20,6 +22,8 @@ import {
   TERMINAL_SCHEDULER_JOB_RUN_STATUSES,
 } from "@/lib/scheduler/jobs";
 import { durableWorkersHealth } from "@/lib/workers/health";
+
+const defaultLogger = pino({ name: "admin-execution-host-status" });
 
 const HOST_LIMIT = 20;
 const UUID =
@@ -73,21 +77,35 @@ export type AdminExecutionHostRow = Readonly<{
   retiredAt: string | null;
 }>;
 
+export type AdminPanelFailure = Readonly<{ unavailable: true }>;
+
 export type AdminExecutionHostStatus = Readonly<{
   sampledAt: string;
-  hosts: readonly AdminExecutionHostRow[];
-  lag: ExecutionEventLagReadModel;
-  latestSweep: Readonly<{
-    attemptId: string;
-    status: string;
-    claimedAt: string;
-    finishedAt: string | null;
-    observation: ExecutionObservabilitySummary | null;
-    observationStatus: "available" | "unsupported";
-  }> | null;
+  hosts: readonly AdminExecutionHostRow[] | AdminPanelFailure;
+  lag: ExecutionEventLagReadModel | AdminPanelFailure;
+  latestSweep:
+    | Readonly<{
+        attemptId: string;
+        status: string;
+        claimedAt: string;
+        finishedAt: string | null;
+        observation: ExecutionObservabilitySummary | null;
+        observationStatus: "available" | "unsupported";
+      }>
+    | AdminPanelFailure
+    | null;
   workers: Readonly<Record<string, DurableWorkerState>>;
   schedulerClock: SchedulerClockStatus;
+  poisonCursor: Readonly<{ runId: string; consumerName: string }> | null;
 }>;
+
+export function isPanelUnavailable(value: unknown): value is AdminPanelFailure {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as AdminPanelFailure).unavailable === true
+  );
+}
 
 function iso(value: Date | string | null): string | null {
   if (value === null) return null;
@@ -178,25 +196,50 @@ export function parsePoisonCursorSearchParams(
   return { runId, consumerName };
 }
 
+async function settlePanel<T>(
+  read: () => Promise<T>,
+  panel: string,
+  logger: Logger,
+): Promise<T | AdminPanelFailure> {
+  try {
+    return await read();
+  } catch (error) {
+    logger.warn({ panel, err: error }, "admin-execution-host-panel-failed");
+
+    return { unavailable: true };
+  }
+}
+
 export async function getAdminExecutionHostStatus(
   input: {
     db?: AdminStatusDb;
     now?: Date;
     poisonAfter?: { runId: string; consumerName: string };
+    logger?: Logger;
   } = {},
 ): Promise<AdminExecutionHostStatus> {
   const db = input.db ?? (getDb() as unknown as AdminStatusDb);
   const now = input.now ?? new Date();
+  const logger = input.logger ?? defaultLogger;
   const health = await getPlatformStatus();
+  // D6: this page exists to diagnose a lagging or unreachable plane, so one
+  // panel's failure — typically the collector hitting its 2 s statement
+  // timeout, exactly the condition an operator came here to see — must not
+  // take the stored sweep evidence and host list down with it.
   const [hosts, lag, latestSweep] = await Promise.all([
-    listHosts(db),
-    collectExecutionEventLag({
-      db,
-      health,
-      now,
-      poisonAfter: input.poisonAfter,
-    }),
-    latestSweepObservation(db),
+    settlePanel(() => listHosts(db), "hosts", logger),
+    settlePanel(
+      () =>
+        collectExecutionEventLag({
+          db,
+          health,
+          now,
+          poisonAfter: input.poisonAfter,
+        }),
+      "lag",
+      logger,
+    ),
+    settlePanel(() => latestSweepObservation(db), "latestSweep", logger),
   ]);
 
   return {
@@ -206,19 +249,30 @@ export async function getAdminExecutionHostStatus(
     latestSweep,
     workers: durableWorkersHealth(),
     schedulerClock: getSchedulerClockStatus(),
+    poisonCursor: input.poisonAfter ?? null,
   };
 }
 
+// Takes the RAW search params rather than a parsed cursor so the role check
+// cannot be ordered after input parsing: an unauthenticated caller must not be
+// able to tell a malformed cursor from a well-formed one.
 export async function requireAdminExecutionHostStatus(
   input: {
     db?: AdminStatusDb;
     now?: Date;
-    poisonAfter?: { runId: string; consumerName: string };
+    searchParams?: Record<string, string | string[] | undefined>;
+    logger?: Logger;
   } = {},
 ): Promise<AdminExecutionHostStatus> {
   await requireGlobalRole("admin");
 
-  return getAdminExecutionHostStatus(input);
+  const { searchParams, ...rest } = input;
+  const poisonAfter = parsePoisonCursorSearchParams(searchParams ?? {});
+
+  return getAdminExecutionHostStatus({
+    ...rest,
+    ...(poisonAfter ? { poisonAfter } : {}),
+  });
 }
 
 function shellQuote(value: string): string {

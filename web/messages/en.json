@@ -3072,7 +3072,8 @@
       "empty": "No poisoned projection consumers.",
       "incomplete": "Current failure evidence is incomplete; no repair command can be issued safely.",
       "count": "{total} poisoned consumers",
-      "next": "Next page"
+      "next": "Next page",
+      "first": "First page"
     },
     "workers": {
       "title": "Durable workers",
@@ -3123,6 +3124,48 @@
       "title": "Admin access required",
       "body": "Execution-host diagnostics contain platform-wide operational metadata.",
       "back": "Return to the desk"
+    },
+    "panelUnavailable": "This panel could not be read. The other panels below are current.",
+    "readiness": {
+      "unknown": "Unknown",
+      "ready": "Ready",
+      "unavailable": "Unavailable"
+    },
+    "streamState": {
+      "observed": "Observed",
+      "active": "Active",
+      "closed": "Closed",
+      "lost": "Lost"
+    },
+    "telemetryStatus": {
+      "available": "Host sampled",
+      "unsupported": "Not reported",
+      "unavailable": "Host unreachable",
+      "stale": "Stale sample"
+    },
+    "consumerState": {
+      "ready": "Ready",
+      "retrying": "Retrying",
+      "poisoned": "Poisoned"
+    },
+    "workerState": {
+      "running": "Running",
+      "degraded": "Degraded",
+      "stopped": "Stopped"
+    },
+    "verdict": {
+      "observing": "Observing",
+      "lagging": "Lagging",
+      "not_advancing": "Not advancing",
+      "clear": "Clear",
+      "unknown": "Unknown",
+      "inactive": "Inactive",
+      "reset": "Reset"
+    },
+    "driver": {
+      "fallback_timer": "In-process timer",
+      "external_tick": "External tick",
+      "missing_tick": "No clock"
     }
   },
   "adminScheduler": {
@@ -3176,6 +3219,13 @@
         "fallback_timer": "This process runs a tick every {seconds}s. Process counters reset on restart.",
         "external_tick": "Call {path} from external cron and verify the durable core-job timestamps below.",
         "missing_tick": "Set MAISTER_CRON_TOKEN for an external caller or enable the fallback timer."
+      },
+      "jobStatus": {
+        "Claimed": "Claimed",
+        "Running": "Running",
+        "Succeeded": "Succeeded",
+        "Failed": "Failed",
+        "Skipped": "Skipped"
       }
     },
     "brainQueue": {

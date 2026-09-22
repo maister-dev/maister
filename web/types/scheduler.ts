@@ -73,7 +73,9 @@ export type SchedulerClockStatus = SchedulerClockConfiguration & {
 
 export type SchedulerCoreJobClockRow = {
   id: string;
-  nextRunAt: string | null;
+  // `scheduler_jobs.next_run_at` is NOT NULL, so a core row always carries one
+  // — an optional type here would invite a dead "never scheduled" branch.
+  nextRunAt: string;
   disabledAt: string | null;
   lastStartedAt: string | null;
   lastFinishedAt: string | null;

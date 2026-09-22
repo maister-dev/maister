@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  boundExecutionObservability,
+  createExecutionObservability,
   parseExecutionObservability,
   reduceLagObservation,
+  type ExecutionObservabilitySummary,
   type LagObservationSample,
 } from "@/lib/execution-host/events/lag-observation";
 
@@ -122,6 +125,11 @@ describe("reduceLagObservation", () => {
     });
   });
 
+  // NOT a duplicate of `lag.test.ts`'s boundary case: that one pins the
+  // PREDICATE (eligible / not eligible), this one pins what the REDUCER does
+  // at the same numbers — 100 is `clear` rather than merely "not lagging",
+  // 101 too young stays `observing` WITH the above-threshold start preserved,
+  // and a stale gap is `unknown`. Deleting either loses real coverage.
   it("honors exact backlog, age and freshness boundaries", () => {
     const first = firstAboveThreshold();
     const atThreshold = reduceLagObservation({
@@ -301,5 +309,187 @@ describe("reduceLagObservation", () => {
     expect(
       parseExecutionObservability({ ...encoded, attemptId: "" }),
     ).toBeNull();
+  });
+
+  it("reports missing telemetry on a FIRST sample as unknown, not observing", () => {
+    const unidentified = reduceLagObservation({
+      sample: sample({ identity: null, quality: "partial" }),
+      previous: null,
+      lagAgeMs: 120_000,
+    });
+
+    expect(unidentified.verdict).toBe("unknown");
+    expect(unidentified.incidentOpen).toBe(false);
+
+    const identified = reduceLagObservation({
+      sample: sample(),
+      previous: null,
+      lagAgeMs: 120_000,
+    });
+
+    expect(identified.verdict).toBe("observing");
+  });
+
+  it("rejects a persisted stream whose deeper members are malformed", () => {
+    const observation = firstAboveThreshold();
+    const encoded = {
+      schemaVersion: 1,
+      attemptId: "attempt-1",
+      observerId: "observer-a",
+      sampledAt: "2026-09-22T12:00:00.000Z",
+      quality: "complete",
+      errors: [],
+      stream: observation,
+      consumers: {
+        status: "available",
+        total: 0,
+        maximumBacklog: "0",
+        top: [],
+      },
+      poison: { status: "available", total: 0, rows: [] },
+      commands: { status: "available", total: 0, accepted: 0, impasse: 0 },
+      workers: { status: "available", states: {} },
+    };
+
+    // Each of these used to pass the shallow check and then throw inside the
+    // reducer, which the sweep reported as a COLLECTOR failure.
+    for (const broken of [
+      { ...observation, watermarks: { received: 200 } },
+      { ...observation, watermarks: null },
+      { ...observation, projectionOverThresholdSince: "not-a-date" },
+      { ...observation, hostBacklog: { status: "weird" } },
+      { ...observation, projectionBacklog: { status: "available" } },
+      { ...observation, verdict: "made_up" },
+      { ...observation, transition: "made_up" },
+      { ...observation, streamState: "made_up" },
+    ]) {
+      expect(
+        parseExecutionObservability({ ...encoded, stream: broken }),
+        JSON.stringify(broken).slice(0, 80),
+      ).toBeNull();
+    }
+  });
+});
+
+describe("boundExecutionObservability", () => {
+  function summary(
+    overrides: Partial<ExecutionObservabilitySummary> = {},
+  ): ExecutionObservabilitySummary {
+    return {
+      schemaVersion: 1,
+      attemptId: "attempt-1",
+      observerId: "observer-a",
+      sampledAt: "2026-09-22T12:00:00.000Z",
+      quality: "complete",
+      errors: [],
+      stream: null,
+      consumers: {
+        status: "available",
+        total: 0,
+        maximumBacklog: "0",
+        top: [],
+      },
+      poison: { status: "available", total: 0, rows: [] },
+      commands: { status: "available", total: 0, accepted: 0, impasse: 0 },
+      workers: { status: "available", states: {} },
+      ...overrides,
+    } as ExecutionObservabilitySummary;
+  }
+
+  it("O3: keeps a small summary whole", () => {
+    const small = summary();
+
+    expect(boundExecutionObservability(small)).toBe(small);
+  });
+
+  it("O3: drops the bounded row lists before the 64 KiB cap, recording the count", () => {
+    const top = Array.from({ length: 20 }, (_, index) => ({
+      consumerName: `consumer-${index}`.padEnd(4_000, "x"),
+      runId: `run-${index}`,
+      runStatus: "Running",
+      executionHostId: "host-1",
+      runHorizonSequence: "100",
+      lastRunSequence: "0",
+      backlog: "100",
+      diagnostic: null,
+      lastServedAt: null,
+      serviceAgeMs: null,
+      state: "ready",
+      nextRetryAt: null,
+      latestNodeErrorCode: null,
+    }));
+    const bounded = boundExecutionObservability(
+      summary({
+        consumers: {
+          status: "available",
+          total: 20,
+          maximumBacklog: "100",
+          top,
+        },
+      } as unknown as Partial<ExecutionObservabilitySummary>),
+    );
+
+    expect(bounded.consumers.top).toEqual([]);
+    expect(bounded.consumers.truncated).toBe(20);
+    expect(Buffer.byteLength(JSON.stringify(bounded), "utf8")).toBeLessThan(
+      65_536,
+    );
+  });
+
+  it("O3: refuses a summary still oversized after the rows are dropped", () => {
+    expect(() =>
+      boundExecutionObservability(summary({ errors: ["x".repeat(70_000)] })),
+    ).toThrow(RangeError);
+  });
+});
+
+describe("createExecutionObservability", () => {
+  it("measures the projection lane over the consumers that DO report", () => {
+    const model = {
+      sampledAt: "2026-09-22T12:00:00.000Z",
+      streams: [],
+      consumers: {
+        eligiblePopulation: 3,
+        totalConsumers: 3,
+        displayed: 3,
+        truncated: 0,
+        maximumBacklog: "7",
+        diagnosticCount: 1,
+        byHost: [
+          {
+            executionHostId: "host-1",
+            consumerCount: 3,
+            maximumBacklog: "7",
+            diagnosticCount: 1,
+          },
+        ],
+        top: [],
+        diagnostics: [],
+      },
+      poison: { total: 0, displayed: 0, nextAfter: null, rows: [] },
+      commands: {
+        total: 0,
+        queued: 0,
+        delivering: 0,
+        accepted: 0,
+        acceptedWithoutTimestamp: 0,
+        oldestAcceptedAt: null,
+        oldestAcceptedAgeMs: null,
+      },
+    } as never;
+    const observation = createExecutionObservability({
+      attemptId: "attempt-1",
+      observerId: "observer-a",
+      model,
+      previous: null,
+      workers: {},
+      impasse: null,
+      lagAgeMs: 120_000,
+    });
+
+    // One inconsistent cursor is surfaced as an error, NOT as a blanked lane:
+    // otherwise an open incident could never clear.
+    expect(observation.errors).toContain("consumer:cursor_ahead_of_horizon");
+    expect(observation.consumers.status).toBe("available");
   });
 });

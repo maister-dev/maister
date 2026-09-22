@@ -51,16 +51,32 @@ Tables scroll within their panels at narrow widths, and every colored state has
 text. EN/RU catalogs have identical keys.
 
 Host health is sampled separately from one read-only Postgres observation and
-is not presented as an atomic snapshot. Historical hosts are paged diagnostics;
-only the supported local host is contacted. Current projection ownership comes
+is not presented as an atomic snapshot. The host and stream listings are capped
+at the 20 most recent rows rather than paged; only the poison list paginates.
+Only the supported local host is contacted. Current projection ownership comes
 from active assignments. The chrome summary uses the request-cached `/health`
 sample only and makes no consumer/history query.
 
-Authorization is checked twice on purpose. `proxy.ts` re-reads the current user
-before React starts streaming so a denied navigation receives a literal HTTP
-403. The page calls `requireGlobalRole("admin")` again immediately before the
-detailed read, closing a role-change race. Next.js `experimental.authInterrupts`
-enables the page-level `forbidden()` response.
+Panels degrade independently. The host list, the lag collector and the stored
+sweep observation are read concurrently and settled separately, so a collector
+that exceeds its SQL budget — the condition an operator most often opens this
+page to diagnose — renders one unavailable panel while the host rows, the
+stored sweep evidence, worker health and the clock summary stay visible.
+
+Authorization is enforced in two places, and the pair is NOT redundant —
+measured, not assumed. `proxy.ts` re-reads the current user before React starts
+streaming and rewrites to `/access-denied/execution-host` with a literal HTTP
+403; that rewrite is what actually sets the status. Removing it and relying on
+the page's `forbidden()` alone was tried and answers **200** on a production
+build (`clock-boot.integration.test.ts` E1 catches it; both Playwright 403 specs
+run under `next dev` and do not), so `experimental.authInterrupts` renders the
+boundary without the status this contract requires.
+
+The page's own check is the second half and closes the role-change race: its
+read calls `requireGlobalRole("admin")` BEFORE it parses the poison cursor or
+issues any query, so an unauthorized caller cannot distinguish a malformed
+cursor from a well-formed one, and a demotion between the proxy read and the
+render is still refused.
 
 ## Acceptance
 
@@ -71,6 +87,11 @@ enables the page-level `forbidden()` response.
   produces no unsafe command.
 - Expanded, collapsed and mobile rail links work and do not add a second host
   request or a heavy database query.
+- A member sees the coarse platform summary in both rail states with NO link to
+  this page, and the rail omits the admin nav entry entirely.
 - Playwright owns the admin, member, live-demotion, EN/RU and three rail-mode
   cases in `admin-execution-host.spec.ts`; the explicit `AUTHED_SPEC` entry
-  keeps the file out of the unauthenticated project.
+  keeps the file out of the unauthenticated project. The literal 403 is
+  additionally qualified against a PRODUCTION build in
+  `clock-boot.integration.test.ts`, since `authInterrupts` behaves differently
+  under `next dev`.

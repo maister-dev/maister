@@ -76,6 +76,7 @@ const status: AdminExecutionHostStatus = {
       skippedOverlapLastStreak: 0,
     },
   },
+  poisonCursor: null,
 };
 
 describe("ExecutionHostStatus", () => {
@@ -92,5 +93,31 @@ describe("ExecutionHostStatus", () => {
     expect(markup).toContain("streams.watermarkLegend");
     expect(markup).toContain("streams.lagLegend");
     expect(markup).not.toContain("90s");
+  });
+
+  it("D6: renders per-panel unavailability instead of failing the page", async () => {
+    const markup = renderToStaticMarkup(
+      await ExecutionHostStatus({
+        status: {
+          ...status,
+          lag: { unavailable: true },
+          latestSweep: { unavailable: true },
+        },
+      }),
+    );
+
+    expect(markup).toContain("panelUnavailable");
+    // The host row and the clock survive the collector's failure.
+    expect(markup).toContain("eh_local");
+    expect(markup).toContain("driver.fallback_timer");
+  });
+
+  it("localizes every status token rather than printing the enum member", async () => {
+    const markup = renderToStaticMarkup(await ExecutionHostStatus({ status }));
+
+    expect(markup).toContain("readiness.ready");
+    expect(markup).toContain("driver.fallback_timer");
+    expect(markup).not.toMatch(/>\s*ready\s*</);
+    expect(markup).not.toMatch(/>\s*fallback_timer\s*</);
   });
 });

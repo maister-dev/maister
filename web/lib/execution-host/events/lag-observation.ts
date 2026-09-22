@@ -247,7 +247,13 @@ export function reduceLagObservation(
       ...base,
       streak: 0,
       incidentOpen: false,
-      verdict: "observing",
+      // An active stream the manager cannot even identify is missing
+      // telemetry, not a baseline being established: `observing` claims a
+      // first sample was taken, which would be a healthy zero it never saw.
+      verdict:
+        sample.quality === "complete" && sample.identity !== null
+          ? "observing"
+          : "unknown",
       transition: null,
     };
   }
@@ -344,6 +350,56 @@ function isNonemptyString(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
 }
 
+const VERDICTS: readonly LagObservationVerdict[] = [
+  "observing",
+  "lagging",
+  "not_advancing",
+  "clear",
+  "unknown",
+  "inactive",
+  "reset",
+];
+const TRANSITIONS: readonly LagObservationTransition[] = [
+  "lagging",
+  "recovered",
+  "reset",
+];
+const STREAM_STATES = ["observed", "active", "closed", "lost"] as const;
+
+function isNullableSequence(value: unknown): boolean {
+  return value === null || isNonemptyString(value);
+}
+
+function isWatermarks(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    isNullableSequence(value.received) &&
+    isNullableSequence(value.contiguous) &&
+    isNullableSequence(value.acknowledged)
+  );
+}
+
+function isBacklogSource(value: unknown, availableKey: string): boolean {
+  if (!isRecord(value)) return false;
+  if (value.status === "unsupported" || value.status === "unavailable")
+    return true;
+  if (value.status !== "available") return false;
+  if (availableKey === "maximumBacklog")
+    return isNonemptyString(value[availableKey]);
+
+  return (
+    typeof value.unacknowledgedCount === "number" &&
+    Number.isInteger(value.unacknowledgedCount) &&
+    value.unacknowledgedCount >= 0 &&
+    (value.oldestUnacknowledgedAgeMs === null ||
+      typeof value.oldestUnacknowledgedAgeMs === "number")
+  );
+}
+
+// Validates EVERY member the reducer later reads. A shallow check let a
+// malformed `watermarks` or `projectionOverThresholdSince` through, and the
+// reducer then threw on it — surfacing as `lag_collection_failed` (a collector
+// fault) instead of `unsupported` (an unreadable prior observation).
 function isStreamObservation(value: unknown): value is LagStreamObservation {
   if (!isRecord(value)) return false;
   const identity = value.identity;
@@ -357,12 +413,27 @@ function isStreamObservation(value: unknown): value is LagStreamObservation {
         isNonemptyString(identity.executionHostId) &&
         isNonemptyString(identity.streamId) &&
         isNonemptyString(identity.bootId))) &&
+    (value.streamState === null ||
+      STREAM_STATES.includes(
+        value.streamState as (typeof STREAM_STATES)[number],
+      )) &&
+    isWatermarks(value.watermarks) &&
+    isBacklogSource(value.hostBacklog, "unacknowledgedCount") &&
+    isBacklogSource(value.projectionBacklog, "maximumBacklog") &&
+    (value.previousSampleId === null ||
+      isNonemptyString(value.previousSampleId)) &&
+    (value.projectionOverThresholdSince === null ||
+      (isNonemptyString(value.projectionOverThresholdSince) &&
+        Number.isFinite(Date.parse(value.projectionOverThresholdSince)))) &&
     typeof value.streak === "number" &&
     Number.isInteger(value.streak) &&
     value.streak >= 0 &&
     value.streak <= LAG_CONSECUTIVE_SWEEPS &&
     typeof value.incidentOpen === "boolean" &&
-    isNonemptyString(value.verdict)
+    VERDICTS.includes(value.verdict as LagObservationVerdict) &&
+    (value.transition === null ||
+      value.transition === undefined ||
+      TRANSITIONS.includes(value.transition as LagObservationTransition))
   );
 }
 
@@ -475,8 +546,17 @@ export function createExecutionObservability(
   const hostAggregate = input.model.consumers.byHost.find(
     (aggregate) => aggregate.executionHostId === stream?.executionHostId,
   );
+  const diagnosticConsumers = hostAggregate?.diagnosticCount ?? 0;
+  const measurableConsumers =
+    (hostAggregate?.consumerCount ?? 0) - diagnosticConsumers;
+  // `maximumBacklog` is MAX over rows with a computable backlog, so a
+  // diagnostic consumer is already excluded from it. One inconsistent cursor
+  // therefore must NOT blank the whole host's lane — that made an open
+  // incident permanently unrecoverable. Only a host whose consumers are ALL
+  // diagnostic has nothing left to measure; the diagnostic itself stays
+  // visible in `errors` and on the admin page either way.
   const projectionBacklog: LagObservationSample["projectionBacklog"] =
-    (hostAggregate?.diagnosticCount ?? 0) > 0
+    diagnosticConsumers > 0 && measurableConsumers <= 0
       ? { status: "unavailable" }
       : {
           status: "available",

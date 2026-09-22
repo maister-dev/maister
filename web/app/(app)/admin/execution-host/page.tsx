@@ -6,10 +6,7 @@ import { forbidden } from "next/navigation";
 
 import { ExecutionHostStatus } from "@/components/admin/execution-host-status";
 import { isMaisterError } from "@/lib/errors";
-import {
-  parsePoisonCursorSearchParams,
-  requireAdminExecutionHostStatus,
-} from "@/lib/execution-host/admin-status";
+import { requireAdminExecutionHostStatus } from "@/lib/execution-host/admin-status";
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
@@ -25,12 +22,11 @@ export default async function AdminExecutionHostPage({
   searchParams: SearchParams;
 }): Promise<ReactElement> {
   const t = await getTranslations("adminExecutionHost");
-  const cursor = parsePoisonCursorSearchParams(await searchParams);
   let status;
 
   try {
     status = await requireAdminExecutionHostStatus({
-      ...(cursor ? { poisonAfter: cursor } : {}),
+      searchParams: await searchParams,
     });
   } catch (error) {
     if (isMaisterError(error) && error.code === "UNAUTHORIZED") forbidden();
@@ -53,7 +49,10 @@ export default async function AdminExecutionHostPage({
         </div>
       </header>
 
-      <ExecutionHostStatus status={status} />
+      <ExecutionHostStatus
+        poisonCursor={status.poisonCursor ?? undefined}
+        status={status}
+      />
     </div>
   );
 }

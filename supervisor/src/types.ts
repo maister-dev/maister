@@ -691,6 +691,7 @@ export const REASON_TOKENS = [
   "legacy_field",
   "missing_envelope",
   "health_query_invalid",
+  "stream_health_unavailable",
   "invalid_event_sequence",
   "replay_floor_lost",
   "stream_identity_conflict",

@@ -20,7 +20,7 @@ launch — so I can navigate and start work without leaving the current screen.
 
 | Role | Sees | Notes |
 | --- | --- | --- |
-| Global viewer / member | Home, Projects, Work, Activity, Inbox, Flow Studio, Observatory nav; active workspaces; runners readiness; launch | `Agents` / `MCPs` / `Users` / `Scheduler` / `Execution host` / `Settings` are hidden (admin-only) |
+| Global viewer / member | Home, Projects, Work, Activity, Inbox, Flow Studio, Observatory nav; active workspaces; runners readiness; launch | `Agents` / `MCPs` / `Users` / `Execution host` / `Scheduler` / `Settings` are hidden (admin-only); the platform status pill/dot IS shown, without its link |
 | Global admin | All of the above plus `Agents`, `MCPs`, `Users`, `Scheduler`, `Execution host`, `Settings` | Hidden nav is convenience only; admin routes recheck authorization, and execution-host diagnostics reject before any detailed read |
 
 The hidden admin nav is never the authorization boundary — the route enforces it.
@@ -51,7 +51,7 @@ Expanded mode, top to bottom:
 
 1. **Section nav** — Home, Projects, Work, Activity (badge), Inbox (badge),
    Flow Studio, Observatory, then the admin block
-   (Agents, MCPs, Users, Scheduler, Execution host, Settings). **Two badges, two tones**
+   (Agents, MCPs, Users, Execution host, Scheduler, Settings). **Two badges, two tones**
    (ADR-169 D7): the Inbox badge shows `decisions` in the **attention** tone
    (amber, `data-testid="inbox-nav-badge"`) and means "N things are blocked on
    you"; the Activity badge shows `updates` in a **neutral** tone
@@ -95,10 +95,14 @@ Expanded mode, top to bottom:
    links to `/settings` (the platform runner catalog) and the popover shows a
    "Configure in Settings" cue; for non-admins it is information-only (the
    `title` is the keyboard/SR fallback — non-admin chips are not focusable).
-   The admin-only platform status pill below this region links to
-   `/admin/execution-host`; it reuses the layout's cached health sample.
-4. **Platform status** — admin-only ready/behind/unavailable pill linking to
-   execution-host diagnostics. Members do not receive the link or a DB read.
+   The platform status pill below this region links to
+   `/admin/execution-host` for an admin; it reuses the layout's cached health
+   sample.
+4. **Platform status** — a ready/behind/unavailable pill shown to EVERY role.
+   Only an admin gets the link to execution-host diagnostics; for other roles
+   it is the same coarse summary without a link. Nobody gets an extra DB read:
+   the pill renders from the layout's cached `/health` sample. The collapsed
+   rail shows the same summary as a dot under the same rule.
 5. **Launch** — primary launch button + hint, with a Cmd/Ctrl+K shortcut
    ([`launch-dialog.md`](launch-dialog.md)).
 
@@ -120,15 +124,16 @@ Collapsed mode order:
 
 1. **Section icon stack** — Home, Projects, Work, Activity (badge), Inbox
    (badge), Flow Studio, Observatory, then the admin
-   icons when allowed (Agents, MCPs, Users, Scheduler, Execution host, Settings). These packaged
+   icons when allowed (Agents, MCPs, Users, Execution host, Scheduler, Settings). These packaged
    icons are the same destinations as expanded mode, not a separate compact menu.
 2. **Active workspaces flyout** — one icon opens the same per-project live-run
    groups documented in [`active-workspaces.md`](active-workspaces.md). The rail
    itself shows only the affordance and count, not duplicate narrow text rows.
 3. **Runners readiness flyout** — one icon opens the same adapter readiness rows
    as expanded mode.
-4. **Platform status dot** — admin-only, with the same accessible status label
-   and `/admin/execution-host` link as the expanded pill.
+4. **Platform status dot** — shown to every role with the same accessible
+   status label as the expanded pill; the `/admin/execution-host` link is
+   admin-only, exactly as it is there.
 5. **Compact launch** — the `+` control opens the existing
    [`launch-dialog.md`](launch-dialog.md).
 

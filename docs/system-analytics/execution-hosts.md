@@ -160,12 +160,24 @@ logical ACK boundary, not from raw `acknowledged_at`: lazy ACK ranges update the
 stream boundary without rewriting every event. A backwards host wall clock is
 reported as age zero with a diagnostic warning.
 
-The supervisor producer rejects unknown output fields. The web consumer keeps
-known-field validation but passes unknown response/stream fields for forward
-compatibility. This tolerance is confined to health; command envelopes remain
-strict. The health read is one bounded SQLite statement using the stream
-counter/budget rows and the existing `(stream_id, sequence_sort_key)` replay
-index. It decodes no event body and reads no runtime file.
+The supervisor's response shape is pinned by a strict schema
+(`SupervisorHealthResponseSchema`) that every body this route emits is asserted
+against in the host's own integration suite, so an unknown output field is a
+test failure rather than a silent addition. The web consumer keeps known-field
+validation but passes unknown response/stream fields for forward compatibility.
+This tolerance is confined to health; command envelopes remain strict. The
+health read is three bounded SQLite statements — resolve the current stream,
+read its row, then aggregate the counter/budget rows over the existing
+`(stream_id, sequence_sort_key)` replay index. It decodes no event body and
+reads no runtime file.
+
+An opt-in snapshot failure answers a typed `503 EXECUTOR_UNAVAILABLE`; it never
+omits the block to impersonate an older host. `details.reason` separates the two
+causes: `runtime_storage_unavailable` means storage needs repair, while
+`stream_health_unavailable` means only the telemetry snapshot is inconsistent.
+Readiness never depends on either — the registrar and every command path probe
+`/health` WITHOUT `includeStream`, so a telemetry fault cannot refuse a launch;
+only the status pill and the lag collector request the block.
 
 ```mermaid
 stateDiagram-v2

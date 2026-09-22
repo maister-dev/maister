@@ -2,7 +2,7 @@
 
 Branch: `codex/scheduler-clock-ingest-lag`
 Created: 2026-09-22
-Status: In progress; scheduler-clock implementation is complete through Phase 1.
+Status: Implemented; all tasks complete. Review remediation applied 2026-09-22 (see `.ai-factory/patches/`).
 Method: specification-driven development (SDD), implemented in test-driven slices (RED → GREEN → REFACTOR).
 Verified source: `7201d0607acc032c9c883a02df716cc9da4f5abf` (the supplied diagnosis baseline and this checkout's initial HEAD).
 
@@ -18,7 +18,7 @@ Verified source: `7201d0607acc032c9c883a02df716cc9da4f5abf` (the supplied diagno
 ## Roadmap Linkage
 
 Milestone: completed M24 maintenance amendment (P0-6/P0-7, 2026-09-22).
-Rationale: this is the explicitly supplied execution-seam diagnosis P0-6/P0-7, related to Stage A/B stabilization and ADR-167 D8. It does not complete S5.2, P0-3, ADR-177 or a broader roadmap milestone. `.ai-factory/ROADMAP.md` and the stabilization plan remain outside this plan's edit ownership.
+Rationale: this is the explicitly supplied execution-seam diagnosis P0-6/P0-7, related to Stage A/B stabilization and ADR-167 D8. It does not complete S5.2, P0-3, ADR-177 or a broader roadmap milestone. The stabilization plan remains outside this plan's edit ownership. `.ai-factory/ROADMAP.md` received one amendment recording this maintenance work, agreed as an exception to the line above.
 
 ## Outcome and boundaries
 

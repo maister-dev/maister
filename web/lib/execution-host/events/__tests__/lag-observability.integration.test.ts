@@ -199,9 +199,20 @@ describe("execution lag observability across the real host and manager stores", 
 
     let previous = null;
     let lagging = null;
-    const observationStart = Date.now();
+    let opened = null;
+    // The age predicate is exercised against the real host clock: the gate is
+    // set ABOVE the age the host reports right now, so early sweeps carry an
+    // over-THRESHOLD backlog that is still too YOUNG to count. Pinning
+    // lagAgeMs to 0 asserts nothing about the predicate at all.
+    const SWEEP_DELAY_MS = 700;
+    const observedAgeMs = heldHealth.health.stream?.oldestUnacknowledgedAgeMs;
 
-    for (let sweep = 0; sweep < 4; sweep += 1) {
+    expect(observedAgeMs).not.toBeNull();
+    const lagAgeMs = (observedAgeMs ?? 0) + SWEEP_DELAY_MS * 3;
+    const sweeps: Array<{ ageMs: number; count: number; streak: number }> = [];
+
+    for (let sweep = 0; sweep < 8; sweep += 1) {
+      await delay(SWEEP_DELAY_MS);
       const sampledHealth = await transport.platformStatus();
 
       await consumeRuntimeEventStreamOnce({
@@ -215,7 +226,7 @@ describe("execution lag observability across the real host and manager stores", 
       const model = await collectExecutionEventLag({
         db: database.db,
         health: sampledHealth,
-        now: new Date(observationStart + sweep * 1_000),
+        now: new Date(),
       });
       const observation = createExecutionObservability({
         attemptId: `lag-attempt-${sweep}`,
@@ -224,21 +235,57 @@ describe("execution lag observability across the real host and manager stores", 
         previous,
         workers: {},
         impasse: 0,
-        lagAgeMs: 0,
+        lagAgeMs,
       });
 
       previous = observation.stream;
+      if (observation.stream?.transition === "lagging") opened = observation;
       lagging = observation;
+      const backlog = observation.stream?.hostBacklog;
+
+      if (sweep > 0 && backlog?.status === "available") {
+        sweeps.push({
+          ageMs: backlog.oldestUnacknowledgedAgeMs ?? 0,
+          count: backlog.unacknowledgedCount,
+          streak: observation.stream?.streak ?? 0,
+        });
+      }
       expect(model.streams[0].streamState).toBe("active");
       expect(observation.stream?.hostBacklog).toMatchObject({
         status: "available",
       });
     }
 
-    expect(lagging?.stream).toMatchObject({
+    // The gate is real: an over-THRESHOLD count alone never counts toward the
+    // streak until that backlog has also aged past the configured threshold.
+    // (Sweep 0 is excluded — a first sample has no streak by construction, so
+    // including it would make this pass for any gate, including zero.)
+    const tooYoung = sweeps.filter(
+      (entry) => entry.count > 100 && entry.ageMs < lagAgeMs,
+    );
+    const oldEnough = sweeps.filter(
+      (entry) => entry.count > 100 && entry.ageMs >= lagAgeMs,
+    );
+
+    expect(tooYoung.length).toBeGreaterThan(0);
+    expect(oldEnough.length).toBeGreaterThan(0);
+    expect(tooYoung.map((entry) => entry.streak)).toEqual(
+      tooYoung.map(() => 0),
+    );
+    expect(Math.max(...oldEnough.map((entry) => entry.streak))).toBe(3);
+
+    // The incident opens exactly once, at streak three...
+    expect(opened?.stream).toMatchObject({
       verdict: "lagging",
       incidentOpen: true,
       transition: "lagging",
+      streak: 3,
+    });
+    // ...and every later sweep stays open WITHOUT re-emitting the transition.
+    expect(lagging?.stream).toMatchObject({
+      verdict: "lagging",
+      incidentOpen: true,
+      transition: null,
       streak: 3,
     });
     expect(await commandStreamLost({ db: database.db, commandId })).toBe(false);
@@ -279,7 +326,7 @@ describe("execution lag observability across the real host and manager stores", 
     const caughtUp = await collectExecutionEventLag({
       db: database.db,
       health: caughtUpHealth,
-      now: new Date(observationStart + 5_000),
+      now: new Date(),
     });
     const recovered = createExecutionObservability({
       attemptId: "lag-attempt-recovered",

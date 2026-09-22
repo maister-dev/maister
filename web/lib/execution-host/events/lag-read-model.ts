@@ -9,7 +9,6 @@ import type {
   ExecutionConsumerLag,
   ExecutionEventLagReadModel,
   ExecutionEventStreamLag,
-  PoisonedExecutionConsumer,
   StreamLagArithmetic,
 } from "@/types/execution-host-observability";
 
@@ -20,6 +19,7 @@ import pino from "pino";
 
 import { calculateStreamLag } from "./lag";
 
+import { OPEN_COMMAND_STATES } from "@/lib/execution-host/types";
 import { TERMINAL_RUN_STATUSES } from "@/lib/runs/run-status-sets";
 
 const STREAM_LIMIT = 20;
@@ -113,6 +113,24 @@ function terminalRunStatusSql(): SQL {
   );
 }
 
+function latestNodeErrorLateral(): SQL {
+  return sql`
+      LEFT JOIN LATERAL (
+        SELECT n.error_code
+        FROM node_attempts n
+        WHERE n.run_id = r.run_id
+        ORDER BY n.started_at DESC, n.id DESC
+        LIMIT 1
+      ) latest_attempt ON true`;
+}
+
+function openCommandStateSql(): SQL {
+  return sql.join(
+    OPEN_COMMAND_STATES.map((state) => sql`${state}`),
+    sql`, `,
+  );
+}
+
 export function executionConsumerLagQuery(): SQL {
   return sql`
     WITH eligible_runs AS MATERIALIZED (
@@ -169,35 +187,33 @@ export function executionConsumerLagQuery(): SQL {
         c.next_retry_at
       FROM run_horizons h
       INNER JOIN execution_event_consumers c ON c.run_id = h.run_id
-    ), top_rows AS MATERIALIZED (
-      SELECT
-        c.*,
-        latest_attempt.error_code AS latest_node_error_code
+    ), top_ranked AS MATERIALIZED (
+      SELECT c.*
       FROM consumer_lag c
-      LEFT JOIN LATERAL (
-        SELECT n.error_code
-        FROM node_attempts n
-        WHERE n.run_id = c.run_id
-        ORDER BY n.started_at DESC, n.id DESC
-        LIMIT 1
-      ) latest_attempt ON true
       ORDER BY c.backlog DESC NULLS LAST, c.run_id, c.consumer_name
       LIMIT ${CONSUMER_LIMIT + 1}
-    ), diagnostic_rows AS MATERIALIZED (
-      SELECT
-        c.*,
-        latest_attempt.error_code AS latest_node_error_code
+    ), diagnostic_ranked AS MATERIALIZED (
+      SELECT c.*
       FROM consumer_lag c
-      LEFT JOIN LATERAL (
-        SELECT n.error_code
-        FROM node_attempts n
-        WHERE n.run_id = c.run_id
-        ORDER BY n.started_at DESC, n.id DESC
-        LIMIT 1
-      ) latest_attempt ON true
       WHERE c.diagnostic IS NOT NULL
       ORDER BY c.run_id, c.consumer_name
       LIMIT ${CONSUMER_LIMIT}
+    -- The node_attempts probe is applied AFTER the ranking cut, so it runs at
+    -- most CONSUMER_LIMIT+1 times instead of once per eligible consumer;
+    -- node_attempts is indexed on (run_id) alone, so the unranked shape
+    -- re-sorted every run's attempts to discard all but 21 rows.
+    ), top_rows AS MATERIALIZED (
+      SELECT
+        r.*,
+        latest_attempt.error_code AS latest_node_error_code
+      FROM top_ranked r
+      ${latestNodeErrorLateral()}
+    ), diagnostic_rows AS MATERIALIZED (
+      SELECT
+        r.*,
+        latest_attempt.error_code AS latest_node_error_code
+      FROM diagnostic_ranked r
+      ${latestNodeErrorLateral()}
     ), host_aggregates AS (
       SELECT
         execution_host_id,
@@ -261,10 +277,11 @@ export function executionConsumerLagQuery(): SQL {
   `;
 }
 
-function executionStreamsQuery(): SQL {
+// One projection for both stream reads — the listing and the preferred-stream
+// top-up MUST produce the same columns, since `mapStream` reads them by name.
+function streamProjection(totalCount: SQL): SQL {
   return sql`
-    SELECT
-      COUNT(*) OVER ()::int AS total_count,
+      ${totalCount} AS total_count,
       s.id AS stream_row_id,
       s.execution_host_id,
       h.host_key,
@@ -284,9 +301,27 @@ function executionStreamsQuery(): SQL {
       s.claim_expires_at,
       s.last_boot_id
     FROM execution_event_streams s
-    INNER JOIN execution_hosts h ON h.id = s.execution_host_id
+    INNER JOIN execution_hosts h ON h.id = s.execution_host_id`;
+}
+
+function executionStreamsQuery(): SQL {
+  return sql`
+    SELECT
+    ${streamProjection(sql`COUNT(*) OVER ()::int`)}
     ORDER BY (s.state = 'active') DESC, s.created_at DESC, s.id DESC
     LIMIT ${STREAM_LIMIT}
+  `;
+}
+
+function preferredStreamQuery(
+  preferred: Readonly<{ executionHostId: string; streamId: string }>,
+): SQL {
+  return sql`
+    SELECT
+    ${streamProjection(sql`1::int`)}
+    WHERE s.execution_host_id = ${preferred.executionHostId}
+      AND s.stream_id = ${preferred.streamId}
+    LIMIT 1
   `;
 }
 
@@ -350,7 +385,7 @@ function commandsQuery(): SQL {
         WHERE state = 'accepted' AND accepted_at IS NOT NULL
       ) AS oldest_accepted_at
     FROM execution_commands
-    WHERE state IN ('queued', 'delivering', 'accepted')
+    WHERE state IN (${openCommandStateSql()})
   `;
 }
 
@@ -366,15 +401,25 @@ function ageMs(now: Date, value: Date | string | null): number | null {
   return Math.max(0, now.getTime() - new Date(value).getTime());
 }
 
+// Without host telemetry there is no head to compare against, so the
+// host-to-manager distance is unknowable. Passing the manager's own received
+// sequence as the head yields a 0 that is then discarded — compute the two
+// manager-side distances and leave the third explicitly null.
 function managerOnlyLag(row: StreamQueryRow): StreamLagArithmetic {
   const arithmetic = calculateStreamLag({
-    headSequence: row.last_received_sequence,
+    headSequence: null,
     lastReceivedSequence: row.last_received_sequence,
     lastContiguousSequence: row.last_contiguous_sequence,
     lastAckConfirmedSequence: row.last_ack_confirmed_sequence,
   });
 
-  return { ...arithmetic, hostToManager: null };
+  return {
+    ...arithmetic,
+    hostToManager: null,
+    diagnostics: arithmetic.diagnostics.filter(
+      (diagnostic) => diagnostic !== "host_head_behind_manager",
+    ),
+  };
 }
 
 function streamTelemetry(
@@ -487,10 +532,6 @@ function mapConsumer(row: ConsumerJsonRow, now: Date): ExecutionConsumerLag {
   };
 }
 
-function mapPoison(row: PoisonJsonRow): PoisonedExecutionConsumer {
-  return row;
-}
-
 export async function collectExecutionEventLag(input: {
   db: Db;
   health: PlatformStatus;
@@ -519,33 +560,9 @@ export async function collectExecutionEventLag(input: {
             row.execution_host_id === input.preferredStream?.executionHostId &&
             row.stream_id === input.preferredStream.streamId,
         )
-          ? await tx.execute<StreamQueryRow>(sql`
-              SELECT
-                1::int AS total_count,
-                s.id AS stream_row_id,
-                s.execution_host_id,
-                h.host_key,
-                h.display_name,
-                h.readiness,
-                h.readiness_reason,
-                h.last_seen_at AS host_last_seen_at,
-                h.last_boot_id AS host_boot_id,
-                s.stream_id,
-                s.state AS stream_state,
-                s.last_received_sequence::text,
-                s.last_contiguous_sequence::text,
-                s.last_ack_confirmed_sequence::text,
-                s.last_seen_at AS stream_last_seen_at,
-                s.last_error,
-                s.claim_owner,
-                s.claim_expires_at,
-                s.last_boot_id
-              FROM execution_event_streams s
-              INNER JOIN execution_hosts h ON h.id = s.execution_host_id
-              WHERE s.execution_host_id = ${input.preferredStream.executionHostId}
-                AND s.stream_id = ${input.preferredStream.streamId}
-              LIMIT 1
-            `)
+          ? await tx.execute<StreamQueryRow>(
+              preferredStreamQuery(input.preferredStream),
+            )
           : null;
       const consumerResult = await tx.execute<ConsumerQueryRow>(
         executionConsumerLagQuery(),
@@ -600,7 +617,7 @@ export async function collectExecutionEventLag(input: {
                   consumerName: poisonLast.consumerName,
                 }
               : null,
-          rows: poisonRows.map(mapPoison),
+          rows: poisonRows,
         },
         commands: {
           total: commands.total,

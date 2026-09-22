@@ -4384,6 +4384,12 @@ export const executionEventConsumers = pgTable(
     idxService: index("execution_event_consumers_service_idx")
       .on(t.lastServedAt.asc().nullsFirst(), t.runId, t.consumerName)
       .where(sql`${t.state} <> 'poisoned'`),
+    // The service index is partial on `state <> 'poisoned'`, so the operator
+    // poison count and its keyset page had no index at all. Complement, in the
+    // page's own keyset order.
+    idxPoisoned: index("execution_event_consumers_poisoned_idx")
+      .on(t.runId, t.consumerName)
+      .where(sql`${t.state} = 'poisoned'`),
   }),
 );
 

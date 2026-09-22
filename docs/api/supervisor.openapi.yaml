@@ -346,16 +346,110 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorHealthResponse" }
+              examples:
+                legacy:
+                  summary: Omitted or includeStream=false — the pre-P0-7 shape.
+                  value:
+                    status: ready
+                    host:
+                      hostKey: 1d243f70-235f-47bd-804b-33aa3c8c78db
+                      bootId: 2f6a1c58-0a1e-4a9b-9f0a-2b7c6d4e5f10
+                      protocolVersion: 1
+                    version: 0.1.0
+                    uptimeMs: 91234
+                    checkedAt: "2026-09-22T09:00:00.000Z"
+                    sessions: { live: 1, exited: 2, crashed: 0 }
+                emptyStream:
+                  summary: includeStream=true on a stream that has never been written.
+                  value:
+                    status: ready
+                    host:
+                      hostKey: 1d243f70-235f-47bd-804b-33aa3c8c78db
+                      bootId: 2f6a1c58-0a1e-4a9b-9f0a-2b7c6d4e5f10
+                      protocolVersion: 1
+                    version: 0.1.0
+                    uptimeMs: 1200
+                    checkedAt: "2026-09-22T09:00:00.000Z"
+                    sessions: { live: 0, exited: 0, crashed: 0 }
+                    stream:
+                      streamId: 8f1c2d70-1f4a-4b60-9a2e-6c0d3b7e5a11
+                      headSequence: null
+                      unacknowledgedCount: 0
+                      retainedCount: 0
+                      pressured: false
+                      oldestUnacknowledgedAgeMs: null
+                pending:
+                  summary: A backlog awaiting acknowledgement.
+                  value:
+                    status: ready
+                    host:
+                      hostKey: 1d243f70-235f-47bd-804b-33aa3c8c78db
+                      bootId: 2f6a1c58-0a1e-4a9b-9f0a-2b7c6d4e5f10
+                      protocolVersion: 1
+                    version: 0.1.0
+                    uptimeMs: 3600000
+                    checkedAt: "2026-09-22T09:00:00.000Z"
+                    sessions: { live: 2, exited: 0, crashed: 0 }
+                    stream:
+                      streamId: 8f1c2d70-1f4a-4b60-9a2e-6c0d3b7e5a11
+                      headSequence: "1204"
+                      unacknowledgedCount: 101
+                      retainedCount: 240
+                      pressured: false
+                      oldestUnacknowledgedAgeMs: 180000
+                fullyAcknowledged:
+                  summary: Steady state — age is null exactly at zero backlog.
+                  value:
+                    status: ready
+                    host:
+                      hostKey: 1d243f70-235f-47bd-804b-33aa3c8c78db
+                      bootId: 2f6a1c58-0a1e-4a9b-9f0a-2b7c6d4e5f10
+                      protocolVersion: 1
+                    version: 0.1.0
+                    uptimeMs: 3600000
+                    checkedAt: "2026-09-22T09:00:00.000Z"
+                    sessions: { live: 2, exited: 0, crashed: 0 }
+                    stream:
+                      streamId: 8f1c2d70-1f4a-4b60-9a2e-6c0d3b7e5a11
+                      headSequence: "1204"
+                      unacknowledgedCount: 0
+                      retainedCount: 12
+                      pressured: false
+                      oldestUnacknowledgedAgeMs: null
         "503":
-          description: Runtime storage failed; repair storage before restarting admissions.
+          description: |
+            Runtime storage failed, or the opt-in stream snapshot could not be
+            produced. `details.reason` separates them:
+            `runtime_storage_unavailable` means storage needs repair;
+            `stream_health_unavailable` means only the telemetry snapshot is
+            inconsistent while the daemon itself is healthy. The block is never
+            omitted to impersonate an older host. Manager readiness probes do
+            not pass `includeStream`, so neither reason refuses a launch.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+              examples:
+                storageRepair:
+                  value:
+                    code: EXECUTOR_UNAVAILABLE
+                    message: runtime storage requires repair
+                    details: { reason: runtime_storage_unavailable }
+                telemetryOnly:
+                  value:
+                    code: EXECUTOR_UNAVAILABLE
+                    message: runtime event health snapshot is unavailable
+                    details: { reason: stream_health_unavailable }
         "409":
           description: Invalid or repeated includeStream query value.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+              examples:
+                invalidQuery:
+                  value:
+                    code: PRECONDITION
+                    message: includeStream must occur once with the literal value true or false
+                    details: { reason: health_query_invalid }
   /diagnostics:
     get:
       tags: [health]

@@ -1,10 +1,12 @@
 import { rm } from "node:fs/promises";
 import { resolve } from "node:path";
 
+import { sql } from "drizzle-orm";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createMigrationRootThrough } from "@/lib/db/m43-cutover-migration-root";
+import { previousSchedulerAttemptQuery } from "@/lib/scheduler/jobs";
 import {
   startBarePostgresTestDb,
   type StartedPostgresTestDb,
@@ -125,14 +127,13 @@ describe("migration 0173_scheduler_observation_lookup", () => {
   it("uses the composite index and re-runs the normal migrator as a no-op", async () => {
     await database.pool.query("ANALYZE scheduler_job_runs");
 
-    const explained = await database.pool.query<{ "QUERY PLAN": string }>(
-      `EXPLAIN (ANALYZE, BUFFERS)
-       SELECT id, summary
-       FROM scheduler_job_runs
-       WHERE job_id = 'system-sweep' AND id <> $1
-       ORDER BY claimed_at DESC, id DESC
-       LIMIT 1`,
-      [CURRENT_ATTEMPT_ID],
+    // EXPLAIN the query PRODUCTION runs — the CTE + row-value predicate —
+    // not a hand-written lookalike whose plan says nothing about it.
+    const explained = await database.db.execute<{ "QUERY PLAN": string }>(
+      sql`EXPLAIN (ANALYZE, BUFFERS) ${previousSchedulerAttemptQuery({
+        jobId: "system-sweep",
+        currentAttemptId: CURRENT_ATTEMPT_ID,
+      })}`,
     );
     const plan = explained.rows.map((row) => row["QUERY PLAN"]).join("\n");
 

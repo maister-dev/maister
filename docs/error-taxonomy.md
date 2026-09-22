@@ -551,6 +551,7 @@ Reason tokens (`SupervisorErrorBody.details.reason`, contract in
 | `legacy_field`        | a legacy path field after the strict flip (`details.field` names it)                                                                                                                                                                      | `PRECONDITION` passed through                     |
 | `missing_envelope`    | no envelope after the strict flip                                                                                                                                                                              | `PRECONDITION` passed through                     |
 | `health_query_invalid` | `/health` receives an empty, repeated, or non-literal `includeStream` value                                                                                                                                    | fix the probe query; no retry                     |
+| `stream_health_unavailable` | the opt-in `includeStream=true` snapshot is internally inconsistent while runtime storage itself is available — a telemetry fault, NOT a storage-repair condition. The block is never omitted to impersonate an older host. Readiness probes do not pass `includeStream`, so this never refuses a launch. | diagnostics degrade to `unknown` lag; no retry needed for admission |
 
 ### Web-minted `details.reason` tokens (Implemented — ADR-166)
 
@@ -594,7 +595,7 @@ or epoch), `ACP_PROTOCOL` (integrity disagreement), or
 `event_sequence_invalid`, `event_identity_conflict`, `event_stream_mismatch`,
 `event_schema_invalid`, `stale_assignment_epoch`, `event_redaction_failed`,
 `event_payload_oversize`, `event_payload_unstorable`, `event_outbox_backpressure`,
-`health_query_invalid`,
+`health_query_invalid`, `stream_health_unavailable`,
 `data_plane_unsupported`, `command_invariant_conflict`,
 `runtime_object_not_found`, `runtime_object_missing`,
 `runtime_object_range_invalid`, `runtime_object_integrity_mismatch`, `runtime_object_retained` (manager-internal),

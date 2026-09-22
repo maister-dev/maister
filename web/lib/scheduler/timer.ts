@@ -3,9 +3,9 @@ import "server-only";
 import pino from "pino";
 
 import {
-  getSchedulerClockHealth,
   noteSchedulerTimerOverlap,
   settleSchedulerTimerOverlap,
+  type SchedulerCompletedTick,
 } from "@/lib/scheduler/clock-health";
 import { runSchedulerTick } from "@/lib/scheduler/tick-service";
 import {
@@ -95,7 +95,14 @@ export function startSchedulerTimer(): void {
 
       return;
     }
-    state.active = runSchedulerTick({ source: "timer" })
+    let completed: SchedulerCompletedTick | null = null;
+
+    state.active = runSchedulerTick({
+      onCompleted: (tick) => {
+        completed = tick;
+      },
+      source: "timer",
+    })
       .then(() => {})
       .catch((err: unknown) => {
         log.error(
@@ -105,13 +112,17 @@ export function startSchedulerTimer(): void {
       })
       .finally(() => {
         const settledStreak = settleSchedulerTimerOverlap();
-        const health = getSchedulerClockHealth();
+        // Reports THIS invocation's completion. Reading the process-wide
+        // `lastCompleted` here would attribute a concurrent cron tick's
+        // duration and outcome to the streak the timer just settled.
+        const tick: SchedulerCompletedTick | null = completed;
 
         if (settledStreak > 0)
           log.info(
             {
-              durationMs: health.lastCompleted?.durationMs ?? null,
-              outcome: health.lastCompleted?.outcome ?? null,
+              durationMs: tick?.durationMs ?? null,
+              invocationId: tick?.invocationId ?? null,
+              outcome: tick?.outcome ?? null,
               streakLength: settledStreak,
             },
             "scheduler overlap streak settled",

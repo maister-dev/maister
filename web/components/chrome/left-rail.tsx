@@ -404,6 +404,10 @@ export async function LeftRail({
       </div>
 
       <div className="mt-auto flex shrink-0 flex-col items-center gap-2 pb-4">
+        {/* D6: every role sees the coarse platform summary; only an admin
+            gets the link into the diagnostics page behind it. Matches the
+            expanded rail's pill, so collapsing the rail never changes what a
+            member is allowed to know. */}
         {userRole === "admin" ? (
           <Link
             aria-label={platformStatusLabel(platformStatus, platformLabels)}
@@ -413,7 +417,16 @@ export async function LeftRail({
           >
             <PlatformStatusDot status={platformStatus} />
           </Link>
-        ) : null}
+        ) : (
+          <span
+            aria-label={platformStatusLabel(platformStatus, platformLabels)}
+            className="inline-flex h-9 w-9 items-center justify-center rounded-[10px] border border-line bg-paper"
+            data-testid="rail-platform-status-collapsed"
+            role="status"
+          >
+            <PlatformStatusDot status={platformStatus} />
+          </span>
+        )}
         <ScratchLaunchPopover
           hint={tPortfolio("launchHint")}
           label="+"

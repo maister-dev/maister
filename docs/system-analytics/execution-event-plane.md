@@ -173,6 +173,28 @@ Fresh means the sample gap is positive and no greater than twice the configured
 stream or complete identity replacement closes an open incident with
 `runtime-event-stream-lag-reset` INFO; it does not claim recovery.
 
+The reducer is pure — no database read, no logging — and is exhaustively
+defined by the table below, evaluated top to bottom.
+
+| Input | Verdict and incident effect |
+| --- | --- |
+| Stream not `active` (closed, lost, observed) | `inactive`; streak, age and incident discarded. `reset` transition only if an incident was open. |
+| First sample for this reader, complete and identified | `observing`, streak 0; establishes the baseline and the above-threshold start. |
+| First sample that is incomplete or carries no identity | `unknown`, streak 0. Missing telemetry is not a baseline: `observing` would claim a sample that was never taken. |
+| Later sample whose quality is not `complete` | `unknown`, streak 0; the previous identity and any open incident are preserved, and no recovery is declared. |
+| Identity (host, stream or boot) differs from the previous sample | `reset`; streak, age and incident discarded. `reset` transition only if an incident was open. |
+| Sample gap non-positive or beyond the freshness window | `unknown`, streak 0; an open incident is preserved. |
+| Complete sample with BOTH lanes at or below 100 | `clear`; streak and age reset. `recovered` transition only if an incident was open. Zero is the catch-up target; 100 is the warning-clear boundary. |
+| No manager watermark progress while backlog remains | `not_advancing`, streak 0; an open incident is retained and never recovered. |
+| Backlog above threshold but not yet aged past the window | `observing`, streak 0; the above-threshold start is preserved so the age keeps accruing. |
+| Progressing, eligible sample | Streak increments, saturating at 3. At 3 the verdict is `lagging` and the incident opens; the `lagging` transition is emitted only on the sweep that opens it. |
+
+A host whose consumers are not ALL inconsistent keeps a measurable projection
+lane: `maximumBacklog` is a maximum over the rows with a computable backlog, so
+a `cursor_ahead_of_horizon` consumer is already excluded from it and is
+reported separately in `errors[]`. Blanking the whole lane on one such row
+would leave an open incident with no evidence that could ever clear it.
+
 The observer persists bounded versioned evidence inside the existing terminal
 `system_sweep` attempt summary. It does not write stream error/state/readiness
 or run state. Observer failures are diagnostic errors only: they do not enter
@@ -186,8 +208,19 @@ production consumer in bounded passes, holds and releases a real projection
 cursor, and then invokes the unchanged two-pass stall detector. The collector
 test includes 50,000 runs (1,000 non-terminal), two consumers per populated
 active run, a separate 50,000-event history, and 20 warm samples. It requires
-the indexed horizon plan, collector p95 at or below 250 ms, complete
-observation p95 below one second, and a two-second SQL statement timeout.
+the indexed horizon plan and asserts the shape of the work rather than only its
+clock time: the per-consumer node-error probe runs at most once per row of the
+ranked page (never once per eligible consumer), and the horizon lookup is
+index-served. Wall-clock bounds accompany those as anti-catastrophe limits
+only — this lane is shared, so a timing-only budget would report host load as a
+regression.
+
+`SET LOCAL statement_timeout = '2000ms'` bounds each STATEMENT in the
+observation transaction, not the transaction as a whole: the collector issues
+five reads, so a fully blocked collection can take up to five such budgets
+before it gives up. That is deliberate — the bound exists to stop one pathological
+statement from pinning a read-only snapshot, and the caller degrades the panel
+rather than failing the page.
 
 ## Process flows
 

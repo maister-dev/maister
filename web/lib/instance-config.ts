@@ -6,6 +6,10 @@ import { promisify } from "node:util";
 
 import pino from "pino";
 
+import {
+  DEFAULT_EVENT_STREAM_LAG_AGE_MS,
+  DEFAULT_EVENT_STREAM_LAG_SECONDS,
+} from "@/lib/execution-host/events/lag";
 import { MaisterError } from "@/lib/errors";
 
 export { runtimeRoot } from "@/lib/runtime-root";
@@ -122,9 +126,8 @@ const DEFAULT_ORCHESTRATOR_MAX_FANOUT = 16;
 const DEFAULT_ASSISTANT_ACTIVITY_WAITING_TOOL_AFTER_SECONDS = 90;
 const DEFAULT_ASSISTANT_ACTIVITY_SILENT_AFTER_SECONDS = 180;
 const DEFAULT_ASSISTANT_ACTIVITY_STALLED_AFTER_SECONDS = 900;
-const DEFAULT_EVENT_STREAM_LAG_SECONDS = 120;
 const MAX_SAFE_MILLISECOND_SECONDS = Math.floor(Number.MAX_SAFE_INTEGER / 1000);
-let initializedEventStreamLagAgeMs = DEFAULT_EVENT_STREAM_LAG_SECONDS * 1_000;
+let initializedEventStreamLagAgeMs = DEFAULT_EVENT_STREAM_LAG_AGE_MS;
 
 // M18 Phase 2 (§3.2, Codex F1): a durable `claiming` promotion claim older than
 // this window is considered abandoned (crashed mid-promote) and is reclaimable

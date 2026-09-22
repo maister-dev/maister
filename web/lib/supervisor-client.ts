@@ -42,7 +42,10 @@ import {
 import { ADAPTER_IDS, type AdapterId } from "@/lib/acp-runners/adapter-support";
 import { contextMountsToWire } from "@/lib/context-mounts/types";
 import { MaisterError, type MaisterErrorCode } from "@/lib/errors";
-import { isHostBacklogLagEligible } from "@/lib/execution-host/events/lag";
+import {
+  DEFAULT_EVENT_STREAM_LAG_AGE_MS,
+  isHostBacklogLagEligible,
+} from "@/lib/execution-host/events/lag";
 
 const logger = pino({
   name: "supervisor-client",
@@ -731,10 +734,19 @@ function isAbortError(err: unknown): boolean {
   );
 }
 
+// P0-7: `includeStream` defaults OFF so a readiness probe can never be refused
+// by a telemetry fault — the host answers an opt-in snapshot failure with a
+// typed 503 (D5), and only the telemetry callers ask for it.
 export async function checkSupervisorHealth(
-  opts: { timeoutMs?: number; lagAgeMs?: number } = {},
+  opts: {
+    timeoutMs?: number;
+    lagAgeMs?: number;
+    includeStream?: boolean;
+  } = {},
 ): Promise<PlatformStatus> {
-  const url = `${baseUrl()}/health?includeStream=true`;
+  const url = `${baseUrl()}/health?includeStream=${
+    opts.includeStream === true ? "true" : "false"
+  }`;
   const controller = new AbortController();
   const timeout = setTimeout(
     () => controller.abort(),
@@ -789,12 +801,18 @@ export async function checkSupervisorHealth(
   }
 
   const stream = parsed.data.stream;
+  // `unknown` means the host told us nothing (a pre-P0-7 supervisor, or one
+  // whose telemetry snapshot failed). A present block with a null age is the
+  // healthy steady state — zero backlog — and reads `clear`, not `unknown`.
   const lag = {
     scope: "host_backlog" as const,
     status:
-      stream === undefined || stream.oldestUnacknowledgedAgeMs === null
+      stream === undefined
         ? ("unknown" as const)
-        : isHostBacklogLagEligible(stream, opts.lagAgeMs ?? 120_000)
+        : isHostBacklogLagEligible(
+              stream,
+              opts.lagAgeMs ?? DEFAULT_EVENT_STREAM_LAG_AGE_MS,
+            )
           ? ("behind" as const)
           : ("clear" as const),
     sampledAt: parsed.data.checkedAt,

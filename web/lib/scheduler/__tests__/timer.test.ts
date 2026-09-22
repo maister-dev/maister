@@ -86,6 +86,60 @@ describe("scheduler fallback timer", () => {
     });
   });
 
+  it("settles the streak with ITS OWN completion, then warns again on the next", async () => {
+    const finishers: Array<() => void> = [];
+
+    runSchedulerTickMock.mockImplementation(
+      (input: { onCompleted?: (tick: unknown) => void }) =>
+        new Promise<void>((resolve) => {
+          finishers.push(() => {
+            input.onCompleted?.({
+              invocationId: `invocation-${finishers.length}`,
+              source: "timer",
+              startedAt: "2026-09-22T10:00:00.000Z",
+              finishedAt: "2026-09-22T10:00:02.000Z",
+              durationMs: 2_000,
+              outcome: "partial",
+            });
+            resolve();
+          });
+        }),
+    );
+
+    startSchedulerTimer();
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.advanceTimersByTimeAsync(2_000);
+    finishers[0]!();
+    await vi.advanceTimersByTimeAsync(0);
+
+    const settled = logger.info.mock.calls.filter(
+      ([, message]) => message === "scheduler overlap streak settled",
+    );
+
+    expect(settled).toHaveLength(1);
+    // The INFO reports the invocation the timer itself ran — reading the
+    // process-wide `lastCompleted` would attribute a concurrent cron tick.
+    expect(settled[0]![0]).toMatchObject({
+      durationMs: 2_000,
+      invocationId: "invocation-1",
+      outcome: "partial",
+      streakLength: 2,
+    });
+
+    // A settled streak must ARM the next warning, not silence it.
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(
+      logger.warn.mock.calls.filter(
+        ([, message]) =>
+          message === "scheduler tick skipped: previous tick still running",
+      ),
+    ).toHaveLength(2);
+    finishers[1]!();
+    await vi.advanceTimersByTimeAsync(0);
+  });
+
   it("keeps overlapping invocation fields coherent", () => {
     const first = schedulerTickStarted(
       "cron",

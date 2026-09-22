@@ -60,6 +60,7 @@ export function PlatformStatusPill({
   const content = (
     <span
       className={clsx("inline-flex items-center gap-1.5", className)}
+      data-testid="rail-platform-status"
       title={status.kind === "unavailable" ? status.message : undefined}
     >
       <PlatformStatusDot status={status} />
@@ -70,7 +71,11 @@ export function PlatformStatusPill({
   );
 
   return href ? (
-    <Link aria-label={platformStatusLabel(status, labels)} href={href}>
+    <Link
+      aria-label={platformStatusLabel(status, labels)}
+      data-testid="rail-platform-status-link"
+      href={href}
+    >
       {content}
     </Link>
   ) : (
