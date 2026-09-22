@@ -1323,9 +1323,10 @@ The keep-alive window is the interval between the latest
 
 ### Idle sweeper + scheduler interaction
 
-`web/lib/runs/keepalive-sweeper.ts` exposes `runSweepTick()`, driven by the
-`system_sweep` job on the scheduler clock (`web/lib/scheduler/system-sweeps.ts`);
-`startKeepaliveSweeper`'s `globalThis`-singleton timer has no production caller.
+`system_sweep.default` invokes `runSweepTick()`
+(`web/lib/runs/keepalive-sweeper.ts`) on the unified scheduler clock
+(60-second job cadence) through `web/lib/scheduler/system-sweeps.ts`. There is
+no independent keepalive timer — `startKeepaliveSweeper` was retired in P0-6.
 Each tick runs its passes serially, each capped at 50 rows per tick and
 concurrency 4:
 

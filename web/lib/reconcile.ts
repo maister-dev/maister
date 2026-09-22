@@ -38,10 +38,7 @@ import {
 } from "@/lib/reconcile-evidence-db";
 import { listGraphOnlyCutoverRunIds } from "@/lib/queries/run-cutover";
 import { systemCloseActiveAssignmentsForRun } from "@/lib/assignments/service";
-import {
-  reconcileGraceSeconds,
-  reconcileSweepIntervalSeconds,
-} from "@/lib/instance-config";
+import { reconcileGraceSeconds } from "@/lib/instance-config";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { loadActiveRunSessionsByRunId } from "@/lib/runs/active-run-session";
 import { routeCrashRecover } from "@/lib/runs/crash-recover-route";
@@ -2339,67 +2336,4 @@ export async function runReconcileSweep(
   log.info(summary, "reconcile sweep complete");
 
   return summary;
-}
-
-// --- T2.3: periodic sweeper singleton -------------------------------------
-
-type GlobalReconcileState = {
-  handle: NodeJS.Timeout | null;
-  intervalSeconds: number;
-};
-
-const RECONCILE_GLOBAL_KEY = Symbol.for("maister.reconcile-sweeper.v1");
-
-function globalState(): GlobalReconcileState {
-  const g = globalThis as unknown as Record<symbol, GlobalReconcileState>;
-
-  if (!g[RECONCILE_GLOBAL_KEY]) {
-    g[RECONCILE_GLOBAL_KEY] = { handle: null, intervalSeconds: 0 };
-  }
-
-  return g[RECONCILE_GLOBAL_KEY];
-}
-
-export function startReconcileSweeper(): void {
-  const state = globalState();
-  const intervalSeconds = reconcileSweepIntervalSeconds();
-
-  if (state.handle) {
-    if (state.intervalSeconds === intervalSeconds) {
-      log.debug(
-        { intervalSeconds },
-        "startReconcileSweeper: already running with the same interval — no-op",
-      );
-
-      return;
-    }
-    log.info(
-      { prevIntervalSeconds: state.intervalSeconds, intervalSeconds },
-      "startReconcileSweeper: interval changed — restarting timer",
-    );
-    clearInterval(state.handle);
-    state.handle = null;
-  }
-
-  state.intervalSeconds = intervalSeconds;
-  state.handle = setInterval(() => {
-    void runReconcileSweep().catch((err: unknown) => {
-      log.error(
-        { err: err instanceof Error ? err.message : String(err) },
-        "reconcile sweep tick threw — continuing on next interval",
-      );
-    });
-  }, intervalSeconds * 1_000);
-  state.handle.unref?.();
-  log.info({ intervalSeconds }, "reconcile-sweeper started");
-}
-
-export function stopReconcileSweeper(): void {
-  const state = globalState();
-
-  if (state.handle) {
-    clearInterval(state.handle);
-    state.handle = null;
-    log.info({}, "reconcile-sweeper stopped");
-  }
 }

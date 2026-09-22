@@ -2,7 +2,7 @@
 
 Branch: `codex/scheduler-clock-ingest-lag`
 Created: 2026-09-22
-Status: Planned; implementation and qualification have not started.
+Status: In progress; scheduler-clock implementation is complete through Phase 1.
 Method: specification-driven development (SDD), implemented in test-driven slices (RED → GREEN → REFACTOR).
 Verified source: `7201d0607acc032c9c883a02df716cc9da4f5abf` (the supplied diagnosis baseline and this checkout's initial HEAD).
 
@@ -286,19 +286,19 @@ Phase 0 exit: contracts complete, ownership exception documented, one achievable
 
 ### Phase 1 — Make the recovery clock observable
 
-- [ ] **T4. Resolve the default driver and record tick/overlap telemetry.**
+- [x] **T4. Resolve the default driver and record tick/overlap telemetry.**
   - Files: `web/lib/scheduler/timer-config.ts`, `timer.ts`, `tick-service.ts`, new `clock-health.ts`, `web/instrumentation-node.ts`; new `web/lib/scheduler/__tests__/timer.test.ts` and `timer-config.test.ts`; extend `jobs.integration.test.ts`.
   - Implement D1, preserve shutdown and lease semantics, prove real competing `runSchedulerTick()` calls serialize the due job, and test heartbeat renewal plus stale-finisher refusal. Update runtime telemetry for failed/external/no-op ticks too; do not serialize all independent manual ticks through the fallback guard.
   - Default-on changes test startup too: explicitly set the normal Vitest/Playwright regression environment to `MAISTER_SCHEDULER_TIMER_ENABLED=false` in `web/vitest.workspace.ts` and `web/playwright.config.ts`; owning clock tests clear/override it deliberately. Real production clock smoke must test the truly unset case, not inherit that opt-out. Existing S5.2 helpers remain untouched; use their existing caller environment input where supported. A hidden test-only production branch is forbidden.
   - Add discoverable `web/lib/scheduler/__tests__/clock-boot.integration.test.ts`, using `buildProductionWeb()`/`startRealWeb()` from `web/test-support/real-web.ts`, real PG and the owned supervisor. First cover C1; extend the same suite for C3 in T5 and production card/external-tick behavior in T6. The helper spreads `process.env`: a serial test-owned child driver must delete inherited timer/cron settings before invoking it, then supply each case's env explicitly. Empty-string configuration is not evidence of the truly absent case. Normal Playwright provides a cron token and runs `next dev`, so it cannot substitute for this production test. Exercise out-of-order manual/cron settlements and coherent telemetry tuples in focused timer/tick coverage.
   - Logging: missing-driver boot WARN, one overlap WARN per streak, settlement INFO with final count/duration; all identify local process/driver. Acceptance: C1/C2 and two-ticker case green. Depends: T1–T3.
 
-- [ ] **T5. Remove the dead timer lifecycle and interval readers.**
+- [x] **T5. Remove the dead timer lifecycle and interval readers.**
   - Files: `web/lib/reconcile.ts`, `web/lib/runs/keepalive-sweeper.ts`, `web/lib/instance-config.ts`, `web/lib/runs/keepalive-config.ts`, `web/instrumentation-node.ts`, `web/lib/__tests__/instrumentation.test.ts`, `web/lib/__tests__/instance-config-reconcile.test.ts`, the coordinated inventory entry.
   - Delete dead starts/stops and readers only; preserve sweep functions. Remove the live keepalive log's obsolete interval. Replace obsolete instrumentation mocks/assertions with actual scheduler startup and retired-env warnings.
   - Logging: presence-only ignored-env WARN, including retirement identifier; invalid retired values do not throw. Acceptance: C3; repository search finds no executable starter/stopper/reader references, no test invents an old caller. Depends: T4.
 
-- [ ] **T6. Give the scheduler clock its own top card.**
+- [x] **T6. Give the scheduler clock its own top card.**
   - Files: `web/app/(app)/admin/scheduler/page.tsx`, new `web/components/admin/scheduler-clock-card.tsx`, `scheduler-brain-index-queue.tsx`, `web/lib/queries/scheduler.ts`, `web/types/scheduler.ts`, `web/messages/en.json`, `ru.json`, `docs/screens/admin-scheduler.md`.
   - Move clock guidance above the job/Brain sections; reuse the job row projection for last/next activity, with the mandatory core-clock rows independent of the general list cap. Show configured versus observed behavior, process identity, null/never-observed and running/failure states. Brain card keeps queue only.
   - Migrate `web/components/admin/__tests__/scheduler-brain-index-queue.test.ts` clock assertions; keep its queue assertions. Add `web/e2e/admin-scheduler.spec.ts` and its `AUTHED_SPEC` entry in `web/playwright.config.ts`.

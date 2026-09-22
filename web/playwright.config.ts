@@ -45,7 +45,7 @@ const worktreesRoot = resolveTestWorktreesRoot("e2e", process.env);
 
 process.env.MAISTER_WORKTREES_ROOT = worktreesRoot;
 const AUTHED_SPEC =
-  /.*(auto-promotion|active-workspaces|m11[abc]-.*|m12-evidence-graph|m13-assignments|m15-.*|m16-.*|m17-.*|m18-.*|m19-.*|m22-.*|m23-.*|m27-.*|m43-cutover-history|multi-run-cost-policy|run-task-context|portfolio-board|task-launch-gating|task-edit-fields-scroll|project-registration|project-onboarding|project-automations|admin-users|project-members|review-comments|review-diff-scopes|gate-chat|social-board|agent-mentions|scratch-launch|scratch-detail|scratch-composer|platform-acp-runners|model-suggestions|flows-authoring|flow-editor|run-schedules|flow-package-viewer|flow-studio-artifacts|outbound-webhooks|package-management|platform-agents-.*|evaluation-lab|orchestrator-loop|flow-target-delegation|m38-decide-routing|m40-guardrail-hooks|capability-enforcement|inbox|budget-breach-fork|mcp-hub|mcps|observatory-cost-breakdown|studio-local-edit|studio-package-viewer|studio-import|studio-diff|studio-ai-assistant|studio|forked-package-loop|plan-review-decisions|run-sync|pr-reopen|adr160-rework-claim|adr161-node-interrupt|recursive-harness|execution-host-contract|work-table|activity-feed|desk|push-notifications)\.spec\.ts$/;
+  /.*(auto-promotion|active-workspaces|m11[abc]-.*|m12-evidence-graph|m13-assignments|m15-.*|m16-.*|m17-.*|m18-.*|m19-.*|m22-.*|m23-.*|m27-.*|m43-cutover-history|multi-run-cost-policy|run-task-context|portfolio-board|task-launch-gating|task-edit-fields-scroll|project-registration|project-onboarding|project-automations|admin-users|admin-scheduler|project-members|review-comments|review-diff-scopes|gate-chat|social-board|agent-mentions|scratch-launch|scratch-detail|scratch-composer|platform-acp-runners|model-suggestions|flows-authoring|flow-editor|run-schedules|flow-package-viewer|flow-studio-artifacts|outbound-webhooks|package-management|platform-agents-.*|evaluation-lab|orchestrator-loop|flow-target-delegation|m38-decide-routing|m40-guardrail-hooks|capability-enforcement|inbox|budget-breach-fork|mcp-hub|mcps|observatory-cost-breakdown|studio-local-edit|studio-package-viewer|studio-import|studio-diff|studio-ai-assistant|studio|forked-package-loop|plan-review-decisions|run-sync|pr-reopen|adr160-rework-claim|adr161-node-interrupt|recursive-harness|execution-host-contract|work-table|activity-feed|desk|push-notifications)\.spec\.ts$/;
 
 export default defineConfig({
   testDir: "./e2e",
@@ -127,6 +127,9 @@ export default defineConfig({
       // M19 cron-gc auth gate (see e2e/m19-reconcile-gc.spec.ts). Also gates the
       // outbound-webhooks drain trigger (POST /api/cron/tick).
       MAISTER_CRON_TOKEN,
+      // Tests own explicit tick calls; never let the new default-on fallback
+      // race deterministic fixtures in the shared dev server.
+      MAISTER_SCHEDULER_TIMER_ENABLED: "false",
       // outbound-webhooks.spec.ts: server-side signing secret behind
       // `env:WH_E2E_SECRET` (resolved at webhook send time).
       WH_E2E_SECRET,

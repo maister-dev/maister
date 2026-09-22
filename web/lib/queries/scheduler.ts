@@ -19,6 +19,11 @@ import type {
 import { sql, type SQL } from "drizzle-orm";
 
 import { getDb } from "@/lib/db/client";
+import { getSchedulerClockHealth } from "@/lib/scheduler/clock-health";
+import {
+  DEFAULT_DOMAIN_EVENT_DISPATCH_JOB_ID,
+  DEFAULT_SYSTEM_SWEEP_JOB_ID,
+} from "@/lib/scheduler/jobs";
 import { readSchedulerClockStatus } from "@/lib/scheduler/timer-config";
 
 export type SchedulerStatusRow = {
@@ -35,6 +40,7 @@ export type SchedulerStatusRow = {
   consecutiveFailures: number;
   maxFailures: number;
   lastStatus: SchedulerJobRunStatus | null;
+  lastStartedAt: Date | null;
   lastFinishedAt: Date | null;
   lastErrorCode: string | null;
 };
@@ -77,6 +83,7 @@ type SchedulerStatusDbRow = {
   consecutive_failures: number;
   max_failures: number;
   last_status: SchedulerJobRunStatus | null;
+  last_started_at: Date | string | null;
   last_finished_at: Date | string | null;
   last_error_code: string | null;
 };
@@ -150,7 +157,24 @@ type TableExistsDbRow = {
 };
 
 export function getSchedulerClockStatus(): SchedulerClockStatus {
-  return readSchedulerClockStatus();
+  const configuration = readSchedulerClockStatus();
+  const health = getSchedulerClockHealth();
+
+  return {
+    ...configuration,
+    health: {
+      processId: health.processId,
+      observedAt: health.observedAt,
+      activeCount: health.activeCount,
+      lastStartedAt: health.lastStarted?.startedAt ?? null,
+      lastFinishedAt: health.lastCompleted?.finishedAt ?? null,
+      lastDurationMs: health.lastCompleted?.durationMs ?? null,
+      lastOutcome: health.lastCompleted?.outcome ?? null,
+      skippedOverlapTotal: health.skippedOverlapTotal,
+      skippedOverlapCurrentStreak: health.skippedOverlapCurrentStreak,
+      skippedOverlapLastStreak: health.skippedOverlapLastStreak,
+    },
+  };
 }
 
 export async function listSchedulerStatusRows(
@@ -161,7 +185,28 @@ export async function listSchedulerStatusRows(
 ): Promise<SchedulerStatusRow[]> {
   const db = args.db ?? (getDb() as unknown as SchedulerQueryDb);
   const limit = args.limit ?? 50;
-  const result = await db.execute(sql`
+
+  return querySchedulerStatusRows({ db, limit, predicate: sql`true` });
+}
+
+export async function listCoreSchedulerStatusRows(
+  args: { db?: SchedulerQueryDb } = {},
+): Promise<SchedulerStatusRow[]> {
+  const db = args.db ?? (getDb() as unknown as SchedulerQueryDb);
+
+  return querySchedulerStatusRows({
+    db,
+    limit: 2,
+    predicate: sql`j.id IN (${DEFAULT_SYSTEM_SWEEP_JOB_ID}, ${DEFAULT_DOMAIN_EVENT_DISPATCH_JOB_ID})`,
+  });
+}
+
+async function querySchedulerStatusRows(input: {
+  db: SchedulerQueryDb;
+  limit: number;
+  predicate: SQL;
+}): Promise<SchedulerStatusRow[]> {
+  const result = await input.db.execute(sql`
     SELECT
       j.id,
       j.project_id,
@@ -176,19 +221,21 @@ export async function listSchedulerStatusRows(
       j.consecutive_failures,
       j.max_failures,
       r.status AS last_status,
+      r.started_at AS last_started_at,
       r.finished_at AS last_finished_at,
       r.error_code AS last_error_code
     FROM scheduler_jobs j
     LEFT JOIN projects p ON p.id = j.project_id
     LEFT JOIN LATERAL (
-      SELECT status, finished_at, error_code
+      SELECT status, started_at, finished_at, error_code
       FROM scheduler_job_runs
       WHERE job_id = j.id
       ORDER BY claimed_at DESC
       LIMIT 1
     ) r ON true
+    WHERE ${input.predicate}
     ORDER BY j.next_run_at ASC, j.id ASC
-    LIMIT ${limit}
+    LIMIT ${input.limit}
   `);
 
   return (result.rows ?? []).map((row) =>
@@ -387,6 +434,7 @@ function toSchedulerStatusRow(row: SchedulerStatusDbRow): SchedulerStatusRow {
     consecutiveFailures: row.consecutive_failures,
     maxFailures: row.max_failures,
     lastStatus: row.last_status,
+    lastStartedAt: coerceNullableDate(row.last_started_at),
     lastFinishedAt: coerceNullableDate(row.last_finished_at),
     lastErrorCode: row.last_error_code,
   };

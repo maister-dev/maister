@@ -4,8 +4,6 @@ import type {
   BrainIndexJobStatus,
   BrainIndexQueueViewData,
   BrainIndexQueueViewRow,
-  SchedulerClockDriver,
-  SchedulerClockStatus,
 } from "@/types/scheduler";
 import type { ReactElement } from "react";
 
@@ -14,20 +12,11 @@ import { useTranslations } from "next-intl";
 import clsx from "clsx";
 
 export interface SchedulerBrainIndexQueueProps {
-  clock: SchedulerClockStatus;
   queue: BrainIndexQueueViewData;
 }
 
 const badgeBase =
   "rounded-full border px-2.5 py-1 font-mono text-[10px] font-bold uppercase";
-
-const DRIVER_TONE: Record<SchedulerClockDriver, string> = {
-  external_tick: "border-amber-line bg-amber-soft text-amber",
-  fallback_timer:
-    "border-[color-mix(in_oklab,var(--good)_35%,var(--line))] bg-[color-mix(in_oklab,var(--good)_12%,transparent)] text-good",
-  missing_tick:
-    "border-[color-mix(in_oklab,var(--danger)_35%,var(--line))] bg-[color-mix(in_oklab,var(--danger)_10%,transparent)] text-danger",
-};
 
 const STATUS_TONE: Record<BrainIndexJobStatus, string> = {
   completed:
@@ -83,69 +72,21 @@ function jobError(job: BrainIndexQueueViewRow): string | null {
 }
 
 export function SchedulerBrainIndexQueue({
-  clock,
   queue,
 }: SchedulerBrainIndexQueueProps): ReactElement {
   const t = useTranslations("adminScheduler");
-  const clockGuidance = t(`brainQueue.clock.guidance.${clock.driver}`, {
-    path: clock.tickPath,
-    seconds: clock.tickIntervalSeconds,
-  });
 
   return (
     <section className="rounded-[14px] border border-line bg-paper shadow-[var(--shadow-sm)]">
       <div className="border-b border-line px-5 py-4">
-        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-          <div>
-            <h2 className="m-0 text-[17px] font-semibold text-ink">
-              {t("brainQueue.tableTitle")}
-            </h2>
-            <p className="mt-1 text-[12.5px] leading-[1.5] text-mute">
-              {t("brainQueue.tableSub")}
-            </p>
-          </div>
-          <span className={clsx(badgeBase, DRIVER_TONE[clock.driver])}>
-            {t(`brainQueue.clock.driver.${clock.driver}`)}
-          </span>
+        <div>
+          <h2 className="m-0 text-[17px] font-semibold text-ink">
+            {t("brainQueue.tableTitle")}
+          </h2>
+          <p className="mt-1 text-[12.5px] leading-[1.5] text-mute">
+            {t("brainQueue.tableSub")}
+          </p>
         </div>
-
-        <dl className="mt-4 grid gap-x-5 gap-y-3 border-t border-line pt-4 md:grid-cols-4">
-          <div>
-            <dt className="font-mono text-[10px] uppercase text-mute">
-              {t("brainQueue.clock.tickPath")}
-            </dt>
-            <dd className="mt-1 font-mono text-[11.5px] text-ink">
-              {clock.tickPath}
-            </dd>
-          </div>
-          <div>
-            <dt className="font-mono text-[10px] uppercase text-mute">
-              {t("brainQueue.clock.interval")}
-            </dt>
-            <dd className="mt-1 font-mono text-[11.5px] text-ink">
-              {clock.tickIntervalSeconds}
-              {t("secondsSuffix")}
-            </dd>
-          </div>
-          <div>
-            <dt className="font-mono text-[10px] uppercase text-mute">
-              {t("brainQueue.clock.cronToken")}
-            </dt>
-            <dd className="mt-1 font-mono text-[11.5px] text-ink">
-              {clock.cronTokenConfigured
-                ? t("brainQueue.clock.configured")
-                : t("brainQueue.clock.missing")}
-            </dd>
-          </div>
-          <div>
-            <dt className="font-mono text-[10px] uppercase text-mute">
-              {t("brainQueue.clock.guidanceLabel")}
-            </dt>
-            <dd className="mt-1 text-[12px] leading-[1.45] text-ink-2">
-              {clockGuidance}
-            </dd>
-          </div>
-        </dl>
 
         <div className="mt-4 flex flex-wrap gap-2">
           <QueueCount

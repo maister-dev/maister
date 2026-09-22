@@ -809,7 +809,6 @@ receipt and `ACP_PROTOCOL` when the accepted-with-no-terminal fallback wrote it.
   `archived_branch`, `archived_at`, `runs.resume_started_at` — migration
   0015; `runs.resume_target_step_id` — migration 0016).
 - Config reference: [`../configuration.md`](../configuration.md) —
-  `MAISTER_RECONCILE_SWEEP_INTERVAL_SECONDS`,
   `MAISTER_RECONCILE_GRACE_SECONDS`,
   `MAISTER_GC_AGE_DAYS`, `MAISTER_GC_WARNING_DAYS`,
   `MAISTER_GC_ARCHIVE_PUSH`, `MAISTER_CRON_TOKEN`.

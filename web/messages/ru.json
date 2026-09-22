@@ -3043,6 +3043,46 @@
     },
     "tableTitle": "Задачи движка",
     "tableSub": "Платформенные задачи забираются на каждом /api/cron/tick. Отключённые задачи пропускаются.",
+    "clockCard": {
+      "title": "Часы планировщика",
+      "subtitle": "Локальная телеметрия процесса и долговечная активность двух критичных задач восстановления.",
+      "interval": "Интервал fallback",
+      "cronToken": "Cron token",
+      "configured": "задан",
+      "missing": "не задан",
+      "lastStarted": "Последнее начало",
+      "lastFinished": "Последнее завершение",
+      "duration": "Длительность",
+      "outcome": "Результат",
+      "active": "Активные тики",
+      "overlap": "Пропуски overlap",
+      "overlapValue": "{total} всего · {current} текущая серия · {last} прошлая серия",
+      "process": "ID процесса",
+      "never": "не наблюдалось",
+      "job": "Критичная задача",
+      "status": "Последний статус",
+      "lastRun": "Последний запуск",
+      "errorCode": "Код ошибки",
+      "nextRun": "Следующий запуск",
+      "disabled": "отключена",
+      "missingJob": "отсутствует",
+      "driver": {
+        "fallback_timer": "Fallback timer",
+        "external_tick": "Ожидается внешний tick",
+        "missing_tick": "Tick не настроен"
+      },
+      "outcomes": {
+        "completed": "завершён",
+        "partial": "частично",
+        "failed": "ошибка",
+        "maintenance_noop": "maintenance без работы"
+      },
+      "guidance": {
+        "fallback_timer": "Этот процесс запускает tick каждые {seconds}с. Счётчики процесса сбрасываются при рестарте.",
+        "external_tick": "Вызывайте {path} внешним cron и проверяйте долговечные времена критичных задач ниже.",
+        "missing_tick": "Задайте MAISTER_CRON_TOKEN для внешнего вызова или включите fallback timer."
+      }
+    },
     "brainQueue": {
       "tableTitle": "Очередь индексации Brain",
       "tableSub": "Задачи индексации лежат в brain_index_jobs и разгребаются system_sweep.default на каждом тике планировщика.",

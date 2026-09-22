@@ -609,13 +609,12 @@ describe("scheduler job SQL integration", () => {
         db: schedulerDb,
       });
 
-      const overlapping = await claimDueJobs({
+      const overlappingTick = await runSchedulerTick({
         jobKind: "system_sweep",
-        now: new Date(),
-        db: schedulerDb,
       });
 
-      expect(overlapping).toHaveLength(0);
+      expect(overlappingTick).toMatchObject({ claimedCount: 0 });
+      expect(runSystemSweepMock).toHaveBeenCalledOnce();
       releaseSweep();
       await expect(tick).resolves.toMatchObject({ succeededCount: 1 });
     } finally {

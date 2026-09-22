@@ -56,7 +56,7 @@ export type RealWebOptions = {
   port?: number;
   authSecret?: string;
   isolation?: { driver: IsolationDriver; deniedRoots: readonly string[] };
-  env?: Record<string, string>;
+  env?: Record<string, string | undefined>;
   logFile?: string;
   startTimeoutMs?: number;
 };
@@ -400,6 +400,10 @@ export async function startRealWeb(options: RealWebOptions): Promise<RealWeb> {
     ...options.env,
     ...(await fixtureProcessEnvironment(invocation)),
   };
+
+  for (const [name, value] of Object.entries(options.env ?? {})) {
+    if (value === undefined) delete env[name];
+  }
 
   delete env.VITEST;
   delete env.VITEST_POOL_ID;

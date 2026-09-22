@@ -2239,7 +2239,6 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
   ]),
   ...wrappers("lib/runs/keepalive-sweeper.ts", "manager-flow-state", [
     ["runSweepTick", false],
-    ["startKeepaliveSweeper", false],
   ]),
   ...wrappers("lib/runs/node-interrupt.ts", "manager-flow-state", [
     ["escalateNodeInterrupt", false],

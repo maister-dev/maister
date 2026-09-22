@@ -3043,6 +3043,46 @@
     },
     "tableTitle": "Engine jobs",
     "tableSub": "Platform jobs are claimed on each /api/cron/tick. Disabled jobs are skipped.",
+    "clockCard": {
+      "title": "Scheduler clock",
+      "subtitle": "Process-local tick telemetry and durable activity for the two recovery-critical jobs.",
+      "interval": "Fallback interval",
+      "cronToken": "Cron token",
+      "configured": "configured",
+      "missing": "missing",
+      "lastStarted": "Last started",
+      "lastFinished": "Last finished",
+      "duration": "Duration",
+      "outcome": "Outcome",
+      "active": "Active ticks",
+      "overlap": "Skipped overlaps",
+      "overlapValue": "{total} total · {current} current · {last} previous",
+      "process": "Process ID",
+      "never": "never observed",
+      "job": "Core job",
+      "status": "Last status",
+      "lastRun": "Last run",
+      "errorCode": "Error code",
+      "nextRun": "Next run",
+      "disabled": "disabled",
+      "missingJob": "missing",
+      "driver": {
+        "fallback_timer": "Fallback timer",
+        "external_tick": "External tick expected",
+        "missing_tick": "No tick configured"
+      },
+      "outcomes": {
+        "completed": "completed",
+        "partial": "partial",
+        "failed": "failed",
+        "maintenance_noop": "maintenance no-op"
+      },
+      "guidance": {
+        "fallback_timer": "This process runs a tick every {seconds}s. Process counters reset on restart.",
+        "external_tick": "Call {path} from external cron and verify the durable core-job timestamps below.",
+        "missing_tick": "Set MAISTER_CRON_TOKEN for an external caller or enable the fallback timer."
+      }
+    },
     "brainQueue": {
       "tableTitle": "Brain index queue",
       "tableSub": "Index jobs are stored in brain_index_jobs and drained by system_sweep.default on each scheduler tick.",

@@ -16,9 +16,9 @@ import "server-only";
 //
 // Default: 30 min (locked in CLAUDE.md §1 and docs/configuration.md).
 //
-// `MAISTER_KEEPALIVE_SWEEP_INTERVAL_SECONDS` and
-// `MAISTER_NEEDSINPUTIDLE_TTL_HOURS` live in `web/lib/runs/keepalive-sweeper.ts`
-// (T6/T12) since they only feed the sweeper loop.
+// `MAISTER_NEEDSINPUTIDLE_TTL_HOURS` lives in
+// `web/lib/runs/keepalive-sweeper.ts`; periodic invocation is owned by the
+// scheduler's `system_sweep.default` job.
 
 const DEFAULT_KEEPALIVE_MINUTES = 30;
 

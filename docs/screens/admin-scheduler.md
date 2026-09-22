@@ -6,6 +6,7 @@
   editor, task schedules overview, and ADR-139 one-time diagnostics).
 - **Source:** `web/app/(app)/admin/scheduler/page.tsx`,
   `web/components/admin/scheduler-jobs-table.tsx`,
+  `web/components/admin/scheduler-clock-card.tsx`,
   `web/components/admin/scheduler-job-edit-modal.tsx`,
   `web/components/admin/scheduler-run-schedules-overview.tsx`.
 
@@ -147,6 +148,7 @@ stateDiagram-v2
 - Source: `web/app/(app)/admin/scheduler/page.tsx`,
   `web/lib/queries/scheduler.ts`, `web/lib/scheduler/job-admin.ts`,
   `web/lib/scheduler/job-admin-schema.ts`,
+  `web/components/admin/scheduler-clock-card.tsx`,
   `web/components/admin/scheduler-jobs-table.tsx`,
   `web/components/admin/scheduler-job-edit-modal.tsx`,
   `web/components/admin/scheduler-run-schedules-overview.tsx`.

@@ -3,6 +3,11 @@ import "server-only";
 import pino from "pino";
 
 import { isMaisterError } from "@/lib/errors";
+import {
+  schedulerTickFinished,
+  schedulerTickStarted,
+  type SchedulerTickSource,
+} from "@/lib/scheduler/clock-health";
 import { upgradeMaintenanceEngaged } from "@/lib/maintenance/upgrade-fence";
 import {
   claimDueJobs,
@@ -52,6 +57,7 @@ export type SchedulerTickJobSummary = {
 
 type RunSchedulerTickInput = {
   jobKind?: SchedulerJobKind;
+  source?: SchedulerTickSource;
 };
 
 const log = pino({
@@ -79,6 +85,28 @@ class SystemSweepFailedError extends Error {
 export async function runSchedulerTick(
   input: RunSchedulerTickInput = {},
 ): Promise<SchedulerTickSummary> {
+  const invocation = schedulerTickStarted(input.source ?? "manual");
+
+  try {
+    const result = await runSchedulerTickInternal(input);
+    const outcome = result.maintenanceNoop
+      ? "maintenance_noop"
+      : result.summary.failedCount > 0 || result.summary.skippedCount > 0
+        ? "partial"
+        : "completed";
+
+    schedulerTickFinished(invocation, outcome);
+
+    return result.summary;
+  } catch (err) {
+    schedulerTickFinished(invocation, "failed");
+    throw err;
+  }
+}
+
+async function runSchedulerTickInternal(
+  input: RunSchedulerTickInput,
+): Promise<{ summary: SchedulerTickSummary; maintenanceNoop: boolean }> {
   // D9 step 2: the clock is the entry point for cron launches, agent ticks and
   // the destructive sweep, so a fenced installation claims no job at all. The
   // poller keeps returning a summary — a throw on every tick would bury the
@@ -90,12 +118,15 @@ export async function runSchedulerTick(
     );
 
     return {
-      attemptedCount: 0,
-      claimedCount: 0,
-      succeededCount: 0,
-      failedCount: 0,
-      skippedCount: 0,
-      attempts: [],
+      maintenanceNoop: true,
+      summary: {
+        attemptedCount: 0,
+        claimedCount: 0,
+        succeededCount: 0,
+        failedCount: 0,
+        skippedCount: 0,
+        attempts: [],
+      },
     };
   }
 
@@ -122,7 +153,7 @@ export async function runSchedulerTick(
 
   log.info({ ...summary, jobKind: input.jobKind }, "scheduler tick completed");
 
-  return summary;
+  return { summary, maintenanceNoop: false };
 }
 
 /**
@@ -139,7 +170,7 @@ export async function requestSystemSweep(): Promise<SchedulerTickSummary> {
     now,
   });
 
-  return runSchedulerTick({ jobKind: "system_sweep" });
+  return runSchedulerTick({ jobKind: "system_sweep", source: "cron" });
 }
 
 async function runClaimedJob(

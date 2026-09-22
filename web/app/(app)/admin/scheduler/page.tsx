@@ -1,11 +1,15 @@
 import type { SchedulerJobKind } from "@/lib/db/schema";
 import type { Metadata } from "next";
 import type { ReactElement } from "react";
-import type { BrainIndexQueueViewData } from "@/types/scheduler";
+import type {
+  BrainIndexQueueViewData,
+  SchedulerCoreJobClockRow,
+} from "@/types/scheduler";
 
 import { getTranslations } from "next-intl/server";
 
 import { SchedulerBrainIndexQueue } from "@/components/admin/scheduler-brain-index-queue";
+import { SchedulerClockCard } from "@/components/admin/scheduler-clock-card";
 import { WorkspaceReconciliationFindings } from "@/components/admin/workspace-reconciliation-findings";
 import {
   SchedulerJobsTable,
@@ -23,6 +27,7 @@ import { requireGlobalRole } from "@/lib/authz";
 import {
   getSchedulerClockStatus,
   listBrainIndexQueueRows,
+  listCoreSchedulerStatusRows,
   listSchedulerRunScheduleOverviewRows,
   listSchedulerScheduledLaunchOverviewRows,
   listSchedulerStatusRows,
@@ -67,14 +72,30 @@ export default async function AdminSchedulerPage({
       : undefined;
 
   const clock = getSchedulerClockStatus();
-  const [all, schedules, scheduledLaunches, brainQueue, reconciliation] =
-    await Promise.all([
-      listSchedulerStatusRows({ limit: 200 }),
-      listSchedulerRunScheduleOverviewRows({ limit: 200 }),
-      listSchedulerScheduledLaunchOverviewRows({ limit: 200 }),
-      listBrainIndexQueueRows({ limit: 50 }),
-      listWorkspaceReconciliationFindings({ limit: 50 }),
-    ]);
+  const [
+    all,
+    coreJobs,
+    schedules,
+    scheduledLaunches,
+    brainQueue,
+    reconciliation,
+  ] = await Promise.all([
+    listSchedulerStatusRows({ limit: 200 }),
+    listCoreSchedulerStatusRows(),
+    listSchedulerRunScheduleOverviewRows({ limit: 200 }),
+    listSchedulerScheduledLaunchOverviewRows({ limit: 200 }),
+    listBrainIndexQueueRows({ limit: 50 }),
+    listWorkspaceReconciliationFindings({ limit: 50 }),
+  ]);
+  const coreClockRows: SchedulerCoreJobClockRow[] = coreJobs.map((job) => ({
+    id: job.id,
+    nextRunAt: job.nextRunAt.toISOString(),
+    disabledAt: job.disabledAt?.toISOString() ?? null,
+    lastStartedAt: job.lastStartedAt?.toISOString() ?? null,
+    lastFinishedAt: job.lastFinishedAt?.toISOString() ?? null,
+    lastStatus: job.lastStatus,
+    lastErrorCode: job.lastErrorCode,
+  }));
   const filtered = all.filter((job) => {
     if (jobKind && job.jobKind !== jobKind) return false;
     if (state === "active" && job.disabledAt !== null) return false;
@@ -176,6 +197,7 @@ export default async function AdminSchedulerPage({
         </div>
       </header>
 
+      <SchedulerClockCard clock={clock} coreJobs={coreClockRows} />
       <SchedulerJobsTable
         filters={{
           jobKind: jobKind ?? "all",
@@ -183,7 +205,7 @@ export default async function AdminSchedulerPage({
         }}
         jobs={rows}
       />
-      <SchedulerBrainIndexQueue clock={clock} queue={brainQueueRows} />
+      <SchedulerBrainIndexQueue queue={brainQueueRows} />
       <WorkspaceReconciliationFindings
         findings={reconciliation.findings}
         labels={{

@@ -124,7 +124,9 @@ const DEFAULT_RUN_SCHEDULE_DISPATCHER_JOB_ID = "run_schedule.dispatcher";
 const DEFAULT_RUN_SCHEDULE_DISPATCHER_CADENCE_SECONDS = 60;
 const DEFAULT_WEBHOOK_DELIVERY_JOB_ID = "webhook_delivery.default";
 const DEFAULT_WEBHOOK_DELIVERY_CADENCE_SECONDS = 60;
-const DEFAULT_DOMAIN_EVENT_DISPATCH_JOB_ID = "domain_event_dispatch.default";
+
+export const DEFAULT_DOMAIN_EVENT_DISPATCH_JOB_ID =
+  "domain_event_dispatch.default";
 const DEFAULT_DOMAIN_EVENT_DISPATCH_CADENCE_SECONDS = 60;
 // M34 (ADR-089): the ONE seeded agent_tick job — claims due agent_schedules
 // cron rows and recovers stranded Pending agent runs each tick.

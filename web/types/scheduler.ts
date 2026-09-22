@@ -40,12 +40,45 @@ export type SchedulerClockDriver =
   | "external_tick"
   | "missing_tick";
 
-export type SchedulerClockStatus = {
+export type SchedulerClockConfiguration = {
   cronTokenConfigured: boolean;
   driver: SchedulerClockDriver;
   fallbackTimerEnabled: boolean;
   tickIntervalSeconds: number;
   tickPath: "/api/cron/tick";
+};
+
+export type SchedulerClockTickOutcome =
+  | "completed"
+  | "partial"
+  | "failed"
+  | "maintenance_noop";
+
+export type SchedulerClockHealthView = {
+  processId: number;
+  observedAt: string;
+  activeCount: number;
+  lastStartedAt: string | null;
+  lastFinishedAt: string | null;
+  lastDurationMs: number | null;
+  lastOutcome: SchedulerClockTickOutcome | null;
+  skippedOverlapTotal: number;
+  skippedOverlapCurrentStreak: number;
+  skippedOverlapLastStreak: number;
+};
+
+export type SchedulerClockStatus = SchedulerClockConfiguration & {
+  health: SchedulerClockHealthView;
+};
+
+export type SchedulerCoreJobClockRow = {
+  id: string;
+  nextRunAt: string | null;
+  disabledAt: string | null;
+  lastStartedAt: string | null;
+  lastFinishedAt: string | null;
+  lastStatus: string | null;
+  lastErrorCode: string | null;
 };
 
 export type BrainIndexJobReason =
