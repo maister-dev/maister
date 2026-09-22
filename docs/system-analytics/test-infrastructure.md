@@ -1,10 +1,13 @@
-# Test database infrastructure
+# Test infrastructure
 
 ## Purpose
 
 This domain defines ephemeral PostgreSQL ownership for database-backed tests
 (Implemented). It isolates test data by process, makes Docker an explicit
-integration/E2E dependency, and keeps build/unit lanes database-free.
+integration/E2E dependency, and keeps build/unit lanes database-free. It also
+owns real-process isolation, deterministic fault placement and invocation-scoped
+cleanup. S5.2 close-out controls below are Designed until their named evidence
+is recorded; the existing denied-root and durable-worker core is Implemented.
 
 ## Domain entities
 
@@ -17,6 +20,12 @@ integration/E2E dependency, and keeps build/unit lanes database-free.
   E2E preparation with its URL, then starts Playwright with that URL.
 - **E2E preparation** — applies main and Brain migrations and seeds E2E
   fixtures through the test-environment command path.
+
+- **Invocation** — one runner-minted process/root cleanup authority.
+- **Resource ledger** — atomic process/root identities outside disposable roots.
+- **Fault proxy** — test-only HTTP-aware TCP boundary with command-scoped faults.
+- **Barrier** — reached evidence plus explicit release or owned-process death.
+- **Build handle** — verified immutable production build reused by nested controls.
 
 ## State machine
 
@@ -86,15 +95,192 @@ sequenceDiagram
 
 `web/test-support/process-isolation.ts` resolves the kernel isolation driver this host can enforce (macOS `sandbox-exec`, denial = `EPERM`; the Linux uid/mount-namespace driver is scheduled with S5.3 and an unsupported host fails loudly) and `web/test-support/real-web.ts` starts the production web (`next build` of the checked-out tree, `server.ts`, production `instrumentation.ts` boot) in its own process group under that driver, with a credentials sign-in over the production Auth.js endpoints. `web/test-support/__tests__/execution-ab-isolation.integration.test.ts` (4/4) is AT-16's core: disjoint private roots for web and supervisor with only the worktrees root shared; the web identity is denied the host's sentinel and its live `state.sqlite` while the harness and the host keep them; a scratch launch with an upload completes through HTTP/Postgres with the real host executing the prompt; the object reads back under the AB-12 policy with the transcript; a SIGKILLed web restarts through production initialization under the same isolation, serves the same history and bytes, and completes a further turn on the still-live host session. It runs alone (`node scripts/run-stage-ab-tests.mjs isolation`, serial slice) with `MAISTER_TEST_EVIDENCE_DIR` keeping build/web/supervisor logs outside the worktree.
 
-**Still Designed.** Replace file-level allowlisting with entries keyed by source file + enclosing function + resolved filesystem/child-process callee + operation kind + ownership class + rationale. Scan `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.mjs` production roots, including `web/app`, `web/lib`, components that can import server utilities, scripts, instrumentation and imported shared helpers. Enumerate aliases/wrappers and child-process filesystem effects. Use TypeScript AST where practical; unresolved dynamic calls require explicit classification. Tests and migration-only sources are separately identified, not silently excluded from the ownership model.
+### S5.2 close-out protocol (Designed)
 
-Classes: manager-owned DB/config/package/evaluation artifacts; supervisor runtime bytes/state; repository/worktree/Git operations retained for Stage C; temporary operator import only. Mixed files contain multiple entries. A new host-runtime read in an already approved file must fail the guard. This static test supplements a real denied-access environment; it cannot prove isolation by itself.
+Option B is selected: the real `sandbox-exec` driver runs in a dedicated,
+serial GitHub `macos-15-intel` job with Node 24.19.0 and a pinned Colima/Lima
+Docker runtime. The local owner Mac is ARM64 and keeps its existing driver;
+no Rosetta requirement is imposed locally. The Intel pin is for the hosted
+container-runtime recipe. The Linux uid/mount-namespace driver and separate-user
+Linux deployment remain S5.3. Unsupported drivers fail loudly. The negative
+control expects the driver's documented errno (macOS EPERM); the host positive
+control and HTTP readback must still succeed. Testcontainers uses only
+`pg-container.ts`, with real runtime/port reachability proved before the lane.
+CI must upload the actual `vitest.json`, safe traces and timings; total cold
+setup/build/tests/cleanup/upload must measure below 60 minutes. Missing runner
+execution or an unavailable kernel driver is unqualified, never a local-pass
+substitute. Qualification records revision, image, architecture and Node version.
 
-Use disjoint private roots under separate process identities or Linux mount namespaces. Shared repository/worktree access remains permitted; supervisor SQLite/log/object/adapter-private roots are absent or inaccessible to web. Merely choosing different path strings or chmod under the same root user is insufficient. Negative control: a web-process access attempt to a seeded known private sentinel returns EACCES/ENOENT; positive controls prove supervisor access and authorized HTTP object read still work. Test harness may manage both roots; production web may not.
+The designed invocation lifecycle preserves roots across restart and disposes
+of them only after the last owned process using them is dead.
 
-Extend `web/test-support/real-supervisor.ts` and add one real web-process harness with isolated ports, DBs, process groups and persistent restart roots. Reuse `web/test-support/pg-container.ts` as the sole Postgres constructor; no shared development database/ports or broad process killing. A test-only network proxy can drop ACKs, block receipts/SSE, delay old responses and cut streams deterministically without changing production branches. Fake ACP is permitted for deterministic protocol effects; the supervisor, HTTP stack, SQLite, Postgres, projector and owner entrypoints must be real.
+```mermaid
+stateDiagram-v2
+  [*] --> Allocated
+  Allocated --> Registered: ownership marker before content
+  Registered --> Ready: identified process and health
+  Registered --> Stopping: startup failure
+  Ready --> Stopping: stop, worker death, or lane signal
+  Stopping --> Reaped: owned processes confirmed dead
+  Reaped --> Registered: restart retains roots
+  Reaped --> RootsRemoved: terminal disposal
+  Stopping --> CleanupFailed: surviving or unverifiable process
+  Reaped --> CleanupFailed: root removal fails
+  RootsRemoved --> [*]
+  CleanupFailed --> [*]: nonzero lane and retained evidence
+```
 
-Fault synchronization uses explicit fixture barriers after host acceptance/before HTTP ACK, after canonical commit/before owner apply, after consumer claim/before failing apply, and after object seal/before catalog ACK. Tests release barriers or terminate the owned process group; elapsed sleeps never prove that a failure window was reached. Each invocation uses unique ports, database, private roots and an artifact directory outside the worktree.
+New module: `web/test-support/supervisor-fault-proxy.ts`. It is an HTTP-aware
+TCP proxy on loopback between the production web and the real supervisor.
+Production web receives `MAISTER_SUPERVISOR_URL=proxy.url`; the proxy alone
+forwards to the real supervisor. Harness-only receipt/health/metadata probes
+use the real supervisor URL and are separately attributed. Observe one stable
+`hostKey`, with boot ID changing only on an actual supervisor restart.
+Never proxy SQLite or host filesystem operations.
+
+Use a typed selector `{caseId, commandId, route, assignmentEpoch}` (or
+`objectId`/`streamId` for those protocols), an explicit action type, and
+explicit operations `arm`, `awaitReached`, `release`, `cut`, `assertDrained`,
+`close`. Capture an auto-minted command ID from its durable row/envelope before
+forwarding it; never reconstruct it from timing. Pass unselected traffic
+unchanged. Keep bounded metadata/frame buffers and redact bodies/secrets.
+
+Distinguish a single-shot hold/cut from a persistent partition. P1 consumes one
+ACK-drop action. P2 keeps dropping **every retry ACK for the selected command**
+and blocking its receipt route until explicit release; each matched attempt is
+counted without consuming the partition. Duplicate single-shot consumption is
+an error; repeated matches on a persistent partition are expected. No boolean
+multi-mode helper: use typed actions with separate handlers.
+
+Barrier states: `armed → reached → released | owned_process_killed`.
+An explicit drop/cut is a release with that recorded fault disposition, not an
+untracked socket close. Disposal of an unresolved barrier fails before cleanup.
+`unreached`, `unreleased`, selector mismatch, client abort without disposition,
+or invalid repeated single-shot consumption fails the test. `finally` destroys sockets,
+rejects pending waits, releases DB locks and removes test triggers while retaining
+the original failure. Timeout diagnoses failure; it never releases a barrier or
+proves a window. Production retry deadlines and lease expiry still run normally.
+
+| ID / required window | Mechanism and owning scope | Mandatory evidence before action |
+| --- | --- | --- |
+| B1 host acceptance / before HTTP ACK | Hold the exact upstream command response before any downstream ACK bytes; direct receipt lookup confirms committed acceptance; explicitly drop the downstream connection. | Same command ID/request digest on host receipt; no downstream ACK; host remains healthy. |
+| B2 canonical commit / before owner apply | Test-only, row-scoped trigger in the disposable PG database at the selected owner's domain write; harness holds its advisory key. Use separate observer connection. Do not hold a broad run-row lock that also blocks ingest. | Canonical terminal row visible to observer; claim belongs to intended worker; `pg_locks` waiter identified; domain result and `completion_applied_at` absent. |
+| B3 consumer claim / before failing apply | Scoped projector-domain-write trigger after committed consumer claim; identify waiting backend and terminate that exact backend or the owned web PGID. | Durable consumer claim/token + `pg_stat_activity`/`pg_locks` waiter; failure rolls back effect and cursor together. |
+| B4 object seal / before catalogue ACK | Hold target upload response and target seal-event delivery, or block the exact catalogue reducer with a scoped PG trigger. Define ACK as manager catalogue commit; upload response alone is not this boundary. | Direct host metadata proves sealed generation/hash; manager catalogue still pending; neither HTTP nor SSE has bypassed the barrier. |
+
+DB barrier helper: `web/test-support/fault-barriers.ts`, extracting only needed
+patterns from `web/lib/execution-host/events/__tests__/event-claim-lock.integration.test.ts:298–325,402–484`.
+Each lock key is unique to invocation/case/resource; triggers match that same
+resource. `projectionTransaction` has a real 5-second cumulative deadline:
+after observing the waiter, release or kill within it. Hold long partitions in
+the network proxy, never inside these transactions. If the deadline expires
+before the chosen action, fail the control as a missed window.
+
+Authorship is mandatory: reuse `durable-workers-ledger.ts` and existing
+ADR-176/177 witnesses; record worker/boot/claim owner and exact terminal evidence
+digest. Where claims are cleared on commit, a disposable-PG audit trigger records
+the successful writer transaction and the null→timestamp application edge.
+Do not seed expected final outcomes or invoke recovery/apply directly from the
+harness in a production control. Claim count may exceed one after recovery;
+committed domain result and completion application must be singular. Assert
+successor/current rows as well as the source command, not just a pass log.
+
+The runner mints a fresh `MAISTER_TEST_WORKTREE_INVOCATION_ID` **before** spawning
+Vitest and propagates it unchanged to every descendant. Do not adopt a caller's
+possibly shared ID as cleanup authority. Nested O-controls get their own runner
+ID. Preserve `vitest.workspace.ts` standalone behavior, but its fallback minting
+must not replace the runner's ID. Per-worker root suffixes do not change the
+environment tag used by the sweep.
+
+**Build ownership is separate from process ownership.** `real-web.ts` currently
+keys its `.next` build stamp by invocation ID. A nested O-control must not
+rebuild or mutate `.next` while an outer production web serves it. T04/T05 add
+the smallest test-support build handle (revision, verified build ID, artifact
+path) passed to an explicit start-from-built-artifact helper; validate the handle
+before use. All nested cleanup invocations reuse the outer lane's one build,
+but retain separate cleanup IDs and ports. No unverified skip-build flag and no
+production server change. Register build subprocesses too. Build-lock ownership
+uses PID/start identity: reclaim a proved dead owner rather than waiting for the
+current age-only stale threshold. Never delete the worktree's `.next` as a temp
+root. A startup-failure/worker-death control must prove no build descendant or
+dead-owner lock obstructs the next run.
+
+Add an invocation resource ledger outside disposable roots: atomic per-resource
+records avoid shared-file lost updates. Record process PID/PGID, UID, start time,
+role, expected parent identity, root ownership and boot/case identity before
+reporting readiness. Root ownership records precede content. Enumerate live
+processes by OS environment data, match the **exact environment entry** and
+validate start identity before signaling; a command-line substring is not
+environment ownership. Linux can read `/proc/<pid>/environ`; macOS needs an
+environment-aware reader (e.g. `sysctl KERN_PROCARGS2`, with the argv/env split
+parsed explicitly), bundled in test support and qualified on the CI image.
+Failure to inspect an owned candidate is an error, not an empty process list.
+Do not print collected environments. No `pgrep -f` or binary-name kill.
+
+Sweep authority is exactly one minted invocation ID. Exclude the runner and its
+short-lived inspection helpers explicitly. Validate registered groups and their
+members before group signals; escaped tagged descendants are also caught by the
+environment scan. Any mixed/unverifiable group fails closed for group signaling;
+terminate only individually verified owned PIDs and report the anomaly. PID/PGID
+reuse, permission errors and unexpected owners never authorize wider cleanup.
+
+Three enforcement levels:
+
+1. **Runner:** await cleanup in `finally` and SIGINT/SIGTERM/error paths; async
+   cleanup cannot live in Node's synchronous `exit` callback. Forward signals to
+   the owned Vitest group, wait bounded grace, discover tagged survivors, report
+   each, TERM/KILL as needed, and recheck. Any survivor discovered by the final
+   sweep makes the lane non-zero even if killed successfully. Preserve an
+   original failed exit/signal and combine cleanup diagnostics, not mask it.
+   Spawn errors, reporter parse errors, missing reports and discovery failures
+   still sweep. Signals are handled idempotently, with bounded escalation.
+2. **Fixture parent death:** preload a watchdog only through test-support spawn
+   arguments (`--import` test-support module), preserving the direct production
+   Node child and its detached process group. Do not interpose a pnpm/tsx shim.
+   Capture expected parent and runner identities before boot, check immediately
+   and then on a bounded poll; macOS reparenting to PID 1 or loss of either owner
+   terminates the owned group. Runner death must also be detected while a Vitest
+   worker remains alive. Linux uses the same poll for this increment. Parent-loss
+   handling uses immediate group SIGKILL after identity validation: a preload
+   cannot TERM itself and reliably remain alive to escalate against resistant
+   adapters. Ordinary fixture SIGTERM/drain tests retain their existing behavior.
+   Termination reaches adapter descendants, not only the supervisor leader. Production
+   `supervisor/src/main.ts` and `web/server.ts` stay untouched. Polling here is
+   test-process liveness only, not a product state-transition mechanism.
+   Pass expected identities via test-only spawn metadata, not production config.
+   Also preload the owned Vitest Node entrypoint from the test runner so runner
+   SIGKILL does not leave its worker group alive. The outer O-control observes
+   self-termination of worker and fixture groups; emergency cleanup is only
+   containment after a failed assertion, never the evidence of success.
+3. **Roots:** remove only invocation-owned runtime/worktree roots after groups
+   are confirmed dead **and the fixture/invocation is terminal**. A kill for
+   `restart()` preserves the same roots and host identity. Track multiple live
+   consumers before disposal; never remove a root still used by another owned
+   web instance. Caller-supplied/shared roots are never recursively deleted
+   without explicit ownership registration by their creating test.
+   Store logs/report/ledger outside removable roots; copy default fixture logs
+   before deletion. Parent-death cleanup and runner cleanup are idempotent.
+   Never delete by `eh-web-rt-*` glob. Preserve ownership markers on failure so
+   an explicit same-invocation recovery can retry; root deletion failure is red.
+
+Runner SIGKILL cannot execute a finalizer. The watchdog must handle its orphaned
+fixture processes; normal/failure/catchable-signal runner paths own root cleanup.
+For CI cancellation, `always()` cleanup consumes the same recorded invocation
+ledger; do not promise cleanup after host power loss. O-controls must prove
+their claimed boundaries separately rather than one mechanism masking another.
+On runner SIGKILL, the outer control/CI finalizer removes that recorded
+invocation's roots only after watchdog exits are proved. An uncontrolled manual
+SIGKILL without a surviving owner can leave inert roots/ledger; document this
+limit rather than pretending an uncatchable signal ran a finalizer. It must
+leave no live owned process. Test-run success always requires zero owned roots.
+
+Common log record: `{invocationId, caseName, event, role, pid, pgid, parentPid,
+runtime, rootRole, rootId, bootId, outcome}` plus command/epoch/claim/barrier IDs
+where relevant. INFO: start/stop/kill/release and sweep result; WARN: retries,
+forced shutdown and detected survivors; ERROR: failed invariant/cleanup. Raw
+temporary root paths may appear only in private evidence/ownership ledger;
+publish role/opaque IDs and safe traces. Every failure carries bounded
+supervisor/web `logTail`, proxy transcript and relevant ledger/PG observations.
 
 `events/__tests__/event-claim-lock.integration.test.ts` also blocks a real stream
 claim row, confirms its PostgreSQL lock waiter, and aborts before releasing the
@@ -162,6 +348,56 @@ Baseline failures are tracked by exact test names/error signatures and environme
 7. On E2E interruption, Playwright's process-group exit MUST be observed before the wrapper
    tears down its database.
 
+### S5.2 partition and process-death acceptance (Designed additions)
+
+All new controls run through production `startRealWeb`, `startRealSupervisor`
+and `pg-container.ts`. Every row names its lane, file and distinguishing
+observation. Existing in-process proofs are accepted only for the stated
+service semantics; they are never relabelled production boot. Elapsed sleeps
+cannot establish a fault window. Every barrier must be resolved in teardown.
+
+| Test / window | Barrier | Lane / file | Mandatory distinguishing observation and RED target |
+| --- | --- | --- | --- |
+| **P1: ACK dropped after host commit → web SIGKILL + restart → exactly one result, no duplicate session.prompt** | B1 reached; drop ACK; SIGKILL web PGID after committed acceptance, restart same DB/roots through production boot; release target event hold to settle. | isolation; `web/test-support/__tests__/execution-ab-partitions.integration.test.ts`, P1 | Original immutable command/request, exactly one host ACP effect and one domain result/application. RED target: second `session.prompt` or lost result. Preserve AT-07's parent-plan sentence: “Unknown remains recoverable through web restart; reconnect yields one correct result and no duplicate prompt”. |
+| **P2: receipts unavailable beyond the 5× budget, then evidence resumes** | Persistent ACK loss plus route-specific hold of `GET /commands/{id}` across dispatch retries; hold this command's accepted **and** terminal SSE evidence so neither can acknowledge/settle it early. Keep health, unrelated commands and unrelated SSE flowing. Await actual lookup exhaustion and persisted reconciliation state before release. | isolation; `web/test-support/__tests__/execution-ab-partitions.integration.test.ts`, P2 | `transport_state=unknown` during uncertainty; exhausted command has `state=queued`, `transport_state=reconciliation_required`, never fabricated failure; release yields agreeing receipt/canonical evidence and one application. Five receipt attempts are **per dispatch**, separate from the current three-dispatch prompt budget. Record both counters and actual deadlines; an arrival is not exhaustion. Sibling health/receipt control remains available. RED target: fabricated failure or unknown stuck after evidence returns. |
+| **P3: cut SSE mid-replay and mid-live** (two named subcases) | Record high-water at stream open; cut both upstream and downstream after selected frame or selected partial frame. Replay frame ≤ frozen high-water; live frame > it. Reconnect from last fully committed exclusive cursor. Explicitly inject one previously forwarded complete frame for the duplicate subcontrol. | isolation; `web/test-support/__tests__/execution-ab-partitions.integration.test.ts`, P3 replay and P3 live | No missing canonical sequence, partial frame never ingested, duplicate recorded as duplicate without another effect, monotone committed/consumer watermarks and advanced `last_seen_at`. A clean exclusive reconnect alone is not duplicate evidence. RED target: gap, replayed effect or unadvanced watermark. Budget each subcase ≥90 s, accounting for 30 s claims and 250 ms reconnect floor; waits prove rows/frames, not log timing. |
+| **P4: delayed old response arrives after successor epoch** | Hold epoch N response on a still-live downstream request; prove N+1 committed via ordinary operator/production path; capture successor authority/domain fields before release. Use B2 to distinguish canonical arrival from owner application where needed. | isolation; `web/test-support/__tests__/execution-ab-partitions.integration.test.ts`, P4 | Prove the late body reaches its intended handler before the unchanged request deadline, not merely a write to an aborted socket. N settles fenced/historically only; no stale-authored change to N+1 assignment/session/incarnation/domain owner fields; successor produces its own result once. RED target: current-owner write from N evidence (EVT-05 / ADR-167 D4). |
+
+| Death window / test | Barrier or evidence trigger | Lane / exact file | Sufficiency and mandatory distinguishing observation |
+| --- | --- | --- | --- |
+| Web SIGKILL mid-prompt — flow | Accepted, unapplied `flow_node_attempt` command; actual web PGID dies. | isolation; `web/test-support/__tests__/durable-workers-boot.integration.test.ts:320`, `applies the flow_node_attempt owner after the production web restarts` | Existing production proof accepted: restart worker applies once; no second prompt. |
+| Web SIGKILL mid-prompt — agent | Same, `agent_turn`. | isolation; `web/test-support/__tests__/durable-workers-boot.integration.test.ts`, `applies the agent_turn owner after the production web restarts` | Existing production proof accepted; one correct agent domain result. |
+| Web SIGKILL mid-prompt — scratch | Same, `scratch_message`. | isolation; `web/test-support/__tests__/durable-workers-boot.integration.test.ts`, `applies the scratch_message owner after the production web restarts` | Existing production proof accepted; one reply from intended owner. |
+| Web SIGTERM with held claim | Durable held claim before SIGTERM. | isolation; `web/test-support/__tests__/durable-workers-concurrency.integration.test.ts:283`, `E: SIGTERM while a claim is held either releases it in the drain or fails shutdown loudly` | Existing production proof accepted: confirmed release or explicit failed drain; one application after restart. |
+| Two web instances | Dead instance's unapplied command; two live production claimants. | isolation; `web/test-support/__tests__/durable-workers-concurrency.integration.test.ts:241`, `D2: two production web instances on one database apply a dead instance's command exactly once` | Existing production proof accepted; winner attributed, losing claimant does not apply. Preserve D1 too. |
+| Web SIGKILL + restart under denied roots | I1 negative control then I3 restart; I4 host control. | isolation; `web/test-support/__tests__/execution-ab-isolation.integration.test.ts:335`, I3 | Existing production proof accepted with I1–I4: same history/object bytes, further turn, supervisor untouched, driver-specific errno. |
+| Supervisor SIGKILL mid-turn | Accepted real prompt, `sup.restart()`, receipt/canonical ordering variants. | web; `web/lib/execution-host/__tests__/command-recovery.integration.test.ts:766`, `RED 1/3 — SIGKILL mid-prompt + restart, ... → Crashed turn-lost, attempt closed, command discharged, recoverable` | **In-process proof accepted** for ADR-177 classification/evidence-order semantics: real host dies, turn_lost → Crashed, Recover → Done, one new prompt. Production worker activation is separately proven by boot suites; do not duplicate the 14-case family. |
+| Adapter SIGKILL mid-turn | Exact adapter PID belonging to run/host; persisted crash evidence. | web; `web/lib/flows/graph/__tests__/prompt-owners.integration.test.ts:3319`, `owner-flow-crash-recover: a crashed agent node recovers to a terminal state with one new prompt under the new epoch`; supporting controls and `crash-recover-continuation.integration.test.ts` | **In-process proof accepted** for ADR-175 domain/epoch semantics: real adapter killed; Recover → Done; one new prompt, zero when agreeing terminal source already exists. Keep all named subvariants. |
+| Supervisor restart during NeedsInput — checkpoint/idle | Durable permission + NeedsInput; kill owned host before checkpoint succeeds; hold checkpoint traffic at a reached route barrier while exercising the unavailable-host response, then restart same host root and release. | isolation; **new** `web/test-support/__tests__/execution-ab-process-death.integration.test.ts`, D1 | Production proof required: respond while unavailable returns 503 EXECUTOR_UNAVAILABLE, stored option survives and `responded_at` stays null; checkpoint transport unavailability retains NeedsInput. After restart, definitive missing-session checkpoint permits NeedsInputIdle/released assignment; idle retry resumes through 202 and eventually records delivery/continuation. Observe checkpoint handle and epoch. No arbitrary typed-error pass, new deadline or UI behavior. |
+| Supervisor restart during session create — W2, before host effect | Hold original create **before forwarding**; prove durable create intent and absent host receipt; kill/restart host, terminate the blocked attempt and release for production retry. | isolation; **new** `web/test-support/__tests__/execution-ab-process-death.integration.test.ts`, D2a | Production proof required: owning driver reissues original intent/ID once, host creates one logical session, binding committed once. Generic reconciliation must not manufacture private create payload. Existing web `command-recovery.integration.test.ts:202` ACK-write error lacks restart. |
+| Supervisor restart during session create — W2, after host commit | B1 holds committed create ACK; direct matching receipt/intent witness, restart host with same root, drop old ACK. | isolation; **new** `web/test-support/__tests__/execution-ab-process-death.integration.test.ts`, D2b | Existing receipt is folded into the original binding; **no extra create is required** to obtain a new ACK. One logical session/intent, one binding application; do not demand that a dead pre-restart adapter remains live. Recovery path must match stored receipt rather than blindly reissue. |
+| Postgres connection loss during projection | B3: committed consumer claim, identified backend blocked at its domain write; terminate that backend. | isolation; **new** `web/test-support/__tests__/execution-ab-process-death.integration.test.ts`, D3; retain web `web/lib/execution-host/events/__tests__/projection-worker.integration.test.ts:163,201` | Existing tests prove failed **shutdown cleanup**, not loss during apply. Add exact production control: effect/cursor rollback together, original failure visible, successor claim retries and projects once without new event. Preserve cleanup tests' EXECUTOR_UNAVAILABLE/retained-claim assertions. |
+| Web death between create ACK and first prompt | Create ACK and binding committed; proxy holds first prompt before upstream forwarding. Kill web group, then restart. | isolation; **new** `web/test-support/__tests__/execution-ab-process-death.integration.test.ts`, D4 | Production proof required. Same create intent/session recovered, zero host prompts at death, one prompt/application after restart. Existing `web/lib/flows/graph/__tests__/prompt-owners.integration.test.ts:1015` before_admission/before_effect/**before_ack** windows do not prove this post-ACK window. |
+
+Non-browser lifecycle acceptance also retains
+`web/lib/execution-host/__tests__/lifecycle-regression.integration.test.ts:329`
+E1 (permission → checkpoint → idle → response, epoch fencing and cleanup) and
+`:540` E2 (retryable resume spawn failure rolls back/reclaims its generation).
+Their in-process proof is sufficient for these service semantics; new D1/D2
+cover missing production restart boundaries. I1–I4 cover production launch,
+history and object readback. Add **L1 active cancellation**, isolation/production
+boot, in `execution-ab-process-death.integration.test.ts`: hold an accepted live
+ACP turn, use the ordinary authenticated scratch interrupt route, observe fenced
+cancel ACK `cancelled: true`, canonical terminal `stopReason=cancelled` and one
+owner application; release the adapter barrier and prove no late successful
+overwrite, then send one subsequent turn through the same live session. Existing
+`deliverer.integration.test.ts:281` cancels after its prompt completed and checks
+only a boolean; `scratch-runs/__tests__/scratch-placement.integration.test.ts:292`
+Q2 uses a fake host. Those retain their narrower coverage and do not substitute
+for active cancellation. This is the requested non-browser lifecycle row, not
+AT-17. Browser half stays open under S5.3.
+
+
 ## Edge cases
 
 - A Docker probe timeout produces `TestDatabaseDockerUnavailableError` without
@@ -186,3 +422,24 @@ Baseline failures are tracked by exact test names/error signatures and environme
 - [feature specification](../../.ai-factory/specs/feature-unified-test-database-testcontainers.md)
 
 The mandatory S1 CI lane runs `test:integration:ab` in both application packages on Node 24.15.0 and 24.19.0. Its explicit suite inventory is `scripts/run-stage-ab-tests.mjs`; missing files, empty discovery, failed or skipped cases fail the lane. The same runner owns the serial `isolation` slice (AT-16 core, above) and the AT-12 browser lane is `pnpm --filter maister-web test:e2e:execution-ab` (`playwright.execution-ab.config.ts`: a REAL supervisor started by `e2e/execution-ab-global-setup.ts` behind a `next dev` web server; `e2e/execution-ab-content.spec.ts`). That lane must run on an otherwise idle host — concurrent CPU load or file writes under `web/` livelocked the dev server's edge-instrumentation recompile at boot (observed before the 2026-09-08 instrumentation split: ~135k warning lines and a 180 s readiness timeout versus ~3k lines and readiness in ~15 s when idle). `web/instrumentation.ts` now reaches its Node-only body (`web/instrumentation-node.ts`) solely through the `NEXT_RUNTIME === "nodejs"` branch, so the Edge instrumentation entry no longer bundles the server graph and a dev boot plus page compile prints none of those warnings; the idle-host requirement has not been re-measured since. Neither lane is wired into CI yet (S5.3). A separate mandatory image job builds the pinned Dockerfile, exercises real binary HTTP and runs `web/scripts/smoke-production-image.ts` through the default image ENTRYPOINT/CMD with a migrated PostgreSQL container. It verifies HTTP readiness, SIGTERM completion and no remaining web PostgreSQL sessions. The broader owner, import and browser/isolation lanes remain part of later stabilization increments.
+
+### S5.2 contract and schema disposition
+
+No permanent schema migration is required. Command identity, transport state,
+receipt/canonical evidence and owner application use existing execution ledgers;
+projection cursor/domain changes remain one transaction. Test-only audit
+triggers and advisory-lock functions exist only in the disposable database and
+are removed on disposal. No production column, historical migration, journal or
+snapshot changes merely to expose a barrier. A demonstrated persistent-state
+fix first amends its canonical specification and follows the migration-number,
+forward-SQL/journal/snapshot/schema and fresh/populated-upgrade gates.
+
+The HTTP meanings are owned by [supervisor OpenAPI](../api/supervisor.openapi.yaml)
+and [web OpenAPI](../api/web.openapi.yaml); admission 202 is not completion,
+receipt 404 is not transport unavailability, and HITL 503 retains response intent
+without a delivery marker. Ordered exclusive replay is owned by
+[execution events](../api/async/execution-host-events.asyncapi.yaml). Recovery
+and epoch semantics live in [prompt lifecycle](execution-prompt-lifecycle.md),
+[event plane](execution-event-plane.md) and [HITL](hitl.md). The
+[S5.2 implementation plan](../../.ai-factory/plans/s5-2-closeout.md) maps each
+requirement to its RED/GREEN/falsification and phase gate.
