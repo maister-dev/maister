@@ -125,6 +125,17 @@ state, unmount, and run replacement cancel retry work. This does not change
 
 ## States
 
+**Stored permission answer (P0-4 — Designed).** A scratch HITL card with
+`answerState: "answer_stored"` shows the selected answer and the localized
+“Answer saved — delivering on resume” status, disables fresh choices and
+offers an identical-payload “Retry delivery” only to an authorized operator.
+The state survives a detail refresh and a 202 response. The scratch panel
+uses the shared `(code, details.reason)` EN/RU copy, not a generic error; a
+terminal 410 says the agent session ended and directs the operator to Recover
+or relaunch. Its feedback persists after the pending card disappears. An
+unknown reason uses the localized per-code fallback; prompt-owner `causeCode`
+can appear only as a monospaced diagnostic.
+
 ```mermaid
 stateDiagram-v2
     [*] --> Starting

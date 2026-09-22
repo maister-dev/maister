@@ -169,6 +169,18 @@ readiness, target-drift, and diff-completeness guards before submitting.
 
 ## States
 
+**Pending HITL answer read state (P0-4 — Designed).** `answerState` distinguishes
+an open request from a stored answer whose `responded_at` is still NULL.
+The run-page card shows the chosen option read-only and an authorized,
+single identical-payload “Retry delivery” action; 202 resume/delivery states
+show that view immediately and refresh keeps it. Localized refusal copy uses
+`code` and `details.reason`, with prompt-owner `causeCode` as a monospaced
+diagnostic. Terminal 410 says the agent session ended before delivery and asks
+the operator to relaunch. This feedback survives card removal, but the fresh
+terminal run page can still lack a persisted failure cause: B6 remains a
+separate run-level cause follow-up, because this item does not write attempt
+failure metadata or change a state transition.
+
 ```mermaid
 stateDiagram-v2
     [*] --> Pending
