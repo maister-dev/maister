@@ -14,14 +14,15 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, URL as NodeURL } from "node:url";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 const INVOCATION_KEY = "MAISTER_TEST_WORKTREE_INVOCATION_ID";
 const LEDGER_KEY = "MAISTER_TEST_PROCESS_LEDGER";
+// Use NodeURL so Vite does not rewrite these filesystem resources into DOM asset URLs.
 const NATIVE_SOURCE = fileURLToPath(
-  new URL("./process-environment.c", import.meta.url),
+  new NodeURL("./process-environment.c", import.meta.url),
 );
 
 export type ProcessIdentity = Readonly<{
@@ -146,7 +147,7 @@ async function nativeReader(invocation: Invocation): Promise<string> {
       process.execPath,
       [
         fileURLToPath(
-          new URL("./fixture-compiler-watchdog.mjs", import.meta.url),
+          new NodeURL("./fixture-compiler-watchdog.mjs", import.meta.url),
         ),
         String(process.pid),
         "cc",
@@ -469,6 +470,7 @@ export async function registerRoot(
     throw new InvocationOwnershipError("owned root is not a directory");
   const canonical = await realpath(root);
   const temporary = await realpath(tmpdir());
+
   await mkdir(invocation.directory, { recursive: true, mode: 0o700 });
   const ledger = await realpath(invocation.directory);
 
@@ -761,7 +763,7 @@ export async function removeInvocationRoots(
       );
     if (record.rootRole === "worktrees") {
       const { cleanupTestWorktrees } = (await import(
-        new URL("./worktree-test-root.ts", import.meta.url).href
+        new NodeURL("./worktree-test-root.ts", import.meta.url).href
       )) as typeof import("./worktree-test-root");
 
       await cleanupTestWorktrees(record.root);
@@ -785,7 +787,7 @@ export async function removeInvocationRoots(
 }
 
 export const FIXTURE_WATCHDOG = fileURLToPath(
-  new URL("./fixture-parent-watchdog.mjs", import.meta.url),
+  new NodeURL("./fixture-parent-watchdog.mjs", import.meta.url),
 );
 
 export async function registerContainerAllocation(

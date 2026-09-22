@@ -6,6 +6,7 @@ import { realpathSync } from "node:fs";
 import { lstat, readFile, readdir, realpath, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { URL as NodeURL } from "node:url";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -260,7 +261,7 @@ export async function mkdtempReal(prefix: string): Promise<string> {
 
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), prefix)));
   const { invocationFromEnvironment, registerRoot } = (await import(
-    new URL("./process-invocation.ts", import.meta.url).href
+    new NodeURL("./process-invocation.ts", import.meta.url).href
   )) as typeof import("./process-invocation");
   const invocation = invocationFromEnvironment();
 
