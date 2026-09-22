@@ -5,6 +5,8 @@ import { availableParallelism, tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { createInvocation, fixtureProcessEnvironment, FIXTURE_WATCHDOG, logInvocation, invocationRecords, fixtureLogTail, registerProcess, removeInvocationRoots, removeInvocationContainers, signalInvocationGroup, sweepInvocation } from "../web/test-support/process-invocation.ts";
+
 import { assertSupportedNode } from "../runtime/node-version.ts";
 
 // Explicit owning seams make a renamed or undiscovered suite fail the lane.
@@ -44,6 +46,7 @@ export const laneSuites = {
   // kernel isolation driver against a real supervisor — runs alone because
   // the build and both process trees own the host.
   isolation: [
+    "test-support/__tests__/execution-ab-process-cleanup.integration.test.ts",
     "test-support/__tests__/execution-ab-isolation.integration.test.ts",
     // P0-2: the three durable workers in the production boot. Same shape as
     // AT-16 — `next build` plus two process trees — so the same serial slice.
@@ -82,42 +85,106 @@ export function vitestArgs({ files, reportPath, concurrency }) {
   ];
 }
 
-async function main() {
+export async function runStageAbLane({ slice, files = laneSuites[slice], workspace, evidenceDirectory = process.env.MAISTER_TEST_EVIDENCE_DIR }) {
   assertSupportedNode(process.versions.node);
-  const slice = process.argv[2];
-
   assert(Object.hasOwn(laneSuites, slice ?? ""), "usage: run-stage-ab-tests.mjs web|supervisor|isolation");
-  const files = laneSuites[slice];
   const cwd = fileURLToPath(new URL(`../${lanePackages[slice]}/`, import.meta.url));
 
   await Promise.all(files.map((file) => access(join(cwd, file))));
-  const directory = await mkdtemp(join(tmpdir(), `maister-ab-${slice}-`));
+  const directory = await mkdtemp(join(evidenceDirectory ?? tmpdir(), `maister-ab-${slice}-`));
+  const invocation = await createInvocation(directory);
   const reportPath = join(directory, "vitest.json");
   const concurrency = laneConcurrency(availableParallelism(), slice);
-  // Docker is a precondition of this lane, not a question, so a slow runtime
-  // client must not cost a suite its whole beforeAll.
-  const env = { ...process.env, MAISTER_TEST_DOCKER_PROBE_TIMEOUT_MS: "30000" };
-  const child = spawn(process.execPath, vitestArgs({ files, reportPath, concurrency }), { cwd, stdio: "inherit", env });
-  const status = await new Promise((resolve, reject) => {
-    child.once("error", reject);
-    child.once("exit", (code, signal) => resolve({ code, signal }));
-  });
+  const env = { ...process.env, ...await fixtureProcessEnvironment(invocation), MAISTER_TEST_DOCKER_PROBE_TIMEOUT_MS: "30000" };
+  const args = ["--import", FIXTURE_WATCHDOG, ...vitestArgs({ files, reportPath, concurrency })];
 
-  console.log(JSON.stringify({ slice, node: process.versions.node, bundledUndici: process.versions.undici, concurrency, reportPath, ...status }));
-  assert.equal(status.code, 0, "A/B integration runner failed");
-  const report = JSON.parse(await readFile(reportPath, "utf8"));
+  if (workspace) args.push("--workspace", workspace);
+  let child;
+  let escalation;
+  let caughtSignal;
+  let failure;
+  let status;
+  const signalDeliveries = [];
+  const onSignal = (signal) => {
+    caughtSignal ??= signal;
+    if (!child?.pid || child.exitCode !== null || child.signalCode !== null) return;
+    signalDeliveries.push(signalInvocationGroup(invocation, child.pid, signal).catch((error) => {
+      failure = failure ? new AggregateError([failure, error], "A/B group signal failed") : error;
+      // The direct child is still ours; a failed group check never authorizes wider signaling.
+      child.kill("SIGKILL");
+    }));
+    escalation ??= setTimeout(() => {
+      if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+    }, 5_000);
+  };
+  const onInterrupt = () => onSignal("SIGINT");
+  const onTerminate = () => onSignal("SIGTERM");
 
-  assert.equal(report.testResults.length, files.length, "A/B discovery omitted an owning suite");
-  for (const file of files) {
-    const result = report.testResults.find((item) => item.name.endsWith(file));
+  process.on("SIGINT", onInterrupt);
+  process.on("SIGTERM", onTerminate);
+  try {
+    await registerProcess(invocation, { role: "runner", caseName: slice, rootRole: "invocation", root: null, bootId: invocation.id, logFile: null }, process.pid);
+    child = spawn(process.execPath, args, { cwd, stdio: "inherit", env, detached: true });
+    const exited = new Promise((resolve, reject) => {
+      child.once("error", reject);
+      child.once("exit", (code, signal) => resolve({ code, signal }));
+    });
 
-    assert(result?.assertionResults.length > 0, `A/B discovery is empty: ${file}`);
-    assert(result.assertionResults.every((item) => item.status === "passed"), `A/B case failed or was skipped: ${file}`);
+    // Registration failure must not leave a concurrently rejected exit promise unobserved.
+    void exited.catch(() => {});
+    await registerProcess(invocation, { role: "vitest", caseName: slice, rootRole: "invocation", root: null, bootId: invocation.id, logFile: null }, child.pid);
+    status = await exited;
+    console.log(JSON.stringify({ slice, invocationId: invocation.id, ledger: invocation.directory, node: process.versions.node, bundledUndici: process.versions.undici, concurrency, reportPath, ...status }));
+    assert.equal(caughtSignal, undefined, `A/B runner interrupted by ${caughtSignal}`);
+    assert.equal(status.code, 0, "A/B integration runner failed");
+    const report = JSON.parse(await readFile(reportPath, "utf8"));
+
+    assert.equal(report.testResults.length, files.length, "A/B discovery omitted an owning suite");
+    for (const file of files) {
+      const result = report.testResults.find((item) => item.name.endsWith(file));
+
+      assert(result?.assertionResults.length > 0, `A/B discovery is empty: ${file}`);
+      assert(result.assertionResults.every((item) => item.status === "passed"), `A/B case failed or was skipped: ${file}`);
+    }
+    assert.equal(report.numFailedTests, 0);
+    assert.equal(report.numPendingTests, 0);
+    assert.equal(report.numTodoTests ?? 0, 0);
+    assert.equal(report.numRuntimeErrorTestSuites ?? 0, 0, "A/B unhandled runtime error");
+    assert.equal(report.success, true, "A/B reporter recorded errors");
+    console.log(JSON.stringify({ slice, passed: report.numPassedTests, suites: files.length, concurrency, reportPath }));
+  } catch (error) {
+    failure = failure ? new AggregateError([failure, error], "A/B execution and signal failed") : error;
+  } finally {
+    if (escalation) clearTimeout(escalation);
+    await Promise.all(signalDeliveries);
+    try {
+      const leaks = await sweepInvocation(invocation);
+      const containers = await removeInvocationContainers(invocation);
+
+      await removeInvocationRoots(invocation);
+      assert.equal(leaks.length, 0, "A/B invocation leaked processes; sweep reaped them");
+      assert.equal(containers.length, 0, "A/B invocation leaked containers; terminal cleanup removed them");
+    } catch (error) {
+      failure = failure ? new AggregateError([failure, error], "A/B execution and cleanup failed") : error;
+    }
+    process.off("SIGINT", onInterrupt);
+    process.off("SIGTERM", onTerminate);
+    logInvocation(invocation, "lane-complete", { role: "runner", caseName: slice, pid: process.pid, pgid: 0, rootRole: "invocation", bootId: invocation.id, outcome: failure ? "failed" : "passed", reportPath });
   }
-  assert.equal(report.numFailedTests, 0);
-  assert.equal(report.numPendingTests, 0);
-  assert.equal(report.numTodoTests ?? 0, 0);
-  console.log(JSON.stringify({ slice, passed: report.numPassedTests, suites: files.length, concurrency, reportPath }));
+  if (failure) {
+    try {
+      for (const record of await invocationRecords(invocation)) {
+        if (record.kind === "process" && record.logFile) {
+          logInvocation(invocation, "fixture-failure", { role: record.role, caseName: record.caseName, pid: record.identity.pid, pgid: record.identity.pgid, rootRole: record.rootRole, bootId: record.bootId, outcome: "failed", logTail: await fixtureLogTail(invocation, record.logFile) });
+        }
+      }
+    } catch (diagnosticError) {
+      throw new AggregateError([failure, diagnosticError], "A/B failure and fixture diagnostics failed");
+    }
+    throw failure;
+  }
+
+  return { directory, reportPath, invocation, status };
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) await main();
+if (process.argv[1] === fileURLToPath(import.meta.url)) await runStageAbLane({ slice: process.argv[2] });

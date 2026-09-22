@@ -258,5 +258,13 @@ export async function mkdtempReal(prefix: string): Promise<string> {
   const os = await import("node:os");
   const path = await import("node:path");
 
-  return await realpath(await mkdtemp(path.join(os.tmpdir(), prefix)));
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), prefix)));
+  const { invocationFromEnvironment, registerRoot } = (await import(
+    new URL("./process-invocation.ts", import.meta.url).href
+  )) as typeof import("./process-invocation");
+  const invocation = invocationFromEnvironment();
+
+  if (invocation) await registerRoot(invocation, root, "fixture");
+
+  return root;
 }

@@ -1,11 +1,11 @@
 # Implementation Plan: Close S5.2 — process death, partitions and denied roots
 
-Created: 2026-09-22. Status: **Implementing; T01–T02 complete; T03 local baseline verified, remote preflight pending; T04 in progress. Qualification pending.**
+Created: 2026-09-22. Status: **Implementing; T01–T02 and T04–T07 complete; T03 local baseline verified, remote preflight pending; T08 in progress. Qualification pending.**
 Branch: none (existing detached worktree preserved).
 Planning HEAD: `c4216cd532c9fe7df2ca38c6045bea23ed54e8fa`.
 User-supplied qualification baseline: local `master @ 1056c5c1`.
 Parent plan: [Stage A/B stabilization](stage-ab-stabilization.md), task S5.2.
-Refinement: SDD/TDD review on 2026-09-22; all implementation tasks remain open.
+Refinement: SDD/TDD review on 2026-09-22; completion evidence is recorded per phase.
 
 ## Goal and boundary
 
@@ -503,7 +503,7 @@ qualification, exact baseline and no broadened process authority. Commit C1.
 
 ### Phase 1 — reliable process ownership before destructive tests
 
-- [ ] **T04 — Add invocation resource identity and safe enumeration.** Files:
+- [x] **T04 — Add invocation resource identity and safe enumeration.** Files:
   `scripts/run-stage-ab-tests.mjs`, new
   `web/test-support/process-invocation.ts` plus its minimal macOS reader/helper,
   `scripts/run-stage-ab-tests.test.mjs`, `web/vitest.workspace.ts`,
@@ -517,7 +517,7 @@ qualification, exact baseline and no broadened process authority. Commit C1.
   no broad unit mock of `ps`. All new helper children are owned too. Logging:
   registration/inspection outcome with no environment dump. Depends: T03.
 
-- [ ] **T05 — Enforce runner exit sweep and O1.** Files: runner,
+- [x] **T05 — Enforce runner exit sweep and O1.** Files: runner,
   `process-invocation.ts`, new
   `web/test-support/__tests__/execution-ab-process-cleanup.integration.test.ts`
   and a narrowly scoped child fixture under `web/test-support/fixtures/`.
@@ -538,7 +538,7 @@ qualification, exact baseline and no broadened process authority. Commit C1.
   mode is added to production entrypoints or the public lane CLI. Logging:
   every sweep kill, originating failure and final recheck. Depends: T04.
 
-- [ ] **T06 — Add fixture parent-death supervision and O2.** Files:
+- [x] **T06 — Add fixture parent-death supervision and O2.** Files:
   `web/test-support/real-supervisor.ts`, `real-web.ts`, new
   `web/test-support/fixture-parent-watchdog.mjs`, runner spawn path and
   cleanup suite/child fixture.
@@ -556,7 +556,7 @@ qualification, exact baseline and no broadened process authority. Commit C1.
   production entrypoint. Logging: parent identity, detection, group action,
   confirmed exit. Depends: T04–T05.
 
-- [ ] **T07 — Complete root cleanup and fixture diagnostics.** Files:
+- [x] **T07 — Complete root cleanup and fixture diagnostics.** Files:
   `real-supervisor.ts`, `real-web.ts`, `worktree-test-root.ts`, ledger/helper,
   cleanup suite; `pg-container.ts` only if invocation labelling/owned-container
   cleanup is needed, never a second constructor. Remove owned roots at terminal
@@ -572,6 +572,23 @@ qualification, exact baseline and no broadened process authority. Commit C1.
 Phase exit: O1/O2 and their falsifications recorded; I1–I4/worker boot/concurrency
 still green. Check runner integration membership for the cleanup file (no
 recursive selection of itself in nested controls). Commit C2.
+
+**Phase 1 verified 2026-09-22:** serial production isolation passed 28/28,
+four suites, zero errors, exit 0, 434.69 s on darwin/arm64 Node 24.15.0;
+terminal sweep found zero leaks. Invocation `cf65a918-eaf8-4c62-bbef-68c8efb4f119`.
+Evidence under `/private/tmp/maister-s52-20260922/phase1-isolation-final/`:
+`lane.log`, `maister-ab-isolation-wBWVSd/vitest.json` and its process ledger.
+Original I1–I4 and worker boot/concurrency assertions remain unchanged.
+The cleanup suite owns 13 integration cases, including reporter failures,
+catchable signals, runner SIGKILL, parent loss with a TERM-resistant adapter,
+exact-environment ownership, OS-denied inspection, and root identity refusal.
+`O1-red-no-sweep.log`, `O2-red-no-watchdog.log`, and
+`ownership-denied-red-disabled.log` record restored one-at-a-time falsifications;
+`cleanup-container-green.log` records 13/13 after fixing independently observed
+shared-Ryuk container leaks with exact invocation labels. The final additional
+ledger/ancestor protection passed `O-roots-ledger-green.log` (targeted case).
+Runner tests 6/6, PG lifecycle control 1/1, web typecheck and targeted lint passed.
+Linux process enumeration and hosted Intel qualification remain T14/T13 gates.
 
 ### Phase 2 — partitions and missing process-death windows
 

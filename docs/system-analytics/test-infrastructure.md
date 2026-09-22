@@ -95,7 +95,7 @@ sequenceDiagram
 
 `web/test-support/process-isolation.ts` resolves the kernel isolation driver this host can enforce (macOS `sandbox-exec`, denial = `EPERM`; the Linux uid/mount-namespace driver is scheduled with S5.3 and an unsupported host fails loudly) and `web/test-support/real-web.ts` starts the production web (`next build` of the checked-out tree, `server.ts`, production `instrumentation.ts` boot) in its own process group under that driver, with a credentials sign-in over the production Auth.js endpoints. `web/test-support/__tests__/execution-ab-isolation.integration.test.ts` (4/4) is AT-16's core: disjoint private roots for web and supervisor with only the worktrees root shared; the web identity is denied the host's sentinel and its live `state.sqlite` while the harness and the host keep them; a scratch launch with an upload completes through HTTP/Postgres with the real host executing the prompt; the object reads back under the AB-12 policy with the transcript; a SIGKILLed web restarts through production initialization under the same isolation, serves the same history and bytes, and completes a further turn on the still-live host session. It runs alone (`node scripts/run-stage-ab-tests.mjs isolation`, serial slice) with `MAISTER_TEST_EVIDENCE_DIR` keeping build/web/supervisor logs outside the worktree.
 
-### S5.2 close-out protocol (Designed)
+### S5.2 close-out protocol (cleanup implemented; partitions and CI qualification Designed)
 
 Option B is selected: the real `sandbox-exec` driver runs in a dedicated,
 serial GitHub `macos-15-intel` job with Node 24.19.0 and a pinned Colima/Lima
@@ -111,7 +111,7 @@ setup/build/tests/cleanup/upload must measure below 60 minutes. Missing runner
 execution or an unavailable kernel driver is unqualified, never a local-pass
 substitute. Qualification records revision, image, architecture and Node version.
 
-The designed invocation lifecycle preserves roots across restart and disposes
+The implemented invocation lifecycle preserves roots across restart and disposes
 of them only after the last owned process using them is dead.
 
 ```mermaid
@@ -192,12 +192,12 @@ ID. Preserve `vitest.workspace.ts` standalone behavior, but its fallback minting
 must not replace the runner's ID. Per-worker root suffixes do not change the
 environment tag used by the sweep.
 
-**Build ownership is separate from process ownership.** `real-web.ts` currently
-keys its `.next` build stamp by invocation ID. A nested O-control must not
-rebuild or mutate `.next` while an outer production web serves it. T04/T05 add
-the smallest test-support build handle (revision, verified build ID, artifact
-path) passed to an explicit start-from-built-artifact helper; validate the handle
-before use. All nested cleanup invocations reuse the outer lane's one build,
+**Build ownership is separate from process ownership.** `real-web.ts`
+keys its `.next` build stamp by invocation ID and returns a verified
+`ProductionWebBuild` handle (revision, build ID, artifact path, invocation ID)
+for nested controls. `startRealWeb` validates the handle before reuse, so a
+nested O-control neither rebuilds nor mutates a running web's `.next`.
+All nested cleanup invocations reuse the outer lane's one build,
 but retain separate cleanup IDs and ports. No unverified skip-build flag and no
 production server change. Register build subprocesses too. Build-lock ownership
 uses PID/start identity: reclaim a proved dead owner rather than waiting for the
@@ -205,7 +205,7 @@ current age-only stale threshold. Never delete the worktree's `.next` as a temp
 root. A startup-failure/worker-death control must prove no build descendant or
 dead-owner lock obstructs the next run.
 
-Add an invocation resource ledger outside disposable roots: atomic per-resource
+`process-invocation.ts` keeps its resource ledger outside disposable roots: atomic per-resource
 records avoid shared-file lost updates. Record process PID/PGID, UID, start time,
 role, expected parent identity, root ownership and boot/case identity before
 reporting readiness. Root ownership records precede content. Enumerate live
@@ -216,6 +216,29 @@ environment-aware reader (e.g. `sysctl KERN_PROCARGS2`, with the argv/env split
 parsed explicitly), bundled in test support and qualified on the CI image.
 Failure to inspect an owned candidate is an error, not an empty process list.
 Do not print collected environments. No `pgrep -f` or binary-name kill.
+
+The macOS implementation uses the bundled `process-environment.c` reader;
+its compilation is itself owned by a parent-death wrapper. The fixture watchdog
+checks parent and runner identities immediately and every 500 ms; owned-group
+termination, including a TERM-resistant adapter, is verified within five seconds.
+`execution-ab-process-cleanup.integration.test.ts` runs 13 controls in the serial
+isolation slice. Local ARM64 qualification passed the full 28-case/four-suite
+slice in 434.69 s with zero sweep leaks. Sweep-disabled and watchdog-disabled
+controls each fail their independent owning assertion. CI and Linux process
+reader qualification are still pending; the Linux isolation driver remains S5.3.
+
+Container ownership is independent of Ryuk's shared session. The sole
+`pg-container.ts` constructor records allocation before start, labels its
+container with `maister.test.invocation=<minted ID>`, then records the returned
+container ID. After owned client processes have exited, terminal runner cleanup
+enumerates only that exact label, revalidates it and removes only those IDs.
+This also covers death between Docker creation and ledger registration. Normal
+pool-before-container teardown remains first; a container found by the terminal
+runner cleanup is a failed lane even when removal succeeds. After runner
+SIGKILL, the surviving outer control/CI finalizer performs this same recorded
+cleanup after proving watchdog termination. Never prune a shared Docker daemon
+or stop its shared Ryuk container. The installed Testcontainers implementation
+can reuse one reaper across invocations; its liveness is not per-lane evidence.
 
 Sweep authority is exactly one minted invocation ID. Exclude the runner and its
 short-lived inspection helpers explicitly. Validate registered groups and their
