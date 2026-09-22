@@ -1124,10 +1124,18 @@ already-inserted run) — never an orphan worktree or live ACP session.
   (SELECT filters `status='NeedsInput'`, then the post-query
   `run_sessions` acp-handle resolution drops it) by construction.
 - `NeedsInput` keep-alive window is `MAISTER_KEEPALIVE_MINUTES`
-  (default 30 min); every web-activity event extends `keepalive_until`.
+  (default 30 min); every web-activity event extends `keepalive_until`. The web
+  is its **only** owner (Implemented — ADR-180): the supervisor does not read
+  the variable and holds no per-permission copy of the window, keeping only the
+  absolute `MAISTER_PERMISSION_MAX_HOURS` backstop (default 24) whose expiry
+  performs the same graceful checkpoint, never a reject or a `SIGKILL`.
 - Idle past `keepalive_until` triggers graceful checkpoint → run becomes
   `NeedsInputIdle` with the active `run_sessions` row's `acp_session_id`
-  (via `loadActiveRunSession`) retained as the resume handle.
+  (via `loadActiveRunSession`) retained as the resume handle. A run whose
+  session is **already** checkpointed is parked by the sweeper's second arm
+  regardless of `keepalive_until` (Implemented — ADR-180), so an operator
+  holding a tab open cannot keep a dead session out of the 24 h `Abandoned`
+  rule.
 - `NeedsInputIdle` resume respawns the adapter and restores context via the
   ACP `session/resume` call on `acp_session_id` (not a CLI flag) and incurs
   ~$0.28 cache-creation cost per respawn (operator-visible if surfaced).
@@ -1289,6 +1297,13 @@ only in the trigger they record in logs — sweeper-driven vs.
 runner-agent-observing-`session.exited.reason="checkpoint"`. The
 status-guard makes them idempotent w.r.t. each other.
 
+**Four writers, one CAS** (Implemented — ADR-180). `NeedsInput → NeedsInputIdle`
+is written by the sweeper's keep-alive arm, the sweeper's checkpointed arm, the
+flow driver's `markCheckpointedFromExit`, and the race-window answer branch in
+the HITL response service. The invariant is not "one writer" but "every writer
+goes through `idleFromNeedsInput`'s CAS" — which is why a fourth writer needs no
+new guard and cannot double-park a run.
+
 ### Keep-alive sliding window
 
 The keep-alive window is the interval between the latest
@@ -1308,15 +1323,23 @@ The keep-alive window is the interval between the latest
 
 ### Idle sweeper + scheduler interaction
 
-`web/lib/runs/keepalive-sweeper.ts` is a `globalThis`-singleton timer
-that runs `runSweepTick()` every `MAISTER_KEEPALIVE_SWEEP_INTERVAL_SECONDS`
-(default 30). Each tick runs two passes serially, each capped at 50
-rows per tick and concurrency 4:
+`web/lib/runs/keepalive-sweeper.ts` exposes `runSweepTick()`, driven by the
+`system_sweep` job on the scheduler clock (`web/lib/scheduler/system-sweeps.ts`);
+`startKeepaliveSweeper`'s `globalThis`-singleton timer has no production caller.
+Each tick runs its passes serially, each capped at 50 rows per tick and
+concurrency 4:
 
 | Pass | SELECT | Per-row action |
 |------|--------|----------------|
 | 1 | `NeedsInput WHERE keepalive_until < now()` | look up supervisor session by `acpSessionId`; if live → `checkpointSession()` then `markCheckpointed`; if not live → `markCheckpointed` directly; on supervisor 5xx → leave row, next tick retries; on success → `releaseSlotOnIdle` → `promoteNextPending` |
+| 1b | `NeedsInput` whose active session holds a `checkpointed` incarnation, **independent of `keepalive_until`** (Implemented — ADR-180) | `markCheckpointed` through the same CAS → `releaseSlotOnIdle` → `promoteNextPending`. Its own query and its own `LIMIT`: Pass 1 orders by `keepalive_until` and would starve these rows behind up to 50 expired ones. Only `checkpointed` qualifies — `exited`/`crashed` incarnations belong to the crash-reconcile paths |
 | 2 | `NeedsInputIdle WHERE checkpoint_at + ttl < now()` | UPDATE to `Abandoned` with status-guard; close any open `hitl_requests.respondedAt`; TTL = `MAISTER_NEEDSINPUTIDLE_TTL_HOURS` |
+
+Pass 1b is a **positive witness**, not an inference from absence:
+`run_session_incarnations.state='checkpointed'` is written only for
+`session.exited{reason:"checkpoint"}`, and the partial unique index
+`run_session_incarnations_active_run_session_uq` guarantees at most one such row
+per session. It needs no new index and no migration.
 
 The scheduler cap is `count(status IN ('Running','NeedsInput','HumanWorking'))` —
 `NeedsInputIdle` does NOT count, so a checkpointed run frees a slot
@@ -1427,7 +1450,8 @@ resume or depend on supervisor availability.
 ## Linked artifacts
 
 - Execution-host contract (ADR-166, Implemented): [`execution-hosts.md`](execution-hosts.md) — every placement CAS re-entry (launch, resume, recover, wait-resume, rework return, node interrupt) mints an `execution_assignments` epoch, and a driver whose command is fenced yields without writing run state.
-- ADRs: [ADR-006 Hybrid HITL](../decisions.md#adr-006-hybrid-hitl-keep-alive--checkpointresume),
+- ADRs: [ADR-006 Hybrid HITL](../decisions.md#adr-006-hybrid-hitl-keep-alive--checkpointresume)
+  (amended by [ADR-180 Permission deadline has one owner](../decisions.md#adr-180-permission-deadline-has-one-owner), Implemented),
   [ADR-011 Workspace lifecycle](../decisions.md#adr-011-workspace-lifecycle-via-git-worktree),
   [ADR-018 Task ↔ Run 1:N](../decisions.md#adr-018-task--run-cardinality-is-1n),
   [ADR-058 Branch targeting + shared promotion + promote-time readiness re-gate](../decisions.md#adr-058-branch-targeting-at-launch-shared-promotion-service-promote-time-readiness-re-gate-m18m15-carve)
@@ -1435,7 +1459,8 @@ resume or depend on supervisor availability.
 - ERD: [`../db/runs-domain.md`](../db/runs-domain.md).
 - Config reference: [`../configuration.md`](../configuration.md)
   §`Environment variables (server tier)` —
-  `MAISTER_MAX_CONCURRENT_RUNS`, `MAISTER_KEEPALIVE_MINUTES`,
+  `MAISTER_MAX_CONCURRENT_RUNS`, `MAISTER_KEEPALIVE_MINUTES` (web),
+  `MAISTER_PERMISSION_MAX_HOURS` (host),
   `MAISTER_HEARTBEAT_INTERVAL_MS`, `MAISTER_KILL_GRACE_MS`.
 - API: [`../api/supervisor.openapi.yaml`](../api/supervisor.openapi.yaml),
   [`../api/async/supervisor-sse.asyncapi.yaml`](../api/async/supervisor-sse.asyncapi.yaml).

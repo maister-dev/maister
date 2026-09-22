@@ -511,6 +511,7 @@ components:
         - runtime_object_missing
         - runtime_object_range_invalid
         - runtime_object_integrity_mismatch
+        - session_checkpointed
       description: |
         (Implemented — ADR-166) Machine-readable refusal discriminator carried in
         `SupervisorErrorBody.details.reason`. Tests assert the token, never

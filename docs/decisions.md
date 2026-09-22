@@ -221,6 +221,7 @@ validate:docs` enforces stub ↔ body equality and the file bijection.
 | [ADR-177](#adr-177-evidence-first-crash-classification) | Evidence-first crash classification | Implemented | 2026-09-21 |
 | [ADR-178](#adr-178-observatory-overview-table-day-aligned-period-url-views-and-auto-apply-filters) | Observatory overview table, day-aligned period, URL views, and auto-apply filters | Implemented (2026-09-21) | 2026-09-21 |
 | [ADR-179](#adr-179-mcp-configuration-values--literal-or-reference-envheader-maps-a-bearer-token-field-value-replacing-project-overlays-host-env-ref-readiness-and-an-adapter-transport-gate) | MCP configuration values — literal-or-reference env/header maps, a bearer token field, value-replacing project overlays, host env-ref readiness, and an adapter transport gate | Implemented | 2026-09-21 |
+| [ADR-180](#adr-180-permission-deadline-has-one-owner) | Permission deadline has one owner | Implemented | 2026-09-22 |
 
 ---
 
@@ -1824,6 +1825,15 @@ Full record: [`decisions/adr-179.md`](decisions/adr-179.md)
 
 ---
 
+### ADR-180: Permission deadline has one owner
+
+**Status:** Implemented
+**Date:** 2026-09-22
+
+Full record: [`decisions/adr-180.md`](decisions/adr-180.md)
+
+---
+
 ## Template for New Decisions
 
 ```markdown
@@ -1951,3 +1961,32 @@ properties/lastAction` sets `nullable: true` beside an `allOf` with no sibling
   the file covers startup reconcile, the periodic sweep, operator Recover, the
   cron GC route, preserve-then-prune and context-mount GC — so this is a split
   decision, not a trim, and belongs to whoever next reworks that domain (R9).
+- **`configuration.md`'s env table is cut in two by an unclosed blockquote
+  (found 2026-09-22, ADR-180 T0.6).** `docs/configuration.md:1166` opens a
+  `>` blockquote for the ADR-160 "no new variable" note and never closes it, so
+  every row from `MAISTER_LOCAL_PACKAGE_LOCK_MINUTES` onward renders as a
+  SECOND, quoted table instead of joining the main one — roughly 50 variables,
+  including `MAISTER_KEEPALIVE_SWEEP_INTERVAL_SECONDS`. ADR-180 placed its own
+  new row in the main table above the break and corrected one stale quoted row
+  in place; re-joining the two tables touches ~50 unrelated rows and was left
+  alone because R9 forbids touching an unrelated section in passing.
+- **`execution_events_disposition_check` exists in SQL with no counterpart in
+  `schema.ts` (found 2026-09-22, ADR-180 T0.6).**
+  `web/lib/db/migrations/0131_foamy_venom.sql:224` adds the CHECK constraint
+  `("ingest_disposition" IN (…) AND ("run_sequence" IS NULL OR
+  "ingest_disposition" = 'accepted'))`, and `web/lib/db/schema.ts` declares no
+  matching `check()` on `executionEvents`. Drizzle therefore does not know the
+  constraint exists and will propose DROPping it on the next `db:generate` that
+  touches that table — the exact "schema.ts is the fourth leg of the migration
+  contract" trap. Not fixed here: ADR-180 adds no migration and touches no
+  schema, and adding a `check()` would change the generated snapshot chain. Left
+  alone because R9 forbids touching an unrelated section in passing.
+- **`execution-host-events.asyncapi.yaml`'s `ReasonToken` is 21 tokens behind
+  `supervisor.openapi.yaml` (found 2026-09-22, ADR-180 T0.5).** The OpenAPI copy
+  is the gating one — `supervisor/src/__tests__/openapi-examples.test.ts` asserts
+  `REASON_TOKENS ⊆ ReasonToken.enum` against it alone — so the AsyncAPI copy has
+  drifted unguarded (it is missing every `command_*` and `import_*` token, among
+  others). ADR-180 added only its own new token to both copies; re-syncing the
+  other 21 is a separate piece of work, and so is deciding whether a second test
+  should gate that copy too. Left alone because R9 forbids touching an unrelated
+  section in passing.

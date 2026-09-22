@@ -20,8 +20,10 @@ info:
       `session.delete`): the durable completion signal. `session.exited.reason` gains `fenced` for
       a session evicted by a higher assignment epoch.
 
-    Permission deferreds age out after `MAISTER_KEEPALIVE_MINUTES`; a
-    late response returns `HITL_TIMEOUT`.
+    Permission deferreds age out after the absolute
+    `MAISTER_PERMISSION_MAX_HOURS` cap (Implemented — ADR-180), whose expiry
+    performs a graceful checkpoint; a late response returns `HITL_TIMEOUT`,
+    non-terminal when it carries `details.reason: session_checkpointed`.
 
     Terminal events (`session.exited` / `session.crashed`) close the
     connection. Clients reconnect with `Last-Event-ID: <monotonicId>`
@@ -160,10 +162,11 @@ components:
         the user (typically via the web tier's HITL board), then resolve
         the deferred via `POST /sessions/{id}/input` with
         `{kind: "permission", action: "select" | "cancel", requestId,
-        optionId?}`. If no decision arrives within
-        `MAISTER_KEEPALIVE_MINUTES`, the supervisor rejects the deferred
-        with `HITL_TIMEOUT` and the adapter observes a cancelled tool
-        call.
+        optionId?}`. If no decision arrives within the absolute
+        `MAISTER_PERMISSION_MAX_HOURS` cap (Implemented — ADR-180), the
+        supervisor CHECKPOINTS the session — the deferred is cancelled, not
+        rejected, so the adapter journals the cancelled tool call for replay
+        after `session/resume`.
       contentType: application/json
       payload: { $ref: "#/components/schemas/SessionPermissionRequestEvent" }
       examples:
@@ -492,6 +495,17 @@ components:
                 its run; its pending prompt request answered `409 FENCED`.
                 Absent for natural process exit (the adapter ran to
                 completion on its own).
+            cause:
+              type: string
+              const: permission_cap
+              description: |
+                (Implemented — ADR-180) Diagnostic only. Present exactly when
+                the terminal was started by the host's own absolute
+                `MAISTER_PERMISSION_MAX_HOURS` cap on a pending permission,
+                alongside `reason: checkpoint`. Nothing branches on it, and it
+                is deliberately NOT a new `reason` value: the web SSE decoder
+                validates `reason` against the three-value enum above and drops
+                the whole terminal event for anything else.
     SessionCrashedEvent:
       allOf:
         - $ref: "#/components/schemas/EventBase"

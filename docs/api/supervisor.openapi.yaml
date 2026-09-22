@@ -1072,6 +1072,13 @@ paths:
         `alreadyCheckpointed: true` and the most recent `monotonicId`.
         On SIGKILL escalation returns 503 `EXECUTOR_UNAVAILABLE` — the
         web sweeper treats this as retryable.
+
+        (Implemented — ADR-180) The teardown body is shared verbatim with the
+        host's own absolute-cap timer: when a pending permission outlives
+        `MAISTER_PERMISSION_MAX_HOURS` the supervisor performs exactly these
+        steps and emits the same terminal (plus an advisory
+        `cause: "permission_cap"`), with NO command, NO fence and NO receipt —
+        so no `session.command` admission event exists for that checkpoint.
       operationId: checkpointSession
       parameters:
         - $ref: "#/components/parameters/SessionId"
@@ -1287,10 +1294,19 @@ paths:
         "410":
           description: |
             Known session, but no pending permission with that `requestId`:
-            the deferred timed out past `MAISTER_KEEPALIVE_MINUTES`, or another
-            request already resolved / cancelled it (a checkpoint cancels with
-            reason `checkpoint`, a higher-epoch eviction with reason `fenced`).
-            Terminal for the web tier (`HITL_TIMEOUT`).
+            the deferred was released by the absolute
+            `MAISTER_PERMISSION_MAX_HOURS` cap, or another request already
+            resolved / cancelled it (a checkpoint cancels with reason
+            `checkpoint`, a higher-epoch eviction with reason `fenced`).
+
+            (Implemented — ADR-180) When the session terminated INTENTIONALLY
+            with its deferreds cancelled — `intentionalReason` in
+            `{checkpoint, intentional}`, never `fenced` — the body carries
+            `details.reason: "session_checkpointed"`. That arm is NOT terminal
+            for the web tier: the answer is kept, the run is parked through the
+            shared CAS and resumed, and `/respond` answers 202
+            `{state: "resume-in-progress"}`. Every other 410 stays terminal
+            (`HITL_TIMEOUT`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
@@ -1299,6 +1315,13 @@ paths:
                   value:
                     code: "HITL_TIMEOUT"
                     message: "no pending permission with that requestId"
+                sessionCheckpointed:
+                  summary: The session was parked by a checkpoint; the answer resumes it
+                  value:
+                    code: "HITL_TIMEOUT"
+                    message: "session was checkpointed — resume and re-deliver"
+                    details:
+                      reason: "session_checkpointed"
         "503":
           description: |
             Unknown session — typically the supervisor restarted (or the
@@ -2989,12 +3012,16 @@ components:
         Subset of the web-tier `MaisterErrorCode`. The web client translates
         this body into `MaisterError({ code })` at the boundary.
 
-        `HITL_TIMEOUT` (M7+, HTTP 410) is returned by
+        `HITL_TIMEOUT` (HTTP 410) is returned by
         `POST /sessions/{id}/input` when the session is known but no pending
         permission exists for the given `(sessionId, requestId)` — the
-        deferred aged past `MAISTER_KEEPALIVE_MINUTES` or was already
-        resolved / cancelled. An unknown session on that route is
-        `EXECUTOR_UNAVAILABLE` (503, retryable).
+        deferred aged past the absolute `MAISTER_PERMISSION_MAX_HOURS` cap or
+        was already resolved / cancelled. An unknown session on that route is
+        `EXECUTOR_UNAVAILABLE` (503, retryable). (Implemented — ADR-180) It no
+        longer means "the host keep-alive window elapsed": that window belongs
+        to the web alone. On the `details.reason: "session_checkpointed"` arm
+        the code is the same but the meaning is NOT terminal — the answer
+        resumes the parked session.
 
         `FENCED` (Implemented — ADR-166, HTTP 409) is returned when
         `fence.assignmentEpoch` is below the host's persisted high-water for
@@ -3047,6 +3074,7 @@ components:
         - import_chunk_conflict
         - import_seal_conflict
         - import_chunk_too_large
+        - session_checkpointed
       description: |
         (Implemented — ADR-166) Machine-readable refusal discriminator carried in
         `SupervisorErrorBody.details.reason`. Tests assert the token, never

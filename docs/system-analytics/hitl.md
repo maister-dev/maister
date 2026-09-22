@@ -164,11 +164,18 @@ flowchart TD
 stateDiagram-v2
     [*] --> Open: agent emits request<br/>or writes needs-input.json
     Open --> Open: web activity bumps<br/>keepalive_until
+    Open --> Open: host cap or sweeper checkpoints<br/>the session (run -> NeedsInputIdle)
     Open --> Responded: operator submits<br/>atomicWriteJson input-{step}.json
     Open --> Expired: 24h elapsed<br/>(run -> Abandoned)
     Responded --> [*]
     Expired --> [*]
 ```
+
+The states are exactly `Open`, `Responded`, `Expired` — there is no
+`Checkpointed` state, because **no host action closes a HITL request**
+(Implemented — ADR-180). Parking a session is a property of the run and of the
+ACP session, not of the request: a checkpointed session leaves the request
+`Open` and answerable, and the answer resumes the session instead of failing it.
 
 ## Process flows
 
@@ -740,18 +747,34 @@ activity pings extend `runs.keepalive_until`, the sweeper checkpoints
 idle `NeedsInput` runs, and a later HITL response resumes the ACP session
 via the `session/resume` call on `acp_session_id` (not a CLI flag).
 
+**The web owns the deadline** (Implemented — ADR-180). `MAISTER_KEEPALIVE_MINUTES`
+is a web variable; the supervisor does not read it and holds no per-permission
+copy of the window. The host keeps one absolute backstop,
+`MAISTER_PERMISSION_MAX_HOURS` (default 24), and when it fires the host performs
+the **same graceful checkpoint** the sweeper's route performs — the open
+deferreds are cancelled (journalled for replay), the child gets `SIGTERM`, and
+`acp_session_id` stays resumable. A host give-up is never a reject and never a
+`SIGKILL`.
+
 While a run is in `NeedsInput`, the run-detail page is responsible for
 keeping the worker alive:
 
 ```mermaid
 flowchart TD
     Open["Open run page"] --> Send["POST /api/runs/[id]/activity"]
-    Send --> DB["UPDATE keepalive_until = now + 30min"]
+    Send --> DB["UPDATE keepalive_until =<br/>now + MAISTER_KEEPALIVE_MINUTES"]
     Focus["Window focus"] --> Send
     Type["Form field change"] --> Send
-    Idle["Idle > 30min OR tab closed"] --> Tick["scheduled tick:<br/>now > keepalive_until"]
+    Idle["Idle past the window<br/>OR tab closed"] --> Tick["system_sweep tick:<br/>now > keepalive_until"]
     Tick --> Checkpoint["supervisor checkpoint<br/>run -> NeedsInputIdle"]
+    Cap["Host cap elapsed<br/>(MAISTER_PERMISSION_MAX_HOURS)"] --> Checkpoint
+    Checkpoint --> Park["sweeper checkpointed arm:<br/>NeedsInput -> NeedsInputIdle<br/>regardless of keepalive_until"]
 ```
+
+The checkpointed arm is what bounds a parked run whose operator keeps a tab
+open: activity pings would otherwise hold `keepalive_until` in the future
+forever, so a session the host already parked would never reach
+`NeedsInputIdle` and the 24 h `Abandoned` rule could never reach it either.
 
 ## Form schema versioning
 
@@ -940,7 +963,14 @@ boolean | enum | array`; unknown type refused with `CONFIG` at Flow
     back to `Running` — the runner owns that transition on resume so
     its `isResume` gate can match.
   - Retry classification: supervisor 410 → `HITL_TIMEOUT` terminal
-    (run → `Failed`); supervisor 503 / network → `EXECUTOR_UNAVAILABLE`
+    (run → `Failed`) **except** when `details.reason` is
+    `session_checkpointed` (Implemented — ADR-180), which is the non-terminal
+    race-window arm: an answer landing after the session was checkpointed but
+    while the registry entry survives its 30 s terminal grace keeps the stored
+    response and a NULL `responded_at`, parks the run through the shared
+    `markCheckpointed` CAS, resumes on the existing idle branch, and answers
+    202 `{state:"resume-in-progress"}` — never `Failed` or `Crashed`;
+    supervisor 503 / network → `EXECUTOR_UNAVAILABLE`
     retryable (row stays claimed, `responded_at` NULL); artifact
     write I/O failure → 503 retryable.
   - Same-payload retry on an already-delivered row re-queues
@@ -1031,10 +1061,13 @@ type}`; the stage `type` MUST be resolved by compiling each distinct flow
   audit signal; the turn's answer still renders with a revert notice.
 - **Supervisor restart while the user response is in-flight** —
   supervisor returns 503 `EXECUTOR_UNAVAILABLE` for the
-  "unknown session" case (distinct from 410 `HITL_TIMEOUT` for
-  expired deferred). The web tier treats 503 as retryable: the
+  "unknown session" case (distinct from 410 `HITL_TIMEOUT` for a
+  released deferred). The web tier treats 503 as retryable: the
   `responded_at` marker stays NULL, the response column holds the
-  user's intent, and a retry replays through the normal flow.
+  user's intent, and a retry replays through the normal flow. The same 503 is
+  what an answer gets once the checkpointed session's registry entry has been
+  removed after its 30 s terminal grace; the sweeper's checkpointed arm parks
+  the run on its next tick (Implemented — ADR-180).
 - **Agent reads a malformed `input-<stepId>.json`** — adapter exits
   non-zero → `Crashed`. Operator decides whether to Recover or
   Discard.
@@ -1141,6 +1174,7 @@ Stage B migration.
 | 1     | web route                               | atomic-claim: `UPDATE hitl_requests SET response=:intent WHERE id=:id AND respondedAt IS NULL` (FOR UPDATE)                                  | none                                                              |
 | 2     | web route → `resumeRun(runId)`          | inside `markResumed`: `UPDATE runs SET status='NeedsInput', keepalive_until=now+N, checkpoint_at=null WHERE id=:id AND status='NeedsInputIdle'` | `POST /sessions` to supervisor with `resumeSessionId`             |
 | 3     | runner-agent permission_request handler | `UPDATE hitl_requests SET respondedAt=now(), response=<merged>`                                                                                 | `POST /sessions/:id/input` to supervisor with the new `requestId` |
+| 2'    | web route → race-window arm (ADR-180)   | `markCheckpointed(runId)` (the shared `idleFromNeedsInput` CAS), then `markResumed` as in phase 2                                              | supervisor answered 410 `session_checkpointed`; the route re-enters the idle branch and returns 202 `{state:"resume-in-progress"}` |
 
 In the pre-owner path, the route returns 202 after Phase 2's 201 from the
 supervisor and does not await Phase 3. Owned graph resumes use the durable
@@ -1156,6 +1190,9 @@ authorization described above and do not require synchronous session creation.
 - Retry after terminal `Failed` (Phase 2 failed terminally):
   410 `{terminal:true}`.
 - Retry with different payload: 409 (the atomic-claim CAS rule).
+- Supervisor answered 410 with `details.reason: "session_checkpointed"`
+  (Implemented — ADR-180): **not** terminal — park through the shared CAS and
+  resume, 202 `{state:"resume-in-progress"}`.
 
 ### Resume failures
 
@@ -1167,6 +1204,11 @@ The classification table mirrors `resumeRun(runId)` results:
 | 400 spawn refused      | CHECKPOINT           | 410 `{terminal:true}`  | Failed (via failResumedRun) |
 | 201 empty acpSessionId | CHECKPOINT           | 410 `{terminal:true}`  | Failed                      |
 | 404 unknown checkpoint | CHECKPOINT           | 410 `{terminal:true}`  | Failed                      |
+
+`POST /sessions/:id/input` has its own 410, which is **not** in this table: a
+session parked by a checkpoint answers `HITL_TIMEOUT` with
+`details.reason: "session_checkpointed"` and is the non-terminal resume arm
+(Implemented — ADR-180), never `failResumedRun`.
 
 ### Resume-prompt watchdog (deferred enforcement)
 
@@ -1327,12 +1369,14 @@ lock. Gate chat remains attached to the parent and never resolves a child.
   ADR-057 (HITL hybrid-surface composition — cross-project inbox; Implemented),
   [ADR-066 Diff rendering stack](../decisions.md#adr-066-editor-and-diff-rendering-stack-shiki-git-diff-view-codemirror) (ADR-082 scope-switcher reuse),
   [ADR-082 Review-diff completeness (Implemented)](../decisions.md#adr-082-review-diff-completeness-with-dirty-state-protocol-and-scope-switcher),
-  [ADR-078 Gate-chat + workspace-neutrality (Implemented)](../decisions.md#adr-078-gate-chat-at-hitl-pauses-with-three-layer-workspace-neutrality).
+  [ADR-078 Gate-chat + workspace-neutrality (Implemented)](../decisions.md#adr-078-gate-chat-at-hitl-pauses-with-three-layer-workspace-neutrality),
+  [ADR-180 Permission deadline has one owner (Implemented)](../decisions.md#adr-180-permission-deadline-has-one-owner)
+  (amends ADR-006).
 - ERD: [`../db/hitl-domain.md`](../db/hitl-domain.md).
 - Config reference: [`../configuration.md`](../configuration.md)
   §`form_schema versioning`;
   §`Environment variables (server tier)` for
-  `MAISTER_KEEPALIVE_MINUTES`.
+  `MAISTER_KEEPALIVE_MINUTES` (web) and `MAISTER_PERMISSION_MAX_HOURS` (host).
 - API (external): [`../api/external/acp.asyncapi.yaml`](../api/external/acp.asyncapi.yaml)
   §`session.request_permission`.
 - Related: [`runs.md`](runs.md), [`flows.md`](flows.md),

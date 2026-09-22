@@ -747,6 +747,19 @@ Source request/terminal digests, checkpoint identity and host event order are
 rechecked during application. Missing or unknown proof retains pending work.
 Historical evidence cannot itself grant permission to mutate the successor.
 
+Host event order accepts **either of two witnesses** (Implemented — ADR-180).
+The preferred one stays the checkpoint command's own admission event. The
+alternate is the session's terminal `session.exited{reason:"checkpoint"}` on the
+same stream, and it exists because a checkpoint the host started for itself
+mints no command at all, and a sweeper checkpoint arriving after the registry's
+terminal grace never produced an admission event either — so the command
+witness is normally absent, not occasionally. The alternate is selected with the
+same uniqueness requirement as the admission event and must match exactly once;
+the absence of both witnesses stays unproven and every caller keeps its
+conservative arm, because a terminal decision never rests on a missing signal.
+The resolved order records which witness proved it. `EDGE-PRM-04` (a prompt-wait
+race) is unaffected: only the ordering proof widens, never who may prompt.
+
 The original command and agent turn stay pending while the checkpointed request
 awaits its normal re-entry. Result application acknowledges the original turn,
 the exact handoff and the command in one transaction. An interrupted source is
