@@ -758,7 +758,7 @@ recorded per control. No production code changed.
 (`pnpm --filter @maister/supervisor test`), no loosened expectations; refactor gate
 below passed.
 
-- [ ] **T2.1 — extract the teardown.** New `supervisor/src/checkpoint-teardown.ts`
+- [x] **T2.1 — extract the teardown.** New `supervisor/src/checkpoint-teardown.ts`
       per D2. `http-api.ts:2528-2600` calls it; the route's `runCommand` envelope,
       status codes and log fields unchanged. Do **not** unify `:2226`/`:2389` (D14).
       **AC**: the route's observable behaviour is byte-identical (existing
@@ -766,7 +766,7 @@ below passed.
       new module imports neither the registry singleton nor `pendingPermissions`
       directly (D14/SRP).
 
-- [ ] **T2.2 — the cap replaces the keep-alive timer.** `pending-permissions.ts`:
+- [x] **T2.2 — the cap replaces the keep-alive timer.** `pending-permissions.ts`:
       delete `keepaliveMinutesEnv`; read `MAISTER_PERMISSION_MAX_HOURS` via
       `Number.parseFloat` + `Number.isFinite(v) && v > 0`, invalid → 24 with a
       one-time WARN (D9). The timer calls the installed cap handler instead of
@@ -775,12 +775,12 @@ below passed.
       **AC**: RED 1 and RED 5 green; `grep MAISTER_KEEPALIVE_MINUTES supervisor/src`
       returns nothing; a fractional cap is honoured; an invalid value logs once.
 
-- [ ] **T2.3 — shutdown order.** `shutdown.ts:16-39` per D7. `purgeSession` removed
+- [x] **T2.3 — shutdown order.** `shutdown.ts:16-39` per D7. `purgeSession` removed
       from this path; `registry.ts:126,194` untouched.
       **AC**: RED 3 green; `purgeSession` has exactly two callers, both on
       already-exited sessions.
 
-- [ ] **T2.4 — the typed refusal + its token.** `http-api.ts:2681-2688` per D4:
+- [x] **T2.4 — the typed refusal + its token.** `http-api.ts:2681-2688` per D4:
       the `INTENTIONALLY_PARKED` allow-list predicate (`fenced` excluded),
       `details:{reason:"session_checkpointed"}`, status still 410. Append the token
       to `supervisor/src/types.ts:725` (D12 item 2).
@@ -788,18 +788,18 @@ below passed.
       landed first); a `fenced` terminal still produces today's response; the
       predicate is a named `ReadonlySet`, not an inline `===`.
 
-- [ ] **T2.5 — the `cause` field.** Emit `cause: "permission_cap"` on the
+- [x] **T2.5 — the `cause` field.** Emit `cause: "permission_cap"` on the
       cap-initiated `session.exited` (D6). No publisher change needed.
       **AC**: the value reaches `run_session_incarnations.terminalReason`;
       `session-stream.ts` still decodes the event (regression assertion, not a code
       change).
 
-- [ ] **T2.6 — deprecation WARN.** `main.ts`: one WARN if
+- [x] **T2.6 — deprecation WARN.** `main.ts`: one WARN if
       `MAISTER_KEEPALIVE_MINUTES` is set in the supervisor env, naming the
       replacement. **Never a refusal.**
       **AC**: boot succeeds with the old var set; exactly one WARN per process.
 
-- [ ] **T2.R — REFACTOR gate (supervisor).** With the suite green: re-read the diff
+- [x] **T2.R — REFACTOR gate (supervisor).** With the suite green: re-read the diff
       against D14. Collapse only duplication that answers one question; split
       anything that grew two responsibilities; remove orphans **this change**
       created (imports, the deleted env helper's references). No behaviour change —

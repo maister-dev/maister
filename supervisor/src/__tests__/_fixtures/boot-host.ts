@@ -14,7 +14,9 @@ import { fileURLToPath } from "node:url";
 import Fastify from "fastify";
 import pino, { type Logger } from "pino";
 
+import { installPermissionCapTeardown } from "../../checkpoint-teardown";
 import { startHeartbeatWatcher } from "../../heartbeat";
+import { pendingPermissions } from "../../pending-permissions";
 import { openHostState } from "../../host-state";
 import { registerRoutes, type SpawnOverrides } from "../../http-api";
 import { SessionRegistry } from "../../registry";
@@ -83,12 +85,22 @@ export async function bootHost(
     ],
   };
 
+  const killGraceMs = opts.killGraceMs ?? 2_000;
+
+  // ADR-180 D10: without this, every bootHost() integration test silently has
+  // no permission cap.
+  installPermissionCapTeardown({
+    registry,
+    permissions: pendingPermissions,
+    logger,
+    killGraceMs,
+  });
   registerRoutes({
     app,
     registry,
     logger,
     runtimeRoot,
-    killGraceMs: opts.killGraceMs ?? 2_000,
+    killGraceMs,
     spawnOverrides,
     hostState,
     workspaceRoots,

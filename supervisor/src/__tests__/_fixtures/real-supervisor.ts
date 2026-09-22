@@ -10,7 +10,13 @@ import type { ChildProcess } from "node:child_process";
 
 import { execFile, spawn } from "node:child_process";
 import { openSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  writeFile,
+} from "node:fs/promises";
 import { createRequire } from "node:module";
 import net from "node:net";
 import { tmpdir } from "node:os";
@@ -176,7 +182,12 @@ export async function startRealSupervisor(
   const child: ChildProcess = spawn(
     process.execPath,
     ["--import", TSX_LOADER, SUPERVISOR_MAIN],
-    { cwd: SUPERVISOR_DIR, env, stdio: ["ignore", logFd, logFd], detached: true },
+    {
+      cwd: SUPERVISOR_DIR,
+      env,
+      stdio: ["ignore", logFd, logFd],
+      detached: true,
+    },
   );
   const pid = child.pid ?? -1;
   const exited = new Promise<number | null>((resolve) => {

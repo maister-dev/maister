@@ -55,7 +55,6 @@ type Parked = {
   sessionId: string;
   acpSessionId: string;
   permission: PermissionRequestEvent;
-  promptCommandId: string;
   stream: SseCollector;
 };
 
@@ -117,20 +116,17 @@ async function prompt(
   booted: Booted,
   runId: string,
   sessionId: string,
-): Promise<string> {
-  const body = envelope(
-    "session.prompt",
-    { hostKey: booted.target.hostState.hostKey, runId },
-    { stepId: "step-1", prompt: "do thing" },
-  );
+): Promise<void> {
   const admitted = await postJson(
     `${booted.sup.url}/sessions/${sessionId}/prompts`,
-    body,
+    envelope(
+      "session.prompt",
+      { hostKey: booted.target.hostState.hostKey, runId },
+      { stepId: "step-1", prompt: "do thing" },
+    ),
   );
 
   expect(admitted.status).toBe(202);
-
-  return body.command.id;
 }
 
 async function promptAndPark(
@@ -139,12 +135,13 @@ async function promptAndPark(
   resumeSessionId?: string,
 ): Promise<Parked> {
   const session = await startSession(booted, runId, resumeSessionId);
-  const promptCommandId = await prompt(booted, runId, session.sessionId);
+
+  await prompt(booted, runId, session.sessionId);
   const permission = (await session.stream.waitFor(
     (e) => e.type === "session.permission_request",
   )) as PermissionRequestEvent;
 
-  return { ...session, permission, promptCommandId };
+  return { ...session, permission };
 }
 
 async function awaitTerminal(stream: SseCollector): Promise<SessionEvent> {
@@ -205,7 +202,9 @@ describe("host permission cap (ADR-180)", () => {
   // discriminant is `producer-output-incomplete`: it is logged only when
   // `abortOutput` fired, which is exactly what a REJECTED deferred causes.
   it("RED 3: graceful shutdown cancels the deferred instead of rejecting it", async () => {
-    const booted = await boot({ MAISTER_PERMISSION_MAX_HOURS: CAP_UNREACHABLE });
+    const booted = await boot({
+      MAISTER_PERMISSION_MAX_HOURS: CAP_UNREACHABLE,
+    });
     const parked = await promptAndPark(booted, "run-shutdown");
 
     await booted.sup.stop();

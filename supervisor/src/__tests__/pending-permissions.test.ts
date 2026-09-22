@@ -98,20 +98,30 @@ describe("PendingPermissionRegistry", () => {
     expect(reg.cancel("s3", "r3", "x")).toBe(false);
   });
 
-  it("times out with HITL_TIMEOUT exactly once after timeoutMs", async () => {
+  // OBSOLETE (ADR-180): this asserted `reject(HITL_TIMEOUT)` after the
+  // keep-alive window. The timer is now an absolute cap that hands the request
+  // to an installed teardown and never rejects. What survives the contract
+  // change is EXACTLY-ONCE: one timer per deferred, cleared by eviction.
+  it("the cap fires exactly once per deferred and leaves it settled", async () => {
+    const fired: string[] = [];
     const reg = createPendingPermissions({
       logger: silentLogger,
       timeoutMs: TIMEOUT_MS,
+      onCapExceeded: (sessionId, requestId) => {
+        fired.push(requestId);
+        reg.cancel(sessionId, requestId, "checkpoint");
+      },
     });
     const d = makeDeferred();
 
     reg.register("s4", "r4", { resolve: d.resolve, reject: d.reject });
     expect(d.rejected).toBeNull();
 
-    await vi.advanceTimersByTimeAsync(TIMEOUT_MS + 10);
+    await vi.advanceTimersByTimeAsync(TIMEOUT_MS * 4);
 
-    expect(d.rejected).toBeInstanceOf(SupervisorError);
-    expect((d.rejected as SupervisorError).code).toBe("HITL_TIMEOUT");
+    expect(fired).toEqual(["r4"]);
+    expect(d.resolved).toEqual({ outcome: "cancelled" });
+    expect(d.rejected).toBeNull();
     expect(reg.resolve("s4", "r4", "allow")).toBe(false);
   });
 

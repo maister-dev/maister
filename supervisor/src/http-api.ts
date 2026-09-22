@@ -8,7 +8,11 @@ import type {
   HostRuntimeObjectRow,
   HostState,
 } from "./host-state";
-import type { SessionRegistry, RegistryEntry } from "./registry";
+import type {
+  IntentionalReason,
+  SessionRegistry,
+  RegistryEntry,
+} from "./registry";
 import type { WorkspaceResolution } from "./workspace-registry";
 
 import { spawn } from "node:child_process";
@@ -62,6 +66,7 @@ import { probeMcpServer } from "./mcp-probe";
 import { ModelSourceRegistry } from "./model-catalog/registry";
 import { resolveModelCatalog } from "./model-catalog/resolve";
 import { ModelCatalogDraftSchema } from "./model-catalog/types";
+import { checkpointSession } from "./checkpoint-teardown";
 import { pendingPermissions } from "./pending-permissions";
 import { contentBlockUriViolation } from "./prompt-confinement";
 import { resolvePromptRuntimeObjects } from "./prompt-runtime-objects";
@@ -156,6 +161,19 @@ const DIAGNOSTIC_ENV_REFS: readonly string[] = [
   "OPENAI_API_KEY",
   "ZAI_API_KEY",
 ];
+// ADR-180: the terminal reasons that mean "parked with its deferreds
+// cancelled, so the answer is still good". `fenced` is deliberately absent — a
+// fenced session means a newer driver generation owns the run, and
+// `assignment_fenced` is that case's existing arm. `intentional` is present
+// because a graceful shutdown now also cancels rather than rejects, leaving
+// exactly the same answerable-but-sessionless state; its reachability through
+// this route is low (the supervisor is going down, so a connection error is
+// likelier) but the PREDICATE is the contract, not the reachability.
+const INTENTIONALLY_PARKED: ReadonlySet<IntentionalReason> = new Set([
+  "checkpoint",
+  "intentional",
+]);
+
 const SESSION_STATUSES: readonly SessionStatus[] = [
   "live",
   "exited",
@@ -2497,7 +2515,6 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
   // NO body fields. NO cross-resource ids.
   app.post<SessionIdParams>("/sessions/:id/checkpoint", async (req, reply) => {
     const sessionId = req.params.id;
-    const startedAt = Date.now();
     // Body validation precedes the session lookup (D11: unknown keys are
     // rejected before any server-state read).
     const parsed = parseCommandBody(
@@ -2523,85 +2540,20 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       expectedRunId: entry.record.runId,
       entry,
       execute: async () => {
-        const checkpointLog = logger.child({ name: "supervisor-checkpoint" });
-
-        // Idempotency: if the child is already gone, return 200 with the
-        // current state. The sweeper may hit this branch when the
-        // supervisor restarted between two ticks.
-        if (
-          entry.record.status === "exited" ||
-          entry.record.status === "crashed"
-        ) {
-          checkpointLog.info(
-            {
-              sessionId,
-              status: entry.record.status,
-              alreadyCheckpointed: true,
-            },
-            "checkpoint endpoint idempotent ack",
-          );
-
-          return {
-            status: 200,
-            body: {
-              alreadyCheckpointed: true,
-              sessionId,
-              monotonicId: entry.record.monotonicId,
-            },
-          };
-        }
-
-        const requestIds = pendingPermissions.requestIds(sessionId);
-
-        checkpointLog.info(
-          {
-            sessionId,
-            pendingPermissionCount: requestIds.length,
-          },
-          "checkpoint requested",
-        );
-
-        for (const requestId of requestIds) {
-          pendingPermissions.cancel(sessionId, requestId, "checkpoint");
-        }
-
-        registry.markIntentionalShutdown(sessionId, "checkpoint");
-        entry.record.stopOutputForTeardown?.();
-        entry.child.kill("SIGTERM");
-
-        const exited = await waitForChildExit(entry, killGraceMs);
-
-        if (!exited) {
-          checkpointLog.warn(
-            { sessionId, killGraceMs },
-            "checkpoint sigterm-grace-expired-sigkill",
-          );
-          entry.child.kill("SIGKILL");
-
-          throw new SupervisorError(
-            "EXECUTOR_UNAVAILABLE",
-            `checkpoint timed out — SIGKILL escalation after ${killGraceMs}ms`,
-          );
-        }
-
-        const latencyMs = Date.now() - startedAt;
-
-        checkpointLog.info(
-          {
-            sessionId,
-            latencyMs,
-            pendingPermissionCount: requestIds.length,
-            alreadyCheckpointed: false,
-          },
-          "checkpoint complete",
-        );
+        const result = await checkpointSession({
+          entry,
+          registry,
+          permissions: pendingPermissions,
+          logger,
+          killGraceMs,
+        });
 
         return {
           status: 200,
           body: {
-            alreadyCheckpointed: false,
+            alreadyCheckpointed: result.alreadyCheckpointed,
             sessionId,
-            monotonicId: entry.record.monotonicId,
+            monotonicId: result.monotonicId,
           },
         };
       },
@@ -2677,14 +2629,33 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
         );
 
         if (!ok) {
-          // Distinct from "unknown session": the session is alive but the
-          // requested deferred is missing — almost always means the
-          // MAISTER_KEEPALIVE_MINUTES timeout already fired (or another
-          // request resolved/cancelled the same deferred). Classify as
-          // HITL_TIMEOUT so the web tier treats it as terminal.
+          // Distinct from "unknown session": the session is known but the
+          // requested deferred is missing. Two different situations share the
+          // 410 (ADR-180):
+          //
+          //   the session was PARKED with its deferreds cancelled — the answer
+          //   is still good and the web resumes on it; every other case (the
+          //   absolute cap released it under a different session, another
+          //   request already resolved it) stays terminal.
+          //
+          // The park is recognized by an allow-list, never a single-value
+          // equality: `fenced` is excluded because a fenced session means a
+          // NEWER driver generation owns the run, and routing a superseded
+          // answer into a resume would resurrect it.
+          const parked =
+            entry.record.status === "exited" &&
+            entry.intentionalShutdown &&
+            entry.intentionalReason !== undefined &&
+            INTENTIONALLY_PARKED.has(entry.intentionalReason);
+
           throw new SupervisorError(
             "HITL_TIMEOUT",
-            "no pending permission with that requestId",
+            parked
+              ? "session was checkpointed — resume and re-deliver"
+              : "no pending permission with that requestId",
+            parked
+              ? { details: { reason: "session_checkpointed" } }
+              : undefined,
           );
         }
 
