@@ -2205,6 +2205,7 @@ table scheduler_job_runs {
 
   indexes {
     job_id [name: 'scheduler_job_runs_job_idx']
+    (job_id, claimed_at, id) [name: 'scheduler_job_runs_job_claimed_idx']
     (status, lease_expires_at) [name: 'scheduler_job_runs_lease_idx']
   }
 }

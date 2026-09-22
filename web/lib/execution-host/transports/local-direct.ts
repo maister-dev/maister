@@ -37,6 +37,7 @@ function toHostHealth(status: wire.PlatformStatus): HostHealth {
     identity: health.host ?? null,
     version: health.version,
     sessions: health.sessions,
+    ...(health.stream === undefined ? {} : { stream: health.stream }),
   };
 }
 

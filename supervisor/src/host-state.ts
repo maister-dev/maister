@@ -269,6 +269,51 @@ export type RuntimeEventOutboxStats = {
   retainedBytes: number;
 };
 
+export type RuntimeEventHealthSnapshot = Readonly<{
+  streamId: string;
+  headSequence: string | null;
+  unacknowledgedCount: number;
+  retainedCount: number;
+  pressured: boolean;
+  oldestUnacknowledgedAgeMs: number | null;
+}>;
+
+type RuntimeEventHealthSnapshotDbRow = {
+  stream_id: string;
+  next_sequence: string;
+  unacknowledged_count: number;
+  retained_count: number;
+  pressured: number;
+  oldest_unacknowledged_created_at: string | null;
+};
+
+export const RUNTIME_EVENT_HEALTH_SNAPSHOT_SQL = `
+SELECT
+  s.stream_id,
+  s.next_sequence,
+  totals.unacknowledged_count,
+  totals.retained_count,
+  p.pressured,
+  (
+    SELECT e.created_at
+    FROM runtime_event_outbox e
+    WHERE e.stream_id = s.stream_id
+      AND e.sequence_sort_key > COALESCE(s.acknowledged_sort_key, '')
+    ORDER BY e.sequence_sort_key
+    LIMIT 1
+  ) AS oldest_unacknowledged_created_at
+FROM runtime_event_streams s
+CROSS JOIN (
+  SELECT
+    COALESCE(SUM(unacknowledged_count), 0) AS unacknowledged_count,
+    COALESCE(SUM(retained_count), 0) AS retained_count
+  FROM runtime_event_budget
+) totals
+CROSS JOIN runtime_event_pressure p
+WHERE p.id = 1
+ORDER BY s.created_at
+LIMIT 1`;
+
 export type HostState = {
   readonly limits: RuntimeLimits;
   runtimeFileBudget(): RuntimeFileBudgetSnapshot;
@@ -370,6 +415,7 @@ export type HostState = {
   hasRuntimeEventsAfter(streamId: string, sequence: string): boolean;
   ackRuntimeEvents(streamId: string, throughSequence: string): string;
   runtimeEventOutboxStats(): RuntimeEventOutboxStats;
+  runtimeEventHealthSnapshot(): RuntimeEventHealthSnapshot;
   assertCanAcceptMutatingCommand(): void;
   pruneAcknowledgedRuntimeEvents(olderThan: Date): number;
   subscribeRuntimeEvents(
@@ -1877,6 +1923,11 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
         },
       };
     },
+    runtimeEventHealthSnapshot() {
+      const streamId = ensureRuntimeEventStream(db, now).stream_id;
+
+      return runtimeEventHealthSnapshot(db, streamId, now(), log);
+    },
     assertCanAcceptMutatingCommand() {
       assertPhysicalAdmission();
       assertOutboxAdmission(db, limits);
@@ -2118,6 +2169,85 @@ function runtimeEventOutboxStats(
       (sum, item) => sum + item.retainedBytes,
       0,
     ),
+  };
+}
+
+function runtimeEventHealthSnapshot(
+  db: DatabaseSync,
+  streamId: string,
+  observedAt: Date,
+  log: Logger | undefined,
+): RuntimeEventHealthSnapshot {
+  getRuntimeEventStream(db, streamId);
+  const row = db.prepare(RUNTIME_EVENT_HEALTH_SNAPSHOT_SQL).get() as
+    | RuntimeEventHealthSnapshotDbRow
+    | undefined;
+
+  if (row === undefined || row.stream_id !== streamId) {
+    throw new HostRuntimeEventError(
+      "stream_corrupt",
+      `runtime event health snapshot did not resolve current stream ${streamId}`,
+    );
+  }
+  if (
+    !Number.isSafeInteger(row.unacknowledged_count) ||
+    row.unacknowledged_count < 0 ||
+    !Number.isSafeInteger(row.retained_count) ||
+    row.retained_count < 0 ||
+    row.unacknowledged_count > row.retained_count ||
+    ![0, 1].includes(row.pressured)
+  ) {
+    throw new HostRuntimeEventError(
+      "stream_corrupt",
+      `runtime event health counters are inconsistent for stream ${streamId}`,
+    );
+  }
+
+  const nextSequence = parseHostEventSequence(row.next_sequence);
+  const headSequence =
+    nextSequence === 0n ? null : (nextSequence - 1n).toString();
+  const oldestCreatedAt = row.oldest_unacknowledged_created_at;
+
+  if (
+    (row.unacknowledged_count === 0 && oldestCreatedAt !== null) ||
+    (row.unacknowledged_count > 0 && oldestCreatedAt === null)
+  ) {
+    throw new HostRuntimeEventError(
+      "stream_corrupt",
+      `runtime event health age is inconsistent for stream ${streamId}`,
+    );
+  }
+
+  let oldestUnacknowledgedAgeMs: number | null = null;
+
+  if (oldestCreatedAt !== null) {
+    const createdAtMs = Date.parse(oldestCreatedAt);
+    const observedAtMs = observedAt.getTime();
+
+    if (!Number.isFinite(createdAtMs) || !Number.isFinite(observedAtMs)) {
+      throw new HostRuntimeEventError(
+        "stream_corrupt",
+        `runtime event health timestamp is invalid for stream ${streamId}`,
+      );
+    }
+    const ageMs = observedAtMs - createdAtMs;
+
+    if (ageMs < 0) {
+      log?.warn(
+        { streamId, observedAt: observedAt.toISOString(), oldestCreatedAt },
+        "runtime-event-health-clock-regressed",
+      );
+    }
+    oldestUnacknowledgedAgeMs = Math.max(0, ageMs);
+  }
+
+  return {
+    streamId,
+    headSequence,
+    unacknowledgedCount: row.unacknowledged_count,
+    retainedCount: row.retained_count,
+    pressured: row.pressured === 1,
+    oldestUnacknowledgedAgeMs,
   };
 }
 

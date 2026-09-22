@@ -42,6 +42,8 @@ import {
 import { ADAPTER_IDS, type AdapterId } from "@/lib/acp-runners/adapter-support";
 import { contextMountsToWire } from "@/lib/context-mounts/types";
 import { MaisterError, type MaisterErrorCode } from "@/lib/errors";
+import { LAG_BACKLOG_THRESHOLD } from "@/lib/execution-host/events/lag";
+import { eventStreamLagSeconds } from "@/lib/instance-config";
 
 const logger = pino({
   name: "supervisor-client",
@@ -323,8 +325,51 @@ const SupervisorHealthSchema = z
         crashed: z.number().int().nonnegative(),
       })
       .strict(),
+    stream: z
+      .object({
+        streamId: z.string().min(1),
+        headSequence: z
+          .string()
+          .regex(/^(0|[1-9][0-9]{0,18})$/)
+          .refine(
+            (value) => BigInt(value) <= (1n << 63n) - 1n,
+            "headSequence exceeds signed BIGINT",
+          )
+          .nullable(),
+        unacknowledgedCount: z.number().int().nonnegative().safe(),
+        retainedCount: z.number().int().nonnegative().safe(),
+        pressured: z.boolean(),
+        oldestUnacknowledgedAgeMs: z
+          .number()
+          .int()
+          .nonnegative()
+          .safe()
+          .nullable(),
+      })
+      .passthrough()
+      .superRefine((value, ctx) => {
+        if (value.unacknowledgedCount > value.retainedCount) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["unacknowledgedCount"],
+            message: "unacknowledgedCount must not exceed retainedCount",
+          });
+        }
+        if (
+          (value.unacknowledgedCount === 0) !==
+          (value.oldestUnacknowledgedAgeMs === null)
+        ) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["oldestUnacknowledgedAgeMs"],
+            message:
+              "oldestUnacknowledgedAgeMs must be null exactly when the unacknowledged count is zero",
+          });
+        }
+      })
+      .optional(),
   })
-  .strict();
+  .passthrough();
 
 const ReadOnlySmokeEvidenceBaseSchema = z
   .object({
@@ -690,7 +735,7 @@ function isAbortError(err: unknown): boolean {
 export async function checkSupervisorHealth(
   opts: { timeoutMs?: number } = {},
 ): Promise<PlatformStatus> {
-  const url = `${baseUrl()}/health`;
+  const url = `${baseUrl()}/health?includeStream=true`;
   const controller = new AbortController();
   const timeout = setTimeout(
     () => controller.abort(),
@@ -744,7 +789,20 @@ export async function checkSupervisorHealth(
     };
   }
 
-  return { kind: "ready", health: parsed.data };
+  const stream = parsed.data.stream;
+  const lag = {
+    scope: "host_backlog" as const,
+    status:
+      stream === undefined || stream.oldestUnacknowledgedAgeMs === null
+        ? ("unknown" as const)
+        : stream.unacknowledgedCount > Number(LAG_BACKLOG_THRESHOLD) &&
+            stream.oldestUnacknowledgedAgeMs >= eventStreamLagSeconds() * 1_000
+          ? ("behind" as const)
+          : ("clear" as const),
+    sampledAt: parsed.data.checkedAt,
+  };
+
+  return { kind: "ready", health: parsed.data, lag };
 }
 
 export async function checkSupervisorDiagnostics(

@@ -825,6 +825,11 @@ export const schedulerJobRuns = pgTable(
   },
   (t) => ({
     idxJob: index("scheduler_job_runs_job_idx").on(t.jobId),
+    idxJobClaimed: index("scheduler_job_runs_job_claimed_idx").on(
+      t.jobId,
+      t.claimedAt,
+      t.id,
+    ),
     idxLease: index("scheduler_job_runs_lease_idx").on(
       t.status,
       t.leaseExpiresAt,

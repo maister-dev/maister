@@ -1,0 +1,1 @@
+CREATE INDEX IF NOT EXISTS "scheduler_job_runs_job_claimed_idx" ON "scheduler_job_runs" USING btree ("job_id","claimed_at","id");

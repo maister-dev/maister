@@ -4,6 +4,8 @@ import { z } from "zod";
 
 import { COMMAND_KINDS } from "../../runtime/command-kinds";
 
+import { RuntimeEventSequenceSchema } from "./runtime-events";
+
 const EXECUTOR_AGENTS = [
   "claude",
   "codex",
@@ -688,6 +690,7 @@ export const REASON_TOKENS = [
   "workspace_rejected",
   "legacy_field",
   "missing_envelope",
+  "health_query_invalid",
   "invalid_event_sequence",
   "replay_floor_lost",
   "stream_identity_conflict",
@@ -998,6 +1001,41 @@ export const ExecutionHostIdentitySchema = z
 
 export type ExecutionHostIdentity = z.infer<typeof ExecutionHostIdentitySchema>;
 
+export const SupervisorEventStreamHealthSchema = z
+  .object({
+    streamId: z.string().min(1),
+    headSequence: RuntimeEventSequenceSchema.nullable(),
+    unacknowledgedCount: z.number().int().nonnegative().safe(),
+    retainedCount: z.number().int().nonnegative().safe(),
+    pressured: z.boolean(),
+    oldestUnacknowledgedAgeMs: z.number().int().nonnegative().safe().nullable(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (value.unacknowledgedCount > value.retainedCount) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["unacknowledgedCount"],
+        message: "unacknowledgedCount must not exceed retainedCount",
+      });
+    }
+    if (
+      (value.unacknowledgedCount === 0) !==
+      (value.oldestUnacknowledgedAgeMs === null)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["oldestUnacknowledgedAgeMs"],
+        message:
+          "oldestUnacknowledgedAgeMs must be null exactly when the unacknowledged count is zero",
+      });
+    }
+  });
+
+export type SupervisorEventStreamHealth = z.infer<
+  typeof SupervisorEventStreamHealthSchema
+>;
+
 export const SupervisorHealthResponseSchema = z
   .object({
     status: z.literal("ready"),
@@ -1012,6 +1050,7 @@ export const SupervisorHealthResponseSchema = z
         crashed: z.number().int().nonnegative(),
       })
       .strict(),
+    stream: SupervisorEventStreamHealthSchema.optional(),
   })
   .strict();
 

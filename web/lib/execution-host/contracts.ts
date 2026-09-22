@@ -16,6 +16,7 @@ import type {
   SupervisorRuntimeOutputBinding,
 } from "@/lib/supervisor-client";
 import type { PlatformStatus } from "@/types/platform-status";
+import type { SupervisorEventStreamHealth } from "@/types/platform-status";
 import type { ContextMountSnapshot } from "@/lib/context-mounts/types";
 import type {
   CommandEnvelope,
@@ -39,6 +40,7 @@ export type HostHealth =
       identity: ExecutionHostIdentity | null;
       version: string;
       sessions: { live: number; exited: number; crashed: number };
+      stream?: SupervisorEventStreamHealth;
     }
   | { kind: "unavailable"; reason: string; message: string };
 

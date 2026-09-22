@@ -6,6 +6,8 @@ import { promisify } from "node:util";
 
 import pino from "pino";
 
+import { MaisterError } from "@/lib/errors";
+
 export { runtimeRoot } from "@/lib/runtime-root";
 
 const execFileAsync = promisify(execFile);
@@ -120,6 +122,8 @@ const DEFAULT_ORCHESTRATOR_MAX_FANOUT = 16;
 const DEFAULT_ASSISTANT_ACTIVITY_WAITING_TOOL_AFTER_SECONDS = 90;
 const DEFAULT_ASSISTANT_ACTIVITY_SILENT_AFTER_SECONDS = 180;
 const DEFAULT_ASSISTANT_ACTIVITY_STALLED_AFTER_SECONDS = 900;
+const DEFAULT_EVENT_STREAM_LAG_SECONDS = 120;
+const MAX_SAFE_MILLISECOND_SECONDS = Math.floor(Number.MAX_SAFE_INTEGER / 1000);
 
 // M18 Phase 2 (§3.2, Codex F1): a durable `claiming` promotion claim older than
 // this window is considered abandoned (crashed mid-promote) and is reclaimable
@@ -231,6 +235,29 @@ export function gcAgeDays(): number {
 // before the stream is treated as stalled. See events/stream-health.ts.
 export function eventStreamStallSeconds(): number {
   return positiveIntFromEnv("MAISTER_EVENT_STREAM_STALL_SECONDS", 300);
+}
+
+export function eventStreamLagSeconds(): number {
+  const raw = process.env.MAISTER_EVENT_STREAM_LAG_SECONDS;
+
+  if (raw === undefined) return DEFAULT_EVENT_STREAM_LAG_SECONDS;
+  if (!/^[1-9][0-9]*$/.test(raw)) {
+    throw new MaisterError(
+      "CONFIG",
+      "MAISTER_EVENT_STREAM_LAG_SECONDS must be a canonical positive integer",
+    );
+  }
+
+  const parsed = Number(raw);
+
+  if (!Number.isSafeInteger(parsed) || parsed > MAX_SAFE_MILLISECOND_SECONDS) {
+    throw new MaisterError(
+      "CONFIG",
+      "MAISTER_EVENT_STREAM_LAG_SECONDS must convert safely to milliseconds",
+    );
+  }
+
+  return parsed;
 }
 
 export function costReconcileLookbackHours(): number {

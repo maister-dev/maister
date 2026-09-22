@@ -308,26 +308,26 @@ Phase 1 exit: relevant tests execute and pass; full web unit and integration pro
 
 ### Phase 2 — Publish and measure event-plane progress
 
-- [ ] **T16. Add and qualify the ordered scheduler-observation index.**
+- [x] **T16. Add and qualify the ordered scheduler-observation index.**
   - Files: `web/lib/db/schema.ts`, generated main migration `0173_scheduler_observation_lookup.sql` and its journal/snapshot (number revalidated per D7), `docs/database-schema.md`, `docs/db/scheduler-domain.md`, generated ERD/DBML; new `web/lib/db/__tests__/migration-0173-scheduler-observation.integration.test.ts` with matching final number.
   - RED: start real PG at the predecessor migration using `startMainPostgresTestDbUpTo`, seed durable job/attempt rows and assert the required index contract; capture the missing-index failure. GREEN: generate/apply the additive migration through existing helpers/runner; assert exact keys/order, unchanged rows and normal migration rerun no-op. Exercise the specified ordered SQL on newest failed/reaped rows and equal claim timestamps; T9 owns proving the production reader uses those semantics.
   - REFACTOR: generation parity, journal integrity and migration checks; populated `EXPLAIN` verifies bounded index traversal, without requiring a particular planner choice for tiny fixtures. Record build/lock timing and rollback compatibility.
   - Logging: existing migration runner and qualification evidence only. Acceptance: M1; no backfill or new storage semantics; old reader/schema remain compatible. Depends: T1/T3.
 
-- [ ] **T7. Implement the opt-in cheap host health snapshot and skew-safe transport.**
+- [x] **T7. Implement the opt-in cheap host health snapshot and skew-safe transport.**
   - Files: `supervisor/src/host-state.ts`, `http-api.ts`, `types.ts`; a narrow helper in `outbox-budget.ts` only if needed to reuse authoritative counters; `web/lib/supervisor-client.ts`, `web/types/platform-status.ts`, `web/lib/execution-host/contracts.ts`, `transports/local-direct.ts`.
   - Implement D3; no filesystem work or budget-policy changes. Extend `supervisor/src/__tests__/runtime-event-outbox.integration.test.ts` (real SQLite/Fastify health); extend `web/lib/__tests__/supervisor-client.test.ts` and `web/lib/execution-host/__tests__/registrar.integration.test.ts`.
   - Preserve an isolated fixture of the **baseline** strict web parser/default request and the baseline host response; using the newly tolerant parser for both sides does not prove old-web compatibility. Run the same schema cases against real response bodies.
   - Logging: normal health stays quiet; malformed known fields remain typed transport errors with safe response/status context. Acceptance: L4 both directions and opt-in path, unknown-key tolerance, empty/first/ACKed/purged head/age invariants, cheap SQL plan. Depends: T1–T3.
 
-- [ ] **T8. Implement pure lag arithmetic and the bounded Postgres collector.**
+- [x] **T8. Implement pure lag arithmetic and the bounded Postgres collector.**
   - Files: new `web/lib/execution-host/events/lag.ts`, `lag-read-model.ts`, `web/types/execution-host-observability.ts`; new `events/__tests__/lag.test.ts`, `lag-read-model.integration.test.ts`; `web/lib/instance-config.ts` for the single lag-age env.
   - Implement D4 and the threshold inputs in D5. Reuse run status sets, indexed run horizons, separate poison pagination, current command counts and a shared safe rearm-command formatter. No status writes, no swallowed DB failure. Preserve nullable fields and bigint precision end-to-end.
   - Logging: collector timings/population at DEBUG and explicit incomplete/query errors at WARN; the pure arithmetic function logs nothing and mutates no inputs.
   - Author/run the raw-number L1a/L1b scenarios in new `events/__tests__/lag-observability.integration.test.ts` before implementing collection; use the existing real supervisor/PG helpers. Wire lifecycle assertions only in T9, after their own RED run.
   - Acceptance: Q1/O2 and real Postgres arithmetic including first sequence/null cursor, isolated projection backlog, poison on terminal run, exact top-20 ordering, query plans and budgets above. Depends: T7.
 
-- [ ] **T9. Integrate samples, sustained-lag transitions and sweep summary.**
+- [x] **T9. Integrate samples, sustained-lag transitions and sweep summary.**
   - Files: `web/lib/execution-host/events/stream-health.ts` (summary integration only), new `events/lag-observation.ts` and its small pure transition test, `web/lib/scheduler/system-sweeps.ts`, `tick-service.ts`, a narrow prior-summary loader in scheduler queries/jobs; extend `system-sweeps.test.ts`, `jobs.integration.test.ts`, `events/__tests__/lag-observability.integration.test.ts` and `stream-health.integration.test.ts`.
   - Carry versioned prior observation through existing attempt summaries and result fences. Add worker and command observations to the persisted/logged summary. Keep all stall/lost/recovery functions and ordering untouched. Make unknown/stale/partial samples explicit and read only `workers/health.ts`.
   - Add/run RED lifecycle assertions for L1a/L1b, O1/O3 before implementation; retain L1c/L2 as unchanged-authority baseline guards where already green. Observer failures beyond the job's failure-limit count must not disable the job; genuine existing bundle failures still follow their old policy. Test version/size limits and partially unavailable sources without resetting unrelated diagnostics to zero.

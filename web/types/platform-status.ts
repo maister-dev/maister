@@ -1,3 +1,12 @@
+export type SupervisorEventStreamHealth = {
+  streamId: string;
+  headSequence: string | null;
+  unacknowledgedCount: number;
+  retainedCount: number;
+  pressured: boolean;
+  oldestUnacknowledgedAgeMs: number | null;
+};
+
 export type SupervisorHealth = {
   status: "ready";
   // ADR-166: the durable execution-host identity (absent on a pre-ADR-166
@@ -11,6 +20,7 @@ export type SupervisorHealth = {
     exited: number;
     crashed: number;
   };
+  stream?: SupervisorEventStreamHealth;
 };
 
 export type PlatformUnavailableReason =
@@ -19,10 +29,17 @@ export type PlatformUnavailableReason =
   | "http"
   | "malformed";
 
+export type PlatformLagSummary = Readonly<{
+  scope: "host_backlog";
+  status: "clear" | "behind" | "unknown";
+  sampledAt: string;
+}>;
+
 export type PlatformStatus =
   | {
       kind: "ready";
       health: SupervisorHealth;
+      lag?: PlatformLagSummary;
     }
   | {
       kind: "unavailable";

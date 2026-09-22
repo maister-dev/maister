@@ -8,6 +8,10 @@ import type { WorkspaceGcSummary } from "@/lib/gc/workspace-gc";
 import type { PlainAgentDirectoryGcSummary } from "@/lib/gc/plain-agent-directory-gc";
 import type { EvidenceSweepSummary } from "@/lib/evaluations/evidence/gc";
 import type { WorkspaceReconciliationSummary } from "@/lib/gc/workspace-reconciler";
+import type {
+  ExecutionObservabilitySummary,
+  LagStreamObservation,
+} from "@/lib/execution-host/events/lag-observation";
 
 import pino from "pino";
 
@@ -18,7 +22,14 @@ import { runCapabilitiesCleanupSweep } from "@/lib/capabilities/cleanup";
 import {
   ensureLocalExecutionDataPlane,
   executionCommandReconcilePass,
+  executionHosts,
 } from "@/lib/execution-host";
+import { getDb } from "@/lib/db/client";
+import { collectExecutionEventLag } from "@/lib/execution-host/events/lag-read-model";
+import {
+  createExecutionObservability,
+  createUnavailableExecutionObservability,
+} from "@/lib/execution-host/events/lag-observation";
 import { runEphemeralAgentGcSweep } from "@/lib/gc/ephemeral-agent-gc";
 import { runContextMountGcSweep } from "@/lib/gc/context-mount-gc";
 import { runAgentMaterializationCleanupSweep } from "@/lib/gc/agent-materialization-gc";
@@ -36,6 +47,8 @@ import {
 } from "@/lib/notifications/digest-trigger";
 import { runSweepTick } from "@/lib/runs/keepalive-sweeper";
 import { runSyncRecoverySweep } from "@/lib/runs/sync-recovery";
+import { eventStreamLagSeconds } from "@/lib/instance-config";
+import { durableWorkersHealth } from "@/lib/workers/health";
 
 export type GcCompatibilitySummary = {
   worktreesPreserved: number;
@@ -93,7 +106,16 @@ export type SystemSweepSummary = GcCompatibilitySummary & {
   // model/dimension switch — re-embeds active items into the new generation).
   // null when it threw before returning a summary.
   brainReindex: Awaited<ReturnType<typeof runBrainReindexSweep>> | null;
+  executionObservability: ExecutionObservabilitySummary | null;
 };
+
+export type SystemSweepInput = Readonly<{
+  executionObservation?: Readonly<{
+    attemptId: string;
+    observerId: string;
+    previous: LagStreamObservation | null;
+  }>;
+}>;
 
 const log = pino({
   name: "scheduler-system-sweeps",
@@ -269,7 +291,9 @@ async function runGcBundle(): Promise<GcBundleResult> {
   };
 }
 
-export async function runSystemSweep(): Promise<SystemSweepSummary> {
+export async function runSystemSweep(
+  input: SystemSweepInput = {},
+): Promise<SystemSweepSummary> {
   // The sweep unlinks workspaces and runtime-object bytes that the importer is
   // inventorying. It is only reachable through the fenced scheduler clock, so
   // this is the boundary's own backstop against a direct caller.
@@ -284,6 +308,7 @@ export async function runSystemSweep(): Promise<SystemSweepSummary> {
   let executionEventPlane: SystemSweepSummary["executionEventPlane"] = null;
   let streamHealth: SystemSweepSummary["streamHealth"] = null;
   let digest: SystemSweepSummary["digest"] = null;
+  let executionObservability: ExecutionObservabilitySummary | null = null;
 
   try {
     keepalive = await runSweepTick();
@@ -374,6 +399,53 @@ export async function runSystemSweep(): Promise<SystemSweepSummary> {
     log.error({ err: message }, "system_sweep execution-host reconcile threw");
   }
 
+  const workerHealth = durableWorkersHealth();
+
+  log.info({ workers: workerHealth }, "system_sweep durable worker health");
+
+  if (input.executionObservation) {
+    const observationInput = input.executionObservation;
+    const sampledAt = new Date();
+
+    try {
+      const health = await executionHosts.local().platformStatus();
+      const model = await collectExecutionEventLag({
+        db: getDb(),
+        health,
+        now: sampledAt,
+        logger: log,
+      });
+
+      executionObservability = createExecutionObservability({
+        ...observationInput,
+        model,
+        workers: workerHealth,
+        impasse: executionHost?.commands.impasse ?? 0,
+        lagAgeMs: eventStreamLagSeconds() * 1_000,
+      });
+    } catch (err) {
+      const message = errorMessage(err);
+
+      errors.push(`execution observability unavailable: ${message}`);
+      log.warn(
+        {
+          attemptId: observationInput.attemptId,
+          observerId: observationInput.observerId,
+          errorType: err instanceof Error ? err.name : "unknown",
+        },
+        "system_sweep execution observability unavailable",
+      );
+      executionObservability = createUnavailableExecutionObservability({
+        ...observationInput,
+        sampledAt: sampledAt.toISOString(),
+        errorCode: "lag_collection_failed",
+        workers: workerHealth,
+        impasse: executionHost?.commands.impasse ?? 0,
+        lagAgeMs: eventStreamLagSeconds() * 1_000,
+      });
+    }
+  }
+
   let brain: SystemSweepSummary["brain"] = null;
 
   try {
@@ -435,24 +507,6 @@ export async function runSystemSweep(): Promise<SystemSweepSummary> {
     log.error({ err: message }, "system_sweep digest trigger threw");
   }
 
-  try {
-    // Local durable-worker health, distinct from `platform-status`, which
-    // reports the REMOTE supervisor's. Imports only `lib/workers/health.ts`,
-    // which carries no domain graph — importing the composition root here
-    // would pull the flow runner into the scheduler bundle.
-    const { durableWorkersHealth } = await import("@/lib/workers/health");
-
-    log.info(
-      { workers: durableWorkersHealth() },
-      "system_sweep durable worker health",
-    );
-  } catch (err) {
-    const message = errorMessage(err);
-
-    errors.push(`durable worker health failed: ${message}`);
-    log.error({ err: message }, "system_sweep durable worker health threw");
-  }
-
   const summary = {
     digest,
     keepalive,
@@ -464,6 +518,7 @@ export async function runSystemSweep(): Promise<SystemSweepSummary> {
     executionHost,
     brain,
     brainReindex,
+    executionObservability,
     workspace: gc.workspace,
     workspaceReconciliation: gc.workspaceReconciliation,
     revision: gc.revision,
@@ -480,7 +535,17 @@ export async function runSystemSweep(): Promise<SystemSweepSummary> {
     bundleErrors,
   };
 
-  log.info({ ...summary, errorCount: errors.length }, "system_sweep completed");
+  log.info(
+    {
+      ...summary,
+      errorCount: errors.length,
+      observationState: input.executionObservation
+        ? "sampled"
+        : "not_requested",
+      attemptId: input.executionObservation?.attemptId,
+    },
+    "system_sweep completed",
+  );
 
   return summary;
 }

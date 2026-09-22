@@ -79,6 +79,14 @@ export type ReapedSchedulerAttempt = {
   jobId: string;
 };
 
+export type PreviousSchedulerAttempt = Readonly<{
+  id: string;
+  status: SchedulerJobRunStatus;
+  claimedAt: Date;
+  summary: Record<string, unknown>;
+  errorCode: string | null;
+}>;
+
 type ComputeNextRunAtInput = {
   previousNextRunAt: Date;
   now: Date;
@@ -111,6 +119,14 @@ type ReapedRow = {
 
 type UpdatedAttemptRow = {
   id: string;
+};
+
+type PreviousAttemptRow = {
+  id: string;
+  status: SchedulerJobRunStatus;
+  claimed_at: Date | string;
+  summary: Record<string, unknown> | null;
+  error_code: string | null;
 };
 
 const log = pino({
@@ -824,6 +840,45 @@ export async function recordJobAttemptStarted(input: {
   `);
 
   return rowsOf<UpdatedAttemptRow>(result).length > 0;
+}
+
+export async function loadPreviousSchedulerAttempt(input: {
+  jobId: string;
+  currentAttemptId: string;
+  db?: SchedulerDb;
+}): Promise<PreviousSchedulerAttempt | null> {
+  const db = input.db ?? (getDb() as unknown as SchedulerDb);
+  const result = await db.execute(sql`
+    WITH current_attempt AS (
+      SELECT claimed_at, id
+      FROM scheduler_job_runs
+      WHERE id = ${input.currentAttemptId}
+        AND job_id = ${input.jobId}
+    )
+    SELECT
+      previous.id,
+      previous.status,
+      previous.claimed_at,
+      previous.summary,
+      previous.error_code
+    FROM scheduler_job_runs previous
+    CROSS JOIN current_attempt current
+    WHERE previous.job_id = ${input.jobId}
+      AND (previous.claimed_at, previous.id) < (current.claimed_at, current.id)
+    ORDER BY previous.claimed_at DESC, previous.id DESC
+    LIMIT 1
+  `);
+  const row = rowsOf<PreviousAttemptRow>(result)[0];
+
+  if (row === undefined) return null;
+
+  return {
+    id: row.id,
+    status: row.status,
+    claimedAt: coerceDate(row.claimed_at),
+    summary: row.summary ?? {},
+    errorCode: row.error_code,
+  };
 }
 
 export async function renewSchedulerJobAttemptLease(

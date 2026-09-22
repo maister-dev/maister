@@ -1184,6 +1184,13 @@
       "when": 1790016407278,
       "tag": "0172_mcp_env_values",
       "breakpoints": true
+    },
+    {
+      "idx": 173,
+      "version": "7",
+      "when": 1790069782823,
+      "tag": "0173_scheduler_observation_lookup",
+      "breakpoints": true
     }
   ]
 }

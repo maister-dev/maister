@@ -21,6 +21,7 @@ import {
   ensureDefaultSchedulerJobs,
   ensurePrStateScanJobs,
   ensureRepoDeliveryScanJobs,
+  loadPreviousSchedulerAttempt,
   reapStuckSchedulerAttempts,
   recordJobAttemptResult,
   requestSchedulerJobNow,
@@ -273,6 +274,58 @@ describe("scheduler job SQL integration", () => {
 
     expect(first.length + second.length).toBe(1);
     expect(attempts).toHaveLength(1);
+  });
+
+  it("loads the immediate prior attempt by claimed time and id without skipping a reaped row", async () => {
+    const claimedAt = new Date("2026-06-05T10:00:00.000Z");
+    const leaseExpiresAt = new Date("2026-06-05T10:01:00.000Z");
+    const jobId = await insertSchedulerJob({
+      jobKind: "system_sweep",
+      nextRunAt: claimedAt,
+    });
+
+    await db.insert(schema.schedulerJobRuns).values([
+      {
+        id: "attempt-a",
+        jobId,
+        jobKind: "system_sweep",
+        status: "Succeeded",
+        claimedAt,
+        leaseExpiresAt,
+        summary: { executionObservability: { schemaVersion: 1 } },
+      },
+      {
+        id: "attempt-b",
+        jobId,
+        jobKind: "system_sweep",
+        status: "Failed",
+        claimedAt,
+        leaseExpiresAt,
+        errorCode: "LEASE_EXPIRED",
+        summary: {},
+      },
+      {
+        id: "attempt-c",
+        jobId,
+        jobKind: "system_sweep",
+        status: "Running",
+        claimedAt,
+        leaseExpiresAt,
+      },
+    ]);
+
+    await expect(
+      loadPreviousSchedulerAttempt({
+        jobId,
+        currentAttemptId: "attempt-c",
+        db: schedulerDb,
+      }),
+    ).resolves.toMatchObject({
+      id: "attempt-b",
+      status: "Failed",
+      errorCode: "LEASE_EXPIRED",
+      summary: {},
+    });
   });
 
   it("fires one catch-up attempt and advances overdue next_run_at to the future", async () => {
@@ -559,6 +612,67 @@ describe("scheduler job SQL integration", () => {
     expect(attempts[0].summary).toMatchObject({
       workspaceReconciliation: null,
       errors: [],
+    });
+  });
+
+  it("passes the immediately committed observation to the next sweep owner", async () => {
+    const persistedStream = {
+      attemptId: "prior-attempt",
+      observerId: "observer-a",
+      sampledAt: "2026-09-22T12:00:00.000Z",
+      identity: {
+        executionHostId: "host-1",
+        streamId: "stream-1",
+        bootId: "boot-1",
+      },
+      streamState: "active",
+      watermarks: { received: "1", contiguous: "1", acknowledged: "1" },
+      hostBacklog: {
+        status: "available",
+        unacknowledgedCount: 101,
+        oldestUnacknowledgedAgeMs: 120_000,
+      },
+      projectionBacklog: { status: "available", maximumBacklog: "0" },
+      previousSampleId: null,
+      projectionOverThresholdSince: null,
+      streak: 1,
+      incidentOpen: false,
+      verdict: "observing",
+      transition: null,
+    };
+    const firstSummary = {
+      bundleErrors: [],
+      errors: [],
+      executionObservability: {
+        schemaVersion: 1,
+        attemptId: "prior-attempt",
+        observerId: "observer-a",
+        sampledAt: "2026-09-22T12:00:00.000Z",
+        quality: "complete",
+        errors: [],
+        stream: persistedStream,
+        consumers: {
+          status: "available",
+          total: 0,
+          maximumBacklog: "0",
+          top: [],
+        },
+        poison: { status: "available", total: 0, rows: [] },
+        commands: { status: "available", total: 0, accepted: 0, impasse: 0 },
+        workers: { status: "available", states: {} },
+      },
+    };
+
+    runSystemSweepMock.mockResolvedValueOnce(firstSummary);
+    await requestSystemSweep();
+    runSystemSweepMock.mockImplementationOnce(async (input) => {
+      expect(input.executionObservation.previous).toEqual(persistedStream);
+
+      return { ...firstSummary, executionObservability: null };
+    });
+
+    await expect(requestSystemSweep()).resolves.toMatchObject({
+      succeededCount: 1,
     });
   });
 

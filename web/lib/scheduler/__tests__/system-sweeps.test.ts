@@ -42,6 +42,8 @@ const runBrainReindexSweepMock = vi.hoisted(() => vi.fn());
 const sweepEvaluationEvidenceMock = vi.hoisted(() => vi.fn());
 const runPlainAgentDirectoryGcSweepMock = vi.hoisted(() => vi.fn());
 const ensureLocalExecutionDataPlaneMock = vi.hoisted(() => vi.fn());
+const collectExecutionEventLagMock = vi.hoisted(() => vi.fn());
+const platformStatusMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/runs/keepalive-sweeper", () => ({
   runSweepTick: runSweepTickMock,
@@ -83,6 +85,9 @@ vi.mock("@/lib/runs/sync-recovery", () => ({
 // mocked like every other arm so `errors: []` stays a real guard.
 vi.mock("@/lib/execution-host", () => ({
   ensureLocalExecutionDataPlane: ensureLocalExecutionDataPlaneMock,
+  executionHosts: {
+    local: () => ({ platformStatus: platformStatusMock }),
+  },
   executionCommandReconcilePass: vi.fn(async () => ({
     commands: {
       scanned: 0,
@@ -97,6 +102,10 @@ vi.mock("@/lib/execution-host", () => ({
     commandsPruned: 0,
     legacy: { candidates: 0, runIds: [] },
   })),
+}));
+vi.mock("@/lib/db/client", () => ({ getDb: () => ({}) }));
+vi.mock("@/lib/execution-host/events/lag-read-model", () => ({
+  collectExecutionEventLag: collectExecutionEventLagMock,
 }));
 // Same exposure, PRE-EXISTING (ADR-122, not this branch): both brain sweeps were
 // un-mocked too, so they threw on getDb() into the same swallowed `errors[]`.
@@ -216,6 +225,13 @@ describe("scheduler system sweeps", () => {
       action: "touch",
       restarted: false,
     });
+    platformStatusMock.mockReset().mockResolvedValue({
+      kind: "unavailable",
+      reason: "supervisor_down",
+      health: null,
+      sessions: [],
+    });
+    collectExecutionEventLagMock.mockReset();
   });
 
   it("runs every cleanup service once as part of the canonical system sweep", async () => {
@@ -366,6 +382,34 @@ describe("scheduler system sweeps", () => {
     } finally {
       writeDurableWorkerSlot("flowContinuation", undefined);
     }
+  });
+
+  it("persists an unavailable observation without consuming the scheduler failure budget", async () => {
+    collectExecutionEventLagMock.mockRejectedValueOnce(
+      new Error("database timed out"),
+    );
+    const { runSystemSweep } = await import("../system-sweeps");
+
+    const summary = await runSystemSweep({
+      executionObservation: {
+        attemptId: "attempt-current",
+        observerId: "observer-b",
+        previous: null,
+      },
+    });
+
+    expect(summary.bundleErrors).toEqual([]);
+    expect(summary.errors).toContain(
+      "execution observability unavailable: database timed out",
+    );
+    expect(summary.executionObservability).toMatchObject({
+      schemaVersion: 1,
+      attemptId: "attempt-current",
+      observerId: "observer-b",
+      quality: "unavailable",
+      errors: ["lag_collection_failed"],
+      stream: null,
+    });
   });
 
   // Every arm is individually try/caught into `errors[]`, so a sweep that throws

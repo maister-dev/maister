@@ -174,7 +174,8 @@ paths:
                 required: [streamId, acknowledgedThrough]
                 properties:
                   streamId: { type: string, format: uuid }
-                  acknowledgedThrough: { $ref: "#/components/schemas/RuntimeEventSequence" }
+                  acknowledgedThrough:
+                    { $ref: "#/components/schemas/RuntimeEventSequence" }
         "409":
           description: Missing, stale, foreign, non-contiguous, or beyond-emitted ACK.
           content:
@@ -219,7 +220,10 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/RuntimeObjectMetadata" }
-        "409": { description: "Object is absent, expired, or cannot be read in its current state." }
+        "409":
+          {
+            description: "Object is absent, expired, or cannot be read in its current state.",
+          }
     delete:
       tags: [execution-host]
       summary: Apply a fenced runtime-object retention deletion (Implemented — ADR-167)
@@ -232,7 +236,10 @@ paths:
           application/json:
             schema: { $ref: "#/components/schemas/RuntimeObjectDeleteCommand" }
       responses:
-        "204": { description: Object is deleted or already absent under the recorded retention policy. }
+        "204":
+          {
+            description: Object is deleted or already absent under the recorded retention policy.,
+          }
   /runtime-objects/{objectId}/content:
     put:
       tags: [execution-host]
@@ -279,7 +286,10 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/RuntimeObjectMetadata" }
-        "413": { description: Upload exceeds the reserved or negotiated fixed size limit. }
+        "413":
+          {
+            description: Upload exceeds the reserved or negotiated fixed size limit.,
+          }
     get:
       tags: [execution-host]
       summary: Read a single byte range of an opaque runtime object (Implemented — ADR-167)
@@ -309,11 +319,19 @@ paths:
         state commits with its canonical event before refusal; failed persistence
         returns storage-unavailable without claiming a durable state change.
       responses:
-        "200": { description: Full bytes only for an object no larger than 8 MiB. }
+        "200":
+          { description: Full bytes only for an object no larger than 8 MiB. }
         "206": { description: One byte range with `Content-Range`. }
-        "409": { description: "Typed runtime_object_missing, runtime_object_integrity_mismatch, or retryable command_in_progress." }
-        "503": { description: "Runtime storage unavailable or response-spool capacity pressure." }
-        "416": { description: "Invalid, unsatisfiable, or multi-range request." }
+        "409":
+          {
+            description: "Typed runtime_object_missing, runtime_object_integrity_mismatch, or retryable command_in_progress.",
+          }
+        "503":
+          {
+            description: "Runtime storage unavailable or response-spool capacity pressure.",
+          }
+        "416":
+          { description: "Invalid, unsatisfiable, or multi-range request." }
   /health:
     get:
       tags: [health]
@@ -330,7 +348,7 @@ paths:
         `bootId` (changes on every restart), and `protocolVersion`. The web
         registrar upserts `execution_hosts` from it. Never a path.
 
-        (Designed — P0-7) The legacy response remains the default for binary
+        (Implemented — P0-7) The legacy response remains the default for binary
         skew. A caller that sends the single literal `includeStream=true`
         additionally receives the current runtime-event stream head and bounded
         outbox counters. `includeStream=false` is the legacy shape. Empty,
@@ -353,6 +371,72 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorHealthResponse" }
+              examples:
+                legacy:
+                  value:
+                    status: ready
+                    host:
+                      hostKey: eh_0123456789abcdef0123456789abcdef
+                      bootId: 123e4567-e89b-42d3-a456-426614174000
+                      protocolVersion: 1
+                    version: 0.0.1
+                    uptimeMs: 42000
+                    sessions: { live: 1, exited: 2, crashed: 0 }
+                    checkedAt: "2026-09-22T09:00:00.000Z"
+                emptyStream:
+                  value:
+                    status: ready
+                    host:
+                      hostKey: eh_0123456789abcdef0123456789abcdef
+                      bootId: 123e4567-e89b-42d3-a456-426614174000
+                      protocolVersion: 1
+                    version: 0.0.1
+                    uptimeMs: 42000
+                    sessions: { live: 0, exited: 0, crashed: 0 }
+                    checkedAt: "2026-09-22T09:00:00.000Z"
+                    stream:
+                      streamId: 81f49551-c9ce-4e22-99c4-076a78470de6
+                      headSequence: null
+                      unacknowledgedCount: 0
+                      retainedCount: 0
+                      pressured: false
+                      oldestUnacknowledgedAgeMs: null
+                pendingStream:
+                  value:
+                    status: ready
+                    host:
+                      hostKey: eh_0123456789abcdef0123456789abcdef
+                      bootId: 123e4567-e89b-42d3-a456-426614174000
+                      protocolVersion: 1
+                    version: 0.0.1
+                    uptimeMs: 42000
+                    sessions: { live: 1, exited: 0, crashed: 0 }
+                    checkedAt: "2026-09-22T09:00:00.000Z"
+                    stream:
+                      streamId: 81f49551-c9ce-4e22-99c4-076a78470de6
+                      headSequence: "42"
+                      unacknowledgedCount: 3
+                      retainedCount: 8
+                      pressured: false
+                      oldestUnacknowledgedAgeMs: 2500
+                fullyAcknowledged:
+                  value:
+                    status: ready
+                    host:
+                      hostKey: eh_0123456789abcdef0123456789abcdef
+                      bootId: 123e4567-e89b-42d3-a456-426614174000
+                      protocolVersion: 1
+                    version: 0.0.1
+                    uptimeMs: 42000
+                    sessions: { live: 0, exited: 1, crashed: 0 }
+                    checkedAt: "2026-09-22T09:00:00.000Z"
+                    stream:
+                      streamId: 81f49551-c9ce-4e22-99c4-076a78470de6
+                      headSequence: "42"
+                      unacknowledgedCount: 0
+                      retainedCount: 8
+                      pressured: false
+                      oldestUnacknowledgedAgeMs: null
         "503":
           description: Runtime storage failed; repair storage before restarting admissions.
           content:
@@ -2340,7 +2424,7 @@ components:
           maxItems: 64
           items:
             type: string
-            pattern: '^[A-Za-z_][A-Za-z0-9_]*$'
+            pattern: "^[A-Za-z_][A-Za-z0-9_]*$"
             maxLength: 256
           description: |
             Environment-variable NAMES to check on this host. At most 64 per
@@ -2727,7 +2811,11 @@ components:
             required: [type]
             additionalProperties: true
             properties:
-              type: { type: string, enum: [text, resource_link, resource, runtime_object] }
+              type:
+                {
+                  type: string,
+                  enum: [text, resource_link, resource, runtime_object],
+                }
               text: { type: string }
               uri: { type: string }
               name: { type: string }
@@ -2892,7 +2980,8 @@ components:
         authorize reconstruction. A lost object never means an empty result.
       properties:
         schema: { type: string, enum: [maister.session-content.v2] }
-        sourcePayloadSchema: { type: string, enum: [maister.session.command.v2] }
+        sourcePayloadSchema:
+          { type: string, enum: [maister.session.command.v2] }
         commandId: { type: string, format: uuid }
         hostSessionId: { type: string, pattern: "^[A-Za-z0-9._-]{1,128}$" }
         source:
@@ -2913,7 +3002,23 @@ components:
     RuntimeEventEnvelope:
       type: object
       additionalProperties: false
-      required: [envelopeVersion, eventId, hostKey, hostBootId, streamId, sequence, runId, assignmentId, assignmentEpoch, hostSessionId, eventType, occurredAt, payloadSchema, payload]
+      required:
+        [
+          envelopeVersion,
+          eventId,
+          hostKey,
+          hostBootId,
+          streamId,
+          sequence,
+          runId,
+          assignmentId,
+          assignmentEpoch,
+          hostSessionId,
+          eventType,
+          occurredAt,
+          payloadSchema,
+          payload,
+        ]
       description: |
         Designed ADR-167 deterministic event spine. `eventId` is UUIDv5 of the
         host-derived `(hostKey, streamId, sequence)`. The payload is open JSON
@@ -2926,21 +3031,73 @@ components:
         hostBootId: { type: string, format: uuid }
         streamId: { type: string, format: uuid }
         sequence: { $ref: "#/components/schemas/RuntimeEventSequence" }
-        runId: { type: string, minLength: 1, maxLength: 128, description: Server-derived assignment run identity. }
-        assignmentId: { type: string, format: uuid, description: Server-derived assignment identity. }
-        assignmentEpoch: { type: integer, minimum: 1, maximum: 2147483647, description: Server-derived fence epoch. }
+        runId:
+          {
+            type: string,
+            minLength: 1,
+            maxLength: 128,
+            description: Server-derived assignment run identity.,
+          }
+        assignmentId:
+          {
+            type: string,
+            format: uuid,
+            description: Server-derived assignment identity.,
+          }
+        assignmentEpoch:
+          {
+            type: integer,
+            minimum: 1,
+            maximum: 2147483647,
+            description: Server-derived fence epoch.,
+          }
         hostSessionId:
           type: string
-          pattern: '^[A-Za-z0-9._-]{1,128}$'
+          pattern: "^[A-Za-z0-9._-]{1,128}$"
           nullable: true
           description: Opaque host-derived ACP session identity when one exists; clients must not parse it.
         eventType:
           type: string
-          enum: [session.created, session.line, session.update, session.permission_request, session.hook_trip, session.command, session.chat_turn, session.exited, session.crashed, usage.recorded, runtime_object.available, runtime_object.state]
-        occurredAt: { type: string, format: date-time, description: "Host occurrence metadata, never an ordering authority." }
+          enum:
+            [
+              session.created,
+              session.line,
+              session.update,
+              session.permission_request,
+              session.hook_trip,
+              session.command,
+              session.chat_turn,
+              session.exited,
+              session.crashed,
+              usage.recorded,
+              runtime_object.available,
+              runtime_object.state,
+            ]
+        occurredAt:
+          {
+            type: string,
+            format: date-time,
+            description: "Host occurrence metadata, never an ordering authority.",
+          }
         payloadSchema:
           type: string
-          enum: [maister.session.created.v1, maister.session.line.v1, maister.session.update.v1, maister.session.permission-request.v1, maister.session.hook-trip.v1, maister.session.command.v1, maister.session.chat-turn.v1, maister.session.exited.v1, maister.session.crashed.v1, maister.usage.recorded.v1, maister.runtime-object.available.v1, maister.runtime-object.state.v1, maister.session.content.v2, maister.session.command.v2]
+          enum:
+            [
+              maister.session.created.v1,
+              maister.session.line.v1,
+              maister.session.update.v1,
+              maister.session.permission-request.v1,
+              maister.session.hook-trip.v1,
+              maister.session.command.v1,
+              maister.session.chat-turn.v1,
+              maister.session.exited.v1,
+              maister.session.crashed.v1,
+              maister.usage.recorded.v1,
+              maister.runtime-object.available.v1,
+              maister.runtime-object.state.v1,
+              maister.session.content.v2,
+              maister.session.command.v2,
+            ]
         payload:
           type: object
           additionalProperties: true
@@ -2961,14 +3118,21 @@ components:
       additionalProperties: false
       required: [streamId, throughSequence]
       properties:
-        streamId: { type: string, format: uuid, description: "Request-body supplied, verified against the selected host stream." }
+        streamId:
+          {
+            type: string,
+            format: uuid,
+            description: "Request-body supplied, verified against the selected host stream.",
+          }
         throughSequence: { $ref: "#/components/schemas/RuntimeEventSequence" }
     ExecutionHostCapabilities:
       type: object
       additionalProperties: false
-      required: [dataPlaneVersion, eventStream, asyncPrompt, runtimeObjects, limits]
+      required:
+        [dataPlaneVersion, eventStream, asyncPrompt, runtimeObjects, limits]
       properties:
-        dataPlaneVersion: { type: string, enum: ["execution-host-data-plane.v1"] }
+        dataPlaneVersion:
+          { type: string, enum: ["execution-host-data-plane.v1"] }
         eventStream: { type: boolean }
         asyncPrompt: { type: boolean }
         runtimeObjects: { type: boolean }
@@ -2985,16 +3149,51 @@ components:
       additionalProperties: false
       required: [command, fence, payload]
       properties:
-        command: { $ref: "#/components/schemas/CommandEnvelope/properties/command" }
+        command:
+          { $ref: "#/components/schemas/CommandEnvelope/properties/command" }
         fence: { $ref: "#/components/schemas/CommandFence" }
         payload:
           type: object
           additionalProperties: false
-          required: [objectId, kind, logicalName, mimeType, sizeBytes, sha256, generation, retentionClass]
+          required:
+            [
+              objectId,
+              kind,
+              logicalName,
+              mimeType,
+              sizeBytes,
+              sha256,
+              generation,
+              retentionClass,
+            ]
           properties:
             objectId: { type: string, format: uuid }
-            kind: { type: string, enum: [session_log, raw_transcript, cost_diagnostic, checkpoint, attachment, capability_profile, capability_instructions, agent_memory_snapshot, node_result, evidence, generated_artifact, plan_review, diagnostic] }
-            logicalName: { type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$", maxLength: 255 }
+            kind:
+              {
+                type: string,
+                enum:
+                  [
+                    session_log,
+                    raw_transcript,
+                    cost_diagnostic,
+                    checkpoint,
+                    attachment,
+                    capability_profile,
+                    capability_instructions,
+                    agent_memory_snapshot,
+                    node_result,
+                    evidence,
+                    generated_artifact,
+                    plan_review,
+                    diagnostic,
+                  ],
+              }
+            logicalName:
+              {
+                type: string,
+                pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+                maxLength: 255,
+              }
             mimeType: { type: string, maxLength: 255 }
             sizeBytes: { type: integer, minimum: 0, maximum: 26214400 }
             sha256: { type: string, pattern: "^[a-f0-9]{64}$" }
@@ -3006,7 +3205,8 @@ components:
       additionalProperties: false
       required: [command, fence, payload]
       properties:
-        command: { $ref: "#/components/schemas/CommandEnvelope/properties/command" }
+        command:
+          { $ref: "#/components/schemas/CommandEnvelope/properties/command" }
         fence: { $ref: "#/components/schemas/CommandFence" }
         payload:
           type: object
@@ -3032,29 +3232,105 @@ components:
         in one session request are rejected before spawn.
       properties:
         objectId: { type: string, format: uuid }
-        kind: { type: string, enum: [session_log, raw_transcript, cost_diagnostic, checkpoint, attachment, capability_profile, capability_instructions, agent_memory_snapshot, node_result, evidence, generated_artifact, plan_review, diagnostic] }
-        logicalName: { type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$", maxLength: 255 }
+        kind:
+          {
+            type: string,
+            enum:
+              [
+                session_log,
+                raw_transcript,
+                cost_diagnostic,
+                checkpoint,
+                attachment,
+                capability_profile,
+                capability_instructions,
+                agent_memory_snapshot,
+                node_result,
+                evidence,
+                generated_artifact,
+                plan_review,
+                diagnostic,
+              ],
+          }
+        logicalName:
+          {
+            type: string,
+            pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+            maxLength: 255,
+          }
         mimeType: { type: string, minLength: 1, maxLength: 255 }
         generation: { type: integer, minimum: 1 }
         retentionClass: { type: string, enum: [run, delivery, ephemeral] }
         expiresAt: { type: string, format: date-time, nullable: true }
         envName:
           type: string
-          enum: [MAISTER_OUTPUT_FILE, MAISTER_PLAN_DOCUMENT_FILE, MAISTER_PLAN_REVIEW_FILE]
+          enum:
+            [
+              MAISTER_OUTPUT_FILE,
+              MAISTER_PLAN_DOCUMENT_FILE,
+              MAISTER_PLAN_REVIEW_FILE,
+            ]
     RuntimeObjectMetadata:
       type: object
       additionalProperties: false
-      required: [objectId, kind, logicalName, mimeType, sizeBytes, sha256, generation, retentionClass, state, createdAt, sealedAt, expiresAt, deletedAt]
+      required:
+        [
+          objectId,
+          kind,
+          logicalName,
+          mimeType,
+          sizeBytes,
+          sha256,
+          generation,
+          retentionClass,
+          state,
+          createdAt,
+          sealedAt,
+          expiresAt,
+          deletedAt,
+        ]
       properties:
         objectId: { type: string, format: uuid }
-        kind: { type: string, enum: [session_log, raw_transcript, cost_diagnostic, checkpoint, attachment, capability_profile, capability_instructions, agent_memory_snapshot, node_result, evidence, generated_artifact, plan_review, diagnostic] }
+        kind:
+          {
+            type: string,
+            enum:
+              [
+                session_log,
+                raw_transcript,
+                cost_diagnostic,
+                checkpoint,
+                attachment,
+                capability_profile,
+                capability_instructions,
+                agent_memory_snapshot,
+                node_result,
+                evidence,
+                generated_artifact,
+                plan_review,
+                diagnostic,
+              ],
+          }
         logicalName: { type: string }
         mimeType: { type: string }
         sizeBytes: { type: integer, minimum: 0, nullable: true }
         sha256: { type: string, pattern: "^[a-f0-9]{64}$", nullable: true }
         generation: { type: integer, minimum: 1 }
         retentionClass: { type: string, enum: [run, delivery, ephemeral] }
-        state: { type: string, enum: [pending, available, deleting, missing, deleted, expired, corrupt] }
+        state:
+          {
+            type: string,
+            enum:
+              [
+                pending,
+                available,
+                deleting,
+                missing,
+                deleted,
+                expired,
+                corrupt,
+              ],
+          }
         createdAt: { type: string, format: date-time }
         sealedAt: { type: string, format: date-time, nullable: true }
         expiresAt: { type: string, format: date-time, nullable: true }
@@ -3863,28 +4139,40 @@ components:
             id: { type: string, format: uuid }
             kind: { type: string, enum: [session.prompt] }
             issuedAt: { type: string, format: date-time }
-        fence: { $ref: '#/components/schemas/CommandFence' }
+        fence: { $ref: "#/components/schemas/CommandFence" }
         target:
           type: object
           additionalProperties: false
           required: [hostSessionId]
           properties:
             hostSessionId: { type: string, minLength: 1, maxLength: 128 }
-        payload: { $ref: '#/components/schemas/SendPromptRequest' }
+        payload: { $ref: "#/components/schemas/SendPromptRequest" }
     CommandOutputReferenceV2:
       x-implementation-status: Designed
       type: object
       additionalProperties: false
-      required: [objectId, generation, sizeBytes, sha256, commandId, hostSessionId, acceptedSequence, terminalSequence]
+      required:
+        [
+          objectId,
+          generation,
+          sizeBytes,
+          sha256,
+          commandId,
+          hostSessionId,
+          acceptedSequence,
+          terminalSequence,
+        ]
       properties:
         objectId: { type: string, format: uuid }
         generation: { type: integer, minimum: 1, maximum: 2147483647 }
         sizeBytes: { type: integer, minimum: 0, maximum: 9007199254740991 }
-        sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        sha256: { type: string, pattern: "^[a-f0-9]{64}$" }
         commandId: { type: string, format: uuid }
         hostSessionId: { type: string, minLength: 1, maxLength: 128 }
-        acceptedSequence: { type: string, pattern: '^(0|[1-9][0-9]{0,18})$', maxLength: 19 }
-        terminalSequence: { type: string, pattern: '^(0|[1-9][0-9]{0,18})$', maxLength: 19 }
+        acceptedSequence:
+          { type: string, pattern: "^(0|[1-9][0-9]{0,18})$", maxLength: 19 }
+        terminalSequence:
+          { type: string, pattern: "^(0|[1-9][0-9]{0,18})$", maxLength: 19 }
       description: |
         Immutable full semantic output. Sequence strings are signed-BIGINT-safe;
         command, session, generation and both sequence bounds must agree with
@@ -3893,19 +4181,35 @@ components:
       x-implementation-status: Designed
       type: object
       additionalProperties: false
-      required: [schema, commandId, hostKey, runId, assignmentId, assignmentEpoch, hostSessionId, requestSha256, streamId, acceptedSequence, terminalSequence, response]
+      required:
+        [
+          schema,
+          commandId,
+          hostKey,
+          runId,
+          assignmentId,
+          assignmentEpoch,
+          hostSessionId,
+          requestSha256,
+          streamId,
+          acceptedSequence,
+          terminalSequence,
+          response,
+        ]
       properties:
         schema: { type: string, enum: [maister.command-output.v2] }
         commandId: { type: string, format: uuid }
-        hostKey: { type: string, pattern: '^[A-Za-z0-9_-]{8,64}$' }
+        hostKey: { type: string, pattern: "^[A-Za-z0-9_-]{8,64}$" }
         runId: { type: string, minLength: 1, maxLength: 128 }
         assignmentId: { type: string, format: uuid }
         assignmentEpoch: { type: integer, minimum: 1, maximum: 2147483647 }
         hostSessionId: { type: string, minLength: 1, maxLength: 128 }
-        requestSha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        requestSha256: { type: string, pattern: "^[a-f0-9]{64}$" }
         streamId: { type: string, format: uuid }
-        acceptedSequence: { type: string, pattern: '^(0|[1-9][0-9]{0,18})$', maxLength: 19 }
-        terminalSequence: { type: string, pattern: '^(0|[1-9][0-9]{0,18})$', maxLength: 19 }
+        acceptedSequence:
+          { type: string, pattern: "^(0|[1-9][0-9]{0,18})$", maxLength: 19 }
+        terminalSequence:
+          { type: string, pattern: "^(0|[1-9][0-9]{0,18})$", maxLength: 19 }
         response:
           type: object
           additionalProperties: false
@@ -3914,7 +4218,7 @@ components:
             objectId: { type: string, format: uuid }
             generation: { type: integer, minimum: 1, maximum: 2147483647 }
             sizeBytes: { type: integer, minimum: 0, maximum: 9007199254740991 }
-            sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+            sha256: { type: string, pattern: "^[a-f0-9]{64}$" }
       description: |
         Immutable JSON manifest, at most 2 MiB, addressing the original
         command-attributed event span and a separately sealed original ACP
@@ -3928,23 +4232,25 @@ components:
       x-implementation-status: Designed
       type: object
       additionalProperties: false
-      required: [outcomeVersion, status, eventId, streamId, sequence, result, error]
+      required:
+        [outcomeVersion, status, eventId, streamId, sequence, result, error]
       properties:
         outcomeVersion: { type: integer, enum: [2] }
         status: { type: string, enum: [succeeded, failed, fenced] }
         eventId: { type: string, format: uuid }
         streamId: { type: string, format: uuid }
-        sequence: { type: string, pattern: '^(0|[1-9][0-9]{0,18})$', maxLength: 19 }
+        sequence:
+          { type: string, pattern: "^(0|[1-9][0-9]{0,18})$", maxLength: 19 }
         result:
           type: object
           nullable: true
           additionalProperties: true
           description: Versioned bounded per-kind result, including output reference for prompt success; never raw semantic output.
           properties:
-            output: { $ref: '#/components/schemas/CommandOutputReferenceV2' }
+            output: { $ref: "#/components/schemas/CommandOutputReferenceV2" }
         error:
           nullable: true
-          allOf: [{ $ref: '#/components/schemas/SupervisorErrorBody' }]
+          allOf: [{ $ref: "#/components/schemas/SupervisorErrorBody" }]
       description: |
         Success requires a result and null error; failure/fencing requires an
         exact nested error and null result. The reducer validates the per-kind
@@ -3954,24 +4260,41 @@ components:
       x-implementation-status: Designed
       type: object
       additionalProperties: false
-      required: [receiptVersion, commandId, kind, hostKey, runId, assignmentId, assignmentEpoch, hostSessionId, requestSchema, requestSha256, phase, httpStatus, receivedAt, terminal]
+      required:
+        [
+          receiptVersion,
+          commandId,
+          kind,
+          hostKey,
+          runId,
+          assignmentId,
+          assignmentEpoch,
+          hostSessionId,
+          requestSchema,
+          requestSha256,
+          phase,
+          httpStatus,
+          receivedAt,
+          terminal,
+        ]
       properties:
         receiptVersion: { type: integer, enum: [2] }
         commandId: { type: string, format: uuid }
-        kind: { $ref: '#/components/schemas/CommandKind' }
-        hostKey: { type: string, pattern: '^[A-Za-z0-9_-]{8,64}$' }
+        kind: { $ref: "#/components/schemas/CommandKind" }
+        hostKey: { type: string, pattern: "^[A-Za-z0-9_-]{8,64}$" }
         runId: { type: string, minLength: 1, maxLength: 128 }
         assignmentId: { type: string, format: uuid }
         assignmentEpoch: { type: integer, minimum: 1, maximum: 2147483647 }
-        hostSessionId: { type: string, nullable: true, minLength: 1, maxLength: 128 }
+        hostSessionId:
+          { type: string, nullable: true, minLength: 1, maxLength: 128 }
         requestSchema: { type: string, enum: [maister.command.request.v2] }
-        requestSha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        requestSha256: { type: string, pattern: "^[a-f0-9]{64}$" }
         phase: { type: string, enum: [accepted, completed, rejected] }
         httpStatus: { type: integer, minimum: 100, maximum: 599 }
         receivedAt: { type: string, format: date-time }
         terminal:
           nullable: true
-          allOf: [{ $ref: '#/components/schemas/CommandTerminalEvidenceV2' }]
+          allOf: [{ $ref: "#/components/schemas/CommandTerminalEvidenceV2" }]
       description: |
         Host/fence/target are derived from the stored admission, never the querying
         caller. Accepted has null terminal; completed/rejected has exact terminal
@@ -3981,14 +4304,25 @@ components:
       x-implementation-status: Designed
       type: object
       additionalProperties: false
-      required: [retirementId, generation, requestSha256, terminalEvidenceSha256, terminalSequence, ownerDisposition, eligibleAt]
+      required:
+        [
+          retirementId,
+          generation,
+          requestSha256,
+          terminalEvidenceSha256,
+          terminalSequence,
+          ownerDisposition,
+          eligibleAt,
+        ]
       properties:
         retirementId: { type: string, format: uuid }
         generation: { type: integer, minimum: 1, maximum: 2147483647 }
-        requestSha256: { type: string, pattern: '^[a-f0-9]{64}$' }
-        terminalEvidenceSha256: { type: string, pattern: '^[a-f0-9]{64}$' }
-        terminalSequence: { type: string, pattern: '^(0|[1-9][0-9]{0,18})$', maxLength: 19 }
-        ownerDisposition: { type: string, enum: [applied, superseded, not_applicable] }
+        requestSha256: { type: string, pattern: "^[a-f0-9]{64}$" }
+        terminalEvidenceSha256: { type: string, pattern: "^[a-f0-9]{64}$" }
+        terminalSequence:
+          { type: string, pattern: "^(0|[1-9][0-9]{0,18})$", maxLength: 19 }
+        ownerDisposition:
+          { type: string, enum: [applied, superseded, not_applicable] }
         eligibleAt: { type: string, format: date-time }
       description: |
         POST /commands/{commandId}/retirement over the existing trusted local
@@ -4002,13 +4336,14 @@ components:
       x-implementation-status: Designed
       type: object
       additionalProperties: false
-      required: [generation, manifestSha256, offset, sizeBytes, sha256, objectId]
+      required:
+        [generation, manifestSha256, offset, sizeBytes, sha256, objectId]
       properties:
         generation: { type: integer, minimum: 1, maximum: 2147483647 }
-        manifestSha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        manifestSha256: { type: string, pattern: "^[a-f0-9]{64}$" }
         offset: { type: integer, minimum: 0, maximum: 9007199254740991 }
         sizeBytes: { type: integer, minimum: 0, maximum: 8388608 }
-        sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        sha256: { type: string, pattern: "^[a-f0-9]{64}$" }
         objectId: { type: string, format: uuid }
       description: |
         Maintenance Unix-socket transport only; no TCP import route. URL-selected

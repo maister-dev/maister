@@ -8,6 +8,7 @@ import {
   type MockInstance,
 } from "vitest";
 import { Agent, fetch as undiciFetch } from "undici";
+import { z } from "zod";
 
 vi.mock("undici", async (importOriginal) => {
   const actual = await importOriginal<typeof import("undici")>();
@@ -290,17 +291,161 @@ describe("checkSupervisorHealth", () => {
     sessions: { live: 1, exited: 2, crashed: 3 },
   };
 
+  const baselineStrictHealthSchema = z
+    .object({
+      status: z.literal("ready"),
+      version: z.string().min(1),
+      uptimeMs: z.number().int().nonnegative(),
+      checkedAt: z.string().datetime(),
+      sessions: z
+        .object({
+          live: z.number().int().nonnegative(),
+          exited: z.number().int().nonnegative(),
+          crashed: z.number().int().nonnegative(),
+        })
+        .strict(),
+    })
+    .strict();
+
   it("maps a valid health response to ready", async () => {
     mockOnce(new Response(JSON.stringify(readyHealth), { status: 200 }));
 
     await expect(checkSupervisorHealth()).resolves.toEqual({
       kind: "ready",
       health: readyHealth,
+      lag: {
+        scope: "host_backlog",
+        status: "unknown",
+        sampledAt: readyHealth.checkedAt,
+      },
     });
     expect(fetchSpy).toHaveBeenCalledWith(
-      "http://supervisor:7777/health",
+      "http://supervisor:7777/health?includeStream=true",
       expect.objectContaining({ method: "GET" }),
     );
+  });
+
+  it("accepts absent stream telemetry and future response fields", async () => {
+    const newerHealth = {
+      ...readyHealth,
+      futureTopLevel: "ignored",
+      stream: {
+        streamId: "1d243f70-235f-47bd-804b-33aa3c8c78db",
+        headSequence: "42",
+        unacknowledgedCount: 3,
+        retainedCount: 8,
+        pressured: false,
+        oldestUnacknowledgedAgeMs: 2_500,
+        futureStreamField: "ignored",
+      },
+    };
+
+    mockOnce(new Response(JSON.stringify(newerHealth), { status: 200 }));
+
+    await expect(checkSupervisorHealth()).resolves.toMatchObject({
+      kind: "ready",
+      health: { stream: newerHealth.stream },
+      lag: { scope: "host_backlog", status: "clear" },
+    });
+
+    mockOnce(new Response(JSON.stringify(readyHealth), { status: 200 }));
+
+    await expect(checkSupervisorHealth()).resolves.toEqual({
+      kind: "ready",
+      health: readyHealth,
+      lag: {
+        scope: "host_backlog",
+        status: "unknown",
+        sampledAt: readyHealth.checkedAt,
+      },
+    });
+  });
+
+  it("summarizes an aged host backlog without changing ready status", async () => {
+    const health = {
+      ...readyHealth,
+      stream: {
+        streamId: "1d243f70-235f-47bd-804b-33aa3c8c78db",
+        headSequence: "100",
+        unacknowledgedCount: 101,
+        retainedCount: 101,
+        pressured: false,
+        oldestUnacknowledgedAgeMs: 120_000,
+      },
+    };
+
+    mockOnce(new Response(JSON.stringify(health), { status: 200 }));
+
+    await expect(checkSupervisorHealth()).resolves.toMatchObject({
+      kind: "ready",
+      lag: {
+        scope: "host_backlog",
+        status: "behind",
+        sampledAt: readyHealth.checkedAt,
+      },
+    });
+  });
+
+  it("keeps known stream fields strict and the baseline parser isolated", async () => {
+    const streamHealth = {
+      ...readyHealth,
+      stream: {
+        streamId: "1d243f70-235f-47bd-804b-33aa3c8c78db",
+        headSequence: "01",
+        unacknowledgedCount: 0,
+        retainedCount: 0,
+        pressured: false,
+        oldestUnacknowledgedAgeMs: null,
+      },
+    };
+
+    expect(baselineStrictHealthSchema.safeParse(readyHealth).success).toBe(
+      true,
+    );
+    expect(baselineStrictHealthSchema.safeParse(streamHealth).success).toBe(
+      false,
+    );
+    mockOnce(new Response(JSON.stringify(streamHealth), { status: 200 }));
+
+    await expect(checkSupervisorHealth()).resolves.toMatchObject({
+      kind: "unavailable",
+      reason: "malformed",
+    });
+  });
+
+  it("rejects unsafe or internally inconsistent stream counters", async () => {
+    const validStream = {
+      streamId: "1d243f70-235f-47bd-804b-33aa3c8c78db",
+      headSequence: "0",
+      unacknowledgedCount: 1,
+      retainedCount: 1,
+      pressured: false,
+      oldestUnacknowledgedAgeMs: 0,
+    };
+    const invalidStreams = [
+      { ...validStream, unacknowledgedCount: 2 },
+      {
+        ...validStream,
+        unacknowledgedCount: 0,
+        oldestUnacknowledgedAgeMs: 0,
+      },
+      { ...validStream, oldestUnacknowledgedAgeMs: null },
+      { ...validStream, retainedCount: 1.5 },
+      { ...validStream, retainedCount: Number.MAX_SAFE_INTEGER + 1 },
+      { ...validStream, oldestUnacknowledgedAgeMs: -1 },
+    ];
+
+    for (const stream of invalidStreams) {
+      mockOnce(
+        new Response(JSON.stringify({ ...readyHealth, stream }), {
+          status: 200,
+        }),
+      );
+      await expect(checkSupervisorHealth()).resolves.toMatchObject({
+        kind: "unavailable",
+        reason: "malformed",
+      });
+    }
   });
 
   it("maps network failure to unavailable", async () => {
