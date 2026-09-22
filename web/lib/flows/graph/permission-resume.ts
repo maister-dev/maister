@@ -62,6 +62,11 @@ import { readPromptOutput } from "@/lib/execution-host/prompt-output";
 export const PERMISSION_RESUME_PROMPT =
   "Resuming after operator response — please continue with the prior tool call.";
 
+// The resume route blocks on this reconcile, so the ceiling is a route-latency
+// budget, not a transport timeout: past it the operator is told to retry rather
+// than left holding an open request.
+const RECONCILE_RECEIPT_TIMEOUT_MS = 30_000;
+
 const log = pino({
   name: "flow-permission-resume",
   level: process.env.LOG_LEVEL ?? "info",
@@ -305,7 +310,7 @@ export async function prepareFlowPermissionResult(
     const evidence = await reconcilePromptCommand({
       db,
       commandId: source.data.flowPrompt.commandId,
-      signal: AbortSignal.timeout(30_000),
+      signal: AbortSignal.timeout(RECONCILE_RECEIPT_TIMEOUT_MS),
       lookupReceipt: (id) => transport.getCommandReceipt(id),
     });
     const command = evidence.command;
@@ -354,7 +359,7 @@ export async function prepareFlowPermissionResult(
       receipt.body?.ok !== true)
   )
     return { kind: "pending", reason: "input_not_confirmed" };
-  const signal = AbortSignal.timeout(30_000);
+  const signal = AbortSignal.timeout(RECONCILE_RECEIPT_TIMEOUT_MS);
   const evidence = await reconcilePromptCommand({
     db,
     commandId: source.data.flowPrompt.commandId,

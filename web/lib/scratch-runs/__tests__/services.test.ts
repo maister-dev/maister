@@ -20,7 +20,6 @@ import {
 } from "@/lib/scratch-runs/launch";
 import {
   assistantScratchMessageDraft,
-  nextScratchMessageSequence,
   userScratchMessageDraft,
 } from "@/lib/scratch-runs/messages";
 import {
@@ -152,15 +151,12 @@ describe("scratch attachment helpers", () => {
 
 describe("scratch message and state helpers", () => {
   it("builds monotonic message drafts", () => {
-    expect(nextScratchMessageSequence([1, 3, 2])).toBe(4);
-    expect(userScratchMessageDraft({ sequence: 1, content: "hi" })).toEqual({
-      sequence: 1,
+    expect(userScratchMessageDraft({ content: "hi" })).toEqual({
       role: "user",
       content: "hi",
     });
     expect(
       assistantScratchMessageDraft({
-        sequence: 2,
         content: "ok",
         supervisorEventId: "7",
       }),

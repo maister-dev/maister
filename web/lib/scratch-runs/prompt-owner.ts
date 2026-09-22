@@ -254,10 +254,13 @@ export async function prepareScratchPrompt(input: {
       if (run?.runKind !== "scratch" || run.status !== "Running")
         return "superseded";
       if (outcome.state === "succeeded") {
+        // No terminal event yet means the transcript cannot have caught up.
+        if (!command.terminalEventId)
+          throw new PromptOwnerDeferred("scratch_transcript_pending");
         const [terminal] = await tx
           .select({ sequence: executionEvents.runSequence })
           .from(executionEvents)
-          .where(eq(executionEvents.id, command.terminalEventId ?? ""));
+          .where(eq(executionEvents.id, command.terminalEventId));
         const [transcript] = await tx
           .select({ sequence: executionEventConsumers.lastRunSequence })
           .from(executionEventConsumers)

@@ -814,10 +814,7 @@ export async function* launchScratchRunStaged(
   const name = args.body.name?.trim() || scratchNameFallback(args.body.prompt);
   const messageId = hasInitialPrompt ? randomUUID() : null;
   const initialMessage = hasInitialPrompt
-    ? userScratchMessageDraft({
-        sequence: 1,
-        content: rawPrompt,
-      })
+    ? userScratchMessageDraft({ content: rawPrompt })
     : null;
   const validatedAttachments = validateScratchAttachments(
     args.body.attachments,
@@ -1570,7 +1567,7 @@ export async function* launchLocalPackageAssistantStaged(
   const name = pkg.name ? `${pkg.name} assistant` : scratchNameFallback(prompt);
   const messageId = hasInitialPrompt ? randomUUID() : null;
   const initialMessage = hasInitialPrompt
-    ? userScratchMessageDraft({ sequence: 1, content: rawPrompt })
+    ? userScratchMessageDraft({ content: rawPrompt })
     : null;
 
   // Before the run row commits, every materialization failure needs an explicit

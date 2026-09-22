@@ -63,6 +63,10 @@ export const canonicalTranscriptProjector: ExecutionEventProjector = {
 // 22021 character_not_in_repertoire. None can succeed on a retry.
 const UNSTORABLE_SQLSTATES = new Set(["22P05", "22P02", "22021"]);
 
+// A scratch turn boundary: the point after which no open text or thought row
+// may be continued, and the usage row starts again.
+const SCRATCH_BOUNDARY_EVENTS = new Set(["session.command", "session.created"]);
+
 function unstorableSqlState(error: unknown): string | null {
   for (let cause = error, depth = 0; cause && depth < 5; depth += 1) {
     const code = (cause as { code?: unknown }).code;
@@ -83,8 +87,7 @@ export async function projectTranscriptEvent(
   if (
     event.eventType !== "session.update" &&
     !RESET_EVENTS.has(event.eventType) &&
-    event.eventType !== "session.command" &&
-    event.eventType !== "session.created"
+    !SCRATCH_BOUNDARY_EVENTS.has(event.eventType)
   )
     return false;
   const [run] = await tx
@@ -96,9 +99,7 @@ export async function projectTranscriptEvent(
   if (!run)
     throw new ExecutionEventProjectionError("transcript run is missing", true);
   const scratchBoundary =
-    run.kind === "scratch" &&
-    (event.eventType === "session.command" ||
-      event.eventType === "session.created");
+    run.kind === "scratch" && SCRATCH_BOUNDARY_EVENTS.has(event.eventType);
 
   if (
     event.eventType !== "session.update" &&
