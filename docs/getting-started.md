@@ -255,7 +255,8 @@ DB_URL=postgres://maister:maister@localhost:5432/maister pnpm db:seed
 
 Full reference: [Database Schema](database-schema.md). For the full env-var
 list (incl. `MAISTER_DB_POOL_MAX`, `MAISTER_MAX_CONCURRENT_RUNS`,
-`MAISTER_KEEPALIVE_MINUTES`): [Configuration](configuration.md).
+`MAISTER_KEEPALIVE_MINUTES` (web) and `MAISTER_PERMISSION_MAX_HOURS` (host)):
+[Configuration](configuration.md).
 
 ### Local destructive reset
 

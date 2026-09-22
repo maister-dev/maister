@@ -98,20 +98,30 @@ describe("PendingPermissionRegistry", () => {
     expect(reg.cancel("s3", "r3", "x")).toBe(false);
   });
 
-  it("times out with HITL_TIMEOUT exactly once after timeoutMs", async () => {
+  // OBSOLETE (ADR-180): this asserted `reject(HITL_TIMEOUT)` after the
+  // keep-alive window. The timer is now an absolute cap that hands the request
+  // to an installed teardown and never rejects. What survives the contract
+  // change is EXACTLY-ONCE: one timer per deferred, cleared by eviction.
+  it("the cap fires exactly once per deferred and leaves it settled", async () => {
+    const fired: string[] = [];
     const reg = createPendingPermissions({
       logger: silentLogger,
       timeoutMs: TIMEOUT_MS,
+      onCapExceeded: (sessionId, requestId) => {
+        fired.push(requestId);
+        reg.cancel(sessionId, requestId, "checkpoint");
+      },
     });
     const d = makeDeferred();
 
     reg.register("s4", "r4", { resolve: d.resolve, reject: d.reject });
     expect(d.rejected).toBeNull();
 
-    await vi.advanceTimersByTimeAsync(TIMEOUT_MS + 10);
+    await vi.advanceTimersByTimeAsync(TIMEOUT_MS * 4);
 
-    expect(d.rejected).toBeInstanceOf(SupervisorError);
-    expect((d.rejected as SupervisorError).code).toBe("HITL_TIMEOUT");
+    expect(fired).toEqual(["r4"]);
+    expect(d.resolved).toEqual({ outcome: "cancelled" });
+    expect(d.rejected).toBeNull();
     expect(reg.resolve("s4", "r4", "allow")).toBe(false);
   });
 
@@ -199,5 +209,75 @@ describe("PendingPermissionRegistry", () => {
     expect(reg.totalSize()).toBe(3);
     expect(reg.size("sA")).toBe(1);
     expect(reg.size("sB")).toBe(2);
+  });
+});
+
+// ADR-180: the per-permission timer is no longer a copy of the web keep-alive
+// window and no longer REJECTS. It is an absolute cap whose expiry hands the
+// request to an installed teardown (the graceful checkpoint), and the deferred
+// is always released as `{outcome:"cancelled"}` so the adapter journals the
+// tool call for replay after `session/resume`. A reject is a producer fault:
+// it reaches `abortOutput` and SIGKILLs the child.
+describe("absolute permission cap (ADR-180)", () => {
+  it("hands the expired request to the installed cap handler, which releases it as cancelled", async () => {
+    const seen: Array<{ sessionId: string; requestId: string }> = [];
+    const reg = createPendingPermissions({
+      logger: silentLogger,
+      timeoutMs: TIMEOUT_MS,
+      onCapExceeded: (sessionId, requestId) => {
+        seen.push({ sessionId, requestId });
+        // What the real teardown does first: cancel every open deferred.
+        reg.cancel(sessionId, requestId, "checkpoint");
+      },
+    });
+    const d = makeDeferred();
+
+    reg.register("cap-1", "req-1", { resolve: d.resolve, reject: d.reject });
+
+    await vi.advanceTimersByTimeAsync(TIMEOUT_MS + 10);
+
+    expect(seen).toEqual([{ sessionId: "cap-1", requestId: "req-1" }]);
+    expect(d.resolved).toEqual({ outcome: "cancelled" });
+    expect(d.rejected).toBeNull();
+    expect(reg.size("cap-1")).toBe(0);
+  });
+
+  it("releases the deferred as cancelled — never rejected — when no teardown is wired", async () => {
+    const reg = createPendingPermissions({
+      logger: silentLogger,
+      timeoutMs: TIMEOUT_MS,
+    });
+    const d = makeDeferred();
+
+    reg.register("cap-2", "req-2", { resolve: d.resolve, reject: d.reject });
+
+    await vi.advanceTimersByTimeAsync(TIMEOUT_MS + 10);
+
+    expect(d.resolved).toEqual({ outcome: "cancelled" });
+    expect(d.rejected).toBeNull();
+  });
+
+  // The production registry is a module-level singleton created at import
+  // (D10), so its teardown can only be installed AFTER construction — and
+  // after requests may already be registered.
+  it("setCapHandler arms a request registered before the handler was installed", async () => {
+    const seen: string[] = [];
+    const reg = createPendingPermissions({
+      logger: silentLogger,
+      timeoutMs: TIMEOUT_MS,
+    });
+    const d = makeDeferred();
+
+    reg.register("cap-3", "req-3", { resolve: d.resolve, reject: d.reject });
+    reg.setCapHandler((sessionId, requestId) => {
+      seen.push(`${sessionId}/${requestId}`);
+      reg.cancel(sessionId, requestId, "checkpoint");
+    });
+
+    await vi.advanceTimersByTimeAsync(TIMEOUT_MS + 10);
+
+    expect(seen).toEqual(["cap-3/req-3"]);
+    expect(d.resolved).toEqual({ outcome: "cancelled" });
+    expect(d.rejected).toBeNull();
   });
 });

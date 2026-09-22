@@ -723,6 +723,10 @@ export const REASON_TOKENS = [
   "import_chunk_conflict",
   "import_seal_conflict",
   "import_chunk_too_large",
+  // ADR-180: the session terminated INTENTIONALLY with its deferreds
+  // cancelled, so a late answer is a RESUME, not a failure. It rides the
+  // unchanged 410 HITL_TIMEOUT.
+  "session_checkpointed",
 ] as const;
 
 export type ReasonToken = (typeof REASON_TOKENS)[number];
@@ -1316,6 +1320,12 @@ export type SessionEvent =
       // operator-cancel path. ADR-166: `"fenced"` = evicted by a command with a
       // higher assignment epoch.
       reason?: "checkpoint" | "intentional" | "fenced";
+      // ADR-180: diagnostic only — present exactly when the host's own
+      // absolute permission cap started the teardown. Nothing branches on it,
+      // and it is deliberately NOT a new `reason` value: the web's SSE decoder
+      // validates `reason` against the three above and drops the whole
+      // terminal event for anything else.
+      cause?: "permission_cap";
     }
   // ADR-166: command acceptance / completion for the enveloped session routes
   // — the durable completion signal that is NOT the long-lived HTTP response.

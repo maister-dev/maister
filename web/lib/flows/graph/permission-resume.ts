@@ -33,9 +33,12 @@ import {
 } from "./permission-result-evidence";
 import { decodeNodePromptCompletion } from "./node-prompt-owner";
 
+import { withdrawRefusedPermissionDelivery } from "@/lib/execution-host/permission-delivery";
 import {
+  isCheckpointedPermissionInputReceipt,
   isPermissionResultCommand,
   isPermissionCheckpointInterruption,
+  isRefusedPermissionDelivery,
   isRejectedPermissionInputReceipt,
   permissionCheckpointOrder,
 } from "@/lib/execution-host/permission-handoff-evidence";
@@ -171,6 +174,10 @@ export async function prepareFlowPermissionResult(
       })
   )
     throw new PromptOwnerInvariantError("permission_result_input_identity");
+  // The host REFUSED this delivery outright: no deferred ever saw it, so there
+  // is nothing to hand forward. The ordinary resume claim withdraws the void
+  // intent and re-delivers the stored answer to the resumed session.
+  if (isRefusedPermissionDelivery(input)) return null;
   const receipt = await transport.getCommandReceipt(input.id);
 
   if (!receipt) return { kind: "pending", reason: "input_receipt_missing" };
@@ -181,6 +188,11 @@ export async function prepareFlowPermissionResult(
     receipt.assignmentEpoch !== input.assignmentEpoch
   )
     throw new PromptOwnerInvariantError("permission_result_receipt_identity");
+  // ADR-180: the delivery was refused because the session was PARKED, not
+  // because the answer expired. There is nothing to reconstruct — the stored
+  // intent is re-issued and re-delivered by the resumed session — so the
+  // ordinary resume claim applies and this preflight has no opinion.
+  if (isCheckpointedPermissionInputReceipt(receipt)) return null;
   const rejected = isRejectedPermissionInputReceipt(receipt);
 
   if (
@@ -236,14 +248,28 @@ export async function prepareFlowPermissionResult(
   if (
     !checkpoint ||
     checkpoint.result?.sessionId !== source.data.supervisorSessionId
-  )
-    return { kind: "pending", reason: "source_checkpoint_pending" };
-  const order = await permissionCheckpointOrder(db, command, checkpoint);
+  ) {
+    // A host-initiated park (ADR-180) mints no command at all. The grant's
+    // `checkpointCommandId` is a DB-constrained string, so this path still
+    // cannot hand the result forward — but it can stop CLAIMING a checkpoint
+    // is still coming when the terminal witness already proves it happened.
+    const witnessed = await permissionCheckpointOrder(db, command, null);
 
-  if (order === "unproven")
+    return {
+      kind: "pending",
+      reason:
+        witnessed === "unproven"
+          ? "source_checkpoint_pending"
+          : "source_checkpoint_uncommanded",
+    };
+  }
+  const resolved = await permissionCheckpointOrder(db, command, checkpoint);
+
+  if (resolved === "unproven")
     return { kind: "pending", reason: "source_checkpoint_order_unproven" };
   const interrupted =
-    order === "after_checkpoint" && isPermissionCheckpointInterruption(command);
+    resolved.order === "after_checkpoint" &&
+    isPermissionCheckpointInterruption(command);
   const prepared: PreparedPermissionEvidence = {
     hitlRequestId: hitl.id,
     sourceJson: canonicalCommandJson(hitl.schema),
@@ -475,7 +501,14 @@ export async function authorizeNodePermissionResume(
   const { run, hitl, response, source, command, prior, attempt, incarnation } =
     context;
 
-  if (response._delivery !== undefined)
+  if (
+    response._delivery !== undefined &&
+    !(await withdrawRefusedPermissionDelivery(tx, hitl, response, {
+      assignmentId: prior.id,
+      supervisorSessionId: source.supervisorSessionId,
+      requestId: source.requestId,
+    }))
+  )
     throw new PromptOwnerInvariantError("permission_resume_input_unclassified");
   const promptOrdinal = attempt.actionPromptOrdinal + 1;
 

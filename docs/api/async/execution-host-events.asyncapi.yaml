@@ -451,9 +451,14 @@ components:
         `HITL_TIMEOUT` (M7+, HTTP 410) is returned by
         `POST /sessions/{id}/input` when the session is known but no pending
         permission exists for the given `(sessionId, requestId)` — the
-        deferred aged past `MAISTER_KEEPALIVE_MINUTES` or was already
-        resolved / cancelled. An unknown session on that route is
-        `EXECUTOR_UNAVAILABLE` (503, retryable).
+        deferred was released by the absolute `MAISTER_PERMISSION_MAX_HOURS`
+        cap, by a checkpoint, or by another request resolving / cancelling
+        it. When the session was parked with its deferreds cancelled the body
+        carries `details.reason: "session_checkpointed"` (Implemented —
+        ADR-180) and the web resumes on the stored answer instead of failing
+        the run; an answer landing between the cancel and the child's exit
+        waits for the exit and gets the same arm. An unknown session on that
+        route is `EXECUTOR_UNAVAILABLE` (503, retryable).
 
         `FENCED` (Implemented — ADR-166, HTTP 409) is returned when
         `fence.assignmentEpoch` is below the host's persisted high-water for
@@ -511,6 +516,7 @@ components:
         - runtime_object_missing
         - runtime_object_range_invalid
         - runtime_object_integrity_mismatch
+        - session_checkpointed
       description: |
         (Implemented — ADR-166) Machine-readable refusal discriminator carried in
         `SupervisorErrorBody.details.reason`. Tests assert the token, never

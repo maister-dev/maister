@@ -11,7 +11,14 @@ export type PermissionDeferred = {
   reject: (err: Error) => void;
 };
 
+// ADR-180: the registry has no access to the child process, so the
+// teardown a cap must perform is INSTALLED rather than imported. The
+// production registry is a module-level singleton created at import, so the
+// installer must also arm requests registered before it was called.
+export type CapHandler = (sessionId: string, requestId: string) => void;
+
 export type PendingPermissionRegistry = {
+  setCapHandler(handler: CapHandler): void;
   register(
     sessionId: string,
     requestId: string,
@@ -37,21 +44,40 @@ type Entry = {
 export type CreatePendingPermissionsOptions = {
   logger?: Logger;
   timeoutMs?: number;
+  onCapExceeded?: CapHandler;
 };
 
-export function keepaliveMinutesEnv(): number {
-  const raw = process.env.MAISTER_KEEPALIVE_MINUTES ?? "30";
-  const parsed = Number.parseInt(raw, 10);
+export const DEFAULT_PERMISSION_MAX_HOURS = 24;
 
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 30;
+// Parsed as a positive FLOAT, unlike its `positiveIntFromEnv` neighbours. The
+// deviation is load-bearing: the integration lane drives the cap with
+// sub-second values, and an integer-only parser would make 1 hour the smallest
+// expressible cap and leave the timer path entirely unpinned.
+export function permissionMaxHoursEnv(logger?: Logger): number {
+  const raw = process.env.MAISTER_PERMISSION_MAX_HOURS;
+
+  if (raw === undefined || raw === "") return DEFAULT_PERMISSION_MAX_HOURS;
+
+  const parsed = Number.parseFloat(raw);
+
+  if (Number.isFinite(parsed) && parsed > 0) return parsed;
+
+  logger?.warn(
+    { raw, fallbackHours: DEFAULT_PERMISSION_MAX_HOURS },
+    "MAISTER_PERMISSION_MAX_HOURS is not a positive number — using the default",
+  );
+
+  return DEFAULT_PERMISSION_MAX_HOURS;
 }
 
 export function createPendingPermissions(
   opts: CreatePendingPermissionsOptions = {},
 ): PendingPermissionRegistry {
   const log = opts.logger?.child({ name: "supervisor-acp" });
-  const timeoutMs = opts.timeoutMs ?? keepaliveMinutesEnv() * 60_000;
+  const timeoutMs =
+    opts.timeoutMs ?? permissionMaxHoursEnv(opts.logger) * 3_600_000;
   const sessions = new Map<string, Map<string, Entry>>();
+  let capHandler: CapHandler | undefined = opts.onCapExceeded;
 
   const evict = (sessionId: string, requestId: string): Entry | undefined => {
     const bySession = sessions.get(sessionId);
@@ -66,7 +92,11 @@ export function createPendingPermissions(
     return entry;
   };
 
-  return {
+  const api: PendingPermissionRegistry = {
+    setCapHandler(handler): void {
+      capHandler = handler;
+    },
+
     register(sessionId, requestId, deferred): void {
       let bySession = sessions.get(sessionId);
 
@@ -92,24 +122,28 @@ export function createPendingPermissions(
       }
 
       const timer = setTimeout(() => {
-        const evicted = evict(sessionId, requestId);
+        const entry = sessions.get(sessionId)?.get(requestId);
 
-        if (!evicted) return;
+        if (!entry) return;
         log?.warn(
           {
             sessionId,
             requestId,
             timeoutMs,
-            ageMs: Date.now() - evicted.createdAt,
+            ageMs: Date.now() - entry.createdAt,
           },
-          "pending-permission timed out",
+          "pending-permission cap exceeded",
         );
-        evicted.deferred.reject(
-          new SupervisorError(
-            "HITL_TIMEOUT",
-            `permission request ${requestId} timed out after ${Math.floor(timeoutMs / 60_000)} minutes`,
-          ),
-        );
+        if (capHandler) {
+          capHandler(sessionId, requestId);
+
+          return;
+        }
+        // No teardown installed (a harness that never called setCapHandler):
+        // release the deferred as CANCELLED rather than leak it. The cap NEVER
+        // rejects — a rejected permission is a producer fault that reaches
+        // abortOutput and SIGKILLs the child.
+        api.cancel(sessionId, requestId, "permission_cap");
       }, timeoutMs);
 
       timer.unref?.();
@@ -236,6 +270,8 @@ export function createPendingPermissions(
       sessions.delete(sessionId);
     },
   };
+
+  return api;
 }
 
 export const pendingPermissions: PendingPermissionRegistry =

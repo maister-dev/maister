@@ -24,10 +24,12 @@ import {
 import {
   isPermissionResultCommand,
   isPermissionCheckpointInterruption,
+  isRefusedPermissionDelivery,
   permissionCheckpointOrder,
   isRejectedPermissionInputReceipt,
 } from "./permission-handoff-evidence";
 import { PromptOwnerInvariantError } from "./prompt-owners";
+import { TERMINAL_COMMAND_STATES } from "./types";
 
 import {
   agentTurns,
@@ -63,7 +65,9 @@ export const agentPermissionResumeSchema = z
     sourceCommandId: id,
     sourceRequestSha256: digest,
     sourceTerminalEvidenceSha256: digest,
-    checkpointCommandId: id,
+    // Null for a park the host performed itself (ADR-180): no command exists,
+    // and the session's terminal event is the checkpoint witness instead.
+    checkpointCommandId: id.nullable(),
     inputCommandId: id.nullable(),
     resumeSessionId: id,
     optionId: id,
@@ -81,7 +85,7 @@ export type Source = Readonly<{
   turn: AgentTurn;
   prior: ExecutionAssignment;
   incarnation: RunSessionIncarnation & { acpSessionId: string };
-  checkpoint: ExecutionCommand;
+  checkpoint: ExecutionCommand | null;
   input: ExecutionCommand | null;
   kind: "result" | "continue" | "rejected";
   pause?: z.infer<typeof pauseProofSchema>;
@@ -222,7 +226,7 @@ export async function readCheckpointSource(
     return { kind: "pending", reason: "assignment_not_checkpointed" };
   if (!isPermissionResultCommand(command))
     return { kind: "pending", reason: "source_not_settled" };
-  const [checkpoint] = await db
+  const checkpoints = await db
     .select()
     .from(executionCommands)
     .where(
@@ -231,26 +235,45 @@ export async function readCheckpointSource(
         eq(executionCommands.executionAssignmentId, prior.id),
         eq(executionCommands.targetSessionId, source.supervisorSessionId),
         eq(executionCommands.kind, "session.checkpoint"),
-        eq(executionCommands.state, "succeeded"),
       ),
     )
-    .orderBy(asc(executionCommands.createdAt), asc(executionCommands.id))
-    .limit(1);
+    .orderBy(asc(executionCommands.createdAt), asc(executionCommands.id));
+  // ADR-180: a park the HOST performed itself mints no command at all, so the
+  // grant may name none and the session's terminal event is the witness. A
+  // command still in flight is waited for — it settles into a confirmed
+  // checkpoint or a refusal. Which witness ORDERS the prompt is decided by
+  // `permissionCheckpointOrder` (a mere acknowledgement of an already-parked
+  // session yields to the terminal event there).
+  const checkpoint =
+    checkpoints.find(
+      (row) =>
+        row.state === "succeeded" &&
+        row.result?.sessionId === source.supervisorSessionId,
+    ) ?? null;
 
   if (
-    !checkpoint ||
-    checkpoint.result?.sessionId !== source.supervisorSessionId
+    !checkpoint &&
+    checkpoints.some(
+      (row) =>
+        !(TERMINAL_COMMAND_STATES as readonly string[]).includes(row.state),
+    )
   )
     return { kind: "pending", reason: "checkpoint_not_confirmed" };
   if (
-    checkpoint.executionHostId !== prior.executionHostId ||
-    checkpoint.assignmentEpoch !== prior.epoch
+    checkpoint &&
+    (checkpoint.executionHostId !== prior.executionHostId ||
+      checkpoint.assignmentEpoch !== prior.epoch)
   )
     throw new PromptOwnerInvariantError("agent_permission_checkpoint_identity");
-  const order = await permissionCheckpointOrder(db, command, checkpoint);
+  const resolved = await permissionCheckpointOrder(db, command, checkpoint);
 
-  if (order === "unproven")
-    return { kind: "pending", reason: "checkpoint_order_unproven" };
+  if (resolved === "unproven")
+    return {
+      kind: "pending",
+      reason: checkpoint
+        ? "checkpoint_order_unproven"
+        : "checkpoint_not_confirmed",
+    };
   const halt =
     source.kind === "hook_trip" ? await findAgentPromptHalt(db, command) : null;
 
@@ -292,23 +315,28 @@ export async function readCheckpointSource(
         "agent_permission_resume_input_missing",
       );
     checkInput(source, response, command, row);
-    if (!row.receiptEvidence)
-      return { kind: "pending", reason: "input_receipt_missing" };
-    checkInputReceipt(row, row.receiptEvidence);
-    if (
-      !isRejectedPermissionInputReceipt(row.receiptEvidence) &&
-      (row.state !== "succeeded" ||
-        row.receiptEvidence.phase !== "completed" ||
-        row.receiptEvidence.httpStatus !== 200 ||
-        row.receiptEvidence.body.ok !== true)
-    )
-      return { kind: "pending", reason: "input_not_confirmed" };
-    if (
-      isRejectedPermissionInputReceipt(row.receiptEvidence) &&
-      row.state !== "failed"
-    )
-      return { kind: "pending", reason: "input_rejection_unsettled" };
-    input = row;
+    // ADR-180: a delivery the host REFUSED outright never reached a deferred.
+    // Nothing was delivered, so the source reads as undelivered and the grant
+    // carries the answer to the resumed session's reissued request.
+    if (!isRefusedPermissionDelivery(row)) {
+      if (!row.receiptEvidence)
+        return { kind: "pending", reason: "input_receipt_missing" };
+      checkInputReceipt(row, row.receiptEvidence);
+      if (
+        !isRejectedPermissionInputReceipt(row.receiptEvidence) &&
+        (row.state !== "succeeded" ||
+          row.receiptEvidence.phase !== "completed" ||
+          row.receiptEvidence.httpStatus !== 200 ||
+          row.receiptEvidence.body.ok !== true)
+      )
+        return { kind: "pending", reason: "input_not_confirmed" };
+      if (
+        isRejectedPermissionInputReceipt(row.receiptEvidence) &&
+        row.state !== "failed"
+      )
+        return { kind: "pending", reason: "input_rejection_unsettled" };
+      input = row;
+    }
   }
 
   return {
@@ -327,7 +355,7 @@ export async function readCheckpointSource(
         input?.receiptEvidence &&
         isRejectedPermissionInputReceipt(input.receiptEvidence)
           ? "rejected"
-          : (order === "after_checkpoint" || halt !== null) &&
+          : (resolved.order === "after_checkpoint" || halt !== null) &&
               isPermissionCheckpointInterruption(command)
             ? "continue"
             : "result",
@@ -367,7 +395,7 @@ export async function assertAgentPermissionResumeSource(
     grant.sourceRequestSha256 !== source.command.requestSha256 ||
     grant.sourceTerminalEvidenceSha256 !==
       source.command.terminalEvidenceSha256 ||
-    grant.checkpointCommandId !== source.checkpoint.id ||
+    grant.checkpointCommandId !== (source.checkpoint?.id ?? null) ||
     grant.inputCommandId !== (source.input?.id ?? null) ||
     grant.resumeSessionId !== source.incarnation.acpSessionId ||
     grant.optionId !== source.response.optionId ||

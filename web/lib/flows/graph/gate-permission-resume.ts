@@ -30,6 +30,7 @@ import {
 } from "./permission-result-evidence";
 
 import { gatePermissionSourceSchema } from "@/lib/execution-host/flow-permission-source";
+import { withdrawRefusedPermissionDelivery } from "@/lib/execution-host/permission-delivery";
 import {
   assertPermissionHandoffSource,
   assertGatePermissionContinuation,
@@ -256,7 +257,14 @@ export async function authorizeGatePermissionResume(
     incarnation,
   } = context;
 
-  if (response._delivery !== undefined)
+  if (
+    response._delivery !== undefined &&
+    !(await withdrawRefusedPermissionDelivery(tx, hitl, response, {
+      assignmentId: prior.id,
+      supervisorSessionId: source.supervisorSessionId,
+      requestId: source.requestId,
+    }))
+  )
     throw new PromptOwnerInvariantError("gate_permission_input_unclassified");
   const promptOrdinal = evaluation.promptOrdinal + 1;
 

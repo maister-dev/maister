@@ -335,6 +335,14 @@ sequenceDiagram
 The end-to-end fencing scenario: a driver whose assignment generation has
 ended is rejected at the host and writes nothing.
 
+The same teardown can also start on the host itself, when a pending permission
+outlives the absolute cap (Implemented — ADR-180). That variant has no
+`session.checkpoint` command and no fence — the first two steps below are simply
+absent — and the sweeper's later `POST /sessions/{s1}/checkpoint` normally meets
+a `404` because the registry entry was removed after its 30 s terminal grace.
+Everything from the `session.exited{reason:checkpoint}` line onwards is
+identical.
+
 ```mermaid
 sequenceDiagram
     autonumber
@@ -496,6 +504,26 @@ a Stage-C deletion obligation (ADR-166 D9).
 | `session.cancel`     | `POST /sessions/{id}/cancel`     | ACP cancel                                                                                                       | immediate    | HTTP 200                                                                                                      |
 | `session.checkpoint` | `POST /sessions/{id}/checkpoint` | cancel deferreds + SIGTERM + wait                                                                                | ≤ kill grace | HTTP 200 + SSE `session.exited{reason:"checkpoint"}`                                                          |
 | `session.delete`     | `DELETE /sessions/{id}`          | SIGTERM/SIGKILL                                                                                                  | ≤ kill grace | HTTP 204 + SSE `session.exited`                                                                               |
+
+`session.checkpoint` is the only kind whose **effect** also has a host-internal
+producer (Implemented — ADR-180). When a pending permission outlives the host's
+absolute `MAISTER_PERMISSION_MAX_HOURS` cap, the supervisor performs the same
+teardown — cancel every open deferred, `markIntentionalShutdown("checkpoint")`,
+`SIGTERM`, wait the kill grace — and emits the same
+`session.exited{reason:"checkpoint"}` (with an advisory `cause:"permission_cap"`
+on the payload). It is **not a command**: it mints no `command.id`, carries no
+fence, writes no ledger row and no receipt, and a failing teardown is logged
+rather than returned to anyone. Consequently the checkpoint **admission** event
+a manager would use as an ordering witness does not exist on that path, which is
+why the permission-handoff ORDERING proof also accepts the terminal event
+itself. A later `session.checkpoint` the host merely acknowledges as already
+parked (`alreadyCheckpointed: true`) did not cause the park: its admission sits
+after the session's own checkpoint terminal, so it yields to that terminal —
+it orders a prompt only for a session that ended on its own. The agent idle
+claim resumes on the terminal witness with a null `checkpointCommandId`; the
+flow handoff grant still names a command row, so a flow run the host parked
+re-prompts through the ordinary resume claim rather than handing a historical
+result forward.
 
 Unknown-outcome retry budgets (same command id): adopt 3 (0.5 s·2ⁿ), create 3
 (1 s·2ⁿ), prompt 3 before acceptance / 0 after, input 3, cancel 3, checkpoint

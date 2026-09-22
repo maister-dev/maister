@@ -22,6 +22,7 @@ import { canonicalCommandJson } from "../../../runtime/command-json";
 import {
   isPermissionResultCommand,
   isPermissionCheckpointInterruption,
+  isAfterCheckpoint,
   isPermissionResultHandoff,
   permissionCheckpointOrder,
 } from "./permission-handoff-evidence";
@@ -181,8 +182,9 @@ export async function assertPermissionHandoffSource(
   if (
     resume.kind === "permission_continue"
       ? !isPermissionCheckpointInterruption(command) ||
-        (await permissionCheckpointOrder(db, command, checkpoint)) !==
-          "after_checkpoint"
+        !isAfterCheckpoint(
+          await permissionCheckpointOrder(db, command, checkpoint),
+        )
       : !(await isPermissionResultHandoff(db, command, checkpoint))
   )
     throw new PromptOwnerInvariantError("permission_result_checkpoint_order");

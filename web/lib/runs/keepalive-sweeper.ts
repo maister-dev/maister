@@ -80,8 +80,15 @@ import {
 } from "@/lib/execution-host/agent-pause-permissions";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { hitlRequests, nodeAttempts, projects, runs, runSyncAttempts } =
-  schemaModule as unknown as Record<string, any>;
+const {
+  hitlRequests,
+  nodeAttempts,
+  projects,
+  runSessionIncarnations,
+  runSessions,
+  runs,
+  runSyncAttempts,
+} = schemaModule as unknown as Record<string, any>;
 
 // ADR-141: a run with a non-terminal `run_sync_attempts` row is owned
 // by the branch-sync recovery path — NO keepalive pass may idle, checkpoint, or
@@ -200,6 +207,57 @@ async function fetchPass1Candidates(db: Db): Promise<Pass1Candidate[]> {
     id: row.id,
     hostSessionId: activeByRun.get(row.id)?.hostSessionId ?? null,
   }));
+}
+
+/** ADR-180: the bound that does not depend on the operator's tab.
+ *
+ * `bumpKeepalive` extends `keepalive_until` for a `NeedsInput` run with no
+ * session-liveness check, and Pass 1 selects on `keepalive_until < now` — so an
+ * operator who keeps a tab open but never answers would hold an ALREADY
+ * checkpointed session out of Pass 1 forever, and Pass 2's 24 h `Abandoned`
+ * rule could never reach it either.
+ *
+ * This is its own query with its own LIMIT rather than an `OR` widening Pass 1:
+ * Pass 1 orders by `keepalive_until`, so rows with a FUTURE one would sort last
+ * and starve behind up to 50 expired candidates — the exact progress question a
+ * bounded sweep has to answer.
+ *
+ * The witness is POSITIVE, never an inference from absence:
+ * `run_session_incarnations.state='checkpointed'` is written only for
+ * `session.exited{reason:"checkpoint"}`, and the partial unique index
+ * `run_session_incarnations_active_run_session_uq` guarantees at most one such
+ * row per session. `exited`/`crashed` incarnations are terminal and belong to
+ * the crash-reconcile paths, not here.
+ */
+async function fetchCheckpointedCandidates(db: Db): Promise<string[]> {
+  const rows = await db
+    .selectDistinct({ id: runs.id })
+    .from(runs)
+    .innerJoin(runSessions, eq(runSessions.runId, runs.id))
+    .innerJoin(
+      runSessionIncarnations,
+      eq(runSessionIncarnations.runSessionId, runSessions.id),
+    )
+    .where(
+      and(
+        eq(runs.status, "NeedsInput"),
+        eq(runSessionIncarnations.state, "checkpointed"),
+        // The incarnation must belong to the run's CURRENT assignment. Between
+        // `markResumed` (which mints the next assignment) and the create ack
+        // (which retires the old incarnation) the run is `NeedsInput` with a
+        // `checkpointed` incarnation of the PRIOR assignment; a park there
+        // would release the resume's fresh assignment under its own feet.
+        eq(
+          runSessionIncarnations.executionAssignmentId,
+          runs.executionAssignmentId,
+        ),
+        excludeActiveSyncAttempt(db),
+      ),
+    )
+    .orderBy(asc(runs.id))
+    .limit(PER_TICK_LIMIT);
+
+  return rows.map((row: { id: string }) => row.id);
 }
 
 type Pass2Candidate = { id: string; runKind: string };
@@ -322,6 +380,40 @@ async function runPass1(db: Db, hosts: ExecutionHosts): Promise<number> {
           "sweeper pass1 promoteNextPending after markCheckpointed failed",
         );
       }
+    }
+  });
+
+  return idled;
+}
+
+/** Pass 1b (ADR-180) — park a run whose session is ALREADY checkpointed,
+ * regardless of `keepalive_until`. It writes through the same
+ * `markCheckpointed` CAS as the three other writers of this transition, so it
+ * cannot double-park.
+ */
+async function runPass1Checkpointed(db: Db): Promise<number> {
+  const candidates = await fetchCheckpointedCandidates(db);
+
+  if (candidates.length === 0) return 0;
+
+  let idled = 0;
+
+  await runWithConcurrency(candidates, PER_PASS_CONCURRENCY, async (runId) => {
+    const transition = await markCheckpointed(runId, { db });
+
+    if (!transition.ok) return;
+    idled += 1;
+    log.info(
+      { runId, arm: "checkpointed" },
+      "sweeper pass1 parked an already-checkpointed session independently of keepalive_until",
+    );
+    try {
+      await releaseSlotOnIdle({ runId, db });
+    } catch (err) {
+      log.warn(
+        { runId, err: err instanceof Error ? err.message : String(err) },
+        "sweeper pass1 checkpointed-arm promoteNextPending failed",
+      );
     }
   });
 
@@ -2338,7 +2430,8 @@ export async function runSweepTick(
 ): Promise<SweepResult> {
   const db = opts.db ?? getDb();
   const hosts = opts.executionHosts ?? createExecutionHosts({ db });
-  const idledCount = await runPass1(db, hosts);
+  const idledCount =
+    (await runPass1(db, hosts)) + (await runPass1Checkpointed(db));
   const abandonedCount = await runPass2(db);
   const killedCount = await runTimeLimitPass(db, hosts);
   const budgetActedCount = await runBudgetPass(db, hosts);

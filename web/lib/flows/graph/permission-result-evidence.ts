@@ -221,13 +221,16 @@ export async function lockPermissionContinuationEvidence(
 > {
   const evidence = await lockPermissionInputEvidence(tx, context, prepared);
 
+  const resolved = await permissionCheckpointOrder(
+    tx,
+    context.command,
+    evidence.checkpoint,
+  );
+
   if (
     !isPermissionCheckpointInterruption(context.command) ||
-    (await permissionCheckpointOrder(
-      tx,
-      context.command,
-      evidence.checkpoint,
-    )) !== "after_checkpoint"
+    resolved === "unproven" ||
+    resolved.order !== "after_checkpoint"
   )
     throw new PromptOwnerInvariantError("permission_continue_checkpoint_order");
 

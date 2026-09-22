@@ -23,12 +23,20 @@ export const SESSION_EVENT_CHANNEL = "session.event";
 // can distinguish operator-cancel runs from sweeper-driven checkpoints.
 export type IntentionalReason = "intentional" | "checkpoint" | "fenced";
 
+// ADR-180: a diagnostic marker for WHICH producer started a checkpoint. It
+// rides `session.exited.cause` and nothing branches on it. It is deliberately
+// not a new `IntentionalReason`: the web's SSE decoder validates `reason`
+// against the three values above and drops the whole terminal event for
+// anything else, hanging the driver on an exit it never sees.
+export type IntentionalCause = "permission_cap";
+
 export type RegistryEntry = {
   record: SessionRecord;
   child: ChildProcess;
   emitter: SessionEmitter;
   intentionalShutdown: boolean;
   intentionalReason?: IntentionalReason;
+  intentionalCause?: IntentionalCause;
   eventBuffer: SessionEvent[];
   eventBufferBytes: number;
   connection?: acp.ClientSideConnection;
@@ -153,6 +161,7 @@ export class SessionRegistry {
   markIntentionalShutdown(
     sessionId: string,
     reason: IntentionalReason = "intentional",
+    cause?: IntentionalCause,
   ): boolean {
     const entry = this.entries.get(sessionId);
 
@@ -160,6 +169,7 @@ export class SessionRegistry {
 
     entry.intentionalShutdown = true;
     entry.intentionalReason = reason;
+    entry.intentionalCause = cause;
 
     return true;
   }

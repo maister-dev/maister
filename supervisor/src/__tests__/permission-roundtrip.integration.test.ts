@@ -6,6 +6,8 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { checkpointSession } from "../checkpoint-teardown";
+import { attachHeartbeat } from "../heartbeat";
 import {
   pendingPermissions,
   type AcpPermissionOutcome,
@@ -18,6 +20,7 @@ import {
   envelope,
   fenceFor,
   postJson,
+  silentLogger,
   type BootedHost,
 } from "./_fixtures/boot-host";
 
@@ -43,6 +46,7 @@ async function registerFakeSession(
   registry: SessionRegistry,
   runtimeRoot: string,
   sessionId: string,
+  child: ChildProcess = makeFakeChild(),
 ): Promise<{ record: SessionRecord; emitter: EventEmitter }> {
   const record: SessionRecord = {
     sessionId,
@@ -64,9 +68,25 @@ async function registerFakeSession(
   };
   const emitter = new EventEmitter();
 
-  registry.register(record, makeFakeChild(), emitter);
+  registry.register(record, child, emitter);
 
   return { record, emitter };
+}
+
+// A child the park can SIGTERM and that exits only when the control says so:
+// the cancel→exit window stays open exactly as long as the control needs it.
+function makeParkableChild(): ChildProcess {
+  const child = new EventEmitter() as EventEmitter & {
+    exitCode: number | null;
+    signalCode: NodeJS.Signals | null;
+    kill: (signal?: NodeJS.Signals) => boolean;
+  };
+
+  child.exitCode = null;
+  child.signalCode = null;
+  child.kill = () => true;
+
+  return child as unknown as ChildProcess;
 }
 
 function deferredCapture(): {
@@ -430,5 +450,107 @@ describe("POST /sessions/:id/input permission round-trip", () => {
       code: "CRASH",
     });
     expect(pendingPermissions.size("s-purge")).toBe(0);
+  });
+});
+
+// ADR-180: the park cancels its deferreds FIRST, and the session's terminal
+// (`status: "exited"`) lands only after the child exits and its output drains.
+// An answer inside that window is the same answer as one after it, so the
+// route must not answer the terminal 410 that fails the run.
+describe("POST /sessions/:id/input inside a park's cancel→exit window (ADR-180)", () => {
+  const requestId = "22222222-2222-4222-8222-222222222222";
+
+  async function parkLiveSession(sessionId: string, killGraceMs: number) {
+    const child = makeParkableChild();
+
+    await registerFakeSession(
+      booted!.registry,
+      booted!.runtimeRoot,
+      sessionId,
+      child,
+    );
+    attachHeartbeat({
+      sessionId,
+      child,
+      registry: booted!.registry,
+      logger: silentLogger,
+    });
+    const deferred = deferredCapture();
+
+    pendingPermissions.register(sessionId, requestId, {
+      resolve: deferred.resolve,
+      reject: deferred.reject,
+    });
+    const entry = booted!.registry.get(sessionId)!;
+    const teardown = checkpointSession({
+      entry,
+      registry: booted!.registry,
+      permissions: pendingPermissions,
+      logger: silentLogger,
+      killGraceMs,
+    });
+
+    teardown.catch(() => undefined);
+
+    return { child, entry, deferred, teardown };
+  }
+
+  function answer(sessionId: string) {
+    return postJson(
+      `${booted!.url}/sessions/${sessionId}/input`,
+      command("session.input", sessionId, {
+        kind: "permission",
+        action: "select",
+        requestId,
+        optionId: "allow",
+      }),
+    );
+  }
+
+  it("an answer between deferred cancel and child exit is the checkpointed 410, answered after the exit", async () => {
+    booted = await bootBare();
+    const sessionId = "00000000-0000-4000-8000-000000000041";
+    const { child, entry, deferred, teardown } = await parkLiveSession(
+      sessionId,
+      1_000,
+    );
+
+    expect(deferred.resolved()).toEqual({ outcome: "cancelled" });
+    expect(entry.record.status).toBe("live");
+    const pending = answer(sessionId);
+
+    // The heartbeat and the teardown each hold an exit listener; the route's
+    // own wait is the third. Only then is the window provably open under the
+    // route, so releasing the exit here cannot certify a route that never
+    // looked.
+    await expect
+      .poll(() => child.listenerCount("exit"), { timeout: 5_000, interval: 5 })
+      .toBe(3);
+    (child as { exitCode: number | null }).exitCode = 0;
+    child.emit("exit", 0, null);
+    const res = await pending;
+
+    expect(res.status).toBe(410);
+    expect(res.body).toMatchObject({
+      code: "HITL_TIMEOUT",
+      details: { reason: "session_checkpointed" },
+    });
+    expect(entry.record.status).toBe("exited");
+    await teardown;
+  });
+
+  it("an answer whose park outlasts the kill grace is a retryable 503, never the terminal 410", async () => {
+    booted = await bootHost({ killGraceMs: 200 });
+    const sessionId = "00000000-0000-4000-8000-000000000042";
+    const { entry, teardown } = await parkLiveSession(sessionId, 200);
+
+    const res = await answer(sessionId);
+
+    expect(res.status).toBe(503);
+    expect(res.body).toMatchObject({ code: "EXECUTOR_UNAVAILABLE" });
+    expect(entry.record.status).toBe("live");
+    await expect(teardown).rejects.toMatchObject({
+      code: "EXECUTOR_UNAVAILABLE",
+    });
   });
 });

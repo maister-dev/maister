@@ -27,6 +27,11 @@
 //   MOCK_ACP_HOLD_AFTER_PERMISSION  "1" → retain the selected turn until teardown.
 //   MOCK_ACP_FAIL_AFTER_PERMISSION  ACP request error after a selected permission.
 //   MOCK_ACP_COMPLETE_ON_CHECKPOINT "1" → finish the held turn during teardown.
+//   MOCK_ACP_PERMISSION_MALFORMED "1" → emit a session/request_permission frame
+//                             the supervisor's schema REFUSES, bypassing the
+//                             SDK (which would never produce one). Pins the
+//                             producer-fault boundary: that path must still
+//                             abort the output and SIGKILL.
 
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -42,6 +47,8 @@ const HOLD_AFTER_PERMISSION =
 const FAIL_AFTER_PERMISSION = process.env.MOCK_ACP_FAIL_AFTER_PERMISSION;
 const COMPLETE_ON_CHECKPOINT =
   process.env.MOCK_ACP_COMPLETE_ON_CHECKPOINT === "1";
+const PERMISSION_MALFORMED =
+  process.env.MOCK_ACP_PERMISSION_MALFORMED === "1";
 const STATE_DIR = process.env.MOCK_ACP_STATE_DIR ?? null;
 
 function log(level, payload) {
@@ -300,6 +307,19 @@ class MockAgent {
         acpSessionId: params.sessionId,
         pendingPermission: { toolCall, options },
       });
+
+      if (PERMISSION_MALFORMED) {
+        process.stdout.write(
+          `${JSON.stringify({
+            jsonrpc: "2.0",
+            id: 9001,
+            method: "session/request_permission",
+            params: { notASessionId: true },
+          })}\n`,
+        );
+
+        return new Promise(() => {});
+      }
 
       const result = await this.connection.requestPermission({
         sessionId: params.sessionId,

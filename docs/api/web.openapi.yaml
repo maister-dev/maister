@@ -7515,6 +7515,13 @@ paths:
           description: |
             Idle-branch: a capacity claim authorizes resume. Owned graph node
             permission resumes return before their leased session creation.
+            An answer the host refused with `410 session_checkpointed` (the
+            session was parked with its deferreds cancelled — Implemented,
+            ADR-180) is parked through the shared CAS and resumed on this same
+            branch for every run kind, never failed; an agent run takes its
+            own idle claim. A delivery intent the host refused outright (503,
+            the command never admitted) is withdrawn by the idle resume and
+            the stored answer is re-delivered to the resumed session.
             A confirmed original-input/result handoff instead retains the
             original prompt and returns `runStatus: "Running"`; no new ACP
             prompt is created. A new permission turn returns `NeedsInput`,
@@ -7543,10 +7550,13 @@ paths:
                     minimum: 0
         "410":
           description: |
-            Either (M7) permission deferred expired before delivery
-            (`HITL_TIMEOUT`) — flow runs transition to `Failed`, while
+            Either (M7) permission deferred released terminally before
+            delivery (`HITL_TIMEOUT` without `details.reason:
+            session_checkpointed`) — flow runs transition to `Failed`, while
             scratch runs transition to `Crashed` and record
-            `scratch_runs.error_code = HITL_TIMEOUT`; or (M8 idle branch)
+            `scratch_runs.error_code = HITL_TIMEOUT`; a host 410 that carries
+            `session_checkpointed` is NOT this arm — it parks and resumes with
+            202 (ADR-180); or (M8 idle branch)
             `resumeRun` failed terminally (`CHECKPOINT`) — supervisor
             400 / 404 / 201-with-empty-acpSessionId. The idle-branch
             response includes `terminal: true`.

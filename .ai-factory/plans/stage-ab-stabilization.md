@@ -810,6 +810,38 @@ S4 rollback: before 0134, keep sources and all import checkpoints; stop maintena
 
 - [ ] **S5.3 — Browser lifecycle and runtime/transport matrix.** Owner Q; Depends: S5.2 and S3 browser policy. Files: new dedicated Playwright real-supervisor config, lifecycle/content specs, CI/scripts, minimum Node/image qualification. Exercise launch→stream→HITL→checkpoint→resume→cancel/completion/history, each owner-visible reply and active MIME download after restarts. Run AT-17 on minimum 24.15, 24.19 and selected image with exact binary/dependency versions. Logging: scenario/revision/runtime/image/transport phase and result. Acceptance: browser outcomes come from real web/supervisor; default fake-peer E2E remains supporting regression only; no full-Node-24 claim from one passing patch.
 
+  **Named scenario added by ADR-180 (one owner for the permission deadline).**
+  *A permission older than the old host window while the operator is active →
+  answered and delivered; an idle permission → checkpoint, resume, delivered.*
+  Owning suites: the supervisor half in
+  `supervisor/src/__tests__/permission-cap.integration.test.ts` (graceful
+  teardown, the real boot path's cap wiring, graceful shutdown, and the
+  unchanged producer-fault SIGKILL boundary); the web half in
+  `web/lib/__tests__/permission-deadline.integration.test.ts` (the web owns the
+  deadline, the race-window answer on both the 410 and 503 sides, the terminal
+  evidence witness, the driver front-run, and the keepalive-independent park).
+  Both run against the real supervisor fixture and real Postgres; neither uses a
+  mocked route/service suite as its pinning evidence.
+
+  **Contract surfaces ADR-180 closes** (the as-built list is re-derived from the
+  diff at its Phase 4 and must equal this):
+
+  | Surface | Change | Spec file(s) |
+  |---|---|---|
+  | `details.reason` token | `session_checkpointed` added to a CLOSED enum | `docs/api/supervisor.openapi.yaml` (the gating enum); `supervisor/src/types.ts`; `docs/api/async/execution-host-events.asyncapi.yaml`; `web/lib/execution-host/types.ts` |
+  | `POST /sessions/:id/input` 410 | names the new reason and its non-terminal arm | `docs/api/supervisor.openapi.yaml`; `docs/supervisor.md` |
+  | `POST /sessions/:id/checkpoint` | teardown shared with a host-initiated cap | `docs/api/supervisor.openapi.yaml`; `docs/supervisor.md` |
+  | `session.exited` payload | optional `cause` (single literal); `reason` enum untouched | `docs/api/async/supervisor-sse.asyncapi.yaml` |
+  | `POST /respond` 202 `state` | **no change** — `resume-in-progress` already in the closed enum | `docs/api/web.openapi.yaml` |
+  | New env `MAISTER_PERMISSION_MAX_HOURS` | added | `docs/configuration.md`; `.env.example`; `supervisor/.env.sample`; `deploy/maister.env.example` |
+  | `MAISTER_KEEPALIVE_MINUTES` | re-scoped web-only | `docs/configuration.md`; `docs/supervisor.md`; the three env samples; `web/.env.sample`; `docs/getting-started.md`; `docs/decisions/adr-006.md` |
+  | `HITL_TIMEOUT` semantics | no longer "the host window elapsed" | `docs/error-taxonomy.md` |
+  | HITL + run keep-alive, host command table, checkpoint handoff | one owner; host cap; race-window resume; terminal witness; the keepalive-independent park | `docs/system-analytics/{hitl,runs,execution-hosts,execution-prompt-lifecycle}.md` |
+  | ADR | new ADR-180; amends ADR-006 | `docs/decisions/adr-180.md` + hub stub + index row |
+
+  **No** `session.exited` `reason` enum change · **no** `httpStatusForCode`
+  change · **no** migration · **no** new `runs.status` · **no** new index.
+
 - [ ] **S5.4 — Final specification, lineage and acceptance gate.** Owner D/Q; Depends: S5.1–S5.3. Files: all affected canonical docs/analytics/API/ERD/error/config surfaces and this plan; no new summary-report deliverable. Recheck current main/HEAD; revalidate changed findings, migration order/constraints/snapshot hashes and ADR anchors, including prose provisional numbering. Run full suites/gates, verify every AT row with actual runner/case/artifact evidence, and adversarial review of final fix cycles. Logging: exact gate/ref/scenario/evidence state and unresolved risk IDs. Acceptance: all AB-01–17 and final matrix rows satisfied; no known A/B defect remains hidden by quarantine or Implemented prose; Stage C is still unimplemented.
 
 S5 rollback: qualification-only changes can revert independently, but evidence cannot be treated as passing after reverting a tested fix. Runtime state retains S1–S4 recovery/retention guarantees. Release only a commit whose concrete scenario matrix and specification gates correspond to that exact revision.
@@ -879,7 +911,7 @@ All rows start **Planned / unverified**. Implementation fills exact test case, r
 | Real web restart and simultaneous worker claims | AT-03/05/16 | Boot through production initialization, fair due work, no duplicate apply, no process-local continuation dependency | S5 |
 | Web runtime-root access denied | AT-16 | Negative control EACCES/ENOENT, supervisor positive control, lifecycle/history/object access succeeds through HTTP/PG | S5 |
 | V7b minimum runtime and image | AT-17 | Node 24.15.0 and 24.19.0 exact versions plus pinned image pass real native-stack replacement; diagnosed invalid-content-length captured in RED, not excused by a newer pass | S1/S5 |
-| Single-host lifecycle regression | Real AT-16 + browser lane | Launch, replay, HITL, idle checkpoint/resume, cancellation, completion, history and artifact download remain coherent without Stage C features | Every release/S5 |
+| Single-host lifecycle regression | Real AT-16 + browser lane; **the permission deadline is covered by ADR-180's named S5.3 scenario — green 2026-09-22**: `supervisor/src/__tests__/permission-cap.integration.test.ts` (4/4 after the post-review fix: RED 1/3/6/11), the two cancel→exit window controls in `permission-roundtrip.integration.test.ts` (14/14) and `web/lib/__tests__/permission-deadline.integration.test.ts` (10/10, including the blocking preflight and the post-review RED 12/13/14), each re-run against its own falsification | Launch, replay, HITL, idle checkpoint/resume, cancellation, completion, history and artifact download remain coherent without Stage C features. The HITL half is now explicit: an active operator's answer is delivered rather than killing the agent, and a checkpointed session's answer resumes instead of failing the run | Every release/S5 |
 
 ## Risk register and completion conditions
 

@@ -473,7 +473,7 @@ secret material.
 | Second prompt while `Running` or terminal dialog state | `409 PRECONDITION`; the existing prompt/session is left untouched. |
 | Supervisor unavailable before launch | `503 EXECUTOR_UNAVAILABLE`; no worktree, DB run, or upload side effect occurs. |
 | Supervisor prompt delivery fails after message commit | Retryable or crashed dialog status follows existing scratch service behavior; the user message stays visible. |
-| Permission deferred times out | `HITL_TIMEOUT`; scratch transitions to `Crashed` with error metadata. |
+| Permission deferred released terminally (host 410 without `session_checkpointed`) | `HITL_TIMEOUT`; scratch transitions to `Crashed` with error metadata. A `session_checkpointed` 410 — the session was parked with its deferreds cancelled (Implemented — ADR-180) — parks and resumes instead, never `Crashed`. |
 | Promote merge conflict | `409 CONFLICT`; run remains `Review` and the worktree stays available. |
 | Shared lifecycle drop from scratch detail | Preserve first, remove only a MAIster-owned worktree, set `removed_at`, and mark non-`Done` runs/dialog metadata `Abandoned`. |
 | Composer launch canceled mid-stream (Implemented — FR-F2) | A client disconnect aborts at the next stage boundary: pre-commit (during `materializing`) it GCs the worktree+branch; post-commit it marks the run `Crashed` (a tracked row, not an orphan). No orphan worktree/session remains. |

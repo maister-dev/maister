@@ -23,6 +23,7 @@ import {
   runSessionIncarnations,
 } from "@/lib/db/schema";
 import { lockCurrentSessionAssignment } from "@/lib/execution-host/session-binding";
+import { withdrawRefusedPermissionDelivery } from "@/lib/execution-host/permission-delivery";
 import {
   PromptOwnerDeferred,
   PromptOwnerInvariantError,
@@ -311,8 +312,19 @@ export async function prepareAgentPermissionResponse(
     optionId: response.optionId,
   } as const;
 
-  if (response._delivery !== undefined) {
-    const parsed = deliverySchema.safeParse(response._delivery);
+  // An operator may retry a definitive service refusal with a fresh input
+  // command (ADR-180); an unknown outcome keeps its original identity.
+  const current =
+    (response._delivery !== undefined
+      ? await withdrawRefusedPermissionDelivery(tx, hitl, response, {
+          assignmentId: source.agentPrompt.assignmentId,
+          supervisorSessionId: source.supervisorSessionId,
+          requestId: source.requestId,
+        })
+      : null) ?? response;
+
+  if (current._delivery !== undefined) {
+    const parsed = deliverySchema.safeParse(current._delivery);
 
     if (
       !parsed.success ||
@@ -339,7 +351,7 @@ export async function prepareAgentPermissionResponse(
     .update(hitlRequests)
     .set({
       response: {
-        ...response,
+        ...current,
         _delivery: {
           commandId: delivery.commandId,
           hostSessionId: source.supervisorSessionId,
@@ -655,10 +667,28 @@ export async function requireAgentPermissionCompletion(
     )
     .limit(1);
 
+  // ADR-180: a park the host performed itself mints no checkpoint command.
+  // The session's own terminal — its incarnation reads `checkpointed` — is the
+  // proof that the prompt's rejection is an interruption the resume carries
+  // forward, not a result to finalize the run on.
+  const [parked] = command.targetSessionId
+    ? await db
+        .select({ id: runSessionIncarnations.id })
+        .from(runSessionIncarnations)
+        .where(
+          and(
+            eq(runSessionIncarnations.runId, command.runId),
+            eq(runSessionIncarnations.hostSessionId, command.targetSessionId),
+            eq(runSessionIncarnations.state, "checkpointed"),
+          ),
+        )
+        .limit(1)
+    : [];
+
   if (
     response?._delivery !== undefined ||
     checkpoint ||
-    (pending && run.status === "NeedsInputIdle") ||
+    (pending && (parked || run.status === "NeedsInputIdle")) ||
     (await findAgentPromptHalt(db, command))
   )
     throw new PromptOwnerDeferred("agent_permission_completion_pending");

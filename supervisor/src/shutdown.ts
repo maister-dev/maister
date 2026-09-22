@@ -18,8 +18,14 @@ async function stopSession(
       child.once("exit", () => resolve()),
     );
 
-    pendingPermissions.purgeSession(record.sessionId);
+    // ADR-180: order first, and CANCEL rather than purge. `purgeSession`
+    // REJECTS every open deferred, which reaches abortOutput and SIGKILLs the
+    // child the supervisor is in the middle of asking to exit politely. A
+    // cancel is journalled by the adapter and replayed after session/resume.
     registry.markIntentionalShutdown(record.sessionId);
+    for (const requestId of pendingPermissions.requestIds(record.sessionId)) {
+      pendingPermissions.cancel(record.sessionId, requestId, "shutdown");
+    }
     record.stopOutputForTeardown?.();
     child.kill("SIGTERM");
     const timer = setTimeout(() => {

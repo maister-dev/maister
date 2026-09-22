@@ -627,7 +627,11 @@ carries `executionWorkspaceId`, `assignmentId`, `assignmentEpoch`, and
 ### `POST /sessions/:id/checkpoint` _(Implemented)_
 
 Real graceful-checkpoint endpoint. Body is `{}` strictly (Zod-validated
-empty object; unknown keys → 409 PRECONDITION). For each open
+empty object; unknown keys → 409 PRECONDITION). The teardown body is
+`checkpointSession()` in `supervisor/src/checkpoint-teardown.ts`, shared verbatim
+with the host's own absolute-cap timer (Implemented — ADR-180); the route keeps
+the ADR-166 command envelope, fence and ledger receipt, while the cap path has
+none of those. For each open
 pending-permission deferred owned by the session, the supervisor
 calls `pendingPermissions.cancel(sessionId, requestId, "checkpoint")`
 — the same wire-level outcome shape the operator-cancel path produces,
@@ -650,8 +654,12 @@ Status codes:
 
 #### Checkpoint + Resume lifecycle
 
-When a `NeedsInput` run's `keepalive_until` expires the web sweeper
-calls this endpoint, which:
+The web sweeper calls this endpoint when a `NeedsInput` run's
+`keepalive_until` expires. The **host** runs the same teardown without any
+endpoint when a pending permission outlives `MAISTER_PERMISSION_MAX_HOURS`
+(Implemented — ADR-180): no `command.id`, no fence, no ledger row, no receipt,
+and a throwing teardown is logged at `error` rather than returned to anyone. The
+steps are identical from here on:
 
 1. Cancels every pending permission with `reason="checkpoint"`. The
    agent observes `{outcome:"cancelled"}` at the ACP layer and records
@@ -662,7 +670,12 @@ calls this endpoint, which:
 2. Marks the session intentional with reason `"checkpoint"`. Heartbeat
    reads this on the child exit and emits
    `session.exited { reason: "checkpoint" }` (optional field —
-   see AsyncAPI spec).
+   see AsyncAPI spec). A cap-initiated terminal additionally carries
+   `cause: "permission_cap"` on the payload — **diagnostic only**, read by
+   nothing for control flow, and deliberately not spelled as a new `reason`
+   value, because the web's SSE decoder validates
+   `reason ∈ {checkpoint, intentional, fenced}` and drops the whole terminal
+   event otherwise.
 3. SIGTERMs the child with `MAISTER_KILL_GRACE_MS` grace.
 4. On 200 the web sweeper runs `markCheckpointed(runId)` →
    `NeedsInputIdle` and `releaseSlotOnIdle` → `promoteNextPending`.
@@ -731,9 +744,19 @@ held by the supervisor's `PendingPermissionRegistry` with
   (retryable; typically a supervisor restart between
   `session.permission_request` emission and the user's response).
 - `410 { code: "HITL_TIMEOUT" }` — known session but no pending
-  deferred with that `requestId` (the deferred either timed out via
-  `MAISTER_KEEPALIVE_MINUTES` or another request already
-  resolved/cancelled it).
+  deferred with that `requestId` (the deferred was released by the absolute
+  `MAISTER_PERMISSION_MAX_HOURS` cap, by a checkpoint, or by another request
+  resolving/cancelling it). When the session terminated **intentionally with its
+  deferreds cancelled** — `intentionalReason ∈ {checkpoint, intentional}`, never
+  `fenced` — the body carries `details.reason: "session_checkpointed"`
+  (Implemented — ADR-180). That token is the web's signal to park through the
+  shared CAS and resume rather than fail the run; the status stays 410 and
+  `httpStatusForCode` is unchanged. An input that lands after the park
+  cancelled the deferreds but before the child has exited waits for the exit
+  (bounded by `MAISTER_KILL_GRACE_MS`) and gets the same arm; a park that
+  outlasts the grace answers the retryable 503 instead. Once the registry entry
+  is removed after its 30 s terminal grace the same answer gets the retryable
+  503 below.
 - `409 { code: "PRECONDITION" }` — Zod validation failure on the
   request body (e.g. `action="select"` with no `optionId`).
 
@@ -976,7 +999,8 @@ docker compose; production overrides go in `.env`.
 | `MAISTER_HEARTBEAT_INTERVAL_MS`    | `5000`                                                                  | Orphan-child detection interval.                                                                                                                                                                     |
 | `MAISTER_KILL_GRACE_MS`            | `5000`                                                                  | SIGTERM → SIGKILL grace per child on DELETE and graceful shutdown.                                                                                                                                   |
 | `MAISTER_SHUTDOWN_GRACE_MS`        | `15000`                                                                 | Grace before SIGKILL during supervisor shutdown; the total deadline adds MAISTER_KILL_GRACE_MS and 5000 ms for output/HTTP cleanup.                                                                                                                                            |
-| `MAISTER_KEEPALIVE_MINUTES`        | `30`                                                                    | NeedsInput keep-alive window (minutes). Bounds the pending-permission deferred timeout AND the web-side sweeper-driven NeedsInput → NeedsInputIdle transition. Bumped by every web activity ping.    |
+| `MAISTER_PERMISSION_MAX_HOURS`     | `24`                                                                    | **(Implemented — ADR-180)** Absolute cap on a single pending permission. On expiry the host runs the graceful checkpoint teardown — never a reject. Parsed as a positive FLOAT (fractional values accepted; the integration lane uses sub-second caps); invalid → 24 with one WARN. |
+| ~~`MAISTER_KEEPALIVE_MINUTES`~~     | —                                                                       | **(Implemented — ADR-180)** No longer read by the supervisor; it is a WEB variable (see [`configuration.md`](configuration.md)). Still set in the supervisor env → one boot WARN, never a refusal.    |
 | `ANTHROPIC_BASE_URL`               | `https://api.anthropic.com`                                             | Process-wide default for Claude-compatible adapters. Platform runners should prefer typed provider config plus env refs.                                                                             |
 | `ANTHROPIC_AUTH_TOKEN`             | unset                                                                   | Required when `ANTHROPIC_BASE_URL` points at a third-party (z.ai GLM, OpenRouter, …).                                                                                                                |
 | `MAISTER_ADAPTER_BINARY_CLAUDE`    | unset                                                                   | Optional supervisor-side executable override for `claude`. When unset, PATH resolution uses `claude-agent-acp`.                                                                                      |
@@ -1149,7 +1173,8 @@ structured human/form HITL remains a web-side artifact workflow.
   decomposes these into run or scratch dialog artifacts.
 - `session.permission_request` — emitted when the adapter asks for tool
   permission. The supervisor blocks the ACP request until web sends
-  permission input or the keep-alive timeout expires.
+  permission input, the session is checkpointed, or the absolute
+  `MAISTER_PERMISSION_MAX_HOURS` cap elapses.
 
 The legacy `session.line` event type stays — `cost.ts` and any other
 raw-line consumer keep working unchanged. The supervisor tees stdout

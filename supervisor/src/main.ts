@@ -27,9 +27,13 @@ import {
   openHostState,
   startRuntimeEventPruner,
 } from "./host-state";
+import { installPermissionCapTeardown } from "./checkpoint-teardown";
 import { registerRoutes } from "./http-api";
 import { createDefaultModelSourceRegistry } from "./model-catalog/sources";
-import { pendingPermissions } from "./pending-permissions";
+import {
+  pendingPermissions,
+  permissionMaxHoursEnv,
+} from "./pending-permissions";
 import { SessionRegistry } from "./registry";
 import { stopRegisteredSessions } from "./shutdown";
 import { runtimeLimitsFromEnv } from "./runtime-limits";
@@ -161,8 +165,24 @@ export async function start(): Promise<void> {
     { port, runtimeRoot: root, logLevel, heartbeatIntervalMs },
     "supervisor-starting",
   );
+  // The pending-permission registry parsed the cap at import, before any
+  // logger existed; this second parse only surfaces the one documented WARN.
+  permissionMaxHoursEnv(logger);
 
   const registry = new SessionRegistry(logger);
+
+  installPermissionCapTeardown({
+    registry,
+    permissions: pendingPermissions,
+    logger,
+    killGraceMs,
+  });
+  if (process.env.MAISTER_KEEPALIVE_MINUTES) {
+    logger.warn(
+      { replacement: "MAISTER_PERMISSION_MAX_HOURS" },
+      "MAISTER_KEEPALIVE_MINUTES is set in the supervisor environment but is no longer read here — it is a WEB variable (ADR-180)",
+    );
+  }
   const app = Fastify({ logger: loggerConfig });
   const hostState = bootExecutionHost({ runtimeRoot: root, logger });
 
