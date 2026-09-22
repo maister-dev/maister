@@ -682,7 +682,7 @@ links + indexes + ERD check); `pnpm validate:contracts` green.
 **Exit criteria**: every control fails for its stated reason on `master`, evidence
 recorded per control. No production code changed.
 
-- [ ] **T1.1 — supervisor unit REDs.** `pending-permissions.test.ts` (project
+- [x] **T1.1 — supervisor unit REDs.** `pending-permissions.test.ts` (project
       `unit`): construct with an explicit `timeoutMs` (the singleton reads env once
       at import — D10) and assert expiry **resolves `{outcome:"cancelled"}` through
       the installed cap handler**, not `reject(HITL_TIMEOUT)`. New
@@ -693,7 +693,7 @@ recorded per control. No production code changed.
       each assertion names the observable (the deferred's settled value, the call
       order), not an internal field.
 
-- [ ] **T1.2 — supervisor integration REDs.** Project `integration`, real process,
+- [x] **T1.2 — supervisor integration REDs.** Project `integration`, real process,
       `mock-acp-adapter-resumable.mjs` + `MOCK_ACP_REQUEST_PERMISSION=1`. The cap is
       compressed **through the fixture env only** (D11):
       `MAISTER_PERMISSION_MAX_HOURS≈0.0005`.
@@ -717,7 +717,7 @@ recorded per control. No production code changed.
       **AC**: four controls, each failing on `master` for a distinct reason; no two
       share an assertion; none uses `expect.poll` (D11).
 
-- [ ] **T1.3 — web integration REDs + the blocking preflight.** Real Postgres
+- [x] **T1.3 — web integration REDs + the blocking preflight.** Real Postgres
       (`test-support/pg-container.ts`) + real supervisor + a real `ProjectionWorker`.
       - **PREFLIGHT (blocking)**: terminal `session.exited` rows in
         `execution_events` carry non-null `eventStreamId` and `hostSequence`. If

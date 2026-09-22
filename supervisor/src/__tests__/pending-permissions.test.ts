@@ -201,3 +201,73 @@ describe("PendingPermissionRegistry", () => {
     expect(reg.size("sB")).toBe(2);
   });
 });
+
+// ADR-180: the per-permission timer is no longer a copy of the web keep-alive
+// window and no longer REJECTS. It is an absolute cap whose expiry hands the
+// request to an installed teardown (the graceful checkpoint), and the deferred
+// is always released as `{outcome:"cancelled"}` so the adapter journals the
+// tool call for replay after `session/resume`. A reject is a producer fault:
+// it reaches `abortOutput` and SIGKILLs the child.
+describe("absolute permission cap (ADR-180)", () => {
+  it("hands the expired request to the installed cap handler, which releases it as cancelled", async () => {
+    const seen: Array<{ sessionId: string; requestId: string }> = [];
+    const reg = createPendingPermissions({
+      logger: silentLogger,
+      timeoutMs: TIMEOUT_MS,
+      onCapExceeded: (sessionId, requestId) => {
+        seen.push({ sessionId, requestId });
+        // What the real teardown does first: cancel every open deferred.
+        reg.cancel(sessionId, requestId, "checkpoint");
+      },
+    });
+    const d = makeDeferred();
+
+    reg.register("cap-1", "req-1", { resolve: d.resolve, reject: d.reject });
+
+    await vi.advanceTimersByTimeAsync(TIMEOUT_MS + 10);
+
+    expect(seen).toEqual([{ sessionId: "cap-1", requestId: "req-1" }]);
+    expect(d.resolved).toEqual({ outcome: "cancelled" });
+    expect(d.rejected).toBeNull();
+    expect(reg.size("cap-1")).toBe(0);
+  });
+
+  it("releases the deferred as cancelled — never rejected — when no teardown is wired", async () => {
+    const reg = createPendingPermissions({
+      logger: silentLogger,
+      timeoutMs: TIMEOUT_MS,
+    });
+    const d = makeDeferred();
+
+    reg.register("cap-2", "req-2", { resolve: d.resolve, reject: d.reject });
+
+    await vi.advanceTimersByTimeAsync(TIMEOUT_MS + 10);
+
+    expect(d.resolved).toEqual({ outcome: "cancelled" });
+    expect(d.rejected).toBeNull();
+  });
+
+  // The production registry is a module-level singleton created at import
+  // (D10), so its teardown can only be installed AFTER construction — and
+  // after requests may already be registered.
+  it("setCapHandler arms a request registered before the handler was installed", async () => {
+    const seen: string[] = [];
+    const reg = createPendingPermissions({
+      logger: silentLogger,
+      timeoutMs: TIMEOUT_MS,
+    });
+    const d = makeDeferred();
+
+    reg.register("cap-3", "req-3", { resolve: d.resolve, reject: d.reject });
+    reg.setCapHandler((sessionId, requestId) => {
+      seen.push(`${sessionId}/${requestId}`);
+      reg.cancel(sessionId, requestId, "checkpoint");
+    });
+
+    await vi.advanceTimersByTimeAsync(TIMEOUT_MS + 10);
+
+    expect(seen).toEqual(["cap-3/req-3"]);
+    expect(d.resolved).toEqual({ outcome: "cancelled" });
+    expect(d.rejected).toBeNull();
+  });
+});
