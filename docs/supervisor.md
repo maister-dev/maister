@@ -751,8 +751,12 @@ held by the supervisor's `PendingPermissionRegistry` with
   `fenced` — the body carries `details.reason: "session_checkpointed"`
   (Implemented — ADR-180). That token is the web's signal to park through the
   shared CAS and resume rather than fail the run; the status stays 410 and
-  `httpStatusForCode` is unchanged. Once the registry entry is removed after its
-  30 s terminal grace the same answer gets the retryable 503 below.
+  `httpStatusForCode` is unchanged. An input that lands after the park
+  cancelled the deferreds but before the child has exited waits for the exit
+  (bounded by `MAISTER_KILL_GRACE_MS`) and gets the same arm; a park that
+  outlasts the grace answers the retryable 503 instead. Once the registry entry
+  is removed after its 30 s terminal grace the same answer gets the retryable
+  503 below.
 - `409 { code: "PRECONDITION" }` — Zod validation failure on the
   request body (e.g. `action="select"` with no `optionId`).
 

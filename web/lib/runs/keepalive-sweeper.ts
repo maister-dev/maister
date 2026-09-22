@@ -209,7 +209,7 @@ async function fetchPass1Candidates(db: Db): Promise<Pass1Candidate[]> {
   }));
 }
 
-/** ADR-180 D13: the bound that does not depend on the operator's tab.
+/** ADR-180: the bound that does not depend on the operator's tab.
  *
  * `bumpKeepalive` extends `keepalive_until` for a `NeedsInput` run with no
  * session-liveness check, and Pass 1 selects on `keepalive_until < now` — so an
@@ -242,9 +242,19 @@ async function fetchCheckpointedCandidates(db: Db): Promise<string[]> {
       and(
         eq(runs.status, "NeedsInput"),
         eq(runSessionIncarnations.state, "checkpointed"),
+        // The incarnation must belong to the run's CURRENT assignment. Between
+        // `markResumed` (which mints the next assignment) and the create ack
+        // (which retires the old incarnation) the run is `NeedsInput` with a
+        // `checkpointed` incarnation of the PRIOR assignment; a park there
+        // would release the resume's fresh assignment under its own feet.
+        eq(
+          runSessionIncarnations.executionAssignmentId,
+          runs.executionAssignmentId,
+        ),
         excludeActiveSyncAttempt(db),
       ),
     )
+    .orderBy(asc(runs.id))
     .limit(PER_TICK_LIMIT);
 
   return rows.map((row: { id: string }) => row.id);
@@ -376,7 +386,7 @@ async function runPass1(db: Db, hosts: ExecutionHosts): Promise<number> {
   return idled;
 }
 
-/** Pass 1b (ADR-180 D13) — park a run whose session is ALREADY checkpointed,
+/** Pass 1b (ADR-180) — park a run whose session is ALREADY checkpointed,
  * regardless of `keepalive_until`. It writes through the same
  * `markCheckpointed` CAS as the three other writers of this transition, so it
  * cannot double-park.

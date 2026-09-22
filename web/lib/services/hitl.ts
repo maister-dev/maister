@@ -1226,135 +1226,93 @@ async function handlePermissionResponse(
     );
   };
 
-  // M8 T10 / D8: NeedsInputIdle branch. The intent is now in
-  // hitl_requests.response (Phase 1). There is no live supervisor
-  // session to deliverPermission to — we trigger a respawn via
-  // resumeRun and return 202. The runner-agent's permission_request
-  // handler (T11) will auto-deliver the stored intent against the new
-  // requestId once the resumed session re-issues the permission.
-  if (claim.runStatus === "NeedsInputIdle") {
-    if (runRow.runKind === "agent") {
-      await reconcileAgentPermissionResume(
-        db,
-        runId,
-        args.executionHosts.transport,
-      );
-      const placementHost = await localHost({
-        db,
-        transport: args.executionHosts.transport,
-      });
+  // The agent idle wake is its own claim (agent pool cap, its own resume
+  // evidence, `startAgentSession`). An agent run must never take the flow
+  // resume: it requires a `workspaces` row a `none` / `repo_read` agent does
+  // not have, and would fail the run terminally on an answered permission.
+  const runAgentIdleResume = async (): Promise<NextResponse> => {
+    await reconcileAgentPermissionResume(
+      db,
+      runId,
+      args.executionHosts.transport,
+    );
+    const placementHost = await localHost({
+      db,
+      transport: args.executionHosts.transport,
+    });
 
-      // ADR-121 (T14, G4): cap-gate the agent idle-resume claim atomically (closes
-      // the D2 over-cap bypass on the agent pool too). Under the scheduler lock,
-      // count the agent pool; if at cap, DEFER — stamp resume_requested_at (the C3
-      // FIFO key) and leave the run NeedsInputIdle for the gate to admit on a freed
-      // slot. NeedsInputIdle is not counted; the claim flips it to Running
-      // (counted), so live < cap before ⇒ live + 1 ≤ cap after.
-      const claimed = await db.transaction(async (tx: any) => {
-        await takeSchedulerLock(tx);
-        const live = await countLiveRuns(tx, "agent");
+    // ADR-121 (T14, G4): cap-gate the agent idle-resume claim atomically (closes
+    // the D2 over-cap bypass on the agent pool too). Under the scheduler lock,
+    // count the agent pool; if at cap, DEFER — stamp resume_requested_at (the C3
+    // FIFO key) and leave the run NeedsInputIdle for the gate to admit on a freed
+    // slot. NeedsInputIdle is not counted; the claim flips it to Running
+    // (counted), so live < cap before ⇒ live + 1 ≤ cap after.
+    const claimed = await db.transaction(async (tx: any) => {
+      await takeSchedulerLock(tx);
+      const live = await countLiveRuns(tx, "agent");
 
-        if (live >= capForPool("agent")) {
-          await tx
-            .update(runs)
-            .set({ resumeRequestedAt: new Date() })
-            .where(and(eq(runs.id, runId), eq(runs.status, "NeedsInputIdle")));
-          await args.recordSuccessAudit?.(tx, 202);
+      if (live >= capForPool("agent")) {
+        await tx
+          .update(runs)
+          .set({ resumeRequestedAt: new Date() })
+          .where(and(eq(runs.id, runId), eq(runs.status, "NeedsInputIdle")));
+        await args.recordSuccessAudit?.(tx, 202);
 
-          return "queued" as const;
-        }
-
-        // ADR-166 D3: the idle wake is a new driver generation, minted inside
-        // this claim; startAgentSession binds to it.
-        const claim = await claimAgentIdleResumeInTransaction(tx, runId, {
-          placement: { host: placementHost },
-          recordSuccessAudit: async (t: any) => {
-            await args.recordSuccessAudit?.(t, 202);
-          },
-        });
-
-        return claim.ok
-          ? { assignmentId: claim.assignment?.id ?? null }
-          : claim.reason === "pending-evidence"
-            ? ("pending" as const)
-            : (false as const);
-      });
-
-      if (claimed === "queued" || claimed === "pending") {
-        log.info(
-          {
-            runId,
-            hitlRequestId,
-            branch: "agent-idle",
-            phase: "resume-queued",
-            reason: claimed === "queued" ? "capacity" : "source-evidence",
-            latencyMs: Date.now() - startedAt,
-          },
-          "permission stored; agent resume awaits its normal claim",
-        );
-
-        return NextResponse.json(
-          {
-            ok: true,
-            runStatus: "NeedsInputIdle",
-            state: "resume-in-progress",
-          },
-          { status: 202 },
-        );
+        return "queued" as const;
       }
 
-      if (!claimed) {
-        log.info(
-          {
-            runId,
-            hitlRequestId,
-            branch: "agent-idle",
-            phase: "claim-race",
-            latencyMs: Date.now() - startedAt,
-          },
-          "concurrent agent resume in progress — returning 202",
-        );
-
-        await recordSuccessAuditInTransaction(args, 202);
-
-        return NextResponse.json(
-          {
-            ok: true,
-            runStatus: "Running",
-            state: "resume-in-progress",
-          },
-          { status: 202 },
-        );
-      }
-
-      const { startAgentSession } = await import("@/lib/agents/launch");
-
-      queueMicrotask(() => {
-        void startAgentSession(runId, {
-          db,
-          assignmentId: claimed.assignmentId,
-        }).catch((err: unknown) => {
-          log.error(
-            {
-              runId,
-              hitlRequestId,
-              err: err instanceof Error ? err.message : String(err),
-            },
-            "agent idle permission resume failed",
-          );
-        });
+      // ADR-166 D3: the idle wake is a new driver generation, minted inside
+      // this claim; startAgentSession binds to it.
+      const claim = await claimAgentIdleResumeInTransaction(tx, runId, {
+        placement: { host: placementHost },
+        recordSuccessAudit: async (t: any) => {
+          await args.recordSuccessAudit?.(t, 202);
+        },
       });
 
+      return claim.ok
+        ? { assignmentId: claim.assignment?.id ?? null }
+        : claim.reason === "pending-evidence"
+          ? ("pending" as const)
+          : (false as const);
+    });
+
+    if (claimed === "queued" || claimed === "pending") {
       log.info(
         {
           runId,
           hitlRequestId,
           branch: "agent-idle",
-          phase: "resume-scheduled",
+          phase: "resume-queued",
+          reason: claimed === "queued" ? "capacity" : "source-evidence",
           latencyMs: Date.now() - startedAt,
         },
-        "permission stored; agent resume scheduled — auto-deliver async",
+        "permission stored; agent resume awaits its normal claim",
       );
+
+      return NextResponse.json(
+        {
+          ok: true,
+          runStatus: "NeedsInputIdle",
+          state: "resume-in-progress",
+        },
+        { status: 202 },
+      );
+    }
+
+    if (!claimed) {
+      log.info(
+        {
+          runId,
+          hitlRequestId,
+          branch: "agent-idle",
+          phase: "claim-race",
+          latencyMs: Date.now() - startedAt,
+        },
+        "concurrent agent resume in progress — returning 202",
+      );
+
+      await recordSuccessAuditInTransaction(args, 202);
 
       return NextResponse.json(
         {
@@ -1366,8 +1324,55 @@ async function handlePermissionResponse(
       );
     }
 
-    return runIdleResume();
-  }
+    const { startAgentSession } = await import("@/lib/agents/launch");
+
+    queueMicrotask(() => {
+      void startAgentSession(runId, {
+        db,
+        assignmentId: claimed.assignmentId,
+      }).catch((err: unknown) => {
+        log.error(
+          {
+            runId,
+            hitlRequestId,
+            err: err instanceof Error ? err.message : String(err),
+          },
+          "agent idle permission resume failed",
+        );
+      });
+    });
+
+    log.info(
+      {
+        runId,
+        hitlRequestId,
+        branch: "agent-idle",
+        phase: "resume-scheduled",
+        latencyMs: Date.now() - startedAt,
+      },
+      "permission stored; agent resume scheduled — auto-deliver async",
+    );
+
+    return NextResponse.json(
+      {
+        ok: true,
+        runStatus: "Running",
+        state: "resume-in-progress",
+      },
+      { status: 202 },
+    );
+  };
+
+  const runIdleResumeForKind = (): Promise<NextResponse> =>
+    runRow.runKind === "agent" ? runAgentIdleResume() : runIdleResume();
+
+  // M8 T10 / D8: NeedsInputIdle branch. The intent is now in
+  // hitl_requests.response (Phase 1). There is no live supervisor
+  // session to deliverPermission to — we trigger a respawn via
+  // resumeRun and return 202. The runner-agent's permission_request
+  // handler (T11) will auto-deliver the stored intent against the new
+  // requestId once the resumed session re-issues the permission.
+  if (claim.runStatus === "NeedsInputIdle") return runIdleResumeForKind();
 
   // Phase 2: deliver the queued `session.input` command, then mark respondedAt.
   // `delivered` distinguishes a supervisor-side delivery FAILURE (deferred still
@@ -1623,7 +1628,7 @@ async function handlePermissionResponse(
           "answer landed on a checkpointed session — parking and resuming",
         );
 
-        return runIdleResume();
+        return runIdleResumeForKind();
       }
 
       if (outcome.transition === "in-flight-resume") {

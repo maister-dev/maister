@@ -11,7 +11,7 @@ export type PermissionDeferred = {
   reject: (err: Error) => void;
 };
 
-// ADR-180 D10: the registry has no access to the child process, so the
+// ADR-180: the registry has no access to the child process, so the
 // teardown a cap must perform is INSTALLED rather than imported. The
 // production registry is a module-level singleton created at import, so the
 // installer must also arm requests registered before it was called.

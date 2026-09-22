@@ -21,6 +21,10 @@ import { gatePromptOperationKey } from "./prompt-owner";
 import { lockFlowPromptOwner } from "./prompt-owner-authority";
 import { pendingNodePermissionResumeExists } from "./permission-resume";
 
+import {
+  deliveryIntentSchema,
+  withdrawRefusedPermissionDelivery,
+} from "@/lib/execution-host/permission-delivery";
 import { createHitlRequest } from "@/lib/runs/hitl-create";
 import { flowPermissionSourceSchema } from "@/lib/execution-host/flow-permission-source";
 import {
@@ -51,21 +55,6 @@ const permissionEnvelopeSchema = z.object({
   supervisorSessionId: z.string().min(1),
   requestId: z.string().min(1),
 });
-
-const deliveryIntentSchema = z
-  .object({
-    commandId: z.string().min(1),
-    hostSessionId: z.string().min(1),
-    payload: z
-      .object({
-        kind: z.literal("permission"),
-        action: z.literal("select"),
-        requestId: z.string().min(1),
-        optionId: z.string().min(1),
-      })
-      .strict(),
-  })
-  .strict();
 
 async function readPermissionResume(
   tx: Db,
@@ -177,53 +166,11 @@ export async function prepareFlowPermissionResponse(
 
   if (hitl && schema && response?._delivery !== undefined) {
     await assertFlowPermissionDelivery(tx, schema);
-    const parsed = deliveryIntentSchema.safeParse(response._delivery);
-
-    if (!parsed.success)
-      throw new PromptOwnerInvariantError("permission_delivery_intent");
-    const intent = parsed.data;
-    const [prior] = await tx
-      .select()
-      .from(executionCommands)
-      .where(eq(executionCommands.id, intent.commandId));
-    const details = prior?.lastError?.details as
-      | Record<string, unknown>
-      | undefined;
-
-    if (
-      prior?.state === "failed" &&
-      prior.lastError?.code === "EXECUTOR_UNAVAILABLE" &&
-      details?.httpStatus === 503
-    ) {
-      if (
-        prior.runId !== hitl.runId ||
-        prior.executionAssignmentId !== schema.flowPrompt.assignmentId ||
-        prior.kind !== "session.input" ||
-        prior.targetSessionId !== schema.supervisorSessionId ||
-        prior.payload.requestId !== schema.requestId ||
-        prior.payload.optionId !== response.optionId
-      )
-        throw new PromptOwnerInvariantError("permission_retry_identity");
-      const { _delivery, ...retained } = response;
-
-      void _delivery;
-
-      await tx
-        .update(hitlRequests)
-        .set({
-          response: {
-            ...retained,
-            _audit: {
-              ...(typeof retained._audit === "object" &&
-              retained._audit !== null
-                ? retained._audit
-                : {}),
-              previousDeliveryCommandId: intent.commandId,
-            },
-          },
-        })
-        .where(eq(hitlRequests.id, hitl.id));
-    }
+    await withdrawRefusedPermissionDelivery(tx, hitl, response, {
+      assignmentId: schema.flowPrompt.assignmentId,
+      supervisorSessionId: schema.supervisorSessionId,
+      requestId: schema.requestId,
+    });
   }
 
   return prepareFlowPermissionInput(tx, client, hitlRequestId);

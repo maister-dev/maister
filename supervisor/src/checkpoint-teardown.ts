@@ -7,15 +7,22 @@ import { SupervisorError } from "./types";
 
 export type CheckpointCause = "permission_cap";
 
+/** The two registry operations a park needs — a harness holding several
+ * registries behind one cap handler satisfies it without being one. */
+export type CheckpointRegistry = Pick<
+  SessionRegistry,
+  "get" | "markIntentionalShutdown"
+>;
+
 export type CheckpointSessionInput = {
   entry: RegistryEntry;
-  registry: SessionRegistry;
+  registry: CheckpointRegistry;
   // Injected, never imported: this module owns teardown, `pending-permissions`
   // owns deferred lifetime, and neither learns the other's internals.
   permissions: PendingPermissionRegistry;
   logger: Logger;
   killGraceMs: number;
-  // Diagnostic only (ADR-180 D6): it rides the emitted `session.exited`
+  // Diagnostic only (ADR-180): it rides the emitted `session.exited`
   // payload and nothing branches on it.
   cause?: CheckpointCause;
 };
@@ -45,7 +52,7 @@ export async function checkpointSession(
   if (entry.record.status === "exited" || entry.record.status === "crashed") {
     log.info(
       { sessionId, status: entry.record.status, alreadyCheckpointed: true },
-      "checkpoint endpoint idempotent ack",
+      "checkpoint idempotent ack",
     );
 
     return {
@@ -105,14 +112,14 @@ export async function checkpointSession(
 
 /** Install the host's absolute-permission-cap teardown.
  *
- * ADR-180 D10: the cap timer knows a `(sessionId, requestId)` and nothing else
+ * ADR-180: the cap timer knows a `(sessionId, requestId)` and nothing else
  * — the registry that owns the child process is not in its scope. Both boot
  * paths (production `main.ts` and the in-process test harness) MUST call this;
  * a registration checklist nothing executes is an unverified claim, so the
  * wiring lives in one function rather than in two hand-copied closures.
  */
 export function installPermissionCapTeardown(deps: {
-  registry: SessionRegistry;
+  registry: CheckpointRegistry;
   permissions: PendingPermissionRegistry;
   logger: Logger;
   killGraceMs: number;

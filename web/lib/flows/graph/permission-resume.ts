@@ -33,10 +33,12 @@ import {
 } from "./permission-result-evidence";
 import { decodeNodePromptCompletion } from "./node-prompt-owner";
 
+import { withdrawRefusedPermissionDelivery } from "@/lib/execution-host/permission-delivery";
 import {
   isCheckpointedPermissionInputReceipt,
   isPermissionResultCommand,
   isPermissionCheckpointInterruption,
+  isRefusedPermissionDelivery,
   isRejectedPermissionInputReceipt,
   permissionCheckpointOrder,
 } from "@/lib/execution-host/permission-handoff-evidence";
@@ -172,6 +174,10 @@ export async function prepareFlowPermissionResult(
       })
   )
     throw new PromptOwnerInvariantError("permission_result_input_identity");
+  // The host REFUSED this delivery outright: no deferred ever saw it, so there
+  // is nothing to hand forward. The ordinary resume claim withdraws the void
+  // intent and re-delivers the stored answer to the resumed session.
+  if (isRefusedPermissionDelivery(input)) return null;
   const receipt = await transport.getCommandReceipt(input.id);
 
   if (!receipt) return { kind: "pending", reason: "input_receipt_missing" };
@@ -495,7 +501,14 @@ export async function authorizeNodePermissionResume(
   const { run, hitl, response, source, command, prior, attempt, incarnation } =
     context;
 
-  if (response._delivery !== undefined)
+  if (
+    response._delivery !== undefined &&
+    !(await withdrawRefusedPermissionDelivery(tx, hitl, response, {
+      assignmentId: prior.id,
+      supervisorSessionId: source.supervisorSessionId,
+      requestId: source.requestId,
+    }))
+  )
     throw new PromptOwnerInvariantError("permission_resume_input_unclassified");
   const promptOrdinal = attempt.actionPromptOrdinal + 1;
 

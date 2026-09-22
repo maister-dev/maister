@@ -973,8 +973,12 @@ boolean | enum | array`; unknown type refused with `CONFIG` at Flow
     race-window arm: an answer landing after the session was checkpointed but
     while the registry entry survives its 30 s terminal grace keeps the stored
     response and a NULL `responded_at`, parks the run through the shared
-    `markCheckpointed` CAS, resumes on the existing idle branch, and answers
-    202 `{state:"resume-in-progress"}` — never `Failed` or `Crashed`;
+    `markCheckpointed` CAS, resumes on the existing idle branch of its run
+    KIND (an agent run takes the agent idle claim, never the flow resume),
+    and answers 202 `{state:"resume-in-progress"}` — never `Failed` or
+    `Crashed`. The host itself waits for the child's exit before answering
+    an input that lands between the deferred cancel and the exit, so that
+    window takes the same arm;
     supervisor 503 / network → `EXECUTOR_UNAVAILABLE`
     retryable (row stays claimed, `responded_at` NULL); artifact
     write I/O failure → 503 retryable.
@@ -1072,7 +1076,10 @@ type}`; the stage `type` MUST be resolved by compiling each distinct flow
   user's intent, and a retry replays through the normal flow. The same 503 is
   what an answer gets once the checkpointed session's registry entry has been
   removed after its 30 s terminal grace; the sweeper's checkpointed arm parks
-  the run on its next tick (Implemented — ADR-180).
+  the run on its next tick, and the operator's retry then resumes it: the idle
+  resume withdraws the delivery intent the refused input left behind (the host
+  never admitted that command, so no receipt will ever arrive) and re-delivers
+  the stored answer to the resumed session (Implemented — ADR-180).
 - **Agent reads a malformed `input-<stepId>.json`** — adapter exits
   non-zero → `Crashed`. Operator decides whether to Recover or
   Discard.

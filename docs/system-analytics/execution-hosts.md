@@ -515,7 +515,15 @@ on the payload). It is **not a command**: it mints no `command.id`, carries no
 fence, writes no ledger row and no receipt, and a failing teardown is logged
 rather than returned to anyone. Consequently the checkpoint **admission** event
 a manager would use as an ordering witness does not exist on that path, which is
-why the permission-handoff proof also accepts the terminal event itself.
+why the permission-handoff ORDERING proof also accepts the terminal event
+itself. A later `session.checkpoint` the host merely acknowledges as already
+parked (`alreadyCheckpointed: true`) did not cause the park: its admission sits
+after the session's own checkpoint terminal, so it yields to that terminal —
+it orders a prompt only for a session that ended on its own. The agent idle
+claim resumes on the terminal witness with a null `checkpointCommandId`; the
+flow handoff grant still names a command row, so a flow run the host parked
+re-prompts through the ordinary resume claim rather than handing a historical
+result forward.
 
 Unknown-outcome retry budgets (same command id): adopt 3 (0.5 s·2ⁿ), create 3
 (1 s·2ⁿ), prompt 3 before acceptance / 0 after, input 3, cancel 3, checkpoint

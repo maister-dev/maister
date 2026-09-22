@@ -9,9 +9,10 @@
 //
 // Controls (each fails on master for a reason no other control fails for):
 //   RED 1  the teardown is graceful and the ACP handle is provably usable
+//          (it also proves the real boot installs the cap at all)
 //   RED 3  graceful shutdown does not race its own SIGKILL
-//   RED 5  the cap handler is installed by the real boot path
 //   RED 6  a genuine producer fault still SIGKILLs (guard — must stay green)
+//   RED 11 an unparseable cap value boots with the default and one WARN
 import type { SessionEvent } from "../types";
 
 import { mkdtemp, rm } from "node:fs/promises";
@@ -40,6 +41,8 @@ import {
 const CAP_HOURS = "0.0004";
 // Far out of reach: only the path under test may release the deferred.
 const CAP_UNREACHABLE = "24";
+// A negative over a log TAIL is vacuous once the log outgrows the tail.
+const WHOLE_LOG = Number.MAX_SAFE_INTEGER;
 
 type PermissionRequestEvent = Extract<
   SessionEvent,
@@ -171,7 +174,15 @@ describe("host permission cap (ADR-180)", () => {
       cause: "permission_cap",
     });
 
-    const log = await booted.sup.logTail();
+    // The completion line lands after the terminal reaches the stream.
+    await expect
+      .poll(
+        async () =>
+          (await booted.sup.logTail(WHOLE_LOG)).includes("checkpoint complete"),
+        { timeout: 5_000, interval: 50 },
+      )
+      .toBe(true);
+    const log = await booted.sup.logTail(WHOLE_LOG);
 
     expect(log).not.toContain("producer_permission_failed");
     expect(log).not.toContain("producer-output-incomplete");
@@ -188,16 +199,6 @@ describe("host permission cap (ADR-180)", () => {
     await parked.stream.close();
   }, 120_000);
 
-  // RED 5. The WIRING only — that a production boot arms a cap at all. It
-  // asserts nothing about teardown semantics; RED 1 owns those.
-  it("RED 5: the production boot installs the cap — a pending permission is torn down", async () => {
-    const booted = await boot();
-    const parked = await promptAndPark(booted, "run-cap-wiring");
-
-    await awaitTerminal(parked.stream);
-    await parked.stream.close();
-  }, 120_000);
-
   // RED 3. SIGTERM the supervisor itself while a permission is open. The
   // discriminant is `producer-output-incomplete`: it is logged only when
   // `abortOutput` fired, which is exactly what a REJECTED deferred causes.
@@ -209,13 +210,25 @@ describe("host permission cap (ADR-180)", () => {
 
     await booted.sup.stop();
 
-    const log = await booted.sup.logTail();
+    const log = await booted.sup.logTail(WHOLE_LOG);
 
+    expect(log).toContain("session-exited");
     expect(log).not.toContain("producer-output-incomplete");
     expect(log).not.toContain("producer_permission_failed");
     expect(log).not.toContain("shutdown-sigkill");
     await parked.stream.close();
   }, 120_000);
+
+  // RED 11. The documented fallback. The registry singleton parses the cap at
+  // import with no logger in reach, so the one WARN has to come from the boot
+  // path itself — a boot that says nothing certifies a silent misconfiguration.
+  it("RED 11: an unparseable cap value boots with the default and one WARN", async () => {
+    const booted = await boot({ MAISTER_PERMISSION_MAX_HOURS: "twenty-four" });
+    const log = await booted.sup.logTail(WHOLE_LOG);
+    const warning = "MAISTER_PERMISSION_MAX_HOURS is not a positive number";
+
+    expect(log.split(warning)).toHaveLength(2);
+  }, 60_000);
 
   // RED 6. The producer boundary is UNCHANGED: a malformed permission request
   // is a real fault and must still abort the output and SIGKILL the child.

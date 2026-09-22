@@ -757,8 +757,19 @@ witness is normally absent, not occasionally. The alternate is selected with the
 same uniqueness requirement as the admission event and must match exactly once;
 the absence of both witnesses stays unproven and every caller keeps its
 conservative arm, because a terminal decision never rests on a missing signal.
-The resolved order records which witness proved it. `EDGE-PRM-04` (a prompt-wait
-race) is unaffected: only the ordering proof widens, never who may prompt.
+The resolved order records which witness proved it. A checkpoint command the
+host acknowledged as already parked (`alreadyCheckpointed: true`) did not cause
+the park and yields to the session's checkpoint terminal; it orders a prompt
+only for a session that ended on its own, where a completed prompt before the
+acknowledgement is a result. The
+terminal witness classifies the interruption: the host commits an interrupted
+prompt's rejection after the session's own terminal, so it reads
+`after_checkpoint`. It does not by itself authorize a flow result handoff —
+that grant still names a checkpoint command row, so a flow run the host parked
+re-prompts through the ordinary resume claim — while an agent run's grant
+carries a null `checkpointCommandId` and resumes on it. `EDGE-PRM-04` (a
+prompt-wait race) is unaffected: only the ordering proof widens, never who may
+prompt.
 
 The original command and agent turn stay pending while the checkpointed request
 awaits its normal re-entry. Result application acknowledges the original turn,

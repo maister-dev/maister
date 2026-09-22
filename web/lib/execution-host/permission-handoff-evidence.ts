@@ -44,6 +44,28 @@ export function isRejectedPermissionInputReceipt(
   );
 }
 
+/** A `session.input` the host REFUSED with a definitive 503 — typically the
+ * unknown-session refusal once a parked session's registry entry aged out.
+ * The command never reached a deferred, so the delivery intent that names it
+ * is void: the operator's answer is still undelivered and only a fresh input
+ * can carry it. A network failure or an unknown outcome is NOT this — the
+ * host may have admitted the command — and keeps its intent.
+ */
+export function isRefusedPermissionDelivery(
+  command: ExecutionCommand,
+): boolean {
+  const details = command.lastError?.details as
+    | Record<string, unknown>
+    | undefined;
+
+  return (
+    command.kind === "session.input" &&
+    command.state === "failed" &&
+    command.lastError?.code === "EXECUTOR_UNAVAILABLE" &&
+    details?.httpStatus === 503
+  );
+}
+
 type PermissionResultCommand = ExecutionCommand &
   (
     | Readonly<{ state: "succeeded" }>
@@ -83,7 +105,7 @@ export function isPermissionCheckpointInterruption(
 
 /** Which witness proved the ordering. A test that cannot tell the two apart
  * cannot tell a working extension from a coincidence, so the resolved order
- * carries it (ADR-180 D5). The two are NOT collapsed behind one "find any
+ * carries it (ADR-180). The two are NOT collapsed behind one "find any
  * checkpoint" helper: they are different witnesses with different trust.
  */
 export type CheckpointBoundary = "command" | "terminal";
@@ -100,14 +122,14 @@ type BoundaryEvent = {
   hostSequence: string | number | bigint | null;
 };
 
-function hostIdentity(command: ExecutionCommand) {
+function hostIdentity(command: ExecutionCommand, hostSessionId: string) {
   return and(
     eq(executionEvents.source, "host"),
     eq(executionEvents.runId, command.runId),
     eq(executionEvents.executionHostId, command.executionHostId),
     eq(executionEvents.executionAssignmentId, command.executionAssignmentId),
     eq(executionEvents.assignmentEpoch, command.assignmentEpoch),
-    eq(executionEvents.hostSessionId, command.targetSessionId as string),
+    eq(executionEvents.hostSessionId, hostSessionId),
     eq(executionEvents.ingestDisposition, "accepted"),
   );
 }
@@ -124,6 +146,7 @@ function usable(witness: BoundaryEvent, terminal: BoundaryEvent): boolean {
 async function commandWitness(
   db: Db,
   command: ExecutionCommand,
+  hostSessionId: string,
   checkpoint: ExecutionCommand,
 ): Promise<BoundaryEvent | null> {
   const rows = await db
@@ -131,7 +154,7 @@ async function commandWitness(
     .from(executionEvents)
     .where(
       and(
-        hostIdentity(command),
+        hostIdentity(command, hostSessionId),
         eq(executionEvents.eventType, "session.command"),
         sql`${executionEvents.payload}->>'commandId' = ${checkpoint.id}`,
         sql`${executionEvents.payload}->>'kind' = 'session.checkpoint'`,
@@ -154,13 +177,14 @@ async function commandWitness(
 async function terminalWitness(
   db: Db,
   command: ExecutionCommand,
+  hostSessionId: string,
 ): Promise<BoundaryEvent | null> {
   const rows = await db
     .select()
     .from(executionEvents)
     .where(
       and(
-        hostIdentity(command),
+        hostIdentity(command, hostSessionId),
         eq(executionEvents.eventType, "session.exited"),
         sql`${executionEvents.payload}->>'reason' = 'checkpoint'`,
       ),
@@ -184,12 +208,13 @@ export async function permissionCheckpointOrder(
   checkpoint: ExecutionCommand | null,
 ): Promise<PermissionCheckpointOrder> {
   if (!command.terminalEventId || !command.targetSessionId) return "unproven";
+  const hostSessionId = command.targetSessionId;
   const [terminal] = await db
     .select()
     .from(executionEvents)
     .where(
       and(
-        hostIdentity(command),
+        hostIdentity(command, hostSessionId),
         eq(executionEvents.eventType, "session.command"),
         eq(executionEvents.id, command.terminalEventId),
       ),
@@ -208,12 +233,27 @@ export async function permissionCheckpointOrder(
   )
     return "unproven";
 
-  const commanded = checkpoint
-    ? await commandWitness(db, command, checkpoint)
-    : null;
-  const boundary: CheckpointBoundary = commanded ? "command" : "terminal";
-  const witness = commanded ?? (await terminalWitness(db, command));
+  // A checkpoint the host acknowledged as ALREADY parked did not cause the
+  // park: its admission sits after the session's own checkpoint terminal and
+  // after the interruption that terminal caused, so it yields to the terminal
+  // event. It still marks a position, though — for a session that ended on
+  // its own there is no checkpoint terminal, and a prompt that completed
+  // before the acknowledgement is a result.
+  const acknowledgement = checkpoint?.result?.alreadyCheckpointed === true;
+  let boundary: CheckpointBoundary = "command";
+  let witness =
+    checkpoint && !acknowledgement
+      ? await commandWitness(db, command, hostSessionId, checkpoint)
+      : null;
 
+  if (!witness) {
+    witness = await terminalWitness(db, command, hostSessionId);
+    boundary = "terminal";
+  }
+  if (!witness && checkpoint && acknowledgement) {
+    witness = await commandWitness(db, command, hostSessionId, checkpoint);
+    boundary = "command";
+  }
   if (!witness || !usable(witness, terminal)) return "unproven";
 
   return {

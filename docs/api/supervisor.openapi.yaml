@@ -1305,8 +1305,11 @@ paths:
             `details.reason: "session_checkpointed"`. That arm is NOT terminal
             for the web tier: the answer is kept, the run is parked through the
             shared CAS and resumed, and `/respond` answers 202
-            `{state: "resume-in-progress"}`. Every other 410 stays terminal
-            (`HITL_TIMEOUT`).
+            `{state: "resume-in-progress"}`. An input landing after the park
+            cancelled the deferreds but before the child exited waits for the
+            exit (bounded by the kill grace) and gets the same arm; a park that
+            outlasts the grace answers the retryable 503 instead. Every other
+            410 stays terminal (`HITL_TIMEOUT`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }

@@ -5,7 +5,7 @@ import type { ProjectionWorker } from "@/lib/execution-host/events/projection-wo
 
 import { fork, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { and, asc, eq, inArray, isNull } from "drizzle-orm";
@@ -13,21 +13,15 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import {
   agents,
-  agentProjectLinks,
-  projects,
   runs,
   runSessions,
   runResults,
-  packageInstalls,
-  projectPackageAttachments,
-  platformAcpRunners,
   executionCommands,
   domainEvents,
   executionAssignments,
   agentTurns,
   hitlRequests,
   users,
-  workspaces,
 } from "@/lib/db/schema";
 import { startAgentContinuationWorker } from "@/lib/agents/continuation-worker";
 import { lockAgentPermissionResult } from "@/lib/agents/permission-resume";
@@ -44,7 +38,6 @@ import { getCommandReceipt } from "@/lib/supervisor-client";
 import { queryRunTokens } from "@/lib/runs/cost-rollups";
 import { startPromptOwnerWorker } from "@/lib/execution-host/prompt-owner-recovery";
 import { RUNTIME_EVENT_CLAIM_LEASE_MS } from "@/lib/execution-host/events/consumer";
-import { testRunnerSnapshot } from "@/lib/__tests__/runner-fixtures";
 import { createExecutionHosts } from "@/lib/execution-host/client";
 import { mintAssignment } from "@/lib/execution-host/assignments";
 import {
@@ -55,15 +48,13 @@ import { resetRegistrarStateForTests } from "@/lib/execution-host/registrar";
 import { canonicalProjectors } from "@/lib/execution-host/events/projection-runtime";
 import { startProjectionWorker } from "@/lib/execution-host/events/projection-worker";
 import { stopRuntimeEventConsumers } from "@/lib/execution-host/events/consumer";
-import { initRepo, git } from "@/test-support/git-fixture";
-import { addWorktree } from "@/lib/worktree";
-import { agentWorkdirPath } from "@/lib/agents/workspace-paths";
 import { interruptPermissionInputAcknowledgement } from "@/test-support/permission-ack-fault";
 import { countLiveRuns, promoteNextPending } from "@/lib/scheduler";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
+import { seedAgentRun } from "@/test-support/agent-run-seed";
 import {
   startRealSupervisor,
   useRealSupervisorUrl,
@@ -172,146 +163,15 @@ async function seedAgent(input: {
   parallelPermission?: boolean;
   permissionOnResume?: boolean;
 }): Promise<string> {
-  const runId = randomUUID();
-  const projectId = randomUUID();
-  const runnerId = randomUUID();
-  const packageId = randomUUID();
-  const packageName = `fixture-${runId}`;
-  const agentId = `${packageName}:researcher`;
-  const repoPath = await initRepo(
-    path.join(supervisor.runtimeRoot, `repo-${runId}`),
-  );
-  const installedPath = path.join(supervisor.runtimeRoot, `package-${runId}`);
-  const sourcePath = path.join(
-    installedPath,
-    "maister-agents",
-    "researcher.md",
-  );
   const prompt = `fixture-output:${JSON.stringify({ ...input, chunkSize: 400_000, text: '\n```json maister:output\n{"summary":"original answer"}\n```' })}`;
 
-  await mkdir(path.dirname(sourcePath), { recursive: true });
-  await writeFile(
-    sourcePath,
-    `---\nname: Researcher\ndescription: d\nworkspace: ${input.permission ? "worktree" : "none"}\nmode: session\nplatform_mcp: false\ntriggers:\n  - manual\nrisk_tier: read_only\n${input.hookTrip ? `hooks:\n  repetition:\n    max: ${input.parallelPermission ? 2 : 1}\n` : ""}---\n${prompt}\n`,
-  );
-  await db.insert(projects).values({
-    id: projectId,
-    slug: `p-${runId}`,
-    name: "Agent fixture",
-    taskKey: `T${runId.replaceAll("-", "").slice(0, 7)}`.toUpperCase(),
-    repoPath,
-    maisterYamlPath: path.join(repoPath, "maister.yaml"),
-  });
-  await db.insert(packageInstalls).values({
-    id: packageId,
-    sourceUrl: `github.com/fixture/${runId}`,
-    name: packageName,
-    versionLabel: "v1.0.0",
-    resolvedRevision: "rev-1",
-    manifest: {},
-    manifestDigest: "digest",
-    installedPath,
-    packageStatus: "Installed",
-    trustStatus: "trusted",
-  });
-  await db.insert(projectPackageAttachments).values({
-    id: randomUUID(),
-    projectId,
-    packageInstallId: packageId,
-    packageName,
-  });
-  await db.insert(agents).values({
-    id: agentId,
-    packageName,
-    versionLabel: "v1.0.0",
-    origin: "git",
-    name: "Researcher",
-    description: "d",
+  return seedAgentRun(db, {
+    runtimeRoot: supervisor.runtimeRoot,
+    definition: `---\nname: Researcher\ndescription: d\nworkspace: ${input.permission ? "worktree" : "none"}\nmode: session\nplatform_mcp: false\ntriggers:\n  - manual\nrisk_tier: read_only\n${input.hookTrip ? `hooks:\n  repetition:\n    max: ${input.parallelPermission ? 2 : 1}\n` : ""}---\n${prompt}\n`,
     workspace: input.permission ? "worktree" : "none",
-    mode: "session",
-    triggers: ["manual"],
-    riskTier: "read_only",
-    sourcePath,
-    enabled: true,
-  });
-  await db
-    .insert(agentProjectLinks)
-    .values({ id: randomUUID(), projectId, agentId });
-  const snapshot = testRunnerSnapshot(runnerId);
-
-  await db.insert(platformAcpRunners).values({
-    id: runnerId,
-    adapter: "claude",
-    capabilityAgent: "claude",
-    model: snapshot.model,
-    provider: { kind: "anthropic" },
-    permissionPolicy: "default",
-    readinessStatus: "Ready",
-    readinessReasons: [],
-    enabled: true,
-  });
-  await db.insert(runs).values({
-    id: runId,
-    projectId,
-    runKind: "agent",
-    agentId,
-    agentWorkspace: input.permission ? "worktree" : "none",
-    status: "Running",
-    flowVersion: "agent",
-    flowRevision: "manual",
     resultContract: contract,
-    triggerSource: "manual",
-    persistent: input.persistent ?? false,
-    addressableKey: input.persistent ? "researcher" : null,
+    persistent: input.persistent,
   });
-  if (input.permission) {
-    const worktreePath = agentWorkdirPath(`p-${runId}`, runId);
-    const branch = `maister/permission-${runId}`;
-    const baseCommit = await git(repoPath, "rev-parse", "HEAD");
-
-    await addWorktree({
-      projectRepoPath: repoPath,
-      worktreePath,
-      branch,
-      startPoint: "main",
-      provenance: {
-        version: 2,
-        runId,
-        parentRepoPath: repoPath,
-        projectId,
-        branch,
-        workspaceKind: "agent",
-        createdAt: new Date().toISOString(),
-      },
-    });
-    await db.insert(workspaces).values({
-      id: randomUUID(),
-      runId,
-      projectId,
-      branch,
-      worktreePath,
-      parentRepoPath: repoPath,
-      baseBranch: "main",
-      targetBranch: "main",
-      baseCommit,
-    });
-  }
-  await db.insert(runSessions).values({
-    id: randomUUID(),
-    runId,
-    sessionName: "default",
-    runnerId,
-    runnerSnapshot: snapshot,
-    capabilityAgent: "claude",
-  });
-  const hosts = createExecutionHosts({ db });
-  const host = await localHost({ db, transport: hosts.transport });
-
-  await db.transaction((tx) =>
-    mintAssignment(tx, { runId, hostId: host.id, reason: "launch" }),
-  );
-
-  return runId;
 }
 
 function startDriver(

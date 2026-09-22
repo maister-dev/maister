@@ -57,7 +57,9 @@ const fakeDb = {
       innerJoin: () => ({
         innerJoin: () => ({
           where: () => ({
-            limit: async () => state.checkpointed.map((id) => ({ id })),
+            orderBy: () => ({
+              limit: async () => state.checkpointed.map((id) => ({ id })),
+            }),
           }),
         }),
       }),

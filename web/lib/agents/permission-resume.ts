@@ -8,6 +8,7 @@ import type { ExecutionAssignment, HitlRequest } from "@/lib/db/schema";
 import type {
   AgentPermissionResume,
   Readiness,
+  Source,
 } from "@/lib/execution-host/agent-permission-handoff";
 
 import { and, asc, eq, isNull, or, sql } from "drizzle-orm";
@@ -32,6 +33,7 @@ import {
 import { PromptOwnerInvariantError } from "@/lib/execution-host/prompt-owners";
 import { reconcilePromptCommand } from "@/lib/execution-host/prompt-reconciliation";
 import { markSucceeded, markFailed } from "@/lib/execution-host/commands";
+import { withdrawRefusedPermissionDelivery } from "@/lib/execution-host/permission-delivery";
 import { isRejectedPermissionInputReceipt } from "@/lib/execution-host/permission-handoff-evidence";
 import { lockCurrentSessionAssignment } from "@/lib/execution-host/session-binding";
 import { agentPermissionEnvelopeSchema } from "@/lib/execution-host/agent-permission-source";
@@ -190,6 +192,31 @@ export async function readAgentPermissionResume(
   return hitl ? readCheckpointSource(db, hitl) : null;
 }
 
+async function withdrawRefusedAgentDelivery(
+  tx: Db,
+  source: Source,
+): Promise<Record<string, unknown>> {
+  const envelope = agentPermissionEnvelopeSchema.safeParse(source.hitl.schema);
+
+  if (!envelope.success)
+    throw new PromptOwnerInvariantError("agent_permission_resume_source_shape");
+  const withdrawn = await withdrawRefusedPermissionDelivery(
+    tx,
+    source.hitl,
+    source.response,
+    {
+      assignmentId: source.prior.id,
+      supervisorSessionId: envelope.data.supervisorSessionId,
+      requestId: envelope.data.requestId,
+    },
+  );
+
+  if (!withdrawn)
+    throw new PromptOwnerInvariantError("agent_permission_input_unclassified");
+
+  return withdrawn;
+}
+
 /** The normal capacity claim is the sole author of a historical handoff. */
 export async function authorizeAgentPermissionResume(
   tx: Db,
@@ -248,17 +275,25 @@ export async function authorizeAgentPermissionResume(
     sourceCommandId: source.command.id,
     sourceRequestSha256: source.command.requestSha256!,
     sourceTerminalEvidenceSha256: source.command.terminalEvidenceSha256!,
-    checkpointCommandId: source.checkpoint.id,
+    checkpointCommandId: source.checkpoint?.id ?? null,
     inputCommandId: source.input?.id ?? null,
     resumeSessionId: source.incarnation.acpSessionId,
     optionId: source.response.optionId,
     ...(source.pause ? { pause: source.pause } : {}),
   };
 
+  // A delivery the host refused outright never reached a deferred (ADR-180):
+  // the grant carries the answer to the reissued request, so the void intent
+  // is withdrawn with it rather than left as an unclassified input.
+  const response =
+    source.input === null && source.response._delivery !== undefined
+      ? await withdrawRefusedAgentDelivery(tx, source)
+      : source.response;
+
   await tx
     .update(hitlRequests)
     .set({
-      response: { ...source.response, _agentResume: grant },
+      response: { ...response, _agentResume: grant },
       ...(source.kind === "result" || source.input
         ? { respondedAt: new Date() }
         : {}),

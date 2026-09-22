@@ -985,6 +985,54 @@ the result.
 The D2 escalation window is an accepted residual and deliberately has **no**
 control — do not add one, and do not let a control assert a clean park there.
 
+### Post-review amendment (2026-09-22, `/aif-review` → `/aif-fix`)
+
+The review of the five commits above found six merge blockers and the fix
+landed as one further increment on this branch. What changed against the plan
+as written:
+
+- **503-then-park left the idle resume stuck** (confirmed by extending RED 4b
+  one operator step): the retryable 503 leaves a `_delivery` intent naming a
+  command the host never admitted, and `prepareFlowPermissionResult` waited for
+  its receipt forever. Fixed at the choke point: `isRefusedPermissionDelivery`
+  (a definitive 503) + `withdrawRefusedPermissionDelivery`, shared by the live
+  retry (`prepareFlowPermissionResponse`), the node and gate resume claims, and
+  the agent live retry / idle claim. RED 4b now retries after the park and
+  waits for `respondedAt`.
+- **Pass 1b re-parked a resume in flight**: `fetchCheckpointedCandidates` now
+  requires the `checkpointed` incarnation to belong to
+  `runs.execution_assignment_id`, and orders by `runs.id`. RED 12 seeds the
+  window between `markResumed` and the create ack.
+- **The race-window arm forks on run kind**: `hitl.ts` extracts the agent idle
+  branch into `runAgentIdleResume` and both resume sites call
+  `runIdleResumeForKind`. RED 13 drives an agent run through the window.
+- **The agent idle path is widened** (owner decision at fix time, reversing the
+  "agent/scratch idle paths not widened" non-goal): `readCheckpointSource`
+  accepts the terminal witness when no causal checkpoint command exists
+  (`checkpointCommandId` becomes nullable on the grant), an idempotent
+  `alreadyCheckpointed: true` command yields to the session's checkpoint
+  terminal (`permissionCheckpointOrder`; it still orders a prompt for a session
+  that ended on its own — the first cut made it no witness at all and broke the
+  completed-original handoff), and `requireAgentPermissionCompletion` defers
+  the live driver's finalization when the session's incarnation reads
+  `checkpointed`. RED 14 parks an agent run through the host cap and resumes it.
+- **The cancel→exit window**: `POST /sessions/:id/input` waits for the child's
+  exit (bounded by the kill grace) before answering the checkpointed 410, and
+  answers a retryable 503 when the park outlasts the grace. Two in-process
+  controls in `permission-roundtrip` hold the window open with a parkable fake
+  child.
+- **D5 stands, corrected**: the review's "inverted order" claim was refuted by a
+  probe (the interrupted prompt's rejection lands AFTER `session.exited`, so the
+  terminal witness reads `after_checkpoint`); RED 7 now asserts that order
+  instead of accepting either. The docs no longer claim the terminal event
+  proves a *flow* handoff — that grant still names a command row.
+- Test hygiene: RED 5 removed (implied by RED 1); RED 1/3 assert a positive
+  over the whole log; RED 4a/8 wait for `respondedAt`; RED 11 pins the boot
+  WARN for an unparseable cap (the singleton has no logger — `main.ts` parses
+  once more to say it). The `bootHost` fixture installs ONE cap handler over
+  every booted registry.
+- Kept as locked: the `{checkpoint, intentional}` allow-list (D4/D7).
+
 ### Existing suites that must stay green without loosened expectations
 
 Supervisor: `pending-permissions`, `checkpoint`, `permission-roundtrip`,

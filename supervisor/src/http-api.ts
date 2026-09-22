@@ -2642,11 +2642,30 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
           // equality: `fenced` is excluded because a fenced session means a
           // NEWER driver generation owns the run, and routing a superseded
           // answer into a resume would resurrect it.
-          const parked =
-            entry.record.status === "exited" &&
+          const parking =
             entry.intentionalShutdown &&
             entry.intentionalReason !== undefined &&
             INTENTIONALLY_PARKED.has(entry.intentionalReason);
+
+          // The park cancels the deferreds BEFORE the child exits, and the
+          // terminal (`status: "exited"`) lands only after its output drains.
+          // An answer inside that window is the same answer as one after it:
+          // wait the kill grace out here rather than answer the terminal 410
+          // that would fail the run. A park that outlasts the grace is a
+          // retryable refusal, never the terminal arm.
+          if (parking && entry.record.status === "live") {
+            logger.info(
+              { sessionId, requestId: body.requestId, killGraceMs },
+              "input awaits checkpoint exit",
+            );
+            await waitForChildExit(entry, killGraceMs);
+          }
+          if (parking && entry.record.status !== "exited")
+            throw new SupervisorError(
+              "EXECUTOR_UNAVAILABLE",
+              "session is being checkpointed — retry the response",
+            );
+          const parked = parking;
 
           throw new SupervisorError(
             "HITL_TIMEOUT",

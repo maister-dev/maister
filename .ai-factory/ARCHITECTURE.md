@@ -112,7 +112,8 @@ mAIster/
 │       ├── acp-client.ts           # Zed-standard ACP client (one per session)
 │       ├── spawn.ts                # child_process.spawn per session (claude/codex)
 │       ├── heartbeat.ts            # crash detection → mark Crashed
-│       ├── http-api.ts             # Route handlers (Fastify); checkpoint is an inline handler here
+│       ├── http-api.ts             # Route handlers (Fastify); the checkpoint route delegates to checkpoint-teardown.ts
+│       ├── checkpoint-teardown.ts  # (Implemented — ADR-180) graceful park shared by the checkpoint route and the permission cap
 │       ├── host-state.ts           # (Implemented — ADR-166) node:sqlite state store: identity, fences, handles, receipts
 │       ├── execution-fence.ts      # (Implemented — ADR-166) envelope fence rules + lower-epoch eviction
 │       ├── command-receipts.ts     # (Implemented — ADR-166) receipts: replay / join / turn_lost

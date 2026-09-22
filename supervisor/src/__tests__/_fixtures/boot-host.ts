@@ -28,6 +28,41 @@ export const FIXTURES_DIR = resolve(
 
 export const silentLogger = pino({ level: "silent" });
 
+// `pendingPermissions` is a module singleton with ONE cap handler, and a test
+// file may hold several hosts at once. The handler is installed once, over
+// every booted registry, instead of being re-pointed at the last host booted.
+const bootedRegistries = new Set<SessionRegistry>();
+let capTeardownInstalled = false;
+
+function owningRegistry(sessionId: string): SessionRegistry | undefined {
+  for (const registry of bootedRegistries)
+    if (registry.get(sessionId)) return registry;
+
+  return undefined;
+}
+
+function installPermissionCapTeardownOnce(
+  logger: Logger,
+  killGraceMs: number,
+): void {
+  if (capTeardownInstalled) return;
+  capTeardownInstalled = true;
+  installPermissionCapTeardown({
+    registry: {
+      get: (sessionId) => owningRegistry(sessionId)?.get(sessionId),
+      markIntentionalShutdown: (sessionId, reason, cause) =>
+        owningRegistry(sessionId)?.markIntentionalShutdown(
+          sessionId,
+          reason,
+          cause,
+        ) ?? false,
+    },
+    permissions: pendingPermissions,
+    logger,
+    killGraceMs,
+  });
+}
+
 export type BootedHost = {
   app: FastifyInstance;
   url: string;
@@ -87,14 +122,10 @@ export async function bootHost(
 
   const killGraceMs = opts.killGraceMs ?? 2_000;
 
-  // ADR-180 D10: without this, every bootHost() integration test silently has
-  // no permission cap.
-  installPermissionCapTeardown({
-    registry,
-    permissions: pendingPermissions,
-    logger,
-    killGraceMs,
-  });
+  // ADR-180: without this, every bootHost() integration test silently has no
+  // permission cap.
+  bootedRegistries.add(registry);
+  installPermissionCapTeardownOnce(logger, killGraceMs);
   registerRoutes({
     app,
     registry,
@@ -123,6 +154,7 @@ export async function bootHost(
     workspaceRoots,
     stop: async () => {
       stopHeartbeat();
+      bootedRegistries.delete(registry);
       const exits: Promise<void>[] = [];
 
       for (const entry of registry.list()) {
