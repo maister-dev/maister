@@ -19,6 +19,13 @@ import { ALL_SCHEDULER_JOB_KINDS } from "@/lib/scheduler/job-catalog";
 export type SchedulerJobKind = DbSchedulerJobKind;
 
 export const SCHEDULER_JOB_KINDS = ALL_SCHEDULER_JOB_KINDS;
+export const TERMINAL_SCHEDULER_JOB_RUN_STATUSES = [
+  "Succeeded",
+  "Failed",
+  "Skipped",
+] as const satisfies readonly SchedulerJobRunStatus[];
+export type TerminalSchedulerJobRunStatus =
+  (typeof TERMINAL_SCHEDULER_JOB_RUN_STATUSES)[number];
 
 export type ClaimedSchedulerJob = {
   id: string;
@@ -28,6 +35,7 @@ export type ClaimedSchedulerJob = {
   target: Record<string, unknown>;
   previousNextRunAt: Date;
   nextRunAt: Date;
+  cadenceIntervalSeconds: number;
   leaseExpiresAt: Date;
 };
 
@@ -79,6 +87,14 @@ export type ReapedSchedulerAttempt = {
   jobId: string;
 };
 
+export type PreviousSchedulerAttempt = Readonly<{
+  id: string;
+  status: SchedulerJobRunStatus;
+  claimedAt: Date;
+  summary: Record<string, unknown>;
+  errorCode: string | null;
+}>;
+
 type ComputeNextRunAtInput = {
   previousNextRunAt: Date;
   now: Date;
@@ -101,6 +117,7 @@ type SchedulerRow = {
   target: Record<string, unknown> | null;
   previous_next_run_at: Date | string;
   next_run_at: Date | string;
+  cadence_interval_seconds: number;
   lease_expires_at: Date | string;
 };
 
@@ -111,6 +128,14 @@ type ReapedRow = {
 
 type UpdatedAttemptRow = {
   id: string;
+};
+
+type PreviousAttemptRow = {
+  id: string;
+  status: SchedulerJobRunStatus;
+  claimed_at: Date | string;
+  summary: Record<string, unknown> | null;
+  error_code: string | null;
 };
 
 const log = pino({
@@ -124,7 +149,9 @@ const DEFAULT_RUN_SCHEDULE_DISPATCHER_JOB_ID = "run_schedule.dispatcher";
 const DEFAULT_RUN_SCHEDULE_DISPATCHER_CADENCE_SECONDS = 60;
 const DEFAULT_WEBHOOK_DELIVERY_JOB_ID = "webhook_delivery.default";
 const DEFAULT_WEBHOOK_DELIVERY_CADENCE_SECONDS = 60;
-const DEFAULT_DOMAIN_EVENT_DISPATCH_JOB_ID = "domain_event_dispatch.default";
+
+export const DEFAULT_DOMAIN_EVENT_DISPATCH_JOB_ID =
+  "domain_event_dispatch.default";
 const DEFAULT_DOMAIN_EVENT_DISPATCH_CADENCE_SECONDS = 60;
 // M34 (ADR-089): the ONE seeded agent_tick job — claims due agent_schedules
 // cron rows and recovers stranded Pending agent runs each tick.
@@ -765,6 +792,7 @@ export async function claimDueJobs(
         j.target,
         candidate.next_run_at AS previous_next_run_at,
         j.next_run_at,
+        j.cadence_interval_seconds,
         j.lease_expires_at
     ),
     inserted AS (
@@ -822,6 +850,55 @@ export async function recordJobAttemptStarted(input: {
   `);
 
   return rowsOf<UpdatedAttemptRow>(result).length > 0;
+}
+
+// Exported so the migration test can EXPLAIN the query production actually
+// runs: an index proven against a hand-written lookalike proves nothing about
+// the CTE + row-value predicate below.
+export function previousSchedulerAttemptQuery(input: {
+  jobId: string;
+  currentAttemptId: string;
+}): SQL {
+  return sql`
+    WITH current_attempt AS (
+      SELECT claimed_at, id
+      FROM scheduler_job_runs
+      WHERE id = ${input.currentAttemptId}
+        AND job_id = ${input.jobId}
+    )
+    SELECT
+      previous.id,
+      previous.status,
+      previous.claimed_at,
+      previous.summary,
+      previous.error_code
+    FROM scheduler_job_runs previous
+    CROSS JOIN current_attempt current
+    WHERE previous.job_id = ${input.jobId}
+      AND (previous.claimed_at, previous.id) < (current.claimed_at, current.id)
+    ORDER BY previous.claimed_at DESC, previous.id DESC
+    LIMIT 1
+  `;
+}
+
+export async function loadPreviousSchedulerAttempt(input: {
+  jobId: string;
+  currentAttemptId: string;
+  db?: SchedulerDb;
+}): Promise<PreviousSchedulerAttempt | null> {
+  const db = input.db ?? (getDb() as unknown as SchedulerDb);
+  const result = await db.execute(previousSchedulerAttemptQuery(input));
+  const row = rowsOf<PreviousAttemptRow>(result)[0];
+
+  if (row === undefined) return null;
+
+  return {
+    id: row.id,
+    status: row.status,
+    claimedAt: coerceDate(row.claimed_at),
+    summary: row.summary ?? {},
+    errorCode: row.error_code,
+  };
 }
 
 export async function renewSchedulerJobAttemptLease(
@@ -990,6 +1067,7 @@ function toClaimedSchedulerJob(row: SchedulerRow): ClaimedSchedulerJob {
     target: row.target ?? {},
     previousNextRunAt: coerceDate(row.previous_next_run_at),
     nextRunAt: coerceDate(row.next_run_at),
+    cadenceIntervalSeconds: row.cadence_interval_seconds,
     leaseExpiresAt: coerceDate(row.lease_expires_at),
   };
 }

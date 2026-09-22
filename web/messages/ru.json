@@ -136,6 +136,7 @@
     "settings": "Настройки",
     "users": "Пользователи",
     "scheduler": "Планировщик",
+    "executionHost": "Хост исполнения",
     "board": "Доска",
     "activity": "Активность",
     "observatory": "Обсерватория",
@@ -789,6 +790,7 @@
     "hostUnavailable": "Хост недоступен",
     "supervisor": "супервизор",
     "supervisorReady": "Супервизор готов",
+    "supervisorBehind": "Приём событий отстаёт",
     "supervisorUnavailable": "Супервизор недоступен",
     "docs": "Документация",
     "poc": "POC · один хост"
@@ -3031,6 +3033,141 @@
       "viewer": "наблюдатель"
     }
   },
+  "adminExecutionHost": {
+    "eyebrow": "Админ",
+    "title": "Хост исполнения",
+    "subtitle": "Текущее состояние хоста, потока событий, проекций, воркеров и команд в одном операторском экране.",
+    "missing": "недоступно",
+    "yes": "да",
+    "no": "нет",
+    "sampledAt": "Текущие данные сняты {value}",
+    "hosts": {
+      "title": "Хосты",
+      "subtitle": "Сохранённая регистрация менеджера остаётся видимой, когда supervisor недоступен.",
+      "empty": "Хосты исполнения не зарегистрированы."
+    },
+    "streams": {
+      "title": "Потоки событий",
+      "subtitle": "Watermark менеджера и отдельно снятая голова хоста. Lag не меняет состояние потока.",
+      "empty": "Потоки событий ещё не наблюдались.",
+      "observation": "вердикт последнего sweep",
+      "observationMeta": "{observer}, выборка {sampledAt}",
+      "unacked": "не ACK на хосте",
+      "watermarkLegend": "R получено · C непрерывно · A подтверждено ACK",
+      "lagLegend": "H→M хост до менеджера · G разрыв · A подтверждение ACK"
+    },
+    "consumers": {
+      "title": "Потребители проекций",
+      "subtitle": "Наибольший backlog незавершённых прогонов. Итоги охватывают всю допустимую выборку.",
+      "unattributed": "без привязки",
+      "count": "Показано {shown} из {total} потребителей для {runs} допустимых прогонов.",
+      "diagnosticCount": "Несогласованных курсоров потребителей: {count}.",
+      "diagnostics": {
+        "cursor_ahead_of_horizon": "курсор опережает горизонт запуска"
+      }
+    },
+    "poison": {
+      "title": "Отравленные потребители",
+      "subtitle": "Завершённые и активные прогоны перечисляются отдельно от таблицы backlog.",
+      "empty": "Отравленных потребителей проекций нет.",
+      "incomplete": "Текущих данных ошибки недостаточно для безопасной команды ремонта.",
+      "count": "Отравленных потребителей: {total}",
+      "next": "Следующая страница",
+      "first": "Первая страница"
+    },
+    "workers": {
+      "title": "Долговечные воркеры",
+      "subtitle": "Состояние текущего процесса и последнее сохранённое наблюдение планировщика.",
+      "current": "Текущий процесс",
+      "latestSweep": "Последний sweep планировщика",
+      "latestSweepMeta": "{observer}, выборка {sampledAt}"
+    },
+    "commands": {
+      "title": "Открытые команды",
+      "subtitle": "Текущие счётчики менеджера и последнее наблюдение impasse планировщика.",
+      "latestSweep": "Impasse зафиксирован {sampledAt}"
+    },
+    "clock": {
+      "title": "Часы планировщика",
+      "subtitle": "Часы восстановления, владеющие наблюдением event plane.",
+      "last": "Последний завершённый tick: {value}",
+      "open": "Открыть диагностику планировщика"
+    },
+    "fields": {
+      "host": "Хост",
+      "readiness": "Готовность",
+      "reason": "Причина",
+      "boot": "Идентификатор запуска",
+      "version": "Версия",
+      "capabilities": "Возможности",
+      "lastSeen": "Последнее наблюдение",
+      "stream": "Поток",
+      "state": "Состояние",
+      "watermarks": "Отметки менеджера R/C/A",
+      "hostHead": "Голова хоста",
+      "lag": "Отставание H→M/G/A",
+      "pressure": "Давление",
+      "claim": "Захват",
+      "error": "Последняя ошибка",
+      "run": "Прогон",
+      "consumer": "Потребитель",
+      "backlog": "Очередь",
+      "cursor": "Курсор / горизонт",
+      "served": "Возраст обслуживания",
+      "nodeError": "Ошибка узла",
+      "open": "Открыто",
+      "accepted": "Принято",
+      "oldest": "Старейшая принятая",
+      "impasse": "Последний impasse"
+    },
+    "forbidden": {
+      "title": "Требуется доступ администратора",
+      "body": "Диагностика хоста исполнения содержит операционные метаданные всей платформы.",
+      "back": "Вернуться на рабочий стол"
+    },
+    "panelUnavailable": "Эту панель прочитать не удалось. Остальные панели ниже актуальны.",
+    "readiness": {
+      "unknown": "Неизвестно",
+      "ready": "Готов",
+      "unavailable": "Недоступен"
+    },
+    "streamState": {
+      "observed": "Наблюдается",
+      "active": "Активен",
+      "closed": "Закрыт",
+      "lost": "Потерян"
+    },
+    "telemetryStatus": {
+      "available": "Снято с хоста",
+      "unsupported": "Не сообщается",
+      "unavailable": "Хост недоступен",
+      "stale": "Устаревшая выборка"
+    },
+    "consumerState": {
+      "ready": "Готов",
+      "retrying": "Повтор",
+      "poisoned": "Отравлен"
+    },
+    "workerState": {
+      "running": "Работает",
+      "degraded": "Деградировал",
+      "stopped": "Остановлен"
+    },
+    "verdict": {
+      "observing": "Наблюдение",
+      "lagging": "Отставание",
+      "not_advancing": "Не продвигается",
+      "clear": "Чисто",
+      "unknown": "Неизвестно",
+      "inactive": "Неактивен",
+      "reset": "Сброс"
+    },
+    "driver": {
+      "fallback_timer": "Внутренний таймер",
+      "external_tick": "Внешний tick",
+      "missing_tick": "Часов нет"
+    }
+  },
   "adminScheduler": {
     "eyebrow": "Админ",
     "title": "Планировщик",
@@ -3043,6 +3180,54 @@
     },
     "tableTitle": "Задачи движка",
     "tableSub": "Платформенные задачи забираются на каждом /api/cron/tick. Отключённые задачи пропускаются.",
+    "clockCard": {
+      "title": "Часы планировщика",
+      "subtitle": "Локальная телеметрия процесса и долговечная активность двух критичных задач восстановления.",
+      "interval": "Интервал fallback",
+      "cronToken": "Токен cron",
+      "configured": "задан",
+      "missing": "не задан",
+      "lastStarted": "Последнее начало",
+      "lastFinished": "Последнее завершение",
+      "duration": "Длительность",
+      "outcome": "Результат",
+      "active": "Активные тики",
+      "overlap": "Пропуски overlap",
+      "overlapValue": "{total} всего · {current} текущая серия · {last} прошлая серия",
+      "process": "ID процесса",
+      "never": "не наблюдалось",
+      "job": "Критичная задача",
+      "status": "Последний статус",
+      "lastRun": "Последний запуск",
+      "errorCode": "Код ошибки",
+      "nextRun": "Следующий запуск",
+      "disabled": "отключена",
+      "missingJob": "отсутствует",
+      "overdue": "просрочено",
+      "driver": {
+        "fallback_timer": "Внутренний таймер",
+        "external_tick": "Ожидается внешний tick",
+        "missing_tick": "Tick не настроен"
+      },
+      "outcomes": {
+        "completed": "завершён",
+        "partial": "частично",
+        "failed": "ошибка",
+        "maintenance_noop": "maintenance без работы"
+      },
+      "guidance": {
+        "fallback_timer": "Этот процесс запускает tick каждые {seconds}с. Счётчики процесса сбрасываются при рестарте.",
+        "external_tick": "Вызывайте {path} внешним cron и проверяйте долговечные времена критичных задач ниже.",
+        "missing_tick": "Задайте MAISTER_CRON_TOKEN для внешнего вызова или включите fallback timer."
+      },
+      "jobStatus": {
+        "Claimed": "Захвачена",
+        "Running": "Выполняется",
+        "Succeeded": "Успешно",
+        "Failed": "Ошибка",
+        "Skipped": "Пропущена"
+      }
+    },
     "brainQueue": {
       "tableTitle": "Очередь индексации Brain",
       "tableSub": "Задачи индексации лежат в brain_index_jobs и разгребаются system_sweep.default на каждом тике планировщика.",
@@ -3066,24 +3251,6 @@
         "manual": "вручную",
         "event": "событие",
         "chunker_upgrade": "обновление chunker"
-      },
-      "clock": {
-        "tickPath": "Tick route",
-        "interval": "Интервал fallback",
-        "cronToken": "Cron token",
-        "configured": "задан",
-        "missing": "не задан",
-        "guidanceLabel": "Драйвер",
-        "driver": {
-          "fallback_timer": "Fallback timer",
-          "external_tick": "Нужен внешний tick",
-          "missing_tick": "Tick не настроен"
-        },
-        "guidance": {
-          "fallback_timer": "Web-процесс вызывает {path} каждые {seconds}с.",
-          "external_tick": "Вызывайте {path} внешним cron; fallback timer выключен.",
-          "missing_tick": "Задайте MAISTER_CRON_TOKEN для внешнего cron или MAISTER_SCHEDULER_TIMER_ENABLED=true для single-box инсталляции."
-        }
       }
     },
     "reconciliation": {

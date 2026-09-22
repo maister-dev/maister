@@ -517,7 +517,10 @@ Full DSL reference: [Flow DSL](flow-dsl.md). Bundled plugin walkthrough:
 ## Scheduler cron
 
 The unified scheduler clock is exposed at `GET`/`POST /api/cron/tick`
-(Implemented). Point external cron there in production. The route is
+(Implemented). Single-box installs use the fallback timer by default and should
+set `MAISTER_SCHEDULER_TIMER_ENABLED=true` explicitly. Multi-web or
+operator-owned cron installs set it `false`, configure `MAISTER_CRON_TOKEN`, and
+point external cron there every minute. The route is
 stateless: every tick claims due jobs atomically, runs bounded handlers, and
 records attempt results. Set `MAISTER_CRON_TOKEN` to a secret and pass it in the
 `X-Maister-Cron-Token` header:
@@ -535,9 +538,9 @@ server-only secret — never commit a real value or log it.
 `GET`/`POST /api/cron/gc` remains a compatibility route for the original GC
 contract (ADR-033..036).
 It delegates to the scheduler `system_sweep` service while preserving the old
-GC summary shape and `200`/`207` behavior. Single-box deployments may enable the
-fallback timer with `MAISTER_SCHEDULER_TIMER_ENABLED=true`, but external cron is
-the preferred production clock.
+GC summary shape and `200`/`207` behavior. Confirm the resolved driver and
+advancing core-job timestamps on `/admin/scheduler`; a configured token alone
+does not prove the external clock invokes the route.
 
 ## Project layout
 

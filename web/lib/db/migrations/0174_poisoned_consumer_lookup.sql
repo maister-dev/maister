@@ -1,0 +1,1 @@
+CREATE INDEX IF NOT EXISTS "execution_event_consumers_poisoned_idx" ON "execution_event_consumers" USING btree ("run_id","consumer_name") WHERE "execution_event_consumers"."state" = 'poisoned';

@@ -62,7 +62,10 @@ describe("/api/cron/tick", () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(runSchedulerTickMock).toHaveBeenCalledWith({ jobKind: undefined });
+    expect(runSchedulerTickMock).toHaveBeenCalledWith({
+      jobKind: undefined,
+      source: "cron",
+    });
     expect(JSON.stringify(body)).not.toContain("test-token");
   });
 
@@ -87,6 +90,7 @@ describe("/api/cron/tick", () => {
     expect(response.status).toBe(200);
     expect(runSchedulerTickMock).toHaveBeenCalledWith({
       jobKind: "agent_tick",
+      source: "cron",
     });
   });
 
@@ -111,6 +115,7 @@ describe("/api/cron/tick", () => {
     expect(response.status).toBe(200);
     expect(runSchedulerTickMock).toHaveBeenCalledWith({
       jobKind: "run_schedule",
+      source: "cron",
     });
   });
 
@@ -135,6 +140,7 @@ describe("/api/cron/tick", () => {
     expect(response.status).toBe(200);
     expect(runSchedulerTickMock).toHaveBeenCalledWith({
       jobKind: "repo_delivery_scan",
+      source: "cron",
     });
   });
 

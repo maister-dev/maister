@@ -35,6 +35,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
   const summary = await runSchedulerTick({
     jobKind: rawJobKind ?? undefined,
+    source: "cron",
   });
   const status =
     summary.failedCount > 0 || summary.skippedCount > 0 ? 207 : 200;

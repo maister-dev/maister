@@ -1019,6 +1019,7 @@ table execution_event_consumers {
     (consumer_name, run_id) [pk]
     (next_retry_at, claim_expires_at) [name: 'execution_event_consumers_retry_idx']
     (last_served_at, run_id, consumer_name) [name: 'execution_event_consumers_service_idx']
+    (run_id, consumer_name) [name: 'execution_event_consumers_poisoned_idx']
   }
 }
 
@@ -2205,6 +2206,7 @@ table scheduler_job_runs {
 
   indexes {
     job_id [name: 'scheduler_job_runs_job_idx']
+    (job_id, claimed_at, id) [name: 'scheduler_job_runs_job_claimed_idx']
     (status, lease_expires_at) [name: 'scheduler_job_runs_lease_idx']
   }
 }

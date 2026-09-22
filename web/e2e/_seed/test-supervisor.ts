@@ -1014,7 +1014,8 @@ export async function startTestSupervisor(
   }
 
   const server = createServer((req, res) => {
-    const url = req.url ?? "";
+    const url = new URL(req.url ?? "/", "http://test-supervisor.local")
+      .pathname;
     const method = req.method ?? "GET";
 
     // ---- stub-supervisor superset: readiness surfaces --------------------

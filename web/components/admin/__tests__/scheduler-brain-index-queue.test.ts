@@ -1,7 +1,4 @@
-import type {
-  BrainIndexQueueViewData,
-  SchedulerClockStatus,
-} from "@/types/scheduler";
+import type { BrainIndexQueueViewData } from "@/types/scheduler";
 
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -12,17 +9,6 @@ vi.mock("next-intl", () => ({
 }));
 
 import { SchedulerBrainIndexQueue } from "@/components/admin/scheduler-brain-index-queue";
-
-function clock(over: Partial<SchedulerClockStatus> = {}): SchedulerClockStatus {
-  return {
-    cronTokenConfigured: false,
-    driver: "missing_tick",
-    fallbackTimerEnabled: false,
-    tickIntervalSeconds: 60,
-    tickPath: "/api/cron/tick",
-    ...over,
-  };
-}
 
 function queue(
   over: Partial<BrainIndexQueueViewData> = {},
@@ -52,16 +38,14 @@ function queue(
 }
 
 describe("SchedulerBrainIndexQueue", () => {
-  it("renders clock diagnostics and links queued Brain jobs to the project", () => {
+  it("links queued Brain jobs to the project without clock diagnostics", () => {
     const markup = renderToStaticMarkup(
       createElement(SchedulerBrainIndexQueue, {
-        clock: clock({ cronTokenConfigured: true, driver: "external_tick" }),
         queue: queue(),
       }),
     );
 
-    expect(markup).toContain("brainQueue.clock.driver.external_tick");
-    expect(markup).toContain("/api/cron/tick");
+    expect(markup).not.toContain("brainQueue.clock");
     expect(markup).toContain("docs/**/*.md");
     expect(markup).toContain("job-1");
     expect(markup).toContain('href="/projects/maister?tab=brain"');
@@ -70,7 +54,6 @@ describe("SchedulerBrainIndexQueue", () => {
   it("renders a diagnostic row when Brain schema is not applied", () => {
     const markup = renderToStaticMarkup(
       createElement(SchedulerBrainIndexQueue, {
-        clock: clock(),
         queue: queue({
           rows: [],
           schemaApplied: false,
@@ -80,6 +63,5 @@ describe("SchedulerBrainIndexQueue", () => {
     );
 
     expect(markup).toContain("brainQueue.schemaMissing");
-    expect(markup).toContain("brainQueue.clock.driver.missing_tick");
   });
 });

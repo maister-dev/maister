@@ -8,8 +8,6 @@ const getDb = vi.hoisted(() => vi.fn());
 const findPendingMigrations = vi.hoisted(() => vi.fn());
 const findPendingBrainMigrations = vi.hoisted(() => vi.fn());
 const assertDatabaseNotAheadOfBinary = vi.hoisted(() => vi.fn());
-const startKeepaliveSweeper = vi.hoisted(() => vi.fn());
-const startReconcileSweeper = vi.hoisted(() => vi.fn());
 const startSchedulerTimer = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/db/check-migrations", () => ({
@@ -28,16 +26,12 @@ vi.mock("@/lib/runs/resume-recovery", () => ({
 }));
 vi.mock("@/lib/reconcile", () => ({
   runReconcileSweep: vi.fn().mockResolvedValue(undefined),
-  startReconcileSweeper,
 }));
 vi.mock("@/lib/agents/registry", () => ({
   resyncAgents: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock("@/lib/projector/catch-up-sweep", () => ({
   runProjectorCatchUpSweep: vi.fn().mockResolvedValue(undefined),
-}));
-vi.mock("@/lib/runs/keepalive-sweeper", () => ({
-  startKeepaliveSweeper,
 }));
 vi.mock("@/lib/scheduler/timer", () => ({
   startSchedulerTimer,
@@ -64,8 +58,6 @@ describe("instrumentation DB boot boundary", () => {
     findPendingBrainMigrations.mockResolvedValue([]);
     assertDatabaseNotAheadOfBinary.mockReset();
     assertDatabaseNotAheadOfBinary.mockResolvedValue(undefined);
-    startKeepaliveSweeper.mockReset();
-    startReconcileSweeper.mockReset();
     startSchedulerTimer.mockReset();
   });
 
@@ -111,8 +103,6 @@ describe("instrumentation DB boot boundary", () => {
     await register();
 
     expect(startSchedulerTimer).toHaveBeenCalledOnce();
-    expect(startKeepaliveSweeper).not.toHaveBeenCalled();
-    expect(startReconcileSweeper).not.toHaveBeenCalled();
   });
 
   it("does nothing on the edge runtime", async () => {

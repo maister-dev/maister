@@ -42,6 +42,10 @@ import {
 import { ADAPTER_IDS, type AdapterId } from "@/lib/acp-runners/adapter-support";
 import { contextMountsToWire } from "@/lib/context-mounts/types";
 import { MaisterError, type MaisterErrorCode } from "@/lib/errors";
+import {
+  DEFAULT_EVENT_STREAM_LAG_AGE_MS,
+  isHostBacklogLagEligible,
+} from "@/lib/execution-host/events/lag";
 
 const logger = pino({
   name: "supervisor-client",
@@ -323,8 +327,51 @@ const SupervisorHealthSchema = z
         crashed: z.number().int().nonnegative(),
       })
       .strict(),
+    stream: z
+      .object({
+        streamId: z.string().min(1),
+        headSequence: z
+          .string()
+          .regex(/^(0|[1-9][0-9]{0,18})$/)
+          .refine(
+            (value) => BigInt(value) <= (1n << 63n) - 1n,
+            "headSequence exceeds signed BIGINT",
+          )
+          .nullable(),
+        unacknowledgedCount: z.number().int().nonnegative().safe(),
+        retainedCount: z.number().int().nonnegative().safe(),
+        pressured: z.boolean(),
+        oldestUnacknowledgedAgeMs: z
+          .number()
+          .int()
+          .nonnegative()
+          .safe()
+          .nullable(),
+      })
+      .passthrough()
+      .superRefine((value, ctx) => {
+        if (value.unacknowledgedCount > value.retainedCount) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["unacknowledgedCount"],
+            message: "unacknowledgedCount must not exceed retainedCount",
+          });
+        }
+        if (
+          (value.unacknowledgedCount === 0) !==
+          (value.oldestUnacknowledgedAgeMs === null)
+        ) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["oldestUnacknowledgedAgeMs"],
+            message:
+              "oldestUnacknowledgedAgeMs must be null exactly when the unacknowledged count is zero",
+          });
+        }
+      })
+      .optional(),
   })
-  .strict();
+  .passthrough();
 
 const ReadOnlySmokeEvidenceBaseSchema = z
   .object({
@@ -687,10 +734,19 @@ function isAbortError(err: unknown): boolean {
   );
 }
 
+// P0-7: `includeStream` defaults OFF so a readiness probe can never be refused
+// by a telemetry fault — the host answers an opt-in snapshot failure with a
+// typed 503 (D5), and only the telemetry callers ask for it.
 export async function checkSupervisorHealth(
-  opts: { timeoutMs?: number } = {},
+  opts: {
+    timeoutMs?: number;
+    lagAgeMs?: number;
+    includeStream?: boolean;
+  } = {},
 ): Promise<PlatformStatus> {
-  const url = `${baseUrl()}/health`;
+  const url = `${baseUrl()}/health?includeStream=${
+    opts.includeStream === true ? "true" : "false"
+  }`;
   const controller = new AbortController();
   const timeout = setTimeout(
     () => controller.abort(),
@@ -744,7 +800,25 @@ export async function checkSupervisorHealth(
     };
   }
 
-  return { kind: "ready", health: parsed.data };
+  const stream = parsed.data.stream;
+  // `unknown` means the host told us nothing (a pre-P0-7 supervisor, or one
+  // whose telemetry snapshot failed). A present block with a null age is the
+  // healthy steady state — zero backlog — and reads `clear`, not `unknown`.
+  const lag = {
+    scope: "host_backlog" as const,
+    status:
+      stream === undefined
+        ? ("unknown" as const)
+        : isHostBacklogLagEligible(
+              stream,
+              opts.lagAgeMs ?? DEFAULT_EVENT_STREAM_LAG_AGE_MS,
+            )
+          ? ("behind" as const)
+          : ("clear" as const),
+    sampledAt: parsed.data.checkedAt,
+  };
+
+  return { kind: "ready", health: parsed.data, lag };
 }
 
 export async function checkSupervisorDiagnostics(

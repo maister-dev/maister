@@ -63,6 +63,27 @@ export async function seedAdmin(db: NodePgDatabase): Promise<string> {
   return userId;
 }
 
+export const WORKER_MEMBER = {
+  email: "durable-workers-member@maister.local",
+  password: "DurableWorkers!pass2",
+};
+
+export async function seedMember(db: NodePgDatabase): Promise<string> {
+  const userId = randomUUID();
+
+  await db.insert(schema.users).values({
+    id: userId,
+    email: WORKER_MEMBER.email,
+    name: "Durable workers member",
+    passwordHash: await bcrypt.hash(WORKER_MEMBER.password, 10),
+    role: "member",
+    accountStatus: "active",
+    mustChangePassword: false,
+  });
+
+  return userId;
+}
+
 export async function seedPlatformRunner(
   db: NodePgDatabase,
   options: { makeDefault?: boolean } = {},

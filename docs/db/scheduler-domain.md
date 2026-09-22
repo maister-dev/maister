@@ -160,29 +160,30 @@ erDiagram
 
 ## Indexes
 
-| Constraint / Index                  | Columns                      | Purpose                                |
-| ----------------------------------- | ---------------------------- | -------------------------------------- |
-| `scheduler_jobs_due_idx`            | `(disabled_at, next_run_at)` | Due-job scan                           |
-| `scheduler_jobs_kind_due_idx`       | `(job_kind, next_run_at)`    | `jobKind` filtered ticks               |
-| `scheduler_jobs_project_kind_idx`   | `(project_id, job_kind)`     | Project-scoped job read model          |
-| `repo_delivery_rollups_project_branch_bucket_uq` (ADR-134) | `(project_id, branch, bucket_start, bucket_end)` UNIQUE | Idempotent daily target-branch denominator replacement |
-| `repo_delivery_rollups_project_branch_bucket_idx` (ADR-134) | `(project_id, branch, bucket_start)` | Bounded project Observatory range read |
-| `workspaces_pr_state_scan_idx` (ADR-140, Implemented) | `(project_id) WHERE pr_url IS NOT NULL AND (pr_state IS NULL OR pr_state='open')` | `pr_state_scan` open/unknown-PR candidate query |
-| `scheduler_job_runs_job_idx`        | `(job_id)`                   | Job attempt history                    |
-| `scheduler_job_runs_lease_idx`      | `(status, lease_expires_at)` | Stuck-attempt reaper                   |
-| `agent_schedules_project_agent_idx` | `(project_id, agent_id)`     | Project agent schedule lookup          |
-| `agent_schedules_due_cron_idx`      | `(trigger_type, enabled, next_fire_at)` | Due cron schedule scan        |
-| `run_schedules_project_idx`   | `(project_id)`               | Project schedules list                 |
-| `run_schedules_task_idx`      | `(task_id)`                  | Per-task schedule lookup               |
-| `run_schedules_due_idx`       | `(enabled, next_fire_at)`    | Dispatcher due-scan                    |
-| `run_schedules_last_run_idx`  | `(last_run_id)`              | FK SET NULL + last-run status join     |
-| `scheduled_task_launches_project_idx` (ADR-139) | `(project_id, updated_at)` | Bounded project listing |
-| `scheduled_task_launches_due_idx` (ADR-139) | `(next_attempt_at, id)` partial for `Scheduled`/`RetryWaiting` | Bounded one-time due scan |
-| `scheduled_task_launches_creator_key_uq` (ADR-139) | `(project_id, created_by_user_id, idempotency_key)` UNIQUE | Same-key replay/conflict boundary |
-| `scheduled_task_launch_attempts_run_id_uq` (ADR-139) | `(run_id)` UNIQUE | One reservation identity per Run |
-| `scheduled_task_launch_attempts_launch_live_uq` (ADR-139) | `(scheduled_launch_id)` partial for `Reserved`/`Materialized` | One in-flight reservation per intent |
-| `scheduled_task_launch_attempts_launch_idx` (ADR-139) | `(scheduled_launch_id, created_at)` | Recovery and audit lookup |
-| `scheduled_task_launch_events_launch_created_idx` (ADR-139) | `(scheduled_launch_id, created_at)` | Ordered safe audit trail |
+| Constraint / Index                                          | Columns                                                                           | Purpose                                                |
+| ----------------------------------------------------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| `scheduler_jobs_due_idx`                                    | `(disabled_at, next_run_at)`                                                      | Due-job scan                                           |
+| `scheduler_jobs_kind_due_idx`                               | `(job_kind, next_run_at)`                                                         | `jobKind` filtered ticks                               |
+| `scheduler_jobs_project_kind_idx`                           | `(project_id, job_kind)`                                                          | Project-scoped job read model                          |
+| `repo_delivery_rollups_project_branch_bucket_uq` (ADR-134)  | `(project_id, branch, bucket_start, bucket_end)` UNIQUE                           | Idempotent daily target-branch denominator replacement |
+| `repo_delivery_rollups_project_branch_bucket_idx` (ADR-134) | `(project_id, branch, bucket_start)`                                              | Bounded project Observatory range read                 |
+| `workspaces_pr_state_scan_idx` (ADR-140, Implemented)       | `(project_id) WHERE pr_url IS NOT NULL AND (pr_state IS NULL OR pr_state='open')` | `pr_state_scan` open/unknown-PR candidate query        |
+| `scheduler_job_runs_job_idx`                                | `(job_id)`                                                                        | Job attempt history                                    |
+| `scheduler_job_runs_job_claimed_idx`                        | `(job_id, claimed_at, id)`                                                        | Deterministic prior observation lookup                 |
+| `scheduler_job_runs_lease_idx`                              | `(status, lease_expires_at)`                                                      | Stuck-attempt reaper                                   |
+| `agent_schedules_project_agent_idx`                         | `(project_id, agent_id)`                                                          | Project agent schedule lookup                          |
+| `agent_schedules_due_cron_idx`                              | `(trigger_type, enabled, next_fire_at)`                                           | Due cron schedule scan                                 |
+| `run_schedules_project_idx`                                 | `(project_id)`                                                                    | Project schedules list                                 |
+| `run_schedules_task_idx`                                    | `(task_id)`                                                                       | Per-task schedule lookup                               |
+| `run_schedules_due_idx`                                     | `(enabled, next_fire_at)`                                                         | Dispatcher due-scan                                    |
+| `run_schedules_last_run_idx`                                | `(last_run_id)`                                                                   | FK SET NULL + last-run status join                     |
+| `scheduled_task_launches_project_idx` (ADR-139)             | `(project_id, updated_at)`                                                        | Bounded project listing                                |
+| `scheduled_task_launches_due_idx` (ADR-139)                 | `(next_attempt_at, id)` partial for `Scheduled`/`RetryWaiting`                    | Bounded one-time due scan                              |
+| `scheduled_task_launches_creator_key_uq` (ADR-139)          | `(project_id, created_by_user_id, idempotency_key)` UNIQUE                        | Same-key replay/conflict boundary                      |
+| `scheduled_task_launch_attempts_run_id_uq` (ADR-139)        | `(run_id)` UNIQUE                                                                 | One reservation identity per Run                       |
+| `scheduled_task_launch_attempts_launch_live_uq` (ADR-139)   | `(scheduled_launch_id)` partial for `Reserved`/`Materialized`                     | One in-flight reservation per intent                   |
+| `scheduled_task_launch_attempts_launch_idx` (ADR-139)       | `(scheduled_launch_id, created_at)`                                               | Recovery and audit lookup                              |
+| `scheduled_task_launch_events_launch_created_idx` (ADR-139) | `(scheduled_launch_id, created_at)`                                               | Ordered safe audit trail                               |
 
 ## Linked artifacts
 

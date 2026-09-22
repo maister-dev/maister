@@ -128,6 +128,26 @@ async function loadUser(id: string) {
   return rows[0] ?? null;
 }
 
+export function hasActiveGlobalRole(
+  user: Pick<SessionUser, "accountStatus" | "mustChangePassword" | "role">,
+  min: GlobalRole,
+): boolean {
+  return (
+    user.accountStatus === "active" &&
+    !user.mustChangePassword &&
+    GLOBAL_ORDER[user.role] >= GLOBAL_ORDER[min]
+  );
+}
+
+export async function hasActiveGlobalRoleById(
+  userId: string,
+  min: GlobalRole,
+): Promise<boolean> {
+  const user = await loadUser(userId);
+
+  return user !== null && hasActiveGlobalRole(user, min);
+}
+
 /**
  * Resolve the current user. DB-authoritative: the JWT supplies only the user
  * id (server-issued); role, mustChangePassword, and existence are re-read from
@@ -205,7 +225,7 @@ export async function requireActiveSession(): Promise<SessionUser> {
 
 export async function requireGlobalRole(min: GlobalRole): Promise<SessionUser> {
   const user = await requireActiveSession();
-  const granted = GLOBAL_ORDER[user.role] >= GLOBAL_ORDER[min];
+  const granted = hasActiveGlobalRole(user, min);
 
   log.debug({ userId: user.id, role: user.role, min, granted }, "global role");
 

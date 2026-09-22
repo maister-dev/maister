@@ -825,6 +825,11 @@ export const schedulerJobRuns = pgTable(
   },
   (t) => ({
     idxJob: index("scheduler_job_runs_job_idx").on(t.jobId),
+    idxJobClaimed: index("scheduler_job_runs_job_claimed_idx").on(
+      t.jobId,
+      t.claimedAt,
+      t.id,
+    ),
     idxLease: index("scheduler_job_runs_lease_idx").on(
       t.status,
       t.leaseExpiresAt,
@@ -4379,6 +4384,12 @@ export const executionEventConsumers = pgTable(
     idxService: index("execution_event_consumers_service_idx")
       .on(t.lastServedAt.asc().nullsFirst(), t.runId, t.consumerName)
       .where(sql`${t.state} <> 'poisoned'`),
+    // The service index is partial on `state <> 'poisoned'`, so the operator
+    // poison count and its keyset page had no index at all. Complement, in the
+    // page's own keyset order.
+    idxPoisoned: index("execution_event_consumers_poisoned_idx")
+      .on(t.runId, t.consumerName)
+      .where(sql`${t.state} = 'poisoned'`),
   }),
 );
 

@@ -3,7 +3,14 @@ import { Pool } from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import * as schema from "@/lib/db/schema";
-import { listSchedulerStatusRows } from "@/lib/queries/scheduler";
+import {
+  listCoreSchedulerStatusRows,
+  listSchedulerStatusRows,
+} from "@/lib/queries/scheduler";
+import {
+  DEFAULT_DOMAIN_EVENT_DISPATCH_JOB_ID,
+  DEFAULT_SYSTEM_SWEEP_JOB_ID,
+} from "@/lib/scheduler/jobs";
 import {
   createSchedulerJob,
   deleteSchedulerJob,
@@ -37,6 +44,67 @@ async function clearJobs(): Promise<void> {
 describe("scheduler job admin service integration", () => {
   beforeEach(async () => {
     await clearJobs();
+  });
+
+  // D1: the clock card must ALWAYS show the two core recovery jobs. The
+  // general list is capped, so a project with many overdue jobs would push
+  // them out of view — which is exactly when an operator needs to see them.
+  it("D1: 200 overdue project jobs never hide the two core clock rows", async () => {
+    await createSchedulerJob(
+      {
+        id: DEFAULT_SYSTEM_SWEEP_JOB_ID,
+        jobKind: "system_sweep",
+        cadenceIntervalSeconds: 120,
+      },
+      db,
+    );
+    await createSchedulerJob(
+      {
+        id: DEFAULT_DOMAIN_EVENT_DISPATCH_JOB_ID,
+        jobKind: "domain_event_dispatch",
+        cadenceIntervalSeconds: 60,
+      },
+      db,
+    );
+    for (let index = 0; index < 200; index += 1) {
+      await createSchedulerJob(
+        {
+          id: `overdue-${index}`,
+          jobKind: "system_sweep",
+          cadenceIntervalSeconds: 60,
+        },
+        db,
+      );
+    }
+    // Every project job is due BEFORE the core rows, so `next_run_at ASC`
+    // ranks all 200 ahead of them.
+    await pool.query(
+      `UPDATE scheduler_jobs SET next_run_at = now() - interval '1 day'
+       WHERE id LIKE 'overdue-%'`,
+    );
+    await pool.query(
+      `UPDATE scheduler_jobs SET next_run_at = now() + interval '1 day'
+       WHERE id IN ($1, $2)`,
+      [DEFAULT_SYSTEM_SWEEP_JOB_ID, DEFAULT_DOMAIN_EVENT_DISPATCH_JOB_ID],
+    );
+
+    const paged = await listSchedulerStatusRows({ db });
+
+    expect(paged.map((row) => row.id)).not.toContain(
+      DEFAULT_SYSTEM_SWEEP_JOB_ID,
+    );
+
+    const core = await listCoreSchedulerStatusRows({ db });
+
+    expect(core.map((row) => row.id).sort()).toEqual(
+      [
+        DEFAULT_SYSTEM_SWEEP_JOB_ID,
+        DEFAULT_DOMAIN_EVENT_DISPATCH_JOB_ID,
+      ].sort(),
+    );
+    for (const row of core) {
+      expect(row.nextRunAt).toBeInstanceOf(Date);
+    }
   });
 
   it("creates a job that surfaces in the status list", async () => {

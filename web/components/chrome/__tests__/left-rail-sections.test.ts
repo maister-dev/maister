@@ -46,6 +46,7 @@ describe("buildLeftRailSections", () => {
       "agents",
       "mcps",
       "users",
+      "executionHost",
       "scheduler",
       "settings",
     ]);

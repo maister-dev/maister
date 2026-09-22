@@ -139,6 +139,7 @@ flowchart TD
 
     Rail --> Users["Users /admin/users — admin"]
     Rail --> Scheduler["admin-scheduler /admin/scheduler — admin"]
+    Rail --> ExecutionHost["admin/execution-host /admin/execution-host — admin"]
     Rail --> Settings["Settings /settings — admin"]
     Settings --> SettingsAcp["settings-acp-runners — ACP runner catalog"]
     TopNav --> Account["Account /account — profile, password, personal API tokens"]
@@ -185,6 +186,7 @@ flowchart TD
 | [`settings-acp-runners.md`](settings-acp-runners.md) | Settings → ACP runners catalog (admin) | `/settings` | Implemented |
 | [`settings-brain.md`](settings-brain.md) | Settings → Brain provider config (admin) | `/settings` | Implemented |
 | [`admin-scheduler.md`](admin-scheduler.md) | Scheduler cockpit (admin) | `/admin/scheduler` | Implemented (ADR-071) |
+| [`admin/execution-host.md`](admin/execution-host.md) | Execution-host and event-plane diagnostics (admin) | `/admin/execution-host` | Implemented (P0-7) |
 | [`projects/project-board.md`](projects/project-board.md) | Project board (columns, Markdown task cards, launch, task editing) | `/projects/{slug}` | Implemented |
 | [`projects/project-automations.md`](projects/project-automations.md) | Project Automations (one-time task launches, recurring schedules, agent binding links) | `/projects/{slug}?tab=automations` | Implemented (ADR-139) |
 | [`projects/project-mcps-hub.md`](projects/project-mcps-hub.md) | Project MCP hub (3-source list, requirements ledger, match/connect/overlay, test-connection) | `/projects/{slug}?tab=mcps` | Implemented (list + ADR-129 hub) |

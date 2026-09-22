@@ -10,6 +10,7 @@ export const RAIL_SECTION_IDS = [
   "mcps",
   "users",
   "scheduler",
+  "executionHost",
   "settings",
 ] as const;
 
@@ -61,6 +62,7 @@ export function railSectionForPathname(
   if (isPathPrefix(path, "/mcps")) return "mcps";
   if (isPathPrefix(path, "/admin/users")) return "users";
   if (isPathPrefix(path, "/admin/scheduler")) return "scheduler";
+  if (isPathPrefix(path, "/admin/execution-host")) return "executionHost";
   if (isPathPrefix(path, "/settings")) return "settings";
 
   return null;

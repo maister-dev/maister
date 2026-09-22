@@ -125,23 +125,9 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-const DEFAULT_SWEEP_INTERVAL_SECONDS = 30;
 const DEFAULT_NEEDS_INPUT_IDLE_TTL_HOURS = 24;
 const PER_TICK_LIMIT = 50;
 const PER_PASS_CONCURRENCY = 4;
-
-function sweepIntervalSeconds(): number {
-  const raw = process.env.MAISTER_KEEPALIVE_SWEEP_INTERVAL_SECONDS;
-
-  if (!raw) return DEFAULT_SWEEP_INTERVAL_SECONDS;
-  const parsed = Number.parseInt(raw, 10);
-
-  if (!Number.isFinite(parsed) || parsed < 1) {
-    return DEFAULT_SWEEP_INTERVAL_SECONDS;
-  }
-
-  return parsed;
-}
 
 function needsInputIdleTtlHours(): number {
   const raw = process.env.MAISTER_NEEDSINPUTIDLE_TTL_HOURS;
@@ -2445,7 +2431,6 @@ export async function runSweepTick(
       abandonedCount,
       killedCount,
       budgetActedCount,
-      sweepIntervalSeconds: sweepIntervalSeconds(),
     },
     "sweeper tick complete",
   );
@@ -2457,95 +2442,4 @@ export async function runSweepTick(
     killedCount,
     budgetActedCount,
   };
-}
-
-// Singleton on globalThis so Next.js HMR does not multiply timers. The
-// sweeper is a server-only side-effect; UI never touches it.
-type GlobalSweeperState = {
-  handle: NodeJS.Timeout | null;
-  intervalSeconds: number;
-  running: boolean;
-};
-
-const SWEEPER_GLOBAL_KEY = Symbol.for("maister.keepalive-sweeper.v1");
-
-function globalState(): GlobalSweeperState {
-  const g = globalThis as unknown as Record<symbol, GlobalSweeperState>;
-
-  if (!g[SWEEPER_GLOBAL_KEY]) {
-    g[SWEEPER_GLOBAL_KEY] = {
-      handle: null,
-      intervalSeconds: 0,
-      running: false,
-    };
-  }
-
-  return g[SWEEPER_GLOBAL_KEY];
-}
-
-export function startKeepaliveSweeper(): void {
-  const state = globalState();
-  const intervalSeconds = sweepIntervalSeconds();
-
-  if (state.handle) {
-    if (state.intervalSeconds === intervalSeconds) {
-      log.debug(
-        { intervalSeconds },
-        "startKeepaliveSweeper: already running with the same interval — no-op",
-      );
-
-      return;
-    }
-    log.info(
-      {
-        prevIntervalSeconds: state.intervalSeconds,
-        intervalSeconds,
-      },
-      "startKeepaliveSweeper: interval changed — restarting timer",
-    );
-    clearInterval(state.handle);
-    state.handle = null;
-  }
-
-  state.intervalSeconds = intervalSeconds;
-  state.handle = setInterval(() => {
-    // Re-entrancy guard: setInterval fires every N s regardless of whether the
-    // previous tick's promise resolved. A slow tick (many candidates, heavy DB)
-    // could otherwise overlap with the next — two ticks racing the SAME run. The
-    // per-row CAS keeps that correct, but overlap wastes work and would let an
-    // escalate loser delete the winner's needs-input.json. Skip while a tick is
-    // in flight. (Cross-PROCESS overlap on a multi-instance web tier is still
-    // possible — the per-row CAS + the no-unlink-on-loss path above cover it.)
-    if (state.running) {
-      log.debug({}, "sweeper tick still running — skipping this interval");
-
-      return;
-    }
-    state.running = true;
-    void runSweepTick()
-      .catch((err: unknown) => {
-        log.error(
-          { err: err instanceof Error ? err.message : String(err) },
-          "sweeper tick threw — continuing on next interval",
-        );
-      })
-      .finally(() => {
-        state.running = false;
-      });
-  }, intervalSeconds * 1_000);
-  state.handle.unref?.();
-  log.info(
-    { intervalSeconds, perTickLimit: PER_TICK_LIMIT },
-    "keepalive-sweeper started",
-  );
-}
-
-export function stopKeepaliveSweeper(): void {
-  const state = globalState();
-
-  if (state.handle) {
-    clearInterval(state.handle);
-    state.handle = null;
-    log.info({}, "keepalive-sweeper stopped");
-  }
 }

@@ -11,12 +11,14 @@ export interface StatusBarProps {
   platformStatus: PlatformStatus;
   summary?: string;
   liveStatus?: ReactNode;
+  platformHref?: string;
 }
 
 export async function StatusBar({
   platformStatus,
   summary,
   liveStatus,
+  platformHref,
 }: StatusBarProps): Promise<ReactElement> {
   const t = await getTranslations("status");
   const requestHeaders = await headers();
@@ -29,8 +31,10 @@ export async function StatusBar({
     >
       <div className="flex items-center gap-3.5">
         <PlatformStatusPill
+          href={platformHref}
           labels={{
             ready: t("supervisorReady"),
+            behind: t("supervisorBehind"),
             unavailable: t("supervisorUnavailable"),
           }}
           status={platformStatus}

@@ -136,6 +136,7 @@
     "settings": "Settings",
     "users": "Users",
     "scheduler": "Scheduler",
+    "executionHost": "Execution host",
     "board": "Board",
     "activity": "Activity",
     "observatory": "Observatory",
@@ -789,6 +790,7 @@
     "hostUnavailable": "Host unavailable",
     "supervisor": "supervisor",
     "supervisorReady": "Supervisor ready",
+    "supervisorBehind": "Event ingest behind",
     "supervisorUnavailable": "Supervisor unavailable",
     "docs": "Docs",
     "poc": "POC · single-host"
@@ -3031,6 +3033,141 @@
       "viewer": "viewer"
     }
   },
+  "adminExecutionHost": {
+    "eyebrow": "Admin",
+    "title": "Execution host",
+    "subtitle": "Current host, event-stream, projection, worker, and command evidence in one operator view.",
+    "missing": "unavailable",
+    "yes": "yes",
+    "no": "no",
+    "sampledAt": "Current data sampled {value}",
+    "hosts": {
+      "title": "Hosts",
+      "subtitle": "Durable manager registration remains visible when the supervisor is unavailable.",
+      "empty": "No execution hosts are registered."
+    },
+    "streams": {
+      "title": "Event streams",
+      "subtitle": "Manager watermarks and the separately sampled host head. Lag never changes stream state.",
+      "empty": "No event streams have been observed.",
+      "observation": "last sweep verdict",
+      "observationMeta": "{observer}, sampled {sampledAt}",
+      "unacked": "host unACKed",
+      "watermarkLegend": "R received · C contiguous · A ACK-confirmed",
+      "lagLegend": "H→M host to manager · G gap · A ACK confirmation"
+    },
+    "consumers": {
+      "title": "Projection consumers",
+      "subtitle": "Top backlog across non-terminal runs. The totals cover the complete eligible population.",
+      "unattributed": "unattributed",
+      "count": "Showing {shown} of {total} consumers across {runs} eligible runs.",
+      "diagnosticCount": "{count} consumer cursor inconsistencies require investigation.",
+      "diagnostics": {
+        "cursor_ahead_of_horizon": "cursor ahead of run horizon"
+      }
+    },
+    "poison": {
+      "title": "Poisoned consumers",
+      "subtitle": "Terminal and active runs are listed independently from the backlog table.",
+      "empty": "No poisoned projection consumers.",
+      "incomplete": "Current failure evidence is incomplete; no repair command can be issued safely.",
+      "count": "{total} poisoned consumers",
+      "next": "Next page",
+      "first": "First page"
+    },
+    "workers": {
+      "title": "Durable workers",
+      "subtitle": "Current process health and the latest persisted scheduler observation.",
+      "current": "Current process",
+      "latestSweep": "Latest scheduler sweep",
+      "latestSweepMeta": "{observer}, sampled {sampledAt}"
+    },
+    "commands": {
+      "title": "Open commands",
+      "subtitle": "Current manager counts plus the latest scheduler impasse observation.",
+      "latestSweep": "Impasse sampled {sampledAt}"
+    },
+    "clock": {
+      "title": "Scheduler clock",
+      "subtitle": "The recovery clock that owns event-plane observation.",
+      "last": "Last completed tick: {value}",
+      "open": "Open scheduler diagnostics"
+    },
+    "fields": {
+      "host": "Host",
+      "readiness": "Readiness",
+      "reason": "Reason",
+      "boot": "Boot ID",
+      "version": "Version",
+      "capabilities": "Capabilities",
+      "lastSeen": "Last seen",
+      "stream": "Stream",
+      "state": "State",
+      "watermarks": "Manager R/C/A",
+      "hostHead": "Host head",
+      "lag": "Lag H→M/G/A",
+      "pressure": "Pressured",
+      "claim": "Claim",
+      "error": "Last error",
+      "run": "Run",
+      "consumer": "Consumer",
+      "backlog": "Backlog",
+      "cursor": "Cursor / horizon",
+      "served": "Last served age",
+      "nodeError": "Node error",
+      "open": "Open",
+      "accepted": "Accepted",
+      "oldest": "Oldest accepted",
+      "impasse": "Last impasse"
+    },
+    "forbidden": {
+      "title": "Admin access required",
+      "body": "Execution-host diagnostics contain platform-wide operational metadata.",
+      "back": "Return to the desk"
+    },
+    "panelUnavailable": "This panel could not be read. The other panels below are current.",
+    "readiness": {
+      "unknown": "Unknown",
+      "ready": "Ready",
+      "unavailable": "Unavailable"
+    },
+    "streamState": {
+      "observed": "Observed",
+      "active": "Active",
+      "closed": "Closed",
+      "lost": "Lost"
+    },
+    "telemetryStatus": {
+      "available": "Host sampled",
+      "unsupported": "Not reported",
+      "unavailable": "Host unreachable",
+      "stale": "Stale sample"
+    },
+    "consumerState": {
+      "ready": "Ready",
+      "retrying": "Retrying",
+      "poisoned": "Poisoned"
+    },
+    "workerState": {
+      "running": "Running",
+      "degraded": "Degraded",
+      "stopped": "Stopped"
+    },
+    "verdict": {
+      "observing": "Observing",
+      "lagging": "Lagging",
+      "not_advancing": "Not advancing",
+      "clear": "Clear",
+      "unknown": "Unknown",
+      "inactive": "Inactive",
+      "reset": "Reset"
+    },
+    "driver": {
+      "fallback_timer": "In-process timer",
+      "external_tick": "External tick",
+      "missing_tick": "No clock"
+    }
+  },
   "adminScheduler": {
     "eyebrow": "Admin",
     "title": "Scheduler",
@@ -3043,6 +3180,54 @@
     },
     "tableTitle": "Engine jobs",
     "tableSub": "Platform jobs are claimed on each /api/cron/tick. Disabled jobs are skipped.",
+    "clockCard": {
+      "title": "Scheduler clock",
+      "subtitle": "Process-local tick telemetry and durable activity for the two recovery-critical jobs.",
+      "interval": "Fallback interval",
+      "cronToken": "Cron token",
+      "configured": "configured",
+      "missing": "missing",
+      "lastStarted": "Last started",
+      "lastFinished": "Last finished",
+      "duration": "Duration",
+      "outcome": "Outcome",
+      "active": "Active ticks",
+      "overlap": "Skipped overlaps",
+      "overlapValue": "{total} total · {current} current · {last} previous",
+      "process": "Process ID",
+      "never": "never observed",
+      "job": "Core job",
+      "status": "Last status",
+      "lastRun": "Last run",
+      "errorCode": "Error code",
+      "nextRun": "Next run",
+      "disabled": "disabled",
+      "missingJob": "missing",
+      "overdue": "overdue",
+      "driver": {
+        "fallback_timer": "Fallback timer",
+        "external_tick": "External tick expected",
+        "missing_tick": "No tick configured"
+      },
+      "outcomes": {
+        "completed": "completed",
+        "partial": "partial",
+        "failed": "failed",
+        "maintenance_noop": "maintenance no-op"
+      },
+      "guidance": {
+        "fallback_timer": "This process runs a tick every {seconds}s. Process counters reset on restart.",
+        "external_tick": "Call {path} from external cron and verify the durable core-job timestamps below.",
+        "missing_tick": "Set MAISTER_CRON_TOKEN for an external caller or enable the fallback timer."
+      },
+      "jobStatus": {
+        "Claimed": "Claimed",
+        "Running": "Running",
+        "Succeeded": "Succeeded",
+        "Failed": "Failed",
+        "Skipped": "Skipped"
+      }
+    },
     "brainQueue": {
       "tableTitle": "Brain index queue",
       "tableSub": "Index jobs are stored in brain_index_jobs and drained by system_sweep.default on each scheduler tick.",
@@ -3066,24 +3251,6 @@
         "manual": "manual",
         "event": "event",
         "chunker_upgrade": "chunker upgrade"
-      },
-      "clock": {
-        "tickPath": "Tick route",
-        "interval": "Fallback interval",
-        "cronToken": "Cron token",
-        "configured": "configured",
-        "missing": "missing",
-        "guidanceLabel": "Driver",
-        "driver": {
-          "fallback_timer": "Fallback timer",
-          "external_tick": "External tick expected",
-          "missing_tick": "No tick configured"
-        },
-        "guidance": {
-          "fallback_timer": "The web process calls {path} every {seconds}s.",
-          "external_tick": "Call {path} from external cron; fallback timer is off.",
-          "missing_tick": "Set MAISTER_CRON_TOKEN for an external cron caller or MAISTER_SCHEDULER_TIMER_ENABLED=true for single-box installs."
-        }
       }
     },
     "reconciliation": {

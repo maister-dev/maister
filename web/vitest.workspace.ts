@@ -9,6 +9,7 @@ const testWorktreeInvocationId =
   process.env.MAISTER_TEST_WORKTREE_INVOCATION_ID ?? randomUUID();
 const testEnvironment = {
   MAISTER_TEST_WORKTREE_INVOCATION_ID: testWorktreeInvocationId,
+  MAISTER_SCHEDULER_TIMER_ENABLED: "false",
 };
 
 const alias = {

@@ -1,21 +1,32 @@
 import "server-only";
 
+import { randomUUID } from "node:crypto";
+
 import pino from "pino";
 
 import { isMaisterError } from "@/lib/errors";
+import {
+  schedulerTickFinished,
+  schedulerTickStarted,
+  type SchedulerCompletedTick,
+  type SchedulerTickSource,
+} from "@/lib/scheduler/clock-health";
 import { upgradeMaintenanceEngaged } from "@/lib/maintenance/upgrade-fence";
 import {
   claimDueJobs,
   DEFAULT_SYSTEM_SWEEP_JOB_ID,
   ensureDefaultSchedulerJobs,
+  loadPreviousSchedulerAttempt,
   reapStuckSchedulerAttempts,
   recordJobAttemptResult,
   recordJobAttemptStarted,
   renewSchedulerJobAttemptLease,
   requestSchedulerJobNow,
   schedulerAttemptTimeoutSeconds,
+  TERMINAL_SCHEDULER_JOB_RUN_STATUSES,
   type ClaimedSchedulerJob,
   type SchedulerJobKind,
+  type TerminalSchedulerJobRunStatus,
 } from "@/lib/scheduler/jobs";
 import { runEvaluationDispatchTick } from "@/lib/evaluations/dispatcher/tick";
 import { runEvaluationSuiteScanTick } from "@/lib/evaluations/suites";
@@ -31,6 +42,11 @@ import { runPrStateScanJob } from "@/lib/scheduler/handlers/pr-state-scan";
 import { runRepoDeliveryScanJob } from "@/lib/scheduler/handlers/repo-delivery-scan";
 import { runWebhookDeliveryJob } from "@/lib/scheduler/handlers/webhook-delivery";
 import { runSystemSweep } from "@/lib/scheduler/system-sweeps";
+import {
+  parseExecutionObservability,
+  type ExecutionObservabilitySummary,
+  type LagStreamObservation,
+} from "@/lib/execution-host/events/lag-observation";
 
 export type SchedulerTickSummary = {
   attemptedCount: number;
@@ -45,19 +61,24 @@ export type SchedulerTickJobSummary = {
   jobId: string;
   attemptId: string;
   jobKind: SchedulerJobKind;
-  status: "Succeeded" | "Failed" | "Skipped";
+  status: TerminalSchedulerJobRunStatus;
   errorCode?: string;
   errorMessage?: string;
 };
 
 type RunSchedulerTickInput = {
   jobKind?: SchedulerJobKind;
+  source?: SchedulerTickSource;
+  // D1: hands the caller the completion of the invocation IT started, so a
+  // concurrent cron tick finishing first cannot be attributed to this one.
+  onCompleted?: (tick: SchedulerCompletedTick | null) => void;
 };
 
 const log = pino({
   name: "scheduler-tick",
   level: process.env.LOG_LEVEL ?? "info",
 });
+const SCHEDULER_OBSERVER_ID = `scheduler:${process.pid}:${randomUUID()}`;
 
 class SchedulerLeaseLostError extends Error {
   constructor(job: ClaimedSchedulerJob) {
@@ -79,6 +100,28 @@ class SystemSweepFailedError extends Error {
 export async function runSchedulerTick(
   input: RunSchedulerTickInput = {},
 ): Promise<SchedulerTickSummary> {
+  const invocation = schedulerTickStarted(input.source ?? "manual");
+
+  try {
+    const result = await runSchedulerTickInternal(input);
+    const outcome = result.maintenanceNoop
+      ? "maintenance_noop"
+      : result.summary.failedCount > 0 || result.summary.skippedCount > 0
+        ? "partial"
+        : "completed";
+
+    input.onCompleted?.(schedulerTickFinished(invocation, outcome));
+
+    return result.summary;
+  } catch (err) {
+    input.onCompleted?.(schedulerTickFinished(invocation, "failed"));
+    throw err;
+  }
+}
+
+async function runSchedulerTickInternal(
+  input: RunSchedulerTickInput,
+): Promise<{ summary: SchedulerTickSummary; maintenanceNoop: boolean }> {
   // D9 step 2: the clock is the entry point for cron launches, agent ticks and
   // the destructive sweep, so a fenced installation claims no job at all. The
   // poller keeps returning a summary — a throw on every tick would bury the
@@ -90,12 +133,15 @@ export async function runSchedulerTick(
     );
 
     return {
-      attemptedCount: 0,
-      claimedCount: 0,
-      succeededCount: 0,
-      failedCount: 0,
-      skippedCount: 0,
-      attempts: [],
+      maintenanceNoop: true,
+      summary: {
+        attemptedCount: 0,
+        claimedCount: 0,
+        succeededCount: 0,
+        failedCount: 0,
+        skippedCount: 0,
+        attempts: [],
+      },
     };
   }
 
@@ -122,7 +168,7 @@ export async function runSchedulerTick(
 
   log.info({ ...summary, jobKind: input.jobKind }, "scheduler tick completed");
 
-  return summary;
+  return { summary, maintenanceNoop: false };
 }
 
 /**
@@ -139,7 +185,7 @@ export async function requestSystemSweep(): Promise<SchedulerTickSummary> {
     now,
   });
 
-  return runSchedulerTick({ jobKind: "system_sweep" });
+  return runSchedulerTick({ jobKind: "system_sweep", source: "cron" });
 }
 
 async function runClaimedJob(
@@ -152,13 +198,42 @@ async function runClaimedJob(
   try {
     switch (job.jobKind) {
       case "system_sweep": {
-        const systemSweepSummary = await runSystemSweepWithLease(job);
+        // D5: this is a TELEMETRY read on the recovery path. A failure here
+        // must not fail the attempt — that would count toward `disabled_at`
+        // and skip the sweep entirely, disabling recovery because its own
+        // observability could not be read.
+        let previous: Awaited<ReturnType<typeof loadPreviousSchedulerAttempt>> =
+          null;
+
+        try {
+          previous = await loadPreviousSchedulerAttempt({
+            jobId: job.id,
+            currentAttemptId: job.attemptId,
+          });
+        } catch (error) {
+          log.warn(
+            { jobId: job.id, attemptId: job.attemptId, err: error },
+            "scheduler-previous-attempt-read-failed",
+          );
+        }
+        const priorObservation = previousExecutionObservation(previous);
+        const systemSweepSummary = await runSystemSweepWithLease(
+          job,
+          priorObservation,
+        );
 
         if (systemSweepSummary.bundleErrors.length > 0) {
           throw new SystemSweepFailedError(systemSweepSummary);
         }
 
-        return recordSucceeded(job, systemSweepSummary);
+        const result = await recordSucceeded(job, systemSweepSummary);
+
+        if (result.status === "Succeeded")
+          publishExecutionObservationTransition(
+            systemSweepSummary.executionObservability,
+          );
+
+        return result;
       }
       case "command": {
         await runCommandJob(job.target);
@@ -269,6 +344,9 @@ async function runClaimedJob(
 
     if (!recorded) return leaseLost(job);
 
+    if (err instanceof SystemSweepFailedError)
+      publishExecutionObservationTransition(err.summary.executionObservability);
+
     return {
       jobId: job.id,
       attemptId: job.attemptId,
@@ -296,6 +374,7 @@ async function recordSucceeded(
 
 async function runSystemSweepWithLease(
   job: ClaimedSchedulerJob,
+  previous: LagStreamObservation | null,
 ): Promise<Awaited<ReturnType<typeof runSystemSweep>>> {
   let leaseLost = false;
   let renewal: Promise<void> | null = null;
@@ -344,7 +423,17 @@ async function runSystemSweepWithLease(
   timer.unref();
 
   try {
-    const summary = await runSystemSweep();
+    const summary = await runSystemSweep({
+      executionObservation: {
+        attemptId: job.attemptId,
+        observerId: SCHEDULER_OBSERVER_ID,
+        previous,
+        maxSampleGapMs: Math.max(
+          120_000,
+          2 * job.cadenceIntervalSeconds * 1_000,
+        ),
+      },
+    });
 
     if (renewal !== null) await renewal;
     if (leaseLost) throw new SchedulerLeaseLostError(job);
@@ -356,6 +445,64 @@ async function runSystemSweepWithLease(
   } finally {
     clearInterval(timer);
   }
+}
+
+function previousExecutionObservation(
+  previous: Awaited<ReturnType<typeof loadPreviousSchedulerAttempt>>,
+): LagStreamObservation | null {
+  if (
+    previous === null ||
+    !TERMINAL_SCHEDULER_JOB_RUN_STATUSES.some(
+      (status) => status === previous.status,
+    )
+  )
+    return null;
+
+  return (
+    parseExecutionObservability(previous.summary.executionObservability)
+      ?.stream ?? null
+  );
+}
+
+function publishExecutionObservationTransition(
+  observation: ExecutionObservabilitySummary | null | undefined,
+): void {
+  if (observation == null) return;
+  const stream = observation.stream;
+
+  if (!stream?.transition) return;
+
+  const fields = {
+    attemptId: observation.attemptId,
+    observerId: observation.observerId,
+    sampledAt: observation.sampledAt,
+    executionHostId: stream.identity?.executionHostId ?? null,
+    streamId: stream.identity?.streamId ?? null,
+    bootId: stream.identity?.bootId ?? null,
+    verdict: stream.verdict,
+    streak: stream.streak,
+    hostBacklog:
+      stream.hostBacklog.status === "available"
+        ? stream.hostBacklog.unacknowledgedCount
+        : null,
+    projectionBacklog:
+      stream.projectionBacklog.status === "available"
+        ? stream.projectionBacklog.maximumBacklog
+        : null,
+  };
+
+  if (stream.transition === "lagging") {
+    log.warn(fields, "runtime-event-stream-lagging");
+
+    return;
+  }
+
+  log.info(
+    fields,
+    stream.transition === "recovered"
+      ? "runtime-event-stream-lag-recovered"
+      : "runtime-event-stream-lag-reset",
+  );
 }
 
 function leaseLost(job: ClaimedSchedulerJob): SchedulerTickJobSummary {

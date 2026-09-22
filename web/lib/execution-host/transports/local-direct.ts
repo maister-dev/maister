@@ -37,6 +37,7 @@ function toHostHealth(status: wire.PlatformStatus): HostHealth {
     identity: health.host ?? null,
     version: health.version,
     sessions: health.sessions,
+    ...(health.stream === undefined ? {} : { stream: health.stream }),
   };
 }
 
@@ -70,10 +71,17 @@ function toRuntimeObjectMetadata(
   };
 }
 
-export function createLocalDirectTransport(): ExecutionHostTransport {
+export function createLocalDirectTransport(
+  options: Readonly<{ lagAgeMs?: number }> = {},
+): ExecutionHostTransport {
   return {
     async health(opts) {
-      return toHostHealth(await wire.checkSupervisorHealth(opts));
+      return toHostHealth(
+        await wire.checkSupervisorHealth({
+          ...opts,
+          lagAgeMs: options.lagAgeMs,
+        }),
+      );
     },
     capabilities() {
       return wire.getExecutionHostCapabilities();
@@ -104,7 +112,11 @@ export function createLocalDirectTransport(): ExecutionHostTransport {
       }));
     },
     platformStatus(opts) {
-      return wire.checkSupervisorHealth(opts);
+      return wire.checkSupervisorHealth({
+        ...opts,
+        lagAgeMs: options.lagAgeMs,
+        includeStream: true,
+      });
     },
     resolveModelSuggestions(draft, opts) {
       return wire.resolveModelSuggestions(draft, opts);
@@ -119,7 +131,9 @@ export function createLocalDirectTransport(): ExecutionHostTransport {
       return wire.streamSession(sessionId, opts);
     },
     async *streamRuntimeEvents(opts) {
-      const health = toHostHealth(await wire.checkSupervisorHealth());
+      const health = toHostHealth(
+        await wire.checkSupervisorHealth({ lagAgeMs: options.lagAgeMs }),
+      );
 
       if (health.kind !== "ready" || !health.identity) {
         throw new MaisterError(

@@ -190,7 +190,7 @@ there is no `gc_state` enum column.
 
 Runs once on Node boot from `web/instrumentation-node.ts`, AFTER the two
 existing recovery sweeps (`runResumeRecoverySweep`,
-`runTakeoverReturnRecoverySweep`) and BEFORE the keep-alive sweeper.
+`runTakeoverReturnRecoverySweep`) and before the scheduler timer starts.
 
 Before the `Running`-only crash classifier, this same startup call repairs
 ADR-137 Plan-review graph handoffs. It examines only current-step,
@@ -218,11 +218,13 @@ flowchart TD
 
 ### Periodic reconcile sweep (Implemented)
 
-A `globalThis`-singleton timer
-(`setInterval(...).unref()`, `MAISTER_RECONCILE_SWEEP_INTERVAL_SECONDS`,
-default 60) re-runs the same classification on a cadence. This is the
-sanctioned recovery poll (heartbeat + reconcile), NOT a banned live-path
-transition poll — the live path stays ACP-notification-driven.
+The seeded `system_sweep.default` scheduler job runs the same classification on
+the unified scheduler clock every 60 seconds. This is the sanctioned recovery
+poll (heartbeat + reconcile), NOT a banned live-path transition poll — the live
+path stays ACP-notification-driven. The retired
+`MAISTER_RECONCILE_SWEEP_INTERVAL_SECONDS` and
+`MAISTER_KEEPALIVE_SWEEP_INTERVAL_SECONDS` values are ignored with a boot WARN;
+there is no independent in-process reconcile or keepalive timer.
 
 The cadence also retries the bounded Plan-review handoff repair described above.
 It has no supervisor side effect: a ready graph wake calls `runFlow()` and an
@@ -807,7 +809,6 @@ receipt and `ACP_PROTOCOL` when the accepted-with-no-terminal fallback wrote it.
   `archived_branch`, `archived_at`, `runs.resume_started_at` — migration
   0015; `runs.resume_target_step_id` — migration 0016).
 - Config reference: [`../configuration.md`](../configuration.md) —
-  `MAISTER_RECONCILE_SWEEP_INTERVAL_SECONDS`,
   `MAISTER_RECONCILE_GRACE_SECONDS`,
   `MAISTER_GC_AGE_DAYS`, `MAISTER_GC_WARNING_DAYS`,
   `MAISTER_GC_ARCHIVE_PUSH`, `MAISTER_CRON_TOKEN`.

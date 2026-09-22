@@ -12,6 +12,7 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  experimental: { authInterrupts: true },
   serverExternalPackages: ["pg"],
   turbopack: {
     root: repoRoot,

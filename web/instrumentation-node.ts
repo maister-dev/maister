@@ -1,16 +1,16 @@
 // Next.js 16+ instrumentation hook — runs once per server process boot
-// (Node runtime only, NOT the edge runtime). M8 T6 wires the
-// keep-alive sweeper here so the singleton timer starts on the first
-// request without any explicit kick. HMR-safe because the sweeper
-// stores its handle on globalThis.
+// (Node runtime only, NOT the edge runtime). It validates operator
+// configuration, then starts the durable workers and the scheduler clock;
+// the clock's fallback timer is HMR-safe because it stores its handle on
+// globalThis. (The keep-alive and reconcile sweeper timers this hook used to
+// own were retired in P0-6 — the scheduler clock owns that work now.)
 //
-// M8 Codex review fix #2: also runs the resume-recovery sweep BEFORE
-// the keep-alive sweeper. This catches claimed-but-undelivered HITL
-// intents stranded across a web-process restart (the /respond idle
-// branch returns 202 based on a queueMicrotask that may not survive a
-// restart). The sweep is bounded and idempotent — a second invocation
-// finds no matching rows. Failure during recovery is logged but does
-// not block boot.
+// It also runs the resume-recovery sweep, which catches claimed-but-
+// undelivered HITL intents stranded across a web-process restart (the
+// /respond idle branch returns 202 based on a queueMicrotask that may not
+// survive a restart). The sweep is bounded and idempotent — a second
+// invocation finds no matching rows. Failure during recovery is logged but
+// does not block boot.
 //
 // This module is the Node-runtime body of instrumentation.ts and must stay
 // reachable ONLY through its `NEXT_RUNTIME === "nodejs"` branch — see the
@@ -20,6 +20,21 @@ export async function registerNodeRuntime(): Promise<void> {
   const { assertSupportedNode } = await import("../runtime/node-version");
 
   assertSupportedNode(process.versions.node);
+  const { initializeEventStreamLagConfig } = await import(
+    "@/lib/instance-config"
+  );
+
+  const { readSchedulerClockStatus } = await import(
+    "@/lib/scheduler/timer-config"
+  );
+
+  // Operator configuration is validated before any recoverable boot step so a
+  // malformed value refuses the process rather than surfacing later: an
+  // invalid lag threshold would break /health, and an invalid clock setting
+  // would throw from `startSchedulerTimer()` far below — after the durable
+  // workers are already running.
+  initializeEventStreamLagConfig();
+  readSchedulerClockStatus();
   const { projectionLimitsFromEnv } = await import(
     "@/lib/execution-host/events/projection-limits"
   );

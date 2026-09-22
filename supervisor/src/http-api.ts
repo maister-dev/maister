@@ -242,6 +242,22 @@ function countSessionsByStatus(
   return counts;
 }
 
+function parseHealthStreamOption(query: unknown): boolean {
+  const value =
+    query !== null && typeof query === "object"
+      ? (query as Record<string, unknown>).includeStream
+      : undefined;
+
+  if (value === undefined || value === "false") return false;
+  if (value === "true") return true;
+
+  throw new SupervisorError(
+    "PRECONDITION",
+    "includeStream must occur once with the literal value true or false",
+    { details: { reason: "health_query_invalid" } },
+  );
+}
+
 function runtimeEventSupervisorError(error: unknown): SupervisorError {
   if (error instanceof HostRuntimeEventError) {
     if (
@@ -1339,7 +1355,9 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     reply.status(500).send({ code: "ACP_PROTOCOL", message });
   });
 
-  app.get("/health", async (_req, reply) => {
+  app.get("/health", async (req, reply) => {
+    const includeStream = parseHealthStreamOption(req.query);
+
     if (!hostState.runtimeStorageAvailable()) {
       reply.status(503).send({
         code: "EXECUTOR_UNAVAILABLE",
@@ -1349,6 +1367,38 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
 
       return;
     }
+    let stream: SupervisorHealthResponse["stream"];
+
+    if (includeStream) {
+      try {
+        stream = hostState.runtimeEventHealthSnapshot();
+      } catch (cause) {
+        logger.warn({ err: cause }, "runtime-event-health-snapshot-failed");
+        // The block is never omitted — an opt-in failure must not impersonate
+        // an older host (D5). Storage itself is available (checked above), so
+        // the reason distinguishes a telemetry fault from one needing repair:
+        // readiness probes ask for the legacy shape and never reach here.
+        const storageBroken =
+          cause instanceof HostRuntimeEventError &&
+          cause.reason === "runtime_storage_unavailable";
+
+        throw new SupervisorError(
+          "EXECUTOR_UNAVAILABLE",
+          storageBroken
+            ? "runtime event health snapshot requires storage repair"
+            : "runtime event health snapshot is unavailable",
+          {
+            cause,
+            details: {
+              reason: storageBroken
+                ? "runtime_storage_unavailable"
+                : "stream_health_unavailable",
+            },
+          },
+        );
+      }
+    }
+
     const body: SupervisorHealthResponse = {
       status: "ready",
       host: {
@@ -1360,6 +1410,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       uptimeMs: Math.max(0, Date.now() - SUPERVISOR_STARTED_AT_MS),
       checkedAt: new Date().toISOString(),
       sessions: countSessionsByStatus(registry.list()),
+      ...(stream === undefined ? {} : { stream }),
     };
 
     reply.status(200).send(body);

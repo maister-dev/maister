@@ -215,6 +215,37 @@ stateDiagram-v2
     Disabled --> [*]
 ```
 
+### Clock lifecycle (Implemented — P0-6, 2026-09-22)
+
+The driver is resolved once at boot from two variables and is then visible on
+`/admin/scheduler`. An invalid `MAISTER_SCHEDULER_TIMER_ENABLED` refuses boot
+with `CONFIG` — validated alongside the lag threshold BEFORE the durable
+workers start, so a misconfigured process never reaches a half-started state.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Resolve: boot reads MAISTER_SCHEDULER_TIMER_ENABLED<br/>and MAISTER_CRON_TOKEN
+    Resolve --> FallbackTimer: unset + no token<br/>or literal true
+    Resolve --> ExternalTick: literal false + token present
+    Resolve --> MissingTick: literal false + no token
+    Resolve --> RefusedBoot: any other value (CONFIG)
+
+    FallbackTimer --> TickRunning: interval fires and no tick is active
+    FallbackTimer --> OverlapSkipped: interval fires while a tick is active
+    OverlapSkipped --> OverlapSkipped: streak grows, WARN emitted once
+    OverlapSkipped --> TickRunning: running tick finishes<br/>streak settled with ITS OWN completion (INFO)
+    TickRunning --> FallbackTimer: completed / partial / failed / maintenance_noop
+
+    ExternalTick --> TickRunning: POST /api/cron/tick with the token
+    MissingTick --> [*]: boot WARN names both variables; no tick ever fires
+```
+
+Each invocation is paired by id: `schedulerTickStarted` mints it,
+`schedulerTickFinished` closes it and returns that invocation's outcome to the
+caller that started it. Nothing reads the process-wide "last completed" tick to
+describe a tick it ran, because a concurrent cron invocation may have finished
+in between.
+
 ## Process flows
 
 ### Authorized tick
@@ -234,7 +265,7 @@ flowchart TD
     Budget -- no --> Skip[Skipped or queued per kind]
     Budget -- yes --> Handle[run job handler]
     Handle --> Summary[record attempt result]
-    Summary --> Resp{any attempt failed?}
+    Summary --> Resp{any attempt failed or skipped?}
     Resp -- no --> R200[200 tick summary]
     Resp -- yes --> R207[207 partial tick summary]
 ```
@@ -374,7 +405,12 @@ flowchart TD
   MUST leave it untouched), MUST NEVER launch an ACP session or call the
   supervisor client, and MUST run on a per-project cadence of
   `PR_STATE_SCAN_CADENCE_SECONDS` (300s) rather than as a global singleton.
-- The fallback timer MUST be off unless `MAISTER_SCHEDULER_TIMER_ENABLED=true`.
+- Clock resolution is one contract shared by boot and UI: unset timer plus no
+  cron token selects the 60-second `fallback_timer`; unset timer plus a token
+  selects `external_tick`; explicit `true` selects the fallback even with a
+  token; explicit `false` plus a token selects external; explicit `false`
+  without a token is `missing_tick` and emits one boot WARN naming both
+  variables. Empty means unset; every other nonempty value is `CONFIG`.
 - `/api/cron/gc` MUST keep its existing auth and response contract and run the
   shared GC bundle (workspace + revision GC + capabilities cleanup +
   ephemeral-agent cleanup + terminal/missing-run agent-materialization retry +
@@ -385,12 +421,22 @@ flowchart TD
   separate concepts: Engine jobs are fixed-interval clock work; Task schedules
   are cron rows owned by projects and fired through the single
   `run_schedule.dispatcher` job.
-- `/admin/scheduler` MUST show scheduler clock diagnostics for operators:
-  fallback timer state, fallback interval, whether `MAISTER_CRON_TOKEN` is
-  configured, and an explicit driver state. When the fallback timer is disabled,
-  the screen MUST say that an external caller is expected to hit
-  `/api/cron/tick`; when neither clock path is configured, it MUST say that no
-  tick is configured.
+- `/admin/scheduler` MUST begin with a standalone scheduler-clock card. It shows
+  resolved driver, configured fallback interval, cron-token presence, local
+  process/observation identity, active tick count, last start/finish/duration,
+  and outcome (`completed | partial | failed | maintenance_noop`). Timer overlap
+  counters are process-local and reset on restart. The first skipped firing in
+  a streak WARNs with length one; settlement INFO reports the final streak.
+  Full tick telemetry is process-local. Durable per-job activity is cluster
+  evidence from `scheduler_job_runs`, never relabeled as an entire tick.
+  A returned tick is `partial` when at least one claimed attempt is `Failed` or
+  `Skipped` (including a routine PRECONDITION skip), `completed` when all
+  attempts succeed, `failed` when the tick throws, and `maintenance_noop` when
+  the upgrade fence prevents claims.
+- The card MUST always include `system_sweep.default` and
+  `domain_event_dispatch.default` last/next/status rows independently of the
+  capped general list. Missing, disabled, overdue, never-run and failed states
+  stay visible. The Brain card contains only its queue.
 - `/admin/scheduler` MUST show the Brain index queue from `brain_index_jobs`,
   active rows first, with project, source, reason, status, progress, created
   time, source `last_indexed_at`, and source/job error context. The queue is
@@ -416,6 +462,39 @@ flowchart TD
 - Operator-visible execution failures on the screen MUST come from the last
   `scheduler_job_runs` status/error and existing structured scheduler logs;
   the UI should not invent a second error channel.
+
+### Execution observability summary (Implemented — P0-7, 2026-09-22)
+
+The terminal `system_sweep` attempt summary owns an additive member:
+
+```text
+executionObservability = {
+  schemaVersion: 1, attemptId, observerId, sampledAt,
+  quality: complete | partial | unavailable,
+  errors, stream, consumers, poison, commands, workers
+}
+```
+
+Each source reports a safe `available | unsupported | unavailable` status; the
+top-level `errors[]` carries the reason codes. One runtime parser owns this JSON
+for scheduler/admin readers; unsupported older/newer schemas render unavailable
+and restart qualification. The member is capped at 64 KiB UTF-8 JSON. If detail
+rows are dropped, identity, comparison state, exact totals and a numeric
+`truncated` count of the dropped rows remain; a summary still over the cap after
+the row lists are emptied is refused rather than persisted. Raw event/error bodies, prompts,
+paths and commands never enter history.
+
+The immediately preceding attempt for `system_sweep.default` is selected by
+`job_id`, ordered `(claimed_at DESC, id DESC)`, strictly before the current
+row's own `(claimed_at, id)`. Reading it is telemetry, not a precondition: a
+failure logs `scheduler-previous-attempt-read-failed` and the sweep proceeds
+with no prior observation rather than failing the attempt. It
+must be terminal and carry a supported observation; failed/reaped/missing
+attempts break continuity rather than being skipped. Transition logs publish
+only after the current terminal-result CAS succeeds. The sampled summary log is
+pre-persistence evidence and includes attempt ID; the persisted JSON and
+post-CAS transition are authoritative. Telemetry timeouts remain diagnostic and
+must not enter `bundleErrors` or disable the scheduler job.
 - (ADR-121, Implemented) `promoteNextPending` is the unified priority-ordered
   admission gate. On a freed slot it admits the single most-critical eligible unit
   across THREE sources — C1 Pending runs, C3 answered-idle resumables

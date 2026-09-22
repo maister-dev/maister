@@ -42,6 +42,9 @@ const runBrainReindexSweepMock = vi.hoisted(() => vi.fn());
 const sweepEvaluationEvidenceMock = vi.hoisted(() => vi.fn());
 const runPlainAgentDirectoryGcSweepMock = vi.hoisted(() => vi.fn());
 const ensureLocalExecutionDataPlaneMock = vi.hoisted(() => vi.fn());
+const collectExecutionEventLagMock = vi.hoisted(() => vi.fn());
+const platformStatusMock = vi.hoisted(() => vi.fn());
+const executionCommandReconcilePassMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/runs/keepalive-sweeper", () => ({
   runSweepTick: runSweepTickMock,
@@ -83,20 +86,14 @@ vi.mock("@/lib/runs/sync-recovery", () => ({
 // mocked like every other arm so `errors: []` stays a real guard.
 vi.mock("@/lib/execution-host", () => ({
   ensureLocalExecutionDataPlane: ensureLocalExecutionDataPlaneMock,
-  executionCommandReconcilePass: vi.fn(async () => ({
-    commands: {
-      scanned: 0,
-      redelivered: 0,
-      orphaned: 0,
-      folded: 0,
-      turnLost: 0,
-      skippedInFlight: 0,
-      errors: [],
-    },
-    assignmentsReleased: 0,
-    commandsPruned: 0,
-    legacy: { candidates: 0, runIds: [] },
-  })),
+  executionHosts: {
+    local: () => ({ platformStatus: platformStatusMock }),
+  },
+  executionCommandReconcilePass: executionCommandReconcilePassMock,
+}));
+vi.mock("@/lib/db/client", () => ({ getDb: () => ({}) }));
+vi.mock("@/lib/execution-host/events/lag-read-model", () => ({
+  collectExecutionEventLag: collectExecutionEventLagMock,
 }));
 // Same exposure, PRE-EXISTING (ADR-122, not this branch): both brain sweeps were
 // un-mocked too, so they threw on getDb() into the same swallowed `errors[]`.
@@ -158,6 +155,34 @@ const revisionSummary = {
   failed: 0,
 };
 
+function emptyLagModel() {
+  return {
+    sampledAt: "2026-09-22T12:00:00.000Z",
+    streams: [],
+    consumers: {
+      eligiblePopulation: 0,
+      totalConsumers: 0,
+      displayed: 0,
+      truncated: 0,
+      maximumBacklog: "0",
+      diagnosticCount: 0,
+      byHost: [],
+      top: [],
+      diagnostics: [],
+    },
+    poison: { total: 0, displayed: 0, nextAfter: null, rows: [] },
+    commands: {
+      total: 0,
+      queued: 0,
+      delivering: 0,
+      accepted: 0,
+      acceptedWithoutTimestamp: 0,
+      oldestAcceptedAt: null,
+      oldestAcceptedAgeMs: null,
+    },
+  };
+}
+
 describe("scheduler system sweeps", () => {
   beforeEach(() => {
     vi.resetModules();
@@ -215,6 +240,33 @@ describe("scheduler system sweeps", () => {
       host: { id: "11111111-1111-4111-8111-111111111111" },
       action: "touch",
       restarted: false,
+    });
+    platformStatusMock.mockReset().mockResolvedValue({
+      kind: "unavailable",
+      reason: "supervisor_down",
+      health: null,
+      sessions: [],
+    });
+    // A DEFAULT model. With `mockReset()` alone the collector resolved
+    // `undefined`, every later `createExecutionObservability` threw a
+    // TypeError into `errors[]`, and cases asserting a null impasse passed
+    // because the whole summary had degraded — not because the arm they
+    // targeted failed.
+    collectExecutionEventLagMock.mockReset().mockResolvedValue(emptyLagModel());
+    executionCommandReconcilePassMock.mockReset().mockResolvedValue({
+      commands: {
+        scanned: 0,
+        redelivered: 0,
+        orphaned: 0,
+        folded: 0,
+        turnLost: 0,
+        skippedInFlight: 0,
+        impasse: 0,
+        errors: [],
+      },
+      assignmentsReleased: 0,
+      commandsPruned: 0,
+      legacy: { candidates: 0, runIds: [] },
     });
   });
 
@@ -366,6 +418,66 @@ describe("scheduler system sweeps", () => {
     } finally {
       writeDurableWorkerSlot("flowContinuation", undefined);
     }
+  });
+
+  it("persists an unavailable observation without consuming the scheduler failure budget", async () => {
+    collectExecutionEventLagMock.mockRejectedValueOnce(
+      new Error("database timed out"),
+    );
+    const { runSystemSweep } = await import("../system-sweeps");
+
+    const summary = await runSystemSweep({
+      executionObservation: {
+        attemptId: "attempt-current",
+        observerId: "observer-b",
+        previous: null,
+      },
+    });
+
+    expect(summary.bundleErrors).toEqual([]);
+    expect(summary.errors).toContain(
+      "execution observability unavailable: database timed out",
+    );
+    expect(summary.executionObservability).toMatchObject({
+      schemaVersion: 1,
+      attemptId: "attempt-current",
+      observerId: "observer-b",
+      quality: "unavailable",
+      errors: ["lag_collection_failed"],
+      stream: null,
+    });
+  });
+
+  it("records an unknown impasse when command reconciliation fails", async () => {
+    executionCommandReconcilePassMock.mockRejectedValueOnce(
+      new Error("command query failed"),
+    );
+    const { runSystemSweep } = await import("../system-sweeps");
+
+    const summary = await runSystemSweep({
+      executionObservation: {
+        attemptId: "attempt-current",
+        observerId: "observer-b",
+        previous: null,
+      },
+    });
+
+    expect(summary.errors).toContain(
+      "execution-host reconcile pass failed: command query failed",
+    );
+    // The collector itself SUCCEEDED here, so the summary must not have
+    // degraded through the collector-failure path: only the impasse count is
+    // unknown. Without this the case passed on a TypeError from an undefined
+    // model, which is a different failure entirely.
+    expect(
+      summary.errors.some((error) =>
+        error.startsWith("execution observability unavailable"),
+      ),
+    ).toBe(false);
+    expect(summary.executionObservability?.errors).not.toContain(
+      "lag_collection_failed",
+    );
+    expect(summary.executionObservability?.commands.impasse).toBeNull();
   });
 
   // Every arm is individually try/caught into `errors[]`, so a sweep that throws

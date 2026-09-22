@@ -6,6 +6,12 @@ import { promisify } from "node:util";
 
 import pino from "pino";
 
+import {
+  DEFAULT_EVENT_STREAM_LAG_AGE_MS,
+  DEFAULT_EVENT_STREAM_LAG_SECONDS,
+} from "@/lib/execution-host/events/lag";
+import { MaisterError } from "@/lib/errors";
+
 export { runtimeRoot } from "@/lib/runtime-root";
 
 const execFileAsync = promisify(execFile);
@@ -110,7 +116,6 @@ export function importMaxFileBytes(): number {
 const DEFAULT_GC_AGE_DAYS = 14;
 const DEFAULT_WORKBENCH_MAX_FILE_BYTES = 524_288;
 const DEFAULT_GC_WARNING_DAYS = 2;
-const DEFAULT_RECONCILE_SWEEP_INTERVAL_SECONDS = 60;
 const DEFAULT_RECONCILE_GRACE_SECONDS = 90;
 const DEFAULT_RALPH_MAX_ATTEMPTS = 5;
 const DEFAULT_AUTO_RETRY_MAX_ATTEMPTS = 3;
@@ -121,6 +126,8 @@ const DEFAULT_ORCHESTRATOR_MAX_FANOUT = 16;
 const DEFAULT_ASSISTANT_ACTIVITY_WAITING_TOOL_AFTER_SECONDS = 90;
 const DEFAULT_ASSISTANT_ACTIVITY_SILENT_AFTER_SECONDS = 180;
 const DEFAULT_ASSISTANT_ACTIVITY_STALLED_AFTER_SECONDS = 900;
+const MAX_SAFE_MILLISECOND_SECONDS = Math.floor(Number.MAX_SAFE_INTEGER / 1000);
+let initializedEventStreamLagAgeMs = DEFAULT_EVENT_STREAM_LAG_AGE_MS;
 
 // M18 Phase 2 (§3.2, Codex F1): a durable `claiming` promotion claim older than
 // this window is considered abandoned (crashed mid-promote) and is reclaimable
@@ -234,6 +241,39 @@ export function eventStreamStallSeconds(): number {
   return positiveIntFromEnv("MAISTER_EVENT_STREAM_STALL_SECONDS", 300);
 }
 
+export function eventStreamLagSeconds(): number {
+  const raw = process.env.MAISTER_EVENT_STREAM_LAG_SECONDS;
+
+  if (raw === undefined) return DEFAULT_EVENT_STREAM_LAG_SECONDS;
+  if (!/^[1-9][0-9]*$/.test(raw)) {
+    throw new MaisterError(
+      "CONFIG",
+      "MAISTER_EVENT_STREAM_LAG_SECONDS must be a canonical positive integer",
+    );
+  }
+
+  const parsed = Number(raw);
+
+  if (!Number.isSafeInteger(parsed) || parsed > MAX_SAFE_MILLISECOND_SECONDS) {
+    throw new MaisterError(
+      "CONFIG",
+      "MAISTER_EVENT_STREAM_LAG_SECONDS must convert safely to milliseconds",
+    );
+  }
+
+  return parsed;
+}
+
+export function initializeEventStreamLagConfig(): number {
+  initializedEventStreamLagAgeMs = eventStreamLagSeconds() * 1_000;
+
+  return initializedEventStreamLagAgeMs;
+}
+
+export function configuredEventStreamLagAgeMs(): number {
+  return initializedEventStreamLagAgeMs;
+}
+
 export function costReconcileLookbackHours(): number {
   return positiveIntFromEnv("MAISTER_COST_RECONCILE_LOOKBACK_HOURS", 168);
 }
@@ -301,21 +341,6 @@ export function orchestratorMaxFanout(): number {
 
   if (!Number.isFinite(parsed) || parsed < 1) {
     return DEFAULT_ORCHESTRATOR_MAX_FANOUT;
-  }
-
-  return parsed;
-}
-
-// M19 Phase 2 (T2.3): how often the periodic reconcile sweeper ticks. Env
-// override, sane default, floor at 1.
-export function reconcileSweepIntervalSeconds(): number {
-  const raw = process.env.MAISTER_RECONCILE_SWEEP_INTERVAL_SECONDS;
-
-  if (!raw) return DEFAULT_RECONCILE_SWEEP_INTERVAL_SECONDS;
-  const parsed = Number.parseInt(raw, 10);
-
-  if (!Number.isFinite(parsed) || parsed < 1) {
-    return DEFAULT_RECONCILE_SWEEP_INTERVAL_SECONDS;
   }
 
   return parsed;

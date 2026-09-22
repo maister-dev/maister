@@ -6,13 +6,22 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { openHostState, type CommandReceiptRow } from "../host-state";
+import { HostRuntimeEventError } from "../host-runtime-errors";
+import { SupervisorHealthResponseSchema } from "../types";
+import {
+  openHostState,
+  RUNTIME_EVENT_HEALTH_SNAPSHOT_SQL,
+  type CommandReceiptRow,
+  type HostState,
+} from "../host-state";
 import {
   CONTROL_EVENT_MAX_BYTES,
   DEFAULT_RUNTIME_LIMITS,
   validateRuntimeLimits,
   runtimeLimitsFromEnv,
 } from "../runtime-limits";
+
+import { bootHost, cleanupRuntimeRoot } from "./_fixtures/boot-host";
 
 const SMALL_LIMITS = validateRuntimeLimits({
   ...DEFAULT_RUNTIME_LIMITS,
@@ -491,6 +500,11 @@ describe("Stage B durable host event outbox", () => {
         pressured: true,
         reservedControlRows: 18,
       });
+      // H1: the health SNAPSHOT is the manager's only view of pressure, so it
+      // must carry the flag too — the stats path above is host-private.
+      expect(state.runtimeEventHealthSnapshot()).toMatchObject({
+        pressured: true,
+      });
       clock += SMALL_LIMITS.eventAckGraceMs + 1;
       state.pruneAcknowledgedRuntimeEvents(
         new Date(clock - SMALL_LIMITS.eventAckGraceMs),
@@ -648,6 +662,223 @@ describe("Stage B durable host event outbox", () => {
       restarted.close();
     } finally {
       rmSync(stateDir, { force: true, recursive: true });
+    }
+  });
+
+  it("reports an opt-in stream snapshot without changing legacy health", async () => {
+    let clock = new Date("2026-09-22T09:00:00.000Z");
+    const host = await bootHost({ now: () => clock });
+
+    try {
+      const legacy = (await (
+        await fetch(`${host.url}/health`)
+      ).json()) as Record<string, unknown>;
+      const explicitLegacy = (await (
+        await fetch(`${host.url}/health?includeStream=false`)
+      ).json()) as Record<string, unknown>;
+
+      expect(legacy).not.toHaveProperty("stream");
+      expect(explicitLegacy).not.toHaveProperty("stream");
+      expect(Object.keys(explicitLegacy).sort()).toEqual(
+        Object.keys(legacy).sort(),
+      );
+      expect(explicitLegacy).toMatchObject({
+        status: legacy.status,
+        host: legacy.host,
+        version: legacy.version,
+        sessions: legacy.sessions,
+      });
+
+      // The producer's own strict schema is the oracle: every shape this route
+      // emits must parse, so `.strict()` is a live contract rather than a
+      // declaration no code ever exercises.
+      for (const body of [legacy, explicitLegacy]) {
+        expect(SupervisorHealthResponseSchema.safeParse(body)).toMatchObject({
+          success: true,
+        });
+      }
+
+      const empty = (await (
+        await fetch(`${host.url}/health?includeStream=true`)
+      ).json()) as { stream: Record<string, unknown> };
+
+      expect(SupervisorHealthResponseSchema.safeParse(empty)).toMatchObject({
+        success: true,
+      });
+      expect(empty.stream).toMatchObject({
+        streamId: host.hostState.getRuntimeEventStreamId(),
+        headSequence: null,
+        unacknowledgedCount: 0,
+        retainedCount: 0,
+        pressured: false,
+        oldestUnacknowledgedAgeMs: null,
+      });
+
+      const first = host.hostState.appendRuntimeEvent(eventDraft());
+
+      clock = new Date("2026-09-22T08:59:59.000Z");
+      const regressed = (await (
+        await fetch(`${host.url}/health?includeStream=true`)
+      ).json()) as { stream: Record<string, unknown> };
+
+      expect(regressed.stream.oldestUnacknowledgedAgeMs).toBe(0);
+
+      clock = new Date("2026-09-22T09:00:02.000Z");
+      const second = host.hostState.appendRuntimeEvent(eventDraft());
+
+      clock = new Date("2026-09-22T09:00:07.000Z");
+      host.hostState.ackRuntimeEvents(first.streamId, first.sequence);
+
+      const partial = (await (
+        await fetch(`${host.url}/health?includeStream=true`)
+      ).json()) as { stream: Record<string, unknown> };
+
+      expect(SupervisorHealthResponseSchema.safeParse(partial)).toMatchObject({
+        success: true,
+      });
+      expect(partial.stream).toMatchObject({
+        headSequence: "1",
+        unacknowledgedCount: 1,
+        retainedCount: 2,
+        oldestUnacknowledgedAgeMs: 5_000,
+      });
+
+      const sqlite = new DatabaseSync(join(host.stateDir, "state.sqlite"));
+
+      try {
+        const rawAcks = sqlite
+          .prepare(
+            "SELECT acknowledged_at FROM runtime_event_outbox ORDER BY sequence_sort_key",
+          )
+          .all() as Array<{ acknowledged_at: string | null }>;
+        const queryPlan = sqlite
+          .prepare(`EXPLAIN QUERY PLAN ${RUNTIME_EVENT_HEALTH_SNAPSHOT_SQL}`)
+          .all()
+          .map((row) => JSON.stringify(row))
+          .join("\n");
+
+        expect(rawAcks).toEqual([
+          { acknowledged_at: null },
+          { acknowledged_at: null },
+        ]);
+        expect(queryPlan).toContain("runtime_event_outbox_stream_replay_idx");
+      } finally {
+        sqlite.close();
+      }
+
+      clock = new Date(
+        clock.getTime() + host.hostState.limits.eventAckGraceMs + 1,
+      );
+      host.hostState.pruneAcknowledgedRuntimeEvents(clock);
+      const purgedPrefix = (await (
+        await fetch(`${host.url}/health?includeStream=true`)
+      ).json()) as { stream: Record<string, unknown> };
+
+      expect(purgedPrefix.stream).toMatchObject({
+        headSequence: "1",
+        retainedCount: 1,
+        unacknowledgedCount: 1,
+      });
+
+      host.hostState.ackRuntimeEvents(second.streamId, second.sequence);
+      const acknowledged = (await (
+        await fetch(`${host.url}/health?includeStream=true`)
+      ).json()) as { stream: Record<string, unknown> };
+
+      expect(acknowledged.stream).toMatchObject({
+        headSequence: "1",
+        retainedCount: 1,
+        unacknowledgedCount: 0,
+        oldestUnacknowledgedAgeMs: null,
+      });
+
+      clock = new Date(
+        clock.getTime() + host.hostState.limits.eventAckGraceMs + 1,
+      );
+      host.hostState.pruneAcknowledgedRuntimeEvents(clock);
+      const purgedAll = (await (
+        await fetch(`${host.url}/health?includeStream=true`)
+      ).json()) as { stream: Record<string, unknown> };
+
+      expect(purgedAll.stream).toMatchObject({
+        headSequence: "1",
+        retainedCount: 0,
+        unacknowledgedCount: 0,
+        oldestUnacknowledgedAgeMs: null,
+      });
+
+      for (const query of [
+        "includeStream=",
+        "includeStream=yes",
+        "includeStream=true&includeStream=false",
+      ]) {
+        const response = await fetch(`${host.url}/health?${query}`);
+
+        expect(response.status, query).toBe(409);
+        await expect(response.json(), query).resolves.toMatchObject({
+          code: "PRECONDITION",
+          details: { reason: "health_query_invalid" },
+        });
+      }
+    } finally {
+      await host.stop();
+      await cleanupRuntimeRoot(host.runtimeRoot);
+    }
+  });
+
+  it("returns a typed failure instead of impersonating an older host, and names the fault", async () => {
+    // D5 keeps the typed 503 (the block is never omitted), but the reason must
+    // separate a telemetry consistency fault from storage that needs repair —
+    // the manager classifies on it, and only the latter is a host problem.
+    const cases = [
+      {
+        thrown: new HostRuntimeEventError(
+          "stream_corrupt",
+          "runtime event health counters are inconsistent",
+        ),
+        reason: "stream_health_unavailable",
+      },
+      {
+        thrown: new HostRuntimeEventError(
+          "runtime_storage_unavailable",
+          "runtime storage requires repair",
+        ),
+        reason: "runtime_storage_unavailable",
+      },
+      {
+        thrown: new Error("sqlite read failed"),
+        reason: "stream_health_unavailable",
+      },
+    ];
+
+    for (const { thrown, reason } of cases) {
+      const state = openHostState({ inMemory: true });
+      const failingState: HostState = {
+        ...state,
+        runtimeEventHealthSnapshot() {
+          throw thrown;
+        },
+      };
+      const host = await bootHost({ hostState: failingState });
+
+      try {
+        expect((await fetch(`${host.url}/health`)).status).toBe(200);
+        expect(
+          (await fetch(`${host.url}/health?includeStream=false`)).status,
+          reason,
+        ).toBe(200);
+        const response = await fetch(`${host.url}/health?includeStream=true`);
+
+        expect(response.status, reason).toBe(503);
+        await expect(response.json(), reason).resolves.toMatchObject({
+          code: "EXECUTOR_UNAVAILABLE",
+          details: { reason },
+        });
+      } finally {
+        await host.stop();
+        state.close();
+        await cleanupRuntimeRoot(host.runtimeRoot);
+      }
     }
   });
 });

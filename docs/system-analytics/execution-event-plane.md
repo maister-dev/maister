@@ -125,6 +125,103 @@ the consumer's two silent reconnect paths — a failed post-ACK watermark record
 and a lost or changed claim — now log and record instead of retrying every 2 s
 in complete silence.
 
+### Lag versus stall (Implemented — P0-7, 2026-09-22)
+
+Lag is computed observability and is never an `execution_event_streams.state`
+or a reason to degrade a stream. Stall/lost retains the repair-first authority
+above. Duplicate traffic may advance `last_seen_at`, so no lag formula uses
+silence as progress. With a known empty cursor represented as `-1` internally,
+all sequence arithmetic uses bigint and serializes as canonical decimal strings:
+
+- ingest distance = `hostHead - last_received_sequence`;
+- manager gap distance = `last_received_sequence - last_contiguous_sequence`;
+- ACK-confirmation distance = `last_contiguous_sequence - last_ack_confirmed_sequence`;
+- projection backlog = `max(accepted run_sequence) - consumer.last_run_sequence`.
+
+The accepted horizon filters `ingest_disposition='accepted' AND run_sequence IS
+NOT NULL`, matching projector work. A first event at sequence zero behind a null
+cursor is backlog one. Distances describe sequence positions rather than an
+exact missing-row count when a sequence gap exists. Missing host telemetry,
+inconsistent manager watermarks, a cached host head behind the manager, and
+identity replacement are `unknown`, never zero or a clamped healthy value.
+
+Projection candidates are all non-terminal runs with registered consumers,
+including parked runs. Their horizons use the `(run_id, run_sequence)` index;
+the read model orders the complete eligible population by backlog with stable
+run/consumer tie-breakers before returning top 20 and exact totals. Current
+host attribution comes only from the active execution assignment. Unassigned
+runs remain visible as unattributed; historical ownership is not guessed.
+Poisoned consumers are queried separately, including terminal runs, with stable
+20-row pagination and the event/cursor/error-generation needed by the existing
+rearm command.
+
+The default warning threshold is backlog greater than 100 for at least 120 s
+(`MAISTER_EVENT_STREAM_LAG_SECONDS`) while a manager watermark advances in
+three consecutive, fresh `system_sweep` observations for the same
+host/stream/boot identity. `last_served_at` is informational only because a
+claim updates it. Projection age tracks whether the maximum attributed backlog
+over the full population remained above threshold; it does not claim that the
+same consumer was behind throughout. At streak three one
+`runtime-event-stream-lagging` WARN opens an incident. A complete sample with
+both host and projection lanes at or below 100 clears it and emits one
+`runtime-event-stream-lag-recovered` INFO. No sequence progress while backlog
+remains is `not_advancing`, not recovery. Missing/stale sources reset the streak
+and preserve an open incident; lost/closed or identity replacement resets it
+without a recovered claim.
+Fresh means the sample gap is positive and no greater than twice the configured
+`system_sweep.default` cadence (with the 120 s default floor). A lost/closed
+stream or complete identity replacement closes an open incident with
+`runtime-event-stream-lag-reset` INFO; it does not claim recovery.
+
+The reducer is pure — no database read, no logging — and is exhaustively
+defined by the table below, evaluated top to bottom.
+
+| Input | Verdict and incident effect |
+| --- | --- |
+| Stream not `active` (closed, lost, observed) | `inactive`; streak, age and incident discarded. `reset` transition only if an incident was open. |
+| First sample for this reader, complete and identified | `observing`, streak 0; establishes the baseline and the above-threshold start. |
+| First sample that is incomplete or carries no identity | `unknown`, streak 0. Missing telemetry is not a baseline: `observing` would claim a sample that was never taken. |
+| Later sample whose quality is not `complete` | `unknown`, streak 0; the previous identity and any open incident are preserved, and no recovery is declared. |
+| Identity (host, stream or boot) differs from the previous sample | `reset`; streak, age and incident discarded. `reset` transition only if an incident was open. |
+| Sample gap non-positive or beyond the freshness window | `unknown`, streak 0; an open incident is preserved. |
+| Complete sample with BOTH lanes at or below 100 | `clear`; streak and age reset. `recovered` transition only if an incident was open. Zero is the catch-up target; 100 is the warning-clear boundary. |
+| No manager watermark progress while backlog remains | `not_advancing`, streak 0; an open incident is retained and never recovered. |
+| Backlog above threshold but not yet aged past the window | `observing`, streak 0; the above-threshold start is preserved so the age keeps accruing. |
+| Progressing, eligible sample | Streak increments, saturating at 3. At 3 the verdict is `lagging` and the incident opens; the `lagging` transition is emitted only on the sweep that opens it. |
+
+A host whose consumers are not ALL inconsistent keeps a measurable projection
+lane: `maximumBacklog` is a maximum over the rows with a computable backlog, so
+a `cursor_ahead_of_horizon` consumer is already excluded from it and is
+reported separately in `errors[]`. Blanking the whole lane on one such row
+would leave an open incident with no evidence that could ever clear it.
+
+The observer persists bounded versioned evidence inside the existing terminal
+`system_sweep` attempt summary. It does not write stream error/state/readiness
+or run state. Observer failures are diagnostic errors only: they do not enter
+the sweep's failure bundle, increment consecutive scheduler failures, or
+disable recovery work. The admin read is read-only and cannot advance a streak
+or emit transitions.
+
+Qualification uses the real supervisor outbox and real PostgreSQL. It creates
+more than 100 host events through ordinary checkpoint commands, advances the
+production consumer in bounded passes, holds and releases a real projection
+cursor, and then invokes the unchanged two-pass stall detector. The collector
+test includes 50,000 runs (1,000 non-terminal), two consumers per populated
+active run, a separate 50,000-event history, and 20 warm samples. It requires
+the indexed horizon plan and asserts the shape of the work rather than only its
+clock time: the per-consumer node-error probe runs at most once per row of the
+ranked page (never once per eligible consumer), and the horizon lookup is
+index-served. Wall-clock bounds accompany those as anti-catastrophe limits
+only — this lane is shared, so a timing-only budget would report host load as a
+regression.
+
+`SET LOCAL statement_timeout = '2000ms'` bounds each STATEMENT in the
+observation transaction, not the transaction as a whole: the collector issues
+five reads, so a fully blocked collection can take up to five such budgets
+before it gives up. That is deliberate — the bound exists to stop one pathological
+statement from pinning a read-only snapshot, and the caller degrades the panel
+rather than failing the page.
+
 ## Process flows
 
 ```mermaid

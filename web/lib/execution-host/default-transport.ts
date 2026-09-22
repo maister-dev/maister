@@ -2,6 +2,8 @@ import type { ExecutionHostTransport } from "./contracts";
 
 import { createLocalDirectTransport } from "./transports/local-direct";
 
+import { configuredEventStreamLagAgeMs } from "@/lib/instance-config";
+
 // The transport every implicit resolution uses when a caller injects none
 // (registrar, client factory, recovery). Tests that exercise production paths
 // without an injection seam (state transitions, routes, event consumers) point
@@ -9,7 +11,10 @@ import { createLocalDirectTransport } from "./transports/local-direct";
 let override: ExecutionHostTransport | null = null;
 
 export function defaultTransport(): ExecutionHostTransport {
-  return override ?? createLocalDirectTransport();
+  return (
+    override ??
+    createLocalDirectTransport({ lagAgeMs: configuredEventStreamLagAgeMs() })
+  );
 }
 
 export function setDefaultTransportForTests(

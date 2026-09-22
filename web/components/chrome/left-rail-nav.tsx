@@ -12,6 +12,7 @@ import {
   InboxIcon,
   PuzzlePieceIcon,
   SignalIcon,
+  ServerStackIcon,
   Squares2X2Icon,
   TableCellsIcon,
   UsersIcon,
@@ -74,6 +75,7 @@ const sectionIcons: Record<RailSectionId, HeroIcon> = {
   mcps: PuzzlePieceIcon,
   users: UsersIcon,
   scheduler: ClockIcon,
+  executionHost: ServerStackIcon,
   settings: Cog6ToothIcon,
 };
 

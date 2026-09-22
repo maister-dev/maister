@@ -22,6 +22,11 @@ import { ActiveWorkspaceRow } from "@/components/chrome/active-workspace-row";
 import { AutoCloseDetails } from "@/components/chrome/auto-close-details";
 import { LaunchHotkeyHint } from "@/components/chrome/launch-hotkey-hint";
 import { LeftRailNav } from "@/components/chrome/left-rail-nav";
+import {
+  PlatformStatusDot,
+  PlatformStatusPill,
+  platformStatusLabel,
+} from "@/components/chrome/platform-status";
 import { buildLeftRailSections } from "@/components/chrome/left-rail-sections";
 import { RailCollapse } from "@/components/chrome/rail-collapse";
 import { RunnersReadinessRailView } from "@/components/chrome/runners-readiness-rail";
@@ -166,6 +171,12 @@ export async function LeftRail({
   const tNav = await getTranslations("nav");
   const tPortfolio = await getTranslations("portfolio");
   const tGc = await getTranslations("gc");
+  const tStatus = await getTranslations("status");
+  const platformLabels = {
+    ready: tStatus("supervisorReady"),
+    behind: tStatus("supervisorBehind"),
+    unavailable: tStatus("supervisorUnavailable"),
+  };
   const locale = await getLocale();
   const nowMs = Date.now();
   const activeCount =
@@ -393,6 +404,29 @@ export async function LeftRail({
       </div>
 
       <div className="mt-auto flex shrink-0 flex-col items-center gap-2 pb-4">
+        {/* D6: every role sees the coarse platform summary; only an admin
+            gets the link into the diagnostics page behind it. Matches the
+            expanded rail's pill, so collapsing the rail never changes what a
+            member is allowed to know. */}
+        {userRole === "admin" ? (
+          <Link
+            aria-label={platformStatusLabel(platformStatus, platformLabels)}
+            className="inline-flex h-9 w-9 items-center justify-center rounded-[10px] border border-line bg-paper"
+            data-testid="rail-platform-status-collapsed"
+            href="/admin/execution-host"
+          >
+            <PlatformStatusDot status={platformStatus} />
+          </Link>
+        ) : (
+          <span
+            aria-label={platformStatusLabel(platformStatus, platformLabels)}
+            className="inline-flex h-9 w-9 items-center justify-center rounded-[10px] border border-line bg-paper"
+            data-testid="rail-platform-status-collapsed"
+            role="status"
+          >
+            <PlatformStatusDot status={platformStatus} />
+          </span>
+        )}
         <ScratchLaunchPopover
           hint={tPortfolio("launchHint")}
           label="+"
@@ -530,6 +564,12 @@ export async function LeftRail({
       />
 
       <div className="mt-auto flex shrink-0 flex-col gap-2 border-t border-line pb-4 pt-3">
+        <PlatformStatusPill
+          className="px-0.5 font-mono text-[10px]"
+          labels={platformLabels}
+          status={platformStatus}
+          {...(userRole === "admin" ? { href: "/admin/execution-host" } : {})}
+        />
         <ScratchLaunchPopover
           hint={tPortfolio("launchHint")}
           label={tPortfolio("launchRun")}

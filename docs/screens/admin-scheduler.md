@@ -6,6 +6,7 @@
   editor, task schedules overview, and ADR-139 one-time diagnostics).
 - **Source:** `web/app/(app)/admin/scheduler/page.tsx`,
   `web/components/admin/scheduler-jobs-table.tsx`,
+  `web/components/admin/scheduler-clock-card.tsx`,
   `web/components/admin/scheduler-job-edit-modal.tsx`,
   `web/components/admin/scheduler-run-schedules-overview.tsx`.
 
@@ -30,6 +31,8 @@ The hidden nav item is convenience only. The route and
 
 - **Entry:** the admin block of the [left rail](chrome/left-rail.md), alongside
   Users, MCPs, and Settings.
+- **Related diagnostics:** the execution-host page links back here from its
+  clock summary; see [`admin/execution-host.md`](admin/execution-host.md).
 - **Within:** Engine job filters stay URL-synchronized; "New job" and per-row
   edit open the scheduler job modal.
 - **Exit:** Task schedule rows link to the owning project schedule tab
@@ -49,6 +52,13 @@ flowchart TD
 ## Layout & regions
 
 - **Header** — admin eyebrow, page title, and concise scheduler purpose.
+- **Scheduler clock** — the first standalone card shows resolved driver,
+  fallback interval, cron-token presence, local process tick state/outcome and
+  overlap totals. It always shows durable last/next activity for
+  `system_sweep.default` and `domain_event_dispatch.default`, even when the
+  general job list is capped. Process counters are labeled as reset-on-restart;
+  durable attempts are cluster evidence. Missing, disabled, overdue,
+  never-observed and partial/failure states are explicit.
 - **Engine jobs** — full-width view-only table over `scheduler_jobs` plus last
   `scheduler_job_runs` attempt. The table shows job id, kind, target summary,
   cadence, next run, enabled/disabled state, failure count, last attempt
@@ -75,6 +85,8 @@ flowchart TD
   display path, correlated run/project identifiers, timestamps, rescue result,
   and sanitized error/result codes. It has no re-arm, delete, or arbitrary-path
   action; only global admins can call the backing API.
+- **Brain index queue** — retains queue state only. Clock configuration and
+  guidance do not live inside this card.
 
 ## States
 
@@ -138,6 +150,7 @@ stateDiagram-v2
 - Source: `web/app/(app)/admin/scheduler/page.tsx`,
   `web/lib/queries/scheduler.ts`, `web/lib/scheduler/job-admin.ts`,
   `web/lib/scheduler/job-admin-schema.ts`,
+  `web/components/admin/scheduler-clock-card.tsx`,
   `web/components/admin/scheduler-jobs-table.tsx`,
   `web/components/admin/scheduler-job-edit-modal.tsx`,
   `web/components/admin/scheduler-run-schedules-overview.tsx`.
