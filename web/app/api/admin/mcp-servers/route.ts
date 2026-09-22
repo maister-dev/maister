@@ -2,17 +2,19 @@ import "server-only";
 
 import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
-import { z } from "zod";
 
 import { requireGlobalRole } from "@/lib/authz";
-import { ADAPTER_IDS } from "@/lib/acp-runners/adapter-support";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
-import { buildCreateBody, validateMcpServerDraft } from "@/lib/mcp/mcp-form";
+import {
+  buildCreateBody,
+  platformMcpBodySchema,
+  validateMcpServerDraft,
+} from "@/lib/mcp/mcp-form";
 import { evaluateMcpReadiness } from "@/lib/mcp/readiness";
+import { loadMcpReadinessContext } from "@/lib/mcp/readiness-host";
 import { ensureSerenaPlatformMcpSeed } from "@/lib/mcp/serena-seed";
-import { executionHosts } from "@/lib/execution-host";
 
 const { platformMcpServers } = schemaModule as unknown as Record<string, any>;
 
@@ -21,36 +23,12 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-const envKeyRefSchema = z
-  .string()
-  .regex(
-    /^(env:)?[A-Za-z_][A-Za-z0-9_]*$/,
-    "secret must be env:NAME, not a value",
-  );
-
-// Flat shape (mirrors the permissive OpenAPI PlatformMcpServerBody + the PATCH
-// route). Transport-specific requirements (stdio→command, sse/http→url) are
-// enforced by validateMcpServerDraft; off-transport fields are normalized away
-// by buildCreateBody so a stray field never persists.
-const postBodySchema = z
-  .object({
-    id: z
-      .string()
-      .min(1)
-      .regex(/^[A-Za-z0-9._-]+$/),
-    transport: z.enum(["stdio", "sse", "http"]),
-    // nullable: the client sends the normalized body (off-transport fields as
-    // null); validateMcpServerDraft + buildCreateBody handle the nulls. Matches
-    // the PATCH schema.
-    command: z.string().min(1).nullable().optional(),
-    args: z.array(z.string()).optional(),
-    envKeys: z.array(envKeyRefSchema).optional(),
-    url: z.string().url().nullable().optional(),
-    headerKeys: z.array(envKeyRefSchema).optional(),
-    supportedAgents: z.array(z.enum(ADAPTER_IDS)).min(1).optional(),
-    enabled: z.boolean().optional(),
-  })
-  .strict();
+// ADR-179: ONE body schema, built from the shared value grammar (it replaced a
+// verbatim copy of the pre-ADR-179 key regex that lived here and in three
+// sibling route files). Transport-specific requirements (stdio→command,
+// sse/http→url) are enforced by validateMcpServerDraft; off-transport fields
+// are normalized away by buildCreateBody so a stray field never persists.
+const postBodySchema = platformMcpBodySchema;
 
 function statusForCode(code: string): number {
   switch (code) {
@@ -138,8 +116,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     }
 
     const values = buildCreateBody(parsed.data);
-    const diagnostics = await executionHosts.local().diagnostics();
-    const readiness = evaluateMcpReadiness(values, diagnostics);
+    const readiness = evaluateMcpReadiness(
+      values,
+      await loadMcpReadinessContext([values], { serverId: values.id }),
+    );
     const db = getDb() as any;
 
     // Race-safe create: rely on the id primary key, not a read-then-write

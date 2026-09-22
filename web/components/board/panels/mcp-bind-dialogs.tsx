@@ -8,6 +8,7 @@ import { useTranslations } from "next-intl";
 import clsx from "clsx";
 
 import { useModalFocusTrap } from "@/components/board/panels/use-modal-focus-trap";
+import { secretShapedKey } from "@/lib/mcp/value-grammar";
 
 // ADR-129 (W-D, T6.2): the write dialogs over the bindings/overlay routes.
 // MatchDialog binds a requirement ref to a candidate server (platform/project/
@@ -299,7 +300,11 @@ export function OverlayDialog({
 }: {
   slug: string;
   binding: McpBindingView;
-  slots?: { env: string[]; header: string[] };
+  slots?: {
+    env: string[];
+    header: string[];
+    transport?: "stdio" | "sse" | "http";
+  };
   onClose: () => void;
   onDone: () => void;
 }): ReactElement {
@@ -315,6 +320,9 @@ export function OverlayDialog({
     (overlay.argsOverride ?? []).join(" "),
   );
   const [urlOverride, setUrlOverride] = useState(overlay.urlOverride ?? "");
+  const [bearerTokenEnv, setBearerTokenEnv] = useState(
+    overlay.bearerTokenEnv ?? "",
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -327,10 +335,12 @@ export function OverlayDialog({
 
     const args = tokens(argsText);
     const url = urlOverride.trim();
+    const bearer = bearerTokenEnv.trim();
     // Sparse overlay: omit every empty field (skill-context: sparse payloads).
     const configOverlay = {
       ...(fromRows(envRows) ? { envRemap: fromRows(envRows) } : {}),
       ...(fromRows(headerRows) ? { headerRemap: fromRows(headerRows) } : {}),
+      ...(bearer.length > 0 ? { bearerTokenEnv: bearer } : {}),
       ...(args.length > 0 ? { argsOverride: args } : {}),
       ...(url.length > 0 ? { urlOverride: url } : {}),
     };
@@ -358,6 +368,7 @@ export function OverlayDialog({
     setRows: (next: RemapRow[]) => void,
     slotHints: string[],
     listId: string,
+    kind: "env" | "header",
   ): ReactElement => (
     <div className="flex flex-col gap-1.5">
       {slotHints.length > 0 ? (
@@ -385,21 +396,31 @@ export function OverlayDialog({
               )
             }
           />
-          <input
-            aria-label={t("overlayValuePlaceholder")}
-            className={`${inputClass} flex-1`}
-            disabled={busy}
-            placeholder={t("overlayValuePlaceholder")}
-            spellCheck={false}
-            value={row.value}
-            onChange={(e) =>
-              setRows(
-                rows.map((r, i) =>
-                  i === index ? { ...r, value: e.target.value } : r,
-                ),
-              )
-            }
-          />
+          <div className="flex flex-1 flex-col gap-1">
+            <input
+              aria-label={t("overlayValuePlaceholder")}
+              className={`${inputClass} w-full`}
+              disabled={busy}
+              placeholder={t("overlayValuePlaceholder")}
+              spellCheck={false}
+              value={row.value}
+              onChange={(e) =>
+                setRows(
+                  rows.map((r, i) =>
+                    i === index ? { ...r, value: e.target.value } : r,
+                  ),
+                )
+              }
+            />
+            {row.slot.trim() !== "" &&
+            !row.value.startsWith("env:") &&
+            row.value !== "" &&
+            secretShapedKey(kind, row.slot.trim()) ? (
+              <span className="font-mono text-[10px] text-amber" role="note">
+                {t("secretShapedWarning")}
+              </span>
+            ) : null}
+          </div>
           <button
             aria-label={t("delete")}
             className="text-mute hover:text-danger"
@@ -471,6 +492,7 @@ export function OverlayDialog({
           setEnvRows,
           slots?.env ?? [],
           "mcp-overlay-env-slots",
+          "env",
         )}
       </label>
       <label className="flex flex-col gap-1.5">
@@ -480,8 +502,23 @@ export function OverlayDialog({
           setHeaderRows,
           slots?.header ?? [],
           "mcp-overlay-header-slots",
+          "header",
         )}
       </label>
+      {slots?.transport !== "stdio" ? (
+        <label className="flex flex-col gap-1.5">
+          <span className={fieldLabel}>{t("overlayBearer")}</span>
+          <input
+            className={inputClass}
+            data-testid="mcp-overlay-bearer"
+            disabled={busy}
+            placeholder="env:MCP_TOKEN"
+            spellCheck={false}
+            value={bearerTokenEnv}
+            onChange={(e) => setBearerTokenEnv(e.target.value)}
+          />
+        </label>
+      ) : null}
       <label className="flex flex-col gap-1.5">
         <span className={fieldLabel}>{t("overlayArgs")}</span>
         <input

@@ -223,6 +223,7 @@ export type {
   SupervisorAdapterLaunchInput,
   SupervisorDiagnostics,
   SupervisorDiagnosticsStatus,
+  SupervisorEnvRefPresence,
   SupervisorEvent,
   SupervisorExecutorInput,
   SupervisorMcpProbeRequest,

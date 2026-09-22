@@ -65,10 +65,6 @@ function sourceForLaunch(
   return "project";
 }
 
-function redactedEnv(env: Record<string, string> | undefined): string[] {
-  return Object.keys(env ?? {}).sort();
-}
-
 // FR-B1: capture a skill's `description` + `argument-hint` from its SKILL.md
 // frontmatter into material. Rebuilt wholesale per upsert, so dropping the
 // frontmatter on reinstall clears these (SET/CLEAR symmetry).
@@ -100,17 +96,20 @@ function baseMaterial(c: ProjectCapabilityConfig): CapabilityMaterial {
   switch (c.kind) {
     case "mcp":
       // NEVER store `config` — it is arbitrary user YAML
-      // (z.record(z.string(), z.unknown())) that can carry literal secret VALUES,
-      // and nothing downstream reads it. Mirrors the env→envKeys redaction:
-      // `env`/`headers` are reduced to key NAMES (T-C4), `config` is dropped
-      // entirely (ISSUE 2).
+      // (z.record(z.string(), z.unknown())) that nothing downstream reads, so
+      // there is no reason to keep it (ISSUE 2).
+      //
+      // ADR-179 (D31): `env`/`headers` VALUES are carried as declared under the
+      // shared grammar. Rebuilt wholesale per upsert, so removing a key from
+      // `maister.yaml` removes it from material (SET/CLEAR symmetry).
       return {
         transport: c.transport ?? "stdio",
         command: c.command ?? null,
         args: c.args ?? [],
-        envKeys: redactedEnv(c.env),
+        env: { ...(c.env ?? {}) },
         url: c.url ?? null,
-        headerKeys: redactedEnv(c.headers),
+        headers: { ...(c.headers ?? {}) },
+        bearerTokenEnv: c.bearerTokenEnv ?? null,
       };
     case "skill":
       return {
@@ -136,9 +135,11 @@ function baseMaterial(c: ProjectCapabilityConfig): CapabilityMaterial {
     case "agent_definition":
       return {};
     case "env_profile":
-      // NEVER store env values — only key names (mirrors mcp env redaction).
+      // NEVER store env values — only key names. Unlike MCP values (ADR-179),
+      // an env-profile value is not an operator-declared configuration value:
+      // there is no form surface behind it and no reason to carry one.
       return {
-        envKeys: redactedEnv(c.env),
+        envKeys: Object.keys(c.env ?? {}).sort(),
       };
     default:
       return {};

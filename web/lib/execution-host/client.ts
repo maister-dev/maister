@@ -7,6 +7,7 @@ import type {
   SendPromptInput,
   SupervisorEvent,
   SupervisorDiagnosticsStatus,
+  SupervisorEnvRefPresence,
   SupervisorMcpProbeRequest,
   SupervisorMcpProbeResult,
   SupervisorModelCatalog,
@@ -223,6 +224,13 @@ export interface HostAdminClient {
   diagnostics(opts?: {
     timeoutMs?: number;
   }): Promise<SupervisorDiagnosticsStatus>;
+  // ADR-179: host env-var PRESENCE by name — MCP readiness' only consumer.
+  // Accepts ANY number of names; the transport dedupes, chunks by the route's
+  // cap and merges the answers in request order. Never returns a value.
+  checkEnvRefs(
+    names: readonly string[],
+    opts?: { timeoutMs?: number },
+  ): Promise<SupervisorEnvRefPresence[]>;
   platformStatus(opts?: { timeoutMs?: number }): Promise<PlatformStatus>;
   resolveModelSuggestions(
     draft: SupervisorModelCatalogDraft,
@@ -1014,6 +1022,9 @@ export function createExecutionHosts(
       },
       diagnostics(opts) {
         return transport.diagnostics(opts);
+      },
+      checkEnvRefs(names, opts) {
+        return transport.checkEnvRefs(names, opts);
       },
       platformStatus(opts) {
         return transport.platformStatus(opts);

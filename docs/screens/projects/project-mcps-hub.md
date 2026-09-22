@@ -59,6 +59,22 @@ Two regions:
 The board-header MCP **metacell** shows the project-effective MCP count (from the
 hub read model), replacing the previous hardcoded `—`.
 
+**Readiness across all three sources (Implemented, ADR-179).** The readiness cell
+renders for platform rows from `platform_mcp_servers.readiness_status` and for
+project and package rows from the write-time `material.readiness` cache, with
+the reasons as a tooltip in both cases.
+
+**Modal + overlay field order (Implemented, ADR-179).** The project MCP modal
+mirrors the platform one: ref id, description, transport (`sse (legacy)`), then
+`command` + `args` **or** `url` + bearer token env, then env rows **or** header
+rows via the shared `KeyValueRows` control, then supported agents. The
+**Configure** (overlay) dialog uses the same control: the key datalist is the
+target's declared slots (the KEYS of its `env`/`headers` maps), the value is
+`literal | env:NAME` with the same secret-shaped warning, and an http/sse target
+additionally offers a bearer-token-env override. The overlay replaces the VALUE
+and keeps the KEY, and the PATCH body stays sparse — only touched keys are
+sent.
+
 ## States
 
 Per requirement classification:
@@ -72,8 +88,8 @@ stateDiagram-v2
     Bound --> Disconnected: Disconnect (disabled binding)
     Disconnected --> Bound: Reconnect
     Bound --> Misconfigured: overlay invalid / target removed
-    Bound --> NotReady: target probe NotReady or platform trust withheld
-    NotReady --> Bound: trust granted / probe ok
+    Bound --> NotReady: target probe NotReady, a referenced host env var absent, or platform trust withheld
+    NotReady --> Bound: trust granted / probe ok / host env var provided
 ```
 
 ## Data & APIs
@@ -84,7 +100,10 @@ stateDiagram-v2
   `POST /api/projects/{slug}/mcp/bindings`,
   `PATCH/DELETE /api/projects/{slug}/mcp/bindings/{refId}`,
   `POST /api/projects/{slug}/mcp/connect`, `POST /api/projects/{slug}/mcp/disconnect`,
-  `POST /api/projects/{slug}/mcp/probe` (test connection, trust-gated).
+  `POST /api/projects/{slug}/mcp/probe` (test connection, trust-gated),
+  `POST/PATCH /api/projects/{slug}/mcp` (project-local server CRUD — the body
+  carries `env`/`headers` value maps and `bearerTokenEnv`, and readiness is
+  cached into `material.readiness` on create and update).
 - Behavior lives in
   [`../../system-analytics/mcp-management.md`](../../system-analytics/mcp-management.md)
   (do not restate — R7).
@@ -93,6 +112,9 @@ stateDiagram-v2
 
 `mcpPanel` (board tab, extended for the hub columns/actions/dialogs, including
 `bind`/`rebind`/`configure`/`disconnect`/`connect`/`match*`/`overlay*`/`probing`).
+ADR-179 adds the same field labels as the platform modal plus
+`overlayBearer`, and rewords `overlayIntro` and `overlayValuePlaceholder` — the
+overlay no longer accepts `env:NAME` references only. EN + RU parity is gated.
 The shared MCP-select reuses `mcpPanel`/`flowEditor.nodeForm` labels (node) +
 new `scratch.mcpSource*` keys; the agent effective-MCPs column adds
 `agentsAttach.colEffectiveMcps`. EN + RU parity enforced by

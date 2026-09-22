@@ -46,6 +46,11 @@ const runnerEnvValueSchema = z
     "env ref value must be env:NAME",
   );
 
+// A value that must be a reference, never a literal (ADR-179 bearerTokenEnv).
+const envRefSchema = z
+  .string()
+  .regex(/^env:[A-Za-z_][A-Za-z0-9_]*$/, "must be an env:NAME reference");
+
 // Adoption paths (the workspace path, `repoPath`, and every context-mount
 // path) are shape-validated only here: the workspace registry owns the D7
 // rule tokens (`relative_path`, `parent_segment`, …) so a refusal always
@@ -191,40 +196,152 @@ export const AdapterLaunchSchema = z
     }
   });
 
-// M27/T-C4: transport-tagged. stdio uses command/args/envKeys; sse/http use
-// url/headerKeys. Header/env VALUES are resolved supervisor-side from the NAME
-// keys (process.env) — never sent over the wire. Exception (M34, ADR-089):
-// `env` carries literal values for server-GENERATED secrets that exist in no
-// process.env (the per-launch ephemeral agent token injected into the MCP
-// facade) — same trust channel as executor.env/adapterLaunch.env.
-export const McpServerInputSchema = z
-  .object({
-    name: z.string().min(1).max(128),
-    transport: z.enum(["stdio", "sse", "http"]).default("stdio"),
-    command: z.string().min(1).max(1024).optional(),
-    args: z.array(launchArgSchema).max(64).optional(),
-    envKeys: z.array(z.string().min(1).max(256)).max(64).optional(),
-    env: z.record(z.string().min(1).max(256), z.string()).optional(),
-    url: z.string().url().max(2048).optional(),
-    headerKeys: z.array(z.string().min(1).max(256)).max(64).optional(),
-  })
-  .strict()
-  .superRefine((s, ctx) => {
-    if (s.transport === "stdio" && !s.command) {
+// ADR-179: MCP values are whole-value `literal | env:NAME`, the same grammar
+// runner env values already use — so `mcpValueSchema` is an alias, not a twin.
+export const mcpValueSchema = runnerEnvValueSchema;
+
+const mcpEnvNameSchema = envNameSchema.max(256);
+
+// RFC 7230 token. A header name that is not a token cannot be put on the wire.
+const mcpHeaderNameSchema = z
+  .string()
+  .min(1)
+  .max(256)
+  .regex(/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/, "must be an RFC 7230 header token");
+
+// RFC 7230 field-value alphabet, applied to a LITERAL header value so a CR/LF
+// injection is refused here rather than discovered as a runtime fetch failure.
+// A reference is exempt: its value is only known after resolution, which no
+// write-time check can predict.
+const mcpHeaderValueSchema = mcpValueSchema.refine(
+  (value) =>
+    value.startsWith("env:") || /^[\t\x20-\x7e\x80-\xff]*$/.test(value),
+  "header value must not contain CR, LF, or another control character",
+);
+
+const mcpEnvMapSchema = z
+  .record(mcpEnvNameSchema, mcpValueSchema)
+  .refine((m) => Object.keys(m).length <= 64, "at most 64 env entries");
+
+const mcpHeaderMapSchema = z
+  .record(mcpHeaderNameSchema, mcpHeaderValueSchema)
+  .refine((m) => Object.keys(m).length <= 64, "at most 64 header entries");
+
+function hasAuthorizationHeader(headers: Record<string, string> | undefined) {
+  return Object.keys(headers ?? {}).some(
+    (name) => name.toLowerCase() === "authorization",
+  );
+}
+
+// M27/T-C4 + ADR-179: transport-tagged. stdio uses command/args/env; sse/http
+// use url/headers/bearerTokenEnv. A value is `literal | env:NAME`; the VALUE
+// behind a reference is resolved here, host-side, from process.env and never
+// crosses the wire. A literal is the operator's declaration that the value is
+// not a secret — that channel also carries server-GENERATED secrets existing in
+// no process.env (M34, ADR-089: the per-launch ephemeral agent token on the MCP
+// facade entry), same trust channel as executor.env/adapterLaunch.env.
+const mcpServerFields = {
+  transport: z.enum(["stdio", "sse", "http"]).default("stdio"),
+  command: z.string().min(1).max(1024).optional(),
+  args: z.array(launchArgSchema).max(64).optional(),
+  env: mcpEnvMapSchema.optional(),
+  url: z.string().url().max(2048).optional(),
+  headers: mcpHeaderMapSchema.optional(),
+  bearerTokenEnv: envRefSchema.optional(),
+} as const;
+
+type McpServerShape = {
+  transport: "stdio" | "sse" | "http";
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  url?: string;
+  headers?: Record<string, string>;
+  bearerTokenEnv?: string;
+};
+
+// Normalization is by transport and is ENFORCED, not silently applied: the web
+// form drops the other transport's fields before sending, so their presence
+// here is a caller bug worth naming.
+function refineMcpServerFields(
+  value: McpServerShape,
+  ctx: z.RefinementCtx,
+): void {
+  const remote = value.transport === "sse" || value.transport === "http";
+
+  if (!remote) {
+    if (!value.command) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: "stdio MCP server requires a command",
         path: ["command"],
       });
     }
-    if ((s.transport === "sse" || s.transport === "http") && !s.url) {
+    for (const field of ["url", "headers", "bearerTokenEnv"] as const) {
+      if (value[field] === undefined) continue;
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: `${s.transport} MCP server requires a url`,
-        path: ["url"],
+        message: `stdio MCP server must not carry ${field}`,
+        path: [field],
       });
     }
-  });
+
+    return;
+  }
+
+  if (!value.url) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `${value.transport} MCP server requires a url`,
+      path: ["url"],
+    });
+  }
+  for (const field of ["command", "args", "env"] as const) {
+    if (value[field] === undefined) continue;
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `${value.transport} MCP server must not carry ${field}`,
+      path: [field],
+    });
+  }
+  // One source of truth for the header: the MCP authorization spec fixes its
+  // name and scheme, so a declared row and the composed one cannot coexist.
+  if (value.bearerTokenEnv && hasAuthorizationHeader(value.headers)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message:
+        "bearerTokenEnv and an Authorization header row must not both be set",
+      path: ["bearerTokenEnv"],
+    });
+  }
+}
+
+export const McpServerInputSchema = z
+  .object({ name: z.string().min(1).max(128), ...mcpServerFields })
+  .strict()
+  .superRefine(refineMcpServerFields);
+
+// ADR-129 (W-F) + ADR-179: the probe body is the same field set minus `name`.
+// Derived from one object so the two schemas cannot drift again (C5).
+export const McpProbeRequestSchema = z
+  .object(mcpServerFields)
+  .strict()
+  .superRefine(refineMcpServerFields);
+
+// ADR-179: host env-var PRESENCE by name. Presence only — a value is never
+// returned. `names` is body-controlled and allow-listed by the env-name regex;
+// it names no run, session, workspace, or path.
+export const EnvRefsRequestSchema = z
+  .object({ names: z.array(envNameSchema.max(256)).min(1).max(64) })
+  .strict();
+
+export const EnvRefsResponseSchema = z
+  .object({
+    refs: z.array(
+      z.object({ name: z.string(), present: z.boolean() }).strict(),
+    ),
+  })
+  .strict();
 
 // ADR-130: derived capability-enforcement set for the capability_guard seam
 // interceptor. Present iff the resolved node/agent declares strict tools/mcps on an
@@ -833,6 +950,9 @@ export type Executor = z.infer<typeof ExecutorSchema>;
 export type RunnerLaunch = z.infer<typeof RunnerLaunchSchema>;
 export type AdapterLaunch = z.infer<typeof AdapterLaunchSchema>;
 export type McpServerInput = z.infer<typeof McpServerInputSchema>;
+export type McpProbeRequestInput = z.infer<typeof McpProbeRequestSchema>;
+export type EnvRefsRequest = z.infer<typeof EnvRefsRequestSchema>;
+export type EnvRefsResponse = z.infer<typeof EnvRefsResponseSchema>;
 export type StartSessionRequest = z.infer<typeof StartSessionRequestSchema>;
 export type SendPromptRequest = z.infer<typeof SendPromptRequestSchema>;
 

@@ -14,20 +14,22 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-// M27/T-C4: transport-tagged. `stdio` carries command/args/envKeys; `sse`/`http`
-// carry url/headerKeys. Header/env values are resolved supervisor-side from the
-// NAME keys — never carried here. Exception (M34, ADR-089): `env` carries
-// literal values for server-GENERATED secrets that exist in no process.env
-// (the per-launch ephemeral agent token injected into the MCP facade).
+// M27/T-C4 + ADR-179: transport-tagged. `stdio` carries command/args/env;
+// `sse`/`http` carry url/headers/bearerTokenEnv. `env` and `headers` are
+// `Record<name, value>` maps keyed by the name the SERVER reads; a value is
+// whole-value `literal | env:NAME` and the value behind a REFERENCE is resolved
+// only on the execution host. That same channel carries server-GENERATED
+// credentials existing in no process.env (M34, ADR-089: the per-launch
+// ephemeral agent token on the MCP facade entry).
 export type AgentMcpServer = {
   name: string;
   transport: "stdio" | "sse" | "http";
   command?: string;
   args?: string[];
-  envKeys?: string[];
   env?: Record<string, string>;
   url?: string;
-  headerKeys?: string[];
+  headers?: Record<string, string>;
+  bearerTokenEnv?: string;
 };
 
 // ADR-108 (M40) P4: the claude `.claude/settings.local.json` `hooks` block. The
@@ -96,14 +98,17 @@ function claudeSettingsModel(model: string | undefined): string | undefined {
   return trimmed;
 }
 
-function envKeysOf(material: CapabilityMaterial): string[] {
-  return Array.isArray(material.envKeys) ? (material.envKeys as string[]) : [];
-}
+// ADR-179: every source now stores ONE map shape (migration 0172 rewrote the
+// three legacy ones), so this is a typed read, not a shape negotiation.
+function valueMapOf(
+  material: CapabilityMaterial,
+  field: "env" | "headers",
+): Record<string, string> {
+  const value = material[field];
 
-function headerKeysOf(material: CapabilityMaterial): string[] {
-  return Array.isArray(material.headerKeys)
-    ? (material.headerKeys as string[])
-    : [];
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+
+  return { ...(value as Record<string, string>) };
 }
 
 function mcpServerFromMaterial(
@@ -120,7 +125,11 @@ function mcpServerFromMaterial(
       name,
       transport,
       url: typeof material.url === "string" ? material.url : "",
-      headerKeys: headerKeysOf(material),
+      headers: valueMapOf(material, "headers"),
+      ...(typeof material.bearerTokenEnv === "string" &&
+      material.bearerTokenEnv.length > 0
+        ? { bearerTokenEnv: material.bearerTokenEnv }
+        : {}),
     };
   }
 
@@ -129,7 +138,7 @@ function mcpServerFromMaterial(
     transport: "stdio",
     command: typeof material.command === "string" ? material.command : "",
     args: Array.isArray(material.args) ? (material.args as string[]) : [],
-    envKeys: envKeysOf(material),
+    env: valueMapOf(material, "env"),
   };
 }
 

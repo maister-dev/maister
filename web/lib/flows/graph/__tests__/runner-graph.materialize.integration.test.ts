@@ -139,7 +139,7 @@ async function seedGraphRun(
 
 // Seed the capability_records the node opts into via its settings. Columns
 // match lib/db/schema.ts capabilityRecords; material shapes match what
-// lib/capabilities/agent-map.ts reads (command/args/envKeys for mcp).
+// lib/capabilities/agent-map.ts reads (command/args/env for mcp).
 async function seedCapabilityRecords(projectId: string): Promise<void> {
   await db.insert(schema.capabilityRecords).values([
     {
@@ -156,7 +156,7 @@ async function seedCapabilityRecords(projectId: string): Promise<void> {
       material: {
         command: "github-mcp",
         args: [],
-        envKeys: ["GITHUB_TOKEN"],
+        env: { GITHUB_TOKEN: "env:GITHUB_TOKEN" },
         config: {},
       },
     },
@@ -269,7 +269,7 @@ describe("runGraph — capability materialization → createSession (T4.1)", () 
     const github = mcpServers.find((s) => s.name === "github");
 
     expect(github).toBeDefined();
-    expect(github?.envKeys).toContain("GITHUB_TOKEN");
+    expect(github?.env).toEqual({ GITHUB_TOKEN: "env:GITHUB_TOKEN" });
 
     // ...and the SDK "local" settings tier was written to the WORKTREE ROOT
     // .claude/settings.local.json with the node's tools allow-list.

@@ -44,6 +44,9 @@ export type HubServerEntry = {
   enabled: boolean;
   trust?: string;
   readiness?: string;
+  // ADR-179 (D19): why readiness is NotReady, rendered as the status chip's
+  // tooltip. A presence check whose reason is invisible is not actionable.
+  readinessReasons?: string[];
   usedByCount?: number;
   boundByRefs: string[];
   lastProbeStatus?: string | null;
@@ -68,8 +71,11 @@ type CapabilityRow = {
     transport?: string;
     requirement?: boolean;
     packageInstallId?: string;
-    envKeys?: string[];
+    env?: Record<string, string>;
     lastProbe?: { status?: string } | null;
+    // ADR-179 (D18): the write-time readiness cache for project and package
+    // rows; platform rows keep theirs in their own columns.
+    readiness?: { status?: string; reasons?: string[] } | null;
   } | null;
   disabled_at: Date | string | null;
 };
@@ -79,6 +85,7 @@ type PlatformRow = {
   transport: string;
   trust_status: string;
   readiness_status: string;
+  readiness_reasons?: string[] | null;
   last_probe_status: string | null;
   enabled: boolean;
 };
@@ -137,10 +144,13 @@ export function composeProjectMcpHub(args: {
         ? {
             trust: platform.trust_status,
             readiness: platform.readiness_status,
+            readinessReasons: platform.readiness_reasons ?? [],
             usedByCount: args.usedByByServerId.get(platform.id) ?? 0,
             lastProbeStatus: platform.last_probe_status,
           }
         : {
+            readiness: row.material?.readiness?.status ?? "Unknown",
+            readinessReasons: row.material?.readiness?.reasons ?? [],
             lastProbeStatus: row.material?.lastProbe?.status ?? null,
           }),
       boundByRefs: boundByRefsForTarget.get(row.capability_ref_id) ?? [],
@@ -319,7 +329,8 @@ export async function getProjectMcpHub(
   );
   const platformRows = rowsOf<PlatformRow>(
     await database.execute(sql`
-      SELECT id, transport, trust_status, readiness_status, last_probe_status, enabled
+      SELECT id, transport, trust_status, readiness_status, readiness_reasons,
+             last_probe_status, enabled
       FROM platform_mcp_servers
     `),
   );

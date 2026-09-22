@@ -20,12 +20,15 @@ const stdioServer: McpServerRow = {
   transport: "stdio",
   command: "github-mcp",
   args: [],
-  envKeys: ["GITHUB_TOKEN"],
+  description: null,
+  env: { GITHUB_TOKEN: "env:GITHUB_TOKEN" },
   url: null,
-  headerKeys: [],
+  headers: {},
+  bearerTokenEnv: null,
   supportedAgents: ["claude", "codex"],
   trustStatus: "untrusted",
-  readinessStatus: "Unknown",
+  readinessStatus: "NotReady",
+  readinessReasons: ["env ref missing: GITHUB_TOKEN"],
   enabled: true,
 };
 
@@ -34,12 +37,15 @@ const httpServer: McpServerRow = {
   transport: "http",
   command: null,
   args: [],
-  envKeys: [],
+  description: null,
+  env: {},
   url: "https://mcp.example.com/sse",
-  headerKeys: ["MCP_AUTH"],
+  headers: { "X-Api-Key": "env:MCP_AUTH" },
+  bearerTokenEnv: null,
   supportedAgents: ["claude"],
   trustStatus: "untrusted",
   readinessStatus: "Unknown",
+  readinessReasons: [],
   enabled: false,
 };
 
@@ -72,5 +78,30 @@ describe("McpServersPanel", () => {
     );
 
     expect(markup).toContain("mcpEmpty");
+  });
+});
+
+// ADR-179 (D19): the reason travels to the operator, not just to the column.
+describe("readiness reasons", () => {
+  it("renders the reasons as the status chip's tooltip", () => {
+    const markup = renderToStaticMarkup(
+      createElement(McpServersPanel, {
+        servers: [stdioServer],
+        isAdmin: true,
+      } as never),
+    );
+
+    expect(markup).toContain("env ref missing: GITHUB_TOKEN");
+  });
+
+  it("falls back to the status when there is no reason", () => {
+    const markup = renderToStaticMarkup(
+      createElement(McpServersPanel, {
+        servers: [httpServer],
+        isAdmin: true,
+      } as never),
+    );
+
+    expect(markup).toContain('title="Unknown"');
   });
 });

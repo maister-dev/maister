@@ -38,6 +38,10 @@ export const STUB_SESSIONS_DIR = path.resolve("e2e/.runtime/stub-sessions");
 export const STUB_HOST_KEY = "eh_e2e_stub_supervisor_0001";
 export const STUB_BOOT_ID = "0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0";
 
+// ADR-179: the fixed presence fixture for both e2e supervisors — deterministic,
+// and small enough that a spec can reason about which refs are Ready.
+export const E2E_PRESENT_ENV_REFS = new Set(["PATH", "HOME", "E2E_MCP_TOKEN"]);
+
 const RELEASE_BACKSTOP_MS = 15_000;
 const RELEASE_POLL_MS = 150;
 
@@ -493,7 +497,7 @@ function sendJson(
 export function startStubSupervisor(): Promise<Server> {
   mkdirSync(STUB_SESSIONS_DIR, { recursive: true });
 
-  const server = createServer((req, res) => {
+  const server = createServer(async (req, res) => {
     if (req.method === "GET" && req.url === "/health") {
       const body = JSON.stringify({
         status: "ready",
@@ -536,6 +540,38 @@ export function startStubSupervisor(): Promise<Server> {
 
       res.writeHead(200, { "content-type": "application/json" });
       res.end(body);
+
+      return;
+    }
+
+    // ADR-179 (D26/T13): without this route EVERY platform MCP save would log a
+    // host WARN and store `Unknown`. The specs assert no readiness value, so a
+    // missing route would pass silently — it is here so the lane exercises the
+    // real path. The allow-list is deliberately small and fixed.
+    if (req.method === "POST" && req.url === "/diagnostics/env-refs") {
+      const body = (await readJsonBody(req)) as { names?: unknown };
+      const names = Array.isArray(body.names)
+        ? (body.names as string[]).filter((n) => typeof n === "string")
+        : [];
+
+      if (names.length === 0 || names.length > 64) {
+        res.writeHead(409, { "content-type": "application/json" });
+        res.end(
+          JSON.stringify({ code: "PRECONDITION", message: "names: 1..64" }),
+        );
+
+        return;
+      }
+
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({
+          refs: [...new Set(names)].map((name) => ({
+            name,
+            present: E2E_PRESENT_ENV_REFS.has(name),
+          })),
+        }),
+      );
 
       return;
     }

@@ -10,9 +10,11 @@ function row(overrides: Partial<PlatformMcpServer>): PlatformMcpServer {
     transport: "stdio",
     command: "github-mcp",
     args: ["--flag"],
-    envKeys: ["env:GITHUB_TOKEN"],
+    description: null,
+    env: { GITHUB_TOKEN: "env:GITHUB_TOKEN" },
     url: null,
-    headerKeys: [],
+    headers: {},
+    bearerTokenEnv: null,
     supportedAgents: ["claude", "codex"],
     trustStatus: "untrusted",
     readinessStatus: "Unknown",
@@ -41,16 +43,22 @@ describe("platformMcpRowToCapability (T-C3)", () => {
     expect(cap.agents).toEqual(["claude", "codex"]);
   });
 
-  it("projects env NAME references as an env:NAME map (never plaintext)", () => {
+  it("passes the stored env map through unchanged, literals included", () => {
+    // ADR-179: the row already stores the map, so this projection is identity.
+    // A LITERAL survives — it is the operator's declaration that the value is
+    // not a secret — while the value behind a REFERENCE stays on the host.
     const cap = platformMcpRowToCapability(
-      row({ envKeys: ["env:GITHUB_TOKEN", "BARE_NAME"] }),
+      row({
+        env: {
+          GITHUB_TOKEN: "env:GITHUB_TOKEN",
+          FASTMCP_LOG_LEVEL: "ERROR",
+        },
+      }),
     );
 
-    // Keyed by the var NAME; value is the env:NAME ref. The downstream
-    // redactedEnv keeps only the NAMES, so no value ever reaches the DB.
     expect(cap.env).toEqual({
       GITHUB_TOKEN: "env:GITHUB_TOKEN",
-      BARE_NAME: "env:BARE_NAME",
+      FASTMCP_LOG_LEVEL: "ERROR",
     });
   });
 
@@ -91,15 +99,17 @@ describe("platformMcpRowToCapability (T-C3)", () => {
         id: "remote",
         transport: "http",
         command: null,
-        envKeys: [],
+        env: {},
         url: "https://mcp.example.com/sse",
-        headerKeys: ["env:MCP_AUTH"],
+        headers: { "X-Api-Key": "env:MCP_AUTH" },
+        bearerTokenEnv: "env:MCP_TOKEN",
       }),
     );
 
     expect(cap.transport).toBe("http");
     expect(cap.url).toBe("https://mcp.example.com/sse");
-    expect(cap.headers).toEqual({ MCP_AUTH: "env:MCP_AUTH" });
+    expect(cap.headers).toEqual({ "X-Api-Key": "env:MCP_AUTH" });
+    expect(cap.bearerTokenEnv).toBe("env:MCP_TOKEN");
     expect(cap.command).toBeUndefined();
   });
 });

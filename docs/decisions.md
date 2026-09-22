@@ -110,7 +110,7 @@ validate:docs` enforces stub ↔ body equality and the file bijection.
 | [ADR-067](#adr-067-flow-editor-write-path--canvas-edits-as-m25-authored-flow-drafts-with-hard-gate-before-persist)                                           | Flow editor write path — canvas edits as M25 authored flow drafts with hard-gate before persist                                                | Accepted                                                             | 2026-06-08 |
 | [ADR-068](#adr-068-authoredexecutable-flow-bridge--two-axis-trust-gate-supersedes-adr-061-publish-boundary)                                                  | Authored→executable flow bridge + two-axis trust gate (supersedes ADR-061 publish boundary)                                                    | Accepted                                                             | 2026-06-08 |
 | [ADR-069](#adr-069-versionbinding-pinnedlatest--resolve-at-launch--unified-resolved-set-snapshot)                                                            | `version_binding` (pinned\|latest) + resolve-at-launch + unified resolved-set snapshot                                                         | Implemented                                                          | 2026-06-08 |
-| [ADR-070](#adr-070-mcp--capability-management-model--3-scope-identity-local-first-precedence-platform-storage-setup-time-resolve)                            | MCP + capability management model — 3-scope identity, local-first precedence, platform storage, setup-time resolve                             | Implemented                                                          | 2026-06-08 |
+| [ADR-070](#adr-070-mcp--capability-management-model--3-scope-identity-local-first-precedence-platform-storage-setup-time-resolve)                            | MCP + capability management model — 3-scope identity, local-first precedence, platform storage, setup-time resolve                             | Implemented; amended by ADR-179 | 2026-06-08 |
 | [ADR-071](#adr-071-user-facing-run-schedules-on-the-m24-clock)                                                                                               | User-facing run schedules on the M24 clock                                                                                                     | Accepted                                                             | 2026-06-10 |
 | [ADR-072](#adr-072-pr-grade-review-comments--reviewcomments-table-snapshot-anchoring-runner-side-rework-compose-open-gate-guard)                             | PR-grade review comments — `review_comments` table, snapshot anchoring, runner-side rework compose, open-gate guard                            | Implemented                                                          | 2026-06-10 |
 | [ADR-066](#adr-066-editor-and-diff-rendering-stack-shiki-git-diff-view-codemirror)                                                                           | Editor and diff rendering stack (Shiki, git-diff-view, CodeMirror)                                                                             | Implemented                                                          | 2026-06-08 |
@@ -170,7 +170,7 @@ validate:docs` enforces stub ↔ body equality and the file bijection.
 | [ADR-126](#adr-126-auto-promotion-lanes)                                                                                                                     | Auto-promotion lanes                                                                                                                           | Implemented                                                          | 2026-07-03 |
 | [ADR-127](#adr-127-project-brain-consultant-indexed-tier)                                                                                                    | Project Brain Consultant indexed tier                                                                                                          | Implemented                                                          | 2026-07-03 |
 | [ADR-128](#adr-128-project-brain-self-improvement-proposal-bridge)                                                                                           | Project Brain self-improvement proposal bridge                                                                                                 | Implemented                                                          | 2026-07-03 |
-| [ADR-129](#adr-129-mcp-management-v2--requirements--bindings-per-project-overlay-trust--health-activation)                                                   | MCP management v2 — requirements & bindings, per-project overlay, trust & health activation                                                    | Implemented                                                          | 2026-07-11 |
+| [ADR-129](#adr-129-mcp-management-v2--requirements--bindings-per-project-overlay-trust--health-activation)                                                   | MCP management v2 — requirements & bindings, per-project overlay, trust & health activation                                                    | Implemented; amended by ADR-179 | 2026-07-11 |
 | [ADR-130](#adr-130-adapter-agnostic-capability-enforcement-at-the-acp-seam)                                                                                  | Adapter-agnostic capability enforcement at the ACP seam                                                                                        | Implemented                                                          | 2026-07-11 |
 | [ADR-131](#adr-131-postgres-only-and-graph-only-engine-300-cut-over)                                                                                         | Postgres-only and graph-only engine 3.0.0 cut-over                                                                                             | Accepted                                                             | 2026-07-11 |
 | [ADR-132](#adr-132-forked-package-loop--ephemeral-pins-package-experiment-axis-local-sources-upstream-sync)                                                  | Forked-package loop — ephemeral pins, package experiment axis, local sources, upstream sync                                                    | Implemented                                                          | 2026-07-11 |
@@ -219,6 +219,7 @@ validate:docs` enforces stub ↔ body equality and the file bijection.
 | [ADR-175](#adr-175-operator-recover-of-a-crashed-agent-node-re-enters-the-flow-graph) | Operator Recover of a crashed agent node re-enters the flow graph | Accepted; amended by ADR-176 | 2026-09-18 |
 | [ADR-176](#adr-176-automated-crash-recover-re-entry--the-flow-continuation-worker-owns-the-committed-intent-under-a-bounded-per-run-budget) | Automated crash-recover re-entry — the flow continuation worker owns the committed intent under a bounded per-run budget | Implemented | 2026-09-21 |
 | [ADR-178](#adr-178-observatory-overview-table-day-aligned-period-url-views-and-auto-apply-filters) | Observatory overview table, day-aligned period, URL views, and auto-apply filters | Implemented (2026-09-21) | 2026-09-21 |
+| [ADR-179](#adr-179-mcp-configuration-values--literal-or-reference-envheader-maps-a-bearer-token-field-value-replacing-project-overlays-host-env-ref-readiness-and-an-adapter-transport-gate) | MCP configuration values — literal-or-reference env/header maps, a bearer token field, value-replacing project overlays, host env-ref readiness, and an adapter transport gate | Implemented | 2026-09-21 |
 
 ---
 
@@ -836,7 +837,7 @@ Full record: [`decisions/adr-069.md`](decisions/adr-069.md)
 
 ### ADR-070: MCP + capability management model — 3-scope identity, local-first precedence, platform storage, setup-time resolve
 
-**Status:** Implemented
+**Status:** Implemented; amended by ADR-179
 **Date:** 2026-06-08
 
 Full record: [`decisions/adr-070.md`](decisions/adr-070.md)
@@ -1367,7 +1368,7 @@ Full record: [`decisions/adr-128.md`](decisions/adr-128.md)
 
 ### ADR-129: MCP management v2 — requirements & bindings, per-project overlay, trust & health activation
 
-**Status:** Implemented
+**Status:** Implemented; amended by ADR-179
 **Date:** 2026-07-11
 
 Full record: [`decisions/adr-129.md`](decisions/adr-129.md)
@@ -1810,6 +1811,15 @@ Full record: [`decisions/adr-177.md`](decisions/adr-177.md)
 **Date:** 2026-09-21
 
 Full record: [`decisions/adr-178.md`](decisions/adr-178.md)
+
+---
+
+### ADR-179: MCP configuration values — literal-or-reference env/header maps, a bearer token field, value-replacing project overlays, host env-ref readiness, and an adapter transport gate
+
+**Status:** Implemented
+**Date:** 2026-09-21
+
+Full record: [`decisions/adr-179.md`](decisions/adr-179.md)
 
 ---
 

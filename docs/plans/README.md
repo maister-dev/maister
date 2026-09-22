@@ -33,3 +33,4 @@ fails when a file here is missing from it).
 | [`2026-09-11-ext-recover-discard-design.md`](2026-09-11-ext-recover-discard-design.md) | Shipped (2026-09-11) — ADR-034 amendment; `runs:recover` over `/api/v1/ext` |
 | [`2026-09-17-desk-visual-redesign-design.md`](2026-09-17-desk-visual-redesign-design.md) | Shipped (2026-09-17) — ADR-174; `NAV-08` declares the one-object-per-work-item contract |
 | [`2026-09-21-observatory-overview-and-navigation-design.md`](2026-09-21-observatory-overview-and-navigation-design.md) | Shipped (2026-09-21) — ADR-178; overview table, day-aligned period, URL views, auto-apply filter bar |
+| [`2026-09-21-mcp-configurator-env-model-design.md`](2026-09-21-mcp-configurator-env-model-design.md) | Shipped (2026-09-21) — ADR-179: env/header value maps, bearer token field, value-replacing overlays, host env-ref readiness, adapter transport gate |

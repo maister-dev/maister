@@ -58,12 +58,29 @@ const LABELS = {
 const CATALOG: PlatformMcpCatalogEntry[] = [
   {
     id: "context7",
+    description: null,
     transport: "stdio",
     command: "npx context7",
     args: [],
     url: null,
-    envKeys: [],
-    headerKeys: [],
+    // ADR-179 (D28): a package is shareable, so the prefill must never copy a
+    // LITERAL into a template — `CONTEXT7_API_KEY` here is a literal and must
+    // land as `env:CONTEXT7_API_KEY`, while an existing reference is kept.
+    env: { CONTEXT7_API_KEY: "sk-literal", GH: "env:GH_TOKEN" },
+    headers: {},
+    bearerTokenEnv: null,
+    enabled: true,
+  },
+  {
+    id: "vendor",
+    description: null,
+    transport: "http",
+    command: null,
+    args: [],
+    url: "https://mcp.example.com/v1",
+    env: {},
+    headers: { "X-Api-Key": "literal-key", "X-Tenant": "env:TENANT" },
+    bearerTokenEnv: "env:VENDOR_TOKEN",
     enabled: true,
   },
 ];
@@ -86,6 +103,38 @@ function Host(): ReturnType<typeof McpTemplateEditor> {
     labels: LABELS,
     onChange: setContent,
   });
+}
+
+// Mount, select a catalog entry, Apply, and return the raw editor's text.
+function applyCatalogEntry(id: string): string {
+  const node = document.createElement("div");
+
+  document.body.append(node);
+  const root = createRoot(node);
+
+  roots.push(root);
+  act(() => root.render(createElement(Host)));
+
+  const select = node.querySelector<HTMLSelectElement>(
+    '[data-testid="mcp-template-catalog"]',
+  );
+  const valueSetter = Object.getOwnPropertyDescriptor(
+    HTMLSelectElement.prototype,
+    "value",
+  )!.set!;
+
+  act(() => {
+    valueSetter.call(select, id);
+    select!.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  act(() => {
+    node
+      .querySelector<HTMLButtonElement>('[data-testid="mcp-template-apply"]')!
+      .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+
+  return node.querySelector<HTMLTextAreaElement>('[data-testid="raw-editor"]')!
+    .value;
 }
 
 describe("McpTemplateEditor apply", () => {
@@ -127,5 +176,25 @@ describe("McpTemplateEditor apply", () => {
     expect(raw().value).not.toBe("1");
     expect(raw().value).toContain("transport: stdio");
     expect(raw().value).toContain("id: context7");
+  });
+
+  // ADR-179 (D28): the prefill NEVER writes a literal into a shareable package.
+  it("converts a platform literal into env:<KEY> and copies a reference as-is", () => {
+    const raw = applyCatalogEntry("context7");
+
+    expect(raw).toContain("CONTEXT7_API_KEY: env:CONTEXT7_API_KEY");
+    expect(raw).toContain("GH: env:GH_TOKEN");
+    // The literal itself must not appear anywhere in the template.
+    expect(raw).not.toContain("sk-literal");
+  });
+
+  it("sanitizes a header name into a valid env name and carries the bearer ref", () => {
+    const raw = applyCatalogEntry("vendor");
+
+    // `X-Api-Key` is not an env name; uppercased with `-` -> `_`.
+    expect(raw).toContain("X_API_KEY: env:X_API_KEY");
+    expect(raw).toContain("X_TENANT: env:TENANT");
+    expect(raw).toContain("env:VENDOR_TOKEN");
+    expect(raw).not.toContain("literal-key");
   });
 });

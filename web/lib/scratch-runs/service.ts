@@ -48,6 +48,7 @@ import {
   materializeFlowAuthoringSkill,
 } from "@/lib/capabilities/adapter-home";
 import { materializeCapabilityProfile } from "@/lib/capabilities/materialize";
+import { gateAndOverlayMcpServers } from "@/lib/mcp/materialization-gate";
 import {
   loadSelectableCapabilities,
   resolveCapabilityProfile,
@@ -1070,6 +1071,36 @@ export async function* launchScratchRunStaged(
         await tx.insert(scratchAttachments).values(storedAttachments);
       });
     }
+    // ADR-179 (D17): scratch takes the SAME shared gate as the flow node and the
+    // standalone agent. It did not before — `materializeCapabilityProfile`'s
+    // output went straight to the create payload, so an untrusted platform
+    // server was spawned, a project overlay was ignored, and a codex session
+    // with an `sse` server died at `session/new`.
+    //
+    // `execTrust` is "trusted" for the same reason the agent path constants it
+    // (`agents/effective.ts`): there is no flow revision behind a scratch
+    // session, and the operator selected these servers in this session. The
+    // PLATFORM trust gate still applies and is the meaningful one here.
+    const gated = await gateAndOverlayMcpServers({
+      db: db as never,
+      projectId: project.id,
+      runId,
+      supported: profile.supported,
+      mcpServers: materialized.mcpServers,
+      execTrust: "trusted",
+      adapter: executor.agent as never,
+    });
+
+    if (gated.withheld.length > 0) {
+      log.warn(
+        {
+          runId,
+          withheld: gated.withheld.map((w) => `${w.refId}:${w.reason}`),
+        },
+        "scratch MCP servers withheld (trust/transport) — persisted",
+      );
+    }
+
     const capabilityBundle = await publishCapabilityBundle({
       client,
       runId,
@@ -1094,7 +1125,7 @@ export async function* launchScratchRunStaged(
           ...adapterHomeEnv,
         },
       }),
-      mcpServers: materialized.mcpServers,
+      mcpServers: gated.mcpServers,
     });
 
     await db.transaction(async (tx: Db) => {

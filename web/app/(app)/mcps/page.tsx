@@ -29,12 +29,17 @@ export default async function McpsPage(): Promise<ReactElement> {
       transport: platformMcpServers.transport,
       command: platformMcpServers.command,
       args: platformMcpServers.args,
-      envKeys: platformMcpServers.envKeys,
+      description: platformMcpServers.description,
+      env: platformMcpServers.env,
       url: platformMcpServers.url,
-      headerKeys: platformMcpServers.headerKeys,
+      headers: platformMcpServers.headers,
+      bearerTokenEnv: platformMcpServers.bearerTokenEnv,
       supportedAgents: platformMcpServers.supportedAgents,
       trustStatus: platformMcpServers.trustStatus,
       readinessStatus: platformMcpServers.readinessStatus,
+      // ADR-179 (D19): a presence check whose reason is invisible is not
+      // actionable — the panel renders these as the status chip's tooltip.
+      readinessReasons: platformMcpServers.readinessReasons,
       enabled: platformMcpServers.enabled,
     })
     .from(platformMcpServers);

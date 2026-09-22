@@ -1,9 +1,12 @@
+import { referencedEnvNames } from "@/lib/mcp/value-grammar";
+
 export type McpReadinessInput = {
   readonly transport: "stdio" | "sse" | "http";
   readonly command?: string | null;
   readonly url?: string | null;
-  readonly envKeys?: readonly string[];
-  readonly headerKeys?: readonly string[];
+  readonly env?: Readonly<Record<string, string>> | null;
+  readonly headers?: Readonly<Record<string, string>> | null;
+  readonly bearerTokenEnv?: string | null;
   readonly supportedAgents?: readonly string[] | null;
 };
 
@@ -30,19 +33,33 @@ export type McpReadinessResult = {
   readonly reasons: string[];
 };
 
-function envRefName(ref: string): string {
-  return ref.startsWith("env:") ? ref.slice("env:".length) : ref;
-}
+// ADR-179: presence comes from the HOST (`POST /diagnostics/env-refs`), not
+// from the fixed `GET /diagnostics.envRefs` catalog — that list enumerates
+// provider credentials, so every MCP referencing `env:GITHUB_TOKEN` was
+// falsely NotReady until an operator edited an unrelated supervisor variable.
+// `null` = the host read failed, which yields Unknown like a dead host.
+export type McpEnvPresenceInput =
+  | readonly { readonly name: string; readonly present: boolean }[]
+  | null;
 
-// Mirrors lib/acp-runners/readiness.ts `evaluateRunnerReadiness` for platform MCP
-// servers: transport config × supervisor `/diagnostics` env references ×
-// supported-agent adapter availability. Recomputed on every write (POST/PATCH),
-// never on DELETE. Diagnostics unavailable → Unknown (env refs cannot be
-// verified). Pure; no I/O, no secrets (only `env:NAME` names are read).
+export type McpReadinessContext = {
+  readonly presence: McpEnvPresenceInput;
+  readonly adapters: McpDiagnosticsInput;
+};
+
+// Mirrors lib/acp-runners/readiness.ts `evaluateRunnerReadiness` for MCP rows:
+// transport config × HOST env-ref presence × supported-agent adapter
+// availability. Recomputed on every write (POST/PATCH), never on DELETE, and
+// cached the same way for project rows (create/update) and package rows
+// (attach/upgrade). Either host read failing → Unknown. Pure; no I/O, and the
+// only thing it reads out of a value is the NAME behind an `env:` reference — a
+// LITERAL references nothing and so never produces a reason.
 export function evaluateMcpReadiness(
   row: McpReadinessInput,
-  diagnostics: McpDiagnosticsInput,
+  context: McpReadinessContext,
 ): McpReadinessResult {
+  const diagnostics = context.adapters;
+
   if (!diagnostics || diagnostics.kind !== "ready") {
     const reason =
       diagnostics?.kind === "unavailable"
@@ -50,6 +67,13 @@ export function evaluateMcpReadiness(
         : "supervisor diagnostics unavailable";
 
     return { status: "Unknown", reasons: [reason] };
+  }
+
+  if (!context.presence) {
+    return {
+      status: "Unknown",
+      reasons: ["host env-ref presence unavailable"],
+    };
   }
 
   const reasons: string[] = [];
@@ -60,14 +84,14 @@ export function evaluateMcpReadiness(
     reasons.push("missing url");
   }
 
-  const envRefs = diagnostics.diagnostics.envRefs;
-  const referenced = [...(row.envKeys ?? []), ...(row.headerKeys ?? [])];
+  const presentByName = new Map(
+    context.presence.map((ref) => [ref.name, ref.present]),
+  );
 
-  for (const key of referenced) {
-    const name = envRefName(key);
-    const ref = envRefs.find((item) => item.name === name);
-
-    if (!ref?.present) reasons.push(`env ref missing: ${name}`);
+  for (const name of referencedEnvNames(row)) {
+    if (presentByName.get(name) !== true) {
+      reasons.push(`env ref missing: ${name}`);
+    }
   }
 
   // A server no available adapter can host is not usable whatever its own

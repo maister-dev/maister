@@ -61,12 +61,14 @@ erDiagram
 
     PLATFORM_MCP_SERVERS {
         text id PK
+        text description "ADR-179: nullable operator note"
         text transport "stdio|sse|http"
         text command "nullable; stdio only"
         jsonb args "DEFAULT []"
-        jsonb env_keys "env:NAME refs only; DEFAULT []"
+        jsonb env "ADR-179: Record name to literal or env:NAME; DEFAULT {}"
         text url "nullable; sse|http only"
-        jsonb header_keys "env:NAME refs only; DEFAULT []"
+        jsonb headers "ADR-179: Record header to literal or env:NAME; DEFAULT {}"
+        text bearer_token_env "ADR-179: nullable env:NAME; sse|http only"
         jsonb supported_agents "DEFAULT [claude,codex,gemini,opencode,mimo]"
         text trust_status "untrusted|trusted|trusted_by_policy (DEFAULT untrusted)"
         text readiness_status "Unknown|Ready|NotReady (DEFAULT Unknown)"
@@ -95,7 +97,7 @@ erDiagram
         text target_kind "platform|project|package (CHECK)"
         text target_id "platform_mcp_servers.id | capability_records.id"
         boolean enabled "DEFAULT true; false = explicit opt-out"
-        jsonb config_overlay "DEFAULT {}; env/header/arg/url NAME remaps only"
+        jsonb config_overlay "DEFAULT {}; ADR-179: replaces VALUES for declared keys"
         text recommended_hint "nullable; studio hint mirror"
         text created_by "nullable; audit user id"
         timestamp created_at
@@ -217,7 +219,7 @@ tree, and initial git commit.
 - **(Implemented, ADR-088)** `project_package_attachments` UNIQUE on
   `(project_id, package_name)` — at most one attached version of a package per
   project.
-- **(Designed, ADR-129)** `project_mcp_bindings` UNIQUE on `(project_id, ref_id)`
+- **(Implemented, ADR-129)** `project_mcp_bindings` UNIQUE on `(project_id, ref_id)`
   — exactly one binding per ref per project; `target_kind` carries a CHECK
   (`platform|project|package`); `project_id` FK CASCADE.
 - **(Implemented, ADR-096)** `local_packages.slug` UNIQUE — platform-scoped
@@ -262,8 +264,8 @@ tree, and initial git commit.
   enablement. Until that lands, `flows` is still the mutable current pointer;
   run safety comes from `runs.flow_revision`.
 - `flow_revisions.exec_trust` **(Designed)**: second independent trust axis. `untrusted | trusted`. Gates `runRevisionSetup` (setup.sh) and MCP stdio command spawn. Default `untrusted`; requires an explicit operator flip. Drawn in the narrative; `FLOW_REVISIONS` is not included in this partial ERD.
-- `platform_mcp_servers` **(Designed — ADR-070)**: platform-admin-managed MCP server catalog. No FK to other tables in this diagram — secret values are stored only as `env:NAME` references. Mirrors `platform_acp_runners` in admin CRUD surface. **(ADR-129 Designed)** `trust_status` becomes load-bearing at materialization (untrusted ⇒ visible-but-withheld); `last_probe_status`/`last_probe_at`/`last_probe_reason` cache the admin global health probe (never a secret value).
-- `project_mcp_bindings` **(Designed, ADR-129)**: the explicit binding of a capability `ref_id` to a concrete MCP target within one project. FK `project_id` → `projects` (CASCADE). UNIQUE `(project_id, ref_id)` — one binding per ref per project. An enabled binding's target WINS over `project > platform > flow-package` precedence; a disabled binding makes the ref unresolvable (explicit opt-out); an absent binding leaves resolution unchanged (grandfather). `config_overlay` remaps env/header/arg/url NAMES only (no secret value). See [`../system-analytics/mcp-management.md`](../system-analytics/mcp-management.md).
+- `platform_mcp_servers` **(Implemented — ADR-070)**: platform-admin-managed MCP server catalog. No FK to other tables in this diagram. Mirrors `platform_acp_runners` in admin CRUD surface. **(ADR-129 Implemented)** `trust_status` becomes load-bearing at materialization (untrusted ⇒ visible-but-withheld); `last_probe_status`/`last_probe_at`/`last_probe_reason` cache the admin global health probe (never a secret value). **(ADR-179 Implemented, migration `0172`)** `env`/`headers` are `Record<name, value>` maps whose values are whole-value `literal | env:NAME`, plus `bearer_token_env` (`env:NAME`, sse/http only, composed into `Authorization: Bearer` on the host and appended LAST) and a free-text `description`; they replaced the two pre-ADR-179 name-list columns. A LITERAL is the operator's declaration that the value is not a secret; the value behind a REFERENCE is never stored and is resolved only on the execution host. `readiness_status`/`readiness_reasons` are recomputed on every write from host env-ref presence (`POST /diagnostics/env-refs`) crossed with adapter availability.
+- `project_mcp_bindings` **(Implemented, ADR-129)**: the explicit binding of a capability `ref_id` to a concrete MCP target within one project. FK `project_id` → `projects` (CASCADE). UNIQUE `(project_id, ref_id)` — one binding per ref per project. An enabled binding's target WINS over `project > platform > flow-package` precedence; a disabled binding makes the ref unresolvable (explicit opt-out); an absent binding leaves resolution unchanged (grandfather). **(ADR-179)** `config_overlay` replaces the VALUE for a key the target declares and PRESERVES the key — the key is the server's contract; slots are the keys of the target's `env`/`headers` maps, overlay values use the same `literal | env:NAME` grammar, and `bearerTokenEnv` is overridable for an http/sse target. Migration `0172` leaves stored overlay rows untouched. See [`../system-analytics/mcp-management.md`](../system-analytics/mcp-management.md).
 - ADR-084 DB audit: runner adapter/capability-agent columns are SQL `text`
   without CHECK/enum constraints, so adding `gemini`, `opencode`, and `mimo` is a
   TypeScript/schema contract change, not a SQL DDL migration for runner rows.

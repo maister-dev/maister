@@ -14,6 +14,15 @@ import { PanelSection } from "@/components/settings/panel-section";
 
 export type { McpServerRow };
 
+// The reasons, when there are any — otherwise the status reads for itself.
+function readinessTitle(server: McpServerRow): string {
+  const reasons = server.readinessReasons ?? [];
+
+  return server.readinessStatus === "NotReady" && reasons.length > 0
+    ? reasons.join("; ")
+    : server.readinessStatus;
+}
+
 type Props = {
   servers: McpServerRow[];
 };
@@ -109,10 +118,16 @@ export function McpServersPanel({ servers }: Props): ReactElement {
                     {server.supportedAgents.join(", ")}
                   </td>
                   <td className="px-4 py-3">
+                    {/* ADR-179 (D19): a presence check whose REASON is
+                        invisible is not actionable — `env ref missing: X` is
+                        the whole point. Same tooltip pattern as the runner
+                        readiness cell. */}
                     <span
+                      aria-label={readinessTitle(server)}
                       className={`rounded-full border px-2 py-1 text-[11px] font-semibold ${readinessClass(
                         server.readinessStatus,
                       )}`}
+                      title={readinessTitle(server)}
                     >
                       {server.readinessStatus}
                     </span>

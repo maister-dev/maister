@@ -12,6 +12,10 @@ import {
   AdoptWorkspaceRequestSchema,
   CommandEnvelopeSchema,
   CommandReceiptSchema,
+  EnvRefsRequestSchema,
+  EnvRefsResponseSchema,
+  McpProbeRequestSchema,
+  McpServerInputSchema,
   REASON_TOKENS,
   SessionCommandEventSchema,
   StartSessionRequestSchema,
@@ -36,6 +40,32 @@ function schemaExample(name: string): unknown {
 }
 
 describe("supervisor OpenAPI 0.8.0 examples ↔ Zod", () => {
+  // ADR-179: these four are only parity-checked because they carry an
+  // `example` — a component without one is silently skipped by this harness.
+  it("McpServerInput example parses", () => {
+    expect(
+      McpServerInputSchema.safeParse(schemaExample("McpServerInput")).success,
+    ).toBe(true);
+  });
+
+  it("McpProbeRequest example parses", () => {
+    expect(
+      McpProbeRequestSchema.safeParse(schemaExample("McpProbeRequest")).success,
+    ).toBe(true);
+  });
+
+  it("EnvRefsRequest example parses", () => {
+    expect(
+      EnvRefsRequestSchema.safeParse(schemaExample("EnvRefsRequest")).success,
+    ).toBe(true);
+  });
+
+  it("EnvRefsResponse example parses", () => {
+    expect(
+      EnvRefsResponseSchema.safeParse(schemaExample("EnvRefsResponse")).success,
+    ).toBe(true);
+  });
+
   it("CommandEnvelope example parses", () => {
     expect(
       CommandEnvelopeSchema.safeParse(schemaExample("CommandEnvelope")).success,

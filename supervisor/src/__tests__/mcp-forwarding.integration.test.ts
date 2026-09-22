@@ -1,18 +1,14 @@
-// T4.5-C (RED): the supervisor must forward capability MCP server defs from
+// T4.5-C + ADR-179: the supervisor forwards capability MCP server defs from
 // StartSessionRequest.mcpServers onto the ACP wire via
-// connection.newSession({ cwd, mcpServers: [...] }), resolving each envKey to
-// its VALUE from the supervisor's OWN process.env (secrets stay host-side).
+// connection.newSession({ cwd, mcpServers: [...] }), resolving each `env:NAME`
+// value from the supervisor's OWN process.env and passing each literal
+// verbatim (the value behind a reference stays host-side).
 //
-// This test is RED today because:
-//   (a) StartSessionRequestSchema is `.strict()` and has NO `mcpServers` key,
-//       so POST /sessions returns 409 PRECONDITION (unknown key), AND
-//   (b) acp-client.ts hardcodes `newSession({ ..., mcpServers: [] })`, so even
-//       if the field were accepted the adapter would never see the server.
-//
-// The recording mock adapter (mock-acp-record-newsession.mjs) writes the
-// params it receives in `newSession` (cwd + mcpServers) to a JSON file. The
-// test reads that file back and asserts the github server arrived with its
-// env resolved to the sentinel value.
+// The recording mock adapter (mock-acp-record-newsession.mjs) writes the params
+// it receives in `newSession` (cwd + mcpServers) to a JSON file. The test reads
+// that file back and asserts the shape the adapters actually accept — in
+// particular that a stdio entry stays UNTAGGED, because claude-agent-acp
+// silently DROPS a server carrying an explicit `type:"stdio"`.
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -94,7 +90,7 @@ afterEach(async () => {
 });
 
 describe("T4.5-C — supervisor forwards capability MCP servers to ACP adapter", () => {
-  it("passes mcpServers to newSession with env resolved from supervisor process.env", async () => {
+  it("forwards a stdio env map: a reference resolves, a literal passes verbatim, ${X} stays literal", async () => {
     if (!booted) throw new Error("not booted");
     const { recordPath } = booted;
 
@@ -103,43 +99,15 @@ describe("T4.5-C — supervisor forwards capability MCP servers to ACP adapter",
         name: "github",
         command: "github-mcp",
         args: [],
-        envKeys: [SENTINEL_ENV_KEY],
-      },
-    ]);
-
-    // RED reason (a): schema is `.strict()` with no `mcpServers` key, so the
-    // unknown key trips Zod and the route returns 409 PRECONDITION here.
-    expect(res.status).toBe(201);
-
-    const record = await readRecord(recordPath);
-
-    // RED reason (b): acp-client.ts hardcodes `mcpServers: []`, so even when
-    // the schema accepts the field the adapter receives an empty array.
-    const github = (record.mcpServers as Array<Record<string, unknown>>).find(
-      (s) => s.name === "github",
-    );
-
-    expect(github).toBeDefined();
-    expect(github?.command).toBe("github-mcp");
-    expect(github?.args).toEqual([]);
-    expect(github?.env).toContainEqual({
-      name: SENTINEL_ENV_KEY,
-      value: SENTINEL_ENV_VALUE,
-    });
-  });
-
-  it("forwards literal env values, which win over same-named envKeys (M34, agent-token channel)", async () => {
-    if (!booted) throw new Error("not booted");
-    const { recordPath } = booted;
-
-    const res = await createSession(booted, [
-      {
-        name: "maister",
-        command: "maister-facade",
-        args: ["--stdio"],
-        envKeys: [SENTINEL_ENV_KEY],
         env: {
-          [SENTINEL_ENV_KEY]: "literal-wins",
+          [SENTINEL_ENV_KEY]: `env:${SENTINEL_ENV_KEY}`,
+          FASTMCP_LOG_LEVEL: "ERROR",
+          // D2: no interpolation — a provisioner substituting inside literals
+          // would corrupt values meant for the server.
+          TEMPLATE_LIKE: "${" + SENTINEL_ENV_KEY + "}",
+          MISSING: "env:MCP_FORWARDING_ABSENT_SENTINEL",
+          // M34/ADR-089: the server-GENERATED credential channel — a literal
+          // that exists in no process.env.
           MAISTER_PROJECT_TOKEN: "tok_ephemeral",
         },
       },
@@ -148,23 +116,30 @@ describe("T4.5-C — supervisor forwards capability MCP servers to ACP adapter",
     expect(res.status).toBe(201);
 
     const record = await readRecord(recordPath);
-    const maister = (record.mcpServers as Array<Record<string, unknown>>).find(
-      (s) => s.name === "maister",
+    const github = (record.mcpServers as Array<Record<string, unknown>>).find(
+      (s) => s.name === "github",
     );
-    const env = maister?.env as Array<{ name: string; value: string }>;
 
-    expect(env).toContainEqual({
-      name: SENTINEL_ENV_KEY,
-      value: "literal-wins",
-    });
-    expect(env).toContainEqual({
-      name: "MAISTER_PROJECT_TOKEN",
-      value: "tok_ephemeral",
-    });
-    expect(env.filter((e) => e.name === SENTINEL_ENV_KEY)).toHaveLength(1);
+    expect(github).toBeDefined();
+    expect(github?.command).toBe("github-mcp");
+    expect(github?.args).toEqual([]);
+    // T4: stdio entries stay UNTAGGED — claude-agent-acp drops a server
+    // carrying an explicit `type:"stdio"`.
+    expect(github?.type).toBeUndefined();
+
+    const env = github?.env as Array<{ name: string; value: string }>;
+
+    expect(env).toEqual([
+      { name: SENTINEL_ENV_KEY, value: SENTINEL_ENV_VALUE },
+      { name: "FASTMCP_LOG_LEVEL", value: "ERROR" },
+      { name: "TEMPLATE_LIKE", value: "${" + SENTINEL_ENV_KEY + "}" },
+      // D3: an unset reference resolves to "", never fail-fast.
+      { name: "MISSING", value: "" },
+      { name: "MAISTER_PROJECT_TOKEN", value: "tok_ephemeral" },
+    ]);
   });
 
-  it("forwards an http MCP server as type=http with url + headers resolved from process.env (M27/T-C4)", async () => {
+  it("forwards an http MCP server with headers resolved and Authorization composed LAST", async () => {
     if (!booted) throw new Error("not booted");
     const { recordPath } = booted;
 
@@ -172,8 +147,12 @@ describe("T4.5-C — supervisor forwards capability MCP servers to ACP adapter",
       {
         name: "remote",
         transport: "http",
-        url: "https://mcp.example.com/sse",
-        headerKeys: [SENTINEL_ENV_KEY],
+        url: "https://mcp.example.com/v1",
+        headers: {
+          "X-Tenant": "acme",
+          "X-Key": `env:${SENTINEL_ENV_KEY}`,
+        },
+        bearerTokenEnv: `env:${SENTINEL_ENV_KEY}`,
       },
     ]);
 
@@ -186,11 +165,65 @@ describe("T4.5-C — supervisor forwards capability MCP servers to ACP adapter",
 
     expect(remote).toBeDefined();
     expect(remote?.type).toBe("http");
-    expect(remote?.url).toBe("https://mcp.example.com/sse");
-    expect(remote?.headers).toContainEqual({
-      name: SENTINEL_ENV_KEY,
-      value: SENTINEL_ENV_VALUE,
-    });
+    expect(remote?.url).toBe("https://mcp.example.com/v1");
     expect(remote?.command).toBeUndefined();
+
+    // The MCP authorization spec fixes the header name and scheme, so the
+    // composed header is appended LAST, after every declared row.
+    expect(remote?.headers).toEqual([
+      { name: "X-Tenant", value: "acme" },
+      { name: "X-Key", value: SENTINEL_ENV_VALUE },
+      { name: "Authorization", value: `Bearer ${SENTINEL_ENV_VALUE}` },
+    ]);
+  });
+
+  it("forwards sse as type=sse — the adapter gate is web-side, the supervisor forwards", async () => {
+    if (!booted) throw new Error("not booted");
+    const { recordPath } = booted;
+
+    const res = await createSession(booted, [
+      {
+        name: "legacy",
+        transport: "sse",
+        url: "https://mcp.example.com/sse",
+        headers: { "X-Tenant": "acme" },
+      },
+    ]);
+
+    expect(res.status).toBe(201);
+
+    const record = await readRecord(recordPath);
+    const legacy = (record.mcpServers as Array<Record<string, unknown>>).find(
+      (s) => s.name === "legacy",
+    );
+
+    expect(legacy?.type).toBe("sse");
+    expect(legacy?.url).toBe("https://mcp.example.com/sse");
+  });
+
+  it("REFUSES a body carrying a pre-ADR-179 name-list field, naming the path", async () => {
+    if (!booted) throw new Error("not booted");
+
+    // D12: no legacy acceptance at the branch tip. The one-commit D33 window
+    // where these were folded into the map is closed; a web tier that has not
+    // switched must fail loudly rather than silently sending nothing.
+    for (const field of ["envKeys", "headerKeys"]) {
+      const res = await createSession(booted, [
+        { name: "github", command: "github-mcp", [field]: ["GITHUB_TOKEN"] },
+      ]);
+
+      expect(res.status).toBe(409);
+
+      const body = res.body as { code?: string; message?: string };
+
+      expect(body.code).toBe("PRECONDITION");
+      // The message names the offending ENTRY and the rejected KEY, which is
+      // what makes a 409 from a strict schema actionable (C6: the supervisor
+      // has no 400). Zod reports an unrecognized key against the OBJECT's path,
+      // not the key's — so it reads `mcpServers.0: Unrecognized key(s) in
+      // object: 'envKeys'` rather than `mcpServers.0.envKeys`.
+      expect(body.message).toContain("mcpServers.0");
+      expect(body.message).toContain(field);
+    }
   });
 });

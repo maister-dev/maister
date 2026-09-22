@@ -42,8 +42,10 @@ const mcpCatalog = [
     command: "x",
     args: [],
     url: null,
-    envKeys: [],
-    headerKeys: [],
+    env: {},
+    headers: {},
+    bearerTokenEnv: null,
+    description: null,
   },
 ];
 

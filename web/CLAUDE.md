@@ -263,6 +263,28 @@ places with another. As of 2026-09-03 on `main` + ADR-165:
 - **integration** — 0 failures, except the two-case
   `lib/runs/__tests__/dirty-resolution-race.integration.test.ts` pair, which
   flakes under parallel load and passes 4/4 in isolation.
+
+**Measured 2026-09-22 (ADR-179 branch REBASED onto `master` c4216cd5, this
+Mac).** unit **819 files / 8480 tests, 0 failures**; integration **500 files /
+4414 tests, 1 failure** (25m); supervisor **26 files / 239 tests, 0 failures**.
+The lane totals moved because `master` gained 22 commits, not because this
+branch added files. The one failure was
+`lib/execution-host/__tests__/deliverer.integration.test.ts` "D3: runtime-object
+reserve, upload, and delete use the assignment-bound command ledger" — a NEW
+name, not the documented `dirty-resolution-race` pair. Classified load-sensitive,
+not a regression: it passes 4/4 in four consecutive isolated runs (4 tests each),
+and the branch's entire `lib/execution-host/` + fake diff is **+78/-0** — pure
+insertion adding only `checkEnvRefs`/`EnvRefPresence`/`EnvRefs`, with no line
+touching the runtime-object or deliverer path. It reproduced identically after
+the rebase, so it is now a standing load-sensitive name, not a branch artefact:
+treat a recurrence as load, and re-run the file idle before filing it.
+
+**A first-hit Next-dev compile can exhaust a 10s e2e timeout.** Before calling
+such a failure a regression, re-run the spec in isolation and read the RETRY
+time: `scratch-detail.spec.ts:50` fails at **10.8s** and passes on retry at
+**1.0s**, reproducibly, on BOTH this branch and plain `master` (2 runs each).
+A retry that passes in a second proves the data was there and the first hit paid
+for compilation — the failure is warm-up, not behaviour.
 - **e2e** — **1 pre-existing failure in 1 spec file**, enumerated below,
   plus one known-flaky spec. Ports 3100/7788 and the `maister_e2e` database are
   shared across worktrees; kill both ports before a run. Before filing an e2e
@@ -451,6 +473,35 @@ trees with the failing case trading places (`:43` on master, `:99` on the
 branch, and `:43` flaky-then-passing on the branch), and the whole file passes
 3/3 in isolation on the branch across three consecutive runs. It is
 load-sensitive, not worker-regressed.
+
+**Measured 2026-09-22 (ADR-179 branch REBASED onto `master` c4216cd5,
+`--workers=2`, quiet host, ports 3100/7788 freed first).** **199 tests: 5
+failed, 4 flaky, 188 passed (7.8m).** The suite grew from 193 because `master`
+added specs.
+
+- **failed**: `desk.spec.ts:205`, `platform-agents-page.spec.ts:26`,
+  `review-diff-scopes.spec.ts:43`, `scratch-detail.spec.ts:50`,
+  `studio-ai-assistant.spec.ts:69`.
+- **flaky**: `activity-feed.spec.ts:51`, `push-notifications.spec.ts:103`,
+  `push-notifications.spec.ts:218`, `work-table.spec.ts:97`.
+
+**Nothing here is attributable to the MCP value model.** Four of the five
+failures are in the sets above (`review-diff-scopes` sits on `:43`, the
+documented `master` line, and `forked-package-loop:518` no longer fails). The
+one name in neither set, `scratch-detail.spec.ts:50`, was settled by
+MEASUREMENT rather than by reading the diff: it reproduces identically on plain
+`master` (10.8s fail → 1.0s retry pass, two runs on each tree), and every file
+implementing or exercising the suggestion list is byte-identical between the
+two trees. Run the spec on `master` before attributing a name like this to a
+branch — after a rebase, "a NEW name" no longer implies "this branch's",
+because `master` moved too.
+
+**`pnpm lint` on `master` c4216cd5 is RED: 3 errors**, all
+`react/no-children-prop` in `components/observatory/__tests__/` — 2 in
+`observatory-filter-bar.test.ts`, 1 in `overview-table.test.ts`, landed by the
+observatory merge. The historical baseline (0 errors / 14 warnings) describes
+the tree BEFORE that merge. Lint the changed files alone to see your own
+contribution: this branch's 92 changed web files give **0 errors**.
 
 **`webServer.stdout` defaults to `"ignore"`, so this lane DISCARDS the dev
 server's structured logs.** Only its stderr is piped, which is why the
@@ -771,6 +822,14 @@ CRUD is admin-only and the page is reachable from the admin section of
 `left-rail.tsx`. Domain contract: [`docs/system-analytics/acp-runners.md`](../docs/system-analytics/acp-runners.md)
 
 - ADR-065. (Filters are intentionally omitted — small N.)
+
+The `create | edit` modal's **key/value rows** live in
+`components/settings/key-value-rows.tsx` (ADR-179), extracted from the runner
+modal and shared with the platform MCP modal, the project MCP modal, the MCP
+binding-overlay dialog and the Studio MCP template editor. Its labels are PROPS
+rather than `useTranslations` calls, so each surface keeps its own i18n
+namespace; it exports `rowsFromRecord` / `recordFromRows` / `duplicateKeyIds`.
+Reach for it before hand-rolling another `Record<string, string>` editor.
 
 * **Tables are view-only.** No inline editing, row dropdowns, or row-level
   mutate buttons. Rows display data only.

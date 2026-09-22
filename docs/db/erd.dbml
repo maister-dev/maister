@@ -1581,12 +1581,14 @@ table platform_acp_runners {
 
 table platform_mcp_servers {
   id text [pk, not null]
+  description text
   transport text [not null, default: 'stdio']
   command text
   args jsonb [not null, default: `[]`]
-  env_keys jsonb [not null, default: `[]`]
+  env jsonb [not null, default: `{}`]
   url text
-  header_keys jsonb [not null, default: `[]`]
+  headers jsonb [not null, default: `{}`]
+  bearer_token_env text
   supported_agents jsonb [not null, default: `["claude","codex","gemini","opencode","mimo"]`]
   trust_status text [not null, default: 'untrusted']
   readiness_status text [not null, default: 'Unknown']

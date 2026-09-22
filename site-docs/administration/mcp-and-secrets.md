@@ -29,25 +29,46 @@ that project.
 
 ## Keep secret values out of MAIster data
 
-MCP configuration stores environment and header **names**, not secret values.
-Use references such as `env:GITHUB_TOKEN`. Set `GITHUB_TOKEN` in the supervisor
-service environment on every execution host that can run the MCP.
+MCP environment and header entries are **name and value** pairs. A value is one
+of two things, and nothing in between:
 
-Do not put API keys in `flow.yaml`, a package file, a project form, a URL, or an
-argument. MAIster resolves the referenced variable only when the supervisor
-starts or connects to the MCP server. Client-visible snapshots and logs retain
-the variable name, never its value.
+- a **reference** such as `env:GITHUB_TOKEN` — MAIster stores only the
+  reference, and the execution host substitutes the value when it starts or
+  connects to the MCP server. Set `GITHUB_TOKEN` in the supervisor service
+  environment on every host that can run the MCP;
+- a **literal** such as `FASTMCP_LOG_LEVEL=ERROR` — stored and used exactly as
+  written, which is your statement that it is not a secret.
 
-A project overlay can remap a declared slot to another environment-variable or
-header name. This lets two projects use different credentials for the same
-platform MCP definition without cloning the server or exposing either value.
+There is no substitution inside a value: `${HOME}` reaches the server as those
+eight characters.
+
+Use a reference for anything secret. Do not put an API key in `flow.yaml`, a
+package file, a project form, a URL, or an argument. Client-visible snapshots
+and logs keep a reference as a reference — the value behind it never appears in
+them. A literal is visible to anyone who can read the catalog, so the form warns
+you inline when a literal sits under a name that looks like a credential
+(`*_TOKEN`, `*_API_KEY`, `Authorization`, …). It is a warning, not a refusal.
+
+For a server that requires bearer authentication, use the **bearer token env**
+field rather than writing an `Authorization` header yourself: give it an
+`env:NAME` reference and the host composes `Authorization: Bearer <value>`.
+Setting both is refused.
+
+A project overlay changes the **value** a project uses for a slot the server
+declares, and never the name — the name is the server's own contract. Two
+projects can therefore point the same slot at different credentials, or one at a
+plain literal such as a different `GH_HOST`, without cloning the server or
+exposing either value.
 
 ## Register a platform MCP server
 
 1. Open **MCPs** as a global administrator.
 2. Add the logical ID and supported agent families.
 3. Select `stdio`, `sse`, or `http` and fill in its command or URL fields.
-4. Declare required environment or header slot names.
+   `sse` is legacy — it was deprecated by the MCP specification, and a Codex
+   runner cannot use it at all. Prefer `http`.
+4. Add the environment rows (for `stdio`) or header rows (for `sse`/`http`), and
+   the bearer token env reference if the server needs one.
 5. Leave the server untrusted until its source and command have been reviewed.
 6. Trust and enable it.
 7. Run **Test connection** and inspect the initialization result and latency.
@@ -67,19 +88,25 @@ For every unresolved required reference:
 
 1. choose a compatible platform, project, or package target;
 2. connect the binding;
-3. add a names-only project overlay when the target's default slots do not fit;
+3. add a project overlay when the target's default values do not fit — the
+   overlay replaces a slot's value and keeps its name;
 4. test the connection in the project context;
 5. confirm that the requirement becomes ready.
 
 Flow nodes distinguish required MCPs from additional ones. An unresolved
 required MCP refuses launch. An unavailable additional MCP is omitted and
-recorded as withheld so the Run explains the degraded capability set.
+recorded as withheld so the Run explains the degraded capability set. A
+transport the launching agent cannot use counts as unavailable: a required `sse`
+server on a Codex runner refuses the launch before any workspace is created, and
+an additional one is withheld with the reason shown on the Run.
 
 ## Use MCP from Flow Studio
 
 In a node's settings, select MCP references from the package and project-aware
 picker. Package definitions stay portable because they carry logical IDs and
-environment names. The project binding and the execution host supply local
+environment references — prefilling a template from a platform server converts a
+literal into a reference, so a shared package never carries one of your
+values. The project binding and the execution host supply local
 implementation details.
 
 The resolved set is snapshotted into the Run. Later changes to a binding do not

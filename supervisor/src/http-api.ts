@@ -82,11 +82,13 @@ import {
   AdoptWorkspacePayloadSchema,
   CommandEnvelopeSchema,
   DeleteRuntimeObjectPayloadSchema,
+  EnvRefsRequestSchema,
   errorBody,
   httpStatusForCode,
   isEnvelopedBody,
   legacySessionPathField,
   isSupervisorError,
+  McpProbeRequestSchema,
   parseGateChatHitlId,
   SendPromptRequestSchema,
   CommandRetirementProofSchema,
@@ -128,34 +130,6 @@ const InputBodySchema = z
   .refine((b) => (b.action === "select" ? Boolean(b.optionId) : true), {
     message: "optionId is required when action='select'",
     path: ["optionId"],
-  });
-
-// ADR-129 (W-F): NAMES-only probe request. Values are resolved supervisor-side.
-const McpProbeRequestSchema = z
-  .object({
-    transport: z.enum(["stdio", "sse", "http"]),
-    command: z.string().min(1).optional(),
-    args: z.array(z.string()).optional(),
-    envKeys: z.array(z.string()).optional(),
-    url: z.string().url().optional(),
-    headerKeys: z.array(z.string()).optional(),
-  })
-  .strict()
-  .superRefine((r, ctx) => {
-    if (r.transport === "stdio" && !r.command) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["command"],
-        message: "stdio probe requires `command`",
-      });
-    }
-    if ((r.transport === "sse" || r.transport === "http") && !r.url) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["url"],
-        message: `${r.transport} probe requires \`url\``,
-      });
-    }
   });
 
 export type CheckpointResponse = {
@@ -1863,6 +1837,28 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     reply.status(200).send(body);
   });
 
+  // ADR-179: host env-var PRESENCE by name, for MCP readiness. Presence only —
+  // the value is never returned and never logged. `refs` mirrors REQUEST order
+  // after de-duplication (NOT sorted like `diagnosticEnvRefs()`): the caller
+  // chunks a long list by the cap below and merges the answers back by
+  // position. Unauthenticated, the same posture as `GET /diagnostics`
+  // (ADR-166); the resulting presence oracle is an accepted exposure bounded by
+  // the cap and the name regex, closed by Stage D host auth.
+  app.post("/diagnostics/env-refs", async (req, reply) => {
+    const names = Array.from(
+      new Set(EnvRefsRequestSchema.parse(req.body).names),
+    );
+
+    logger.info({ count: names.length }, "http POST /diagnostics/env-refs");
+
+    reply.status(200).send({
+      refs: names.map((name) => ({
+        name,
+        present: Boolean(process.env[name]),
+      })),
+    });
+  });
+
   // ADR-166 D7: the ONLY path-bearing route. Registers a host-local path for a
   // run as an opaque handle; every later route derives its paths from it.
   app.post("/workspaces/adopt", async (req, reply) => {
@@ -2255,6 +2251,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
             commandId: record.createdByCommandId,
             pid: record.pid,
             acpSessionId,
+            mcpServerCount: request.mcpServers?.length ?? 0,
             status: 201,
           },
           "http POST /sessions",

@@ -127,7 +127,7 @@ describe("platform MCP → capability_records projection (real postgres)", () =>
       transport: "stdio",
       command: "github-mcp",
       args: ["-y"],
-      envKeys: ["env:GITHUB_TOKEN"],
+      env: { GITHUB_TOKEN: "env:GITHUB_TOKEN", GH_HOST: "github.com" },
       supportedAgents: ["claude", "codex"],
     });
     // A disabled server MUST NOT project.
@@ -163,12 +163,16 @@ describe("platform MCP → capability_records projection (real postgres)", () =>
     expect(rows).toHaveLength(1);
     const record = rows[0] as {
       capabilityRefId: string;
-      material: { command?: string; envKeys?: string[] };
+      material: { command?: string; env?: Record<string, string> };
     };
 
     expect(record.capabilityRefId).toBe("github");
     expect(record.material.command).toBe("github-mcp");
-    // NAME-only — the secret value is never stored.
-    expect(record.material.envKeys).toEqual(["GITHUB_TOKEN"]);
+    // ADR-179: the VALUE map, carried through. The value behind the reference
+    // stays on the execution host; the literal is stored as declared.
+    expect(record.material.env).toEqual({
+      GITHUB_TOKEN: "env:GITHUB_TOKEN",
+      GH_HOST: "github.com",
+    });
   });
 });

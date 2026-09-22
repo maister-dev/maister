@@ -206,7 +206,7 @@ describe("project MCP CRUD (real postgres)", () => {
       transport: "stdio",
       command: "github-mcp",
       args: ["--stdio"],
-      envKeys: ["env:GITHUB_TOKEN"],
+      env: { GITHUB_TOKEN: "env:GITHUB_TOKEN", FASTMCP_LOG_LEVEL: "ERROR" },
     });
 
     expect(created.status).toBe(201);
@@ -255,13 +255,26 @@ describe("project MCP CRUD (real postgres)", () => {
     expect(afterDelete.refs).not.toContain(mcpId);
   });
 
-  it("rejects a plaintext secret value (env:NAME only) with 422", async () => {
+  // ADR-179 (D24): the project route, like the platform one, ACCEPTS a literal.
+  it("ACCEPTS a literal value under a secret-shaped key (201)", async () => {
+    sessionRef.value = ADMIN;
+    const created = await createMcp(PROJECT_A_SLUG, {
+      id: `lit-${randomUUID().slice(0, 8)}`,
+      transport: "stdio",
+      command: "x",
+      env: { GITHUB_TOKEN: "sk-raw-secret-value" },
+    });
+
+    expect(created.status).toBe(201);
+  });
+
+  it("rejects a MALFORMED env: value with 422", async () => {
     sessionRef.value = ADMIN;
     const created = await createMcp(PROJECT_A_SLUG, {
       id: `bad-${randomUUID().slice(0, 8)}`,
       transport: "stdio",
       command: "x",
-      envKeys: ["sk-raw-secret-value"],
+      env: { GH: "env:1BAD" },
     });
 
     expect(created.status).toBe(422);
@@ -281,16 +294,30 @@ describe("project MCP CRUD (real postgres)", () => {
     expect(second.status).toBe(409);
   });
 
-  it("creates an http MCP with header key refs", async () => {
+  it("creates an http MCP with a header map and a bearer token ref", async () => {
     sessionRef.value = ADMIN;
     const created = await createMcp(PROJECT_A_SLUG, {
       id: `http-${randomUUID().slice(0, 8)}`,
       transport: "http",
       url: "https://mcp.example.com/sse",
-      headerKeys: ["env:MCP_AUTH"],
+      headers: { "X-Api-Key": "env:MCP_AUTH", "X-Tenant": "acme" },
+      bearerTokenEnv: "env:MCP_TOKEN",
     });
 
     expect(created.status).toBe(201);
+  });
+
+  it("refuses bearerTokenEnv beside an Authorization header row with 422", async () => {
+    sessionRef.value = ADMIN;
+    const created = await createMcp(PROJECT_A_SLUG, {
+      id: `conflict-${randomUUID().slice(0, 8)}`,
+      transport: "http",
+      url: "https://mcp.example.com/sse",
+      headers: { Authorization: "Basic abc" },
+      bearerTokenEnv: "env:MCP_TOKEN",
+    });
+
+    expect(created.status).toBe(422);
   });
 });
 

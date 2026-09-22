@@ -377,21 +377,32 @@ default; custom compatibility choices are not rewritten.
 
 ## `platform_mcp_servers` (Designed)
 
-**(Designed, migration `0033+`.)** Platform-admin-managed MCP server
-catalog. Mirrors `platform_acp_runners` in admin CRUD surface and usage-guard
-semantics. Secrets are stored **only** as `env:NAME` references — values are
-never stored and are resolved supervisor-side.
+**(Implemented, migration `0033+`; value model migration `0172`.)**
+Platform-admin-managed MCP server catalog. Mirrors `platform_acp_runners` in
+admin CRUD surface and usage-guard semantics. Values are whole-value
+`literal | env:NAME` (ADR-179); the value behind a REFERENCE is never stored and
+is resolved on the execution host.
 
 ```ts
 {
   id,                            // PK (admin-assigned, stable ref id)
+  description?,                  // (ADR-179, migration 0172) text NULL
   transport: 'stdio' | 'sse' | 'http',
   command?,                      // stdio only; spawn gated on exec_trust
   args (jsonb, DEFAULT '[]'),
-  envKeys (jsonb, DEFAULT '[]'), // env-var NAMES only (env:NAME pattern);
-                                 //   values are never stored
+  env (jsonb NOT NULL, DEFAULT '{}'),  // (ADR-179, migration 0172)
+                                 //   Record<envName, literal | 'env:NAME'>,
+                                 //   keyed by the name the SERVER reads.
+                                 //   Replaced the pre-ADR-179 name-list column.
   url?,                          // sse | http only
-  headerKeys (jsonb, DEFAULT '[]'), // header NAMES only (env:NAME pattern)
+  headers (jsonb NOT NULL, DEFAULT '{}'), // (ADR-179, migration 0172)
+                                 //   Record<rfc7230Token, literal | 'env:NAME'>.
+                                 //   Replaced the pre-ADR-179 name-list column.
+  bearerTokenEnv?,               // (ADR-179, migration 0172) text NULL;
+                                 //   'env:NAME', sse|http only; the host
+                                 //   composes Authorization: Bearer <value>
+                                 //   and appends it LAST. Refused alongside an
+                                 //   Authorization header row.
   supportedAgents (jsonb, DEFAULT '["claude","codex","gemini","opencode","mimo"]'),
   trustStatus: 'untrusted' | 'trusted' | 'trusted_by_policy',
                                  // DEFAULT 'untrusted'; mirrors
@@ -411,7 +422,7 @@ references it (mirrors `assertCanDisable`). A duplicate id on POST returns 409
 via `onConflictDoNothing().returning()`, never a raw 500. Stdio `command` spawn
 is gated on `exec_trust = 'trusted'` for the owning `flow_revisions` row (§4.2).
 
-**(ADR-129 — Designed.)** `trustStatus` becomes **load-bearing** at
+**(ADR-129 — Implemented.)** `trustStatus` becomes **load-bearing** at
 materialization: an `untrusted` server is visible in every project hub but
 withheld from the executable set (`platform-untrusted`). Migration `0093`
 grandfather-backfills `trust_status='trusted' WHERE enabled=true AND
@@ -420,6 +431,17 @@ trust_status='untrusted'` so existing setups are unchanged (Serena,
 global health probe (`POST /mcp-probe`); per-project probe/readiness for the
 same server lives on the project's `capability_records.material` instead (the
 overlay makes the effective config per-project).
+
+**(ADR-179 — Implemented.)** `readinessStatus`/`readinessReasons` are recomputed
+on every POST/PATCH from **host env-ref presence** (`POST /diagnostics/env-refs`
+— the names referenced by `env:NAME` values across `env`, `headers` and
+`bearerTokenEnv`; a LITERAL contributes no name) crossed with supported-agent
+adapter availability. The same verdict is cached for the other two row kinds on
+`capability_records.material.readiness` — project rows at create/update, package
+rows at attach/upgrade ingestion. A host read failure yields `Unknown` and the
+write still commits. Migration `0172` also rewrites
+`capability_records.material` for `kind='mcp'` from its three legacy shapes to
+ONE map shape (`env`, `headers`, `bearerTokenEnv`) for every source.
 
 ## `project_mcp_bindings` (Designed, ADR-129)
 
@@ -1505,7 +1527,8 @@ expression is wrong once `webhook_events.project_id` can be NULL — see
   withheldMcps?,                 // (ADR-129 — Designed, migration 0093) jsonb NULL.
                                  //   Run-level withheld-MCP sink for flow AND agent:
                                  //   {refId,transport,reason,scope}[]; reason ∈
-                                 //   {platform-untrusted, exec-untrusted-stdio}.
+                                 //   {platform-untrusted, exec-untrusted-stdio,
+                                 //    agent-unsupported-transport}   // ADR-179
                                  //   Never a secret value. Read by run-detail.
   deliveryPolicySnapshot?,       // ADR-085 (jsonb, migration 0047)
                                  //   immutable resolved DeliveryPolicy at launch;

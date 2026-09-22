@@ -170,7 +170,7 @@ erDiagram
         boolean brain_context "Implemented ADR-122 0088: ambient Project-Brain launch axis, nullable — null = off"
         jsonb promotion_hold "ADR-126 0089: {source,reason?,createdAt} auto-promotion hold, nullable (NULL = no hold)"
         timestamptz review_entered_at "ADR-126 0089: auto-promotion grace anchor stamped at Review-flip, nullable"
-        jsonb withheld_mcps "ADR-129 Designed: run-level withheld-MCP sink {refId,transport,reason,scope}[] for flow AND agent, nullable"
+        jsonb withheld_mcps "ADR-129 Implemented: run-level withheld-MCP sink {refId,transport,reason,scope}[] for flow, agent AND scratch, nullable; ADR-179 adds reason agent-unsupported-transport"
         text promoted_head_sha "ADR-134 Implemented: final target delivery head, nullable"
         text merge_commit_sha "ADR-134 Implemented: non-FF/provider merge SHA, nullable"
         jsonb diff_stat "ADR-134 Implemented: cleaned {files,additions,deletions}, nullable"
@@ -746,7 +746,7 @@ only for explicit HITL or permission waits.
   display/audit ownership for new Flow and scratch launches. Scratch v1
   authorization remains project-role based.
 - `RUNS.resolved_capability_set` **(Designed — ADR-069)**: frozen at launch by `launchRun`; the runner reads this snapshot, never the live catalog. Shape: `{ flowRevisionId, flowOrigin, capabilities: {refId,kind,sha}[], mcps: {refId,sha,scope}[] }`. An edit or publish during a run must NOT mutate this field. **(ADR-129 Designed)** each `mcps[]` entry additionally records `provenance: 'binding'|'precedence'` (+ optional `boundTarget:{kind,id}`); the field is optional so pre-migration runs read it absent.
-- `RUNS.withheld_mcps` **(Designed, ADR-129)**: nullable run-level sink of MCPs excluded from the executable set — `{refId, transport, reason, scope}[]` where `reason ∈ {platform-untrusted, exec-untrusted-stdio}`. Populated for BOTH flow launches (mirroring per-node `node_attempts.materialization_plan.withheldMcps`) and agent launches (which persist no materialization_plan). Read by the run-detail panel; never contains a secret value. Kills the prior silent warn-log-only downgrade.
+- `RUNS.withheld_mcps` **(Implemented, ADR-129; reason union extended by ADR-179)**: nullable run-level sink of MCPs excluded from the executable set — `{refId, transport, reason, scope}[]` where `reason ∈ {platform-untrusted, exec-untrusted-stdio, agent-unsupported-transport}`, applied in that pass order so the strongest refusal names the withhold. Populated for flow launches (mirroring per-node `node_attempts.materialization_plan.withheldMcps`), agent launches and scratch launches (neither persists a materialization_plan) — every surface that passes through `gateAndOverlayMcpServers`. `agent-unsupported-transport` covers an ADDITIONAL ref whose transport the launch adapter cannot use (codex + `sse`); a REQUIRED one refuses the launch with `EXECUTOR_UNAVAILABLE` instead and never reaches this sink. jsonb-only — no migration. Read by the run-detail panel; never contains a secret value. Kills the prior silent warn-log-only downgrade.
 - `SCRATCH_RUNS ||--o{ SCRATCH_MESSAGES` — append-only dialog ledger with
   monotonic sequence per run.
 - `SCRATCH_RUNS ||--|| SCRATCH_CAPABILITY_PROFILES` — exactly one launch-time

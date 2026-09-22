@@ -72,13 +72,14 @@ async function seedProject(): Promise<string> {
 async function seedPlatformServer(args: {
   enabled: boolean;
   trust: string;
-  envKeys?: string[];
+  // ADR-179: the declared SLOTS are the keys of the `env` map.
+  env?: Record<string, string>;
 }): Promise<string> {
   const id = `srv-${randomUUID().slice(0, 8)}`;
 
   await db.execute(sql`
-    INSERT INTO platform_mcp_servers (id, transport, command, env_keys, enabled, trust_status)
-    VALUES (${id}, 'stdio', 'npx', ${JSON.stringify(args.envKeys ?? [])}::jsonb,
+    INSERT INTO platform_mcp_servers (id, transport, command, env, enabled, trust_status)
+    VALUES (${id}, 'stdio', 'npx', ${JSON.stringify(args.env ?? {})}::jsonb,
             ${args.enabled}, ${args.trust})
   `);
 
@@ -93,7 +94,7 @@ async function seedProjectMcp(projectId: string, refId: string): Promise<void> {
     )
     VALUES (${randomUUID()}, ${projectId}, ${refId}, 'mcp', ${refId}, 'project',
             ${JSON.stringify(["claude"])}::jsonb, 'enforced', true, true,
-            ${JSON.stringify({ origin: "project-mcp", transport: "stdio", command: "npx", envKeys: ["GH_TOKEN"] })}::jsonb,
+            ${JSON.stringify({ origin: "project-mcp", transport: "stdio", command: "npx", env: { GH_TOKEN: "env:GH_TOKEN" } })}::jsonb,
             now(), now())
   `);
 }
@@ -116,7 +117,7 @@ describe("binding-service — bind → load → resolve (W-A/W-B)", () => {
     const ref = await seedPlatformServer({
       enabled: true,
       trust: "trusted",
-      envKeys: ["env:GITHUB_TOKEN"],
+      env: { GITHUB_TOKEN: "env:GITHUB_TOKEN" },
     });
 
     await seedProjectMcp(projectId, ref);
@@ -249,7 +250,7 @@ describe("binding-service — validation contract", () => {
     const ref = await seedPlatformServer({
       enabled: true,
       trust: "trusted",
-      envKeys: ["env:GITHUB_TOKEN"],
+      env: { GITHUB_TOKEN: "env:GITHUB_TOKEN" },
     });
 
     // Known slot → accepted.

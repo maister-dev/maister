@@ -22,7 +22,7 @@ export const SERENA_MCP_SEED = {
     "--context",
     "ide-assistant",
   ],
-  envKeys: [],
+  env: {},
   enabled: false,
   trustStatus: "untrusted",
   readinessStatus: "Unknown",

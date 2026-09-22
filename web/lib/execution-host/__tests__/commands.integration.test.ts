@@ -301,6 +301,10 @@ describe("insertCommand", () => {
         env: { MAISTER_CAPABILITY_PROFILE: SENTINEL_PATH },
         preArgs: ["--x"],
       },
+      // ADR-179 (E-EH-12): the value maps must survive the projection no better
+      // than anything else. A LITERAL is stored and returned by catalog reads
+      // (D1) — but the command LEDGER reduces `mcpServers` to a count, so
+      // neither a literal nor a reference reaches `execution_commands.payload`.
       mcpServers: [
         {
           name: "maister",
@@ -312,6 +316,8 @@ describe("insertCommand", () => {
           name: "other",
           transport: "http",
           url: "https://h/" + SENTINEL_TOKEN,
+          headers: { "X-Api-Key": SENTINEL_TOKEN },
+          bearerTokenEnv: "env:SENTINEL_REF",
         },
       ],
       hooksConfig: { repetition: { max: 3 } },

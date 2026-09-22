@@ -99,33 +99,91 @@ Rules:
 - Admin APIs and UI may show secret ref names and readiness reason codes, but
   never raw token values or generated config bodies.
 
-### MCP capability template — `platform_mcp_servers` (Designed)
+### MCP capability template — `platform_mcp_servers` (Implemented)
 
-**(Designed — ADR-065)** Platform MCP servers are stored in the `platform_mcp_servers`
-table (admin-only CRUD, mirrors `platform_acp_runners`). The transport field is
-discriminated:
+**(Implemented — ADR-065; value model ADR-179)** Platform MCP servers are stored
+in the `platform_mcp_servers` table (admin-only CRUD, mirrors
+`platform_acp_runners`). The transport field is discriminated:
 
-| `transport` | Required fields | Optional fields    |
-| ----------- | --------------- | ------------------ |
-| `stdio`     | `command`       | `args`, `env_keys` |
-| `sse`       | `url`           | `header_keys`      |
-| `http`      | `url`           | `header_keys`      |
+| `transport`    | Required fields | Optional fields                      |
+| -------------- | --------------- | ------------------------------------ |
+| `stdio`        | `command`       | `args`, `env`, `description`          |
+| `sse` (legacy) | `url`           | `headers`, `bearer_token_env`, `description` |
+| `http`         | `url`           | `headers`, `bearer_token_env`, `description` |
 
-`env_keys` and `header_keys` store **names only** (`env:NAME`; regex
-`^env:[A-Za-z_][A-Za-z0-9_]*$`). Secret **values** are resolved supervisor-side
-from `process.env` at session spawn and MUST NEVER be stored in `platform_mcp_servers`,
+Normalization is by transport and is enforced, not silently applied: `stdio`
+drops `url`/`headers`/`bearer_token_env`, and `sse`/`http` drop
+`command`/`args`/`env`. `sse` is legacy — deprecated by MCP 2025-03-26 and
+absent from the ACP v2 schema — and `codex` cannot use it at all.
+
+#### MCP value grammar (Implemented — ADR-179)
+
+`env` and `headers` are `Record<name, value>` maps keyed by the name the
+**server** reads. Every value is **whole-value**: there is no interpolation.
+
+| Value | Class | Accepted | Resolution on the execution host |
+| ----- | ----- | -------- | -------------------------------- |
+| does not start with `env:` | literal | yes — warned in the UI under a secret-shaped key | passed verbatim; `${X}` reaches the server unchanged |
+| `env:NAME` matching `^env:[A-Za-z_][A-Za-z0-9_]*$` | env-ref | yes | `process.env[NAME] ?? ""` |
+| starts with `env:`, fails that regex | malformed | no — `CONFIG` 422 naming the field | never reaches resolution |
+
+`^env:[A-Za-z_][A-Za-z0-9_]*$` is the **reference grammar** for the whole
+product — MCP values, runner `env` values, package manifest `mcps[]` values, and
+binding overlay values all use it. Keys: env names
+`^[A-Za-z_][A-Za-z0-9_]*$`; header names are RFC 7230 tokens
+`^[!#$%&'*+.^_\x60|~0-9A-Za-z-]+$`. A **literal** header value is additionally
+held to the RFC 7230 field-value alphabet, so a CR/LF injection is refused at
+write rather than discovered as a runtime request failure.
+
+`bearer_token_env` is an `env:NAME` reference (sse/http only) that the host
+composes into `Authorization: Bearer <value>` and appends **LAST**. Declaring it
+alongside an `Authorization` header row is refused (`CONFIG` 422 web-side,
+`PRECONDITION` 409 supervisor-side) — the MCP authorization spec fixes one
+source of truth for that header.
+
+The value behind a **reference** MUST NEVER be stored in `platform_mcp_servers`,
 returned in any HTTP response, written to any DB column, or included in an ACP
-`session/update` payload visible to the browser. This is the same `env:NAME`
-secret-ref policy used by `platform_acp_runners` (ADR-044 + ADR-065).
+`session/update` payload visible to the browser; it is resolved on the execution
+host at session spawn. This is the same `env:NAME` secret-ref policy used by
+`platform_acp_runners` (ADR-044 + ADR-065).
+
+A **literal** value is the operator's declaration that the value is not a
+secret. It IS stored and IS returned by catalog reads — that is the point of the
+decision. The form shows an inline, non-blocking warning when a literal sits
+under a secret-shaped key (an env key with a `_`-delimited segment in `TOKEN`,
+`SECRET`, `PASSWORD`, `PASSWD`, `API_KEY`, `APIKEY`, `PRIVATE_KEY`,
+`ACCESS_KEY`, or a header named `Authorization`, `Proxy-Authorization`,
+`Cookie`, `X-Api-Key`, `X-Auth-Token`; both case-insensitive). The route accepts
+it.
+
+**Readiness** is recomputed on every write from host env-ref **presence**
+(supervisor `POST /diagnostics/env-refs`, which answers `{name, present}` and
+never a value) crossed with supported-agent adapter availability. The names come
+from the `env:NAME` values across `env`, `headers` and `bearer_token_env`, so a
+literal never produces a readiness reason. A host read failure yields readiness
+`Unknown` and the write still commits.
 
 `exec_trust` on the `flow_revisions` row gates MCP stdio `command` spawn: a revision
 with `exec_trust=untrusted` MUST NOT spawn a stdio MCP command even if `trustStatus`
 is `trusted_by_policy` (logic-trust alone is insufficient — see
 [`system-analytics/flow-packages.md`](system-analytics/flow-packages.md) §"Version binding and authored→executable bridge").
 
-**No new web environment variable is required by the platform MCP catalog.** MCP
-server secrets travel only as env-var names; the supervisor resolves them from its
-existing `process.env` at spawn. The env table above is unchanged by it.
+**Exposure of `maister.yaml capabilities.mcps[].env/headers` values
+(Implemented — ADR-179).** Values declared in a project's `maister.yaml` are
+carried into `capability_records.material` as written, under the same grammar —
+they are no longer reduced to their names. `maister.yaml` is the operator's own
+host file, at the same trust level as `supervisor/.env`. The consequence to
+accept before writing a literal there: it is returned by
+`GET /api/projects/{slug}/mcp` to every caller that passes the project catalog
+read gate (`authorizeCatalogRouteProject`), not only to an admin. Write a
+reference (`env:NAME`) for anything that is a secret; the D1 declaration applies
+to the literal.
+
+**No new web environment variable is required by the platform MCP catalog.** An
+MCP secret travels only as an env-var name; the supervisor resolves it from its
+existing `process.env` at spawn. The env table above is unchanged by it, and
+`POST /diagnostics/env-refs` introduces no variable of its own —
+`MAISTER_DIAGNOSTIC_ENV_REFS` is unrelated and governs only `GET /diagnostics`.
 
 ### Project Brain provider config — `platform_runtime_settings` (Implemented, ADR-122)
 
@@ -186,6 +244,9 @@ capabilities:
     - id: github
       source: project
       command: github-mcp-server
+      env: # values are literal | env:NAME — see the value grammar above
+        GITHUB_TOKEN: env:GITHUB_TOKEN
+        GH_HOST: ghe.example.com
       agents: [claude, codex]
   skills:
     - id: aif-implement
@@ -416,16 +477,30 @@ capabilities:
   - { id: aif-bundle, path: capability }
 mcps:
   [] # MCP server templates: {id, transport: stdio|http,
-  #  command?/args?/url?, env: env:NAME refs ONLY, description?}
+  #  command?/args?/url?, env, headers?, bearerTokenEnv?, description?}
 restrictions:
   [] # path-sets: {id, paths: [globs]} → ingested as
   #  flow-package-scoped restriction capability records on attach
 ```
 
 Rules: all `path` values are escape-guarded relative subpaths; ids unique per
-section; `mcps[].env` values MUST match `/^env:[A-Z0-9_]+$/` (secret values
-are never stored — same convention as `platform_mcp_servers`). There is NO
-`version` field — the git tag is the only pin (ADR-021 semantics).
+section. There is NO `version` field — the git tag is the only pin (ADR-021
+semantics).
+
+**`mcps[]` values (Implemented — ADR-179).** `env` accepts either the legacy
+`string[]` of `env:NAME` entries — normalized at load to
+`{ NAME: "env:NAME" }`, so `attach.ts` and Studio see ONE shape — or a
+`Record<name, value>` map. New optional `headers: Record<name, value>` and
+`bearerTokenEnv: env:NAME` (http only, refused alongside an `Authorization`
+header row) complete the set. All values use the shared value grammar above:
+`literal | env:NAME`, case-insensitive names. This relaxes the previous
+uppercase-only, prefix-mandatory `/^env:[A-Z0-9_]+$/` rule. Additive — no
+`schemaVersion` bump.
+
+A package is shareable, so a package **template** should not carry a literal
+credential: the Studio editor's prefill from a platform row converts a literal
+into a reference (env key `K` → `env:K`; header `X-Api-Key` → `env:X_API_KEY`)
+and copies an existing reference as-is.
 
 **`result_profiles` (Implemented — [ADR-165](decisions.md#adr-165-governed-recursive-agent-harness--public-run-results-result-profiles-effective-recursion-bounds-result-only-completion)).**
 An optional package-level block declaring NAMED public result contracts for

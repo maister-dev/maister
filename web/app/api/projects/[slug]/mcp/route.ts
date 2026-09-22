@@ -1,11 +1,10 @@
 import "server-only";
 
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 
-import { ADAPTER_IDS } from "@/lib/acp-runners/adapter-support";
 import { authorizeCatalogRouteProject } from "@/lib/catalog/route-auth";
 import { catalogErrorResponse } from "@/lib/catalog/route-errors";
+import { projectMcpBodySchema } from "@/lib/mcp/mcp-form";
 import {
   createProjectMcp,
   listProjectMcps,
@@ -14,30 +13,11 @@ import {
 // M27/T-C5: project-scoped MCP collection. GET lists this project's MCPs
 // (capability_records source='project', kind='mcp'); POST creates one. RBAC =
 // manageCatalog (project admin), enforced by authorizeCatalogRouteProject — the
-// SAME helper the catalog caps routes use. Secrets are env:NAME refs only.
+// SAME helper the catalog caps routes use. ADR-179: values are whole-value
+// `literal | env:NAME`, validated by the ONE shared body schema (it replaced a
+// verbatim copy of the pre-ADR-179 key regex that lived here).
 
-const envKeyRefSchema = z
-  .string()
-  .regex(
-    /^(env:)?[A-Za-z_][A-Za-z0-9_]*$/,
-    "secret must be env:NAME, not a value",
-  );
-
-const postBodySchema = z
-  .object({
-    id: z
-      .string()
-      .min(1)
-      .regex(/^[A-Za-z0-9._-]+$/),
-    transport: z.enum(["stdio", "sse", "http"]),
-    command: z.string().min(1).nullable().optional(),
-    args: z.array(z.string()).optional(),
-    envKeys: z.array(envKeyRefSchema).optional(),
-    url: z.string().url().nullable().optional(),
-    headerKeys: z.array(envKeyRefSchema).optional(),
-    supportedAgents: z.array(z.enum(ADAPTER_IDS)).min(1).optional(),
-  })
-  .strict();
+const postBodySchema = projectMcpBodySchema;
 
 type RouteContext = {
   params: Promise<{ slug: string }>;

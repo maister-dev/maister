@@ -56,6 +56,9 @@ describe("loadMaisterPackageManifest", () => {
       { id: "aif-bundle", path: "capability" },
     ]);
     expect(manifest.mcps[0]?.transport).toBe("http");
+    // ADR-179 (D34): the legacy list is folded to a map ONCE, at load, so
+    // `attach.ts` and Studio see exactly one shape.
+    expect(manifest.mcps[0]?.env).toEqual({ DOCS_TOKEN: "env:DOCS_TOKEN" });
     expect(manifest.restrictions[0]?.paths).toEqual(["docs/**"]);
   });
 
@@ -114,9 +117,79 @@ describe("loadMaisterPackageManifest", () => {
     );
   });
 
-  it("rejects an mcp env value that is not an env:NAME reference", async () => {
+  // OBSOLETE under ADR-179 (D1/D4): a literal is accepted in the MAP form — it
+  // is the operator's declaration that the value is not a secret. The LIST form
+  // is still references-only (a bare list entry has no key to pair with, so it
+  // must name a variable). Replaced by the four cases below.
+  it("rejects a LIST entry that is not an env:NAME reference", async () => {
     const root = await packageRoot(
       `schemaVersion: 1\nname: p\nflows:\n  - { id: a, path: flows/a }\nmcps:\n  - { id: m, transport: http, url: "https://x", env: ["plaintext-secret"] }\n`,
+    );
+
+    await expect(loadMaisterPackageManifest(root)).rejects.toSatisfy(
+      (e: unknown) => isMaisterError(e) && e.code === "CONFIG",
+    );
+  });
+
+  it("accepts the MAP form, with a literal and lowercase names", async () => {
+    const root = await packageRoot(
+      `schemaVersion: 1\nname: p\nflows:\n  - { id: a, path: flows/a }\nmcps:\n  - id: m\n    transport: stdio\n    command: npx\n    env:\n      DOCS_TOKEN: env:DOCS_TOKEN\n      fastmcp_log_level: ERROR\n`,
+    );
+    const manifest = await loadMaisterPackageManifest(root);
+
+    // The pre-ADR-179 rule was uppercase-only and prefix-mandatory; the shared
+    // grammar relaxes both.
+    expect(manifest.mcps[0]?.env).toEqual({
+      DOCS_TOKEN: "env:DOCS_TOKEN",
+      fastmcp_log_level: "ERROR",
+    });
+  });
+
+  it("produces IDENTICAL material from the list and map forms", async () => {
+    const list = await loadMaisterPackageManifest(
+      await packageRoot(
+        `schemaVersion: 1\nname: p\nflows:\n  - { id: a, path: flows/a }\nmcps:\n  - { id: m, transport: stdio, command: npx, env: ["env:DOCS_TOKEN"] }\n`,
+      ),
+    );
+    const map = await loadMaisterPackageManifest(
+      await packageRoot(
+        `schemaVersion: 1\nname: p\nflows:\n  - { id: a, path: flows/a }\nmcps:\n  - id: m\n    transport: stdio\n    command: npx\n    env:\n      DOCS_TOKEN: env:DOCS_TOKEN\n`,
+      ),
+    );
+
+    expect(list.mcps[0]?.env).toEqual(map.mcps[0]?.env);
+  });
+
+  it("accepts headers + bearerTokenEnv on an http template", async () => {
+    const root = await packageRoot(
+      `schemaVersion: 1\nname: p\nflows:\n  - { id: a, path: flows/a }\nmcps:\n  - id: m\n    transport: http\n    url: "https://x"\n    headers:\n      X-Tenant: acme\n    bearerTokenEnv: env:MCP_TOKEN\n`,
+    );
+    const manifest = await loadMaisterPackageManifest(root);
+
+    expect(manifest.mcps[0]?.headers).toEqual({ "X-Tenant": "acme" });
+    expect(manifest.mcps[0]?.bearerTokenEnv).toBe("env:MCP_TOKEN");
+  });
+
+  it.each([
+    [
+      "bearerTokenEnv on stdio",
+      '{ id: m, transport: stdio, command: npx, bearerTokenEnv: "env:T" }',
+    ],
+    [
+      "bearerTokenEnv beside an Authorization header",
+      '{ id: m, transport: http, url: "https://x", headers: { Authorization: "Basic a" }, bearerTokenEnv: "env:T" }',
+    ],
+    [
+      "headers on a requirement-only entry",
+      '{ id: m, headers: { "X-Tenant": "acme" } }',
+    ],
+    [
+      "a malformed env: value",
+      '{ id: m, transport: stdio, command: npx, env: { GH: "env:1BAD" } }',
+    ],
+  ])("rejects %s with CONFIG", async (_l, mcp) => {
+    const root = await packageRoot(
+      `schemaVersion: 1\nname: p\nflows:\n  - { id: a, path: flows/a }\nmcps:\n  - ${mcp}\n`,
     );
 
     await expect(loadMaisterPackageManifest(root)).rejects.toSatisfy(

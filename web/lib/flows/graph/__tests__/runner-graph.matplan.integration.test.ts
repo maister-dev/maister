@@ -156,7 +156,7 @@ async function seedCapabilityRecords(projectId: string): Promise<void> {
       material: {
         command: "github-mcp",
         args: [],
-        envKeys: ["GITHUB_TOKEN"],
+        env: { GITHUB_TOKEN: "env:GITHUB_TOKEN" },
         config: {},
       },
     },
@@ -450,7 +450,7 @@ describe("runGraph — materialization plan → node_attempts ledger (T4.2 / T4.
         material: {
           command: "github-mcp",
           args: [],
-          envKeys: ["GITHUB_TOKEN"],
+          env: { GITHUB_TOKEN: "env:GITHUB_TOKEN" },
           config: { token: SECRET },
         },
       },

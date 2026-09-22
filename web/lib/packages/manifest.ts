@@ -11,6 +11,7 @@ import {
   type MaisterPackageManifest,
 } from "@/lib/config.schema";
 import { MaisterError } from "@/lib/errors";
+import { envRefName } from "@/lib/mcp/value-grammar";
 
 const log = pino({
   name: "package-manifest",
@@ -23,12 +24,48 @@ function asError(err: unknown): Error {
 
 export const PACKAGE_MANIFEST_FILENAME = "maister-package.yaml";
 
+// ADR-179 (D34): the loader is the ONLY place that knows the legacy list form.
+// `attach.ts` and Studio consume this type and see `mcps[].env` as a map,
+// always. The zod schema keeps the union so its output type stays honest about
+// what a FILE may contain; normalization happens once, here.
+export type NormalizedPackageManifest = Omit<MaisterPackageManifest, "mcps"> & {
+  mcps: (Omit<MaisterPackageManifest["mcps"][number], "env"> & {
+    env?: Record<string, string>;
+  })[];
+};
+
+function normalizeMcpEnv(
+  env: string[] | Record<string, string> | undefined,
+): Record<string, string> | undefined {
+  if (env === undefined) return undefined;
+  if (!Array.isArray(env)) return env;
+
+  // A legacy entry is `env:NAME`; the declared SLOT is the bare name and the
+  // declared VALUE is the reference itself.
+  return Object.fromEntries(
+    env.map((ref) => [envRefName(ref) ?? ref, ref] as const),
+  );
+}
+
+export function normalizePackageManifest(
+  manifest: MaisterPackageManifest,
+): NormalizedPackageManifest {
+  return {
+    ...manifest,
+    mcps: manifest.mcps.map((mcp) => {
+      const env = normalizeMcpEnv(mcp.env);
+
+      return env === undefined ? { ...mcp, env: undefined } : { ...mcp, env };
+    }),
+  };
+}
+
 // Loads + validates `<packageRoot>/maister-package.yaml` (ADR-088). Every
 // failure mode is CONFIG so callers branch on one code; the package
 // installer adds its own FLOW_INSTALL wrapping for fetch/copy failures.
 export async function loadMaisterPackageManifest(
   packageRoot: string,
-): Promise<MaisterPackageManifest> {
+): Promise<NormalizedPackageManifest> {
   const manifestPath = join(packageRoot, PACKAGE_MANIFEST_FILENAME);
   let raw: string;
 
@@ -84,5 +121,5 @@ export async function loadMaisterPackageManifest(
     "maister-package.yaml loaded",
   );
 
-  return parsed.data;
+  return normalizePackageManifest(parsed.data);
 }

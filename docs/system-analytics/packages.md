@@ -58,7 +58,11 @@ typed incompatibility.
   version label `local-<digest12>`, content-digest addressed.
 - **Package manifest** — `maister-package.yaml` v1 (schema:
   [`../configuration.md`](../configuration.md)): `flows[]`, `capabilities[]`,
-  `mcps[]` templates, `restrictions[]` path-sets, package metadata.
+  `mcps[]` templates, `restrictions[]` path-sets, package metadata. An
+  `mcps[]` entry's `env` accepts the legacy `env:NAME` string list (normalized at
+  load to a map) or a `Record<name, value>` map, plus optional `headers` and
+  `bearerTokenEnv` (http only) — all under the shared `literal | env:NAME`
+  grammar (ADR-179).
 
 ## State machine
 

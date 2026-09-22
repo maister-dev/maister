@@ -6,6 +6,7 @@ import type {
   PromptAccepted,
   SendPromptInput,
   SupervisorDiagnosticsStatus,
+  SupervisorEnvRefPresence,
   SupervisorEvent,
   SupervisorMcpProbeRequest,
   SupervisorMcpProbeResult,
@@ -211,6 +212,13 @@ export interface ExecutionHostTransport {
   diagnostics(opts?: {
     timeoutMs?: number;
   }): Promise<SupervisorDiagnosticsStatus>;
+  // ADR-179: host env-var PRESENCE by name, for MCP readiness. Accepts ANY
+  // number of names — the transport dedupes, chunks by the route cap and merges
+  // the answers back in request order. Never returns a value.
+  checkEnvRefs(
+    names: readonly string[],
+    opts?: { timeoutMs?: number },
+  ): Promise<SupervisorEnvRefPresence[]>;
   // The chrome's platform status (the `/health` body in its UI shape).
   platformStatus(opts?: { timeoutMs?: number }): Promise<PlatformStatus>;
   // Host-scoped admin operations (ADR-166 T4.6): the model catalog and MCP

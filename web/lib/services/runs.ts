@@ -1291,6 +1291,10 @@ export async function* launchRunStaged(
             capabilityRefId: capabilityRecords.capabilityRefId,
             source: capabilityRecords.source,
             agents: capabilityRecords.agents,
+            // ADR-179: the transport gate reads the winner's transport out of
+            // material, so a REQUIRED ref the adapter cannot speak refuses the
+            // launch HERE — before a worktree or a run row exists.
+            material: capabilityRecords.material,
           })
           .from(capabilityRecords)
           .where(
@@ -1311,7 +1315,9 @@ export async function* launchRunStaged(
         if (unsupportedMcp !== null) {
           throw new MaisterError(
             "EXECUTOR_UNAVAILABLE",
-            `required mcp "${unsupportedMcp}" cannot materialize for executor agent ${capabilityAgent} in project ${project.slug} — bind or configure it in Project → MCPs`,
+            unsupportedMcp.reason === "unsupported-transport"
+              ? `required mcp "${unsupportedMcp.refId}" uses transport ${unsupportedMcp.transport}, which executor agent ${capabilityAgent} cannot use, in project ${project.slug} — change its transport or bind another server in Project → MCPs`
+              : `required mcp "${unsupportedMcp.refId}" cannot materialize for executor agent ${capabilityAgent} in project ${project.slug} — bind or configure it in Project → MCPs`,
           );
         }
       }

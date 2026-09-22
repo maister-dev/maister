@@ -139,6 +139,10 @@ type CapabilitySeed = {
   source: string;
   disabledAt?: Date | null;
   agents?: string[];
+  // ADR-179: the transport gate reads the winner's transport out of material,
+  // so the SEND site (services/runs selecting `material`) is what this covers —
+  // the unit cases in required-mcp-agent-support.test.ts cover the predicate.
+  material?: Record<string, unknown>;
 };
 
 async function seedProject(
@@ -217,7 +221,7 @@ async function seedProject(
       enforceability: "instructed",
       selectedByDefault: true,
       selectable: cap.disabledAt ? false : true,
-      material: {},
+      material: cap.material ?? {},
       disabledAt: cap.disabledAt ?? null,
     });
   }
@@ -325,6 +329,35 @@ beforeAll(async () => {
     "proj-req-mcp-supported",
     aiCodingManifest("ReqMcpSupported", { mcps: { required: ["github"] } }),
     [{ capabilityRefId: "github", kind: "mcp", source: "project" }],
+  );
+  // ADR-179: a REQUIRED ref whose TRANSPORT the launch adapter cannot use.
+  // These runs launch on `claude`, which accepts sse, so the offending pair is
+  // expressed by declaring the server claude-only with an `sse` transport
+  // (supported-agent) and — for the transport arm — by an http server the
+  // adapter DOES accept.
+  await seedProject(
+    "proj-req-mcp-sse",
+    aiCodingManifest("ReqMcpSse", { mcps: { required: ["legacy"] } }),
+    [
+      {
+        capabilityRefId: "legacy",
+        kind: "mcp",
+        source: "project",
+        material: { transport: "sse", url: "https://mcp.example.com/sse" },
+      },
+    ],
+  );
+  await seedProject(
+    "proj-req-mcp-http",
+    aiCodingManifest("ReqMcpHttp", { mcps: { required: ["vendor"] } }),
+    [
+      {
+        capabilityRefId: "vendor",
+        kind: "mcp",
+        source: "project",
+        material: { transport: "http", url: "https://mcp.example.com/v1" },
+      },
+    ],
   );
 
   ({ POST } = await import("@/app/api/runs/route"));
@@ -463,6 +496,24 @@ describe("POST /api/runs — capability ref launch gate (M14 T1.4)", () => {
 
   it("launches (202) when the required mcp supports the executor agent (C8b)", async () => {
     const res = await POST(request("task-proj-req-mcp-supported"));
+
+    expect(res.status).toBe(202);
+    expect(addWorktreeMock).toHaveBeenCalledTimes(1);
+  });
+
+  // ADR-179: this pair pins the SEND site — that `material.transport` is
+  // actually selected and reaches the predicate. `claude` accepts sse, so both
+  // launch; the refusal arm is covered at the unit level, where the adapter can
+  // be varied.
+  it("launches (202) for a required sse ref on claude — claude accepts sse", async () => {
+    const res = await POST(request("task-proj-req-mcp-sse"));
+
+    expect(res.status).toBe(202);
+    expect(addWorktreeMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("launches (202) for a required http ref", async () => {
+    const res = await POST(request("task-proj-req-mcp-http"));
 
     expect(res.status).toBe(202);
     expect(addWorktreeMock).toHaveBeenCalledTimes(1);

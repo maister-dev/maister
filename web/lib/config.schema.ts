@@ -6,6 +6,12 @@ import {
 } from "@/lib/flows/manifest-shape";
 import { CONTEXT_REPOS_MAX } from "@/lib/context-mounts/types";
 import { ADAPTER_IDS, PROVIDER_KINDS } from "@/lib/acp-runners/adapter-support";
+import {
+  envRefSchema,
+  hasAuthorizationHeader,
+  mcpEnvMapSchema,
+  mcpHeaderMapSchema,
+} from "@/lib/mcp/value-grammar";
 
 // Replicated from flow-paths.ts to avoid pulling the `server-only` constraint
 // (and its transitive MaisterError dep) into config.schema.ts, which must remain
@@ -94,15 +100,20 @@ const capabilityCommonSchema = z.object({
 export const mcpCapabilitySchema = capabilityCommonSchema.extend({
   kind: z.literal("mcp").default("mcp"),
   // M27/T-C4: transport. Absent ⇒ `stdio` (back-compat) — readers default via
-  // `?? "stdio"`. `stdio` uses command/args/env; `sse`/`http` use url/headers.
-  // Header/env values are NEVER stored — only the NAME keys reach
-  // `capability_records.material`; values resolve supervisor-side.
+  // `?? "stdio"`. `stdio` uses command/args/env; `sse`/`http` use
+  // url/headers/bearerTokenEnv.
+  // ADR-179 (D31): env/header VALUES are carried as declared under the shared
+  // `literal | env:NAME` grammar — `maister.yaml` is the operator's own host
+  // file, at the same trust level as `supervisor/.env`. Before the change they
+  // were reduced to their NAMES here; `configuration.md` states the exposure a
+  // literal accepts (it is returned by the project catalog read).
   transport: z.enum(["stdio", "sse", "http"]).optional(),
   command: z.string().min(1).optional(),
   args: z.array(z.string()).optional(),
-  env: z.record(z.string(), z.string()).optional(),
+  env: mcpEnvMapSchema.optional(),
   url: z.string().url().optional(),
-  headers: z.record(z.string(), z.string()).optional(),
+  headers: mcpHeaderMapSchema.optional(),
+  bearerTokenEnv: envRefSchema.optional(),
   config: z.record(z.string(), z.unknown()).optional(),
   enforceability: capabilityEnforceabilitySchema.default("enforced"),
 });
@@ -1498,10 +1509,6 @@ export const packageManifestEntrySchema = z
   })
   .strict();
 
-// Secret values are NEVER stored — only env-var references, mirroring the
-// platform_mcp_servers env_keys convention.
-const PACKAGE_ENV_REF = /^env:[A-Z0-9_]+$/;
-
 export const packageManifestMcpSchema = z
   .object({
     id: capabilityRefIdSchema,
@@ -1511,13 +1518,15 @@ export const packageManifestMcpSchema = z
     command: z.string().min(1).optional(),
     args: z.array(z.string()).optional(),
     url: z.string().min(1).optional(),
-    env: z
-      .array(
-        z
-          .string()
-          .regex(PACKAGE_ENV_REF, "env entries must be env:NAME references"),
-      )
-      .optional(),
+    // ADR-179 (D4/D27): the legacy `string[]` of `env:NAME` stays accepted and
+    // is normalized to `{ NAME: "env:NAME" }` at LOAD, so `attach.ts` and
+    // Studio see ONE shape (`loadMaisterPackageManifest`). The union is kept
+    // here rather than a `.transform` so the zod OUTPUT type stays honest about
+    // what a manifest file may contain. Names are now case-insensitive under
+    // the shared grammar — a relaxation of the old uppercase-only rule.
+    env: z.union([z.array(envRefSchema), mcpEnvMapSchema]).optional(),
+    headers: mcpHeaderMapSchema.optional(),
+    bearerTokenEnv: envRefSchema.optional(),
     description: z.string().min(1).optional(),
     // ADR-132 (D3): optional hint pre-selecting a platform server to match this
     // requirement in the project MCP hub match dialog.
@@ -1542,7 +1551,39 @@ export const packageManifestMcpSchema = z
         });
       }
 
+      if (mcp.headers !== undefined || mcp.bearerTokenEnv !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [mcp.headers !== undefined ? "headers" : "bearerTokenEnv"],
+          message:
+            "`headers`/`bearerTokenEnv` require a transport (template), not a requirement-only entry",
+        });
+      }
+
       return;
+    }
+
+    // ADR-179: `bearerTokenEnv` is http-only and is the ONE source of truth for
+    // the Authorization header, so it cannot coexist with a declared row.
+    if (mcp.transport === "stdio") {
+      for (const field of ["headers", "bearerTokenEnv"] as const) {
+        if (mcp[field] === undefined) continue;
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [field],
+          message: `\`${field}\` is only valid on transport: http`,
+        });
+      }
+    } else if (
+      mcp.bearerTokenEnv !== undefined &&
+      hasAuthorizationHeader(mcp.headers)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["bearerTokenEnv"],
+        message:
+          "bearerTokenEnv and an Authorization header row must not both be set",
+      });
     }
 
     // Template: transport is required and drives command/url validation.

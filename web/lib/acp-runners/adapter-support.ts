@@ -103,6 +103,9 @@ export const ADAPTER_SUPPORT = [
     launchCommandHint: ["claude-agent-acp"],
     modelChannel: "settings_local",
     resumeStrategy: "session_resume",
+    // Verified against claude-agent-acp 0.75.1 (`dist/acp-agent.js`): accepts
+    // `http` | `sse` and untagged stdio, and silently DROPS a server carrying
+    // an explicit `type:"stdio"` (the ACP v2 shape).
     mcpTransports: ["stdio", "sse", "http"],
     fsPolicy: "none",
     capabilitySurface: { skills: true, subagents: true, skillSigil: "/" },
@@ -121,7 +124,11 @@ export const ADAPTER_SUPPORT = [
     launchCommandHint: ["codex-acp"],
     modelChannel: "set_session_model",
     resumeStrategy: "session_resume",
-    mcpTransports: ["stdio", "sse", "http"],
+    // Verified against codex-acp 1.10.0 (`createMcpSeverConfig` in
+    // `dist/index.js`): it THROWS `invalidRequest` for `sse` (and `acp`) while
+    // building the session config, which fails `session/new` for the WHOLE
+    // session — so `sse` is not merely unsupported, it is fatal.
+    mcpTransports: ["stdio", "http"],
     fsPolicy: "none",
     capabilitySurface: { skills: true, subagents: false, skillSigil: "$" },
     materialization: {
@@ -143,6 +150,7 @@ export const ADAPTER_SUPPORT = [
     launchCommandHint: ["gemini", "--acp"],
     modelChannel: "advisory",
     resumeStrategy: "load_session_pending_smoke",
+    // unverified against the adapter binary
     mcpTransports: ["stdio", "sse", "http"],
     fsPolicy: "none",
     capabilitySurface: { skills: true, subagents: false, skillSigil: "/" },
@@ -161,6 +169,7 @@ export const ADAPTER_SUPPORT = [
     launchCommandHint: ["opencode", "acp"],
     modelChannel: "advisory",
     resumeStrategy: "session_resume_pending_smoke",
+    // unverified against the adapter binary
     mcpTransports: ["stdio", "sse", "http"],
     fsPolicy: "none",
     capabilitySurface: { skills: true, subagents: false, skillSigil: "/" },
@@ -183,6 +192,7 @@ export const ADAPTER_SUPPORT = [
     launchCommandHint: ["mimo", "acp"],
     modelChannel: "set_session_model",
     resumeStrategy: "session_resume_pending_smoke",
+    // unverified against the adapter binary
     mcpTransports: ["stdio", "sse", "http"],
     fsPolicy: "none",
     capabilitySurface: { skills: true, subagents: false, skillSigil: "/" },
@@ -203,6 +213,20 @@ export function getAdapterSupportById(
   adapterId: string,
 ): AdapterSupport | undefined {
   return ADAPTER_SUPPORT.find((adapter) => adapter.id === adapterId);
+}
+
+// ADR-179: the accessor that makes `mcpTransports` load-bearing. It was dead
+// data with zero readers repo-wide, which is why the documented
+// "agent-unsupported transport" edge case was never implemented. An unknown
+// adapter falls back to every transport rather than none: withholding
+// everything for a catalog row we do not recognize would be a worse failure
+// than forwarding it.
+export function mcpTransportsForAdapter(
+  adapter: AdapterId,
+): readonly AdapterMcpTransport[] {
+  return (
+    getAdapterSupportById(adapter)?.mcpTransports ?? ["stdio", "sse", "http"]
+  );
 }
 
 export function providerKindsForAdapter(

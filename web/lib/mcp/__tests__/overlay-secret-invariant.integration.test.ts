@@ -16,14 +16,24 @@ import {
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
 
-// ADR-129 (W-C, T4.3): the untouchable-invariant guard. Project A and project B
-// remap the same MCP's env slot to DIFFERENT names; each session gets its own
-// NAME, and a seeded secret VALUE appears in NO DB row, response, or log fixture.
+// ADR-129 (W-C, T4.3), amended by ADR-179: the untouchable-invariant guard.
+// Project A and project B point the SAME env key at DIFFERENT sources; each
+// session gets its own source, and the seeded secret VALUE behind the reference
+// appears in NO DB row, response, or log fixture.
+//
+// ADR-179 adds the second half: a LITERAL value IS stored and returned — that is
+// D1 — so the literal sentinel must reach the materialized server and the
+// binding row, while the value behind a REFERENCE must not.
 
 type Db = NodePgDatabase;
 
-// The literal token VALUE that must NEVER cross into any web-tier structure.
+// The token VALUE behind a REFERENCE. It must NEVER cross into any web-tier
+// structure — the execution host is the only place it exists.
 const SECRET_SENTINEL = "ghp_THIS_VALUE_MUST_NEVER_APPEAR_1234567890";
+
+// A LITERAL an operator declared non-secret. It MUST survive end-to-end: the
+// invariant is about references, not about every string.
+const LITERAL_SENTINEL = "lit-9f3a";
 
 let testDatabase: StartedPostgresTestDb;
 let db: Db;
@@ -67,8 +77,10 @@ async function seedProject(): Promise<string> {
 // projects overlay the SAME server with different NAMES.
 async function seedGithubServer(): Promise<string> {
   await db.execute(sql`
-    INSERT INTO platform_mcp_servers (id, transport, command, env_keys, enabled, trust_status)
-    VALUES ('github', 'stdio', 'npx', ${JSON.stringify(["env:API_TOKEN"])}::jsonb, true, 'trusted')
+    INSERT INTO platform_mcp_servers (id, transport, command, env, enabled, trust_status)
+    VALUES ('github', 'stdio', 'npx',
+            ${JSON.stringify({ API_TOKEN: "env:API_TOKEN", GH_HOST: LITERAL_SENTINEL })}::jsonb,
+            true, 'trusted')
     ON CONFLICT (id) DO NOTHING
   `);
 
@@ -80,11 +92,11 @@ const githubServer = (): AgentMcpServer => ({
   transport: "stdio",
   command: "npx",
   args: ["-y", "server-github"],
-  envKeys: ["API_TOKEN"],
+  env: { API_TOKEN: "env:API_TOKEN", GH_HOST: LITERAL_SENTINEL },
 });
 
 describe("overlay secret invariant (W-C, real postgres)", () => {
-  it("gives each project its own remapped NAME and never lets the secret VALUE cross", async () => {
+  it("gives each project its own SOURCE for one key and never lets the referenced VALUE cross", async () => {
     const projectA = await seedProject();
     const projectB = await seedProject();
     const serverA = await seedGithubServer();
@@ -120,16 +132,25 @@ describe("overlay secret invariant (W-C, real postgres)", () => {
       await loadProjectMcpOverlays(projectB, injected()),
     );
 
-    // Each session receives its OWN name.
-    expect(appliedA.envKeys).toEqual(["PROJ_A_TOKEN"]);
-    expect(appliedB.envKeys).toEqual(["PROJ_B_TOKEN"]);
+    // Each session receives its OWN source for the SAME key — the key is the
+    // server's contract and is preserved.
+    expect(appliedA.env).toEqual({
+      API_TOKEN: "env:PROJ_A_TOKEN",
+      GH_HOST: LITERAL_SENTINEL,
+    });
+    expect(appliedB.env).toEqual({
+      API_TOKEN: "env:PROJ_B_TOKEN",
+      GH_HOST: LITERAL_SENTINEL,
+    });
 
-    // The secret VALUE never appears in the materialized ACP server payloads.
+    // The value behind the REFERENCE never appears in the materialized payload.
     expect(JSON.stringify(appliedA)).not.toContain(SECRET_SENTINEL);
     expect(JSON.stringify(appliedB)).not.toContain(SECRET_SENTINEL);
+    // The LITERAL does — D1 is the whole point of it being a literal.
+    expect(JSON.stringify(appliedA)).toContain(LITERAL_SENTINEL);
   });
 
-  it("stores only NAMES in the binding row — the secret VALUE is in no DB column", async () => {
+  it("stores only the declared source in the binding row — the referenced VALUE is in no DB column", async () => {
     const projectId = await seedProject();
     const serverId = await seedGithubServer();
 

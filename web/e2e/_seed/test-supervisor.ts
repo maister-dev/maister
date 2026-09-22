@@ -265,6 +265,9 @@ export interface TestSupervisorHandle {
   stop: () => Promise<void>;
 }
 
+// ADR-179: same fixed presence fixture as the stub supervisor.
+const TEST_PRESENT_ENV_REFS = new Set(["PATH", "HOME", "E2E_MCP_TOKEN"]);
+
 function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown>> {
   return new Promise((resolve) => {
     let raw = "";
@@ -1141,6 +1144,39 @@ export async function startTestSupervisor(
           envRefs: [{ name: "ZAI_API_KEY", present: false }],
         }),
       );
+
+      return;
+    }
+
+    // ADR-179 (D26): mirrors the stub's route so both e2e supervisors answer the
+    // readiness path identically.
+    if (method === "POST" && url === "/diagnostics/env-refs") {
+      void readJsonBody(req).then((body) => {
+        const names = Array.isArray(body.names)
+          ? (body.names as unknown[]).filter(
+              (n): n is string => typeof n === "string",
+            )
+          : [];
+
+        if (names.length === 0 || names.length > 64) {
+          res.writeHead(409, { "content-type": "application/json" });
+          res.end(
+            JSON.stringify({ code: "PRECONDITION", message: "names: 1..64" }),
+          );
+
+          return;
+        }
+
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(
+          JSON.stringify({
+            refs: [...new Set(names)].map((name) => ({
+              name,
+              present: TEST_PRESENT_ENV_REFS.has(name),
+            })),
+          }),
+        );
+      });
 
       return;
     }

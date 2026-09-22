@@ -2657,10 +2657,11 @@ export async function resolveAgentProfileMcpServers(args: {
     agent: args.capabilityAgent as never,
   });
 
-  // ADR-130 (W-C/W-E): the SAME shared gate+overlay pass as the flow seam
-  // (spec §13). platform-trust + exec-trust withhold is persisted to the
-  // run-level sink (agent runs carry no node_attempts materialization_plan),
-  // then per-binding NAME-only overlays apply to the executable set.
+  // ADR-130 (W-C/W-E) + ADR-179: the SAME shared gate+overlay pass as the flow
+  // and scratch seams (spec §13). platform-trust, exec-trust and adapter
+  // transport withholds are persisted to the run-level sink (agent runs carry no
+  // node_attempts materialization_plan), then per-binding VALUE overlays apply
+  // to the executable set.
   const { mcpServers, withheld } = await gateAndOverlayMcpServers({
     db: args.db as never,
     projectId: args.projectId,
@@ -2668,6 +2669,7 @@ export async function resolveAgentProfileMcpServers(args: {
     supported: profile.supported,
     mcpServers: mapped.mcpServers,
     execTrust: args.execTrust,
+    adapter: args.capabilityAgent as never,
   });
 
   if (withheld.length > 0) {
@@ -2677,7 +2679,7 @@ export async function resolveAgentProfileMcpServers(args: {
         execTrust: args.execTrust,
         withheld: withheld.map((w) => `${w.refId}:${w.reason}`),
       },
-      "agent MCP servers withheld (trust/exec-trust) — persisted",
+      "agent MCP servers withheld (trust/exec-trust/transport) — persisted",
     );
   }
 

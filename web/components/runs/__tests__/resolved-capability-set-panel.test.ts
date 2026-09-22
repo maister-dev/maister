@@ -22,6 +22,7 @@ const labels: ResolvedCapabilitySetLabels = {
   withheldReason: {
     "platform-untrusted": "platform untrusted",
     "exec-untrusted-stdio": "exec-untrusted stdio",
+    "agent-unsupported-transport": "transport unsupported by the agent",
   },
 };
 
@@ -73,6 +74,14 @@ describe("ResolvedCapabilitySetPanel", () => {
           reason: "platform-untrusted",
           scope: "platform",
         },
+        // ADR-179: the third reason renders like the other two — a codex run
+        // that dropped an `sse` server must say so, not fall through blank.
+        {
+          refId: "legacy-sse",
+          transport: "sse",
+          reason: "agent-unsupported-transport",
+          scope: "platform",
+        },
       ],
     });
 
@@ -81,6 +90,8 @@ describe("ResolvedCapabilitySetPanel", () => {
     expect(html).toContain("Withheld MCP servers");
     expect(html).toContain('data-testid="withheld-mcp-serena"');
     expect(html).toContain("platform untrusted");
+    expect(html).toContain('data-testid="withheld-mcp-legacy-sse"');
+    expect(html).toContain("transport unsupported by the agent");
   });
 
   it("shows the empty label when there are no capabilities or mcps", () => {

@@ -278,7 +278,7 @@ function claudeProfile() {
         material: {
           command: "github-mcp",
           args: [],
-          envKeys: ["GITHUB_TOKEN"],
+          env: { GITHUB_TOKEN: "env:GITHUB_TOKEN" },
         },
       },
     ],

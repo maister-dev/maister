@@ -47,8 +47,11 @@ export type McpBindingView = {
   targetId: string;
   enabled: boolean;
   configOverlay: {
+    // ADR-179: declared slot NAME -> the VALUE this project uses for it
+    // (`literal | env:NAME`). The slot's name is preserved on the wire.
     envRemap?: Record<string, string>;
     headerRemap?: Record<string, string>;
+    bearerTokenEnv?: string;
     argsOverride?: string[];
     urlOverride?: string;
   };
@@ -56,13 +59,15 @@ export type McpBindingView = {
 };
 
 // A platform server the project MAY connect (id === refId in this model).
+// ADR-179: it advertises its SLOTS — the keys of its `env`/`headers` maps —
+// which is what the overlay editor offers as a datalist. Never its values.
 export type PlatformCandidateView = {
   id: string;
   transport: string;
   trustStatus: string;
   enabled: boolean;
-  envKeys: string[];
-  headerKeys: string[];
+  envSlots: string[];
+  headerSlots: string[];
 };
 
 export interface McpPanelProps {
@@ -151,16 +156,30 @@ export function McpPanel({
 
   const slotsFor = (
     binding: McpBindingView,
-  ): { env: string[]; header: string[] } | undefined => {
+  ):
+    | { env: string[]; header: string[]; transport?: "stdio" | "sse" | "http" }
+    | undefined => {
     if (binding.targetKind === "platform") {
       const p = platformById.get(binding.targetId);
 
-      return p ? { env: p.envKeys, header: p.headerKeys } : undefined;
+      return p
+        ? {
+            env: p.envSlots,
+            header: p.headerSlots,
+            transport: p.transport as "stdio" | "sse" | "http",
+          }
+        : undefined;
     }
     if (binding.targetKind === "project") {
       const s = projectServerById.get(binding.targetId);
 
-      return s ? { env: s.envKeys, header: s.headerKeys } : undefined;
+      return s
+        ? {
+            env: Object.keys(s.env ?? {}),
+            header: Object.keys(s.headers ?? {}),
+            transport: s.transport,
+          }
+        : undefined;
     }
 
     return undefined; // package: free-form slots (server validates)

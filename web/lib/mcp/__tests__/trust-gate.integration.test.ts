@@ -131,10 +131,17 @@ describe("materialization trust gate (W-E, real postgres)", () => {
         reason: "platform-untrusted",
         scope: "platform",
       },
+      // ADR-179: the third reason is part of the dedupe key like the other two.
+      {
+        refId: "legacy",
+        transport: "sse",
+        reason: "agent-unsupported-transport",
+        scope: "platform",
+      },
     ];
 
     await mergeRunWithheldMcps(gateDb(), runId, withheld);
-    // Re-merging the same record is idempotent (deduped).
+    // Re-merging the same records is idempotent (deduped).
     await mergeRunWithheldMcps(gateDb(), runId, withheld);
 
     const rows = ((
@@ -142,5 +149,35 @@ describe("materialization trust gate (W-E, real postgres)", () => {
     ).rows ?? []) as Array<{ withheld_mcps: WithheldMcp[] | null }>;
 
     expect(rows[0].withheld_mcps).toEqual(withheld);
+  });
+
+  it("keeps the SAME ref under two different reasons — the key is (refId, reason)", async () => {
+    const runId = await seedRun();
+
+    await mergeRunWithheldMcps(gateDb(), runId, [
+      {
+        refId: "legacy",
+        transport: "sse",
+        reason: "platform-untrusted",
+        scope: "platform",
+      },
+    ]);
+    await mergeRunWithheldMcps(gateDb(), runId, [
+      {
+        refId: "legacy",
+        transport: "sse",
+        reason: "agent-unsupported-transport",
+        scope: "platform",
+      },
+    ]);
+
+    const rows = ((
+      await db.execute(sql`SELECT withheld_mcps FROM runs WHERE id = ${runId}`)
+    ).rows ?? []) as Array<{ withheld_mcps: WithheldMcp[] | null }>;
+
+    expect(rows[0].withheld_mcps?.map((w) => w.reason)).toEqual([
+      "platform-untrusted",
+      "agent-unsupported-transport",
+    ]);
   });
 });

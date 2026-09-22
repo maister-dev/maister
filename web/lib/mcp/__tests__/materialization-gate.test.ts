@@ -92,3 +92,77 @@ describe("partitionWithheldMcps (W-E)", () => {
     expect(withheld).toEqual([]);
   });
 });
+
+// ADR-179: the third pass. It runs AFTER the two trust passes, so the strongest
+// refusal names the withhold.
+describe("partitionWithheldMcps — adapter transport gate (ADR-179)", () => {
+  const trusted = (name: string) => ({
+    sourceByRef: new Map([[name, "platform"]]),
+    platformTrustedByRef: new Map([[name, true]]),
+    execTrust: "trusted" as const,
+  });
+
+  it("withholds a codex sse server with reason agent-unsupported-transport", () => {
+    const { kept, withheld } = partitionWithheldMcps({
+      mcpServers: [srv("legacy", "sse")],
+      ...trusted("legacy"),
+      adapter: "codex",
+    });
+
+    expect(kept).toEqual([]);
+    expect(withheld).toEqual([
+      {
+        refId: "legacy",
+        transport: "sse",
+        reason: "agent-unsupported-transport",
+        scope: "platform",
+      },
+    ]);
+  });
+
+  it("keeps a claude sse server — claude accepts sse", () => {
+    const { kept, withheld } = partitionWithheldMcps({
+      mcpServers: [srv("legacy", "sse")],
+      ...trusted("legacy"),
+      adapter: "claude",
+    });
+
+    expect(kept.map((s) => s.name)).toEqual(["legacy"]);
+    expect(withheld).toEqual([]);
+  });
+
+  it("keeps a codex http server", () => {
+    const { kept } = partitionWithheldMcps({
+      mcpServers: [srv("vendor", "http")],
+      ...trusted("vendor"),
+      adapter: "codex",
+    });
+
+    expect(kept.map((s) => s.name)).toEqual(["vendor"]);
+  });
+
+  it("platform-untrusted WINS over the transport gate for the same server", () => {
+    // Pass order matters: an untrusted server is withheld for trust even when
+    // the adapter also cannot speak its transport.
+    const { withheld } = partitionWithheldMcps({
+      mcpServers: [srv("legacy", "sse")],
+      sourceByRef: new Map([["legacy", "platform"]]),
+      platformTrustedByRef: new Map([["legacy", false]]),
+      execTrust: "trusted",
+      adapter: "codex",
+    });
+
+    expect(withheld[0].reason).toBe("platform-untrusted");
+  });
+
+  it("applies NO transport gate when the caller does not name an adapter", () => {
+    // A caller that does not know its adapter must not silently withhold
+    // everything.
+    const { kept } = partitionWithheldMcps({
+      mcpServers: [srv("legacy", "sse")],
+      ...trusted("legacy"),
+    });
+
+    expect(kept.map((s) => s.name)).toEqual(["legacy"]);
+  });
+});

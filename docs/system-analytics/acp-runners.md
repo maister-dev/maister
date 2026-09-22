@@ -453,11 +453,14 @@ sequenceDiagram
   [instance-config.md](instance-config.md) (host roots / host tools on the same
   page), [capability-catalog.md](capability-catalog.md),
   [model-catalog.md](model-catalog.md) (model discovery + application, ADR-076).
-  **(Designed)** The platform MCP server admin CRUD (`platform_mcp_servers`
+  **(Implemented)** The platform MCP server admin CRUD (`platform_mcp_servers`
   table, `/api/admin/mcp-servers` routes, settings panel) mirrors this runner
   CRUD pattern precisely — same usage-guard delete, same `onConflictDoNothing`
-  duplicate-id protection, same `env:NAME` secret policy, same `admin`-only gate
-  (ADR-065 precedent). See [`mcp-management.md`](mcp-management.md).
+  duplicate-id protection, same `admin`-only gate (ADR-065 precedent), and since
+  ADR-179 the SAME value grammar as runner `env`: whole-value
+  `literal | env:NAME`, one validator, literals accepted and only warned under a
+  secret-shaped key. The key/value rows control is the same shared component.
+  See [`mcp-management.md`](mcp-management.md).
 - **Rail surface:** the left-rail "Runners readiness" block
   ([`../screens/chrome/left-rail.md`](../screens/chrome/left-rail.md)) surfaces
   each adapter's configured runners read-only (identity + enabled/readiness, no
