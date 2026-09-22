@@ -39,11 +39,48 @@ import {
   vi,
 } from "vitest";
 
+import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
+import { setDefaultTransportForTests } from "@/lib/execution-host/default-transport";
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
+
+const unexpectedRealTransportCall = vi.hoisted(() =>
+  vi.fn(() => {
+    throw new Error(
+      "shared-tree suite attempted to call the real supervisor transport",
+    );
+  }),
+);
+
+vi.mock(
+  "@/lib/execution-host/transports/local-direct",
+  async (importOriginal) => {
+    const actual =
+      await importOriginal<
+        typeof import("@/lib/execution-host/transports/local-direct")
+      >();
+
+    return {
+      ...actual,
+      createLocalDirectTransport: () =>
+        new Proxy(actual.createLocalDirectTransport(), {
+          get(target, property, receiver) {
+            const value: unknown = Reflect.get(target, property, receiver);
+
+            return typeof value === "function"
+              ? unexpectedRealTransportCall
+              : value;
+          },
+        }),
+    };
+  },
+);
+
+let previousSupervisorUrl: string | undefined;
+let fakeHostId: string;
 
 // The merge primitives are stubbed (no real repo) so the DB tree-resolve +
 // settled-gate + claim/finalize CAS is what's exercised.
@@ -103,6 +140,8 @@ let promoteRun: typeof import("@/lib/runs/promote").promoteRun;
 let markReworkFromReview: typeof import("@/lib/runs/state-transitions").markReworkFromReview;
 
 beforeAll(async () => {
+  previousSupervisorUrl = process.env.MAISTER_SUPERVISOR_URL;
+  delete process.env.MAISTER_SUPERVISOR_URL;
   testDatabase = await startMainPostgresTestDb({
     databaseName: "shared_tree_autolaunch_test",
   });
@@ -121,7 +160,14 @@ beforeAll(async () => {
 }, 180_000);
 
 afterAll(async () => {
-  await testDatabase?.stop();
+  try {
+    await testDatabase?.stop();
+  } finally {
+    setDefaultTransportForTests(null);
+    if (previousSupervisorUrl === undefined)
+      delete process.env.MAISTER_SUPERVISOR_URL;
+    else process.env.MAISTER_SUPERVISOR_URL = previousSupervisorUrl;
+  }
 });
 
 let projectId: string;
@@ -137,6 +183,8 @@ beforeEach(async () => {
   await pool.query(`DELETE FROM "platform_acp_runners"`);
   await pool.query(`DELETE FROM "projects"`);
   await pool.query(`DELETE FROM "users"`);
+
+  ({ hostId: fakeHostId } = await fakeExecutionHosts(db));
 
   projectId = randomUUID();
   executorId = randomUUID();
@@ -167,7 +215,24 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
-  vi.clearAllMocks();
+  try {
+    expect(process.env.MAISTER_SUPERVISOR_URL).toBeUndefined();
+    expect(
+      unexpectedRealTransportCall,
+      "real supervisor transport must never be called, even when its error is caught",
+    ).not.toHaveBeenCalled();
+    // eslint-disable-next-line no-console
+    console.log(
+      JSON.stringify({
+        suite: "shared-tree-auto-launch",
+        fakeHostId,
+        transportCalls: unexpectedRealTransportCall.mock.calls.length,
+        outcome: "passed",
+      }),
+    );
+  } finally {
+    vi.clearAllMocks();
+  }
 });
 
 async function seedRoot(): Promise<string> {

@@ -122,7 +122,9 @@ The supported single-host layout in this guide keeps `/opt/maister` for both
 because the two units run as the same `maister` user; the AT-16 qualification
 (`web/test-support/__tests__/execution-ab-isolation.integration.test.ts`)
 runs them on disjoint private roots with only the worktrees root shared and the
-web denied the supervisor's root at the kernel. What must stay true when the
+web denied the supervisor's root at the kernel. This macOS proof uses distinct
+sandbox security contexts, not distinct Unix users. The shipped same-user,
+shared-root layout does not enforce that isolation boundary. What must stay true when the
 roots differ: the supervisor identity must still read the web's runtime root
 where read-only context mounts are materialized (ADR-157) and write the
 shared worktrees root; `MAISTER_WORKSPACE_ROOTS` must list every root the web

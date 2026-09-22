@@ -1,6 +1,6 @@
 # Implementation Plan: Close S5.2 — process death, partitions and denied roots
 
-Created: 2026-09-22. Status: **Implementing; T01–T02 and T04–T12 complete; T03 local baseline verified, hosted preflight pending; T13 wiring implemented, hosted run pending; T14 broad web regression in progress.**
+Created: 2026-09-22. Status: **Implementing; All local implementation and verification complete (T01–T02, T04–T12, T14); T03/T13 hosted qualification and T15 final S5.2 closure remain blocked on publishing/running CI.**
 Branch: none (existing detached worktree preserved).
 Planning HEAD: `c4216cd532c9fe7df2ca38c6045bea23ed54e8fa`.
 User-supplied qualification baseline: local `master @ 1056c5c1`.
@@ -687,7 +687,7 @@ fix cycle. Commit C3.
   Logging: setup/build/suite/cleanup/upload timings and remaining budget.
   Depends: T02 for T13a; T07, T11, T12 for T13b. Complete T13 only after T13b.
 
-- [ ] **T14 — Run the final scoped regression and falsification gates.** Files:
+- [x] **T14 — Run the final scoped regression and falsification gates.** Files:
   existing test runner configurations only if discovery requires correction;
   evidence outside worktree. Execute the commands below separately and retain
   exit codes, Errors lines and exact failure sets. Isolation alone; web A/B and
@@ -698,7 +698,9 @@ fix cycle. Commit C3.
   authority, watchdog parent race, D1 semantics and stale-writer attribution.
   Any unresolved S5.2 assertion, leak or missing CI proof keeps S5.2 unchecked.
   Logging: revision/node/driver/command/case/exact error/evidence pointer.
-  Depends: T13.
+  Depends: T13 wiring; its hosted qualification remains the external T13/S5.2
+  completion gate. Independent local checks completed while that execution
+  prerequisite was unavailable; no CI requirement is waived.
 
 - [ ] **T15 — Apply the as-built evidence and stop at S5.2.** Files:
   `.ai-factory/plans/stage-ab-stabilization.md`, this plan,
@@ -1196,3 +1198,61 @@ execution and hosted evidence remain open; do not mark T03/T13 complete.
   `7e05d1b9-e179-46b5-8ccf-12a61c552bc4`. T08–T11 are complete. Their owning web
   A/B, web unit, supervisor A/B/unit/integration and full 40-case isolation gates
   are recorded above; T14's remaining broad web inventory is a separate final gate.
+
+- **Phase 2 commit:** `c191e3dc` (`test(execution-host): qualify production
+  partitions and death windows`) records T08–T11, their product fixes and
+  qualification evidence. The remaining broad web inventory runs on that
+  committed source plus the already-qualified T12 test wiring; production
+  source is held stable during the run.
+- **CI measurement boundary:** the runner/evidence/timestamp step now precedes
+  checkout, so the local elapsed counter includes checkout and all subsequent
+  setup, build, tests, uploads and cleanup. `runner.txt` records the actual run
+  URL. `phase3-ci-structure.log` verifies YAML, `macos-15-intel`, the 60-minute
+  job limit, full isolation script and unconditional artifact upload steps.
+  No hosted run has been executed or claimed; T03/T13 remain open.
+
+- **Remaining broad web integration gate:**
+  `phase3-web-integration-remaining.log`,
+  `maister-ab-isolation-JYlNmS/vitest.json`, invocation
+  `39d2108e-802b-4055-b4b6-08e2d5afd1c0`: **3,939/3,939 tests in 463/463 files**,
+  exit 0, no skips/todos/runtime errors, zero process/container leaks, 1,681.864 s
+  (28.03 min), cleanup 569 ms. Source `c191e3dc` plus the T12 test wiring; native
+  Darwin ARM64 / Node 24.15.0, serial, start load 4.897 with lid open. All five
+  S4.1 suites, retained-history allocator, scratch placement and transcript
+  projection passed. No baseline exception remains in the final result.
+- **Refreshed local preflight:** `phase3-preflight-final.log`,
+  `maister-ab-isolation-jgGRMZ/vitest.json`, invocation
+  `750f81a5-0e6e-4d9e-83af-b2547f3c45da`: 1/1, exit 0, zero leaks,
+  4.859 s including cleanup. Real kernel denial and disposable main/Brain
+  PostgreSQL reads pass on this ARM Mac. It does not qualify the hosted Intel VM.
+- **Complete web inventory reconciliation:** `full-web-integration-inventory.json`
+  is exactly the disjoint union of the 33-file web A/B report (445 tests),
+  six-file isolation report (40), one-file preflight (1) and remaining 463-file
+  report (3,939): **503 files / 4,425 passing integration tests**, no missing or
+  double-counted files. This is a set of actual executed gates, not a claim that
+  one monolithic command produced the aggregate. Web unit 815 files / 8,386
+  tests; supervisor unit 43 / 407; supervisor integration 25 / 232 and its A/B
+  subset 10 / 106 all passed, as recorded above. Typechecks, scoped lint,
+  runner-manifest tests, docs/contracts and Linux helper compatibility also pass.
+
+### Remaining external qualification
+
+Local implementation, falsification, regression and documentation work is
+complete. T03/T13 require the workflow at this revision to be published and run
+on `macos-15-intel` / Node 24.19.0, including the real-driver/PostgreSQL preflight,
+all 40 required isolation cases, uploaded `vitest.json`, zero cleanup leaks and
+measured total job time below 60 minutes. This task authorizes no push or merge,
+so that hosted execution has not occurred. The local 13.93-minute isolation run
+is not a substitute. T15 therefore cannot tick S5.2, advance Current task to
+S5.3 or change 42/45 to 43/45. Those checkboxes remain open deliberately; the
+Phase-3 local checkpoint records completed work without claiming hosted CI or
+final S5.2 acceptance.
+
+- **Final checkpoint checks:** `phase3-final-docs.log` passes after the local
+  results/status update. `linux-helper-final.log` refreshes the real Linux
+  ARM64 / Node 24.19 helper smoke on the committed code, exit 0: exact-tag sweep,
+  protected sibling and parent-death exit in 542 ms without a sweep. Read-only
+  source mounts and `docker run --init --rm` leave no smoke container behind.
+  This qualifies shared test-support helpers only, not the deferred Linux
+  filesystem-isolation driver. Final diff whitespace checks pass; production
+  entrypoints, persistent schema and migration history remain unchanged.

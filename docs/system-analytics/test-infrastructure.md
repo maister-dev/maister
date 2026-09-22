@@ -243,8 +243,8 @@ isolation slice. Local ARM64 qualification passed the full 40-case/six-suite
 slice in 836.089 s with zero sweep leaks. Sweep-disabled and watchdog-disabled
 controls each fail their independent owning assertion. The Linux environment
 reader and parent-death wrapper passed the real Linux ARM64/Node 24.19 container
-smoke (`linux-helper-smoke.log`), including exact-tag sibling protection and
-527 ms parent-death termination without a sweep. Hosted Intel CI is still
+smoke (`linux-helper-final.log`), including exact-tag sibling protection and
+542 ms parent-death termination without a sweep. Hosted Intel CI is still
 pending; the Linux isolation driver remains S5.3.
 
 Container ownership is independent of Ryuk's shared session. The sole
@@ -400,7 +400,7 @@ runtime errors, zero process/container leaks, 836.089 s including cleanup.
 Runtime: Darwin ARM64/Node 24.15.0 with `sandbox-exec`; invocation
 `19274cea-53f9-4083-841c-c2c39abca4cc`. Source: `7566ba10` plus the implementation
 working tree recorded by `qualified-source-sha256.json` under that evidence
-root. The implementation plan records the exact fault/guard falsification
+root, now incorporated in `c191e3dc`. The implementation plan records the exact fault/guard falsification
 assertions and their restored source hashes. This local report does not supply
 the still-required hosted Intel CI run, artifact or total-job duration.
 Accepted in-process web rows are qualified by
@@ -408,7 +408,11 @@ Accepted in-process web rows are qualified by
 445/445 tests in all 33 web A/B files, invocation
 `c4899dcf-7407-40da-b105-8ed9421f52d6`, 2,987.540 s, zero skips/errors/leaks.
 Its runner used the serial pool; its semantic lane remains **web / in-process**,
-including ADR-175/176/177, rather than production isolation.
+including ADR-175/176/177, rather than production isolation. The remaining
+463-file web inventory passes 3,939 tests in `maister-ab-isolation-JYlNmS/vitest.json`
+(1,681.864 s, zero skips/errors/leaks); together with the refreshed one-case
+preflight in `maister-ab-isolation-jgGRMZ/vitest.json`, the four disjoint primary
+gates cover all 503 integration files and 4,425 tests. This remains local evidence.
 
 All new controls run through production `startRealWeb`, `startRealSupervisor`
 and `pg-container.ts`. Every row names its lane, file and distinguishing
