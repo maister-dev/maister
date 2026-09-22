@@ -196,6 +196,13 @@ Explicit false without a token is `missing_tick` and logs a WARN naming both
 configuration variables. In that state recovery, checkpoint cleanup and
 parked-parent wakes do not run.
 
+To roll back an external scheduler to the in-process single-box clock, stop the
+external caller, set `MAISTER_SCHEDULER_TIMER_ENABLED=true`, remove
+`MAISTER_CRON_TOKEN`, restart `maister-web`, and verify advancing durable
+attempt timestamps on `/admin/scheduler`. To move in the other direction,
+configure and test the authenticated external call before disabling the
+fallback. Scheduler claims serialize a brief overlap during either handoff.
+
 Apply migrations and seed the first admin:
 
 ```bash

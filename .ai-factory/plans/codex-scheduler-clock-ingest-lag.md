@@ -357,18 +357,18 @@ Phase 3 exit: positive and negative browser access, first-class clock and full d
 
 ### Phase 4 — Qualify the real behavior and close the contract
 
-- [ ] **T13. Run L1/L2 end-to-end on real supervisor and Postgres.**
+- [x] **T13. Run L1/L2 end-to-end on real supervisor and Postgres.**
   - Files: `web/lib/execution-host/events/__tests__/lag-observability.integration.test.ts`, already authored and driven RED → GREEN in T8/T9; reuse `web/test-support/real-supervisor.ts`, `pg-container.ts` and the existing mock ACP lifecycle adapter without taking ownership of S5.2 fixtures.
   - Execute the matrix below through real claim/ingest/projection/scheduler/read-model paths. Test-owned barriers control stream consumption and projection; no production test toggle. Capture accepted/acknowledged milestones before holds and drain after release. Check actual emitted frame boundaries with existing helpers.
   - Logging: capture sweep numbers, transition order, identity/sample times and DB evidence; evidence outside the worktree runtime roots. Acceptance: each L1/L2 variant passes against real storage, never merely mocked SQL or fake health. Depends: T9/T12.
 
-- [ ] **T14. Run falsification, performance and regression gates.**
+- [x] **T14. Run falsification, performance and regression gates.**
   - Files: owning tests and the changed implementation only if a defect is found. Run the commands below on a quiet host, serializing lanes. Run any necessary baseline comparison at the verified revision in isolation.
   - Execute temporary mutation controls: zero/remove lag computation => L1 fails on first numeric assertion; remove overlap counter => C2 fails; remove tolerant web parser => unknown-field L4 fails. Also force unconditional stream emission on default `/health` => old-web L4 fails. Restore each mutation and rerun its owning case.
   - Classify full-lane failures by exact file/test name against baseline; no blanket acceptance of historical counts. An environmental inability to run a gate leaves qualification pending; no skip/quarantine added to make this item look green. Fix cycle includes adversarial review of health skew, arithmetic, authorization, stale observations and lease ownership.
   - Logging: runner/time/runtime/query-plan/failed-case evidence. Acceptance: selected performance budgets and all required owning cases green; no mutation remains. Depends: T13.
 
-- [ ] **T15. Complete as-built docs, deployment smoke and focused integration handoff.**
+- [x] **T15. Complete as-built docs, deployment smoke and focused integration handoff.**
   - Files: T1/T2/T12 docs and the ADR-167 dated amendment; the plan's task markers only after evidence exists.
   - Change Designed to Implemented for delivered scope, record formulas/thresholds/coverage/limits, cross-link deployment and both admin pages. State that other ADR-167 D8 metrics remain under their own contracts. Smoke a single-box boot with unset/explicit settings and external cron, verify actual job timestamps, and exercise rollback configuration.
   - Recheck shared-file ownership with S5.2/P0-3 before local integration; retain the one inventory deletion only. No change to their semantics or qualification claims. No memory edit, push or broader completion claim.

@@ -34,6 +34,11 @@ const SKIP_DIRS = new Set([
  * collapsing them into one column would make that unrepresentable.
  */
 const HOME_LINKS = [
+  {
+    file: "app/(app)/admin/execution-host/forbidden.tsx",
+    intent: "home",
+    target: "/",
+  },
   { file: "app/(auth)/layout.tsx", intent: "home", target: "/" },
   { file: "app/change-password/actions.ts", intent: "home", target: "/" },
   { file: "app/change-password/page.tsx", intent: "home", target: "/" },

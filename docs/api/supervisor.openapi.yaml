@@ -447,6 +447,11 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+              example:
+                code: PRECONDITION
+                message: includeStream must be one literal true or false value
+                retryable: false
+                details: { reason: health_query_invalid }
   /diagnostics:
     get:
       tags: [health]
@@ -3393,6 +3398,7 @@ components:
         - runtime_storage_pressure
         - runtime_output_buffer_capacity
         - runtime_output_frame_too_large
+        - health_query_invalid
         - required_output_incomplete
         - runtime_object_missing
         - runtime_object_range_invalid

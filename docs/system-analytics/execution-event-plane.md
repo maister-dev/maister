@@ -125,7 +125,7 @@ the consumer's two silent reconnect paths — a failed post-ACK watermark record
 and a lost or changed claim — now log and record instead of retrying every 2 s
 in complete silence.
 
-### Lag versus stall (Designed — P0-7)
+### Lag versus stall (Implemented — P0-7, 2026-09-22)
 
 Lag is computed observability and is never an `execution_event_streams.state`
 or a reason to degrade a stream. Stall/lost retains the repair-first authority
@@ -175,6 +175,13 @@ or run state. Observer failures are diagnostic errors only: they do not enter
 the sweep's failure bundle, increment consecutive scheduler failures, or
 disable recovery work. The admin read is read-only and cannot advance a streak
 or emit transitions.
+
+Qualification uses the real supervisor outbox and real PostgreSQL. It creates
+more than 100 host events through ordinary checkpoint commands, advances the
+production consumer in bounded passes, holds and releases a real projection
+cursor, and then invokes the unchanged two-pass stall detector. The collector
+test includes 50,000 accepted events, requires the indexed horizon plan, and
+caps the complete read below two seconds on the qualification host.
 
 ## Process flows
 

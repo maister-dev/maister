@@ -237,11 +237,15 @@ describe("execution event lag read model", () => {
   });
 
   it("collects exact bigint lag, accepted-only horizons and bounded top consumers", async () => {
+    const startedAt = performance.now();
     const model = await collectExecutionEventLag({
       db: database.db,
       health,
       now: NOW,
     });
+    const durationMs = performance.now() - startedAt;
+
+    expect(durationMs).toBeLessThan(2_000);
 
     expect(model.streams).toHaveLength(1);
     expect(model.streams[0]).toMatchObject({

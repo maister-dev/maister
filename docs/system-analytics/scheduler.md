@@ -428,7 +428,7 @@ flowchart TD
   `scheduler_job_runs` status/error and existing structured scheduler logs;
   the UI should not invent a second error channel.
 
-### Execution observability summary (Designed — P0-7)
+### Execution observability summary (Implemented — P0-7, 2026-09-22)
 
 The terminal `system_sweep` attempt summary owns an additive member:
 

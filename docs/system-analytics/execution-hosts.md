@@ -137,7 +137,7 @@ registrar reads `GET /health` and applies this policy under a
 `SELECT … FOR UPDATE` of the single non-retired local row. Transitions carry
 the log marker they emit.
 
-### Health stream capability (Designed — P0-7)
+### Health stream capability (Implemented — P0-7, 2026-09-22)
 
 `GET /health` without `includeStream`, or with the one literal value `false`,
 retains the pre-P0-7 response byte shape so an older strict web can register a

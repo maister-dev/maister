@@ -1,16 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
 import { MaisterError } from "@/lib/errors";
+import {
+  formatProjectionRearmCommand,
+  requireAdminExecutionHostStatus,
+} from "@/lib/execution-host/admin-status";
 
 const requireGlobalRoleMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/authz", () => ({
   requireGlobalRole: requireGlobalRoleMock,
 }));
-
-import {
-  formatProjectionRearmCommand,
-  requireAdminExecutionHostStatus,
-} from "@/lib/execution-host/admin-status";
 
 describe("execution host admin boundary", () => {
   beforeEach(() => {

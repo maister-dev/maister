@@ -148,10 +148,10 @@ export default async function AppLayout({
             />
           ) : null
         }
-        platformStatus={platformStatus}
         platformHref={
           sessionUser?.role === "admin" ? "/admin/execution-host" : undefined
         }
+        platformStatus={platformStatus}
       />
     </div>
   );
