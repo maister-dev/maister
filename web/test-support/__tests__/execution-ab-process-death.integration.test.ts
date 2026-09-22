@@ -156,12 +156,12 @@ it("D2a: supervisor restart before create effect reissues the original durable i
   expect(after!.create_intent).toEqual(before!.create_intent);
   expect(after!.id).toBe(before!.id);
   expect(await commands(runId, "session.create")).toHaveLength(1);
+  // `traffic` records the REQUEST witness and the response is a separate copy,
+  // so a `status === null` clause here would match every entry and prove
+  // nothing. Count the creates that reached the host instead.
   expect(
     fixture.proxy.traffic.filter(
-      (row) =>
-        row.method === "POST" &&
-        row.path === "/sessions" &&
-        row.status === null,
+      (row) => row.method === "POST" && row.path === "/sessions",
     ),
   ).toHaveLength(2);
   const prompt = await completedPrompt(runId);
@@ -244,12 +244,12 @@ it("D2b: supervisor restart after create commit folds its receipt without anothe
   expect(creates).toHaveLength(1);
   expect(creates[0]!.create_intent).toEqual(before!.create_intent);
   expect(creates[0]!.state).toBe("succeeded");
+  // `traffic` records the REQUEST witness and the response is a separate copy,
+  // so a `status === null` clause here would match every entry and prove
+  // nothing. Count the creates that reached the host instead.
   expect(
     fixture.proxy.traffic.filter(
-      (row) =>
-        row.method === "POST" &&
-        row.path === "/sessions" &&
-        row.status === null,
+      (row) => row.method === "POST" && row.path === "/sessions",
     ),
   ).toHaveLength(1);
 }, 240_000);
@@ -331,7 +331,41 @@ it("L1: active scratch cancellation settles once and the same session accepts a 
   };
 
   expect(receipt.terminal.result.stopReason).toBe("cancelled");
+  // The cancel already resolved the held prompt, and one ACP prompt yields
+  // exactly ONE response — so this signal cannot manufacture a late SUCCESS
+  // through this seam, and claiming it does would be claiming a window the
+  // protocol has no room for. What it does exercise is the adjacent property:
+  // a stray post-settlement adapter signal overwrites nothing already applied.
   await releaseAdapter(first.pid);
+
+  const afterSignal = await poll(
+    async () =>
+      (await commands(command!.run_id, "session.prompt")).find(
+        (row) => row.id === settled.id,
+      ) ?? null,
+    30_000,
+    "settled prompt re-read after the stray adapter signal",
+  );
+
+  expect({
+    state: afterSignal.state,
+    applied: afterSignal.completion_applied_at,
+    terminalEventId: afterSignal.terminal_event_id,
+    applicationState: afterSignal.application_state,
+  }).toEqual({
+    state: settled.state,
+    applied: settled.completion_applied_at,
+    terminalEventId: settled.terminal_event_id,
+    applicationState: settled.application_state,
+  });
+  await assertOneApply(afterSignal);
+  expect(
+    (
+      (await (
+        await fetch(`${fixture.supervisor.url}/commands/${settled.id}`)
+      ).json()) as { terminal: { result: { stopReason: string } } }
+    ).terminal.result.stopReason,
+  ).toBe("cancelled");
   expect(await launched).toBe(command!.run_id);
   const next = fixture.api(`/api/scratch-runs/${command!.run_id}/messages`, {
     method: "POST",
@@ -468,6 +502,14 @@ it("D3: connection loss after projection claim rolls back effect and cursor; a s
   const rolledBack = await consumer();
 
   expect(rolledBack.last_run_sequence).toBe(before.last_run_sequence);
+  // `before` is read with the writer ALREADY blocked, so equality alone would
+  // also hold for a projector that had committed this cursor in an earlier
+  // transaction. Anchor it to the sealed event instead: a cursor that rolled
+  // back must still sit BELOW the sequence whose projection was torn down.
+  expect(event.sequence).toBeTruthy();
+  expect(Number(rolledBack.last_run_sequence)).toBeLessThan(
+    Number(event.sequence),
+  );
   expect(
     (
       await fixture.database.pool.query(

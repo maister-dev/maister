@@ -12,16 +12,9 @@ import {
   FIXTURE_WATCHDOG,
   fixtureProcessEnvironment,
   invocationFromEnvironment,
-  registerProcess,
-  registerSpawnedProcess,
   registerRoot,
-  readLogTail,
-  fixtureLogTail,
-  preserveFixtureLog,
-  signalInvocationGroup,
-  assertInvocationGroupEmpty,
-  logInvocation,
 } from "./process-invocation";
+import { retryFixtureStart, startOwnedFixture } from "./owned-fixture";
 
 // ADR-166 T3.1: a REAL supervisor child for web integration tests — the
 // production `supervisor/src/main.ts` boot (host state store, fences,
@@ -256,93 +249,20 @@ export async function startRealSupervisor(
   );
 
   closeSync(logFd);
-  const pid = child.pid ?? -1;
-  const exited = new Promise<number | null>((resolve) => {
-    child.once("exit", (code) => resolve(code));
+
+  const owned = await startOwnedFixture({
+    invocation,
+    child,
+    role: "supervisor",
+    root: runtimeRoot,
+    logFile,
+    bootId: `starting:${child.pid ?? -1}`,
+    killGraceMs: 10_000,
+    ready: async (exited: Promise<number | null>) =>
+      (await waitForHealth(url, options.startTimeoutMs ?? 60_000, exited))
+        .bootId,
   });
-  const leaderGone = () => child.exitCode !== null || child.signalCode !== null;
-  let bootId = `starting:${pid}`;
-
-  try {
-    await registerSpawnedProcess(
-      invocation,
-      {
-        role: "supervisor",
-        caseName: process.env.MAISTER_TEST_CASE_NAME ?? "fixture",
-        rootRole: "supervisor",
-        root: runtimeRoot,
-        bootId,
-        logFile,
-      },
-      child,
-    );
-    const health = await waitForHealth(
-      url,
-      options.startTimeoutMs ?? 60_000,
-      exited,
-    );
-
-    bootId = health.bootId;
-    await registerProcess(
-      invocation,
-      {
-        role: "supervisor",
-        caseName: process.env.MAISTER_TEST_CASE_NAME ?? "fixture",
-        rootRole: "supervisor",
-        root: runtimeRoot,
-        bootId: health.bootId,
-        logFile,
-      },
-      pid,
-    );
-  } catch (error) {
-    const failures: unknown[] = [error];
-
-    try {
-      if (pid > 0) await signalInvocationGroup(invocation, pid, "SIGKILL");
-    } catch (cleanupError) {
-      failures.push(cleanupError);
-    }
-    throw new Error(
-      `supervisor startup failed\n${await readLogTail(logFile)}`,
-      { cause: new AggregateError(failures, "supervisor startup/cleanup") },
-    );
-  }
-
-  const kill = async (signal: NodeJS.Signals = "SIGKILL") => {
-    if (!leaderGone()) {
-      await signalInvocationGroup(invocation, pid, signal);
-      await Promise.race([
-        exited,
-        new Promise<void>((r) => {
-          setTimeout(r, 10_000).unref();
-        }),
-      ]);
-      if (!leaderGone()) {
-        await signalInvocationGroup(invocation, pid, "SIGKILL");
-        await exited;
-      }
-    }
-    try {
-      await assertInvocationGroupEmpty(invocation, pid);
-    } finally {
-      await preserveFixtureLog(invocation, logFile);
-    }
-    logInvocation(
-      invocation,
-      signal === "SIGKILL" ? "fixture-kill" : "fixture-stop",
-      {
-        role: "supervisor",
-        caseName: process.env.MAISTER_TEST_CASE_NAME ?? "fixture",
-        pid,
-        pgid: pid,
-        rootRole: "supervisor",
-        bootId,
-        signal,
-        outcome: "stopped",
-      },
-    );
-  };
+  const { pid, exited, kill } = owned;
 
   const handle: RealSupervisor = {
     url,
@@ -357,31 +277,13 @@ export async function startRealSupervisor(
     exited,
     kill,
     stop: () => kill("SIGTERM"),
-    async logTail(maxBytes = LOG_TAIL_BYTES) {
-      try {
-        return await fixtureLogTail(invocation, logFile, maxBytes);
-      } catch (err) {
-        return `<log unreadable: ${err instanceof Error ? err.message : String(err)}>`;
-      }
-    },
+    logTail: (maxBytes = LOG_TAIL_BYTES) => owned.logTail(maxBytes),
     restart: async (overrides = {}) => {
       await kill("SIGKILL");
-      // The kernel may hold the port briefly after a SIGKILL — retry the bind.
-      let last: unknown;
 
-      for (let attempt = 0; attempt < 20; attempt += 1) {
-        try {
-          return await startRealSupervisor({
-            ...handle.options,
-            ...overrides,
-            logFile,
-          });
-        } catch (err) {
-          last = err;
-          await new Promise((r) => setTimeout(r, 250));
-        }
-      }
-      throw last;
+      return retryFixtureStart(() =>
+        startRealSupervisor({ ...handle.options, ...overrides, logFile }),
+      );
     },
   };
 

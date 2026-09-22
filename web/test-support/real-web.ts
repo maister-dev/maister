@@ -4,8 +4,10 @@ import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { closeSync, openSync } from "node:fs";
 import {
+  readdir,
   readFile,
   readlink,
+  rm,
   symlink,
   unlink,
   writeFile,
@@ -21,17 +23,13 @@ import {
   fixtureProcessEnvironment,
   invocationFromEnvironment,
   registerProcess,
-  registerSpawnedProcess,
   findProcessIdentity,
   processIdentity,
   sameProcess,
   readLogTail,
-  fixtureLogTail,
-  preserveFixtureLog,
-  signalInvocationGroup,
-  assertInvocationGroupEmpty,
   logInvocation,
 } from "./process-invocation";
+import { retryFixtureStart, startOwnedFixture } from "./owned-fixture";
 
 // AT-16 (D10): a REAL production web process for integration tests — the
 // `server.ts` entrypoint the systemd unit and the image run (`next build`
@@ -147,8 +145,24 @@ async function acquireBuildLock(): Promise<() => Promise<void>> {
           );
         }
       } catch (inspectionError) {
-        if ((inspectionError as NodeJS.ErrnoException).code !== "ENOENT")
-          throw inspectionError;
+        const code = (inspectionError as NodeJS.ErrnoException).code;
+
+        // The retired lock was an EMPTY directory at this same path, reclaimed
+        // by elapsed age. A checkout that ran it and crashed leaves one behind,
+        // and `readlink` answers EINVAL on a directory — not ENOENT — so
+        // without this arm every acquisition rethrows a bare EINVAL until
+        // someone deletes the path by hand. An empty directory carries no owner
+        // identity to prove alive, which is why the format was retired; a
+        // non-empty one is not ours to remove.
+        if (code === "EINVAL") {
+          if ((await readdir(BUILD_LOCK_DIR)).length)
+            throw new Error(
+              `unrecognized build lock at ${BUILD_LOCK_DIR}; remove it to proceed`,
+            );
+          await rm(BUILD_LOCK_DIR, { recursive: true, force: true });
+          continue;
+        }
+        if (code !== "ENOENT") throw inspectionError;
         // Another contender released the same lock. Retry acquisition.
       }
     }
@@ -410,73 +424,22 @@ export async function startRealWeb(options: RealWebOptions): Promise<RealWeb> {
   });
 
   closeSync(logFd);
-  const pid = child.pid ?? -1;
-  const fixtureBootId = `${buildId}:${pid}`;
-  const exited = new Promise<number | null>((resolve) => {
-    child.once("exit", (code) => resolve(code));
+
+  const owned = await startOwnedFixture({
+    invocation,
+    child,
+    role: "web",
+    root: options.runtimeRoot,
+    logFile,
+    bootId: `${buildId}:${child.pid ?? -1}`,
+    killGraceMs: 30_000,
+    ready: async (exited: Promise<number | null>) => {
+      await waitForLogin(url, options.startTimeoutMs ?? 120_000, exited);
+
+      return undefined;
+    },
   });
-  const leaderGone = () => child.exitCode !== null || child.signalCode !== null;
-
-  try {
-    await registerSpawnedProcess(
-      invocation,
-      {
-        role: "web",
-        caseName: process.env.MAISTER_TEST_CASE_NAME ?? "fixture",
-        rootRole: "web",
-        root: options.runtimeRoot,
-        bootId: fixtureBootId,
-        logFile,
-      },
-      child,
-    );
-    await waitForLogin(url, options.startTimeoutMs ?? 120_000, exited);
-  } catch (error) {
-    const failures: unknown[] = [error];
-
-    try {
-      if (pid > 0) await signalInvocationGroup(invocation, pid, "SIGKILL");
-    } catch (cleanupError) {
-      failures.push(cleanupError);
-    }
-    throw new Error(`web startup failed\n${await readLogTail(logFile)}`, {
-      cause: new AggregateError(failures, "web startup/cleanup"),
-    });
-  }
-  const kill = async (signal: NodeJS.Signals = "SIGKILL") => {
-    if (!leaderGone()) {
-      await signalInvocationGroup(invocation, pid, signal);
-      await Promise.race([
-        exited,
-        new Promise<void>((r) => {
-          setTimeout(r, 30_000).unref();
-        }),
-      ]);
-      if (!leaderGone()) {
-        await signalInvocationGroup(invocation, pid, "SIGKILL");
-        await exited;
-      }
-    }
-    try {
-      await assertInvocationGroupEmpty(invocation, pid);
-    } finally {
-      await preserveFixtureLog(invocation, logFile);
-    }
-    logInvocation(
-      invocation,
-      signal === "SIGKILL" ? "fixture-kill" : "fixture-stop",
-      {
-        role: "web",
-        caseName: process.env.MAISTER_TEST_CASE_NAME ?? "fixture",
-        pid,
-        pgid: pid,
-        rootRole: "web",
-        bootId: fixtureBootId,
-        signal,
-        outcome: "stopped",
-      },
-    );
-  };
+  const { pid, exited, kill } = owned;
   const handle: RealWeb = {
     url,
     port,
@@ -487,30 +450,13 @@ export async function startRealWeb(options: RealWebOptions): Promise<RealWeb> {
     exited,
     kill,
     stop: () => kill("SIGTERM"),
-    async logTail(maxBytes = LOG_TAIL_BYTES) {
-      try {
-        return await fixtureLogTail(invocation, logFile, maxBytes);
-      } catch (err) {
-        return `<log unreadable: ${err instanceof Error ? err.message : String(err)}>`;
-      }
-    },
+    logTail: (maxBytes = LOG_TAIL_BYTES) => owned.logTail(maxBytes),
     restart: async (overrides = {}) => {
       await kill("SIGKILL");
-      let last: unknown;
 
-      for (let attempt = 0; attempt < 20; attempt += 1) {
-        try {
-          return await startRealWeb({
-            ...handle.options,
-            ...overrides,
-            logFile,
-          });
-        } catch (err) {
-          last = err;
-          await new Promise((r) => setTimeout(r, 250));
-        }
-      }
-      throw last;
+      return retryFixtureStart(() =>
+        startRealWeb({ ...handle.options, ...overrides, logFile }),
+      );
     },
   };
 

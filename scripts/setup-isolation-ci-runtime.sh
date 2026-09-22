@@ -32,6 +32,12 @@ printf '%s  %s\n' \
   0d6f99c19f6e4bc3c92730c4c29d929e6927f0cb0a0ba1a84383367135a8ff31 \
   "$runtime_dir/lima.tar.gz" | shasum -a 256 --check
 tar -xzf "$runtime_dir/lima.tar.gz" -C "$runtime_dir"
+# Colima and Lima are checksum-pinned above; these two are NOT, deliberately.
+# The Docker CLI and coreutils have no upstream formula whose version Homebrew
+# can pin, and the isolation lane depends only on their stable surfaces (the
+# `docker` client protocol and `gtimeout`). The resolved versions are echoed
+# below so a hosted failure can be attributed to a version bump; pin them by
+# direct download if that ever happens.
 brew install docker coreutils
 colima version
 limactl --version

@@ -646,6 +646,19 @@ describe("S5.2 production-boot fault partitions", () => {
       "the duplicate frame classified by production ingest",
       100,
     );
+    // The log line above carries the CLASSIFICATION; this carries the durable
+    // EFFECT. `execution_events.ingest_disposition` has no `duplicate` value
+    // (`schema.ts`) — ingest only bumps the stream's `last_seen_at` — so the
+    // durable proof that the replayed frame was treated as a duplicate is that
+    // it produced no second row for its sequence.
+    const ingested = await database!.pool.query<{ count: string }>(
+      `SELECT count(*) FROM execution_events e
+         JOIN execution_event_streams s ON s.id = e.event_stream_id
+        WHERE s.state = 'active' AND e.host_sequence = $1`,
+      [reached.sequence],
+    );
+
+    expect(ingested.rows[0]?.count).toBe("1");
     await assertOneApplication(reached.commandId!);
   }
 

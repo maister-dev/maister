@@ -381,9 +381,9 @@ describe("S5.2 invocation process ownership", () => {
       await expect(
         registerRoot(invocation, invocation.directory, "fixture"),
       ).rejects.toThrow("exclude the evidence ledger");
-      await expect(registerRoot(invocation, directory, "fixture")).rejects.toThrow(
-        "exclude the evidence ledger",
-      );
+      await expect(
+        registerRoot(invocation, directory, "fixture"),
+      ).rejects.toThrow("exclude the evidence ledger");
       await expect(removeInvocationRoots(invocation)).rejects.toThrow(
         "processes remain alive",
       );
@@ -700,6 +700,10 @@ describe("S5.2 invocation process ownership", () => {
         owned.pid!,
       );
 
+      // A real PID reuse cannot be forced inside a test, so this is a PURE
+      // control over the comparison that decides ownership: the same pid with a
+      // different start time is a DIFFERENT process. It is not evidence that a
+      // reused pid was observed in the wild.
       expect(
         sameProcess(record.identity, { ...record.identity, started: "reused" }),
       ).toBe(false);
@@ -719,6 +723,15 @@ describe("S5.2 invocation process ownership", () => {
       ).rejects.toThrow("lacks the exact invocation environment tag");
       expect(other.exitCode).toBeNull();
       expect(decoy.exitCode).toBeNull();
+      // The deny-process-info probe below is macOS-only. The isolation lane is
+      // macOS-only by design (`process-isolation.ts` refuses a host it cannot
+      // enforce; Linux is S5.3), so say that rather than letting the host fail
+      // with a bare ENOENT on a missing `sandbox-exec`.
+      expect(
+        process.platform,
+        "O-identity's process-info denial probe requires macOS sandbox-exec",
+      ).toBe("darwin");
+
       const readerUrl = new URL("../process-invocation.ts", import.meta.url)
         .href;
       const probe = `const reader = await import(${JSON.stringify(readerUrl)}); await reader.processIdentity(${JSON.stringify(invocation)}, ${owned.pid});`;
