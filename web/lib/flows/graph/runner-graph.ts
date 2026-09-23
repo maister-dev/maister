@@ -3084,7 +3084,7 @@ export async function runGraph(
           if (opts.driver)
             await tx
               .update(runs)
-              .set({ currentStepId: node.id })
+              .set({ currentStepId: node.id, resumeRequestedAt: null })
               .where(eq(runs.id, runId));
 
           return row;

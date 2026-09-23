@@ -56,6 +56,7 @@ export async function currentCoordinator(
   parentRunId: string,
 ): Promise<{
   status: string;
+  resumeRequestedAt: Date | null;
   nodeId: string;
   nodeAttemptId: string;
   nodeType: CoordinatorType;
@@ -64,6 +65,7 @@ export async function currentCoordinator(
     .select({
       runKind: runs.runKind,
       status: runs.status,
+      resumeRequestedAt: runs.resumeRequestedAt,
       currentStepId: runs.currentStepId,
     })
     .from(runs)
@@ -87,6 +89,7 @@ export async function currentCoordinator(
 
   return {
     status: parent.status,
+    resumeRequestedAt: parent.resumeRequestedAt,
     nodeId: parent.currentStepId,
     nodeAttemptId: attempt.id,
     nodeType: attempt.nodeType,
@@ -218,7 +221,7 @@ async function dispatchResume(
 export async function wakeParkedCoordinator(input: {
   db: Db;
   parentRunId: string;
-  cause: "settled_child" | "post_park";
+  cause: "settled_child" | "post_park" | "continuation_worker";
   allowFailedOrchestratorChild?: boolean;
   expectedAttemptId?: string;
   resumeFlow?: ResumeFlow;
@@ -234,8 +237,9 @@ export async function wakeParkedCoordinator(input: {
     return { kind: "skipped", reason: "stale_attempt" };
   if (
     !(
-      input.allowFailedOrchestratorChild &&
-      coordinator.nodeType === "orchestrator"
+      coordinator.nodeType === "orchestrator" &&
+      (input.allowFailedOrchestratorChild ||
+        coordinator.resumeRequestedAt !== null)
     )
   ) {
     const pending = await pendingCoordinatorChildCount(

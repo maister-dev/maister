@@ -17,15 +17,22 @@ import {
   inArray,
   lt,
   lte,
+  notExists,
+  notInArray,
   or,
   sql,
 } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import pino from "pino";
 
 import { runFlow } from "../runner";
 
 import { openFlowPromptExists } from "./prompt-permission";
-import { readCoordinatorWakeIntent } from "./coordinator-wake";
+import {
+  currentCoordinator,
+  readCoordinatorWakeIntent,
+  wakeParkedCoordinator,
+} from "./coordinator-wake";
 import { pendingGatePermissionResumeExists } from "./gate-permission-resume";
 
 import {
@@ -48,11 +55,13 @@ import { markResumedFromWait } from "@/lib/runs/state-transitions";
 import { projectionTransaction } from "@/lib/execution-host/events/projection-transaction";
 import { projectionLimitsFromEnv } from "@/lib/execution-host/events/projection-limits";
 import { runEventWakeBus } from "@/lib/execution-host/events/run-wake";
+import { SETTLED_RUN_STATUSES } from "@/lib/runs/run-status-sets";
 
 const log = pino({
   name: "flow-continuation-worker",
   level: process.env.LOG_LEVEL ?? "info",
 });
+const pendingChild = alias(runs, "pending_child");
 
 /** The run cursor and existing attempt are the queue. A keyset scan covers
  * already-applied commands even when no new host event arrives. Each free
@@ -240,6 +249,41 @@ export function startFlowContinuationWorker(input: {
                         AND source_assignment.epoch < ${executionAssignments.epoch}
                     )`,
                   ),
+                  and(
+                    eq(runs.status, "WaitingOnChildren"),
+                    exists(
+                      tx
+                        .select({ id: nodeAttempts.id })
+                        .from(nodeAttempts)
+                        .where(
+                          and(
+                            eq(nodeAttempts.runId, runs.id),
+                            eq(nodeAttempts.nodeId, runs.currentStepId),
+                            eq(nodeAttempts.status, "NeedsInput"),
+                            inArray(nodeAttempts.nodeType, [
+                              "orchestrator",
+                              "consensus",
+                            ]),
+                          ),
+                        ),
+                    ),
+                    or(
+                      isNotNull(runs.resumeRequestedAt),
+                      notExists(
+                        tx
+                          .select({ id: pendingChild.id })
+                          .from(pendingChild)
+                          .where(
+                            and(
+                              eq(pendingChild.parentRunId, runs.id),
+                              notInArray(pendingChild.status, [
+                                ...SETTLED_RUN_STATUSES,
+                              ]),
+                            ),
+                          ),
+                      ),
+                    ),
+                  ),
                   // ADR-176 C: the committed recover intent. It satisfies NONE
                   // of the evidence arms above — the crashed attempt is bound to
                   // the RETIRED assignment epoch, so E3's
@@ -310,6 +354,24 @@ export function startFlowContinuationWorker(input: {
           continue;
         }
         if (candidate.status === "WaitingOnChildren") {
+          const coordinator = await currentCoordinator(input.db, candidate.id);
+
+          if (coordinator?.status === "WaitingOnChildren") {
+            await wakeParkedCoordinator({
+              db: input.db,
+              parentRunId: candidate.id,
+              cause: "continuation_worker",
+              expectedAttemptId: coordinator.nodeAttemptId,
+              resumeFlow: (runId, options) =>
+                runFlow(runId, {
+                  ...input,
+                  ...options,
+                  signal: controller.signal,
+                }),
+            });
+            failures.delete(slot);
+            continue;
+          }
           const resumed = await markResumedFromWait(candidate.id, {
             db: input.db,
           });

@@ -4,10 +4,12 @@ import type {
   DomainEventKind,
   RunSettledEventKind,
 } from "@/lib/domain-events/taxonomy";
+import type { Db as ExecutionDb } from "@/lib/execution-host/db";
 
 import pino from "pino";
 
 import { domainEvents } from "@/lib/db/schema";
+import { armFailedCoordinatorWake } from "@/lib/domain-events/coordinator-wake-intent";
 
 const log = pino({
   name: "domain-events-outbox",
@@ -58,6 +60,27 @@ export type EmitDomainEventInput =
 export async function emitDomainEvent(
   input: EmitDomainEventInput,
 ): Promise<void> {
+  if (
+    input.parentRunId &&
+    (input.kind === "run.failed" ||
+      input.kind === "run.crashed" ||
+      input.kind === "run.abandoned")
+  ) {
+    // The child status, event and wake intent share the caller's transaction.
+    // A consumer replay cannot re-arm an already handled failure.
+    if (
+      await armFailedCoordinatorWake(input.db as ExecutionDb, input.parentRunId)
+    )
+      log.info(
+        {
+          parentRunId: input.parentRunId,
+          childRunId: input.runId,
+          kind: input.kind,
+        },
+        "[FIX:P0-5] failed child armed coordinator wake",
+      );
+  }
+
   // Run-terminal kinds fold parent_run_id into the payload (null for top-level).
   const payload =
     input.parentRunId === undefined
