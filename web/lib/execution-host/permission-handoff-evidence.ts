@@ -6,6 +6,8 @@ import type { CommandReceipt } from "./contracts";
 
 import { and, eq, sql } from "drizzle-orm";
 
+import { assertTerminalEventConfirmed } from "./prompt-owners";
+
 import { executionEvents } from "@/lib/db/schema";
 
 function isPermissionInputTimeout(receipt: CommandReceipt): boolean {
@@ -207,6 +209,7 @@ export async function permissionCheckpointOrder(
   command: ExecutionCommand,
   checkpoint: ExecutionCommand | null,
 ): Promise<PermissionCheckpointOrder> {
+  assertTerminalEventConfirmed(command);
   if (!command.terminalEventId || !command.targetSessionId) return "unproven";
   const hostSessionId = command.targetSessionId;
   const [terminal] = await db

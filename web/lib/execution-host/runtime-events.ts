@@ -423,3 +423,24 @@ export const RuntimeEventAckSchema = z
   .strict();
 
 export type RuntimeEventAck = z.infer<typeof RuntimeEventAckSchema>;
+
+const RuntimeEventSequenceSchema = z
+  .string()
+  .regex(SEQUENCE)
+  .refine((value) => BigInt(value) <= 9_223_372_036_854_775_807n);
+
+// ADR-167 D5 amendment (2026-09-23): mirror of the supervisor's
+// `GET /runtime-events/span` body. Envelopes parse exactly as SSE ones do.
+export const RuntimeEventSpanSchema = z
+  .object({
+    streamId: z.string().uuid(),
+    after: RuntimeEventSequenceSchema,
+    through: RuntimeEventSequenceSchema,
+    state: z.enum(["complete", "partial", "unavailable"]),
+    reason: z
+      .enum(["replay_floor_lost", "stream_identity_changed", "beyond_emitted"])
+      .optional(),
+    nextAfter: RuntimeEventSequenceSchema.nullable(),
+    events: z.array(RuntimeEventEnvelopeSchema).max(500),
+  })
+  .strict();

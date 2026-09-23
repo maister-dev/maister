@@ -81,6 +81,8 @@ import {
 import {
   RuntimeEventAckSchema,
   RuntimeEventSequenceSchema,
+  RuntimeEventSpanQuerySchema,
+  type RuntimeEventSpan,
 } from "./runtime-events";
 import { spawnSession } from "./spawn";
 import {
@@ -1841,6 +1843,56 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
         BigInt(left.sequence) < BigInt(right.sequence) ? -1 : 1,
       )
       .forEach(send);
+  });
+
+  // ADR-167 D5 amendment: the same retained envelopes the SSE replay serves,
+  // as one bounded JSON page. No command filter — contiguity and source
+  // binding are only provable over the whole range — and no ACK or prune.
+  app.get("/runtime-events/span", async (req, reply) => {
+    const query = RuntimeEventSpanQuerySchema.safeParse(req.query);
+
+    if (!query.success)
+      throw new SupervisorError(
+        "PRECONDITION",
+        "runtime event span must name a stream and satisfy after < through",
+        { details: { reason: "invalid_event_span" } },
+      );
+    const { streamId, after, through } = query.data;
+    let page: ReturnType<typeof hostState.runtimeEventsInRange>;
+
+    try {
+      page = hostState.runtimeEventsInRange(streamId, after, through, 500);
+    } catch (error) {
+      throw runtimeEventSupervisorError(error);
+    }
+    const body: RuntimeEventSpan =
+      page.state === "unavailable"
+        ? {
+            streamId,
+            after,
+            through,
+            state: "unavailable",
+            reason: page.reason,
+            nextAfter: null,
+            events: [],
+          }
+        : {
+            streamId,
+            after,
+            through,
+            state: page.state,
+            nextAfter: page.nextAfter,
+            events: page.events.map(
+              (event) => event.envelope as RuntimeEventSpan["events"][number],
+            ),
+          };
+
+    if (page.state === "unavailable")
+      logger.warn(
+        { reason: page.reason, after, through },
+        "runtime-event-span-unavailable",
+      );
+    reply.status(200).send(body);
   });
 
   app.post("/runtime-events/ack", async (req, reply) => {

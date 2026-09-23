@@ -11,10 +11,12 @@ import type {
   ExecutionHostTransport,
   HostHealth,
   InputDeliveryResult,
+  RuntimeEventSpanPage,
   RuntimeObjectContent,
   RuntimeObjectMetadata,
   WorkspaceRecord,
 } from "@/lib/execution-host/contracts";
+import type { RuntimeEventEnvelope } from "@/lib/execution-host/runtime-events";
 import type {
   CommandEnvelope,
   CommandKind,
@@ -222,6 +224,20 @@ export type FakeExecutionHost = {
     event: FakeCanonicalEvent,
   ): Promise<void>;
   waitForCanonicalEvents(): Promise<void>;
+  // ADR-167 D5 amendment: the manager lags the host. While held, canonical
+  // envelopes stay retained (the span route serves them) but are neither
+  // ingested nor projected; release drains them through the same path, each
+  // optionally rewritten first. The floor models an ACKed-and-pruned prefix.
+  holdIngest(): void;
+  releaseIngest(opts?: {
+    tamper?: (envelope: RuntimeEventEnvelope) => RuntimeEventEnvelope;
+  }): Promise<void>;
+  setPrunedFloor(sequence: string | null): void;
+  /** The DB wiring's hand-off: retain, then ingest now or once released. */
+  deliverCanonical(
+    envelope: RuntimeEventEnvelope,
+    ingest: (envelope: RuntimeEventEnvelope) => Promise<void>,
+  ): Promise<void>;
   publishPromptReceipt(receipt: CommandReceipt): void;
   sealPromptJson(runId: string, value: unknown): ImmutableObjectReference;
   writeRuntimeOutput(objectId: string, bytes: Uint8Array): void;
@@ -579,6 +595,13 @@ export function createFakeExecutionHost(
 
     if (queue && queue.length > 0) throw queue.shift();
   };
+
+  const retainedEnvelopes: RuntimeEventEnvelope[] = [];
+  let prunedFloor: bigint | null = null;
+  let heldEnvelopes: Array<{
+    envelope: RuntimeEventEnvelope;
+    ingest: (envelope: RuntimeEventEnvelope) => Promise<void>;
+  }> | null = null;
 
   const settleInflightPrompts = (sessionId: string, err: MaisterError) => {
     for (const turn of inflightPrompts.get(sessionId) ?? []) turn.reject(err);
@@ -1060,6 +1083,40 @@ export function createFakeExecutionHost(
     async *streamRuntimeEvents(opts) {
       await record("streamRuntimeEvents", null, [opts?.afterSequence]);
       if (opts?.signal?.aborted) return;
+    },
+    // Mirrors the supervisor route AND the local-direct mapping of its
+    // refusals: a malformed range or a scripted fault reads as unavailable.
+    async readRuntimeEventSpan(input): Promise<RuntimeEventSpanPage> {
+      try {
+        await record("readRuntimeEventSpan", null, [input]);
+      } catch {
+        return { state: "unavailable", reason: "request_failed" };
+      }
+      const after = BigInt(input.after);
+      const through = BigInt(input.through);
+      const head = retainedEnvelopes.at(-1);
+
+      if (after >= through)
+        return { state: "unavailable", reason: "request_failed" };
+      if (!head || head.streamId !== input.streamId)
+        return { state: "unavailable", reason: "stream_identity_changed" };
+      if (through > BigInt(head.sequence))
+        return { state: "unavailable", reason: "beyond_emitted" };
+      if (prunedFloor !== null && after < prunedFloor)
+        return { state: "unavailable", reason: "replay_floor_lost" };
+      const events = retainedEnvelopes
+        .filter(
+          (envelope) =>
+            envelope.streamId === input.streamId &&
+            BigInt(envelope.sequence) > after &&
+            BigInt(envelope.sequence) <= through,
+        )
+        .slice(0, 500);
+      const last = events.at(-1)?.sequence ?? null;
+
+      return last === input.through
+        ? { state: "complete", nextAfter: null, events }
+        : { state: "partial", nextAfter: last, events };
     },
     async acknowledgeRuntimeEvents(input) {
       await record("acknowledgeRuntimeEvents", null, [input]);
@@ -2007,6 +2064,28 @@ export function createFakeExecutionHost(
       promptBehavior = behavior;
     },
     publishCanonical,
+    holdIngest() {
+      heldEnvelopes ??= [];
+    },
+    async releaseIngest(opts) {
+      const held = heldEnvelopes ?? [];
+
+      heldEnvelopes = null;
+      for (const { envelope, ingest } of held)
+        await ingest(opts?.tamper ? opts.tamper(envelope) : envelope);
+    },
+    setPrunedFloor(sequence) {
+      prunedFloor = sequence === null ? null : BigInt(sequence);
+    },
+    async deliverCanonical(envelope, ingest) {
+      retainedEnvelopes.push(envelope);
+      if (heldEnvelopes) {
+        heldEnvelopes.push({ envelope, ingest });
+
+        return;
+      }
+      await ingest(envelope);
+    },
     setCanonicalEventSink(sink) {
       canonicalEventSink = sink;
     },
@@ -2433,47 +2512,42 @@ export async function fakeExecutionHosts(
           }),
         );
       }
-      await ingestRuntimeEvent({
-        db,
-        executionHostId: hostId,
-        envelope: {
-          envelopeVersion: 1,
-          eventId,
-          hostKey: fake.identity.hostKey,
-          hostBootId: fake.identity.bootId,
-          streamId: canonicalStreamState.streamId,
-          sequence: currentSequence.toString(),
-          runId: envelope.fence.runId,
-          assignmentId: envelope.fence.assignmentId,
-          assignmentEpoch: envelope.fence.assignmentEpoch,
-          hostSessionId:
-            event.type === "runtime_object.available" ? null : sessionId,
-          eventType,
-          occurredAt: new Date().toISOString(),
-          payloadSchema,
-          payload,
-        },
-      });
-      if (event.type === "runtime_object.available")
-        await projectCanonicalRuntimeObjects({
-          db,
-          runId: envelope.fence.runId,
-        });
-      await projectExecutionEvents({
-        db,
+      const canonical = {
+        envelopeVersion: 1,
+        eventId,
+        hostKey: fake.identity.hostKey,
+        hostBootId: fake.identity.bootId,
+        streamId: canonicalStreamState.streamId,
+        sequence: currentSequence.toString(),
         runId: envelope.fence.runId,
-        projector: canonicalTranscriptProjector,
+        assignmentId: envelope.fence.assignmentId,
+        assignmentEpoch: envelope.fence.assignmentEpoch,
+        hostSessionId:
+          event.type === "runtime_object.available" ? null : sessionId,
+        eventType,
+        occurredAt: new Date().toISOString(),
+        payloadSchema,
+        payload,
+      } as RuntimeEventEnvelope;
+
+      await fake.deliverCanonical(canonical, async (delivered) => {
+        await ingestRuntimeEvent({
+          db,
+          executionHostId: hostId,
+          envelope: delivered,
+        });
+        if (delivered.eventType === "runtime_object.available")
+          await projectCanonicalRuntimeObjects({ db, runId: delivered.runId });
+        await projectExecutionEvents({
+          db,
+          runId: delivered.runId,
+          projector: canonicalTranscriptProjector,
+        });
+        await Promise.all([
+          projectCanonicalPromptCommands({ db, runId: delivered.runId }),
+          projectCanonicalSessionLifecycle({ db, runId: delivered.runId }),
+        ]);
       });
-      await Promise.all([
-        projectCanonicalPromptCommands({
-          db,
-          runId: envelope.fence.runId,
-        }),
-        projectCanonicalSessionLifecycle({
-          db,
-          runId: envelope.fence.runId,
-        }),
-      ]);
     },
   );
 

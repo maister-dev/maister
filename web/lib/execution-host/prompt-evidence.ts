@@ -25,6 +25,7 @@ import { normalizeCommandReceiptV2 } from "./command-receipt";
 import { casTransition, getCommand } from "./commands";
 import { commandSignals } from "./signals";
 import { preparePromptContent } from "./events/session-content";
+import { reanchorDispatchedPrompts } from "./events/run-message-store";
 import { CONSUMER_SIGNAL_EVENT_TYPES } from "./prompt-signal-events";
 
 import {
@@ -492,7 +493,63 @@ async function bindTerminalEvent(
     .where(eq(executionCommands.id, command.id))
     .returning();
 
+  if (command.settledFrom === "host_span") {
+    log.info(
+      { commandId: command.id, eventId: event.id },
+      "prompt-host-span-confirmed",
+    );
+    if (event.runSequence !== null && command.completedAt) {
+      const rows = await reanchorDispatchedPrompts(tx, {
+        runId: command.runId,
+        settledAt: command.completedAt,
+        anchor: event.runSequence,
+      });
+
+      if (rows > 0)
+        log.info(
+          {
+            runId: command.runId,
+            commandId: command.id,
+            anchor: event.runSequence.toString(),
+            rows,
+          },
+          "transcript-prompts-reanchored",
+        );
+    }
+  }
+
   return { command: stored };
+}
+
+/** ADR-167 D5 amendment (D-B5): settle from the host's verified span. The
+ * reducer runs byte for byte as for the canonical event; only the identity
+ * bind differs, and `settled_from` records `host_span`. */
+export async function reduceHostSpanEvidence(
+  db: Db,
+  commandId: string,
+  terminal: ExecutionEvent,
+): Promise<PromptEvidenceResult & { settledHere: boolean }> {
+  const result = await db.transaction(async (tx) => {
+    const locked = await lockPrompt(tx, commandId);
+
+    // The canonical feed or the direct binding won the race: nothing to add.
+    if (locked.terminalEvidenceSha256)
+      return {
+        disposition: "settled" as const,
+        command: locked,
+        settledHere: false,
+      };
+    const reduced = await reducePromptEvidence(tx, locked, {
+      feed: "host_span",
+      event: terminal,
+    });
+
+    return { ...reduced, settledHere: reduced.disposition === "settled" };
+  });
+
+  if (result.disposition !== "waiting") commandSignals.wake(commandId);
+
+  return result;
 }
 
 /** The canonical terminal event a completed v2 receipt names, when a fast feed

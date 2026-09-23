@@ -1,10 +1,13 @@
-// ADR-167 D5 amendment (2026-09-23) — a finished turn settles on host evidence
-// instead of waiting behind the prompt projector. Every case holds the canonical
-// PROMPT projector for its run while ingest keeps running, so the projector
-// cannot be the writer of what is asserted before the release.
+// ADR-167 D5 amendment (2026-09-23) — B.5: a finished turn settles from the
+// host's own verified event span while the manager has not ingested it. The
+// lag is real: a fault proxy between the manager and a real supervisor holds
+// the command's `session.command` frames on the shared event stream, so the
+// accepted and terminal events are neither ingested nor bindable, and the
+// contiguous frontier stays behind the turn.
 import type { Db } from "@/lib/execution-host/db";
 import type { FlowYamlV1 } from "@/lib/config.schema";
 import type { RealSupervisor } from "@/test-support/real-supervisor";
+import type { SupervisorFaultProxy } from "@/test-support/supervisor-fault-proxy";
 
 import { randomUUID } from "node:crypto";
 
@@ -45,23 +48,24 @@ import {
   startRealSupervisor,
   useRealSupervisorUrl,
 } from "@/test-support/real-supervisor";
+import { startSupervisorFaultProxy } from "@/test-support/supervisor-fault-proxy";
 
 let database: StartedPostgresTestDb;
 let db: Db;
 let supervisor: RealSupervisor;
+let proxy: SupervisorFaultProxy;
 let worker: ProjectionWorker;
 let restoreUrl: () => void = () => {};
 
 beforeAll(async () => {
   database = await startMainPostgresTestDb({
-    databaseName: "eh_prompt_host_settlement",
+    databaseName: "eh_prompt_host_span",
   });
   db = database.db as unknown as Db;
-  // A real adapter outlives its turn; the default fixture exits 10 ms after
-  // each one, and that `session.exited` can land inside the turn's own span —
-  // a consumer signal that correctly keeps the turn on the canonical path.
+  // A real adapter outlives its turn (see prompt-host-settlement).
   supervisor = await startRealSupervisor({ fixtureArgs: ["--hang"] });
-  restoreUrl = useRealSupervisorUrl(supervisor.url);
+  proxy = await startSupervisorFaultProxy(supervisor.url);
+  restoreUrl = useRealSupervisorUrl(proxy.url);
   resetRegistrarStateForTests();
   resetResolverForTests();
   worker = startProjectionWorker({ db, projectors: canonicalProjectors });
@@ -71,31 +75,47 @@ afterAll(async () => {
   await stopRuntimeEventConsumers();
   restoreUrl();
   await worker?.stop();
+  await proxy?.close();
   await supervisor?.kill();
   await database?.stop();
 });
+
+/** Hold every `session.command` frame of the shared stream until released. */
+function holdCommandFrames(caseId: string) {
+  return proxy.arm(
+    {
+      caseId,
+      method: "GET",
+      path: /^\/runtime-events$/,
+      eventType: "session.command",
+    },
+    "hold-events",
+  );
+}
+
+/** A barrier refuses a second release, or one it never reached; cleanup
+ * must not mask the case's own verdict. */
+function settle(barrier: { release(): void }): void {
+  try {
+    barrier.release();
+  } catch {
+    // Already released, or never reached.
+  }
+}
+
+function dropSpanReads(caseId: string) {
+  return proxy.arm(
+    // The witness path is the raw request URL, query string included.
+    { caseId, method: "GET", path: /^\/runtime-events\/span\?/ },
+    "drop-responses",
+  );
+}
 
 function holdPrompts(runId: string) {
   return holdProjection(database.pool, {
     consumerName: CANONICAL_PROJECTION_CONSUMERS.prompt,
     runId,
   });
-}
-
-async function promptCommand(runId: string) {
-  const [command] = await db
-    .select()
-    .from(executionCommands)
-    .where(
-      and(
-        eq(executionCommands.runId, runId),
-        eq(executionCommands.kind, "session.prompt"),
-      ),
-    );
-
-  if (!command) throw new Error(`no prompt command for run ${runId}`);
-
-  return command;
 }
 
 async function promptCursor(runId: string): Promise<bigint | null> {
@@ -127,7 +147,32 @@ async function terminalRunSequence(eventId: string): Promise<bigint> {
   return event.runSequence;
 }
 
-async function seedSingleNodeFlow() {
+async function promptCommand(runId: string) {
+  const [command] = await db
+    .select()
+    .from(executionCommands)
+    .where(
+      and(
+        eq(executionCommands.runId, runId),
+        eq(executionCommands.kind, "session.prompt"),
+      ),
+    );
+
+  if (!command) throw new Error(`no prompt command for run ${runId}`);
+
+  return command;
+}
+
+async function runStatus(runId: string) {
+  return (
+    await db
+      .select({ status: runs.status })
+      .from(runs)
+      .where(eq(runs.id, runId))
+  )[0]?.status;
+}
+
+async function seedSingleNodeFlow(prompt: string) {
   const name = randomUUID();
   const repoPath = await initRepo(`${supervisor.runtimeRoot}/repo-${name}`);
   const worktreePath = await addWorktree(
@@ -140,13 +185,13 @@ async function seedSingleNodeFlow() {
     database.db,
     {
       schemaVersion: 1,
-      name: "host-settlement",
+      name: "host-span",
       compat: { engine_min: "1.1.0" },
       nodes: [
         {
           id: "work",
           type: "ai_coding",
-          action: { prompt: "hello" },
+          action: { prompt },
           transitions: { success: "done" },
         },
       ] as FlowYamlV1["nodes"],
@@ -163,9 +208,14 @@ async function seedSingleNodeFlow() {
   );
 }
 
-describe("direct terminal binding (B.4)", () => {
+describe("direct terminal binding (B.4) on the real supervisor", () => {
   it("B1: a completed turn settles from its ingested terminal event while the prompt projector is held, and the projector later confirms idempotently", async () => {
-    const { runId } = await seedSingleNodeFlow();
+    const { runId } = await seedSingleNodeFlow(
+      'fixture-output:{"bytes":0,"text":"bound directly"}',
+    );
+    // Only the direct binding may settle: the host span is unreadable and the
+    // prompt projector is held while ingest keeps running.
+    const noSpan = dropSpanReads("B1");
     const release = await holdPrompts(runId);
     let flow: Promise<void> | null = null;
 
@@ -221,6 +271,13 @@ describe("direct terminal binding (B.4)", () => {
         completionAppliedAt: settled.completionAppliedAt,
       });
     } finally {
+      // The direct binding may win before any span read; reach the rule so
+      // the proxy drains either way.
+      if (noSpan.observations.length === 0)
+        await fetch(
+          `${proxy.url}/runtime-events/span?streamId=${randomUUID()}&after=0&through=1`,
+        ).catch(() => undefined);
+      settle(noSpan);
       await release();
       await flow?.catch(() => undefined);
     }
@@ -319,6 +376,160 @@ describe("direct terminal binding (B.4)", () => {
       });
     } finally {
       await release();
+    }
+  }, 240_000);
+});
+
+describe("host-span settlement (B.5) on the real supervisor", () => {
+  it("B2: a completed turn settles from the host span while its events are held, the node advances, and the canonical event later confirms without a second application", async () => {
+    const { runId } = await seedSingleNodeFlow(
+      'fixture-output:{"bytes":0,"text":"from the host span"}',
+    );
+    const held = holdCommandFrames("B2");
+    let flow: Promise<void> | null = null;
+
+    try {
+      flow = runFlow(runId, {
+        db: database.db,
+        runtimeRoot: supervisor.runtimeRoot,
+        executionHosts: createExecutionHosts({ db }),
+      });
+      await expect
+        .poll(() => runStatus(runId), { timeout: 90_000, interval: 250 })
+        .toBe("Review");
+      await flow;
+      const settled = await promptCommand(runId);
+
+      // Nothing of the turn's command frames reached the manager.
+      expect(held.observations.length).toBeGreaterThanOrEqual(2);
+      expect(settled).toMatchObject({
+        state: "succeeded",
+        settledFrom: "host_span",
+        terminalEventId: null,
+        applicationState: "applied",
+        applicationError: null,
+      });
+      expect(settled.completionAppliedAt).toBeInstanceOf(Date);
+
+      held.release();
+      await expect
+        .poll(async () => (await promptCommand(runId)).terminalEventId, {
+          timeout: 60_000,
+        })
+        .toBe(settled.receiptEvidence?.eventId);
+      expect(await promptCommand(runId)).toMatchObject({
+        terminalEvidenceSha256: settled.terminalEvidenceSha256,
+        settledFrom: "host_span",
+        applicationState: "applied",
+        applicationError: null,
+        completionAppliedAt: settled.completionAppliedAt,
+      });
+    } finally {
+      settle(held);
+      await flow?.catch(() => undefined);
+    }
+  }, 240_000);
+
+  it("B7: a span carrying a permission request is never settled from the host; it settles canonically once the frames arrive", async () => {
+    const repoPath = await initRepo(
+      `${supervisor.runtimeRoot}/repo-${randomUUID()}`,
+    );
+    const project = await seedProjectRow(database.db, { repoPath });
+    const runId = await seedRun(database.db, {
+      projectId: project.id,
+      status: "Running",
+      runKind: "flow",
+    });
+
+    await seedWorkspace(database.db, {
+      runId,
+      projectId: project.id,
+      worktreePath: await addWorktree(
+        repoPath,
+        `${supervisor.runtimeRoot}/wt-${randomUUID()}`,
+        `maister/b7-${randomUUID().slice(0, 6)}`,
+      ),
+      parentRepoPath: repoPath,
+    });
+    const client = await createExecutionHosts({ db }).forRun(runId, {
+      reason: "launch",
+    });
+    const session = await client.createSession({
+      stepId: "s1",
+      executor: { agent: "claude", model: "mock" },
+    });
+    const held = holdCommandFrames("B7");
+
+    try {
+      const handle = await client.prompt(
+        session.hostSessionId,
+        {
+          stepId: "s1",
+          prompt:
+            'fixture-output:{"bytes":0,"permission":true,"text":"answered"}',
+        },
+        {
+          admitOwner: await seedNodePromptOwner(
+            db,
+            client,
+            session.hostSessionId,
+          ),
+        },
+      );
+      // The request is stored behind the held accepted frame (`pending_gap`),
+      // so no canonical stream yields it; answer it from the stored row.
+      let requestId: string | undefined;
+
+      await expect
+        .poll(
+          async () => {
+            const [row] = await db
+              .select({ payload: executionEvents.payload })
+              .from(executionEvents)
+              .where(
+                and(
+                  eq(executionEvents.runId, runId),
+                  eq(executionEvents.eventType, "session.permission_request"),
+                ),
+              );
+
+            requestId = row?.payload?.requestId as string | undefined;
+
+            return requestId;
+          },
+          { timeout: 30_000 },
+        )
+        .toBeTruthy();
+      await client.deliverInput(session.hostSessionId, {
+        kind: "permission",
+        action: "select",
+        requestId: requestId!,
+        optionId: "allow",
+      });
+      await expect(
+        client.waitForPrompt(handle, { signal: AbortSignal.timeout(15_000) }),
+      ).rejects.toThrow();
+      expect(await promptCommand(runId)).toMatchObject({
+        terminalEvidenceSha256: null,
+        settledFrom: null,
+      });
+      expect(
+        (await promptCommand(runId)).receiptEvidence?.evidenceV2?.phase,
+      ).toBe("completed");
+
+      held.release();
+      expect(
+        (
+          await client.waitForPrompt(handle, {
+            signal: AbortSignal.timeout(60_000),
+          })
+        ).stopReason,
+      ).toBe("end_turn");
+      expect(await promptCommand(runId)).toMatchObject({
+        settledFrom: "canonical",
+      });
+    } finally {
+      settle(held);
     }
   }, 240_000);
 });

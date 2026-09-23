@@ -59,6 +59,19 @@ export class PromptOwnerDeferred extends MaisterError {
   }
 }
 
+/** ADR-167 D5 amendment (D-B9): absence is never proof. A turn settled from
+ * the host's span has no canonical terminal row until the canonical event
+ * confirms it; a check that reads that row waits instead of reading "none". */
+export function assertTerminalEventConfirmed(
+  command: Readonly<{
+    terminalEventId: string | null;
+    settledFrom: string | null;
+  }>,
+): void {
+  if (command.terminalEventId === null && command.settledFrom === "host_span")
+    throw new PromptOwnerDeferred("terminal_event_unconfirmed");
+}
+
 export class PromptOwnerInvariantError extends MaisterError {
   constructor(causeCode: string) {
     if (!/^[a-z][a-z0-9_]{0,63}$/.test(causeCode))

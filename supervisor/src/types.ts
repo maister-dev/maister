@@ -693,6 +693,7 @@ export const REASON_TOKENS = [
   "health_query_invalid",
   "stream_health_unavailable",
   "invalid_event_sequence",
+  "invalid_event_span",
   "replay_floor_lost",
   "stream_identity_conflict",
   "ack_not_contiguous",

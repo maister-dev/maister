@@ -252,6 +252,24 @@ export type HostRuntimeEventRow = {
   createdAt: string;
 };
 
+/** Why a retained span cannot be served; never a command outcome. */
+export type RuntimeEventSpanUnavailableReason =
+  | "replay_floor_lost"
+  | "stream_identity_changed"
+  | "beyond_emitted";
+
+/** One bounded page of the retained range `(after, through]`. */
+export type RuntimeEventSpanPage =
+  | Readonly<{
+      state: "complete" | "partial";
+      nextAfter: string | null;
+      events: HostRuntimeEventRow[];
+    }>
+  | Readonly<{
+      state: "unavailable";
+      reason: RuntimeEventSpanUnavailableReason;
+    }>;
+
 export type AppendRuntimeEventInput = {
   draft: RuntimeEventDraft;
   terminal?: boolean;
@@ -412,6 +430,13 @@ export type HostState = {
     limit?: number,
   ): HostRuntimeEventRow[];
   pendingRuntimeEvents(streamId: string, limit?: number): HostRuntimeEventRow[];
+  // Read-only: never acknowledges, prunes or creates a stream position.
+  runtimeEventsInRange(
+    streamId: string,
+    after: string,
+    through: string,
+    limit?: number,
+  ): RuntimeEventSpanPage;
   hasRuntimeEventsAfter(streamId: string, sequence: string): boolean;
   ackRuntimeEvents(streamId: string, throughSequence: string): string;
   runtimeEventOutboxStats(): RuntimeEventOutboxStats;
@@ -1798,6 +1823,44 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
         validateRuntimeEventLimit(limit),
       );
     },
+    runtimeEventsInRange(streamId, after, through, limit = 500) {
+      const stream = ensureRuntimeEventStream(db, now);
+
+      if (stream.stream_id !== streamId)
+        return { state: "unavailable", reason: "stream_identity_changed" };
+      const lower = parseHostEventSequence(after);
+      const upper = parseHostEventSequence(through);
+
+      // The caller may name a terminal the host has not emitted; answering
+      // with whatever exists would read as a complete span.
+      if (upper >= parseHostEventSequence(stream.next_sequence))
+        return { state: "unavailable", reason: "beyond_emitted" };
+      if (
+        stream.replay_floor_sequence !== null &&
+        lower < parseHostEventSequence(stream.replay_floor_sequence)
+      )
+        return { state: "unavailable", reason: "replay_floor_lost" };
+      const events = runtimeEventPage(
+        db,
+        streamId,
+        hostEventSequenceSortKey(lower),
+        validateRuntimeEventLimit(limit),
+        hostEventSequenceSortKey(upper),
+      );
+      const last = events.at(-1)?.sequence;
+
+      // Rows above the floor and below the head are never deleted, so an empty
+      // page here means the outbox lost rows it still promises to retain.
+      if (last === undefined)
+        throw new HostRuntimeEventError(
+          "stream_corrupt",
+          `runtime event span (${after}, ${through}] has no retained rows on stream ${streamId}`,
+        );
+
+      return last === through
+        ? { state: "complete", nextAfter: null, events }
+        : { state: "partial", nextAfter: last, events };
+    },
     pendingRuntimeEvents(streamId, limit = 500) {
       const stream = getRuntimeEventStream(db, streamId);
 
@@ -2613,13 +2676,21 @@ function runtimeEventPage(
   streamId: string,
   afterSortKey: string | null,
   limit: number,
+  throughSortKey: string | null = null,
 ): HostRuntimeEventRow[] {
+  // Sort keys are fixed-width decimals, so "~" bounds every real key.
   const candidates = db
     .prepare(
       `SELECT sequence_sort_key, encoded_bytes FROM runtime_event_outbox
-    WHERE stream_id = ? AND sequence_sort_key > ? ORDER BY sequence_sort_key ASC LIMIT ?`,
+    WHERE stream_id = ? AND sequence_sort_key > ? AND sequence_sort_key <= ?
+    ORDER BY sequence_sort_key ASC LIMIT ?`,
     )
-    .all(streamId, afterSortKey ?? "", Math.min(limit, 500)) as Array<{
+    .all(
+      streamId,
+      afterSortKey ?? "",
+      throughSortKey ?? "~",
+      Math.min(limit, 500),
+    ) as Array<{
     sequence_sort_key: string;
     encoded_bytes: number;
   }>;

@@ -12,12 +12,17 @@ import type {
 } from "../contracts";
 import type { CommandEnvelope, CommandKind, WorkspaceKind } from "../types";
 
+import { ZodError } from "zod";
+
 import { normalizeCommandReceiptV2 } from "../command-receipt";
 import { asExecutionWorkspaceId } from "../types";
-import { RuntimeEventEnvelopeSchema } from "../runtime-events";
+import {
+  RuntimeEventEnvelopeSchema,
+  RuntimeEventSpanSchema,
+} from "../runtime-events";
 
 import * as wire from "@/lib/supervisor-client";
-import { MaisterError } from "@/lib/errors";
+import { isMaisterError, MaisterError } from "@/lib/errors";
 
 // ADR-166 D10: the local-direct transport — the only importer of the
 // enveloped `supervisor-client` wire. Pure adaptation: no DB, no ledger, no
@@ -162,6 +167,47 @@ export function createLocalDirectTransport(
     },
     acknowledgeRuntimeEvents(input) {
       return wire.acknowledgeRuntimeEvents(input);
+    },
+    // A span read is an optimisation over the canonical feed, so every wire,
+    // status, shape or identity failure is an unavailable page, never a throw.
+    async readRuntimeEventSpan(input) {
+      const failed = {
+        state: "unavailable",
+        reason: "request_failed",
+      } as const;
+
+      try {
+        const health = toHostHealth(
+          await wire.checkSupervisorHealth({ lagAgeMs: options.lagAgeMs }),
+        );
+
+        if (health.kind !== "ready" || !health.identity) return failed;
+        const hostKey = health.identity.hostKey;
+        const body = RuntimeEventSpanSchema.parse(
+          await wire.readRuntimeEventSpan(input),
+        );
+
+        if (
+          body.streamId !== input.streamId ||
+          body.after !== input.after ||
+          body.through !== input.through ||
+          body.events.some((event) => event.hostKey !== hostKey)
+        )
+          return failed;
+        if (body.state === "unavailable")
+          return body.reason
+            ? { state: "unavailable", reason: body.reason }
+            : failed;
+
+        return {
+          state: body.state,
+          nextAfter: body.nextAfter,
+          events: body.events,
+        };
+      } catch (error) {
+        if (isMaisterError(error) || error instanceof ZodError) return failed;
+        throw error;
+      }
     },
     async getCommandReceipt(commandId) {
       const receipt = await wire.getCommandReceipt(commandId);

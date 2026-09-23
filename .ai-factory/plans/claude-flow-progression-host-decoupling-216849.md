@@ -667,7 +667,7 @@ Each commit is gated on the phase exit criteria. Merge goes to master with `--no
 
 ### Phase 3: B.5 — host range read and ingest-independent settlement
 
-- [ ] **T3.1: Supervisor route (D-B3), host side first.**
+- [x] **T3.1: Supervisor route (D-B3), host side first.**
   - Files:
     - `supervisor/src/host-state.ts`: `runtimeEventsInRange`, built on `runtimeEventPage` with an upper bound;
     - `supervisor/src/http-api.ts`: the new GET next to `:1749`, with zod query validation;
@@ -682,7 +682,7 @@ Each commit is gated on the phase exit criteria. Merge goes to master with `--no
     - identical envelopes to the SSE replay for the same range (parity).
   - **Logging:** DEBUG-free. WARN `runtime-event-span-unavailable {reason, after, through}`.
 
-- [ ] **T3.2: Web transport seam and fake-host extension.**
+- [x] **T3.2: Web transport seam and fake-host extension.**
   - Files:
     - `web/lib/execution-host/contracts.ts`: `readRuntimeEventSpan` on `ExecutionHostTransport`.
     - `lib/supervisor-client.ts`: GET with `ADMIN_READ_TIMEOUT_MS`; non-200 maps to a typed "unavailable".
@@ -695,7 +695,7 @@ Each commit is gated on the phase exit criteria. Merge goes to master with `--no
     - The default (no hold) is unchanged, so the ~96 fake-based suites keep their behaviour. The Phase 3 exit re-runs them.
   - **Parity: new scenario rows** in `host-parity.integration.test.ts`, which has no prompt or event rows today (C27). The rows are complete / partial (paging) / pruned / foreign stream / invalid span. One table runs against the fake **and** the real supervisor (skill-context rule "parity suite for contracts split across two processes").
 
-- [ ] **T3.3: Shared normalization and verification (D-B4).**
+- [x] **T3.3: Shared normalization and verification (D-B4).**
   - Files:
     - `events/ingest.ts`: export `normalizeRuntimeEnvelope` and `classifyEnvelopeDisposition`. They are extracted with no behavior change, and ingest calls them.
     - `prompt-output.ts`: `EventPageSource`, the verifier loop and the accepted-row check shared by both sources.
@@ -703,7 +703,7 @@ Each commit is gated on the phase exit criteria. Merge goes to master with `--no
   - **Unit tests** (unit project) of the verifier over synthetic pages, covering each refusal cause: `event_size`, `event_span_gap` (hole, out of order, foreign stream), `terminal_identity`, `source_command_binding`, `content_binding`, and the object digest. `stale_epoch` rows are accepted inside the span exactly as `prompt-output.ts:169` accepts them.
   - **Guard:** the existing `bounded-output.integration` suite stays green on the canonical source.
 
-- [ ] **T3.4: RED B2 / B3 / B4 / B5, then the feed wiring (D-B1, D-B5, D-B6).**
+- [x] **T3.4: RED B2 / B3 / B4 / B5, then the feed wiring (D-B1, D-B5, D-B6).**
   - **B2** (real supervisor): hold ingest with `startSupervisorFaultProxy(...).arm(selector, "hold-events")` (C27), so nothing is ingested.
     - A completed turn settles from the host span.
     - The node advances.
@@ -729,7 +729,7 @@ Each commit is gated on the phase exit criteria. Merge goes to master with `--no
     - INFO `prompt-host-span-confirmed {commandId}` in `recordPromptEvent` when it binds a host_span-settled command.
     - DEBUG `prompt-evidence-feed-selected` (D-C2), only on the claim.
 
-- [ ] **T3.5: RED B6–B9, then the signal-free rule for B.5, the adapter hardening, the transcript re-anchor and released-assignment settlement (D-B8, D-B9, D-B10, D-B11).**
+- [x] **T3.5: RED B6–B9, then the signal-free rule for B.5, the adapter hardening, the transcript re-anchor and released-assignment settlement (D-B8, D-B9, D-B10, D-B11).**
   - **B6 (D-B11)**, real supervisor + fault proxy:
     - The assignment is released (checkpoint wins) while the terminal is held.
     - The host-span settles the historical ledger (`settled_from='host_span'`), and the owner is superseded.
@@ -763,6 +763,14 @@ Each commit is gated on the phase exit criteria. Merge goes to master with `--no
     - B1-signal, B2–B9, B5-503 and B-failed are green.
     - The Phase 1 suite set, every fake-host suite (the ~96 `fakeGraphHosts` / `fakeExecutionHosts` users, via the full integration lane) and the supervisor lanes (`pnpm --filter @maister/supervisor test`) are green.
     - `pnpm validate:contracts` is green.
+
+  - **As done (2026-09-23) — Phase 3 record.**
+    - **Route (T3.1):** `runtimeEventsInRange` + `GET /runtime-events/span` (`runtime-event-span.integration.test.ts`: exact range byte-identical to the SSE replay with no ACK/prune, 500-row and 1 MiB paging, pruned floor after a real prune, foreign stream, unemitted terminal, malformed/empty ranges → 409 `invalid_event_span`). `openapi-examples.test.ts` now parses every span example (the T0.4 deferral). **Pre-existing red fixed:** that suite's "publishes every refusal reason" case was red on `master` — `stream_health_unavailable` (added by 29858e11) was never published in the OpenAPI `ReasonToken` enum.
+    - **Transport + fake (T3.2):** any wire, status, shape or identity failure is an `unavailable` page (`request_failed`), never a throw. The fake gains `holdIngest` / `releaseIngest({tamper})` / `setPrunedFloor` / `deliverCanonical` and serves spans from its retained envelopes. **Deviation:** the parity table gains only the content-independent rows (invalid span, foreign stream). The bare fake used by `host-parity` has no canonical stream of its own (stream allocation lives in its DB wiring), so the content rows are covered by the supervisor route test (real SQLite, real prune) plus the fake-host B-cases instead.
+    - **Verifier (T3.3):** `commandEvents` is the one verifier over `canonicalPages` or `hostOutputPages`; `prompt-host-span.ts` normalizes envelopes with ingest's own `normalizeRuntimeEnvelope` / `classifyEnvelopeDisposition` / digest helpers (only the command's own session is classified; other rows are read for contiguity alone). `readPromptOutput` reads the host span when the canonical frontier is behind; an unreadable or signal-bearing span answers exactly as before (`event_frontier`). Unit: `prompt-span-verifier.test.ts` (13 cases, every refusal cause).
+    - **Feed wiring (T3.4):** `verifyHostPromptSpan` + `reduceHostSpanEvidence` (lock, `settledHere`) + the D-B5 claim in `prompt-reconciliation.ts`, first attempt inside the receipt claim. Host reads only for callers passing a receipt lookup. **Observed:** a mock turn completes before its events are ingested, so the waiter's first receipt read now often settles from the host span; three `bounded-output` cases that read canonical rows right after the wait now wait for the canonical frontier first (`untilIngested`) — an obsolete assumption, not a regression.
+    - **Tests (T3.4/T3.5):** real supervisor + fault proxy (`prompt-host-span.integration.test.ts`): B1 (span reads dropped, so the direct binding is the only fast feed — this also covers B5's transport-failure variant), B1-signal, B2, B7; fake host (`prompt-host-span-fake.integration.test.ts`): B5 (pruned), B-failed, B3 after and before application, B4 row equality and the lock racer (both writers parked on the row lock via `pg_stat_activity`), B6, B8, B9. **Deviations:** B7 uses the live permission request (a hook trip needs guardrail config); both types run the same `CONSUMER_SIGNAL_EVENT_TYPES` check, whose list the drift guard pins. B8 is DB-free because the D-B9 guard throws before any query. B9 exercises `reanchorDispatchedPrompts` at the DB level. The guard-disabled mutation for the racer moves to T5.4.
+    - **Placement:** `assertTerminalEventConfirmed` lives in `prompt-owners.ts` beside `PromptOwnerDeferred` (importing it into `prompt-evidence.ts` would close a module cycle).
 
 <!-- Commit checkpoint 4 -->
 

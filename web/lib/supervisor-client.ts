@@ -1568,6 +1568,30 @@ export async function getCommandReceipt(
   }
 }
 
+/** ADR-167 D5 amendment: the raw span body; the transport validates it. */
+export async function readRuntimeEventSpan(input: {
+  streamId: string;
+  after: string;
+  through: string;
+  signal?: AbortSignal;
+}): Promise<unknown> {
+  const query = new URLSearchParams({
+    streamId: input.streamId,
+    after: input.after,
+    through: input.through,
+  });
+  const res = await request<unknown>({
+    method: "GET",
+    path: `/runtime-events/span?${query}`,
+    ctx: "readRuntimeEventSpan",
+    fallbackCode: "EXECUTOR_UNAVAILABLE",
+    timeoutMs: ADMIN_READ_TIMEOUT_MS,
+    signal: input.signal,
+  });
+
+  return res.body;
+}
+
 // Structural twins of the `contracts.ts` retirement pair. This module is the
 // lower layer (contracts imports from it, never the reverse), so the shapes are
 // declared here and flow outward by assignability.

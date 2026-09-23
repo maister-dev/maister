@@ -479,6 +479,33 @@ export const RuntimeEventAckSchema = z
 
 export type RuntimeEventAck = z.infer<typeof RuntimeEventAckSchema>;
 
+// ADR-167 D5 amendment (2026-09-23): the read-only span a manager verifies to
+// settle a finished turn before the shared stream is ingested.
+export const RuntimeEventSpanQuerySchema = z
+  .object({
+    streamId: z.string().uuid(),
+    after: RuntimeEventSequenceSchema,
+    through: RuntimeEventSequenceSchema,
+  })
+  .strict()
+  .refine((query) => BigInt(query.after) < BigInt(query.through));
+
+export const RuntimeEventSpanSchema = z
+  .object({
+    streamId: z.string().uuid(),
+    after: RuntimeEventSequenceSchema,
+    through: RuntimeEventSequenceSchema,
+    state: z.enum(["complete", "partial", "unavailable"]),
+    reason: z
+      .enum(["replay_floor_lost", "stream_identity_changed", "beyond_emitted"])
+      .optional(),
+    nextAfter: RuntimeEventSequenceSchema.nullable(),
+    events: z.array(RuntimeEventEnvelopeSchema),
+  })
+  .strict();
+
+export type RuntimeEventSpan = z.infer<typeof RuntimeEventSpanSchema>;
+
 function uuidFromSha1(hash: Buffer): string {
   const bytes = Buffer.from(hash.subarray(0, 16));
 

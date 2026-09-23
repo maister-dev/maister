@@ -4,8 +4,9 @@ import type { Db } from "./db";
 import type { ExecutionHostTransport } from "./contracts";
 import type { ExecutionCommand, ExecutionEvent } from "@/lib/db/schema";
 import type {
-  ImmutableObjectReference,
   CommandOutputManifestV2,
+  CommandReceiptV2,
+  ImmutableObjectReference,
 } from "../../../runtime/command-evidence";
 
 import { createHash } from "node:crypto";
@@ -25,6 +26,8 @@ import {
   sessionContentSource,
 } from "./runtime-events";
 import { reconcileStoredPromptEvidence } from "./prompt-evidence";
+import { HostSpanUnavailable, hostSpanPages } from "./prompt-host-span";
+import { CONSUMER_SIGNAL_EVENT_TYPES } from "./prompt-signal-events";
 
 import {
   executionEvents,
@@ -117,15 +120,14 @@ async function readObjectJson(
   }
 }
 
-async function* commandEvents(input: {
+/** Canonical rows of `(acceptedSequence, terminalSequence]`, in bounded pages. */
+async function* canonicalPages(input: {
   db: Db;
-  command: ExecutionCommand;
   manifest: CommandOutputManifestV2;
   streamRowId: string;
-  transport: ExecutionHostTransport;
   signal: AbortSignal;
-}): AsyncGenerator<ExecutionEvent> {
-  const { db, command, manifest, streamRowId, transport, signal } = input;
+}): AsyncGenerator<ExecutionEvent[]> {
+  const { db, manifest, streamRowId, signal } = input;
   const terminal = BigInt(manifest.terminalSequence);
   let cursor = BigInt(manifest.acceptedSequence);
 
@@ -160,7 +162,115 @@ async function* commandEvents(input: {
       .where(inArray(executionEvents.id, ids))
       .orderBy(asc(executionEvents.hostSequence));
 
+    yield page;
+    cursor = page.at(-1)?.hostSequence ?? terminal;
+  }
+}
+
+function assertAcceptedBinding(
+  accepted: ExecutionEvent | undefined,
+  command: ExecutionCommand,
+  manifest: CommandOutputManifestV2,
+): void {
+  if (
+    !accepted ||
+    accepted.hostSequence !== BigInt(manifest.acceptedSequence) ||
+    accepted.hostSessionId !== manifest.hostSessionId ||
+    accepted.runId !== command.runId ||
+    accepted.executionAssignmentId !== command.executionAssignmentId ||
+    accepted.assignmentEpoch !== command.assignmentEpoch ||
+    accepted.payload?.commandId !== command.id ||
+    accepted.payload.phase !== "accepted" ||
+    accepted.payload.kind !== "session.prompt"
+  )
+    throw incomplete("accepted_binding");
+}
+
+/** The host's verified rows for the same span (ADR-167 D5 amendment, D-B4).
+ * The accepted row is checked here, as the canonical path checks it before
+ * paging. A span carrying an event the flow consumer reacts to is refused:
+ * such a turn must reach its owner only through the canonical feed.
+ * `terminal` receives the host's terminal row for a settlement. */
+async function* hostOutputPages(input: {
+  db: Db;
+  transport: ExecutionHostTransport;
+  command: ExecutionCommand;
+  manifest: CommandOutputManifestV2;
+  hostKey: string;
+  streamRowId: string;
+  signal: AbortSignal;
+  terminal?: { event: ExecutionEvent | null };
+}): AsyncGenerator<ExecutionEvent[]> {
+  const { command, manifest } = input;
+  let accepted = false;
+
+  for await (const page of hostSpanPages({
+    db: input.db,
+    transport: input.transport,
+    executionHostId: command.executionHostId,
+    hostKey: input.hostKey,
+    streamId: manifest.streamId,
+    streamRowId: input.streamRowId,
+    hostSessionId: manifest.hostSessionId,
+    after: BigInt(manifest.acceptedSequence) - 1n,
+    through: BigInt(manifest.terminalSequence),
+    signal: input.signal,
+  })) {
+    for (const event of page)
+      if (
+        event.hostSessionId === manifest.hostSessionId &&
+        (CONSUMER_SIGNAL_EVENT_TYPES as readonly string[]).includes(
+          event.eventType,
+        )
+      )
+        throw new HostSpanSignals(event.eventType);
+    if (!accepted) {
+      assertAcceptedBinding(page[0], command, manifest);
+      accepted = true;
+    }
+    const rest = page.filter(
+      (event) => event.hostSequence !== BigInt(manifest.acceptedSequence),
+    );
+
+    if (input.terminal) {
+      const last = rest.at(-1);
+
+      if (last?.hostSequence === BigInt(manifest.terminalSequence))
+        input.terminal.event = last;
+    }
+    if (rest.length > 0) yield rest;
+  }
+}
+
+/** A consumer-signal event lies inside a host span (D-B8). */
+export class HostSpanSignals extends MaisterError {
+  constructor(readonly eventType: string) {
+    super("PRECONDITION", "host span carries a consumer signal event", {
+      details: { reason: "span_has_signal_events", eventType },
+    });
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+/** The one verifier of a command's event span, whichever feed pages it.
+ * Exported for its unit tests over synthetic pages. */
+export async function* commandEvents(input: {
+  command: ExecutionCommand;
+  manifest: CommandOutputManifestV2;
+  terminalEventId: string;
+  pages: AsyncIterable<ExecutionEvent[]>;
+  streamRowId: string;
+  transport: ExecutionHostTransport;
+  signal: AbortSignal;
+}): AsyncGenerator<ExecutionEvent> {
+  const { command, manifest, streamRowId, transport, signal } = input;
+  const terminal = BigInt(manifest.terminalSequence);
+  let cursor = BigInt(manifest.acceptedSequence);
+
+  for await (const page of input.pages) {
     for (const event of page) {
+      if (event.payloadBytes === null || event.payloadBytes > 1_048_576)
+        throw incomplete("event_size");
       if (
         event.hostSequence !== cursor + 1n ||
         event.eventStreamId !== streamRowId ||
@@ -171,7 +281,7 @@ async function* commandEvents(input: {
         throw incomplete("event_span_gap");
       cursor = event.hostSequence;
       if (cursor === terminal) {
-        if (event.id !== command.terminalEventId)
+        if (event.id !== input.terminalEventId)
           throw incomplete("terminal_identity");
         continue;
       }
@@ -218,35 +328,21 @@ async function* commandEvents(input: {
       yield { ...event, payload, payloadBytes: reference.sizeBytes };
     }
   }
+  if (cursor !== terminal) throw incomplete("event_span_gap");
 }
 
-/** Internal owner replay only. Browser callers must separately grant repository
- * content access. Consumers must exhaust events successfully before applying
- * a result; a partial iterator is never complete terminal output.
- */
-export async function readPromptOutput(input: {
+/** Host, manifest and original response of a completed v2 prompt, verified
+ * against the command before any event of its span is read. */
+async function openPromptOutput(input: {
   db: Db;
-  commandId: string;
+  command: ExecutionCommand;
+  receipt: CommandReceiptV2;
+  stopReason: unknown;
   signal: AbortSignal;
-}): Promise<{
-  response: Record<string, unknown>;
-  events: AsyncIterable<ExecutionEvent>;
-}> {
-  const { db, commandId, signal } = input;
-  const evidence = await reconcileStoredPromptEvidence(db, commandId, signal);
-  const command = await getCommand(db, commandId);
-
-  if (
-    evidence.disposition !== "settled" ||
-    !command ||
-    command.state !== "succeeded" ||
-    !command.receiptEvidence?.evidenceV2?.terminal ||
-    !command.result
-  )
-    throw incomplete("terminal_evidence");
-  const receipt = command.receiptEvidence.evidenceV2;
+}) {
+  const { db, command, receipt, signal } = input;
   const terminal = receipt.terminal!;
-  const reference = parseCommandOutputReferenceV2(command.result.output);
+  const reference = parseCommandOutputReferenceV2(terminal.result?.output);
   const [host] = await db
     .select()
     .from(executionHosts)
@@ -296,13 +392,91 @@ export async function readPromptOutput(input: {
       ),
     )
     .limit(1);
+  const original = await readObjectJson(transport, manifest.response, signal);
 
   if (
-    !stream ||
-    stream.lastContiguousSequence === null ||
-    stream.lastContiguousSequence < BigInt(manifest.terminalSequence)
+    Object.keys(original).length !== 5 ||
+    original.schema !== "maister.command-response.v2" ||
+    original.commandId !== command.id ||
+    original.hostSessionId !== manifest.hostSessionId ||
+    original.requestSha256 !== command.requestSha256 ||
+    !isRecord(original.response) ||
+    original.response.stopReason !== input.stopReason
   )
+    throw incomplete("response_binding");
+
+  return {
+    transport,
+    hostKey: host.hostKey,
+    manifest,
+    stream,
+    response: original.response,
+  };
+}
+
+/** Internal owner replay only. Browser callers must separately grant repository
+ * content access. Consumers must exhaust events successfully before applying
+ * a result; a partial iterator is never complete terminal output.
+ */
+export async function readPromptOutput(input: {
+  db: Db;
+  commandId: string;
+  signal: AbortSignal;
+}): Promise<{
+  response: Record<string, unknown>;
+  events: AsyncIterable<ExecutionEvent>;
+}> {
+  const { db, commandId, signal } = input;
+  const evidence = await reconcileStoredPromptEvidence(db, commandId, signal);
+  const command = await getCommand(db, commandId);
+
+  if (
+    evidence.disposition !== "settled" ||
+    !command ||
+    command.state !== "succeeded" ||
+    !command.receiptEvidence?.evidenceV2?.terminal ||
+    !command.result
+  )
+    throw incomplete("terminal_evidence");
+  const receipt = command.receiptEvidence.evidenceV2;
+  const opened = await openPromptOutput({
+    db,
+    command,
+    receipt,
+    stopReason: command.result.stopReason,
+    signal,
+  });
+  const { manifest, stream, transport } = opened;
+
+  if (!stream || stream.lastContiguousSequence === null)
     throw incomplete("event_frontier");
+  // The receipt names the terminal event, so a turn settled from the host's
+  // span before its canonical event was bound verifies the same identity.
+  const terminalEventId = command.terminalEventId ?? receipt.terminal!.eventId;
+
+  if (stream.lastContiguousSequence < BigInt(manifest.terminalSequence))
+    return {
+      response: opened.response,
+      events: frontierFallback(
+        commandEvents({
+          command,
+          manifest,
+          terminalEventId,
+          pages: hostOutputPages({
+            db,
+            transport,
+            command,
+            manifest,
+            hostKey: opened.hostKey,
+            streamRowId: stream.id,
+            signal,
+          }),
+          streamRowId: stream.id,
+          transport,
+          signal,
+        }),
+      ),
+    };
   const [span] = await db
     .select({ count: sql<string>`count(*)::text` })
     .from(executionEvents)
@@ -333,39 +507,91 @@ export async function readPromptOutput(input: {
     )
     .limit(1);
 
-  if (
-    !accepted ||
-    accepted.hostSessionId !== manifest.hostSessionId ||
-    accepted.runId !== command.runId ||
-    accepted.executionAssignmentId !== command.executionAssignmentId ||
-    accepted.assignmentEpoch !== command.assignmentEpoch ||
-    accepted.payload?.commandId !== command.id ||
-    accepted.payload.phase !== "accepted" ||
-    accepted.payload.kind !== "session.prompt"
-  )
-    throw incomplete("accepted_binding");
-  const original = await readObjectJson(transport, manifest.response, signal);
-
-  if (
-    Object.keys(original).length !== 5 ||
-    original.schema !== "maister.command-response.v2" ||
-    original.commandId !== command.id ||
-    original.hostSessionId !== manifest.hostSessionId ||
-    original.requestSha256 !== command.requestSha256 ||
-    !isRecord(original.response) ||
-    original.response.stopReason !== command.result.stopReason
-  )
-    throw incomplete("response_binding");
+  assertAcceptedBinding(accepted, command, manifest);
 
   return {
-    response: original.response,
+    response: opened.response,
     events: commandEvents({
-      db,
       command,
       manifest,
+      terminalEventId,
+      pages: canonicalPages({ db, manifest, streamRowId: stream.id, signal }),
       streamRowId: stream.id,
       transport,
       signal,
     }),
   };
+}
+
+/** A host span that cannot be read, or that carries a consumer signal, leaves
+ * the output exactly where it was before host evidence was admissible: behind
+ * the canonical frontier. */
+async function* frontierFallback(
+  events: AsyncGenerator<ExecutionEvent>,
+): AsyncGenerator<ExecutionEvent> {
+  try {
+    yield* events;
+  } catch (error) {
+    if (
+      error instanceof HostSpanUnavailable ||
+      error instanceof HostSpanSignals
+    )
+      throw incomplete("event_frontier");
+    throw error;
+  }
+}
+
+/** ADR-167 D5 amendment (D-B4): prove a completed, not yet settled v2 turn
+ * from the host's own span — the same manifest, response, contiguity,
+ * identity, source and content checks the owner will later apply — and return
+ * the host's terminal row for the reducer. Throws `HostSpanUnavailable`,
+ * `HostSpanSignals`, or an incomplete-output refusal. */
+export async function verifyHostPromptSpan(input: {
+  db: Db;
+  command: ExecutionCommand;
+  signal: AbortSignal;
+}): Promise<ExecutionEvent> {
+  const { db, command, signal } = input;
+  const receipt = command.receiptEvidence?.evidenceV2;
+
+  if (
+    !receipt?.terminal ||
+    receipt.phase !== "completed" ||
+    command.terminalEvidenceSha256 !== null
+  )
+    throw incomplete("terminal_evidence");
+  const opened = await openPromptOutput({
+    db,
+    command,
+    receipt,
+    stopReason: receipt.terminal.result?.stopReason,
+    signal,
+  });
+
+  // No manager stream row means no ingest ever observed this host stream.
+  if (!opened.stream) throw new HostSpanUnavailable("stream_unknown");
+  const terminal: { event: ExecutionEvent | null } = { event: null };
+
+  for await (const event of commandEvents({
+    command,
+    manifest: opened.manifest,
+    terminalEventId: receipt.terminal.eventId,
+    pages: hostOutputPages({
+      db,
+      transport: opened.transport,
+      command,
+      manifest: opened.manifest,
+      hostKey: opened.hostKey,
+      streamRowId: opened.stream.id,
+      signal,
+      terminal,
+    }),
+    streamRowId: opened.stream.id,
+    transport: opened.transport,
+    signal,
+  }))
+    void event;
+  if (!terminal.event) throw incomplete("terminal_identity");
+
+  return terminal.event;
 }

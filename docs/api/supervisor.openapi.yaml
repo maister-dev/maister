@@ -3339,7 +3339,9 @@ components:
         - workspace_rejected
         - legacy_field
         - missing_envelope
+        - stream_health_unavailable
         - invalid_event_sequence
+        - invalid_event_span
         - replay_floor_lost
         - stream_identity_conflict
         - ack_not_contiguous

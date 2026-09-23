@@ -5,21 +5,26 @@ import type { Db } from "./db";
 import type { CommandReceipt } from "./contracts";
 import type { PromptEvidenceResult } from "./prompt-evidence";
 
-import { and, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import pino from "pino";
 
+import { getCommand } from "./commands";
 import {
   depositPromptReceipt,
   quarantinePromptProtocol,
   reconcileStoredPromptEvidence,
+  reduceHostSpanEvidence,
 } from "./prompt-evidence";
+import { HostSpanSignals, verifyHostPromptSpan } from "./prompt-output";
+import { HostSpanUnavailable } from "./prompt-host-span";
 import {
   classifyPromptTransportFailure,
   isPromptProtocolConflict,
 } from "./prompt-transport";
 import { OPEN_COMMAND_STATES } from "./types";
 
-import { executionCommands } from "@/lib/db/schema";
+import { executionCommands, executionEventStreams } from "@/lib/db/schema";
+import { isMaisterError } from "@/lib/errors";
 
 const log = pino({
   name: "prompt-reconciliation",
@@ -64,9 +69,16 @@ export async function reconcilePromptCommand(input: {
     row.lastError.details.transport === "not_sent"
   )
     return { disposition: "settled", command: row, receiptRead: "not_due" };
-  if (row.receiptEvidence || !input.lookupReceipt)
-    return { ...existing, receiptRead: "not_due" };
+  // Host reads are for callers that may reach the host (they pass a receipt
+  // lookup); a DB-only query never triggers one.
+  if (!input.lookupReceipt) return { ...existing, receiptRead: "not_due" };
   const now = input.now ?? (() => new Date());
+
+  if (row.receiptEvidence)
+    return {
+      ...(await settleFromHostSpanWhenDue(input.db, row.id, signal, now)),
+      receiptRead: "not_due",
+    };
   const at = now();
   const claimUntil = new Date(at.getTime() + RECEIPT_CLAIM_MS);
   const [claimed] = await input.db
@@ -112,6 +124,12 @@ export async function reconcilePromptCommand(input: {
 
     if (deposited.disposition === "quarantined")
       return { ...deposited, receiptRead };
+    // First attempt inside this claim, without waiting out the retry delay:
+    // the direct binding, then the host's span (ADR-167 D5 amendment, D-B5).
+    const bound = await reconcileStoredPromptEvidence(input.db, row.id, signal);
+
+    if (bound.disposition === "waiting")
+      await attemptHostSpan(input.db, row.id, signal, now);
   }
   await input.db
     .update(executionCommands)
@@ -133,4 +151,143 @@ export async function reconcilePromptCommand(input: {
     ...(await reconcileStoredPromptEvidence(input.db, row.id, signal)),
     receiptRead,
   };
+}
+
+/** A completed receipt with no ingested terminal event: claim the row the way
+ * the receipt read does (the same column and constants), so one waiter per
+ * ~5 s reads the host span however many wake at 4 Hz. */
+async function settleFromHostSpanWhenDue(
+  db: Db,
+  commandId: string,
+  signal: AbortSignal,
+  now: () => Date,
+): Promise<PromptEvidenceResult> {
+  const pending = await getCommand(db, commandId);
+
+  // Failed and fenced receipts carry no output manifest, so no bounded span
+  // proves them signal-free: they settle canonically (D-B4 scope).
+  if (pending?.receiptEvidence?.evidenceV2?.phase !== "completed")
+    return reconcileStoredPromptEvidence(db, commandId, signal);
+  const at = now();
+  const claimUntil = new Date(at.getTime() + RECEIPT_CLAIM_MS);
+  const [claimed] = await db
+    .update(executionCommands)
+    .set({ nextAttemptAt: claimUntil })
+    .where(
+      and(
+        eq(executionCommands.id, commandId),
+        eq(executionCommands.kind, "session.prompt"),
+        inArray(executionCommands.state, [...OPEN_COMMAND_STATES]),
+        isNotNull(executionCommands.receiptEvidence),
+        isNull(executionCommands.terminalEvidenceSha256),
+        or(
+          isNull(executionCommands.nextAttemptAt),
+          lte(executionCommands.nextAttemptAt, at),
+        ),
+      ),
+    )
+    .returning({ id: executionCommands.id });
+
+  if (!claimed) return reconcileStoredPromptEvidence(db, commandId, signal);
+  const settled = await attemptHostSpan(db, commandId, signal, now);
+
+  await db
+    .update(executionCommands)
+    .set({ nextAttemptAt: new Date(now().getTime() + RECEIPT_RETRY_MS) })
+    .where(
+      and(
+        eq(executionCommands.id, commandId),
+        eq(executionCommands.nextAttemptAt, claimUntil),
+        inArray(executionCommands.state, [...OPEN_COMMAND_STATES]),
+      ),
+    );
+
+  return settled ?? reconcileStoredPromptEvidence(db, commandId, signal);
+}
+
+/** One host-span attempt under a held claim. A span that is unreadable,
+ * unverifiable or signal-bearing is never evidence against the command: the
+ * command keeps waiting for the canonical feed. */
+async function attemptHostSpan(
+  db: Db,
+  commandId: string,
+  signal: AbortSignal,
+  now: () => Date,
+): Promise<PromptEvidenceResult | null> {
+  const command = await getCommand(db, commandId);
+
+  if (!command || command.terminalEvidenceSha256) return null;
+  const receipt = command.receiptEvidence?.evidenceV2;
+
+  if (receipt?.phase !== "completed" || !receipt.terminal) {
+    log.debug(
+      { commandId, feed: "canonical", reason: "receipt_not_completed" },
+      "prompt-evidence-feed-selected",
+    );
+
+    return null;
+  }
+  let terminal;
+
+  try {
+    terminal = await verifyHostPromptSpan({ db, command, signal });
+  } catch (error) {
+    if (signal.aborted) throw error;
+    if (error instanceof HostSpanSignals) {
+      log.debug(
+        { commandId, feed: "none", reason: "span_has_signal_events" },
+        "prompt-evidence-feed-selected",
+      );
+
+      return null;
+    }
+    if (error instanceof HostSpanUnavailable)
+      log.warn(
+        { commandId, reason: error.reason },
+        "prompt-host-span-unavailable",
+      );
+    else
+      log.warn(
+        {
+          commandId,
+          causeCode: isMaisterError(error)
+            ? String(error.details?.causeCode ?? error.code)
+            : error instanceof Error
+              ? error.name
+              : "unknown",
+        },
+        "prompt-host-span-unverified",
+      );
+
+    return null;
+  }
+  log.debug(
+    { commandId, feed: "host_span", reason: "span_verified" },
+    "prompt-evidence-feed-selected",
+  );
+  const result = await reduceHostSpanEvidence(db, commandId, terminal);
+
+  if (result.settledHere) {
+    const [stream] = terminal.eventStreamId
+      ? await db
+          .select({ last: executionEventStreams.lastContiguousSequence })
+          .from(executionEventStreams)
+          .where(eq(executionEventStreams.id, terminal.eventStreamId))
+      : [];
+
+    log.warn(
+      {
+        commandId,
+        runId: command.runId,
+        hostId: command.executionHostId,
+        lagEvents: String(
+          BigInt(receipt.terminal.sequence) - (stream?.last ?? -1n),
+        ),
+        lagMs: now().getTime() - Date.parse(receipt.receivedAt),
+      },
+      "prompt-settled-from-host-span",
+    );
+  }
+
+  return result;
 }

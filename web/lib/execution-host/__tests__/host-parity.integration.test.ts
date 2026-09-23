@@ -407,6 +407,46 @@ const SCENARIOS: Array<{
       );
     },
   },
+  // ADR-167 D5 amendment: a span read never throws — both hosts answer an
+  // unreadable range as a typed unavailable page, which the manager treats as
+  // "settle canonically instead".
+  {
+    name: "span with after >= through → unavailable (request_failed)",
+    expected: {
+      ok: true,
+      body: { state: "unavailable", reason: "request_failed" },
+    },
+    run: async (lab) =>
+      normalize(
+        () =>
+          lab.transport.readRuntimeEventSpan({
+            streamId: randomUUID(),
+            after: "5",
+            through: "5",
+          }),
+        (page) => ({ ...page }),
+      ),
+  },
+  {
+    name: "span on a stream the host does not own → stream_identity_changed",
+    expected: {
+      ok: true,
+      body: { state: "unavailable", reason: "stream_identity_changed" },
+    },
+    run: async (lab) => {
+      await liveSession(lab, newRun());
+
+      return normalize(
+        () =>
+          lab.transport.readRuntimeEventSpan({
+            streamId: randomUUID(),
+            after: "0",
+            through: "1",
+          }),
+        (page) => ({ ...page }),
+      );
+    },
+  },
 ];
 
 let sup: RealSupervisor;

@@ -20,6 +20,7 @@ import {
   SessionCommandEventSchema,
   StartSessionRequestSchema,
 } from "../types";
+import { RuntimeEventSpanSchema } from "../runtime-events";
 
 const DOCS = resolve(fileURLToPath(import.meta.url), "../../../../docs/api");
 const openapi = parse(
@@ -118,6 +119,26 @@ describe("supervisor OpenAPI 0.8.0 examples ↔ Zod", () => {
         `${method} ${path}`,
       ).toBe(true);
     }
+  });
+
+  // ADR-167 D5 amendment: every documented span shape — complete, partial and
+  // each unavailable reason — is a response the route may actually send.
+  it("runtime event span examples parse", () => {
+    const examples = openapi.paths["/runtime-events/span"].get.responses["200"]
+      .content["application/json"].examples as Record<
+      string,
+      { value: unknown }
+    >;
+
+    expect(Object.keys(examples).sort()).toEqual([
+      "beyondEmitted",
+      "complete",
+      "partial",
+      "replayFloorLost",
+      "streamIdentityChanged",
+    ]);
+    for (const { value } of Object.values(examples))
+      expect(RuntimeEventSpanSchema.safeParse(value).success).toBe(true);
   });
 
   it("session.command AsyncAPI examples parse", () => {
