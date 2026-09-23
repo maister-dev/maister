@@ -2242,6 +2242,79 @@ describe("Consensus prompt owners through the production graph driver", () => {
   // ADR-167 D5 amendment (2026-09-23): a draft child whose session has no
   // durable incarnation yet must YIELD, never finalize Failed; the agent
   // continuation worker re-drives the claimed turn once the incarnation exists.
+  it("owner-consensus-draft: a create another caller holds yields the draft child, and the agent worker finishes it", async () => {
+    const seeded = await seedConsensusFlow(consensusPrompt("agree"));
+    const claim = `test_claimed_child_create_${randomUUID().replaceAll("-", "")}`;
+    const childCreates = () =>
+      database.db
+        .select({ id: executionCommands.id })
+        .from(executionCommands)
+        .innerJoin(runs, eq(runs.id, executionCommands.runId))
+        .where(
+          and(
+            eq(runs.parentRunId, seeded.runId),
+            eq(executionCommands.kind, "session.create"),
+          ),
+        );
+
+    // Another caller's live claim on the create (the agent continuation
+    // worker's, in production): a launcher that meets it gets
+    // SessionCreatePending before any delivery.
+    await database.pool.query(
+      `CREATE FUNCTION ${claim}() RETURNS trigger LANGUAGE plpgsql AS $$
+       BEGIN
+         IF NEW.kind = 'session.create' AND EXISTS (
+           SELECT 1 FROM runs r WHERE r.id = NEW.run_id AND r.parent_run_id = '${seeded.runId}'
+         ) THEN NEW.next_attempt_at := clock_timestamp() + interval '1 hour'; END IF;
+         RETURN NEW;
+       END $$`,
+    );
+    await database.pool.query(
+      `CREATE TRIGGER ${claim} BEFORE INSERT ON execution_commands FOR EACH ROW EXECUTE FUNCTION ${claim}()`,
+    );
+    try {
+      await drive(seeded.runId);
+      await expect
+        .poll(async () => (await childCreates()).length, { timeout: 30_000 })
+        .toBe(2);
+      // Both launchers have met the claim; a child they failed is final by now.
+      await new Promise((resolve) => setTimeout(resolve, 3_000));
+      expect(
+        (
+          await database.db
+            .select({ status: runs.status })
+            .from(runs)
+            .where(eq(runs.parentRunId, seeded.runId))
+        ).map((child) => child.status),
+      ).toEqual(["Running", "Running"]);
+    } finally {
+      await database.pool.query(
+        `DROP TRIGGER IF EXISTS ${claim} ON execution_commands`,
+      );
+      await database.pool.query(`DROP FUNCTION IF EXISTS ${claim}()`);
+    }
+
+    // The claim lapses; the worker re-drives each claimed turn on its create.
+    await database.pool.query(
+      `UPDATE execution_commands c SET next_attempt_at = NULL FROM runs r
+        WHERE r.id = c.run_id AND r.parent_run_id = $1 AND c.kind = 'session.create'`,
+      [seeded.runId],
+    );
+    const agents = startAgentContinuationWorker({
+      db: database.db as unknown as Db,
+      executionHosts: createExecutionHosts({
+        db: database.db as unknown as Db,
+      }),
+    });
+
+    try {
+      await settleDraftsAndResume(seeded.runId);
+      expect(await childCreates()).toHaveLength(2);
+    } finally {
+      await agents.stop();
+    }
+  }, 300_000);
+
   it("owner-consensus-draft: an admission fence timeout yields the draft child and the agent worker re-drives it", async () => {
     const seeded = await seedConsensusFlow(consensusPrompt("agree"));
     const fault = await holdChildAdmission(seeded.runId);
