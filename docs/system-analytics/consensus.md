@@ -70,7 +70,7 @@ stateDiagram-v2
     Running --> Drafting: fan out draft child runs
     Drafting --> WaitingOnChildren: parent parks and releases slot
     WaitingOnChildren --> Verifying: all draft children settled, at least one draft available
-    WaitingOnChildren --> Failed: all draft children settled, no draft available
+    WaitingOnChildren --> Failed: all draft children settled, no retained draft text
     Verifying --> Tallying: verdict rows persisted
     Tallying --> Synthesizing: unanimous
     Tallying --> Drafting: iterate and rounds remain
@@ -160,12 +160,13 @@ flowchart LR
   parent enters `WaitingOnChildren`.
 - A consensus parent MUST wake only after every draft child in the current round
   reaches a settled state.
-- A failed draft child MUST be treated as settled unavailable evidence unless
-  parent cancellation or abandon is active. A settled round with NO available
-  draft (no `Done` child with draft text) MUST fail the node attempt with
-  `MaisterError("CRASH")` (`details.reason = "consensus_no_draft_available"`,
-  carrying each child's status and terminal reason) instead of verifying
-  fail-closed over nothing, iterating, or escalating to a human.
+- A failed draft child with retained text MUST be treated as settled partial
+  evidence; without retained text it is unavailable. Parent cancellation or
+  abandon prevents further round work. A settled round with no draft text at
+  all MUST fail the node attempt with `MaisterError("CRASH")`
+  (`details.reason = "consensus_no_draft_available"`, carrying each child's
+  status and terminal reason) instead of verifying fail-closed over nothing,
+  iterating, or escalating to a human.
 - Draft children MUST be dispatched on the root database handle, never the
   parent's traversal handle: the parent releases its execution assignment when
   it parks, after which every traversal-scoped statement refuses with
@@ -177,9 +178,10 @@ flowchart LR
   one idempotent verdict row per verifier-target pair, owned by the matrix cell
   it was paid for
   (see [prompt lifecycle](execution-prompt-lifecycle.md#consensus-verifier-matrix-cell-implemented)).
-- A verification or synthesis turn whose owner application is still pending MUST
-  refuse with `consensus_generation_pending`; it MUST NOT be recorded as a
-  fail-closed disagreement or an empty plan.
+- A settled verification or synthesis turn whose owner application is deferred
+  MUST yield with `flow_prompt_continuation_pending`. If the owned wait returns
+  before its applied generation is visible, `consensus_generation_pending`
+  MUST also yield. Neither case is a fail-closed disagreement or empty plan.
 - Malformed verifier output MUST fail closed into a persisted disagree verdict,
   not throw away the node lifecycle.
 - A draft child MUST publish its artifact and settle only from its own verified
@@ -196,7 +198,7 @@ flowchart LR
 - Consensus runtime logs MUST use structured fields and MUST NOT include prompt
   bodies, draft bodies, free-form human resolution text, or artifact bodies.
 
-### P0-5 v2 execution contract (Designed; acceptance before Implemented)
+### P0-5 v2 execution contract (Implemented)
 
 1. Draft owner retains at most 1,048,576 UTF-8 bytes. A successful non-`end_turn`
    turn with non-empty text is a **partial** draft artifact with `partial: true`,
@@ -264,11 +266,16 @@ flowchart LR
    exists when its reference is published. Draft payload links use child run
    IDs; debate payload links use the parent run ID. Existing decisions and
    response validation remain unchanged.
-10. A pending verifier or synthesis owner application raises
-    `ConsensusGenerationPending` as a **yield** in both graph catches; the node
-    remains Running. The production owner worker applies or poisons the command,
-    and the continuation worker re-drives; ADR-177 poisoning remains a finite
-    owner-poisoned crash. No coordinator auto-retry policy changes.
+10. Once a verifier or synthesis turn has settled, a deferred owner application
+    makes its dedicated owned prompt wait return a pending outcome. The driver
+    yields with `flow_prompt_continuation_pending` while the node stays Running.
+    If the consensus runtime returns without the applied cell/generation,
+    `ConsensusGenerationPending` also passes both graph catches as a yield.
+    Re-entry adopts the existing logical prompt command, never buys another
+    turn, and closes its exact applied host session before consuming the cached
+    cell or synthesis. The production owner worker applies or poisons the
+    command, and the continuation worker re-drives; ADR-177 poisoning remains
+    a finite owner-poisoned crash. No coordinator auto-retry policy changes.
 11. After either coordinator kind parks, one shared zero-pending query and CAS
     wake checks for child settlement that arrived before the park. Event
     consumer and catch-up race to a single winner. A Running parent on an
@@ -286,8 +293,10 @@ flowchart LR
 13. All new flags ride existing versioned JSON and legacy readers; verdict
     rows retain their `(attempt, round, verifier, target)` uniqueness. No new
     migration, owner-ref key, supervisor contract, DSL version or table is
-    required. The source of text-bound metadata is pinned before prompt enqueue
-    and checked against the immutable delivered command on replay.
+    required. Text-bound metadata is pinned before prompt enqueue. Its UTF-16
+    value span identifies the bounded text in the immutable delivered command;
+    owner application checks that slice's digest, prompt digest and byte/marker
+    accounting on replay without storing a second full draft.
 
 ## Edge cases
 
@@ -296,9 +305,10 @@ flowchart LR
   engine floor below `1.9.0` fail as `MaisterError("CONFIG")`.
 - **Stale participant or synthesizer** — a ref that parses but is no longer
   trusted or resolvable at launch fails as `MaisterError("PRECONDITION")`.
-- **Draft child failure** — a failed child is settled unavailable evidence; the
-  parent waits for sibling drafts before iterate/escalate. When every draft of
-  the round is unavailable the node fails `CRASH` with the children's terminal
+- **Draft child failure** — a failed child with retained partial text remains
+  partial evidence; a child without retained text is unavailable. The parent
+  waits for sibling drafts before iterate/escalate. When every draft of the
+  round is unavailable the node fails `CRASH` with the children's terminal
   reasons (read from their `run.failed` / `run.crashed` / `run.abandoned`
   domain events); nothing is verified and no HITL is created.
 - **Verifier malformed output** — invalid JSON, unknown axes, missing axes, and

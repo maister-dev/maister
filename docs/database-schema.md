@@ -2898,7 +2898,7 @@ protocol, not a Flow gate.
 }
 ```
 
-P0-5 v2 (Designed) writes a version-1 envelope into existing JSONB for new
+P0-5 v2 (Implemented) writes a version-1 envelope into existing JSONB for new
 cells and reads both it and historical arrays. The envelope's `truncated`
 records the verifier input cut; old arrays have **unknown** truncation state.
 The SQL column has no array-only CHECK (`0070`), and later migrations do not

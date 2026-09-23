@@ -7325,7 +7325,17 @@ paths:
         response, writes `input-<nodeId>.json`, and queues `runFlow`; it never
         accepts draft ids, participant ids, artifact ids, or transition targets
         from the body. `provide-resolution` requires bounded non-empty
-        `response.resolution`; free-form resolution text is not logged.
+        `response.resolution`; free-form resolution text is not logged. The
+        pending HITL schema includes stable `drafts[].decision` slots with
+        `classification` (`complete`, `partial`, `unavailable`), optional
+        `stopReason`/`reason`, labeled `excerpt`, `artifactRef`, and child
+        `artifactRunId`. It also includes additive `technicalFailures[]` entries
+        (`verifierId`, `targetParticipantId`, `parseStatus`, `errorCode`),
+        separate from material `disagreements`. Unavailable choices remain
+        listed but are rejected by response validation; partial choices remain
+        selectable. `debateLog`
+        carries a bounded excerpt and parent-run artifact reference. Existing
+        decision names and response body shape are unchanged.
 
         Successful live permission delivery returns `state: "delivered"`.
         For an owned node prompt, the exact input ACK transaction also wakes
@@ -21055,7 +21065,7 @@ components:
         droppedBytes: { type: integer, minimum: 0 }
         cap: { type: integer, minimum: 0 }
       description: >-
-        (Designed, P0-5 v2) UTF-8 byte counts. Retained plus dropped equals
+        (Implemented, P0-5 v2) UTF-8 byte counts. Retained plus dropped equals
         original content bytes; display marker bytes count toward cap but
         not retained content bytes.
 
@@ -21067,7 +21077,7 @@ components:
         text: { type: string }
         partial:
           type: boolean
-          description: "(Designed, P0-5 v2) Consensus draft/generation incomplete evidence."
+          description: "(Implemented, P0-5 v2) Consensus draft/generation incomplete evidence."
         stopReason:
           type: string
           description: "Actual consensus ACP stop reason; absent on old artifacts."

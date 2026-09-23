@@ -216,7 +216,7 @@ resolution. EN + RU parity is required.
 - Clearing the last consensus HITL updates `decisions` through the existing inbox
   count path.
 
-P0-5 v2 (Designed): the expanded consensus card labels partial drafts with
+P0-5 v2 (Implemented): the expanded consensus card labels partial drafts with
 actual stop reason, keeps unavailable slots disabled without shifting
 `pick-draft-N` numbering, and separates `technicalFailures[]` from material
 criticism in EN/RU. Every bounded excerpt is labeled and has a usable full-

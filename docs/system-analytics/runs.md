@@ -402,7 +402,7 @@ run machine:
    the same door. `POST /api/runs/{runId}/discard` marks `Abandoned` and enters
    the GC countdown (no synchronous worktree removal).
 
-**Consensus incomplete-synthesis extension (Designed, P0-5 v2).** The
+**Consensus incomplete-synthesis extension (Implemented, P0-5 v2).** The
 backend and run-page Recover capability share one exact-latest-attempt witness:
 `node_attempts.error_code = CRASH`, applied incomplete synthesis generation
 with `consensus_synthesis_incomplete`, matching run/node/attempt/synthesis ID,

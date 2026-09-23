@@ -846,7 +846,7 @@ Cross-verification verdict output is parsed fail-closed:
 unknown verdict strings count as `disagree` and are persisted in
 `consensus_round_verdicts` for recovery and audit.
 
-The fixed draft trailer and own-prior-draft prompt change alter engine prompt content, not the Flow DSL or manifest shape; they require no engine-version bump. The one engine text-slot bound is `CONSENSUS_PROMPT_TEXT_CAP_BYTES = 65,536` UTF-8 bytes with an explicit dropped-byte marker and structured truncation metadata; see [consensus analytics](system-analytics/consensus.md#p0-5-v2-execution-contract-designed-acceptance-before-implemented).
+The fixed draft trailer and own-prior-draft prompt change alter engine prompt content, not the Flow DSL or manifest shape; they require no engine-version bump. The one engine text-slot bound is `CONSENSUS_PROMPT_TEXT_CAP_BYTES = 65,536` UTF-8 bytes with an explicit dropped-byte marker and structured truncation metadata; see [consensus analytics](system-analytics/consensus.md#p0-5-v2-execution-contract-implemented).
 
 **Engine floor.** Declaring a `consensus` node requires
 `compat.engine_min >= 1.9.0`, else the manifest is refused at load with

@@ -790,7 +790,7 @@ not an error code** — the run's own failure is a plain `CONFIG`, and
 `run.failed.reason` carries `result_missing` / `result_invalid`. See
 [`system-analytics/run-results.md`](system-analytics/run-results.md).
 
-### Consensus P0-5 v2 error amendment (Designed, 2026-09-23)
+### Consensus P0-5 v2 error amendment (Implemented, 2026-09-23)
 
 | Reason | Code and durable outcome | Operator path |
 | --- | --- | --- |
