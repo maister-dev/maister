@@ -2021,7 +2021,32 @@ honours its three modes; refactor gate passed.
       together twice at `--workers=2` (35.5 s, 32.2 s), flow-target-delegation
       alone twice more. Noted, not fixed (another fixture's): the observatory
       seed's task-less `Pending` flow run, which the scheduler promotes whenever
-      a slot frees. `web/CLAUDE.md`'s baseline records all of it.
+      a slot frees. `web/CLAUDE.md`'s baseline records all of it. The final lane
+      then surfaced a fourth name of the same class: `adr160-rework-claim:66`
+      (29.8 s, out of budget at the post-return fresh-review wait; 7.7 s and
+      6.9 s alone, where the previous lane had needed 24.6 s) — its own 45 s wait
+      had always been cut off by the 30 s default; it now carries 120 s too. With
+      the hold in place flow-target-delegation reached its last step for the
+      first time and met `read ECONNRESET` on a dispatcher tick in a lane at load
+      151 (a keep-alive socket the dev server had just closed); the tick is
+      idempotent, so both specs' tick helper retries once on a fresh connection.
+      The four specs then passed together twice at `--workers=2`, at load 62 and
+      39.
+
+**Phase 5 lanes (final tree, 2026-09-23).** Unit 826 files / 8611 tests, 0
+failed, 0 skipped (a run overlapping a load spike to 151 timed out 17 cases in
+10 untouched files; the idle re-run is this one). Integration 511 files / 4544
+tests: 4 red in 3 files, all in code with no line of this branch —
+`permission-deadline` RED 13/14 (ADR-180; red at load >= 28, green at <= 20
+across four idle rounds), `deliverer` D3 (documented), `permission-resume`
+"owner-flow-repeated-permission" (once, in a lane that started at load 151;
+green in every re-run) — recorded in `web/CLAUDE.md`. e2e: the documented set
+(`platform-agents-page:26`, `review-diff-scopes:43`, `studio-ai-assistant:69`,
+`push-notifications:103/218` intermittent), the flaky `scratch-detail:50`,
+`work-table:97`; under load 151 also `flow-studio-artifacts:155` (a React Flow
+handle without a bounding box) and `flow-package-viewer:79` (a 500 on save,
+green on retry) — Studio code this branch does not touch; the four T5.3 specs
+green.
 
 **Commit 9** — `fix(workbench-git): recover respects the one writer of a worktree` (T5.1)
 **Commit 10** — `feat(workbench-git): a Failed workbench expires like a finished one` (T5.2)

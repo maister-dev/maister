@@ -433,6 +433,15 @@ for compilation — the failure is warm-up, not behaviour.
   default `chromium` project where it cannot pass. The default config now
   ignores `execution-ab-*.spec.ts` the same way it already ignored `live-*`.
 
+**Measured 2026-09-23 (ADR-181 branch, this Mac): two more load-sensitive
+integration names, both in code that branch does not touch.**
+`lib/__tests__/permission-deadline.integration.test.ts` RED 13 (and RED 14 in
+one lane) — ADR-180's race-window cases — failed at load ≥ 28 and passed at
+≤ 20, four idle rounds; `lib/flows/graph/__tests__/permission-resume.integration.test.ts`
+"owner-flow-repeated-permission" failed once in a lane that started at load 157
+and passed in every re-run. Re-run a hit idle before reading anything into it.
+The lane totals were 511 files / 4544 tests.
+
 **Budget ~25 min for the integration lane and do not mistake it for a hang.** It
 is gated by two very slow files — `lib/flows/graph/__tests__/prompt-owners.integration.test.ts`
 (~23 min, 52 tests) and `lib/agents/__tests__/prompt-owners.integration.test.ts`
