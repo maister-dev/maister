@@ -39,6 +39,7 @@ export async function buildRunSyncPanelData(input: {
   syncStrategyDefault: "rebase" | "merge";
   syncRunnerId: string | null;
   prUrl: string | null;
+  publishedBranch: string | null;
   db?: Db;
 }): Promise<RunSyncPanelData> {
   const db = (input.db ?? getDb()) as Db;
@@ -63,6 +64,7 @@ export async function buildRunSyncPanelData(input: {
     // path reads silently drops the push.
     published = await isBranchPublished({
       prUrl: input.prUrl,
+      publishedBranch: input.publishedBranch,
       repo: input.parentRepoPath,
       branch: input.branch,
     });

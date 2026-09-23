@@ -139,7 +139,8 @@ describe("lifecycleActionsForScratchDetail", () => {
     expect(actions).toContain("drop");
   });
 
-  it("offers nothing when the workspace is gone", () => {
+  // ADR-181 D10: a removed worktree offers exactly the way back.
+  it("offers only reattach when the workspace is gone", () => {
     expect(
       lifecycleActionsForScratchDetail(
         detail({
@@ -151,6 +152,6 @@ describe("lifecycleActionsForScratchDetail", () => {
           },
         }),
       ),
-    ).toEqual([]);
+    ).toEqual(["reattach"]);
   });
 });

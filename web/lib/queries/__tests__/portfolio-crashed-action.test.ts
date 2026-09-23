@@ -46,6 +46,17 @@ describe("portfolio recover/discard action — Crashed flow runs (M19)", () => {
   });
 });
 
+// ADR-181 D2/D14: a portfolio caller passes `null, null` for the claim owner and
+// viewer (the carve-out is a run-detail affordance) and the row's DB facts.
+const rowFacts = {
+  claimOwnerUserId: null,
+  viewerUserId: null,
+  publishedBranch: null,
+  prUrl: null,
+  prState: null,
+  promotionState: "none",
+} as const;
+
 describe("portfolio lifecycle actions — shared workbench matrix", () => {
   it("Running flow workspace exposes stop only", () => {
     expect(
@@ -56,11 +67,13 @@ describe("portfolio lifecycle actions — shared workbench matrix", () => {
         hasWorkspace: true,
         removedAt: null,
         archivedBranch: null,
+        ...rowFacts,
       }),
     ).toEqual(["stop"]);
   });
 
-  it("Review flow workspace exposes archive, drop, and export", () => {
+  // ADR-181 D1: a usable parked worktree admits the tree/publish/update set.
+  it("Review flow workspace exposes archive, drop, and the git set", () => {
     expect(
       lifecycleActionsForWorkspace({
         runKind: "flow",
@@ -69,11 +82,20 @@ describe("portfolio lifecycle actions — shared workbench matrix", () => {
         hasWorkspace: true,
         removedAt: null,
         archivedBranch: null,
+        ...rowFacts,
       }),
-    ).toEqual(["archive", "drop", "exportBranch"]);
+    ).toEqual([
+      "archive",
+      "drop",
+      "exportBranch",
+      "snapshotCommit",
+      "discardChanges",
+      "update",
+    ]);
   });
 
-  it("removed workspace exposes no lifecycle actions", () => {
+  // ADR-181 D10: a removed worktree offers exactly the way back.
+  it("removed workspace exposes only reattach", () => {
     expect(
       lifecycleActionsForWorkspace({
         runKind: "flow",
@@ -82,8 +104,9 @@ describe("portfolio lifecycle actions — shared workbench matrix", () => {
         hasWorkspace: true,
         removedAt: new Date("2026-06-09T08:00:00.000Z"),
         archivedBranch: "maister/archive/run-1",
+        ...rowFacts,
       }),
-    ).toEqual([]);
+    ).toEqual(["reattach"]);
   });
 
   it("missing workspace exposes no lifecycle actions", () => {
@@ -95,6 +118,7 @@ describe("portfolio lifecycle actions — shared workbench matrix", () => {
         hasWorkspace: false,
         removedAt: null,
         archivedBranch: null,
+        ...rowFacts,
       }),
     ).toEqual([]);
   });

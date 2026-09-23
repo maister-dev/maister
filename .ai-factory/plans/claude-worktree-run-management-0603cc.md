@@ -405,6 +405,67 @@ record.
   the web, and this plan adds no env var. RED 7's "update-from-published brings
   a remote push back" step moves to RED 14, because it needs Phase 2's
   `onto:"published"`.
+- **C36–C44 — found during Phase 1 GREEN and REFACTOR (2026-09-23).**
+  - **C36 — error bodies forward the reason TOKEN, not `details`.** D24 said
+    `...(err.details ? { details: err.details } : {})`. The existing route
+    suite pins that other `details` fields (`private: "not public"`) never
+    leave the server. `route-utils` and the `sync` route therefore forward
+    `details: { reason }` only — the UI's one branch key — so no server-side
+    context (attempt ids, SHAs) can ride a refusal. `run_not_found` maps to
+    404 in the same formatter (C29).
+  - **C37 — T1.R does NOT fold the three local git fixtures.** They are not
+    copies. real-git builds a non-clone repo with a SEPARATE worktrees root (the
+    drop tests' allowed-root check needs it); sync-target sets repo identity
+    config and cuts worktrees with the production `addWorktree`. Folding them
+    would change behaviour, which the refactor gate forbids. The shared fixture
+    gained what it lacked instead: a repo `user.name/email`, without which a
+    production rebase (Phase 2) fails on a host with no global identity.
+  - **C38 — `remoteTrackingBranchHead` / `remoteBranchExists` gain no
+    `remoteBranch?`.** Their `branch` argument already IS the remote-side name;
+    callers pass the public name. A second parameter would duplicate it.
+  - **C39 — `discardWorktreeChanges` is its own primitive.** `reset --hard HEAD`
+    + `clean -fd` with the shared containment guard, not the ADR-079
+    `discardWorktree` (`restore --staged --worktree`), because a parked tree can
+    hold an unmerged index that `restore` refuses.
+  - **C40 — no placeholder sections.** Update and PR land WITH their operations
+    (T2.3, T3.5) rather than as disabled Phase-1 placeholders (no throwaway UI).
+    Reattach ships in Phase 1 because RED 12 renders it; its route is T2.2.
+  - **C41 — the lifecycle race test injects the session/role deps.** vitest
+    2.1.9's `requestWithMock` skips a manual mock while the importer's shared
+    callstack holds it, so two racers' first lazy `import("@/lib/authz")` hands
+    the second the REAL module. The race under test is the claim; every other
+    default dep stays production.
+  - **C42 — surfaces.** The Backlog card uses the `menu` variant (D14); the
+    flight card keeps `compact`, its git ids rendered as deep links. Only the
+    detail host (`DetailGitHost`) reads `?git=` and the run stream, so a rail row
+    never re-renders on a query change. `getRunDetail` feeds its D2 facts from
+    the ONE loader (`loadWorkbenchGitFacts`). Promotion's reverse fence was
+    widened to any live lifecycle claim in Phase 1 (C26), beside the lifecycle
+    claim's refusal of a live promotion claim.
+  - **C43 — an existing publication outranks the template (a regression the
+    integration lane caught).** D4's order was upstream → request → template.
+    A PR opened BEFORE ADR-181 has the INTERNAL branch as its head and no
+    publication record, so re-promoting a reopened run rendered the template,
+    pushed a second branch and opened a SECOND PR — the exact failure reopen
+    exists to prevent (`reopen.integration.test.ts` "re-promote REUSES the same
+    PR"). The same hole lets an edited task title re-render a new slug once the
+    upstream config is gone (a re-attach from the archive ref). The order is now:
+    upstream on this remote → the recorded `published_*` on this remote → a
+    pre-ADR-181 PR head (`pr_url` set, no record, on `origin`) → request →
+    template, each fixed case refusing a different request with
+    `public_name_fixed`. `nameSource: "upstream"` names every fixed case (the
+    OpenAPI description is widened in T4.3). A promotion derives the name from
+    the WORKSPACE's owning run, so a shared tree's branch name does not depend on
+    which sibling promotes. Pinned by `publication.test.ts` (10 cases; reverting
+    the precedence fails 5 of them and the reopen reuse case).
+  - **C44 — the recovery sweep's landed-push proof read the old name (found in
+    T1.R).** An orphaned mechanical sync in `pushing` is settled forward only
+    when the remote head equals the worktree HEAD. The sweep (W4b) read
+    `origin/<internal>`, but T1.7 moved the push itself to the publication, so a
+    push that DID land was recorded `failed`. It now reads `syncPushTarget`, the
+    same target the live path and the W3 arm use. Pinned by a
+    `sync-recovery.integration.test.ts` case on a publication at `fork`
+    (reverting the read fails it).
 - **Token set (final, T0.1).** Service refusals: `public_name_fixed`,
   `public_branch_template_invalid` (400 `CONFIG`), `clean_worktree`,
   `dirty_worktree`, `not_published`, `published_remote_not_origin`,
@@ -1259,7 +1320,7 @@ route; `Failed` listed on portfolio / project list / rail / Backlog card; the
 
 **Commit 2** — `test(workbench-git): RED — parked runs have no git path`
 
-- [ ] **T1.1 — Migration `0173` + schema.** `schema.ts`: `workspaces` `+
+- [x] **T1.1 — Migration `0173` + schema.** `schema.ts`: `workspaces` `+
       publishedBranch/publishedRemote/publishedAt` (after `:4665`) + the co-nullity
       CHECK; `projects` `+ publicBranchTemplate` (after `:191`); the two op-name
       unions (D15). `pnpm --filter maister-web db:generate` → `0173_<name>.sql` +
@@ -1269,7 +1330,7 @@ route; `Failed` listed on portfolio / project list / rail / Backlog card; the
       **AC**: RED 5 (journal integrity + co-nullity CHECK refuses a half-null row,
       real Postgres) green; a second `db:generate` reports "No schema changes";
       `db:erd --check` green; `migration-journal-integrity` suite green.
-- [ ] **T1.2 — `maister.yaml` field + registration + write-back.**
+- [x] **T1.2 — `maister.yaml` field + registration + write-back.**
       `config.schema.ts:190-196` `public_branch_template` (D5 validation, `CONFIG`
       with `public_branch_template_invalid`); `app/api/projects/route.ts:402-418`
       maps it (absent → column default); `yaml-writeback.ts:118-168`
@@ -1279,7 +1340,7 @@ route; `Failed` listed on portfolio / project list / rail / Backlog card; the
       **AC**: RED 5 round-trip (SET / CLEAR / re-SET, and column → YAML omit/emit)
       green; an invalid template refuses registration with `CONFIG` before any row
       is written.
-- [ ] **T1.3 — Git primitives (`web/lib/worktree.ts`).** `pushBranch` per D4
+- [x] **T1.3 — Git primitives (`web/lib/worktree.ts`).** `pushBranch` per D4
       (`remoteBranch`, `leaseSha`, `setUpstream`, refspec after `--end-of-options`);
       `forceWithLeasePush` and `sync-target.ts:283` `pushWithLease` become wrappers
       taking `remote`/`remoteBranch`; `branchUpstream(repo, branch)`;
@@ -1293,7 +1354,7 @@ route; `Failed` listed on portfolio / project list / rail / Backlog card; the
       untouched) green at the primitive level; `worktree-sync.test.ts` and
       `real-git.integration.test.ts:336` (force-with-lease retry) green with the
       wrappers.
-- [ ] **T1.4 — Policy module.** `web/lib/workbench-git/policy.ts` per D1 (exhaustive
+- [x] **T1.4 — Policy module.** `web/lib/workbench-git/policy.ts` per D1 (exhaustive
       `STATUS_CLASS`, exported `WORKTREE_ACTION_STATUSES`, `canReclaimLifecycle`
       exported from the service and reused, the widened `WorkbenchLifecycleActionId`
       + `ACTION_ORDER`); `deriveWorkbenchLifecycleActions` re-based on it; op-name
@@ -1305,7 +1366,7 @@ route; `Failed` listed on portfolio / project list / rail / Backlog card; the
       reattach` and never `archive|drop|stop`);
       `policy.test.ts` matrix unchanged and green; the carve-out file migrated
       (§Assertion migration).
-- [ ] **T1.5 — The carve-out opens.** `service.ts:179` type → `Promise<{id}>`,
+- [x] **T1.5 — The carve-out opens.** `service.ts:179` type → `Promise<{id}>`,
       `:1980-1984` returns the user, six `?? null` sites simplified;
       `openReworkClaimOwnerUserId` extracted to `lib/runs/rework-claim.ts` and used by
       `loadContext` (`:2117-2121`), `getRunDetail` (`run.ts:808`), `layout.tsx:1226`;
@@ -1317,7 +1378,7 @@ route; `Failed` listed on portfolio / project list / rail / Backlog card; the
       → the owner's run detail lists the git set, another member's lists
       `human-owned`, the board/rail/portfolio list none); the falsification "revert
       `:1980-1984`" turns RED 2 red again.
-- [ ] **T1.5b — Fact loader.** `web/lib/workbench-git/facts.ts`
+- [x] **T1.5b — Fact loader.** `web/lib/workbench-git/facts.ts`
       `loadWorkbenchGitFacts` per D1a (claim owner, live shared sibling, informational
       active assignment, presence, lazy reattach sources, slot + PR fields), wired
       into `loadContext`/`requireActionAllowed` (`service.ts:395-440`, `:2040+`).
@@ -1329,13 +1390,13 @@ route; `Failed` listed on portfolio / project list / rail / Backlog card; the
       fact derivation exists (grep control: `countUnsettledSharedSiblings` and
       `openReworkClaimOwnerUserId` are called from the loader only, outside their
       original modules).
-- [ ] **T1.6 — Public branch name.** `web/lib/workbench-git/public-branch-name.ts`
+- [x] **T1.6 — Public branch name.** `web/lib/workbench-git/public-branch-name.ts`
       per D5 (`renderPublicBranchName`, `transliterate`, `validatePublicBranchTemplate`);
       the `{task_key}` loader JOINs `projects` (C2).
       **AC**: RED 6 green (Cyrillic → Latin table incl. `щ→shch`, `ё→yo`; 40-char
       cap; empty slug collapses separators; `run-<8hex>`; `{attempt}` from the
       branch suffix; unknown placeholder / invalid result → `CONFIG`).
-- [ ] **T1.7 — Publish + the `published_*` readers.** `exportWorkbenchBranch`
+- [x] **T1.7 — Publish + the `published_*` readers.** `exportWorkbenchBranch`
       (`service.ts:1485-1590`) per D4 (name core, lease before push, refspec +
       upstream, `published_*` after, result fields); `export-branch/route.ts:16-29`
       body `+ branchName`; `isBranchPublished` (`branch-published.ts`) `+
@@ -1352,7 +1413,7 @@ route; `Failed` listed on portfolio / project list / rail / Backlog card; the
       `<published_remote>/<published_branch>`) green; `promote-pr.test.ts` migrated
       (push args now carry the public name and `setUpstream`); `rework-claim.integration.test.ts:725`
       still green for an unpublished branch.
-- [ ] **T1.8 — Discard-changes.** `web/lib/workbench-git/service.ts`
+- [x] **T1.8 — Discard-changes.** `web/lib/workbench-git/service.ts`
       `discardWorkbenchChanges` per D8; route `app/api/runs/[runId]/discard-changes/route.ts`
       (family A, `errorResponse` from `workbench-lifecycle/route-utils.ts`, whose
       `errorPayload` now forwards `details` — D24; `routes.test.ts` gains the
@@ -1360,7 +1421,7 @@ route; `Failed` listed on portfolio / project list / rail / Backlog card; the
       **AC**: RED 9 green (rescue ref holds tracked + untracked changes; tree clean
       after; clean tree → 409 `clean_worktree`; the ref survives `dropWorkbench`;
       viewer 403 / member 200).
-- [ ] **T1.9 — `git-state`.** `web/lib/workbench-git/read-model.ts` `loadGitState`
+- [x] **T1.9 — `git-state`.** `web/lib/workbench-git/read-model.ts` `loadGitState`
       per D3 (scratch base/target from `scratch_runs`; field-wise degradation with
       `warnings`; `ls-remote` best-effort); route `git-state/route.ts` (GET, family A
       with `recoverRun` in the deps). `getRunDetail` and the layout are asserted NOT
@@ -1369,7 +1430,7 @@ route; `Failed` listed on portfolio / project list / rail / Backlog card; the
       NULL` → `worktreePresent:false` and only `reattach` enabled; unreachable remote
       → `remoteReachable:false` + 200; member 200 / viewer 403; a grep control that
       `read-model.ts` is imported only by the route and the component tests).
-- [ ] **T1.10 — `Failed` visibility.** `portfolio.ts:77-90` `+ "Failed"`; pin it
+- [x] **T1.10 — `Failed` visibility.** `portfolio.ts:77-90` `+ "Failed"`; pin it
       with a unit assertion; `queries/board.ts` `BacklogCard.latestRun` (+ `worktreePath` added to the
       run-row select at `:549-551`) + the `worktreePresence` helper
       (`web/lib/workbench-git/presence.ts`, D14); `TaskCard` renders the menu; attention stream
@@ -1378,7 +1439,7 @@ route; `Failed` listed on portfolio / project list / rail / Backlog card; the
       chip; `decisions.count` unchanged; `listCrashedForProjects` excludes it) and
       RED 4 (Backlog card DTO carries `lifecycleActions` only when the latest run's
       worktree is usable) green; `portfolio.integration.test.ts` counts migrated.
-- [ ] **T1.11 — Panel (Phase-1 sections) + hosting + menus + inspector + i18n.**
+- [x] **T1.11 — Panel (Phase-1 sections) + hosting + menus + inspector + i18n.**
       `git-panel.tsx` (header, Tree, Publish, Commands; Update/PR/Reattach sections
       render disabled placeholders until Phases 2–3), the `git-state` fetch pattern
       (`node-transcript-panel.tsx:70-115`), `lifecycle-actions.tsx` hosts it and
@@ -1394,14 +1455,14 @@ route; `Failed` listed on portfolio / project list / rail / Backlog card; the
       actions; rail menu emits deep links; a typed PR title survives a `git-state`
       refresh tick); `i18n-parity` green; `lifecycle-actions.dom.test.ts`
       migrated (export dialog cases → panel cases).
-- [ ] **T1.12 — Unpushed-work guard + archive knob.** Archive/Drop dialogs fetch
+- [x] **T1.12 — Unpushed-work guard + archive knob.** Archive/Drop dialogs fetch
       `git-state`, render counts and the two primaries (D17);
       `archiveWorkbenchForCtx` / `removeWorkbenchForCtx` pass
       `archivePush: gcArchivePush()`.
       **AC**: RED 13 green (`preserveWorktree` receives `archivePush:true` when the
       env is `"true"`, `false` otherwise; the dialog shows `unpushedCommits` and runs
       publish before archive on the first primary).
-- [ ] **T1.R — REFACTOR gate (Phase 1).** Suite green; re-read the diff against D22:
+- [x] **T1.R — REFACTOR gate (Phase 1).** Suite green; re-read the diff against D22:
       fold the three hand-rolled bare-remote fixtures onto
       `git-remote-fixture.ts`; remove orphans this change created (the Export
       dialog's helpers, `loadMetadata`, the `| void`); no behaviour change, zero test
@@ -1409,6 +1470,17 @@ route; `Failed` listed on portfolio / project list / rail / Backlog card; the
       **AC**: `pnpm --filter maister-web test` green before and after; `pnpm lint`
       0 errors on changed files (`git status` checked before staging — it is
       `eslint --fix`); `pnpm typecheck` clean.
+      **Verified 2026-09-23** on the Commit-3 tree: unit 825 files / 8583 tests
+      green; integration 487/508 on the first pass — the Mac slept 08:35–09:17
+      mid-lane (`pmset` "Maintenance Sleep", on battery) and two other sessions
+      ran full lanes (load 45–100). Every one of the 21 failures passed on
+      re-run under `caffeinate`: 16 in one batch, `deliverer`,
+      `run-transcript-projector`, `projection-worker`, `permission-deadline`
+      solo, and `lib/agents/__tests__/prompt-owners` by failing group (3 + 8 +
+      18 tests; its failing names changed on every run). tsc, lint (74 changed
+      files, 0 problems), `validate:docs`, `validate:contracts` green. C37 keeps
+      the three fixtures; orphans removed (the `| void`, three exports nothing
+      else imports); C44 fixed with a falsified control.
 
 **Commit 3** — `feat(workbench-git): git panel, git-state, publish under a public name, discard, Failed visibility, carve-out`
 

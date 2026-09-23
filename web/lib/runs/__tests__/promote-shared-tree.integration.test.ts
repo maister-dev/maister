@@ -63,6 +63,10 @@ vi.mock("@/lib/worktree", async (importOriginal) => {
     })),
     findTargetMergeByRunId: vi.fn(async () => null),
     headCommit: vi.fn(async () => "shared-source-head"),
+    // ADR-181 D4: the PR push resolves its PUBLIC name from the branch
+    // upstream (none in this fake repo) and leases on the remote head.
+    branchUpstream: vi.fn(async () => null),
+    remoteBranchHead: vi.fn(async () => null),
     pushBranch: (...args: unknown[]) => pushBranchSpy(...(args as [])),
     promoteLocalMerge: (...args: unknown[]) =>
       promoteLocalMergeSpy(...(args as [])),
@@ -476,9 +480,28 @@ describe("ADR-134 — shared pull-request promotion owns one tree root", () => {
       prNumber: 7,
     });
     expect(pushBranchSpy).toHaveBeenCalledTimes(1);
+
+    // ADR-181 D4/D11: the tree's branch is published under its PUBLIC name —
+    // the one pushed, recorded on the allocator's workspace, and the PR head.
+    const [published] = (
+      await pool.query(
+        `SELECT "published_branch", "published_remote" FROM "workspaces" WHERE "run_id" = $1`,
+        [allocator],
+      )
+    ).rows;
+
+    expect(published.published_branch).toMatch(/^feature\//);
+    expect(published.published_remote).toBe("origin");
+    expect(pushBranchSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        branch: `maister/agents/${root}`,
+        remoteBranch: published.published_branch,
+        setUpstream: true,
+      }),
+    );
     expect(createOrUpdatePrSpy).toHaveBeenCalledWith(
       expect.objectContaining({
-        sourceBranch: `maister/agents/${root}`,
+        sourceBranch: published.published_branch,
         body: expect.stringContaining(`run ${allocator}`),
       }),
     );

@@ -263,6 +263,13 @@ export async function POST(
       parentRepoPath,
       branch,
       remote: parsed.data.remote ?? null,
+      published:
+        loaded.workspace.publishedBranch && loaded.workspace.publishedRemote
+          ? {
+              remote: loaded.workspace.publishedRemote,
+              branch: loaded.workspace.publishedBranch,
+            }
+          : null,
     });
 
     const porcelain = await statusPorcelain({ worktreePath });

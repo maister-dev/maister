@@ -18,9 +18,24 @@ function input(
     workspaceArchived: false,
     claimOwnerUserId: null,
     viewerUserId: null,
+    // ADR-181: a caller holding the workspace row passes its DB facts.
+    publishedBranch: null,
+    prUrl: null,
+    prState: null,
     ...over,
   };
 }
+
+// ADR-181 D1: a usable parked worktree admits the tree, publish and update git
+// set beside archive/drop; openPr/finalizePr wait for a publication and a PR.
+const PARKED_GIT_SET: WorkbenchLifecycleActionId[] = [
+  "archive",
+  "drop",
+  "exportBranch",
+  "snapshotCommit",
+  "discardChanges",
+  "update",
+];
 
 function enabledActionIds(
   over: Partial<WorkbenchLifecyclePolicyInput> = {},
@@ -58,22 +73,14 @@ describe("deriveWorkbenchLifecycleActions", () => {
     ).toEqual(["stop"]);
   });
 
-  it("allows archive, drop, and export from stopped review workbenches", () => {
-    expect(enabledActionIds({ runStatus: "Review" })).toEqual([
-      "archive",
-      "drop",
-      "exportBranch",
-    ]);
+  it("allows archive, drop, and the git set from stopped review workbenches", () => {
+    expect(enabledActionIds({ runStatus: "Review" })).toEqual(PARKED_GIT_SET);
   });
 
   it.each(["Crashed", "Done", "Abandoned", "Failed"] as const)(
-    "allows archive, drop, and export from %s workbenches while present",
+    "allows archive, drop, and the git set from %s workbenches while present",
     (runStatus) => {
-      expect(enabledActionIds({ runStatus })).toEqual([
-        "archive",
-        "drop",
-        "exportBranch",
-      ]);
+      expect(enabledActionIds({ runStatus })).toEqual(PARKED_GIT_SET);
     },
   );
 
@@ -81,13 +88,14 @@ describe("deriveWorkbenchLifecycleActions", () => {
     expect(enabledActionIds({ runStatus: "HumanWorking" })).toEqual([]);
   });
 
-  it("does not offer archive, drop, or export after the worktree was removed", () => {
+  // ADR-181 D10: a removed worktree is re-attachable, and nothing else is.
+  it("offers only reattach after the worktree was removed", () => {
     expect(
       enabledActionIds({
         runStatus: "Done",
         workspaceRemoved: true,
       }),
-    ).toEqual([]);
+    ).toEqual(["reattach"]);
   });
 
   it("uses allow-list guards for unknown future states", () => {

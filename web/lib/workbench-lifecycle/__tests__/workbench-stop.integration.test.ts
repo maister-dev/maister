@@ -326,7 +326,8 @@ describe("workbench stop — scratch runs", () => {
       },
     );
     const deps: WorkbenchLifecycleDeps = {
-      requireActiveSession: vi.fn(async () => undefined),
+      // ADR-181 D2: the binding returns the authenticated user (the viewer).
+      requireActiveSession: vi.fn(async () => ({ id: "user-1" })),
       loadContext,
       authorize: vi.fn(async () => undefined),
       executionHosts: memoryExecutionHosts(createFakeExecutionHost()),
@@ -352,6 +353,8 @@ describe("workbench stop — scratch runs", () => {
       statusPorcelain: vi.fn(async () => ""),
       snapshotDirtyWorktree: vi.fn(async () => false),
       pushBranch: vi.fn(async () => undefined),
+      branchUpstream: vi.fn(async () => null),
+      recordPublished: vi.fn(async () => undefined),
       claimLifecycleOperation: vi.fn(async () => ({
         attemptId: "scratch-archive-attempt",
         leaseExpiresAt: new Date("2026-06-16T08:05:00.000Z"),

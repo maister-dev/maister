@@ -35,6 +35,7 @@ import {
   resolveProjectSource,
   type ResolvedSource,
 } from "@/lib/repo-source";
+import { DEFAULT_PUBLIC_BRANCH_TEMPLATE } from "@/lib/workbench-git/public-branch-name";
 import { getDefaultBranch } from "@/lib/worktree";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (matches usage in
@@ -408,6 +409,11 @@ async function register(
         provider: resolved.provider,
         mainBranch: config.project.main_branch,
         branchPrefix: config.project.branch_prefix,
+        // ADR-181 D6: same SET/CLEAR symmetry — an absent key is the default,
+        // written explicitly so the row never depends on the column DEFAULT.
+        publicBranchTemplate:
+          config.project.public_branch_template ??
+          DEFAULT_PUBLIC_BRANCH_TEMPLATE,
         maisterYamlPath,
         // M18 (§3.4) SET/CLEAR symmetry: a present promotion.mode materializes
         // to projects.promotion_mode; an absent one resets to NULL (default)

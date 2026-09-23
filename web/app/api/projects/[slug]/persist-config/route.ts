@@ -111,6 +111,7 @@ export async function POST(
         name: project.name,
         mainBranch: project.mainBranch,
         branchPrefix: project.branchPrefix,
+        publicBranchTemplate: project.publicBranchTemplate,
         defaultRunnerId: project.defaultRunnerId ?? null,
         promotionMode: project.promotionMode ?? null,
         maisterYamlPath: project.maisterYamlPath ?? null,

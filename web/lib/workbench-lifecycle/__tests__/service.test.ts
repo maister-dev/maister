@@ -76,7 +76,8 @@ function deps(ctx: LifecycleContext): WorkbenchLifecycleDeps {
   fake = createFakeExecutionHost();
 
   return {
-    requireActiveSession: vi.fn(async () => undefined),
+    // ADR-181 D2: the binding returns the authenticated user (the viewer).
+    requireActiveSession: vi.fn(async () => ({ id: "user-1" })),
     loadContext: vi.fn(async () => ctx),
     authorize: vi.fn(async () => undefined),
     executionHosts: memoryExecutionHosts(fake),
@@ -103,6 +104,8 @@ function deps(ctx: LifecycleContext): WorkbenchLifecycleDeps {
     statusPorcelain: vi.fn(async () => ""),
     snapshotDirtyWorktree: vi.fn(async () => false),
     pushBranch: vi.fn(async () => undefined),
+    branchUpstream: vi.fn(async () => null),
+    recordPublished: vi.fn(async () => undefined),
     claimLifecycleOperation: vi.fn(async () => ({
       attemptId: "lifecycle-attempt-1",
       leaseExpiresAt: new Date("2026-06-09T08:05:00.000Z"),
@@ -150,6 +153,8 @@ describe("workbench lifecycle service", () => {
       branch: "maister/run-1",
       baseRef: "abc1234",
       runId: "run-1",
+      // ADR-181 D17: MAISTER_GC_ARCHIVE_PUSH unset in this suite → local only.
+      archivePush: false,
     });
     expect(d.claimLifecycleOperation).toHaveBeenCalledWith({
       runId: "run-1",
@@ -453,8 +458,17 @@ describe("workbench lifecycle service", () => {
     expect(d.pushBranch).not.toHaveBeenCalled();
   });
 
+  // ADR-181 D4: the run branch is published under the PUBLIC name the project
+  // template renders from the task, with an upstream set; the lease (read
+  // before the push) is only sent on a forced publish.
+  const taskContext = () =>
+    context({
+      project: { id: "project-1", mainBranch: "main", taskKey: "ABC" },
+      task: { number: 7, title: "Fix it" },
+    });
+
   it("export snapshots dirty work before pushing when explicitly requested", async () => {
-    const d = deps(context());
+    const d = deps(taskContext());
 
     vi.mocked(d.statusPorcelain).mockResolvedValueOnce("?? file.ts\n");
     vi.mocked(d.snapshotDirtyWorktree).mockResolvedValueOnce(true);
@@ -474,8 +488,18 @@ describe("workbench lifecycle service", () => {
       projectRepoPath: "/tmp/repo",
       remote: "origin",
       branch: "maister/run-1",
+      remoteBranch: "feature/ABC-7-fix-it",
+      setUpstream: true,
       force: undefined,
     });
+    expect(d.recordPublished).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: "workspace-1",
+        remote: "origin",
+        branch: "feature/ABC-7-fix-it",
+        fence: { kind: "lifecycle", attemptId: "lifecycle-attempt-1" },
+      }),
+    );
     expect(d.claimLifecycleOperation).toHaveBeenCalledWith({
       runId: "run-1",
       workspaceId: "workspace-1",
@@ -491,17 +515,21 @@ describe("workbench lifecycle service", () => {
       ok: true,
       branch: "maister/run-1",
       remote: "origin",
-      pushedRef: "origin/maister/run-1",
+      pushedRef: "origin/feature/ABC-7-fix-it",
+      publishedBranch: "feature/ABC-7-fix-it",
+      publishedRemote: "origin",
+      publishedRef: "origin/feature/ABC-7-fix-it",
+      nameSource: "template",
       snapshotCreated: true,
       checkoutCommands: [
-        "git -C /tmp/repo fetch origin maister/run-1",
-        "git -C /tmp/repo switch maister/run-1",
+        "git -C /tmp/repo fetch origin feature/ABC-7-fix-it",
+        "git -C /tmp/repo switch --track origin/feature/ABC-7-fix-it",
       ],
     });
   });
 
   it("export forwards force-with-lease intent to git push", async () => {
-    const d = deps(context());
+    const d = deps(taskContext());
 
     await exportWorkbenchBranch("run-1", {
       remote: "origin",
@@ -515,7 +543,11 @@ describe("workbench lifecycle service", () => {
       projectRepoPath: "/tmp/repo",
       remote: "origin",
       branch: "maister/run-1",
+      remoteBranch: "feature/ABC-7-fix-it",
+      setUpstream: true,
       force: true,
+      // The ls-remote read before the push (no remote ref yet → expect absent).
+      leaseSha: null,
     });
   });
 

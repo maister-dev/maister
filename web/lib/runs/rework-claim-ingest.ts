@@ -30,6 +30,9 @@ export type ReworkIngestArgs = {
   branch: string;
   // Body-controlled. Validated against the repo's ACTUAL remotes before use.
   remote?: string | null;
+  // ADR-181 D7: `workspaces.published_*` — once the branch is published under a
+  // public name, the operator's pushes land THERE, not on `<remote>/<branch>`.
+  published?: { remote: string; branch: string } | null;
 };
 
 const DEFAULT_REMOTE = "origin";
@@ -67,8 +70,18 @@ export async function ingestForReworkReturn(
     );
   }
 
+  // The publication is where pushes land — unless the operator explicitly
+  // named ANOTHER remote, which keeps the pre-ADR-181 `<remote>/<branch>` read.
+  const publication =
+    args.published &&
+    remotes.includes(args.published.remote) &&
+    (requested === null || requested === args.published.remote)
+      ? args.published
+      : null;
   const remote =
-    requested ?? (remotes.includes(DEFAULT_REMOTE) ? DEFAULT_REMOTE : null);
+    publication?.remote ??
+    requested ??
+    (remotes.includes(DEFAULT_REMOTE) ? DEFAULT_REMOTE : null);
 
   if (remote === null) {
     log.info(
@@ -81,7 +94,7 @@ export async function ingestForReworkReturn(
 
   await fetchRemote({ projectRepoPath: args.parentRepoPath, name: remote });
 
-  const trackingRef = `${remote}/${args.branch}`;
+  const trackingRef = `${remote}/${publication?.branch ?? args.branch}`;
 
   if (!(await remoteTrackingRefExists(args.worktreePath, trackingRef))) {
     log.info(

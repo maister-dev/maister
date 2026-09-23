@@ -52,7 +52,14 @@ function httpStatusForCode(code: string): number {
 function errorResponse(err: unknown, runId: string): NextResponse {
   if (isMaisterError(err)) {
     return NextResponse.json(
-      { code: err.code, message: err.message },
+      {
+        code: err.code,
+        message: err.message,
+        // ADR-181 D24: the reason token only — the panel's branch key.
+        ...(typeof err.details?.reason === "string"
+          ? { details: { reason: err.details.reason } }
+          : {}),
+      },
       { status: httpStatusForCode(err.code) },
     );
   }

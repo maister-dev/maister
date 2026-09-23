@@ -72,9 +72,11 @@ function renderInspector(): string {
           label: "Open review",
           href: "/runs/run-1?wb=diff",
         },
+        // ADR-181 C34: a listed action carries its target; disabled keeps it.
         {
-          id: "promote",
-          label: "Promote",
+          id: "openPr",
+          label: "Open PR",
+          href: "/runs/run-1?git=pr",
           disabled: true,
           disabledReason: "Review first",
         },
@@ -206,9 +208,10 @@ describe("RunInspector", () => {
         labels: LABELS,
         facts: [],
         changeSummary: null,
+        // ADR-181 C34: only href-bearing items are listed at all.
         actions: [
-          { id: "promote", label: "Promote" },
-          { id: "drop", label: "Discard" },
+          { id: "promote", label: "Promote", href: "/runs/run-1?wb=diff" },
+          { id: "drop", label: "Discard", href: "/runs/run-1?git=tree" },
         ],
       }),
     );

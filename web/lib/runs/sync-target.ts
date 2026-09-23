@@ -17,8 +17,10 @@ import * as schemaModule from "@/lib/db/schema";
 import { RUN_SYNC_TERMINAL_PHASES, type RunSyncPhase } from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { isLaunchedLineageRun } from "@/lib/evaluations/membership";
+import { syncShapeRefusal } from "@/lib/runs/sync-shape";
 import { promotionClaimTimeoutSeconds } from "@/lib/instance-config";
 import { isBranchPublished } from "@/lib/runs/branch-published";
+import { recordPublished } from "@/lib/workbench-git/publication";
 import { lifecycleClaimIsStale } from "@/lib/runs/lifecycle-claim";
 import {
   markSyncFromReview,
@@ -181,29 +183,10 @@ export function assertSyncEligible(
       `run must be Review to sync (is ${run.status})`,
     );
   }
-  if (run.runKind !== "flow" && run.runKind !== "agent") {
-    throw new MaisterError(
-      "PRECONDITION",
-      `only flow and agent runs can sync (is ${run.runKind})`,
-    );
-  }
-  if (run.parentRunId !== null) {
-    throw new MaisterError(
-      "PRECONDITION",
-      "an orchestrator child run cannot sync its branch",
-    );
-  }
-  if (run.workspaceMode === "shared") {
-    throw new MaisterError(
-      "PRECONDITION",
-      "a shared-tree run cannot sync — the tree is one branch",
-    );
-  }
-  if (run.isLaunchedLineage) {
-    throw new MaisterError(
-      "PRECONDITION",
-      "a launched evaluation participant cannot sync — decide the study first",
-    );
+  const shapeRefusal = syncShapeRefusal(run);
+
+  if (shapeRefusal !== null) {
+    throw new MaisterError("PRECONDITION", shapeRefusal);
   }
   if (workspace.removedAt !== null) {
     throw new MaisterError(
@@ -277,18 +260,41 @@ export async function verifySyncGate(
   return { ok: true };
 }
 
+// ADR-181 D7: where a run's branch lives on a remote — its publication when
+// recorded, else `origin` under the internal name (the pre-ADR-181 shape).
+export type SyncPushTarget = { remote: string; remoteBranch: string };
+
+export function syncPushTarget(workspace: {
+  branch: string;
+  publishedBranch?: string | null;
+  publishedRemote?: string | null;
+}): SyncPushTarget {
+  return workspace.publishedBranch && workspace.publishedRemote
+    ? {
+        remote: workspace.publishedRemote,
+        remoteBranch: workspace.publishedBranch,
+      }
+    : { remote: "origin", remoteBranch: workspace.branch };
+}
+
 // Explicit-SHA force-with-lease push. A lease rejection (the remote moved off
 // `remoteShaBefore`) resolves structurally — the caller maps it to a typed
 // CONFLICT and keeps the local rebase. Reusable by the Task 10 resolver finalize.
+// ADR-181 D7: `target` is where the branch is published (default `origin` +
+// the internal name), so the lease and the push name the SAME remote ref.
 export async function pushWithLease(
   worktree: string,
   branch: string,
   remoteShaBefore: string | null,
+  target?: { remote: string; remoteBranch: string },
 ): Promise<{ pushed: true } | { pushed: false; leaseFailed: true }> {
   return forceWithLeasePush({
     worktreePath: worktree,
     branch,
     expectedSha: remoteShaBefore,
+    ...(target
+      ? { remote: target.remote, remoteBranch: target.remoteBranch }
+      : {}),
   });
 }
 
@@ -511,6 +517,9 @@ async function settleAttempt(
     headMoved: boolean;
     headShaAfter?: string;
     pushed?: boolean;
+    // ADR-181 D4: where the push landed, recorded in the SAME transaction as
+    // the settle — a push under a public name is never left unrecorded.
+    pushedTo?: SyncPushTarget;
     now: () => Date;
     // The resolver path additionally owns the run's status: it flipped Review→Running
     // to work, so its success must hand the run back. Kept as a flag on the ONE
@@ -553,6 +562,16 @@ async function settleAttempt(
     }
     if (args.flipRunningToReview) {
       await markSyncReviewFromRunning(args.runId, { db: tx });
+    }
+    if (args.pushed === true && args.pushedTo) {
+      await recordPublished({
+        database: tx,
+        workspaceId: claim.workspaceId,
+        remote: args.pushedTo.remote,
+        branch: args.pushedTo.remoteBranch,
+        at: args.now(),
+        fence: { kind: "lifecycle", attemptId: claim.lifecycleAttemptId },
+      });
     }
     await releaseSyncClaim(tx, claim);
   });
@@ -724,8 +743,16 @@ export async function syncRunTarget(
   //    published branch is ever pushed, so only it needs the network read.
   const published = await isBranchPublished({
     prUrl: (workspace.prUrl as string | null) ?? null,
+    publishedBranch: (workspace.publishedBranch as string | null) ?? null,
     repo,
     branch,
+  });
+  // ADR-181 D7: the lease and the push name the SAME remote ref — the public
+  // name when the branch was published under one.
+  const pushTarget = syncPushTarget({
+    branch,
+    publishedBranch: workspace.publishedBranch as string | null,
+    publishedRemote: workspace.publishedRemote as string | null,
   });
   let remoteShaBefore: string | null = null;
   let remoteShaIndeterminate = false;
@@ -734,8 +761,8 @@ export async function syncRunTarget(
     try {
       remoteShaBefore = await remoteBranchHead({
         projectRepoPath: repo,
-        remote: "origin",
-        branch,
+        remote: pushTarget.remote,
+        branch: pushTarget.remoteBranch,
       });
     } catch {
       // Could not read the remote head — record it; the eventual push refuses.
@@ -950,6 +977,7 @@ export async function syncRunTarget(
           conflictedFiles: applied.conflictedFiles,
           headShaBefore,
           published,
+          pushTarget,
           remoteShaBefore,
           remoteShaIndeterminate,
           push: input.push,
@@ -1093,7 +1121,12 @@ export async function syncRunTarget(
       // The LAST cancellation checkpoint before the only irreversible act in the
       // whole sync.
       await advancePhaseOrCancel(db, claim, runId, "pushing");
-      const push = await pushWithLease(worktree, branch, remoteShaBefore);
+      const push = await pushWithLease(
+        worktree,
+        branch,
+        remoteShaBefore,
+        pushTarget,
+      );
 
       if (!push.pushed) {
         await failAttempt(
@@ -1115,6 +1148,7 @@ export async function syncRunTarget(
       headMoved,
       headShaAfter,
       pushed,
+      pushedTo: pushTarget,
       now,
     });
     log.info(
@@ -1249,6 +1283,7 @@ type SyncResolverArgs = {
   conflictedFiles: string[];
   headShaBefore: string;
   published: boolean;
+  pushTarget: SyncPushTarget;
   remoteShaBefore: string | null;
   remoteShaIndeterminate: boolean;
   push?: boolean;
@@ -1606,7 +1641,12 @@ async function driveSyncResolver(
 
       // The last cancellation checkpoint before the irreversible push.
       await advancePhaseOrCancel(db, claim, runId, "pushing");
-      const push = await pushWithLease(worktree, branch, args.remoteShaBefore);
+      const push = await pushWithLease(
+        worktree,
+        branch,
+        args.remoteShaBefore,
+        args.pushTarget,
+      );
 
       if (!push.pushed) {
         await teardownSession();
@@ -1652,6 +1692,7 @@ async function driveSyncResolver(
       headMoved: true,
       headShaAfter,
       pushed,
+      pushedTo: args.pushTarget,
       now,
       flipRunningToReview: true,
     });

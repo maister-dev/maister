@@ -52,3 +52,53 @@ export const RELEASED_LIFECYCLE_CLAIM = {
   lifecycleOperationName: null,
   lifecycleOperationExpectedRunStatus: null,
 } as const;
+
+const LIFECYCLE_RECLAIMABLE_STATES = new Set(["none", "failed"]);
+
+/**
+ * Whether the workbench lifecycle slot may be claimed now: free, failed, or a
+ * `claiming` whose LEASE lapsed. ADR-181 D1: the git policy's `busy` is exactly
+ * the complement for a `claiming` slot, so the button and the claim agree.
+ */
+export function canReclaimLifecycle(workspace: {
+  lifecycleOperationState?: string | null;
+  lifecycleOperationLeaseExpiresAt?: Date | null;
+}): boolean {
+  const state = workspace.lifecycleOperationState ?? "none";
+
+  if (LIFECYCLE_RECLAIMABLE_STATES.has(state)) return true;
+
+  if (state === "claiming") {
+    const leaseExpiresAt = workspace.lifecycleOperationLeaseExpiresAt
+      ? new Date(workspace.lifecycleOperationLeaseExpiresAt)
+      : null;
+
+    if (!leaseExpiresAt) return true;
+
+    return leaseExpiresAt.getTime() <= Date.now();
+  }
+
+  return false;
+}
+
+/**
+ * ADR-181 C26: a PROMOTION claim that still owns the worktree — `claiming`
+ * inside its window. Promotion's `canReclaim` and the lifecycle claim both read
+ * this rule, so "one writer per worktree" holds in both directions.
+ */
+export function promotionClaimIsLive(workspace: {
+  promotionState?: string | null;
+  promotionClaimedAt?: Date | null;
+}): boolean {
+  if ((workspace.promotionState ?? "none") !== "claiming") return false;
+
+  const claimedAt = workspace.promotionClaimedAt
+    ? new Date(workspace.promotionClaimedAt)
+    : null;
+
+  if (!claimedAt) return false;
+
+  return (
+    claimedAt.getTime() >= Date.now() - promotionClaimTimeoutSeconds() * 1000
+  );
+}

@@ -14,6 +14,7 @@ import { promisify } from "node:util";
 import pino from "pino";
 import { z } from "zod";
 
+import { branchNameSchema } from "@/lib/git-ref-names";
 import { MaisterError } from "@/lib/errors";
 import {
   DELIVERY_PATHSPEC,
@@ -81,16 +82,9 @@ const absolutePathSchema = z
     "must be absolute with no '..' segments",
   );
 
-export const branchNameSchema = z
-  .string()
-  .min(1)
-  .max(255)
-  .regex(/^[A-Za-z0-9_./-]+$/, "branch must match /^[A-Za-z0-9_./-]+$/")
-  .refine((b) => !b.startsWith("-"), "branch must not start with '-'")
-  .refine((b) => !b.includes(".."), "branch must not contain '..'")
-  .refine((b) => !b.includes("@{"), "branch must not contain '@{'")
-  .refine((b) => !b.endsWith("/"), "branch must not end with '/'")
-  .refine((b) => !b.endsWith(".lock"), "branch must not end with .lock");
+// The rule lives in a client-safe module so the manifest schema can validate a
+// public-branch template without importing this server-only one.
+export { branchNameSchema };
 
 const gitRefSchema = z
   .string()
@@ -910,9 +904,17 @@ export type PushBranchArgs = {
   projectRepoPath: string;
   remote: string;
   branch: string;
+  // ADR-181 D4: the name the branch gets ON the remote (default: `branch`).
+  // Always pushed as the refspec `refs/heads/<branch>:refs/heads/<remoteBranch>`,
+  // so a run's internal branch can be published under a public name.
+  remoteBranch?: string;
   force?: boolean;
-  // ADR-093: `git push -u` — sets the branch's upstream to remote/branch while
-  // pushing (the "set upstream" remotes action).
+  // ADR-181 D4 / ADR-141: with `force`, an EXPLICIT-SHA lease on the remote ref,
+  // captured by the caller BEFORE the push (`null` = expect the ref absent).
+  // Omitted, `force` falls back to the tracking-ref `--force-with-lease`.
+  leaseSha?: string | null;
+  // ADR-093: `git push -u` — sets the branch's upstream while pushing; with a
+  // refspec, `branch.<branch>.merge` names `<remoteBranch>`.
   setUpstream?: boolean;
 };
 
@@ -953,9 +955,11 @@ function isNonFastForwardPush(stderrText: string): boolean {
   );
 }
 
-// Push a run branch to its remote using the host git credential helper (no
-// token in argv). A non-fast-forward rejection is an operator conflict; other
-// failures remain transient by classification.
+// THE push primitive (ADR-181 D4): publish, branch sync and promotion all put a
+// branch on a remote through here, using the host git credential helper (no
+// token in argv). A non-fast-forward rejection — or an explicit lease that went
+// stale — is an operator conflict; other failures remain transient by
+// classification.
 export async function pushBranch(args: PushBranchArgs): Promise<void> {
   const repo = validate(
     absolutePathSchema,
@@ -964,20 +968,49 @@ export async function pushBranch(args: PushBranchArgs): Promise<void> {
   );
   const remote = validate(remoteNameSchema, args.remote, "remote");
   const branch = validate(branchNameSchema, args.branch, "branch");
+  const remoteBranch =
+    args.remoteBranch === undefined
+      ? branch
+      : validate(branchNameSchema, args.remoteBranch, "remoteBranch");
   const force = args.force === true;
+  const explicitLease = force && args.leaseSha !== undefined;
+  const leaseSha =
+    explicitLease && args.leaseSha !== null && args.leaseSha !== undefined
+      ? validate(gitCommitSchema, args.leaseSha, "leaseSha")
+      : null;
+  const leaseArgs = explicitLease
+    ? [`--force-with-lease=refs/heads/${remoteBranch}:${leaseSha ?? ""}`]
+    : force
+      ? ["--force-with-lease"]
+      : [];
+  const target =
+    remoteBranch === branch
+      ? `${remote} ${branch}`
+      : `${remote} ${branch}:${remoteBranch}`;
 
-  log.info({ projectRepoPath: repo, remote, branch, force }, "pushBranch");
+  log.info(
+    {
+      projectRepoPath: repo,
+      remote,
+      branch,
+      remoteBranch,
+      force,
+      leaseSha: explicitLease ? leaseSha : undefined,
+      setUpstream: args.setUpstream === true,
+    },
+    "pushBranch",
+  );
 
   try {
     const pushArgs = [
       "-C",
       repo,
       "push",
-      ...(force ? ["--force-with-lease"] : []),
+      ...leaseArgs,
       ...(args.setUpstream === true ? ["--set-upstream"] : []),
       "--end-of-options",
       remote,
-      branch,
+      `refs/heads/${branch}:refs/heads/${remoteBranch}`,
     ];
     const { stdout, stderr } = await execFileAsync("git", pushArgs, {
       signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
@@ -993,16 +1026,19 @@ export async function pushBranch(args: PushBranchArgs): Promise<void> {
     const stderrText = errorText(err) || asError(err).message;
     const redacted = redactUrl(stderrText);
 
-    if (!force && isNonFastForwardPush(stderrText)) {
+    // A tracking-ref lease (`force` without `leaseSha`) keeps its historical
+    // transient classification; an explicit lease's rejection means the remote
+    // moved off the SHA the caller saw — a conflict, like a non-fast-forward.
+    if ((!force || explicitLease) && isNonFastForwardPush(stderrText)) {
       throw new GitPushRejectedError(
-        `git push ${remote} ${branch} rejected: ${redacted}`,
+        `git push ${target} rejected: ${redacted}`,
         { cause: asError(err) },
       );
     }
 
     throw new MaisterError(
       "EXECUTOR_UNAVAILABLE",
-      `git push ${remote} ${branch} failed: ${redacted}`,
+      `git push ${target} failed: ${redacted}`,
       { cause: asError(err) },
     );
   }
@@ -2253,7 +2289,9 @@ export type WorkingTreeDiffResult = DiffResult & {
   nameStatus: DiffFileEntry[];
 };
 
-async function withIntentToAddTempIndex<T>(
+// A COPY of the worktree's real index, for commands that must stage without
+// touching what the operator staged (the working-tree diff, the ADR-181 rescue).
+async function withTempIndexCopy<T>(
   worktreePath: string,
   fn: (env: NodeJS.ProcessEnv) => Promise<T>,
 ): Promise<T> {
@@ -2279,8 +2317,17 @@ async function withIntentToAddTempIndex<T>(
       // A repo with no index yet (fresh) — the temp index starts empty.
     }
 
-    const env: NodeJS.ProcessEnv = { ...process.env, GIT_INDEX_FILE: tmpIndex };
+    return await fn({ ...process.env, GIT_INDEX_FILE: tmpIndex });
+  } finally {
+    await fsRm(tmpDir, { recursive: true, force: true });
+  }
+}
 
+async function withIntentToAddTempIndex<T>(
+  worktreePath: string,
+  fn: (env: NodeJS.ProcessEnv) => Promise<T>,
+): Promise<T> {
+  return withTempIndexCopy(worktreePath, async (env) => {
     await execFileAsync("git", ["-C", worktreePath, "add", "-N", "."], {
       signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
       maxBuffer: EXEC_MAX_BUFFER,
@@ -2288,9 +2335,7 @@ async function withIntentToAddTempIndex<T>(
     });
 
     return await fn(env);
-  } finally {
-    await fsRm(tmpDir, { recursive: true, force: true });
-  }
+  });
 }
 
 export async function diffWorkingTree(
@@ -3047,6 +3092,137 @@ export async function discardWorktree(worktreePath: string): Promise<void> {
   await runGit(wt, ["clean", "-fd"]);
 
   log.info({ worktreePath: wt }, "[dirty] worktree discarded to HEAD");
+}
+
+// ADR-181 D8: rescue refs live under the run's id in the shared ref namespace,
+// so they outlive the worktree, the internal branch (`removeBranch` deletes
+// `refs/heads/*` only) and the preserve path.
+const RESCUE_REF_ROOT = "refs/maister/rescue";
+const runIdSchema = z.string().uuid();
+
+export type RescueRef = { ref: string; sha: string; createdAt: string };
+
+// The copyable restore line for a rescue ref. It keeps its `-C <worktree>`: a
+// path-free restore pasted into the parent checkout would overwrite the
+// parent's files (ADR-181 C20).
+export function rescueRestoreCommand(
+  worktreePath: string,
+  ref: string,
+): string {
+  return `git -C ${worktreePath} restore --source=${ref} -- .`;
+}
+
+function rescueIndex(ref: string): number {
+  const n = Number(ref.slice(ref.lastIndexOf("/") + 1));
+
+  return Number.isInteger(n) && n > 0 ? n : 0;
+}
+
+export async function listRescueRefs(args: {
+  projectRepoPath: string;
+  runId: string;
+}): Promise<RescueRef[]> {
+  const repo = validate(
+    absolutePathSchema,
+    args.projectRepoPath,
+    "projectRepoPath",
+  );
+  const runId = validate(runIdSchema, args.runId, "runId");
+  const { stdout } = await runGit(repo, [
+    "for-each-ref",
+    "--format=%(refname)%00%(objectname)%00%(creatordate:iso-strict)",
+    `${RESCUE_REF_ROOT}/${runId}/`,
+  ]);
+
+  return stdout
+    .split("\n")
+    .filter((line) => line.length > 0)
+    .map((line) => {
+      const [ref, sha, createdAt] = line.split("\0");
+
+      return { ref, sha, createdAt };
+    })
+    .filter((r) => rescueIndex(r.ref) > 0)
+    .sort((a, b) => rescueIndex(a.ref) - rescueIndex(b.ref));
+}
+
+// ADR-181 D8 step 3 — the point of no return is AFTER this: every staged,
+// unstaged and untracked (non-ignored) change becomes a commit on top of HEAD,
+// written through a COPY of the index, so the operator's real index is exactly
+// as it was if the reset below never runs. `<n>` is max+1 and the ref is
+// created only if absent: a retry after a crash writes `#n+1`, never over a
+// rescue that already holds the only copy of the work.
+export async function writeRescueRef(args: {
+  worktreePath: string;
+  runId: string;
+}): Promise<{ ref: string; sha: string }> {
+  const wt = validate(absolutePathSchema, args.worktreePath, "worktreePath");
+  const runId = validate(runIdSchema, args.runId, "runId");
+  const head = validate(
+    gitCommitSchema,
+    (
+      await runGit(wt, ["rev-parse", "--verify", "HEAD^{commit}"])
+    ).stdout.trim(),
+    "commit",
+  );
+  const existing = await listRescueRefs({ projectRepoPath: wt, runId });
+  const n =
+    existing.reduce((max, r) => Math.max(max, rescueIndex(r.ref)), 0) + 1;
+  const ref = `${RESCUE_REF_ROOT}/${runId}/${n}`;
+  const identityArgs = await commitIdentityArgs(wt);
+  const sha = await withTempIndexCopy(wt, async (indexEnv) => {
+    const env = { ...indexEnv, LC_ALL: "C" };
+    const opts = {
+      signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
+      maxBuffer: EXEC_MAX_BUFFER,
+      env,
+    };
+
+    await execFileAsync("git", ["-C", wt, "add", "-A"], opts);
+    const { stdout: tree } = await execFileAsync(
+      "git",
+      ["-C", wt, "write-tree"],
+      opts,
+    );
+    const { stdout: commit } = await execFileAsync(
+      "git",
+      [
+        "-C",
+        wt,
+        ...identityArgs,
+        "commit-tree",
+        tree.trim(),
+        "-p",
+        head,
+        "-m",
+        `maister: rescue ${runId} #${n}`,
+      ],
+      opts,
+    );
+
+    return validate(gitCommitSchema, commit.trim(), "commit");
+  });
+
+  await runGit(wt, ["update-ref", "-m", "maister: rescue", ref, sha, ""]);
+  log.info({ worktreePath: wt, runId, ref, sha, head }, "rescue ref written");
+
+  return { ref, sha };
+}
+
+// ADR-181 D8 step 4: the destructive half of discard-changes, run only after
+// `writeRescueRef` returned. `reset --hard` (not `restore`) because a parked
+// tree can hold an unmerged index; `clean -fd` without `-x`: ignored files are
+// not the operator's work. Same containment guard as `discardWorktree`.
+export async function discardWorktreeChanges(
+  worktreePath: string,
+): Promise<void> {
+  const wt = validate(absolutePathSchema, worktreePath, "worktreePath");
+
+  containmentAssert(wt);
+  await runGit(wt, ["reset", "--hard", "--quiet", "HEAD"]);
+  await runGit(wt, ["clean", "-fd", "--quiet"]);
+
+  log.info({ worktreePath: wt }, "worktree changes discarded to HEAD");
 }
 
 export type ResolveBaseRefArgs = {
@@ -3832,22 +4008,62 @@ export async function hasConflictMarkers(
   }
 }
 
-// Whether `branch` has a configured upstream (`branch@{upstream}` resolves).
-// `branchNameSchema` forbids `@{`, so the suffix cannot be spoofed by the input.
+export type BranchUpstream = { remote: string; branch: string };
+
+// ADR-181 D4: where `branch` is published — `branch.<b>.remote` plus the
+// remote-side name from `branch.<b>.merge` (`refs/heads/<name>`), which differs
+// from `branch` once it was pushed under a public name. Read from config, not
+// from `<b>@{upstream}`: a remote name may contain `/`, so the tracking ref
+// `refs/remotes/<r>/<b>` cannot be split back into remote and branch.
+// `branchNameSchema` bounds the key to `[A-Za-z0-9_./-]`, so it cannot address
+// another config section.
+export async function branchUpstream(
+  repo: string,
+  branch: string,
+): Promise<BranchUpstream | null> {
+  const repoPath = validate(absolutePathSchema, repo, "repo");
+  const br = validate(branchNameSchema, branch, "branch");
+  const read = async (key: string): Promise<string | null> => {
+    try {
+      const { stdout } = await runGit(repoPath, ["config", "--get", key]);
+      const value = stdout.trim();
+
+      return value.length > 0 ? value : null;
+    } catch (err) {
+      if (isGitMissingRef(err)) return null;
+
+      throw new MaisterError(
+        "CONFLICT",
+        `git config --get ${key} failed: ${errorText(err) || asError(err).message}`,
+        { cause: asError(err) },
+      );
+    }
+  };
+  const [remote, merge] = await Promise.all([
+    read(`branch.${br}.remote`),
+    read(`branch.${br}.merge`),
+  ]);
+
+  if (remote === null || merge === null || !merge.startsWith("refs/heads/")) {
+    return null;
+  }
+
+  const upstream = { remote, branch: merge.slice("refs/heads/".length) };
+
+  log.debug(
+    { projectRepoPath: repoPath, branch: br, upstream },
+    "branchUpstream",
+  );
+
+  return upstream;
+}
+
+// Whether `branch` has a configured upstream.
 export async function branchHasUpstream(
   repo: string,
   branch: string,
 ): Promise<boolean> {
-  const repoPath = validate(absolutePathSchema, repo, "repo");
-  const br = validate(branchNameSchema, branch, "branch");
-
-  try {
-    await runGit(repoPath, ["rev-parse", "--abbrev-ref", `${br}@{upstream}`]);
-
-    return true;
-  } catch {
-    return false;
-  }
+  return (await branchUpstream(repo, branch)) !== null;
 }
 
 export type ForceWithLeaseResult =
@@ -3863,63 +4079,43 @@ export type ForceWithLeaseResult =
 // typed CONFLICT and keeps the local rebase result. Any other push failure stays a
 // transient EXECUTOR_UNAVAILABLE (redacted; URLs may carry creds). `expectedSha`
 // null pushes with an empty lease (`:`), i.e. "expect the remote ref to be absent".
+//
+// ADR-181 D4: a thin wrapper over `pushBranch` (one push code path for publish,
+// sync and promotion). `remote`/`remoteBranch` default to `origin` and `branch`;
+// a published run passes its `published_remote`/`published_branch`.
 export async function forceWithLeasePush(args: {
   worktreePath: string;
   branch: string;
   expectedSha: string | null;
+  remote?: string;
+  remoteBranch?: string;
+  setUpstream?: boolean;
 }): Promise<ForceWithLeaseResult> {
-  const wt = validate(absolutePathSchema, args.worktreePath, "worktreePath");
-  const branch = validate(branchNameSchema, args.branch, "branch");
-  const lease = `refs/heads/${branch}:${args.expectedSha ?? ""}`;
-
-  log.info(
-    { worktreePath: wt, branch, expectedSha: args.expectedSha },
-    "forceWithLeasePush",
-  );
-
   try {
-    const { stdout, stderr } = await execFileAsync(
-      "git",
-      [
-        "-C",
-        wt,
-        "push",
-        `--force-with-lease=${lease}`,
-        "--end-of-options",
-        "origin",
-        branch,
-      ],
-      {
-        signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
-        maxBuffer: EXEC_MAX_BUFFER,
-        env: NETWORK_GIT_ENV,
-      },
-    );
-
-    log.debug({ stdout, stderr }, "forceWithLeasePush done");
+    await pushBranch({
+      projectRepoPath: args.worktreePath,
+      remote: args.remote ?? "origin",
+      branch: args.branch,
+      remoteBranch: args.remoteBranch,
+      force: true,
+      leaseSha: args.expectedSha,
+      setUpstream: args.setUpstream,
+    });
 
     return { pushed: true };
   } catch (err) {
-    const stderrText = errorText(err) || asError(err).message;
-    const redacted = redactUrl(stderrText);
-
-    // A lease rejection surfaces as a non-fast-forward / "stale info" rejection —
-    // the same signal pushBranch classifies. It is an expected outcome, not a
-    // transient failure, so it resolves structurally instead of throwing.
-    if (isNonFastForwardPush(stderrText)) {
+    // A lease rejection is an expected outcome, not a transient failure, so it
+    // resolves structurally instead of throwing.
+    if (err instanceof GitPushRejectedError) {
       log.info(
-        { worktreePath: wt, branch },
+        { worktreePath: args.worktreePath, branch: args.branch },
         "forceWithLeasePush lease rejected (remote moved)",
       );
 
       return { pushed: false, leaseFailed: true };
     }
 
-    throw new MaisterError(
-      "EXECUTOR_UNAVAILABLE",
-      `git push --force-with-lease ${branch} failed: ${redacted}`,
-      { cause: asError(err) },
-    );
+    throw err;
   }
 }
 

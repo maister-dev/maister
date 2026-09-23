@@ -191,6 +191,12 @@ export const projects = pgTable("projects", {
   provider: text("provider"),
   mainBranch: text("main_branch").notNull().default("main"),
   branchPrefix: text("branch_prefix").notNull().default("maister/"),
+  // ADR-181 (migration 0179): the template for the PUBLIC name a run branch is
+  // published under (`{task_key}`, `{slug}`, `{attempt}`); the internal branch
+  // stays the run's identity. Mirrored as `project.public_branch_template`.
+  publicBranchTemplate: text("public_branch_template")
+    .notNull()
+    .default("feature/{task_key}-{slug}"),
   // ADR-093: nullable — NULL = config lives only in the DB (registered with no
   // maister.yaml on disk; the manifest is optional at manual registration).
   maisterYamlPath: text("maister_yaml_path"),
@@ -4639,7 +4645,14 @@ export type WorkspaceLifecycleOperationName =
   | "exportBranch"
   | "snapshotCommit"
   | "handoffBranch"
-  | "sync";
+  | "sync"
+  // ADR-181: the run git panel's own operations (publish reuses `exportBranch`,
+  // update reuses `sync`). `discardChanges` resets a tree; `discard` removes a
+  // workspace — two different questions.
+  | "discardChanges"
+  | "reattach"
+  | "prOpen"
+  | "prFinalize";
 
 export type WorkspacePreservationOutcome =
   | "not_needed"
@@ -4747,6 +4760,15 @@ export const workspaces = pgTable(
     prHasConflicts: boolean("pr_has_conflicts"),
     prMergedAt: timestamp("pr_merged_at", { withTimezone: true, mode: "date" }),
     prMergeCommitSha: text("pr_merge_commit_sha"),
+    // ADR-181 (migration 0179): the name the internal branch carries on the
+    // remote. Written ONLY after a successful push, by one writer
+    // (`recordPublished`); the three are all set or all null (CHECK below).
+    publishedBranch: text("published_branch"),
+    publishedRemote: text("published_remote"),
+    publishedAt: timestamp("published_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
   },
   (t) => ({
     lifecycleClaimIndex: index("workspaces_lifecycle_claim_idx").on(
@@ -4790,6 +4812,10 @@ export const workspaces = pgTable(
     prStateCheck: check(
       "workspaces_pr_state_check",
       sql`${t.prState} in ('open', 'merged', 'closed')`,
+    ),
+    publishedShapeCheck: check(
+      "workspaces_published_shape_check",
+      sql`(${t.publishedBranch} IS NULL) = (${t.publishedRemote} IS NULL) AND (${t.publishedBranch} IS NULL) = (${t.publishedAt} IS NULL)`,
     ),
     // Partial index backing the pr_state_scan candidate query (decision 2).
     prStateScanIdx: index("workspaces_pr_state_scan_idx")

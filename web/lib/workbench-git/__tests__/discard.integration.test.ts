@@ -3,7 +3,14 @@
 // a temporary index before `reset --hard` + `clean -fd`. Driven through the real
 // route (the wire body is part of the contract) over real git and real Postgres.
 
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -77,9 +84,11 @@ afterAll(async () => {
 beforeEach(async () => {
   await clearWorkbenchGitTables(testDatabase.pool);
   // Under the test worktrees root: drop removes only a worktree it owns there.
-  root = await mkdtemp(
-    join(process.env.MAISTER_WORKTREES_ROOT ?? tmpdir(), "wg-discard-"),
-  );
+  // The setup file names the root; nothing creates it until a suite does.
+  const worktreesRoot = process.env.MAISTER_WORKTREES_ROOT ?? tmpdir();
+
+  await mkdir(worktreesRoot, { recursive: true });
+  root = await mkdtemp(join(worktreesRoot, "wg-discard-"));
   repo = await initRepoWithBareRemote(root);
   requireProjectAction.mockReset();
   requireProjectAction.mockImplementation(async () => undefined);

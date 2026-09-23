@@ -47,6 +47,10 @@ vi.mock("@/lib/worktree", async (orig) => {
     // transaction, so it is the seam for injecting the tx-fails-after-attach race.
     addWorktreeForBranch: vi.fn(actual.addWorktreeForBranch),
     pushBranch: vi.fn(async () => undefined),
+    // ADR-181 D4: the PR push resolves its PUBLIC name from the branch
+    // upstream (none in this fake repo) and leases on the remote head.
+    branchUpstream: vi.fn(async () => null),
+    remoteBranchHead: vi.fn(async () => null),
     headCommit: vi.fn(async () => "source-head-000"),
     resolveBaseCommit: vi.fn(async () => "tip00000"),
     squashRunBranch: vi.fn(async () => ({ squashed: false, collapsed: 0 })),

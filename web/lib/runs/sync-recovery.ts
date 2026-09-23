@@ -18,7 +18,12 @@ import {
   markSyncReviewFromNeedsInput,
   markSyncReviewFromRunning,
 } from "@/lib/runs/state-transitions";
-import { pushWithLease, verifySyncGate } from "@/lib/runs/sync-target";
+import {
+  pushWithLease,
+  syncPushTarget,
+  verifySyncGate,
+} from "@/lib/runs/sync-target";
+import { recordPublished } from "@/lib/workbench-git/publication";
 import { poolForRunKind, promoteNextPending } from "@/lib/scheduler";
 import {
   createExecutionHosts,
@@ -75,6 +80,9 @@ type RunContext = {
   repo: string;
   targetBranch: string;
   prUrl: string | null;
+  // ADR-181 D7: where the branch is published (the lease and push target).
+  publishedBranch: string | null;
+  publishedRemote: string | null;
 };
 
 async function loadActiveAttempt(
@@ -130,6 +138,8 @@ async function loadRunContext(
       repo: workspaces.parentRepoPath,
       targetBranch: workspaces.targetBranch,
       prUrl: workspaces.prUrl,
+      publishedBranch: workspaces.publishedBranch,
+      publishedRemote: workspaces.publishedRemote,
     })
     .from(runs)
     .innerJoin(workspaces, eq(workspaces.runId, runs.id))
@@ -150,6 +160,8 @@ async function loadRunContext(
       (row.projectMainBranch as string | null) ??
       "main",
     prUrl: (row.prUrl as string | null) ?? null,
+    publishedBranch: (row.publishedBranch as string | null) ?? null,
+    publishedRemote: (row.publishedRemote as string | null) ?? null,
   };
 }
 
@@ -439,9 +451,15 @@ export async function recoverSyncAttemptOnReconcile(args: {
   const headShaAfter = await headCommit({ worktreePath: ctx.worktree });
   const published = await isBranchPublished({
     prUrl: ctx.prUrl,
+    publishedBranch: ctx.publishedBranch,
     repo: ctx.repo,
     branch: ctx.branch,
   }).catch(() => false);
+  const pushTarget = syncPushTarget({
+    branch: ctx.branch,
+    publishedBranch: ctx.publishedBranch,
+    publishedRemote: ctx.publishedRemote,
+  });
   let pushed = false;
 
   if (published) {
@@ -449,6 +467,7 @@ export async function recoverSyncAttemptOnReconcile(args: {
       ctx.worktree,
       ctx.branch,
       attempt.remoteShaBefore,
+      pushTarget,
     );
 
     if (push.pushed) {
@@ -459,8 +478,8 @@ export async function recoverSyncAttemptOnReconcile(args: {
       // moved remotely (a real conflict → fail, keep the local result).
       const remoteHead = await remoteBranchHead({
         projectRepoPath: ctx.repo,
-        remote: "origin",
-        branch: ctx.branch,
+        remote: pushTarget.remote,
+        branch: pushTarget.remoteBranch,
       }).catch(() => null);
 
       if (
@@ -496,6 +515,28 @@ export async function recoverSyncAttemptOnReconcile(args: {
     // An in-process finalize terminalized this attempt between our pre-read and
     // here. It owns the ledger and the claim — leave both alone.
     return { window: "w3", outcome: "noop" };
+  }
+  if (pushed && attempt.lifecycleAttemptId) {
+    // ADR-181 D4: record where the push landed. Best effort HERE: a recovered
+    // claim may be past its lease, and the publication stays discoverable (the
+    // upstream / the existing record), so the next publish records it anyway.
+    await recordPublished({
+      database: db,
+      workspaceId: attempt.workspaceId,
+      remote: pushTarget.remote,
+      branch: pushTarget.remoteBranch,
+      at: now(),
+      fence: { kind: "lifecycle", attemptId: attempt.lifecycleAttemptId },
+    }).catch((err: unknown) => {
+      log.warn(
+        {
+          runId,
+          attempt: attempt.id,
+          err: err instanceof Error ? err.message : String(err),
+        },
+        "sync recovery: publication not recorded (claim past its lease)",
+      );
+    });
   }
   if (attempt.headShaBefore && headShaAfter !== attempt.headShaBefore) {
     // HEAD moved (decision 13) — restart the auto-promotion grace window.
@@ -781,13 +822,17 @@ export async function runSyncRecoverySweep(
         const head = await headCommit({ worktreePath: cand.worktree }).catch(
           () => null,
         );
-        const remoteHead = pushCtx
-          ? await remoteBranchHead({
-              projectRepoPath: pushCtx.repo,
-              remote: "origin",
-              branch: pushCtx.branch,
-            }).catch(() => null)
-          : null;
+        // ADR-181 D7: ask where the live path pushed — the publication, not
+        // `origin` under the internal name.
+        const pushTarget = pushCtx ? syncPushTarget(pushCtx) : null;
+        const remoteHead =
+          pushCtx && pushTarget
+            ? await remoteBranchHead({
+                projectRepoPath: pushCtx.repo,
+                remote: pushTarget.remote,
+                branch: pushTarget.remoteBranch,
+              }).catch(() => null)
+            : null;
 
         if (
           head &&

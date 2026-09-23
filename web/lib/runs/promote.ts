@@ -17,8 +17,12 @@ import { isMaisterError, MaisterError } from "@/lib/errors";
 import { isLaunchedLineageRun } from "@/lib/evaluations/membership";
 import { recordArtifact } from "@/lib/flows/graph/artifact-store";
 import { assertEvidenceReady } from "@/lib/flows/graph/evidence-readiness";
-import { gcAgeDays, promotionClaimTimeoutSeconds } from "@/lib/instance-config";
-import { lifecycleClaimIsStale } from "@/lib/runs/lifecycle-claim";
+import { gcAgeDays } from "@/lib/instance-config";
+import {
+  canReclaimLifecycle,
+  lifecycleClaimIsStale,
+  promotionClaimIsLive,
+} from "@/lib/runs/lifecycle-claim";
 import { type SyncActor } from "@/lib/runs/sync-target";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import {
@@ -42,6 +46,7 @@ import {
 import { detectProvider, readRemoteOrigin } from "@/lib/repo-source";
 import {
   branchExists,
+  branchUpstream,
   deliveryCommitStats,
   deliveryHistoryStats,
   findTargetMergeByRunId,
@@ -49,9 +54,14 @@ import {
   promoteLocalMerge,
   promoteRebaseMerge,
   pushBranch,
+  remoteBranchHead,
   resolveBaseCommit,
   squashRunBranch,
 } from "@/lib/worktree";
+import {
+  recordPublished,
+  resolvePublishName,
+} from "@/lib/workbench-git/publication";
 import { readWorktreeProvenanceForPromotion } from "@/lib/worktree-provenance";
 import { commitsFromSnapshot } from "@/lib/runs/execution-policy";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
@@ -61,7 +71,7 @@ import {
 } from "@/lib/auto-promotion/config";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { runs, scratchRuns, workspaces, projects } =
+const { runs, scratchRuns, tasks, workspaces, projects } =
   schemaModule as unknown as Record<string, any>;
 
 // FIXME(any): route + tests pass a minimal drizzle-like fake / a Testcontainers
@@ -181,16 +191,7 @@ function canReclaim(workspace: {
 
   if (RECLAIMABLE_STATES.has(state)) return true;
 
-  if (state === "claiming") {
-    const claimedAt = workspace.promotionClaimedAt
-      ? new Date(workspace.promotionClaimedAt)
-      : null;
-
-    if (!claimedAt) return true;
-    const cutoffMs = Date.now() - promotionClaimTimeoutSeconds() * 1000;
-
-    return claimedAt.getTime() < cutoffMs;
-  }
+  if (state === "claiming") return !promotionClaimIsLive(workspace);
 
   return false;
 }
@@ -797,6 +798,20 @@ async function promoteWorkspaceRun(
       );
     }
 
+    // ADR-181 C26: one writer per worktree covers promotion too — a live claim
+    // of ANY workbench op (publish, discard, re-attach, …) owns the tree, by the
+    // same lease rule the lifecycle service reclaims by.
+    if (
+      workspace.lifecycleOperationName !== "sync" &&
+      workspace.lifecycleOperationState === "claiming" &&
+      !canReclaimLifecycle(workspace)
+    ) {
+      throw new MaisterError(
+        "CONFLICT",
+        `a workbench ${workspace.lifecycleOperationName ?? "operation"} is in progress for this run`,
+      );
+    }
+
     if (!canReclaim(workspace)) {
       throw new MaisterError(
         "CONFLICT",
@@ -1365,15 +1380,39 @@ async function promotePullRequestSideEffect(args: {
 
     await adapter.preflight();
 
+    // ADR-181 D4/D11: the PR branch is the PUBLIC name — the same core the run
+    // git panel's publish uses, so a promotion and a panel publish → open PR →
+    // finalize converge on identical rows.
+    const publicBranch = await publicBranchForPromotion(db, claim, project);
+    // The lease is captured BEFORE the push (ADR-141): a forced PR update never
+    // overwrites a head it did not read.
+    const leaseSha = args.forcePush
+      ? await remoteBranchHead({
+          projectRepoPath: claim.workspace.parentRepoPath,
+          remote: "origin",
+          branch: publicBranch,
+        })
+      : undefined;
+
     // Push then open/update the PR — both are transient on failure (the helpers
     // throw EXECUTOR_UNAVAILABLE), so the claim is intentionally LEFT claiming.
     await pushBranch({
       projectRepoPath: claim.workspace.parentRepoPath,
       remote: "origin",
       branch: claim.workspace.branch,
+      remoteBranch: publicBranch,
+      setUpstream: true,
       // Only force when a squash rewrote base..HEAD — keeps a plain (keep_all)
       // PR push a non-forced fast-forward.
-      ...(args.forcePush ? { force: true } : {}),
+      ...(args.forcePush ? { force: true, leaseSha } : {}),
+    });
+    await recordPublished({
+      database: db,
+      workspaceId: claim.workspace.id,
+      remote: "origin",
+      branch: publicBranch,
+      at: new Date(),
+      fence: { kind: "promotion", attemptId: claim.attemptId },
     });
     const sourceHead = await headCommit({
       worktreePath: claim.workspace.worktreePath,
@@ -1382,7 +1421,7 @@ async function promotePullRequestSideEffect(args: {
     const pr = await adapter.createOrUpdatePr({
       repoPath: claim.workspace.parentRepoPath,
       remote: "origin",
-      sourceBranch: claim.workspace.branch,
+      sourceBranch: publicBranch,
       targetBranch: claim.resolvedTarget,
       title: prTitle(claim),
       body: prBody(claim),
@@ -1408,6 +1447,54 @@ async function promotePullRequestSideEffect(args: {
     await markPromotionFailed(db, claim.workspace.id, claim.attemptId);
     throw err;
   }
+}
+
+// ADR-181 D4 step 2 for a promotion: an existing publication on origin fixes
+// the name, else the project template renders it (a promotion never takes a
+// request). The name belongs to the WORKSPACE's run — a shared tree's branch is
+// the allocator's, whichever sibling promotes it.
+async function publicBranchForPromotion(
+  db: Db,
+  claim: FlowClaim,
+  project: any,
+): Promise<string> {
+  const ownerRunId: string = claim.workspace.runId ?? claim.run.id;
+  const ownerTaskId: string | null =
+    ownerRunId === claim.run.id
+      ? (claim.run.taskId ?? null)
+      : ((
+          await db
+            .select({ taskId: runs.taskId })
+            .from(runs)
+            .where(eq(runs.id, ownerRunId))
+        )[0]?.taskId ?? null);
+  const taskRows = ownerTaskId
+    ? await db
+        .select({ number: tasks.number, title: tasks.title })
+        .from(tasks)
+        .where(eq(tasks.id, ownerTaskId))
+    : [];
+  const task = taskRows[0] ?? null;
+
+  return resolvePublishName({
+    runId: ownerRunId,
+    internalBranch: claim.workspace.branch,
+    remote: "origin",
+    requested: null,
+    template: project?.publicBranchTemplate,
+    taskKey:
+      task && project?.taskKey ? `${project.taskKey}-${task.number}` : null,
+    taskTitle: task?.title ?? null,
+    recordedBranch: claim.workspace.publishedBranch ?? null,
+    recordedRemote: claim.workspace.publishedRemote ?? null,
+    legacyPrHead:
+      (claim.workspace.prUrl ?? null) !== null &&
+      (claim.workspace.publishedBranch ?? null) === null,
+    upstream: await branchUpstream(
+      claim.workspace.parentRepoPath,
+      claim.workspace.branch,
+    ),
+  }).name;
 }
 
 function prTitle(claim: FlowClaim): string {

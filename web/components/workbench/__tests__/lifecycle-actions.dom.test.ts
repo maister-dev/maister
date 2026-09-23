@@ -101,14 +101,6 @@ function findButton(container: ParentNode, label: string): HTMLButtonElement {
   return button;
 }
 
-function findTextarea(container: ParentNode): HTMLTextAreaElement {
-  const textarea = container.querySelector("textarea");
-
-  if (!textarea) throw new Error("textarea not found");
-
-  return textarea;
-}
-
 function findInput(container: ParentNode): HTMLInputElement {
   const input = container.querySelector("input");
 
@@ -205,6 +197,64 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+function renderDetail(actions: WorkbenchLifecycleActionId[]): Rendered {
+  const container = document.createElement("div");
+  const root = createRoot(container);
+
+  document.body.appendChild(container);
+  roots.push(root);
+
+  act(() => {
+    root.render(
+      createElement(WorkbenchLifecycleActions, {
+        runId: "run-1",
+        runKind: "flow",
+        actions,
+        variant: "detail",
+      }),
+    );
+  });
+
+  return { container, root };
+}
+
+function usableGitState(): Record<string, unknown> {
+  return {
+    runId: "run-1",
+    runKind: "flow",
+    runStatus: "Review",
+    internalBranch: "maister/run-1",
+    publicBranch: null,
+    publishedRemote: null,
+    publishedAt: null,
+    suggestedPublicBranch: "feature/KEY-7-x",
+    upstream: null,
+    remotes: ["origin", "backup"],
+    worktreePresent: true,
+    workspaceRemoved: false,
+    head: "a".repeat(40),
+    targetHead: "b".repeat(40),
+    dirty: { tracked: 0, untracked: 0 },
+    unpushedCommits: null,
+    aheadBehind: { base: null, target: null, published: null },
+    publishedRemoteHead: null,
+    remoteReachable: true,
+    pr: null,
+    busy: null,
+    hasActiveAssignment: false,
+    hasLiveSharedSibling: false,
+    reattachSources: { local: null, published: null, archive: null },
+    rescueRefs: [],
+    actions: [
+      { id: "exportBranch", enabled: true, disabledReason: null },
+      { id: "snapshotCommit", enabled: true, disabledReason: null },
+    ],
+    prDefaults: null,
+    commands: { checkout: [], restoreRescue: null },
+    warnings: [],
+  };
+}
+
 describe("WorkbenchLifecycleActions dialogs", () => {
   it("opens and closes an in-app confirmation dialog with focus restored", async () => {
     renderActions(["archive"]);
@@ -253,139 +303,26 @@ describe("WorkbenchLifecycleActions dialogs", () => {
 
       expect(textOf(document.body)).toContain(expectedText);
       expect(textOf(document.body)).not.toContain("private server diagnostic");
-      expect(fetchMock).toHaveBeenCalledTimes(1);
+      // ADR-181 D17: the confirmation also reads git-state (the unpushed-work
+      // guard); the drop itself is POSTed exactly once.
+      expect(
+        fetchMock.mock.calls.filter(([, init]) => init?.method === "POST"),
+      ).toHaveLength(1);
       expect(refreshMock).not.toHaveBeenCalled();
     },
   );
 
-  it("requires a commit message before calling snapshot-commit", async () => {
-    const fetchMock = vi.fn<FetchLike>(async () => metadataResponse(true));
-
-    vi.stubGlobal("fetch", fetchMock);
-
-    renderActions(["exportBranch"]);
-
-    await click(
-      findButton(document.body, "workbenchLifecycle.action.snapshotCommit"),
-    );
-    await flushPromises();
-    await changeInput(findTextarea(document.body), "");
-
-    const commitButton = findButton(
-      document.body,
-      "workbenchLifecycle.dialog.commit",
-    );
-
-    expect(commitButton.disabled).toBe(true);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-
-  it("disables snapshot commit when the worktree is already clean", async () => {
-    const fetchMock = vi.fn<FetchLike>(async () => metadataResponse(false));
-
-    vi.stubGlobal("fetch", fetchMock);
-
-    renderActions(["exportBranch"]);
-
-    await click(
-      findButton(document.body, "workbenchLifecycle.action.snapshotCommit"),
-    );
-    await flushPromises();
-
-    expect(
-      findButton(document.body, "workbenchLifecycle.dialog.commit").disabled,
-    ).toBe(true);
-  });
-
-  it("pushes the run branch and exposes force-with-lease after a conflict", async () => {
-    const exportBodies: Record<string, unknown>[] = [];
-    const fetchMock = vi.fn<FetchLike>(async (input, init) => {
-      const url = String(input);
-
-      if (url.endsWith("/handoff-metadata")) {
-        return metadataResponse(false);
-      }
-
-      if (url.endsWith("/export-branch")) {
-        exportBodies.push(
-          JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>,
-        );
-
-        if (exportBodies.length === 1) {
-          return jsonResponse(
-            {
-              code: "CONFLICT",
-              message: "remote branch has newer commits",
-              pushRejected: "non_fast_forward",
-              canForce: true,
-              retryHint: "Review the remote branch or force push.",
-            },
-            { status: 409 },
-          );
-        }
-
-        return jsonResponse({
-          ok: true,
-          runId: "run-1",
-          branch: "maister/run-1",
-          remote: "origin",
-          pushedRef: "origin/maister/run-1",
-          snapshotCreated: false,
-          checkoutCommands: [
-            "git -C /repo fetch origin maister/run-1",
-            "git -C /repo switch maister/run-1",
-          ],
-        });
-      }
-
-      throw new Error(`unexpected fetch: ${url}`);
-    });
-
-    vi.stubGlobal("fetch", fetchMock);
-
-    renderActions(["exportBranch"]);
-
-    await click(
-      findButton(document.body, "workbenchLifecycle.action.exportBranch"),
-    );
-    await flushPromises();
-    await click(findButton(document.body, "workbenchLifecycle.dialog.push"));
-    await flushPromises();
-
-    expect(textOf(document.body)).toContain("current run state conflicts");
-    expect(textOf(document.body)).not.toContain(
-      "remote branch has newer commits",
-    );
-    expect(textOf(document.body)).not.toContain("Review the remote branch");
-
-    await click(
-      findButton(document.body, "workbenchLifecycle.dialog.forcePush"),
-    );
-    await flushPromises();
-
-    expect(exportBodies).toEqual([
-      {
-        remote: "origin",
-        snapshotDirty: false,
-        commitMessage: null,
-        force: false,
-      },
-      {
-        remote: "origin",
-        snapshotDirty: false,
-        commitMessage: null,
-        force: true,
-      },
-    ]);
-    expect(textOf(document.body)).toContain("origin/maister/run-1");
-    expect(refreshMock).toHaveBeenCalled();
-  });
-
+  // ADR-181 C30: the handoff form moved, unchanged, into the git panel's
+  // Publish section.
   it("validates handoff fields, renders backend errors, and copies checkout commands", async () => {
     let handoffCalls = 0;
     let lastHandoffBody: Record<string, unknown> | null = null;
     const fetchMock = vi.fn<FetchLike>(async (input, init) => {
       const url = String(input);
+
+      if (url.endsWith("/git-state")) {
+        return jsonResponse(usableGitState());
+      }
 
       if (url.endsWith("/handoff-metadata")) {
         return metadataResponse(false);
@@ -422,14 +359,17 @@ describe("WorkbenchLifecycleActions dialogs", () => {
 
     vi.stubGlobal("fetch", fetchMock);
 
-    renderActions(["exportBranch"]);
+    renderDetail(["exportBranch", "snapshotCommit"]);
 
-    await click(
-      findButton(document.body, "workbenchLifecycle.action.exportBranch"),
-    );
+    await click(byTestId(document.body, "workbench-git-open"));
     await flushPromises();
-    await changeInput(findSelect(document.body), "backup");
-    await changeInput(findInput(document.body), "bad..branch");
+    await click(byTestId(document.body, "git-panel-handoff-open"));
+    await flushPromises();
+
+    const handoff = byTestId(document.body, "git-panel-handoff");
+
+    await changeInput(findSelect(handoff), "backup");
+    await changeInput(findInput(handoff), "bad..branch");
 
     expect(
       findButton(document.body, "workbenchLifecycle.dialog.handoff").disabled,
@@ -438,7 +378,7 @@ describe("WorkbenchLifecycleActions dialogs", () => {
       "workbenchLifecycle.dialog.invalidBranch",
     );
 
-    await changeInput(findInput(document.body), "maister/handoff/run-1");
+    await changeInput(findInput(handoff), "maister/handoff/run-1");
     await click(findButton(document.body, "workbenchLifecycle.dialog.handoff"));
     await flushPromises();
 
@@ -589,9 +529,15 @@ describe("WorkbenchLifecycleActions rail menu", () => {
     expect(sheet.querySelector('[data-testid="menu-open"]')).not.toBeNull();
     expect(sheet.querySelector('[data-testid="menu-archive"]')).not.toBeNull();
     expect(sheet.querySelector('[data-testid="menu-drop"]')).not.toBeNull();
-    // flow runs are not renamed here; snapshot/push stay in the run card.
+    // flow runs are not renamed here.
     expect(sheet.querySelector('[data-testid="menu-rename"]')).toBeNull();
-    expect(sheet.querySelector('[data-testid="menu-exportBranch"]')).toBeNull();
+    // ADR-181 C34: publish is reachable from the menu — as a deep link into
+    // the run's git panel, never a blind mutation.
+    expect(
+      sheet
+        .querySelector('[data-testid="menu-exportBranch"]')
+        ?.getAttribute("href"),
+    ).toBe("/runs/run-1?git=publish");
   });
 
   it("stop & archive posts to the combined flow endpoint", async () => {

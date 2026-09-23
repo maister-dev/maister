@@ -15,6 +15,7 @@ import {
 } from "@/components/board/task-card-editing";
 import { TaskDecomposition } from "@/components/board/task-decomposition";
 import { TaskQueueControls } from "@/components/board/task-queue-controls";
+import { WorkbenchLifecycleActions } from "@/components/workbench/lifecycle-actions";
 
 export interface TaskCardProps {
   card: BacklogCard;
@@ -240,6 +241,23 @@ export function TaskCard({
           />
         ) : null}
       </div>
+      {/* ADR-181 D14: a Failed/Abandoned latest run's work stays reachable from
+          the card while its worktree is usable (the DTO is null otherwise). */}
+      {card.latestRun && card.latestRun.lifecycleActions.length > 0 ? (
+        <div
+          className="relative z-10"
+          data-testid="task-card-latest-run-actions"
+        >
+          <WorkbenchLifecycleActions
+            workspaceAvailable
+            actions={card.latestRun.lifecycleActions}
+            runHref={`/runs/${card.latestRun.id}`}
+            runId={card.latestRun.id}
+            runKind={card.latestRun.kind}
+            variant="menu"
+          />
+        </div>
+      ) : null}
     </article>
   );
 }

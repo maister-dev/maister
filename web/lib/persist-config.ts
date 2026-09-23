@@ -40,6 +40,7 @@ export type PersistConfigProject = {
   name: string;
   mainBranch: string;
   branchPrefix: string;
+  publicBranchTemplate: string;
   defaultRunnerId: string | null;
   promotionMode: string | null;
   maisterYamlPath: string | null;
@@ -165,6 +166,7 @@ export async function persistProjectConfig(opts: {
       name: project.name,
       mainBranch: project.mainBranch,
       branchPrefix: project.branchPrefix,
+      publicBranchTemplate: project.publicBranchTemplate,
       defaultRunnerId: project.defaultRunnerId,
       promotionMode: project.promotionMode,
     },

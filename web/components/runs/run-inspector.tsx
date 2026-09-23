@@ -200,26 +200,17 @@ function InspectorActionItem({
         )}
       />
       <div className="min-w-0">
-        {action.href && !action.disabled ? (
-          <a
-            className={clsx(
-              "text-[13px] font-semibold hover:underline",
-              danger ? "text-[#d9534f]" : "text-ink",
-            )}
-            href={action.href}
-          >
-            {action.label}
-          </a>
-        ) : (
-          <span
-            className={clsx(
-              "text-[13px] font-semibold",
-              danger ? "text-[#d9534f]" : "text-ink",
-            )}
-          >
-            {action.label}
-          </span>
-        )}
+        <a
+          aria-disabled={action.disabled ? "true" : undefined}
+          className={clsx(
+            "text-[13px] font-semibold hover:underline",
+            danger ? "text-[#d9534f]" : "text-ink",
+            action.disabled && "opacity-70",
+          )}
+          href={action.href ?? undefined}
+        >
+          {action.label}
+        </a>
         {action.description ? (
           <p className="m-0 mt-1 text-[12px] text-mute">{action.description}</p>
         ) : null}
@@ -249,10 +240,13 @@ export function RunInspector({
 }: RunInspectorProps): ReactElement {
   const [activeTab, setActiveTab] = useState<RunInspectorTab>("overview");
   const changeText = summaryText(changeSummary);
-  const dangerActions = actions.filter((action) =>
+  // ADR-181 C34: only actions with a target are listed, each as a link; a
+  // control with no deep link (stop, promote, archive, drop) lives on the page.
+  const linked = actions.filter((action) => Boolean(action.href));
+  const dangerActions = linked.filter((action) =>
     DANGER_ACTIONS.has(action.id),
   );
-  const normalActions = actions.filter(
+  const normalActions = linked.filter(
     (action) => !DANGER_ACTIONS.has(action.id),
   );
 

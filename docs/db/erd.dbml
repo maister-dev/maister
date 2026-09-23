@@ -1741,6 +1741,7 @@ table projects {
   provider text
   main_branch text [not null, default: 'main']
   branch_prefix text [not null, default: 'maister/']
+  public_branch_template text [not null, default: 'feature/{task_key}-{slug}']
   maister_yaml_path text
   default_runner_id text
   sync_strategy_default text [not null, default: 'rebase']
@@ -2681,9 +2682,13 @@ table workspaces {
   pr_has_conflicts boolean
   pr_merged_at "timestamp with time zone"
   pr_merge_commit_sha text
+  published_branch text
+  published_remote text
+  published_at "timestamp with time zone"
 
   indexes {
     (lifecycle_operation_state, lifecycle_operation_lease_expires_at) [name: 'workspaces_lifecycle_claim_idx']
+
 
 
 

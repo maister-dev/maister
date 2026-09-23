@@ -63,6 +63,21 @@ const { exportWorkbenchBranch } = await import(
   "@/lib/workbench-lifecycle/service"
 );
 const { discardWorkbenchChanges } = await import("@/lib/workbench-git/service");
+const { depsFromOptions } = await import("@/lib/workbench-lifecycle/service");
+
+// The default deps load `@/lib/authz` lazily, and vitest 2.1.9 skips a manual
+// mock when the importer's shared callstack already holds it: two racers taking
+// that import concurrently hand the second one the REAL module (which then
+// fails loading next-auth). The race under test is the lifecycle claim, so the
+// session and role checks are injected; every other dep — the fact loader, the
+// FOR UPDATE claim, git — is the production default.
+function raceDeps() {
+  return {
+    ...depsFromOptions(undefined),
+    requireActiveSession: async () => ({ id: "user-1" }),
+    authorize: async () => undefined,
+  };
+}
 
 let testDatabase: StartedPostgresTestDb;
 let root: string;
@@ -194,10 +209,11 @@ describe("publish vs discard on one workspace", () => {
         snapshotDirty: true,
         commitMessage: "snapshot before publish",
         force: false,
+        deps: raceDeps(),
       }).finally(firstSettled.resolve);
-      const discard = discardWorkbenchChanges(run.runId).finally(
-        firstSettled.resolve,
-      );
+      const discard = discardWorkbenchChanges(run.runId, {
+        deps: raceDeps(),
+      }).finally(firstSettled.resolve);
 
       const results = await Promise.allSettled([publish, discard]);
 

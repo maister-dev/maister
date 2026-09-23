@@ -39,14 +39,12 @@ beforeAll(async () => {
   flowId = randomUUID();
   taskId = randomUUID();
 
-  await db.insert(schema.projects).values({
-    taskKey: `T${randomUUID().slice(0, 8)}`.toUpperCase(),
-    id: projectId,
-    slug: `proj-${projectId.slice(0, 8)}`,
-    name: "Test",
-    repoPath: `/tmp/proj-${projectId.slice(0, 8)}`,
-    maisterYamlPath: "/tmp/m.yaml",
-  });
+  // Raw, naming only these columns: this suite replays an OLDER schema, and a
+  // drizzle insert emits every column, including ones later migrations add.
+  await db.execute(sql`
+    INSERT INTO "projects" ("id", "slug", "name", "repo_path", "maister_yaml_path", "task_key")
+    VALUES (${projectId}, ${`proj-${projectId.slice(0, 8)}`}, 'Test', ${`/tmp/proj-${projectId.slice(0, 8)}`}, '/tmp/m.yaml', ${`T${randomUUID().slice(0, 8)}`.toUpperCase()})
+  `);
   await db
     .insert(schema.platformAcpRunners)
     .values(testPlatformRunnerRow(executorId, "claude"));

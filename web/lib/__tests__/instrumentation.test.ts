@@ -99,11 +99,14 @@ describe("instrumentation DB boot boundary", () => {
     expect(startSchedulerTimer).not.toHaveBeenCalled();
   });
 
+  // The first case to boot fully: `registerNodeRuntime` loads the whole
+  // node-runtime graph through dynamic imports, and that one-time module load
+  // (~4 s idle) is not this case's behaviour — so it gets its own budget.
   it("starts only the scheduler fallback timer after boot recovery", async () => {
     await register();
 
     expect(startSchedulerTimer).toHaveBeenCalledOnce();
-  });
+  }, 30_000);
 
   it("does nothing on the edge runtime", async () => {
     process.env.NEXT_RUNTIME = "edge";

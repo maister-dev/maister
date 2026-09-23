@@ -33,6 +33,7 @@ import {
 } from "@/lib/queries/board-progress";
 import {
   lifecycleActionsForWorkspace,
+  presenceForRows,
   type WorkbenchLifecycleAction,
 } from "@/lib/queries/portfolio";
 import { computeReadinessByRun } from "@/lib/queries/readiness-batch";
@@ -139,6 +140,18 @@ export interface BacklogCard {
   // carrier or an as-plan task) — the orchestrator task it belongs to, so the
   // card carries its own provenance and a relaunch can be warned about.
   parentTask: ParentTaskRef | null;
+  // ADR-181 D14: a task whose latest run is Failed/Abandoned derives to
+  // Backlog, where its work used to be reachable only by URL. Set ONLY while
+  // that run's worktree is usable (row not removed AND the path exists) — a
+  // card never offers a git action against a worktree that is gone.
+  latestRun: BacklogLatestRun | null;
+}
+
+export interface BacklogLatestRun {
+  id: string;
+  kind: "flow";
+  status: RunStatus;
+  lifecycleActions: WorkbenchLifecycleAction[];
 }
 
 export interface ParentTaskRef {
@@ -547,8 +560,11 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
       capabilityAgent: activeSessionCapabilityAgent(runs.id),
       runnerSnapshot: activeSessionRunnerSnapshot(runs.id),
       workspaceId: workspaces.id,
+      worktreePath: workspaces.worktreePath,
       archivedBranch: workspaces.archivedBranch,
       removedAt: workspaces.removedAt,
+      publishedBranch: workspaces.publishedBranch,
+      prUrl: workspaces.prUrl,
       prNumber: workspaces.prNumber,
       prState: workspaces.prState,
       prHasConflicts: workspaces.prHasConflicts,
@@ -677,6 +693,23 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
     }
   }
 
+  const presence = await presenceForRows([...latestRunByTask.values()]);
+  const workspaceFacts = (row: (typeof runRows)[number]) => ({
+    runKind: "flow" as const,
+    runStatus: row.status,
+    dialogStatus: null,
+    hasWorkspace: Boolean(row.workspaceId),
+    removedAt: row.removedAt,
+    archivedBranch: row.archivedBranch,
+    claimOwnerUserId: null,
+    viewerUserId: null,
+    worktreePresent: presence.get(row.worktreePath) ?? false,
+    publishedBranch: row.publishedBranch,
+    prUrl: row.prUrl,
+    prState: row.prState ?? null,
+    promotionState: row.promotionState,
+  });
+
   let backlogPos = 0;
   let merged7d = 0;
   const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
@@ -730,6 +763,19 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
         relations: relationsByTask.get(task.taskId) ?? [],
         childTasks: childTasksByTask.get(task.taskId) ?? [],
         parentTask: parentTaskByTask.get(task.taskId) ?? null,
+        latestRun:
+          run !== null &&
+          run.removedAt === null &&
+          presence.get(run.worktreePath) === true
+            ? {
+                id: run.runId,
+                kind: "flow",
+                status: run.status as RunStatus,
+                lifecycleActions: lifecycleActionsForWorkspace(
+                  workspaceFacts(run),
+                ),
+              }
+            : null,
       });
       backlogPos += 1;
       continue;
@@ -808,14 +854,7 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
         runStatus: run.status,
         acpSessionId: run.acpSessionId,
       }),
-      lifecycleActions: lifecycleActionsForWorkspace({
-        runKind: "flow",
-        runStatus: run.status,
-        dialogStatus: null,
-        hasWorkspace: Boolean(run.workspaceId),
-        removedAt: run.removedAt,
-        archivedBranch: run.archivedBranch,
-      }),
+      lifecycleActions: lifecycleActionsForWorkspace(workspaceFacts(run)),
       // Done cards always read "ready" — terminal, no actionable readiness badge.
       readiness:
         cardStatus === "done"

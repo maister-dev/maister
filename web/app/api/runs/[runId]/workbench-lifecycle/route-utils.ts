@@ -14,7 +14,11 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-function httpStatusForCode(code: string): number {
+function httpStatusForCode(code: string, reason?: unknown): number {
+  // C29: an unknown run is a 404 on every family-A route (the shared loader
+  // tags it), not the 409 its PRECONDITION code would otherwise map to.
+  if (code === "PRECONDITION" && reason === "run_not_found") return 404;
+
   switch (code) {
     case "UNAUTHENTICATED":
       return 401;
@@ -62,6 +66,13 @@ function errorPayload(err: MaisterError): Record<string, unknown> {
       ? { canForce: details.canForce }
       : {}),
     ...(retryHint ? { retryHint } : {}),
+    // D24: the UI branches on `code` + `details.reason`, so the token is
+    // forwarded — and ONLY the token: other `details` fields are server-side
+    // context and never cross this boundary. The top-level `reason` enum above
+    // is untouched.
+    ...(typeof err.details?.reason === "string"
+      ? { details: { reason: err.details.reason } }
+      : {}),
   };
 }
 
@@ -70,7 +81,7 @@ export function errorResponse(
   ctx: { runId: string; route: string },
 ): NextResponse {
   if (isMaisterError(err)) {
-    const status = httpStatusForCode(err.code);
+    const status = httpStatusForCode(err.code, err.details?.reason);
 
     log.warn(
       {

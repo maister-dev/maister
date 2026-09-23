@@ -1390,6 +1390,8 @@
     "concurrencyDesc": "макс. одновременно работающих воркспейсов",
     "branchPrefix": "Префикс ветки",
     "branchPrefixDesc": "применяется к каждой ветке worktree",
+    "publicBranchTemplate": "Публичное имя ветки",
+    "publicBranchTemplateDesc": "шаблон, под которым ветка прогона публикуется (maister.yaml project.public_branch_template)",
     "launchBlocked": "Заблокирована:",
     "launchBlockedShort": "заблокирована",
     "launchFlagged": "Помечена на рассмотрение — разрешите перед запуском.",
@@ -3846,11 +3848,16 @@
       "archive": "Архив",
       "drop": "Удалить",
       "snapshotCommit": "Коммит",
-      "exportBranch": "Экспорт",
+      "exportBranch": "Опубликовать",
       "open": "Открыть прогон",
       "rename": "Переименовать",
       "stopArchive": "Остановить и архивировать",
-      "stopDrop": "Остановить и удалить"
+      "stopDrop": "Остановить и удалить",
+      "discardChanges": "Отменить изменения",
+      "update": "Обновить",
+      "openPr": "Открыть PR",
+      "finalizePr": "Завершить по PR",
+      "reattach": "Вернуть рабочую копию"
     },
     "tooltip": {
       "stop": "Завершить прогон и закрыть его сессию — рабочая копия сохранится для ревью. Чтобы только прервать текущий ход, используйте «Стоп» в поле ввода.",
@@ -3867,27 +3874,17 @@
     "dialog": {
       "cancel": "Отмена",
       "confirm": "Подтвердить",
-      "commit": "Коммит",
-      "push": "Push",
-      "forcePush": "Force push",
       "handoff": "Создать ветку",
       "copy": "Копировать",
-      "clean": "Worktree чистый.",
-      "dirty": "Сначала закоммитьте изменения, затем push ветки прогона.",
-      "commitMessage": "Сообщение коммита",
       "remote": "Remote",
-      "runBranch": "Ветка прогона: {branch}",
       "handoffBranch": "Опциональная ветка передачи",
       "handoffHelp": "Создает и пушит отдельную ветку на текущем HEAD worktree.",
       "invalidRemote": "Remote может содержать буквы, цифры, _, ., / или - и не может начинаться с -.",
       "invalidBranch": "Ветка может содержать буквы, цифры, _, ., / или - и не может содержать .., @{, завершающий / или .lock.",
-      "snapshotDone": "Snapshot-коммит {commit}",
       "title": {
         "stop": "Остановить прогон",
         "archive": "Архивировать workbench",
         "drop": "Удалить workbench",
-        "snapshotCommit": "Snapshot-коммит",
-        "exportBranch": "Экспорт ветки",
         "menu": "Действия прогона",
         "stopArchive": "Остановить и архивировать",
         "stopDrop": "Остановить и удалить"
@@ -3911,6 +3908,141 @@
       "UNAUTHENTICATED": "Войдите в систему повторно, чтобы выполнить действие.",
       "UNAUTHORIZED": "У вас нет разрешения на это действие.",
       "CRASH": "Сервер не смог выполнить действие. Проверьте логи web-сервера для этого запуска."
+    }
+  },
+  "workbenchGit": {
+    "title": "Git-панель",
+    "loading": "Читаю состояние git…",
+    "loadFailed": "Не удалось прочитать состояние git.",
+    "cancel": "Отмена",
+    "publicChip": "Опубликовано как {remote}/{branch}",
+    "prChip": "PR #{number} · {state}",
+    "prState": {
+      "open": "открыт",
+      "merged": "слит",
+      "closed": "закрыт",
+      "unknown": "не проверен"
+    },
+    "busy": "Занято: {name}",
+    "section": {
+      "tree": "Рабочее дерево",
+      "publish": "Публикация",
+      "update": "Обновление",
+      "pr": "Pull request",
+      "reattach": "Возврат рабочей копии",
+      "commands": "Команды"
+    },
+    "tree": {
+      "dirty": "Изменено: {tracked}, не отслеживается: {untracked}",
+      "clean": "Чисто — коммитить нечего"
+    },
+    "commit": {
+      "message": "Сообщение коммита",
+      "submit": "Закоммитить"
+    },
+    "discard": {
+      "title": "Отменить изменения?",
+      "body": "Сначала все изменения сохраняются в rescue-ref, затем рабочая копия сбрасывается к HEAD.",
+      "confirm": "Отменить изменения",
+      "done": "Сохранено в {ref}"
+    },
+    "publish": {
+      "remote": "Remote",
+      "name": "Публичное имя ветки",
+      "force": "Перезаписать удалённую ветку (force-with-lease)",
+      "unpushed": "Коммитов нет на remote: {count}",
+      "done": "Опубликовано: {ref}",
+      "handoff": "Handoff-ветка…"
+    },
+    "reattach": {
+      "local": "Локальная ветка",
+      "published": "Опубликованная ветка",
+      "archive": "Архивный ref"
+    },
+    "commands": {
+      "checkout": "Забрать ветку на другой машине",
+      "unpublished": "Опубликуйте ветку, чтобы забрать её на другой машине.",
+      "restoreRescue": "Вернуть последнюю отмену",
+      "copy": "Копировать"
+    },
+    "hint": {
+      "commitOrDiscardFirst": "Сначала закоммитьте или отмените изменения",
+      "cleanTree": "Рабочее дерево чистое"
+    },
+    "done": {
+      "snapshotCommit": "Закоммичено",
+      "discardChanges": "Изменения отменены и сохранены в rescue-ref",
+      "exportBranch": "Опубликовано",
+      "update": "Обновлено",
+      "openPr": "Pull request открыт",
+      "finalizePr": "Завершено",
+      "reattach": "Рабочая копия возвращена"
+    },
+    "guard": {
+      "unpushed": "Нет ни на одном remote: коммитов — {commits}, изменённых файлов — {files}.",
+      "publishThen": {
+        "archive": "Опубликовать и архивировать",
+        "drop": "Опубликовать и удалить"
+      }
+    },
+    "disabledReason": {
+      "live-workbench": "Прогон активен — сначала остановите его",
+      "human-owned": "Прогон забран другим оператором",
+      "missing-workspace": "У прогона нет рабочей копии",
+      "removed-workspace": "Рабочая копия удалена — верните её",
+      "worktree-missing": "Каталог рабочей копии пропал — верните её",
+      "worktree-present": "Рабочая копия уже на месте",
+      "busy": "Рабочая копия занята другой операцией",
+      "unsupported-status": "Недоступно в этом статусе прогона",
+      "unsupported-run": "Недоступно для такого прогона",
+      "promoted": "Уже продвинут",
+      "no-remote": "У репозитория нет remote",
+      "not-published": "Сначала опубликуйте ветку",
+      "no-reattach-source": "Не из чего вернуть рабочую копию",
+      "pr-missing": "PR не записан",
+      "pr-closed": "PR закрыт"
+    },
+    "errors": {
+      "public_name_fixed": "Ветка уже опубликована под другим именем.",
+      "public_branch_template_invalid": "Шаблон имени ветки проекта не даёт корректного имени — введите имя вручную.",
+      "clean_worktree": "Рабочее дерево чистое — делать нечего.",
+      "dirty_worktree": "Сначала закоммитьте или отмените изменения.",
+      "not_published": "Сначала опубликуйте ветку.",
+      "published_remote_not_origin": "Сначала опубликуйте ветку в origin.",
+      "publish_stale": "Опубликованная ветка отстаёт от рабочей копии — сначала опубликуйте.",
+      "target_branch_unknown": "Целевая ветка неизвестна.",
+      "provider_unsupported": "Провайдер этого репозитория не умеет открывать pull request.",
+      "agent_requires_review": "AI-разрешение конфликтов доступно только в статусе Review.",
+      "base_branch_unknown": "Базовая ветка неизвестна.",
+      "pr_missing": "Для этого прогона не записан pull request.",
+      "pr_closed": "Pull request закрыт.",
+      "target_drift": "Целевая ветка сдвинулась после ревью.",
+      "review_only_field": "Эта опция действует только в статусе Review.",
+      "no_reattach_source": "Не из чего вернуть рабочую копию.",
+      "worktree_path_occupied": "Каталог рабочей копии уже занят.",
+      "run_not_found": "Прогон больше не существует.",
+      "busy": "Рабочая копия занята другой операцией — повторите, когда она закончится.",
+      "human_owned": "Этот прогон забран другим оператором.",
+      "live_workbench": "Прогон активен — сначала остановите его.",
+      "missing_workspace": "У прогона нет рабочей копии.",
+      "removed_workspace": "Рабочая копия удалена — сначала верните её.",
+      "worktree_missing": "Каталог рабочей копии пропал — сначала верните её.",
+      "worktree_present": "Рабочая копия уже на месте.",
+      "unsupported_status": "Недоступно в этом статусе прогона.",
+      "unsupported_run": "Недоступно для такого прогона.",
+      "promoted": "Прогон уже продвинут.",
+      "no_remote": "У репозитория нет remote.",
+      "workspace_git_identity_invalid": "Настройте user.name и user.email для пользователя сервера и повторите.",
+      "workspace_preservation_failed": "Не удалось сначала сохранить рабочую копию, поэтому ничего не изменено.",
+      "non_fast_forward": "На удалённой ветке есть более новые коммиты.",
+      "PRECONDITION": "Состояние прогона не позволяет это действие.",
+      "CONFLICT": "Текущее состояние прогона конфликтует с действием.",
+      "CONFIG": "Запрос отклонён как некорректный.",
+      "EXECUTOR_UNAVAILABLE": "Git или remote недоступны — повторите.",
+      "UNAUTHENTICATED": "Войдите снова.",
+      "UNAUTHORIZED": "Нет прав на это действие.",
+      "CRASH": "Сервер неожиданно завершил операцию с ошибкой.",
+      "generic": "Действие не выполнено."
     }
   },
   "projectMembers": {

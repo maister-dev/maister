@@ -10,6 +10,7 @@ import {
   projects as projectsTable,
   runs as runsTable,
   scratchRuns as scratchRunsTable,
+  tasks as tasksTable,
   workspaces as workspacesTable,
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
@@ -55,17 +56,28 @@ type Tables = {
   scratch_runs: Row[];
   workspaces: Row[];
   projects: Row[];
+  // ADR-181 D5: the public name's `{task_key}` / `{slug}` come from the task.
+  tasks: Row[];
 };
 
-const dbState: { tables: Tables } = {
-  tables: { runs: [], scratch_runs: [], workspaces: [], projects: [] },
-};
+function emptyTables(): Tables {
+  return {
+    runs: [],
+    scratch_runs: [],
+    workspaces: [],
+    projects: [],
+    tasks: [],
+  };
+}
+
+const dbState: { tables: Tables } = { tables: emptyTables() };
 
 function tableOf(t: unknown): keyof Tables {
   if (t === runsTable) return "runs";
   if (t === scratchRunsTable) return "scratch_runs";
   if (t === workspacesTable) return "workspaces";
   if (t === projectsTable) return "projects";
+  if (t === tasksTable) return "tasks";
   throw new Error("unknown table");
 }
 
@@ -89,10 +101,18 @@ function selectChain() {
 function updateChain(table: unknown) {
   return {
     set: (vals: Row) => ({
-      where: async (_pred?: unknown) => {
-        for (const row of dbState.tables[tableOf(table)]) {
+      // Awaitable as-is, and `.returning()` for a CAS writer (ADR-181's
+      // `recordPublished` counts the rows its fence matched).
+      where: (_pred?: unknown) => {
+        const rows = dbState.tables[tableOf(table)];
+
+        for (const row of rows) {
           Object.assign(row, vals);
         }
+
+        return Object.assign(Promise.resolve(undefined), {
+          returning: async () => rows.map((row) => ({ id: row.id })),
+        });
       },
     }),
   };
@@ -141,6 +161,10 @@ vi.mock("@/lib/worktree", () => ({
   })),
   findTargetMergeByRunId: vi.fn(async () => null),
   headCommit: vi.fn(async () => "source-head-000"),
+  // ADR-181 D4: no upstream yet → the template names the PR branch; no remote
+  // head yet → the lease expects the ref absent.
+  branchUpstream: vi.fn(async () => null),
+  remoteBranchHead: vi.fn(async () => null),
   promoteLocalMerge: vi.fn(async () => "merged00"),
   promoteRebaseMerge: vi.fn(async () => "rebased00"),
   pushBranch: vi.fn(async () => undefined),
@@ -199,9 +223,11 @@ function seedGithubFlowRun(
     currentStepId: "review-node",
     endedAt: null,
   });
+  dbState.tables.tasks.push({ id: "task-1", number: 5, title: "Ship it" });
   dbState.tables.projects.push({
     id: "project-1",
     slug: "demo",
+    taskKey: "DEMO",
     mainBranch: "main",
     provider: overrides.provider ?? "github",
     repoUrl:
@@ -245,7 +271,7 @@ async function expectMaisterCode(p: Promise<unknown>, code: string) {
 }
 
 beforeEach(() => {
-  dbState.tables = { runs: [], scratch_runs: [], workspaces: [], projects: [] };
+  dbState.tables = emptyTables();
   vi.mocked(branchExists).mockReset().mockResolvedValue(true);
   vi.mocked(headCommit).mockReset().mockResolvedValue("source-head-000");
   vi.mocked(promoteLocalMerge).mockReset().mockResolvedValue("merged00");
@@ -306,22 +332,30 @@ describe("promoteRun — pull_request happy path (github)", () => {
     expect(selectPrAdapter).toHaveBeenCalledWith("github", expect.anything());
     expect(preflight).toHaveBeenCalledTimes(1);
 
-    // Branch pushed before the PR is opened.
+    // Branch pushed before the PR is opened — under its PUBLIC name (ADR-181
+    // D4), with an upstream so a later panel publish keeps the same name.
     expect(pushBranch).toHaveBeenCalledWith({
       projectRepoPath: "/repos/demo",
       remote: "origin",
       branch: "maister/flow-1",
+      remoteBranch: "feature/DEMO-5-ship-it",
+      setUpstream: true,
+    });
+    expect(dbState.tables.workspaces[0]).toMatchObject({
+      publishedBranch: "feature/DEMO-5-ship-it",
+      publishedRemote: "origin",
     });
     const pushOrder = vi.mocked(pushBranch).mock.invocationCallOrder[0];
     const prOrder = createOrUpdatePr.mock.invocationCallOrder[0];
 
     expect(pushOrder).toBeLessThan(prOrder);
 
-    // createOrUpdatePr received the source/target branches.
+    // createOrUpdatePr received the source/target branches — the PR head is
+    // the public name the push created.
     expect(createOrUpdatePr).toHaveBeenCalledWith(
       expect.objectContaining({
         repoPath: "/repos/demo",
-        sourceBranch: "maister/flow-1",
+        sourceBranch: "feature/DEMO-5-ship-it",
         targetBranch: "main",
       }),
     );
@@ -594,7 +628,13 @@ describe("promoteRun — pull_request + commits=squash_rework (C2)", () => {
 
     // A rewrite happened → the (possibly already-pushed) PR branch is forced.
     expect(pushBranch).toHaveBeenCalledWith(
-      expect.objectContaining({ branch: "maister/flow-1", force: true }),
+      expect.objectContaining({
+        branch: "maister/flow-1",
+        force: true,
+        // ADR-181 D4: an explicit lease read BEFORE the push (the remote ref
+        // is absent here, so the lease expects it absent).
+        leaseSha: null,
+      }),
     );
     expect(res.ok).toBe(true);
     expect(dbState.tables.runs[0].status).toBe("Done");

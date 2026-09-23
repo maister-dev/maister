@@ -76,7 +76,8 @@ function deps(
   over: Partial<WorkbenchLifecycleDeps> = {},
 ): WorkbenchLifecycleDeps {
   return {
-    requireActiveSession: vi.fn(async () => undefined),
+    // ADR-181 D2: the binding returns the authenticated user (the viewer).
+    requireActiveSession: vi.fn(async () => ({ id: "user-1" })),
     loadContext: vi.fn(async () => context()),
     authorize: vi.fn(async () => undefined),
     executionHosts: memoryExecutionHosts(createFakeExecutionHost()),
@@ -103,6 +104,8 @@ function deps(
     statusPorcelain: vi.fn(async () => ""),
     snapshotDirtyWorktree: vi.fn(async () => true),
     pushBranch: vi.fn(async () => undefined),
+    branchUpstream: vi.fn(async () => null),
+    recordPublished: vi.fn(async () => undefined),
     claimLifecycleOperation: claimOnce(),
     renewLifecycleOperationLease: vi.fn(async () => ({
       attemptId: "attempt-1",

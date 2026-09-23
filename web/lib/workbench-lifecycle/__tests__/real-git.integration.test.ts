@@ -12,6 +12,7 @@ import {
   memoryExecutionHosts,
 } from "@/test-support/fake-execution-host";
 import {
+  branchUpstream,
   createBranchAtHead,
   headCommit,
   listRemotes,
@@ -136,13 +137,28 @@ function lifecycleContext(workbench: GitWorkbench): LifecycleContext {
   };
 }
 
+// ADR-181 D4: a context carrying the task the public name is rendered from
+// (`feature/{task_key}-{slug}` → `feature/RG-3-ship-export`).
+const PUBLIC_BRANCH = "feature/RG-3-ship-export";
+
+function publishingContext(workbench: GitWorkbench): LifecycleContext {
+  const ctx = lifecycleContext(workbench);
+
+  return {
+    ...ctx,
+    project: { ...ctx.project, taskKey: "RG" },
+    task: { number: 3, title: "Ship export" },
+  };
+}
+
 function realGitDeps(
   ctx: LifecycleContext,
   worktreesRootPath: string,
   records: LifecycleRecords,
 ): WorkbenchLifecycleDeps {
   return {
-    requireActiveSession: vi.fn(async () => undefined),
+    // ADR-181 D2: the binding returns the authenticated user (the viewer).
+    requireActiveSession: vi.fn(async () => ({ id: "user-real" })),
     loadContext: vi.fn(async () => ctx),
     authorize: vi.fn(async () => undefined),
     executionHosts: memoryExecutionHosts(createFakeExecutionHost()),
@@ -168,6 +184,9 @@ function realGitDeps(
     statusPorcelain,
     snapshotDirtyWorktree,
     pushBranch,
+    branchUpstream,
+    // No database here: the publication record is asserted as a call.
+    recordPublished: vi.fn(async () => undefined),
     claimLifecycleOperation: vi.fn(async () => ({
       attemptId: "attempt-real",
       leaseExpiresAt: new Date("2026-06-09T08:05:00.000Z"),
@@ -293,11 +312,11 @@ describe("workbench lifecycle real git integration", () => {
     );
   });
 
-  it("export pushes the existing run branch to the selected remote", async () => {
+  it("export pushes the run branch to the selected remote under its public name", async () => {
     const workbench = await createGitWorkbench("run-export");
     const store = records();
     const deps = realGitDeps(
-      lifecycleContext(workbench),
+      publishingContext(workbench),
       workbench.worktreesRoot,
       store,
     );
@@ -319,7 +338,9 @@ describe("workbench lifecycle real git integration", () => {
       ok: true,
       branch: workbench.branch,
       remote: "origin",
-      pushedRef: `origin/${workbench.branch}`,
+      pushedRef: `origin/${PUBLIC_BRANCH}`,
+      publishedBranch: PUBLIC_BRANCH,
+      nameSource: "template",
       snapshotCreated: false,
     });
 
@@ -327,17 +348,35 @@ describe("workbench lifecycle real git integration", () => {
       workbench.bareRemote,
       "show-ref",
       "--verify",
-      `refs/heads/${workbench.branch}`,
+      `refs/heads/${PUBLIC_BRANCH}`,
     );
 
     expect(remoteRef).toContain(snapshot.commit);
+    // The internal name never reaches the remote; the upstream names the
+    // public one, so the next publish keeps it.
+    await expect(
+      git(
+        workbench.bareRemote,
+        "show-ref",
+        "--verify",
+        `refs/heads/${workbench.branch}`,
+      ),
+    ).rejects.toThrow();
+    expect(
+      (
+        await git(workbench.repo, "config", `branch.${workbench.branch}.merge`)
+      ).trim(),
+    ).toBe(`refs/heads/${PUBLIC_BRANCH}`);
+    expect(deps.recordPublished).toHaveBeenCalledWith(
+      expect.objectContaining({ remote: "origin", branch: PUBLIC_BRANCH }),
+    );
   });
 
   it("export reports non-fast-forward conflicts and force-with-lease can retry", async () => {
     const workbench = await createGitWorkbench("run-export-force");
     const store = records();
     const deps = realGitDeps(
-      lifecycleContext(workbench),
+      publishingContext(workbench),
       workbench.worktreesRoot,
       store,
     );
@@ -361,12 +400,13 @@ describe("workbench lifecycle real git integration", () => {
     await git(workbench.repo, "commit", "-q", "-m", "remote move");
     const remoteSha = (await git(workbench.repo, "rev-parse", "HEAD")).trim();
 
+    // Someone else moves the PUBLISHED name (ADR-181 D4).
     await git(
       workbench.repo,
       "push",
       "origin",
       "--force",
-      `${remoteSha}:refs/heads/${workbench.branch}`,
+      `${remoteSha}:refs/heads/${PUBLIC_BRANCH}`,
     );
 
     await expect(
@@ -382,13 +422,8 @@ describe("workbench lifecycle real git integration", () => {
       canForce: true,
     });
 
-    await git(
-      workbench.repo,
-      "fetch",
-      "origin",
-      `${workbench.branch}:refs/remotes/origin/${workbench.branch}`,
-    );
-
+    // No fetch first: the forced retry's lease is the SHA `ls-remote` reads
+    // before the push (ADR-181 D4), not a tracking ref the operator refreshed.
     await exportWorkbenchBranch(workbench.runId, {
       remote: "origin",
       snapshotDirty: false,
@@ -401,7 +436,7 @@ describe("workbench lifecycle real git integration", () => {
       workbench.bareRemote,
       "show-ref",
       "--verify",
-      `refs/heads/${workbench.branch}`,
+      `refs/heads/${PUBLIC_BRANCH}`,
     );
 
     expect(remoteRef).toContain(snapshot.commit);

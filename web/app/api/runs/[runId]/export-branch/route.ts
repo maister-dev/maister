@@ -10,12 +10,17 @@ import {
   type RouteParams,
 } from "../workbench-lifecycle/route-utils";
 
-import { remoteNameSchema } from "@/lib/worktree";
+import { branchNameSchema, remoteNameSchema } from "@/lib/worktree";
 import { exportWorkbenchBranch } from "@/lib/workbench-lifecycle/service";
 
 const exportBodySchema = z
   .object({
     remote: remoteNameSchema.default("origin"),
+    // ADR-181 D4: the public name; refused once an upstream fixes it.
+    branchName: branchNameSchema
+      .nullable()
+      .optional()
+      .transform((value) => value ?? null),
     snapshotDirty: z.boolean().default(false),
     commitMessage: z
       .string()
@@ -38,6 +43,7 @@ export async function POST(
     const parsed = parseRouteBody(exportBodySchema, await parseJsonBody(req));
     const body = {
       remote: parsed.remote ?? "origin",
+      branchName: parsed.branchName ?? null,
       snapshotDirty: parsed.snapshotDirty ?? false,
       commitMessage: parsed.commitMessage ?? null,
       force: parsed.force ?? false,

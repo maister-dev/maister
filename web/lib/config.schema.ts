@@ -12,6 +12,7 @@ import {
   mcpEnvMapSchema,
   mcpHeaderMapSchema,
 } from "@/lib/mcp/value-grammar";
+import { validatePublicBranchTemplate } from "@/lib/workbench-git/public-branch-name";
 
 // Replicated from flow-paths.ts to avoid pulling the `server-only` constraint
 // (and its transitive MaisterError dep) into config.schema.ts, which must remain
@@ -187,10 +188,28 @@ export const projectPromotionSchema = z
   })
   .strict();
 
+// ADR-181 D5: validated here, at parse, so an unusable template refuses
+// registration before any row is written — not first at publish time.
+// SPARSE like `promotion`: absent → the column default at registration.
+const publicBranchTemplateSchema = z
+  .string()
+  .min(1)
+  .superRefine((template, ctx) => {
+    try {
+      validatePublicBranchTemplate(template);
+    } catch (err) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  });
+
 export const projectBlockSchema = z.object({
   name: z.string().min(1),
   main_branch: z.string().min(1).default("main"),
   branch_prefix: z.string().min(1).default("maister/"),
+  public_branch_template: publicBranchTemplateSchema.optional(),
   promotion: projectPromotionSchema.optional(),
   default_runner: z.string().min(1).optional(),
 });

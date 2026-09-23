@@ -20,20 +20,25 @@ function render(over: Partial<Props> = {}): string {
     createElement(WorkbenchLifecycleActions, {
       runId: "run-1",
       runKind: "flow",
-      actions: ["archive", "drop", "exportBranch"],
+      actions: ["archive", "drop", "exportBranch", "snapshotCommit"],
       ...over,
     }),
   );
 }
 
 describe("WorkbenchLifecycleActions", () => {
-  it("renders one control per allowed lifecycle action", () => {
+  // ADR-181 D16: snapshotCommit is its own policy id (no longer implied by
+  // exportBranch), and a card reaches every git action by DEEP LINK into the
+  // run's git panel — never a blind mutation from the card.
+  it("renders one control per allowed lifecycle action, git actions as deep links", () => {
     const html = render();
 
     expect(html).toContain("workbenchLifecycle.action.archive");
     expect(html).toContain("workbenchLifecycle.action.drop");
     expect(html).toContain("workbenchLifecycle.action.snapshotCommit");
     expect(html).toContain("workbenchLifecycle.action.exportBranch");
+    expect(html).toContain('href="/runs/run-1?git=publish"');
+    expect(html).toContain('href="/runs/run-1?git=tree"');
     expect(html).not.toContain("workbenchLifecycle.action.stop");
   });
 

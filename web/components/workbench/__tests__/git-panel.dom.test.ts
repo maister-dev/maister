@@ -312,6 +312,35 @@ describe("WorkbenchGitPanel", () => {
     expect(feedbackSuccess).toHaveBeenCalledTimes(1);
   });
 
+  // Migrated from the removed Export dialog (lifecycle-actions.dom.test.ts):
+  // a commit needs a message, and a clean tree has nothing to commit/discard.
+  it("keeps Commit's submit disabled until a message is typed", async () => {
+    render();
+    await settle();
+
+    await click(must("git-panel-action-snapshotCommit"));
+
+    const submit = must<HTMLButtonElement>("git-panel-commit-submit");
+
+    expect(submit.disabled).toBe(true);
+    await type(must<HTMLTextAreaElement>("git-panel-commit-message"), "   ");
+    expect(submit.disabled).toBe(true);
+    expect(posts()).toHaveLength(0);
+  });
+
+  it("disables Commit and Discard on a clean tree, naming why", async () => {
+    states = [gitState({ dirty: { tracked: 0, untracked: 0 } })];
+    render();
+    await settle();
+
+    for (const id of ["snapshotCommit", "discardChanges"]) {
+      const button = must<HTMLButtonElement>(`git-panel-action-${id}`);
+
+      expect(button.disabled).toBe(true);
+      expect(button.title).toBe("workbenchGit.hint.cleanTree");
+    }
+  });
+
   it("discards through the destructive confirmation and shows the rescue ref", async () => {
     mutation = (call) =>
       call.url.endsWith("/discard-changes")

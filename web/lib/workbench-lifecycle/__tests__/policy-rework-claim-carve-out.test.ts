@@ -9,10 +9,9 @@ import {
 
 // T-A8 (AC-A8) — ADR-160 owner carve-out. `HumanWorking` disables EVERY action
 // with `human-owned`. The rework claim pokes exactly one hole in that, for
-// exactly one actor: the claim owner gets `exportBranch`, which is what makes
-// snapshotCommit / handoffBranch / handoff-metadata reachable (all three gate on
-// `requireActionAllowed(ctx, "exportBranch")`). Everything else — every other
-// action, and every other actor — keeps today's behaviour byte-for-byte.
+// exactly one actor: the claim owner. Since ADR-181 D1 the hole is the git set
+// (commit, discard, publish, update, open PR, re-attach), never archive / drop /
+// stop / finalize. Every other actor keeps today's behaviour byte-for-byte.
 
 const OWNER = "user-owner";
 const OTHER = "user-other";
@@ -49,10 +48,14 @@ describe("T-A8 ADR-160 — HumanWorking lifecycle owner carve-out", () => {
 
     expect(actions.exportBranch.enabled).toBe(true);
     expect(actions.exportBranch.disabledReason).toBeNull();
+    // ADR-181 D1: the owner's hole is the whole git set on a usable tree.
+    for (const id of ["snapshotCommit", "discardChanges", "update"]) {
+      expect(actions[id].enabled).toBe(true);
+    }
 
     // The run is mid-handoff: removing its worktree under the operator editing
     // it is never the right default, even for the owner.
-    for (const id of ["stop", "archive", "drop"]) {
+    for (const id of ["stop", "archive", "drop", "finalizePr"]) {
       expect(actions[id].enabled).toBe(false);
       expect(actions[id].disabledReason).toBe("human-owned");
     }
@@ -86,19 +89,32 @@ describe("T-A8 ADR-160 — HumanWorking lifecycle owner carve-out", () => {
     expect(actions.every((a) => a.disabledReason === "human-owned")).toBe(true);
   });
 
-  it.each([
-    ["a removed workspace", { workspaceRemoved: true }],
-    ["an absent workspace", { hasWorkspace: false }],
-  ])(
-    "refuses the owner the carve-out with %s",
-    (_label, over: Partial<WorkbenchLifecyclePolicyInput>) => {
-      const actions = deriveWorkbenchLifecycleActions(
-        input({ claimOwnerUserId: OWNER, viewerUserId: OWNER, ...over }),
-      );
+  // ADR-181 D10: a removed worktree leaves the owner exactly one way back.
+  it("gives the owner only reattach on a removed workspace", () => {
+    const actions = deriveWorkbenchLifecycleActions(
+      input({
+        claimOwnerUserId: OWNER,
+        viewerUserId: OWNER,
+        workspaceRemoved: true,
+      }),
+    );
 
-      expect(actions.every((a) => !a.enabled)).toBe(true);
-    },
-  );
+    expect(actions.filter((a) => a.enabled).map((a) => a.id)).toEqual([
+      "reattach",
+    ]);
+  });
+
+  it("refuses the owner the carve-out with an absent workspace", () => {
+    const actions = deriveWorkbenchLifecycleActions(
+      input({
+        claimOwnerUserId: OWNER,
+        viewerUserId: OWNER,
+        hasWorkspace: false,
+      }),
+    );
+
+    expect(actions.every((a) => !a.enabled)).toBe(true);
+  });
 
   // Regression fence: the carve-out is keyed on HumanWorking. Passing a matching
   // owner/viewer pair on any OTHER status must change nothing.

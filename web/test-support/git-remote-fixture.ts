@@ -50,6 +50,14 @@ export async function initRepoWithBareRemote(
 
   await gitIn(root, ["init", "-q", "--bare", "-b", "main", remote]);
   await gitIn(root, ["clone", "-q", remote, parent]);
+  // Production git (a sync rebase, a merge) commits with the REPO identity, not
+  // the `-c` pins above; worktrees share this config.
+  await gitIn(parent, ["config", "user.name", "workbench-git-test"]);
+  await gitIn(parent, [
+    "config",
+    "user.email",
+    "workbench-git-test@example.invalid",
+  ]);
   await writeFile(join(parent, "base.txt"), "base\n");
   await gitIn(parent, ["add", "base.txt"]);
   await gitIn(parent, ["commit", "-q", "-m", "base"]);

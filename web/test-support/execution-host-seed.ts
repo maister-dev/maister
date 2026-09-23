@@ -24,14 +24,13 @@ export async function seedProjectRow(
   const slug = input.slug ?? `eh-${short}`;
   const repoPath = input.repoPath ?? `/tmp/eh-${short}`;
 
-  await db.insert(schema.projects).values({
-    id: projectId,
-    slug,
-    name: `EH ${short}`,
-    repoPath,
-    maisterYamlPath: "/tmp/m.yaml",
-    taskKey: `E${short.slice(0, 5).toUpperCase()}`,
-  });
+  // Raw, naming only these columns: migration-replay suites seed a schema that
+  // predates later `projects` columns, and a drizzle insert emits every column
+  // (a defaulted one as DEFAULT) — which does not exist yet there.
+  await db.execute(sql`
+    INSERT INTO "projects" ("id", "slug", "name", "repo_path", "maister_yaml_path", "task_key")
+    VALUES (${projectId}, ${slug}, ${`EH ${short}`}, ${repoPath}, '/tmp/m.yaml', ${`E${short.slice(0, 5).toUpperCase()}`})
+  `);
 
   return { id: projectId, slug, repoPath };
 }
