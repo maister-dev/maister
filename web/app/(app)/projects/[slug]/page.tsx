@@ -462,6 +462,7 @@ export default async function ProjectBoardPage({
               </h2>
               <HitlInboxGrid
                 canAct={canAct}
+                canReadRepoFiles={canReadRepoFiles}
                 currentUserId={user.id}
                 items={hitl.items}
               />

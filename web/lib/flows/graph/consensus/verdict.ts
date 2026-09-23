@@ -21,6 +21,7 @@ export type ParsedConsensusVerdict = {
   axes: Record<string, boolean>;
   disagreements: ConsensusDisagreement[];
   confidence?: number;
+  technicalDetail?: "empty_disagreement";
 };
 
 function closedAxes(materialAxes: readonly string[]): Record<string, boolean> {
@@ -154,6 +155,17 @@ export function parseConsensusVerdict(
   if (disagreementsResult.status !== "ok") {
     return failClosed(disagreementsResult.status, materialAxes);
   }
+  if (
+    obj.verdict === "disagree" &&
+    Object.values(axesResult.axes).every(Boolean) &&
+    disagreementsResult.disagreements.every(
+      (row) => !row.claim.trim() && !row.counterEvidence.trim(),
+    )
+  )
+    return {
+      ...failClosed("invalid_schema", materialAxes),
+      technicalDetail: "empty_disagreement",
+    };
 
   const confidence =
     typeof obj.confidence === "number" && Number.isFinite(obj.confidence)

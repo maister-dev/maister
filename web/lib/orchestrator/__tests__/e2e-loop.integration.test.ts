@@ -106,6 +106,7 @@ let supervisor: TestSupervisorHandle;
 let agentsRoot: string;
 let worktreesRoot: string;
 let originalWorktreesRoot: string | undefined;
+let originalFacadeCommand: string | undefined;
 const createdPaths: string[] = [];
 
 async function git(cwd: string, ...args: string[]): Promise<string> {
@@ -156,6 +157,10 @@ beforeAll(async () => {
   worktreesRoot = createTestWorktreesRoot("vitest", randomUUID());
   originalWorktreesRoot = process.env.MAISTER_WORKTREES_ROOT;
   process.env.MAISTER_WORKTREES_ROOT = worktreesRoot;
+  // The facade injection asserted below must not depend on whether `mcp/` was
+  // built in this checkout; the test supervisor never spawns the command.
+  originalFacadeCommand = process.env.MAISTER_MCP_FACADE_COMMAND;
+  process.env.MAISTER_MCP_FACADE_COMMAND = process.execPath;
 
   testDatabase = await startMainPostgresTestDb({
     databaseName: "maister_test_orc_loop",
@@ -221,6 +226,11 @@ afterAll(async () => {
       delete process.env.MAISTER_WORKTREES_ROOT;
     } else {
       process.env.MAISTER_WORKTREES_ROOT = originalWorktreesRoot;
+    }
+    if (originalFacadeCommand === undefined) {
+      delete process.env.MAISTER_MCP_FACADE_COMMAND;
+    } else {
+      process.env.MAISTER_MCP_FACADE_COMMAND = originalFacadeCommand;
     }
   }
 }, 60_000);

@@ -5,9 +5,10 @@ import type { FlowYamlV1 } from "@/lib/config.schema";
 
 import { randomUUID } from "node:crypto";
 import { fork, type ChildProcess } from "node:child_process";
+import { existsSync } from "node:fs";
 import path from "node:path";
 
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
@@ -18,6 +19,7 @@ import {
   executionCommands,
   flowRevisions,
   flows,
+  hitlRequests,
   nodeAttempts,
   runs,
 } from "@/lib/db/schema";
@@ -25,7 +27,23 @@ import { buildOrchestratorResumeConsumer } from "@/lib/domain-events/orchestrato
 import { startPromptOwnerWorker } from "@/lib/execution-host/prompt-owner-recovery";
 import { flowPromptOwners } from "@/lib/flows/graph/prompt-owner";
 import { consensusDraftPromptOwners } from "@/lib/flows/graph/consensus/draft-prompt-owner";
+import { verifyConsensusInputEvidence } from "@/lib/flows/graph/consensus/input-evidence";
+import { recordConsensusVerdict } from "@/lib/flows/graph/consensus/ledger";
+import {
+  isConsensusHumanIntentApplied,
+  markConsensusHumanIntentApplied,
+  prepareConsensusHumanIntent,
+  resolveConsensusHumanRequest,
+} from "@/lib/flows/graph/consensus/human-decision";
 import { runFlow } from "@/lib/flows/runner";
+import { atomicWriteJson } from "@/lib/atomic";
+import { markArtifactsStale } from "@/lib/flows/graph/artifact-store";
+import { assertEvidenceReady } from "@/lib/flows/graph/evidence-readiness";
+import { decodeConsensusResolutionSchema } from "@/lib/flows/consensus-resolution";
+import { validateConsensusDecision } from "@/lib/flows/hitl-validate";
+import { startFlowContinuationWorker } from "@/lib/flows/graph/continuation-worker";
+import { resumeCrashedRun } from "@/lib/runs/recover";
+import { runReconcileSweep } from "@/lib/reconcile";
 import { createExecutionHosts } from "@/lib/execution-host/client";
 import { canonicalProjectors } from "@/lib/execution-host/events/projection-runtime";
 import { startProjectionWorker } from "@/lib/execution-host/events/projection-worker";
@@ -47,8 +65,13 @@ let database: StartedPostgresTestDb;
 let supervisor: RealSupervisor;
 let worker: ProjectionWorker;
 let restoreUrl: () => void = () => {};
+let originalFlowCap: string | undefined;
 
 beforeAll(async () => {
+  // Every case seeds its own project and leaves its parent parked; the global
+  // flow cap is not under test here and would defer later cases' wakes.
+  originalFlowCap = process.env.MAISTER_MAX_CONCURRENT_RUNS;
+  process.env.MAISTER_MAX_CONCURRENT_RUNS = "64";
   database = await startMainPostgresTestDb({
     databaseName: "consensus_prompt_owners",
   });
@@ -70,6 +93,9 @@ afterAll(async () => {
   await worker?.stop();
   await supervisor?.kill();
   await database?.stop();
+  if (originalFlowCap === undefined)
+    delete process.env.MAISTER_MAX_CONCURRENT_RUNS;
+  else process.env.MAISTER_MAX_CONCURRENT_RUNS = originalFlowCap;
 });
 
 const AXES = ["scope", "risk"] as const;
@@ -95,7 +121,13 @@ function consensusPrompt(verdict: "agree" | "disagree"): string {
   return `fixture-output:${JSON.stringify({ bytes: 0, text: draftBody })}`;
 }
 
-async function seedConsensusFlow(prompt: string) {
+async function seedConsensusFlow(
+  prompt: string,
+  rounds: { mode: "single_pass" | "iterate"; max: number } = {
+    mode: "single_pass",
+    max: 1,
+  },
+) {
   const name = randomUUID();
   const repoPath = await initRepo(`${supervisor.runtimeRoot}/repo-${name}`);
   const worktreePath = await addWorktree(
@@ -113,7 +145,7 @@ async function seedConsensusFlow(prompt: string) {
         { id: "qa", runner: "primary" },
       ],
       material_axes: [...AXES],
-      rounds: { mode: "single_pass", max: 1 },
+      rounds,
       synthesizer: { runner: "primary" },
       transitions: { success: "done" },
     },
@@ -153,6 +185,27 @@ async function seedConsensusFlow(prompt: string) {
   return seeded;
 }
 
+async function replaceConsensusPrompt(
+  flowRevisionId: string,
+  flowId: string,
+  prompt: string,
+): Promise<void> {
+  const [revision] = await database.db
+    .select({ manifest: flowRevisions.manifest })
+    .from(flowRevisions)
+    .where(eq(flowRevisions.id, flowRevisionId));
+  const manifest = structuredClone(revision.manifest) as {
+    nodes: Array<{ prompt: string }>;
+  };
+
+  manifest.nodes[0].prompt = prompt;
+  await database.db
+    .update(flowRevisions)
+    .set({ manifest })
+    .where(eq(flowRevisions.id, flowRevisionId));
+  await database.db.update(flows).set({ manifest }).where(eq(flows.id, flowId));
+}
+
 function drive(runId: string): Promise<unknown> {
   return runFlow(runId, {
     db: database.db,
@@ -161,9 +214,7 @@ function drive(runId: string): Promise<unknown> {
   });
 }
 
-/** Round 1 fans out real child agent runs. Wake the parent exactly the way the
- * production domain-event dispatcher does once every draft is terminal. */
-async function settleDraftsAndResume(parentRunId: string): Promise<void> {
+async function waitForDraftsDone(parentRunId: string): Promise<void> {
   await expect
     .poll(
       async () => {
@@ -172,18 +223,99 @@ async function settleDraftsAndResume(parentRunId: string): Promise<void> {
           .from(runs)
           .where(eq(runs.parentRunId, parentRunId));
 
-        return children.length === 2 &&
+        return (
+          children.length === 2 &&
           children.every((child) => child.status === "Done")
-          ? children.length
-          : 0;
+        );
       },
       { timeout: 60_000, interval: 100 },
     )
-    .toBe(2);
+    .toBe(true);
+}
+
+/** A BEFORE INSERT trigger with the given plpgsql body; returns its remover. */
+async function installInsertTrigger(
+  table: string,
+  body: string,
+): Promise<() => Promise<void>> {
+  const trigger = `consensus_trigger_${randomUUID().replaceAll("-", "")}`;
+
+  await database.pool.query(
+    `CREATE FUNCTION ${trigger}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN ${body} END $$`,
+  );
+  await database.pool.query(
+    `CREATE TRIGGER ${trigger} BEFORE INSERT ON ${table} FOR EACH ROW EXECUTE FUNCTION ${trigger}()`,
+  );
+
+  return async () => {
+    await database.pool.query(`DROP TRIGGER IF EXISTS ${trigger} ON ${table}`);
+    await database.pool.query(`DROP FUNCTION IF EXISTS ${trigger}()`);
+  };
+}
+
+/** Round 1 fans out real child agent runs. Wake the parent exactly the way the
+ * production domain-event dispatcher does once every draft is terminal. */
+async function settleDraftsAndResume(
+  parentRunId: string,
+  status: "Done" | "Failed" = "Done",
+  nodeAttemptId?: string,
+  round = 1,
+): Promise<void> {
+  const matchingChildren = async () =>
+    (
+      await database.db
+        .select({
+          id: runs.id,
+          status: runs.status,
+          triggerPayload: runs.triggerPayload,
+        })
+        .from(runs)
+        .where(eq(runs.parentRunId, parentRunId))
+    ).filter(
+      (child) =>
+        (
+          child.triggerPayload as {
+            nodeAttemptId?: string;
+            round?: number;
+          } | null
+        )?.round === round &&
+        (!nodeAttemptId ||
+          (child.triggerPayload as { nodeAttemptId?: string } | null)
+            ?.nodeAttemptId === nodeAttemptId),
+    );
+
+  try {
+    await expect
+      .poll(
+        async () => {
+          const children = await matchingChildren();
+
+          return children.length === 2 &&
+            children.every((child) => child.status === status)
+            ? children.length
+            : 0;
+        },
+        { timeout: 60_000, interval: 100 },
+      )
+      .toBe(2);
+  } catch (error) {
+    const children = await matchingChildren();
+
+    throw new Error(
+      `draft settlement for ${parentRunId}: ${JSON.stringify(children.map(({ id, status: childStatus, triggerPayload }) => ({ id, status: childStatus, triggerPayload })))}`,
+      { cause: error },
+    );
+  }
+  const childIds = (await matchingChildren()).map((child) => child.id);
   const events = await database.db
     .select()
     .from(domainEvents)
-    .where(eq(domainEvents.kind, "run.done"));
+    .where(
+      and(
+        eq(domainEvents.kind, status === "Done" ? "run.done" : "run.failed"),
+        inArray(domainEvents.runId, childIds),
+      ),
+    );
   const consumer = buildOrchestratorResumeConsumer({
     db: database.db,
     resumeFlow: (runId, options) =>
@@ -511,6 +643,1322 @@ describe("Consensus prompt owners through the production graph driver", () => {
       ),
     ).toHaveLength(2);
   }, 180_000);
+  it("P0-5: delayed verifier application keeps the node live until owner recovery", async () => {
+    const seeded = await seedConsensusFlow(consensusPrompt("agree"));
+
+    await drive(seeded.runId);
+    await waitForDraftsDone(seeded.runId);
+    const dropTrigger = await installInsertTrigger(
+      "consensus_round_verdicts",
+      "RAISE EXCEPTION 'held consensus verifier application';",
+    );
+
+    const resuming = settleDraftsAndResume(seeded.runId);
+    let resumeOutcome: "pending" | "fulfilled" | "rejected" = "pending";
+
+    void resuming.then(
+      () => {
+        resumeOutcome = "fulfilled";
+      },
+      () => {
+        resumeOutcome = "rejected";
+      },
+    );
+
+    try {
+      await expect
+        .poll(
+          async () => {
+            const commands = await database.db
+              .select()
+              .from(executionCommands)
+              .where(
+                and(
+                  eq(executionCommands.runId, seeded.runId),
+                  eq(executionCommands.kind, "session.prompt"),
+                ),
+              );
+
+            return commands.some(
+              (command) =>
+                (command.ownerRef as { variant?: string } | null)?.variant ===
+                  "consensus_verifier" &&
+                command.applicationAttempts >= 1 &&
+                command.applicationState !== "applied",
+            );
+          },
+          { timeout: 30_000, interval: 100 },
+        )
+        .toBe(true);
+      // The driver has yielded (its traversal returned) before the node state
+      // is read: a pending application leaves it Running, never Failed.
+      await expect
+        .poll(() => resumeOutcome, { timeout: 10_000, interval: 100 })
+        .toBe("fulfilled");
+      const [run] = await database.db
+        .select({ status: runs.status })
+        .from(runs)
+        .where(eq(runs.id, seeded.runId));
+      const [attempt] = await database.db
+        .select({ status: nodeAttempts.status })
+        .from(nodeAttempts)
+        .where(eq(nodeAttempts.runId, seeded.runId));
+
+      expect(run.status).toBe("Running");
+      expect(attempt.status).toBe("Running");
+    } finally {
+      await dropTrigger();
+    }
+
+    const owners = startPromptOwnerWorker({
+      db: database.db as unknown as Db,
+      owners: flowPromptOwners,
+    });
+    const continuation = startFlowContinuationWorker({
+      db: database.db as unknown as Db,
+      runtimeRoot: supervisor.runtimeRoot,
+      executionHosts: createExecutionHosts({
+        db: database.db as unknown as Db,
+      }),
+    });
+
+    try {
+      await resuming;
+      await expect
+        .poll(
+          async () => {
+            const [run] = await database.db
+              .select({ status: runs.status })
+              .from(runs)
+              .where(eq(runs.id, seeded.runId));
+
+            return run.status;
+          },
+          { timeout: 60_000, interval: 100 },
+        )
+        .toBe("Review");
+      const verifierCommands = await database.db
+        .select({ ownerRef: executionCommands.ownerRef })
+        .from(executionCommands)
+        .where(eq(executionCommands.runId, seeded.runId));
+
+      expect(
+        verifierCommands.filter(
+          (command) =>
+            (command.ownerRef as { variant?: string } | null)?.variant ===
+            "consensus_verifier",
+        ),
+      ).toHaveLength(2);
+      const liveSessions = await createExecutionHosts({
+        db: database.db as unknown as Db,
+      })
+        .local()
+        .listSessions();
+
+      expect(
+        liveSessions.filter(
+          (session) =>
+            session.runId === seeded.runId && session.status === "live",
+        ),
+      ).toHaveLength(0);
+    } finally {
+      await continuation.stop();
+      await owners.stop();
+    }
+  }, 180_000);
+  it("P0-5: delayed synthesis application yields and resumes through the owner workers", async () => {
+    const seeded = await seedConsensusFlow(consensusPrompt("agree"));
+
+    await drive(seeded.runId);
+    await waitForDraftsDone(seeded.runId);
+    const dropTrigger = await installInsertTrigger(
+      "artifact_instances",
+      "IF NEW.id LIKE '%:consensus-synthesis:%' AND NEW.id NOT LIKE '%:input' THEN RAISE EXCEPTION 'held consensus synthesis application'; END IF; RETURN NEW;",
+    );
+    const resuming = settleDraftsAndResume(seeded.runId);
+    let resumeOutcome: "pending" | "fulfilled" | "rejected" = "pending";
+
+    void resuming.then(
+      () => {
+        resumeOutcome = "fulfilled";
+      },
+      () => {
+        resumeOutcome = "rejected";
+      },
+    );
+
+    try {
+      await expect
+        .poll(
+          async () => {
+            const commands = await database.db
+              .select()
+              .from(executionCommands)
+              .where(eq(executionCommands.runId, seeded.runId));
+
+            return commands.some(
+              (command) =>
+                (command.ownerRef as { variant?: string } | null)?.variant ===
+                  "consensus_synthesis" &&
+                command.applicationAttempts >= 1 &&
+                command.applicationState !== "applied",
+            );
+          },
+          { timeout: 30_000, interval: 100 },
+        )
+        .toBe(true);
+      // The driver has yielded (its traversal returned) before the node state
+      // is read: a pending application leaves it Running, never Failed.
+      await expect
+        .poll(() => resumeOutcome, { timeout: 10_000, interval: 100 })
+        .toBe("fulfilled");
+      const [run] = await database.db
+        .select({ status: runs.status })
+        .from(runs)
+        .where(eq(runs.id, seeded.runId));
+      const [attempt] = await database.db
+        .select({ status: nodeAttempts.status })
+        .from(nodeAttempts)
+        .where(eq(nodeAttempts.runId, seeded.runId));
+
+      expect(run.status).toBe("Running");
+      expect(attempt.status).toBe("Running");
+    } finally {
+      await dropTrigger();
+    }
+
+    const owners = startPromptOwnerWorker({
+      db: database.db as unknown as Db,
+      owners: flowPromptOwners,
+    });
+    const continuation = startFlowContinuationWorker({
+      db: database.db as unknown as Db,
+      runtimeRoot: supervisor.runtimeRoot,
+      executionHosts: createExecutionHosts({
+        db: database.db as unknown as Db,
+      }),
+    });
+
+    try {
+      await resuming;
+      await expect
+        .poll(
+          async () => {
+            const [run] = await database.db
+              .select({ status: runs.status })
+              .from(runs)
+              .where(eq(runs.id, seeded.runId));
+
+            return run.status;
+          },
+          { timeout: 60_000, interval: 100 },
+        )
+        .toBe("Review");
+      const synthesisCommands = await database.db
+        .select({ ownerRef: executionCommands.ownerRef })
+        .from(executionCommands)
+        .where(eq(executionCommands.runId, seeded.runId));
+
+      expect(
+        synthesisCommands.filter(
+          (command) =>
+            (command.ownerRef as { variant?: string } | null)?.variant ===
+            "consensus_synthesis",
+        ),
+      ).toHaveLength(1);
+      const liveSessions = await createExecutionHosts({
+        db: database.db as unknown as Db,
+      })
+        .local()
+        .listSessions();
+
+      expect(
+        liveSessions.filter(
+          (session) =>
+            session.runId === seeded.runId && session.status === "live",
+        ),
+      ).toHaveLength(0);
+    } finally {
+      await continuation.stop();
+      await owners.stop();
+    }
+  }, 180_000);
+  it("P0-5: poisoned verifier application ends in owner-poisoned crash", async () => {
+    const seeded = await seedConsensusFlow(consensusPrompt("agree"));
+
+    await drive(seeded.runId);
+    const dropTrigger = await installInsertTrigger(
+      "consensus_round_verdicts",
+      "RAISE EXCEPTION 'poison consensus verifier application';",
+    );
+
+    const resuming = settleDraftsAndResume(seeded.runId);
+    const owners = startPromptOwnerWorker({
+      db: database.db as unknown as Db,
+      owners: flowPromptOwners,
+    });
+
+    try {
+      await expect
+        .poll(
+          async () => {
+            const commands = await database.db
+              .select()
+              .from(executionCommands)
+              .where(
+                and(
+                  eq(executionCommands.runId, seeded.runId),
+                  eq(executionCommands.kind, "session.prompt"),
+                ),
+              );
+            const verifier = commands.find(
+              (command) =>
+                (command.ownerRef as { variant?: string } | null)?.variant ===
+                "consensus_verifier",
+            );
+
+            return verifier?.applicationAttempts ?? 0;
+          },
+          { timeout: 30_000, interval: 100 },
+        )
+        .toBeGreaterThan(0);
+
+      for (let attempt = 1; attempt < 5; attempt += 1) {
+        await database.db
+          .update(executionCommands)
+          .set({ applicationNextRetryAt: sql`clock_timestamp()` })
+          .where(
+            and(
+              eq(executionCommands.runId, seeded.runId),
+              eq(executionCommands.applicationState, "pending"),
+            ),
+          );
+        await expect
+          .poll(
+            async () => {
+              const commands = await database.db
+                .select({ attempts: executionCommands.applicationAttempts })
+                .from(executionCommands)
+                .where(
+                  and(
+                    eq(executionCommands.runId, seeded.runId),
+                    eq(executionCommands.kind, "session.prompt"),
+                    sql`${executionCommands.ownerRef}->>'variant' = 'consensus_verifier'`,
+                  ),
+                );
+
+              return Math.max(
+                0,
+                ...commands.map((command) => command.attempts),
+              );
+            },
+            { timeout: 30_000, interval: 100 },
+          )
+          .toBeGreaterThan(attempt);
+      }
+
+      await resuming;
+      const commands = await database.db
+        .select()
+        .from(executionCommands)
+        .where(eq(executionCommands.runId, seeded.runId));
+
+      expect(
+        commands.some(
+          (command) =>
+            (command.ownerRef as { variant?: string } | null)?.variant ===
+              "consensus_verifier" &&
+            command.applicationState === "poisoned" &&
+            command.applicationAttempts === 5,
+        ),
+      ).toBe(true);
+      await runReconcileSweep({
+        db: database.db,
+        executionHosts: createExecutionHosts({
+          db: database.db as unknown as Db,
+        }),
+      });
+      const [run] = await database.db
+        .select({ status: runs.status })
+        .from(runs)
+        .where(eq(runs.id, seeded.runId));
+
+      const crashed = await database.db
+        .select({ payload: domainEvents.payload })
+        .from(domainEvents)
+        .where(
+          and(
+            eq(domainEvents.runId, seeded.runId),
+            eq(domainEvents.kind, "run.crashed"),
+          ),
+        );
+
+      expect(run.status).toBe("Crashed");
+      expect(
+        crashed.map((event) => (event.payload as { reason?: string }).reason),
+      ).toEqual(["owner-poisoned"]);
+    } finally {
+      await owners.stop();
+      await dropTrigger();
+    }
+  }, 180_000);
+  it("P0-5: a consensus command quarantined after application crashes owner-poisoned", async () => {
+    const seeded = await seedConsensusFlow(consensusPrompt("disagree"));
+
+    await drive(seeded.runId);
+    await settleDraftsAndResume(seeded.runId);
+    const [attempt] = await database.db
+      .select()
+      .from(nodeAttempts)
+      .where(eq(nodeAttempts.runId, seeded.runId));
+    const [verifier] = await database.db
+      .select()
+      .from(executionCommands)
+      .where(
+        and(
+          eq(executionCommands.runId, seeded.runId),
+          sql`${executionCommands.ownerRef}->>'variant' = 'consensus_verifier'`,
+        ),
+      );
+
+    expect(verifier.applicationState).toBe("applied");
+    // `quarantine()` keeps a conflict found AFTER application `applied` and
+    // records only the reason; the node is back in its live window.
+    await database.db
+      .update(executionCommands)
+      .set({
+        applicationError: {
+          reason: "prompt_terminal_conflict",
+          phase: "prepare",
+          causeCode: "terminal_evidence_mismatch",
+        },
+      })
+      .where(eq(executionCommands.id, verifier.id));
+    await database.db
+      .update(runs)
+      .set({ status: "Running" })
+      .where(eq(runs.id, seeded.runId));
+    await database.db
+      .update(nodeAttempts)
+      .set({ status: "Running" })
+      .where(eq(nodeAttempts.id, attempt.id));
+    await runReconcileSweep({
+      db: database.db,
+      executionHosts: createExecutionHosts({
+        db: database.db as unknown as Db,
+      }),
+    });
+    const [run] = await database.db
+      .select({ status: runs.status })
+      .from(runs)
+      .where(eq(runs.id, seeded.runId));
+    const crashed = await database.db
+      .select({ payload: domainEvents.payload })
+      .from(domainEvents)
+      .where(
+        and(
+          eq(domainEvents.runId, seeded.runId),
+          eq(domainEvents.kind, "run.crashed"),
+        ),
+      );
+
+    expect(run.status).toBe("Crashed");
+    expect(
+      crashed.map((event) => (event.payload as { reason?: string }).reason),
+    ).toEqual(["owner-poisoned"]);
+  }, 180_000);
+  it("P0-5: full 60 kB drafts and verbose verifier JSON survive owner application", async () => {
+    const tail = "DRAFT-LAST-LINE-P0-5";
+    const verdict = `${"reasoning ".repeat(4_000)}${verdictJson("agree")}`;
+    const draftBody = `fixture-output:${JSON.stringify({ bytes: 0, text: verdict })}\n${"d".repeat(18_000)}\n${tail}`;
+    const prompt = `fixture-output:${JSON.stringify({ bytes: 0, text: draftBody })}`;
+    const seeded = await seedConsensusFlow(prompt);
+
+    await drive(seeded.runId);
+    await settleDraftsAndResume(seeded.runId);
+    const [attempt] = await database.db
+      .select()
+      .from(nodeAttempts)
+      .where(eq(nodeAttempts.runId, seeded.runId));
+    const verdicts = await database.db
+      .select()
+      .from(consensusRoundVerdicts)
+      .where(eq(consensusRoundVerdicts.nodeAttemptId, attempt.id));
+    const commands = await database.db
+      .select()
+      .from(executionCommands)
+      .where(
+        and(
+          eq(executionCommands.runId, seeded.runId),
+          eq(executionCommands.kind, "session.prompt"),
+        ),
+      );
+
+    expect(verdicts).toHaveLength(2);
+    expect(verdicts.every((cell) => cell.verdict === "agree")).toBe(true);
+    for (const cell of verdicts) {
+      const command = commands.find(
+        (row) =>
+          (row.ownerRef as { verdictId?: string } | null)?.verdictId ===
+          cell.id,
+      );
+
+      expect(command?.requestCanonicalJson).toContain(tail);
+    }
+  }, 180_000);
+  it("P0-5: verifier output past 1 MiB is technical even with valid trailing JSON", async () => {
+    const body = `fixture-output:${JSON.stringify({ bytes: 1024 * 1024 + 1, text: verdictJson("agree"), chunkSize: 131_071 })}`;
+    const seeded = await seedConsensusFlow(
+      `fixture-output:${JSON.stringify({ bytes: 0, text: body })}`,
+    );
+
+    await drive(seeded.runId);
+    await settleDraftsAndResume(seeded.runId);
+    const [attempt] = await database.db
+      .select({ id: nodeAttempts.id })
+      .from(nodeAttempts)
+      .where(eq(nodeAttempts.runId, seeded.runId));
+    const cells = await database.db
+      .select()
+      .from(consensusRoundVerdicts)
+      .where(eq(consensusRoundVerdicts.nodeAttemptId, attempt.id));
+
+    expect(cells).toHaveLength(2);
+    expect(
+      cells.every((cell) => cell.errorCode === "output_cap_exceeded"),
+    ).toBe(true);
+    expect(cells.every((cell) => cell.verdict === "disagree")).toBe(true);
+  }, 180_000);
+  it("P0-5: max_tokens drafts remain partial evidence and cost no verifier turn", async () => {
+    const body = "An unfinished but useful draft";
+    const prompt = `fixture-output:${JSON.stringify({ bytes: 0, text: body, stopReason: "max_tokens" })}`;
+    const seeded = await seedConsensusFlow(prompt);
+
+    await drive(seeded.runId);
+    await settleDraftsAndResume(seeded.runId, "Failed");
+    const [attempt] = await database.db
+      .select()
+      .from(nodeAttempts)
+      .where(eq(nodeAttempts.runId, seeded.runId));
+    const [run] = await database.db
+      .select({ status: runs.status })
+      .from(runs)
+      .where(eq(runs.id, seeded.runId));
+    const children = await database.db
+      .select()
+      .from(runs)
+      .where(eq(runs.parentRunId, seeded.runId));
+    const verdicts = await database.db
+      .select()
+      .from(consensusRoundVerdicts)
+      .where(eq(consensusRoundVerdicts.nodeAttemptId, attempt.id));
+    const verifierCommands = await database.db
+      .select()
+      .from(executionCommands)
+      .where(
+        and(
+          eq(executionCommands.runId, seeded.runId),
+          eq(executionCommands.kind, "session.prompt"),
+        ),
+      );
+
+    expect(run.status).toBe("NeedsInput");
+    expect(verdicts).toHaveLength(2);
+    expect(verdicts.every((cell) => cell.errorCode === "draft_partial")).toBe(
+      true,
+    );
+    expect(verifierCommands).toHaveLength(0);
+    for (const child of children) {
+      const payload = child.triggerPayload as { participantId: string };
+      const [artifact] = await database.db
+        .select()
+        .from(artifactInstances)
+        .where(
+          eq(
+            artifactInstances.id,
+            `run:${child.id}:consensus-draft:${attempt.id}:${payload.participantId}:r1`,
+          ),
+        );
+
+      expect(artifact?.locator).toMatchObject({
+        kind: "inline",
+        text: body,
+        partial: true,
+        stopReason: "max_tokens",
+      });
+    }
+  }, 180_000);
+  it("P0-5: all-partial drafts spend a drafter round instead of reporting no text", async () => {
+    const prompt = `fixture-output:${JSON.stringify({ bytes: 0, text: "partial plan", stopReason: "max_tokens" })}`;
+    const seeded = await seedConsensusFlow(prompt, { mode: "iterate", max: 2 });
+
+    await drive(seeded.runId);
+    await settleDraftsAndResume(seeded.runId, "Failed");
+    await expect
+      .poll(
+        async () => {
+          const children = await database.db
+            .select({ triggerPayload: runs.triggerPayload })
+            .from(runs)
+            .where(eq(runs.parentRunId, seeded.runId));
+
+          return children.filter(
+            (child) =>
+              (child.triggerPayload as { round?: number } | null)?.round === 2,
+          ).length;
+        },
+        { timeout: 30_000, interval: 100 },
+      )
+      .toBe(2);
+    const [attempt] = await database.db
+      .select({ id: nodeAttempts.id })
+      .from(nodeAttempts)
+      .where(eq(nodeAttempts.runId, seeded.runId));
+    const roundOneCells = await database.db
+      .select()
+      .from(consensusRoundVerdicts)
+      .where(
+        and(
+          eq(consensusRoundVerdicts.nodeAttemptId, attempt.id),
+          eq(consensusRoundVerdicts.round, 1),
+        ),
+      );
+    const requests = await database.db
+      .select({ id: hitlRequests.id })
+      .from(hitlRequests)
+      .where(eq(hitlRequests.runId, seeded.runId));
+
+    expect(roundOneCells).toHaveLength(2);
+    expect(
+      roundOneCells.every((cell) => cell.errorCode === "draft_partial"),
+    ).toBe(true);
+    expect(requests).toHaveLength(0);
+    await settleDraftsAndResume(seeded.runId, "Failed", attempt.id, 2);
+    await expect
+      .poll(
+        async () => {
+          const [run] = await database.db
+            .select({ status: runs.status })
+            .from(runs)
+            .where(eq(runs.id, seeded.runId));
+
+          return run.status;
+        },
+        { timeout: 30_000, interval: 100 },
+      )
+      .toBe("NeedsInput");
+  }, 180_000);
+  it("P0-5: over-bound target is labeled in the verdict and debate stays JSON", async () => {
+    const body = `fixture-output:${JSON.stringify({ bytes: 0, text: verdictJson("agree") })}\n${"z".repeat(70_000)}`;
+    const seeded = await seedConsensusFlow(
+      `fixture-output:${JSON.stringify({ bytes: 0, text: body })}`,
+    );
+
+    await drive(seeded.runId);
+    await settleDraftsAndResume(seeded.runId);
+    const [attempt] = await database.db
+      .select()
+      .from(nodeAttempts)
+      .where(eq(nodeAttempts.runId, seeded.runId));
+    const cells = await database.db
+      .select()
+      .from(consensusRoundVerdicts)
+      .where(eq(consensusRoundVerdicts.nodeAttemptId, attempt.id));
+    const commands = await database.db
+      .select()
+      .from(executionCommands)
+      .where(
+        and(
+          eq(executionCommands.runId, seeded.runId),
+          eq(executionCommands.kind, "session.prompt"),
+        ),
+      );
+    const [debate] = await database.db
+      .select()
+      .from(artifactInstances)
+      .where(eq(artifactInstances.id, `run:${attempt.id}:debate_log`));
+
+    expect(cells).toHaveLength(2);
+    for (const cell of cells) {
+      expect(cell.verdict).toBe("agree");
+      expect(cell.disagreements).toMatchObject({
+        version: 1,
+        truncated: true,
+        textBounds: expect.objectContaining({ cap: 65_536 }),
+      });
+      const command = commands.find(
+        (row) =>
+          (row.ownerRef as { verdictId?: string } | null)?.verdictId ===
+          cell.id,
+      );
+
+      expect(command?.requestCanonicalJson).toContain(
+        "consensus text truncated: dropped",
+      );
+    }
+    const synthesisCommand = commands.find(
+      (row) =>
+        (row.ownerRef as { variant?: string } | null)?.variant ===
+        "consensus_synthesis",
+    );
+    const [synthesis] = await database.db
+      .select()
+      .from(artifactInstances)
+      .where(
+        eq(
+          artifactInstances.id,
+          `run:${attempt.id}:consensus-synthesis:r1:consensus`,
+        ),
+      );
+
+    expect(synthesisCommand?.requestCanonicalJson).toContain(
+      "consensus text truncated: dropped",
+    );
+    expect(synthesis.locator).toMatchObject({
+      truncated: true,
+      inputTextBounds: { cap: 65_536 },
+    });
+    const synthesisId = `run:${attempt.id}:consensus-synthesis:r1:consensus`;
+    const [prepared] = await database.db
+      .select()
+      .from(artifactInstances)
+      .where(eq(artifactInstances.id, `${synthesisId}:input`));
+    const expectedOwner = {
+      generationId: synthesisId,
+      nodeAttemptId: attempt.id,
+      round: 1,
+      role: "synthesis" as const,
+    };
+
+    expect(
+      await verifyConsensusInputEvidence(
+        database.db as unknown as Db,
+        synthesisCommand!,
+        expectedOwner,
+      ),
+    ).toMatchObject({ textBounds: { droppedBytes: expect.any(Number) } });
+    if (prepared.locator.kind !== "inline")
+      throw new Error("consensus input evidence must be inline");
+    const originalLocator = prepared.locator;
+    const forged = JSON.parse(originalLocator.text) as Record<string, unknown>;
+
+    await database.db
+      .update(artifactInstances)
+      .set({
+        locator: {
+          kind: "inline",
+          text: JSON.stringify({ ...forged, valueSha256: "0".repeat(64) }),
+        },
+      })
+      .where(eq(artifactInstances.id, prepared.id));
+    await expect(
+      verifyConsensusInputEvidence(
+        database.db as unknown as Db,
+        synthesisCommand!,
+        expectedOwner,
+      ),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      details: { causeCode: "consensus_input_request_mismatch" },
+    });
+    await database.db
+      .update(artifactInstances)
+      .set({ locator: originalLocator })
+      .where(eq(artifactInstances.id, prepared.id));
+    await database.db
+      .update(artifactInstances)
+      .set({
+        locator: {
+          kind: "inline",
+          text: JSON.stringify({ ...forged, valueSpan: undefined }),
+        },
+      })
+      .where(eq(artifactInstances.id, prepared.id));
+    await expect(
+      verifyConsensusInputEvidence(
+        database.db as unknown as Db,
+        synthesisCommand!,
+        expectedOwner,
+      ),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      details: { causeCode: "consensus_input_evidence_schema" },
+    });
+    await database.db
+      .update(artifactInstances)
+      .set({ locator: originalLocator })
+      .where(eq(artifactInstances.id, prepared.id));
+    expect(() =>
+      JSON.parse((debate.locator as { text: string }).text),
+    ).not.toThrow();
+  }, 180_000);
+  it("P0-5: HITL commits a round debate artifact and partial-safe choices together", async () => {
+    const seeded = await seedConsensusFlow(consensusPrompt("disagree"));
+
+    await drive(seeded.runId);
+    await settleDraftsAndResume(seeded.runId);
+    const [attempt] = await database.db
+      .select()
+      .from(nodeAttempts)
+      .where(eq(nodeAttempts.runId, seeded.runId));
+    const [request] = await database.db
+      .select()
+      .from(hitlRequests)
+      .where(
+        and(
+          eq(hitlRequests.runId, seeded.runId),
+          eq(hitlRequests.stepId, "decide"),
+        ),
+      );
+    const hitlSchema = request?.schema as {
+      nodeAttemptId: string;
+      debateLog: { artifactRef: string; artifactRunId: string };
+      drafts: Array<{ artifactRef: string; artifactRunId: string }>;
+    };
+    const [debate] = await database.db
+      .select()
+      .from(artifactInstances)
+      .where(eq(artifactInstances.id, hitlSchema.debateLog.artifactRef));
+
+    expect(request).toBeDefined();
+    expect(hitlSchema.nodeAttemptId).toBe(attempt.id);
+    expect(hitlSchema.debateLog.artifactRunId).toBe(seeded.runId);
+    expect(debate?.locator.kind).toBe("inline");
+    expect(() =>
+      JSON.parse((debate.locator as { text: string }).text),
+    ).not.toThrow();
+    expect(hitlSchema.drafts).toHaveLength(2);
+    expect(
+      hitlSchema.drafts.every((draft) => draft.artifactRunId !== seeded.runId),
+    ).toBe(true);
+    await database.db
+      .update(hitlRequests)
+      .set({
+        response: { decision: "re-run-round" },
+        respondedAt: new Date(),
+      })
+      .where(eq(hitlRequests.id, request.id));
+    await database.db
+      .update(runs)
+      .set({ status: "Running" })
+      .where(eq(runs.id, seeded.runId));
+    await database.db
+      .update(nodeAttempts)
+      .set({ status: "Running" })
+      .where(eq(nodeAttempts.id, attempt.id));
+    const source = await resolveConsensusHumanRequest(
+      database.db as unknown as Db,
+      {
+        runId: seeded.runId,
+        nodeId: "decide",
+        nodeAttemptId: attempt.id,
+        decision: "re-run-round",
+      },
+    );
+    const intent = await prepareConsensusHumanIntent(
+      database.db as unknown as Db,
+      {
+        runId: seeded.runId,
+        nodeId: "decide",
+        nodeAttemptId: attempt.id,
+        attempt: attempt.attempt,
+        ...source,
+      },
+    );
+
+    expect(intent).toMatchObject({
+      hitlRequestId: request.id,
+      sourceRound: 1,
+      targetRound: 2,
+    });
+    expect(
+      await prepareConsensusHumanIntent(database.db as unknown as Db, {
+        runId: seeded.runId,
+        nodeId: "decide",
+        nodeAttemptId: attempt.id,
+        attempt: attempt.attempt,
+        ...source,
+      }),
+    ).toEqual(intent);
+    await expect(
+      prepareConsensusHumanIntent(database.db as unknown as Db, {
+        runId: seeded.runId,
+        nodeId: "decide",
+        nodeAttemptId: attempt.id,
+        attempt: attempt.attempt,
+        ...source,
+        responseDigest: "changed-response",
+      }),
+    ).rejects.toThrow("intent changed on replay");
+    await markConsensusHumanIntentApplied(database.db as unknown as Db, {
+      runId: seeded.runId,
+      nodeId: "decide",
+      attempt: attempt.attempt,
+      intent,
+    });
+    expect(
+      await isConsensusHumanIntentApplied(database.db as unknown as Db, intent),
+    ).toBe(true);
+  }, 180_000);
+  async function consensusRequests(runId: string) {
+    return database.db
+      .select()
+      .from(hitlRequests)
+      .where(
+        and(eq(hitlRequests.runId, runId), eq(hitlRequests.stepId, "decide")),
+      );
+  }
+
+  it("P0-5: a HITL creation replayed after its commit adopts the same request and evidence", async () => {
+    // Partial drafts record unpaid fail-closed cells, whose axes the writer
+    // builds in manifest order and jsonb returns in storage order.
+    const prompt = `fixture-output:${JSON.stringify({ bytes: 0, text: "An unfinished draft", stopReason: "max_tokens" })}`;
+    const seeded = await seedConsensusFlow(prompt);
+
+    await drive(seeded.runId);
+    await settleDraftsAndResume(seeded.runId, "Failed");
+    const [attempt] = await database.db
+      .select()
+      .from(nodeAttempts)
+      .where(eq(nodeAttempts.runId, seeded.runId));
+    const before = await consensusRequests(seeded.runId);
+    const debate = async () =>
+      database.db
+        .select()
+        .from(artifactInstances)
+        .where(
+          and(
+            eq(artifactInstances.runId, seeded.runId),
+            eq(artifactInstances.artifactDefId, "consensus-round-debate"),
+          ),
+        );
+    const [debateBefore] = await debate();
+    const schema = decodeConsensusResolutionSchema(before[0]?.schema);
+
+    expect(before).toHaveLength(1);
+    expect(schema).toMatchObject({
+      escalationReason: "single_pass",
+      nodeAttemptId: attempt.id,
+    });
+    expect(schema?.drafts.map((draft) => draft.classification)).toEqual([
+      "partial",
+      "partial",
+    ]);
+    expect(
+      validateConsensusDecision({ decision: "pick-draft-1" }, before[0].schema)
+        .ok,
+    ).toBe(true);
+    expect(debateBefore.requiredFor ?? []).not.toContain("review");
+
+    // Death after the HITL transaction committed but before the runner parked
+    // the node: the run and attempt are still the Running pair it re-enters.
+    await database.db
+      .update(runs)
+      .set({ status: "Running" })
+      .where(eq(runs.id, seeded.runId));
+    await database.db
+      .update(nodeAttempts)
+      .set({ status: "Running" })
+      .where(eq(nodeAttempts.id, attempt.id));
+    await drive(seeded.runId);
+    const after = await consensusRequests(seeded.runId);
+    const [run] = await database.db
+      .select({ status: runs.status })
+      .from(runs)
+      .where(eq(runs.id, seeded.runId));
+    const debates = await debate();
+
+    expect(run.status).toBe("NeedsInput");
+    expect(after.map((request) => request.id)).toEqual(
+      before.map((request) => request.id),
+    );
+    expect(debates).toHaveLength(1);
+    expect(debates[0].locator).toEqual(debateBefore.locator);
+
+    // Answered and consumed, then a death before the node settled: re-entry
+    // must ask again rather than park on a request nobody can answer.
+    await database.db
+      .update(hitlRequests)
+      .set({ response: { decision: "abort" }, respondedAt: new Date() })
+      .where(eq(hitlRequests.id, before[0].id));
+    await database.db
+      .update(runs)
+      .set({ status: "Running" })
+      .where(eq(runs.id, seeded.runId));
+    await database.db
+      .update(nodeAttempts)
+      .set({ status: "Running" })
+      .where(eq(nodeAttempts.id, attempt.id));
+    await drive(seeded.runId);
+    const reasked = await consensusRequests(seeded.runId);
+
+    expect(reasked).toHaveLength(2);
+    expect(
+      reasked.filter((request) => request.respondedAt === null),
+    ).toHaveLength(1);
+
+    // A rework stales the node's evidence; the HITL-only debate must not then
+    // stand as a required-but-missing review deliverable.
+    await markArtifactsStale(seeded.runId, ["decide"], database.db);
+    const readiness = await assertEvidenceReady(
+      seeded.runId,
+      "review",
+      database.db,
+    );
+
+    expect(readiness.reasons.join("\n")).not.toContain(
+      "consensus-round-debate",
+    );
+  }, 180_000);
+  it("P0-5: HITL disagreement summaries stay bounded after whole-output parsing", async () => {
+    const verdict = JSON.stringify({
+      verdict: "disagree",
+      axes: { scope: false, risk: true },
+      disagreements: [
+        {
+          axis: "scope",
+          claim: `${"c".repeat(3_000)}CLAIM-TAIL`,
+          counter_evidence: "see the draft",
+        },
+      ],
+      confidence: 0.5,
+    });
+    const draftBody = `\nfixture-output:${JSON.stringify({ bytes: 0, text: verdict })}`;
+    const seeded = await seedConsensusFlow(
+      `fixture-output:${JSON.stringify({ bytes: 0, text: draftBody })}`,
+    );
+
+    await drive(seeded.runId);
+    await settleDraftsAndResume(seeded.runId);
+    const [request] = await consensusRequests(seeded.runId);
+    const summaries = decodeConsensusResolutionSchema(
+      request.schema,
+    )?.disagreements.map((row) => row.summary ?? "");
+
+    expect(summaries?.length).toBeGreaterThan(0);
+    for (const summary of summaries ?? []) {
+      expect(Buffer.byteLength(summary, "utf8")).toBeLessThanOrEqual(1024);
+      expect(summary).not.toContain("CLAIM-TAIL");
+      expect(summary).toContain("cap 1024 bytes]");
+    }
+  }, 180_000);
+  it("P0-5: a rerun that dies before its applied marker adopts its round on replay", async () => {
+    const draftBody = `\nfixture-output:${JSON.stringify({ bytes: 0, text: "not-json" })}`;
+    const seeded = await seedConsensusFlow(
+      `fixture-output:${JSON.stringify({ bytes: 0, text: draftBody })}`,
+      { mode: "iterate", max: 2 },
+    );
+
+    await drive(seeded.runId);
+    await settleDraftsAndResume(seeded.runId);
+    const [request] = await consensusRequests(seeded.runId);
+    const inputPath = path.join(
+      supervisor.runtimeRoot,
+      ".maister",
+      seeded.slug,
+      "runs",
+      seeded.runId,
+      "input-decide.json",
+    );
+
+    expect(
+      decodeConsensusResolutionSchema(request.schema)?.escalationReason,
+    ).toBe("technical_only");
+    // The respond route's durable writes: the input artifact, then the stamp.
+    await atomicWriteJson(inputPath, { decision: "re-run-round" });
+    await database.db
+      .update(hitlRequests)
+      .set({ response: { decision: "re-run-round" }, respondedAt: new Date() })
+      .where(eq(hitlRequests.id, request.id));
+    await killAtDatabaseWrite({
+      table: "artifact_instances",
+      event: "INSERT",
+      predicate: "NEW.artifact_def_id = 'consensus-human-intent-applied'",
+      runId: seeded.runId,
+    });
+    const children = async (round: number) =>
+      (
+        await database.db
+          .select({ id: runs.id, triggerPayload: runs.triggerPayload })
+          .from(runs)
+          .where(eq(runs.parentRunId, seeded.runId))
+      ).filter(
+        (child) =>
+          (child.triggerPayload as { round?: number } | null)?.round === round,
+      );
+    const applied = async () =>
+      database.db
+        .select({ id: artifactInstances.id })
+        .from(artifactInstances)
+        .where(
+          and(
+            eq(artifactInstances.runId, seeded.runId),
+            eq(
+              artifactInstances.artifactDefId,
+              "consensus-human-intent-applied",
+            ),
+          ),
+        );
+    const roundTwo = (await children(2)).map((child) => child.id).sort();
+
+    expect(roundTwo).toHaveLength(2);
+    expect(await applied()).toHaveLength(0);
+    expect(existsSync(inputPath)).toBe(true);
+    await database.pool.query(
+      "SELECT pg_sleep(greatest(0, extract(epoch from flow_driver_lease_expires_at - clock_timestamp())) + 0.25) FROM runs WHERE id = $1",
+      [seeded.runId],
+    );
+    await drive(seeded.runId);
+
+    try {
+      expect((await children(2)).map((child) => child.id).sort()).toEqual(
+        roundTwo,
+      );
+      expect(await children(3)).toHaveLength(0);
+      expect(await applied()).toHaveLength(1);
+      expect(existsSync(inputPath)).toBe(false);
+    } finally {
+      // The killed driver dispatched these drafts; with no agent recovery
+      // worker in this suite they would hold the agent pool for later cases.
+      await database.db
+        .update(runs)
+        .set({ status: "Abandoned", endedAt: new Date() })
+        .where(inArray(runs.id, roundTwo));
+    }
+  }, 240_000);
+  it("P0-5: verifier-only invalid JSON escalates without spending another draft round", async () => {
+    const draftBody = `\nfixture-output:${JSON.stringify({ bytes: 0, text: "not-json" })}`;
+    const prompt = `fixture-output:${JSON.stringify({ bytes: 0, text: draftBody })}`;
+    const seeded = await seedConsensusFlow(prompt, { mode: "iterate", max: 2 });
+
+    await drive(seeded.runId);
+    await settleDraftsAndResume(seeded.runId);
+    const [run] = await database.db
+      .select({ status: runs.status })
+      .from(runs)
+      .where(eq(runs.id, seeded.runId));
+    const [request] = await database.db
+      .select()
+      .from(hitlRequests)
+      .where(
+        and(
+          eq(hitlRequests.runId, seeded.runId),
+          eq(hitlRequests.stepId, "decide"),
+        ),
+      );
+
+    expect(request).toBeDefined();
+    const requestSchema = request.schema as {
+      round: number;
+      technicalFailures: Array<{ errorCode: string; parseStatus: string }>;
+    };
+    const children = await database.db
+      .select({ id: runs.id })
+      .from(runs)
+      .where(eq(runs.parentRunId, seeded.runId));
+
+    expect(run.status).toBe("NeedsInput");
+    expect(requestSchema.round).toBe(1);
+    expect(requestSchema.technicalFailures).toHaveLength(2);
+    expect(
+      requestSchema.technicalFailures.every(
+        (failure) => failure.errorCode === "invalid_json",
+      ),
+    ).toBe(true);
+    expect(children).toHaveLength(2);
+  }, 180_000);
+  it("P0-5: incomplete synthesis keeps its text and Recover mints a fresh generation", async () => {
+    const originalPrompt = consensusPrompt("agree");
+    const seeded = await seedConsensusFlow(originalPrompt);
+
+    await drive(seeded.runId);
+    // This test changes the immutable fixture's authored prompt between the
+    // draft and synthesis drives so the same adapter can return a different
+    // terminal stop reason for synthesis without changing supervisor code.
+    await waitForDraftsDone(seeded.runId);
+    await replaceConsensusPrompt(
+      seeded.flowRevisionId!,
+      seeded.flowId,
+      `fixture-output:${JSON.stringify({ bytes: 0, text: "partial synthesis text", stopReason: "max_tokens" })}`,
+    );
+    await settleDraftsAndResume(seeded.runId);
+    const [failed] = await database.db
+      .select()
+      .from(nodeAttempts)
+      .where(eq(nodeAttempts.runId, seeded.runId));
+    const oldSynthesisId = `run:${failed.id}:consensus-synthesis:r1:consensus`;
+    const [oldSynthesis] = await database.db
+      .select()
+      .from(artifactInstances)
+      .where(eq(artifactInstances.id, oldSynthesisId));
+    const [crashed] = await database.db
+      .select({ status: runs.status })
+      .from(runs)
+      .where(eq(runs.id, seeded.runId));
+
+    expect(crashed.status).toBe("Crashed");
+    expect(failed).toMatchObject({ status: "Failed", errorCode: "CRASH" });
+    expect(oldSynthesis.locator).toMatchObject({
+      kind: "inline",
+      text: "partial synthesis text",
+      partial: true,
+      reason: "consensus_synthesis_incomplete",
+      stopReason: "max_tokens",
+    });
+    if (oldSynthesis.locator.kind !== "inline")
+      throw new Error("incomplete synthesis requires inline evidence");
+    const hosts = createExecutionHosts({ db: database.db as unknown as Db });
+    const recover = () =>
+      resumeCrashedRun(seeded.runId, {
+        db: database.db as unknown as Db,
+        executionHosts: hosts,
+        runFlow: (runId, options) =>
+          runFlow(runId, {
+            ...options,
+            runtimeRoot: supervisor.runtimeRoot,
+            executionHosts: hosts,
+          }),
+      });
+
+    await database.db
+      .update(artifactInstances)
+      .set({ locator: { ...oldSynthesis.locator, reason: "unrelated" } })
+      .where(eq(artifactInstances.id, oldSynthesisId));
+    expect((await recover()).state).toBe("discard-only");
+    await database.db
+      .update(artifactInstances)
+      .set({ locator: oldSynthesis.locator })
+      .where(eq(artifactInstances.id, oldSynthesisId));
+    // A missing witness cannot authorize the redispatch either.
+    await database.db
+      .delete(artifactInstances)
+      .where(eq(artifactInstances.id, oldSynthesisId));
+    expect((await recover()).state).toBe("discard-only");
+    await database.db.insert(artifactInstances).values(oldSynthesis);
+    const commands = await database.db
+      .select()
+      .from(executionCommands)
+      .where(
+        and(
+          eq(executionCommands.runId, seeded.runId),
+          eq(executionCommands.kind, "session.prompt"),
+        ),
+      );
+    const synthesisCommand = commands.find(
+      (command) =>
+        (command.ownerRef as { synthesisId?: string } | null)?.synthesisId ===
+        oldSynthesisId,
+    );
+
+    expect(synthesisCommand).toBeDefined();
+    await database.db
+      .update(executionCommands)
+      .set({
+        applicationError: {
+          reason: "prompt_terminal_conflict",
+          phase: "prepare",
+          causeCode: "terminal_evidence_mismatch",
+        },
+      })
+      .where(eq(executionCommands.id, synthesisCommand!.id));
+    expect((await recover()).state).toBe("discard-only");
+    await database.db
+      .update(executionCommands)
+      .set({ applicationError: synthesisCommand!.applicationError })
+      .where(eq(executionCommands.id, synthesisCommand!.id));
+    const preRecoverAttempts = await database.db
+      .select({ id: nodeAttempts.id })
+      .from(nodeAttempts)
+      .where(eq(nodeAttempts.runId, seeded.runId));
+
+    expect(preRecoverAttempts).toHaveLength(1);
+    await replaceConsensusPrompt(
+      seeded.flowRevisionId!,
+      seeded.flowId,
+      originalPrompt,
+    );
+    const result = await recover();
+
+    expect(result.state).toBe("redispatched");
+    const attempts = await database.db
+      .select()
+      .from(nodeAttempts)
+      .where(eq(nodeAttempts.runId, seeded.runId));
+
+    expect(attempts).toHaveLength(2);
+    expect(attempts[1].id).not.toBe(failed.id);
+    await settleDraftsAndResume(seeded.runId, "Done", attempts[1].id);
+    const newSynthesisId = `run:${attempts[1].id}:consensus-synthesis:r1:consensus`;
+    const [newSynthesis] = await database.db
+      .select()
+      .from(artifactInstances)
+      .where(eq(artifactInstances.id, newSynthesisId));
+    const [retainedOld] = await database.db
+      .select()
+      .from(artifactInstances)
+      .where(eq(artifactInstances.id, oldSynthesisId));
+
+    expect((newSynthesis.locator as { text: string }).text.trim()).not.toBe("");
+    expect(retainedOld.locator).toMatchObject({
+      partial: true,
+      text: "partial synthesis text",
+    });
+
+    // Stale witness: a later attempt that crashes for another reason cannot
+    // borrow the first attempt's incomplete-synthesis evidence.
+    await database.db
+      .update(nodeAttempts)
+      .set({ status: "Failed", errorCode: "CRASH" })
+      .where(eq(nodeAttempts.id, attempts[1].id));
+    await database.db
+      .update(runs)
+      .set({
+        status: "Crashed",
+        currentStepId: null,
+        resumeTargetStepId: "decide",
+      })
+      .where(eq(runs.id, seeded.runId));
+    expect((await recover()).state).toBe("discard-only");
+  }, 180_000);
+  it("P0-5: an empty end_turn synthesis is a named recoverable crash", async () => {
+    const seeded = await seedConsensusFlow(consensusPrompt("agree"));
+
+    await drive(seeded.runId);
+    await waitForDraftsDone(seeded.runId);
+    await replaceConsensusPrompt(
+      seeded.flowRevisionId!,
+      seeded.flowId,
+      `fixture-output:${JSON.stringify({ bytes: 0, text: "", stopReason: "end_turn" })}`,
+    );
+    await settleDraftsAndResume(seeded.runId);
+    const [run] = await database.db
+      .select({ status: runs.status })
+      .from(runs)
+      .where(eq(runs.id, seeded.runId));
+    const [attempt] = await database.db
+      .select()
+      .from(nodeAttempts)
+      .where(eq(nodeAttempts.runId, seeded.runId));
+    const [synthesis] = await database.db
+      .select()
+      .from(artifactInstances)
+      .where(
+        eq(
+          artifactInstances.id,
+          `run:${attempt.id}:consensus-synthesis:r1:consensus`,
+        ),
+      );
+
+    expect(run.status).toBe("Crashed");
+    expect(attempt).toMatchObject({ status: "Failed", errorCode: "CRASH" });
+    expect(synthesis.locator).toMatchObject({
+      kind: "inline",
+      text: "",
+      partial: true,
+      reason: "consensus_synthesis_incomplete",
+      stopReason: "end_turn",
+    });
+  }, 180_000);
   it("owner-consensus-synthesis: the plan comes from its own applied generation", async () => {
     const seeded = await seedConsensusFlow(consensusPrompt("agree"));
 
@@ -674,6 +2122,43 @@ describe("Consensus prompt owners through the production graph driver", () => {
           verdict: cell.verdict,
         });
       }
+
+      // Layer 3: the runtime's unpaid fail-closed write loses to the applied
+      // cell. It gets the stored cell back and cannot rewrite the paid turn's
+      // raw-output evidence.
+      const [rawBefore] = await database.db
+        .select({ locator: artifactInstances.locator })
+        .from(artifactInstances)
+        .where(eq(artifactInstances.id, source.rawOutputArtifactId!));
+      const kept = await recordConsensusVerdict({
+        db: database.db as unknown as Db,
+        runId: seeded.runId,
+        nodeId: "decide",
+        nodeAttemptId: attempt.id,
+        attempt: attempt.attempt,
+        round: source.round,
+        verifierId: source.verifierKey,
+        targetParticipantId: source.targetKey,
+        result: {
+          parseStatus: "invalid_json",
+          verdict: "disagree",
+          axes: { scope: false, risk: false },
+          disagreements: [],
+        },
+        rawOutput: "fail-closed overwrite attempt",
+        errorCode: "CRASH",
+      });
+      const [rawAfter] = await database.db
+        .select({ locator: artifactInstances.locator })
+        .from(artifactInstances)
+        .where(eq(artifactInstances.id, source.rawOutputArtifactId!));
+
+      expect(kept).toMatchObject({
+        verdict: source.verdict,
+        parseStatus: source.parseStatus,
+      });
+      expect(kept.errorCode).not.toBe("CRASH");
+      expect(rawAfter.locator).toEqual(rawBefore.locator);
     } finally {
       await database.db
         .update(executionCommands)

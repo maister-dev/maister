@@ -17,6 +17,7 @@ import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
 import { resolveNodeRecoverInfo } from "@/lib/flows/graph/current-node-kind";
 import { classifyRecover } from "@/lib/runs/recover-classify";
+import { loadConsensusRecoveryEvidence } from "@/lib/flows/graph/consensus/recovery-evidence";
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import {
   applyCrashedTurnEvidence,
@@ -214,7 +215,19 @@ export async function resumeCrashedRun(
       nodeId: resumeTarget,
       sessionName,
     });
-    const plan = classifyRecover({ acpSessionId }, nodeKind, retrySafe);
+    const consensusEvidence =
+      nodeKind === "consensus"
+        ? await loadConsensusRecoveryEvidence(tx, {
+            runId,
+            nodeId: resumeTarget,
+          })
+        : null;
+    const plan = classifyRecover(
+      { acpSessionId },
+      nodeKind,
+      retrySafe,
+      consensusEvidence,
+    );
 
     if (plan === "discard-only") {
       log.info(
@@ -401,7 +414,19 @@ export async function driveResume(
     nodeId: resumeTarget,
     sessionName,
   });
-  const plan = classifyRecover({ acpSessionId }, nodeKind, retrySafe);
+  const consensusEvidence =
+    nodeKind === "consensus"
+      ? await loadConsensusRecoveryEvidence(db, {
+          runId,
+          nodeId: resumeTarget,
+        })
+      : null;
+  const plan = classifyRecover(
+    { acpSessionId },
+    nodeKind,
+    retrySafe,
+    consensusEvidence,
+  );
 
   log.info(
     {

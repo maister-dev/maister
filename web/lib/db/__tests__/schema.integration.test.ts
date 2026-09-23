@@ -14,6 +14,7 @@ import {
   testRunnerSnapshot,
 } from "@/lib/__tests__/runner-fixtures";
 import { setEnforcementSnapshot } from "@/lib/flows/graph/ledger";
+import { loadConsensusVerdicts } from "@/lib/flows/graph/consensus/ledger";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -532,6 +533,48 @@ describe("consensus_round_verdicts (M41, migration 0070)", () => {
     ]);
     expect(row.raw_output_artifact_id).toBe(artifactId);
 
+    const envelopeId = newId();
+    const envelope = {
+      version: 1 as const,
+      rows: [
+        {
+          axis: "risk",
+          claim: "bounded audit",
+          counterEvidence: "full draft artifact",
+        },
+      ],
+      truncated: true,
+      textBounds: {
+        bytes: 70_000,
+        retainedBytes: 65_458,
+        droppedBytes: 4_542,
+        cap: 65_536,
+      },
+    };
+
+    await db.insert(schema.consensusRoundVerdicts).values({
+      id: envelopeId,
+      runId: ids.runId,
+      nodeAttemptId: attemptId,
+      round: 1,
+      verifierKey: "claude",
+      targetKey: "codex",
+      parseStatus: "parsed",
+      verdict: "disagree",
+      axes: { feasibility: true, risk: false },
+      disagreements: envelope,
+      rawOutputArtifactId: artifactId,
+    });
+    const envelopeRows = await db.execute(
+      sql.raw(
+        `select disagreements from consensus_round_verdicts where id = '${envelopeId}'`,
+      ),
+    );
+
+    expect(
+      (envelopeRows.rows[0] as { disagreements: unknown }).disagreements,
+    ).toEqual(envelope);
+
     await db.execute(
       sql.raw(`delete from artifact_instances where id = '${artifactId}'`),
     );
@@ -549,6 +592,21 @@ describe("consensus_round_verdicts (M41, migration 0070)", () => {
         }
       ).raw_output_artifact_id,
     ).toBeNull();
+    await db.execute(
+      sql.raw(
+        `update consensus_round_verdicts set disagreements = '{"version":2,"rows":[],"truncated":false}'::jsonb where id = '${envelopeId}'`,
+      ),
+    );
+    await expect(
+      loadConsensusVerdicts({
+        db: db as unknown as Parameters<typeof loadConsensusVerdicts>[0]["db"],
+        nodeAttemptId: attemptId,
+        round: 1,
+      }),
+    ).rejects.toMatchObject({
+      code: "CRASH",
+      details: { reason: "consensus_verdict_storage_invalid" },
+    });
   });
 });
 

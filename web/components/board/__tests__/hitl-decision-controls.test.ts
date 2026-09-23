@@ -1246,8 +1246,9 @@ describe("HitlDecisionControls — consensus resolution card (M41)", () => {
 });
 
 describe("consensusHitlFromSchema — pure schema narrowing", () => {
-  it("parses a well-formed consensus_resolution schema", () => {
+  it("decodes a legacy consensus_resolution schema through the shared decoder", () => {
     expect(consensusHitlFromSchema(CONSENSUS_SCHEMA)).toEqual({
+      kind: "consensus_resolution",
       round: 2,
       allowedDecisions: [
         "pick-draft-1",
@@ -1259,11 +1260,13 @@ describe("consensusHitlFromSchema — pure schema narrowing", () => {
       drafts: [
         {
           decision: "pick-draft-1",
+          slot: 1,
           label: "Planner A",
           excerpt: "Use a branch-targeted rollout with smoke checks.",
         },
         {
           decision: "pick-draft-2",
+          slot: 2,
           label: "Planner B",
           excerpt: "Prefer a smaller first merge and defer analytics.",
         },
@@ -1274,8 +1277,10 @@ describe("consensusHitlFromSchema — pure schema narrowing", () => {
           summary: "Planner A keeps analytics in; Planner B defers it.",
         },
       ],
-      debateExcerpt:
-        "Both drafts agree on branch targeting but disagree on scope.",
+      technicalFailures: [],
+      debateLog: {
+        excerpt: "Both drafts agree on branch targeting but disagree on scope.",
+      },
     });
   });
 
@@ -1286,6 +1291,242 @@ describe("consensusHitlFromSchema — pure schema narrowing", () => {
     ).toBeNull();
     expect(consensusHitlFromSchema(null)).toBeNull();
     expect(consensusHitlFromSchema("nope")).toBeNull();
+  });
+});
+
+// The record the P0-5 writer produces: stable slots, a classification per slot,
+// no English label or placeholder text, draft artifacts on child runs and the
+// round debate on the parent run, and an engine escalation reason.
+const TRUNCATION_MARKER =
+  "\n[consensus text truncated: dropped 40960 UTF-8 bytes; cap 32000 bytes]";
+const PRODUCTION_CONSENSUS_SCHEMA = {
+  kind: "consensus_resolution",
+  nodeAttemptId: "attempt-1",
+  round: 1,
+  maxRounds: 2,
+  allowedDecisions: [
+    "pick-draft-1",
+    "pick-draft-2",
+    "pick-draft-3",
+    "provide-resolution",
+    "re-run-round",
+    "abort",
+  ],
+  escalationReason: "technical_only",
+  drafts: [
+    {
+      decision: "pick-draft-1",
+      slot: 1,
+      classification: "partial",
+      stopReason: "end_turn",
+      reason: "output_cap_exceeded",
+      excerpt: `Partial plan body${TRUNCATION_MARKER}`,
+      excerptBounds: {
+        bytes: 72_960,
+        retainedBytes: 32_000,
+        droppedBytes: 40_960,
+        cap: 32_000,
+      },
+      artifactRef: "draft-1-artifact",
+      artifactRunId: "child-run-1",
+    },
+    { decision: "pick-draft-2", slot: 2, classification: "unavailable" },
+    {
+      decision: "pick-draft-3",
+      slot: 3,
+      classification: "complete",
+      excerpt: "Complete plan body",
+      artifactRef: "draft-3-artifact",
+      artifactRunId: "child-run-3",
+    },
+  ],
+  disagreements: [],
+  technicalFailures: [
+    {
+      verifierId: "reviewer-b",
+      targetParticipantId: "planner-c",
+      parseStatus: "invalid_json",
+      errorCode: "invalid_json",
+      targetSlot: 3,
+    },
+    {
+      verifierId: "reviewer-a",
+      targetParticipantId: "planner-z",
+      parseStatus: "parsed",
+      errorCode: "SOMETHING_NEW",
+    },
+  ],
+  debateLog: {
+    excerpt: '{"round":1}',
+    artifactRef: "run:attempt-1:consensus-round-debate:1",
+    artifactRunId: "parent-run",
+  },
+};
+
+const P05_LABELS = {
+  ...CONSENSUS_LABELS,
+  consensusPartial: "Partial",
+  "consensusPartialCause.output_cap_exceeded": "output size limit reached",
+  "consensusPartialCause.max_tokens": "token limit reached",
+  consensusUnavailable: "Unavailable",
+  consensusUnavailableReason: "No draft text was produced.",
+  consensusDownloadDraft: "Download full draft",
+  consensusDownloadDraftAria: "Download full draft $n",
+  consensusDownloadDebate: "Download full debate",
+  consensusExcerptOmitted: "Excerpt — $kb KB omitted",
+  consensusDraftExcerptAria: "Draft $n excerpt",
+  consensusDebateExcerptAria: "Debate log excerpt",
+  consensusTechnicalFailures: "Technical verification failures",
+  consensusTechnicalFailureRow: "Verifier $verifier · Draft $n",
+  consensusTechnicalFailureTarget: "Verifier $verifier · $target",
+  consensusTechnicalDiagnostic: "Code",
+  "consensusTechnicalCode.invalid_json": "returned malformed JSON",
+  "consensusTechnicalCode.other": "verification failed",
+  "consensusEscalation.technical_only":
+    "Verifiers could not judge the drafts — run another round or resolve manually.",
+};
+
+function openingTag(html: string, testId: string): string {
+  const idx = html.indexOf(`data-testid="${testId}"`);
+
+  expect(idx).toBeGreaterThan(-1);
+  const start = html.lastIndexOf("<", idx);
+
+  return html.slice(start, html.indexOf(">", idx) + 1);
+}
+
+function renderProduction(
+  over: Partial<ControlsProps> = {},
+  schema: Record<string, unknown> = PRODUCTION_CONSENSUS_SCHEMA,
+): string {
+  return render({ kind: "human", schema, labels: P05_LABELS, ...over });
+}
+
+describe("HitlDecisionControls — consensus P0-5 evidence", () => {
+  it("keeps an unavailable middle slot disabled with its reason, without renumbering", () => {
+    const html = renderProduction();
+    const unavailable = openingTag(html, "consensus-pick-draft-2");
+
+    expect(unavailable).toContain('disabled=""');
+    expect(unavailable).toContain('aria-disabled="true"');
+    expect(unavailable).toContain(
+      'aria-describedby="consensus-unavailable-reason-2"',
+    );
+    expect(html).toContain('id="consensus-unavailable-reason-2"');
+    expect(html).toContain("No draft text was produced.");
+    expect(html).toContain('data-testid="consensus-unavailable-draft-2"');
+    expect(html).toContain("Use draft 3");
+    expect(openingTag(html, "consensus-pick-draft-3")).not.toContain(
+      "disabled",
+    );
+    expect(html).not.toContain("Draft unavailable.");
+  });
+
+  it("labels a partial by its cause, never by a raw protocol token", () => {
+    const capped = renderProduction();
+
+    expect(capped).toContain("Partial · output size limit reached");
+    expect(capped).not.toContain("end_turn");
+
+    const tokens = renderProduction(
+      {},
+      {
+        ...PRODUCTION_CONSENSUS_SCHEMA,
+        drafts: [
+          {
+            decision: "pick-draft-1",
+            slot: 1,
+            classification: "partial",
+            stopReason: "max_tokens",
+            reason: "consensus_draft_incomplete",
+            excerpt: "Cut short",
+          },
+        ],
+      },
+    );
+
+    expect(tokens).toContain("Partial · token limit reached");
+    expect(tokens).not.toContain("max_tokens");
+    // A partial is a valid pick but never the visually primary one.
+    expect(openingTag(tokens, "consensus-pick-draft-1")).toContain("bg-paper");
+  });
+
+  it("maps technical failures to draft slots with a localized code and a labelled raw diagnostic", () => {
+    const html = renderProduction();
+
+    expect(html).toContain("Verifier reviewer-b · Draft 3");
+    expect(html).toContain("returned malformed JSON");
+    expect(html).toContain("(Code: invalid_json)");
+    expect(html).toContain("Verifier reviewer-a · planner-z");
+    expect(html).toContain("verification failed");
+    expect(html).toContain("(Code: SOMETHING_NEW)");
+    expect(html).not.toContain("→");
+  });
+
+  it("explains a technical-only escalation instead of claiming no disagreements", () => {
+    const html = renderProduction();
+
+    expect(html).toContain('data-testid="consensus-escalation"');
+    expect(html).toContain("Verifiers could not judge the drafts");
+    expect(html).not.toContain("No material disagreements");
+    expect(html).not.toContain('data-testid="consensus-disagreements"');
+  });
+
+  it("replaces the engine truncation marker with a localized omitted chip", () => {
+    const html = renderProduction();
+
+    expect(html).not.toContain("[consensus text truncated");
+    expect(html).toContain("Partial plan body");
+    expect(html).toContain("Excerpt — 40 KB omitted");
+    const excerpt = openingTag(html, "consensus-draft-excerpt-1");
+
+    expect(excerpt).toContain('tabindex="0"');
+    expect(excerpt).toContain('aria-label="Draft 1 excerpt"');
+  });
+
+  it("hides draft downloads from readers without the repository-content grant", () => {
+    const html = renderProduction({ canReadRepoFiles: false });
+
+    expect(html).not.toContain('data-testid="consensus-draft-artifact-1"');
+    expect(html).not.toContain("/api/runs/child-run-1/");
+    // The round debate is board evidence and stays downloadable.
+    const debate = openingTag(html, "consensus-debate-artifact");
+
+    expect(debate).toContain(
+      'href="/api/runs/parent-run/artifacts/run%3Aattempt-1%3Aconsensus-round-debate%3A1/payload"',
+    );
+    expect(debate).toContain('download=""');
+  });
+
+  it("offers a named draft download to readers with the grant", () => {
+    const html = renderProduction({ canReadRepoFiles: true });
+    const link = openingTag(html, "consensus-draft-artifact-1");
+
+    expect(link).toContain(
+      'href="/api/runs/child-run-1/artifacts/draft-1-artifact/payload"',
+    );
+    expect(link).toContain('aria-label="Download full draft 1"');
+    expect(link).toContain('download=""');
+    expect(link).not.toContain("target=");
+    expect(html).toContain("Download full draft");
+    expect(html).not.toContain('data-testid="consensus-draft-artifact-2"');
+  });
+
+  it("keeps a legacy record without classification or decisions pickable", () => {
+    const html = render({
+      kind: "human",
+      schema: CONSENSUS_SCHEMA,
+      labels: P05_LABELS,
+    });
+
+    expect(openingTag(html, "consensus-pick-draft-1")).not.toContain(
+      "disabled",
+    );
+    expect(openingTag(html, "consensus-pick-draft-2")).not.toContain(
+      "disabled",
+    );
+    expect(html).not.toContain('data-testid="consensus-escalation"');
+    expect(html).toContain("scope");
   });
 });
 

@@ -24,13 +24,18 @@ function baseInput(
     rootDb,
     projectId: "project-1",
     taskId: "task-1",
+    flowRevisionId: null,
+    runnerProfiles: undefined,
     runDefaultRunnerId: "runner-parent",
     parentRunId: "parent-run",
     rootRunId: "root-run",
     nodeId: "decide",
     nodeAttemptId: "attempt-1",
     round: 1,
-    prompt: "Settle the release plan.",
+    prompts: [
+      { participantId: "architect", prompt: "Settle the release plan." },
+      { participantId: "codex", prompt: "Settle the release plan." },
+    ],
     participants: [
       { id: "architect", agent: "pkg:architect" },
       { id: "codex", runner: "runner-codex" },
@@ -188,6 +193,42 @@ describe("launchConsensusDraftRuns", () => {
     expect(tryStartRun).toHaveBeenCalledWith(expect.any(String), { db });
   });
 
+  it.each([
+    ["missing", [{ participantId: "architect", prompt: "only one" }]],
+    [
+      "foreign",
+      [
+        { participantId: "architect", prompt: "a" },
+        { participantId: "stranger", prompt: "b" },
+      ],
+    ],
+    [
+      "duplicate",
+      [
+        { participantId: "architect", prompt: "a" },
+        { participantId: "architect", prompt: "b" },
+      ],
+    ],
+  ])(
+    "refuses a %s participant prompt as an engine invariant before any child exists",
+    async (_case, prompts) => {
+      const inserts: unknown[] = [];
+      const launchAgent = vi.fn();
+
+      await expect(
+        launchConsensusDraftRuns(
+          { ...baseInput(fakeDb({ inserts })), prompts },
+          { launchAgent } as never,
+        ),
+      ).rejects.toMatchObject({
+        code: "CRASH",
+        details: { reason: "consensus_draft_prompt_map_invalid" },
+      });
+      expect(inserts).toEqual([]);
+      expect(launchAgent).not.toHaveBeenCalled();
+    },
+  );
+
   it("does not relaunch an already recorded participant draft", async () => {
     const db = fakeDb({
       existingRows: [
@@ -206,6 +247,9 @@ describe("launchConsensusDraftRuns", () => {
     const input = {
       ...baseInput(db),
       participants: [{ id: "architect", agent: "pkg:architect" }],
+      prompts: [
+        { participantId: "architect", prompt: "Settle the release plan." },
+      ],
     } as ConsensusDraftLaunchInput;
     const launchAgent = vi.fn();
 
@@ -269,6 +313,7 @@ describe("launchConsensusDraftRuns", () => {
     const input = {
       ...baseInput(db, rootDb),
       participants: [{ id: "codex", runner: "runner-codex" }],
+      prompts: [{ participantId: "codex", prompt: "Settle the release plan." }],
     } as ConsensusDraftLaunchInput;
 
     await launchConsensusDraftRuns(input, { startAgentSession, tryStartRun });

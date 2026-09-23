@@ -158,7 +158,8 @@ erDiagram
         timestamp resume_started_at "Recover in-flight marker + reconcile grace anchor"
         timestamp crash_recover_next_retry_at "Implemented ADR-176 0171: worker backoff deadline for the committed recover intent, nullable — NULL = eligible now"
         int crash_recover_attempts "Implemented ADR-176 0171: per-run bound on automated crash-recover re-entry, NOT NULL DEFAULT 0, CHECK >= 0, cap 5"
-        timestamp resume_requested_at "ADR-121 (0087): idle HITL answered, awaiting a slot (C3 FIFO key)"
+        timestamp resume_requested_at "ADR-121 (0087): idle HITL answered, awaiting a slot (C3 FIFO key); also a capacity-deferred coordinator wake"
+        timestamp failed_child_wake_at "P0-5 (0175): a failed child of the current orchestrator node wakes the parked coordinator despite pending siblings; never read by C3"
         timestamp queue_admitted_at "ADR-121 (0087): auto-drain origin marker, NULL = manual/scratch/resume"
         text resume_target_step_id "node id retained at crash time for Recover; current_step_id is nulled on crash (0016)"
         jsonb resolved_capability_set "ADR-069 Designed: frozen capability snapshot at launch; runner reads this, never live catalog"
@@ -389,10 +390,10 @@ erDiagram
         text parse_status "parsed|invalid_json|invalid_schema|missing_axes|unknown_axes"
         text verdict "agree|disagree"
         jsonb axes "declared material axis -> boolean"
-        jsonb disagreements "bounded disagreement facts"
+        jsonb disagreements "legacy array or v1 envelope {version,rows,truncated,textBounds?}"
         real confidence "optional, advisory"
-        text raw_output_artifact_id "optional bounded raw evidence ref"
-        text error_code "MaisterErrorCode literal"
+        text raw_output_artifact_id "FK artifact_instances; bounded raw evidence, written before the cell"
+        text error_code "draft_partial|draft_unavailable|output_cap_exceeded|empty_disagreement|target_missing|failed-turn MaisterError code"
         timestamp created_at
     }
 
@@ -526,7 +527,15 @@ erDiagram
 > per-round verifier rows for `consensus` node attempts. Its unique key
 > `(node_attempt_id, round, verifier_key, target_key)` lets recovery reuse
 > completed cross-verification sessions instead of spawning them again. Rows
-> cascade from both `RUNS` and `NODE_ATTEMPTS`.
+> cascade from both `RUNS` and `NODE_ATTEMPTS`. P0-5 v2: cells are written
+> insert-if-absent after their raw-output artifact, and a losing unpaid
+> fail-closed write returns the stored cell.
+
+> **(Implemented, migration `0175`, P0-5 v2.)** `RUNS.failed_child_wake_at`
+> (nullable timestamptz) — the orchestrator failed-child wake intent, armed in
+> the child's terminal-event transaction and cleared when the coordinator's turn
+> starts. Kept apart from `resume_requested_at` (the C3 "HITL answered" FIFO
+> key). See [`../system-analytics/orchestrator.md`](../system-analytics/orchestrator.md).
 
 > **(Implemented, migration `0011`, additive.)** The
 > `RUNS.status` enum gains `HumanWorking` (manual takeover claim), and

@@ -178,11 +178,17 @@ Lifecycle sections:
 | `rework`      | Defines allowed targets, workspace policy, loop limits, and where comments become later input.  |
 
 **Node `retry_safe?` (boolean, default `false`).** A per-node opt-in that gates operator crash-recovery
-re-dispatch of a **session-less** node (`cli`/`check`/`judge`/`human`/`form`).
+re-dispatch of a **session-less** node (`cli`/`check`/`guard`/`human`/`form`).
 A `Crashed` run whose recover target is session-less is redispatch-recoverable
 only when its config declares `retry_safe: true` — re-running a session-less
-node repeats its side effects (accepted-risk). `ai_coding` nodes ignore
-`retry_safe` (they recover via `session/resume`, never a fresh re-run). See
+node repeats its side effects (accepted-risk). Agent nodes (`ai_coding`,
+`judge`, `orchestrator`) ignore `retry_safe` (they recover via
+`session/resume`, never a fresh re-run — ADR-175). A `consensus` node follows
+the session-less rule with two evidence overrides from its latest attempt: a
+quarantined verifier/synthesis command (disagreeing terminal evidence) makes
+it discard-only even with `retry_safe: true`, and an applied incomplete
+synthesis (`consensus_synthesis_incomplete`) redispatches a fresh attempt even
+with `retry_safe: false`. See
 [ADR-034](decisions.md#adr-034-crashed-run-recovery-semantics-hybrid---resume--re-dispatch-durable-marker-first-cap-re-admission)
 and [`system-analytics/reconciliation-gc.md`](system-analytics/reconciliation-gc.md).
 
@@ -805,8 +811,7 @@ nodes:
   (`{{ task.prompt }}`, `{{ steps.<id>.vars.<name> }}`,
   `{{ artifacts.<id>.content }}`, …) before the first draft is launched; an
   unknown variable fails the node with `CONFIG` and no draft child is created.
-  Verifier critique appended on later rounds is agent output and is never
-  re-rendered. Engines before `3.8.0` forwarded the prompt literally, so a
+  Each draft prompt ends with the engine trailer requiring the complete final-message draft, noting that file writes are refused and file references are not the deliverable. Later rounds carry the addressed verdict, that participant's own prior draft, and bounded union critique plus separate technical notes. All agent-authored values enter a static template as `consensus.*` data; they are never re-rendered. Engines before `3.8.0` forwarded the prompt literally, so a
   flow that relies on the rendering SHOULD declare `compat.engine_min >= 3.8.0`.
 - **`participants[]`** — 2..`MAISTER_MAX_ORCHESTRATOR_FANOUT` read-only draft
   authors. Each entry declares exactly one stable `id` plus either `agent` or
@@ -817,9 +822,17 @@ nodes:
   Consensus is reached only when every verifier returns `verdict: "agree"` and
   every declared axis is `true`.
 - **`rounds`** — `mode: single_pass | iterate` (default `single_pass`) plus
-  bounded `max`. Iteration re-fans drafts with union disagreement context.
+  bounded `max`. A partial draft is retained with its stop reason, cannot be verified or agree, and can be picked by a human. Automatic iteration carries each participant's addressed verdict and own prior draft. Parsed material rows/failed axes or drafter-side reasons justify re-fan; verifier-side technical failures alone escalate immediately to HITL, even with rounds remaining. Human `re-run-round` explicitly carries the pinned source-round critique.
 - **`on_no_consensus`** — v1 supports `escalate`; the engine creates a bounded
-  HITL payload with draft/debate artifact refs and capped excerpts.
+  HITL payload with draft/debate artifact refs, capped labeled excerpts, draft
+  `complete | partial | unavailable` state, an `escalationReason`
+  (`technical_only | rounds_exhausted | single_pass`) and additive
+  `technicalFailures[]` (`verifierId`, `targetParticipantId`, `parseStatus`,
+  `errorCode`, `targetSlot`). Partial draft choices are labeled and pickable;
+  unavailable slots retain their original `pick-draft-N` numbering but server
+  validation rejects their selection with `NEEDS_INPUT`. Full draft text is
+  agent output and downloads only for readers with `readRepoFiles`. Response
+  shape and decision names are unchanged.
 - **`synthesizer`** — a non-voting role declared as `agent` or `runner`. It writes
   the mandatory `consensus_plan` (`kind: plan`) and `debate_log`
   (`kind: human_note`) artifacts before the node follows `transitions.success`.
@@ -846,6 +859,8 @@ Cross-verification verdict output is parsed fail-closed:
 `confidence` is advisory only. Missing axes, unknown axes, malformed JSON, or
 unknown verdict strings count as `disagree` and are persisted in
 `consensus_round_verdicts` for recovery and audit.
+
+The fixed draft trailer and own-prior-draft prompt change alter engine prompt content, not the Flow DSL or manifest shape; they require no engine-version bump. The one engine text-slot bound is `CONSENSUS_PROMPT_TEXT_CAP_BYTES = 65,536` UTF-8 bytes with an explicit dropped-byte marker and structured truncation metadata; see [consensus analytics](system-analytics/consensus.md#p0-5-v2-execution-contract-implemented).
 
 **Engine floor.** Declaring a `consensus` node requires
 `compat.engine_min >= 1.9.0`, else the manifest is refused at load with

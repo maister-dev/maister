@@ -66,6 +66,7 @@ import {
 } from "./run-context";
 import { runNodeGates } from "./gates-exec";
 import { FlowPromptContinuationPending } from "./prompt-owner";
+import { ConsensusGenerationPending } from "./consensus/prompt-owner";
 import { isFlowDriverClaimLost } from "./driver-claim";
 import { persistLocalActionCompletion } from "./action-completion";
 import { persistFinishContinuation } from "./finish-continuation";
@@ -83,6 +84,7 @@ import {
   markNodeNeedsInput,
   markNodeReworked,
   markNodeRunning,
+  markCoordinatorResumedRunning,
   resetReworkBaseline,
   setCheckpointRef,
   setEnforcementSnapshot,
@@ -247,6 +249,7 @@ import * as schemaModule from "@/lib/db/schema";
 import { nodeAttempts } from "@/lib/db/schema";
 import { getDb } from "@/lib/db/client";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
+import { clearFailedCoordinatorWake } from "@/lib/domain-events/coordinator-wake-intent";
 import { emitDelegatedReviewIfChild } from "@/lib/runs/delegated-review-emit";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 
@@ -3082,7 +3085,7 @@ export async function runGraph(
           if (opts.driver)
             await tx
               .update(runs)
-              .set({ currentStepId: node.id })
+              .set({ currentStepId: node.id, failedChildWakeAt: null })
               .where(eq(runs.id, runId));
 
           return row;
@@ -3167,7 +3170,19 @@ export async function runGraph(
       // work; a normal NeedsInput resume still re-enters Running before its
       // action is dispatched again.
       if (!reusesCompletedAttempt) {
-        await markNodeRunning(nodeAttemptId, db);
+        if (
+          resumingThisNode &&
+          (isConsensusResume || isOrchestratorResume) &&
+          opts.driver
+        )
+          await markCoordinatorResumedRunning(
+            nodeAttemptId,
+            opts.driver.claim.assignmentId,
+            db,
+          );
+        else await markNodeRunning(nodeAttemptId, db);
+        if (resumingThisNode && isOrchestratorResume)
+          await clearFailedCoordinatorWake(db, runId);
       }
 
       // M11c (ADR-032): per-node enforcement gate. For capability-bearing
@@ -3543,6 +3558,7 @@ export async function runGraph(
         } catch (err) {
           if (
             err instanceof FlowPromptContinuationPending ||
+            err instanceof ConsensusGenerationPending ||
             isFlowDriverClaimLost(err)
           )
             throw err;
@@ -5233,6 +5249,7 @@ export async function runGraph(
   } catch (err) {
     if (
       err instanceof FlowPromptContinuationPending ||
+      err instanceof ConsensusGenerationPending ||
       isFencedError(err) ||
       isFlowDriverClaimLost(err)
     ) {
@@ -5296,7 +5313,15 @@ export async function runGraph(
     await db.transaction(async (tx: Db) => {
       const rows = await tx
         .update(runs)
-        .set({ status: "Crashed", endedAt, currentStepId: null })
+        .set({
+          status: "Crashed",
+          endedAt,
+          currentStepId: null,
+          ...(currentNodeId &&
+          graph.nodes.get(currentNodeId)?.nodeType === "consensus"
+            ? { resumeTargetStepId: currentNodeId }
+            : {}),
+        })
         .where(and(eq(runs.id, runId), failureStatus))
         .returning({
           projectId: runs.projectId,

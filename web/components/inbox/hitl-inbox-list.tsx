@@ -10,6 +10,8 @@ import { HitlCard } from "@/components/inbox/hitl-card";
 interface GridProps {
   items: HitlItem[];
   canAct: boolean;
+  // Server-derived `readRepoFiles`; gates the consensus draft download link.
+  canReadRepoFiles?: boolean;
   currentUserId: string;
 }
 
@@ -19,6 +21,7 @@ interface GridProps {
 export function HitlInboxGrid({
   items,
   canAct,
+  canReadRepoFiles = false,
   currentUserId,
 }: GridProps): ReactElement {
   return (
@@ -27,6 +30,7 @@ export function HitlInboxGrid({
         <HitlCard
           key={item.hitlRequestId}
           canAct={canAct}
+          canReadRepoFiles={canReadRepoFiles}
           currentUserId={currentUserId}
           item={item}
         />
@@ -38,6 +42,7 @@ export function HitlInboxGrid({
 interface ListProps {
   items: CrossProjectHitlItem[];
   canAct: boolean;
+  canReadRepoFiles?: boolean;
   currentUserId: string;
 }
 
@@ -46,6 +51,7 @@ interface ListProps {
 export async function HitlInboxList({
   items,
   canAct,
+  canReadRepoFiles = false,
   currentUserId,
 }: ListProps): Promise<ReactElement> {
   const t = await getTranslations("inbox");
@@ -81,6 +87,7 @@ export async function HitlInboxList({
           </div>
           <HitlInboxGrid
             canAct={canAct}
+            canReadRepoFiles={canReadRepoFiles}
             currentUserId={currentUserId}
             items={group.items}
           />

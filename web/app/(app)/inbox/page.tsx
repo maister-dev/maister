@@ -8,7 +8,11 @@ import { HitlInboxList } from "@/components/inbox/hitl-inbox-list";
 import { InboxPanel } from "@/components/portfolio/inbox-panel";
 import { buildWorkStageLabels } from "@/lib/work/work-row-labels";
 import { requireSession } from "@/lib/authz";
-import { getDecisionsQueue, hitlDecisionsOf } from "@/lib/queries/decisions";
+import {
+  decisionQueueReadsRepoFiles,
+  getDecisionsQueue,
+  hitlDecisionsOf,
+} from "@/lib/queries/decisions";
 import { getInboxItems, getUnreadInboxCount } from "@/lib/queries/inbox";
 
 export async function generateMetadata(): Promise<Metadata> {
@@ -64,7 +68,12 @@ export default async function InboxPage(): Promise<ReactElement> {
               <h2 className="mb-3.5 inline-flex items-center gap-2.5 font-sans text-sm font-bold tracking-[-0.01em] text-ink before:h-[7px] before:w-[7px] before:rounded-full before:bg-amber before:content-['']">
                 {t("needsActionTitle", { count: hitlItems.length })}
               </h2>
-              <HitlInboxList canAct currentUserId={user.id} items={hitlItems} />
+              <HitlInboxList
+                canAct
+                canReadRepoFiles={decisionQueueReadsRepoFiles()}
+                currentUserId={user.id}
+                items={hitlItems}
+              />
             </section>
           ) : null}
 

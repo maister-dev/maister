@@ -153,7 +153,7 @@ function seedArtifact(
     nodeAttemptId: null,
     nodeId: "implement",
     attempt: 1,
-    artifactDefId: null,
+    artifactDefId: overrides.artifactDefId ?? null,
     kind: overrides.kind ?? "log",
     producer: "runner",
     locator: overrides.locator,
@@ -461,6 +461,75 @@ describe("GET /api/runs/[runId]/artifacts/[artifactId]/payload", () => {
     expect(res.status).toBe(403);
     expect(openRuntimeObjectContent).not.toHaveBeenCalled();
     expect(requireProjectAction).toHaveBeenCalledWith(
+      expect.any(String),
+      "readRepoFiles",
+    );
+  });
+
+  it.each([
+    "default:consensus-draft",
+    "default:consensus-verdict",
+    "default:consensus-synthesis",
+  ])(
+    "inline %s agent output requires the repository-content grant a viewer lacks",
+    async (artifactDefId) => {
+      vi.mocked(requireProjectAction).mockImplementation(
+        async (_projectId, action) => {
+          if (action === "readRepoFiles")
+            throw new MaisterError(
+              "UNAUTHORIZED",
+              "repository content permission is required",
+            );
+
+          return { role: "viewer" } as never;
+        },
+      );
+      seedArtifact({
+        id: "art-consensus-viewer",
+        artifactDefId,
+        locator: { kind: "inline", text: "quoted repository source" },
+      });
+
+      const res = await invokeGet("art-consensus-viewer");
+      const body = await res.text();
+
+      expect(res.status).toBe(403);
+      expect(body).not.toContain("quoted repository source");
+      expect(requireProjectAction).toHaveBeenCalledWith(
+        expect.any(String),
+        "readRepoFiles",
+      );
+    },
+  );
+
+  it("a member with the repository-content grant reads a consensus draft", async () => {
+    seedArtifact({
+      id: "art-consensus-member",
+      artifactDefId: "default:consensus-draft",
+      locator: { kind: "inline", text: "full draft body" },
+    });
+
+    const res = await invokeGet("art-consensus-member");
+
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("full draft body");
+    expect(requireProjectAction).toHaveBeenCalledWith(
+      expect.any(String),
+      "readRepoFiles",
+    );
+  });
+
+  it("other inline evidence stays board evidence at readBoard", async () => {
+    seedArtifact({
+      id: "art-round-debate",
+      artifactDefId: "consensus-round-debate",
+      locator: { kind: "inline", text: "{}" },
+    });
+
+    const res = await invokeGet("art-round-debate");
+
+    expect(res.status).toBe(200);
+    expect(requireProjectAction).not.toHaveBeenCalledWith(
       expect.any(String),
       "readRepoFiles",
     );

@@ -2741,6 +2741,11 @@ export function memoryBoundClient(args: {
 
       return completion;
     },
+    // The memory client keeps no owner ledger, so every settled turn is
+    // "applied" at once and this never yields the real client's `null`
+    // (pending application). That branch is covered against a stub client in
+    // lib/flows/graph/__tests__/consensus-application-wait.test.ts.
+    waitForPromptOwnerApplication: (handle) => client.waitForPrompt(handle),
     deliverInput: (sessionId, payload) =>
       fake.transport.deliverInput(
         sessionId,

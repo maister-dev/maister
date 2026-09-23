@@ -30,6 +30,7 @@ import {
 import { closeDb } from "@/lib/db/client";
 import { recordCurrentArtifact } from "@/lib/flows/graph/artifact-store";
 import { runFlow } from "@/lib/flows/runner";
+import { ConsensusGenerationPending } from "@/lib/flows/graph/consensus/prompt-owner";
 import { fakeGraphHosts } from "@/test-support/fake-execution-host";
 import {
   schema,
@@ -195,6 +196,37 @@ const VALID_VARS = {
     debateLogArtifactId: "debate_log",
   },
 };
+
+describe("P0-5 consensus pending graph yield", () => {
+  it("keeps the node Running until the applied generation can be replayed", async () => {
+    const seeded = await seedGraphRun(
+      consensusFlow(undefined, {}, "echo done"),
+    );
+    const { hosts } = await fakeGraphHosts(db, seeded.runId);
+    const redrive = () =>
+      runFlow(seeded.runId, {
+        db,
+        runtimeRoot: seeded.runtimeRoot,
+        executionHosts: hosts,
+      });
+
+    runConsensusNode.mockRejectedValueOnce(
+      new ConsensusGenerationPending("verdict-owner-application"),
+    );
+    await redrive();
+    const [attempt] = await getAttempts(seeded.runId);
+
+    expect((await getRun(seeded.runId)).status).toBe("Running");
+    expect(attempt.status).toBe("Running");
+    scriptCompletion({});
+    await redrive();
+    const [resumed] = await getAttempts(seeded.runId);
+
+    expect(resumed.id).toBe(attempt.id);
+    expect(resumed.status).toBe("Succeeded");
+    expect((await getRun(seeded.runId)).status).not.toBe("Failed");
+  }, 60_000);
+});
 
 describe("runGraph — ADR-162 consensus engine_vars transport", () => {
   it("AC-10: validates the engine vars in place and persists them unmutated", async () => {

@@ -68,6 +68,18 @@ function actingProjectRoles(): ProjectRole[] {
   return projectRolesForActions(DECISION_ACTIONS);
 }
 
+/**
+ * Whether EVERY reader the decision queue admits also holds `action` on the
+ * item's project. Queue items are scoped to the `DECISION_ACTIONS` role floor,
+ * so a surface rendering them may show an `action`-gated affordance exactly
+ * when that floor clears it — derived from the same rank map, never assumed.
+ */
+export function decisionQueueGrants(action: ProjectAction): boolean {
+  const granted = projectRolesForActions([action]);
+
+  return actingProjectRoles().every((role) => granted.includes(role));
+}
+
 export interface VisibleProject {
   id: string;
   slug: string;

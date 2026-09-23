@@ -36,7 +36,10 @@ import {
   listFlaggedForProjects,
 } from "@/lib/queries/decision-sources";
 import { getCrossProjectHitlInbox } from "@/lib/queries/portfolio";
-import { getActionableProjectIds } from "@/lib/queries/visible-projects";
+import {
+  decisionQueueGrants,
+  getActionableProjectIds,
+} from "@/lib/queries/visible-projects";
 import { getOpenRelationBlockers } from "@/lib/social/relations";
 
 const { projects } = schema;
@@ -348,6 +351,13 @@ export function hitlDecisionsOf(
  * layout, the home page and the inbox page each call it; the work happens once.
  */
 export const getDecisionsQueue = cache(computeDecisionsQueue);
+
+// Every reader this queue admits holds `readRepoFiles` exactly when this is
+// true, so a queue surface may render repository-content affordances from it
+// without a per-item role read.
+export function decisionQueueReadsRepoFiles(): boolean {
+  return decisionQueueGrants("readRepoFiles");
+}
 
 /**
  * The canonical `decisions` number. Deliberately the length of the same list

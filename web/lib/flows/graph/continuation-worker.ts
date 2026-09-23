@@ -17,14 +17,22 @@ import {
   inArray,
   lt,
   lte,
+  notExists,
+  notInArray,
   or,
   sql,
 } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import pino from "pino";
 
 import { runFlow } from "../runner";
 
 import { openFlowPromptExists } from "./prompt-permission";
+import {
+  currentCoordinator,
+  readCoordinatorWakeIntent,
+  wakeParkedCoordinator,
+} from "./coordinator-wake";
 import { pendingGatePermissionResumeExists } from "./gate-permission-resume";
 
 import {
@@ -47,11 +55,15 @@ import { markResumedFromWait } from "@/lib/runs/state-transitions";
 import { projectionTransaction } from "@/lib/execution-host/events/projection-transaction";
 import { projectionLimitsFromEnv } from "@/lib/execution-host/events/projection-limits";
 import { runEventWakeBus } from "@/lib/execution-host/events/run-wake";
+import { SETTLED_RUN_STATUSES } from "@/lib/runs/run-status-sets";
 
 const log = pino({
   name: "flow-continuation-worker",
   level: process.env.LOG_LEVEL ?? "info",
 });
+const pendingChild = alias(runs, "pending_child");
+const wakeAttempt = alias(nodeAttempts, "wake_attempt");
+const sourceAssignment = alias(executionAssignments, "source_assignment");
 
 /** The run cursor and existing attempt are the queue. A keyset scan covers
  * already-applied commands even when no new host event arrives. Each free
@@ -91,6 +103,7 @@ export function startFlowContinuationWorker(input: {
               currentStepId: runs.currentStepId,
               crashRecoverAttempts: runs.crashRecoverAttempts,
               crashRecoverNextRetryAt: runs.crashRecoverNextRetryAt,
+              placementReason: executionAssignments.placementReason,
             })
             .from(runs)
             .innerJoin(
@@ -163,9 +176,16 @@ export function startFlowContinuationWorker(input: {
                             and(
                               eq(nodeAttempts.runId, runs.id),
                               eq(nodeAttempts.nodeId, runs.currentStepId),
-                              eq(
-                                nodeAttempts.executionAssignmentId,
-                                executionAssignments.id,
+                              or(
+                                eq(
+                                  nodeAttempts.executionAssignmentId,
+                                  executionAssignments.id,
+                                ),
+                                and(
+                                  eq(runs.status, "WaitingOnChildren"),
+                                  eq(nodeAttempts.nodeType, "consensus"),
+                                  eq(nodeAttempts.status, "NeedsInput"),
+                                ),
                               ),
                               or(
                                 and(
@@ -182,6 +202,7 @@ export function startFlowContinuationWorker(input: {
                                         "ai_coding",
                                         "judge",
                                         "orchestrator",
+                                        "consensus",
                                       ]),
                                     ),
                                     exists(
@@ -206,6 +227,83 @@ export function startFlowContinuationWorker(input: {
                                   ),
                                 ),
                               ),
+                            ),
+                          ),
+                      ),
+                    ),
+                  ),
+                  and(
+                    eq(runs.status, "Running"),
+                    eq(executionAssignments.state, "active"),
+                    eq(executionAssignments.placementReason, "wait_resume"),
+                    exists(
+                      tx
+                        .select({ id: wakeAttempt.id })
+                        .from(wakeAttempt)
+                        .innerJoin(
+                          sourceAssignment,
+                          eq(
+                            sourceAssignment.id,
+                            wakeAttempt.executionAssignmentId,
+                          ),
+                        )
+                        .where(
+                          and(
+                            eq(wakeAttempt.runId, runs.id),
+                            eq(wakeAttempt.nodeId, runs.currentStepId),
+                            eq(wakeAttempt.status, "NeedsInput"),
+                            inArray(wakeAttempt.nodeType, [
+                              "consensus",
+                              "orchestrator",
+                            ]),
+                            eq(sourceAssignment.runId, runs.id),
+                            eq(sourceAssignment.state, "released"),
+                            eq(
+                              sourceAssignment.releasedReason,
+                              "waiting_on_children",
+                            ),
+                            eq(
+                              sourceAssignment.executionHostId,
+                              executionAssignments.executionHostId,
+                            ),
+                            lt(
+                              sourceAssignment.epoch,
+                              executionAssignments.epoch,
+                            ),
+                          ),
+                        ),
+                    ),
+                  ),
+                  and(
+                    eq(runs.status, "WaitingOnChildren"),
+                    exists(
+                      tx
+                        .select({ id: nodeAttempts.id })
+                        .from(nodeAttempts)
+                        .where(
+                          and(
+                            eq(nodeAttempts.runId, runs.id),
+                            eq(nodeAttempts.nodeId, runs.currentStepId),
+                            eq(nodeAttempts.status, "NeedsInput"),
+                            inArray(nodeAttempts.nodeType, [
+                              "orchestrator",
+                              "consensus",
+                            ]),
+                          ),
+                        ),
+                    ),
+                    or(
+                      isNotNull(runs.failedChildWakeAt),
+                      notExists(
+                        tx
+                          .select({ id: pendingChild.id })
+                          .from(pendingChild)
+                          .where(
+                            and(
+                              eq(pendingChild.parentRunId, runs.id),
+                              notInArray(pendingChild.status, [
+                                ...SETTLED_RUN_STATUSES,
+                              ]),
                             ),
                           ),
                       ),
@@ -281,13 +379,45 @@ export function startFlowContinuationWorker(input: {
           continue;
         }
         if (candidate.status === "WaitingOnChildren") {
+          const coordinator = await currentCoordinator(input.db, candidate.id);
+
+          if (coordinator?.status === "WaitingOnChildren") {
+            await wakeParkedCoordinator({
+              db: input.db,
+              parentRunId: candidate.id,
+              cause: "continuation_worker",
+              expectedAttemptId: coordinator.nodeAttemptId,
+              resumeFlow: (runId, options) =>
+                runFlow(runId, {
+                  ...input,
+                  ...options,
+                  signal: controller.signal,
+                }),
+            });
+            failures.delete(slot);
+            continue;
+          }
           const resumed = await markResumedFromWait(candidate.id, {
             db: input.db,
           });
 
           if (!resumed.ok) continue;
         }
-        await runFlow(candidate.id, { ...input, signal: controller.signal });
+        const wakeIntent =
+          candidate.status === "WaitingOnChildren" ||
+          candidate.placementReason === "wait_resume"
+            ? await readCoordinatorWakeIntent(input.db, candidate.id)
+            : null;
+
+        await runFlow(candidate.id, {
+          ...input,
+          signal: controller.signal,
+          ...(wakeIntent?.nodeType === "consensus"
+            ? { consensusResume: { targetStepId: wakeIntent.nodeId } }
+            : wakeIntent?.nodeType === "orchestrator"
+              ? { orchestratorResume: { targetStepId: wakeIntent.nodeId } }
+              : {}),
+        });
         failures.delete(slot);
       } catch (error) {
         const reason = isMaisterError(error) ? error.code : "service_failure";

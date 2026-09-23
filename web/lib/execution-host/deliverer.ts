@@ -772,6 +772,7 @@ export type PromptQueryResult =
       state: "pending";
       transportState: ExecutionCommand["transportState"];
       nextReconcileAt: string | null;
+      ownerApplicationPending?: true;
     };
 
 /** Bounded query over the same evidence path as waits and startup recovery.
@@ -834,6 +835,7 @@ export async function queryPrompt(
           transportState: application.transportState,
           nextReconcileAt:
             application.applicationNextRetryAt?.toISOString() ?? null,
+          ownerApplicationPending: true,
         };
     }
     if (evidence.command.state === "succeeded")
@@ -875,6 +877,39 @@ export async function waitForPromptCompletion(
       // has given up on the stream the wait can never end — yield instead of
       // spinning forever. The caller turns this into a continuation-pending
       // yield: no run state is written and a later driver can resume.
+      if (
+        await commandStreamLost({
+          db: input.db,
+          commandId: input.handle.commandId,
+        })
+      )
+        throw new MaisterError(
+          "EXECUTOR_UNAVAILABLE",
+          "execution host event stream is lost; prompt evidence cannot arrive",
+          { details: { reason: "event_stream_lost" } },
+        );
+    }
+    await waitForCommandWake(input.handle.commandId, input.signal);
+  }
+}
+
+/** A Flow owner can release its graph claim while a settled prompt's durable
+ * application retries. Host output still waits through the normal event path.
+ */
+export async function waitForPromptOwnerApplication(
+  input: PromptQueryOptions & {
+    assignmentIsCurrent?: () => Promise<boolean>;
+  },
+): Promise<PromptResult | null> {
+  let nextHealthCheck = Date.now() + STREAM_HEALTH_CHECK_MS;
+
+  for (;;) {
+    const result = await queryPrompt(input);
+
+    if (result.state === "succeeded") return result.result;
+    if (result.ownerApplicationPending) return null;
+    if (Date.now() >= nextHealthCheck) {
+      nextHealthCheck = Date.now() + STREAM_HEALTH_CHECK_MS;
       if (
         await commandStreamLost({
           db: input.db,

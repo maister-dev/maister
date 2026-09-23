@@ -6274,7 +6274,12 @@ paths:
         locator additionally requires `readRepoFiles` (`member`), the same
         grant as the direct runtime-object content route, because agent
         session output can quote any file the agent read (M22 ADR-053: a viewer
-        cannot browse source). Resolves the artifact's locator. Legacy file
+        cannot browse source). (Implemented, P0-5 v2) The same grant covers an
+        INLINE artifact holding consensus agent output — def
+        `default:consensus-draft`, `default:consensus-verdict` or
+        `default:consensus-synthesis` — so a viewer gets `403`; other inline
+        evidence (including the consensus round debate) stays `readBoard`.
+        Resolves the artifact's locator. Legacy file
         locators are path-confined to the run directory; `execution-object`
         locators resolve through the manager-owned object catalogue and typed
         host contract, never a web runtime path. Diff / log / git / inline output is served as
@@ -7325,7 +7330,28 @@ paths:
         response, writes `input-<nodeId>.json`, and queues `runFlow`; it never
         accepts draft ids, participant ids, artifact ids, or transition targets
         from the body. `provide-resolution` requires bounded non-empty
-        `response.resolution`; free-form resolution text is not logged.
+        `response.resolution`; free-form resolution text is not logged. The
+        pending HITL schema includes stable `drafts[].decision` slots with
+        `classification` (`complete`, `partial`, `unavailable`), optional
+        `stopReason`/`reason`, a bounded `excerpt` only when text exists (plus
+        `excerptBounds` when it was cut), `slot`, and — only when the draft
+        artifact exists — `artifactRef` and child `artifactRunId` (whose
+        payload requires `readRepoFiles`). The server sends no display `label`.
+        The schema carries `nodeAttemptId`, `escalationReason`
+        (`technical_only`, `rounds_exhausted`, `single_pass`), and additive
+        `technicalFailures[]` entries (`verifierId`, `targetParticipantId`,
+        `parseStatus`, `errorCode`, `targetSlot`), separate from material
+        `disagreements` (`axis` ≤ 256 bytes, `summary` ≤ 1,024 bytes).
+        Unavailable choices remain listed but are rejected by response
+        validation with 422 `NEEDS_INPUT` before any mutation — a legacy choice
+        without its own `decision` is matched by position; partial and legacy
+        unclassified choices remain selectable. `debateLog` carries a bounded
+        excerpt (`excerptBounds` when cut) and a parent-run artifact reference.
+        The request id is UUID-shaped and derived from the attempt and round,
+        so a replayed escalation adopts the same request. The writer, this
+        validator and the inbox card share one decoder
+        (`web/lib/flows/consensus-resolution.ts`). Existing decision names and
+        response body shape are unchanged.
 
         Successful live permission delivery returns `state: "delivered"`.
         For an owned node prompt, the exact input ACK transaction also wakes
@@ -8780,8 +8806,8 @@ paths:
         (Implemented, M19 — ADR-034.)
 
         Recovers a `Crashed` flow run via a hybrid plan decided by
-        `classifyRecover(run, nodeKind, retrySafe)` over the **recover target
-        node** — `runs.resume_target_step_id` (the node id retained at crash
+        `classifyRecover(run, nodeKind, retrySafe, consensusEvidence)` over the
+        **recover target node** — `runs.resume_target_step_id` (the node id retained at crash
         time; `current_step_id` is nulled on crash), falling back to
         `current_step_id` for live/hand-seeded rows:
 
@@ -8792,6 +8818,9 @@ paths:
         | agent (`ai_coding`/`judge`/`orchestrator`) | null | ignored | `discard-only` | 409 |
         | session-less (`cli`/`check`/`guard`/`human`/`form`) | irrelevant | `true` | `redispatch` — re-run the node | 200 redispatched / 202 queued |
         | session-less | irrelevant | `false` (default) | `discard-only` | 409 |
+        | `consensus`, latest attempt has a quarantined consensus command | irrelevant | any | `discard-only` — never re-prompt from disagreeing evidence | 409 |
+        | `consensus`, latest attempt carries the applied incomplete-synthesis witness | irrelevant | any | `redispatch` — fresh node attempt and synthesis ID | 200 redispatched / 202 queued |
+        | `consensus`, neither | irrelevant | `true` / `false` | as session-less | 200 redispatched / 409 |
         | unresolvable target node | — | — | `discard-only` | 409 |
 
         (ADR-175) `judge` is an AGENT node on this table: it runs an ACP session
@@ -21046,12 +21075,56 @@ components:
         kind: { type: string, enum: [hitl-response] }
         hitlRequestId: { type: string }
 
+    ConsensusTextBounds:
+      type: object
+      required: [bytes, retainedBytes, droppedBytes, cap]
+      properties:
+        bytes: { type: integer, minimum: 0 }
+        retainedBytes: { type: integer, minimum: 0 }
+        droppedBytes: { type: integer, minimum: 0 }
+        cap: { type: integer, minimum: 0 }
+      description: >-
+        (Implemented, P0-5 v2) UTF-8 byte counts. Retained plus dropped equals
+        original content bytes; display marker bytes count toward cap but
+        not retained content bytes.
+
     ArtifactLocatorInline:
       type: object
       required: [kind, text]
       properties:
         kind: { type: string, enum: [inline] }
         text: { type: string }
+        partial:
+          type: boolean
+          description: "(Implemented, P0-5 v2) Consensus draft/generation incomplete evidence."
+        stopReason:
+          type: string
+          description: >-
+            (Implemented, P0-5 v2) Consensus draft/generation stop reason: the
+            host's own ACP value when the turn settled with one, else the
+            engine value `host_failure` (failed host turn) or
+            `stop_reason_unavailable` (settled without one). Absent on old
+            artifacts.
+        reason:
+          type: string
+          description: "Named partial/output-retention reason when present."
+        truncated:
+          type: boolean
+          description: "A consensus input or published output was bounded; absence on old rows is unknown."
+        textBounds:
+          description: >-
+            Loss of THIS artifact's own text: a bounded published plan, an
+            output past the 1 MiB retention budget, or a raw-output excerpt
+            (whose count also includes bytes lost past that budget).
+          allOf:
+            - $ref: "#/components/schemas/ConsensusTextBounds"
+        inputTextBounds:
+          description: >-
+            Synthesis generations and plans only: the cut of the selected text
+            the synthesizer was given, copied from its input evidence.
+            `truncated` is true when either bound dropped bytes.
+          allOf:
+            - $ref: "#/components/schemas/ConsensusTextBounds"
         hitlRequestId:
           type: string
           description: |

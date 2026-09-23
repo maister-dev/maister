@@ -60,7 +60,7 @@ export type ConsensusDraftLaunchInput = {
   nodeId: string;
   nodeAttemptId: string;
   round: number;
-  prompt: string;
+  prompts: readonly Readonly<{ participantId: string; prompt: string }>[];
   participants: ConsensusParticipantDef[];
   workspaceMode: "repo_read";
 };
@@ -107,6 +107,7 @@ function participantWorkspaceMode(
 function draftPayload(
   input: ConsensusDraftLaunchInput,
   participant: ConsensusParticipantDef,
+  prompt: string,
 ): ConsensusDraftPayload {
   const kind = participantKind(participant);
 
@@ -117,7 +118,7 @@ function draftPayload(
     round: input.round,
     participantId: participant.id,
     participantKind: kind,
-    prompt: input.prompt,
+    prompt,
     workspaceMode: participantWorkspaceMode(participant, input.workspaceMode),
   };
 }
@@ -300,6 +301,29 @@ export async function launchConsensusDraftRuns(
     tryStartRun: deps.tryStartRun ?? tryStartRun,
   };
   const results: ConsensusDraftLaunchResult[] = [];
+  const configured = new Set(
+    input.participants.map((participant) => participant.id),
+  );
+  const promptByParticipant = new Map<string, string>();
+
+  for (const item of input.prompts) {
+    if (
+      !configured.has(item.participantId) ||
+      promptByParticipant.has(item.participantId)
+    )
+      throw new MaisterError(
+        "CRASH",
+        `consensus draft prompt map contains a foreign or duplicate participant ${item.participantId}`,
+        { details: { reason: "consensus_draft_prompt_map_invalid" } },
+      );
+    promptByParticipant.set(item.participantId, item.prompt);
+  }
+  if (promptByParticipant.size !== input.participants.length)
+    throw new MaisterError(
+      "CRASH",
+      `consensus draft prompt map has ${promptByParticipant.size} prompts for ${input.participants.length} participants`,
+      { details: { reason: "consensus_draft_prompt_map_invalid" } },
+    );
 
   for (const participant of input.participants) {
     const existing = await existingDraftRun(input, participant.id);
@@ -309,7 +333,11 @@ export async function launchConsensusDraftRuns(
       continue;
     }
 
-    const payload = draftPayload(input, participant);
+    const payload = draftPayload(
+      input,
+      participant,
+      promptByParticipant.get(participant.id)!,
+    );
 
     if ("agent" in participant && participant.agent) {
       const launched = await launch({

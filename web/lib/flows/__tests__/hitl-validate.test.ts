@@ -66,6 +66,48 @@ describe("validateConsensusDecision", () => {
     });
   });
 
+  it("rejects an unavailable draft slot while preserving partial and legacy picks", () => {
+    const classifiedSchema = {
+      ...consensusSchema,
+      allowedDecisions: ["pick-draft-1", "pick-draft-2", "pick-draft-3"],
+      drafts: [
+        { decision: "pick-draft-1", classification: "complete" },
+        { decision: "pick-draft-2", classification: "unavailable" },
+        { decision: "pick-draft-3", classification: "partial" },
+      ],
+    };
+
+    expect(
+      validateConsensusDecision({ decision: "pick-draft-2" }, classifiedSchema),
+    ).toEqual({ ok: false, message: "draft is unavailable" });
+    expect(
+      validateConsensusDecision({ decision: "pick-draft-3" }, classifiedSchema)
+        .ok,
+    ).toBe(true);
+    expect(
+      validateConsensusDecision({ decision: "pick-draft-1" }, consensusSchema)
+        .ok,
+    ).toBe(true);
+  });
+
+  it("refuses an unavailable slot that carries no decision of its own, as the card does", () => {
+    const positional = {
+      ...consensusSchema,
+      allowedDecisions: ["pick-draft-1", "pick-draft-2"],
+      drafts: [
+        { classification: "partial" },
+        { classification: "unavailable" },
+      ],
+    };
+
+    expect(
+      validateConsensusDecision({ decision: "pick-draft-2" }, positional),
+    ).toEqual({ ok: false, message: "draft is unavailable" });
+    expect(
+      validateConsensusDecision({ decision: "pick-draft-1" }, positional).ok,
+    ).toBe(true);
+  });
+
   it("accepts a non-empty human resolution", () => {
     const r = validateConsensusDecision(
       {

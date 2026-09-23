@@ -1938,6 +1938,13 @@ export const runs = pgTable(
       withTimezone: true,
       mode: "date",
     }),
+    // P0-5: a failed child of the current orchestrator node wakes its parked
+    // coordinator even while siblings are pending. Kept apart from
+    // `resumeRequestedAt`, which C3 admission reads as "HITL answered".
+    failedChildWakeAt: timestamp("failed_child_wake_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
     // ADR-121 (INV-9): auto-drain ORIGIN marker — set at the run-INSERT inside
     // `launchRun` for queue-admitted (C2) runs. The precise `liveAuto` counter;
     // immutable launch-origin snapshot. NULL ⇒ manual/scratch/resume run (incl. an
@@ -5658,7 +5665,23 @@ export type ArtifactLocator =
       hitlRequestId?: string;
       threadIds?: string[];
       feedbackFingerprint?: string;
+      // P0-5: consensus evidence stays in existing artifact locator JSON.
+      partial?: boolean;
+      stopReason?: string;
+      reason?: string;
+      truncated?: boolean;
+      textBounds?: ArtifactTextBounds;
+      inputTextBounds?: ArtifactTextBounds;
     };
+
+// P0-5: one byte-accounting shape for every bounded consensus text
+// (`bytes = retainedBytes + droppedBytes`, `cap` includes any marker).
+export type ArtifactTextBounds = {
+  bytes: number;
+  retainedBytes: number;
+  droppedBytes: number;
+  cap: number;
+};
 
 // ADR-165 (0129): the PUBLIC result plane — one row per result REVISION of a
 // run, any run kind. `invalid` rows are first-class: they are the ONE durable
@@ -5850,6 +5873,15 @@ export type ConsensusRoundDisagreement = {
   counterEvidence: string;
 };
 
+export type ConsensusRoundDisagreementStorage =
+  | ConsensusRoundDisagreement[]
+  | {
+      version: 1;
+      rows: ConsensusRoundDisagreement[];
+      truncated: boolean;
+      textBounds?: ArtifactTextBounds;
+    };
+
 export const consensusRoundVerdicts = pgTable(
   "consensus_round_verdicts",
   {
@@ -5875,7 +5907,7 @@ export const consensusRoundVerdicts = pgTable(
     verdict: text("verdict", { enum: ["agree", "disagree"] }).notNull(),
     axes: jsonb("axes").$type<Record<string, boolean>>().notNull().default({}),
     disagreements: jsonb("disagreements")
-      .$type<ConsensusRoundDisagreement[]>()
+      .$type<ConsensusRoundDisagreementStorage>()
       .notNull()
       .default([]),
     confidence: real("confidence"),

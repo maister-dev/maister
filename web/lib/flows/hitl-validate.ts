@@ -2,6 +2,12 @@ import "server-only";
 
 import { MaisterError } from "@/lib/errors";
 import {
+  consensusDraftForDecision,
+  decodeConsensusResolutionSchema,
+  isConsensusDraftPickable,
+  isConsensusResolutionKind,
+} from "@/lib/flows/consensus-resolution";
+import {
   isPlainObject,
   validateStructuredOutput,
 } from "@/lib/flows/output-schema";
@@ -82,12 +88,6 @@ export function isReviewSchema(schema: unknown): boolean {
   return isPlainObject(schema) && (schema as ReviewSchemaLike).review === true;
 }
 
-type ConsensusResolutionSchemaLike = {
-  kind?: unknown;
-  allowedDecisions?: unknown;
-  decisions?: unknown;
-};
-
 export type ResolvedConsensusDecision = {
   decision: string;
   response: {
@@ -96,32 +96,17 @@ export type ResolvedConsensusDecision = {
   };
 };
 
-function stringArray(value: unknown): string[] {
-  return Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === "string")
-    : [];
-}
-
-function consensusAllowedDecisions(
-  schema: ConsensusResolutionSchemaLike,
-): string[] {
-  const allowed = stringArray(schema.allowedDecisions);
-
-  return allowed.length > 0 ? allowed : stringArray(schema.decisions);
-}
-
 export function isConsensusResolutionSchema(schema: unknown): boolean {
-  if (!isPlainObject(schema)) return false;
-  const kind = (schema as ConsensusResolutionSchemaLike).kind;
-
-  return kind === "consensus_resolution" || kind === "consensus";
+  return isConsensusResolutionKind(schema);
 }
 
 export function validateConsensusDecision(
   response: unknown,
   schema: unknown,
 ): ({ ok: true } & ResolvedConsensusDecision) | { ok: false; message: string } {
-  if (!isPlainObject(schema) || !isConsensusResolutionSchema(schema)) {
+  const decoded = decodeConsensusResolutionSchema(schema);
+
+  if (!decoded) {
     return {
       ok: false,
       message: "consensus hitl schema is missing or malformed",
@@ -131,9 +116,7 @@ export function validateConsensusDecision(
     return { ok: false, message: "response must be a JSON object" };
   }
 
-  const allowed = consensusAllowedDecisions(
-    schema as ConsensusResolutionSchemaLike,
-  );
+  const allowed = decoded.allowedDecisions;
   const decision = response.decision;
 
   if (typeof decision !== "string" || !allowed.includes(decision)) {
@@ -141,6 +124,16 @@ export function validateConsensusDecision(
       ok: false,
       message: `decision must be one of [${allowed.join(", ")}]`,
     };
+  }
+
+  if (decision.startsWith("pick-draft-")) {
+    // The same decoder the inbox card uses, so a slot the card disables is
+    // exactly a slot this refuses — legacy positional choices included.
+    const selected = consensusDraftForDecision(decoded, decision);
+
+    if (selected && !isConsensusDraftPickable(selected)) {
+      return { ok: false, message: "draft is unavailable" };
+    }
   }
 
   if (decision === "provide-resolution") {

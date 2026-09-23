@@ -247,7 +247,21 @@ async function getRun(runId: string): Promise<any> {
 
 describe("orchestrator node — supervisory lifecycle (M37)", () => {
   it("parks on WaitingOnChildren (not NeedsInput), no run.needs_input webhook, token survives", async () => {
-    const { runId, runtimeRoot } = await seedOrchestratorRun();
+    const { runId, projectId, runtimeRoot } = await seedOrchestratorRun();
+    const parent = await getRun(runId);
+
+    // A coordinator with no pending child is now woken immediately by the
+    // post-park catch-up. Keep one real pending child for this park assertion.
+    await db.insert(schema.runs).values({
+      id: randomUUID(),
+      taskId: parent.taskId,
+      projectId,
+      flowId: parent.flowId,
+      flowVersion: "v1.0.0",
+      status: "Running",
+      parentRunId: runId,
+      rootRunId: runId,
+    });
 
     // Lazy import so the runner-agent / db-client mocks are installed first.
     const { runFlow } = await import("@/lib/flows/runner");

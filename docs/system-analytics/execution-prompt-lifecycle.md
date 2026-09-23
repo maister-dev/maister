@@ -893,10 +893,52 @@ failed, fenced or non-`end_turn` host outcome records the existing fail-closed
 verdict with its error code rather than a missing cell.
 
 The runtime reads its cell back from the ledger instead of the live stdout it
-used before. While that application is still pending it raises the typed
-`consensus_generation_pending` refusal, so an unavailable result never becomes a
+used before. A deferred application yields the driver through the owned wait;
+if the wait returns without its applied cell, the runtime raises typed
+`consensus_generation_pending`. Neither path turns unavailable evidence into a
 fail-closed disagreement. Postgres additionally freezes an admitted command's
 owner reference, so one cell's paid output cannot be re-pointed at its sibling.
+
+#### P0-5 v2 input evidence and pending control (Implemented)
+
+Before verifier/synthesis prompt enqueue, the current-owner admission path
+records a deterministic `:input` artifact keyed by its verdict/synthesis ID.
+Versioned JSON contains the exact attempt/round/generation, the source (the
+target draft artifact for a verifier; the picked draft's artifact, or the
+`consensus` / `provide-resolution` label, for synthesis), bounded input digest
+and byte bounds, and the UTF-16 span of that value in the rendered prompt. The
+span is the slot's own position: `prepareConsensusInputEvidence` renders the
+static template once with a sentinel in that slot and once with the value, so an
+identical earlier passage (e.g. inside the base prompt) can never be mistaken
+for it. It contains no duplicate draft body.
+Re-entry compares rather than overwrites this evidence; an orphan
+preparation cannot be mistaken for an applied cell. On application, read only
+the matching generation's preparation; the command's verified canonical
+request proves the prompt and sliced value digests and byte/marker accounting
+delivered to the host. The redacted
+command projection intentionally holds only byte/count summaries. The strict
+owner-ref JSONB CHECK from migration 0140 is unchanged. Historical commands
+without input evidence remain readable with unknown truncation metadata.
+
+After host settlement, a deferred consensus owner application makes the
+dedicated owned prompt wait (`waitForConsensusApplication`) yield with
+`flow_prompt_continuation_pending`. A **superseded** command is settled, not
+pending — the immutable cell or generation it would have written already exists
+under another writer, so the runtime reads that result; the same rule holds when
+re-entry finds the logical command already `superseded`
+(`reattachConsensusPrompt`). A **poisoned** command keeps yielding; ADR-177
+reconcile owns its `owner-poisoned` crash (including a quarantine found after
+application, read from `application_error`).
+Re-entry adopts the existing logical command instead of issuing another turn
+and closes the applied command's exact host session before using cached output.
+If consensus runtime returns from the wait before its cell/generation is visible,
+`ConsensusGenerationPending` passes both graph catches as a control-flow yield.
+The node stays Running, the owner worker applies the result, and the production
+continuation worker re-enters the graph. Bounded owner-application poison still
+ends in ADR-177's owner-poisoned crash. A replayed immutable verdict cell is
+never rewritten to add metadata. A non-`end_turn` draft with retained text has
+an atomically applied partial artifact and Failed child status; the parent
+records an unpaid `draft_partial` cell rather than opening a verifier command.
 
 ### Consensus synthesis generation (Implemented)
 
@@ -910,11 +952,17 @@ the verifier and refuses once a synthesis artifact for that generation exists.
 
 Application commits the round-scoped synthesis output artifact with the command
 application marker in one transaction; the node then publishes its existing
-current `consensus_plan` and `debate_log` from that applied output. Empty or
-non-`end_turn` synthesis output records the generation's failure evidence
-instead of an empty plan, and the node fails on its existing `PRECONDITION`
-path. A generation whose artifact already exists is refused at admission, so a
-re-entering driver adopts the applied output rather than paying again.
+current `consensus_plan` and `debate_log` from a complete applied output. Empty
+or non-`end_turn` output keeps a partial generation artifact with the actual
+stop reason and input/output bounds, then fails the node with `CRASH` reason
+`consensus_synthesis_incomplete`, carrying the actual stop reason and
+synthesis ID. A generation whose artifact already exists is refused at
+admission, so a re-entering driver adopts the applied output rather than paying
+again. Explicit Recover is available only when the latest failed attempt has
+that matching applied witness and no quarantined terminal conflict. It mints a
+fresh node attempt and generation, after checking quarantine **before** the
+redispatch branch; it never resumes the synthesis substep as an ACP node
+session. Missing, stale and mismatched witnesses have no new recovery arm.
 
 ### Consensus draft agent turn (Implemented)
 

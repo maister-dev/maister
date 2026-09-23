@@ -16,6 +16,15 @@ import pino from "pino";
 
 import { recordArtifact } from "../artifact-store";
 
+import {
+  CONSENSUS_DRAFT_OUTPUT_CAP_BYTES,
+  consensusTurnStopReason,
+  finishConsensusOutput,
+  retainConsensusOutput,
+  type RetainedConsensusOutput,
+} from "./text";
+import { CONSENSUS_DRAFT_ARTIFACT_DEF } from "./artifact-defs";
+
 import { prepareAgentRunFinalization } from "@/lib/agents/finalization";
 import {
   acknowledgeAgentMessage,
@@ -31,12 +40,12 @@ import { agentTurns, runs } from "@/lib/db/schema";
 import { PromptOwnerInvariantError } from "@/lib/execution-host/prompt-owners";
 import { agentMessageText } from "@/lib/run-transcript/agent-text";
 
+export { CONSENSUS_DRAFT_OUTPUT_CAP_BYTES } from "./text";
+
 const log = pino({
   name: "consensus-draft-prompt-owner",
   level: process.env.LOG_LEVEL ?? "info",
 });
-
-export const CONSENSUS_DRAFT_OUTPUT_CAP_BYTES = 1024 * 1024;
 
 type DraftRef = Extract<
   Extract<PromptOwner, { kind: "agent_turn" }>["ref"],
@@ -169,7 +178,11 @@ export async function prepareConsensusDraftPrompt(
 ): Promise<PreparedPromptOwner> {
   const { db, command, outcome } = context;
   const ref: DraftRef = context.owner.ref;
-  let text = "";
+  let retained: RetainedConsensusOutput = {
+    text: "",
+    retainedBytes: 0,
+    droppedBytes: 0,
+  };
 
   if (outcome.state === "succeeded") {
     for await (const event of outcome.events) {
@@ -177,9 +190,11 @@ export async function prepareConsensusDraftPrompt(
       const chunk = agentMessageText(event.payload?.update);
 
       if (chunk === null) continue;
-      const remaining = CONSENSUS_DRAFT_OUTPUT_CAP_BYTES - text.length;
-
-      if (remaining > 0) text += chunk.slice(0, remaining);
+      retained = retainConsensusOutput(
+        retained,
+        chunk,
+        CONSENSUS_DRAFT_OUTPUT_CAP_BYTES,
+      );
     }
   }
   const [run] = await db
@@ -195,10 +210,49 @@ export async function prepareConsensusDraftPrompt(
     source.participantId !== ref.participantId
   )
     throw new PromptOwnerInvariantError("consensus_draft_owner_source");
+  retained = finishConsensusOutput(retained, CONSENSUS_DRAFT_OUTPUT_CAP_BYTES);
+  const text = retained.text;
+
+  const outputBounds = {
+    bytes: retained.retainedBytes + retained.droppedBytes,
+    retainedBytes: retained.retainedBytes,
+    droppedBytes: retained.droppedBytes,
+    cap: CONSENSUS_DRAFT_OUTPUT_CAP_BYTES,
+  };
+
+  if (retained.droppedBytes > 0)
+    log.warn(
+      {
+        role: "draft-output",
+        runId: ref.runId,
+        nodeAttemptId: ref.nodeAttemptId,
+        participantId: ref.participantId,
+        round: ref.round,
+        ...outputBounds,
+      },
+      "consensus-text-truncated",
+    );
   const complete =
     outcome.state === "succeeded" &&
     outcome.response.stopReason === "end_turn" &&
-    text.trim().length > 0;
+    text.trim().length > 0 &&
+    retained.droppedBytes === 0;
+  const partial = text.trim().length > 0 && !complete;
+  const stopReason = consensusTurnStopReason(outcome);
+
+  if (partial)
+    log.warn(
+      {
+        runId: ref.runId,
+        nodeAttemptId: ref.nodeAttemptId,
+        participantId: ref.participantId,
+        round: ref.round,
+        stopReason,
+        retainedBytes: retained.retainedBytes,
+        droppedBytes: retained.droppedBytes,
+      },
+      "consensus-draft-incomplete",
+    );
 
   if (outcome.state !== "fenced")
     await stopAgentPromptSession(db, ref, command.targetSessionId, command.id);
@@ -225,16 +279,32 @@ export async function prepareConsensusDraftPrompt(
         ))
       )
         return supersedeAgentMessage(tx, ref, command.id);
-      if (complete)
+      if (complete || partial)
         await recordArtifact(
           {
             id: consensusDraftArtifactId(ref.runId, source),
             runId: ref.runId,
             nodeId: "consensus-draft",
-            artifactDefId: "default:consensus-draft",
+            artifactDefId: CONSENSUS_DRAFT_ARTIFACT_DEF,
             kind: "human_note",
             producer: "runner",
-            locator: { kind: "inline", text },
+            locator: {
+              kind: "inline",
+              text,
+              ...(partial
+                ? {
+                    partial: true,
+                    stopReason,
+                    reason:
+                      retained.droppedBytes > 0
+                        ? "output_cap_exceeded"
+                        : "consensus_draft_incomplete",
+                    ...(retained.droppedBytes > 0
+                      ? { truncated: true, textBounds: outputBounds }
+                      : {}),
+                  }
+                : {}),
+            },
             validity: "current",
             visibility: "internal",
             retention: "run",

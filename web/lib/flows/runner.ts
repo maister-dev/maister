@@ -15,6 +15,7 @@ import { bindExecution } from "./runner-agent";
 import { claimFlowDriver, isFlowDriverClaimLost } from "./graph/driver-claim";
 import { flowDriverDatabase } from "./graph/driver-db";
 import { withFlowDriver } from "./graph/driver-lifetime";
+import { wakeParkedCoordinator } from "./graph/coordinator-wake";
 
 import { getDb } from "@/lib/db/client";
 import { createExecutionHosts, isFencedError } from "@/lib/execution-host";
@@ -61,6 +62,12 @@ export async function runFlow(
     !["Running", "NeedsInput"].includes(loaded.run.status)
   ) {
     await runGraph(loaded, { ...opts, db, runtimeRoot });
+    await wakeParkedCoordinator({
+      db,
+      parentRunId: runId,
+      cause: "post_park",
+      resumeOptions: { runtimeRoot, executionHosts: opts.executionHosts },
+    });
 
     return;
   }
@@ -105,4 +112,10 @@ export async function runFlow(
     if (!isFlowDriverClaimLost(error) && !isFencedError(error)) throw error;
     logger.warn({ assignmentId: claim.assignmentId }, "flow-driver-yielded");
   }
+  await wakeParkedCoordinator({
+    db,
+    parentRunId: runId,
+    cause: "post_park",
+    resumeOptions: { runtimeRoot, executionHosts: hosts },
+  });
 }

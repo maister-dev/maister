@@ -30,7 +30,7 @@ import {
   runSessionIncarnations,
   runSessions,
 } from "@/lib/db/schema";
-import { MaisterError } from "@/lib/errors";
+import { isMaisterError, MaisterError } from "@/lib/errors";
 import { isTurnLostError } from "@/lib/reconcile-evidence";
 import {
   closeTurnLostAttempt,
@@ -92,6 +92,51 @@ export async function waitForGateApplication(
         .where(eq(executionCommands.id, commandId));
 
       if (command?.applicationState === "applied") return;
+    } catch (readCause) {
+      throw new FlowPromptContinuationPending(commandId, readCause);
+    }
+    throw new FlowPromptContinuationPending(commandId, cause);
+  }
+}
+
+/** A settled consensus turn with a deferred owner application releases the
+ * graph driver; the application and continuation workers own its retry. A
+ * superseded command is settled, not pending: the immutable cell or generation
+ * it would have written already exists, and the runtime reads that instead. A
+ * poisoned one keeps yielding; ADR-177 reconcile owns its crash.
+ */
+export async function waitForConsensusApplication(
+  db: Db,
+  client: BoundClient,
+  commandId: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  try {
+    const result = await client.waitForPromptOwnerApplication(
+      { commandId },
+      { owners: flowPromptOwners, signal },
+    );
+
+    if (result === null)
+      throw new FlowPromptContinuationPending(commandId, undefined);
+  } catch (cause) {
+    if (cause instanceof FlowPromptContinuationPending) throw cause;
+    if (
+      isMaisterError(cause) &&
+      cause.details?.reason === "prompt_owner_superseded"
+    )
+      return;
+    try {
+      const [command] = await db
+        .select({ applicationState: executionCommands.applicationState })
+        .from(executionCommands)
+        .where(eq(executionCommands.id, commandId));
+
+      if (
+        command?.applicationState === "applied" ||
+        command?.applicationState === "superseded"
+      )
+        return;
     } catch (readCause) {
       throw new FlowPromptContinuationPending(commandId, readCause);
     }

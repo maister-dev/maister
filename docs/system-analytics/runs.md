@@ -402,6 +402,29 @@ run machine:
    the same door. `POST /api/runs/{runId}/discard` marks `Abandoned` and enters
    the GC countdown (no synchronous worktree removal).
 
+**Consensus Recover (Implemented, P0-5 v2; corrected 2026-09-23).** A crashed
+`consensus` node keeps the session-less `retry_safe` rule, and the latest
+attempt's evidence only adds to it. The backend and the run-page Recover
+capability share one classifier (`classifyRecover` in
+`web/lib/runs/recover-classify.ts`) and one evidence loader
+(`loadConsensusRecoveryEvidence` in `web/lib/flows/graph/consensus/recovery-evidence.ts`):
+
+| Latest consensus attempt evidence | `retry_safe` | Plan |
+| --- | --- | --- |
+| a consensus verifier/synthesis command of that attempt carries `application_error.reason = prompt_terminal_conflict` (quarantined) | any | `discard-only` — never re-prompt from disagreeing evidence |
+| applied incomplete-synthesis witness: attempt `Failed`/`CRASH`, generation artifact reason `consensus_synthesis_incomplete`, matching run/node/attempt/synthesis ID, applied `consensus_synthesis` command | any | `redispatch` — fresh node attempt and synthesis ID |
+| neither | `true` | `redispatch` (session-less rule) |
+| neither | `false` (default) | `discard-only` |
+
+The evidence parameter is required, so a caller cannot silently drop the
+quarantine refusal. Missing, stale (earlier attempt) or mismatched witness
+evidence falls through to the `retry_safe` rule. ADR-177 owner poison remains
+distinct. No broad auto-retry or run error column. Tests:
+`web/lib/runs/__tests__/recover-classify.test.ts`,
+`web/lib/queries/__tests__/run-recoverable.test.ts`, and the consensus owner
+integration "incomplete synthesis keeps its text and Recover mints a fresh
+generation" (mismatched, missing, quarantined and stale witness controls).
+
 **Recovery window — `status × evidence → arm` (normative; ADR-177).** Every cell a
 `run_kind='flow'` agent node can be parked in, and the single arm that owns it. A
 cell with no arm is a defect, not a default.
@@ -417,6 +440,7 @@ cell with no arm is a defect, not a default.
 | `Running` (no session) | `pending_ingest` or `inflight` ∧ host stream `lost` | CRASH `stream-lost` | an operator, via Recover |
 | `Running` (no session) | `turn_lost` | CRASH `turn-lost` via `applyTurnLostBoundary` | an operator, via Recover |
 | `Running` (no session) | `quarantined` / `poisoned` | CRASH `owner-poisoned` via `applyTurnLostBoundary` | an operator; Recover refuses to re-prompt from disagreeing evidence |
+| `Running`, current node `consensus` (live session or not) | a `consensus_verifier` / `consensus_synthesis` command of the open attempt `poisoned`, or quarantined (`application_error.reason = prompt_terminal_conflict`, also after application) | CRASH `owner-poisoned` through the same evidence boundary, BEFORE the live-session arm (`resolveConsensusPoisonEvidence` → `classifyPromptEvidence`) | an operator; Recover follows the consensus table above |
 | `Running`, committed recover intent | any | `recover` / `reattach` / `wait` (ADR-176 `routeCrashRecover`) | the flow continuation worker, else the sweep backstop |
 | `Crashed` | settled-unapplied `turn_lost` on a still-open attempt | Recover declines, supersedes, re-dispatches (ADR-177) | the fresh attempt |
 | `Crashed` | agreeing terminal evidence, unapplied | Recover applies it first, no second paid turn (ADR-175) | the graph |

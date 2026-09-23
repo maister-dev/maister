@@ -1198,6 +1198,13 @@
       "when": 1790098063859,
       "tag": "0174_poisoned_consumer_lookup",
       "breakpoints": true
+    },
+    {
+      "idx": 175,
+      "version": "7",
+      "when": 1790174901052,
+      "tag": "0175_failed_child_wake",
+      "breakpoints": true
     }
   ]
 }

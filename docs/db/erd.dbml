@@ -2057,6 +2057,7 @@ table runs {
   flow_driver_token text
   flow_driver_lease_expires_at "timestamp with time zone"
   resume_requested_at "timestamp with time zone"
+  failed_child_wake_at "timestamp with time zone"
   queue_admitted_at "timestamp with time zone"
   resume_target_step_id text
   resolved_capability_set jsonb

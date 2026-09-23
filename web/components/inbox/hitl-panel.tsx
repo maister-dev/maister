@@ -108,6 +108,9 @@ export function isReviewGate(item: HitlItem): boolean {
 export interface HitlPanelProps {
   item: HitlItem;
   canAct: boolean;
+  // Server-derived `readRepoFiles` on the item's project (the consensus draft
+  // download serves agent output that can quote repository files).
+  canReadRepoFiles?: boolean;
   currentUserId: string;
   /** Owned by the parent — the card's header button, or the Desk's table row. */
   expanded: boolean;
@@ -122,6 +125,7 @@ export interface HitlPanelProps {
 export function HitlPanel({
   item,
   canAct,
+  canReadRepoFiles = false,
   currentUserId,
   expanded,
   onRequestExpand,
@@ -188,6 +192,7 @@ export function HitlPanel({
             answerState={item.answerState}
             availableOptions={item.availableOptions}
             canAct={canAct}
+            canReadRepoFiles={canReadRepoFiles}
             claimStage={item.claimStage}
             criticality={item.criticality}
             hitlRequestId={item.hitlRequestId}
@@ -280,6 +285,7 @@ export function HitlPanel({
                 }
                 budgetProgress={context?.budgetProgress ?? null}
                 canAct={canAct}
+                canReadRepoFiles={canReadRepoFiles}
                 claimStage={context?.claimStage ?? item.claimStage}
                 criticality={item.criticality}
                 hitlRequestId={item.hitlRequestId}

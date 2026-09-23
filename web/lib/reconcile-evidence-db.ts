@@ -6,7 +6,7 @@ import type {
   PromptReceiptProbe,
 } from "./reconcile-evidence";
 
-import { and, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, or, sql } from "drizzle-orm";
 import pino from "pino";
 
 import * as schemaModule from "@/lib/db/schema";
@@ -213,6 +213,57 @@ export const NO_PROMPT_EVIDENCE: ResolvedPromptEvidence = {
   commandId: null,
   nodeAttemptId: null,
 };
+
+/** A poisoned or quarantined consensus generation is a terminal owner refusal
+ * even if its supervisor session remains live. It belongs to the current open
+ * attempt; old or closed-attempt generations cannot crash a new attempt. The
+ * row is classified by `classifyPromptEvidence`, whose quarantine test reads
+ * `application_error` because a conflict found after application stays
+ * `applied`. */
+export async function resolveConsensusPoisonEvidence(
+  db: Db,
+  input: { runId: string; nodeId: string },
+): Promise<ResolvedPromptEvidence> {
+  const nodeAttemptId = await resolveEvidenceAttemptId(db, input);
+
+  if (!nodeAttemptId) return NO_PROMPT_EVIDENCE;
+  const [row] = await db
+    .select({
+      id: executionCommands.id,
+      state: executionCommands.state,
+      applicationState: executionCommands.applicationState,
+      applicationError: executionCommands.applicationError,
+      lastError: executionCommands.lastError,
+      terminalEventId: executionCommands.terminalEventId,
+      terminalEvidenceSha256: executionCommands.terminalEvidenceSha256,
+    })
+    .from(executionCommands)
+    .where(
+      and(
+        eq(executionCommands.runId, input.runId),
+        eq(executionCommands.kind, "session.prompt"),
+        sql`${executionCommands.ownerRef}->>'variant' IN ('consensus_verifier', 'consensus_synthesis')`,
+        sql`${executionCommands.ownerRef}->>'nodeAttemptId' = ${nodeAttemptId}`,
+        or(
+          eq(executionCommands.applicationState, "poisoned"),
+          sql`${executionCommands.applicationError}->>'reason' = 'prompt_terminal_conflict'`,
+        ),
+      ),
+    )
+    .orderBy(desc(executionCommands.createdAt))
+    .limit(1);
+  const evidence = classifyPromptEvidence(row ?? null);
+
+  if (evidence !== "poisoned" && evidence !== "quarantined")
+    return NO_PROMPT_EVIDENCE;
+
+  return {
+    evidence,
+    streamLost: false,
+    commandId: row.id,
+    nodeAttemptId,
+  };
+}
 
 /** Resolve one candidate's prompt evidence for the reconcile classifier.
  *

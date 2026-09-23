@@ -8,9 +8,18 @@ import type {
   BudgetBreachParkMode,
   BudgetBreachProgressDto,
 } from "@/lib/runs/budget-breach-fork";
+import type {
+  ConsensusEscalationReason,
+  ConsensusPartialCause,
+  ConsensusResolutionDraft,
+  ConsensusResolutionSchema,
+  ConsensusResolutionTechnicalFailure,
+  ConsensusTextBoundsView,
+} from "@/lib/flows/consensus-resolution";
 
 import {
   ArchiveBoxIcon,
+  ArrowDownTrayIcon,
   ArrowPathIcon,
   ArrowUturnRightIcon,
   ExclamationTriangleIcon,
@@ -19,6 +28,11 @@ import {
 import clsx from "clsx";
 
 import { NodeInterruptControls } from "@/components/runs/node-interrupt-controls";
+import {
+  consensusPartialCause,
+  decodeConsensusResolutionSchema,
+  isConsensusDraftPickable,
+} from "@/lib/flows/consensus-resolution";
 
 // Structural mirror of the server's NodeInterruptOptionMatrix. Declared from
 // the widget's own prop types rather than imported from the server-only
@@ -29,7 +43,33 @@ export type NodeInterruptOptionMatrixView = Pick<
   "interruptedNodeId" | "defaultOptionId" | "options" | "restartTargets"
 >;
 
-export interface HitlDecisionControlsLabels {
+// Closed EN/RU maps for the consensus card: a missing key is a compile error in
+// the fallback maps below, and an unknown server value falls back to `other`.
+export const CONSENSUS_TECHNICAL_CODES = [
+  "invalid_json",
+  "invalid_schema",
+  "missing_axes",
+  "unknown_axes",
+  "empty_disagreement",
+  "output_cap_exceeded",
+  "target_missing",
+  "EXECUTOR_UNAVAILABLE",
+  "ACP_PROTOCOL",
+  "CRASH",
+  "other",
+] as const;
+export type ConsensusTechnicalCode = (typeof CONSENSUS_TECHNICAL_CODES)[number];
+
+type ConsensusCardMappedLabels = Partial<
+  Record<
+    | `consensusPartialCause.${ConsensusPartialCause}`
+    | `consensusTechnicalCode.${ConsensusTechnicalCode}`
+    | `consensusEscalation.${ConsensusEscalationReason}`,
+    string
+  >
+>;
+
+export interface HitlDecisionControlsLabels extends ConsensusCardMappedLabels {
   criticalityLabel: string;
   "criticality.low": string;
   "criticality.medium": string;
@@ -123,6 +163,19 @@ export interface HitlDecisionControlsLabels {
   consensusProvideResolution?: string;
   consensusRerunRound?: string;
   consensusAbort?: string;
+  consensusPartial?: string;
+  consensusTechnicalFailures?: string;
+  consensusDownloadDraft?: string;
+  consensusDownloadDraftAria?: string;
+  consensusDownloadDebate?: string;
+  consensusUnavailable?: string;
+  consensusUnavailableReason?: string;
+  consensusExcerptOmitted?: string;
+  consensusDraftExcerptAria?: string;
+  consensusDebateExcerptAria?: string;
+  consensusTechnicalFailureRow?: string;
+  consensusTechnicalFailureTarget?: string;
+  consensusTechnicalDiagnostic?: string;
   planDecisionTitle?: string;
   planDecisionRecommendation?: string;
   planReviewAssumptions?: string;
@@ -366,6 +419,10 @@ export interface HitlDecisionControlsProps {
   budgetDropWorkspace?: boolean;
   disabled: boolean;
   compact?: boolean;
+  // Server-derived `readRepoFiles` on the run's project. Consensus draft text
+  // is agent output that can quote repository files; its download link is shown
+  // only to readers the payload route will serve. Defaults to hidden.
+  canReadRepoFiles?: boolean;
   error: string | null;
   labels: HitlDecisionControlsLabels;
   onCommentsChange: (v: string) => void;
@@ -501,149 +558,27 @@ export function planReviewDecisionFromSchema(
   };
 }
 
-export interface ConsensusDraftChoiceView {
-  decision: string;
-  label: string;
-  excerpt?: string;
-}
+// The card decodes the SAME record the server validates, through the shared
+// client-safe decoder, so the slots it disables are exactly the slots the
+// response route refuses. A record with no consensus decision is not a card.
+export type ConsensusHitlView = ConsensusResolutionSchema;
 
-export interface ConsensusDisagreementView {
-  axis: string;
-  summary?: string;
-}
-
-export interface ConsensusHitlView {
-  round: number;
-  allowedDecisions: string[];
-  drafts: ConsensusDraftChoiceView[];
-  disagreements: ConsensusDisagreementView[];
-  debateExcerpt?: string;
-}
-
-function recordArray(value: unknown): Record<string, unknown>[] {
-  return Array.isArray(value)
-    ? value.filter(
-        (item): item is Record<string, unknown> =>
-          !!item && typeof item === "object",
-      )
-    : [];
-}
-
-function stringArray(value: unknown): string[] {
-  return Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === "string")
-    : [];
-}
-
-function optionalText(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim().length > 0
-    ? value
-    : undefined;
-}
-
-function consensusDecisions(s: Record<string, unknown>): string[] {
-  const decisions = stringArray(s.allowedDecisions);
-
-  return decisions.length > 0 ? decisions : stringArray(s.decisions);
-}
-
-function consensusDrafts(
-  s: Record<string, unknown>,
-  decisions: string[],
-): ConsensusDraftChoiceView[] {
-  const pickDecisions = decisions.filter((decision) =>
-    decision.startsWith("pick-draft-"),
-  );
-
-  return recordArray(s.drafts ?? s.choices).map((draft, index) => {
-    const n = index + 1;
-    const decision = optionalText(draft.decision) ?? pickDecisions[index];
-    const label =
-      optionalText(draft.label) ??
-      optionalText(draft.participantLabel) ??
-      optionalText(draft.title) ??
-      optionalText(draft.name) ??
-      `Draft ${n}`;
-    const excerpt =
-      optionalText(draft.excerpt) ??
-      optionalText(draft.summary) ??
-      optionalText(draft.preview);
-
-    return {
-      decision: decision ?? `pick-draft-${n}`,
-      label,
-      ...(excerpt ? { excerpt } : {}),
-    };
-  });
-}
-
-function consensusDisagreements(
-  s: Record<string, unknown>,
-): ConsensusDisagreementView[] {
-  return recordArray(s.disagreements ?? s.materialAxisDisagreements)
-    .map((item) => {
-      const axis = optionalText(item.axis);
-      const summary =
-        optionalText(item.summary) ??
-        optionalText(item.claim) ??
-        optionalText(item.reason);
-
-      return axis ? { axis, ...(summary ? { summary } : {}) } : null;
-    })
-    .filter((item): item is ConsensusDisagreementView => item !== null);
-}
-
-function consensusDebateExcerpt(
-  s: Record<string, unknown>,
-): string | undefined {
-  const debateLog = s.debateLog ?? s.debate_log;
-
-  if (debateLog && typeof debateLog === "object") {
-    const excerpt = optionalText(
-      (debateLog as Record<string, unknown>).excerpt,
-    );
-
-    if (excerpt) return excerpt;
-  }
-
-  return optionalText(s.debateExcerpt ?? s.debate_log_excerpt);
-}
-
-// Structural view of the consensus-resolution human HITL schema. The server
-// owns ids and artifact references; the UI exposes only bounded labels/excerpts
-// and allow-listed decisions so users never edit raw participant/run ids.
 export function consensusHitlFromSchema(
   schema: unknown,
 ): ConsensusHitlView | null {
-  if (!schema || typeof schema !== "object") return null;
-  const s = schema as Record<string, unknown>;
+  const decoded = decodeConsensusResolutionSchema(schema);
 
-  if (s.kind !== "consensus_resolution" && s.kind !== "consensus") {
-    return null;
-  }
+  if (!decoded) return null;
 
-  const allowedDecisions = consensusDecisions(s);
-  const hasConsensusDecision = allowedDecisions.some(
+  return decoded.allowedDecisions.some(
     (decision) =>
       decision.startsWith("pick-draft-") ||
       decision === "provide-resolution" ||
       decision === "re-run-round" ||
       decision === "abort",
-  );
-
-  if (!hasConsensusDecision) return null;
-
-  const round = typeof s.round === "number" && s.round > 0 ? s.round : 1;
-
-  return {
-    round,
-    allowedDecisions,
-    drafts: consensusDrafts(s, allowedDecisions),
-    disagreements: consensusDisagreements(s),
-    ...(consensusDebateExcerpt(s)
-      ? { debateExcerpt: consensusDebateExcerpt(s) }
-      : {}),
-  };
+  )
+    ? decoded
+    : null;
 }
 
 // String-token variant of fillTemplate for the breach summary (scope/meter are
@@ -870,12 +805,295 @@ function FormFieldControl({
   );
 }
 
+const PARTIAL_CAUSE_FALLBACK: Record<ConsensusPartialCause, string> = {
+  output_cap_exceeded: "output size limit reached",
+  max_tokens: "token limit reached",
+  max_turn_requests: "turn limit reached",
+  refusal: "the agent refused",
+  cancelled: "cancelled",
+  host_failure: "runner failure",
+  unknown: "unknown stop reason",
+};
+
+const TECHNICAL_CODE_FALLBACK: Record<ConsensusTechnicalCode, string> = {
+  invalid_json: "returned malformed JSON",
+  invalid_schema: "returned a verdict in the wrong shape",
+  missing_axes: "skipped required axes",
+  unknown_axes: "judged undeclared axes",
+  empty_disagreement: "disagreed without giving a reason",
+  output_cap_exceeded: "output exceeded the size limit",
+  target_missing: "the draft to verify was missing",
+  EXECUTOR_UNAVAILABLE: "the runner was unavailable",
+  ACP_PROTOCOL: "agent protocol error",
+  CRASH: "the verifier crashed",
+  other: "verification failed",
+};
+
+const ESCALATION_FALLBACK: Record<ConsensusEscalationReason, string> = {
+  technical_only:
+    "Verifiers could not judge the drafts — run another round or resolve manually.",
+  rounds_exhausted:
+    "No agreement after the last allowed round — pick a draft, resolve, or abort.",
+  single_pass:
+    "No agreement in the single allowed round — pick a draft, resolve, or abort.",
+};
+
+function technicalCode(errorCode: string): ConsensusTechnicalCode {
+  return (CONSENSUS_TECHNICAL_CODES as readonly string[]).includes(errorCode)
+    ? (errorCode as ConsensusTechnicalCode)
+    : "other";
+}
+
+// One pass, so a verifier id that happens to contain `$n` is never rewritten.
+function fillConsensusTemplate(
+  template: string,
+  tokens: Record<"verifier" | "target" | "n", string>,
+): string {
+  return template.replace(
+    /\$(verifier|target|n)\b/g,
+    (_match, token: "verifier" | "target" | "n") => tokens[token],
+  );
+}
+
+// The D1 truncation marker is an engine protocol string (English, byte counts);
+// the card replaces it with a localized chip when the record says it was cut.
+const CONSENSUS_TRUNCATION_MARKER =
+  /\n\[consensus text truncated: dropped \d+ UTF-8 bytes; cap \d+ bytes\]$/;
+
+function displayExcerpt(
+  text: string | undefined,
+  bounds: ConsensusTextBoundsView | undefined,
+): string | undefined {
+  if (!text) return undefined;
+
+  return bounds ? text.replace(CONSENSUS_TRUNCATION_MARKER, "") : text;
+}
+
+function omittedKilobytes(bounds: ConsensusTextBoundsView): number {
+  return Math.max(1, Math.ceil(bounds.droppedBytes / 1024));
+}
+
+function ConsensusExcerpt({
+  text,
+  bounds,
+  ariaLabel,
+  omittedTemplate,
+  testId,
+  className,
+}: {
+  text: string;
+  bounds?: ConsensusTextBoundsView;
+  ariaLabel: string;
+  omittedTemplate: string;
+  testId: string;
+  className: string;
+}): ReactElement {
+  return (
+    <>
+      {bounds ? (
+        <span
+          className="mt-2 inline-flex w-fit rounded-full border border-line bg-ivory px-2 py-0.5 font-mono text-[10px] text-mute"
+          data-testid={`${testId}-omitted`}
+        >
+          {omittedTemplate.replace("$kb", String(omittedKilobytes(bounds)))}
+        </span>
+      ) : null}
+      <p
+        aria-label={ariaLabel}
+        className={className}
+        data-testid={testId}
+        role="region"
+        // A capped-height excerpt scrolls; a keyboard user can only read the
+        // overflow if the region takes focus (axe scrollable-region-focusable).
+        // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
+        tabIndex={0}
+      >
+        {text}
+      </p>
+    </>
+  );
+}
+
+function ConsensusDownloadLink({
+  href,
+  label,
+  ariaLabel,
+  testId,
+}: {
+  href: string;
+  label: string;
+  ariaLabel: string;
+  testId: string;
+}): ReactElement {
+  return (
+    <a
+      download
+      aria-label={ariaLabel}
+      className="mt-2 inline-flex w-fit items-center gap-1 font-mono text-[11px] text-amber underline"
+      data-testid={testId}
+      href={href}
+    >
+      <ArrowDownTrayIcon aria-hidden="true" className="h-3.5 w-3.5" />
+      {label}
+    </a>
+  );
+}
+
+function payloadHref(runId: string, artifactId: string): string {
+  return `/api/runs/${encodeURIComponent(runId)}/artifacts/${encodeURIComponent(artifactId)}/payload`;
+}
+
+function ConsensusDraftCard({
+  draft,
+  labels,
+  disabled,
+  pickAllowed,
+  canReadRepoFiles,
+  onDecision,
+}: {
+  draft: ConsensusResolutionDraft;
+  labels: HitlDecisionControlsLabels;
+  disabled: boolean;
+  pickAllowed: boolean;
+  canReadRepoFiles: boolean;
+  onDecision: (decision: string) => void;
+}): ReactElement {
+  const pickable = isConsensusDraftPickable(draft);
+  const partial = draft.classification === "partial";
+  const cause = consensusPartialCause(draft);
+  const reasonId = `consensus-unavailable-reason-${draft.slot}`;
+  const excerpt = displayExcerpt(draft.excerpt, draft.excerptBounds);
+
+  return (
+    <article
+      className="flex flex-col rounded-[8px] border border-line bg-paper px-3 py-2"
+      data-testid={`consensus-draft-${draft.slot}`}
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <b className="min-w-0 break-words text-[12.5px] font-semibold text-ink">
+          {draft.label ||
+            labeledNumber(
+              labels.consensusDraftFallback ?? "Draft $n",
+              draft.slot,
+            )}
+        </b>
+        {partial ? (
+          <span
+            className="rounded-full border border-amber-line bg-amber-soft px-2 py-0.5 font-mono text-[10px] text-amber"
+            data-testid={`consensus-partial-draft-${draft.slot}`}
+          >
+            {labels.consensusPartial ?? "Partial"} ·{" "}
+            {labels[`consensusPartialCause.${cause}`] ??
+              PARTIAL_CAUSE_FALLBACK[cause]}
+          </span>
+        ) : null}
+        {pickable ? null : (
+          <span
+            className="rounded-full border border-line bg-ivory px-2 py-0.5 font-mono text-[10px] text-mute"
+            data-testid={`consensus-unavailable-draft-${draft.slot}`}
+          >
+            {labels.consensusUnavailable ?? "Unavailable"}
+          </span>
+        )}
+        {pickAllowed ? (
+          <button
+            aria-describedby={pickable ? undefined : reasonId}
+            aria-disabled={pickable ? undefined : true}
+            className={clsx(
+              "ml-auto rounded-lg border px-3 py-1.5 font-mono text-[10.5px] font-bold uppercase tracking-[0.06em]",
+              // A partial or unusable draft is never the visually primary choice.
+              pickable && !partial
+                ? "border-amber bg-amber text-white shadow-[0_4px_12px_-6px_var(--amber)] hover:bg-amber-2"
+                : "border-amber-line bg-paper text-amber hover:border-amber",
+              (disabled || !pickable) && "opacity-60",
+            )}
+            data-testid={`consensus-pick-draft-${draft.slot}`}
+            disabled={disabled || !pickable}
+            type="button"
+            onClick={() => onDecision(draft.decision)}
+          >
+            {labeledNumber(
+              labels.consensusPickDraft ?? "Use draft $n",
+              draft.slot,
+            )}
+          </button>
+        ) : null}
+      </div>
+      {pickable ? null : (
+        <p className="mt-1 text-[12px] text-mute" id={reasonId}>
+          {labels.consensusUnavailableReason ?? "No draft text was produced."}
+        </p>
+      )}
+      {excerpt ? (
+        <ConsensusExcerpt
+          ariaLabel={labeledNumber(
+            labels.consensusDraftExcerptAria ?? "Draft $n excerpt",
+            draft.slot,
+          )}
+          bounds={draft.excerptBounds}
+          className="mt-2 max-h-24 overflow-y-auto whitespace-pre-wrap break-words text-[12px] leading-[1.5] text-ink-2"
+          omittedTemplate={
+            labels.consensusExcerptOmitted ?? "Excerpt — $kb KB omitted"
+          }
+          testId={`consensus-draft-excerpt-${draft.slot}`}
+          text={excerpt}
+        />
+      ) : null}
+      {draft.artifactRef && draft.artifactRunId && canReadRepoFiles ? (
+        <ConsensusDownloadLink
+          ariaLabel={labeledNumber(
+            labels.consensusDownloadDraftAria ?? "Download full draft $n",
+            draft.slot,
+          )}
+          href={payloadHref(draft.artifactRunId, draft.artifactRef)}
+          label={labels.consensusDownloadDraft ?? "Download full draft"}
+          testId={`consensus-draft-artifact-${draft.slot}`}
+        />
+      ) : null}
+    </article>
+  );
+}
+
+function ConsensusTechnicalFailureRow({
+  failure,
+  labels,
+}: {
+  failure: ConsensusResolutionTechnicalFailure;
+  labels: HitlDecisionControlsLabels;
+}): ReactElement {
+  const code = technicalCode(failure.errorCode);
+  const subject = fillConsensusTemplate(
+    failure.targetSlot
+      ? (labels.consensusTechnicalFailureRow ?? "Verifier $verifier · Draft $n")
+      : (labels.consensusTechnicalFailureTarget ??
+          "Verifier $verifier · $target"),
+    {
+      verifier: failure.verifierId,
+      target: failure.targetParticipantId,
+      n: String(failure.targetSlot ?? ""),
+    },
+  );
+
+  return (
+    <li className="rounded-[8px] border border-amber-line bg-amber-soft px-3 py-2 text-[12px] text-ink-2">
+      <span className="font-semibold text-ink">{subject}</span>
+      {": "}
+      {labels[`consensusTechnicalCode.${code}`] ??
+        TECHNICAL_CODE_FALLBACK[code]}
+      <span className="ml-1.5 font-mono text-[10.5px] text-mute">
+        ({labels.consensusTechnicalDiagnostic ?? "Code"}: {failure.errorCode})
+      </span>
+    </li>
+  );
+}
+
 function ConsensusHitlCard({
   view,
   labels,
   comments,
   disabled,
   compact,
+  canReadRepoFiles,
   onCommentsChange,
   onDecision,
 }: {
@@ -884,6 +1102,7 @@ function ConsensusHitlCard({
   comments: string;
   disabled: boolean;
   compact?: boolean;
+  canReadRepoFiles: boolean;
   onCommentsChange: (v: string) => void;
   onDecision: (decision: string) => void;
 }): ReactElement {
@@ -893,6 +1112,10 @@ function ConsensusHitlCard({
   const canRerunRound = hasDecision("re-run-round");
   const canAbort = hasDecision("abort");
   const resolutionBlank = comments.trim().length === 0;
+  const technicalOnly =
+    view.technicalFailures.length > 0 && view.disagreements.length === 0;
+  const debate = view.debateLog;
+  const debateExcerpt = displayExcerpt(debate?.excerpt, debate?.excerptBounds);
 
   return (
     <div
@@ -911,89 +1134,131 @@ function ConsensusHitlCard({
         </span>
       </div>
 
+      {view.escalationReason ? (
+        <p
+          className={clsx(
+            "flex items-start gap-1.5 text-[12.5px] leading-[1.5]",
+            view.escalationReason === "technical_only"
+              ? "text-amber"
+              : "text-ink-2",
+          )}
+          data-testid="consensus-escalation"
+        >
+          {view.escalationReason === "technical_only" ? (
+            <ExclamationTriangleIcon
+              aria-hidden="true"
+              className="mt-0.5 h-4 w-4 flex-none"
+            />
+          ) : null}
+          {labels[`consensusEscalation.${view.escalationReason}`] ??
+            ESCALATION_FALLBACK[view.escalationReason]}
+        </p>
+      ) : null}
+
       {view.drafts.length > 0 ? (
         <div className="grid gap-2" data-testid="consensus-drafts">
           <p className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute">
             {labels.consensusDrafts ?? "Drafts"}
           </p>
-          {view.drafts.map((draft, index) => (
-            <article
-              key={`${draft.decision}-${index}`}
-              className="rounded-[8px] border border-line bg-paper px-3 py-2"
-            >
-              <div className="flex flex-wrap items-center gap-2">
-                <b className="min-w-0 break-words text-[12.5px] font-semibold text-ink">
-                  {draft.label ||
-                    labeledNumber(
-                      labels.consensusDraftFallback ?? "Draft $n",
-                      index + 1,
-                    )}
-                </b>
-                {hasDecision(draft.decision) ? (
-                  <button
-                    className={clsx(
-                      "ml-auto rounded-lg border border-amber bg-amber px-3 py-1.5 font-mono text-[10.5px] font-bold uppercase tracking-[0.06em] text-white shadow-[0_4px_12px_-6px_var(--amber)] hover:bg-amber-2",
-                      disabled && "opacity-60",
-                    )}
-                    data-testid={`consensus-pick-draft-${index + 1}`}
-                    disabled={disabled}
-                    type="button"
-                    onClick={() => onDecision(draft.decision)}
-                  >
-                    {labeledNumber(
-                      labels.consensusPickDraft ?? "Use draft $n",
-                      index + 1,
-                    )}
-                  </button>
-                ) : null}
-              </div>
-              {draft.excerpt ? (
-                <p className="mt-2 max-h-24 overflow-y-auto whitespace-pre-wrap break-words text-[12px] leading-[1.5] text-ink-2">
-                  {draft.excerpt}
-                </p>
-              ) : null}
-            </article>
+          {view.drafts.map((draft) => (
+            <ConsensusDraftCard
+              key={`${draft.decision}-${draft.slot}`}
+              canReadRepoFiles={canReadRepoFiles}
+              disabled={disabled}
+              draft={draft}
+              labels={labels}
+              pickAllowed={hasDecision(draft.decision)}
+              onDecision={onDecision}
+            />
           ))}
         </div>
       ) : null}
 
-      <div className="grid gap-1.5" data-testid="consensus-disagreements">
-        <p className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute">
-          {labels.consensusDisagreements ?? "Disagreements"}
-        </p>
-        {view.disagreements.length > 0 ? (
+      {technicalOnly ? null : (
+        <div className="grid gap-1.5" data-testid="consensus-disagreements">
+          <p className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute">
+            {labels.consensusDisagreements ?? "Disagreements"}
+          </p>
+          {view.disagreements.length > 0 ? (
+            <ul className="grid gap-1.5">
+              {view.disagreements.map((item, index) => (
+                <li
+                  key={`${item.axis}-${index}`}
+                  className="rounded-[8px] border border-amber-line bg-amber-soft px-3 py-2"
+                >
+                  <span className="font-mono text-[11px] font-bold uppercase tracking-[0.04em] text-amber">
+                    {item.axis}
+                  </span>
+                  {item.summary ? (
+                    <p className="mt-1 whitespace-pre-wrap break-words text-[12px] leading-[1.5] text-ink-2">
+                      {item.summary}
+                    </p>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="rounded-[8px] border border-line bg-ivory px-3 py-2 text-[12px] text-mute">
+              {labels.consensusNoDisagreements ?? "No material disagreements"}
+            </p>
+          )}
+        </div>
+      )}
+
+      {view.technicalFailures.length > 0 ? (
+        <div
+          className="grid gap-1.5"
+          data-testid="consensus-technical-failures"
+        >
+          <p className="flex items-center gap-1.5 font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-amber">
+            <ExclamationTriangleIcon
+              aria-hidden="true"
+              className="h-3.5 w-3.5"
+            />
+            {labels.consensusTechnicalFailures ??
+              "Technical verification failures"}
+          </p>
           <ul className="grid gap-1.5">
-            {view.disagreements.map((item) => (
-              <li
-                key={`${item.axis}-${item.summary ?? ""}`}
-                className="rounded-[8px] border border-amber-line bg-amber-soft px-3 py-2"
-              >
-                <span className="font-mono text-[11px] font-bold uppercase tracking-[0.04em] text-amber">
-                  {item.axis}
-                </span>
-                {item.summary ? (
-                  <p className="mt-1 whitespace-pre-wrap break-words text-[12px] leading-[1.5] text-ink-2">
-                    {item.summary}
-                  </p>
-                ) : null}
-              </li>
+            {view.technicalFailures.map((failure, index) => (
+              <ConsensusTechnicalFailureRow
+                key={`${failure.verifierId}-${failure.targetParticipantId}-${index}`}
+                failure={failure}
+                labels={labels}
+              />
             ))}
           </ul>
-        ) : (
-          <p className="rounded-[8px] border border-line bg-ivory px-3 py-2 text-[12px] text-mute">
-            {labels.consensusNoDisagreements ?? "No material disagreements"}
-          </p>
-        )}
-      </div>
+        </div>
+      ) : null}
 
-      {view.debateExcerpt ? (
+      {debateExcerpt || (debate?.artifactRef && debate.artifactRunId) ? (
         <div className="grid gap-1.5" data-testid="consensus-debate-log">
           <p className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute">
             {labels.consensusDebateLog ?? "Debate log"}
           </p>
-          <p className="max-h-24 overflow-y-auto whitespace-pre-wrap break-words rounded-[8px] border border-line bg-ivory px-3 py-2 text-[12px] leading-[1.5] text-ink-2">
-            {view.debateExcerpt}
-          </p>
+          {debateExcerpt ? (
+            <ConsensusExcerpt
+              ariaLabel={
+                labels.consensusDebateExcerptAria ?? "Debate log excerpt"
+              }
+              bounds={debate?.excerptBounds}
+              className="max-h-24 overflow-y-auto whitespace-pre-wrap break-words rounded-[8px] border border-line bg-ivory px-3 py-2 text-[12px] leading-[1.5] text-ink-2"
+              omittedTemplate={
+                labels.consensusExcerptOmitted ?? "Excerpt — $kb KB omitted"
+              }
+              testId="consensus-debate-excerpt"
+              text={debateExcerpt}
+            />
+          ) : null}
+          {debate?.artifactRef && debate.artifactRunId ? (
+            <ConsensusDownloadLink
+              ariaLabel={
+                labels.consensusDownloadDebate ?? "Download full debate"
+              }
+              href={payloadHref(debate.artifactRunId, debate.artifactRef)}
+              label={labels.consensusDownloadDebate ?? "Download full debate"}
+              testId="consensus-debate-artifact"
+            />
+          ) : null}
         </div>
       ) : null}
 
@@ -1091,6 +1356,7 @@ export function HitlDecisionControls({
   budgetDropWorkspace,
   disabled,
   compact,
+  canReadRepoFiles = false,
   error,
   labels,
   onCommentsChange,
@@ -1311,6 +1577,7 @@ export function HitlDecisionControls({
         </>
       ) : consensusHitl ? (
         <ConsensusHitlCard
+          canReadRepoFiles={canReadRepoFiles}
           comments={comments}
           compact={compact}
           disabled={disabled}

@@ -249,10 +249,51 @@ sequenceDiagram
     CH->>B: child SETTLED: run.done/failed/crashed/abandoned/review<br/>(payload parent_run_id)
     B->>R: dispatch (branch on run_kind BEFORE choosing resume driver)
     R->>R: re-read parent status under lock<br/>skip if not WaitingOnChildren<br/>success-side settle waits for last non-settled sibling
-    R->>SUP: session resume on acp_session_id
-    R->>O: WaitingOnChildren to Running
-    Note over R: concurrent manual-resume + event-resume converge to one (CONFLICT on the loser)
+    R->>O: markResumedFromWait CAS: WaitingOnChildren to Running<br/>(pinned to the parked attempt, mints the wait_resume epoch)
+    R->>SUP: graph re-entry resumes the session on acp_session_id
+    Note over R: event, post-park catch-up and continuation worker converge on one CAS, the loser gets a typed skipped
 ```
+
+#### Early settlement and post-park catch-up (Implemented, P0-5 v2)
+
+The child event consumer, coordinator post-park path and existing continuation
+worker use one pending-child predicate and one CAS wake helper
+(`wakeParkedCoordinator` in `web/lib/flows/graph/coordinator-wake.ts`) for both
+`orchestrator` and `consensus` parents. A failed, crashed or abandoned child
+arms the current orchestrator's **`runs.failed_child_wake_at`** in the same
+transaction as its terminal event (`armFailedCoordinatorWake`, called by
+`emitDomainEvent`) while the parent is `Running`, `NeedsInput`,
+`NeedsInputIdle` or `WaitingOnChildren` on an orchestrator node — so a failure
+that lands while the coordinator waits on its own HITL is not lost. The intent
+is a dedicated column (migration 0175), not `resume_requested_at`: C3 admission
+reads `resume_requested_at` on a `NeedsInputIdle` run as "HITL answered" and
+would resume an unanswered coordinator. The intent survives an early event with
+pending siblings; the event consumer emits a structured WARN while the parent
+is Running. After park commit and driver-claim release, the runner checks once.
+The continuation worker also selects a parked coordinator when no children
+remain pending or a failed-child intent exists, then calls the same wake
+helper. Consensus requires zero pending children; the orchestrator's
+failed-child intent bypasses that count. The intent is cleared when the
+coordinator's turn starts — the resumed orchestrator attempt
+(`clearFailedCoordinatorWake`) or a new node attempt — so a wake rolled back on
+a retryable respawn failure keeps it. Event, catch-up and worker races grant one
+winner; losers get a typed `skipped`, a stale attempt or a terminal parent is a
+no-op. Capacity deferral (which still stamps `resume_requested_at` on the
+parked row) and terminal/cancellation guards remain in force.
+
+A successful wake of either coordinator kind is durable in the existing
+Running status, current NeedsInput attempt, `wait_resume` assignment and
+released source assignment with `waiting_on_children`
+(`readCoordinatorWakeIntent`). The continuation worker selects and revalidates
+that tuple after claim release, including a parent with no command yet and a
+parked parent with a deferred resume marker; its Running-node/no-command arm
+admits `consensus` beside `ai_coding`/`judge`/`orchestrator`, so a death after
+the rebound but before the first verifier command re-enters the same attempt. A
+stale node/attempt or second racer cannot dispatch. The continuation worker
+closes the death window between park commit and one-shot catch-up through its
+existing keyset scan. Tests: `orchestrator-park.integration.test.ts` and
+`web/lib/domain-events/__tests__/orchestrator-resume-early-settle.test.ts`. See
+[consensus protocol](consensus.md#p0-5-v2-execution-contract-implemented).
 
 ### (d) cancel / abandon cascade down the run-tree (Implemented)
 
