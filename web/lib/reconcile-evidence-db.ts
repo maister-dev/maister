@@ -6,7 +6,7 @@ import type {
   PromptReceiptProbe,
 } from "./reconcile-evidence";
 
-import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, or, sql } from "drizzle-orm";
 import pino from "pino";
 
 import * as schemaModule from "@/lib/db/schema";
@@ -214,9 +214,12 @@ export const NO_PROMPT_EVIDENCE: ResolvedPromptEvidence = {
   nodeAttemptId: null,
 };
 
-/** A poisoned consensus generation is a terminal owner refusal even if its
- * supervisor session remains live. It belongs to the current open attempt;
- * old or closed-attempt generations cannot crash a new attempt. */
+/** A poisoned or quarantined consensus generation is a terminal owner refusal
+ * even if its supervisor session remains live. It belongs to the current open
+ * attempt; old or closed-attempt generations cannot crash a new attempt. The
+ * row is classified by `classifyPromptEvidence`, whose quarantine test reads
+ * `application_error` because a conflict found after application stays
+ * `applied`. */
 export async function resolveConsensusPoisonEvidence(
   db: Db,
   input: { runId: string; nodeId: string },
@@ -227,7 +230,12 @@ export async function resolveConsensusPoisonEvidence(
   const [row] = await db
     .select({
       id: executionCommands.id,
+      state: executionCommands.state,
       applicationState: executionCommands.applicationState,
+      applicationError: executionCommands.applicationError,
+      lastError: executionCommands.lastError,
+      terminalEventId: executionCommands.terminalEventId,
+      terminalEvidenceSha256: executionCommands.terminalEvidenceSha256,
     })
     .from(executionCommands)
     .where(
@@ -236,19 +244,21 @@ export async function resolveConsensusPoisonEvidence(
         eq(executionCommands.kind, "session.prompt"),
         sql`${executionCommands.ownerRef}->>'variant' IN ('consensus_verifier', 'consensus_synthesis')`,
         sql`${executionCommands.ownerRef}->>'nodeAttemptId' = ${nodeAttemptId}`,
-        inArray(executionCommands.applicationState, [
-          "poisoned",
-          "quarantined",
-        ]),
+        or(
+          eq(executionCommands.applicationState, "poisoned"),
+          sql`${executionCommands.applicationError}->>'reason' = 'prompt_terminal_conflict'`,
+        ),
       ),
     )
     .orderBy(desc(executionCommands.createdAt))
     .limit(1);
+  const evidence = classifyPromptEvidence(row ?? null);
 
-  if (!row) return NO_PROMPT_EVIDENCE;
+  if (evidence !== "poisoned" && evidence !== "quarantined")
+    return NO_PROMPT_EVIDENCE;
 
   return {
-    evidence: row.applicationState,
+    evidence,
     streamLost: false,
     commandId: row.id,
     nodeAttemptId,

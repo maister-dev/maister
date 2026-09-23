@@ -178,11 +178,17 @@ Lifecycle sections:
 | `rework`      | Defines allowed targets, workspace policy, loop limits, and where comments become later input.  |
 
 **Node `retry_safe?` (boolean, default `false`).** A per-node opt-in that gates operator crash-recovery
-re-dispatch of a **session-less** node (`cli`/`check`/`judge`/`human`/`form`).
+re-dispatch of a **session-less** node (`cli`/`check`/`guard`/`human`/`form`).
 A `Crashed` run whose recover target is session-less is redispatch-recoverable
 only when its config declares `retry_safe: true` — re-running a session-less
-node repeats its side effects (accepted-risk). `ai_coding` nodes ignore
-`retry_safe` (they recover via `session/resume`, never a fresh re-run). See
+node repeats its side effects (accepted-risk). Agent nodes (`ai_coding`,
+`judge`, `orchestrator`) ignore `retry_safe` (they recover via
+`session/resume`, never a fresh re-run — ADR-175). A `consensus` node follows
+the session-less rule with two evidence overrides from its latest attempt: a
+quarantined verifier/synthesis command (disagreeing terminal evidence) makes
+it discard-only even with `retry_safe: true`, and an applied incomplete
+synthesis (`consensus_synthesis_incomplete`) redispatches a fresh attempt even
+with `retry_safe: false`. See
 [ADR-034](decisions.md#adr-034-crashed-run-recovery-semantics-hybrid---resume--re-dispatch-durable-marker-first-cap-re-admission)
 and [`system-analytics/reconciliation-gc.md`](system-analytics/reconciliation-gc.md).
 
@@ -819,11 +825,14 @@ nodes:
   bounded `max`. A partial draft is retained with its stop reason, cannot be verified or agree, and can be picked by a human. Automatic iteration carries each participant's addressed verdict and own prior draft. Parsed material rows/failed axes or drafter-side reasons justify re-fan; verifier-side technical failures alone escalate immediately to HITL, even with rounds remaining. Human `re-run-round` explicitly carries the pinned source-round critique.
 - **`on_no_consensus`** — v1 supports `escalate`; the engine creates a bounded
   HITL payload with draft/debate artifact refs, capped labeled excerpts, draft
-  `complete | partial | unavailable` state and additive `technicalFailures[]`
-  (`verifierId`, `targetParticipantId`, `parseStatus`, `errorCode`). Partial
-  draft choices are labeled and pickable; unavailable slots retain their
-  original `pick-draft-N` numbering but server validation rejects their
-  selection with `NEEDS_INPUT`. Response shape and decision names are unchanged.
+  `complete | partial | unavailable` state, an `escalationReason`
+  (`technical_only | rounds_exhausted | single_pass`) and additive
+  `technicalFailures[]` (`verifierId`, `targetParticipantId`, `parseStatus`,
+  `errorCode`, `targetSlot`). Partial draft choices are labeled and pickable;
+  unavailable slots retain their original `pick-draft-N` numbering but server
+  validation rejects their selection with `NEEDS_INPUT`. Full draft text is
+  agent output and downloads only for readers with `readRepoFiles`. Response
+  shape and decision names are unchanged.
 - **`synthesizer`** — a non-voting role declared as `agent` or `runner`. It writes
   the mandatory `consensus_plan` (`kind: plan`) and `debate_log`
   (`kind: human_note`) artifacts before the node follows `transitions.success`.

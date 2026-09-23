@@ -18,12 +18,14 @@ import type { ConsensusRoundDisagreementStorage } from "@/lib/db/schema";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import pino from "pino";
 
+import { CONSENSUS_VERDICT_ARTIFACT_DEF } from "./artifact-defs";
 import { boundConsensusText, CONSENSUS_EXCERPT_CAP_BYTES } from "./text";
-
 import {
-  getArtifactsForRun,
-  recordArtifact,
-} from "@/lib/flows/graph/artifact-store";
+  decodeConsensusLocatorMeta,
+  decodeConsensusTextBounds,
+} from "./locator-meta";
+
+import { getArtifactsForRun } from "@/lib/flows/graph/artifact-store";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 
@@ -34,8 +36,6 @@ const log = pino({
 
 const { artifactInstances, consensusRoundVerdicts, domainEvents, runs } =
   schemaModule as unknown as Record<string, any>;
-
-export const CONSENSUS_TEXT_CAP_BYTES = CONSENSUS_EXCERPT_CAP_BYTES;
 
 export type ConsensusDraftEvidence = {
   participantId: string;
@@ -60,6 +60,27 @@ export type ConsensusVerdictEvidence = ParsedConsensusVerdict & {
   textBounds?: ConsensusTextBounds;
 };
 
+function isDisagreementRow(value: unknown): value is ConsensusDisagreement {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    typeof (value as ConsensusDisagreement).axis === "string" &&
+    typeof (value as ConsensusDisagreement).claim === "string" &&
+    typeof (value as ConsensusDisagreement).counterEvidence === "string"
+  );
+}
+
+function invalidStorage(): MaisterError {
+  return new MaisterError(
+    "CRASH",
+    "invalid consensus verdict disagreement storage",
+    { details: { reason: "consensus_verdict_storage_invalid" } },
+  );
+}
+
+// A legacy array means "no truncation recorded", never "complete", and is read
+// as before. A version-1 envelope (every new writer) is validated field by
+// field: its rows feed critique prompts.
 function normalizeDisagreements(value: ConsensusRoundDisagreementStorage): {
   rows: ConsensusDisagreement[];
   truncated?: boolean;
@@ -69,20 +90,21 @@ function normalizeDisagreements(value: ConsensusRoundDisagreementStorage): {
   if (
     value?.version !== 1 ||
     !Array.isArray(value.rows) ||
+    !value.rows.every(isDisagreementRow) ||
     typeof value.truncated !== "boolean"
   )
-    throw new MaisterError(
-      "CRASH",
-      "invalid consensus verdict disagreement storage",
-      {
-        details: { reason: "consensus_verdict_storage_invalid" },
-      },
-    );
+    throw invalidStorage();
+  const textBounds =
+    value.textBounds === undefined
+      ? undefined
+      : decodeConsensusTextBounds(value.textBounds);
+
+  if (value.textBounds !== undefined && !textBounds) throw invalidStorage();
 
   return {
     rows: value.rows,
     truncated: value.truncated,
-    ...(value.textBounds ? { textBounds: value.textBounds } : {}),
+    ...(textBounds ? { textBounds } : {}),
   };
 }
 
@@ -202,8 +224,8 @@ export async function loadConsensusDraftEvidence(args: {
       const artifact = artifacts.get(artifactId);
 
       const artifactText = inlineArtifactText(artifact);
-      const locator = artifact?.locator;
-      const partial = locator?.kind === "inline" && locator.partial === true;
+      const meta = decodeConsensusLocatorMeta(artifact?.locator);
+      const partial = meta?.partial === true;
 
       return {
         participantId: payload.participantId,
@@ -219,9 +241,8 @@ export async function loadConsensusDraftEvidence(args: {
             : partial
               ? "partial"
               : "complete",
-        stopReason:
-          locator?.kind === "inline" ? (locator.stopReason ?? null) : null,
-        reason: locator?.kind === "inline" ? (locator.reason ?? null) : null,
+        stopReason: meta?.stopReason ?? null,
+        reason: meta?.reason ?? null,
       };
     })
     .sort((a, b) => a.participantId.localeCompare(b.participantId));
@@ -346,6 +367,9 @@ export type ConsensusVerdictWrite = ConsensusVerdictCell &
     rawOutput: string;
     errorCode?: string;
     inputTextBounds?: ConsensusTextBounds;
+    // Bytes the generation lost past its 1 MiB retention budget; recorded on
+    // the raw-output artifact, which is otherwise only an excerpt of `rawOutput`.
+    outputDroppedBytes?: number;
   }>;
 
 export async function loadConsensusVerdictCell(
@@ -366,85 +390,120 @@ export async function loadConsensusVerdictCell(
   );
 }
 
+/** The runtime's unpaid fail-closed write. An immutable cell that already
+ * exists wins (an owner applied it first); either way the caller gets the cell
+ * as stored, so a first pass and a replay serialize identical evidence. */
 export async function recordConsensusVerdict(
   args: ConsensusVerdictWrite & { db: Db },
 ): Promise<ConsensusVerdictEvidence> {
-  return args.db.transaction((tx: Db) => writeConsensusVerdict(tx, args));
+  const written = await args.db.transaction((tx: Db) =>
+    writeConsensusVerdict(tx, args),
+  );
+
+  if (!written)
+    log.warn(
+      {
+        runId: args.runId,
+        nodeAttemptId: args.nodeAttemptId,
+        round: args.round,
+        verifierId: args.verifierId,
+        targetParticipantId: args.targetParticipantId,
+        errorCode: args.errorCode ?? null,
+      },
+      "consensus-verdict-cell-exists",
+    );
+  const stored = await loadConsensusVerdictCell({ ...args, db: args.db });
+
+  if (!stored)
+    throw new MaisterError(
+      "CRASH",
+      `consensus verdict cell for ${args.nodeAttemptId} round ${args.round} ${args.verifierId} -> ${args.targetParticipantId} vanished after its write`,
+      { details: { reason: "consensus_verdict_cell_missing" } },
+    );
+
+  return stored;
 }
 
-/** DB-only; an owner application commits it with its command marker. */
+/** DB-only; an owner application commits it with its command marker. The
+ * cell's FK needs its raw-output artifact first, so both inserts are
+ * insert-if-absent: a writer that loses the immutable cell to an earlier one
+ * leaves that winner's artifact untouched and gets null back. */
 export async function writeConsensusVerdict(
   tx: Db,
   args: ConsensusVerdictWrite,
-): Promise<ConsensusVerdictEvidence> {
-  const raw = boundConsensusText(args.rawOutput, CONSENSUS_EXCERPT_CAP_BYTES);
-
-  if (raw.truncated)
-    log.warn(
-      {
-        role: "verifier-raw-artifact",
-        participantId: args.targetParticipantId,
-        round: args.round,
-        bytes: raw.bounds.bytes,
-        cap: raw.bounds.cap,
-        droppedBytes: raw.bounds.droppedBytes,
-        artifactId: consensusVerdictArtifactId(args),
-      },
-      "consensus-text-truncated",
-    );
-  const rawOutputText = raw.text;
+): Promise<ConsensusVerdictEvidence | null> {
   const rawOutputArtifactId = consensusVerdictArtifactId(args);
-  const id = consensusVerdictLedgerId(args);
-  const rawOutputArtifact = {
-    id: rawOutputArtifactId,
-    runId: args.runId,
-    nodeAttemptId: args.nodeAttemptId,
-    nodeId: args.nodeId,
-    attempt: args.attempt,
-    artifactDefId: "default:consensus-verdict",
-    kind: "ai_judgment",
-    producer: "runner",
-    locator: {
-      kind: "inline",
-      text: rawOutputText,
-      ...(raw.truncated ? { truncated: true, textBounds: raw.bounds } : {}),
-    },
-    validity: "current",
-    visibility: "internal",
-    retention: "run",
-  } satisfies Omit<ArtifactInstanceInsert, "createdAt">;
-  const row = {
-    id,
-    runId: args.runId,
-    nodeAttemptId: args.nodeAttemptId,
-    round: args.round,
-    verifierKey: args.verifierId,
-    targetKey: args.targetParticipantId,
-    parseStatus: args.result.parseStatus,
-    verdict: args.result.verdict,
-    axes: args.result.axes,
-    disagreements: {
-      version: 1,
-      rows: args.result.disagreements,
-      truncated: !!args.inputTextBounds?.droppedBytes,
-      ...(args.inputTextBounds ? { textBounds: args.inputTextBounds } : {}),
-    },
-    confidence: args.result.confidence,
-    rawOutputArtifactId,
-    errorCode: args.errorCode ?? args.result.technicalDetail,
-  } satisfies ConsensusRoundVerdictInsert;
+  const raw = boundConsensusText(args.rawOutput, CONSENSUS_EXCERPT_CAP_BYTES);
+  const outputDropped = args.outputDroppedBytes ?? 0;
+  const rawBounds = {
+    bytes: raw.bounds.bytes + outputDropped,
+    retainedBytes: raw.bounds.retainedBytes,
+    droppedBytes: raw.bounds.droppedBytes + outputDropped,
+    cap: raw.bounds.cap,
+  };
 
-  await recordArtifact(rawOutputArtifact, tx);
+  await tx
+    .insert(artifactInstances)
+    .values({
+      id: rawOutputArtifactId,
+      runId: args.runId,
+      nodeAttemptId: args.nodeAttemptId,
+      nodeId: args.nodeId,
+      attempt: args.attempt,
+      artifactDefId: CONSENSUS_VERDICT_ARTIFACT_DEF,
+      kind: "ai_judgment",
+      producer: "runner",
+      locator: {
+        kind: "inline",
+        text: raw.text,
+        ...(rawBounds.droppedBytes > 0
+          ? { truncated: true, textBounds: rawBounds }
+          : {}),
+        ...(outputDropped > 0 ? { reason: "output_cap_exceeded" } : {}),
+      },
+      validity: "current",
+      visibility: "internal",
+      retention: "run",
+    } satisfies Omit<ArtifactInstanceInsert, "createdAt">)
+    .onConflictDoNothing();
   const inserted = await tx
     .insert(consensusRoundVerdicts)
-    .values(row)
+    .values({
+      id: consensusVerdictLedgerId(args),
+      runId: args.runId,
+      nodeAttemptId: args.nodeAttemptId,
+      round: args.round,
+      verifierKey: args.verifierId,
+      targetKey: args.targetParticipantId,
+      parseStatus: args.result.parseStatus,
+      verdict: args.result.verdict,
+      axes: args.result.axes,
+      disagreements: {
+        version: 1,
+        rows: args.result.disagreements,
+        truncated: !!args.inputTextBounds?.droppedBytes,
+        ...(args.inputTextBounds ? { textBounds: args.inputTextBounds } : {}),
+      },
+      confidence: args.result.confidence,
+      rawOutputArtifactId,
+      errorCode: args.errorCode ?? args.result.technicalDetail,
+    } satisfies ConsensusRoundVerdictInsert)
     .onConflictDoNothing()
     .returning({ id: consensusRoundVerdicts.id });
 
-  if (inserted.length === 0)
-    throw new MaisterError(
-      "CONFLICT",
-      `consensus verdict cell already exists for ${args.nodeAttemptId} round ${args.round} ${args.verifierId} -> ${args.targetParticipantId}`,
+  if (inserted.length === 0) return null;
+  if (rawBounds.droppedBytes > 0)
+    log.warn(
+      {
+        role: "verifier-raw-artifact",
+        runId: args.runId,
+        nodeAttemptId: args.nodeAttemptId,
+        participantId: args.targetParticipantId,
+        round: args.round,
+        artifactId: rawOutputArtifactId,
+        ...rawBounds,
+      },
+      "consensus-text-truncated",
     );
 
   return {

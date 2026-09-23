@@ -14,6 +14,7 @@ import { isMaisterError } from "@/lib/errors";
 import { openRuntimeObjectContent } from "@/lib/execution-host/runtime-objects";
 import { resolveArtifactContent } from "@/lib/flows/graph/artifact-content";
 import { safeDownloadHeaders } from "@/lib/http/safe-download";
+import { CONSENSUS_AGENT_OUTPUT_ARTIFACT_DEFS } from "@/lib/flows/graph/consensus/artifact-defs";
 import { parseSingleByteRange } from "@/lib/http/single-byte-range";
 import { runtimeRoot } from "@/lib/instance-config";
 import { getRunDetail } from "@/lib/queries/run";
@@ -167,6 +168,16 @@ export async function GET(
     }
 
     const locator = artifact.locator as ArtifactLocator;
+
+    // Inline consensus agent output (drafts, verifier raw output, synthesis
+    // generations) is session output like an execution object, so it needs the
+    // same repository-content grant rather than board evidence's `readBoard`.
+    if (
+      locator.kind === "inline" &&
+      artifact.artifactDefId !== null &&
+      CONSENSUS_AGENT_OUTPUT_ARTIFACT_DEFS.has(artifact.artifactDefId)
+    )
+      await requireProjectAction(detail.projectId, "readRepoFiles");
 
     if (locator.kind === "execution-object") {
       // An execution object is agent session output that can quote any file

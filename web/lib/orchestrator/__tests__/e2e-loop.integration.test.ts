@@ -106,6 +106,7 @@ let supervisor: TestSupervisorHandle;
 let agentsRoot: string;
 let worktreesRoot: string;
 let originalWorktreesRoot: string | undefined;
+let originalFacadeCommand: string | undefined;
 const createdPaths: string[] = [];
 
 async function git(cwd: string, ...args: string[]): Promise<string> {
@@ -156,6 +157,10 @@ beforeAll(async () => {
   worktreesRoot = createTestWorktreesRoot("vitest", randomUUID());
   originalWorktreesRoot = process.env.MAISTER_WORKTREES_ROOT;
   process.env.MAISTER_WORKTREES_ROOT = worktreesRoot;
+  // The facade injection asserted below must not depend on whether `mcp/` was
+  // built in this checkout; the test supervisor never spawns the command.
+  originalFacadeCommand = process.env.MAISTER_MCP_FACADE_COMMAND;
+  process.env.MAISTER_MCP_FACADE_COMMAND = process.execPath;
 
   testDatabase = await startMainPostgresTestDb({
     databaseName: "maister_test_orc_loop",
@@ -221,6 +226,11 @@ afterAll(async () => {
       delete process.env.MAISTER_WORKTREES_ROOT;
     } else {
       process.env.MAISTER_WORKTREES_ROOT = originalWorktreesRoot;
+    }
+    if (originalFacadeCommand === undefined) {
+      delete process.env.MAISTER_MCP_FACADE_COMMAND;
+    } else {
+      process.env.MAISTER_MCP_FACADE_COMMAND = originalFacadeCommand;
     }
   }
 }, 60_000);
@@ -483,7 +493,8 @@ describe("M37 orchestrator full loop through the real supervisor-client wire", (
 
     // ---- Stage 1: run the orchestrator node through the REAL wire. ----------
     // runFlow → runGraph → real runner-agent → createSession + sendPrompt over
-    // HTTP to the test supervisor. On sendPrompt its directLaunchHook spawns
+    // HTTP to the test supervisor. On sendPrompt the supervisor reads the facade
+    // token from the createSession mcpServers and (via directLaunchHook) spawns
     // 2 children, then emits session.exited{0}. The clean end_turn + 2 pending
     // children → the orchestrator parks on WaitingOnChildren.
     await runFlow(runId, { db, runtimeRoot: process.cwd() });
@@ -500,6 +511,13 @@ describe("M37 orchestrator full loop through the real supervisor-client wire", (
 
     expect(orchestratorCreates).toHaveLength(1);
     expect(orchestratorCreates[0].isResume).toBe(false);
+    // The maister facade token rode the createSession mcpServers payload.
+    const facade = orchestratorCreates[0].mcpServers.find(
+      (s) => s.name === "maister",
+    ) as { env?: Record<string, string> } | undefined;
+
+    expect(facade?.env?.MAISTER_PROJECT_TOKEN).toBeTruthy();
+
     // Two child agent runs exist with the parent + root linkage, still Pending
     // (tryStartRun forced off), and the orchestrator released its slot at park.
     const children = await childRunIds(runId);

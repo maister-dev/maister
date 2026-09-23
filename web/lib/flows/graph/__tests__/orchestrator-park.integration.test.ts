@@ -335,6 +335,53 @@ async function seedChild(
   return { runId: childRunId, taskId: childTaskId };
 }
 
+// A woken coordinator re-materializes its node before re-parking.
+const RE_ENTRY_POLL = { timeout: 10_000, interval: 100 };
+
+function startWorker(
+  hosts: Awaited<ReturnType<typeof fakeGraphHosts>>["hosts"],
+): ReturnType<typeof startFlowContinuationWorker> {
+  return startFlowContinuationWorker({
+    db: db as unknown as Parameters<
+      typeof startFlowContinuationWorker
+    >[0]["db"],
+    runtimeRoot: process.cwd(),
+    executionHosts: hosts,
+  });
+}
+
+async function failChild(
+  parentRunId: string,
+  child: { runId: string; taskId: string },
+): Promise<void> {
+  await db.transaction(async (tx) => {
+    await tx
+      .update(schema.runs)
+      .set({ status: "Failed" })
+      .where(eq(schema.runs.id, child.runId));
+    await emitDomainEvent({
+      db: tx,
+      kind: "run.failed",
+      projectId,
+      taskId: child.taskId,
+      runId: child.runId,
+      actor: { type: "system", id: null },
+      parentRunId,
+      payload: { runKind: "agent", status: "Failed" },
+    });
+  });
+}
+
+async function waitResumeCount(runId: string): Promise<number> {
+  const assignments = await db
+    .select()
+    .from(schema.executionAssignments)
+    .where(eq(schema.executionAssignments.runId, runId));
+
+  return assignments.filter((row) => row.placementReason === "wait_resume")
+    .length;
+}
+
 async function getRun(runId: string): Promise<any> {
   const rows = await db
     .select()
@@ -375,7 +422,7 @@ describe("orchestrator park-vs-complete (M37 T5.1)", () => {
       runConsensusNode.mockReset();
     }
   }, 90_000);
-  it("retains an early failed-child wake intent while another child is pending", async () => {
+  it("keeps a failed-child wake intent until the woken coordinator's turn starts", async () => {
     const { runId } = await seedOrchestratorRun();
     const failed = await seedChild(runId, "Running");
 
@@ -420,7 +467,11 @@ describe("orchestrator park-vs-complete (M37 T5.1)", () => {
     expect(resumed).toEqual([runId]);
     expect((await getRun(runId)).status).toBe("Running");
     await consumer.handle([event]);
-    expect((await getRun(runId)).resumeRequestedAt).toBeNull();
+    expect(resumed).toEqual([runId]);
+    expect(await getRun(runId)).toMatchObject({
+      resumeRequestedAt: null,
+      failedChildWakeAt: expect.any(Date),
+    });
     expect(
       await readCoordinatorWakeIntent(
         db as unknown as Parameters<typeof readCoordinatorWakeIntent>[0],
@@ -430,6 +481,110 @@ describe("orchestrator park-vs-complete (M37 T5.1)", () => {
       nodeId: "coordinate",
       nodeType: "orchestrator",
     });
+  }, 90_000);
+  it("honors a failed child settled while its coordinator waits on its own HITL", async () => {
+    const { runId } = await seedOrchestratorRun();
+    const failed = await seedChild(runId, "Running");
+    const sibling = await seedChild(runId, "Running");
+    const { hosts } = await bindCoordinatorHost(runId);
+    const { runAgentStep } = await import("@/lib/flows/runner-agent");
+    let duringHitl: Record<string, unknown> | undefined;
+
+    vi.mocked(runAgentStep).mockImplementationOnce(async () => {
+      // A permission request pauses the live turn; a child fails meanwhile.
+      await db
+        .update(schema.runs)
+        .set({ status: "NeedsInput" })
+        .where(eq(schema.runs.id, runId));
+      await failChild(runId, failed);
+      duringHitl = await getRun(runId);
+      await db
+        .update(schema.runs)
+        .set({ status: "Running" })
+        .where(eq(schema.runs.id, runId));
+
+      return {
+        ok: true,
+        stdout: "",
+        vars: {},
+        durationMs: 1,
+        acpSessionId: "acp-coordinator-1",
+      };
+    });
+    const { runFlow } = await import("@/lib/flows/runner");
+
+    await runFlow(runId, {
+      db,
+      runtimeRoot: process.cwd(),
+      executionHosts: hosts,
+    });
+    expect(duringHitl).toMatchObject({
+      status: "NeedsInput",
+      failedChildWakeAt: expect.any(Date),
+      resumeRequestedAt: null,
+    });
+    await expect.poll(() => waitResumeCount(runId), RE_ENTRY_POLL).toBe(1);
+    await expect
+      .poll(async () => {
+        const parent = await getRun(runId);
+
+        return [parent.status, parent.failedChildWakeAt];
+      }, RE_ENTRY_POLL)
+      .toEqual(["WaitingOnChildren", null]);
+    expect((await getRun(sibling.runId)).status).toBe("Running");
+  }, 90_000);
+  it("keeps a failed-child intent out of answered-idle C3 admission", async () => {
+    const { runId } = await seedOrchestratorRun();
+    const failed = await seedChild(runId, "Running");
+
+    await seedChild(runId, "Running");
+    const { hosts } = await bindCoordinatorHost(runId);
+    const { runAgentStep } = await import("@/lib/flows/runner-agent");
+    const { markCheckpointed } = await import("@/lib/runs/state-transitions");
+    const { promoteNextPending } = await import("@/lib/scheduler");
+    const resumeRun = vi.fn(async () => {});
+    const promoteRun = vi.fn(async () => {});
+    let idle: Record<string, unknown> | undefined;
+
+    vi.mocked(runAgentStep).mockImplementationOnce(async () => {
+      // An unanswered permission request idles past its keep-alive window.
+      await db
+        .update(schema.runs)
+        .set({ status: "NeedsInput" })
+        .where(eq(schema.runs.id, runId));
+      expect((await markCheckpointed(runId, { db })).ok).toBe(true);
+      await failChild(runId, failed);
+      idle = await getRun(runId);
+      await promoteNextPending({
+        db,
+        pool: "flow",
+        resumeRun,
+        runFlow: promoteRun,
+      });
+      await new Promise((resolve) => setImmediate(resolve));
+
+      return {
+        ok: true,
+        stdout: "",
+        vars: {},
+        durationMs: 1,
+        acpSessionId: "acp-coordinator-1",
+      };
+    });
+    const { runFlow } = await import("@/lib/flows/runner");
+
+    await runFlow(runId, {
+      db,
+      runtimeRoot: process.cwd(),
+      executionHosts: hosts,
+    });
+    expect(idle).toMatchObject({
+      status: "NeedsInputIdle",
+      failedChildWakeAt: expect.any(Date),
+      resumeRequestedAt: null,
+    });
+    expect(resumeRun).not.toHaveBeenCalled();
+    expect(promoteRun).not.toHaveBeenCalled();
   }, 90_000);
   it("wakes a consensus coordinator whose last child settles before park", async () => {
     runConsensusNode.mockReset();
@@ -499,27 +654,14 @@ describe("orchestrator park-vs-complete (M37 T5.1)", () => {
       release();
     }
     await driving;
-    const continuation = startFlowContinuationWorker({
-      db: db as unknown as Parameters<
-        typeof startFlowContinuationWorker
-      >[0]["db"],
-      runtimeRoot: process.cwd(),
-      executionHosts: hosts,
-    });
+    const continuation = startWorker(hosts);
 
     try {
       await expect
         .poll(async () => (await getRun(runId)).status, { timeout: 10_000 })
         .toBe("Crashed");
       expect(runConsensusNode).toHaveBeenCalledTimes(2);
-      const assignments = await db
-        .select()
-        .from(schema.executionAssignments)
-        .where(eq(schema.executionAssignments.runId, runId));
-
-      expect(
-        assignments.filter((row) => row.placementReason === "wait_resume"),
-      ).toHaveLength(1);
+      expect(await waitResumeCount(runId)).toBe(1);
     } finally {
       await continuation.stop();
       runConsensusNode.mockReset();
@@ -577,38 +719,14 @@ describe("orchestrator park-vs-complete (M37 T5.1)", () => {
       release();
     }
     await driving;
-    await expect
-      .poll(async () => {
-        const assignments = await db
-          .select()
-          .from(schema.executionAssignments)
-          .where(eq(schema.executionAssignments.runId, runId));
-
-        return assignments.filter(
-          (row) => row.placementReason === "wait_resume",
-        ).length;
-      })
-      .toBe(1);
-    const continuation = startFlowContinuationWorker({
-      db: db as unknown as Parameters<
-        typeof startFlowContinuationWorker
-      >[0]["db"],
-      runtimeRoot: process.cwd(),
-      executionHosts: hosts,
-    });
+    await expect.poll(() => waitResumeCount(runId)).toBe(1);
+    const continuation = startWorker(hosts);
 
     try {
       await expect
         .poll(async () => (await getRun(runId)).status, { timeout: 10_000 })
         .toBe("Review");
-      const assignments = await db
-        .select()
-        .from(schema.executionAssignments)
-        .where(eq(schema.executionAssignments.runId, runId));
-
-      expect(
-        assignments.filter((row) => row.placementReason === "wait_resume"),
-      ).toHaveLength(1);
+      expect(await waitResumeCount(runId)).toBe(1);
     } finally {
       await continuation.stop();
     }
@@ -682,20 +800,24 @@ describe("orchestrator park-vs-complete (M37 T5.1)", () => {
       release();
     }
     await driving;
+    await expect.poll(() => waitResumeCount(runId)).toBe(1);
+    expect((await getRun(second.runId)).status).toBe("Running");
     await expect
       .poll(async () => {
-        const assignments = await db
-          .select()
-          .from(schema.executionAssignments)
-          .where(eq(schema.executionAssignments.runId, runId));
+        const parent = await getRun(runId);
 
-        return assignments.filter(
-          (row) => row.placementReason === "wait_resume",
-        ).length;
-      })
-      .toBe(1);
-    expect((await getRun(second.runId)).status).toBe("Running");
+        return [parent.status, parent.failedChildWakeAt];
+      }, RE_ENTRY_POLL)
+      .toEqual(["WaitingOnChildren", null]);
     await settle(second);
+    await expect
+      .poll(async () => (await getRun(runId)).status, RE_ENTRY_POLL)
+      .toBe("Review");
+    expect(await getRun(runId)).toMatchObject({
+      failedChildWakeAt: null,
+      resumeRequestedAt: null,
+    });
+    expect(await waitResumeCount(runId)).toBe(2);
   }, 90_000);
   it.each(["orchestrator", "consensus"] as const)(
     "recovers a %s parent after the last child settles without a delivered wake",
@@ -739,29 +861,11 @@ describe("orchestrator park-vs-complete (M37 T5.1)", () => {
         .update(schema.runs)
         .set({ status: "Failed" })
         .where(eq(schema.runs.id, child.runId));
-      const continuation = startFlowContinuationWorker({
-        db: db as unknown as Parameters<
-          typeof startFlowContinuationWorker
-        >[0]["db"],
-        runtimeRoot: process.cwd(),
-        executionHosts: hosts,
-      });
+      const continuation = startWorker(hosts);
 
       try {
         await expect
-          .poll(
-            async () => {
-              const assignments = await db
-                .select()
-                .from(schema.executionAssignments)
-                .where(eq(schema.executionAssignments.runId, runId));
-
-              return assignments.filter(
-                (row) => row.placementReason === "wait_resume",
-              ).length;
-            },
-            { timeout: 10_000 },
-          )
+          .poll(() => waitResumeCount(runId), { timeout: 10_000 })
           .toBe(1);
       } finally {
         await continuation.stop();
@@ -797,29 +901,11 @@ describe("orchestrator park-vs-complete (M37 T5.1)", () => {
       parentRunId: runId,
       payload: { runKind: "agent", status: "Failed" },
     });
-    const continuation = startFlowContinuationWorker({
-      db: db as unknown as Parameters<
-        typeof startFlowContinuationWorker
-      >[0]["db"],
-      runtimeRoot: process.cwd(),
-      executionHosts: hosts,
-    });
+    const continuation = startWorker(hosts);
 
     try {
       await expect
-        .poll(
-          async () => {
-            const assignments = await db
-              .select()
-              .from(schema.executionAssignments)
-              .where(eq(schema.executionAssignments.runId, runId));
-
-            return assignments.filter(
-              (row) => row.placementReason === "wait_resume",
-            ).length;
-          },
-          { timeout: 10_000 },
-        )
+        .poll(() => waitResumeCount(runId), { timeout: 10_000 })
         .toBe(1);
       expect((await getRun(sibling.runId)).status).toBe("Running");
     } finally {
@@ -857,25 +943,13 @@ describe("orchestrator park-vs-complete (M37 T5.1)", () => {
         resumeFlow: dispatch,
       }),
     ]);
-    const assignments = await db
-      .select()
-      .from(schema.executionAssignments)
-      .where(eq(schema.executionAssignments.runId, runId));
 
     expect(
       [event.kind, catchup.kind].filter((kind) => kind === "woken"),
     ).toHaveLength(1);
     expect(dispatch).toHaveBeenCalledTimes(1);
-    expect(
-      assignments.filter((row) => row.placementReason === "wait_resume"),
-    ).toHaveLength(1);
-    const continuation = startFlowContinuationWorker({
-      db: db as unknown as Parameters<
-        typeof startFlowContinuationWorker
-      >[0]["db"],
-      runtimeRoot: process.cwd(),
-      executionHosts: hosts,
-    });
+    expect(await waitResumeCount(runId)).toBe(1);
+    const continuation = startWorker(hosts);
 
     try {
       await expect
@@ -885,11 +959,107 @@ describe("orchestrator park-vs-complete (M37 T5.1)", () => {
       await continuation.stop();
     }
   }, 90_000);
-  it("re-drives a rebound coordinator after death before its first command", async () => {
+  it.each(["orchestrator", "consensus"] as const)(
+    "re-drives a rebound %s coordinator after death before its first command",
+    async (nodeType) => {
+      if (nodeType === "consensus") {
+        runConsensusNode.mockReset();
+        runConsensusNode
+          .mockResolvedValueOnce({
+            ok: false,
+            stdout: "",
+            vars: {},
+            durationMs: 1,
+            needsInput: true,
+            waitsForChildren: true,
+          })
+          .mockResolvedValue({ ok: true, stdout: "", vars: {}, durationMs: 1 });
+      }
+      const { runId } = await seedOrchestratorRun(
+        nodeType === "consensus" ? consensusFlow : orchestratorFlow,
+      );
+      const child = await seedChild(runId, "Running");
+      const { hosts } = await bindCoordinatorHost(
+        runId,
+        nodeType === "consensus" ? "decide" : "coordinate",
+      );
+      const { runFlow } = await import("@/lib/flows/runner");
+
+      try {
+        await runFlow(runId, {
+          db,
+          runtimeRoot: process.cwd(),
+          executionHosts: hosts,
+        });
+        await db
+          .update(schema.runs)
+          .set({ status: "Failed" })
+          .where(eq(schema.runs.id, child.runId));
+        const wake = await wakeParkedCoordinator({
+          db: db as unknown as Parameters<
+            typeof wakeParkedCoordinator
+          >[0]["db"],
+          parentRunId: runId,
+          cause: "settled_child",
+          resumeFlow: async () => {},
+        });
+
+        if (wake.kind !== "woken")
+          throw new Error(`coordinator wake refused: ${wake.kind}`);
+        const active = await getRun(runId);
+
+        // Death after the re-entry rebound the attempt to the wait epoch but
+        // before its first prompt command.
+        await db
+          .update(schema.nodeAttempts)
+          .set({
+            status: "Running",
+            executionAssignmentId: active.executionAssignmentId,
+            endedAt: null,
+          })
+          .where(eq(schema.nodeAttempts.id, wake.nodeAttemptId));
+        const continuation = startWorker(hosts);
+
+        try {
+          if (nodeType === "consensus")
+            // The mocked runtime publishes no declared outputs, so the proof is
+            // the worker re-entering THIS attempt rather than the run's end.
+            await expect
+              .poll(
+                () =>
+                  runConsensusNode.mock.calls
+                    .slice(1)
+                    .map(([input]) => input.nodeAttemptId),
+                RE_ENTRY_POLL,
+              )
+              .toContain(wake.nodeAttemptId);
+          else
+            await expect
+              .poll(async () => (await getRun(runId)).status, RE_ENTRY_POLL)
+              .toBe("Review");
+          const attempts = await db
+            .select()
+            .from(schema.nodeAttempts)
+            .where(eq(schema.nodeAttempts.runId, runId));
+
+          expect(attempts).toHaveLength(1);
+        } finally {
+          await continuation.stop();
+        }
+      } finally {
+        runConsensusNode.mockReset();
+      }
+    },
+    90_000,
+  );
+  it("wakes only the parked attempt it names, and never a terminal parent", async () => {
     const { runId } = await seedOrchestratorRun();
     const child = await seedChild(runId, "Running");
     const { hosts } = await bindCoordinatorHost(runId);
     const { runFlow } = await import("@/lib/flows/runner");
+    const wakeDb = db as unknown as Parameters<
+      typeof wakeParkedCoordinator
+    >[0]["db"];
 
     await runFlow(runId, {
       db,
@@ -900,46 +1070,29 @@ describe("orchestrator park-vs-complete (M37 T5.1)", () => {
       .update(schema.runs)
       .set({ status: "Failed" })
       .where(eq(schema.runs.id, child.runId));
-    const wake = await wakeParkedCoordinator({
-      db: db as unknown as Parameters<typeof wakeParkedCoordinator>[0]["db"],
-      parentRunId: runId,
-      cause: "settled_child",
-      resumeFlow: async () => {},
-    });
 
-    if (wake.kind !== "woken")
-      throw new Error(`coordinator wake refused: ${wake.kind}`);
-    const active = await getRun(runId);
-
+    expect(
+      await wakeParkedCoordinator({
+        db: wakeDb,
+        parentRunId: runId,
+        cause: "settled_child",
+        expectedAttemptId: randomUUID(),
+        resumeFlow: async () => {},
+      }),
+    ).toEqual({ kind: "skipped", reason: "stale_attempt" });
     await db
-      .update(schema.nodeAttempts)
-      .set({
-        status: "Running",
-        executionAssignmentId: active.executionAssignmentId,
-        endedAt: null,
-      })
-      .where(eq(schema.nodeAttempts.id, wake.nodeAttemptId));
-    const continuation = startFlowContinuationWorker({
-      db: db as unknown as Parameters<
-        typeof startFlowContinuationWorker
-      >[0]["db"],
-      runtimeRoot: process.cwd(),
-      executionHosts: hosts,
-    });
-
-    try {
-      await expect
-        .poll(async () => (await getRun(runId)).status, { timeout: 10_000 })
-        .toBe("Review");
-      const attempts = await db
-        .select()
-        .from(schema.nodeAttempts)
-        .where(eq(schema.nodeAttempts.runId, runId));
-
-      expect(attempts).toHaveLength(1);
-    } finally {
-      await continuation.stop();
-    }
+      .update(schema.runs)
+      .set({ status: "Abandoned" })
+      .where(eq(schema.runs.id, runId));
+    expect(
+      await wakeParkedCoordinator({
+        db: wakeDb,
+        parentRunId: runId,
+        cause: "continuation_worker",
+        resumeFlow: async () => {},
+      }),
+    ).toEqual({ kind: "skipped", reason: "parent_not_parked_coordinator" });
+    expect(await waitResumeCount(runId)).toBe(0);
   }, 90_000);
   it("parks on WaitingOnChildren when a pending child exists; checkpoints + releases the slot", async () => {
     const { runId } = await seedOrchestratorRun();

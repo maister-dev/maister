@@ -31,6 +31,7 @@ describe("isRunRecoverable — run-detail recoverability (M19)", () => {
           acpSessionId: "acp-session-123",
           currentNodeKind: "ai_coding",
           retrySafe,
+          consensusEvidence: null,
         }),
       ).toBe(true);
     }
@@ -43,6 +44,7 @@ describe("isRunRecoverable — run-detail recoverability (M19)", () => {
         acpSessionId: null,
         currentNodeKind: "ai_coding",
         retrySafe: true,
+        consensusEvidence: null,
       }),
     ).toBe(false);
   });
@@ -54,6 +56,7 @@ describe("isRunRecoverable — run-detail recoverability (M19)", () => {
         acpSessionId: null,
         currentNodeKind: "check",
         retrySafe: true,
+        consensusEvidence: null,
       }),
     ).toBe(true);
   });
@@ -65,6 +68,7 @@ describe("isRunRecoverable — run-detail recoverability (M19)", () => {
         acpSessionId: "acp-session-123",
         currentNodeKind: "cli",
         retrySafe: false,
+        consensusEvidence: null,
       }),
     ).toBe(false);
   });
@@ -76,6 +80,7 @@ describe("isRunRecoverable — run-detail recoverability (M19)", () => {
         acpSessionId: "acp-session-123",
         currentNodeKind: "ai_coding",
         retrySafe: true,
+        consensusEvidence: null,
       }),
     ).toBe(false);
   });
@@ -87,6 +92,7 @@ describe("isRunRecoverable — run-detail recoverability (M19)", () => {
         acpSessionId: "acp-session-123",
         currentNodeKind: "ai_coding",
         retrySafe: true,
+        consensusEvidence: null,
         workspaceRemoved: true,
       }),
     ).toBe(false);
@@ -103,6 +109,7 @@ describe("isRunRecoverable — run-detail recoverability (M19)", () => {
           acpSessionId: "acp-session-123",
           currentNodeKind: null,
           retrySafe,
+          consensusEvidence: null,
         }),
       ).toBe(retrySafe);
     }
@@ -120,6 +127,7 @@ describe("isRunRecoverable — run-detail recoverability (M19)", () => {
           acpSessionId: null,
           currentNodeKind: kind,
           retrySafe: true,
+          consensusEvidence: null,
         }),
       ).toBe(true);
       expect(
@@ -128,6 +136,7 @@ describe("isRunRecoverable — run-detail recoverability (M19)", () => {
           acpSessionId: null,
           currentNodeKind: kind,
           retrySafe: false,
+          consensusEvidence: null,
         }),
       ).toBe(false);
     }
@@ -144,6 +153,7 @@ describe("isRunRecoverable — run-detail recoverability (M19)", () => {
           acpSessionId: "acp-judge",
           currentNodeKind: "judge",
           retrySafe,
+          consensusEvidence: null,
         }),
       ).toBe(true);
       expect(
@@ -152,29 +162,36 @@ describe("isRunRecoverable — run-detail recoverability (M19)", () => {
           acpSessionId: null,
           currentNodeKind: "judge",
           retrySafe,
+          consensusEvidence: null,
         }),
       ).toBe(false);
     }
   });
 
-  it("offers consensus Recover only for an exact incomplete-synthesis witness without quarantine", () => {
+  it("consensus Recover follows the classifier: witness, quarantine, then retry_safe", () => {
     const base = {
       status: "Crashed" as const,
       acpSessionId: null,
       currentNodeKind: "consensus" as const,
-      retrySafe: true,
     };
 
-    expect(isRunRecoverable({ ...base })).toBe(false);
+    expect(
+      isRunRecoverable({ ...base, retrySafe: false, consensusEvidence: null }),
+    ).toBe(false);
+    expect(
+      isRunRecoverable({ ...base, retrySafe: true, consensusEvidence: null }),
+    ).toBe(true);
     expect(
       isRunRecoverable({
         ...base,
+        retrySafe: false,
         consensusEvidence: { incompleteSynthesis: true, quarantined: false },
       }),
     ).toBe(true);
     expect(
       isRunRecoverable({
         ...base,
+        retrySafe: true,
         consensusEvidence: { incompleteSynthesis: true, quarantined: true },
       }),
     ).toBe(false);
@@ -182,6 +199,7 @@ describe("isRunRecoverable — run-detail recoverability (M19)", () => {
       isRunRecoverable({
         ...base,
         status: "Running",
+        retrySafe: false,
         consensusEvidence: { incompleteSynthesis: true, quarantined: false },
       }),
     ).toBe(false);

@@ -4,7 +4,6 @@ import type {
   DomainEventKind,
   RunSettledEventKind,
 } from "@/lib/domain-events/taxonomy";
-import type { Db as ExecutionDb } from "@/lib/execution-host/db";
 
 import pino from "pino";
 
@@ -68,9 +67,7 @@ export async function emitDomainEvent(
   ) {
     // The child status, event and wake intent share the caller's transaction.
     // A consumer replay cannot re-arm an already handled failure.
-    if (
-      await armFailedCoordinatorWake(input.db as ExecutionDb, input.parentRunId)
-    )
+    if (await armFailedCoordinatorWake(input.db, input.parentRunId))
       log.info(
         {
           parentRunId: input.parentRunId,

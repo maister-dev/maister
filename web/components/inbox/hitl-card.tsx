@@ -76,12 +76,14 @@ const STAGE_ICON: Record<string, typeof UserIcon> = {
 export interface HitlCardProps {
   item: HitlItem;
   canAct: boolean;
+  canReadRepoFiles?: boolean;
   currentUserId: string;
 }
 
 export function HitlCard({
   item,
   canAct,
+  canReadRepoFiles = false,
   currentUserId,
 }: HitlCardProps): ReactElement {
   const t = useTranslations("inbox");
@@ -189,6 +191,7 @@ export function HitlCard({
 
       <HitlPanel
         canAct={canAct}
+        canReadRepoFiles={canReadRepoFiles}
         currentUserId={currentUserId}
         expanded={expanded}
         item={item}

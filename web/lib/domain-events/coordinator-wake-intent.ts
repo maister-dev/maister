@@ -6,6 +6,16 @@ import { and, eq, exists, inArray, sql } from "drizzle-orm";
 
 import { nodeAttempts, runs } from "@/lib/db/schema";
 
+// Every parent status in which the orchestrator node's attempt can still be
+// open. A parent paused on its own HITL must keep the intent too, or it parks
+// later behind pending siblings with the failure unhandled.
+const ARMABLE_PARENT_STATUSES = [
+  "Running",
+  "NeedsInput",
+  "NeedsInputIdle",
+  "WaitingOnChildren",
+] as const;
+
 /** Record an orchestrator failure wake in the child's terminal transaction. */
 export async function armFailedCoordinatorWake(
   db: Db,
@@ -14,12 +24,12 @@ export async function armFailedCoordinatorWake(
   const armed = await db
     .update(runs)
     .set({
-      resumeRequestedAt: sql`coalesce(${runs.resumeRequestedAt}, clock_timestamp())`,
+      failedChildWakeAt: sql`coalesce(${runs.failedChildWakeAt}, clock_timestamp())`,
     })
     .where(
       and(
         eq(runs.id, parentRunId),
-        inArray(runs.status, ["Running", "WaitingOnChildren"]),
+        inArray(runs.status, [...ARMABLE_PARENT_STATUSES]),
         exists(
           db
             .select({ id: nodeAttempts.id })
@@ -38,4 +48,15 @@ export async function armFailedCoordinatorWake(
     .returning({ id: runs.id });
 
   return armed.length > 0;
+}
+
+/** The coordinator's turn has started and will observe every settled child. */
+export async function clearFailedCoordinatorWake(
+  db: Db,
+  runId: string,
+): Promise<void> {
+  await db
+    .update(runs)
+    .set({ failedChildWakeAt: null })
+    .where(eq(runs.id, runId));
 }

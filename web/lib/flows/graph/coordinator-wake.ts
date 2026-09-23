@@ -56,7 +56,7 @@ export async function currentCoordinator(
   parentRunId: string,
 ): Promise<{
   status: string;
-  resumeRequestedAt: Date | null;
+  failedChildWakeAt: Date | null;
   nodeId: string;
   nodeAttemptId: string;
   nodeType: CoordinatorType;
@@ -65,7 +65,7 @@ export async function currentCoordinator(
     .select({
       runKind: runs.runKind,
       status: runs.status,
-      resumeRequestedAt: runs.resumeRequestedAt,
+      failedChildWakeAt: runs.failedChildWakeAt,
       currentStepId: runs.currentStepId,
     })
     .from(runs)
@@ -89,7 +89,7 @@ export async function currentCoordinator(
 
   return {
     status: parent.status,
-    resumeRequestedAt: parent.resumeRequestedAt,
+    failedChildWakeAt: parent.failedChildWakeAt,
     nodeId: parent.currentStepId,
     nodeAttemptId: attempt.id,
     nodeType: attempt.nodeType,
@@ -180,14 +180,21 @@ async function rollbackOnRetryable(
   );
 }
 
+export type CoordinatorResumeOptions = Pick<
+  RunFlowOptions,
+  "runtimeRoot" | "executionHosts"
+>;
+
 async function dispatchResume(
   db: Db,
   parentRunId: string,
   nodeId: string,
   nodeType: CoordinatorType,
   injected?: ResumeFlow,
+  resumeOptions: CoordinatorResumeOptions = {},
 ): Promise<void> {
   const options: RunFlowOptions = {
+    ...resumeOptions,
     db,
     ...(nodeType === "orchestrator"
       ? { orchestratorResume: { targetStepId: nodeId } }
@@ -225,6 +232,7 @@ export async function wakeParkedCoordinator(input: {
   allowFailedOrchestratorChild?: boolean;
   expectedAttemptId?: string;
   resumeFlow?: ResumeFlow;
+  resumeOptions?: CoordinatorResumeOptions;
 }): Promise<CoordinatorWakeResult> {
   const coordinator = await currentCoordinator(input.db, input.parentRunId);
 
@@ -239,7 +247,7 @@ export async function wakeParkedCoordinator(input: {
     !(
       coordinator.nodeType === "orchestrator" &&
       (input.allowFailedOrchestratorChild ||
-        coordinator.resumeRequestedAt !== null)
+        coordinator.failedChildWakeAt !== null)
     )
   ) {
     const pending = await pendingCoordinatorChildCount(
@@ -275,6 +283,7 @@ export async function wakeParkedCoordinator(input: {
     coordinator.nodeId,
     coordinator.nodeType,
     input.resumeFlow,
+    input.resumeOptions,
   );
 
   return {

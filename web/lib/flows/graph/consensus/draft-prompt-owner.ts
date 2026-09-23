@@ -18,10 +18,12 @@ import { recordArtifact } from "../artifact-store";
 
 import {
   CONSENSUS_DRAFT_OUTPUT_CAP_BYTES,
+  consensusTurnStopReason,
   finishConsensusOutput,
   retainConsensusOutput,
   type RetainedConsensusOutput,
 } from "./text";
+import { CONSENSUS_DRAFT_ARTIFACT_DEF } from "./artifact-defs";
 
 import { prepareAgentRunFinalization } from "@/lib/agents/finalization";
 import {
@@ -211,16 +213,22 @@ export async function prepareConsensusDraftPrompt(
   retained = finishConsensusOutput(retained, CONSENSUS_DRAFT_OUTPUT_CAP_BYTES);
   const text = retained.text;
 
+  const outputBounds = {
+    bytes: retained.retainedBytes + retained.droppedBytes,
+    retainedBytes: retained.retainedBytes,
+    droppedBytes: retained.droppedBytes,
+    cap: CONSENSUS_DRAFT_OUTPUT_CAP_BYTES,
+  };
+
   if (retained.droppedBytes > 0)
     log.warn(
       {
         role: "draft-output",
+        runId: ref.runId,
+        nodeAttemptId: ref.nodeAttemptId,
         participantId: ref.participantId,
         round: ref.round,
-        bytes: retained.retainedBytes + retained.droppedBytes,
-        cap: CONSENSUS_DRAFT_OUTPUT_CAP_BYTES,
-        droppedBytes: retained.droppedBytes,
-        runId: ref.runId,
+        ...outputBounds,
       },
       "consensus-text-truncated",
     );
@@ -230,6 +238,21 @@ export async function prepareConsensusDraftPrompt(
     text.trim().length > 0 &&
     retained.droppedBytes === 0;
   const partial = text.trim().length > 0 && !complete;
+  const stopReason = consensusTurnStopReason(outcome);
+
+  if (partial)
+    log.warn(
+      {
+        runId: ref.runId,
+        nodeAttemptId: ref.nodeAttemptId,
+        participantId: ref.participantId,
+        round: ref.round,
+        stopReason,
+        retainedBytes: retained.retainedBytes,
+        droppedBytes: retained.droppedBytes,
+      },
+      "consensus-draft-incomplete",
+    );
 
   if (outcome.state !== "fenced")
     await stopAgentPromptSession(db, ref, command.targetSessionId, command.id);
@@ -262,7 +285,7 @@ export async function prepareConsensusDraftPrompt(
             id: consensusDraftArtifactId(ref.runId, source),
             runId: ref.runId,
             nodeId: "consensus-draft",
-            artifactDefId: "default:consensus-draft",
+            artifactDefId: CONSENSUS_DRAFT_ARTIFACT_DEF,
             kind: "human_note",
             producer: "runner",
             locator: {
@@ -271,15 +294,14 @@ export async function prepareConsensusDraftPrompt(
               ...(partial
                 ? {
                     partial: true,
-                    stopReason:
-                      outcome.state === "succeeded" &&
-                      typeof outcome.response.stopReason === "string"
-                        ? outcome.response.stopReason
-                        : "host_failure",
+                    stopReason,
                     reason:
                       retained.droppedBytes > 0
                         ? "output_cap_exceeded"
                         : "consensus_draft_incomplete",
+                    ...(retained.droppedBytes > 0
+                      ? { truncated: true, textBounds: outputBounds }
+                      : {}),
                   }
                 : {}),
             },

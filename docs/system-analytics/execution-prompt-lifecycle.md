@@ -903,9 +903,14 @@ owner reference, so one cell's paid output cannot be re-pointed at its sibling.
 
 Before verifier/synthesis prompt enqueue, the current-owner admission path
 records a deterministic `:input` artifact keyed by its verdict/synthesis ID.
-Versioned JSON contains the exact attempt/round/generation, source artifact or
-HITL request ID, bounded input digest and byte bounds, and the UTF-16 span of
-that value in the rendered prompt. It contains no duplicate draft body.
+Versioned JSON contains the exact attempt/round/generation, the source (the
+target draft artifact for a verifier; the picked draft's artifact, or the
+`consensus` / `provide-resolution` label, for synthesis), bounded input digest
+and byte bounds, and the UTF-16 span of that value in the rendered prompt. The
+span is the slot's own position: `prepareConsensusInputEvidence` renders the
+static template once with a sentinel in that slot and once with the value, so an
+identical earlier passage (e.g. inside the base prompt) can never be mistaken
+for it. It contains no duplicate draft body.
 Re-entry compares rather than overwrites this evidence; an orphan
 preparation cannot be mistaken for an applied cell. On application, read only
 the matching generation's preparation; the command's verified canonical
@@ -916,7 +921,14 @@ owner-ref JSONB CHECK from migration 0140 is unchanged. Historical commands
 without input evidence remain readable with unknown truncation metadata.
 
 After host settlement, a deferred consensus owner application makes the
-dedicated owned prompt wait yield with `flow_prompt_continuation_pending`.
+dedicated owned prompt wait (`waitForConsensusApplication`) yield with
+`flow_prompt_continuation_pending`. A **superseded** command is settled, not
+pending — the immutable cell or generation it would have written already exists
+under another writer, so the runtime reads that result; the same rule holds when
+re-entry finds the logical command already `superseded`
+(`reattachConsensusPrompt`). A **poisoned** command keeps yielding; ADR-177
+reconcile owns its `owner-poisoned` crash (including a quarantine found after
+application, read from `application_error`).
 Re-entry adopts the existing logical command instead of issuing another turn
 and closes the applied command's exact host session before using cached output.
 If consensus runtime returns from the wait before its cell/generation is visible,

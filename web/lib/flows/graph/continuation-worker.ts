@@ -62,6 +62,8 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 const pendingChild = alias(runs, "pending_child");
+const wakeAttempt = alias(nodeAttempts, "wake_attempt");
+const sourceAssignment = alias(executionAssignments, "source_assignment");
 
 /** The run cursor and existing attempt are the queue. A keyset scan covers
  * already-applied commands even when no new host event arrives. Each free
@@ -234,20 +236,43 @@ export function startFlowContinuationWorker(input: {
                     eq(runs.status, "Running"),
                     eq(executionAssignments.state, "active"),
                     eq(executionAssignments.placementReason, "wait_resume"),
-                    sql`EXISTS (
-                      SELECT 1 FROM node_attempts wake_attempt
-                      JOIN execution_assignments source_assignment
-                        ON source_assignment.id = wake_attempt.execution_assignment_id
-                      WHERE wake_attempt.run_id = ${runs.id}
-                        AND wake_attempt.node_id = ${runs.currentStepId}
-                        AND wake_attempt.status = 'NeedsInput'
-                        AND wake_attempt.node_type IN ('consensus', 'orchestrator')
-                        AND source_assignment.run_id = ${runs.id}
-                        AND source_assignment.state = 'released'
-                        AND source_assignment.released_reason = 'waiting_on_children'
-                        AND source_assignment.execution_host_id = ${executionAssignments.executionHostId}
-                        AND source_assignment.epoch < ${executionAssignments.epoch}
-                    )`,
+                    exists(
+                      tx
+                        .select({ id: wakeAttempt.id })
+                        .from(wakeAttempt)
+                        .innerJoin(
+                          sourceAssignment,
+                          eq(
+                            sourceAssignment.id,
+                            wakeAttempt.executionAssignmentId,
+                          ),
+                        )
+                        .where(
+                          and(
+                            eq(wakeAttempt.runId, runs.id),
+                            eq(wakeAttempt.nodeId, runs.currentStepId),
+                            eq(wakeAttempt.status, "NeedsInput"),
+                            inArray(wakeAttempt.nodeType, [
+                              "consensus",
+                              "orchestrator",
+                            ]),
+                            eq(sourceAssignment.runId, runs.id),
+                            eq(sourceAssignment.state, "released"),
+                            eq(
+                              sourceAssignment.releasedReason,
+                              "waiting_on_children",
+                            ),
+                            eq(
+                              sourceAssignment.executionHostId,
+                              executionAssignments.executionHostId,
+                            ),
+                            lt(
+                              sourceAssignment.epoch,
+                              executionAssignments.epoch,
+                            ),
+                          ),
+                        ),
+                    ),
                   ),
                   and(
                     eq(runs.status, "WaitingOnChildren"),
@@ -268,7 +293,7 @@ export function startFlowContinuationWorker(input: {
                         ),
                     ),
                     or(
-                      isNotNull(runs.resumeRequestedAt),
+                      isNotNull(runs.failedChildWakeAt),
                       notExists(
                         tx
                           .select({ id: pendingChild.id })

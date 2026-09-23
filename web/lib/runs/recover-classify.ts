@@ -47,21 +47,26 @@ const AGENT_NODE_KINDS: ReadonlySet<NodeKind> = new Set<NodeKind>([
 // offered ONLY when the Flow author marked the node `retry_safe: true`;
 // otherwise the crashed node is discard-only. An agent node ignores `retrySafe`
 // (it recovers by resuming its session, not by re-running).
+// P0-5: a consensus node keeps the session-less `retry_safe` rule. Its latest
+// attempt's evidence only adds to it: a quarantined terminal conflict refuses
+// any re-run (ADR-175 never re-prompts from disagreeing evidence), and an
+// applied incomplete synthesis is redispatchable even with `retry_safe: false`.
+// REQUIRED so a caller cannot silently drop the quarantine refusal; non-consensus
+// callers pass `null`.
+export type ConsensusRecoverEvidence = Readonly<{
+  incompleteSynthesis: boolean;
+  quarantined: boolean;
+}>;
+
 export function classifyRecover(
   run: { acpSessionId: string | null },
   currentNodeKind: NodeKind,
   retrySafe: boolean,
-  consensusEvidence: {
-    incompleteSynthesis: boolean;
-    quarantined: boolean;
-  } = { incompleteSynthesis: false, quarantined: false },
+  consensusEvidence: ConsensusRecoverEvidence | null,
 ): RecoverPlan {
   if (currentNodeKind === "consensus") {
-    if (consensusEvidence.quarantined) return "discard-only";
-
-    return consensusEvidence.incompleteSynthesis
-      ? "redispatch"
-      : "discard-only";
+    if (consensusEvidence?.quarantined) return "discard-only";
+    if (consensusEvidence?.incompleteSynthesis) return "redispatch";
   }
   if (AGENT_NODE_KINDS.has(currentNodeKind)) {
     return run.acpSessionId ? "resume-agent" : "discard-only";

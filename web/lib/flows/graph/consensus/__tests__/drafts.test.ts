@@ -193,6 +193,42 @@ describe("launchConsensusDraftRuns", () => {
     expect(tryStartRun).toHaveBeenCalledWith(expect.any(String), { db });
   });
 
+  it.each([
+    ["missing", [{ participantId: "architect", prompt: "only one" }]],
+    [
+      "foreign",
+      [
+        { participantId: "architect", prompt: "a" },
+        { participantId: "stranger", prompt: "b" },
+      ],
+    ],
+    [
+      "duplicate",
+      [
+        { participantId: "architect", prompt: "a" },
+        { participantId: "architect", prompt: "b" },
+      ],
+    ],
+  ])(
+    "refuses a %s participant prompt as an engine invariant before any child exists",
+    async (_case, prompts) => {
+      const inserts: unknown[] = [];
+      const launchAgent = vi.fn();
+
+      await expect(
+        launchConsensusDraftRuns(
+          { ...baseInput(fakeDb({ inserts })), prompts },
+          { launchAgent } as never,
+        ),
+      ).rejects.toMatchObject({
+        code: "CRASH",
+        details: { reason: "consensus_draft_prompt_map_invalid" },
+      });
+      expect(inserts).toEqual([]);
+      expect(launchAgent).not.toHaveBeenCalled();
+    },
+  );
+
   it("does not relaunch an already recorded participant draft", async () => {
     const db = fakeDb({
       existingRows: [

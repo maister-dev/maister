@@ -1174,7 +1174,12 @@ async function reattachConsensusPrompt(
   );
 
   if (!existing) return null;
-  if (existing.applicationState !== "applied")
+  // Superseded means the immutable result already exists under another writer;
+  // the runtime reads it. Anything else is still owed by its owner worker.
+  if (
+    existing.applicationState !== "applied" &&
+    existing.applicationState !== "superseded"
+  )
     throw new ConsensusGenerationPending(
       owner.variant === "consensus_verifier"
         ? owner.verdictId

@@ -62,7 +62,12 @@ export async function runFlow(
     !["Running", "NeedsInput"].includes(loaded.run.status)
   ) {
     await runGraph(loaded, { ...opts, db, runtimeRoot });
-    await wakeParkedCoordinator({ db, parentRunId: runId, cause: "post_park" });
+    await wakeParkedCoordinator({
+      db,
+      parentRunId: runId,
+      cause: "post_park",
+      resumeOptions: { runtimeRoot, executionHosts: opts.executionHosts },
+    });
 
     return;
   }
@@ -107,5 +112,10 @@ export async function runFlow(
     if (!isFlowDriverClaimLost(error) && !isFencedError(error)) throw error;
     logger.warn({ assignmentId: claim.assignmentId }, "flow-driver-yielded");
   }
-  await wakeParkedCoordinator({ db, parentRunId: runId, cause: "post_park" });
+  await wakeParkedCoordinator({
+    db,
+    parentRunId: runId,
+    cause: "post_park",
+    resumeOptions: { runtimeRoot, executionHosts: hosts },
+  });
 }

@@ -27,7 +27,10 @@ import { buildActivityRowLabels } from "@/lib/activity/activity-row-labels";
 import { buildWorkRowsLabels } from "@/lib/work/work-row-labels";
 import { countWorkInFlightByStage } from "@/lib/work/stage-counts";
 import { getActivityCursor } from "@/lib/queries/activity-cursor";
-import { getDecisionsQueue } from "@/lib/queries/decisions";
+import {
+  decisionQueueReadsRepoFiles,
+  getDecisionsQueue,
+} from "@/lib/queries/decisions";
 import { getPortfolio } from "@/lib/queries/portfolio";
 import { getWorkTable } from "@/lib/queries/work-table";
 import {
@@ -139,6 +142,7 @@ export default async function DeskPage({
         row.runId === null ? null : (decisionByRunId.get(row.runId) ?? null),
       events: feed.rows.filter((event) => event.runId === row.runId),
       canAct: user.role !== "viewer",
+      canReadRepoFiles: decisionQueueReadsRepoFiles(),
       currentUserId: user.id,
       activityLabels,
       reviewLabel: tInbox("decisions.review"),
@@ -307,6 +311,7 @@ function deskRowPanel({
   decision,
   events,
   canAct,
+  canReadRepoFiles,
   currentUserId,
   activityLabels,
   reviewLabel,
@@ -318,6 +323,7 @@ function deskRowPanel({
   decision: DecisionItem | null;
   events: ActivityFeedRow[];
   canAct: boolean;
+  canReadRepoFiles: boolean;
   currentUserId: string;
   activityLabels: ActivityRowLabels;
   reviewLabel: string;
@@ -330,6 +336,7 @@ function deskRowPanel({
       <HitlPanel
         expanded
         canAct={canAct}
+        canReadRepoFiles={canReadRepoFiles}
         currentUserId={currentUserId}
         item={decision.hitl}
       />

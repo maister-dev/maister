@@ -7,13 +7,17 @@ import type { AgentExecution } from "@/lib/flows/runner-agent";
 import type { ConsensusNodeDef } from "./drafts";
 import type { ParsedConsensusVerdict } from "./verdict";
 import type { ConsensusRoleRuntime } from "./roles";
+import type {
+  ConsensusEscalationReason,
+  ConsensusResolutionSchema,
+} from "@/lib/flows/consensus-resolution";
 
-import { randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { readFile, unlink } from "node:fs/promises";
 import path from "node:path";
 
 import pino from "pino";
-import { eq } from "drizzle-orm";
+import { and, eq, isNotNull, sql } from "drizzle-orm";
 
 import { recordCurrentArtifact } from "../artifact-store";
 
@@ -27,18 +31,21 @@ import { launchConsensusDraftRuns } from "./drafts";
 import { prepareConsensusInputEvidence } from "./input-evidence";
 import {
   composeConsensusRoundCritique,
+  CONSENSUS_CRITIQUE_FIELD_CAP_BYTES,
+  CONSENSUS_CRITIQUE_LABEL_CAP_BYTES,
+  CONSENSUS_CRITIQUE_ROW_LIMIT,
   consensusDraftTrailer,
   hasActionableConsensusCritique,
   technicalConsensusFailures,
   type ConsensusTechnicalFailure,
 } from "./critique";
+import { boundLoggedConsensusText } from "./bounded-log";
 import { buildConsensusRotation } from "./rotation";
 import { tallyConsensus, type ConsensusTallyResult } from "./tally";
 import { parseConsensusVerdict } from "./verdict";
 import { acquireConsensusAgentCapacity } from "./capacity";
 import { resolveConsensusRoleRuntime } from "./roles";
 import {
-  CONSENSUS_TEXT_CAP_BYTES,
   latestConsensusRound,
   loadConsensusDraftEvidence,
   loadConsensusDraftFailureReasons,
@@ -57,13 +64,15 @@ import {
   type ConsensusSynthesisEvidence,
 } from "./prompt-owner";
 import {
-  boundConsensusText,
+  CONSENSUS_DRAFT_OUTPUT_CAP_BYTES,
+  CONSENSUS_EXCERPT_CAP_BYTES,
   CONSENSUS_PROMPT_TEXT_CAP_BYTES,
+  type BoundedConsensusText,
   type ConsensusTextBounds,
 } from "./text";
 
 import { ensureSubstepRunSession } from "@/lib/runs/substep-session";
-import { createHitlRequest } from "@/lib/runs/hitl-create";
+import { createHitlRequestIfAbsent } from "@/lib/runs/hitl-create";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 import { runAgentStep } from "@/lib/flows/runner-agent";
 import { renderStrict } from "@/lib/flows/templating";
@@ -72,7 +81,7 @@ import { MaisterError } from "@/lib/errors";
 import { isFencedError } from "@/lib/execution-host";
 import { atomicWriteJson } from "@/lib/atomic";
 import { createHitlAssignmentForRun } from "@/lib/assignments/service";
-import { artifactInstances } from "@/lib/db/schema";
+import { artifactInstances, hitlRequests } from "@/lib/db/schema";
 
 const log = pino({
   name: "consensus-runtime",
@@ -129,44 +138,25 @@ function runDir(
   return path.join(runtimeRoot, ".maister", projectSlug, "runs", runId);
 }
 
-function boundedText(
+type TextSlot = Readonly<{
+  round: number;
+  role: string;
+  participantId: string;
+  generationId?: string;
+}>;
+
+// Every consensus text bound in this node logs its run and attempt identity.
+function boundText(
+  args: { loaded: LoadedRun; nodeAttemptId: string },
   value: string,
   cap: number,
-  role: string,
-  participantId: string,
-  round: number,
-): string {
-  const bounded = boundConsensusText(value, cap);
-
-  if (bounded.truncated)
-    log.warn(
-      {
-        role,
-        participantId,
-        round,
-        bytes: bounded.bounds.bytes,
-        cap: bounded.bounds.cap,
-        droppedBytes: bounded.bounds.droppedBytes,
-      },
-      "consensus-text-truncated",
-    );
-
-  return bounded.text;
-}
-
-function promptText(
-  value: string,
-  role: string,
-  participantId: string,
-  round: number,
-): string {
-  return boundedText(
-    value,
-    CONSENSUS_PROMPT_TEXT_CAP_BYTES,
-    role,
-    participantId,
-    round,
-  );
+  slot: TextSlot,
+): BoundedConsensusText {
+  return boundLoggedConsensusText(value, cap, {
+    runId: args.loaded.run.id,
+    nodeAttemptId: args.nodeAttemptId,
+    ...slot,
+  });
 }
 
 function failClosedVerdict(
@@ -482,6 +472,8 @@ async function launchRound(
   const critique =
     priorRound > 0
       ? composeConsensusRoundCritique({
+          runId: args.loaded.run.id,
+          nodeAttemptId: args.nodeAttemptId,
           round: priorRound,
           participants: participantOrder(args.def),
           drafts: priorDrafts,
@@ -567,6 +559,16 @@ async function runVerifier(
     sessionName: string;
   },
 ): Promise<ConsensusVerdictEvidence> {
+  const targetText = args.target.artifactText;
+
+  // verifyConsensusRound records partial/unavailable targets unpaid; only a
+  // complete draft may reach capacity and a paid verifier turn.
+  if (args.target.classification !== "complete" || !targetText)
+    throw new MaisterError(
+      "CRASH",
+      `consensus verifier ${args.verifierId} was handed a ${args.target.classification} target`,
+      { details: { reason: "consensus_verifier_target_not_complete" } },
+    );
   const startedAt = Date.now();
   const release = await acquireConsensusAgentCapacity({
     runId: args.loaded.run.id,
@@ -587,111 +589,109 @@ async function runVerifier(
   });
 
   try {
-    if (
-      args.target.classification !== "complete" ||
-      !args.target.artifactText
-    ) {
-      parsed = failClosedVerdict(args.def.material_axes);
-      errorCode =
-        args.target.classification === "partial"
-          ? "draft_partial"
-          : "draft_unavailable";
-    } else {
-      verifierRuntime = await resolveVerifierRuntime(args);
-      // The verifier runs its own session beside the node's, deliberately on a
-      // DIFFERENT runner — seed its row before the create ack so the runner is
-      // recorded rather than left NULL (lib/runs/substep-session.ts).
-      await ensureSubstepRunSession({
-        db: args.db,
-        runId: args.loaded.run.id,
-        sessionName: args.sessionName,
-        snapshot: verifierRuntime.resolution.runnerSnapshot,
-        runnerId: verifierRuntime.resolution.runnerId,
-        runnerResolutionTier: verifierRuntime.resolution.runnerResolutionTier,
-        resolutionSource: verifierRuntime.resolutionSource,
-        resolutionWarning: verifierRuntime.resolution.resolutionWarning ?? null,
-      });
-      const boundedTarget = boundConsensusText(
-        args.target.artifactText,
-        CONSENSUS_PROMPT_TEXT_CAP_BYTES,
-      );
-      const verifierContext = withConsensusVars(args.context, {
-        verifier_id: args.verifierId,
-        target_participant_id: args.target.participantId,
-        material_axes: JSON.stringify(args.def.material_axes),
-        target_draft: promptText(
-          args.target.artifactText,
-          "verifier",
-          args.target.participantId,
-          args.round,
-        ),
-      });
-
-      await prepareConsensusInputEvidence(args.db, {
-        runId: args.loaded.run.id,
-        nodeId: args.node.id,
-        nodeAttemptId: args.nodeAttemptId,
-        attempt: args.nodeAttemptNumber,
+    verifierRuntime = await resolveVerifierRuntime(args);
+    // The verifier runs its own session beside the node's, deliberately on a
+    // DIFFERENT runner — seed its row before the create ack so the runner is
+    // recorded rather than left NULL (lib/runs/substep-session.ts).
+    await ensureSubstepRunSession({
+      db: args.db,
+      runId: args.loaded.run.id,
+      sessionName: args.sessionName,
+      snapshot: verifierRuntime.resolution.runnerSnapshot,
+      runnerId: verifierRuntime.resolution.runnerId,
+      runnerResolutionTier: verifierRuntime.resolution.runnerResolutionTier,
+      resolutionSource: verifierRuntime.resolutionSource,
+      resolutionWarning: verifierRuntime.resolution.resolutionWarning ?? null,
+    });
+    const boundedTarget = boundText(
+      args,
+      targetText,
+      CONSENSUS_PROMPT_TEXT_CAP_BYTES,
+      {
         round: args.round,
+        role: "verifier-target",
+        participantId: args.target.participantId,
         generationId: owner.verdictId,
-        role: "verifier",
-        sourceId: args.target.artifactId ?? args.target.runId,
-        value: boundedTarget.text,
-        renderedPrompt: renderStrict(
-          verifierPrompt(),
-          verifierContext as unknown as Record<string, unknown>,
-        ),
-        textBounds: boundedTarget.bounds,
-      });
-      const res = await runAgentStep(
-        {
-          id: `${args.node.id}:verify:${args.round}:${args.verifierId}:${args.target.participantId}`,
-          type: "agent",
-          mode: "new-session",
-          prompt: verifierPrompt(),
-        },
-        {
-          promptOwner: owner,
-          runtimeRoot: args.runtimeRoot,
-          projectSlug: args.loaded.projectSlug,
-          runId: args.loaded.run.id,
-          stepId: `${args.node.id}-verify`,
-          sessionName: args.sessionName,
-          nodeAttemptId: args.nodeAttemptId,
-          worktreePath: args.worktreePath,
-          bindExecution: args.bindExecution,
-          executor: {
-            id: verifierRuntime.executor.id,
-            agent: verifierRuntime.executor.agent,
-            model: verifierRuntime.executor.model,
-            env: (verifierRuntime.executor.env ?? undefined) as
-              | Record<string, string>
-              | undefined,
-          },
-          ...(verifierRuntime.runner ? { runner: verifierRuntime.runner } : {}),
-          ...(verifierRuntime.adapterLaunch
-            ? { adapterLaunch: verifierRuntime.adapterLaunch }
-            : {}),
-          ...(verifierRuntime.agentBinding
-            ? { agentBinding: verifierRuntime.agentBinding }
-            : {}),
-          db: args.db,
-          context: verifierContext,
-        },
-        args.execution,
-      );
+      },
+    );
+    const verifierVars = {
+      verifier_id: args.verifierId,
+      target_participant_id: args.target.participantId,
+      material_axes: JSON.stringify(args.def.material_axes),
+    };
+    const verifierContext = withConsensusVars(args.context, {
+      ...verifierVars,
+      target_draft: boundedTarget.text,
+    });
 
-      if (res.fenced) throw fencedYield(args.loaded.run.id, args.node.id);
-      // The owner already committed this cell from the verified command output.
-      applied = await loadConsensusVerdictCell({
-        db: args.db,
+    await prepareConsensusInputEvidence(args.db, {
+      runId: args.loaded.run.id,
+      nodeId: args.node.id,
+      nodeAttemptId: args.nodeAttemptId,
+      attempt: args.nodeAttemptNumber,
+      round: args.round,
+      generationId: owner.verdictId,
+      role: "verifier",
+      sourceId: args.target.artifactId ?? args.target.runId,
+      value: boundedTarget.text,
+      renderPrompt: (slot) =>
+        renderStrict(
+          verifierPrompt(),
+          withConsensusVars(args.context, {
+            ...verifierVars,
+            target_draft: slot,
+          }) as unknown as Record<string, unknown>,
+        ),
+      textBounds: boundedTarget.bounds,
+    });
+    const res = await runAgentStep(
+      {
+        id: `${args.node.id}:verify:${args.round}:${args.verifierId}:${args.target.participantId}`,
+        type: "agent",
+        mode: "new-session",
+        prompt: verifierPrompt(),
+      },
+      {
+        promptOwner: owner,
+        runtimeRoot: args.runtimeRoot,
+        projectSlug: args.loaded.projectSlug,
+        runId: args.loaded.run.id,
+        stepId: `${args.node.id}-verify`,
+        sessionName: args.sessionName,
         nodeAttemptId: args.nodeAttemptId,
-        round: args.round,
-        verifierId: args.verifierId,
-        targetParticipantId: args.target.participantId,
-      });
-      if (!applied) throw new ConsensusGenerationPending(owner.verdictId);
-    }
+        worktreePath: args.worktreePath,
+        bindExecution: args.bindExecution,
+        executor: {
+          id: verifierRuntime.executor.id,
+          agent: verifierRuntime.executor.agent,
+          model: verifierRuntime.executor.model,
+          env: (verifierRuntime.executor.env ?? undefined) as
+            | Record<string, string>
+            | undefined,
+        },
+        ...(verifierRuntime.runner ? { runner: verifierRuntime.runner } : {}),
+        ...(verifierRuntime.adapterLaunch
+          ? { adapterLaunch: verifierRuntime.adapterLaunch }
+          : {}),
+        ...(verifierRuntime.agentBinding
+          ? { agentBinding: verifierRuntime.agentBinding }
+          : {}),
+        db: args.db,
+        context: verifierContext,
+      },
+      args.execution,
+    );
+
+    if (res.fenced) throw fencedYield(args.loaded.run.id, args.node.id);
+    // The owner already committed this cell from the verified command output.
+    applied = await loadConsensusVerdictCell({
+      db: args.db,
+      nodeAttemptId: args.nodeAttemptId,
+      round: args.round,
+      verifierId: args.verifierId,
+      targetParticipantId: args.target.participantId,
+    });
+    if (!applied) throw new ConsensusGenerationPending(owner.verdictId);
   } catch (err) {
     if (
       isFencedError(err) ||
@@ -907,62 +907,53 @@ function debateLogText(args: {
   );
 }
 
-function promptDebateLogText(args: {
-  source: string;
-  round: number;
-  tally: ConsensusTallyResult;
-  verdicts: readonly ConsensusVerdictEvidence[];
-  drafts: readonly ConsensusDraftEvidence[];
-}): string {
-  const shownVerdicts = args.verdicts.slice(0, 12);
-  let remainingRows = 12;
+// The prompt-facing and HITL-facing debate value: every text FIELD is bounded
+// before serialization, so the document always parses and names the full log.
+function compactDebateLogText(
+  args: { loaded: LoadedRun; nodeAttemptId: string } & {
+    source: string;
+    round: number;
+    tally: ConsensusTallyResult;
+    verdicts: readonly ConsensusVerdictEvidence[];
+    drafts: readonly ConsensusDraftEvidence[];
+  },
+): string {
+  const limit = CONSENSUS_CRITIQUE_ROW_LIMIT;
+  const label = (value: string, participantId: string) =>
+    boundText(args, value, CONSENSUS_CRITIQUE_LABEL_CAP_BYTES, {
+      round: args.round,
+      role: "debate-label",
+      participantId,
+    }).text;
+  const field = (value: string, participantId: string) =>
+    boundText(args, value, CONSENSUS_CRITIQUE_FIELD_CAP_BYTES, {
+      round: args.round,
+      role: "debate-field",
+      participantId,
+    }).text;
+  const shownVerdicts = args.verdicts.slice(0, limit);
+  let remainingRows = limit;
   const verdicts = shownVerdicts.map((verdict) => {
+    const target = verdict.targetParticipantId;
     const rows = verdict.disagreements.slice(0, remainingRows);
-    const shownAxes = Object.entries(verdict.axes).slice(0, 12);
+    const shownAxes = Object.entries(verdict.axes).slice(0, limit);
 
     remainingRows -= rows.length;
 
     return {
       verifierId: verdict.verifierId,
-      targetParticipantId: verdict.targetParticipantId,
+      targetParticipantId: target,
       parseStatus: verdict.parseStatus,
       verdict: verdict.verdict,
       errorCode: verdict.errorCode,
       axes: Object.fromEntries(
-        shownAxes.map(([axis, passed]) => [
-          boundedText(
-            axis,
-            256,
-            "debate-axis",
-            verdict.targetParticipantId,
-            args.round,
-          ),
-          passed,
-        ]),
+        shownAxes.map(([axis, passed]) => [label(axis, target), passed]),
       ),
       omittedAxes: Object.keys(verdict.axes).length - shownAxes.length,
       disagreements: rows.map((row) => ({
-        axis: boundedText(
-          row.axis,
-          256,
-          "debate-axis",
-          verdict.targetParticipantId,
-          args.round,
-        ),
-        claim: boundedText(
-          row.claim,
-          1024,
-          "debate-claim",
-          verdict.targetParticipantId,
-          args.round,
-        ),
-        counterEvidence: boundedText(
-          row.counterEvidence,
-          1024,
-          "debate-counter-evidence",
-          verdict.targetParticipantId,
-          args.round,
-        ),
+        axis: label(row.axis, target),
+        claim: field(row.claim, target),
+        counterEvidence: field(row.counterEvidence, target),
       })),
       omittedRows: verdict.disagreements.length - rows.length,
       rawOutputArtifactId: verdict.rawOutputArtifactId,
@@ -977,11 +968,9 @@ function promptDebateLogText(args: {
       disagreementCount: args.tally.disagreementCount,
       invalidVerdictCount: args.tally.invalidVerdictCount,
       failedAxes: args.tally.failedAxes
-        .slice(0, 12)
-        .map((axis) =>
-          boundedText(axis, 256, "debate-failed-axis", "all", args.round),
-        ),
-      omittedFailedAxes: Math.max(0, args.tally.failedAxes.length - 12),
+        .slice(0, limit)
+        .map((axis) => label(axis, "all")),
+      omittedFailedAxes: Math.max(0, args.tally.failedAxes.length - limit),
     },
     draftRefs: args.drafts.map((draft) => ({
       participantId: draft.participantId,
@@ -1049,11 +1038,38 @@ function completedSynthesisText(
   return evidence.text;
 }
 
+// The published plan is one prompt-text slot; the full generation stays in its
+// own artifact. Bounded exactly once for both the fresh and the replay path.
+function boundedPlan(
+  args: RunConsensusNodeInput & { round: number },
+  evidence: ConsensusSynthesisEvidence,
+): { planText: string; planTextBounds?: ConsensusTextBounds } {
+  const plan = boundText(
+    args,
+    completedSynthesisText(evidence, args.node.id),
+    CONSENSUS_PROMPT_TEXT_CAP_BYTES,
+    {
+      round: args.round,
+      role: "plan",
+      participantId: "synthesizer",
+      generationId: evidence.synthesisId,
+    },
+  );
+
+  return {
+    planText: plan.text,
+    ...(plan.truncated ? { planTextBounds: plan.bounds } : {}),
+  };
+}
+
 async function synthesizeConsensus(
   args: RunConsensusNodeInput & {
     round: number;
     source: string;
     selectedText: string;
+    // The evidence the selected text came from: a picked draft's artifact, or
+    // the source label when the text is agreement or a human resolution.
+    selectedSourceId?: string;
     tally: ConsensusTallyResult;
     verdicts: readonly ConsensusVerdictEvidence[];
     drafts: readonly ConsensusDraftEvidence[];
@@ -1097,19 +1113,7 @@ async function synthesizeConsensus(
     return finishConsensusSynthesis({
       ...args,
       debateLog,
-      planText: promptText(
-        completedSynthesisText(applied, args.node.id),
-        "plan",
-        "synthesizer",
-        args.round,
-      ),
-      planTextBounds: boundConsensusText(
-        applied.text,
-        CONSENSUS_PROMPT_TEXT_CAP_BYTES,
-      ).truncated
-        ? boundConsensusText(applied.text, CONSENSUS_PROMPT_TEXT_CAP_BYTES)
-            .bounds
-        : undefined,
+      ...boundedPlan(args, applied),
       synthesisInputTextBounds: applied.inputTextBounds,
       synthesisTruncated: applied.truncated === true,
       startedAt,
@@ -1129,20 +1133,25 @@ async function synthesizeConsensus(
   let synthesisTruncated = false;
 
   try {
-    const boundedSelected = boundConsensusText(
+    const boundedSelected = boundText(
+      args,
       args.selectedText,
       CONSENSUS_PROMPT_TEXT_CAP_BYTES,
+      {
+        round: args.round,
+        role: "synthesis-input",
+        participantId: "synthesizer",
+        generationId: owner.synthesisId,
+      },
     );
-    const synthesisContext = withConsensusVars(args.context, {
+    const synthesisVars = {
       source: args.source,
       prompt: renderedNodePrompt(args),
-      selected_text: promptText(
-        args.selectedText,
-        "synthesis-input",
-        "synthesizer",
-        args.round,
-      ),
-      debate_log: promptDebateLogText(args),
+      debate_log: compactDebateLogText(args),
+    };
+    const synthesisContext = withConsensusVars(args.context, {
+      ...synthesisVars,
+      selected_text: boundedSelected.text,
     });
 
     await prepareConsensusInputEvidence(args.db, {
@@ -1153,12 +1162,16 @@ async function synthesizeConsensus(
       round: args.round,
       generationId: owner.synthesisId,
       role: "synthesis",
-      sourceId: args.source,
+      sourceId: args.selectedSourceId ?? args.source,
       value: boundedSelected.text,
-      renderedPrompt: renderStrict(
-        synthesisPrompt(),
-        synthesisContext as unknown as Record<string, unknown>,
-      ),
+      renderPrompt: (slot) =>
+        renderStrict(
+          synthesisPrompt(),
+          withConsensusVars(args.context, {
+            ...synthesisVars,
+            selected_text: slot,
+          }) as unknown as Record<string, unknown>,
+        ),
       textBounds: boundedSelected.bounds,
     });
     const res = await runAgentStep(
@@ -1207,18 +1220,7 @@ async function synthesizeConsensus(
 
     if (output === null)
       throw new ConsensusGenerationPending(owner.synthesisId);
-    planText = promptText(
-      completedSynthesisText(output, args.node.id),
-      "plan",
-      "synthesizer",
-      args.round,
-    );
-    const boundedPlan = boundConsensusText(
-      output.text,
-      CONSENSUS_PROMPT_TEXT_CAP_BYTES,
-    );
-
-    planTextBounds = boundedPlan.truncated ? boundedPlan.bounds : undefined;
+    ({ planText, planTextBounds } = boundedPlan(args, output));
     synthesisInputTextBounds = output.inputTextBounds;
     synthesisTruncated = output.truncated === true;
   } finally {
@@ -1253,21 +1255,6 @@ async function finishConsensusSynthesis(
   },
 ): Promise<ConsensusNodeResult> {
   const { debateLog, planText, startedAt } = args;
-
-  if (planText.trim().length === 0)
-    completedSynthesisText(
-      {
-        kind: "incomplete",
-        text: planText,
-        stopReason: null,
-        synthesisId: consensusSynthesisOwner({
-          nodeAttemptId: args.nodeAttemptId,
-          round: args.round,
-          source: args.source,
-        }).synthesisId,
-      },
-      args.node.id,
-    );
 
   await recordCurrentArtifact(
     {
@@ -1345,62 +1332,109 @@ async function finishConsensusSynthesis(
   };
 }
 
-function hitlSchema(args: {
-  nodeAttemptId: string;
-  debateArtifactId: string;
-  parentRunId: string;
-  round: number;
-  maxRounds: number;
-  drafts: readonly ConsensusDraftEvidence[];
-  tally: ConsensusTallyResult;
-  debateLog: string;
-  technicalFailures: readonly ConsensusTechnicalFailure[];
-}): Record<string, unknown> {
-  const choices = args.drafts.map((draft, index) => ({
-    decision: `pick-draft-${index + 1}`,
-    label: `Draft ${index + 1}`,
-    artifactRef: draft.artifactId,
-    artifactRunId: draft.runId,
-    classification: draft.classification,
-    stopReason: draft.stopReason,
-    reason: draft.reason,
-    excerpt: boundedText(
-      draft.artifactText ?? "Draft unavailable.",
-      CONSENSUS_TEXT_CAP_BYTES,
-      "hitl-draft",
-      draft.participantId,
-      args.round,
-    ),
-  }));
-  const allowedDecisions = [
-    ...choices.map((choice) => choice.decision),
-    "provide-resolution",
-    ...(args.round < args.maxRounds ? ["re-run-round"] : []),
-    "abort",
-  ];
+// A replay after the request committed re-derives this id and adopts the open
+// row instead of asking twice. `answered` counts this round's already-answered
+// requests: re-entering after an answer was consumed but before the node
+// settled must ask again, never park on a request nobody can answer.
+function consensusHitlRequestId(
+  nodeAttemptId: string,
+  round: number,
+  answered: number,
+): string {
+  const hex = createHash("sha256")
+    .update(`consensus-hitl:${nodeAttemptId}:r${round}:${answered}`)
+    .digest("hex");
+  const variant = ((Number.parseInt(hex[16], 16) & 0x3) | 0x8).toString(16);
+
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-8${hex.slice(13, 16)}-${variant}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
+
+function hitlSchema(
+  args: RunConsensusNodeInput & {
+    debateArtifactId: string;
+    round: number;
+    maxRounds: number;
+    drafts: readonly ConsensusDraftEvidence[];
+    tally: ConsensusTallyResult;
+    compactDebateLog: string;
+    technicalFailures: readonly ConsensusTechnicalFailure[];
+    escalationReason: ConsensusEscalationReason;
+  },
+): ConsensusResolutionSchema {
+  const slotOf = new Map(
+    args.drafts.map((draft, index) => [draft.participantId, index + 1]),
+  );
+  const drafts = args.drafts.map((draft, index) => {
+    const excerpt = draft.artifactText
+      ? boundText(args, draft.artifactText, CONSENSUS_EXCERPT_CAP_BYTES, {
+          round: args.round,
+          role: "hitl-draft",
+          participantId: draft.participantId,
+        })
+      : null;
+
+    return {
+      decision: `pick-draft-${index + 1}`,
+      slot: index + 1,
+      classification: draft.classification,
+      ...(draft.stopReason ? { stopReason: draft.stopReason } : {}),
+      ...(draft.reason ? { reason: draft.reason } : {}),
+      ...(excerpt
+        ? {
+            excerpt: excerpt.text,
+            ...(excerpt.truncated ? { excerptBounds: excerpt.bounds } : {}),
+          }
+        : {}),
+      ...(draft.artifactId
+        ? { artifactRef: draft.artifactId, artifactRunId: draft.runId }
+        : {}),
+    };
+  });
+  const debate = boundText(
+    args,
+    args.compactDebateLog,
+    CONSENSUS_EXCERPT_CAP_BYTES,
+    { round: args.round, role: "hitl-debate", participantId: "coordinator" },
+  );
 
   return {
     kind: "consensus_resolution",
     nodeAttemptId: args.nodeAttemptId,
     round: args.round,
     maxRounds: args.maxRounds,
-    allowedDecisions,
-    drafts: choices,
-    disagreements: args.tally.disagreements.slice(0, 24).map((item) => ({
-      axis: item.axis,
-      summary: item.claim,
-    })),
-    technicalFailures: args.technicalFailures,
+    allowedDecisions: [
+      ...drafts.map((draft) => draft.decision),
+      "provide-resolution",
+      ...(args.round < args.maxRounds ? ["re-run-round"] : []),
+      "abort",
+    ],
+    escalationReason: args.escalationReason,
+    drafts,
+    disagreements: args.tally.disagreements
+      .slice(0, 2 * CONSENSUS_CRITIQUE_ROW_LIMIT)
+      .map((item) => ({
+        axis: boundText(args, item.axis, CONSENSUS_CRITIQUE_LABEL_CAP_BYTES, {
+          round: args.round,
+          role: "hitl-axis",
+          participantId: "round",
+        }).text,
+        summary: boundText(
+          args,
+          item.claim,
+          CONSENSUS_CRITIQUE_FIELD_CAP_BYTES,
+          { round: args.round, role: "hitl-claim", participantId: "round" },
+        ).text,
+      })),
+    technicalFailures: args.technicalFailures.map((failure) => {
+      const targetSlot = slotOf.get(failure.targetParticipantId);
+
+      return { ...failure, ...(targetSlot ? { targetSlot } : {}) };
+    }),
     debateLog: {
-      excerpt: boundedText(
-        args.debateLog,
-        CONSENSUS_TEXT_CAP_BYTES,
-        "hitl-debate",
-        "coordinator",
-        args.round,
-      ),
+      excerpt: debate.text,
+      ...(debate.truncated ? { excerptBounds: debate.bounds } : {}),
       artifactRef: args.debateArtifactId,
-      artifactRunId: args.parentRunId,
+      artifactRunId: args.loaded.run.id,
     },
   };
 }
@@ -1412,26 +1446,25 @@ async function createConsensusHitl(
     drafts: readonly ConsensusDraftEvidence[];
     tally: ConsensusTallyResult;
     verdicts: readonly ConsensusVerdictEvidence[];
+    escalationReason: ConsensusEscalationReason;
   },
 ): Promise<ConsensusNodeResult> {
-  const debateLog = debateLogText({
+  const debateInput = {
+    ...args,
     source: "no-consensus",
     round: args.round,
     tally: args.tally,
     verdicts: args.verdicts,
     drafts: args.drafts,
-  });
+  };
+  const debateLog = debateLogText(debateInput);
   const debateArtifactId = `run:${args.nodeAttemptId}:consensus-round-debate:${args.round}`;
+  const technicalFailures = technicalConsensusFailures(args.verdicts);
   const schema = hitlSchema({
-    nodeAttemptId: args.nodeAttemptId,
+    ...args,
     debateArtifactId,
-    parentRunId: args.loaded.run.id,
-    round: args.round,
-    maxRounds: args.maxRounds,
-    drafts: args.drafts,
-    tally: args.tally,
-    debateLog,
-    technicalFailures: technicalConsensusFailures(args.verdicts),
+    compactDebateLog: compactDebateLogText(debateInput),
+    technicalFailures,
   });
   const prompt = `Consensus node "${args.node.id}" needs a human resolution.`;
   const dir = runDir(
@@ -1440,8 +1473,36 @@ async function createConsensusHitl(
     args.loaded.run.id,
   );
   const needsInputPath = path.join(dir, "needs-input.json");
-  const hitlRequestId = randomUUID();
+  const answered = await args.db
+    .select({ id: hitlRequests.id })
+    .from(hitlRequests)
+    .where(
+      and(
+        eq(hitlRequests.runId, args.loaded.run.id),
+        eq(hitlRequests.stepId, args.node.id),
+        isNotNull(hitlRequests.respondedAt),
+        sql`${hitlRequests.schema}->>'kind' = 'consensus_resolution'`,
+        sql`${hitlRequests.schema}->>'nodeAttemptId' = ${args.nodeAttemptId}`,
+        sql`${hitlRequests.schema}->>'round' = ${String(args.round)}`,
+      ),
+    );
+  const hitlRequestId = consensusHitlRequestId(
+    args.nodeAttemptId,
+    args.round,
+    answered.length,
+  );
 
+  if (args.escalationReason === "technical_only")
+    log.warn(
+      {
+        runId: args.loaded.run.id,
+        nodeId: args.node.id,
+        nodeAttemptId: args.nodeAttemptId,
+        round: args.round,
+        technicalFailures,
+      },
+      "consensus-technical-only-escalation",
+    );
   await atomicWriteJson(needsInputPath, {
     nodeId: args.node.id,
     kind: "consensus_resolution",
@@ -1450,8 +1511,12 @@ async function createConsensusHitl(
     requestedAt: new Date().toISOString(),
   });
 
+  let created = false;
+
   try {
     await args.db.transaction(async (tx: Db) => {
+      // HITL evidence, not a review deliverable: a re-run that later agrees
+      // without a HITL must not leave a required-but-stale def behind.
       await tx
         .insert(artifactInstances)
         .values({
@@ -1465,7 +1530,6 @@ async function createConsensusHitl(
           producer: "runner",
           locator: { kind: "inline", text: debateLog },
           validity: "current",
-          requiredFor: ["review"],
           visibility: "internal",
           retention: "run",
         })
@@ -1482,15 +1546,22 @@ async function createConsensusHitl(
         throw new MaisterError(
           "CONFLICT",
           "consensus round debate changed on replay",
+          { details: { reason: "consensus_round_debate_changed" } },
         );
-      await createHitlRequest(tx, {
-        id: hitlRequestId,
-        runId: args.loaded.run.id,
-        stepId: args.node.id,
-        kind: "human",
-        schema,
-        prompt,
-      });
+      created =
+        (await createHitlRequestIfAbsent(
+          tx,
+          {
+            id: hitlRequestId,
+            runId: args.loaded.run.id,
+            stepId: args.node.id,
+            kind: "human",
+            schema,
+            prompt,
+          },
+          { id: hitlRequests.id },
+        )) !== undefined;
+      if (!created) return;
       await createHitlAssignmentForRun({
         db: tx,
         runId: args.loaded.run.id,
@@ -1533,9 +1604,11 @@ async function createConsensusHitl(
       nodeAttemptId: args.nodeAttemptId,
       hitlRequestId,
       round: args.round,
-      decisionCount: (schema.allowedDecisions as string[]).length,
+      escalationReason: args.escalationReason,
+      decisionCount: schema.allowedDecisions.length,
+      created,
     },
-    "consensus HITL created",
+    created ? "consensus HITL created" : "consensus HITL adopted on replay",
   );
 
   return {
@@ -1548,10 +1621,10 @@ async function createConsensusHitl(
   };
 }
 
-function selectedDraftText(args: {
+function selectedDraft(args: {
   decision: string;
   drafts: readonly ConsensusDraftEvidence[];
-}): string {
+}): { text: string; sourceId: string } {
   const index =
     Number.parseInt(args.decision.replace("pick-draft-", ""), 10) - 1;
   const draft = args.drafts[index];
@@ -1563,9 +1636,19 @@ function selectedDraftText(args: {
     );
   }
 
-  return draft.classification === "partial"
-    ? `Partial draft (stop reason: ${draft.stopReason ?? draft.reason ?? "unknown"}).\n\n${draft.artifactText}`
-    : draft.artifactText;
+  const sourceId = draft.artifactId ?? draft.runId;
+
+  if (draft.classification !== "partial")
+    return { text: draft.artifactText, sourceId };
+  const cause =
+    draft.reason === "output_cap_exceeded"
+      ? `it exceeded the ${CONSENSUS_DRAFT_OUTPUT_CAP_BYTES}-byte output cap`
+      : `stop reason: ${draft.stopReason ?? "unknown"}`;
+
+  return {
+    text: `Partial draft (${cause}).\n\n${draft.artifactText}`,
+    sourceId,
+  };
 }
 
 export async function runConsensusNode(
@@ -1584,14 +1667,18 @@ export async function runConsensusNode(
   });
   const maxRounds = roundLimit(args.def);
   const round = Math.max(currentRound, 1);
-  const humanRequest = humanDecision
-    ? await resolveConsensusHumanRequest(args.db, {
-        runId: args.loaded.run.id,
-        nodeId: args.node.id,
-        nodeAttemptId: args.nodeAttemptId,
-        ...humanDecision,
-      })
-    : null;
+  // Only a rerun spends a NEW round, so only it is pinned to the delivered
+  // request's source round. A pick or resolution acts on the round the pending
+  // HITL was raised for, which is the latest: no round starts while it waits.
+  const humanRequest =
+    humanDecision?.decision === "re-run-round"
+      ? await resolveConsensusHumanRequest(args.db, {
+          runId: args.loaded.run.id,
+          nodeId: args.node.id,
+          nodeAttemptId: args.nodeAttemptId,
+          ...humanDecision,
+        })
+      : null;
   const evidenceRound = humanRequest?.sourceRound ?? round;
   const drafts = orderedDrafts(
     args.def,
@@ -1663,12 +1750,14 @@ export async function runConsensusNode(
       return result;
     }
 
-    const selectedText =
+    const selected =
       humanDecision.decision === "provide-resolution"
         ? humanDecision.resolution
-        : selectedDraftText({ decision: humanDecision.decision, drafts });
+          ? { text: humanDecision.resolution, sourceId: "provide-resolution" }
+          : null
+        : selectedDraft({ decision: humanDecision.decision, drafts });
 
-    if (!selectedText) {
+    if (!selected) {
       throw new MaisterError(
         "PRECONDITION",
         "consensus human resolution did not include usable source text",
@@ -1679,7 +1768,8 @@ export async function runConsensusNode(
       ...args,
       round: evidenceRound,
       source: humanDecision.decision,
-      selectedText,
+      selectedText: selected.text,
+      selectedSourceId: selected.sourceId,
       tally: {
         agreementReached: false,
         disagreementCount: 0,
@@ -1750,11 +1840,12 @@ export async function runConsensusNode(
     });
   }
 
-  if (
-    args.def.rounds.mode === "iterate" &&
-    round < maxRounds &&
-    hasActionableConsensusCritique(verdicts, args.def.material_axes)
-  ) {
+  const actionable = hasActionableConsensusCritique(
+    verdicts,
+    args.def.material_axes,
+  );
+
+  if (args.def.rounds.mode === "iterate" && round < maxRounds && actionable) {
     return launchRound({
       ...args,
       round: round + 1,
@@ -1768,5 +1859,10 @@ export async function runConsensusNode(
     drafts,
     tally,
     verdicts,
+    escalationReason: !actionable
+      ? "technical_only"
+      : args.def.rounds.mode === "single_pass"
+        ? "single_pass"
+        : "rounds_exhausted",
   });
 }

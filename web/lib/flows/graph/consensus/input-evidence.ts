@@ -3,14 +3,13 @@ import "server-only";
 import type { Db } from "@/lib/execution-host/db";
 import type { ExecutionCommand } from "@/lib/db/schema";
 
-import { createHash } from "node:crypto";
-
 import { eq } from "drizzle-orm";
 
 import {
   CONSENSUS_PROMPT_TEXT_CAP_BYTES,
   type ConsensusTextBounds,
 } from "./text";
+import { sha256Hex as digest } from "./digest";
 
 import {
   artifactInstances,
@@ -35,9 +34,8 @@ type ConsensusInputEvidence = Readonly<{
   textBounds: ConsensusTextBounds;
 }>;
 
-function digest(value: string): string {
-  return createHash("sha256").update(value, "utf8").digest("hex");
-}
+// Marks the slot while locating it; it cannot occur in a rendered prompt.
+const SLOT_SENTINEL = "\u0000consensus-input-slot\u0000";
 
 export function consensusInputEvidenceId(generationId: string): string {
   return `${generationId}:input`;
@@ -113,13 +111,20 @@ export async function prepareConsensusInputEvidence(
     role: "verifier" | "synthesis";
     sourceId: string;
     value: string;
-    renderedPrompt: string;
+    // Renders the static engine template with `slot` as the bounded value, so
+    // the span is the slot's own position, not the first equal passage.
+    renderPrompt: (slot: string) => string;
     textBounds: ConsensusTextBounds;
   },
 ): Promise<void> {
-  const valueStart = input.renderedPrompt.indexOf(input.value);
+  const renderedPrompt = input.renderPrompt(input.value);
+  const valueStart = input.renderPrompt(SLOT_SENTINEL).indexOf(SLOT_SENTINEL);
 
-  if (valueStart < 0)
+  if (
+    valueStart < 0 ||
+    renderedPrompt.slice(valueStart, valueStart + input.value.length) !==
+      input.value
+  )
     throw new PromptOwnerInvariantError("consensus_input_value_not_rendered");
   const evidence: ConsensusInputEvidence = {
     version: 1,
@@ -130,7 +135,7 @@ export async function prepareConsensusInputEvidence(
     role: input.role,
     sourceId: input.sourceId,
     valueSha256: digest(input.value),
-    promptSha256: digest(input.renderedPrompt),
+    promptSha256: digest(renderedPrompt),
     valueSpan: { start: valueStart, end: valueStart + input.value.length },
     textBounds: input.textBounds,
   };
@@ -166,7 +171,7 @@ export async function prepareConsensusInputEvidence(
         nodeAttemptId: input.nodeAttemptId,
         attempt: input.attempt,
         artifactDefId: "default:consensus-input",
-        kind: "human_note",
+        kind: "log",
         producer: "runner",
         locator: { kind: "inline", text: serialized },
         validity: "current",

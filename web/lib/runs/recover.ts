@@ -221,7 +221,7 @@ export async function resumeCrashedRun(
             runId,
             nodeId: resumeTarget,
           })
-        : undefined;
+        : null;
     const plan = classifyRecover(
       { acpSessionId },
       nodeKind,
@@ -420,7 +420,7 @@ export async function driveResume(
           runId,
           nodeId: resumeTarget,
         })
-      : undefined;
+      : null;
   const plan = classifyRecover(
     { acpSessionId },
     nodeKind,

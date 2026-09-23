@@ -1,14 +1,11 @@
+import type { ArtifactTextBounds } from "@/lib/db/schema";
+
 export const CONSENSUS_PROMPT_TEXT_CAP_BYTES = 64 * 1024;
 export const CONSENSUS_DRAFT_OUTPUT_CAP_BYTES = 1024 * 1024;
 export const CONSENSUS_GENERATION_OUTPUT_CAP_BYTES = 1024 * 1024;
 export const CONSENSUS_EXCERPT_CAP_BYTES = 32_000;
 
-export type ConsensusTextBounds = Readonly<{
-  bytes: number;
-  retainedBytes: number;
-  droppedBytes: number;
-  cap: number;
-}>;
+export type ConsensusTextBounds = Readonly<ArtifactTextBounds>;
 
 export type BoundedConsensusText = Readonly<{
   text: string;
@@ -108,16 +105,17 @@ export function boundConsensusText(
   let prefixBytes = 0;
   let prefixUnits = 0;
 
+  // prefix + marker never shrinks: each code point adds >= 1 byte while the
+  // dropped count can lose at most one digit, so the first misfit ends the scan.
   for (const point of value) {
     prefixBytes += Buffer.byteLength(point, "utf8");
     prefixUnits += point.length;
     const droppedBytes = bytes - prefixBytes;
     const marker = `\n[consensus text truncated: dropped ${droppedBytes} UTF-8 bytes; cap ${cap} bytes]`;
 
-    if (prefixBytes + Buffer.byteLength(marker, "utf8") <= cap) {
-      retainedBytes = prefixBytes;
-      retainedUnits = prefixUnits;
-    }
+    if (prefixBytes + Buffer.byteLength(marker, "utf8") > cap) break;
+    retainedBytes = prefixBytes;
+    retainedUnits = prefixUnits;
   }
 
   const droppedBytes = bytes - retainedBytes;
@@ -131,4 +129,17 @@ export function boundConsensusText(
     truncated: true,
     bounds: { bytes, retainedBytes, droppedBytes, cap },
   };
+}
+
+/** The stop reason a consensus owner records for a turn: the host's own value
+ * when it settled, never an invented `end_turn`. */
+export function consensusTurnStopReason(outcome: {
+  state: string;
+  response?: { stopReason?: unknown };
+}): string {
+  if (outcome.state !== "succeeded") return "host_failure";
+
+  return typeof outcome.response?.stopReason === "string"
+    ? outcome.response.stopReason
+    : "stop_reason_unavailable";
 }

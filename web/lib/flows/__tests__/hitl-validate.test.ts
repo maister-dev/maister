@@ -90,6 +90,24 @@ describe("validateConsensusDecision", () => {
     ).toBe(true);
   });
 
+  it("refuses an unavailable slot that carries no decision of its own, as the card does", () => {
+    const positional = {
+      ...consensusSchema,
+      allowedDecisions: ["pick-draft-1", "pick-draft-2"],
+      drafts: [
+        { classification: "partial" },
+        { classification: "unavailable" },
+      ],
+    };
+
+    expect(
+      validateConsensusDecision({ decision: "pick-draft-2" }, positional),
+    ).toEqual({ ok: false, message: "draft is unavailable" });
+    expect(
+      validateConsensusDecision({ decision: "pick-draft-1" }, positional).ok,
+    ).toBe(true);
+  });
+
   it("accepts a non-empty human resolution", () => {
     const r = validateConsensusDecision(
       {

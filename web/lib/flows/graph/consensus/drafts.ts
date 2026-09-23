@@ -312,15 +312,17 @@ export async function launchConsensusDraftRuns(
       promptByParticipant.has(item.participantId)
     )
       throw new MaisterError(
-        "CONFIG",
+        "CRASH",
         `consensus draft prompt map contains a foreign or duplicate participant ${item.participantId}`,
+        { details: { reason: "consensus_draft_prompt_map_invalid" } },
       );
     promptByParticipant.set(item.participantId, item.prompt);
   }
   if (promptByParticipant.size !== input.participants.length)
     throw new MaisterError(
-      "CONFIG",
+      "CRASH",
       `consensus draft prompt map has ${promptByParticipant.size} prompts for ${input.participants.length} participants`,
+      { details: { reason: "consensus_draft_prompt_map_invalid" } },
     );
 
   for (const participant of input.participants) {

@@ -1,73 +1,96 @@
 import { describe, expect, it, vi } from "vitest";
 
-const recordArtifact = vi.hoisted(() => vi.fn(async () => ({ id: "raw" })));
 const getArtifactsForRun = vi.hoisted(() => vi.fn());
 
-vi.mock("@/lib/flows/graph/artifact-store", () => ({
-  getArtifactsForRun,
-  recordArtifact,
-}));
+vi.mock("@/lib/flows/graph/artifact-store", () => ({ getArtifactsForRun }));
 
 import { recordConsensusVerdict } from "@/lib/flows/graph/consensus/ledger";
 
-function transactionDb(): {
-  db: unknown;
-  tx: { insert: ReturnType<typeof vi.fn> };
-  transaction: ReturnType<typeof vi.fn>;
-  onConflictDoNothing: ReturnType<typeof vi.fn>;
-} {
-  const onConflictDoNothing = vi.fn(() => ({
-    returning: vi.fn(async () => [{ id: "cell" }]),
-  }));
-  const values = vi.fn(() => ({ onConflictDoNothing }));
-  const tx = {
-    insert: vi.fn(() => ({ values })),
-  };
-  const transaction = vi.fn(async (fn: (tx: unknown) => Promise<unknown>) =>
-    fn(tx),
-  );
-
+// The stored row as Postgres returns it: jsonb re-sorts object keys, so the
+// axes come back in storage order, not the manifest order the writer used.
+function storedRow(overrides: Record<string, unknown> = {}) {
   return {
-    db: { transaction },
-    tx,
-    transaction,
-    onConflictDoNothing,
+    verifierKey: "architect",
+    targetKey: "qa",
+    round: 1,
+    parseStatus: "invalid_json",
+    verdict: "disagree",
+    axes: { risk: false, scope: false },
+    disagreements: { version: 1, rows: [], truncated: false },
+    confidence: null,
+    rawOutputArtifactId: "run:attempt-1:consensus-verdict:r1:architect:qa",
+    errorCode: "draft_partial",
+    ...overrides,
   };
 }
 
-describe("recordConsensusVerdict", () => {
-  it("records verifier artifact and ledger row in one transaction", async () => {
-    const { db, tx, transaction, onConflictDoNothing } = transactionDb();
+function fakeDb(insertedCount: number, stored: Record<string, unknown>) {
+  const tx = {
+    insert: vi.fn(() => ({
+      values: vi.fn(() => ({
+        onConflictDoNothing: vi.fn(() =>
+          Object.assign(Promise.resolve(undefined), {
+            returning: vi.fn(async () =>
+              Array.from({ length: insertedCount }, () => ({ id: "cell" })),
+            ),
+          }),
+        ),
+      })),
+    })),
+  };
 
-    const result = await recordConsensusVerdict({
-      db,
-      runId: "run-1",
-      nodeId: "decide",
-      nodeAttemptId: "attempt-1",
-      attempt: 1,
-      round: 1,
-      verifierId: "architect",
-      targetParticipantId: "qa",
-      result: {
+  return {
+    transaction: vi.fn(async (fn: (inner: unknown) => Promise<unknown>) =>
+      fn(tx),
+    ),
+    select: vi.fn(() => ({
+      from: vi.fn(() => ({ where: vi.fn(async () => [stored]) })),
+    })),
+  };
+}
+
+const write = {
+  runId: "run-1",
+  nodeId: "decide",
+  nodeAttemptId: "attempt-1",
+  attempt: 1,
+  round: 1,
+  verifierId: "architect",
+  targetParticipantId: "qa",
+  result: {
+    parseStatus: "invalid_json" as const,
+    verdict: "disagree" as const,
+    axes: { scope: false, risk: false },
+    disagreements: [],
+  },
+  rawOutput: "target draft partial: max_tokens",
+  errorCode: "draft_partial",
+};
+
+describe("recordConsensusVerdict", () => {
+  it("returns a fresh cell exactly as stored, so a replay serializes identically", async () => {
+    const db = fakeDb(1, storedRow());
+
+    const cell = await recordConsensusVerdict({ ...write, db });
+
+    expect(Object.keys(cell.axes)).toEqual(["risk", "scope"]);
+    expect(cell.errorCode).toBe("draft_partial");
+  });
+
+  it("returns the already-applied cell instead of refusing the unpaid write", async () => {
+    const db = fakeDb(
+      0,
+      storedRow({
         parseStatus: "parsed",
         verdict: "agree",
-        axes: { scope: true },
-        disagreements: [],
-      },
-      rawOutput: '{"verdict":"agree"}',
-    });
-
-    expect(result.rawOutputArtifactId).toBe(
-      "run:attempt-1:consensus-verdict:r1:architect:qa",
-    );
-    expect(transaction).toHaveBeenCalledTimes(1);
-    expect(recordArtifact).toHaveBeenCalledWith(
-      expect.objectContaining({
-        id: "run:attempt-1:consensus-verdict:r1:architect:qa",
+        axes: { risk: true, scope: true },
+        errorCode: null,
       }),
-      tx,
     );
-    expect(tx.insert).toHaveBeenCalled();
-    expect(onConflictDoNothing).toHaveBeenCalled();
+
+    const cell = await recordConsensusVerdict({ ...write, db });
+
+    expect(cell).toMatchObject({ parseStatus: "parsed", verdict: "agree" });
+    expect(cell.errorCode).toBeUndefined();
   });
 });

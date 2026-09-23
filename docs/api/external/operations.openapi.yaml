@@ -2406,7 +2406,10 @@ paths:
         OWN retained ACP session (`session/resume` on that node's
         `acp_session_id`, never the newest `run_sessions` row). A session-less
         node (`cli`/`check`/`guard`/`human`/`form`) is re-dispatched only when
-        its manifest config declares `retry_safe: true`. Agreeing terminal
+        its manifest config declares `retry_safe: true`. A `consensus` node
+        follows the session-less rule, except that a quarantined latest
+        attempt is always discard-only and an applied incomplete-synthesis
+        witness redispatches even with `retry_safe: false`. Agreeing terminal
         evidence from the crashed turn is applied BEFORE any dispatch, so a
         recover never pays for a turn the host already completed.
 

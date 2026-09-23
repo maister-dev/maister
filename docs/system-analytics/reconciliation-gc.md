@@ -102,8 +102,11 @@ without changing the original attempt, HITL intent, or deleting its session.
 - **`retry_safe` opt-in** — a per-node boolean on graph nodes (`flow.yaml`
   `nodes[]`), default `false`. A crashed
   session-less node is redispatch-recoverable only when its config declares
-  `retry_safe: true` (`ai_coding` ignores it — recovered via `session/resume`). See
-  [`../flow-dsl.md`](../flow-dsl.md).
+  `retry_safe: true` (agent nodes `ai_coding`/`judge`/`orchestrator` ignore it —
+  recovered via `session/resume`). A `consensus` node follows the session-less
+  rule, except that a quarantined attempt is always discard-only and an applied
+  incomplete-synthesis witness redispatches even with `retry_safe: false`. See
+  [`../flow-dsl.md`](../flow-dsl.md) and [`runs.md`](runs.md).
 - **Workspace** — `workspaces` row / git worktree. GC entities added by
   migration 0015 (**Designed**):
   - `scheduled_removal_at` (timestamptz, null) — GC deadline (cleared on
@@ -253,7 +256,7 @@ flowchart TD
 Operator-driven Recover (`POST /api/runs/{runId}/recover`, and its
 token-authority twin `POST /api/v1/ext/runs/{runId}/recover` under scope
 `runs:recover` — ADR-034 amendment) classifies the
-`Crashed` run with `classifyRecover(run, nodeKind, retrySafe)` over the
+`Crashed` run with `classifyRecover(run, nodeKind, retrySafe, consensusEvidence)` over the
 **recover target node** — `runs.resume_target_step_id` (the node id retained at
 crash time; `current_step_id` is nulled on crash), falling back to
 `current_step_id` for live/hand-seeded rows:
@@ -264,6 +267,9 @@ crash time; `current_step_id` is nulled on crash), falling back to
 | agent (`ai_coding`/`judge`/`orchestrator`) | null | ignored | `discard-only` | no (409) |
 | session-less (`cli`/`check`/`guard`/`human`/`form`) | irrelevant | `true` | `redispatch` — re-run the node | yes (200 redispatched / 202 queued) |
 | session-less | irrelevant | `false` (default) | `discard-only` | no (409) |
+| `consensus`, latest attempt has a quarantined consensus command (`application_error.reason = prompt_terminal_conflict`) | irrelevant | any | `discard-only` — never re-prompt from disagreeing evidence | no (409) |
+| `consensus`, latest attempt carries the applied incomplete-synthesis witness | irrelevant | any | `redispatch` — fresh node attempt and synthesis ID | yes (200 redispatched / 202 queued) |
+| `consensus`, neither | irrelevant | `true` / `false` | as session-less: `redispatch` / `discard-only` | yes / no |
 | unresolvable target node | — | — | `discard-only` | no (409) |
 
 **`judge` is an agent node here (Implemented — ADR-175).** It runs an ACP
@@ -623,10 +629,12 @@ row is already `Done` with a deadline, which is what
   resume_target_step_id` (nulling `current_step_id`) so the row is cleanly
   re-recoverable and operator Recover has a target node.
 - Operator Recover MUST classify via `classifyRecover(run, nodeKind,
-  retrySafe)` over the recover target (`resume_target_step_id`, else
+  retrySafe, consensusEvidence)` over the recover target (`resume_target_step_id`, else
   `current_step_id`): an agent node with an `acpSessionId` resumes via
   the ACP `session/resume` call; a session-less node re-dispatches ONLY when its config is
-  `retry_safe: true`; every other case is discard-only — and the crash-resume
+  `retry_safe: true`; a `consensus` node refuses a quarantined attempt, redispatches
+  an applied incomplete-synthesis witness, and otherwise takes the session-less
+  rule (the evidence argument is required — `null` for other kinds); every other case is discard-only — and the crash-resume
   runner MUST claim single-winner via a CAS-clear of `resume_started_at`.
   **(ADR-176)** The committed intent it leaves behind MUST be routed by the one
   shared `routeCrashRecover` helper that the sweep and the flow continuation
@@ -724,6 +732,7 @@ was before ADR-177.
 |-----------|-----------|----------|--------|--------|
 | status ∉ `{Running}` | any | — | **SKIP** | reconcile is **allow-list `Running`-only**; `NeedsInput`/`NeedsInputIdle`/`HumanWorking`/terminal owned by other sweeps |
 | `Running` | worktree MISSING | — | **CRASH** (`crashRunningRun`, reason `worktree-gone`) | the "runs vs `git worktree list`" check; cannot continue |
+| `Running`, `runKind='flow'` | current node **`consensus`**, live session or not, and a `consensus_verifier` / `consensus_synthesis` command of the current open attempt is poisoned or quarantined | `quarantined` ∨ `poisoned` (`resolveConsensusPoisonEvidence`) | **CRASH** (evidence boundary, reason `owner-poisoned`) | P0-5 v2: a poisoned or quarantined consensus generation is a terminal owner refusal even while its supervisor session lives, so this arm precedes the live-session arms (after the sync arm). The row is classified by `classifyPromptEvidence`, so a conflict found AFTER application (`application_state='applied'` with `application_error.reason='prompt_terminal_conflict'`) counts. Only the current open attempt's commands are read; an older or closed attempt's generation cannot crash a new attempt. Recover then follows the consensus table in [`runs.md`](runs.md) |
 | `Running`, `runKind='flow'` | worktree present, `liveSession` present | — | **RE-ATTACH** (`scheduleResumedSessionDrive`) or re-dispatch `runFlow` | live agent session with no attached runner (post web restart) — not crashed |
 | `Running`, `runKind='agent'` | worktree present, `liveSession` present, an in-process observer holds the host session | — | **SKIP** (reason `agent-observer-live`) | the run's single reader of its canonical stream is alive here — healthy |
 | `Running`, `runKind='scratch'` | worktree present, `liveSession` present | — | **SKIP** (reason `live-scratch-session`) | a scratch dialog between turns is healthy; its continuation owner is the next user message, and a continuation prompt it cannot satisfy would be crashed by the watchdog |

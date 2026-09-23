@@ -99,6 +99,9 @@ export interface RunHitlResponseProps {
   // the run-detail gate panel; board/inbox consumers omit it (no badges, no
   // approve soft-warn there).
   reviewCounts?: ReviewThreadCountsView | null;
+  // Server-derived `readRepoFiles` on the run's project; gates the consensus
+  // draft download link (the payload route enforces the same action).
+  canReadRepoFiles?: boolean;
 }
 
 export function RunHitlResponse({
@@ -120,6 +123,7 @@ export function RunHitlResponse({
   compact,
   criticality,
   reviewCounts,
+  canReadRepoFiles = false,
 }: RunHitlResponseProps): ReactElement {
   const t = useTranslations("run");
   const router = useRouter();
@@ -634,8 +638,66 @@ export function RunHitlResponse({
     consensusPickDraft: t("consensusPickDraft"),
     consensusPartial: t("consensusPartial"),
     consensusTechnicalFailures: t("consensusTechnicalFailures"),
-    consensusViewArtifact: t("consensusViewArtifact"),
-    consensusViewDebate: t("consensusViewDebate"),
+    consensusDownloadDraft: t("consensusDownloadDraft"),
+    consensusDownloadDraftAria: t("consensusDownloadDraftAria"),
+    consensusDownloadDebate: t("consensusDownloadDebate"),
+    consensusUnavailable: t("consensusUnavailable"),
+    consensusUnavailableReason: t("consensusUnavailableReason"),
+    consensusExcerptOmitted: t("consensusExcerptOmitted"),
+    consensusDraftExcerptAria: t("consensusDraftExcerptAria"),
+    consensusDebateExcerptAria: t("consensusDebateExcerptAria"),
+    consensusTechnicalFailureRow: t("consensusTechnicalFailureRow"),
+    consensusTechnicalFailureTarget: t("consensusTechnicalFailureTarget"),
+    consensusTechnicalDiagnostic: t("consensusTechnicalDiagnostic"),
+    "consensusPartialCause.output_cap_exceeded": t(
+      "consensusPartialCause.output_cap_exceeded",
+    ),
+    "consensusPartialCause.max_tokens": t("consensusPartialCause.max_tokens"),
+    "consensusPartialCause.max_turn_requests": t(
+      "consensusPartialCause.max_turn_requests",
+    ),
+    "consensusPartialCause.refusal": t("consensusPartialCause.refusal"),
+    "consensusPartialCause.cancelled": t("consensusPartialCause.cancelled"),
+    "consensusPartialCause.host_failure": t(
+      "consensusPartialCause.host_failure",
+    ),
+    "consensusPartialCause.unknown": t("consensusPartialCause.unknown"),
+    "consensusTechnicalCode.invalid_json": t(
+      "consensusTechnicalCode.invalid_json",
+    ),
+    "consensusTechnicalCode.invalid_schema": t(
+      "consensusTechnicalCode.invalid_schema",
+    ),
+    "consensusTechnicalCode.missing_axes": t(
+      "consensusTechnicalCode.missing_axes",
+    ),
+    "consensusTechnicalCode.unknown_axes": t(
+      "consensusTechnicalCode.unknown_axes",
+    ),
+    "consensusTechnicalCode.empty_disagreement": t(
+      "consensusTechnicalCode.empty_disagreement",
+    ),
+    "consensusTechnicalCode.output_cap_exceeded": t(
+      "consensusTechnicalCode.output_cap_exceeded",
+    ),
+    "consensusTechnicalCode.target_missing": t(
+      "consensusTechnicalCode.target_missing",
+    ),
+    "consensusTechnicalCode.EXECUTOR_UNAVAILABLE": t(
+      "consensusTechnicalCode.EXECUTOR_UNAVAILABLE",
+    ),
+    "consensusTechnicalCode.ACP_PROTOCOL": t(
+      "consensusTechnicalCode.ACP_PROTOCOL",
+    ),
+    "consensusTechnicalCode.CRASH": t("consensusTechnicalCode.CRASH"),
+    "consensusTechnicalCode.other": t("consensusTechnicalCode.other"),
+    "consensusEscalation.technical_only": t(
+      "consensusEscalation.technical_only",
+    ),
+    "consensusEscalation.rounds_exhausted": t(
+      "consensusEscalation.rounds_exhausted",
+    ),
+    "consensusEscalation.single_pass": t("consensusEscalation.single_pass"),
     consensusResolutionLabel: t("consensusResolutionLabel"),
     consensusResolutionPlaceholder: t("consensusResolutionPlaceholder"),
     consensusProvideResolution: t("consensusProvideResolution"),
@@ -665,6 +727,7 @@ export function RunHitlResponse({
       budgetDropWorkspace={budgetDropWorkspace}
       budgetParkMode={budgetParkMode}
       budgetProgress={budgetProgress}
+      canReadRepoFiles={canReadRepoFiles}
       claimStage={claimStage}
       comments={comments}
       compact={compact}

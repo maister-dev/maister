@@ -126,7 +126,7 @@ the project-group header) with three disclosure tiers:
   pre-boundary claims.
 - **Consensus HITL (expanded):** the same card chrome renders a `consensus`
   stage chip, draft count, current round, material-axis disagreement summary,
-  and capped draft/debate excerpts from `inbox-context`. Decision controls are
+  and capped draft/debate excerpts from the HITL schema. Decision controls are
   purpose-built buttons/inputs for `pick-draft-N`, `provide-resolution`,
   `re-run-round`, and `abort`; the card never exposes participant ids, child run
   ids, or unbounded draft bodies as editable fields.
@@ -181,8 +181,9 @@ and activation-unavailable states.
 - `GET /api/runs/{runId}/inbox-context` — the lazy per-card
   expand payload `{ lastAgentMessage, gates[], diff, progress }` plus
   `budgetProgress`, `availableOptions`, and `claimStage` for budget-breach
-  cards, and bounded consensus draft/debate refs when the HITL schema
-  discriminator is `consensus_resolution`; `readBoard` on the run's project;
+  cards; `readBoard` on the run's project. The consensus card needs no expand
+  payload: its bounded drafts, refs and failures come from the HITL row's own
+  `consensus_resolution` schema;
   read-only, partial-null on a missing peek. Behavior in
   [`../system-analytics/hitl.md`](../system-analytics/hitl.md).
 - Mutations: `POST /api/runs/{runId}/hitl/{hitlRequestId}/respond` (inline
@@ -199,10 +200,25 @@ The card reuses `run.*` (criticality / HITL decision) and `board.*` (assignment)
 labels; node-type and gate-status are shown by icon, not text, so no `stage.*` /
 `gate.*` keys exist.
 
-The consensus node adds consensus-specific keys under the existing card/control namespaces:
-draft labels, round labels, disagreement summary, `pickDraft`, `provideResolution`,
-`rerunRound`, `abortConsensus`, and validation text for required human
-resolution. EN + RU parity is required.
+The consensus card's keys live under `run.*` (the namespace `RunHitlResponse`
+reads): `consensusTitle`, `consensusRound`, `consensusDrafts`,
+`consensusDraftFallback`, `consensusPickDraft`, `consensusPartial`,
+`consensusPartialCause.{output_cap_exceeded|max_tokens|max_turn_requests|refusal|cancelled|host_failure|unknown}`,
+`consensusUnavailable`, `consensusUnavailableReason`, `consensusExcerptOmitted`,
+`consensusDraftExcerptAria`, `consensusDebateExcerptAria`,
+`consensusDownloadDraft`, `consensusDownloadDraftAria`,
+`consensusDownloadDebate`, `consensusDisagreements`,
+`consensusNoDisagreements`, `consensusTechnicalFailures`,
+`consensusTechnicalFailureRow`, `consensusTechnicalFailureTarget`,
+`consensusTechnicalDiagnostic`,
+`consensusTechnicalCode.{invalid_json|invalid_schema|missing_axes|unknown_axes|empty_disagreement|output_cap_exceeded|target_missing|EXECUTOR_UNAVAILABLE|ACP_PROTOCOL|CRASH|other}`,
+`consensusEscalation.{technical_only|rounds_exhausted|single_pass}`,
+`consensusDebateLog`, `consensusResolutionLabel`,
+`consensusResolutionPlaceholder`, `consensusProvideResolution`,
+`consensusRerunRound`, `consensusAbort`, and `consensusResolutionRequired`.
+The three dotted families are closed maps in `hitl-decision-controls.tsx`
+(`Record<Union, string>` English fallbacks), so a new cause, code or reason is a
+compile-time gap, not a silently raw token. EN + RU parity is required.
 
 ## Consensus acceptance criteria
 
@@ -216,15 +232,48 @@ resolution. EN + RU parity is required.
 - Clearing the last consensus HITL updates `decisions` through the existing inbox
   count path.
 
-P0-5 v2 (Implemented): the expanded consensus card labels partial drafts with
-actual stop reason, keeps unavailable slots disabled without shifting
-`pick-draft-N` numbering, and separates `technicalFailures[]` from material
-criticism in EN/RU. Every bounded excerpt is labeled and has a usable full-
-text artifact link. Draft links use the child run ID and the round debate link
-uses the parent run ID; the round debate row exists at HITL creation. A human
-may pick partial text; synthesis carries the partial label and reason. Old
-HITL payloads with absent additive fields remain readable. The response API's
-allowed decisions and authorization remain unchanged.
+P0-5 v2 (Implemented): the card decodes its schema through the shared
+client-safe `decodeConsensusResolutionSchema`
+(`web/lib/flows/consensus-resolution.ts`) — the same decoder the respond route
+validates with, so the slots it disables are exactly the picks the server
+refuses. Legacy payloads (no `slot`/`classification`/`decision`, `participantLabel`,
+`debate_log`) stay readable and pickable.
+
+- **Escalation headline.** `escalationReason` renders one localized line above
+  the drafts: `technical_only` (amber, warning glyph — the verifiers could not
+  judge the drafts; run another round or resolve manually), `rounds_exhausted`,
+  or `single_pass`.
+- **Partial drafts** show `Partial · <cause>`, the cause from
+  `consensusPartialCause` mapped to a localized label (an output-cap overflow
+  reads "output size limit reached", never the host's `end_turn`). A partial is
+  pickable but its button uses the secondary (outline) tone, not the primary
+  fill.
+- **Unavailable slots** keep their card and number: an "Unavailable" chip, a
+  short localized reason, and a *disabled* pick button (`aria-disabled`,
+  `aria-describedby` pointing at the reason). No server placeholder text.
+- **Technical failures** render in amber with a warning glyph, one row per cell:
+  "Verifier `<id>` · Draft `<N>`" (`targetSlot`; the target id only when a
+  legacy row has no slot), a localized code label, and the raw code as a
+  labelled secondary diagnostic. When every failure is technical and there are
+  no material rows, the "No material disagreements" box is not shown.
+- **Excerpts** are keyboard-focusable scroll regions with an accessible name.
+  When the record carries `excerptBounds`, the engine's English truncation
+  marker is stripped and a localized "Excerpt — N KB omitted" chip is shown.
+- **Downloads.** The payload route always answers as an attachment, so the
+  links read "Download full draft" / "Download full debate" with a download
+  icon and open in place (no new tab); each draft link is named by its slot.
+  Draft links use the child run ID and the round debate link uses the parent run
+  ID; the round debate row exists at HITL creation.
+- **Viewer gate.** Draft downloads serve agent output that can quote repository
+  files, so the route requires `readRepoFiles` for
+  `default:consensus-draft|consensus-verdict|consensus-synthesis`; the card
+  shows the draft link only when the server-derived `canReadRepoFiles` is true
+  (run page: the viewer's project role; `/inbox` and the Desk:
+  `decisionQueueGrants("readRepoFiles")`, the queue's own role floor; project
+  board: the board's role). The round debate link stays at `readBoard`.
+
+A human may pick partial text; synthesis carries the partial label and reason.
+The response API's allowed decisions and authorization remain unchanged.
 
 ## Budget-breach acceptance criteria
 

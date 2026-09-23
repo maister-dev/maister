@@ -2,9 +2,9 @@ import "server-only";
 
 import type { Db } from "@/lib/execution-host/db";
 
-import { createHash } from "node:crypto";
-
 import { and, desc, eq, isNotNull } from "drizzle-orm";
+
+import { sha256Hex } from "./digest";
 
 import {
   artifactInstances,
@@ -13,6 +13,7 @@ import {
   runs,
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import { decodeConsensusResolutionSchema } from "@/lib/flows/consensus-resolution";
 
 export type ConsensusHumanIntent = Readonly<{
   version: 1;
@@ -23,10 +24,6 @@ export type ConsensusHumanIntent = Readonly<{
   decision: "re-run-round";
   responseDigest: string;
 }>;
-
-function digest(value: unknown): string {
-  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
-}
 
 function intentId(nodeAttemptId: string, hitlRequestId: string): string {
   return `run:${nodeAttemptId}:consensus-human-intent:${hitlRequestId}`;
@@ -66,12 +63,17 @@ export async function resolveConsensusHumanRequest(
   sourceRound: number;
   responseDigest: string;
 }> {
+  const [attempt] = await db
+    .select({ startedAt: nodeAttempts.startedAt })
+    .from(nodeAttempts)
+    .where(eq(nodeAttempts.id, input.nodeAttemptId));
   const rows = await db
     .select({
       id: hitlRequests.id,
       schema: hitlRequests.schema,
       response: hitlRequests.response,
       respondedAt: hitlRequests.respondedAt,
+      createdAt: hitlRequests.createdAt,
     })
     .from(hitlRequests)
     .where(
@@ -84,18 +86,25 @@ export async function resolveConsensusHumanRequest(
     )
     .orderBy(desc(hitlRequests.respondedAt), desc(hitlRequests.createdAt));
   const matches = rows.filter((row) => {
-    const schema = row.schema as Record<string, unknown> | null;
+    const schema = decodeConsensusResolutionSchema(row.schema);
+    const storedRound = (row.schema as { round?: unknown } | null)?.round;
     const response = row.response as Record<string, unknown> | null;
+    // A legacy request carries no attempt identity; it can only belong to this
+    // attempt if it was raised during the attempt's own lifetime.
+    const ownedByAttempt =
+      schema?.nodeAttemptId === undefined
+        ? !!attempt?.startedAt &&
+          row.createdAt.getTime() >= attempt.startedAt.getTime()
+        : schema.nodeAttemptId === input.nodeAttemptId;
 
     return (
-      schema?.kind === "consensus_resolution" &&
-      (schema.nodeAttemptId === undefined ||
-        schema.nodeAttemptId === input.nodeAttemptId) &&
+      schema !== null &&
+      ownedByAttempt &&
       response?.decision === input.decision &&
       (input.resolution === undefined ||
         response.resolution === input.resolution) &&
-      typeof schema.round === "number" &&
-      schema.round > 0
+      typeof storedRound === "number" &&
+      storedRound > 0
     );
   });
   const match = matches[0];
@@ -117,7 +126,7 @@ export async function resolveConsensusHumanRequest(
   return {
     hitlRequestId: match.id,
     sourceRound: (match.schema as { round: number }).round,
-    responseDigest: digest(match.response),
+    responseDigest: sha256Hex(JSON.stringify(match.response)),
   };
 }
 
@@ -177,7 +186,7 @@ export async function prepareConsensusHumanIntent(
         nodeAttemptId: input.nodeAttemptId,
         attempt: input.attempt,
         artifactDefId: "consensus-human-intent",
-        kind: "human_note",
+        kind: "log",
         producer: "runner",
         locator: { kind: "inline", text },
         validity: "current",
@@ -240,7 +249,7 @@ export async function markConsensusHumanIntentApplied(
       nodeAttemptId: input.intent.nodeAttemptId,
       attempt: input.attempt,
       artifactDefId: "consensus-human-intent-applied",
-      kind: "human_note",
+      kind: "log",
       producer: "runner",
       locator: { kind: "inline", text: JSON.stringify(input.intent) },
       validity: "current",

@@ -4,6 +4,8 @@ import type { Db } from "@/lib/execution-host/db";
 
 import { and, desc, eq, sql } from "drizzle-orm";
 
+import { CONSENSUS_SYNTHESIS_ARTIFACT_DEF } from "./artifact-defs";
+
 import {
   artifactInstances,
   executionCommands,
@@ -67,7 +69,7 @@ export async function loadConsensusRecoveryEvidence(
       and(
         eq(artifactInstances.runId, input.runId),
         eq(artifactInstances.nodeAttemptId, attempt.id),
-        eq(artifactInstances.artifactDefId, "default:consensus-synthesis"),
+        eq(artifactInstances.artifactDefId, CONSENSUS_SYNTHESIS_ARTIFACT_DEF),
         sql`${artifactInstances.locator}->>'reason' = 'consensus_synthesis_incomplete'`,
         eq(executionCommands.runId, input.runId),
         eq(executionCommands.applicationState, "applied"),

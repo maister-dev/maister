@@ -1506,8 +1506,23 @@ expression is wrong once `webhook_events.project_id` can be NULL — see
                                  //   strand a count into an unrelated intent.
   resumeRequestedAt?,            // ADR-121 (timestamptz, migration 0087) NULL; set
                                  //   when an idle run's HITL is answered and it awaits
-                                 //   a slot — the C3 admission FIFO key. The resume
-                                 //   re-routing through the cap-safe gate is Designed.
+                                 //   a slot — the C3 admission FIFO key. Also stamped
+                                 //   on a WaitingOnChildren coordinator whose wake was
+                                 //   deferred for capacity (markResumedFromWait); the
+                                 //   continuation worker retries it, C3 never selects it.
+  failedChildWakeAt?,            // P0-5 v2 (timestamptz, migration 0175) NULL.
+                                 //   A failed/crashed/abandoned child of the CURRENT
+                                 //   orchestrator node asks the parked coordinator to
+                                 //   wake even with pending siblings. Writer:
+                                 //   armFailedCoordinatorWake in the child's
+                                 //   terminal-event tx (parent Running / NeedsInput /
+                                 //   NeedsInputIdle / WaitingOnChildren), coalesced.
+                                 //   Clearers: runner-graph on a new node attempt;
+                                 //   clearFailedCoordinatorWake when a resumed
+                                 //   orchestrator turn starts. Readers:
+                                 //   wakeParkedCoordinator and the flow continuation
+                                 //   worker. Separate from resumeRequestedAt so C3
+                                 //   admission can never read it as "answered".
   queueAdmittedAt?,              // ADR-121 (timestamptz, migration 0087) NULL; the
                                  //   auto-DRAIN origin marker, set at run-INSERT for
                                  //   funnel-minted runs. The precise per-project
@@ -2892,8 +2907,11 @@ protocol, not a Flow gate.
   axes (jsonb),                             // declared material axis -> boolean
   disagreements (jsonb),                    // legacy array or v1 { version, rows, truncated, textBounds? }
   confidence?,                              // numeric 0..1 when present; advisory only
-  rawOutputArtifactId?,                     // optional artifact ref for bounded raw evidence
-  errorCode?,                               // one of MaisterErrorCode literals when spawn/parser failed
+  rawOutputArtifactId?,                     // FK -> artifact_instances.id; bounded raw evidence
+  errorCode?,                               // stored reason, not a thrown code: draft_partial |
+                                            //   draft_unavailable (drafter-side, unpaid) |
+                                            //   output_cap_exceeded | empty_disagreement |
+                                            //   target_missing | a failed turn's MaisterError code
   createdAt
 }
 ```
@@ -2905,13 +2923,19 @@ The SQL column has no array-only CHECK (`0070`), and later migrations do not
 add one. Input/decision/debate evidence uses existing artifact rows; the
 strict execution-command owner-ref CHECK and node-attempt action-resume CHECK
 are unchanged. No migration, snapshot, journal, table, index or ERD edit is
-required for this JSON-only change. Do not deploy an old array-only reader
+required for this JSON-only change (the P0-5 branch's one migration, `0175`,
+adds `runs.failed_child_wake_at` for an unrelated wake intent). Do not deploy an old array-only reader
 beside an envelope writer. Roll back by retaining the compatibility reader or
 restoring a pre-change backup while stopped; do not flatten evidence in place.
 
 UNIQUE `(nodeAttemptId, round, verifierKey, targetKey)` makes crash recovery
 replay-safe: a resumed consensus node reuses already persisted verifier rows and
-does not repay finished verification sessions. Indexed on `(runId)` and
+does not repay finished verification sessions. `writeConsensusVerdict` inserts
+the raw-output artifact first (the FK) and then the cell, both
+insert-if-absent: a writer that loses the cell to an earlier one leaves that
+winner's artifact untouched. The runtime's unpaid fail-closed write
+(`recordConsensusVerdict`) then returns the cell **as stored**, so a first pass
+and a replay serialize identical evidence (jsonb re-sorts object keys). Indexed on `(runId)` and
 `(nodeAttemptId)`. Cascade: `ON DELETE CASCADE` from both `runs.id` and
 `node_attempts.id`.
 
@@ -2945,7 +2969,19 @@ validity FSM.
                                             //   | gate-verdict{ gateResultId }
                                             //   | hitl-response{ hitlRequestId }
                                             //   | inline{ text, hitlRequestId?, threadIds?,
-                                            //            feedbackFingerprint? }
+                                            //            feedbackFingerprint?,
+                                            //            partial?, stopReason?, reason?,
+                                            //            truncated?, textBounds?,
+                                            //            inputTextBounds? }
+                                            //   P0-5 v2 consensus metadata; bounds are
+                                            //   ArtifactTextBounds { bytes, retainedBytes,
+                                            //   droppedBytes, cap } with bytes =
+                                            //   retainedBytes + droppedBytes. textBounds
+                                            //   describes loss of THIS artifact's text;
+                                            //   inputTextBounds (synthesis only) the cut of
+                                            //   the selected text it was given. Decoded by
+                                            //   consensus/locator-meta.ts; malformed bounds
+                                            //   are dropped, never trusted.
   uri?,                                     // optional human/direct display ref
   hash?,                                    // content hash (head SHA / file digest);
                                             //   first written by the mutation-sensor gate producer
@@ -2983,6 +3019,21 @@ projector replay **upsert** idempotently (`onConflictDoUpdate`):
 
 The canonical `runSequence` is run-global, so each projector id is unique
 across the entire retained event stream.
+
+**Consensus evidence ids (P0-5 v2, Implemented).** These rows are NOT upserted:
+each is written insert-if-absent, and every replay compares or adopts instead of
+overwriting.
+
+| Row | PK format | Write semantics |
+| --- | --- | --- |
+| draft (agent output, `default:consensus-draft`) | `run:<childRunId>:consensus-draft:<nodeAttemptId>:<participantId>:r<round>` | written once inside the draft owner's application transaction |
+| verdict raw output (`default:consensus-verdict`) | `run:<nodeAttemptId>:consensus-verdict:r<round>:<verifier>:<target>` | insert-if-absent, before its cell (FK) |
+| verdict cell (`consensus_round_verdicts.id`) | `run:<nodeAttemptId>:consensus-verdict-ledger:r<round>:<verifier>:<target>` | insert-if-absent; loser gets the stored cell |
+| synthesis generation (`default:consensus-synthesis`) | `run:<nodeAttemptId>:consensus-synthesis:r<round>:<source>` | written once by its owner application; an existing generation supersedes a replay |
+| input evidence (`default:consensus-input`) | `<generationId>:input` | insert-if-absent, then compare (`consensus_input_evidence_conflict`) |
+| round debate (`consensus-round-debate`) | `run:<nodeAttemptId>:consensus-round-debate:<round>` | insert-if-absent in the HITL transaction, then compare (`consensus_round_debate_changed`); never `requiredFor` |
+| rerun intent / applied marker | `run:<nodeAttemptId>:consensus-human-intent:<hitlRequestId>` / `…:applied` | intent insert-if-absent then compare; applied marker insert-if-absent |
+| consensus HITL request (`hitl_requests.id`) | UUID-shaped sha256 of `consensus-hitl:<nodeAttemptId>:r<round>` | `createHitlRequestIfAbsent`; a replay adopts the committed request and skips its assignment and webhook |
 
 Indexed on `(runId)`, `(nodeAttemptId)`, `(runId, kind)`, and
 `(runId, validity)`. Cascade: `ON DELETE CASCADE` from both `runs.id` and

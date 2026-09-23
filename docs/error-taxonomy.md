@@ -576,7 +576,7 @@ after a receipt lookup). Each rides an existing `MaisterError` code.
 | `workspace_missing`                | `PRECONDITION`                                                                          | adoption — the run has no workspace row / local package / project to adopt                                                         | repair the run's durable rows; not retryable                                                |
 | `run_missing`                      | `PRECONDITION`                                                                          | adoption — the run row is gone                                                                                                     | not retryable                                                                               |
 | `ORPHANED`                         | ledger `last_error {code:"CRASH"}` only (never thrown)                                  | recovery — a non-driverless `queued` row found after a Web crash                                                                   | the existing reconcile handles the run                                                      |
-| `discard_only` (ADR-175)           | `CONFLICT`                                                                              | `resumeCrashedRun` — `classifyRecover` resolved `discard-only` (agent target with no handle, session-less target not `retry_safe`, or unresolvable target) | terminal: discard the run. Never retry                                                       |
+| `discard_only` (ADR-175)           | `CONFLICT`                                                                              | `resumeCrashedRun` — `classifyRecover` resolved `discard-only` (agent target with no handle, session-less target not `retry_safe`, consensus target with a quarantined latest attempt or neither a synthesis witness nor `retry_safe`, or unresolvable target) | terminal: discard the run. Never retry                                                       |
 | `recover_cas_lost` (ADR-175)       | `CONFLICT`                                                                              | `resumeCrashedRun` — the Phase-1 CAS `WHERE status='Crashed'` matched no row (not `Crashed`, or a concurrent recover won)          | refresh the run row; another action already moved its state                                  |
 | `workspace_removed` (ADR-175)      | `PRECONDITION`                                                                          | `resumeCrashedRun` — the run's workspace row carries `removed_at`                                                                  | terminal: archived history cannot be recovered                                               |
 
@@ -792,11 +792,42 @@ not an error code** — the run's own failure is a plain `CONFIG`, and
 
 ### Consensus P0-5 v2 error amendment (Implemented, 2026-09-23)
 
+`MaisterError` reasons (`details.reason`) and the stored reason vocabulary the
+consensus engine writes. Consensus Recover follows `classifyRecover`: a
+quarantined latest attempt refuses, an applied incomplete-synthesis witness
+redispatches, otherwise the node's `retry_safe` rule applies (see
+[`system-analytics/runs.md`](system-analytics/runs.md)).
+
 | Reason | Code and durable outcome | Operator path |
 | --- | --- | --- |
+| `flow_prompt_continuation_pending` | `PRECONDITION`-typed internal yield (`FlowPromptContinuationPending`); node stays Running while an owned verifier/synthesis application is owed | None; the prompt-owner worker applies and the continuation worker re-drives. A superseded command is settled, not pending |
 | `consensus_generation_pending` | `PRECONDITION`-typed internal yield only; node stays Running while an owned verifier/synthesis application remains pending | No failed-node or manual retry action; production owner and continuation workers re-drive, or ADR-177 poison terminates |
-| `consensus_no_draft_available` | `CRASH` when every draft has no retained text, with child terminal reasons | Recover only according to existing attempt evidence; do not label partial text as unavailable |
-| `consensus_synthesis_incomplete` | `CRASH`, node Failed and run Crashed; `details` carry real `stopReason` and `synthesisId`, with retained partial generation text | Recover only for the exact latest applied, non-quarantined witness; fresh node attempt and generation |
+| `consensus_no_draft_available` | `CRASH` when every draft has no retained text, with child terminal reasons | Recover per `classifyRecover` (the `retry_safe` rule — no synthesis witness exists); do not label partial text as unavailable |
+| `consensus_synthesis_incomplete` | `CRASH`, node Failed and run Crashed; `details` carry `stopReason` (the host value, or `host_failure` / `stop_reason_unavailable`; `null` only for a legacy empty artifact) and `synthesisId`, with retained partial generation text | Recover redispatches the exact latest applied, non-quarantined witness even with `retry_safe: false`; fresh node attempt and generation |
+| `consensus_draft_incomplete` | child `run.failed` payload reason (not thrown): a partial draft child, whose artifact is kept with `partial`, `stopReason`, `reason` | None on the child; the parent verifies the round without it (`draft_partial` cell) |
+| `consensus_verifier_target_not_complete` | `CRASH` engine invariant: a non-complete target reached `runVerifier` | Defect; the reachable path records `draft_partial`/`draft_unavailable` unpaid |
+| `consensus_draft_prompt_map_invalid` | `CRASH` engine invariant: the per-participant prompt map was missing, foreign or duplicate; no child is created | Defect |
+| `consensus_verdict_cell_missing` | `CRASH` engine invariant: a verdict cell vanished right after its write | Defect |
+| `consensus_verdict_storage_invalid` | `CRASH`: a version-1 disagreement envelope failed validation on read | Repair the stored row; legacy arrays are read as before |
+| `consensus_round_debate_changed` | `CONFLICT`: a HITL replay derived a different round-debate text than the committed one | Defect; the adopted request is left untouched |
+| `coordinator_resume_attempt_changed` | `CONFLICT`: the parked coordinator attempt was no longer `NeedsInput` when its wake re-entry claimed it | Yield; the current owner continues |
+| (message only) `consensus human input has no matching delivered request` / `…matches multiple delivered requests` / `consensus human decision owner is no longer current` / `consensus human decision intent changed on replay` | `CONFLICT` from the rerun protocol (`human-decision.ts`); only `re-run-round` resolves the delivered request | Re-deliver or discard; a pick or resolution does not consult the request |
+| `draft is unavailable` (validator message) | `NEEDS_INPUT` → 422 before any HITL mutation, when a `pick-draft-N` names a slot stored `unavailable` (a legacy slot without `decision` is matched by position) | Pick another slot, resolve, re-run or abort |
+
+**Verdict `error_code` vocabulary** (`consensus_round_verdicts.error_code`,
+a stored value, not a thrown code): `draft_partial` and `draft_unavailable`
+(drafter-side, unpaid, actionable critique); `output_cap_exceeded` (the 1 MiB
+verifier budget overflowed; technical even with a valid retained prefix);
+`empty_disagreement` (`invalid_schema` technical detail: `disagree` with all
+axes true and no rows); `target_missing` (the rotation target has no draft
+row); otherwise the `MaisterError` code of a failed verifier turn (e.g.
+`EXECUTOR_UNAVAILABLE`, `ACP_PROTOCOL`, `CRASH`). Every value except the two
+drafter-side ones is a technical failure listed in the HITL
+`technicalFailures[]`.
+
+**Payload access.** `GET /api/runs/{runId}/artifacts/{artifactId}/payload`
+answers `403 UNAUTHORIZED` to a reader without `readRepoFiles` for an inline
+`default:consensus-draft|consensus-verdict|consensus-synthesis` artifact.
 
 An applied empty/non-`end_turn` synthesis is not an empty successful plan and
 is not an ordinary `PRECONDITION` node failure. No new `MaisterError` code or

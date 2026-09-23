@@ -11,6 +11,7 @@ import type {
 import type { FlowOwnerRef } from "../prompt-owner-authority";
 import type { ConsensusNodeDef } from "./drafts";
 import type { ConsensusTextBounds } from "./text";
+import type { ParsedConsensusVerdict } from "./verdict";
 
 import { and, eq } from "drizzle-orm";
 import pino from "pino";
@@ -21,13 +22,16 @@ import { loadRun } from "../runner-core";
 import { lockFlowPromptOwner } from "../prompt-owner-authority";
 import { closeAppliedFlowPromptSession } from "../prompt-session-cleanup";
 
+import { CONSENSUS_SYNTHESIS_ARTIFACT_DEF } from "./artifact-defs";
 import { consensusVerdictLedgerId, writeConsensusVerdict } from "./ledger";
 import {
   CONSENSUS_GENERATION_OUTPUT_CAP_BYTES,
+  consensusTurnStopReason,
   finishConsensusOutput,
   retainConsensusOutput,
   type RetainedConsensusOutput,
 } from "./text";
+import { decodeConsensusLocatorMeta } from "./locator-meta";
 import { parseConsensusVerdict } from "./verdict";
 import { verifyConsensusInputEvidence } from "./input-evidence";
 
@@ -123,6 +127,39 @@ export type ConsensusSynthesisEvidence =
       inputTextBounds?: ConsensusTextBounds;
     }>;
 
+/** Only a complete, retained `end_turn` is parsed. An output-cap overflow is
+ * technical fail-closed even when its retained prefix already holds a valid
+ * agreement, and a failed host turn still owes the round a fail-closed cell. */
+export function consensusTurnVerdict(
+  outcome:
+    | { state: "succeeded"; response: { stopReason?: unknown } }
+    | { state: string; error?: { code?: unknown } },
+  retained: Pick<RetainedConsensusOutput, "text" | "droppedBytes">,
+  materialAxes: readonly string[],
+): { ok: boolean; errorCode?: string; result: ParsedConsensusVerdict } {
+  const succeeded = outcome.state === "succeeded" && "response" in outcome;
+  const ok =
+    succeeded &&
+    outcome.response.stopReason === "end_turn" &&
+    retained.droppedBytes === 0;
+  const errorCode = ok
+    ? undefined
+    : retained.droppedBytes > 0
+      ? "output_cap_exceeded"
+      : succeeded
+        ? "ACP_PROTOCOL"
+        : String(
+            ("error" in outcome ? outcome.error?.code : undefined) ??
+              "EXECUTOR_UNAVAILABLE",
+          );
+
+  return {
+    ok,
+    ...(errorCode ? { errorCode } : {}),
+    result: parseConsensusVerdict(ok ? retained.text : "", materialAxes),
+  };
+}
+
 /** An absent generation is pending; an applied empty generation is evidence. */
 export async function loadConsensusSynthesis(input: {
   db: Db;
@@ -133,26 +170,25 @@ export async function loadConsensusSynthesis(input: {
     .from(artifactInstances)
     .where(eq(artifactInstances.id, input.synthesisId));
   const locator = artifact?.locator;
+  const meta = decodeConsensusLocatorMeta(locator);
 
-  if (locator?.kind !== "inline") return null;
+  if (locator?.kind !== "inline" || !meta) return null;
   const metadata = {
-    ...(locator.truncated === true ? { truncated: true } : {}),
-    ...(locator.textBounds ? { textBounds: locator.textBounds } : {}),
-    ...(locator.inputTextBounds
-      ? { inputTextBounds: locator.inputTextBounds }
-      : {}),
+    ...(meta.truncated ? { truncated: true } : {}),
+    ...(meta.textBounds ? { textBounds: meta.textBounds } : {}),
+    ...(meta.inputTextBounds ? { inputTextBounds: meta.inputTextBounds } : {}),
   };
 
   if (
-    locator.partial === true ||
-    (locator.stopReason !== undefined && locator.stopReason !== "end_turn") ||
+    meta.partial ||
+    (meta.stopReason !== null && meta.stopReason !== "end_turn") ||
     locator.text.trim().length === 0
   )
     return {
       kind: "incomplete",
       synthesisId: input.synthesisId,
       text: locator.text,
-      stopReason: locator.stopReason ?? null,
+      stopReason: meta.stopReason,
       ...metadata,
     };
 
@@ -411,6 +447,8 @@ export async function prepareConsensusPrompt(input: {
           ref.variant === "consensus_verifier"
             ? "verifier-output"
             : "synthesis-output",
+        runId: ref.runId,
+        nodeAttemptId: ref.nodeAttemptId,
         participantId:
           ref.variant === "consensus_verifier" ? ref.targetId : "synthesizer",
         round: ref.round,
@@ -424,19 +462,11 @@ export async function prepareConsensusPrompt(input: {
       },
       "consensus-text-truncated",
     );
-  const ok =
-    outcome.state === "succeeded" &&
-    outcome.response.stopReason === "end_turn" &&
-    retained.droppedBytes === 0;
-  const errorCode = ok
-    ? undefined
-    : retained.droppedBytes > 0
-      ? "output_cap_exceeded"
-      : outcome.state === "succeeded"
-        ? "ACP_PROTOCOL"
-        : String(outcome.error.code ?? "EXECUTOR_UNAVAILABLE");
-  // A failed host turn still owes the round a persisted fail-closed cell.
-  const result = parseConsensusVerdict(ok ? rawOutput : "", materialAxes);
+  const { ok, errorCode, result } = consensusTurnVerdict(
+    outcome,
+    retained,
+    materialAxes,
+  );
 
   return {
     apply: async (tx) => {
@@ -471,7 +501,7 @@ export async function prepareConsensusPrompt(input: {
             nodeId: attempt.nodeId,
             nodeAttemptId: ref.nodeAttemptId,
             attempt: attempt.attempt,
-            artifactDefId: "default:consensus-synthesis",
+            artifactDefId: CONSENSUS_SYNTHESIS_ARTIFACT_DEF,
             kind: "plan",
             producer: "runner",
             locator: {
@@ -498,11 +528,7 @@ export async function prepareConsensusPrompt(input: {
                     inputTextBounds: inputEvidence.textBounds,
                   }
                 : {}),
-              ...(outcome.state === "succeeded"
-                ? typeof outcome.response.stopReason === "string"
-                  ? { stopReason: outcome.response.stopReason }
-                  : { stopReason: "stop_reason_unavailable" }
-                : {}),
+              stopReason: consensusTurnStopReason(outcome),
             },
             validity: "current",
             visibility: "internal",
@@ -524,7 +550,7 @@ export async function prepareConsensusPrompt(input: {
 
         return "applied";
       }
-      await writeConsensusVerdict(tx, {
+      const written = await writeConsensusVerdict(tx, {
         runId: ref.runId,
         nodeId: attempt.nodeId,
         nodeAttemptId: ref.nodeAttemptId,
@@ -534,11 +560,18 @@ export async function prepareConsensusPrompt(input: {
         targetParticipantId: ref.targetId,
         result,
         rawOutput,
+        ...(retained.droppedBytes > 0
+          ? { outputDroppedBytes: retained.droppedBytes }
+          : {}),
         ...(inputEvidence?.textBounds.droppedBytes
           ? { inputTextBounds: inputEvidence.textBounds }
           : {}),
         ...(errorCode ? { errorCode } : {}),
       });
+
+      // The lock above excludes another owner; only the runtime's unpaid
+      // fail-closed write can hold this immutable cell, and it wins.
+      if (!written) return "superseded";
       log.info(
         {
           runId: ref.runId,

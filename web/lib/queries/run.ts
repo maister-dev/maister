@@ -60,7 +60,10 @@ import {
   activeSessionCapabilityAgent,
   activeSessionRunnerSnapshot,
 } from "@/lib/runs/active-run-session";
-import { classifyRecover } from "@/lib/runs/recover-classify";
+import {
+  classifyRecover,
+  type ConsensusRecoverEvidence,
+} from "@/lib/runs/recover-classify";
 import { loadConsensusRecoveryEvidence } from "@/lib/flows/graph/consensus/recovery-evidence";
 import { requireRunProjectId } from "@/lib/runs/run-kind-invariants";
 import * as schema from "@/lib/db/schema";
@@ -419,10 +422,7 @@ export function isRunRecoverable(input: {
   acpSessionId: string | null;
   currentNodeKind: NodeAttemptType | null;
   retrySafe: boolean;
-  consensusEvidence?: {
-    incompleteSynthesis: boolean;
-    quarantined: boolean;
-  };
+  consensusEvidence: ConsensusRecoverEvidence | null;
   workspaceRemoved?: boolean;
 }): boolean {
   return (
@@ -547,7 +547,7 @@ export const getRunDetail = cache(async function getRunDetail(
           runId,
           nodeId: recoverTargetStepId,
         })
-      : undefined;
+      : null;
   const recoverable = isRunRecoverable({
     status: row.status,
     acpSessionId: recoverAcpSessionId,

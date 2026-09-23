@@ -31,7 +31,11 @@ substrate — it orders and bounds admission and closes the resume over-cap bug.
   run-INSERT for funnel-minted runs; the precise per-project `liveAuto` counter.
 - **Resume request** (`runs.resume_requested_at`, Implemented) — the C3 FIFO key,
   set when an answered idle run is deferred at cap and consumed (cleared) when the
-  gate flips it to Running.
+  gate flips it to Running. It is also stamped on a parked (`WaitingOnChildren`)
+  coordinator whose wake was deferred for capacity; C3 never selects that row.
+  An orchestrator's failed-child wake intent is deliberately a separate column
+  (`runs.failed_child_wake_at`, P0-5 v2), so C3 can never read it as "answered"
+  and resume a coordinator whose own HITL is still open.
 
 See ERDs: [`db/runs-domain.md`](../db/runs-domain.md),
 [`db/projects-domain.md`](../db/projects-domain.md), and the consolidated

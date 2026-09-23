@@ -86,4 +86,51 @@ describe("consensus UTF-8 text bound", () => {
       expect(result.bounds.retainedBytes).toBe(Math.max(...candidates));
     }
   });
+
+  const MARKER =
+    /\n\[consensus text truncated: dropped (\d+) UTF-8 bytes; cap (\d+) bytes\]$/;
+
+  it.each([
+    ["ascii", "a"],
+    ["two-byte", "é"],
+    ["four-byte", "🙂"],
+  ])(
+    "%s text at cap-1, cap and cap+1 bytes keeps its accounting",
+    (_name, unit) => {
+      const unitBytes = Buffer.byteLength(unit, "utf8");
+      const cap = 300 * unitBytes;
+
+      for (const count of [299, 300, 301]) {
+        const value = unit.repeat(count);
+        const bytes = count * unitBytes;
+        const result = boundConsensusText(value, cap);
+
+        expect(result.bounds.bytes).toBe(bytes);
+        expect(result.bounds.retainedBytes + result.bounds.droppedBytes).toBe(
+          bytes,
+        );
+        expect(Buffer.byteLength(result.text, "utf8")).toBeLessThanOrEqual(cap);
+        expect(result.text).not.toContain("\uFFFD");
+        if (bytes <= cap) {
+          expect(result).toMatchObject({ text: value, truncated: false });
+        } else {
+          const marker = MARKER.exec(result.text);
+
+          expect(result.truncated).toBe(true);
+          expect(Number(marker?.[1])).toBe(result.bounds.droppedBytes);
+          expect(Number(marker?.[2])).toBe(cap);
+          expect(result.text.startsWith(unit.repeat(1))).toBe(true);
+        }
+      }
+    },
+  );
+
+  it("treats a literal marker inside the input as plain text, not metadata", () => {
+    const forged =
+      "draft body\n[consensus text truncated: dropped 99999 UTF-8 bytes; cap 65536 bytes]";
+    const result = boundConsensusText(forged, CONSENSUS_PROMPT_TEXT_CAP_BYTES);
+
+    expect(result).toMatchObject({ text: forged, truncated: false });
+    expect(result.bounds.droppedBytes).toBe(0);
+  });
 });

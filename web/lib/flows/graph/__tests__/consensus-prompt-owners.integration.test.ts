@@ -5,6 +5,7 @@ import type { FlowYamlV1 } from "@/lib/config.schema";
 
 import { randomUUID } from "node:crypto";
 import { fork, type ChildProcess } from "node:child_process";
+import { existsSync } from "node:fs";
 import path from "node:path";
 
 import { and, eq, inArray, sql } from "drizzle-orm";
@@ -27,6 +28,7 @@ import { startPromptOwnerWorker } from "@/lib/execution-host/prompt-owner-recove
 import { flowPromptOwners } from "@/lib/flows/graph/prompt-owner";
 import { consensusDraftPromptOwners } from "@/lib/flows/graph/consensus/draft-prompt-owner";
 import { verifyConsensusInputEvidence } from "@/lib/flows/graph/consensus/input-evidence";
+import { recordConsensusVerdict } from "@/lib/flows/graph/consensus/ledger";
 import {
   isConsensusHumanIntentApplied,
   markConsensusHumanIntentApplied,
@@ -34,6 +36,11 @@ import {
   resolveConsensusHumanRequest,
 } from "@/lib/flows/graph/consensus/human-decision";
 import { runFlow } from "@/lib/flows/runner";
+import { atomicWriteJson } from "@/lib/atomic";
+import { markArtifactsStale } from "@/lib/flows/graph/artifact-store";
+import { assertEvidenceReady } from "@/lib/flows/graph/evidence-readiness";
+import { decodeConsensusResolutionSchema } from "@/lib/flows/consensus-resolution";
+import { validateConsensusDecision } from "@/lib/flows/hitl-validate";
 import { startFlowContinuationWorker } from "@/lib/flows/graph/continuation-worker";
 import { resumeCrashedRun } from "@/lib/runs/recover";
 import { runReconcileSweep } from "@/lib/reconcile";
@@ -58,8 +65,13 @@ let database: StartedPostgresTestDb;
 let supervisor: RealSupervisor;
 let worker: ProjectionWorker;
 let restoreUrl: () => void = () => {};
+let originalFlowCap: string | undefined;
 
 beforeAll(async () => {
+  // Every case seeds its own project and leaves its parent parked; the global
+  // flow cap is not under test here and would defer later cases' wakes.
+  originalFlowCap = process.env.MAISTER_MAX_CONCURRENT_RUNS;
+  process.env.MAISTER_MAX_CONCURRENT_RUNS = "64";
   database = await startMainPostgresTestDb({
     databaseName: "consensus_prompt_owners",
   });
@@ -81,6 +93,9 @@ afterAll(async () => {
   await worker?.stop();
   await supervisor?.kill();
   await database?.stop();
+  if (originalFlowCap === undefined)
+    delete process.env.MAISTER_MAX_CONCURRENT_RUNS;
+  else process.env.MAISTER_MAX_CONCURRENT_RUNS = originalFlowCap;
 });
 
 const AXES = ["scope", "risk"] as const;
@@ -197,6 +212,45 @@ function drive(runId: string): Promise<unknown> {
     runtimeRoot: supervisor.runtimeRoot,
     executionHosts: createExecutionHosts({ db: database.db as unknown as Db }),
   });
+}
+
+async function waitForDraftsDone(parentRunId: string): Promise<void> {
+  await expect
+    .poll(
+      async () => {
+        const children = await database.db
+          .select({ status: runs.status })
+          .from(runs)
+          .where(eq(runs.parentRunId, parentRunId));
+
+        return (
+          children.length === 2 &&
+          children.every((child) => child.status === "Done")
+        );
+      },
+      { timeout: 60_000, interval: 100 },
+    )
+    .toBe(true);
+}
+
+/** A BEFORE INSERT trigger with the given plpgsql body; returns its remover. */
+async function installInsertTrigger(
+  table: string,
+  body: string,
+): Promise<() => Promise<void>> {
+  const trigger = `consensus_trigger_${randomUUID().replaceAll("-", "")}`;
+
+  await database.pool.query(
+    `CREATE FUNCTION ${trigger}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN ${body} END $$`,
+  );
+  await database.pool.query(
+    `CREATE TRIGGER ${trigger} BEFORE INSERT ON ${table} FOR EACH ROW EXECUTE FUNCTION ${trigger}()`,
+  );
+
+  return async () => {
+    await database.pool.query(`DROP TRIGGER IF EXISTS ${trigger} ON ${table}`);
+    await database.pool.query(`DROP FUNCTION IF EXISTS ${trigger}()`);
+  };
 }
 
 /** Round 1 fans out real child agent runs. Wake the parent exactly the way the
@@ -593,29 +647,10 @@ describe("Consensus prompt owners through the production graph driver", () => {
     const seeded = await seedConsensusFlow(consensusPrompt("agree"));
 
     await drive(seeded.runId);
-    await expect
-      .poll(
-        async () => {
-          const children = await database.db
-            .select({ status: runs.status })
-            .from(runs)
-            .where(eq(runs.parentRunId, seeded.runId));
-
-          return (
-            children.length === 2 &&
-            children.every((child) => child.status === "Done")
-          );
-        },
-        { timeout: 60_000, interval: 100 },
-      )
-      .toBe(true);
-    const trigger = `consensus_hold_${randomUUID().replaceAll("-", "")}`;
-
-    await database.pool.query(
-      `CREATE FUNCTION ${trigger}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'held consensus verifier application'; END $$`,
-    );
-    await database.pool.query(
-      `CREATE TRIGGER ${trigger} BEFORE INSERT ON consensus_round_verdicts FOR EACH ROW EXECUTE FUNCTION ${trigger}()`,
+    await waitForDraftsDone(seeded.runId);
+    const dropTrigger = await installInsertTrigger(
+      "consensus_round_verdicts",
+      "RAISE EXCEPTION 'held consensus verifier application';",
     );
 
     const resuming = settleDraftsAndResume(seeded.runId);
@@ -655,6 +690,11 @@ describe("Consensus prompt owners through the production graph driver", () => {
           { timeout: 30_000, interval: 100 },
         )
         .toBe(true);
+      // The driver has yielded (its traversal returned) before the node state
+      // is read: a pending application leaves it Running, never Failed.
+      await expect
+        .poll(() => resumeOutcome, { timeout: 10_000, interval: 100 })
+        .toBe("fulfilled");
       const [run] = await database.db
         .select({ status: runs.status })
         .from(runs)
@@ -666,14 +706,8 @@ describe("Consensus prompt owners through the production graph driver", () => {
 
       expect(run.status).toBe("Running");
       expect(attempt.status).toBe("Running");
-      await expect
-        .poll(() => resumeOutcome, { timeout: 10_000, interval: 100 })
-        .toBe("fulfilled");
     } finally {
-      await database.pool.query(
-        `DROP TRIGGER IF EXISTS ${trigger} ON consensus_round_verdicts`,
-      );
-      await database.pool.query(`DROP FUNCTION IF EXISTS ${trigger}()`);
+      await dropTrigger();
     }
 
     const owners = startPromptOwnerWorker({
@@ -736,29 +770,10 @@ describe("Consensus prompt owners through the production graph driver", () => {
     const seeded = await seedConsensusFlow(consensusPrompt("agree"));
 
     await drive(seeded.runId);
-    await expect
-      .poll(
-        async () => {
-          const children = await database.db
-            .select({ status: runs.status })
-            .from(runs)
-            .where(eq(runs.parentRunId, seeded.runId));
-
-          return (
-            children.length === 2 &&
-            children.every((child) => child.status === "Done")
-          );
-        },
-        { timeout: 60_000, interval: 100 },
-      )
-      .toBe(true);
-    const trigger = `consensus_synthesis_hold_${randomUUID().replaceAll("-", "")}`;
-
-    await database.pool.query(
-      `CREATE FUNCTION ${trigger}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.id LIKE '%:consensus-synthesis:%' AND NEW.id NOT LIKE '%:input' THEN RAISE EXCEPTION 'held consensus synthesis application'; END IF; RETURN NEW; END $$`,
-    );
-    await database.pool.query(
-      `CREATE TRIGGER ${trigger} BEFORE INSERT ON artifact_instances FOR EACH ROW EXECUTE FUNCTION ${trigger}()`,
+    await waitForDraftsDone(seeded.runId);
+    const dropTrigger = await installInsertTrigger(
+      "artifact_instances",
+      "IF NEW.id LIKE '%:consensus-synthesis:%' AND NEW.id NOT LIKE '%:input' THEN RAISE EXCEPTION 'held consensus synthesis application'; END IF; RETURN NEW;",
     );
     const resuming = settleDraftsAndResume(seeded.runId);
     let resumeOutcome: "pending" | "fulfilled" | "rejected" = "pending";
@@ -792,6 +807,11 @@ describe("Consensus prompt owners through the production graph driver", () => {
           { timeout: 30_000, interval: 100 },
         )
         .toBe(true);
+      // The driver has yielded (its traversal returned) before the node state
+      // is read: a pending application leaves it Running, never Failed.
+      await expect
+        .poll(() => resumeOutcome, { timeout: 10_000, interval: 100 })
+        .toBe("fulfilled");
       const [run] = await database.db
         .select({ status: runs.status })
         .from(runs)
@@ -803,14 +823,8 @@ describe("Consensus prompt owners through the production graph driver", () => {
 
       expect(run.status).toBe("Running");
       expect(attempt.status).toBe("Running");
-      await expect
-        .poll(() => resumeOutcome, { timeout: 10_000, interval: 100 })
-        .toBe("fulfilled");
     } finally {
-      await database.pool.query(
-        `DROP TRIGGER IF EXISTS ${trigger} ON artifact_instances`,
-      );
-      await database.pool.query(`DROP FUNCTION IF EXISTS ${trigger}()`);
+      await dropTrigger();
     }
 
     const owners = startPromptOwnerWorker({
@@ -873,13 +887,9 @@ describe("Consensus prompt owners through the production graph driver", () => {
     const seeded = await seedConsensusFlow(consensusPrompt("agree"));
 
     await drive(seeded.runId);
-    const trigger = `consensus_poison_${randomUUID().replaceAll("-", "")}`;
-
-    await database.pool.query(
-      `CREATE FUNCTION ${trigger}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'poison consensus verifier application'; END $$`,
-    );
-    await database.pool.query(
-      `CREATE TRIGGER ${trigger} BEFORE INSERT ON consensus_round_verdicts FOR EACH ROW EXECUTE FUNCTION ${trigger}()`,
+    const dropTrigger = await installInsertTrigger(
+      "consensus_round_verdicts",
+      "RAISE EXCEPTION 'poison consensus verifier application';",
     );
 
     const resuming = settleDraftsAndResume(seeded.runId);
@@ -962,7 +972,7 @@ describe("Consensus prompt owners through the production graph driver", () => {
             command.applicationAttempts === 5,
         ),
       ).toBe(true);
-      const result = await runReconcileSweep({
+      await runReconcileSweep({
         db: database.db,
         executionHosts: createExecutionHosts({
           db: database.db as unknown as Db,
@@ -973,15 +983,89 @@ describe("Consensus prompt owners through the production graph driver", () => {
         .from(runs)
         .where(eq(runs.id, seeded.runId));
 
-      expect(result.ownerPoisoned).toBeGreaterThanOrEqual(1);
+      const crashed = await database.db
+        .select({ payload: domainEvents.payload })
+        .from(domainEvents)
+        .where(
+          and(
+            eq(domainEvents.runId, seeded.runId),
+            eq(domainEvents.kind, "run.crashed"),
+          ),
+        );
+
       expect(run.status).toBe("Crashed");
+      expect(
+        crashed.map((event) => (event.payload as { reason?: string }).reason),
+      ).toEqual(["owner-poisoned"]);
     } finally {
       await owners.stop();
-      await database.pool.query(
-        `DROP TRIGGER IF EXISTS ${trigger} ON consensus_round_verdicts`,
-      );
-      await database.pool.query(`DROP FUNCTION IF EXISTS ${trigger}()`);
+      await dropTrigger();
     }
+  }, 180_000);
+  it("P0-5: a consensus command quarantined after application crashes owner-poisoned", async () => {
+    const seeded = await seedConsensusFlow(consensusPrompt("disagree"));
+
+    await drive(seeded.runId);
+    await settleDraftsAndResume(seeded.runId);
+    const [attempt] = await database.db
+      .select()
+      .from(nodeAttempts)
+      .where(eq(nodeAttempts.runId, seeded.runId));
+    const [verifier] = await database.db
+      .select()
+      .from(executionCommands)
+      .where(
+        and(
+          eq(executionCommands.runId, seeded.runId),
+          sql`${executionCommands.ownerRef}->>'variant' = 'consensus_verifier'`,
+        ),
+      );
+
+    expect(verifier.applicationState).toBe("applied");
+    // `quarantine()` keeps a conflict found AFTER application `applied` and
+    // records only the reason; the node is back in its live window.
+    await database.db
+      .update(executionCommands)
+      .set({
+        applicationError: {
+          reason: "prompt_terminal_conflict",
+          phase: "prepare",
+          causeCode: "terminal_evidence_mismatch",
+        },
+      })
+      .where(eq(executionCommands.id, verifier.id));
+    await database.db
+      .update(runs)
+      .set({ status: "Running" })
+      .where(eq(runs.id, seeded.runId));
+    await database.db
+      .update(nodeAttempts)
+      .set({ status: "Running" })
+      .where(eq(nodeAttempts.id, attempt.id));
+    await runReconcileSweep({
+      db: database.db,
+      executionHosts: createExecutionHosts({
+        db: database.db as unknown as Db,
+      }),
+    });
+    const [run] = await database.db
+      .select({ status: runs.status })
+      .from(runs)
+      .where(eq(runs.id, seeded.runId));
+    const crashed = await database.db
+      .select({ payload: domainEvents.payload })
+      .from(domainEvents)
+      .where(
+        and(
+          eq(domainEvents.runId, seeded.runId),
+          eq(domainEvents.kind, "run.crashed"),
+        ),
+      );
+
+    expect(run.status).toBe("Crashed");
+    expect(
+      crashed.map((event) => (event.payload as { reason?: string }).reason),
+    ).toEqual(["owner-poisoned"]);
   }, 180_000);
   it("P0-5: full 60 kB drafts and verbose verifier JSON survive owner application", async () => {
     const tail = "DRAFT-LAST-LINE-P0-5";
@@ -1416,6 +1500,232 @@ describe("Consensus prompt owners through the production graph driver", () => {
       await isConsensusHumanIntentApplied(database.db as unknown as Db, intent),
     ).toBe(true);
   }, 180_000);
+  async function consensusRequests(runId: string) {
+    return database.db
+      .select()
+      .from(hitlRequests)
+      .where(
+        and(eq(hitlRequests.runId, runId), eq(hitlRequests.stepId, "decide")),
+      );
+  }
+
+  it("P0-5: a HITL creation replayed after its commit adopts the same request and evidence", async () => {
+    // Partial drafts record unpaid fail-closed cells, whose axes the writer
+    // builds in manifest order and jsonb returns in storage order.
+    const prompt = `fixture-output:${JSON.stringify({ bytes: 0, text: "An unfinished draft", stopReason: "max_tokens" })}`;
+    const seeded = await seedConsensusFlow(prompt);
+
+    await drive(seeded.runId);
+    await settleDraftsAndResume(seeded.runId, "Failed");
+    const [attempt] = await database.db
+      .select()
+      .from(nodeAttempts)
+      .where(eq(nodeAttempts.runId, seeded.runId));
+    const before = await consensusRequests(seeded.runId);
+    const debate = async () =>
+      database.db
+        .select()
+        .from(artifactInstances)
+        .where(
+          and(
+            eq(artifactInstances.runId, seeded.runId),
+            eq(artifactInstances.artifactDefId, "consensus-round-debate"),
+          ),
+        );
+    const [debateBefore] = await debate();
+    const schema = decodeConsensusResolutionSchema(before[0]?.schema);
+
+    expect(before).toHaveLength(1);
+    expect(schema).toMatchObject({
+      escalationReason: "single_pass",
+      nodeAttemptId: attempt.id,
+    });
+    expect(schema?.drafts.map((draft) => draft.classification)).toEqual([
+      "partial",
+      "partial",
+    ]);
+    expect(
+      validateConsensusDecision({ decision: "pick-draft-1" }, before[0].schema)
+        .ok,
+    ).toBe(true);
+    expect(debateBefore.requiredFor ?? []).not.toContain("review");
+
+    // Death after the HITL transaction committed but before the runner parked
+    // the node: the run and attempt are still the Running pair it re-enters.
+    await database.db
+      .update(runs)
+      .set({ status: "Running" })
+      .where(eq(runs.id, seeded.runId));
+    await database.db
+      .update(nodeAttempts)
+      .set({ status: "Running" })
+      .where(eq(nodeAttempts.id, attempt.id));
+    await drive(seeded.runId);
+    const after = await consensusRequests(seeded.runId);
+    const [run] = await database.db
+      .select({ status: runs.status })
+      .from(runs)
+      .where(eq(runs.id, seeded.runId));
+    const debates = await debate();
+
+    expect(run.status).toBe("NeedsInput");
+    expect(after.map((request) => request.id)).toEqual(
+      before.map((request) => request.id),
+    );
+    expect(debates).toHaveLength(1);
+    expect(debates[0].locator).toEqual(debateBefore.locator);
+
+    // Answered and consumed, then a death before the node settled: re-entry
+    // must ask again rather than park on a request nobody can answer.
+    await database.db
+      .update(hitlRequests)
+      .set({ response: { decision: "abort" }, respondedAt: new Date() })
+      .where(eq(hitlRequests.id, before[0].id));
+    await database.db
+      .update(runs)
+      .set({ status: "Running" })
+      .where(eq(runs.id, seeded.runId));
+    await database.db
+      .update(nodeAttempts)
+      .set({ status: "Running" })
+      .where(eq(nodeAttempts.id, attempt.id));
+    await drive(seeded.runId);
+    const reasked = await consensusRequests(seeded.runId);
+
+    expect(reasked).toHaveLength(2);
+    expect(
+      reasked.filter((request) => request.respondedAt === null),
+    ).toHaveLength(1);
+
+    // A rework stales the node's evidence; the HITL-only debate must not then
+    // stand as a required-but-missing review deliverable.
+    await markArtifactsStale(seeded.runId, ["decide"], database.db);
+    const readiness = await assertEvidenceReady(
+      seeded.runId,
+      "review",
+      database.db,
+    );
+
+    expect(readiness.reasons.join("\n")).not.toContain(
+      "consensus-round-debate",
+    );
+  }, 180_000);
+  it("P0-5: HITL disagreement summaries stay bounded after whole-output parsing", async () => {
+    const verdict = JSON.stringify({
+      verdict: "disagree",
+      axes: { scope: false, risk: true },
+      disagreements: [
+        {
+          axis: "scope",
+          claim: `${"c".repeat(3_000)}CLAIM-TAIL`,
+          counter_evidence: "see the draft",
+        },
+      ],
+      confidence: 0.5,
+    });
+    const draftBody = `\nfixture-output:${JSON.stringify({ bytes: 0, text: verdict })}`;
+    const seeded = await seedConsensusFlow(
+      `fixture-output:${JSON.stringify({ bytes: 0, text: draftBody })}`,
+    );
+
+    await drive(seeded.runId);
+    await settleDraftsAndResume(seeded.runId);
+    const [request] = await consensusRequests(seeded.runId);
+    const summaries = decodeConsensusResolutionSchema(
+      request.schema,
+    )?.disagreements.map((row) => row.summary ?? "");
+
+    expect(summaries?.length).toBeGreaterThan(0);
+    for (const summary of summaries ?? []) {
+      expect(Buffer.byteLength(summary, "utf8")).toBeLessThanOrEqual(1024);
+      expect(summary).not.toContain("CLAIM-TAIL");
+      expect(summary).toContain("cap 1024 bytes]");
+    }
+  }, 180_000);
+  it("P0-5: a rerun that dies before its applied marker adopts its round on replay", async () => {
+    const draftBody = `\nfixture-output:${JSON.stringify({ bytes: 0, text: "not-json" })}`;
+    const seeded = await seedConsensusFlow(
+      `fixture-output:${JSON.stringify({ bytes: 0, text: draftBody })}`,
+      { mode: "iterate", max: 2 },
+    );
+
+    await drive(seeded.runId);
+    await settleDraftsAndResume(seeded.runId);
+    const [request] = await consensusRequests(seeded.runId);
+    const inputPath = path.join(
+      supervisor.runtimeRoot,
+      ".maister",
+      seeded.slug,
+      "runs",
+      seeded.runId,
+      "input-decide.json",
+    );
+
+    expect(
+      decodeConsensusResolutionSchema(request.schema)?.escalationReason,
+    ).toBe("technical_only");
+    // The respond route's durable writes: the input artifact, then the stamp.
+    await atomicWriteJson(inputPath, { decision: "re-run-round" });
+    await database.db
+      .update(hitlRequests)
+      .set({ response: { decision: "re-run-round" }, respondedAt: new Date() })
+      .where(eq(hitlRequests.id, request.id));
+    await killAtDatabaseWrite({
+      table: "artifact_instances",
+      event: "INSERT",
+      predicate: "NEW.artifact_def_id = 'consensus-human-intent-applied'",
+      runId: seeded.runId,
+    });
+    const children = async (round: number) =>
+      (
+        await database.db
+          .select({ id: runs.id, triggerPayload: runs.triggerPayload })
+          .from(runs)
+          .where(eq(runs.parentRunId, seeded.runId))
+      ).filter(
+        (child) =>
+          (child.triggerPayload as { round?: number } | null)?.round === round,
+      );
+    const applied = async () =>
+      database.db
+        .select({ id: artifactInstances.id })
+        .from(artifactInstances)
+        .where(
+          and(
+            eq(artifactInstances.runId, seeded.runId),
+            eq(
+              artifactInstances.artifactDefId,
+              "consensus-human-intent-applied",
+            ),
+          ),
+        );
+    const roundTwo = (await children(2)).map((child) => child.id).sort();
+
+    expect(roundTwo).toHaveLength(2);
+    expect(await applied()).toHaveLength(0);
+    expect(existsSync(inputPath)).toBe(true);
+    await database.pool.query(
+      "SELECT pg_sleep(greatest(0, extract(epoch from flow_driver_lease_expires_at - clock_timestamp())) + 0.25) FROM runs WHERE id = $1",
+      [seeded.runId],
+    );
+    await drive(seeded.runId);
+
+    try {
+      expect((await children(2)).map((child) => child.id).sort()).toEqual(
+        roundTwo,
+      );
+      expect(await children(3)).toHaveLength(0);
+      expect(await applied()).toHaveLength(1);
+      expect(existsSync(inputPath)).toBe(false);
+    } finally {
+      // The killed driver dispatched these drafts; with no agent recovery
+      // worker in this suite they would hold the agent pool for later cases.
+      await database.db
+        .update(runs)
+        .set({ status: "Abandoned", endedAt: new Date() })
+        .where(inArray(runs.id, roundTwo));
+    }
+  }, 240_000);
   it("P0-5: verifier-only invalid JSON escalates without spending another draft round", async () => {
     const draftBody = `\nfixture-output:${JSON.stringify({ bytes: 0, text: "not-json" })}`;
     const prompt = `fixture-output:${JSON.stringify({ bytes: 0, text: draftBody })}`;
@@ -1465,22 +1775,7 @@ describe("Consensus prompt owners through the production graph driver", () => {
     // This test changes the immutable fixture's authored prompt between the
     // draft and synthesis drives so the same adapter can return a different
     // terminal stop reason for synthesis without changing supervisor code.
-    await expect
-      .poll(
-        async () => {
-          const children = await database.db
-            .select({ status: runs.status })
-            .from(runs)
-            .where(eq(runs.parentRunId, seeded.runId));
-
-          return (
-            children.length === 2 &&
-            children.every((child) => child.status === "Done")
-          );
-        },
-        { timeout: 60_000, interval: 100 },
-      )
-      .toBe(true);
+    await waitForDraftsDone(seeded.runId);
     await replaceConsensusPrompt(
       seeded.flowRevisionId!,
       seeded.flowId,
@@ -1534,6 +1829,12 @@ describe("Consensus prompt owners through the production graph driver", () => {
       .update(artifactInstances)
       .set({ locator: oldSynthesis.locator })
       .where(eq(artifactInstances.id, oldSynthesisId));
+    // A missing witness cannot authorize the redispatch either.
+    await database.db
+      .delete(artifactInstances)
+      .where(eq(artifactInstances.id, oldSynthesisId));
+    expect((await recover()).state).toBe("discard-only");
+    await database.db.insert(artifactInstances).values(oldSynthesis);
     const commands = await database.db
       .select()
       .from(executionCommands)
@@ -1555,7 +1856,8 @@ describe("Consensus prompt owners through the production graph driver", () => {
       .set({
         applicationError: {
           reason: "prompt_terminal_conflict",
-          phase: "apply",
+          phase: "prepare",
+          causeCode: "terminal_evidence_mismatch",
         },
       })
       .where(eq(executionCommands.id, synthesisCommand!.id));
@@ -1601,27 +1903,28 @@ describe("Consensus prompt owners through the production graph driver", () => {
       partial: true,
       text: "partial synthesis text",
     });
+
+    // Stale witness: a later attempt that crashes for another reason cannot
+    // borrow the first attempt's incomplete-synthesis evidence.
+    await database.db
+      .update(nodeAttempts)
+      .set({ status: "Failed", errorCode: "CRASH" })
+      .where(eq(nodeAttempts.id, attempts[1].id));
+    await database.db
+      .update(runs)
+      .set({
+        status: "Crashed",
+        currentStepId: null,
+        resumeTargetStepId: "decide",
+      })
+      .where(eq(runs.id, seeded.runId));
+    expect((await recover()).state).toBe("discard-only");
   }, 180_000);
   it("P0-5: an empty end_turn synthesis is a named recoverable crash", async () => {
     const seeded = await seedConsensusFlow(consensusPrompt("agree"));
 
     await drive(seeded.runId);
-    await expect
-      .poll(
-        async () => {
-          const children = await database.db
-            .select({ status: runs.status })
-            .from(runs)
-            .where(eq(runs.parentRunId, seeded.runId));
-
-          return (
-            children.length === 2 &&
-            children.every((child) => child.status === "Done")
-          );
-        },
-        { timeout: 60_000, interval: 100 },
-      )
-      .toBe(true);
+    await waitForDraftsDone(seeded.runId);
     await replaceConsensusPrompt(
       seeded.flowRevisionId!,
       seeded.flowId,
@@ -1819,6 +2122,43 @@ describe("Consensus prompt owners through the production graph driver", () => {
           verdict: cell.verdict,
         });
       }
+
+      // Layer 3: the runtime's unpaid fail-closed write loses to the applied
+      // cell. It gets the stored cell back and cannot rewrite the paid turn's
+      // raw-output evidence.
+      const [rawBefore] = await database.db
+        .select({ locator: artifactInstances.locator })
+        .from(artifactInstances)
+        .where(eq(artifactInstances.id, source.rawOutputArtifactId!));
+      const kept = await recordConsensusVerdict({
+        db: database.db as unknown as Db,
+        runId: seeded.runId,
+        nodeId: "decide",
+        nodeAttemptId: attempt.id,
+        attempt: attempt.attempt,
+        round: source.round,
+        verifierId: source.verifierKey,
+        targetParticipantId: source.targetKey,
+        result: {
+          parseStatus: "invalid_json",
+          verdict: "disagree",
+          axes: { scope: false, risk: false },
+          disagreements: [],
+        },
+        rawOutput: "fail-closed overwrite attempt",
+        errorCode: "CRASH",
+      });
+      const [rawAfter] = await database.db
+        .select({ locator: artifactInstances.locator })
+        .from(artifactInstances)
+        .where(eq(artifactInstances.id, source.rawOutputArtifactId!));
+
+      expect(kept).toMatchObject({
+        verdict: source.verdict,
+        parseStatus: source.parseStatus,
+      });
+      expect(kept.errorCode).not.toBe("CRASH");
+      expect(rawAfter.locator).toEqual(rawBefore.locator);
     } finally {
       await database.db
         .update(executionCommands)

@@ -179,6 +179,13 @@ function runSessionInsertStub() {
   }));
 }
 
+// Awaitable for plain inserts, `.returning()` for the idempotent HITL insert.
+function insertedRow() {
+  return Object.assign(Promise.resolve(undefined), {
+    returning: vi.fn(async () => [{ id: "inserted" }]),
+  });
+}
+
 function db(): unknown {
   let artifactLocator: unknown;
   const tx = {
@@ -186,7 +193,7 @@ function db(): unknown {
       values: vi.fn((value: { locator?: unknown }) => {
         if (value.locator) artifactLocator = value.locator;
 
-        return { onConflictDoNothing: vi.fn(async () => undefined) };
+        return { onConflictDoNothing: vi.fn(insertedRow) };
       }),
     })),
     // A real transaction can read. `createHitlRequest` — the one writer of
@@ -268,7 +275,7 @@ function dbWithRunnerRows(rows: Record<string, unknown>[]): unknown {
       values: vi.fn((value: { locator?: unknown }) => {
         if (value.locator) artifactLocator = value.locator;
 
-        return { onConflictDoNothing: vi.fn(async () => undefined) };
+        return { onConflictDoNothing: vi.fn(insertedRow) };
       }),
     })),
     // A real transaction can read. `createHitlRequest` — the one writer of

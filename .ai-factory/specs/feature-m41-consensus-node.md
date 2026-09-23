@@ -1,5 +1,13 @@
 # Feature M41 - Consensus Flow-Graph Node
 
+> **Superseded in part (2026-09-23).** Historical M41 design, kept as written.
+> Where it describes failed drafts as unavailable evidence, a re-fan with the
+> union of disagreements, or empty-synthesis handling, the current contract is
+> the P0-5 v2 execution contract in
+> [`docs/system-analytics/consensus.md`](../../docs/system-analytics/consensus.md#p0-5-v2-execution-contract-implemented)
+> and the 2026-09-23 amendments of [ADR-109](../../docs/decisions/adr-109.md)
+> and [ADR-175](../../docs/decisions/adr-175.md).
+
 ## Status
 
 **Designed / frozen SSOT.** This document is the single source of truth for the

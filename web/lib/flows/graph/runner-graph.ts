@@ -249,6 +249,7 @@ import * as schemaModule from "@/lib/db/schema";
 import { nodeAttempts } from "@/lib/db/schema";
 import { getDb } from "@/lib/db/client";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
+import { clearFailedCoordinatorWake } from "@/lib/domain-events/coordinator-wake-intent";
 import { emitDelegatedReviewIfChild } from "@/lib/runs/delegated-review-emit";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 
@@ -3084,7 +3085,7 @@ export async function runGraph(
           if (opts.driver)
             await tx
               .update(runs)
-              .set({ currentStepId: node.id, resumeRequestedAt: null })
+              .set({ currentStepId: node.id, failedChildWakeAt: null })
               .where(eq(runs.id, runId));
 
           return row;
@@ -3180,6 +3181,8 @@ export async function runGraph(
             db,
           );
         else await markNodeRunning(nodeAttemptId, db);
+        if (resumingThisNode && isOrchestratorResume)
+          await clearFailedCoordinatorWake(db, runId);
       }
 
       // M11c (ADR-032): per-node enforcement gate. For capability-bearing

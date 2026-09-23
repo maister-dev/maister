@@ -8,6 +8,8 @@
 //   - agent node + acpSessionId null         -> "discard-only"
 //   - session-less + retry_safe=true         -> "redispatch"
 //   - session-less + retry_safe=false / null -> "discard-only"
+//   - consensus: quarantined attempt -> "discard-only"; applied incomplete
+//     synthesis -> "redispatch"; otherwise the session-less retry_safe rule
 //
 // The AGENT set is `ai_coding | judge | orchestrator` — identical to the set
 // `admitNodePrompt` admits. ADR-175 moved `judge` INTO it: a judge node always
@@ -41,80 +43,85 @@ describe("classifyRecover — agent node (ignores retry_safe)", () => {
   for (const kind of AGENT_KINDS) {
     it(`${kind} + acpSessionId present → resume-agent`, () => {
       expect(
-        classifyRecover({ acpSessionId: "acp-1" }, kind, false),
+        classifyRecover({ acpSessionId: "acp-1" }, kind, false, null),
       ).toBe<RecoverPlan>("resume-agent");
       expect(
-        classifyRecover({ acpSessionId: "acp-1" }, kind, true),
+        classifyRecover({ acpSessionId: "acp-1" }, kind, true, null),
       ).toBe<RecoverPlan>("resume-agent");
     });
 
     it(`${kind} + acpSessionId null → discard-only`, () => {
       expect(
-        classifyRecover({ acpSessionId: null }, kind, true),
+        classifyRecover({ acpSessionId: null }, kind, true, null),
       ).toBe<RecoverPlan>("discard-only");
       expect(
-        classifyRecover({ acpSessionId: null }, kind, false),
+        classifyRecover({ acpSessionId: null }, kind, false, null),
       ).toBe<RecoverPlan>("discard-only");
     });
   }
 });
 
 describe("classifyRecover — session-less node gated on retry_safe", () => {
-  // Consensus now requires exact incomplete-synthesis evidence below.
+  // Consensus stays here: with no attempt evidence it keeps the retry_safe rule.
   const SESSION_LESS: Array<Exclude<NodeKind, "ai_coding" | "judge">> = [
     "cli",
     "check",
     "guard",
     "human",
+    "consensus",
     null,
   ];
 
   for (const kind of SESSION_LESS) {
     it(`${String(kind)} + retry_safe=true → redispatch (acpSessionId irrelevant)`, () => {
       expect(
-        classifyRecover({ acpSessionId: "acp-1" }, kind, true),
+        classifyRecover({ acpSessionId: "acp-1" }, kind, true, null),
       ).toBe<RecoverPlan>("redispatch");
       expect(
-        classifyRecover({ acpSessionId: null }, kind, true),
+        classifyRecover({ acpSessionId: null }, kind, true, null),
       ).toBe<RecoverPlan>("redispatch");
     });
 
     it(`${String(kind)} + retry_safe=false → discard-only (re-run unsafe)`, () => {
       expect(
-        classifyRecover({ acpSessionId: "acp-1" }, kind, false),
+        classifyRecover({ acpSessionId: "acp-1" }, kind, false, null),
       ).toBe<RecoverPlan>("discard-only");
       expect(
-        classifyRecover({ acpSessionId: null }, kind, false),
+        classifyRecover({ acpSessionId: null }, kind, false, null),
       ).toBe<RecoverPlan>("discard-only");
     });
   }
 });
 
-describe("P0-5 incomplete consensus synthesis", () => {
-  it("redispatches a witnessed incomplete synthesis with default retry_safe", () => {
+describe("P0-5 consensus attempt evidence", () => {
+  const noEvidence = { incompleteSynthesis: false, quarantined: false };
+
+  it("redispatches a witnessed incomplete synthesis even with default retry_safe", () => {
     expect(
       classifyRecover({ acpSessionId: null }, "consensus", false, {
         incompleteSynthesis: true,
         quarantined: false,
       }),
-    ).toBe("redispatch");
+    ).toBe<RecoverPlan>("redispatch");
+  });
+
+  it("keeps the retry_safe rule when the latest attempt carries no witness", () => {
     expect(
-      classifyRecover({ acpSessionId: null }, "consensus", false, {
-        incompleteSynthesis: false,
-        quarantined: false,
-      }),
-    ).toBe("discard-only");
+      classifyRecover({ acpSessionId: null }, "consensus", true, noEvidence),
+    ).toBe<RecoverPlan>("redispatch");
     expect(
-      classifyRecover({ acpSessionId: null }, "consensus", true, {
-        incompleteSynthesis: false,
-        quarantined: false,
-      }),
-    ).toBe("discard-only");
-    expect(
-      classifyRecover({ acpSessionId: null }, "consensus", true, {
-        incompleteSynthesis: true,
-        quarantined: true,
-      }),
-    ).toBe("discard-only");
+      classifyRecover({ acpSessionId: null }, "consensus", false, noEvidence),
+    ).toBe<RecoverPlan>("discard-only");
+  });
+
+  it("refuses any re-run of a quarantined consensus attempt, retry_safe included", () => {
+    for (const retrySafe of [true, false]) {
+      expect(
+        classifyRecover({ acpSessionId: null }, "consensus", retrySafe, {
+          incompleteSynthesis: true,
+          quarantined: true,
+        }),
+      ).toBe<RecoverPlan>("discard-only");
+    }
   });
 });

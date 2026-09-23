@@ -95,7 +95,11 @@ import {
 } from "@/components/workbench/review-workspace";
 import { WorkbenchPanel } from "@/components/workbench/workbench-panel";
 import { type WorkbenchTabsLabels } from "@/components/workbench/workbench-tabs";
-import { getProjectRole, getSessionUser } from "@/lib/authz";
+import {
+  getProjectRole,
+  getSessionUser,
+  projectRolesForActions,
+} from "@/lib/authz";
 import { isMaisterError } from "@/lib/errors";
 import { prepareDiff } from "@/lib/diff/prepare";
 import { reposRoot, worktreesRoot } from "@/lib/instance-config";
@@ -359,6 +363,11 @@ export default async function RunDetailLayout({
   if (!role) notFound();
 
   const canAct = role === "owner" || role === "admin" || role === "member";
+  // The consensus draft download serves agent output that can quote repository
+  // files; its payload route requires `readRepoFiles`, so the link follows it.
+  const canReadRepoFiles = projectRolesForActions(["readRepoFiles"]).includes(
+    role,
+  );
   const [t, locale] = await Promise.all([getTranslations("run"), getLocale()]);
 
   const timeline = await getRunTimeline(runId);
@@ -1800,6 +1809,7 @@ export default async function RunDetailLayout({
                           availableOptions={detail.pendingHitl.availableOptions}
                           budgetProgress={detail.pendingHitl.budgetProgress}
                           canAct={canAct}
+                          canReadRepoFiles={canReadRepoFiles}
                           claimStage={detail.pendingHitl.claimStage}
                           criticality={detail.pendingHitl.criticality}
                           hitlRequestId={detail.pendingHitl.hitlRequestId}
@@ -1830,6 +1840,7 @@ export default async function RunDetailLayout({
                       availableOptions={detail.pendingHitl.availableOptions}
                       budgetProgress={detail.pendingHitl.budgetProgress}
                       canAct={canAct}
+                      canReadRepoFiles={canReadRepoFiles}
                       claimStage={detail.pendingHitl.claimStage}
                       criticality={detail.pendingHitl.criticality}
                       hitlRequestId={detail.pendingHitl.hitlRequestId}
@@ -1897,6 +1908,7 @@ export default async function RunDetailLayout({
                 availableOptions={pendingHitl.availableOptions}
                 budgetProgress={pendingHitl.budgetProgress}
                 canAct={canAct}
+                canReadRepoFiles={canReadRepoFiles}
                 claimStage={pendingHitl.claimStage}
                 criticality={pendingHitl.criticality}
                 hitlRequestId={pendingHitl.hitlRequestId}

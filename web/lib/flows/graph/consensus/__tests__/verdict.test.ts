@@ -110,4 +110,42 @@ describe("parseConsensusVerdict", () => {
       verdict: "disagree",
     });
   });
+
+  it("classifies a parsed disagree with every axis true and no content as technical", () => {
+    const parsed = parseConsensusVerdict(
+      JSON.stringify({
+        verdict: "disagree",
+        axes: Object.fromEntries(AXES.map((axis) => [axis, true])),
+        disagreements: [{ axis: AXES[0], claim: "  ", counter_evidence: "" }],
+      }),
+      AXES,
+    );
+
+    expect(parsed).toMatchObject({
+      parseStatus: "invalid_schema",
+      verdict: "disagree",
+      disagreements: [],
+      technicalDetail: "empty_disagreement",
+    });
+    expect(Object.values(parsed.axes).every((value) => value === false)).toBe(
+      true,
+    );
+  });
+
+  it("keeps a disagree that names a false axis as a real content verdict", () => {
+    const parsed = parseConsensusVerdict(
+      JSON.stringify({
+        verdict: "disagree",
+        axes: {
+          ...Object.fromEntries(AXES.map((axis) => [axis, true])),
+          [AXES[1]]: false,
+        },
+        disagreements: [],
+      }),
+      AXES,
+    );
+
+    expect(parsed.parseStatus).toBe("parsed");
+    expect(parsed.technicalDetail).toBeUndefined();
+  });
 });
