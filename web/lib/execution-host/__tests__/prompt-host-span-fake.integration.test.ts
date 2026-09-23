@@ -86,6 +86,9 @@ beforeEach(async () => {
 
 afterAll(async () => {
   await fake?.releaseIngest();
+  // Drain in-flight turns and canonical deliveries before the pool ends, or a
+  // late delivery meets a terminated connection (57P01) after the suite.
+  await fake?.waitForCanonicalEvents();
   await database?.stop();
 });
 
