@@ -86,6 +86,7 @@ type ConsensusResolutionSchemaLike = {
   kind?: unknown;
   allowedDecisions?: unknown;
   decisions?: unknown;
+  drafts?: unknown;
 };
 
 export type ResolvedConsensusDecision = {
@@ -141,6 +142,19 @@ export function validateConsensusDecision(
       ok: false,
       message: `decision must be one of [${allowed.join(", ")}]`,
     };
+  }
+
+  if (decision.startsWith("pick-draft-")) {
+    const drafts = (schema as ConsensusResolutionSchemaLike).drafts;
+    const selected = Array.isArray(drafts)
+      ? drafts.find(
+          (draft) => isPlainObject(draft) && draft.decision === decision,
+        )
+      : undefined;
+
+    if (isPlainObject(selected) && selected.classification === "unavailable") {
+      return { ok: false, message: "draft is unavailable" };
+    }
   }
 
   if (decision === "provide-resolution") {

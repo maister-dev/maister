@@ -627,6 +627,7 @@ describe("runConsensusNode", () => {
       ),
     ).toBe(true);
     expect(runAgentStep).not.toHaveBeenCalled();
+    expect(acquireConsensusAgentCapacity).not.toHaveBeenCalled();
     expect(
       prompts.find((item) => item.participantId === "qa")?.prompt,
     ).toContain("partial QA");

@@ -1531,6 +1531,39 @@ describe("HITL respond route — consensus resolution decision (M41)", () => {
     expect(onDisk).toEqual({ decision: "pick-draft-1" });
   });
 
+  it("refuses an unavailable draft before mutating the HITL request", async () => {
+    const { runId, hitlRequestId, stepId } = seedFormRow("human", {
+      schema: {
+        ...consensusSchema,
+        allowedDecisions: ["pick-draft-1", "pick-draft-2", "abort"],
+        drafts: [
+          { decision: "pick-draft-1", classification: "partial" },
+          { decision: "pick-draft-2", classification: "unavailable" },
+        ],
+      },
+    });
+
+    const res = await invokePost(runId, hitlRequestId, {
+      response: { decision: "pick-draft-2" },
+    });
+
+    expect(res.status).toBe(422);
+    expect(dbState.tables.hitl_requests[0].respondedAt).toBeNull();
+    expect(dbState.tables.hitl_requests[0].response).toBeNull();
+    expect(
+      existsSync(
+        join(
+          runtimeRoot,
+          ".maister",
+          "demo",
+          "runs",
+          runId,
+          `input-${stepId}.json`,
+        ),
+      ),
+    ).toBe(false);
+  });
+
   it("stores a human resolution in the response artifact but not assignment events", async () => {
     const { runId, hitlRequestId, stepId } = seedFormRow("human", {
       schema: consensusSchema,
