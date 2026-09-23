@@ -122,7 +122,7 @@ inspector must not repeat branch/worktree facts already visible there.
    review panel for an eligible `Review` run (see [`flow-run.md`](flow-run.md)),
    and **Reopen** lives on the PR-state chip for a `Done` run whose workspace has
    an open or conflicted PR (`Done → Review`, reusing the SAME provider PR).
-   (ADR-181 — Designed) Every Actions item is a link. The git actions
+   (ADR-181 — Implemented) Every Actions item is a link. The git actions
    (`snapshotCommit`, `discardChanges`, `exportBranch`, `update`, `openPr`,
    `finalizePr`, `reattach`) link to `/runs/{runId}?git=<section>`
    ([`git-panel.md`](git-panel.md)), which is where Update — the former Sync
@@ -171,7 +171,7 @@ Disabled actions display one-line reasons:
 - Flow uses `getRunNodeStatuses`, `GET /api/runs/{runId}/graph-status`, and
   Flow topology from the pinned manifest.
 - Actions use `deriveWorkbenchLifecycleActions` plus promote/delivery policy
-  state. (ADR-181 — Designed) The run detail feeds it the viewer and the open
+  state. (ADR-181 — Implemented) The run detail feeds it the viewer and the open
   rework claim's owner, and `hasWorkspace` is `workspaceId != null`; the
   inspector items carry the git panel deep link as `href`. Delivery shortcuts must preserve the same readiness, target-drift,
   `reviewedTargetCommit`, and truncated-diff acknowledgement contract as the

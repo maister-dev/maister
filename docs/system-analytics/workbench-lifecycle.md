@@ -130,16 +130,19 @@ body values. JSONL and other runtime-artifact retention are unchanged.
 | `Done`                                                                      | no                   | yes until pruned          | yes, status remains `Done` | yes    |
 | `Abandoned` / `Failed`                                                      | no                   | yes while worktree exists | yes                        | yes    |
 
-The matrix is implemented as an allow-list in
-`web/lib/workbench-lifecycle/policy.ts`. Unknown future statuses expose no
-actions until deliberately added. Commit and handoff branch creation are not
-policy-level read-model actions; they are sub-actions inside the Export dialog
-and routes, gated by handoff metadata and lifecycle claims. Branch **sync**
-(Implemented, ADR-141) is likewise not a policy-level read-model action and takes no
-matrix column — it is a `Review`-run operation (top-level `flow`/`agent`,
-`workspace_mode <> 'shared'`, non-experiment) launched from the ReviewPanel,
-target-drift, and PR-conflict surfaces and gated by the shared lifecycle claim;
-see [`branch-sync.md`](branch-sync.md). The combined
+The matrix is implemented as an allow-list in the ONE workbench git policy
+(`web/lib/workbench-git/policy.ts`, which `web/lib/workbench-lifecycle/policy.ts`
+re-exports). Unknown future statuses expose no actions until deliberately
+added. Since ADR-181 the git actions are policy actions beside these four —
+commit (`snapshotCommit`), `discardChanges`, publish (`exportBranch`),
+`update`, `openPr`, `finalizePr` and `reattach` — and the run git panel
+([`workbench-git.md`](workbench-git.md)) replaces the Export dialog; the
+handoff branch form lives in its Publish section, and snapshot, handoff and
+their metadata read still gate on `exportBranch`. Branch **sync** (ADR-141) is
+the panel's `update`: the web route admits it in every parked status through
+the policy, while the ext twin keeps its `Review`-only arm (top-level
+`flow`/`agent`, `workspace_mode <> 'shared'`, non-experiment); see
+[`branch-sync.md`](branch-sync.md). The combined
 **Stop & archive** / **Stop & drop** below are not new policy actions either:
 they compose the existing `stop` (live) and `archive`/`drop` (parked) actions
 server-side so the operator clicks once.
@@ -151,9 +154,11 @@ ADR-160 rework claim pokes exactly one hole in that, and only for one actor:
 
 - **Scope.** When `runStatus === 'HumanWorking'` **and** the viewer matches the
   claim's `owner_user_id` **and** the workspace is present and not removed,
-  `exportBranch` is enabled. `stop`, `archive`, and `drop` stay `human-owned`
-  for the owner too — the run is mid-handoff, and removing its worktree under
-  the operator editing it is never the right default.
+  the owner gets the git set (ADR-181: publish, commit, discard, update, open
+  PR, reattach). `stop`, `archive`, `drop` and `finalizePr` stay `human-owned`
+  for the owner too — the run is mid-handoff, and removing its worktree or
+  changing its status under the operator editing it is never the right
+  default.
 - **Why one flag opens four surfaces.** `snapshotWorkbenchCommit`,
   `createWorkbenchHandoffBranch`, and `getWorkbenchHandoffMetadata` all gate on
   `requireActionAllowed(ctx, "exportBranch")`, so enabling that single action is
@@ -390,7 +395,7 @@ exists. Both directions are matrix-tested. See [`branch-sync.md`](branch-sync.md
   [`reconciliation-gc.md`](reconciliation-gc.md), and
   [`branch-sync.md`](branch-sync.md) (the `sync` lifecycle op + promotion double
   fence).
-- Designed successor for the git actions (ADR-181): [`workbench-git.md`](workbench-git.md)
+- Successor for the git actions (ADR-181): [`workbench-git.md`](workbench-git.md)
   — one status-independent policy, publish under a public name, update, PR
   before promotion, discard, re-attach; archive/drop stay here.
 - Source: `web/lib/workbench-lifecycle/*`,

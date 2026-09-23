@@ -516,7 +516,7 @@ record.
     `lib/runs/sync-ref.ts`; the git-state read model counts each update option
     against the same ref, so it drops the `baseCommit` fallback: a base the
     update would refuse (`base_branch_unknown`) shows no counts.
-- **C54–C65 — found during Phase 3 and the T4.3 truth pass (2026-09-23).**
+- **C54–C67 — found during Phase 3, the T4.3 truth pass, the T4.1 smoke and T4.4 (2026-09-23).**
   - **C54 — attribution rides the finalize, not `PromoteRunInput`.** D12 widened
     `PromoteRunInput.attribution` with `{source:"pr_finalize"}`, but that source
     is minted only by the parked finalize, which never enters `promoteRun`. The
@@ -584,6 +584,20 @@ record.
     never listed; the Tree section lists them newest first. The header chip's
     "with its source" was never served (the name source is the publish
     response's `nameSource`); the screen doc now says so.
+  - **C66 — a vanished worktree failed the run page (found by the T4.1
+    smoke's `[WebServer]` log).** `withTempIndexCopy`'s `rev-parse --git-path
+    index` threw a raw error when the worktree directory was gone, so the run
+    layout's change summary rethrew it (it renders only a `MaisterError` as
+    "unavailable") — exactly the `worktree-gone` page Reattach is offered on.
+    Pre-existing code, made reachable by this plan; it now refuses `CONFLICT`
+    like every sibling git read (`worktree-diff-namestatus.test.ts` pins it,
+    red on the unfixed helper).
+  - **C67 — the ADR-160 comment in `getRunDetail` was displaced (found in
+    T4.4, profiling the m11b e2e failure).** Phase 1 inserted the git fact
+    loader between that comment and `deriveRunContinuation`, so the comment
+    ("the launched-lineage probe [is] paid ONLY on that path") read as if it
+    described the loader, which probes on every non-scratch run. Moved back above
+    `deriveRunContinuation`; no code change.
 - **Token set (final, T0.1).** Service refusals: `public_name_fixed`,
   `public_branch_template_invalid` (400 `CONFIG`), `clean_worktree`,
   `dirty_worktree`, `not_published`, `published_remote_not_origin`,
@@ -1761,7 +1775,7 @@ honours its three modes; refactor gate passed.
 
 ### Phase 4 — e2e smoke, manual live check, as-built truth pass, lane re-qualification
 
-- [ ] **T4.1 — e2e smoke.** Seed `seedWorkbenchGitFixture` in `e2e/_seed/seed-e2e.ts`:
+- [x] **T4.1 — e2e smoke.** Seed `seedWorkbenchGitFixture` in `e2e/_seed/seed-e2e.ts`:
       a project with a bare remote (the `provisionM27Repo:5166-5191` shape), a
       task, a run inserted `Failed` with a real worktree carrying an uncommitted
       change, `provider: "github"` and a `repo_url` that is never contacted. The
@@ -1782,6 +1796,23 @@ honours its three modes; refactor gate passed.
       `--workers=2`.
       **AC**: passes twice on a quiet host; no `networkidle`; every assertion waits
       on the specific response; the fake `gh` recorded exactly one create.
+      **Verified 2026-09-23.** `e2e/workbench-git.spec.ts` passed 3/3 at
+      `--workers=2` (12.4 s, 28.5 s, and 13.8 s inside the full lane on the final
+      code tree). No host was quiet today (load 30-72 — another worktree's vitest
+      lane and a VM at ~600 % CPU), so "quiet" is not claimed. The run is reached
+      through the portfolio's run link, the Backlog card's latest-run actions
+      (`task-card-latest-run-actions`) and the detail's panel host
+      (`workbench-git-open`); Commit, Publish, Open PR and Finalize each await
+      their own response; the bare remote's `refs/heads/<public>` equals the
+      worktree HEAD; the fake recorded exactly one create `{head: <public>, base:
+      main, title: "EWG-1: Fix the widget", draft: true}` and none on finalize,
+      which confirms first outside `Review` (C64); the board then shows the Done
+      run in In Delivery. Also here: `e2e/m27-workbench-lifecycle.spec.ts`
+      migrated — the Phase 1 migration row that never landed (contract moved: the
+      card surfaces show Archive/Drop plus the `card-git-*` deep links, the detail
+      hosts the panel, commit and the handoff branch go through it), with the
+      run-detail specs' 120 s budget; and C66, found by this smoke's `[WebServer]`
+      log.
 - [ ] **T4.2 — Manual live check (owner-executed, recorded).** Against a real
       remote: `gh pr create --draft` (github), `glab mr create --draft` (gitlab), and
       the Gitea family `WIP:` prefix on the owner's Gitea/GitVerse instance —
@@ -1791,7 +1822,14 @@ honours its three modes; refactor gate passed.
       `workbench-git.md` Linked artifacts as the ADR-049-style manual evidence line.
       **AC**: three providers listed with a version and an outcome; any gap becomes
       an Edge-case bullet, not a silent pass.
-- [ ] **T4.3 — As-built docs truth pass + status flips.** Re-derive the contract
+      **Not executed (2026-09-23) — owner-executed, left open.** No real remote or
+      provider credential is used from this session. The gap is recorded, not
+      passed: `workbench-git.md` Linked artifacts carries the pending evidence line
+      with the exact checks, and its Edge cases state that draft handling is
+      proven at the adapter boundary and against the fake `gh` only (a
+      Gitea-family server ignoring the `WIP:` convention opens a ready PR).
+      Commit 8's body says the same.
+- [x] **T4.3 — As-built docs truth pass + status flips.** Re-derive the contract
       surface list from `git diff master...HEAD` and reconcile with the Phase-0
       table (every difference explained in the commit body);
       `workbench-git.md` → **Implemented** (every Expectation re-verified against
@@ -1807,7 +1845,25 @@ honours its three modes; refactor gate passed.
       `pnpm validate:contracts`, redocly, asyncapi.
       **AC**: no `(Designed)` tag remains for ADR-181 surfaces; the three-way ADR
       bijection passes; no `M-NN` token in any new sentence (R6).
-- [ ] **T4.4 — Lanes green, by name.** Quiet host, ports 3100/7788 freed:
+      **Verified 2026-09-23.** `workbench-git.md` → Implemented (Expectations
+      edited in place, each naming its enforcer; edge cases for C55/C58/C60 and
+      the live-check gap); `workbench-lifecycle.md`, `branch-sync.md` (its 12
+      Expectations edited in place), `git-integration.md` (+ the topical ADR-181
+      section), `scratch-runs.md`, `workspaces.md`; OpenAPI tags and summaries,
+      C31/C43/C58/C60, the promote route's reason tokens and scratch modes,
+      `publishedTrackingHead` (C65); the ERD comments, schema doc, error taxonomy,
+      configuration, AsyncAPI, the screens as built (RU labels against
+      `ru.json`); ADR-181 Implemented in the record, the stub and the index, with
+      as-built amendments; root `CLAUDE.md` §7 and §8 (C8). The surface
+      reconciliation's four differences (the promote route's forwarded reasons,
+      C36, C63, C65) are in Commit 8's body. Gates: `pnpm validate:docs` green
+      (58/58 mermaid, 363 ADR anchors + 180 stub↔body pairs in sync, 847 links,
+      142 indexed files, ERD current at 125 tables), `pnpm validate:contracts`
+      green (OpenAPI + AsyncAPI meta-schemas, adapter mirrors), Redocly the SAME
+      8-error / 41-warning set as `master` (all pre-existing, none in an ADR-181
+      schema). No `(Designed)` tag remains beside an ADR-181 mention and no
+      `M-NN` token is in any added doc line (grep of the branch diff).
+- [x] **T4.4 — Lanes green, by name.** Quiet host, ports 3100/7788 freed:
       `pnpm --filter maister-web test:unit`, `test:integration` (~25 min; the two
       `prompt-owners` files dominate), `pnpm --filter @maister/supervisor test`
       (untouched — must still be green), `pnpm --filter maister-web test:e2e
@@ -1819,6 +1875,32 @@ honours its three modes; refactor gate passed.
       green 4/4 when hit; e2e set ⊆ the documented `master` set + zero new names;
       `pnpm lint` 0 errors on changed files; `pnpm typecheck` clean; `git status`
       clean of `eslint --fix` collateral.
+      **Verified 2026-09-23, with two stated deviations.** No host was quiet (load
+      20-72; `pmset -g log`: no sleep after 09:17, so no timeout is a sleep). Unit
+      825 files / 8606 tests green, 0 skipped. Integration: the full lane ran at
+      Commit 7 (511 / 4535, load 25-240) with 6 reds in 5 files — beyond the
+      documented `deliverer` D3, four names (`permission-deadline` RED 13/14,
+      `run-transcript-projector`, `projection-worker` AT-03,
+      `gate-permission-resume`) in code this branch does not touch, green on ONE
+      idle batch re-run, not 4/4 each (deviation 1). The final tree changed
+      since only by C66 (an error-path refusal) and C67 (a comment), so the 28
+      integration files this branch adds or edits plus every C66 caller re-ran on
+      it: 383/383. Supervisor untouched, 449 + 244/245 (runtime-file-budget AT-02
+      8/8 alone twice). e2e, the full lane on the final code tree: 191 passed, 7
+      failed, 1 static skip, 1 not run (serial). Deviation 2 — three names are
+      not in the documented 2026-09-22 set, but the plan's own comparison is "a
+      `master` run on the same host": run on this branch's merge base c36ff5b1
+      (a detached worktree, same host, same session), `orchestrator-loop:56`
+      and `flow-target-delegation:36` fail at the identical assertions (paths
+      with no line of this branch), and `m11b-takeover:67` fails at `:202`
+      where the branch fails one step earlier (`:95`, Return 5 s after the
+      claim) — the branch's run page renders ~10-20 % slower on the e2e
+      database (claim → Return median 3.46 s vs 2.91 s, n = 3 interleaved;
+      probed: git fact loader ~26 ms, rail + presence ~50 ms over 33 rows; see
+      Follow-ups). `push-notifications:103` (documented flaky) is intermittent
+      under either config. So the documented set is stale, not this branch's
+      set larger. Lint: eslint on the 125 changed web files 0 errors / 0
+      warnings, no `--fix` collateral; `tsc --noEmit` clean.
 
 **Commit 8** — `docs(workbench-git): ADR-181 Implemented — as-built sweep, e2e smoke, live PR check`
 
@@ -2024,8 +2106,8 @@ the whole supervisor suite (untouched).
 ## Follow-ups
 
 Everything above ships in this plan; the two R9 TODOs are recorded defects, not
-deferred work of this change. One scope question was found during Phase 2 and is
-put to the owner rather than widened silently:
+deferred work of this change. Two scope questions were found (Phase 2, T4.4) and
+are put to the owner rather than widened silently:
 
 - **Recover does not respect the workspace lifecycle slot (found in T2.1).**
   `resumeCrashedRun` flips `Crashed → Running` without reading
@@ -2040,6 +2122,17 @@ put to the owner rather than widened silently:
   while a live lifecycle claim holds the workspace (a new recover refusal —
   OpenAPI, error taxonomy, the ext twin), and the lifecycle claim compares
   `expectedRunStatus` under a run row lock.
+- **`Failed` rows are never reclaimed, so D14's lists have no bound (found in
+  T4.4).** `DISPOSABLE_WORKSPACE_RUN_STATUSES` is `Done | Abandoned`: a `Failed`
+  run's worktree stays on disk (pre-existing) and, since D14, stays listed in the
+  rail, the portfolio and the project workspace list — one `fs.stat` per row, and
+  `getRailWorkspaceGroups` has no page bound. ADR-181 accepts that "portfolio
+  counts and the rail grow accordingly"; it does not decide a bound (a `Failed`
+  TTL, or a page), which is the owner's call. Measured on the e2e database (33
+  rail rows): the rail query plus presence is ~50 ms median per page render, the
+  git fact loader ~26 ms. The attention stream's change scan inherits the same set
+  (D14, accepted); its comment's "capped by `MAISTER_MAX_CONCURRENT_RUNS`" was
+  already loose (`Review` / `Crashed` hold no slot) and is looser now.
 
 ---
 

@@ -6500,6 +6500,14 @@ paths:
 
         On success all strategies terminate the run at `Done` (no new run
         status); `pull_request` additionally records `pullRequestUrl`/`prNumber`.
+
+        (ADR-181 — Implemented) A scratch run promotes in all three modes,
+        target-locked to `scratch_runs.target_branch`, else its base branch (a
+        `targetBranch` naming anything else is `PRECONDITION`): `rebase_merge`
+        lands the target by fast-forward (no merge commit), and `pull_request`
+        publishes under the public branch name and opens or finds the PR like a
+        flow run's. A PR is pushed under the run's public name and opened as a
+        ready (non-draft) PR.
       operationId: promoteRun
       parameters:
         - name: runId
@@ -6533,6 +6541,11 @@ paths:
             merge/rebase textual conflict (a manual-resolution assignment is
             created and the run stays `Review`), a concurrent promotion already
             in progress, or a promotion superseded by a stale-claim reclaim.
+            (ADR-181 — Implemented) The body carries `details.reason` where a
+            token exists: `target_drift` (the target advanced since review),
+            `target_branch_unknown` (the target does not resolve to a commit),
+            `provider_unsupported` (PR mode with no usable provider) — the only
+            `details` field forwarded.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -6569,7 +6582,7 @@ paths:
         member. Mutually exclusive with promotion and every other lifecycle op
         (double fence).
 
-        **(ADR-181 — Designed) Update.** The `status='Review'` arm is replaced
+        **(ADR-181 — Implemented) Update.** The `status='Review'` arm is replaced
         by the workbench git policy (`update`): every parked status
         (`Review | Crashed | Failed | Done | Abandoned`, and `HumanWorking` for
         the open rework claim's owner) is admitted, while the run-kind,
@@ -6607,7 +6620,7 @@ paths:
                   enum: [target, base, published]
                   default: target
                   description: |
-                    (ADR-181 — Designed) The ref to rebase or merge onto:
+                    (ADR-181 — Implemented) The ref to rebase or merge onto:
                     the promotion target, the recorded base branch, or the
                     published remote branch.
                 strategy:
@@ -6618,7 +6631,7 @@ paths:
                   type: boolean
                   description: |
                     When true launch the AI resolver on conflict; when false abort with `outcome:"conflict"`.
-                    (ADR-181 — Designed) Defaults to true in `Review` only, false in every other status; `true` outside `Review` is refused (`agent_requires_review`).
+                    (ADR-181 — Implemented) Defaults to true in `Review` only, false in every other status; `true` outside `Review` is refused (`agent_requires_review`).
                 push:
                   type: boolean
                   description: Overrides the auto push-iff-published policy.
@@ -6631,7 +6644,7 @@ paths:
             Mechanical sync completed. `outcome` = `synced` (branch rebased and
             optionally pushed), `noop` (already up to date), or `conflict`
             (`agent=false`, aborted cleanly). Run stays `Review`.
-            (ADR-181 — Designed) The run keeps whatever parked status it had;
+            (ADR-181 — Implemented) The run keeps whatever parked status it had;
             on `conflict` the worktree is back at the pre-operation SHA and
             `conflictedFiles` lists the conflicting paths.
           content:
@@ -6659,7 +6672,7 @@ paths:
             claim is active, the run-kind concurrency cap is reached, or the
             force-with-lease push was rejected (branch moved remotely; the local
             rebase result is kept). Both map to HTTP 409 via `httpStatusForCode`.
-            (ADR-181 — Designed) The error body now carries `details`;
+            (ADR-181 — Implemented) The error body now carries `details`;
             `details.reason` on `PRECONDITION`: `agent_requires_review`,
             `base_branch_unknown` (`onto:"base"` with no recorded base branch),
             `not_published` (`onto:"published"` on an unpublished branch),
@@ -9325,7 +9338,7 @@ paths:
   /api/runs/{runId}/export-branch:
     post:
       tags: [runs]
-      summary: Implemented; (ADR-181 — Designed) publish the run branch under its public name
+      summary: (ADR-181 — Implemented) Publish the run branch under its public name
       description: |
         Pushes the server-owned run branch to the selected remote. Dirty
         worktrees require `snapshotDirty=true` and a non-empty `commitMessage`;
@@ -9336,15 +9349,16 @@ paths:
         `force=true` uses `git push --force-with-lease`. Successful responses
         include the pushed ref and two non-chained checkout commands.
 
-        **(ADR-181 — Designed) Publish.** Admitted by the workbench git policy
+        **(ADR-181 — Implemented) Publish.** Admitted by the workbench git policy
         (`exportBranch`) in every parked status. The internal branch stays the
         run's identity; the push is the refspec
         `refs/heads/<internal>:refs/heads/<public>` with `--set-upstream`, after
-        `--end-of-options`. The public name resolves in this order: (a) the
-        internal branch's existing upstream on the same remote — a request
-        `branchName` that differs is refused (`public_name_fixed`); (b) the
-        request `branchName`; (c) the project template
-        `projects.public_branch_template` (default
+        `--end-of-options`. The public name resolves in this order: (a) an
+        existing name on the pushed remote — the internal branch's upstream,
+        else the recorded `published_*`, else (on `origin`) the internal name a
+        pre-ADR-181 PR was opened from — and a request `branchName` that
+        differs is refused (`public_name_fixed`); (b) the request `branchName`;
+        (c) the project template `projects.public_branch_template` (default
         `feature/{task_key}-{slug}`). The lease is an explicit SHA captured by
         `ls-remote` of the public name BEFORE the push — on the forced retry a
         moved remote is the same non-fast-forward classification and the local
@@ -9374,7 +9388,7 @@ paths:
                   minLength: 1
                   maxLength: 255
                   description: |
-                    (ADR-181 — Designed) Public branch name override (validated
+                    (ADR-181 — Implemented) Public branch name override (validated
                     by `branchNameSchema`; used only as a remote ref name).
                     Omitted: the upstream, else the project template, decides.
                 snapshotDirty:
@@ -9424,17 +9438,22 @@ paths:
                     description: Fetch and track the PUBLIC branch (`<remote>/<publishedBranch>`).
                   publishedBranch:
                     type: string
-                    description: (ADR-181 — Designed) The name the branch carries on the remote.
+                    description: (ADR-181 — Implemented) The name the branch carries on the remote.
                   publishedRemote:
                     type: string
-                    description: (ADR-181 — Designed) The remote it was published to.
+                    description: (ADR-181 — Implemented) The remote it was published to.
                   publishedRef:
                     type: string
-                    description: (ADR-181 — Designed) `<publishedRemote>/<publishedBranch>`.
+                    description: (ADR-181 — Implemented) `<publishedRemote>/<publishedBranch>`.
                   nameSource:
                     type: string
                     enum: [upstream, request, template]
-                    description: (ADR-181 — Designed) Which rule chose the public name.
+                    description: |
+                      (ADR-181 — Implemented) Which rule chose the public name:
+                      `upstream` for every existing name that fixes it (the
+                      upstream, the recorded publication, a pre-ADR-181 PR
+                      head), `request` for the body's `branchName`, `template`
+                      for the project template.
               example:
                 ok: true
                 runId: 7c9e6679-7425-40de-944b-e07fc1f90ae7
@@ -9451,7 +9470,7 @@ paths:
                 nameSource: template
         "400":
           description: |
-            Invalid body (`CONFIG`), or (ADR-181 — Designed) the project
+            Invalid body (`CONFIG`), or (ADR-181 — Implemented) the project
             template rendered no valid branch name (`CONFIG` with
             `details.reason: public_branch_template_invalid` — send an explicit
             `branchName`).
@@ -9461,16 +9480,17 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404":
-          description: "(ADR-181 — Designed) Unknown run (`details.reason: run_not_found`)."
+          description: "(ADR-181 — Implemented) Unknown run (`details.reason: run_not_found`)."
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "409":
           description: |
             Live state, missing/removed workspace, missing remote, dirty worktree without snapshot consent, lifecycle claim race, or non-fast-forward push conflict.
-            (ADR-181 — Designed) `details.reason` on `PRECONDITION`:
-            `public_name_fixed` (an upstream already fixes the public name and
-            the request named another), `dirty_worktree`, or a workbench git
+            (ADR-181 — Implemented) `details.reason` on `PRECONDITION`:
+            `public_name_fixed` (an existing name — the upstream, the recorded
+            publication or a pre-ADR-181 PR head — already fixes the public
+            name and the request named another), `dirty_worktree`, or a workbench git
             policy refusal (`live_workbench`, `human_owned`,
             `missing_workspace`, `removed_workspace`, `worktree_missing`,
             `unsupported_status`, `no_remote`); `CONFLICT` with
@@ -9677,7 +9697,7 @@ paths:
   /api/runs/{runId}/git-state:
     get:
       tags: [runs]
-      summary: (ADR-181 — Designed) Read a run worktree's git state for the git panel
+      summary: (ADR-181 — Implemented) Read a run worktree's git state for the git panel
       description: |
         Requires project membership at `member` or above
         (`requireProjectAction("recoverRun")`). The response class is branch
@@ -9735,6 +9755,7 @@ paths:
                   target: { ahead: 4, behind: 2 }
                   published: { ahead: 1, behind: 0 }
                 publishedRemoteHead: 1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b
+                publishedTrackingHead: 1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b
                 remoteReachable: true
                 pr: null
                 busy: null
@@ -9778,7 +9799,7 @@ paths:
   /api/runs/{runId}/discard-changes:
     post:
       tags: [runs]
-      summary: (ADR-181 — Designed) Rescue, then discard a parked worktree's uncommitted changes
+      summary: (ADR-181 — Implemented) Rescue, then discard a parked worktree's uncommitted changes
       description: |
         Requires `member` (`requireProjectAction("promoteRun")`) and a strict
         empty body. Admitted by the workbench git policy (`discardChanges`) and
@@ -9854,13 +9875,15 @@ paths:
   /api/runs/{runId}/pr:
     post:
       tags: [runs]
-      summary: (ADR-181 — Designed) Open or find the provider PR for a published run branch
+      summary: (ADR-181 — Implemented) Open or find the provider PR for a published run branch
       description: |
         Requires `member` (`requireActiveSession` → body →
         `requireProjectAction(<run project>, "promoteRun")`). Opens — or finds
         by head/base — the provider pull/merge request from the published
         branch (`workspaces.published_branch` on `origin`) to `targetBranch`
-        (default `workspaces.target_branch`, else the project main branch)
+        (default `workspaces.target_branch`, else the project main branch; a
+        scratch run is target-locked to `scratch_runs.target_branch`, else its
+        base, exactly as its promotion — another target is `PRECONDITION`)
         through the ADR-049 `PrAdapter` (`gh --draft`, `glab --draft`; the
         Gitea family maps `draft` to a `WIP: ` title prefix because its API
         has no draft flag). An existing open PR for the same head/base is
@@ -9917,7 +9940,8 @@ paths:
         "409":
           description: |
             `PRECONDITION` with `details.reason`: `dirty_worktree` (commit or
-            discard first), `not_published` (publish first),
+            discard first), `not_published` (publish first — also when the
+            published branch vanished from `origin`),
             `published_remote_not_origin` (the branch is published to another
             remote — publish to `origin` first), `publish_stale` (the published
             head differs from the local `HEAD` — publish first),
@@ -9942,7 +9966,7 @@ paths:
   /api/runs/{runId}/pr/finalize:
     post:
       tags: [runs]
-      summary: (ADR-181 — Designed) Finalize a PR-backed run to Done
+      summary: (ADR-181 — Implemented) Finalize a PR-backed run to Done
       description: |
         Requires `member` (`requireActiveSession` → body →
         `requireProjectAction(<run project>, "promoteRun")`). Admitted while
@@ -10030,7 +10054,7 @@ paths:
   /api/runs/{runId}/reattach:
     post:
       tags: [runs]
-      summary: (ADR-181 — Designed) Re-create a removed or vanished run worktree
+      summary: (ADR-181 — Implemented) Re-create a removed or vanished run worktree
       description: |
         Requires `member` (`requireProjectAction("recoverRun")` — it restores
         state and mutates no branch content, the same floor as archive and
@@ -10040,14 +10064,20 @@ paths:
         `<published_remote>/<published_branch>` (fetched; the internal branch
         is re-created at its head with its upstream re-set), else
         `archived_branch`. Runs under the lifecycle claim, op name `reattach`.
-        A directory already present at the worktree path is refused before
-        any git call and left untouched.
+        A directory already present at the worktree path is refused untouched
+        (`CONFLICT`, `worktree_path_occupied`) — unless it is this run's own
+        crashed attempt (a registered worktree of the parent checkout, on the
+        internal branch, whose provenance names the run), which is adopted:
+        no second `git worktree add`, the provenance is re-stamped and the row
+        written.
 
         `git worktree add` (existing branch, no `-b`) is followed by the
         provenance v2 stamp rebuilt from DB facts; only then are `removed_at`
-        and `scheduled_removal_at` cleared. `archived_*` stays as history. A
-        crash between the stamp and the DB write is reconstructed by the
-        workspace reconciler (finding `workspace_reattached`).
+        and `scheduled_removal_at` cleared, in the statement that releases the
+        claim. `archived_*` stays as history. A crash between the stamp and
+        the DB write is completed by the workspace reconciler (finding
+        `workspace_reattached`) or adopted by the retry; a failed add behind
+        the claim leaves the row removed.
       operationId: reattachRunWorkbench
       parameters:
         - name: runId
@@ -20215,13 +20245,13 @@ components:
           type: array
           items: { type: string }
           description: |
-            (ADR-181 — Designed) Repository-relative paths that conflicted,
+            (ADR-181 — Implemented) Repository-relative paths that conflicted,
             captured before the abort. Non-empty only for `outcome:"conflict"`;
             the worktree is back at its pre-operation SHA.
     GitStateResponse:
       type: object
       description: |
-        (ADR-181 — Designed) The lazy git read model of one run worktree,
+        (ADR-181 — Implemented) The lazy git read model of one run worktree,
         served only by `GET /api/runs/{runId}/git-state`. Every field is always
         present; a degraded sub-read is `null` (or empty) and named in
         `warnings`.
@@ -20245,6 +20275,7 @@ components:
         - unpushedCommits
         - aheadBehind
         - publishedRemoteHead
+        - publishedTrackingHead
         - remoteReachable
         - pr
         - busy
@@ -20361,8 +20392,15 @@ components:
           nullable: true
           description: |
             `ls-remote` of the public branch (the one network read, best
-            effort). Differing from the tracking ref means the remote moved —
-            update from `published`.
+            effort). Differing from `publishedTrackingHead` means the remote
+            moved — update from `published`.
+        publishedTrackingHead:
+          type: string
+          nullable: true
+          description: |
+            The local tracking ref of the publication
+            (`refs/remotes/<publishedRemote>/<publicBranch>`), as the last
+            fetch left it; null while unpublished.
         remoteReachable:
           type: boolean
           description: False when the `ls-remote` failed; true when it succeeded or was not needed.
@@ -20477,7 +20515,7 @@ components:
     GitAheadBehind:
       type: object
       nullable: true
-      description: (ADR-181 — Designed) Commit counts of `HEAD` against one ref; null when the ref does not resolve or the worktree is absent.
+      description: (ADR-181 — Implemented) Commit counts of `HEAD` against one ref; null when the ref does not resolve or the worktree is absent.
       required: [ahead, behind]
       additionalProperties: false
       properties:
@@ -20486,7 +20524,7 @@ components:
     WorkbenchGitAction:
       type: object
       description: |
-        (ADR-181 — Designed) One entry of the workbench git policy's output.
+        (ADR-181 — Implemented) One entry of the workbench git policy's output.
         The ids are the one vocabulary shared by the policy, this DTO, the UI
         test ids and the i18n keys.
       required: [id, enabled, disabledReason]
@@ -20529,7 +20567,7 @@ components:
             - null
     DiscardChangesResponse:
       type: object
-      description: (ADR-181 — Designed) Result of a preserve-first discard.
+      description: (ADR-181 — Implemented) Result of a preserve-first discard.
       required: [ok, runId, rescueRef, sha, restoreCommand]
       additionalProperties: false
       properties:
@@ -20546,7 +20584,7 @@ components:
           description: "`git -C <worktree> restore --source=<rescueRef> -- .`"
     OpenPrBody:
       type: object
-      description: (ADR-181 — Designed) Open-PR request; every field optional.
+      description: (ADR-181 — Implemented) Open-PR request; every field optional.
       additionalProperties: false
       properties:
         title:
@@ -20566,7 +20604,7 @@ components:
           description: Validated by `branchNameSchema`; must resolve to a commit, like a `promoteRun` target override.
     OpenPrResponse:
       type: object
-      description: (ADR-181 — Designed) Result of opening (or finding) the PR.
+      description: (ADR-181 — Implemented) Result of opening (or finding) the PR.
       required: [ok, runId, url, number, state, reused, draft, targetBranch]
       additionalProperties: false
       properties:
@@ -20588,7 +20626,7 @@ components:
     FinalizePrBody:
       type: object
       description: |
-        (ADR-181 — Designed) Finalize request. Both fields are meaningful only
+        (ADR-181 — Implemented) Finalize request. Both fields are meaningful only
         for a `Review` run (they are forwarded to `promoteRun`); sent for any
         other status they are refused with `CONFIG`
         (`details.reason: review_only_field`).
@@ -20604,7 +20642,7 @@ components:
           description: Explicit "Finalize anyway" override of the target-drift gate.
     ReattachResponse:
       type: object
-      description: (ADR-181 — Designed) Result of re-attaching a worktree.
+      description: (ADR-181 — Implemented) Result of re-attaching a worktree.
       required: [ok, runId, source, head]
       additionalProperties: false
       properties:
@@ -21632,7 +21670,7 @@ components:
             the discriminator that separates a lock refusal from a stale-CAS
             refusal, since both surface as 409 `CONFLICT`.
             Never a server-only handle.
-            (ADR-181 — Designed) Every run workbench route (the lifecycle routes
+            (ADR-181 — Implemented) Every run workbench route (the lifecycle routes
             and the git panel's `export-branch`, `sync`, `git-state`,
             `discard-changes`, `pr`, `pr/finalize`, `reattach`) forwards
             `details`; the git panel branches on `code` + `details.reason`

@@ -3,6 +3,7 @@ import path from "node:path";
 import { defineConfig, devices } from "@playwright/test";
 
 import { resolvePostgresDbUrl } from "./lib/db/postgres-url";
+import { FAKE_GH_BIN_DIR, FAKE_GH_STATE } from "./e2e/_seed/fake-gh";
 import { STUB_SUPERVISOR_URL } from "./e2e/_seed/stub-supervisor";
 import { resolveTestWorktreesRoot } from "./test-support/worktree-test-root";
 
@@ -45,7 +46,7 @@ const worktreesRoot = resolveTestWorktreesRoot("e2e", process.env);
 
 process.env.MAISTER_WORKTREES_ROOT = worktreesRoot;
 const AUTHED_SPEC =
-  /.*(auto-promotion|active-workspaces|m11[abc]-.*|m12-evidence-graph|m13-assignments|m15-.*|m16-.*|m17-.*|m18-.*|m19-.*|m22-.*|m23-.*|m27-.*|m43-cutover-history|multi-run-cost-policy|run-task-context|portfolio-board|task-launch-gating|task-edit-fields-scroll|project-registration|project-onboarding|project-automations|admin-users|admin-scheduler|admin-execution-host|project-members|review-comments|review-diff-scopes|gate-chat|social-board|agent-mentions|scratch-launch|scratch-detail|scratch-composer|platform-acp-runners|model-suggestions|flows-authoring|flow-editor|run-schedules|flow-package-viewer|flow-studio-artifacts|outbound-webhooks|package-management|platform-agents-.*|evaluation-lab|orchestrator-loop|flow-target-delegation|m38-decide-routing|m40-guardrail-hooks|capability-enforcement|inbox|consensus-resolution|budget-breach-fork|mcp-hub|mcps|observatory-cost-breakdown|studio-local-edit|studio-package-viewer|studio-import|studio-diff|studio-ai-assistant|studio|forked-package-loop|plan-review-decisions|run-sync|pr-reopen|adr160-rework-claim|adr161-node-interrupt|recursive-harness|execution-host-contract|work-table|activity-feed|desk|push-notifications)\.spec\.ts$/;
+  /.*(auto-promotion|active-workspaces|m11[abc]-.*|m12-evidence-graph|m13-assignments|m15-.*|m16-.*|m17-.*|m18-.*|m19-.*|m22-.*|m23-.*|m27-.*|m43-cutover-history|multi-run-cost-policy|run-task-context|portfolio-board|task-launch-gating|task-edit-fields-scroll|project-registration|project-onboarding|project-automations|admin-users|admin-scheduler|admin-execution-host|project-members|review-comments|review-diff-scopes|gate-chat|social-board|agent-mentions|scratch-launch|scratch-detail|scratch-composer|platform-acp-runners|model-suggestions|flows-authoring|flow-editor|run-schedules|flow-package-viewer|flow-studio-artifacts|outbound-webhooks|package-management|platform-agents-.*|evaluation-lab|orchestrator-loop|flow-target-delegation|m38-decide-routing|m40-guardrail-hooks|capability-enforcement|inbox|consensus-resolution|budget-breach-fork|mcp-hub|mcps|observatory-cost-breakdown|studio-local-edit|studio-package-viewer|studio-import|studio-diff|studio-ai-assistant|studio|forked-package-loop|plan-review-decisions|run-sync|pr-reopen|workbench-git|adr160-rework-claim|adr161-node-interrupt|recursive-harness|execution-host-contract|work-table|activity-feed|desk|push-notifications)\.spec\.ts$/;
 
 export default defineConfig({
   testDir: "./e2e",
@@ -151,6 +152,14 @@ export default defineConfig({
       MAISTER_VAPID_PUBLIC_KEY,
       MAISTER_VAPID_PRIVATE_KEY,
       MAISTER_VAPID_SUBJECT: "mailto:e2e@maister.local",
+      // workbench-git.spec.ts (ADR-181 T4.1): the PR provider boundary is a
+      // fake `gh` FIRST on the dev server's PATH, recording every create in a
+      // state file the spec reads back. No other spec reaches a provider CLI
+      // (m18's PR scenario only renders a pre-seeded link), and the token is a
+      // placeholder the fake never checks.
+      PATH: `${FAKE_GH_BIN_DIR}${path.delimiter}${process.env.PATH ?? ""}`,
+      GH_TOKEN: "e2e-fake-gh-token",
+      MAISTER_E2E_FAKE_GH_STATE: FAKE_GH_STATE,
     },
   },
 });

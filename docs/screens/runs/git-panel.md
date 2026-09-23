@@ -3,8 +3,8 @@
 - **Type:** block (a dialog opened from the run's lifecycle actions).
 - **Routes:** shared by `/runs/{runId}` (flow and agent runs) and
   `/scratch-runs/{runId}`; deep-linked with `?git=<section>`.
-- **Status:** Designed (ADR-181).
-- **Source (Designed):** `web/components/workbench/git-panel.tsx`, hosted by
+- **Status:** Implemented (ADR-181).
+- **Source:** `web/components/workbench/git-panel.tsx`, hosted by
   `web/components/workbench/lifecycle-actions.tsx` (`variant="detail"`).
 
 ## JTBD
@@ -66,34 +66,38 @@ An unknown value opens the default section.
 ## Layout & regions
 
 1. **Header** — the internal branch (the run's identity), the public-name chip
-   with its source (`upstream` / `request` / `template`), the PR chip
+   (`<remote>/<branch>`; which rule chose the name — `upstream` / `request` /
+   `template` — is the publish response's `nameSource`), the PR chip
    (`open` / `merged` / `closed`, or "open (not tracked)" for a scratch run,
    whose PRs `pr_state_scan` does not track), and a busy chip naming the
    operation that owns the worktree.
 2. **Tree** — dirty counts (tracked / untracked). **Commit** opens the existing
-   snapshot-commit form. **Discard** opens the shared destructive confirmation.
-   It names the rescue ref that will be written and, after success, shows the
-   copyable restore command. Rescue refs already written are listed newest
-   first.
+   snapshot-commit form. **Discard** opens the shared destructive confirmation,
+   which says every change is saved to a rescue ref first; after success the
+   section names that ref and shows the copyable restore command. Rescue refs
+   already written are listed newest first.
 3. **Publish** — a remote select (from `remotes`), and a name field pre-filled
    from the project template. The field is hidden when an upstream already
    fixes the name, and the chip says so. A force checkbox appears only after a
    `non_fast_forward` refusal; the forced retry is the explicit-SHA lease. A
    secondary **Handoff branch…** action opens the existing handoff form (remote
    + handoff branch name), unchanged.
-4. **Update** — an `onto` select (`target` / `base` / `published`), each option
+4. **Update** — an `onto` choice (`target` / `base` / `published`), each option
    showing its ahead/behind counts; the rebase/merge strategy; a push toggle
-   defaulting to "published"; and the AI-resolver toggle, rendered ONLY for a
-   `Review` run. A "the remote moved" hint appears when `publishedRemoteHead`
-   differs from the tracking ref. A conflict result lists the conflicted paths,
+   defaulting to "published"; and the AI-resolver toggle with its runner,
+   rendered ONLY for a `Review` run. A "the remote moved" hint appears when
+   `publishedRemoteHead` differs from `publishedTrackingHead`. A conflict result lists the conflicted paths,
    and the tree is back where it started.
-5. **PR** — **Open PR** (hidden until published) opens a dialog with title,
-   body, draft and target, pre-filled from the task key, the task title and the
-   run link. A `reused` answer says the existing PR was returned untouched.
-   **Finalize** is shown while a PR is recorded and disabled with a reason when
-   the PR is closed or the run is not finalizable. From `Review` it sends the
-   target head the panel rendered, and a drift refusal offers **Finalize
-   anyway**.
+5. **PR** — once the branch is published, the section is the Open PR form:
+   title, body, target and a draft checkbox, pre-filled by the server
+   (`prDefaults`: the task key and title, the run link); before that it says
+   to publish first. A `reused` answer says the existing PR was returned
+   untouched and nothing was applied. **Finalize** is shown while a PR is
+   recorded and disabled with a reason when the PR is closed or the run is not
+   finalizable. From `Review` it sends the target head the panel rendered, and
+   a drift refusal offers **Finalize anyway**; outside `Review` it opens the
+   shared destructive confirmation first, since no readiness is asserted
+   there.
 6. **Reattach** — rendered INSTEAD of Tree / Publish / Update / PR when the
    worktree is not usable; lists which sources resolve (local branch,
    published branch, archive ref) and re-creates the worktree from the first.

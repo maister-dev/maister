@@ -383,6 +383,15 @@ inject via `{{ artifacts.<id>.content }}` (ADR-120).
 - **Workbench lifecycle** (M27): per-run `stop | archive | drop |
 snapshot-commit | export-branch | handoff-branch` to preserve/free work or
   hand a branch to a local dev. → `docs/system-analytics/workbench-lifecycle.md`.
+- **Run git panel** (ADR-181, Implemented): one status-independent policy
+  admits every git action on a parked run's worktree (`Review | Crashed |
+  Failed | Done | Abandoned`, and the rework-claim owner's `HumanWorking`) —
+  commit, preserve-first `discard-changes`, publish under a public branch name
+  (`projects.public_branch_template`, recorded in `workspaces.published_*`),
+  update onto base / target / publication (`sync` with `onto`), open a PR
+  before any promotion (`pr`), finalize a PR-backed run to `Done` from any
+  parked status (`pr/finalize`), and `reattach` a removed worktree — read by the
+  lazy `git-state`. → `docs/system-analytics/workbench-git.md`.
 - **Scratch runs**: ad-hoc conversational ACP session in a managed worktree
   (`run_kind=scratch`), outside the task board, reusing the run/HITL/diff/
   promote substrate. → `docs/system-analytics/scratch-runs.md`.
@@ -436,9 +445,11 @@ claim), returning the run to `Review` (two-step default) or — with the opt-in
 `autoFinalize` flag — best-effort chaining the finalize to `Done`.
 
 PR lifecycle state is owned by `workspaces` (`pr_state`, `pr_has_conflicts`,
-`pr_merged_at`, `pr_merge_commit_sha`) and written ONLY by the `pr_state_scan`
-job (ADR-140) — never by the supervisor, and never onto `runs.merge_commit_sha`,
-which stays the local-promotion merge commit.
+`pr_merged_at`, `pr_merge_commit_sha`) and advanced ONLY by the `pr_state_scan`
+job (ADR-140) — never by the supervisor, never by a finalize, and never onto
+`runs.merge_commit_sha`, which stays the local-promotion merge commit. The one
+other writer is the run git panel's Open PR (ADR-181), which records the PR it
+opened as `pr_state='open'` and clears a previous PR's fields.
 
 ## Current Scope
 

@@ -2299,14 +2299,26 @@ async function withTempIndexCopy<T>(
   const tmpIndex = path.join(tmpDir, "index");
 
   try {
-    const { stdout: indexPathRaw } = await execFileAsync(
-      "git",
-      ["-C", worktreePath, "rev-parse", "--git-path", "index"],
-      {
-        signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
-        maxBuffer: EXEC_MAX_BUFFER,
-      },
-    );
+    let indexPathRaw: string;
+
+    try {
+      ({ stdout: indexPathRaw } = await execFileAsync(
+        "git",
+        ["-C", worktreePath, "rev-parse", "--git-path", "index"],
+        {
+          signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
+          maxBuffer: EXEC_MAX_BUFFER,
+        },
+      ));
+    } catch (err) {
+      // Typed like every sibling git read: a vanished worktree (ADR-181's
+      // `worktree-gone`) must not surface as a raw failure a page rethrows.
+      throw new MaisterError(
+        "CONFLICT",
+        `git rev-parse --git-path index failed: ${errorText(err) || asError(err).message}`,
+        { cause: asError(err) },
+      );
+    }
     const realIndex = path.isAbsolute(indexPathRaw.trim())
       ? indexPathRaw.trim()
       : path.join(worktreePath, indexPathRaw.trim());

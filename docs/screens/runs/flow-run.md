@@ -295,7 +295,7 @@ this screen owns only the surface. All copy comes from the `run` namespace.
   (`rebase` / `merge`, defaulting to the project `sync_strategy_default`), a
   resolver-runner select (defaulting through the sync-runner chain), a **push**
   toggle, and a "resolve conflicts with AI agent" checkbox **default ON**.
-  (ADR-181 — Designed) This inline dialog is removed: `review-sync-open` and
+  (ADR-181 — Implemented) This inline dialog is removed: `review-sync-open` and
   the drift card's Sync branch open the run git panel's Update section
   (`?git=update`, [`git-panel.md`](git-panel.md)).
 - **Sync-in-progress panel** — while an attempt runs it shows the durable
@@ -314,7 +314,7 @@ this screen owns only the surface. All copy comes from the `run` namespace.
   checkbox, **default OFF** (two-step default: a resolved conflict returns the run
   to `Review` for a clean re-promote; checked finalizes to `Done` best-effort).
 
-## Run git panel (Designed — ADR-181)
+## Run git panel (ADR-181)
 
 For every parked run — `Review | Crashed | Failed | Done | Abandoned`, and
 `HumanWorking` for the open rework claim's owner — the lifecycle actions open

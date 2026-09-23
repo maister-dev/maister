@@ -795,11 +795,6 @@ export const getRunDetail = cache(async function getRunDetail(
     );
   }
 
-  // ADR-160: server-owned continuation availability. The eligibility + re-entry
-  // resolution are only meaningful for a flow run that is in Review (claimable)
-  // or already HumanWorking (claimed), so the manifest parse and the
-  // launched-lineage probe are paid ONLY on that path — every other status
-  // resolves to "unavailable" from the row alone.
   const gitFacts = await loadWorkbenchGitFacts({
     db: client,
     run: {
@@ -833,6 +828,11 @@ export const getRunDetail = cache(async function getRunDetail(
       : null,
   });
 
+  // ADR-160: server-owned continuation availability. The eligibility + re-entry
+  // resolution are only meaningful for a flow run that is in Review (claimable)
+  // or already HumanWorking (claimed), so the manifest parse and the
+  // launched-lineage probe are paid ONLY on that path — every other status
+  // resolves to "unavailable" from the row alone.
   const continuation = await deriveRunContinuation({
     client,
     runId,

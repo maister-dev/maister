@@ -1,6 +1,6 @@
 # Workbench git operations domain
 
-> **Status: Designed (ADR-181).** This contract replaces the status-gated
+> **Status: Implemented (ADR-181).** This contract replaces the status-gated
 > Export dialog, the ReviewPanel sync dialog and the scratch promote block with
 > one git panel per run. It reuses the workbench lifecycle claim, the ADR-141
 > sync core, the ADR-049 `PrAdapter`, and the `worktree.ts` primitives; nothing
@@ -34,9 +34,11 @@ re-entry ([`run-continuation.md`](run-continuation.md)).
 - **Internal branch** — `workspaces.branch`, the run's identity
   (`<prefix>task-<uuid>/attempt-N`, agent and scratch shapes). Never renamed.
 - **Public branch** — `workspaces.published_branch` + `published_remote` +
-  `published_at` (Designed, migration `0179`; co-null by CHECK): the name the
-  branch carries on the remote. Resolved upstream → request `branchName` →
-  project template, and written only after a successful push.
+  `published_at` (migration `0179`; co-null by CHECK): the name the branch
+  carries on the remote. An existing name wins — the upstream on this remote,
+  else the recorded `published_*` on it, else a pre-ADR-181 PR's head (the
+  internal name on `origin`) — then the request `branchName`, then the project
+  template; written only after a successful push.
 - **Public branch template** — `projects.public_branch_template`, default
   `feature/{task_key}-{slug}`, mirrored as `project.public_branch_template` in
   `maister.yaml`. `{task_key}` is `<projects.task_key>-<tasks.number>` (or
@@ -49,9 +51,10 @@ re-entry ([`run-continuation.md`](run-continuation.md)).
   archive/drop, not garbage-collected by this domain.
 - **Lifecycle operation** — the shared `workspaces.lifecycle_operation_*` claim
   (see [`workbench-lifecycle.md`](workbench-lifecycle.md)). TS-only names
-  `exportBranch` (publish), `sync` (update), `discardChanges`, `reattach`,
-  `prOpen` and `prFinalize` sit beside `archive | drop | snapshotCommit |
-  handoffBranch` and the existing crashed-run removal `discard`.
+  `exportBranch` (publish), `sync` (update), `discardChanges`, `reattach` and
+  `prOpen` sit beside `archive | drop | snapshotCommit | handoffBranch` and the
+  existing crashed-run removal `discard`. A PR finalize takes the promotion
+  claim (`promotion_state` / `promotion_attempt_id`), not this slot.
 - **Workbench git policy** — one pure predicate (`deriveWorkbenchGitActions`)
   over facts assembled by one loader (`loadWorkbenchGitFacts`). Its output is
   the ordered action list with a disabled reason from a closed set.
@@ -141,8 +144,8 @@ sequenceDiagram
     Op->>Route: publish {remote?, branchName?, force?}
     Route->>Svc: authorize promoteRun + policy(exportBranch)
     Svc->>Git: upstream of internal branch?
-    alt upstream exists on the same remote
-        Svc->>Svc: public = upstream branch (a different branchName is refused)
+    alt upstream, recorded publication or legacy PR head on this remote
+        Svc->>Svc: public = that fixed name (a different branchName is refused)
     else request branchName
         Svc->>Svc: public = branchName (branchNameSchema)
     else template
@@ -175,7 +178,7 @@ sequenceDiagram
     Svc->>Git: fetch remote (origin for base/target, published_remote for published)
     Svc->>Git: rebase or merge internal branch onto ref
     alt clean
-        Svc->>Git: verify gate (clean, on branch, no markers, ancestor, ahead > 0)
+        Svc->>Git: verify gate (clean, on branch, no markers, ancestor, ahead > 0 — waived onto the run's own publication with nothing local past it)
         opt push (default iff published)
             Svc->>Git: push --force-with-lease=refs/heads/public:sha internal:public
         end
@@ -200,15 +203,18 @@ sequenceDiagram
     participant Scan as pr_state_scan
     Op->>PR: {title, body, draft, targetBranch}
     PR->>PR: policy(openPr), clean tree, published on origin, published head = local HEAD
+    PR->>DB: claim lifecycle slot (prOpen) — every refusal lands before it
     PR->>PA: createOrUpdatePr(public -> target, draft)
     PA-->>PR: {url, number, reused} (existing open PR returned untouched)
-    PR->>DB: pr_url, pr_number, pr_state=open, target_branch (runs.status unchanged)
+    PR->>DB: pr_url, pr_number, pr_state=open, target_branch + release, one UPDATE (runs.status unchanged)
     Scan->>DB: pr_state open | merged | closed, pr_has_conflicts
     Op->>Fin: {reviewedTargetCommit?, allowTargetDrift?}
     Fin->>Fin: policy(finalizePr) — pr_state must not be closed
     alt status Review
         Fin->>DB: promoteRun(mode=pull_request, reviewedTargetCommit) — readiness and drift apply
     else Crashed | Failed | Abandoned
+        Fin->>Fin: published head (ls-remote) = worktree HEAD, else publish_stale
+        Fin->>DB: promotion claim CAS under the workspace lock
         Fin->>DB: Done, promotion_state=done, promoted_head_sha, GC schedule, run.promoted + run.done (source=pr_finalize)
     end
 ```
@@ -282,10 +288,12 @@ is `CONFLICT`, the rest `PRECONDITION`), and an unknown run is 404 with
   the push succeeded; a non-fast-forward rejection MUST be `CONFLICT` with
   `pushRejected:"non_fast_forward"` and `canForce:true` (enforced by
   `pushBranch` and `recordPublished`, the one writer of `published_*`).
-- The public name MUST resolve upstream → request `branchName` → project
-  template, in that order; a template that renders a `branchNameSchema`-invalid
-  name MUST refuse `MaisterError("CONFIG")`, and the three `published_*` columns
-  MUST be all set or all null (enforced by `renderPublicBranchName` and CHECK
+- The public name MUST resolve an existing name first (the upstream, the
+  recorded `published_*`, a pre-ADR-181 PR head — each on the pushed remote)
+  → request `branchName` → project template, in that order; a template that
+  renders a `branchNameSchema`-invalid name MUST refuse `MaisterError("CONFIG")`,
+  and the three `published_*` columns MUST be all set or all null (enforced by
+  `resolvePublishName`, `renderPublicBranchName` and CHECK
   `workspaces_published_shape_check`).
 - `isBranchPublished` and the rework-claim return ingest MUST read
   `published_branch`/`published_remote` before probing upstream, so a published
@@ -306,8 +314,8 @@ is `CONFLICT`, the rest `PRECONDITION`), and an unknown run is 404 with
   set `runs.status='Done'`, `promotion_state='done'`, `promoted_head_sha` and
   `scheduled_removal_at`, and emit `run.promoted` + `run.done` with
   `attribution.source='pr_finalize'`; `pr_state='closed'` MUST refuse
-  `PRECONDITION` (enforced by `finalizePullRequestRun` under the promotion claim
-  CAS).
+  `PRECONDITION` (enforced by `finalizePullRequestRun` and
+  `finalizeParkedPullRequest`, under the promotion claim CAS).
 - Discard MUST write the rescue ref before `reset --hard` + `clean -fd` without
   touching the worktree's real index, MUST refuse a clean tree with
   `PRECONDITION`, and the ref MUST survive archive/drop of the workspace
@@ -341,7 +349,11 @@ is `CONFLICT`, the rest `PRECONDITION`), and an unknown run is 404 with
   `public_branch_template_invalid`; the dialog falls back to the editable field.
 - Provider `generic` (or no `gh`/`glab`/token) → open PR refuses
   `MaisterError("PRECONDITION")` `provider_unsupported`, exactly as
-  `pull_request` promotion does.
+  `pull_request` promotion does (one resolution, `preflightedPrAdapter`).
+- A scratch run's Open PR targets its locked branch
+  (`scratch_runs.target_branch ?? base_branch`), as its promotion does; another
+  target is refused `MaisterError("PRECONDITION")`, so a later finalize from
+  `Review` finds the same PR by head/base.
 - Branch published to a remote other than `origin` → open PR refuses
   `MaisterError("PRECONDITION")` `published_remote_not_origin`; cross-repository
   PRs are out of scope.
@@ -351,7 +363,12 @@ is `CONFLICT`, the rest `PRECONDITION`), and an unknown run is 404 with
 - PR closed on the provider → finalize refuses `PRECONDITION` `pr_closed`; open
   PR creates a new PR for the same head/base (the dedup lists open PRs only).
 - Published head differs from local HEAD on open PR or finalize →
-  `MaisterError("PRECONDITION")` `publish_stale` ("publish first").
+  `MaisterError("PRECONDITION")` `publish_stale` ("publish first"); a
+  published branch that vanished from `origin` reads `not_published` on open PR
+  and `publish_stale` on finalize.
+- A shared-tree allocator finalized from `Failed` settles the tree's `Review`
+  siblings with it; a sibling still writing the tree makes finalize `busy`
+  (`CONFLICT`), under the policy and again under the claim's row lock.
 - Dirty tree on update or open PR → `MaisterError("PRECONDITION")`
   `dirty_worktree`, naming commit and discard as remediation.
 - `agent:true` outside `Review` → `MaisterError("PRECONDITION")`
@@ -391,32 +408,47 @@ is `CONFLICT`, the rest `PRECONDITION`), and an unknown run is 404 with
 - Crash between a successful push/PR/reattach and its DB write → the retry is
   idempotent: the push is a no-op, the PR is found by head/base, the worktree is
   adopted or completed by the reconciler.
+- The providers' draft handling is proven at the adapter boundary (argv and the
+  Gitea request body) and end to end against a fake `gh`, not against live
+  GitHub / GitLab / Gitea: a Gitea-family server that ignores the `WIP:` title
+  convention opens a ready PR. The live check is owner-executed (see Linked
+  artifacts).
 
 ## Linked artifacts
 
 - ADR: [ADR-181](../decisions.md#adr-181-run-git-panel-status-independent-worktree-git-operations-public-branch-names-and-pr-before-promotion)
-  (Accepted, with amendments); builds on [ADR-049](../decisions.md#adr-049-pr-promotion-via-a-hybrid-provider-pradapter-credential-model-b-reverses-the-gh-is-never-invoked-invariant),
+  (Implemented, with amendments); builds on [ADR-049](../decisions.md#adr-049-pr-promotion-via-a-hybrid-provider-pradapter-credential-model-b-reverses-the-gh-is-never-invoked-invariant),
   [ADR-140](../decisions.md#adr-140-pr-lifecycle-tracking),
   [ADR-141](../decisions.md#adr-141-branch-sync-with-ai-conflict-resolver-and-reopen),
   [ADR-148](../decisions.md#adr-148-run-workspace-lifecycle-cleanup-and-reconciliation),
   [ADR-160](../decisions.md#adr-160-review-run-rework-claim-with-fast-forward-only-handoff-round-trip),
   [ADR-166](../decisions.md#adr-166-local-execution-host-contract--durable-host-identity-epoch-fenced-assignments-command-ledger-opaque-adopted-workspaces).
-- API: [`../api/web.openapi.yaml`](../api/web.openapi.yaml) (Designed routes
+- API: [`../api/web.openapi.yaml`](../api/web.openapi.yaml) (routes
   `git-state`, `discard-changes`, `pr`, `pr/finalize`, `reattach`; extended
   `export-branch` and `sync`); webhook `run.promoted.source` in
   [`../api/async/outbound-webhooks.asyncapi.yaml`](../api/async/outbound-webhooks.asyncapi.yaml).
 - ERD: [`../db/runs-domain.md`](../db/runs-domain.md) (`workspaces.published_*`,
-  `projects.public_branch_template` — Designed migration `0179`).
+  `projects.public_branch_template` — migration `0179`).
 - Error taxonomy: [`../error-taxonomy.md`](../error-taxonomy.md).
 - Screens: [`../screens/runs/git-panel.md`](../screens/runs/git-panel.md).
 - Related domains: [`workbench-lifecycle.md`](workbench-lifecycle.md),
   [`branch-sync.md`](branch-sync.md), [`git-integration.md`](git-integration.md),
   [`workspaces.md`](workspaces.md), [`scratch-runs.md`](scratch-runs.md),
   [`run-continuation.md`](run-continuation.md), [`attention.md`](attention.md).
-- Source (Designed): `web/lib/workbench-git/{policy,facts,read-model,service,public-branch-name,presence}.ts`,
-  `web/components/workbench/git-panel.tsx`, extensions in
-  `web/lib/workbench-lifecycle/service.ts`, `web/lib/runs/sync-target.ts`,
-  `web/lib/runs/promote.ts`, `web/lib/runs/pr-adapter.ts`,
-  `web/lib/runs/branch-published.ts`, `web/lib/runs/rework-claim-ingest.ts`,
-  `web/lib/runs/revive-worktree.ts`, `web/lib/gc/workspace-reconciler.ts`,
-  `web/lib/worktree.ts`.
+- Source: `web/lib/workbench-git/{policy,facts,read-model,service,publication,public-branch-name,presence,pull-request,panel-link}.ts`,
+  `web/components/workbench/git-panel.tsx`, the routes
+  `web/app/api/runs/[runId]/{git-state,discard-changes,pr,pr/finalize,reattach}/route.ts`,
+  and extensions in `web/lib/workbench-lifecycle/service.ts`,
+  `web/lib/runs/{sync-target,sync-ref,sync-recovery,promote,pr-adapter,branch-published,rework-claim-ingest,revive-worktree,reopen}.ts`,
+  `web/lib/gc/workspace-reconciler.ts`, `web/lib/worktree.ts`.
+- Tests: `web/lib/workbench-git/__tests__/` (policy, publication, publish,
+  discard, lifecycle-race, reattach, pr-finalize), the `git-state` and `pr`
+  route suites,
+  `sync-target.integration.test.ts`, `pr-adapter.test.ts`,
+  `promote-{pr,service}.test.ts`, `git-panel.dom.test.ts`, and the e2e smoke
+  `web/e2e/workbench-git.spec.ts` (fake `gh`).
+- Manual live evidence (plan T4.2, owner-executed, ADR-049 style): pending —
+  `gh pr create --draft` (GitHub), `glab mr create --draft` (GitLab) and the
+  Gitea/GitVerse `WIP:` title against real remotes, with the provider CLI or
+  server version and the outcome of: draft honoured, the second Open PR finds
+  the same PR, finalize marks `Done`, `pr_state_scan` sees `open` → `merged`.

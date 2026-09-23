@@ -245,10 +245,13 @@ remote primitives; route `web/app/api/projects/[slug]/remotes/route.ts`.
 dispatches PR creation on the project's provider tag. The CLI adapters shell
 `gh`/`glab` with array args + `--end-of-options` (no shell interpolation); the
 Gitea adapter calls the REST API with a host-env bearer token. The operation is
-idempotent: when a PR already exists for `(run branch → target)` it is updated,
-never duplicated (the promotion service stores `pr_url`; the provider query is
-the crash-window fallback — see [`workspaces.md`](workspaces.md)). Tokens,
-credentials, and secret-bearing URLs are NEVER logged.
+idempotent: the push (under the run's public branch name since ADR-181) moves an
+open PR's commits, and an open PR for `(public branch → target)` is returned
+untouched (`reused: true`) — never patched, never duplicated; only when none is
+open is one created, as a draft on request (gh/glab `--draft`, the Gitea family
+a `WIP: ` title). The provider query is the crash-window fallback — see
+[`workspaces.md`](workspaces.md). Tokens, credentials, and secret-bearing URLs
+are NEVER logged.
 
 ```mermaid
 sequenceDiagram
@@ -261,25 +264,24 @@ sequenceDiagram
     alt provider = generic
         PS-->>PS: throw MaisterError(PRECONDITION) PR mode unsupported
     end
-    PS->>GIT: pushBranch(repoPath, remote, runBranch) via host credential helper
+    PS->>GIT: pushBranch internal:public --set-upstream via host credential helper
     alt push rejected (transient)
         GIT-->>PS: non-zero
         PS-->>PS: throw MaisterError(EXECUTOR_UNAVAILABLE) 503
     end
-    PS->>PA: createOrUpdatePr(source to target)
-    PA->>PROV: list existing PR for run branch to target
-    alt PR exists (or stored pr_url)
-        PROV-->>PA: existing PR
-        PA->>PROV: update PR (push commits)
-    else no PR
-        PA->>PROV: create PR (run branch to target)
+    PS->>PA: createOrUpdatePr(public branch to target, draft)
+    PA->>PROV: list open PRs for public branch to target
+    alt open PR exists
+        PROV-->>PA: existing PR (returned untouched, reused)
+    else no open PR
+        PA->>PROV: create PR (draft if asked)
     end
     alt provider 5xx (transient)
         PROV-->>PA: 5xx
         PA-->>PS: throw MaisterError(EXECUTOR_UNAVAILABLE) 503
     else ok
         PROV-->>PA: { url, number }
-        PA-->>PS: { pr_url, pr_number }
+        PA-->>PS: { url, number, reused }
     end
 ```
 
@@ -329,6 +331,27 @@ Status: **Implemented** — `web/lib/workbench-lifecycle/service.ts` +
 `web/lib/worktree.ts`. Branch/remote/path inputs are validated by typed helper
 schemas, and secret-bearing remote output is redacted before errors surface.
 
+### Publish, update, PR before promotion, discard, re-attach (Implemented, ADR-181)
+
+The run git panel ([`workbench-git.md`](workbench-git.md)) drives the same
+primitives outside promotion, one writer per worktree under the lifecycle slot:
+
+- **Publish** pushes `refs/heads/<internal>:refs/heads/<public>` with
+  `--set-upstream` after `--end-of-options`, leased against the `ls-remote`
+  SHA captured before the push; `published_*` is recorded only after it
+  succeeded. The internal branch stays the run's identity.
+- **Update** is the sync core with `onto` (target, base, or the publication
+  fetched from its own remote); its push leases the publication.
+- **Open PR** finds or creates the PR from the published branch on `origin`
+  (the one provider resolution `preflightedPrAdapter`, shared with
+  `pull_request` promotion); **finalize** is DB-only.
+- **Discard** writes a rescue ref through a copied index (`add -A`,
+  `write-tree`, `commit-tree`, `update-ref`) before `reset --hard` +
+  `clean -fd`; the real index is never touched.
+- **Re-attach** re-creates the worktree from the local branch, else the
+  fetched publication (the branch re-created with its upstream re-set), else
+  the archive ref — `git worktree add` without `-b` — and stamps provenance v2.
+
 ### PR-state reads (Implemented, ADR-140)
 
 PR lifecycle tracking adds a `getPrState({ remoteUrl, prNumber })` capability to
@@ -367,7 +390,9 @@ refspec and therefore refreshes every ref, `origin/<branch>` included. A bare
 `--force-with-lease` issued after it would lease against the just-refreshed
 remote-tracking ref and succeed even when the branch moved underneath (the
 footgun). The capture-then-fetch ORDER is the safety property. A lease rejection (the remote branch moved) surfaces as
-a typed `CONFLICT` with both SHAs; the local rebase/merge result is kept.
+a typed `CONFLICT` with both SHAs; the local rebase/merge result is kept. Since
+ADR-181 the leased ref is the publication (`<published_remote>/<published_branch>`,
+else `origin/<internal>`) and the push is the refspec `internal:public`.
 
 ```mermaid
 sequenceDiagram
@@ -542,7 +567,7 @@ metadata fails closed.
   [`workbench-lifecycle.md`](workbench-lifecycle.md) (snapshot, export, and
   handoff operations), and [`branch-sync.md`](branch-sync.md) (PR-state reads,
   sync push, resolver-backed `ai_rebase_merge`).
-- Designed consumers (ADR-181): [`workbench-git.md`](workbench-git.md) —
+- Consumers (ADR-181): [`workbench-git.md`](workbench-git.md) —
   refspec publish `internal:public` with an explicit-SHA lease, PR open with
   `draft`, PR finalize outside promotion.
 - Source: `web/lib/repo-source.ts`; **(Implemented)** `web/lib/worktree.ts`

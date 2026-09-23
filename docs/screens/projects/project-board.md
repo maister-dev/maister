@@ -90,7 +90,7 @@ The board is a horizontally scrollable set of columns:
   angle brackets) and keeps what the renderer shows literally — an intra-word
   `_`, and a raw HTML tag such as `<div>`, which this app renders as text and
   never as markup.
-- **Parked-run menu on a Backlog card (ADR-181 — Designed).** When the task's
+- **Parked-run menu on a Backlog card (ADR-181).** When the task's
   latest run is `Failed` or `Abandoned` and that run's worktree is still usable,
   the Backlog card also carries the run's lifecycle menu (`⋯`) beside Launch.
   Its git items (commit, discard, publish, update, open/finalize PR) are deep

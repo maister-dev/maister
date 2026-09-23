@@ -30,7 +30,7 @@ erDiagram
         jsonb execution_policy_default "migration 0055: default execution policy {preset,overrides}, nullable"
         jsonb task_queue_settings "ADR-121 (0087): {edgeDrain?,maxInFlightAuto?}, nullable (NULL = env defaults)"
         jsonb auto_promotion "ADR-126 (0089): lane config {enabled,lanes[]}, nullable (NULL = defaults+master OFF)"
-        text public_branch_template "NOT NULL default feature/{task_key}-{slug} (ADR-181, 0179, Designed): publish-name template"
+        text public_branch_template "NOT NULL default feature/{task_key}-{slug} (ADR-181, 0179): publish-name template"
         timestamp created_at
         timestamp archived_at "soft archive"
     }

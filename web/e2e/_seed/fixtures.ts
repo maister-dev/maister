@@ -69,6 +69,17 @@ export type E2EExecutionHostFixture = E2EProjectFixture & {
   taskNumber: number;
 };
 
+// ADR-181 T4.1: a Failed run on a project with a bare-remote origin and the
+// fake `gh` provider — commit, publish, open a PR, finalize.
+export type E2EWorkbenchGitFixture = {
+  projectSlug: string;
+  runId: string;
+  taskKey: string;
+  publicBranch: string;
+  worktreePath: string;
+  remotePath: string;
+};
+
 export type E2ERegistrationFixture = {
   repoPath: string;
   duplicateRepoPath: string;
@@ -294,6 +305,7 @@ export type E2EFixtures = {
     // ADR-141: Review run behind its target / Done run with a conflicted PR.
     runSync: E2EProjectFixture;
     prReopen: E2EProjectFixture;
+    workbenchGit: E2EWorkbenchGitFixture;
     board: E2EProjectFixture;
     scratch: E2EProjectFixture;
     registration: E2ERegistrationFixture;

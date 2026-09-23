@@ -30,6 +30,7 @@ import { promisify } from "node:util";
 import bcrypt from "bcryptjs";
 import { Pool } from "pg";
 
+import { resetFakeGhState } from "./fake-gh";
 import { E2E_EXECUTION_HOST_SLUG } from "./fixtures";
 
 import { LEGACY_STEPS_REFUSAL_MESSAGE } from "@/lib/flows/manifest-shape";
@@ -2057,6 +2058,188 @@ async function seedReopenFixture(
     projectSlug: REOPEN_SLUG,
     branch: REOPEN_BRANCH,
     worktreePath,
+  };
+}
+
+// ADR-181 T4.1 — a Failed run whose real worktree carries an uncommitted
+// change, on a project whose origin is a bare remote and whose PR provider is
+// the fake `gh` on the dev server's PATH (e2e/_seed/fake-gh.ts; C16: a local
+// Gitea is unreachable). The spec drives the whole panel path: commit →
+// publish under the public name → open a PR → finalize to Done.
+const WORKBENCH_GIT_SLUG = "e2e-workbench-git";
+const WORKBENCH_GIT_TASK_TITLE = "Fix the widget";
+
+type WorkbenchGitFixtureRecord = {
+  projectSlug: string;
+  runId: string;
+  taskKey: string;
+  publicBranch: string;
+  worktreePath: string;
+  remotePath: string;
+};
+
+async function seedWorkbenchGitFixture(
+  pool: Pool,
+  userId: string,
+): Promise<WorkbenchGitFixtureRecord> {
+  const ids = {
+    project: randomUUID(),
+    runner: randomUUID(),
+    flow: randomUUID(),
+    task: randomUUID(),
+    run: randomUUID(),
+    workspace: randomUUID(),
+    member: randomUUID(),
+  };
+  const repoPath = `${RUNTIME_ROOT}/${ids.project}`;
+  const remotePath = `${RUNTIME_ROOT}/${ids.project}.origin.git`;
+  // Under MAISTER_WORKTREES_ROOT, like m27's (the lifecycle containment guard).
+  const worktreeRoot = path.join(
+    process.env.MAISTER_WORKTREES_ROOT ??
+      path.resolve("e2e/.runtime/worktrees"),
+    ids.project,
+  );
+  const worktreePath = path.join(worktreeRoot, "run");
+  const branch = "maister/ewg-1/attempt-1";
+
+  await pool.query(`DELETE FROM projects WHERE slug = $1`, [
+    WORKBENCH_GIT_SLUG,
+  ]);
+  resetFakeGhState();
+
+  mkdirSync(path.dirname(repoPath), { recursive: true });
+  await createGitRepo(repoPath);
+  resetDir(remotePath);
+  resetDir(worktreeRoot);
+  await execFileAsync("git", [
+    "-C",
+    remotePath,
+    "init",
+    "--bare",
+    "-b",
+    "main",
+  ]);
+  await execFileAsync("git", [
+    "-C",
+    repoPath,
+    "remote",
+    "add",
+    "origin",
+    remotePath,
+  ]);
+  await execFileAsync("git", ["-C", repoPath, "push", "-q", "origin", "main"]);
+
+  const { stdout: baseSha } = await execFileAsync("git", [
+    "-C",
+    repoPath,
+    "rev-parse",
+    "HEAD",
+  ]);
+
+  await execFileAsync("git", [
+    "-C",
+    repoPath,
+    "worktree",
+    "add",
+    "-b",
+    branch,
+    worktreePath,
+    "main",
+  ]);
+  writeFileSync(path.join(worktreePath, "feature.txt"), "feature\n", "utf8");
+  await execFileAsync("git", ["-C", worktreePath, "add", "feature.txt"]);
+  await execFileAsync("git", ["-C", worktreePath, "commit", "-m", "feature"]);
+  // The change the spec commits from the panel.
+  writeFileSync(
+    path.join(worktreePath, "uncommitted.txt"),
+    "commit me from the git panel\n",
+    "utf8",
+  );
+
+  await pool.query(
+    `INSERT INTO projects (id, slug, name, repo_path, main_branch, maister_yaml_path, task_key, provider, repo_url)
+     VALUES ($1, $2, $3, $4, 'main', $5, 'EWG', 'github', $6)`,
+    [
+      ids.project,
+      WORKBENCH_GIT_SLUG,
+      "MAIster E2E Run Git Panel",
+      repoPath,
+      `${repoPath}/maister.yaml`,
+      // Never contacted: the fake `gh` answers every provider call.
+      "https://github.com/maister-e2e/workbench-git.git",
+    ],
+  );
+  await pool.query(
+    `INSERT INTO platform_acp_runners
+       (id, adapter, capability_agent, model, provider, permission_policy,
+        readiness_status, readiness_reasons, enabled)
+     VALUES ($1, 'claude', 'claude', 'claude-sonnet-4-6',
+        '{"kind":"anthropic"}'::jsonb, 'default', 'Ready', '[]'::jsonb, true)
+     ON CONFLICT (id) DO NOTHING`,
+    [ids.runner],
+  );
+  await pool.query(
+    `INSERT INTO flows (id, project_id, flow_ref_id, source, version, installed_path, manifest, schema_version)
+     VALUES ($1, $2, 'aif', $3, 'v0.0.1', $4, $5, 1)`,
+    [
+      ids.flow,
+      ids.project,
+      "github.com/maister/maister-flow-aif",
+      `${RUNTIME_ROOT}/flows/aif-workbench-git@v0.0.1`,
+      JSON.stringify(M11A_MANIFEST),
+    ],
+  );
+  // A Failed latest run returns its task to Backlog (1:N task→run).
+  await pool.query(
+    `INSERT INTO tasks (id, project_id, number, title, prompt, flow_id, status, stage)
+     VALUES ($1, $2, 1, $3, $4, $5, 'Backlog', 'Backlog')`,
+    [
+      ids.task,
+      ids.project,
+      WORKBENCH_GIT_TASK_TITLE,
+      "fix the widget",
+      ids.flow,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO runs (id, task_id, project_id, flow_id, status, flow_version, started_at, ended_at)
+     VALUES ($1, $2, $3, $4, 'Failed', 'v0.0.1', now(), now())`,
+    [ids.run, ids.task, ids.project, ids.flow],
+  );
+  await seedDefaultRunSession(pool, {
+    capabilityAgent: "claude",
+    runId: ids.run,
+    runnerId: ids.runner,
+    runnerSnapshot: e2eClaudeRunnerSnapshot(ids.runner),
+  });
+  await pool.query(
+    `INSERT INTO workspaces
+       (id, run_id, project_id, branch, worktree_path, parent_repo_path,
+        base_branch, base_commit, target_branch, promotion_mode)
+     VALUES ($1, $2, $3, $4, $5, $6, 'main', $7, 'main', 'local_merge')`,
+    [
+      ids.workspace,
+      ids.run,
+      ids.project,
+      branch,
+      worktreePath,
+      repoPath,
+      baseSha.trim(),
+    ],
+  );
+  await pool.query(
+    `INSERT INTO project_members (id, project_id, user_id, role)
+     VALUES ($1, $2, $3, 'owner')`,
+    [ids.member, ids.project, userId],
+  );
+
+  return {
+    projectSlug: WORKBENCH_GIT_SLUG,
+    runId: ids.run,
+    taskKey: "EWG-1",
+    publicBranch: "feature/EWG-1-fix-the-widget",
+    worktreePath,
+    remotePath,
   };
 }
 
@@ -8411,6 +8594,7 @@ async function main(): Promise<void> {
     const adr161 = await seedAdr160NodeInterruptFixture(pool, admin.id);
     const runSync = await seedSyncFixture(pool, admin.id);
     const prReopen = await seedReopenFixture(pool, admin.id);
+    const workbenchGit = await seedWorkbenchGitFixture(pool, admin.id);
     const m12 = await seedM12EvidenceFixture(pool, admin.id);
     const board = await seedLaunchableProjectFixture(pool, {
       slug: BOARD_SLUG,
@@ -8630,6 +8814,7 @@ You answer when summoned by an @mention.
         adr161,
         runSync,
         prReopen,
+        workbenchGit,
         m12,
         board,
         humanAsk,
