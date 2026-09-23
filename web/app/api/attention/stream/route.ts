@@ -56,7 +56,7 @@ const MAX_QUIET_MS = 5 * 60 * 1000;
  * connect-time snapshot carries an EMPTY `changed` because nothing moved — it
  * describes the state the page was already rendered from.
  */
-export const ATTENTION_REGIONS = ["decisions", "work", "activity"] as const;
+const ATTENTION_REGIONS = ["decisions", "work", "activity"] as const;
 
 export type AttentionRegion = (typeof ATTENTION_REGIONS)[number];
 
