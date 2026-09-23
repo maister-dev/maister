@@ -824,7 +824,7 @@ Each replay page is at most 500 events and 1 MiB; a response closes at a page
 boundary while backlog remains, so reconnect continues from its last delivered
 cursor. Startup audits iterate individual envelopes and verify persisted quota
 counters against retained rows.
-`GET /runtime-events/span?streamId&after&through` (Designed — ADR-167 D5
+`GET /runtime-events/span?streamId&after&through` (Implemented — ADR-167 D5
 amendment 2026-09-23) returns the same retained envelopes for the range
 `(after, through]` as one bounded JSON page (`complete`, or `partial` with
 `nextAfter`). It is read-only — it never ACKs, prunes or opens SSE — and takes no

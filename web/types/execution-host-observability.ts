@@ -75,6 +75,16 @@ export type PoisonedExecutionConsumer = Readonly<{
   lastErrorReason: string | null;
 }>;
 
+/** ADR-167 D5 amendment: prompts one host's span settled before its canonical
+ * event was ingested. `hostSpanUnconfirmed` still awaits the canonical terminal;
+ * `postHocConflicts` were applied before the canonical event disagreed. */
+export type HostSpanSettlementCounts = Readonly<{
+  executionHostId: string;
+  hostSpanUnconfirmed: number;
+  hostSpanSettled1h: number;
+  postHocConflicts: number;
+}>;
+
 export type OpenExecutionCommands = Readonly<{
   total: number;
   queued: number;
@@ -83,6 +93,7 @@ export type OpenExecutionCommands = Readonly<{
   acceptedWithoutTimestamp: number;
   oldestAcceptedAt: string | null;
   oldestAcceptedAgeMs: number | null;
+  hostSpan: readonly HostSpanSettlementCounts[];
 }>;
 
 export type ExecutionEventLagReadModel = Readonly<{

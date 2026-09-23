@@ -3149,7 +3149,8 @@
     "commands": {
       "title": "Open commands",
       "subtitle": "Current manager counts plus the latest scheduler impasse observation.",
-      "latestSweep": "Impasse sampled {sampledAt}"
+      "latestSweep": "Impasse sampled {sampledAt}",
+      "hostSpan": "Host-span settlements · {hostId}"
     },
     "clock": {
       "title": "Scheduler clock",
@@ -3182,7 +3183,10 @@
       "open": "Open",
       "accepted": "Accepted",
       "oldest": "Oldest accepted",
-      "impasse": "Last impasse"
+      "impasse": "Last impasse",
+      "hostSpanUnconfirmed": "Awaiting canonical event",
+      "hostSpanSettled1h": "Settled from host span (1 h)",
+      "postHocConflicts": "Post-hoc conflicts"
     },
     "forbidden": {
       "title": "Admin access required",

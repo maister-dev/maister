@@ -818,7 +818,7 @@ Each commit is gated on the phase exit criteria. Merge goes to master with `--no
 
 ### Phase 5: Observability, docs as-built, load control, falsification
 
-- [ ] **T5.1: Counts (D-C2).**
+- [x] **T5.1: Counts (D-C2).**
   - Files:
     - `web/lib/execution-host/events/lag-read-model.ts` (per-host query over `settled_from`; confirm with `EXPLAIN` that it uses the partial index);
     - `events/lag-observation.ts` (summary fields);
@@ -833,7 +833,9 @@ Each commit is gated on the phase exit criteria. Merge goes to master with `--no
     - `postHocConflicts` counts only applied rows carrying `prompt_terminal_conflict`;
     - **Closing:** confirming a row decrements `hostSpanUnconfirmed` (patch 2026-09-22 19.03: a derived state must be tested closing).
 
-- [ ] **T5.2: Docs as-built.** Flip every Phase 0 `Designed` tag to `Implemented`. Attach the T1.6 verdict table to the analytics. Re-verify every `file:line` cited in the amendments and analytics against the final tree (memory: "docs truth pass after milestones").
+- [x] **T5.2: Docs as-built.** Flip every Phase 0 `Designed` tag to `Implemented`. Attach the T1.6 verdict table to the analytics. Re-verify every `file:line` cited in the amendments and analytics against the final tree (memory: "docs truth pass after milestones").
+
+  - **As done (2026-09-23) — T5.1/T5.2.** `commands.hostSpan[]` per host (`HostSpanSettlementCounts`) from one grouped query over `settled_from = 'host_span'`, served by the partial index (EXPLAIN-pinned). **Deviation:** `postHocConflicts` counts only host-span rows — the canonical feed binds the very event it would disagree with, so a post-hoc conflict can only follow a host-span settlement, and the restriction keeps all three counts on the partial index. Admin panel rows + EN/RU copy; the i18n suite now pins the whole `adminExecutionHost.fields` namespace. `host-span-counts.integration.test.ts` asserts per seeded host, excludes canonical and aged rows, and tests the unconfirmed count closing. T5.2: every Phase 0 `Designed` tag of this amendment is `Implemented`; the lifecycle doc gains the T1.6 verdict table, the targeted owner-claim wait and the output source selection; test citations point at the shipped files; `loadConfirmedTerminalEvent` → `assertTerminalEventConfirmed`. No `file:line` citation was added by this branch. `validate:docs:all` and `validate:contracts` green.
 
 - [ ] **T5.3: Load control** (real supervisor, quiet machine, not beside an isolation slice; check `pmset` for sleep per memory).
   - (Counts in this task are read from `settled_from`.) Hold ingest lag at 120 s: claim the consumer and release it after 120 s. Run 6 flow runs with one `ai_coding` turn each (mock ACP adapter).

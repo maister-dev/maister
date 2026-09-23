@@ -97,6 +97,13 @@ type PoisonJsonRow = {
   lastErrorReason: string | null;
 };
 
+type HostSpanQueryRow = {
+  execution_host_id: string;
+  host_span_unconfirmed: number;
+  host_span_settled_1h: number;
+  post_hoc_conflicts: number;
+};
+
 type CommandQueryRow = {
   total: number;
   queued: number;
@@ -389,6 +396,28 @@ function commandsQuery(): SQL {
   `;
 }
 
+// Served by `execution_commands_host_span_settled_idx`. A post-hoc conflict can
+// only follow a host-span settlement: the canonical feed binds the very event
+// it would disagree with.
+export function hostSpanQuery(): SQL {
+  return sql`
+    SELECT
+      execution_host_id,
+      COUNT(*) FILTER (WHERE terminal_event_id IS NULL)::int AS host_span_unconfirmed,
+      COUNT(*) FILTER (
+        WHERE completed_at > clock_timestamp() - interval '1 hour'
+      )::int AS host_span_settled_1h,
+      COUNT(*) FILTER (
+        WHERE application_error->>'reason' = 'prompt_terminal_conflict'
+          AND completion_applied_at IS NOT NULL
+      )::int AS post_hoc_conflicts
+    FROM execution_commands
+    WHERE settled_from = 'host_span'
+    GROUP BY execution_host_id
+    ORDER BY execution_host_id
+  `;
+}
+
 function iso(value: Date | string | null): string | null {
   if (value === null) return null;
 
@@ -571,6 +600,8 @@ export async function collectExecutionEventLag(input: {
         poisonQuery(input.poisonAfter),
       );
       const commandResult = await tx.execute<CommandQueryRow>(commandsQuery());
+      const hostSpanResult =
+        await tx.execute<HostSpanQueryRow>(hostSpanQuery());
       const consumer = consumerResult.rows[0];
       const poison = poisonResult.rows[0];
       const commands = commandResult.rows[0];
@@ -627,6 +658,12 @@ export async function collectExecutionEventLag(input: {
           acceptedWithoutTimestamp: commands.accepted_without_timestamp,
           oldestAcceptedAt: iso(commands.oldest_accepted_at),
           oldestAcceptedAgeMs: ageMs(sampledAt, commands.oldest_accepted_at),
+          hostSpan: hostSpanResult.rows.map((row) => ({
+            executionHostId: row.execution_host_id,
+            hostSpanUnconfirmed: row.host_span_unconfirmed,
+            hostSpanSettled1h: row.host_span_settled_1h,
+            postHocConflicts: row.post_hoc_conflicts,
+          })),
         },
       } satisfies ExecutionEventLagReadModel;
     });

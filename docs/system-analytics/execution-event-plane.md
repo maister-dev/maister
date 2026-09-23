@@ -474,7 +474,7 @@ log line), never by "the sweep has not ticked yet".
 
 Use the same scheduling primitives for command evidence reconciliation and owner application, with separate predicates and fairness indexes; do not conflate their status sets with event consumers. A transport retry budget may enter `reconciliation_required`, but canonical evidence arriving later still wakes reconciliation automatically. Manual rearm is needed for another exhausted outbound dispatch cycle, never to apply already durable successful evidence.
 
-## Prompt settlement from host evidence (Designed — ADR-167 D5 amendment 2026-09-23)
+## Prompt settlement from host evidence (Implemented — ADR-167 D5 amendment 2026-09-23)
 
 The host stream is one per host and totally ordered, so a finished turn's
 terminal event can queue behind other runs' events. Prompt **settlement** no
@@ -522,7 +522,7 @@ Contract and state detail: [prompt lifecycle](execution-prompt-lifecycle.md).
 - **EVT-09:** Bounded outbox pressure rejects new mutating admissions before existing session events are lost.
 - **EVT-10:** Each projector owns a durable per-run cursor and poison state independent of accepted ingest.
 - **EVT-11:** Browser replay is authorized, exclusive-after-cursor, bounded, and sourced only from canonical user-safe rows.
-- **EVT-12:** Canonical events retain with the run while host outbox rows prune only after confirmed ACK and grace; the read-only span route neither ACKs nor prunes (Designed).
+- **EVT-12:** Canonical events retain with the run while host outbox rows prune only after confirmed ACK and grace; the read-only span route neither ACKs nor prunes (Implemented).
 
 ## Edge cases
 

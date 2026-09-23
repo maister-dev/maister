@@ -53,6 +53,14 @@ const status: AdminExecutionHostStatus = {
       acceptedWithoutTimestamp: 0,
       oldestAcceptedAt: sampledAt,
       oldestAcceptedAgeMs: 90_000,
+      hostSpan: [
+        {
+          executionHostId: "host-1",
+          hostSpanUnconfirmed: 3,
+          hostSpanSettled1h: 7,
+          postHocConflicts: 1,
+        },
+      ],
     },
   },
   latestSweep: null,
@@ -93,6 +101,20 @@ describe("ExecutionHostStatus", () => {
     expect(markup).toContain("streams.watermarkLegend");
     expect(markup).toContain("streams.lagLegend");
     expect(markup).not.toContain("90s");
+  });
+
+  it("renders each host's host-span settlement counts as numbers", async () => {
+    const html = renderToStaticMarkup(await ExecutionHostStatus({ status }));
+
+    expect(html).toContain("commands.hostSpan");
+    for (const [label, value] of [
+      ["fields.hostSpanUnconfirmed", "3"],
+      ["fields.hostSpanSettled1h", "7"],
+      ["fields.postHocConflicts", "1"],
+    ])
+      expect(html).toMatch(
+        new RegExp(`${label.replace(".", "\\.")}</dt><dd[^>]*>${value}</dd>`),
+      );
   });
 
   it("D6: renders per-panel unavailability instead of failing the page", async () => {

@@ -634,6 +634,40 @@ export async function ExecutionHostStatus({
                   {observation?.commands.impasse ?? "—"}
                 </dd>
               </div>
+              {lag.commands.hostSpan.map((host) => (
+                <div
+                  key={host.executionHostId}
+                  className="col-span-2 grid grid-cols-3 gap-4 border-t border-line pt-3"
+                >
+                  <p className="col-span-3 font-mono text-xs text-mute">
+                    {t("commands.hostSpan", { hostId: host.executionHostId })}
+                  </p>
+                  <div>
+                    <dt className="text-mute">
+                      {t("fields.hostSpanUnconfirmed")}
+                    </dt>
+                    <dd className="mt-1 text-xl font-semibold">
+                      {host.hostSpanUnconfirmed}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-mute">
+                      {t("fields.hostSpanSettled1h")}
+                    </dt>
+                    <dd className="mt-1 text-xl font-semibold">
+                      {host.hostSpanSettled1h}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-mute">
+                      {t("fields.postHocConflicts")}
+                    </dt>
+                    <dd className="mt-1 text-xl font-semibold">
+                      {host.postHocConflicts}
+                    </dd>
+                  </div>
+                </div>
+              ))}
             </dl>
           )}
           <p className="border-t border-line px-5 py-3 text-xs text-mute">

@@ -64,6 +64,11 @@ const GROUPS: ReadonlyArray<readonly [readonly string[], readonly string[]]> = [
   [["adminExecutionHost", "workerState"], WORKER_STATES],
   [["adminExecutionHost", "verdict"], VERDICTS],
   [["adminExecutionHost", "driver"], DRIVERS],
+  // ADR-167 D5 amendment: the per-host host-span settlement counts.
+  [
+    ["adminExecutionHost", "fields"],
+    ["hostSpanUnconfirmed", "hostSpanSettled1h", "postHocConflicts"],
+  ],
   [["adminScheduler", "clockCard", "jobStatus"], JOB_STATUSES],
 ];
 

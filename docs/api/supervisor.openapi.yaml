@@ -183,7 +183,7 @@ paths:
   /runtime-events/span:
     get:
       tags: [execution-host]
-      summary: Read a bounded range of retained runtime events (Designed — ADR-167 D5 amendment 2026-09-23)
+      summary: Read a bounded range of retained runtime events (Implemented — ADR-167 D5 amendment 2026-09-23)
       description: |
         Read-only JSON page of the SAME retained outbox envelopes the SSE replay
         serves, for the host sequence range `(after, through]`. The manager uses
@@ -3171,7 +3171,7 @@ components:
       additionalProperties: false
       required: [streamId, after, through, state, nextAfter, events]
       description: |
-        Designed (ADR-167 D5 amendment 2026-09-23). `events` holds retained
+        Implemented (ADR-167 D5 amendment 2026-09-23). `events` holds retained
         envelopes with `after < sequence <= through` in ascending order, the
         same bytes the SSE replay sends. `reason` is present exactly when
         `state = unavailable` (then `events` is empty); `nextAfter` is non-null

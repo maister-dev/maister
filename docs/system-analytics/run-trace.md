@@ -152,7 +152,7 @@ sequenceDiagram
   orders on that shared axis, so a node and its gate read in causal order however
   late projection runs — never as two prompts followed by two replies.
   When the previous turn settled from host evidence before its reply was
-  ingested (ADR-167 D5 amendment, Designed 2026-09-23), the prompt dispatched
+  ingested (ADR-167 D5 amendment, Implemented 2026-09-23), the prompt dispatched
   after that settlement is re-anchored to the confirming terminal event's
   `runSequence` in the confirmation transaction
   (`reanchorDispatchedPrompts`), so it still sorts after the reply; rows
@@ -210,4 +210,4 @@ sequenceDiagram
 | EDGE-TRC-06 | concurrent duplicate dispatch | T2.1, T2.5 | `IT-EDGE-TRC-06` | Implemented |
 | EDGE-TRC-07 | context-mount suffix | T2.5 | `UT-EDGE-TRC-07` | Implemented |
 | EDGE-TRC-08 | event-horizon anchor in `run_messages.supervisor_event_id` + node-transcript ordering | T2.5 | `IT-EDGE-TRC-08` | Implemented |
-| EDGE-TRC-08 (host-span re-anchor) | confirmation-time re-anchor of prompts dispatched after a host-span settlement | D4 T3.5 | `prompt-host-settlement.integration.test.ts` B9 | Designed |
+| EDGE-TRC-08 (host-span re-anchor) | confirmation-time re-anchor of prompts dispatched after a host-span settlement | D4 T3.5 | `prompt-host-span-fake.integration.test.ts` B9 (DB level) | Implemented |

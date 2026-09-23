@@ -447,7 +447,7 @@ the existing supervisor `DELETE /sessions/:id` (no new supervisor route; the
 `DELETE` drives teardown so no permission deferred leaks), marks the node
 `Failed`, and ends the run terminal. Cost limits stay record-only.
 
-A turn that already FINISHED on the host is not killed (Designed — ADR-167 D5
+A turn that already FINISHED on the host is not killed (Implemented — ADR-167 D5
 amendment 2026-09-23). For a candidate over its cap, before any teardown, the
 pass reads the attempt's newest owned `session.prompt` across every
 `flow_node_attempt` variant (node, permission_resume, gate_skill, gate_ai,
@@ -530,7 +530,7 @@ flowchart TD
   (`*TOKEN*`/`*KEY*`/`*SECRET*`) field.
 - A run whose elapsed exceeds `limits.maxDurationMinutes` MUST be terminated
   `Failed` unless its attempt's newest owned prompt has a positive completed
-  witness (settled-unapplied, or a `completed` receipt probe — Designed,
+  witness (settled-unapplied, or a `completed` receipt probe — Implemented,
   2026-09-23; `time-limit-watchdog.integration.test.ts`); a run under cap MUST
   NOT be killed; absence of `limits` MUST NOT arm the watchdog. Cost caps remain
   record-only.

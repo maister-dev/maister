@@ -159,7 +159,7 @@ state = 'active'`: at most one active assignment per run (E-EH-02).
   except on a retired tombstone (`retired_at` set), which keeps only the
   request digest, the terminal event and the evidence digest. The `0140`/`0141`
   immutability triggers exempt only the compaction that sets `retired_at`.
-- `execution_commands.settled_from` (`0176`, Designed — ADR-167 D5 amendment
+- `execution_commands.settled_from` (`0176`, Implemented — ADR-167 D5 amendment
   2026-09-23): `canonical | host_span`, written once by the evidence reducer
   when it first sets the digest (`execution_commands_settled_from_check`). The
   re-created `terminal_evidence_check` lets a `host_span` row hold the digest

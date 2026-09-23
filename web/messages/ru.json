@@ -3149,7 +3149,8 @@
     "commands": {
       "title": "Открытые команды",
       "subtitle": "Текущие счётчики менеджера и последнее наблюдение impasse планировщика.",
-      "latestSweep": "Impasse зафиксирован {sampledAt}"
+      "latestSweep": "Impasse зафиксирован {sampledAt}",
+      "hostSpan": "Завершения по событиям хоста · {hostId}"
     },
     "clock": {
       "title": "Часы планировщика",
@@ -3182,7 +3183,10 @@
       "open": "Открыто",
       "accepted": "Принято",
       "oldest": "Старейшая принятая",
-      "impasse": "Последний impasse"
+      "impasse": "Последний impasse",
+      "hostSpanUnconfirmed": "Ждут канонического события",
+      "hostSpanSettled1h": "Завершено по событиям хоста (1 ч)",
+      "postHocConflicts": "Расхождения после применения"
     },
     "forbidden": {
       "title": "Требуется доступ администратора",
