@@ -24,13 +24,18 @@ function baseInput(
     rootDb,
     projectId: "project-1",
     taskId: "task-1",
+    flowRevisionId: null,
+    runnerProfiles: undefined,
     runDefaultRunnerId: "runner-parent",
     parentRunId: "parent-run",
     rootRunId: "root-run",
     nodeId: "decide",
     nodeAttemptId: "attempt-1",
     round: 1,
-    prompt: "Settle the release plan.",
+    prompts: [
+      { participantId: "architect", prompt: "Settle the release plan." },
+      { participantId: "codex", prompt: "Settle the release plan." },
+    ],
     participants: [
       { id: "architect", agent: "pkg:architect" },
       { id: "codex", runner: "runner-codex" },
@@ -206,6 +211,9 @@ describe("launchConsensusDraftRuns", () => {
     const input = {
       ...baseInput(db),
       participants: [{ id: "architect", agent: "pkg:architect" }],
+      prompts: [
+        { participantId: "architect", prompt: "Settle the release plan." },
+      ],
     } as ConsensusDraftLaunchInput;
     const launchAgent = vi.fn();
 
@@ -269,6 +277,7 @@ describe("launchConsensusDraftRuns", () => {
     const input = {
       ...baseInput(db, rootDb),
       participants: [{ id: "codex", runner: "runner-codex" }],
+      prompts: [{ participantId: "codex", prompt: "Settle the release plan." }],
     } as ConsensusDraftLaunchInput;
 
     await launchConsensusDraftRuns(input, { startAgentSession, tryStartRun });

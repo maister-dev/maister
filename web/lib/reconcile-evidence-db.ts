@@ -6,7 +6,7 @@ import type {
   PromptReceiptProbe,
 } from "./reconcile-evidence";
 
-import { and, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import pino from "pino";
 
 import * as schemaModule from "@/lib/db/schema";
@@ -213,6 +213,47 @@ export const NO_PROMPT_EVIDENCE: ResolvedPromptEvidence = {
   commandId: null,
   nodeAttemptId: null,
 };
+
+/** A poisoned consensus generation is a terminal owner refusal even if its
+ * supervisor session remains live. It belongs to the current open attempt;
+ * old or closed-attempt generations cannot crash a new attempt. */
+export async function resolveConsensusPoisonEvidence(
+  db: Db,
+  input: { runId: string; nodeId: string },
+): Promise<ResolvedPromptEvidence> {
+  const nodeAttemptId = await resolveEvidenceAttemptId(db, input);
+
+  if (!nodeAttemptId) return NO_PROMPT_EVIDENCE;
+  const [row] = await db
+    .select({
+      id: executionCommands.id,
+      applicationState: executionCommands.applicationState,
+    })
+    .from(executionCommands)
+    .where(
+      and(
+        eq(executionCommands.runId, input.runId),
+        eq(executionCommands.kind, "session.prompt"),
+        sql`${executionCommands.ownerRef}->>'variant' IN ('consensus_verifier', 'consensus_synthesis')`,
+        sql`${executionCommands.ownerRef}->>'nodeAttemptId' = ${nodeAttemptId}`,
+        inArray(executionCommands.applicationState, [
+          "poisoned",
+          "quarantined",
+        ]),
+      ),
+    )
+    .orderBy(desc(executionCommands.createdAt))
+    .limit(1);
+
+  if (!row) return NO_PROMPT_EVIDENCE;
+
+  return {
+    evidence: row.applicationState,
+    streamLost: false,
+    commandId: row.id,
+    nodeAttemptId,
+  };
+}
 
 /** Resolve one candidate's prompt evidence for the reconcile classifier.
  *

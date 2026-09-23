@@ -66,6 +66,7 @@ import {
 } from "./run-context";
 import { runNodeGates } from "./gates-exec";
 import { FlowPromptContinuationPending } from "./prompt-owner";
+import { ConsensusGenerationPending } from "./consensus/prompt-owner";
 import { isFlowDriverClaimLost } from "./driver-claim";
 import { persistLocalActionCompletion } from "./action-completion";
 import { persistFinishContinuation } from "./finish-continuation";
@@ -3543,6 +3544,7 @@ export async function runGraph(
         } catch (err) {
           if (
             err instanceof FlowPromptContinuationPending ||
+            err instanceof ConsensusGenerationPending ||
             isFlowDriverClaimLost(err)
           )
             throw err;
@@ -5233,6 +5235,7 @@ export async function runGraph(
   } catch (err) {
     if (
       err instanceof FlowPromptContinuationPending ||
+      err instanceof ConsensusGenerationPending ||
       isFencedError(err) ||
       isFlowDriverClaimLost(err)
     ) {
@@ -5296,7 +5299,15 @@ export async function runGraph(
     await db.transaction(async (tx: Db) => {
       const rows = await tx
         .update(runs)
-        .set({ status: "Crashed", endedAt, currentStepId: null })
+        .set({
+          status: "Crashed",
+          endedAt,
+          currentStepId: null,
+          ...(currentNodeId &&
+          graph.nodes.get(currentNodeId)?.nodeType === "consensus"
+            ? { resumeTargetStepId: currentNodeId }
+            : {}),
+        })
         .where(and(eq(runs.id, runId), failureStatus))
         .returning({
           projectId: runs.projectId,

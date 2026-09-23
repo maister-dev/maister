@@ -10,6 +10,7 @@ import type {
 } from "@/lib/execution-host/prompt-owners";
 import type { FlowOwnerRef } from "../prompt-owner-authority";
 import type { ConsensusNodeDef } from "./drafts";
+import type { ConsensusTextBounds } from "./text";
 
 import { and, eq } from "drizzle-orm";
 import pino from "pino";
@@ -19,12 +20,15 @@ import { recordArtifact } from "../artifact-store";
 import { loadRun } from "../runner-core";
 import { lockFlowPromptOwner } from "../prompt-owner-authority";
 
+import { consensusVerdictLedgerId, writeConsensusVerdict } from "./ledger";
 import {
-  CONSENSUS_TEXT_CAP_BYTES,
-  consensusVerdictLedgerId,
-  writeConsensusVerdict,
-} from "./ledger";
+  CONSENSUS_GENERATION_OUTPUT_CAP_BYTES,
+  finishConsensusOutput,
+  retainConsensusOutput,
+  type RetainedConsensusOutput,
+} from "./text";
 import { parseConsensusVerdict } from "./verdict";
+import { verifyConsensusInputEvidence } from "./input-evidence";
 
 import {
   artifactInstances,
@@ -97,17 +101,64 @@ export function consensusSynthesisOwner(generation: {
   };
 }
 
-/** The applied generation's own output, or null while it is still unpaid. */
+export type ConsensusSynthesisEvidence =
+  | Readonly<{
+      kind: "complete";
+      synthesisId: string;
+      text: string;
+      truncated?: boolean;
+      textBounds?: ConsensusTextBounds;
+      inputTextBounds?: ConsensusTextBounds;
+    }>
+  | Readonly<{
+      kind: "incomplete";
+      synthesisId: string;
+      text: string;
+      stopReason: string | null;
+      truncated?: boolean;
+      textBounds?: ConsensusTextBounds;
+      inputTextBounds?: ConsensusTextBounds;
+    }>;
+
+/** An absent generation is pending; an applied empty generation is evidence. */
 export async function loadConsensusSynthesis(input: {
   db: Db;
   synthesisId: string;
-}): Promise<string | null> {
+}): Promise<ConsensusSynthesisEvidence | null> {
   const [artifact] = await input.db
     .select()
     .from(artifactInstances)
     .where(eq(artifactInstances.id, input.synthesisId));
+  const locator = artifact?.locator;
 
-  return artifact?.locator?.kind === "inline" ? artifact.locator.text : null;
+  if (locator?.kind !== "inline") return null;
+  const metadata = {
+    ...(locator.truncated === true ? { truncated: true } : {}),
+    ...(locator.textBounds ? { textBounds: locator.textBounds } : {}),
+    ...(locator.inputTextBounds
+      ? { inputTextBounds: locator.inputTextBounds }
+      : {}),
+  };
+
+  if (
+    locator.partial === true ||
+    (locator.stopReason !== undefined && locator.stopReason !== "end_turn") ||
+    locator.text.trim().length === 0
+  )
+    return {
+      kind: "incomplete",
+      synthesisId: input.synthesisId,
+      text: locator.text,
+      stopReason: locator.stopReason ?? null,
+      ...metadata,
+    };
+
+  return {
+    kind: "complete",
+    synthesisId: input.synthesisId,
+    text: locator.text,
+    ...metadata,
+  };
 }
 
 export function consensusVerifierOwner(cell: {
@@ -282,7 +333,16 @@ export async function prepareConsensusPrompt(input: {
     ref.variant === "consensus_verifier"
       ? await consensusMaterialAxes(db, ref)
       : [];
-  let rawOutput = "";
+  const inputEvidence = await verifyConsensusInputEvidence(
+    db,
+    command,
+    ref.variant === "consensus_verifier" ? ref.verdictId : ref.synthesisId,
+  );
+  let retained: RetainedConsensusOutput = {
+    text: "",
+    retainedBytes: 0,
+    droppedBytes: 0,
+  };
 
   if (outcome.state === "succeeded") {
     for await (const event of outcome.events) {
@@ -290,18 +350,50 @@ export async function prepareConsensusPrompt(input: {
       const chunk = agentMessageText(event.payload?.update);
 
       if (chunk === null) continue;
-      const remaining = CONSENSUS_TEXT_CAP_BYTES - rawOutput.length;
-
-      if (remaining > 0) rawOutput += chunk.slice(0, remaining);
+      retained = retainConsensusOutput(
+        retained,
+        chunk,
+        CONSENSUS_GENERATION_OUTPUT_CAP_BYTES,
+      );
     }
   }
+  retained = finishConsensusOutput(
+    retained,
+    CONSENSUS_GENERATION_OUTPUT_CAP_BYTES,
+  );
+  const rawOutput = retained.text;
+
+  if (retained.droppedBytes > 0)
+    log.warn(
+      {
+        role:
+          ref.variant === "consensus_verifier"
+            ? "verifier-output"
+            : "synthesis-output",
+        participantId:
+          ref.variant === "consensus_verifier" ? ref.targetId : "synthesizer",
+        round: ref.round,
+        bytes: retained.retainedBytes + retained.droppedBytes,
+        cap: CONSENSUS_GENERATION_OUTPUT_CAP_BYTES,
+        droppedBytes: retained.droppedBytes,
+        generationId:
+          ref.variant === "consensus_verifier"
+            ? ref.verdictId
+            : ref.synthesisId,
+      },
+      "consensus-text-truncated",
+    );
   const ok =
-    outcome.state === "succeeded" && outcome.response.stopReason === "end_turn";
+    outcome.state === "succeeded" &&
+    outcome.response.stopReason === "end_turn" &&
+    retained.droppedBytes === 0;
   const errorCode = ok
     ? undefined
-    : outcome.state === "succeeded"
-      ? "ACP_PROTOCOL"
-      : String(outcome.error.code ?? "EXECUTOR_UNAVAILABLE");
+    : retained.droppedBytes > 0
+      ? "output_cap_exceeded"
+      : outcome.state === "succeeded"
+        ? "ACP_PROTOCOL"
+        : String(outcome.error.code ?? "EXECUTOR_UNAVAILABLE");
   // A failed host turn still owes the round a persisted fail-closed cell.
   const result = parseConsensusVerdict(ok ? rawOutput : "", materialAxes);
 
@@ -341,7 +433,36 @@ export async function prepareConsensusPrompt(input: {
             artifactDefId: "default:consensus-synthesis",
             kind: "plan",
             producer: "runner",
-            locator: { kind: "inline", text: ok ? rawOutput : "" },
+            locator: {
+              kind: "inline",
+              text: rawOutput,
+              partial: !ok || rawOutput.trim().length === 0,
+              ...(!ok || rawOutput.trim().length === 0
+                ? { reason: "consensus_synthesis_incomplete" }
+                : {}),
+              ...(retained.droppedBytes > 0
+                ? {
+                    truncated: true,
+                    textBounds: {
+                      bytes: retained.retainedBytes + retained.droppedBytes,
+                      retainedBytes: retained.retainedBytes,
+                      droppedBytes: retained.droppedBytes,
+                      cap: CONSENSUS_GENERATION_OUTPUT_CAP_BYTES,
+                    },
+                  }
+                : {}),
+              ...(inputEvidence?.textBounds.droppedBytes
+                ? {
+                    truncated: true,
+                    inputTextBounds: inputEvidence.textBounds,
+                  }
+                : {}),
+              ...(outcome.state === "succeeded"
+                ? typeof outcome.response.stopReason === "string"
+                  ? { stopReason: outcome.response.stopReason }
+                  : { stopReason: "stop_reason_unavailable" }
+                : {}),
+            },
             validity: "current",
             visibility: "internal",
             retention: "run",
@@ -371,7 +492,10 @@ export async function prepareConsensusPrompt(input: {
         verifierId: ref.verifierId,
         targetParticipantId: ref.targetId,
         result,
-        rawOutput: ok ? rawOutput : (errorCode ?? ""),
+        rawOutput,
+        ...(inputEvidence?.textBounds.droppedBytes
+          ? { inputTextBounds: inputEvidence.textBounds }
+          : {}),
         ...(errorCode ? { errorCode } : {}),
       });
       log.info(

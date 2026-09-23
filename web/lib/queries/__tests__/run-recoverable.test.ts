@@ -156,4 +156,34 @@ describe("isRunRecoverable — run-detail recoverability (M19)", () => {
       ).toBe(false);
     }
   });
+
+  it("offers consensus Recover only for an exact incomplete-synthesis witness without quarantine", () => {
+    const base = {
+      status: "Crashed" as const,
+      acpSessionId: null,
+      currentNodeKind: "consensus" as const,
+      retrySafe: true,
+    };
+
+    expect(isRunRecoverable({ ...base })).toBe(false);
+    expect(
+      isRunRecoverable({
+        ...base,
+        consensusEvidence: { incompleteSynthesis: true, quarantined: false },
+      }),
+    ).toBe(true);
+    expect(
+      isRunRecoverable({
+        ...base,
+        consensusEvidence: { incompleteSynthesis: true, quarantined: true },
+      }),
+    ).toBe(false);
+    expect(
+      isRunRecoverable({
+        ...base,
+        status: "Running",
+        consensusEvidence: { incompleteSynthesis: true, quarantined: false },
+      }),
+    ).toBe(false);
+  });
 });

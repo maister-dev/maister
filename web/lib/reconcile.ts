@@ -34,6 +34,7 @@ import { RUN_SYNC_TERMINAL_PHASES } from "@/lib/db/schema";
 import { resolveCurrentNodeContext } from "@/lib/flows/graph/current-node-kind";
 import {
   NO_PROMPT_EVIDENCE,
+  resolveConsensusPoisonEvidence,
   resolvePromptEvidence,
 } from "@/lib/reconcile-evidence-db";
 import { listGraphOnlyCutoverRunIds } from "@/lib/queries/run-cutover";
@@ -427,6 +428,14 @@ function classifyInner(input: ReconcileInput): ReconcileDecision {
 
     return { action: "sync-recover", reason: "sync-orphaned-idle" };
   }
+
+  if (
+    input.runKind === "flow" &&
+    input.currentNodeKind === "consensus" &&
+    (input.promptEvidence === "poisoned" ||
+      input.promptEvidence === "quarantined")
+  )
+    return { action: "crash", reason: "owner-poisoned" };
 
   // 3. A live Flow session is recovered through its durable graph driver.
   //
@@ -1728,16 +1737,23 @@ export async function runReconcileSweep(
       !liveRunStep &&
       (currentNodeKind === "ai_coding" || currentNodeKind === "orchestrator");
     const promptEvidence =
-      wantsEvidence && cand.currentStepId
-        ? await resolvePromptEvidence(db, hosts.transport, {
+      cand.runKind === "flow" &&
+      currentNodeKind === "consensus" &&
+      cand.currentStepId
+        ? await resolveConsensusPoisonEvidence(db, {
             runId: cand.runId,
-            // The CURRENT NODE's open attempt, which is what the boundary will
-            // act on. Deliberately not `latestAttempt` (the run-scoped grace
-            // anchor): classifying from one attempt and writing to another is
-            // how a run ends up crashed for evidence that was never its own.
             nodeId: cand.currentStepId,
           })
-        : NO_PROMPT_EVIDENCE;
+        : wantsEvidence && cand.currentStepId
+          ? await resolvePromptEvidence(db, hosts.transport, {
+              runId: cand.runId,
+              // The CURRENT NODE's open attempt, which is what the boundary will
+              // act on. Deliberately not `latestAttempt` (the run-scoped grace
+              // anchor): classifying from one attempt and writing to another is
+              // how a run ends up crashed for evidence that was never its own.
+              nodeId: cand.currentStepId,
+            })
+          : NO_PROMPT_EVIDENCE;
 
     // M36 (ADR-095) T7.1: orphan detection needs the parent's status; the
     // parked-orchestrator pass needs to know if any child is still pending.

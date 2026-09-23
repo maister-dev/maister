@@ -5658,6 +5658,23 @@ export type ArtifactLocator =
       hitlRequestId?: string;
       threadIds?: string[];
       feedbackFingerprint?: string;
+      // P0-5: consensus evidence stays in existing artifact locator JSON.
+      partial?: boolean;
+      stopReason?: string;
+      reason?: string;
+      truncated?: boolean;
+      textBounds?: {
+        bytes: number;
+        retainedBytes: number;
+        droppedBytes: number;
+        cap: number;
+      };
+      inputTextBounds?: {
+        bytes: number;
+        retainedBytes: number;
+        droppedBytes: number;
+        cap: number;
+      };
     };
 
 // ADR-165 (0129): the PUBLIC result plane — one row per result REVISION of a
@@ -5850,6 +5867,20 @@ export type ConsensusRoundDisagreement = {
   counterEvidence: string;
 };
 
+export type ConsensusRoundDisagreementStorage =
+  | ConsensusRoundDisagreement[]
+  | {
+      version: 1;
+      rows: ConsensusRoundDisagreement[];
+      truncated: boolean;
+      textBounds?: {
+        bytes: number;
+        retainedBytes: number;
+        droppedBytes: number;
+        cap: number;
+      };
+    };
+
 export const consensusRoundVerdicts = pgTable(
   "consensus_round_verdicts",
   {
@@ -5875,7 +5906,7 @@ export const consensusRoundVerdicts = pgTable(
     verdict: text("verdict", { enum: ["agree", "disagree"] }).notNull(),
     axes: jsonb("axes").$type<Record<string, boolean>>().notNull().default({}),
     disagreements: jsonb("disagreements")
-      .$type<ConsensusRoundDisagreement[]>()
+      .$type<ConsensusRoundDisagreementStorage>()
       .notNull()
       .default([]),
     confidence: real("confidence"),

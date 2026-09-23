@@ -16,6 +16,12 @@ import pino from "pino";
 
 import { recordArtifact } from "../artifact-store";
 
+import {
+  finishConsensusOutput,
+  retainConsensusOutput,
+  type RetainedConsensusOutput,
+} from "./text";
+
 import { prepareAgentRunFinalization } from "@/lib/agents/finalization";
 import {
   acknowledgeAgentMessage,
@@ -169,7 +175,11 @@ export async function prepareConsensusDraftPrompt(
 ): Promise<PreparedPromptOwner> {
   const { db, command, outcome } = context;
   const ref: DraftRef = context.owner.ref;
-  let text = "";
+  let retained: RetainedConsensusOutput = {
+    text: "",
+    retainedBytes: 0,
+    droppedBytes: 0,
+  };
 
   if (outcome.state === "succeeded") {
     for await (const event of outcome.events) {
@@ -177,9 +187,11 @@ export async function prepareConsensusDraftPrompt(
       const chunk = agentMessageText(event.payload?.update);
 
       if (chunk === null) continue;
-      const remaining = CONSENSUS_DRAFT_OUTPUT_CAP_BYTES - text.length;
-
-      if (remaining > 0) text += chunk.slice(0, remaining);
+      retained = retainConsensusOutput(
+        retained,
+        chunk,
+        CONSENSUS_DRAFT_OUTPUT_CAP_BYTES,
+      );
     }
   }
   const [run] = await db
@@ -195,10 +207,28 @@ export async function prepareConsensusDraftPrompt(
     source.participantId !== ref.participantId
   )
     throw new PromptOwnerInvariantError("consensus_draft_owner_source");
+  retained = finishConsensusOutput(retained, CONSENSUS_DRAFT_OUTPUT_CAP_BYTES);
+  const text = retained.text;
+
+  if (retained.droppedBytes > 0)
+    log.warn(
+      {
+        role: "draft-output",
+        participantId: ref.participantId,
+        round: ref.round,
+        bytes: retained.retainedBytes + retained.droppedBytes,
+        cap: CONSENSUS_DRAFT_OUTPUT_CAP_BYTES,
+        droppedBytes: retained.droppedBytes,
+        runId: ref.runId,
+      },
+      "consensus-text-truncated",
+    );
   const complete =
     outcome.state === "succeeded" &&
     outcome.response.stopReason === "end_turn" &&
-    text.trim().length > 0;
+    text.trim().length > 0 &&
+    retained.droppedBytes === 0;
+  const partial = text.trim().length > 0 && !complete;
 
   if (outcome.state !== "fenced")
     await stopAgentPromptSession(db, ref, command.targetSessionId, command.id);
@@ -225,7 +255,7 @@ export async function prepareConsensusDraftPrompt(
         ))
       )
         return supersedeAgentMessage(tx, ref, command.id);
-      if (complete)
+      if (complete || partial)
         await recordArtifact(
           {
             id: consensusDraftArtifactId(ref.runId, source),
@@ -234,7 +264,24 @@ export async function prepareConsensusDraftPrompt(
             artifactDefId: "default:consensus-draft",
             kind: "human_note",
             producer: "runner",
-            locator: { kind: "inline", text },
+            locator: {
+              kind: "inline",
+              text,
+              ...(partial
+                ? {
+                    partial: true,
+                    stopReason:
+                      outcome.state === "succeeded" &&
+                      typeof outcome.response.stopReason === "string"
+                        ? outcome.response.stopReason
+                        : "host_failure",
+                    reason:
+                      retained.droppedBytes > 0
+                        ? "output_cap_exceeded"
+                        : "consensus_draft_incomplete",
+                  }
+                : {}),
+            },
             validity: "current",
             visibility: "internal",
             retention: "run",

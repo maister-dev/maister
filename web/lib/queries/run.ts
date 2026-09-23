@@ -61,6 +61,7 @@ import {
   activeSessionRunnerSnapshot,
 } from "@/lib/runs/active-run-session";
 import { classifyRecover } from "@/lib/runs/recover-classify";
+import { loadConsensusRecoveryEvidence } from "@/lib/flows/graph/consensus/recovery-evidence";
 import { requireRunProjectId } from "@/lib/runs/run-kind-invariants";
 import * as schema from "@/lib/db/schema";
 import { compileManifest } from "@/lib/flows/graph/compile";
@@ -418,6 +419,10 @@ export function isRunRecoverable(input: {
   acpSessionId: string | null;
   currentNodeKind: NodeAttemptType | null;
   retrySafe: boolean;
+  consensusEvidence?: {
+    incompleteSynthesis: boolean;
+    quarantined: boolean;
+  };
   workspaceRemoved?: boolean;
 }): boolean {
   return (
@@ -427,6 +432,7 @@ export function isRunRecoverable(input: {
       { acpSessionId: input.acpSessionId },
       input.currentNodeKind,
       input.retrySafe,
+      input.consensusEvidence,
     ) !== "discard-only"
   );
 }
@@ -535,11 +541,19 @@ export const getRunDetail = cache(async function getRunDetail(
         sessionName: recoverSessionName,
       })
     : row.acpSessionId;
+  const consensusEvidence =
+    row.status === "Crashed" && recoverNodeKind === "consensus"
+      ? await loadConsensusRecoveryEvidence(client, {
+          runId,
+          nodeId: recoverTargetStepId,
+        })
+      : undefined;
   const recoverable = isRunRecoverable({
     status: row.status,
     acpSessionId: recoverAcpSessionId,
     currentNodeKind: recoverNodeKind,
     retrySafe,
+    consensusEvidence,
     workspaceRemoved: row.removedAt !== null,
   });
   const ttl = deriveTtlInfo({

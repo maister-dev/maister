@@ -51,7 +51,18 @@ export function classifyRecover(
   run: { acpSessionId: string | null },
   currentNodeKind: NodeKind,
   retrySafe: boolean,
+  consensusEvidence: {
+    incompleteSynthesis: boolean;
+    quarantined: boolean;
+  } = { incompleteSynthesis: false, quarantined: false },
 ): RecoverPlan {
+  if (currentNodeKind === "consensus") {
+    if (consensusEvidence.quarantined) return "discard-only";
+
+    return consensusEvidence.incompleteSynthesis
+      ? "redispatch"
+      : "discard-only";
+  }
   if (AGENT_NODE_KINDS.has(currentNodeKind)) {
     return run.acpSessionId ? "resume-agent" : "discard-only";
   }

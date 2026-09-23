@@ -14,10 +14,12 @@ function transactionDb(): {
   db: unknown;
   tx: { insert: ReturnType<typeof vi.fn> };
   transaction: ReturnType<typeof vi.fn>;
-  onConflictDoUpdate: ReturnType<typeof vi.fn>;
+  onConflictDoNothing: ReturnType<typeof vi.fn>;
 } {
-  const onConflictDoUpdate = vi.fn(async () => undefined);
-  const values = vi.fn(() => ({ onConflictDoUpdate }));
+  const onConflictDoNothing = vi.fn(() => ({
+    returning: vi.fn(async () => [{ id: "cell" }]),
+  }));
+  const values = vi.fn(() => ({ onConflictDoNothing }));
   const tx = {
     insert: vi.fn(() => ({ values })),
   };
@@ -29,13 +31,13 @@ function transactionDb(): {
     db: { transaction },
     tx,
     transaction,
-    onConflictDoUpdate,
+    onConflictDoNothing,
   };
 }
 
 describe("recordConsensusVerdict", () => {
   it("records verifier artifact and ledger row in one transaction", async () => {
-    const { db, tx, transaction, onConflictDoUpdate } = transactionDb();
+    const { db, tx, transaction, onConflictDoNothing } = transactionDb();
 
     const result = await recordConsensusVerdict({
       db,
@@ -66,6 +68,6 @@ describe("recordConsensusVerdict", () => {
       tx,
     );
     expect(tx.insert).toHaveBeenCalled();
-    expect(onConflictDoUpdate).toHaveBeenCalled();
+    expect(onConflictDoNothing).toHaveBeenCalled();
   });
 });

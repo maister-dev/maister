@@ -60,13 +60,12 @@ describe("classifyRecover — agent node (ignores retry_safe)", () => {
 });
 
 describe("classifyRecover — session-less node gated on retry_safe", () => {
-  // ADR-175: `judge` is no longer here — it is an agent node above.
+  // Consensus now requires exact incomplete-synthesis evidence below.
   const SESSION_LESS: Array<Exclude<NodeKind, "ai_coding" | "judge">> = [
     "cli",
     "check",
     "guard",
     "human",
-    "consensus",
     null,
   ];
 
@@ -89,4 +88,33 @@ describe("classifyRecover — session-less node gated on retry_safe", () => {
       ).toBe<RecoverPlan>("discard-only");
     });
   }
+});
+
+describe("P0-5 incomplete consensus synthesis", () => {
+  it("redispatches a witnessed incomplete synthesis with default retry_safe", () => {
+    expect(
+      classifyRecover({ acpSessionId: null }, "consensus", false, {
+        incompleteSynthesis: true,
+        quarantined: false,
+      }),
+    ).toBe("redispatch");
+    expect(
+      classifyRecover({ acpSessionId: null }, "consensus", false, {
+        incompleteSynthesis: false,
+        quarantined: false,
+      }),
+    ).toBe("discard-only");
+    expect(
+      classifyRecover({ acpSessionId: null }, "consensus", true, {
+        incompleteSynthesis: false,
+        quarantined: false,
+      }),
+    ).toBe("discard-only");
+    expect(
+      classifyRecover({ acpSessionId: null }, "consensus", true, {
+        incompleteSynthesis: true,
+        quarantined: true,
+      }),
+    ).toBe("discard-only");
+  });
 });

@@ -1274,9 +1274,53 @@ describe("consensusHitlFromSchema — pure schema narrowing", () => {
           summary: "Planner A keeps analytics in; Planner B defers it.",
         },
       ],
+      technicalFailures: [],
       debateExcerpt:
         "Both drafts agree on branch targeting but disagree on scope.",
     });
+  });
+
+  it("shows partial evidence and technical failures with a child artifact link", () => {
+    const html = render({
+      kind: "human",
+      schema: {
+        ...CONSENSUS_SCHEMA,
+        drafts: [
+          {
+            participantLabel: "Planner A",
+            excerpt: "Partial proposal",
+            classification: "partial",
+            stopReason: "max_tokens",
+            artifactRef: "draft-artifact",
+            artifactRunId: "child-run",
+          },
+          { participantLabel: "Planner B", classification: "unavailable" },
+        ],
+        technicalFailures: [
+          {
+            verifierId: "reviewer-b",
+            targetParticipantId: "planner-a",
+            parseStatus: "invalid_json",
+            errorCode: "invalid_json",
+          },
+        ],
+      },
+      labels: {
+        ...CONSENSUS_LABELS,
+        consensusPartial: "Partial",
+        consensusTechnicalFailures: "Technical verification failures",
+        consensusViewArtifact: "View full draft",
+      },
+    });
+
+    expect(html).toContain("Partial · max_tokens");
+    expect(html).toContain(
+      "/api/runs/child-run/artifacts/draft-artifact/payload",
+    );
+    expect(html).toContain("Technical verification failures");
+    expect(html).toContain("reviewer-b → planner-a: invalid_json");
+    expect(html).toContain('data-testid="consensus-pick-draft-1"');
+    expect(html).not.toContain('data-testid="consensus-pick-draft-2"');
   });
 
   it("returns null for non-consensus or malformed schemas", () => {

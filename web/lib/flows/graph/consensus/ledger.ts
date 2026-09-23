@@ -12,19 +12,30 @@ import type {
   ConsensusVerdictValue,
   ParsedConsensusVerdict,
 } from "./verdict";
+import type { ConsensusTextBounds } from "./text";
+import type { ConsensusRoundDisagreementStorage } from "@/lib/db/schema";
 
 import { and, desc, eq, inArray } from "drizzle-orm";
+import pino from "pino";
+
+import { boundConsensusText, CONSENSUS_EXCERPT_CAP_BYTES } from "./text";
 
 import {
   getArtifactsForRun,
   recordArtifact,
 } from "@/lib/flows/graph/artifact-store";
 import * as schemaModule from "@/lib/db/schema";
+import { MaisterError } from "@/lib/errors";
+
+const log = pino({
+  name: "consensus-ledger",
+  level: process.env.LOG_LEVEL ?? "info",
+});
 
 const { artifactInstances, consensusRoundVerdicts, domainEvents, runs } =
   schemaModule as unknown as Record<string, any>;
 
-export const CONSENSUS_TEXT_CAP_BYTES = 32_000;
+export const CONSENSUS_TEXT_CAP_BYTES = CONSENSUS_EXCERPT_CAP_BYTES;
 
 export type ConsensusDraftEvidence = {
   participantId: string;
@@ -34,6 +45,9 @@ export type ConsensusDraftEvidence = {
   status: string;
   artifactId: string | null;
   artifactText: string | null;
+  classification: "complete" | "partial" | "unavailable";
+  stopReason: string | null;
+  reason: string | null;
 };
 
 export type ConsensusVerdictEvidence = ParsedConsensusVerdict & {
@@ -42,7 +56,35 @@ export type ConsensusVerdictEvidence = ParsedConsensusVerdict & {
   round: number;
   rawOutputArtifactId: string | null;
   errorCode?: string;
+  truncated?: boolean;
+  textBounds?: ConsensusTextBounds;
 };
+
+function normalizeDisagreements(value: ConsensusRoundDisagreementStorage): {
+  rows: ConsensusDisagreement[];
+  truncated?: boolean;
+  textBounds?: ConsensusTextBounds;
+} {
+  if (Array.isArray(value)) return { rows: value };
+  if (
+    value?.version !== 1 ||
+    !Array.isArray(value.rows) ||
+    typeof value.truncated !== "boolean"
+  )
+    throw new MaisterError(
+      "CRASH",
+      "invalid consensus verdict disagreement storage",
+      {
+        details: { reason: "consensus_verdict_storage_invalid" },
+      },
+    );
+
+  return {
+    rows: value.rows,
+    truncated: value.truncated,
+    ...(value.textBounds ? { textBounds: value.textBounds } : {}),
+  };
+}
 
 type UnknownDraftPayload = {
   kind?: unknown;
@@ -65,7 +107,7 @@ function inlineArtifactText(
 ): string | null {
   if (!artifact || artifact.locator.kind !== "inline") return null;
 
-  return artifact.locator.text.slice(0, CONSENSUS_TEXT_CAP_BYTES);
+  return artifact.locator.text;
 }
 
 function draftArtifactId(args: {
@@ -159,6 +201,10 @@ export async function loadConsensusDraftEvidence(args: {
       });
       const artifact = artifacts.get(artifactId);
 
+      const artifactText = inlineArtifactText(artifact);
+      const locator = artifact?.locator;
+      const partial = locator?.kind === "inline" && locator.partial === true;
+
       return {
         participantId: payload.participantId,
         participantKind: payload.participantKind,
@@ -166,7 +212,16 @@ export async function loadConsensusDraftEvidence(args: {
         round: payload.round,
         status: row.status,
         artifactId: artifact?.id ?? null,
-        artifactText: inlineArtifactText(artifact),
+        artifactText,
+        classification:
+          !artifactText?.trim() || (row.status !== "Done" && !partial)
+            ? "unavailable"
+            : partial
+              ? "partial"
+              : "complete",
+        stopReason:
+          locator?.kind === "inline" ? (locator.stopReason ?? null) : null,
+        reason: locator?.kind === "inline" ? (locator.reason ?? null) : null,
       };
     })
     .sort((a, b) => a.participantId.localeCompare(b.participantId));
@@ -234,23 +289,35 @@ export async function loadConsensusVerdicts(args: {
       ),
     );
 
-  return rows.map((row: Record<string, unknown>) => ({
-    verifierId: row.verifierKey as string,
-    targetParticipantId: row.targetKey as string,
-    round: row.round as number,
-    parseStatus: row.parseStatus as ConsensusParseStatus,
-    verdict: row.verdict as ConsensusVerdictValue,
-    axes: row.axes as Record<string, boolean>,
-    disagreements: row.disagreements as ConsensusDisagreement[],
-    ...(typeof row.confidence === "number"
-      ? { confidence: row.confidence }
-      : {}),
-    rawOutputArtifactId:
-      typeof row.rawOutputArtifactId === "string"
-        ? row.rawOutputArtifactId
-        : null,
-    ...(typeof row.errorCode === "string" ? { errorCode: row.errorCode } : {}),
-  }));
+  return rows.map((row: Record<string, unknown>) => {
+    const storage = normalizeDisagreements(
+      row.disagreements as ConsensusRoundDisagreementStorage,
+    );
+
+    return {
+      verifierId: row.verifierKey as string,
+      targetParticipantId: row.targetKey as string,
+      round: row.round as number,
+      parseStatus: row.parseStatus as ConsensusParseStatus,
+      verdict: row.verdict as ConsensusVerdictValue,
+      axes: row.axes as Record<string, boolean>,
+      disagreements: storage.rows,
+      ...(storage.truncated !== undefined
+        ? { truncated: storage.truncated }
+        : {}),
+      ...(storage.textBounds ? { textBounds: storage.textBounds } : {}),
+      ...(typeof row.confidence === "number"
+        ? { confidence: row.confidence }
+        : {}),
+      rawOutputArtifactId:
+        typeof row.rawOutputArtifactId === "string"
+          ? row.rawOutputArtifactId
+          : null,
+      ...(typeof row.errorCode === "string"
+        ? { errorCode: row.errorCode }
+        : {}),
+    };
+  });
 }
 
 export type ConsensusVerdictCell = Readonly<{
@@ -278,6 +345,7 @@ export type ConsensusVerdictWrite = ConsensusVerdictCell &
     result: ParsedConsensusVerdict;
     rawOutput: string;
     errorCode?: string;
+    inputTextBounds?: ConsensusTextBounds;
   }>;
 
 export async function loadConsensusVerdictCell(
@@ -309,7 +377,22 @@ export async function writeConsensusVerdict(
   tx: Db,
   args: ConsensusVerdictWrite,
 ): Promise<ConsensusVerdictEvidence> {
-  const rawOutputText = args.rawOutput.slice(0, CONSENSUS_TEXT_CAP_BYTES);
+  const raw = boundConsensusText(args.rawOutput, CONSENSUS_EXCERPT_CAP_BYTES);
+
+  if (raw.truncated)
+    log.warn(
+      {
+        role: "verifier-raw-artifact",
+        participantId: args.targetParticipantId,
+        round: args.round,
+        bytes: raw.bounds.bytes,
+        cap: raw.bounds.cap,
+        droppedBytes: raw.bounds.droppedBytes,
+        artifactId: consensusVerdictArtifactId(args),
+      },
+      "consensus-text-truncated",
+    );
+  const rawOutputText = raw.text;
   const rawOutputArtifactId = consensusVerdictArtifactId(args);
   const id = consensusVerdictLedgerId(args);
   const rawOutputArtifact = {
@@ -321,7 +404,11 @@ export async function writeConsensusVerdict(
     artifactDefId: "default:consensus-verdict",
     kind: "ai_judgment",
     producer: "runner",
-    locator: { kind: "inline", text: rawOutputText },
+    locator: {
+      kind: "inline",
+      text: rawOutputText,
+      ...(raw.truncated ? { truncated: true, textBounds: raw.bounds } : {}),
+    },
     validity: "current",
     visibility: "internal",
     retention: "run",
@@ -336,33 +423,29 @@ export async function writeConsensusVerdict(
     parseStatus: args.result.parseStatus,
     verdict: args.result.verdict,
     axes: args.result.axes,
-    disagreements: args.result.disagreements,
+    disagreements: {
+      version: 1,
+      rows: args.result.disagreements,
+      truncated: !!args.inputTextBounds?.droppedBytes,
+      ...(args.inputTextBounds ? { textBounds: args.inputTextBounds } : {}),
+    },
     confidence: args.result.confidence,
     rawOutputArtifactId,
-    errorCode: args.errorCode,
+    errorCode: args.errorCode ?? args.result.technicalDetail,
   } satisfies ConsensusRoundVerdictInsert;
 
   await recordArtifact(rawOutputArtifact, tx);
-  await tx
+  const inserted = await tx
     .insert(consensusRoundVerdicts)
     .values(row)
-    .onConflictDoUpdate({
-      target: [
-        consensusRoundVerdicts.nodeAttemptId,
-        consensusRoundVerdicts.round,
-        consensusRoundVerdicts.verifierKey,
-        consensusRoundVerdicts.targetKey,
-      ],
-      set: {
-        parseStatus: row.parseStatus,
-        verdict: row.verdict,
-        axes: row.axes,
-        disagreements: row.disagreements,
-        confidence: row.confidence,
-        rawOutputArtifactId,
-        errorCode: row.errorCode,
-      },
-    });
+    .onConflictDoNothing()
+    .returning({ id: consensusRoundVerdicts.id });
+
+  if (inserted.length === 0)
+    throw new MaisterError(
+      "CONFLICT",
+      `consensus verdict cell already exists for ${args.nodeAttemptId} round ${args.round} ${args.verifierId} -> ${args.targetParticipantId}`,
+    );
 
   return {
     verifierId: args.verifierId,
@@ -370,7 +453,12 @@ export async function writeConsensusVerdict(
     round: args.round,
     ...args.result,
     rawOutputArtifactId,
-    ...(args.errorCode ? { errorCode: args.errorCode } : {}),
+    ...(args.inputTextBounds?.droppedBytes
+      ? { truncated: true, textBounds: args.inputTextBounds }
+      : {}),
+    ...(args.errorCode || args.result.technicalDetail
+      ? { errorCode: args.errorCode ?? args.result.technicalDetail }
+      : {}),
   };
 }
 

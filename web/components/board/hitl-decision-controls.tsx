@@ -123,6 +123,10 @@ export interface HitlDecisionControlsLabels {
   consensusProvideResolution?: string;
   consensusRerunRound?: string;
   consensusAbort?: string;
+  consensusPartial?: string;
+  consensusTechnicalFailures?: string;
+  consensusViewArtifact?: string;
+  consensusViewDebate?: string;
   planDecisionTitle?: string;
   planDecisionRecommendation?: string;
   planReviewAssumptions?: string;
@@ -505,6 +509,17 @@ export interface ConsensusDraftChoiceView {
   decision: string;
   label: string;
   excerpt?: string;
+  classification?: "complete" | "partial" | "unavailable";
+  stopReason?: string;
+  artifactRef?: string;
+  artifactRunId?: string;
+}
+
+export interface ConsensusTechnicalFailureView {
+  verifierId: string;
+  targetParticipantId: string;
+  parseStatus: string;
+  errorCode: string;
 }
 
 export interface ConsensusDisagreementView {
@@ -517,7 +532,10 @@ export interface ConsensusHitlView {
   allowedDecisions: string[];
   drafts: ConsensusDraftChoiceView[];
   disagreements: ConsensusDisagreementView[];
+  technicalFailures: ConsensusTechnicalFailureView[];
   debateExcerpt?: string;
+  debateArtifactRef?: string;
+  debateArtifactRunId?: string;
 }
 
 function recordArray(value: unknown): Record<string, unknown>[] {
@@ -573,8 +591,39 @@ function consensusDrafts(
       decision: decision ?? `pick-draft-${n}`,
       label,
       ...(excerpt ? { excerpt } : {}),
+      ...(draft.classification === "complete" ||
+      draft.classification === "partial" ||
+      draft.classification === "unavailable"
+        ? { classification: draft.classification }
+        : {}),
+      ...(optionalText(draft.stopReason)
+        ? { stopReason: optionalText(draft.stopReason) }
+        : {}),
+      ...(optionalText(draft.artifactRef)
+        ? { artifactRef: optionalText(draft.artifactRef) }
+        : {}),
+      ...(optionalText(draft.artifactRunId)
+        ? { artifactRunId: optionalText(draft.artifactRunId) }
+        : {}),
     };
   });
+}
+
+function consensusTechnicalFailures(
+  s: Record<string, unknown>,
+): ConsensusTechnicalFailureView[] {
+  return recordArray(s.technicalFailures)
+    .map((item) => {
+      const verifierId = optionalText(item.verifierId);
+      const targetParticipantId = optionalText(item.targetParticipantId);
+      const parseStatus = optionalText(item.parseStatus);
+      const errorCode = optionalText(item.errorCode);
+
+      return verifierId && targetParticipantId && parseStatus && errorCode
+        ? { verifierId, targetParticipantId, parseStatus, errorCode }
+        : null;
+    })
+    .filter((item): item is ConsensusTechnicalFailureView => item !== null);
 }
 
 function consensusDisagreements(
@@ -609,6 +658,22 @@ function consensusDebateExcerpt(
   return optionalText(s.debateExcerpt ?? s.debate_log_excerpt);
 }
 
+function consensusDebateArtifact(
+  s: Record<string, unknown>,
+): { debateArtifactRef: string; debateArtifactRunId: string } | null {
+  const value = s.debateLog;
+
+  if (value === null || typeof value !== "object" || Array.isArray(value))
+    return null;
+  const record = value as Record<string, unknown>;
+  const debateArtifactRef = optionalText(record.artifactRef);
+  const debateArtifactRunId = optionalText(record.artifactRunId);
+
+  return debateArtifactRef && debateArtifactRunId
+    ? { debateArtifactRef, debateArtifactRunId }
+    : null;
+}
+
 // Structural view of the consensus-resolution human HITL schema. The server
 // owns ids and artifact references; the UI exposes only bounded labels/excerpts
 // and allow-listed decisions so users never edit raw participant/run ids.
@@ -640,9 +705,11 @@ export function consensusHitlFromSchema(
     allowedDecisions,
     drafts: consensusDrafts(s, allowedDecisions),
     disagreements: consensusDisagreements(s),
+    technicalFailures: consensusTechnicalFailures(s),
     ...(consensusDebateExcerpt(s)
       ? { debateExcerpt: consensusDebateExcerpt(s) }
       : {}),
+    ...(consensusDebateArtifact(s) ?? {}),
   };
 }
 
@@ -929,7 +996,17 @@ function ConsensusHitlCard({
                       index + 1,
                     )}
                 </b>
-                {hasDecision(draft.decision) ? (
+                {draft.classification === "partial" ? (
+                  <span
+                    className="rounded-full border border-amber-line bg-amber-soft px-2 py-0.5 font-mono text-[10px] text-amber"
+                    data-testid={`consensus-partial-draft-${index + 1}`}
+                  >
+                    {labels.consensusPartial ?? "Partial"}
+                    {draft.stopReason ? ` · ${draft.stopReason}` : ""}
+                  </span>
+                ) : null}
+                {hasDecision(draft.decision) &&
+                draft.classification !== "unavailable" ? (
                   <button
                     className={clsx(
                       "ml-auto rounded-lg border border-amber bg-amber px-3 py-1.5 font-mono text-[10.5px] font-bold uppercase tracking-[0.06em] text-white shadow-[0_4px_12px_-6px_var(--amber)] hover:bg-amber-2",
@@ -951,6 +1028,17 @@ function ConsensusHitlCard({
                 <p className="mt-2 max-h-24 overflow-y-auto whitespace-pre-wrap break-words text-[12px] leading-[1.5] text-ink-2">
                   {draft.excerpt}
                 </p>
+              ) : null}
+              {draft.artifactRef && draft.artifactRunId ? (
+                <a
+                  className="mt-2 inline-block font-mono text-[11px] text-amber underline"
+                  data-testid={`consensus-draft-artifact-${index + 1}`}
+                  href={`/api/runs/${encodeURIComponent(draft.artifactRunId)}/artifacts/${encodeURIComponent(draft.artifactRef)}/payload`}
+                  rel="noopener noreferrer"
+                  target="_blank"
+                >
+                  {labels.consensusViewArtifact ?? "View full draft"}
+                </a>
               ) : null}
             </article>
           ))}
@@ -986,11 +1074,45 @@ function ConsensusHitlCard({
         )}
       </div>
 
+      {view.technicalFailures.length > 0 ? (
+        <div
+          className="grid gap-1.5"
+          data-testid="consensus-technical-failures"
+        >
+          <p className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute">
+            {labels.consensusTechnicalFailures ??
+              "Technical verification failures"}
+          </p>
+          <ul className="grid gap-1.5">
+            {view.technicalFailures.map((failure, index) => (
+              <li
+                key={`${failure.verifierId}-${failure.targetParticipantId}-${index}`}
+                className="rounded-[8px] border border-line bg-ivory px-3 py-2 text-[12px] text-ink-2"
+              >
+                {failure.verifierId} → {failure.targetParticipantId}:{" "}
+                {failure.errorCode || failure.parseStatus}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
       {view.debateExcerpt ? (
         <div className="grid gap-1.5" data-testid="consensus-debate-log">
           <p className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute">
             {labels.consensusDebateLog ?? "Debate log"}
           </p>
+          {view.debateArtifactRef && view.debateArtifactRunId ? (
+            <a
+              className="font-mono text-[11px] text-amber underline"
+              data-testid="consensus-debate-artifact"
+              href={`/api/runs/${encodeURIComponent(view.debateArtifactRunId)}/artifacts/${encodeURIComponent(view.debateArtifactRef)}/payload`}
+              rel="noopener noreferrer"
+              target="_blank"
+            >
+              {labels.consensusViewDebate ?? "View full debate"}
+            </a>
+          ) : null}
           <p className="max-h-24 overflow-y-auto whitespace-pre-wrap break-words rounded-[8px] border border-line bg-ivory px-3 py-2 text-[12px] leading-[1.5] text-ink-2">
             {view.debateExcerpt}
           </p>
