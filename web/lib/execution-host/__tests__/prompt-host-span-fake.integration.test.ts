@@ -283,6 +283,35 @@ describe("host-span settlement on the fake host", () => {
     });
   });
 
+  it("B5-busy: a capped host object read answering command_in_progress is re-read inside the claim, not left for the next one", async () => {
+    const { client, hostSessionId } = await laggingSession();
+    const handle = await prompt(client, hostSessionId);
+    const busy = () =>
+      new MaisterError(
+        "PRECONDITION",
+        "runtime object verification is busy; retry the read",
+        { details: { reason: "command_in_progress" } },
+      );
+
+    await expect
+      .poll(
+        async () =>
+          (await fake.transport.getCommandReceipt(handle.commandId))?.phase,
+        { timeout: 10_000 },
+      )
+      .toBe("completed");
+    fake.failOnce("getRuntimeObjectContent", busy());
+    fake.failOnce("getRuntimeObjectContent", busy());
+
+    // One reconcile: the receipt claim's first attempt settles from the host.
+    await reconcile(handle.commandId);
+    expect(await command(handle.commandId)).toMatchObject({
+      settledFrom: "host_span",
+      terminalEventId: null,
+      state: "succeeded",
+    });
+  });
+
   it("B-write-failed: a host-span write the database refuses leaves the command waiting for the canonical feed", async () => {
     const { client, hostSessionId } = await laggingSession();
     const handle = await prompt(client, hostSessionId);

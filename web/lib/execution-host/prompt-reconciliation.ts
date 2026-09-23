@@ -4,6 +4,9 @@ import type { Logger } from "pino";
 import type { Db } from "./db";
 import type { CommandReceipt } from "./contracts";
 import type { PromptEvidenceResult } from "./prompt-evidence";
+import type { ExecutionCommand, ExecutionEvent } from "@/lib/db/schema";
+
+import { setTimeout as delay } from "node:timers/promises";
 
 import { and, eq, inArray, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import pino from "pino";
@@ -32,6 +35,11 @@ const log = pino({
 });
 const RECEIPT_CLAIM_MS = 30_000;
 const RECEIPT_RETRY_MS = 5_000;
+// Both sides cap concurrent object reads (the host at 2) and answer a busy
+// read `command_in_progress`, "retry the read". Waiting out RECEIPT_RETRY_MS
+// for it doubled host-span settlement latency under concurrency (T5.3).
+const HOST_SPAN_BUSY_ATTEMPTS = 5;
+const HOST_SPAN_BUSY_BACKOFF_MS = 100;
 
 export type PromptReconciliationResult = PromptEvidenceResult & {
   receiptRead: "not_due" | "missing" | "present" | "unavailable";
@@ -205,6 +213,29 @@ async function settleFromHostSpanWhenDue(
   return settled ?? reconcileStoredPromptEvidence(db, commandId, signal);
 }
 
+/** A capped object read answers `command_in_progress`; it is re-read after a
+ * short backoff inside the held claim, never counted as an unverified span. */
+async function verifySpanRetryingBusyReads(
+  db: Db,
+  command: ExecutionCommand,
+  signal: AbortSignal,
+): Promise<ExecutionEvent> {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await verifyHostPromptSpan({ db, command, signal });
+    } catch (error) {
+      if (
+        signal.aborted ||
+        !isMaisterError(error) ||
+        error.details?.reason !== "command_in_progress" ||
+        attempt >= HOST_SPAN_BUSY_ATTEMPTS
+      )
+        throw error;
+      await delay(HOST_SPAN_BUSY_BACKOFF_MS * attempt, undefined, { signal });
+    }
+  }
+}
+
 /** One host-span attempt under a held claim. A span that is unreadable,
  * unverifiable or signal-bearing is never evidence against the command: the
  * command keeps waiting for the canonical feed. */
@@ -230,7 +261,7 @@ async function attemptHostSpan(
   let terminal;
 
   try {
-    terminal = await verifyHostPromptSpan({ db, command, signal });
+    terminal = await verifySpanRetryingBusyReads(db, command, signal);
   } catch (error) {
     if (signal.aborted) throw error;
     if (error instanceof HostSpanSignals) {
@@ -255,6 +286,9 @@ async function attemptHostSpan(
             : error instanceof Error
               ? error.name
               : "unknown",
+          reason: isMaisterError(error)
+            ? String(error.details?.reason ?? "none")
+            : "none",
         },
         "prompt-host-span-unverified",
       );
