@@ -447,6 +447,21 @@ the existing supervisor `DELETE /sessions/:id` (no new supervisor route; the
 `DELETE` drives teardown so no permission deferred leaks), marks the node
 `Failed`, and ends the run terminal. Cost limits stay record-only.
 
+A turn that already FINISHED on the host is not killed (Designed — ADR-167 D5
+amendment 2026-09-23). For a candidate over its cap, before any teardown, the
+pass reads the attempt's newest owned `session.prompt` across every
+`flow_node_attempt` variant (node, permission_resume, gate_skill, gate_ai,
+consensus_verifier, consensus_synthesis). It defers the kill only on a positive
+witness: that command is settled but not yet applied, or it is `accepted` and
+the one ADR-177 receipt probe answers `completed`. Every other shape —
+`indeterminate` (a running v2 turn), `inflight`, `unknown`, `turn_lost`, an
+ordinary rejected failure, an already-applied newest prompt (the driver sits
+between prompts), or no prompt — kills as before. The pass settles nothing and
+makes no host call beyond that probe; the waiting driver or the continuation
+worker settles the turn, and ADR-177 stream-lost bounds the deferral. Each
+deferral logs `time-limit-deferred-completed-turn` and counts
+`deferredCompletedCount` in the sweep summary.
+
 ### Context-repo declaration to release (Implemented — ADR-157)
 
 `settings.context_repos` is declared in the manifest, gated at manifest load by
@@ -514,8 +529,11 @@ flowchart TD
   `enforced / instructed / refused` and MUST NOT serialize any secret
   (`*TOKEN*`/`*KEY*`/`*SECRET*`) field.
 - A run whose elapsed exceeds `limits.maxDurationMinutes` MUST be terminated
-  `Failed`; a run under cap MUST NOT be killed; absence of `limits` MUST NOT arm
-  the watchdog. Cost caps remain record-only.
+  `Failed` unless its attempt's newest owned prompt has a positive completed
+  witness (settled-unapplied, or a `completed` receipt probe — Designed,
+  2026-09-23; `time-limit-watchdog.integration.test.ts`); a run under cap MUST
+  NOT be killed; absence of `limits` MUST NOT arm the watchdog. Cost caps remain
+  record-only.
 - `settings.context_repos` MUST be accepted only on `ai_coding`, `judge`, and
   `orchestrator` nodes and MUST be rejected by the schema on every other node
   type, including `cli` and `check`. (Implemented — ADR-157)

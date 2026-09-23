@@ -76,13 +76,26 @@ generation without advancing the Flow prompt ordinal. The global continuation
 worker runs in the production web boot (see
 [Registered owner application engine](#registered-owner-application-engine-implemented)).
 
-Prompt admission waits for the exact active incarnation after a create ACK.
-Its wait budget includes the host-stream claim lease followed by the configured
-lifecycle projection lease: after a manager dies, stream takeover must finish
-before its retained created event can be projected. Agent, Flow and scratch
-callers propagate their cancellation signal through this wait. Timeout remains
-a typed `prompt_incarnation_pending` refusal; it never permits a prompt against
-an unprojected or different session.
+Prompt admission accepts the exact incarnation in `created | active`
+(`ADMISSIBLE_PROMPT_INCARNATION_STATES`, one allow-list shared by every admission
+site) (Designed — ADR-167 D5 amendment 2026-09-23). `applyCreateAck` — the one
+writer behind the live ACK, the owned-create replay, the W2 receipt fold and the
+lifecycle projector — inserts that incarnation as `created` in the ACK
+transaction under the run → assignment → logical-session → incarnation locks,
+so admission never waits for the lifecycle projector. Before the insert it
+retires every other open incarnation of the same logical session: a lower
+assignment epoch (`assignment_superseded`) or, because consecutive flow nodes
+reuse one session name on one assignment, the same epoch with a different host
+session (`session_superseded`). The remaining fence wait (host-stream claim
+lease plus projection lease) covers only the window in which no ACK is durable.
+Agent, Flow and scratch callers propagate their cancellation signal through it,
+and its timeout is a typed `PromptIncarnationPending` (code
+`EXECUTOR_UNAVAILABLE`, reason `prompt_incarnation_pending`) that every caller
+maps to a **yield**: the flow attempt stays `Running` for the continuation
+worker (no session delete, no `markNodeFailed`), the agent run stays `Running`
+for the agent continuation worker, and scratch keeps the dialog
+`WaitingForUser` with the message persisted. It never permits a prompt against
+a different or superseded session.
 
 ## Domain entities
 
@@ -97,11 +110,14 @@ an unprojected or different session.
 
 ## State machine
 
+The command ledger: a terminal transition always passes the one reducer, fed
+either by the canonical event or by the verified host span (`settled_from`).
+
 ```mermaid
 stateDiagram-v2
   [*] --> queued
   queued --> accepted: host receipt plus accepted event
-  accepted --> succeeded: completed or checkpointed terminal agreement
+  accepted --> succeeded: completed or checkpointed agreement (canonical event or verified host span)
   accepted --> failed: cancelled, turn_lost, exit, or ACP error agreement
   accepted --> fenced: stale assignment before ACP
   accepted --> quarantined: receipt/event mismatch
@@ -109,6 +125,34 @@ stateDiagram-v2
   failed --> applied
   fenced --> [*]
   quarantined --> [*]
+```
+
+The session incarnation (`run_session_incarnations.state`, Designed — ADR-167
+D5 amendment 2026-09-23). `created` is written by `applyCreateAck`, `active` and
+the terminal states by the lifecycle projector, `lost` by supersession. At most
+one row per logical session is `created | active | checkpointed`
+(`run_session_incarnations_active_run_session_uq`); a `lost` row never re-enters
+that set (`projectTerminal` refuses `lost → checkpointed` and records the reason
+instead).
+
+```mermaid
+stateDiagram-v2
+  [*] --> created: create ACK / W2 fold / projector-first create (applyCreateAck)
+  [*] --> lost: stale create with no prior row (projector)
+  created --> active: canonical session.created, current assignment, applied
+  created --> lost: current-assignment session.created whose create is stale
+  created --> lost: superseded by a newer binding (lower epoch or other host session)
+  active --> lost: superseded by a newer binding
+  checkpointed --> lost: superseded by a newer binding
+  created --> exited: session.exited before activation
+  created --> crashed: session.crashed before activation
+  active --> exited: session.exited
+  active --> crashed: session.crashed
+  active --> checkpointed: session.exited reason checkpoint
+  checkpointed --> exited: later exit
+  checkpointed --> crashed: later crash
+  lost --> exited: late exit of a superseded session
+  lost --> crashed: late crash of a superseded session
 ```
 
 ## Process flows
@@ -127,6 +171,34 @@ sequenceDiagram
   O->>M: queryPrompt or waitPrompt after restart
 ```
 
+Settlement from host evidence when the shared stream lags (Designed — ADR-167 D5
+amendment 2026-09-23). The waiting driver (or, for a dead driver, the
+continuation worker's re-drive) owns it; the watchdog and the reconcile sweep
+never settle outside the stream-lost branch.
+
+```mermaid
+sequenceDiagram
+  participant D as Waiting driver (reconcilePromptCommand)
+  participant M as Command ledger (one reducer)
+  participant H as Execution host
+  participant P as Prompt projector
+  D->>H: GET /commands/{id} (receipt claim)
+  H-->>D: completed v2 receipt naming terminal eventId + manifest
+  D->>M: deposit receipt
+  alt terminal event already ingested
+    D->>M: bind receipt-named event, reduce (feed canonical)
+  else not ingested and span signal-free
+    D->>H: GET /runtime-events/span [accepted, terminal] (paged)
+    H-->>D: retained envelopes
+    D->>D: normalize + classify + verify span (same checks as ingested rows)
+    D->>M: reduce (feed host_span, terminal_event_id stays NULL)
+  else unavailable, unverified or signal-bearing
+    D->>D: stay waiting for the canonical feed
+  end
+  M-->>D: settled, owner applies from the verified span
+  P->>M: later: bind canonical event, same digest (confirm) or post-hoc quarantine
+```
+
 ## Immutable requests, outcomes and command authority
 
 The immutable storage/admission contract is active for production prompt
@@ -142,7 +214,10 @@ production registry.
 The shared `prompt-evidence` reducer is implemented for canonical prompt
 outcomes. The projector, admission reconciliation, recovery and waiter retain
 terminal receipt evidence and an exact canonical event pointer on the command
-row. Receipt-first and event-first delivery remain pending until both agree;
+row. Receipt-first and event-first delivery remain pending until both agree —
+or, for a `completed` v2 receipt, until the receipt agrees with the host's
+verified signal-free span, after which `terminal_event_id` stays NULL until the
+canonical event confirms the same digest (Designed, 2026-09-23);
 nested result/error values are compared intact. Migration 0141 protects saved
 evidence and agreed outcomes from replacement and prevents deleting the
 referenced event; only S2.11 retirement may later drop the copied bodies
@@ -222,11 +297,11 @@ The evidence and application states are separate:
 | Dimension | Legal states / transitions | Authority |
 | --- | --- | --- |
 | Transport | `not_sent → dispatching → acknowledged` or `unknown`; transient attempts/backoff and `reconciliation_required` are recoverable operational states | Transport can record uncertainty; it cannot invent execution success/failure. |
-| Command | Existing queued/delivering/accepted/succeeded/failed/fenced vocabulary retained; receipt-first terminal may remain accepted/delivering while awaiting canonical evidence | One terminal reducer consuming validated canonical evidence plus agreeing receipt; a definitive pre-effect refusal has explicit evidence. |
+| Command | Existing queued/delivering/accepted/succeeded/failed/fenced vocabulary retained; receipt-first terminal may remain accepted/delivering while awaiting canonical evidence, or settle from the receipt plus the host's verified signal-free span (Designed, 2026-09-23) | One terminal reducer consuming validated canonical evidence (ingested terminal event, bound by the projector or directly by receipt `eventId`) or the verified host span, each plus an agreeing receipt; `settled_from` records the first feed; a definitive pre-effect refusal has explicit evidence. |
 | Application | `pending → applying → applied` or `superseded`; transient retry / poisoned remain durable | Existing domain owner transaction under assignment/owner-generation fence; marker commits with domain writes. |
 | Retirement | `retained → eligible → host_confirmed → tombstone` | Eligibility protocol, terminal ACK, application disposition, run state and replay grace. |
 
-All producers of terminal evidence call **one reconciliation reducer**: live command deliverer, receipt recovery, prompt projector, `queryPrompt`, `waitPrompt`, startup/sweep. Query/wait may schedule reconciliation but never implement a second terminal writer. The projector must remain DB-only: receipt fetch/host I/O occurs outside its transaction and deposits validated evidence for a later reducer pass.
+All producers of terminal evidence call **one reconciliation reducer**: live command deliverer, receipt recovery, prompt projector, `queryPrompt`, `waitPrompt`, startup/sweep. Query/wait may schedule reconciliation but never implement a second terminal writer. The reducer takes two evidence feeds — `canonical` (the ingested terminal event, bound by the projector or directly from the receipt's `eventId`) and `host_span` (the verified span, only for a `completed` v2 receipt with a manifest and a signal-free span) — and writes `settled_from` once, in the UPDATE that first sets the digest (Designed, 2026-09-23). The projector must remain DB-only: receipt fetch/host I/O occurs outside its transaction and deposits validated evidence for a later reducer pass.
 
 Receipt contract v2 includes command ID/kind, host key, run ID, assignment ID/epoch, URL-selected session identity, request schema/digest, phase, original result/error/reference, terminal event identity/sequence. Derive receipt bindings from the stored receipt/fence/session, not the querying client's body. Receipt absence/failed reads are not failure evidence. A canonical terminal with temporarily unavailable receipt waits/retries; verified matching durable receipt evidence already stored in Postgres remains valid after host retirement. Genuine disagreement quarantines the command and blocks owner application without changing a valid terminal outcome to another value.
 
@@ -308,7 +383,8 @@ full classification table with its writers lives in
 | `failed {turn_lost}` | `Crashed` (`turn-lost`) — **recoverable**, `resume_target_step_id` stamped | `Reworked`, `decision='turn_lost'`, `error_code='CRASH'` | `applied` |
 | quarantined (`prompt_terminal_conflict`) or `poisoned` | `Crashed` (`owner-poisoned`) | `Reworked`, `decision='turn_lost'`, `error_code='CRASH'` | `applied` |
 | pending (ingest / application / claim) or `inflight` | **unchanged** — the named writer owes the next move | open | unchanged |
-| `pending_ingest` or `inflight` on a host whose stream is `lost` | `Crashed` (`stream-lost`) | `Reworked`, `decision='turn_lost'` | `applied` |
+| `pending_ingest` with a `completed` v2 receipt and a readable, verified, signal-free span (Designed, 2026-09-23) | settles from host evidence (`settled_from='host_span'`) through the waiting driver or continuation worker, then follows the `pending_application` / applied rows | open until application | settled; later confirmed by the canonical event |
+| `pending_ingest` or `inflight` on a host whose stream is `lost` | `Crashed` (`stream-lost`) — since 2026-09-23 only after a `completed` probe failed to settle from host evidence (Designed) | `Reworked`, `decision='turn_lost'` | `applied` |
 | `failed {turn_lost}`, settled-unapplied, found by Recover on a still-open attempt | Recover re-dispatches one fresh prompt | the crashed attempt is closed | `superseded`, `completion_applied_at` NULL |
 
 `turn_lost` is matched on the error **reason** — carried nested
@@ -317,6 +393,33 @@ full classification table with its writers lives in
 never on an HTTP status and never on the code, which is `PRECONDITION` on one
 path and `ACP_PROTOCOL` on the other. `error_code` on the attempt is normalized
 to `CRASH` so one root cause stays one Observatory cluster.
+
+#### Recovery windows for host-evidence settlement (normative, Designed — ADR-167 D5 amendment 2026-09-23)
+
+Each cell names the writer that owes the next move; no cell is left to a timer.
+
+| Run / command state | Canonical feed | Host-span feed | Owner of the next move |
+| --- | --- | --- | --- |
+| `Running`, prompt `accepted`, driver alive | projector binds, or D-B4 direct bind | driver's `reconcilePromptCommand` claim (first attempt right after the receipt deposit, then every 5 s) | the waiting driver |
+| `Running`, prompt `accepted`, driver dead | same | same, reached through the continuation worker's Running-attempt re-drive (reattach → wait) | flow continuation worker |
+| `Running`, settled `host_span`, application `pending` | confirms later | — | prompt-owner worker / waiting driver |
+| `Running`, settled, over `maxDurationMinutes` | — | — | not killed; the settling owner above (watchdog defers, no host call beyond its probe) |
+| sessionless `Running`, `pending_ingest`, stream active | event consumer | driver / continuation worker | as ADR-177: SKIP |
+| sessionless `Running`, `pending_ingest`, stream `lost`, probe `completed` | — | the reconcile resolver, once | settles → re-classified; otherwise `Crashed` (`stream-lost`) |
+| assignment released (checkpoint / release won) | late exact `session.command` | same reducer, historical ledger only | nobody for current state (D4) |
+| span signal-bearing, failed/fenced receipt, or no manifest | projector | — (declined) | the canonical path, as before this amendment |
+
+#### Earliest application point per owner (Designed, 2026-09-23)
+
+Host-span settlement makes a command claimable; each adapter still decides when
+it can apply.
+
+| Owner | Applies after | Why |
+| --- | --- | --- |
+| `flow_node_attempt` (node, permission_resume, gates, consensus), `sync_resolution`, `gate_chat` | settlement | no projector dependency; output is hydrated from the verified span |
+| `scratch_message` | the transcript projector passed the terminal event | the reply must be visible before the dialog returns to `WaitingForUser` |
+| `agent_turn`, `consensus_draft` | the lifecycle projector wrote the session `exited`/`crashed` | teardown must be observed before finalization |
+| any adapter check that reads the terminal event row (`findAgentPromptHalt`, `permissionCheckpointOrder`) | the canonical event is bound | `loadConfirmedTerminalEvent` defers (`terminal_event_unconfirmed`) instead of reading absence as proof |
 
 ### Registered owner application engine (Implemented)
 
@@ -729,6 +832,16 @@ input or an unapplied owned prompt keeps a new message queued. A parked agent
 must reacquire agent-pool capacity and mint its next assignment in that claim.
 Scheduler C3 promotion performs the same transition on the parked host; dispatch
 checks its live identity outside the transaction. No two message prompts overlap.
+A message claimed on a launch assignment before its session is admissible (no
+`created | active` incarnation yet) defers as `session_not_admissible` (renamed
+from `session_projection`: it no longer waits for projection). Only a persistent
+agent accepts messages, so the defer is never orphaned: like every deferral it
+writes `resume_requested_at`, the launch turn's park re-arms it from the oldest
+queued turn, and the continuation worker's parked-run arm re-drives the message
+through the same `claimAgentMessage` after the launch turn — the order a
+`prior_turn` deferral already gives. The ACK-authored `created` row narrows the
+window to a message claimed before the launch ACK commits (Designed — ADR-167 D5
+amendment 2026-09-23; no new worker arm).
 At each successful park, the oldest remaining queued input restores the durable
 resume request, so a multi-message queue continues after a lost scheduler hint.
 
@@ -1235,12 +1348,12 @@ Deferred inventory must cover ACP permission promises, prompt wait subscriptions
 
 ## Expectations
 
-- **PRM-01:** `session.prompt` is accepted only after the host durably records its Stage A receipt and accepted event.
+- **PRM-01:** `session.prompt` is accepted only after the host durably records its Stage A receipt and accepted event, and is admitted against an incarnation in `ADMISSIBLE_PROMPT_INCARNATION_STATES` (`created | active`) that `applyCreateAck` wrote in the ACK transaction — never by waiting for lifecycle projection (Designed, 2026-09-23; `prompt-admission-incarnation.integration.test.ts`).
 - **PRM-02 (Implemented):** Retry reuses command ID, logical operation key, and canonical request digest so ACP is never invoked twice.
-- **PRM-03:** Progress and terminal events—not HTTP lifetime or a receipt alone—are lifecycle authority; the queryable receipt is agreeing evidence for reconciliation.
+- **PRM-03:** Progress and terminal events—not HTTP lifetime or a receipt alone—are lifecycle authority; the queryable receipt is agreeing evidence for reconciliation, and since 2026-09-23 the receipt plus the host's verified, signal-free terminal-event bytes settle a `completed` turn through the same reducer, recorded as `settled_from='host_span'` and confirmed later by the canonical event (Designed; `execution_commands_terminal_evidence_check`, `prompt-host-settlement.integration.test.ts`).
 - **PRM-04 (Implemented):** Every prompt command has one typed server-derived owner and idempotent terminal application across web restart; the production registry composed in `web/lib/workers/runtime.ts` MUST cover exactly the `PROMPT_OWNER_SHAPES` kind set, and a duplicate or missing kind MUST fail boot with `MaisterError("CONFIG")` before `prompt-owner-worker-started` is logged (`durable-workers-boot.integration.test.ts`).
 - **PRM-05 (Implemented):** A host restart finding an accepted command without a live turn terminalizes it as `turn_lost` without replaying prompt text. Since [ADR-177](../decisions/adr-177.md) the manager then gives that terminal state a named run outcome instead of letting it age into `agent-session-gone` or burn the run into an unrecoverable `Failed`: one fenced boundary, `applyTurnLostBoundary` (`web/lib/runs/turn-lost-boundary.ts`), closes the attempt `Reworked`/`decision='turn_lost'`/`error_code='CRASH'`, crashes the run `turn-lost` (so `resume_target_step_id` is stamped and Recover is offered), and discharges the command — all in ONE transaction. The command write is `applied` + `completion_applied_at`, single-winner on `completion_applied_at IS NULL`, and is SKIPPED when the row is already `applied`/`superseded` (reachable on the quarantine arm, where `quarantine()` stamped it before the conflict was found): an already-discharged command means the obligation is met, not that a race was lost. The guard that protects a REAL result is the attempt's `action_completion IS NULL`, not the command's. Proven by `web/lib/execution-host/__tests__/command-recovery.integration.test.ts` (a REAL supervisor SIGKILL + restart across three ingest orders, plus a worker-first cell driven by a live prompt-owner worker), `web/lib/__tests__/reconcile-sweep.integration.test.ts` (the seeded decision table, one case per class), `web/lib/runs/__tests__/turn-lost-boundary.integration.test.ts` (the three-sided transaction and every loser), `web/lib/runs/__tests__/crash-recover-turn-lost.integration.test.ts` (Recover's decline-and-discharge) and the pure `web/lib/__tests__/reconcile-evidence.test.ts` + `reconcile-classify.test.ts`.
-- **PRM-06 (Implemented):** Receipt and terminal event must agree on command, assignment, epoch, and outcome before owner mutation.
+- **PRM-06 (Implemented):** Receipt and terminal event must agree on command, assignment, epoch, and outcome before owner mutation — whether the event came from the canonical log or from the verified host span (Designed for the host span, 2026-09-23).
 - **PRM-07 (Implemented):** Session exit, crash, and cancellation terminalize accepted prompts before or atomically with terminal session evidence.
 - **PRM-08 (Implemented):** HITL pause, decision, checkpoint, and resume are durable/fenced and resume uses a new command and required incarnation.
 - **PRM-09 (Implemented):** Cancellation reuses the command ledger and has one terminal prompt outcome despite retry or ACK loss.
@@ -1252,9 +1365,14 @@ Deferred inventory must cover ACP permission promises, prompt wait subscriptions
 
 - **EDGE-PRM-01:** A lost admission or terminal acknowledgement reconciles by original command ID and never starts a second turn (`IT-PRM-02-ACK-LOSS`).
 - **EDGE-PRM-02 (Implemented):** A restarted host with an accepted non-live turn writes `turn_lost` and lets manager recovery choose checkpoint/resume (`IT-PRM-05`). The manager's choice is now explicit and order-independent (ADR-177): whichever of the reconcile sweep and the flow prompt owner reaches it first, both go through `applyTurnLostBoundary` and converge on ONE row set — run `Crashed`, attempt closed `turn_lost`, command `applied` — and an operator Recover then declines the lost turn as a result (it is not one), settles the stranded command `superseded`, and dispatches exactly one fresh prompt. Proven by `web/lib/execution-host/__tests__/command-recovery.integration.test.ts` (a REAL supervisor SIGKILL + restart across three ingest orders, plus a worker-first cell driven by a live prompt-owner worker), `web/lib/__tests__/reconcile-sweep.integration.test.ts` (the seeded decision table, one case per class), `web/lib/runs/__tests__/turn-lost-boundary.integration.test.ts` (the three-sided transaction and every loser), `web/lib/runs/__tests__/crash-recover-turn-lost.integration.test.ts` (Recover's decline-and-discharge) and the pure `web/lib/__tests__/reconcile-evidence.test.ts` + `reconcile-classify.test.ts`.
-- **EDGE-PRM-03:** Disagreeing terminal receipt/event outcomes are quarantined as `prompt_terminal_conflict` and owner application stops (`IT-PRM-06`).
+- **EDGE-PRM-03:** Disagreeing terminal receipt/event outcomes are quarantined as `prompt_terminal_conflict` and owner application stops (`IT-PRM-06`). When the disagreement is found by the canonical confirmation of a host-span settlement AFTER application, the applied outcome stands and the quarantine is a post-hoc audit record; before application the command is poisoned as above (Designed, 2026-09-23 — `CONFLICT`).
 - A duplicate input/cancel/checkpoint uses the existing receipt and fence, and a stale epoch returns typed fenced evidence rather than a new side effect.
-- **EDGE-PRM-04:** If checkpoint or release wins the race with terminal publication, an open prompt wait remains pending instead of locally fencing the accepted command. Receipt evidence alone does not settle it; the exact canonical terminal command event settles the historical command, after which an agreeing receipt makes the result queryable (`IT-PRM-06`).
+- **EDGE-PRM-04:** If checkpoint or release wins the race with terminal publication, an open prompt wait remains pending instead of locally fencing the accepted command. Receipt evidence alone does not settle it; the exact canonical terminal command event settles the historical command, after which an agreeing receipt makes the result queryable (`IT-PRM-06`). A host-span settlement of such a command settles only the historical ledger entry through the same reducer; owner application follows the existing supersession rule and never mutates current run/session state (Designed, 2026-09-23).
+- **EDGE-PRM-05 (Designed, 2026-09-23):** The host pruned the span (after ingest ACK plus grace) or the stream identity changed — the span read answers `unavailable`, the command stays waiting, and the canonical feed settles it; never a fabricated failure (`EXECUTOR_UNAVAILABLE` is only the transport answer, not a command outcome).
+- **EDGE-PRM-06 (Designed, 2026-09-23):** A span holding `session.hook_trip`, `session.permission_request`, `session.exited` or `session.crashed` for the command's session is declined by both fast feeds and settles canonically, so the flow runner's guardrail, permission and checkpoint signals are never skipped.
+- **EDGE-PRM-07 (Designed, 2026-09-23):** Consecutive nodes reuse the `default` session on one assignment; the next create ACK retires the previous `created | active` row as `lost` (`session_superseded`) before inserting its own, and the previous session's late `session.exited` moves it `lost → exited`, never `checkpointed`.
+- **EDGE-PRM-08 (Designed, 2026-09-23):** The prompt-admission fence wait times out (no durable ACK yet) — a typed `PromptIncarnationPending` yield (`EXECUTOR_UNAVAILABLE`, `prompt_incarnation_pending`); flow and agent runs stay `Running` for their continuation workers, scratch stays `WaitingForUser`; a dead driver changes nothing because the continuation workers select the Running attempt / claimed turn.
+- **EDGE-PRM-09 (Designed, 2026-09-23):** A prompt dispatched after a host-span settlement but before that turn's reply was ingested is re-anchored to the confirming terminal event's `runSequence`, so the transcript keeps host order; the activity API sees the moved row once as a mutation.
 
 ## Linked artifacts
 

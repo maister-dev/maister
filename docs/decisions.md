@@ -208,7 +208,7 @@ validate:docs` enforces stub ↔ body equality and the file bijection.
 | [ADR-164](#adr-164-remove-managed-claude-code-router-support)                                                                                                | Remove managed Claude Code Router support                                                                                                      | Implemented                                                          | 2026-09-02 |
 | [ADR-165](#adr-165-governed-recursive-agent-harness--public-run-results-result-profiles-effective-recursion-bounds-result-only-completion)                   | Governed recursive agent harness — public run results, result profiles, effective recursion bounds, result-only completion                     | Implemented                                                          | 2026-09-02 |
 | [ADR-166](#adr-166-local-execution-host-contract--durable-host-identity-epoch-fenced-assignments-command-ledger-opaque-adopted-workspaces) | Local execution-host contract — durable host identity, epoch-fenced assignments, command ledger, opaque adopted workspaces | Implemented | 2026-09-02 |
-| [ADR-167](#adr-167-durable-execution-host-event-and-runtime-data-plane) | Durable execution-host event and runtime-data plane | Implemented | 2026-09-04 |
+| [ADR-167](#adr-167-durable-execution-host-event-and-runtime-data-plane) | Durable execution-host event and runtime-data plane | Implemented; amended 2026-09-23 | 2026-09-04 |
 | [ADR-168](#adr-168-post-issuance-mutation-of-api-tokens) | Post-issuance mutation of API tokens | Implemented | 2026-09-11 |
 | [ADR-169](#adr-169-two-canonical-attention-counters-decisions-and-updates) | Two canonical attention counters, `decisions` and `updates` | Accepted | 2026-09-10 |
 | [ADR-170](#adr-170-derived-work-stage-vocabulary-distinct-from-the-board-columns) | Derived work-stage vocabulary distinct from the board columns | Accepted | 2026-09-10 |
@@ -218,7 +218,7 @@ validate:docs` enforces stub ↔ body equality and the file bijection.
 | [ADR-174](#adr-174-the-desk-renders-one-object-per-work-item) | The Desk renders one object per work item | Accepted | 2026-09-17 |
 | [ADR-175](#adr-175-operator-recover-of-a-crashed-agent-node-re-enters-the-flow-graph) | Operator Recover of a crashed agent node re-enters the flow graph | Accepted; amended by ADR-176 | 2026-09-18 |
 | [ADR-176](#adr-176-automated-crash-recover-re-entry--the-flow-continuation-worker-owns-the-committed-intent-under-a-bounded-per-run-budget) | Automated crash-recover re-entry — the flow continuation worker owns the committed intent under a bounded per-run budget | Implemented | 2026-09-21 |
-| [ADR-177](#adr-177-evidence-first-crash-classification) | Evidence-first crash classification | Implemented | 2026-09-21 |
+| [ADR-177](#adr-177-evidence-first-crash-classification) | Evidence-first crash classification | Implemented; amended 2026-09-23 | 2026-09-21 |
 | [ADR-178](#adr-178-observatory-overview-table-day-aligned-period-url-views-and-auto-apply-filters) | Observatory overview table, day-aligned period, URL views, and auto-apply filters | Implemented (2026-09-21) | 2026-09-21 |
 | [ADR-179](#adr-179-mcp-configuration-values--literal-or-reference-envheader-maps-a-bearer-token-field-value-replacing-project-overlays-host-env-ref-readiness-and-an-adapter-transport-gate) | MCP configuration values — literal-or-reference env/header maps, a bearer token field, value-replacing project overlays, host env-ref readiness, and an adapter transport gate | Implemented | 2026-09-21 |
 | [ADR-180](#adr-180-permission-deadline-has-one-owner) | Permission deadline has one owner | Implemented | 2026-09-22 |
@@ -1708,7 +1708,7 @@ Full record: [`decisions/adr-166.md`](decisions/adr-166.md)
 
 ### ADR-167: Durable execution-host event and runtime-data plane
 
-**Status:** Implemented
+**Status:** Implemented; amended 2026-09-23 (host-evidence settlement)
 **Date:** 2026-09-04
 
 Full record: [`decisions/adr-167.md`](decisions/adr-167.md)
@@ -1793,7 +1793,7 @@ Full record: [`decisions/adr-176.md`](decisions/adr-176.md)
 
 ### ADR-177: Evidence-first crash classification
 
-**Status:** Implemented
+**Status:** Implemented; amended 2026-09-23 (host-evidence settlement)
 **Date:** 2026-09-21
 
 The reconcile sweep classifies a sessionless `Running` flow run from the current

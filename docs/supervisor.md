@@ -824,6 +824,15 @@ Each replay page is at most 500 events and 1 MiB; a response closes at a page
 boundary while backlog remains, so reconnect continues from its last delivered
 cursor. Startup audits iterate individual envelopes and verify persisted quota
 counters against retained rows.
+`GET /runtime-events/span?streamId&after&through` (Designed — ADR-167 D5
+amendment 2026-09-23) returns the same retained envelopes for the range
+`(after, through]` as one bounded JSON page (`complete`, or `partial` with
+`nextAfter`). It is read-only — it never ACKs, prunes or opens SSE — and takes no
+command id, so the manager can prove contiguity and source binding over the whole
+range. A foreign stream, a pruned floor or a range past the highest emitted
+sequence answers `200 unavailable` with `stream_identity_changed`,
+`replay_floor_lost` or `beyond_emitted`; `after >= through` is `409
+PRECONDITION/invalid_event_span`; storage failure is `503`.
 The ring remains a local diagnostic surface only; it is neither browser replay nor
 run-state authority. The supervisor no longer writes `run.events.jsonl`.
 
