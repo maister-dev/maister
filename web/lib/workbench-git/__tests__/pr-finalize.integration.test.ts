@@ -418,6 +418,79 @@ describe("POST /api/runs/{runId}/pr/finalize", () => {
     expect(await doneEvents(run.runId)).toHaveLength(1);
   });
 
+  // The recover direction of one writer per worktree: a recover holds the run
+  // row while it flips `Crashed -> Running` (resumeCrashedRun's Phase 1). A
+  // finalize whose claim read the run WITHOUT that lock took its stale
+  // `Crashed`, claimed, and later flipped the running run to Done.
+  it("decides on the run's status under the run's lock: a recover committing mid-claim is not finalized", async () => {
+    const run = await prRun({ status: "Crashed" });
+    const { depsFromOptions } = await import(
+      "@/lib/workbench-lifecycle/service"
+    );
+    const { finalizePullRequestRun } = await import(
+      "@/lib/workbench-git/service"
+    );
+    const deps = {
+      ...depsFromOptions(undefined),
+      requireActiveSession: async () => ({ id: OPERATOR }),
+      authorize: async () => undefined,
+    };
+    const recover = await testDatabase.pool.connect();
+    let committed = false;
+
+    try {
+      await recover.query("BEGIN");
+      await recover.query(`SELECT id FROM runs WHERE id = $1 FOR UPDATE`, [
+        run.runId,
+      ]);
+      const recoverPid: number = (
+        await recover.query(`SELECT pg_backend_pid() AS pid`)
+      ).rows[0].pid;
+
+      let settled = false;
+      const finalize = finalizePullRequestRun(run.runId, {}, { deps }).then(
+        (value) => ((settled = true), value),
+        (err: unknown) => ((settled = true), err),
+      );
+
+      // The finalize reaches the run row the recover holds and waits on it.
+      // (Matched by the blocker, not by query text: `pg_stat_activity.query`
+      // is truncated, and a `select *` over `runs` loses its FROM clause.)
+      await expect
+        .poll(
+          async () =>
+            settled ||
+            (
+              await testDatabase.pool.query(
+                `SELECT count(*)::int AS n FROM pg_stat_activity
+                  WHERE $1 = ANY (pg_blocking_pids(pid))`,
+                [recoverPid],
+              )
+            ).rows[0].n > 0,
+          { timeout: 15_000 },
+        )
+        .toBe(true);
+      expect(settled ? await finalize : "waiting").toBe("waiting");
+      await recover.query(`UPDATE runs SET status = 'Running' WHERE id = $1`, [
+        run.runId,
+      ]);
+      await recover.query("COMMIT");
+      committed = true;
+
+      expect(await finalize).toMatchObject({
+        code: "PRECONDITION",
+        details: { reason: "unsupported_status" },
+      });
+    } finally {
+      if (!committed) await recover.query("ROLLBACK").catch(() => undefined);
+      recover.release();
+    }
+
+    expect((await runRow(db, run.runId)).status).toBe("Running");
+    expect(await doneEvents(run.runId)).toHaveLength(0);
+    expect(createOrUpdatePr).not.toHaveBeenCalled();
+  });
+
   describe("a shared tree (ADR-102)", () => {
     it("settles the tree's Review siblings with the finalized allocator", async () => {
       const run = await prRun({ sharedTreeAllocator: true });

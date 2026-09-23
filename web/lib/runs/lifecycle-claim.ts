@@ -102,3 +102,22 @@ export function promotionClaimIsLive(workspace: {
     claimedAt.getTime() >= Date.now() - promotionClaimTimeoutSeconds() * 1000
   );
 }
+
+/**
+ * ADR-181 C26: whether a live workbench claim owns the worktree right now — a
+ * lifecycle operation inside its lease, or a promotion inside its window. Both
+ * recovers read it before they put an agent back into the tree; it is the rule
+ * the git policy's `busy` and both claims apply, so none of them can disagree.
+ */
+export function workbenchClaimHoldsTree(workspace: {
+  lifecycleOperationState?: string | null;
+  lifecycleOperationLeaseExpiresAt?: Date | null;
+  promotionState?: string | null;
+  promotionClaimedAt?: Date | null;
+}): boolean {
+  return (
+    ((workspace.lifecycleOperationState ?? "none") === "claiming" &&
+      !canReclaimLifecycle(workspace)) ||
+    promotionClaimIsLive(workspace)
+  );
+}

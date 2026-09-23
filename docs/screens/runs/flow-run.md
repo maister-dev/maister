@@ -265,6 +265,9 @@ namespace: the behind/ahead and PR-state chips, the Sync branch dialog
 labels and Stop, the drift-card Sync branch action, the Reopen action, and the
 `ai_rebase_merge` auto-finalize checkbox. EN + RU parity required.
 
+ADR-181 adds `run.recoverBusy` (the recover panel's notice for a worktree a
+workbench operation still owns). EN + RU parity required.
+
 ADR-125 adds budget-breach labels under the existing run/HITL namespaces:
 progress metrics, `Raise & continue`, `Restart fresh`, `Park the result`,
 snapshot/export mode labels, branch-name validation text, discard/drop
@@ -325,7 +328,11 @@ replaces the Export dialog and absorbs the review panel's Sync branch dialog.
 Promote, the readiness and drift chips and the ahead/behind chip stay on the
 review panel. A `Failed` run stays listed wherever a `Crashed` one is — the
 portfolio, the project workspace list, the rail and the board's Backlog card
-menu — so its git actions are reachable without knowing its URL. Behavior:
+menu — so its git actions are reachable without knowing its URL. One writer
+per worktree holds for Recover too: while a git panel operation or a parked PR
+finalize owns a `Crashed` run's tree, Recover is refused `busy` and the recover
+panel shows the retryable `run.recoverBusy` notice ("retry once it finishes")
+rather than the discard advice every other refusal carries. Behavior:
 [`../../system-analytics/workbench-git.md`](../../system-analytics/workbench-git.md).
 
 ## Budget-breach panel

@@ -370,9 +370,14 @@ run the same classifier, the same Phase-1 CAS + cap re-admission, and the same
 success `runStatus` reports the run's COMMITTED status rather than a constant —
 so a second concurrent call is `409` and a cap-full recover queues rather than
 over-spawning, and the queued promotion reaches the same graph re-entry through
-`driveResume`. The three `409` outcomes are machine-distinguishable on
-`details.reason` (`discard_only`, `recover_cas_lost`, `workspace_removed`), which
-is what makes the operation safe for an unattended caller. See
+`driveResume`. The four `409` outcomes are machine-distinguishable on
+`details.reason` (`discard_only`, `recover_cas_lost`, `workspace_removed`, and
+ADR-181's retryable `busy` — a live workbench claim owns the worktree), which is
+what makes the operation safe for an unattended caller. One writer per worktree
+holds in the recover direction too: the Phase-1 transaction reads the
+workspace's lifecycle and promotion claims after it takes the run row, and every
+claim decides on the run's status under that same row lock, so a recover and a
+git panel operation can never both own the tree. See
 [external-operations.md](external-operations.md).
 
 ### Automated crash-recover re-entry (Implemented — ADR-176)

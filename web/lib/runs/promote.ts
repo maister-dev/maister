@@ -253,6 +253,20 @@ async function loadRun(db: Db, runId: string): Promise<any> {
   return run;
 }
 
+async function loadRunForUpdate(db: Db, runId: string): Promise<any> {
+  const rows = await db
+    .select()
+    .from(runs)
+    .where(eq(runs.id, runId))
+    .for("update");
+
+  if (!rows[0]) {
+    throw new MaisterError("PRECONDITION", `run not found: ${runId}`);
+  }
+
+  return rows[0];
+}
+
 async function loadWorkspaceForUpdate(db: Db, runId: string): Promise<any> {
   const rows = await db
     .select()
@@ -1873,8 +1887,6 @@ export async function finalizeParkedPullRequest(args: {
   const claim: FlowClaim = await db.transaction(async (tx: Db) => {
     const run = await loadRun(tx, runId);
     const workspace = await loadPromotionWorkspaceForUpdate(tx, run);
-    // Re-read under the lock: the status the caller admitted may have moved.
-    const liveRun = await loadRun(tx, runId);
 
     await ctx.authorize(run.projectId);
     assertNoLiveWorkbenchClaim(workspace);
@@ -1885,6 +1897,13 @@ export async function finalizeParkedPullRequest(args: {
         "promotion already in progress for this run",
       );
     }
+
+    // The status the caller admitted may have moved: read it under the run's
+    // own lock, the one a recover holds while it flips `Crashed -> Running`.
+    // Workspace then run, as the lifecycle and sync claims take them, and only
+    // once the tree is known free.
+    const liveRun = await loadRunForUpdate(tx, runId);
+
     if (!PARKED_FINALIZE_STATUSES.has(liveRun.status)) {
       throw new MaisterError(
         "PRECONDITION",

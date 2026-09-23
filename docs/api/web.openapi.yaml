@@ -5657,7 +5657,13 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
         "409":
-          description: Scratch run has no resume handle or cannot be recovered.
+          description: |
+            Scratch run has no resume handle or cannot be recovered, or a
+            concurrent recover won the status CAS. (ADR-181) Also `CONFLICT`
+            with `details.reason: busy` when a live workbench claim owns the
+            worktree — a git panel operation inside its lease, or a scratch
+            promotion inside its claim: the run stays `Crashed`, no generation
+            is minted, and the recover is retryable once that operation ends.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -9028,13 +9034,17 @@ paths:
             agent target node with no `acpSessionId`, a session-less target node
             that is not `retry_safe`, or an unresolvable target node), so only
             Discard is offered; or the run's workspace was already removed
-            (`PRECONDITION`, not `CONFLICT`).
+            (`PRECONDITION`, not `CONFLICT`); or (ADR-181) a live workbench
+            claim owns the worktree — a git panel operation inside its lease,
+            or a parked PR finalize inside its promotion claim — so nothing
+            moved and the recover is retryable once that operation finishes.
 
-            (ADR-175) The three are machine-distinguishable on
+            (ADR-175) The four are machine-distinguishable on
             `details.reason`: `discard_only`, `recover_cas_lost`,
-            `workspace_removed`. An unattended caller branches on that reason to
-            tell "retry later" from "this run is unrecoverable"; the UI keeps
-            branching on `code`.
+            `workspace_removed`, `busy`. An unattended caller branches on that
+            reason to tell "retry later" from "this run is unrecoverable"; the
+            UI branches on `code`, and on `busy` alone among the reasons (its
+            "retry once it finishes" notice).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -9861,7 +9871,9 @@ paths:
             `worktree_missing`, `unsupported_status`). `CONFLICT` with
             `details.reason: busy` — another lifecycle operation, a promotion
             or a live shared-tree sibling owns the worktree, or the lifecycle
-            claim was lost to a racing operation.
+            claim was lost to a racing operation (another claim, or a recover
+            that moved the run's status after this request was admitted — the
+            claim decides on the status under the run's row lock).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }

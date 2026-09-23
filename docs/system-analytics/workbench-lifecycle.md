@@ -268,6 +268,13 @@ single-owner claim on `workspaces.lifecycle_operation_state`,
 effects and finalized only by the same attempt token. Stale `claiming` rows are
 reclaimable using the same timeout as promotion claims. Transient push failures
 leave the claim retryable; non-transient failures finalize as `failed`.
+**(Implemented, ADR-181)** The claim also DECIDES on the status its operation
+was admitted with (`lifecycle_operation_expected_run_status`): once the slot is
+known free it locks the `runs` row (workspace row first, then run — the sync
+claim's order) and refuses `CONFLICT` `details.reason: busy` unless
+`runs.status` still equals it, so a recover that flipped `Crashed → Running`
+after the admission wins; the recovers in turn refuse while a claim is live
+([`workbench-git.md`](workbench-git.md)).
 
 **(Implemented, ADR-141)** Branch **sync** adds a sixth `lifecycle_operation_name`
 value `"sync"` (TS-only — `lifecycle_operation_name` is plain `text` with no
@@ -275,9 +282,10 @@ CHECK). It claims the SAME `lifecycle_operation_*` slot, so it is mutually
 exclusive with `archive | drop | exportBranch | snapshotCommit | handoffBranch`
 for free: a held `"sync"` claim blocks archive/drop/export/snapshot/handoff and
 vice versa, with no extra wiring. Beyond that shared slot, sync adds an explicit
-**cross-column double fence with promotion** — the lifecycle claim and the
-`promoteRun` claim do NOT otherwise cross-guard (only a shared `FOR UPDATE`
-workspace row-lock serializes them): the sync-claim transaction refuses when
+**cross-column double fence with promotion** (since ADR-181 C26 every
+lifecycle claim refuses a live promotion claim and `promoteRun` refuses any live
+lifecycle claim, under the same `FOR UPDATE` workspace row lock): the
+sync-claim transaction refuses when
 `promotion_state ∈ {claiming, done}` (unless `reopened`), and `promoteRun`'s
 claim transaction refuses when an active `lifecycle_operation_name='sync'` claim
 exists. Both directions are matrix-tested. See [`branch-sync.md`](branch-sync.md).

@@ -1828,7 +1828,7 @@ honours its three modes; refactor gate passed.
       with the exact checks, and its Edge cases state that draft handling is
       proven at the adapter boundary and against the fake `gh` only (a
       Gitea-family server ignoring the `WIP:` convention opens a ready PR).
-      Commit 8's body says the same.
+      Commit 8's body says the same. **Owner (2026-09-23): after rollout.**
 - [x] **T4.3 — As-built docs truth pass + status flips.** Re-derive the contract
       surface list from `git diff master...HEAD` and reconcile with the Phase-0
       table (every difference explained in the commit body);
@@ -1902,7 +1902,78 @@ honours its three modes; refactor gate passed.
       set larger. Lint: eslint on the 125 changed web files 0 errors / 0
       warnings, no `--fix` collateral; `tsc --noEmit` clean.
 
-**Commit 8** — `docs(workbench-git): ADR-181 Implemented — as-built sweep, e2e smoke, live PR check`
+**Commit 8** — `docs(workbench-git): ADR-181 Implemented — as-built sweep, e2e smoke, lane re-qualification`
+(as committed, `cd64cdc4`: the planned "live PR check" is T4.2, not executed).
+
+### Phase 5 — owner follow-ups (decided 2026-09-23, after Commit 8)
+
+- [x] **T5.1 — One writer per worktree covers recover (Follow-up 1).** Recover
+      refuses while a live workbench claim owns the tree, and every claimant
+      decides on the run's status under the `runs` row lock.
+      **AC**: a recover under a live lifecycle claim or a live promotion claim is
+      `409 CONFLICT details.reason:"busy"` with nothing moved (still `Crashed`, no
+      generation minted, no dispatch), a lapsed lease owns nothing; a lifecycle
+      claim whose run's status moved after admission refuses `busy` with the tree
+      untouched; a parked finalize whose run a recover flipped mid-claim is not
+      finalized; the scratch recover refuses the same way; the recover panel
+      names `busy` as retryable, never as a discard; each control falsified.
+      **Verified 2026-09-23.** `resumeCrashedRun` reads the workspace's claims
+      after its run row lock and answers `workspace-busy` (`409 CONFLICT busy`
+      through the shared `recoverHttpResponse`, so the ext twin answers the
+      same); the scratch recover route refuses inside its CAS transaction;
+      `workbenchClaimHoldsTree` (`lifecycle-claim.ts`) is the one rule both read.
+      `claimLifecycleOperation` locks the `runs` row after the busy checks
+      (workspace row first — the sync claim's order, and after the busy checks so
+      it never waits on a holder's `recordDrop`, run then workspace) and refuses
+      `busy` unless the status equals `expectedRunStatus`;
+      `finalizeParkedPullRequest` reads the run `FOR UPDATE` in the same place.
+      The recover panel's 409 used to say "discard its workspace" for every
+      refusal — for `busy` that advice destroys the work the git operation
+      preserves — so `recoverHttpToUiState` takes the typed `details.reason` and
+      `busy` renders `run.recoverBusy` (EN/RU). Beyond the Follow-up's two
+      fences: the parked finalize's unlocked re-read (a recover committing
+      mid-claim was finalized to `Done` while running) and the scratch recover,
+      the same gap one route over. Controls: `recover.integration.test.ts` (3),
+      `lifecycle-race.integration.test.ts` (1, the window held at the pre-claim
+      dirty read), `pr-finalize.integration.test.ts` (1, a raw transaction holds
+      the run row; the waiter is matched by `pg_blocking_pids`, because
+      `pg_stat_activity.query` truncates a `select *` over `runs` before its
+      FROM), `scratch-placement.integration.test.ts` Q6, `recover-http.test.ts`,
+      `recover-ui.test.ts`, `run-recover-actions.dom.test.ts` (2). RED first on
+      the unfixed tree (4 red, the lapsed-lease pin green); falsified — the four
+      guards reverted together turned all five integration controls red, and the
+      dropped reason turned the busy banner into the discard advice. The 67
+      integration suites that reach a lifecycle claim, a recover or a promotion:
+      620/620. Contracts: the web and ext recover 409s (the ext "only `503` is
+      retryable" was false for `busy`), the scratch recover 409, the discard 409's
+      `busy` causes; the error taxonomy (`CONFLICT` row + a `busy` recover
+      token); `reconciliation-gc.md`, `workbench-git.md` (Expectation 3 edited in
+      place), `workbench-lifecycle.md` (plus its stale "do NOT otherwise
+      cross-guard", false since C26), `flow-run.md`, the RU manual, an ADR-181
+      amendment.
+- [ ] **T5.2 — A `Failed` workbench expires (Follow-up 2, owner: TTL).** A
+      `Failed` run's worktree is collected like `Done | Abandoned` —
+      `gcAgeDays` after `ended_at` (or at `scheduled_removal_at`), preserved
+      first (snapshot commit + `maister/archive/<runId>`, which Reattach
+      restores from) — and the rail and run detail show its TTL countdown. A
+      new `WORKTREE_TTL_RUN_STATUSES` carries it; `DISPOSABLE_WORKSPACE_RUN_STATUSES`
+      keeps its other readers' meaning (runtime-object retention, the shared-tree
+      removal guard), because those were not decided.
+      **AC**: the GC collects a `Failed` worktree past its TTL and not before,
+      with the dirty tree preserved and re-attachable; `Crashed` and `Review`
+      are still never collected; the rail and run detail carry the countdown;
+      runtime objects of a `Failed` run are untouched; each control falsified;
+      docs/ADR/RU updated.
+- [ ] **T5.3 — The three master-side e2e names (owner: diagnose here).**
+      `orchestrator-loop:56`, `flow-target-delegation:36`, `m11b-takeover:67` fail
+      on this branch's merge base `c36ff5b1` too. Root-cause each from its FIRST
+      attempt with the dev server's logs; fix the product or the spec.
+      **AC**: each passes twice alone on this host, or stays red with a named,
+      evidenced cause the owner can act on; its own commit.
+
+**Commit 9** — `fix(workbench-git): recover respects the one writer of a worktree` (T5.1)
+**Commit 10** — `feat(workbench-git): a Failed workbench expires like a finished one` (T5.2)
+**Commit 11** — the T5.3 fixes (separate, as the owner asked)
 
 ---
 
@@ -2109,7 +2180,8 @@ Everything above ships in this plan; the two R9 TODOs are recorded defects, not
 deferred work of this change. Two scope questions were found (Phase 2, T4.4) and
 are put to the owner rather than widened silently:
 
-- **Recover does not respect the workspace lifecycle slot (found in T2.1).**
+- **Recover does not respect the workspace lifecycle slot (found in T2.1) →
+  fixed in T5.1 (owner, 2026-09-23).**
   `resumeCrashedRun` flips `Crashed → Running` without reading
   `workspaces.lifecycle_operation_*`, and `claimLifecycleOperation` does not
   re-check the run's status under its lock (`expectedRunStatus` is recorded,
@@ -2123,7 +2195,7 @@ are put to the owner rather than widened silently:
   OpenAPI, error taxonomy, the ext twin), and the lifecycle claim compares
   `expectedRunStatus` under a run row lock.
 - **`Failed` rows are never reclaimed, so D14's lists have no bound (found in
-  T4.4).** `DISPOSABLE_WORKSPACE_RUN_STATUSES` is `Done | Abandoned`: a `Failed`
+  T4.4) → a TTL, T5.2 (owner, 2026-09-23).** `DISPOSABLE_WORKSPACE_RUN_STATUSES` is `Done | Abandoned`: a `Failed`
   run's worktree stays on disk (pre-existing) and, since D14, stays listed in the
   rail, the portfolio and the project workspace list — one `fs.stat` per row, and
   `getRailWorkspaceGroups` has no page bound. ADR-181 accepts that "portfolio
@@ -2196,3 +2268,13 @@ are put to the owner rather than widened silently:
 | 10 | Rescue-ref lifetime | **(a)**: not collected in this plan | D8, Out of scope |
 | 12 | C23 — finalize from `Review` and `reviewedTargetCommit` | **(a)**: body `{reviewedTargetCommit?, allowTargetDrift?}`, forwarded to `promoteRun` from `Review` only (400 outside); `git-state.targetHead`; "Finalize anyway" on drift | C23, D12, T0.1, T3.3, T3.5 |
 | 11 | C14 — the execution-assignment arm on parked runs | **(a)**: not an admission condition; a parked status is the witness; `hasActiveAssignment` informational; ADR-181 amendment | C14, D1 (busy arm), D1a, T0.7, RED 1, falsification 16, trap 21 |
+
+## Post-implementation decisions (owner, 2026-09-23, after Commit 8)
+
+| # | Question | Answer | Where it landed |
+|---|---|---|---|
+| 1 | Recover vs the lifecycle slot (Follow-up 1) | **fix** | T5.1, Commit 9 |
+| 2 | `0173` vs `master`'s `0173`/`0174` | **renumber at merge** (to `0175`) | merge step |
+| 3 | T4.2 live provider check | **after rollout** | T4.2 |
+| 4 | Unbounded `Failed` rows (Follow-up 2) | **TTL for `Failed`** (over pagination) | T5.2, Commit 10 |
+| 5 | The three master-side e2e names | **diagnose here**, own commit | T5.3, Commit 11 |

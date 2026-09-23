@@ -2579,6 +2579,36 @@ export async function claimLifecycleOperation(args: {
       );
     }
 
+    // The operation was admitted on the status its caller read; decide on the
+    // status under the run's own lock, or a recover that flipped `Crashed ->
+    // Running` in between hands the tree to an agent AND this operation. Taken
+    // only once the slot is known free, workspace then run — the sync claim's
+    // order — so it never waits on a holder's `recordDrop` (run, then workspace).
+    const runRows = await tx
+      .select({ status: runs.status })
+      .from(runs)
+      .where(eq(runs.id, args.runId))
+      .for("update");
+    const runStatus = runRows[0]?.status ?? null;
+
+    if (runStatus !== args.expectedRunStatus) {
+      log.warn(
+        {
+          runId: args.runId,
+          operation: args.operation,
+          expectedRunStatus: args.expectedRunStatus,
+          runStatus,
+        },
+        "workbench lifecycle claim refused: the run's status moved",
+      );
+
+      throw new MaisterError(
+        "CONFLICT",
+        `run ${args.runId} is ${runStatus ?? "missing"}, not ${args.expectedRunStatus} — another operation moved it`,
+        { details: { reason: "busy" } },
+      );
+    }
+
     const attemptId = randomUUID();
     const claimedAt = new Date();
     const leaseExpiresAt = new Date(

@@ -28,6 +28,7 @@ type RecoverErrorState = Exclude<RecoverUiState, "resumed" | "queued">;
 // string-matched server messages.
 const RECOVER_ERROR_KEY: Record<RecoverErrorState, string> = {
   conflict: "recoverConflict",
+  busy: "recoverBusy",
   gone: "recoverGone",
   retry: "recoverRetry",
   error: "recoverError",
@@ -43,6 +44,26 @@ async function committedRunStatus(res: Response): Promise<string | null> {
 
     return typeof body === "object" && body !== null && "runStatus" in body
       ? String((body as { runStatus: unknown }).runStatus)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+// A refusal's typed `details.reason` token, read for the same reason as the
+// committed status above: it is a declared field, not a server message.
+async function refusalReason(res: Response): Promise<string | null> {
+  try {
+    const body: unknown = await res.json();
+    const details =
+      typeof body === "object" && body !== null && "details" in body
+        ? (body as { details: unknown }).details
+        : null;
+
+    return typeof details === "object" &&
+      details !== null &&
+      "reason" in details
+      ? String((details as { reason: unknown }).reason)
       : null;
   } catch {
     return null;
@@ -78,7 +99,10 @@ export function RunRecoverActions({
         headers: { "content-type": "application/json" },
         body: "{}",
       });
-      const state = recoverHttpToUiState(res.status);
+      const state = recoverHttpToUiState(
+        res.status,
+        res.status === 409 ? await refusalReason(res) : null,
+      );
 
       if (state === "resumed") {
         // A 200 does not always mean the run is Running: a crashed coordinator

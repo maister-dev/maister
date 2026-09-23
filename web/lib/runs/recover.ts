@@ -18,6 +18,7 @@ import { isMaisterError } from "@/lib/errors";
 import { resolveNodeRecoverInfo } from "@/lib/flows/graph/current-node-kind";
 import { classifyRecover } from "@/lib/runs/recover-classify";
 import { loadConsensusRecoveryEvidence } from "@/lib/flows/graph/consensus/recovery-evidence";
+import { workbenchClaimHoldsTree } from "@/lib/runs/lifecycle-claim";
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import {
   applyCrashedTurnEvidence,
@@ -86,6 +87,9 @@ export type RecoverResult =
   | { state: "queued" }
   | { state: "discard-only" }
   | { state: "workspace-removed" }
+  // ADR-181 C26: a live workbench claim (a git panel operation under its
+  // lease, or a parked PR finalize) owns the worktree — retry once it settles.
+  | { state: "workspace-busy" }
   | { state: "conflict" }
   | { state: "unresumable" }
   | { state: "transient" };
@@ -184,15 +188,41 @@ export async function resumeCrashedRun(
     }
 
     const workspaceRows = await tx
-      .select({ removedAt: workspaces.removedAt })
+      .select({
+        removedAt: workspaces.removedAt,
+        lifecycleOperationState: workspaces.lifecycleOperationState,
+        lifecycleOperationName: workspaces.lifecycleOperationName,
+        lifecycleOperationLeaseExpiresAt:
+          workspaces.lifecycleOperationLeaseExpiresAt,
+        promotionState: workspaces.promotionState,
+        promotionClaimedAt: workspaces.promotionClaimedAt,
+      })
       .from(workspaces)
       .where(eq(workspaces.runId, runId))
       .limit(1);
+    const workspace = workspaceRows[0];
 
-    if (workspaceRows[0]?.removedAt != null) {
+    if (workspace?.removedAt != null) {
       log.info({ runId }, "resumeCrashedRun: workspace was removed");
 
       return { state: "workspace-removed" };
+    }
+
+    // ADR-181 C26, the recover direction: one writer per worktree. The claims
+    // decide on the run's status under this run row's lock, so a claim that
+    // committed before the lock was taken is visible here, and one still in
+    // flight waits for this transaction and then sees the flipped status.
+    if (workspace && workbenchClaimHoldsTree(workspace)) {
+      log.info(
+        {
+          runId,
+          lifecycleOperationName: workspace.lifecycleOperationName,
+          promotionState: workspace.promotionState,
+        },
+        "resumeCrashedRun: a workbench claim holds the worktree — refused",
+      );
+
+      return { state: "workspace-busy" };
     }
 
     // The recover target is the node id retained at crash time

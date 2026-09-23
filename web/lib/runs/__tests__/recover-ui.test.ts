@@ -21,6 +21,14 @@ describe("recoverHttpToUiState — recover HTTP status → UI state", () => {
     expect(recoverHttpToUiState(409)).toBe("conflict");
   });
 
+  // ADR-181: the one 409 that is retryable — a workbench operation owns the
+  // worktree. Every other refusal reason stays a dead end.
+  it("409 with reason busy → busy; any other reason → conflict", () => {
+    expect(recoverHttpToUiState(409, "busy")).toBe("busy");
+    expect(recoverHttpToUiState(409, "recover_cas_lost")).toBe("conflict");
+    expect(recoverHttpToUiState(409, "discard_only")).toBe("conflict");
+  });
+
   it("410 → gone", () => {
     expect(recoverHttpToUiState(410)).toBe("gone");
   });

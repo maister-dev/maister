@@ -2472,6 +2472,7 @@
     "streamDisconnected": "Disconnected",
     "streamReconnect": "Reconnect",
     "recoverConflict": "This run can no longer be recovered. Refresh and discard its workspace instead.",
+    "recoverBusy": "A git operation is still running on this run's worktree. Retry once it finishes.",
     "recoverGone": "The checkpoint is gone — this run can only be discarded now.",
     "recoverRetry": "The supervisor is temporarily unavailable. Try again in a moment.",
     "recoverError": "Recovery failed. Try again, or discard the workspace.",

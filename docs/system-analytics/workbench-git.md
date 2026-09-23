@@ -277,11 +277,14 @@ is `CONFLICT`, the rest `PRECONDITION`), and an unknown run is 404 with
   never expose `HumanWorking` git actions (enforced by the policy's owner arm
   and `lifecycleActionsForWorkspace`'s null viewer).
 - Every mutating action MUST run under the `workspaces.lifecycle_operation_*`
-  claim, and that claim MUST refuse a live promotion claim while `promoteRun`
-  refuses any live lifecycle claim; two concurrent actions on one workspace MUST
-  yield one success and one `MaisterError("CONFLICT")` (enforced by
-  `claimLifecycleOperation` and the promotion reverse fence under the same
-  `workspaces` row lock).
+  claim, which MUST refuse a live promotion claim and decide on the admitted
+  `runs.status` under the run's row lock, while `promoteRun` refuses any live
+  lifecycle claim and both recovers (`resumeCrashedRun`, the scratch recover
+  route) refuse `CONFLICT` `details.reason:"busy"` while either claim is live;
+  two concurrent writers on one workspace MUST yield one success and one
+  `MaisterError("CONFLICT")` (enforced by `claimLifecycleOperation`, the
+  promotion reverse fence and `workbenchClaimHoldsTree`, the `workspaces` row
+  lock before the `runs` row lock).
 - Publish MUST push `refs/heads/<internal>:refs/heads/<public>` with
   `--set-upstream`, lease against the `ls-remote` SHA captured BEFORE the push,
   and write `published_branch`, `published_remote`, `published_at` only after

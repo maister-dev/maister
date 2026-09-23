@@ -486,4 +486,54 @@ describe("scratch run placement (ADR-166 Q1–Q3)", () => {
       )[0].status,
     ).not.toBe("Crashed");
   }, 60_000);
+
+  // ADR-181 C26, the recover direction: a live workbench claim (here a publish
+  // under its lease) owns the worktree, so resuming an agent into it is refused
+  // before the run moves or a generation is minted.
+  it("Q6: a live workbench claim owns the worktree — 409 busy, still Crashed, no new generation", async () => {
+    const { session: before } = await scratchAndSession(runId);
+
+    fake.sessions.delete(before.hostSessionId as string);
+    await markScratchCrashed({
+      db,
+      runId,
+      err: new Error("supervisor restart"),
+    });
+
+    const generations = (await assignmentRows(runId)).length;
+    const creates = fake.callsOf("createSession").length;
+    const claimedAt = new Date();
+
+    await db
+      .update(schema.workspaces)
+      .set({
+        lifecycleOperationState: "claiming",
+        lifecycleOperationName: "exportBranch",
+        lifecycleOperationAttemptId: randomUUID(),
+        lifecycleOperationExpectedRunStatus: "Crashed",
+        lifecycleOperationClaimedAt: claimedAt,
+        lifecycleOperationLeaseExpiresAt: new Date(
+          claimedAt.getTime() + 60_000,
+        ),
+      })
+      .where(eq(schema.workspaces.runId, runId));
+
+    const response = await recover();
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "busy" },
+    });
+    expect(
+      (
+        await db
+          .select({ status: schema.runs.status })
+          .from(schema.runs)
+          .where(eq(schema.runs.id, runId))
+      )[0].status,
+    ).toBe("Crashed");
+    expect(await assignmentRows(runId)).toHaveLength(generations);
+    expect(fake.callsOf("createSession")).toHaveLength(creates);
+  }, 60_000);
 });

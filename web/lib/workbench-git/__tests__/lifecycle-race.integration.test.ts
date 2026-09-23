@@ -35,6 +35,7 @@ import {
 import {
   clearWorkbenchGitTables,
   seedWorkbenchRun,
+  workspaceRow,
 } from "@/test-support/workbench-git-seed";
 
 vi.mock("@/lib/worktree", async (orig) => {
@@ -242,4 +243,72 @@ describe("publish vs discard on one workspace", () => {
       expect(published).not.toBe(rescued !== "");
     },
   );
+});
+
+// The plan's Follow-up "Recover does not respect the workspace lifecycle slot":
+// the claim recorded `expectedRunStatus` and never compared it, so an operation
+// admitted on a `Crashed` run still claimed the tree after a recover had put an
+// agent back into it. The claim now decides on the run's status under the run's
+// own lock — the order the sync claim takes (workspace, then run).
+describe("a lifecycle claim against a status that moved", () => {
+  it("refuses a discard admitted on a Crashed run that a recover flipped to Running before the claim", async () => {
+    const branch = "maister/task-race-recover/attempt-1";
+    const worktree = await addRunWorktree(root, repo.parent, branch);
+
+    await writeFile(join(worktree, "feature.txt"), "agent work in progress\n");
+
+    const run = await seedWorkbenchRun(db, {
+      parentRepoPath: repo.parent,
+      worktreePath: worktree,
+      branch,
+      baseCommit: repo.baseSha,
+      status: "Crashed",
+      taskKey: "RACE",
+      task: { number: 200, title: "recover race" },
+    });
+
+    // The discard is past its admission (the policy read `Crashed`) and its
+    // dirty check; the recover commits `Crashed -> Running` right there, and the
+    // next thing the discard does is claim.
+    let admitted = false;
+
+    vi.mocked(worktreeModule.statusPorcelain).mockImplementation(
+      async (args) => {
+        if (!admitted) {
+          admitted = true;
+          await testDatabase.pool.query(
+            `UPDATE runs SET status = 'Running' WHERE id = $1`,
+            [run.runId],
+          );
+        }
+
+        return actual.statusPorcelain(args);
+      },
+    );
+
+    const outcome = await discardWorkbenchChanges(run.runId, {
+      deps: raceDeps(),
+    }).catch((err: unknown) => err);
+
+    expect(admitted).toBe(true);
+    expect(outcome).toBeInstanceOf(MaisterError);
+    expect(outcome).toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "busy" },
+    });
+    // Nothing of the agent's tree was touched: no rescue ref, no reset, and the
+    // slot was never taken.
+    expect(
+      await gitIn(repo.parent, [
+        "for-each-ref",
+        `refs/maister/rescue/${run.runId}/`,
+      ]),
+    ).toBe("");
+    expect(
+      await gitIn(worktree, ["status", "--porcelain", "--", "feature.txt"]),
+    ).not.toBe("");
+    expect(
+      (await workspaceRow(db, run.workspaceId)).lifecycleOperationState,
+    ).toBe("none");
+  });
 });
