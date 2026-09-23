@@ -1212,6 +1212,13 @@
       "when": 1790174902052,
       "tag": "0176_retirement_tombstone_guards",
       "breakpoints": true
+    },
+    {
+      "idx": 177,
+      "version": "7",
+      "when": 1790174903052,
+      "tag": "0177_prompt_settled_from",
+      "breakpoints": true
     }
   ]
 }

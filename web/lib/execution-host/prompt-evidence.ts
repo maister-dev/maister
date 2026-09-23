@@ -6,7 +6,7 @@ import type { ExecutionCommand, ExecutionEvent } from "@/lib/db/schema";
 
 import { createHash } from "node:crypto";
 
-import { eq } from "drizzle-orm";
+import { and, count, eq, gte, inArray, lte } from "drizzle-orm";
 import pino from "pino";
 
 import {
@@ -15,6 +15,7 @@ import {
 } from "../../../runtime/command-json";
 import {
   CommandEvidenceError,
+  parseCommandOutputReferenceV2,
   parseCommandReceiptV2,
   parseCommandEventPayloadV2,
 } from "../../../runtime/command-evidence";
@@ -24,6 +25,7 @@ import { normalizeCommandReceiptV2 } from "./command-receipt";
 import { casTransition, getCommand } from "./commands";
 import { commandSignals } from "./signals";
 import { preparePromptContent } from "./events/session-content";
+import { CONSUMER_SIGNAL_EVENT_TYPES } from "./prompt-signal-events";
 
 import {
   executionCommands,
@@ -39,6 +41,13 @@ const log = pino({
 });
 
 export type PromptEvidenceDisposition = "waiting" | "settled" | "quarantined";
+/** Which evidence settled a prompt first: the ingested canonical terminal
+ * event, or the host's verified event span (ADR-167 D5 amendment). */
+export type PromptEvidenceFeed = "canonical" | "host_span";
+export type TerminalEvidence = Readonly<{
+  feed: PromptEvidenceFeed;
+  event: ExecutionEvent;
+}>;
 export type PromptEvidenceResult = {
   disposition: PromptEvidenceDisposition;
   command: ExecutionCommand;
@@ -281,16 +290,23 @@ function eventMatches(
 async function reducePromptEvidence(
   tx: Db,
   command: ExecutionCommand,
-  event: ExecutionEvent | null,
+  evidence: TerminalEvidence | null,
 ): Promise<PromptEvidenceResult> {
   if (command.applicationError?.reason === "prompt_terminal_conflict")
     return { disposition: "quarantined", command };
-  if (!event || !command.receiptEvidence)
+  if (!evidence || !command.receiptEvidence)
     return { disposition: "waiting", command };
+  const { event, feed } = evidence;
+
+  // The only feed-dependent check: a canonical event is bound to the command
+  // before it reduces; host-span evidence settles with no event row to bind,
+  // and is confirmed when the canonical event later binds the same identity.
   if (
     !eventMatches(command, event) ||
-    command.terminalEventId !== event.id ||
-    command.receiptEvidence.eventId !== event.id
+    command.receiptEvidence.eventId !== event.id ||
+    (command.terminalEventId === null
+      ? feed === "canonical"
+      : command.terminalEventId !== event.id)
   )
     return quarantine(tx, command, "terminal_identity");
   if (!(await receiptMatches(tx, command, command.receiptEvidence)))
@@ -395,6 +411,9 @@ async function reducePromptEvidence(
       lastError: outcome.error,
       completedAt: command.completedAt ?? new Date(),
       terminalEvidenceSha256: digest,
+      // Recorded once, by the feed that settled first; a confirming re-reduce
+      // never rewrites it (the evidence trigger refuses a change).
+      ...(command.terminalEvidenceSha256 ? {} : { settledFrom: feed }),
       transportState: "acknowledged",
       nextAttemptAt: null,
       updatedAt: new Date(),
@@ -403,7 +422,14 @@ async function reducePromptEvidence(
     .returning();
 
   log.debug(
-    { commandId: row.id, eventId: event.id, digest, status: outcome.status },
+    {
+      commandId: row.id,
+      eventId: event.id,
+      digest,
+      status: outcome.status,
+      feed,
+      settledFrom: row.settledFrom,
+    },
     "prompt-evidence-agreed",
   );
 
@@ -438,16 +464,85 @@ export async function recordPromptEvent(
       command: (await getCommand(tx, command.id))!,
     };
   }
-  if (!outcomeFromEvent(event)) return quarantine(tx, command, "event_shape");
-  if (command.terminalEventId && command.terminalEventId !== event.id)
-    return quarantine(tx, command, "event_replacement");
+  const bound = await bindTerminalEvent(tx, command, event);
+
+  if ("refused" in bound) return bound.refused;
+
+  return reducePromptEvidence(tx, bound.command, { feed: "canonical", event });
+}
+
+/** The single writer of `terminal_event_id`: the exact canonical terminal
+ * event of this command, never a replacement. Shared by the prompt projector
+ * and the reconciler's direct binding, under the same row lock. */
+async function bindTerminalEvent(
+  tx: Db,
+  command: ExecutionCommand,
+  event: ExecutionEvent,
+): Promise<{ command: ExecutionCommand } | { refused: PromptEvidenceResult }> {
+  if (!eventMatches(command, event))
+    return { refused: await quarantine(tx, command, "event_binding") };
+  if (!outcomeFromEvent(event))
+    return { refused: await quarantine(tx, command, "event_shape") };
+  if (command.terminalEventId === event.id) return { command };
+  if (command.terminalEventId)
+    return { refused: await quarantine(tx, command, "event_replacement") };
   const [stored] = await tx
     .update(executionCommands)
     .set({ terminalEventId: event.id })
     .where(eq(executionCommands.id, command.id))
     .returning();
 
-  return reducePromptEvidence(tx, stored, event);
+  return { command: stored };
+}
+
+/** The canonical terminal event a completed v2 receipt names, when a fast feed
+ * may settle from it: only a `completed` receipt with an output manifest
+ * bounds the turn's span, which the signal-free rule needs. */
+function receiptSpan(command: ExecutionCommand): {
+  eventId: string;
+  acceptedSequence: bigint;
+  terminalSequence: bigint;
+} | null {
+  const v2 = command.receiptEvidence?.evidenceV2;
+
+  if (!v2 || v2.phase !== "completed" || !v2.terminal) return null;
+  try {
+    const reference = parseCommandOutputReferenceV2(v2.terminal.result?.output);
+
+    return {
+      eventId: v2.terminal.eventId,
+      acceptedSequence: BigInt(reference.acceptedSequence),
+      terminalSequence: BigInt(reference.terminalSequence),
+    };
+  } catch (error) {
+    if (error instanceof CommandEvidenceError) return null;
+    throw error;
+  }
+}
+
+/** A fast feed settles a turn only when its own span holds none of the events
+ * the live flow consumer reacts to; such a span keeps the canonical path. */
+async function spanHasConsumerSignals(
+  db: Db,
+  command: ExecutionCommand,
+  terminal: ExecutionEvent,
+  span: { acceptedSequence: bigint; terminalSequence: bigint },
+): Promise<boolean> {
+  if (!terminal.eventStreamId || !command.targetSessionId) return true;
+  const [row] = await db
+    .select({ n: count() })
+    .from(executionEvents)
+    .where(
+      and(
+        eq(executionEvents.eventStreamId, terminal.eventStreamId),
+        gte(executionEvents.hostSequence, span.acceptedSequence),
+        lte(executionEvents.hostSequence, span.terminalSequence),
+        eq(executionEvents.hostSessionId, command.targetSessionId),
+        inArray(executionEvents.eventType, [...CONSUMER_SIGNAL_EVENT_TYPES]),
+      ),
+    );
+
+  return Number(row?.n ?? 0) > 0;
 }
 
 /** Receipt acquisition is outside this transaction. Only terminal evidence
@@ -513,17 +608,49 @@ export async function reconcileStoredPromptEvidence(
     return { disposition: "quarantined", command };
   if (command.terminalEvidenceSha256)
     return { disposition: "settled", command };
-  const [event] = command.terminalEventId
+  // Direct binding: the receipt names its canonical terminal event, so an
+  // ingested event settles here without waiting for the prompt projector.
+  const span = command.terminalEventId ? null : receiptSpan(command);
+  const eventId = command.terminalEventId ?? span?.eventId ?? null;
+  const [candidate] = eventId
     ? await db
         .select()
         .from(executionEvents)
-        .where(eq(executionEvents.id, command.terminalEventId))
+        .where(eq(executionEvents.id, eventId))
         .limit(1)
     : [];
+  const event =
+    candidate &&
+    span &&
+    (candidate.ingestDisposition !== "accepted" ||
+      (await spanHasConsumerSignals(db, command, candidate, span)))
+      ? undefined
+      : candidate;
   const prepared = event ? await preparePromptContent(db, event, signal) : null;
-  const result = await db.transaction(async (tx) =>
-    reducePromptEvidence(tx, await lockPrompt(tx, commandId), prepared),
-  );
+  const result = await db.transaction(async (tx) => {
+    const locked = await lockPrompt(tx, commandId);
+
+    if (!prepared) return reducePromptEvidence(tx, locked, null);
+    if (locked.terminalEventId === null) {
+      const bound = await bindTerminalEvent(tx, locked, prepared);
+
+      if ("refused" in bound) return bound.refused;
+      log.info(
+        { commandId, eventId: prepared.id },
+        "prompt-terminal-bound-directly",
+      );
+
+      return reducePromptEvidence(tx, bound.command, {
+        feed: "canonical",
+        event: prepared,
+      });
+    }
+
+    return reducePromptEvidence(tx, locked, {
+      feed: "canonical",
+      event: prepared,
+    });
+  });
 
   if (result.disposition !== "waiting") commandSignals.wake(commandId);
 

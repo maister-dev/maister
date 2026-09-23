@@ -73,6 +73,7 @@ import {
   EXECUTION_HOST_READINESS,
   OPEN_COMMAND_STATES,
   PLACEMENT_REASONS,
+  PROMPT_SETTLEMENT_FEEDS,
   RUNTIME_OBJECT_KINDS,
   RUNTIME_OBJECT_RETENTION_CLASSES,
   type RuntimeObjectRetentionHold,
@@ -2326,6 +2327,8 @@ export const executionCommands = pgTable(
       { onDelete: "restrict" },
     ),
     terminalEvidenceSha256: text("terminal_evidence_sha256"),
+    // Written once, by the reducer, in the UPDATE that first sets the digest.
+    settledFrom: text("settled_from", { enum: PROMPT_SETTLEMENT_FEEDS }),
     transportState: text("transport_state", { enum: COMMAND_TRANSPORT_STATES })
       .notNull()
       .default("not_sent"),
@@ -2397,6 +2400,10 @@ export const executionCommands = pgTable(
       .where(
         sql`${t.retiredAt} IS NULL AND ${inLiteralList(t.state, TERMINAL_COMMAND_STATES)}`,
       ),
+    // Per-host host-span settlement counts on /admin/execution-host.
+    idxHostSpanSettled: index("execution_commands_host_span_settled_idx")
+      .on(t.executionHostId, t.completedAt)
+      .where(sql`${t.settledFrom} = 'host_span'`),
     uniqCreateOperation: uniqueIndex("execution_commands_create_operation_uq")
       .on(
         t.runId,
@@ -2446,7 +2453,11 @@ export const executionCommands = pgTable(
     ),
     terminalEvidenceCheck: check(
       "execution_commands_terminal_evidence_check",
-      sql`${t.terminalEvidenceSha256} IS NULL OR (${t.terminalEvidenceSha256} ~ '^[a-f0-9]{64}$' AND ${t.terminalEventId} IS NOT NULL AND (${t.receiptEvidence} IS NOT NULL OR ${t.retiredAt} IS NOT NULL))`,
+      sql`${t.terminalEvidenceSha256} IS NULL OR (${t.terminalEvidenceSha256} ~ '^[a-f0-9]{64}$' AND (${t.terminalEventId} IS NOT NULL OR ${t.settledFrom} IS NOT DISTINCT FROM 'host_span') AND (${t.receiptEvidence} IS NOT NULL OR ${t.retiredAt} IS NOT NULL))`,
+    ),
+    settledFromCheck: check(
+      "execution_commands_settled_from_check",
+      sql`${t.settledFrom} IS NULL OR (${inLiteralList(t.settledFrom, PROMPT_SETTLEMENT_FEEDS)} AND ${t.terminalEvidenceSha256} IS NOT NULL)`,
     ),
     receiptEvidenceCheck: check(
       "execution_commands_receipt_evidence_check",

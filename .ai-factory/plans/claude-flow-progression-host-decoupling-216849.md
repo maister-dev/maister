@@ -620,7 +620,7 @@ Each commit is gated on the phase exit criteria. Merge goes to master with `--no
 
 ### Phase 2: B.4 — direct terminal binding
 
-- [ ] **T2.0: Migration `0176_prompt_settled_from` (see Numbering).**
+- [x] **T2.0: Migration `0176_prompt_settled_from` (see Numbering).**
   - **Files:**
     - `web/lib/db/schema.ts`: `executionCommands.settledFrom`, the check and the partial index;
     - `web/lib/db/migrations/0176_prompt_settled_from.sql`;
@@ -643,21 +643,24 @@ Each commit is gated on the phase exit criteria. Merge goes to master with `--no
     - setting `terminal_event_id` from NULL to an id on a host_span row, with all frozen columns equal → accepted (the confirmation shape);
     - changing `result` after the digest is set → still refused (regression pin on the re-created trigger).
   - **Logging:** none. This is schema only.
+  - **As done (2026-09-23):** the constraint test caught a three-valued-logic hole in the first draft of the CHECK: `settled_from = 'host_span'` is NULL for a NULL `settled_from`, so the whole CHECK evaluated NULL and a pre-`0176` row could drop its `terminal_event_id`. The shipped text uses `settled_from IS NOT DISTINCT FROM 'host_span'`. **Deviation:** the migration is applied by every integration file's test template, not to the shared dev DB, which other worktrees use (a branch-only migration there desyncs their journals, memory "dev DB desyncs when a branch is rebased").
 
-- [ ] **T2.1: RED B1.**
+- [x] **T2.1: RED B1.**
   - New file `web/lib/execution-host/__tests__/prompt-host-settlement.integration.test.ts`, run against the real supervisor.
   - Hold the **prompt** projector with `test-support/projection-hold.ts` (T1.1) while ingest runs. A completed turn settles and the node advances. `terminalEventId` equals the receipt's `eventId`, and `settled_from = 'canonical'`. The WARN from D-C2 is **not** logged, because this is canonical.
   - Release the projector: it is idempotent (same digest, no quarantine, `completionAppliedAt` unchanged).
   - **B1-signal:** the same setup with a turn whose span carries a `session.permission_request`. B.4 does **not** settle it (D-B8). It settles only after the prompt projector is released, with `settled_from='canonical'`, which is today's path.
   - **Expected on master:** the node waits until the projector runs.
 
-- [ ] **T2.2: Implement D-B1 (the reducer signature) and D-B2.**
+- [x] **T2.2: Implement D-B1 (the reducer signature) and D-B2.**
   - Files:
     - `web/lib/execution-host/prompt-evidence.ts`: extract `bindTerminalEvent`; the feed-aware reducer, writing `settled_from`; lookup by `receiptEvidence.eventId` in `reconcileStoredPromptEvidence`; the B.4 signal-free count (D-B8).
     - `web/lib/flows/runner-agent.ts`: export `CONSUMER_SIGNAL_EVENT_TYPES` with its drift-guard unit test.
     - `events/prompt-projector.ts`: it calls `recordPromptEvent`; nothing else changes.
   - **Logging:** INFO `prompt-terminal-bound-directly {commandId, eventId}`.
   - **As done (2026-09-23):** `CONSUMER_SIGNAL_EVENT_TYPES` lives in `web/lib/execution-host/prompt-signal-events.ts`, not in `runner-agent.ts`: the reducer in `execution-host` must not import from `flows`. The drift guard `web/lib/flows/__tests__/consumer-signal-types.test.ts` reads `startEventConsumer`'s `ev.type` branches and requires every non-text branch to be in the list (text-only: `session.update`, `session.line`). The constraint test is `prompt-settled-from.integration.test.ts`; shapes no code path can produce yet (a pre-`0176` row, a host-span row) are seeded with `session_replication_role = replica`, which suspends only triggers, so the CHECKs under test still run.
+  - **Widened (found by `bounded-output.integration`, 2026-09-23):** once the waiter's direct bind settles a command, the prompt projector processes that command's events later, and its transaction locks the row while the waiter's own targeted owner claim runs. The claim used `FOR UPDATE SKIP LOCKED` for every caller, so the waiter reported a settled turn as `pending` (five S2.5 cases red). A claim that names its command now waits for the row (READ COMMITTED, bounded by the transaction's `lock_timeout`); the worker's scan keeps `SKIP LOCKED`. Falsified by the same five cases.
+  - **Test-fixture note:** the host-settlement suite starts its supervisor with `--hang`. The default mock adapter exits 10 ms after each turn, and that `session.exited` can land inside the turn's own span, where the signal-free rule correctly leaves the turn to the projector.
   - **Phase 2 exit:** B1 is green. `command-recovery.integration` RED 1–3 ("both orders") and the projector/consumer suites are green. Full lanes are green as in Phase 1.
 
 <!-- Commit checkpoint 3 -->
@@ -886,6 +889,7 @@ Each commit is gated on the phase exit criteria. Merge goes to master with `--no
 | counts | `lag-read-model` integration (extended) + i18n parity (unit) | real PG |
 
 **Existing assertions expected to migrate** (each must be named obsolete or broken in the phase that changes it):
+- **Classified obsolete (Phase 1, 2026-09-23):** `ingest.integration.test.ts` asserted that a same-epoch session reusing the run's `default` name WEDGES the lifecycle cursor. That wedge is the hazard D-A1a closes (C20); the case now asserts the older incarnation is superseded, the stream keeps moving and the superseded session's own exit still projects (`lost → exited`).
 - `test-support/prompt-owner-fixture.ts:36-43`: an incarnation row now exists before the projector runs.
 - command-recovery V1: it asserts the created row.
 - ADR-177 cases that expect `pending_ingest` for a completed, readable span.

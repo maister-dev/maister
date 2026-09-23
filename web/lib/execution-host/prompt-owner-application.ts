@@ -124,7 +124,12 @@ export async function claimPromptOwner(input: {
         sql`coalesce(${executionCommands.applicationNextRetryAt}, ${executionCommands.createdAt})`,
         executionCommands.id,
       )
-      .for("update", { skipLocked: true })
+      // The worker's scan skips a busy row for the next one. A waiter naming
+      // its own command waits instead: since settlement stopped waiting for
+      // the prompt projector (ADR-167 D5 amendment), that projector may still
+      // be confirming this row when the waiter claims, and skipping would
+      // report a settled turn as pending. Bounded by the transaction budget.
+      .for("update", input.commandId ? undefined : { skipLocked: true })
       .limit(1);
 
     if (!command) return null;
