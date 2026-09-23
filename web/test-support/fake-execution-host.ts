@@ -227,10 +227,13 @@ export type FakeExecutionHost = {
   // ADR-167 D5 amendment: the manager lags the host. While held, canonical
   // envelopes stay retained (the span route serves them) but are neither
   // ingested nor projected; release drains them through the same path, each
-  // optionally rewritten first. The floor models an ACKed-and-pruned prefix.
+  // optionally rewritten first. `before` drains only the prefix up to the
+  // first matching envelope, which stays held with everything after it. The
+  // floor models an ACKed-and-pruned prefix.
   holdIngest(): void;
   releaseIngest(opts?: {
     tamper?: (envelope: RuntimeEventEnvelope) => RuntimeEventEnvelope;
+    before?: (envelope: RuntimeEventEnvelope) => boolean;
   }): Promise<void>;
   setPrunedFloor(sequence: string | null): void;
   /** The DB wiring's hand-off: retain, then ingest now or once released. */
@@ -2068,9 +2071,13 @@ export function createFakeExecutionHost(
       heldEnvelopes ??= [];
     },
     async releaseIngest(opts) {
-      const held = heldEnvelopes ?? [];
+      const all = heldEnvelopes ?? [];
+      const cut = opts?.before
+        ? all.findIndex(({ envelope }) => opts.before!(envelope))
+        : -1;
+      const held = cut === -1 ? all : all.slice(0, cut);
 
-      heldEnvelopes = null;
+      heldEnvelopes = cut === -1 ? null : all.slice(cut);
       for (const { envelope, ingest } of held)
         await ingest(opts?.tamper ? opts.tamper(envelope) : envelope);
     },

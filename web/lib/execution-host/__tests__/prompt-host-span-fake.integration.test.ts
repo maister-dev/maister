@@ -16,6 +16,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import {
   executionCommands,
+  executionEvents,
   nodeAttempts,
   runMessages,
   runs,
@@ -237,6 +238,51 @@ describe("host-span settlement on the fake host", () => {
     });
   });
 
+  it("B5-retry: after an unreadable span the claimed retry settles from the host once due — never sooner — and the canonical event confirms it", async () => {
+    const { client, hostSessionId } = await laggingSession();
+
+    fake.setPrunedFloor("1000000");
+    const handle = await prompt(client, hostSessionId);
+
+    await untilReceipt(handle.commandId);
+    fake.setPrunedFloor(null);
+    const reads = fake.callsOf("readRuntimeEventSpan").length;
+    const retry = (at: number) =>
+      reconcilePromptCommand({
+        db,
+        commandId: handle.commandId,
+        lookupReceipt: (id) => fake.transport.getCommandReceipt(id),
+        now: () => new Date(at),
+      });
+
+    // Waiters wake at 4 Hz; the D-B5 claim lets one read per retry window.
+    await retry(Date.now());
+    expect(fake.callsOf("readRuntimeEventSpan").length).toBe(reads);
+    expect(await command(handle.commandId)).toMatchObject({
+      terminalEvidenceSha256: null,
+      settledFrom: null,
+    });
+
+    await retry(Date.now() + 6_000);
+    expect(fake.callsOf("readRuntimeEventSpan").length).toBeGreaterThan(reads);
+    expect(await command(handle.commandId)).toMatchObject({
+      settledFrom: "host_span",
+      terminalEventId: null,
+      state: "succeeded",
+    });
+
+    await fake.releaseIngest();
+    await expect
+      .poll(async () => (await command(handle.commandId)).terminalEventId, {
+        timeout: 10_000,
+      })
+      .not.toBeNull();
+    expect(await command(handle.commandId)).toMatchObject({
+      settledFrom: "host_span",
+      applicationError: null,
+    });
+  });
+
   it("B-failed: a rejected turn is never read from the host span; it settles canonically", async () => {
     const { client, hostSessionId } = await laggingSession();
 
@@ -366,58 +412,85 @@ describe("host-span settlement on the fake host", () => {
     ]);
   });
 
-  it("B4: the host-span settlement and the canonical projector racing on one row serialize on its lock and settle once", async () => {
-    const { client, hostSessionId } = await laggingSession();
+  // The first writer parked on the row lock settles; the second must re-read
+  // under that lock. Canonical-first is the order that catches a host-span
+  // writer deciding from an unlocked (stale) read of the row.
+  it.each(["host_span", "canonical"] as const)(
+    "B4: the host-span settlement and the canonical projector racing on one row serialize on its lock and settle once (%s parked first)",
+    async (first) => {
+      const { client, hostSessionId } = await laggingSession();
 
-    // Deposit the receipt without letting the waiter settle it first.
-    fake.setPrunedFloor("1000000");
-    const handle = await prompt(client, hostSessionId);
+      // Deposit the receipt without letting the waiter settle it first.
+      fake.setPrunedFloor("1000000");
+      const handle = await prompt(client, hostSessionId);
 
-    await untilReceipt(handle.commandId);
-    fake.setPrunedFloor(null);
-    const terminal = await verifyHostPromptSpan({
-      db,
-      command: await command(handle.commandId),
-      signal: AbortSignal.timeout(10_000),
-    });
-    const holder = await database.pool.connect();
+      await untilReceipt(handle.commandId);
+      fake.setPrunedFloor(null);
+      const terminal = await verifyHostPromptSpan({
+        db,
+        command: await command(handle.commandId),
+        signal: AbortSignal.timeout(10_000),
+      });
 
-    try {
-      await holder.query("BEGIN");
-      await holder.query(
-        "SELECT id FROM execution_commands WHERE id = $1 FOR UPDATE",
-        [handle.commandId],
-      );
-      const hostSpan = reduceHostSpanEvidence(db, handle.commandId, terminal);
-      const canonicalFeed = fake.releaseIngest();
-
-      // Both writers are parked on the row lock, not merely serialized by luck.
-      await expect
-        .poll(
-          async () =>
-            (
-              await database.pool.query<{ n: number }>(
-                `SELECT count(*)::int AS n FROM pg_stat_activity
+      // Everything before the turn's terminal frame is ingested first, so the
+      // canonical writer that parks is the terminal settlement itself.
+      await fake.releaseIngest({
+        before: (envelope) =>
+          envelope.eventType === "session.command" &&
+          Boolean(envelope.payload?.terminal),
+      });
+      const holder = await database.pool.connect();
+      const parked = (writers: number) =>
+        expect
+          .poll(
+            async () =>
+              (
+                await database.pool.query<{ n: number }>(
+                  `SELECT count(*)::int AS n FROM pg_stat_activity
                   WHERE datname = current_database() AND wait_event_type = 'Lock'`,
-              )
-            ).rows[0].n,
-          { timeout: 10_000 },
-        )
-        .toBeGreaterThanOrEqual(2);
-      await holder.query("COMMIT");
-      const [reduced] = await Promise.all([hostSpan, canonicalFeed]);
-      const row = await command(handle.commandId);
+                )
+              ).rows[0].n,
+            { timeout: 10_000 },
+          )
+          .toBeGreaterThanOrEqual(writers);
 
-      expect(row.terminalEvidenceSha256).not.toBeNull();
-      expect(row.terminalEventId).toBe(row.receiptEvidence?.eventId);
-      expect(row.applicationError).toBeNull();
-      // Exactly one writer settled; the other met the digest and stood down.
-      expect(reduced.settledHere).toBe(row.settledFrom === "host_span");
-    } finally {
-      await holder.query("ROLLBACK").catch(() => undefined);
-      holder.release();
-    }
-  });
+      try {
+        await holder.query("BEGIN");
+        await holder.query(
+          "SELECT id FROM execution_commands WHERE id = $1 FOR UPDATE",
+          [handle.commandId],
+        );
+        let hostSpan: ReturnType<typeof reduceHostSpanEvidence>;
+        let canonicalFeed: Promise<void>;
+
+        if (first === "host_span") {
+          hostSpan = reduceHostSpanEvidence(db, handle.commandId, terminal);
+          await parked(1);
+          canonicalFeed = fake.releaseIngest();
+        } else {
+          canonicalFeed = fake.releaseIngest();
+          await parked(1);
+          hostSpan = reduceHostSpanEvidence(db, handle.commandId, terminal);
+        }
+        // Both writers are parked on the row lock, not merely serialized by luck.
+        await parked(2);
+        await holder.query("COMMIT");
+        const [reduced] = await Promise.all([hostSpan, canonicalFeed]);
+        const row = await command(handle.commandId);
+
+        expect(row.terminalEvidenceSha256).not.toBeNull();
+        expect(row.terminalEventId).toBe(row.receiptEvidence?.eventId);
+        expect(row.applicationError).toBeNull();
+        // Exactly the first parked writer settled; the other met the digest
+        // under the lock and stood down.
+        expect(row.settledFrom).toBe(first);
+        expect(reduced.settledHere).toBe(first === "host_span");
+      } finally {
+        await holder.query("ROLLBACK").catch(() => undefined);
+        holder.release();
+      }
+    },
+  );
 
   it("B6: a released assignment's completed turn settles the historical ledger only", async () => {
     const { runId, client, hostSessionId } = await laggingSession();
@@ -515,5 +588,54 @@ describe("transcript re-anchor on confirmation (D-B10)", () => {
 
     expect(moved).toBe(1);
     expect(anchors).toEqual({ before: "2", after: "9" });
+  });
+
+  it("B9-wired: the canonical confirmation of a host-span settlement re-anchors a prompt dispatched after it", async () => {
+    const { runId, client, hostSessionId } = await laggingSession();
+    const handle = await prompt(client, hostSessionId);
+
+    await untilReceipt(handle.commandId);
+    const settled = await command(handle.commandId);
+
+    expect(settled).toMatchObject({
+      settledFrom: "host_span",
+      terminalEventId: null,
+    });
+    // The next node's prompt, dispatched before this turn's reply was ingested.
+    await db.insert(runMessages).values({
+      id: randomUUID(),
+      runId,
+      sequence: 1_000_000,
+      role: "user",
+      content: "next node",
+      supervisorEventId: "0",
+      promptDispatchKey: `dispatch-${randomUUID()}`,
+      createdAt: new Date(settled.completedAt!.getTime() + 1),
+    });
+
+    await fake.releaseIngest();
+    await expect
+      .poll(async () => (await command(handle.commandId)).terminalEventId, {
+        timeout: 10_000,
+      })
+      .not.toBeNull();
+    const [terminal] = await db
+      .select({ runSequence: executionEvents.runSequence })
+      .from(executionEvents)
+      .where(
+        eq(
+          executionEvents.id,
+          (await command(handle.commandId)).terminalEventId!,
+        ),
+      );
+    const [moved] = await db
+      .select({ anchor: runMessages.supervisorEventId })
+      .from(runMessages)
+      .where(
+        and(eq(runMessages.runId, runId), eq(runMessages.sequence, 1_000_000)),
+      );
+
+    expect(terminal?.runSequence).not.toBeNull();
+    expect(moved?.anchor).toBe(terminal!.runSequence!.toString());
   });
 });
