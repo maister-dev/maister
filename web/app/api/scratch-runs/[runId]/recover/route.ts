@@ -462,8 +462,7 @@ export async function POST(
           promotionClaimedAt: workspaces.promotionClaimedAt,
         })
         .from(workspaces)
-        .where(eq(workspaces.runId, runId))
-        .limit(1);
+        .where(eq(workspaces.runId, runId));
 
       if (workspace && workbenchClaimHoldsTree(workspace)) {
         throw new MaisterError(
