@@ -330,10 +330,12 @@ is `CONFLICT`, the rest `PRECONDITION`), and an unknown run is 404 with
   `reattachWorkbench`; the reconciler's `workspace_reattached` arm completes a
   crashed attempt).
 - `Failed` MUST be listed wherever `Crashed` is (portfolio, project workspace
-  list, rail without TTL) and MUST NOT be counted by the ADR-169 attention
+  list, rail) with its worktree TTL countdown, its worktree MUST be collected
+  like a `Done` one (`gcAgeDays` after `ended_at`, preserved first) while its
+  runtime objects are not, and it MUST NOT be counted by the ADR-169 attention
   counters; git state MUST be served only by its own route, never computed in a
-  page RSC (enforced by `ACTIVE_RUN_STATUSES` and the `read-model.ts` import
-  boundary).
+  page RSC (enforced by `ACTIVE_RUN_STATUSES`, `WORKTREE_TTL_RUN_STATUSES` and
+  the `read-model.ts` import boundary).
 
 ## Edge cases
 
@@ -416,6 +418,12 @@ is `CONFLICT`, the rest `PRECONDITION`), and an unknown run is 404 with
   GitHub / GitLab / Gitea: a Gitea-family server that ignores the `WIP:` title
   convention opens a ready PR. The live check is owner-executed (see Linked
   artifacts).
+- A `Failed` worktree past its TTL is collected like a `Done` one (owner,
+  2026-09-23): preserved first (a snapshot commit and `maister/archive/<runId>`),
+  so the panel then offers only Reattach, which restores from that ref, and the
+  run leaves the rail, portfolio and project lists. A `Failed` REUSER of a
+  shared tree still holds the tree — it has no row of its own to count down —
+  while a `Failed` allocator no longer holds its own.
 
 ## Linked artifacts
 

@@ -894,7 +894,7 @@ makes the coordinator's job **collect only**:
   **(Implemented — ADR-163, residual W12)** → each parks in `Review` with its
   worktree and branch retained, holding NO scheduler slot. Nothing reclaims it:
   `Review` has no sweeper, workspace GC only collects
-  `DISPOSABLE_WORKSPACE_RUN_STATUSES` (`Done`/`Abandoned`), and the normal exit
+  `WORKTREE_TTL_RUN_STATUSES` (`Done`/`Abandoned`/`Failed`), and the normal exit
   only revokes the token. Pre-existing (ADR-100) but AMPLIFIED — an agent child
   may be `workspace: none` and reach `Done` with nothing to park, a flow child
   always provisions a worktree. The coordinator contract is "promote or cancel

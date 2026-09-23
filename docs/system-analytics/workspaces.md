@@ -544,7 +544,8 @@ flowchart LR
 - Full Flow reconciliation across Next.js boot, supervisor boot, git worktrees,
   and live sessions is designed. Scratch recovery is implemented through the
   explicit recover route for crashed scratch sessions.
-- GC removes worktrees of runs in `Done | Abandoned` older than 7 d;
+- GC removes worktrees of runs in `Done | Abandoned | Failed` (`Failed` since
+  ADR-181) older than 7 d, preserving each first;
   GC failures log and continue without setting `removed_at`.
 - **(Implemented)** GC MUST select terminal candidates by
   `COALESCE(workspaces.scheduled_removal_at, runs.ended_at + MAISTER_GC_AGE_DAYS) <= now()`

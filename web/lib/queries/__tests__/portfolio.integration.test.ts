@@ -5,6 +5,7 @@ import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
+import { gcAgeDays } from "@/lib/instance-config";
 import {
   testPlatformRunnerRow,
   testRunnerSnapshot,
@@ -420,6 +421,8 @@ describe("portfolio queries (integration)", () => {
     const taskId = await createTask(project, flow, "Failed Task");
     const runId = randomUUID();
 
+    const endedAt = new Date();
+
     await db.insert(schema.runs).values({
       id: runId,
       taskId,
@@ -428,7 +431,7 @@ describe("portfolio queries (integration)", () => {
       status: "Failed",
       flowVersion: "v1.0.0",
       startedAt: new Date(),
-      endedAt: new Date(),
+      endedAt,
     });
     await db.insert(schema.runSessions).values({
       id: randomUUID(),
@@ -458,9 +461,18 @@ describe("portfolio queries (integration)", () => {
       .find((row) => row.runId === runId);
 
     expect(railRow).toBeDefined();
-    // No GC countdown: Failed is not in RAIL_TTL_STATUSES.
+    // A failed workbench reads as a failure, not as the green "Running" an
+    // unmapped status used to fall through to.
+    expect(railRow).toMatchObject({
+      statusLabel: "Failed",
+      statusTone: "crashed",
+    });
+    // ADR-181 (owner, 2026-09-23): the worktree counts down from `ended_at` like
+    // a Done/Abandoned one — a fresh failure is well inside its window.
     expect(railRow?.ttlState).toBe("active");
-    expect(railRow?.effectiveRemovalAt).toBeNull();
+    expect(railRow?.effectiveRemovalAt).toEqual(
+      new Date(endedAt.getTime() + gcAgeDays() * 86_400_000),
+    );
 
     const { getProjectBySlug, getProjectPageData } = await import(
       "@/lib/queries/project"

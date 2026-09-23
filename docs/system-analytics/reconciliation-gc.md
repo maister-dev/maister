@@ -26,7 +26,11 @@ imports; they are not canonical execution-runtime state transitions.
 
 The behavior below is the shipped baseline. ADR-148 changes only the
 workspace cleanup boundary: automatic row-backed GC selects the disposable
-set `{Done, Abandoned}` and never selects `Review`, `Crashed`, or `Failed`.
+set `{Done, Abandoned}` and never selects `Review` or `Crashed`. ADR-181 (owner,
+2026-09-23) adds `Failed` to the worktree set (`WORKTREE_TTL_RUN_STATUSES`) — a
+failed attempt's worktree expires like a finished one, preserved first and
+re-attachable from `maister/archive/<runId>` — while runtime-object retention
+keeps reading `{Done, Abandoned}`, so a failed run's evidence is not collected.
 All row-backed removal paths use a renewable lifecycle claim that fences every
 irreversible Git/filesystem step and the final transaction. A persisted result
 records `removal_kind` independently from `preservation_outcome`; a path absent
@@ -584,7 +588,7 @@ A flow run that finishes `Running → Done` by result-only completion stamps
 `workspaces.scheduled_removal_at = now + MAISTER_GC_AGE_DAYS` in the same
 terminal transaction, exactly like a promoted run. GC needs no new branch: the
 row is already `Done` with a deadline, which is what
-`DISPOSABLE_WORKSPACE_RUN_STATUSES` collects. See
+the worktree GC collects (`WORKTREE_TTL_RUN_STATUSES`). See
 [`run-results.md`](run-results.md) and [`workspaces.md`](workspaces.md).
 
 ## Expectations

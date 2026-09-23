@@ -4,9 +4,15 @@
 // flags. Clock-free and db-free — the caller injects `nowMs`. Live
 // (non-terminal) runs NEVER count down.
 
+import { WORKTREE_TTL_RUN_STATUSES } from "@/lib/runs/run-status-sets";
+
 const DAY_MS = 86_400_000;
 
-const TERMINAL_STATUSES = new Set(["Abandoned", "Done"]);
+// The worktree GC's own eligibility set, so the countdown can never show for a
+// status the sweep would not collect (or hide one it will — ADR-181 `Failed`).
+const TERMINAL_STATUSES: ReadonlySet<string> = new Set(
+  WORKTREE_TTL_RUN_STATUSES,
+);
 
 export interface TtlInfo {
   ttlState: "active" | "warning" | "due";

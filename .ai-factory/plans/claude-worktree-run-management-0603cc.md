@@ -516,7 +516,7 @@ record.
     `lib/runs/sync-ref.ts`; the git-state read model counts each update option
     against the same ref, so it drops the `baseCommit` fallback: a base the
     update would refuse (`base_branch_unknown`) shows no counts.
-- **C54–C67 — found during Phase 3, the T4.3 truth pass, the T4.1 smoke and T4.4 (2026-09-23).**
+- **C54–C68 — found during Phase 3, the T4.3 truth pass, the T4.1 smoke, T4.4 and Phase 5 (2026-09-23).**
   - **C54 — attribution rides the finalize, not `PromoteRunInput`.** D12 widened
     `PromoteRunInput.attribution` with `{source:"pr_finalize"}`, but that source
     is minted only by the parked finalize, which never enters `promoteRun`. The
@@ -598,6 +598,13 @@ record.
     ("the launched-lineage probe [is] paid ONLY on that path") read as if it
     described the loader, which probes on every non-scratch run. Moved back above
     `deriveRunContinuation`; no code change.
+  - **C68 — the rail labelled a `Failed` row "Running" (found in T5.2, the rail
+    screen doc's tone table).** `railStatus` fell through to `{label:
+    "Running", tone: "running"}` for any status it did not name, and D14 made
+    `Failed` rows reachable there — a failed workbench read as a live, pulsing
+    run. It now maps to `{label: "Failed", tone: "crashed"}` (EN "Failed", RU
+    "Ошибка", `portfolio.railStatus`), outside the rail's attention labels as
+    ADR-181 D2 requires; RED 3 pins it (red on the unfixed mapping).
 - **Token set (final, T0.1).** Service refusals: `public_name_fixed`,
   `public_branch_template_invalid` (400 `CONFIG`), `clean_worktree`,
   `dirty_worktree`, `not_published`, `published_remote_not_origin`,
@@ -1951,7 +1958,7 @@ honours its three modes; refactor gate passed.
       place), `workbench-lifecycle.md` (plus its stale "do NOT otherwise
       cross-guard", false since C26), `flow-run.md`, the RU manual, an ADR-181
       amendment.
-- [ ] **T5.2 — A `Failed` workbench expires (Follow-up 2, owner: TTL).** A
+- [x] **T5.2 — A `Failed` workbench expires (Follow-up 2, owner: TTL).** A
       `Failed` run's worktree is collected like `Done | Abandoned` —
       `gcAgeDays` after `ended_at` (or at `scheduled_removal_at`), preserved
       first (snapshot commit + `maister/archive/<runId>`, which Reattach
@@ -1964,6 +1971,32 @@ honours its three modes; refactor gate passed.
       are still never collected; the rail and run detail carry the countdown;
       runtime objects of a `Failed` run are untouched; each control falsified;
       docs/ADR/RU updated.
+      **Verified 2026-09-23.** `WORKTREE_TTL_RUN_STATUSES` (`run-status-sets.ts`)
+      is read by the GC's candidate filter and its held-back log, and by
+      `deriveTtlInfo`, so the countdown can never show for a status the sweep
+      would not collect; `DISPOSABLE_WORKSPACE_RUN_STATUSES` keeps runtime-object
+      retention and the shared-tree removal guard. The shared-tree sibling
+      subqueries now exclude the candidate itself — a `Failed` allocator counted
+      as a live sibling of its own tree and could never be collected — while a
+      `Failed` reuser still holds the tree (no row of its own to count down).
+      C68 below. Contract moved (owner): `workspace-gc`'s protected list and
+      `ttl.test.ts`'s never-counts-down list lose `Failed`, and RED 3's "no GC
+      countdown" becomes the `ended_at + gcAgeDays` deadline. Controls: two
+      `workspace-gc` cases (collected past the TTL, preserved first, archived;
+      kept inside it), the `shared-tree-gc` Failed allocator, two `ttl` cases,
+      RED 3's deadline and label, and a `runtime-object-retention` guard (a
+      `Failed` run's run-class object survives the workspace deadline). RED on
+      the unchanged tree (5 + the label); falsified in three isolated rounds —
+      the candidate set and `ttl.ts` reverted (5 red), the self-exclusion dropped
+      (the allocator case red), `Failed` pushed into the narrower set (the
+      evidence guard red). 38 GC / query / retention / reattach integration
+      suites 368/368; unit 81/81 across TTL, statuses, i18n parity and the rail;
+      tsc clean; eslint 0/0; `validate:docs` green. Docs: `workbench-git.md`
+      (Expectation 12 in place, an edge case), `reconciliation-gc.md` (the
+      ADR-148 boundary sentence and its collection line), `workspaces.md`,
+      `orchestrator.md`, `configuration.md` (`MAISTER_GC_AGE_DAYS`), the rail
+      screen doc (a `Failed` row, the TTL badge), root and web `CLAUDE.md`, the
+      RU manual, an ADR-181 amendment.
 - [ ] **T5.3 — The three master-side e2e names (owner: diagnose here).**
       `orchestrator-loop:56`, `flow-target-delegation:36`, `m11b-takeover:67` fail
       on this branch's merge base `c36ff5b1` too. Root-cause each from its FIRST

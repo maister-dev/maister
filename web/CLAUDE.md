@@ -630,7 +630,7 @@ add`, supervisor `POST /sessions` — body carries `taskId` and optional
   `application/octet-stream` and gated by `readRepoFiles` like the direct
   content route; always a sandboxed no-store attachment — AB-12;
   path-confined to the run dir)
-- `GET /api/cron/gc` (Abandoned/Done worktrees + checkpointed sessions >7d,
+- `GET /api/cron/gc` (Abandoned/Done/Failed worktrees + checkpointed sessions >7d,
   all projects)
 
 Primary nav is the role-driven left rail (`components/chrome/left-rail.tsx`):

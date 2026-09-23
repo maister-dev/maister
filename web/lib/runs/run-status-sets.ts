@@ -20,9 +20,22 @@ export const TERMINAL_RUN_STATUSES = [
 ] as const;
 
 // Workspace retention is intentionally narrower than generic terminality:
-// failed/crashed/reviewed runs remain visible and require an explicit user
-// decision before their worktrees may be removed.
+// crashed/reviewed runs remain visible and require an explicit user decision
+// before their worktrees may be removed. Runtime-object retention and the
+// shared-tree removal guard read this set; the worktree GC reads the one below.
 export const DISPOSABLE_WORKSPACE_RUN_STATUSES = ["Done", "Abandoned"] as const;
+
+// The statuses whose worktree the retention GC collects — at
+// `scheduled_removal_at`, else `gcAgeDays` after `ended_at` — always preserving
+// it first (a snapshot commit plus `maister/archive/<runId>`, which Reattach
+// restores from). ADR-181 (owner, 2026-09-23): a `Failed` attempt's worktree
+// expires like a finished one, or every list that shows it (rail, portfolio,
+// project workspaces) grows without bound. Its evidence does not: runtime
+// objects stay on the narrower set above.
+export const WORKTREE_TTL_RUN_STATUSES = [
+  ...DISPOSABLE_WORKSPACE_RUN_STATUSES,
+  "Failed",
+] as const;
 
 // ADR-165 (D7): a run holds a SCHEDULER SLOT while it is in one of these. It is
 // the same list `countLiveRuns` and `sharedWriterSiblingActive` already used

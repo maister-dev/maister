@@ -89,8 +89,9 @@ export const ACTIVE_RUN_STATUSES = [
   // holds a worktree → counts as an active workspace.
   "WaitingOnChildren",
   // ADR-181 D14: a failed run's worktree is still the operator's work (commit,
-  // publish, discard, re-attach) — listed, with no TTL chip (not in
-  // RAIL_TTL_STATUSES) and no decision count (decision sources are unchanged).
+  // publish, discard, re-attach) — listed, with its worktree TTL countdown
+  // (the GC collects it like a Done one, preserved first — owner, 2026-09-23)
+  // and no decision count (decision sources are unchanged).
   "Failed",
 ] as const;
 const ACTIONABLE_ASSIGNMENT_RUN_STATUSES = [
@@ -100,8 +101,9 @@ const ACTIONABLE_ASSIGNMENT_RUN_STATUSES = [
   "Review",
 ] as const;
 
-// M19 Phase 5: terminal run statuses whose surviving workspace still shows a GC
-// removal countdown in the left rail until the sweeper prunes it.
+// M19 Phase 5: terminal run statuses the left rail lists ONLY while their
+// surviving workspace carries a GC removal date (`Failed` is listed through
+// ACTIVE_RUN_STATUSES; every countdown comes from `deriveTtlInfo`).
 export const RAIL_TTL_STATUSES = ["Abandoned", "Done"] as const;
 
 export type PortfolioStatus = "running" | "idle";
@@ -880,6 +882,9 @@ function railStatus(input: {
   if (input.runStatus === "Crashed") {
     return { label: "Crashed", tone: "crashed" };
   }
+  // ADR-181 D14: a listed Failed workbench reads as a failure; it owes a git
+  // decision, not an answer, so it stays out of the rail's attention labels.
+  if (input.runStatus === "Failed") return { label: "Failed", tone: "crashed" };
   // M19 Phase 5: terminal workspaces awaiting GC surface their own (dimmed)
   // status so they read as "winding down", not "Running".
   if (input.runStatus === "Abandoned" || input.runStatus === "Done") {

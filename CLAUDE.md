@@ -359,7 +359,8 @@ inject via `{{ artifacts.<id>.content }}` (ADR-120).
   `Running` rows with no live ACP session and no checkpoint → `Crashed`,
   surface "Recover or discard". `NeedsInputIdle` rows with a valid
   `acp_session_id` checkpoint stay valid.
-- Cron route GCs `Abandoned/Done` worktrees + checkpointed sessions older
+- Cron route GCs `Abandoned/Done/Failed` worktrees (`Failed` since ADR-181,
+  preserved first) + checkpointed sessions older
   than 7d across all projects (now a `system_sweep` job of the polymorphic
   scheduler clock, M24).
 - **Result-only completion** (ADR-165): a flow whose manifest declares

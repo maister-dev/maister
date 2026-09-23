@@ -927,6 +927,7 @@
       "NeedsInputIdle": "Needs input · idle",
       "Review": "Review",
       "Crashed": "Crashed",
+      "Failed": "Failed",
       "Abandoned": "Abandoned",
       "Done": "Done"
     },

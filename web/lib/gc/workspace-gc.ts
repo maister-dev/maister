@@ -14,6 +14,7 @@ import {
   isNull,
   isNotNull,
   lte,
+  ne,
   notExists,
   notInArray,
   or,
@@ -29,7 +30,10 @@ import { deleteRunCheckpointRefs } from "@/lib/flows/graph/workspace-checkpoint"
 import { preserveWorktree } from "@/lib/gc/preserve";
 import { MaisterError } from "@/lib/errors";
 import { removeOwnedWorktree } from "@/lib/worktree";
-import { DISPOSABLE_WORKSPACE_RUN_STATUSES } from "@/lib/runs/run-status-sets";
+import {
+  DISPOSABLE_WORKSPACE_RUN_STATUSES,
+  WORKTREE_TTL_RUN_STATUSES,
+} from "@/lib/runs/run-status-sets";
 import {
   claimLifecycleOperation,
   finalizeLifecycleOperation,
@@ -59,8 +63,7 @@ const PER_TICK_LIMIT = 100;
 const PER_PASS_CONCURRENCY = 4;
 const RETRY_DELAY_MS = 15 * 60_000;
 
-type DisposableWorkspaceRunStatus =
-  (typeof DISPOSABLE_WORKSPACE_RUN_STATUSES)[number];
+type WorktreeTtlRunStatus = (typeof WORKTREE_TTL_RUN_STATUSES)[number];
 type PreservationOutcome = "not_needed" | "ref_created" | "snapshot_created";
 
 export interface WorkspaceGcSummary {
@@ -105,7 +108,7 @@ type CandidateRow = {
   projectId: string;
   rootRunId: string | null;
   runKind: "flow" | "scratch" | "agent";
-  runStatus: DisposableWorkspaceRunStatus;
+  runStatus: WorktreeTtlRunStatus;
   archivedBranch: string | null;
   archivedAt: Date | null;
   archivedCommit: string | null;
@@ -188,7 +191,8 @@ async function runWithConcurrency<T>(
 //   scheduled_removal_at ?? (ended_at + gcAgeDays). A row is collectable when
 // either the scheduled deadline is set and past, OR (no schedule) ended_at is
 // older than gcAgeDays. removed_at IS NULL gates the whole select (idempotent
-// re-run). Only terminal Abandoned/Done runs are eligible.
+// re-run). Only `WORKTREE_TTL_RUN_STATUSES` runs are eligible (Done, Abandoned
+// and — ADR-181 — Failed).
 async function loadCandidates(db: Db, now: Date): Promise<CandidateRow[]> {
   const endedCutoff = new Date(now.getTime() - gcAgeDays() * 86_400_000);
 
@@ -214,6 +218,9 @@ async function loadCandidates(db: Db, now: Date): Promise<CandidateRow[]> {
         .where(
           and(
             eq(sibling.rootRunId, runs.rootRunId),
+            // The allocator is not a sibling of its own tree: its own status is
+            // the candidate filter's (a `Failed` allocator expires by TTL).
+            ne(sibling.id, runs.id),
             eq(sibling.workspaceMode, "shared"),
             eq(sibling.agentWorkspace, "worktree"),
             notInArray(sibling.status, [...DISPOSABLE_WORKSPACE_RUN_STATUSES]),
@@ -269,7 +276,7 @@ async function loadCandidates(db: Db, now: Date): Promise<CandidateRow[]> {
     .where(
       and(
         isNull(workspaces.removedAt),
-        inArray(runs.status, [...DISPOSABLE_WORKSPACE_RUN_STATUSES]),
+        inArray(runs.status, [...WORKTREE_TTL_RUN_STATUSES]),
         or(
           and(
             isNotNull(workspaces.scheduledRemovalAt),
@@ -309,6 +316,7 @@ async function logTreeBlockedSkips(db: Db, now: Date): Promise<void> {
   // the shared alias name is safe (unlike `$count`, which mis-nests the alias).
   const liveSiblingWhere = and(
     eq(sibling.rootRunId, runs.rootRunId),
+    ne(sibling.id, runs.id),
     eq(sibling.workspaceMode, "shared"),
     eq(sibling.agentWorkspace, "worktree"),
     notInArray(sibling.status, [...DISPOSABLE_WORKSPACE_RUN_STATUSES]),
@@ -333,7 +341,7 @@ async function logTreeBlockedSkips(db: Db, now: Date): Promise<void> {
     .where(
       and(
         isNull(workspaces.removedAt),
-        inArray(runs.status, [...DISPOSABLE_WORKSPACE_RUN_STATUSES]),
+        inArray(runs.status, [...WORKTREE_TTL_RUN_STATUSES]),
         eq(runs.workspaceMode, "shared"),
         eq(runs.agentWorkspace, "worktree"),
         isNotNull(runs.rootRunId),
