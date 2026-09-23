@@ -23,7 +23,11 @@ import { MaisterError } from "@/lib/errors";
 //       repoPath: string; remote: string;
 //       sourceBranch: string; targetBranch: string;
 //       title: string; body: string;
-//     }): Promise<{ url: string; number: number }>;
+//       draft?: boolean;      // ADR-181: gh/glab --draft on CREATE; the Gitea
+//                             // family a `WIP: ` title prefix
+//     }): Promise<{ url: string; number: number; reused: boolean }>;
+//                             // reused (C18): an open PR for the head/base was
+//                             // returned untouched — nothing was applied
 //   }
 //
 //   export function selectPrAdapter(
@@ -409,6 +413,7 @@ describe("GhCliAdapter — createOrUpdatePr happy path (no existing PR)", () => 
     expect(result).toEqual({
       url: "https://github.com/org/repo/pull/42",
       number: 42,
+      reused: false,
     });
 
     // A `gh pr list` (detect) preceded `gh pr create` (no blind create).
@@ -450,6 +455,7 @@ describe("GlabCliAdapter — createOrUpdatePr happy path (no existing MR)", () =
     expect(result).toEqual({
       url: "https://gitlab.com/org/repo/-/merge_requests/7",
       number: 7,
+      reused: false,
     });
   });
 });
@@ -486,6 +492,7 @@ describe("GiteaApiAdapter — createOrUpdatePr happy path (no existing PR)", () 
     expect(result).toEqual({
       url: "https://gitea.example.com/org/repo/pulls/13",
       number: 13,
+      reused: false,
     });
 
     // Bearer token carried on the request; the body has head/base.
@@ -529,6 +536,7 @@ describe("GiteaApiAdapter — createOrUpdatePr happy path (no existing PR)", () 
     expect(result).toEqual({
       url: "https://gitverse.ru/org/repo/pulls/3",
       number: 3,
+      reused: false,
     });
 
     const post = fetchCalls.find(
@@ -575,6 +583,7 @@ describe("GhCliAdapter — idempotent (existing PR for the head branch)", () => 
     expect(result).toEqual({
       url: "https://github.com/org/repo/pull/9",
       number: 9,
+      reused: true,
     });
 
     // No `gh pr create` was issued (update path).
@@ -621,6 +630,7 @@ describe("GiteaApiAdapter — idempotent (existing open PR for the head branch)"
     expect(result).toEqual({
       url: "https://gitea.example.com/org/repo/pulls/5",
       number: 5,
+      reused: true,
     });
 
     const created = fetchCalls.some(
@@ -682,6 +692,7 @@ describe("GhCliAdapter — does NOT match an existing PR for a different base", 
     expect(result).toEqual({
       url: "https://github.com/org/repo/pull/12",
       number: 12,
+      reused: false,
     });
 
     const created = execCalls.some(
@@ -738,6 +749,7 @@ describe("GlabCliAdapter — does NOT match an existing MR for a different base"
     expect(result).toEqual({
       url: "https://gitlab.com/org/repo/-/merge_requests/5",
       number: 5,
+      reused: false,
     });
 
     const created = execCalls.some(
@@ -936,6 +948,7 @@ describe("GiteaApiAdapter — paginates the open-PR lookup", () => {
     expect(result).toEqual({
       url: "https://gitea.example.com/org/repo/pulls/200",
       number: 200,
+      reused: true,
     });
 
     const gets = fetchCalls.filter(

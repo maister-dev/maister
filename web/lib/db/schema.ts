@@ -4647,12 +4647,11 @@ export type WorkspaceLifecycleOperationName =
   | "handoffBranch"
   | "sync"
   // ADR-181: the run git panel's own operations (publish reuses `exportBranch`,
-  // update reuses `sync`). `discardChanges` resets a tree; `discard` removes a
-  // workspace — two different questions.
+  // update reuses `sync`; a PR finalize takes the promotion claim). `discardChanges`
+  // resets a tree; `discard` removes a workspace — two different questions.
   | "discardChanges"
   | "reattach"
-  | "prOpen"
-  | "prFinalize";
+  | "prOpen";
 
 export type WorkspacePreservationOutcome =
   | "not_needed"

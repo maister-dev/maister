@@ -52,6 +52,7 @@ type GitState = {
     published: { ahead: number; behind: number } | null;
   };
   publishedRemoteHead: string | null;
+  publishedTrackingHead: string | null;
   remoteReachable: boolean;
   pr: {
     url: string;
@@ -67,6 +68,7 @@ type GitState = {
   };
   rescueRefs: { ref: string; sha: string; createdAt: string }[];
   actions: WorkbenchGitAction[];
+  prDefaults: { title: string; body: string; targetBranch: string } | null;
   commands: { checkout: string[]; restoreRescue: string | null };
   warnings: string[];
 };
@@ -265,6 +267,13 @@ export function WorkbenchGitPanel({
   const [resolver, setResolver] = useState(true);
   const [runnerId, setRunnerId] = useState(syncDefaults?.defaultRunnerId ?? "");
   const [updateResult, setUpdateResult] = useState<UpdateResult | null>(null);
+  const [prTitle, setPrTitle] = useState<string | null>(null);
+  const [prBody, setPrBody] = useState<string | null>(null);
+  const [prTarget, setPrTarget] = useState<string | null>(null);
+  const [prDraft, setPrDraft] = useState(false);
+  const [prReused, setPrReused] = useState(false);
+  const [driftRefused, setDriftRefused] = useState(false);
+  const [finalizeOpen, setFinalizeOpen] = useState(false);
   const reqIdRef = useRef(0);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastTickRef = useRef(refreshTick);
@@ -322,6 +331,9 @@ export function WorkbenchGitPanel({
           : (state.remotes[0] ?? null)),
     );
     setNameValue((current) => current ?? state.suggestedPublicBranch ?? "");
+    setPrTitle((current) => current ?? state.prDefaults?.title ?? "");
+    setPrBody((current) => current ?? state.prDefaults?.body ?? "");
+    setPrTarget((current) => current ?? state.prDefaults?.targetBranch ?? "");
     // The server pushes a published branch by default (`push ?? published`).
     setPush(
       (current) =>
@@ -522,6 +534,51 @@ export function WorkbenchGitPanel({
     );
   }
 
+  // D11: the server applies its defaults for an omitted field, so an emptied
+  // title or target is left out rather than sent blank.
+  function openPr(): void {
+    const title = (prTitle ?? "").trim();
+    const target = (prTarget ?? "").trim();
+
+    void mutate<{ reused?: boolean }>(
+      "openPr",
+      "pr",
+      {
+        ...(title !== "" ? { title } : {}),
+        ...(prBody !== null ? { body: prBody } : {}),
+        draft: prDraft,
+        ...(target !== "" ? { targetBranch: target } : {}),
+      },
+      (result) => {
+        // C18: an existing PR came back untouched — say so, never "applied".
+        setPrReused(result?.reused === true);
+      },
+    );
+  }
+
+  // D12/C23: from Review a finalize is a promotion, so it carries the target
+  // head this panel rendered; a drift refusal offers the explicit override.
+  function finalizePr(allowTargetDrift: boolean): void {
+    const inReview = state?.runStatus === "Review";
+
+    void mutate(
+      "finalizePr",
+      "pr/finalize",
+      inReview
+        ? {
+            ...(state?.targetHead
+              ? { reviewedTargetCommit: state.targetHead }
+              : {}),
+            ...(allowTargetDrift ? { allowTargetDrift: true } : {}),
+          }
+        : {},
+      () => undefined,
+    ).then((failure) => {
+      setDriftRefused(failure?.details?.reason === "target_drift");
+      setFinalizeOpen(false);
+    });
+  }
+
   const usable = state
     ? state.worktreePresent && !state.workspaceRemoved
     : false;
@@ -562,7 +619,12 @@ export function WorkbenchGitPanel({
           >
             {t("prChip", {
               number: state.pr.number ?? "?",
-              state: t(`prState.${state.pr.state ?? "unknown"}`),
+              state:
+                state.runKind === "scratch"
+                  ? t("prState.notTracked", {
+                      state: t(`prState.${state.pr.state ?? "open"}`),
+                    })
+                  : t(`prState.${state.pr.state ?? "unknown"}`),
             })}
           </a>
         ) : null}
@@ -660,6 +722,27 @@ export function WorkbenchGitPanel({
                   command={rescue.restoreCommand}
                   label={t("commands.copy")}
                 />
+              </div>
+            ) : null}
+            {/* D8: every discard's rescue ref survives, newest first. */}
+            {state.rescueRefs.length > 0 ? (
+              <div className="flex flex-col gap-1">
+                <span className="font-mono text-[10px] font-bold uppercase tracking-[0.08em] text-mute">
+                  {t("tree.rescueRefs")}
+                </span>
+                <ul
+                  className="m-0 flex list-none flex-col gap-0.5 p-0 font-mono text-[10px] text-ink-2"
+                  data-testid="git-panel-rescue-refs"
+                >
+                  {state.rescueRefs.map((rescueRef) => (
+                    <li key={rescueRef.ref}>
+                      <code>{rescueRef.ref}</code>{" "}
+                      <span className="text-mute">
+                        {rescueRef.sha.slice(0, 12)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
               </div>
             ) : null}
           </Section>
@@ -782,6 +865,19 @@ export function WorkbenchGitPanel({
                 );
               })}
             </fieldset>
+            {/* D3: the one network read — the remote moved past the last
+                fetch (someone pushed to the publication). */}
+            {state.publishedRemoteHead !== null &&
+            state.publishedTrackingHead !== null &&
+            state.publishedRemoteHead !== state.publishedTrackingHead ? (
+              <p
+                className="m-0 font-mono text-[10px] text-amber"
+                data-testid="git-panel-update-remote-moved"
+                role="status"
+              >
+                {t("update.remoteMoved")}
+              </p>
+            ) : null}
             <label className="flex flex-col gap-1">
               <span className="font-mono text-[10px] font-bold uppercase tracking-[0.08em] text-mute">
                 {t("update.strategy")}
@@ -880,6 +976,114 @@ export function WorkbenchGitPanel({
             ) : null}
           </Section>
 
+          <Section id="pr" title={t("section.pr")}>
+            {state.publicBranch !== null ? (
+              <>
+                <label className="flex flex-col gap-1">
+                  <span className="font-mono text-[10px] font-bold uppercase tracking-[0.08em] text-mute">
+                    {t("pr.title")}
+                  </span>
+                  <input
+                    className={inputClass}
+                    data-testid="git-panel-pr-title"
+                    maxLength={256}
+                    value={prTitle ?? ""}
+                    onChange={(event) => setPrTitle(event.target.value)}
+                  />
+                </label>
+                <label className="flex flex-col gap-1">
+                  <span className="font-mono text-[10px] font-bold uppercase tracking-[0.08em] text-mute">
+                    {t("pr.body")}
+                  </span>
+                  <textarea
+                    className={clsx(inputClass, "min-h-[72px] py-1.5")}
+                    data-testid="git-panel-pr-body"
+                    value={prBody ?? ""}
+                    onChange={(event) => setPrBody(event.target.value)}
+                  />
+                </label>
+                <label className="flex flex-col gap-1">
+                  <span className="font-mono text-[10px] font-bold uppercase tracking-[0.08em] text-mute">
+                    {t("pr.target")}
+                  </span>
+                  <input
+                    className={inputClass}
+                    data-testid="git-panel-pr-target"
+                    value={prTarget ?? ""}
+                    onChange={(event) => setPrTarget(event.target.value)}
+                  />
+                </label>
+                <label className="flex items-center gap-2 font-mono text-[10px] text-ink-2">
+                  <input
+                    checked={prDraft}
+                    data-testid="git-panel-pr-draft"
+                    type="checkbox"
+                    onChange={(event) => setPrDraft(event.target.checked)}
+                  />
+                  {t("pr.draft")}
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  {actionButton({
+                    id: "openPr",
+                    tone: primary,
+                    blockedBy:
+                      dirtyCount > 0 ? t("hint.commitOrDiscardFirst") : null,
+                    icon: (
+                      <ArrowUpTrayIcon
+                        aria-hidden="true"
+                        className="h-3.5 w-3.5"
+                      />
+                    ),
+                    onClick: openPr,
+                  })}
+                </div>
+                {prReused ? (
+                  <p
+                    className="m-0 font-mono text-[10px] text-ink-2"
+                    data-testid="git-panel-pr-reused"
+                    role="status"
+                  >
+                    {t("pr.reused")}
+                  </p>
+                ) : null}
+              </>
+            ) : (
+              <p
+                className="m-0 font-mono text-[10px] text-mute"
+                data-testid="git-panel-pr-unpublished"
+              >
+                {t("pr.publishFirst")}
+              </p>
+            )}
+            <div className="flex flex-wrap gap-2">
+              {state.pr
+                ? actionButton({
+                    id: "finalizePr",
+                    icon: (
+                      <CheckIcon aria-hidden="true" className="h-3.5 w-3.5" />
+                    ),
+                    // D12: outside Review no readiness is asserted — the
+                    // operator's confirmed click is the decision.
+                    onClick: () =>
+                      state.runStatus === "Review"
+                        ? finalizePr(false)
+                        : setFinalizeOpen(true),
+                  })
+                : null}
+              {driftRefused ? (
+                <button
+                  className={clsx(button, danger)}
+                  data-testid="git-panel-pr-finalize-anyway"
+                  disabled={busy !== null}
+                  type="button"
+                  onClick={() => finalizePr(true)}
+                >
+                  {t("pr.finalizeAnyway")}
+                </button>
+              ) : null}
+            </div>
+          </Section>
+
           <Section id="commands" title={t("section.commands")}>
             {state.commands.checkout.length > 0 ? (
               <>
@@ -946,6 +1150,39 @@ export function WorkbenchGitPanel({
         >
           {error}
         </p>
+      ) : null}
+
+      {finalizeOpen ? (
+        <ConfirmDialog
+          body={t("pr.finalizeBody")}
+          busy={busy !== null}
+          cancelLabel={t("cancel")}
+          testId="git-panel-pr-finalize-dialog"
+          title={t("pr.finalizeTitle")}
+          titleId="git-panel-pr-finalize-title"
+          onClose={() => setFinalizeOpen(false)}
+        >
+          <div className="flex justify-end gap-2">
+            <button
+              className={clsx(button, neutral)}
+              disabled={busy !== null}
+              type="button"
+              onClick={() => setFinalizeOpen(false)}
+            >
+              {t("cancel")}
+            </button>
+            <button
+              className={clsx(button, primary)}
+              data-testid="git-panel-pr-finalize-confirm"
+              disabled={busy !== null}
+              type="button"
+              onClick={() => finalizePr(false)}
+            >
+              <CheckIcon aria-hidden="true" className="h-3.5 w-3.5" />
+              {t("pr.finalizeConfirm")}
+            </button>
+          </div>
+        </ConfirmDialog>
       ) : null}
 
       {discardOpen ? (

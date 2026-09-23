@@ -12,6 +12,7 @@ import {
   type WorkbenchGitAction,
 } from "@/lib/workbench-git/policy";
 import { resolvePublishName } from "@/lib/workbench-git/publication";
+import { pullRequestDefaults } from "@/lib/workbench-git/pull-request";
 import { resolveSyncRef, type SyncOnto } from "@/lib/runs/sync-ref";
 import {
   aheadBehindCounts,
@@ -82,6 +83,9 @@ export type GitStateResponse = {
     published: GitAheadBehind;
   };
   publishedRemoteHead: string | null;
+  // The local tracking ref of the publication; differing from
+  // `publishedRemoteHead` means the remote moved since the last fetch.
+  publishedTrackingHead: string | null;
   remoteReachable: boolean;
   pr: {
     url: string;
@@ -391,9 +395,6 @@ export async function loadGitState(args: {
     }
   }
 
-  const runPath =
-    run.runKind === "scratch" ? `/scratch-runs/${run.id}` : `/runs/${run.id}`;
-  const prName = publicBranch ?? suggestedPublicBranch ?? workspace?.branch;
   const newestRescue = git.rescueRefs[0] ?? null;
 
   const state: GitStateResponse = {
@@ -422,6 +423,7 @@ export async function loadGitState(args: {
       published: git.published,
     },
     publishedRemoteHead: git.publishedRemoteHead,
+    publishedTrackingHead: git.trackingHead,
     remoteReachable: git.remoteReachable,
     pr: workspace?.prUrl
       ? {
@@ -444,10 +446,19 @@ export async function loadGitState(args: {
     reattachSources: facts.reattachSources,
     rescueRefs: git.rescueRefs,
     actions,
+    // C35: the same defaults `openPullRequest` applies when the body omits them.
     prDefaults: workspace
       ? {
-          title: taskKey ? `${taskKey}: ${task!.title}` : workspace.branch,
-          body: `${args.origin}${runPath}\n\nPublished ${prName} → ${targetBranch} (run ${run.id}).`,
+          ...pullRequestDefaults({
+            run,
+            internalBranch: workspace.branch,
+            sourceBranch:
+              publicBranch ?? suggestedPublicBranch ?? workspace.branch,
+            targetBranch,
+            taskKey,
+            taskTitle: task?.title ?? null,
+            origin: args.origin,
+          }),
           targetBranch,
         }
       : null,

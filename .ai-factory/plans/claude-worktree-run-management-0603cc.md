@@ -516,6 +516,74 @@ record.
     `lib/runs/sync-ref.ts`; the git-state read model counts each update option
     against the same ref, so it drops the `baseCommit` fallback: a base the
     update would refuse (`base_branch_unknown`) shows no counts.
+- **C54–C65 — found during Phase 3 and the T4.3 truth pass (2026-09-23).**
+  - **C54 — attribution rides the finalize, not `PromoteRunInput`.** D12 widened
+    `PromoteRunInput.attribution` with `{source:"pr_finalize"}`, but that source
+    is minted only by the parked finalize, which never enters `promoteRun`. The
+    input keeps its one value; `finalizePullRequest` takes a
+    `PromotionAttribution` (auto-promotion | pr_finalize) and derives
+    `promotion_lane` from it. A finalize from Review is a promotion and carries
+    no source (RED 20 pins the absence).
+  - **C55 — the shared-tree flip includes the finalized run.** "Review siblings
+    only — a no-op from a non-Review root" would leave a finalized Failed
+    allocator Failed under `promotion_state='done'`. The flip is
+    `status = 'Review' OR id = <run>`; for a promotion from Review the promoting
+    run is Review already, so nothing changes there.
+  - **C56 — C26 on the scratch claim.** Phase 1's reverse fence covered the
+    workspace-run claim only; a scratch `rebase_merge` now rebases inside the
+    worktree and a scratch PR pushes, so the scratch claim reads the same
+    `assertNoLiveWorkbenchClaim` (extracted from the workspace claim, one fence
+    for both and for the parked finalize). Pinned by a promote-service case.
+  - **C57 — a scratch rebase lands by fast-forward.** It records
+    `promoted_head_sha` and no `merge_commit_sha`, as a flow run's
+    `rebase_merge` does, and its `run.promoted` names the real mode (the scratch
+    finalize said `local_merge` unconditionally).
+  - **C58 — Open PR honours the scratch target lock.** A scratch PR opened to a
+    foreign base would not be the PR a later finalize-from-Review promotion
+    looks up (head/base), which would open a second one. `scratchPromotionTarget`
+    (`scratch_runs.target_branch ?? base_branch`) is the one lock, read by the
+    scratch promotion and by Open PR.
+  - **C59 — a promotion keeps its own PR title and body.** The Open PR defaults
+    (`pullRequestDefaults`, one function with git-state's `prDefaults`) apply to
+    the panel; `promotePullRequestSideEffect` passes its existing title/body
+    and `draft: false`. The shared core is the provider resolution
+    (`preflightedPrAdapter`, extracted from promotion; `provider_unsupported` on
+    both paths) plus the one `createOrUpdatePr` contract.
+  - **C60 — a missing published ref.** Open PR reads a vanished
+    `origin/<public>` as `not_published` (publish first) and a different head as
+    `publish_stale`; finalize reads both as `publish_stale`, the one token its
+    contract lists.
+  - **C61 — authorization order on `/pr` and `/pr/finalize`.** The route gates
+    the session before the body (an anonymous caller never reaches up to 64 KiB
+    of body); the service then authorizes `promoteRun` on the run's own project,
+    as discard and reattach do — one pattern for the git service's ops.
+  - **C62 — RED 20's race holds its window open.** Two finalizes started
+    together can serialize before either claims — the first finishes, the
+    second is refused as already Done — and would pass against a tree with no
+    claim fence at all. The control holds the first arrival at its HEAD read
+    until the second arrives (both past every pre-claim check, the slot free)
+    and, like RED 11, injects the session/role deps (C41). Falsification 13 —
+    no claim CAS and no attempt fence — then shows both finalizes fulfilled.
+  - **C63 — `prFinalize` is not a lifecycle op value.** D15 added it to both
+    op-name unions, but a finalize holds the PROMOTION claim (D12, D20), so
+    the name was never written. It is removed from the unions and from the
+    op-name lists in the ERD comment, the schema doc, the analytics and the
+    ADR amendment.
+  - **C64 — the parked finalize confirms first.** T0.6's manual promises a
+    confirmation before a finalize outside `Review`, where no readiness is
+    asserted; the panel opens the shared destructive confirmation there (and
+    not in `Review`, where the finalize is a promotion). Finalize is shown only
+    while a PR is recorded (the screen contract), and Open PR is the PR
+    section's own form rather than a modal — the screen doc says so as built.
+  - **C65 — the "remote moved" hint needs the tracking head.** Q3 (a) spends
+    `git-state`'s one network read so the panel can say the publication moved
+    on the remote; the read model computed the tracking ref's head but never
+    served it, so the screen's hint could not render. `GitStateResponse` gains
+    `publishedTrackingHead` (additive, OpenAPI updated) and the Update section
+    shows the hint when the two differ. Likewise the served `rescueRefs` were
+    never listed; the Tree section lists them newest first. The header chip's
+    "with its source" was never served (the name source is the publish
+    response's `nameSource`); the screen doc now says so.
 - **Token set (final, T0.1).** Service refusals: `public_name_fixed`,
   `public_branch_template_invalid` (400 `CONFIG`), `clean_worktree`,
   `dirty_worktree`, `not_published`, `published_remote_not_origin`,
@@ -1616,13 +1684,13 @@ honours its three modes; refactor gate passed.
 
 **Commit 6** — `test(workbench-git): RED — a PR is a promotion`
 
-- [ ] **T3.1 — `PrAdapter.draft`.** `pr-adapter.ts:31-38` `+ draft?: boolean`;
+- [x] **T3.1 — `PrAdapter.draft`.** `pr-adapter.ts:31-38` `+ draft?: boolean`;
       gh `:201-220` and glab `:262-279` add `--draft`; gitea/gitverse `:459-464`
       map `draft` to a `WIP: ` title prefix; `PrResult` unchanged.
       **AC**: RED 18 green (argv contains `--draft` exactly when requested; Gitea
       body title prefixed; `findOpenPr` still matches by head/base; no token in any
       thrown message); `pr-adapter.test.ts` contract header updated.
-- [ ] **T3.2 — Open-PR core + `/pr` route + promotion re-base.**
+- [x] **T3.2 — Open-PR core + `/pr` route + promotion re-base.**
       `workbench-git/service.ts` `openPullRequest` per D11 (`resolvePromotionTarget`
       extracted from `promoteWorkspaceRun`; provider resolution extracted from
       `promote.ts:1362-1374`); route `pr/route.ts` (inline authz; errors through
@@ -1634,7 +1702,7 @@ honours its three modes; refactor gate passed.
       `publish_stale`, out-of-policy target, `generic` provider → 409; provider 5xx
       → 503 with the claim `claiming`; viewer 403 / member 200);
       `promote-pr.test.ts` migrated (createOrUpdatePr args: public head, `draft`).
-- [ ] **T3.3 — Finalize extracted + `/pr/finalize`.** `finalizePullRequest`
+- [x] **T3.3 — Finalize extracted + `/pr/finalize`.** `finalizePullRequest`
       (`promote.ts:1421-1674`) exported with the D12 signature (`attribution`,
       `run_kind` arm for scratch); `finalizePullRequestRun` (claim for
       `Crashed|Failed|Abandoned` via `canReclaim` in the `FlowClaim` shape, with the
@@ -1653,13 +1721,13 @@ honours its three modes; refactor gate passed.
       the worktree is usable and behind; two concurrent finalizes → one `CONFLICT`;
       shared-tree `Review` siblings flipped by the extracted path);
       `promote-service.test.ts:632-639` pair ordering still green.
-- [ ] **T3.4 — Scratch modes.** `promoteScratchRun` per D13 (`:1751-1757` removed;
+- [x] **T3.4 — Scratch modes.** `promoteScratchRun` per D13 (`:1751-1757` removed;
       `rebase_merge` and `pull_request` arms with the scratch target).
       **AC**: RED 22 green (both modes admitted; `local_merge` byte-identical;
       target = `scratch_runs.target_branch ?? base_branch`; an explicit foreign
       target still refused); `promote-service.test.ts` scratch refusal case
       classified obsolete and replaced.
-- [ ] **T3.5 — Panel PR section + scratch.** Open-PR dialog (title/body/draft/target
+- [x] **T3.5 — Panel PR section + scratch.** Open-PR dialog (title/body/draft/target
       pre-filled from `task_key`, title, run link), Finalize, chip states
       (`open` / `merged` / `closed` / `not tracked` for scratch); the scratch
       `<select>` (`scratch-inspector-actions.tsx:96-98`) unchanged and now honoured.
@@ -1667,8 +1735,27 @@ honours its three modes; refactor gate passed.
       `pr-closed` tooltip; Open PR hidden until published); RED 23 (integration:
       `pr_state_scan` picks a `Failed`-run PR, `:373`-style eligibility case) green
       with **no** scan code change.
-- [ ] **T3.R — REFACTOR gate (Phase 3).** As T1.R; verify the promotion `pull_request`
+- [x] **T3.R — REFACTOR gate (Phase 3).** As T1.R; verify the promotion `pull_request`
       path contains no second push or PR-lookup implementation (one core each).
+      **Verified 2026-09-23.** One core each: the push is `pushBranch` (D4);
+      find-or-create is the adapter's `createOrUpdatePr`, called by Open PR and
+      the promotion side effect only; the provider resolution is
+      `preflightedPrAdapter` alone (the package publish in `local-packages`
+      resolves the PACKAGE source's provider — a different question); the
+      finalize is `finalizePullRequest`, reached from the promotion side effect
+      and the parked finalize; the fence is `assertNoLiveWorkbenchClaim` for the
+      workspace claim, the scratch claim and the parked claim; the target rule is
+      `resolvePromotionTarget`, the scratch lock `scratchPromotionTarget`, the
+      PR defaults `pullRequestDefaults` (git-state's `prDefaults` reads it).
+      Orphans removed: promote.ts's `selectPrAdapter` / `detectProvider` /
+      `readRemoteOrigin` imports, the read model's `runPath` / `prName`; the D10
+      inventory moved the `readRemoteOrigin` entry to `pull-request.ts`. The
+      `KEY-N` template stays inline — the house idiom at 20+ sites. Falsified
+      and restored: 12 (`draft` ignored → 3 RED 18 cases), 13 (no claim CAS, no
+      attempt fence → both concurrent finalizes fulfilled, window proven open),
+      14 (the scratch refusal back → 3 RED 22 cases), the C56 fence dropped →
+      its case. Suites: RED 18–23 green; 21 promotion-adjacent integration files
+      253/253 at load 85–150.
 
 **Commit 7** — `feat(workbench-git): open a PR before promotion, finalize from any parked status, scratch promote modes`
 

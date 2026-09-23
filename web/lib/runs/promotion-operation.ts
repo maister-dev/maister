@@ -83,10 +83,17 @@ export function buildPromotionRequestBody(
 export function isTargetDriftResponse(value: unknown): boolean {
   if (!value || typeof value !== "object") return false;
 
-  const response = value as { code?: unknown; message?: unknown };
+  const response = value as {
+    code?: unknown;
+    message?: unknown;
+    details?: { reason?: unknown };
+  };
+
+  if (response.code !== "PRECONDITION") return false;
+  // ADR-181: the typed token first; the message match serves a body without one.
+  if (response.details?.reason === "target_drift") return true;
 
   return (
-    response.code === "PRECONDITION" &&
     typeof response.message === "string" &&
     /target advanced/i.test(response.message)
   );

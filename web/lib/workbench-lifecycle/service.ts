@@ -107,11 +107,11 @@ export type LifecycleOperationName =
   // ADR-141: branch sync claims the SAME workspace lifecycle slot, so it is
   // mutually exclusive with the other five (and with a concurrent sync) for free.
   | "sync"
-  // ADR-181: the run git panel's operations take the same slot.
+  // ADR-181: the run git panel's operations take the same slot (a PR finalize
+  // takes the PROMOTION claim instead, so it has no name here).
   | "discardChanges"
   | "reattach"
-  | "prOpen"
-  | "prFinalize";
+  | "prOpen";
 
 export type LifecycleOperationClaim = {
   attemptId: string;
@@ -125,6 +125,10 @@ export type LifecycleProject = {
   // a hand-built context (the template default applies).
   publicBranchTemplate?: string;
   taskKey?: string | null;
+  // ADR-181 D11: the recorded remote and provider Open PR resolves its adapter
+  // from (else the parent checkout's origin and the provider it names).
+  repoUrl?: string | null;
+  provider?: string | null;
 };
 
 export type LifecycleRun = {
@@ -2195,6 +2199,8 @@ async function loadLifecycleContext(runId: string): Promise<LifecycleContext> {
         mainBranch: projects.mainBranch,
         publicBranchTemplate: projects.publicBranchTemplate,
         taskKey: projects.taskKey,
+        repoUrl: projects.repoUrl,
+        provider: projects.provider,
       })
       .from(projects)
       .where(eq(projects.id, projectId)),

@@ -401,16 +401,15 @@ describe("POST /api/runs/[runId]/promote", () => {
     expect(promoteLocalMerge).not.toHaveBeenCalled();
   });
 
-  // M18 Phase 3: PR mode is implemented for flow runs (see promote-pr.test.ts +
-  // route-status.test.ts). Scratch runs remain target-locked, local-merge-only,
-  // so a scratch pull_request request is refused PRECONDITION → 409 (no longer
-  // the Phase-2 CONFIG → 400).
-  it("refuses pull_request mode for a scratch run (PRECONDITION → 409)", async () => {
+  // ADR-181 D13: a scratch run promotes in every mode (the PR arm is pinned in
+  // promote-pr.test.ts), but stays target-locked — a foreign target is refused
+  // PRECONDITION → 409 before any git, whatever the mode.
+  it("refuses a scratch pull_request onto a foreign target (PRECONDITION → 409)", async () => {
     const runId = seedScratchRun();
 
     const res = await invokePost(runId, {
       mode: "pull_request",
-      targetBranch: "main",
+      targetBranch: "release",
     });
 
     expect(res.status).toBe(409);

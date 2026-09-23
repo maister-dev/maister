@@ -1464,18 +1464,6 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       ],
     ),
     ...classified(
-      "lib/runs/promote.ts",
-      "repository-worktree",
-      "promotion writes its delivery record beside the run's manager state and drives the worktree merge — Stage C delivery boundary",
-      [
-        [
-          "promotePullRequestSideEffect",
-          "lib/repo-source.ts#readRemoteOrigin",
-          "wrapper",
-        ],
-      ],
-    ),
-    ...classified(
       "lib/scheduler/handlers/command.ts",
       "manager-flow-state",
       "scheduler console command jobs (fixed host tools with validated arguments)",
@@ -1629,6 +1617,20 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
         [
           "loadWorkbenchGitFacts",
           "lib/workbench-git/presence.ts#worktreePresence",
+          "wrapper",
+        ],
+      ],
+    ),
+    // ADR-181 D11: the ONE PR provider resolution (Open PR and pull_request
+    // promotion) reads the parent checkout's origin when no remote is recorded.
+    ...classified(
+      "lib/workbench-git/pull-request.ts",
+      "repository-worktree",
+      "the PR provider is resolved from the parent checkout's origin — Stage C delivery boundary",
+      [
+        [
+          "preflightedPrAdapter",
+          "lib/repo-source.ts#readRemoteOrigin",
           "wrapper",
         ],
       ],

@@ -45,8 +45,12 @@ let db: NodePgDatabase;
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
 
+// The promotion claim records its owner (`promotion_owner_user_id`, a real FK),
+// so the session user is a real row, seeded in `beforeAll`.
+const OPERATOR = "u-finalizer";
+
 vi.mock("@/lib/authz", () => ({
-  requireActiveSession: vi.fn(async () => ({ id: "user-1" })),
+  requireActiveSession: vi.fn(async () => ({ id: OPERATOR })),
   requireProjectAction: vi.fn(async () => undefined),
 }));
 
@@ -57,7 +61,10 @@ const createOrUpdatePr = vi.fn(async (_args: Record<string, unknown>) => ({
   reused: true,
 }));
 
-vi.mock("@/lib/runs/pr-adapter", () => ({
+// Partial: the ADR-140 scan (the one-step-further case) reads the module's
+// real constants; only the PR-opening seam is stubbed.
+vi.mock("@/lib/runs/pr-adapter", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/runs/pr-adapter")>()),
   selectPrAdapter: vi.fn(() => ({
     preflight: async () => undefined,
     createOrUpdatePr,
@@ -79,9 +86,13 @@ beforeAll(async () => {
   });
   db = testDatabase.db;
   ({ POST } = await import("@/app/api/runs/[runId]/pr/finalize/route"));
-  // C41: resolve the mocked module ONCE before any racer — two concurrent
-  // first lazy imports can hand the second the real module.
-  await import("@/lib/authz");
+  await db.insert(schema.users).values({
+    id: OPERATOR,
+    email: "finalizer@test.invalid",
+    role: "member",
+    accountStatus: "active",
+    passwordHash: "x",
+  });
 }, 180_000);
 
 afterAll(async () => {
@@ -155,7 +166,11 @@ async function prRun(
     published: { branch: PUBLIC, remote: "origin" },
     prUrl,
     prNumber: prUrl ? 42 : null,
-    prState: prUrl ? (opts.prState === undefined ? "open" : opts.prState) : null,
+    prState: prUrl
+      ? opts.prState === undefined
+        ? "open"
+        : opts.prState
+      : null,
     sharedTreeAllocator: opts.sharedTreeAllocator,
   });
 
@@ -342,14 +357,61 @@ describe("POST /api/runs/{runId}/pr/finalize", () => {
     expect((await runRow(db, run.runId)).status).toBe("Failed");
   });
 
+  // D20: the race is the promotion claim's, asserted at the service layer. C41:
+  // two racers taking the default deps' lazy `@/lib/authz` import concurrently
+  // hand the second the REAL module, so the session and role checks are
+  // injected; the fact loader, the FOR UPDATE claim and git stay production.
   it("lets exactly one of two concurrent finalizes win", async () => {
     const run = await prRun();
+    const { depsFromOptions } = await import(
+      "@/lib/workbench-lifecycle/service"
+    );
+    const { finalizePullRequestRun } = await import(
+      "@/lib/workbench-git/service"
+    );
+    const base = depsFromOptions(undefined);
+    // The window the promotion claim must close: both racers are past every
+    // pre-claim check (the policy, the published-head proof) with the slot
+    // free. The first arrival at the HEAD read waits for the second, which can
+    // only be the other racer.
+    let arrivals = 0;
+    let windowOpen = false;
+    let release: () => void = () => undefined;
+    const bothArrived = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const deps = {
+      ...base,
+      requireActiveSession: async () => ({ id: OPERATOR }),
+      authorize: async () => undefined,
+      headCommit: async (args: { worktreePath: string }) => {
+        arrivals += 1;
+        if (arrivals === 2) {
+          windowOpen = true;
+          release();
+        }
+        await Promise.race([
+          bothArrived,
+          new Promise((resolve) => setTimeout(resolve, 5_000)),
+        ]);
 
-    const statuses = (
-      await Promise.all([post(run.runId), post(run.runId)])
-    ).map((r: Response) => r.status);
+        return base.headCommit(args);
+      },
+    };
 
-    expect(statuses.sort()).toEqual([200, 409]);
+    const outcomes = await Promise.allSettled([
+      finalizePullRequestRun(run.runId, {}, { deps }),
+      finalizePullRequestRun(run.runId, {}, { deps }),
+    ]);
+
+    expect(windowOpen).toBe(true);
+    expect(outcomes.map((o) => o.status).sort()).toEqual([
+      "fulfilled",
+      "rejected",
+    ]);
+    expect(outcomes.find((o) => o.status === "rejected")?.reason).toMatchObject(
+      { code: "CONFLICT" },
+    );
     expect(
       (await webhookTypes(run.runId)).map((e: { type: string }) => e.type),
     ).toEqual(["run.promoted", "run.done"]);

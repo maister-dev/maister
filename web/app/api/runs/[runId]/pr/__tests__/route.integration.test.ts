@@ -74,7 +74,10 @@ vi.mock("@/lib/runs/pr-adapter", () => ({
   selectPrAdapter: vi.fn((provider: string) => {
     // The real dispatch: no adapter for a generic remote.
     if (provider === "generic") {
-      throw new MaisterError("PRECONDITION", "PR mode unsupported for provider");
+      throw new MaisterError(
+        "PRECONDITION",
+        "PR mode unsupported for provider",
+      );
     }
 
     return { preflight, createOrUpdatePr };
@@ -291,40 +294,37 @@ describe("POST /api/runs/{runId}/pr", () => {
     ["publish_stale", { stale: true }],
     ["target_branch_unknown", { target: "no-such-branch" }],
     ["provider_unsupported", { provider: "generic" }],
-  ] as const)(
-    "refuses %s with 409 and opens no PR",
-    async (reason, shape) => {
-      const run = await publishedRun({
-        published: "published" in shape ? shape.published : undefined,
-        publishedRemote:
-          "publishedRemote" in shape ? shape.publishedRemote : undefined,
-        provider: "provider" in shape ? shape.provider : undefined,
-      });
+  ] as const)("refuses %s with 409 and opens no PR", async (reason, shape) => {
+    const run = await publishedRun({
+      published: "published" in shape ? shape.published : undefined,
+      publishedRemote:
+        "publishedRemote" in shape ? shape.publishedRemote : undefined,
+      provider: "provider" in shape ? shape.provider : undefined,
+    });
 
-      if ("dirty" in shape) {
-        await writeFile(join(run.worktree, "scratch.txt"), "dirty\n");
-      }
-      if ("stale" in shape) {
-        await commitFile(run.worktree, "later.txt", "later\n", "after publish");
-      }
+    if ("dirty" in shape) {
+      await writeFile(join(run.worktree, "scratch.txt"), "dirty\n");
+    }
+    if ("stale" in shape) {
+      await commitFile(run.worktree, "later.txt", "later\n", "after publish");
+    }
 
-      const res = await post(
-        run.runId,
-        "target" in shape ? { targetBranch: shape.target } : {},
-      );
-      const body = await res.json();
+    const res = await post(
+      run.runId,
+      "target" in shape ? { targetBranch: shape.target } : {},
+    );
+    const body = await res.json();
 
-      expect(res.status).toBe(409);
-      expect(body.details?.reason).toBe(reason);
-      expect(createOrUpdatePr).not.toHaveBeenCalled();
+    expect(res.status).toBe(409);
+    expect(body.details?.reason).toBe(reason);
+    expect(createOrUpdatePr).not.toHaveBeenCalled();
 
-      const ws = await workspaceRow(db, run.workspaceId);
+    const ws = await workspaceRow(db, run.workspaceId);
 
-      expect(ws.prUrl).toBeNull();
-      // A typed refusal before the provider call never holds the slot.
-      expect(ws.lifecycleOperationState).not.toBe("claiming");
-    },
-  );
+    expect(ws.prUrl).toBeNull();
+    // A typed refusal before the provider call never holds the slot.
+    expect(ws.lifecycleOperationState).not.toBe("claiming");
+  });
 
   it("answers 503 on a transient provider failure, writes nothing and keeps the claim retryable", async () => {
     createOrUpdatePr.mockRejectedValueOnce(

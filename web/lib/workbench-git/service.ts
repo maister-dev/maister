@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { PrResult } from "@/lib/runs/pr-adapter";
 import type { MaisterProvenance } from "@/lib/worktree-provenance";
 
 import { and, eq, gt } from "drizzle-orm";
@@ -10,11 +11,23 @@ import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import { RELEASED_LIFECYCLE_CLAIM } from "@/lib/runs/lifecycle-claim";
 import {
+  finalizeParkedPullRequest,
+  promoteRun,
+  resolvePromotionTarget,
+  scratchPromotionTarget,
+  type PromoteRunContext,
+  type PromoteRunResult,
+} from "@/lib/runs/promote";
+import {
   reviveWorktreeForWorkspace,
   type ReviveSource,
 } from "@/lib/runs/revive-worktree";
 import { worktreePresence } from "@/lib/workbench-git/presence";
 import { publishedTarget } from "@/lib/workbench-git/publication";
+import {
+  preflightedPrAdapter,
+  pullRequestDefaults,
+} from "@/lib/workbench-git/pull-request";
 import {
   depsFromOptions,
   markLifecycleClaimFailed,
@@ -42,10 +55,8 @@ import {
 // admitted by the ONE policy (D1) through `requireActionAllowed`.
 
 // FIXME(any): dual drizzle-orm peer-dep variants — mirror sync-target.ts.
-const { flows, runs, workspaces } = schemaModule as unknown as Record<
-  string,
-  any
->;
+const { flows, runs, scratchRuns, workspaces } =
+  schemaModule as unknown as Record<string, any>;
 
 // FIXME(any): the injected db seam is a Drizzle client OR a transaction.
 type Db = any;
@@ -410,4 +421,349 @@ export async function reattachWorkbench(
 
     throw err;
   }
+}
+
+export type OpenPullRequestInput = {
+  title?: string;
+  body?: string;
+  draft?: boolean;
+  targetBranch?: string;
+};
+
+export type OpenPullRequestResult = {
+  ok: true;
+  runId: string;
+  url: string;
+  number: number;
+  state: "open";
+  reused: boolean;
+  draft: boolean;
+  targetBranch: string;
+};
+
+// D11 step 5 + C27: the PR's rows are written only after the provider
+// answered, in the statement that releases the claim (this attempt, a live
+// lease). A different PR resets the previous PR's ADR-140 evidence — null is
+// "unknown until scanned", never the old PR's merge or conflict.
+async function recordPullRequestOpened(args: {
+  workspaceId: string;
+  attemptId: string;
+  pr: PrResult;
+  targetBranch: string;
+  previousPrUrl: string | null;
+}): Promise<boolean> {
+  const rows = await (getDb() as Db)
+    .update(workspaces)
+    .set({
+      prUrl: args.pr.url,
+      prNumber: args.pr.number,
+      prState: "open",
+      targetBranch: args.targetBranch,
+      ...(args.previousPrUrl !== args.pr.url
+        ? { prHasConflicts: null, prMergedAt: null, prMergeCommitSha: null }
+        : {}),
+      ...RELEASED_LIFECYCLE_CLAIM,
+    })
+    .where(
+      and(
+        eq(workspaces.id, args.workspaceId),
+        eq(workspaces.lifecycleOperationName, "prOpen"),
+        eq(workspaces.lifecycleOperationState, "claiming"),
+        eq(workspaces.lifecycleOperationAttemptId, args.attemptId),
+        gt(workspaces.lifecycleOperationLeaseExpiresAt, new Date()),
+      ),
+    )
+    .returning({ id: workspaces.id });
+
+  return rows.length > 0;
+}
+
+// D11 step 2: the target an Open PR resolves — the request's, else the
+// recorded one, else the project main branch; a scratch run is target-locked
+// exactly as its promotion is (D13), so a later finalize finds the same PR.
+async function pullRequestTarget(
+  ctx: LifecycleContext,
+  workspace: LifecycleWorkspace,
+  requested: string | undefined,
+): Promise<string> {
+  if (ctx.run.runKind !== "scratch") {
+    return requested ?? workspace.targetBranch ?? ctx.project.mainBranch;
+  }
+
+  const rows = await (getDb() as Db)
+    .select({
+      baseBranch: scratchRuns.baseBranch,
+      targetBranch: scratchRuns.targetBranch,
+    })
+    .from(scratchRuns)
+    .where(eq(scratchRuns.runId, ctx.run.id));
+
+  if (!rows[0]) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `scratch metadata not found: ${ctx.run.id}`,
+    );
+  }
+
+  return scratchPromotionTarget(rows[0], requested);
+}
+
+// ADR-181 D11 — open, or find by head/base, the provider PR for a run's
+// published branch. Every refusal lands before the claim; the provider call
+// runs under it; the PR's rows are the AFTER-side write (D19), so a crash in
+// between is repaired by a retry that finds the PR and records it.
+export async function openPullRequest(
+  runId: string,
+  input: OpenPullRequestInput,
+  options: WorkbenchGitOptions & { origin: string },
+): Promise<OpenPullRequestResult> {
+  const deps = depsFromOptions(options);
+  const sessionUser = await deps.requireActiveSession();
+  const ctx = await deps.loadContext(runId);
+
+  ctx.viewerUserId = sessionUser.id;
+
+  await deps.authorize(ctx.run.projectId, "promoteRun");
+  requireActionAllowed(ctx, "openPr");
+
+  const workspace = requireWorkspace(ctx);
+  const porcelain = await deps.statusPorcelain({
+    worktreePath: workspace.worktreePath,
+  });
+
+  if (porcelain.trim() !== "") {
+    throw new MaisterError(
+      "PRECONDITION",
+      `the worktree of run ${runId} has uncommitted changes — commit or discard them first`,
+      { details: { reason: "dirty_worktree" } },
+    );
+  }
+
+  const publishedBranch = workspace.publishedBranch ?? null;
+
+  if (publishedBranch === null) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `run ${runId} is not published — publish it first`,
+      { details: { reason: "not_published" } },
+    );
+  }
+  // C24: gh/glab run in the parent checkout and resolve `--head` in the base
+  // repository, so the publication must live on `origin`.
+  if (workspace.publishedRemote !== "origin") {
+    throw new MaisterError(
+      "PRECONDITION",
+      `run ${runId} is published to ${workspace.publishedRemote}, not origin — publish it to origin first`,
+      { details: { reason: "published_remote_not_origin" } },
+    );
+  }
+
+  const [head, publishedHead] = await Promise.all([
+    deps.headCommit({ worktreePath: workspace.worktreePath }),
+    deps.remoteBranchHead({
+      projectRepoPath: workspace.parentRepoPath,
+      remote: "origin",
+      branch: publishedBranch,
+    }),
+  ]);
+
+  if (publishedHead === null) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `origin/${publishedBranch} does not exist — publish run ${runId} first`,
+      { details: { reason: "not_published" } },
+    );
+  }
+  if (publishedHead !== head) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `origin/${publishedBranch} is not the worktree's HEAD — publish run ${runId} first`,
+      { details: { reason: "publish_stale" } },
+    );
+  }
+
+  const targetBranch = await pullRequestTarget(
+    ctx,
+    workspace,
+    input.targetBranch,
+  );
+
+  await resolvePromotionTarget({
+    projectRepoPath: workspace.parentRepoPath,
+    targetBranch,
+  });
+
+  const adapter = await preflightedPrAdapter({
+    project: ctx.project,
+    parentRepoPath: workspace.parentRepoPath,
+  });
+  const defaults = pullRequestDefaults({
+    run: ctx.run,
+    internalBranch: workspace.branch,
+    sourceBranch: publishedBranch,
+    targetBranch,
+    taskKey:
+      ctx.task && ctx.project.taskKey
+        ? `${ctx.project.taskKey}-${ctx.task.number}`
+        : null,
+    taskTitle: ctx.task?.title ?? null,
+    origin: options.origin,
+  });
+  const draft = input.draft === true;
+  const claim = await deps.claimLifecycleOperation({
+    runId,
+    workspaceId: workspace.id,
+    operation: "prOpen",
+    expectedRunStatus: ctx.run.status,
+  });
+
+  try {
+    const pr = await adapter.createOrUpdatePr({
+      repoPath: workspace.parentRepoPath,
+      remote: "origin",
+      sourceBranch: publishedBranch,
+      targetBranch,
+      title: input.title ?? defaults.title,
+      body: input.body ?? defaults.body,
+      draft,
+    });
+
+    if (
+      !(await recordPullRequestOpened({
+        workspaceId: workspace.id,
+        attemptId: claim.attemptId,
+        pr,
+        targetBranch,
+        previousPrUrl: workspace.prUrl ?? null,
+      }))
+    ) {
+      throw new MaisterError(
+        "CONFLICT",
+        `the open-PR claim of run ${runId} was lost; the PR exists and a retry records it`,
+      );
+    }
+
+    log.info(
+      {
+        runId,
+        workspaceId: workspace.id,
+        prNumber: pr.number,
+        reused: pr.reused,
+        draft: pr.reused ? false : draft,
+        sourceBranch: publishedBranch,
+        targetBranch,
+      },
+      "pull request opened for the run's published branch",
+    );
+
+    return {
+      ok: true,
+      runId,
+      url: pr.url,
+      number: pr.number,
+      state: "open",
+      reused: pr.reused,
+      // A reused PR was returned untouched: this request made nothing a draft.
+      draft: pr.reused ? false : draft,
+      targetBranch,
+    };
+  } catch (err) {
+    log.warn(
+      {
+        runId,
+        workspaceId: workspace.id,
+        attemptId: claim.attemptId,
+        errorCode: err instanceof MaisterError ? err.code : "unknown",
+      },
+      "open-PR failed",
+    );
+    await markLifecycleClaimFailed({
+      deps,
+      workspaceId: workspace.id,
+      attemptId: claim.attemptId,
+      err,
+    });
+
+    throw err;
+  }
+}
+
+export type FinalizePullRequestInput = {
+  reviewedTargetCommit?: string;
+  allowTargetDrift?: boolean;
+};
+
+// ADR-181 D12 — finalize a PR-backed run to Done. From Review it IS
+// `promoteRun(pull_request)`: readiness, the drift gate and every promotion
+// gate apply, and the operator's reviewed target rides along (C23). From
+// Crashed | Failed | Abandoned it is the parked finalize under the promotion
+// claim, at the published head — which must be the worktree's HEAD, so the
+// promoted head is what the operator reviewed.
+export async function finalizePullRequestRun(
+  runId: string,
+  input: FinalizePullRequestInput,
+  options?: WorkbenchGitOptions,
+): Promise<PromoteRunResult> {
+  const deps = depsFromOptions(options);
+  const sessionUser = await deps.requireActiveSession();
+  const ctx = await deps.loadContext(runId);
+
+  ctx.viewerUserId = sessionUser.id;
+
+  await deps.authorize(ctx.run.projectId, "promoteRun");
+  requireActionAllowed(ctx, "finalizePr");
+
+  const promoteCtx: PromoteRunContext = {
+    sessionUser,
+    authorize: (projectId) => deps.authorize(projectId, "promoteRun"),
+  };
+
+  if (ctx.run.status === "Review") {
+    return promoteRun(
+      runId,
+      {
+        mode: "pull_request",
+        reviewedTargetCommit: input.reviewedTargetCommit,
+        allowTargetDrift: input.allowTargetDrift,
+      },
+      promoteCtx,
+    );
+  }
+
+  // C23: accepted-and-dropped would read as honoured.
+  if (
+    input.reviewedTargetCommit !== undefined ||
+    input.allowTargetDrift !== undefined
+  ) {
+    throw new MaisterError(
+      "CONFIG",
+      `reviewedTargetCommit and allowTargetDrift apply to a Review run only; run ${runId} is ${ctx.run.status}`,
+      { details: { reason: "review_only_field" } },
+    );
+  }
+
+  const workspace = requireWorkspace(ctx);
+  const published = publishedTarget(workspace);
+  const [head, publishedHead] = await Promise.all([
+    deps.headCommit({ worktreePath: workspace.worktreePath }),
+    deps.remoteBranchHead({
+      projectRepoPath: workspace.parentRepoPath,
+      remote: published.remote,
+      branch: published.remoteBranch,
+    }),
+  ]);
+
+  if (publishedHead === null || publishedHead !== head) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `${published.remote}/${published.remoteBranch} is not the worktree's HEAD — publish run ${runId} first`,
+      { details: { reason: "publish_stale" } },
+    );
+  }
+
+  return finalizeParkedPullRequest({
+    runId,
+    ctx: promoteCtx,
+    sourceHead: publishedHead,
+  });
 }

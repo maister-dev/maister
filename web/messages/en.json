@@ -3911,7 +3911,8 @@
       "open": "open",
       "merged": "merged",
       "closed": "closed",
-      "unknown": "not scanned"
+      "unknown": "not scanned",
+      "notTracked": "{state} (not tracked)"
     },
     "busy": "Busy: {name}",
     "section": {
@@ -3924,7 +3925,8 @@
     },
     "tree": {
       "dirty": "{tracked} changed, {untracked} untracked",
-      "clean": "Clean — nothing to commit"
+      "clean": "Clean — nothing to commit",
+      "rescueRefs": "Rescue refs (newest first)"
     },
     "commit": {
       "message": "Commit message",
@@ -3962,7 +3964,20 @@
         "synced": "Updated: {behind} new commits applied.",
         "conflict": "Conflict: the update was aborted and the worktree is back at its commit.",
         "agent_launched": "Conflict: the AI resolver is working on it."
-      }
+      },
+      "remoteMoved": "The published branch moved on the remote — update onto the publication to bring those commits in."
+    },
+    "pr": {
+      "title": "Title",
+      "body": "Description",
+      "target": "Target branch",
+      "draft": "Open as a draft",
+      "reused": "An open pull request already existed — it was left as it is: the title, description and draft were not applied.",
+      "publishFirst": "Publish the branch to open a pull request.",
+      "finalizeAnyway": "Finalize anyway",
+      "finalizeTitle": "Finalize without a review?",
+      "finalizeBody": "The run goes Done at its published head. Outside Review no readiness is checked — this click is the decision — and the worktree is then scheduled for removal.",
+      "finalizeConfirm": "Finalize"
     },
     "reattach": {
       "local": "Local branch",

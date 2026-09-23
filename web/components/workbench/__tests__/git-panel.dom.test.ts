@@ -102,6 +102,7 @@ function gitState(over: Record<string, unknown> = {}): Record<string, unknown> {
       published: null,
     },
     publishedRemoteHead: null,
+    publishedTrackingHead: null,
     remoteReachable: true,
     pr: null,
     busy: null,
@@ -481,6 +482,37 @@ describe("WorkbenchGitPanel", () => {
     );
   });
 
+  it("lists the rescue refs already written, in the order git-state serves (newest first)", async () => {
+    states = [
+      gitState({
+        rescueRefs: [
+          {
+            ref: `refs/maister/rescue/${RUN}/2`,
+            sha: "e".repeat(40),
+            createdAt: "2026-09-23T10:00:00.000Z",
+          },
+          {
+            ref: `refs/maister/rescue/${RUN}/1`,
+            sha: "f".repeat(40),
+            createdAt: "2026-09-22T10:00:00.000Z",
+          },
+        ],
+      }),
+    ];
+    render();
+    await settle();
+
+    const items = Array.from(
+      must("git-panel-rescue-refs").querySelectorAll("li"),
+      (li) => li.querySelector("code")?.textContent,
+    );
+
+    expect(items).toEqual([
+      `refs/maister/rescue/${RUN}/2`,
+      `refs/maister/rescue/${RUN}/1`,
+    ]);
+  });
+
   it("keeps a typed commit message across a git-state refresh tick", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const view = render();
@@ -679,6 +711,32 @@ describe("WorkbenchGitPanel — Update", () => {
     expect(feedbackSuccess).not.toHaveBeenCalled();
   });
 
+  // D3/Q3: the one network read exists to say the publication moved on the
+  // remote since the last fetch (the operator's own push, from a laptop).
+  it("says the remote moved only when the ls-remote head differs from the tracking ref", async () => {
+    const published = {
+      dirty: CLEAN,
+      publicBranch: PUBLIC,
+      publishedRemote: "origin",
+      publishedTrackingHead: "c".repeat(40),
+    };
+
+    states = [gitState({ ...published, publishedRemoteHead: "c".repeat(40) })];
+    render();
+    await settle();
+
+    expect(byTestId("git-panel-update-remote-moved")).toBeNull();
+
+    document.body.replaceChildren();
+    states = [gitState({ ...published, publishedRemoteHead: "d".repeat(40) })];
+    render();
+    await settle();
+
+    expect(must("git-panel-update-remote-moved").textContent).toBe(
+      "workbenchGit.update.remoteMoved",
+    );
+  });
+
   it("blocks the update on a dirty tree, naming Commit and Discard", async () => {
     render();
     await settle();
@@ -687,5 +745,217 @@ describe("WorkbenchGitPanel — Update", () => {
 
     expect(update.disabled).toBe(true);
     expect(update.title).toBe("workbenchGit.hint.commitOrDiscardFirst");
+  });
+});
+
+// ADR-181 D11/D12 (RED 12 extension): the PR section. Open PR exists only once
+// the branch is published and pre-fills from the server's defaults; a reused
+// PR is reported honestly; Finalize follows the policy (pr-closed disables it)
+// and, from Review, sends the target head the panel rendered — a drift refusal
+// offers "Finalize anyway".
+describe("WorkbenchGitPanel — Pull request", () => {
+  const CLEAN = { tracked: 0, untracked: 0 };
+  const PR_URL = "https://github.com/acme/app/pull/42";
+  const OPENED = {
+    ok: true,
+    runId: RUN,
+    url: PR_URL,
+    number: 42,
+    state: "open",
+    reused: false,
+    draft: true,
+    targetBranch: "main",
+  };
+
+  function published(over: Record<string, unknown> = {}) {
+    return gitState({
+      dirty: CLEAN,
+      publicBranch: PUBLIC,
+      publishedRemote: "origin",
+      upstream: { remote: "origin", branch: PUBLIC },
+      actions: actions(["exportBranch", "update", "openPr"]),
+      ...over,
+    });
+  }
+
+  it("hides Open PR until the branch is published, and says why", async () => {
+    states = [gitState({ dirty: CLEAN })];
+    render();
+    await settle();
+
+    expect(byTestId("git-panel-action-openPr")).toBeNull();
+    expect(must("git-panel-pr-unpublished").textContent).toBe(
+      "workbenchGit.pr.publishFirst",
+    );
+    // Finalize is shown only while a PR is recorded.
+    expect(byTestId("git-panel-action-finalizePr")).toBeNull();
+  });
+
+  it("opens the PR with the pre-filled title, body and target and the draft choice", async () => {
+    states = [published()];
+    mutation = () => json(OPENED);
+    render();
+    await settle();
+
+    expect(must<HTMLInputElement>("git-panel-pr-title").value).toBe(
+      "ABC-1: Fix it",
+    );
+    expect(must<HTMLTextAreaElement>("git-panel-pr-body").value).toBe(
+      "http://localhost/runs/run-1",
+    );
+    expect(must<HTMLInputElement>("git-panel-pr-target").value).toBe("main");
+
+    await click(must("git-panel-pr-draft"));
+    await click(must("git-panel-action-openPr"));
+
+    expect(posts()).toEqual([
+      {
+        url: `/api/runs/${RUN}/pr`,
+        method: "POST",
+        body: {
+          title: "ABC-1: Fix it",
+          body: "http://localhost/runs/run-1",
+          draft: true,
+          targetBranch: "main",
+        },
+      },
+    ]);
+    expect(feedbackSuccess).toHaveBeenCalledTimes(1);
+    expect(byTestId("git-panel-pr-reused")).toBeNull();
+  });
+
+  it("keeps a typed PR title across a git-state refresh tick", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    states = [published()];
+    const view = render();
+
+    await settle();
+    await type(must<HTMLInputElement>("git-panel-pr-title"), "half typed");
+
+    view.rerender({ refreshTick: 1 });
+    await act(async () => {
+      vi.advanceTimersByTime(1_000);
+    });
+    await settle();
+
+    expect(gets()).toHaveLength(2);
+    expect(must<HTMLInputElement>("git-panel-pr-title").value).toBe(
+      "half typed",
+    );
+  });
+
+  it("says so when an open PR already existed and nothing was applied", async () => {
+    states = [published()];
+    mutation = () => json({ ...OPENED, reused: true, draft: false });
+    render();
+    await settle();
+
+    await click(must("git-panel-action-openPr"));
+
+    expect(must("git-panel-pr-reused").textContent).toBe(
+      "workbenchGit.pr.reused",
+    );
+  });
+
+  it("disables Finalize on a closed PR, naming why", async () => {
+    states = [
+      published({
+        pr: { url: PR_URL, number: 42, state: "closed", hasConflicts: null },
+        actions: ALL_IDS.map((id) =>
+          id === "finalizePr"
+            ? { id, enabled: false, disabledReason: "pr-closed" }
+            : { id, enabled: id === "openPr", disabledReason: null },
+        ),
+      }),
+    ];
+    render();
+    await settle();
+
+    const finalize = must<HTMLButtonElement>("git-panel-action-finalizePr");
+
+    expect(finalize.disabled).toBe(true);
+    expect(finalize.title).toBe("workbenchGit.disabledReason.pr-closed");
+  });
+
+  // D12: outside Review nothing asserts readiness, so the click is confirmed
+  // through the shared destructive confirmation before anything is sent.
+  it("finalizes outside Review only after a confirmation, with no Review-only field", async () => {
+    states = [
+      published({
+        pr: { url: PR_URL, number: 42, state: "open", hasConflicts: null },
+        actions: actions(["openPr", "finalizePr"]),
+      }),
+    ];
+    render();
+    await settle();
+
+    await click(must("git-panel-action-finalizePr"));
+
+    expect(must("git-panel-pr-finalize-dialog")).toBeTruthy();
+    expect(posts()).toHaveLength(0);
+
+    await click(must("git-panel-pr-finalize-confirm"));
+
+    expect(posts()).toEqual([
+      { url: `/api/runs/${RUN}/pr/finalize`, method: "POST", body: {} },
+    ]);
+    expect(byTestId("git-panel-pr-finalize-dialog")).toBeNull();
+  });
+
+  it("from Review sends the rendered target head, and offers Finalize anyway on drift", async () => {
+    states = [
+      published({
+        runStatus: "Review",
+        pr: { url: PR_URL, number: 42, state: "open", hasConflicts: null },
+        actions: actions(["openPr", "finalizePr"]),
+      }),
+    ];
+    let finalizeCalls = 0;
+
+    mutation = () => {
+      finalizeCalls += 1;
+
+      return finalizeCalls === 1
+        ? json(
+            {
+              code: "PRECONDITION",
+              message: "target advanced since review",
+              details: { reason: "target_drift" },
+            },
+            409,
+          )
+        : json({ ok: true, mode: "pull_request", pullRequestUrl: PR_URL });
+    };
+    render();
+    await settle();
+
+    expect(byTestId("git-panel-pr-finalize-anyway")).toBeNull();
+    await click(must("git-panel-action-finalizePr"));
+
+    expect(must("git-panel-error").textContent).toBe(
+      "workbenchGit.errors.target_drift",
+    );
+    await click(must("git-panel-pr-finalize-anyway"));
+
+    expect(posts().map((c) => c.body)).toEqual([
+      { reviewedTargetCommit: "b".repeat(40) },
+      { reviewedTargetCommit: "b".repeat(40), allowTargetDrift: true },
+    ]);
+    expect(byTestId("git-panel-pr-finalize-anyway")).toBeNull();
+  });
+
+  it("marks a scratch run's PR as not tracked (the scan skips scratch)", async () => {
+    states = [
+      published({
+        runKind: "scratch",
+        pr: { url: PR_URL, number: 42, state: "open", hasConflicts: null },
+      }),
+    ];
+    render();
+    await settle();
+
+    expect(must("git-panel-pr-chip").textContent).toContain(
+      "workbenchGit.prState.notTracked",
+    );
   });
 });
