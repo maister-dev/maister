@@ -53,6 +53,12 @@ function releaseAllChildSessions(seenRunIds: Set<string>): string[] {
   return released;
 }
 
+// ~19 s on a quiet host; in a loaded lane (load 40-72, --workers=2,
+// 2026-09-23) the 30 s default expired while the held children finalized, on
+// `master` too. Each step keeps its own 30 s poll; the budget only stops the
+// sum from being bound to the default.
+test.setTimeout(120_000);
+
 test("orchestrator loop: launch → park with child subtree → resume to terminal", async ({
   page,
   request,

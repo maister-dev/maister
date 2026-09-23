@@ -503,6 +503,25 @@ two trees. Run the spec on `master` before attributing a name like this to a
 branch — after a rebase, "a NEW name" no longer implies "this branch's",
 because `master` moved too.
 
+**Measured 2026-09-23 (ADR-181 branch; its merge base `c36ff5b1` reproduced in
+a detached worktree on this Mac).** Three names had joined the set on `master`
+itself. `flow-target-delegation.spec.ts:36` was a deterministic race, not load:
+its two-node cli flow children reached `Review` before the coordinator's turn
+ended, so the coordinator — correctly — completed without parking and the wake
+the spec proves never ran. The children now wait at their first node for a file
+the spec creates after it sees the park (`e2e/_seed/delegated-release.ts`).
+`orchestrator-loop.spec.ts:56` and `m11b-takeover.spec.ts:67` were
+budget-bound: ~19 s and ~22 s on a quiet host against the 30 s default, out of
+budget at load 40-72 with `--workers=2`; both now carry 120 s (m11b also waits
+15 s for the claim's refresh and 60 s for the post-return resume).
+`push-notifications.spec.ts:103` is intermittent here under either config
+(`Notification.permission === "denied"` at mount). What found the race was the
+dev server's own log — temporarily set `webServer.stdout: "pipe"` in
+`playwright.config.ts` ("orchestrator turn ended with no pending children").
+Unrelated noise that log also shows: the observatory fixture seeds a task-less
+`Pending` flow run, which the real scheduler promotes whenever a slot frees
+(`promoteNextPending runFlow dispatch failed — task not found`).
+
 **`pnpm lint` on `master` c4216cd5 is RED: 3 errors**, all
 `react/no-children-prop` in `components/observatory/__tests__/` — 2 in
 `observatory-filter-bar.test.ts`, 1 in `overview-table.test.ts`, landed by the

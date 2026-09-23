@@ -1997,12 +1997,31 @@ honours its three modes; refactor gate passed.
       `orchestrator.md`, `configuration.md` (`MAISTER_GC_AGE_DAYS`), the rail
       screen doc (a `Failed` row, the TTL badge), root and web `CLAUDE.md`, the
       RU manual, an ADR-181 amendment.
-- [ ] **T5.3 — The three master-side e2e names (owner: diagnose here).**
+- [x] **T5.3 — The three master-side e2e names (owner: diagnose here).**
       `orchestrator-loop:56`, `flow-target-delegation:36`, `m11b-takeover:67` fail
       on this branch's merge base `c36ff5b1` too. Root-cause each from its FIRST
       attempt with the dev server's logs; fix the product or the spec.
       **AC**: each passes twice alone on this host, or stays red with a named,
       evidenced cause the owner can act on; its own commit.
+      **Verified 2026-09-23.** Diagnosed from the dev server's own log (the lane
+      discards stdout; a temporary `webServer.stdout: "pipe"`, reverted).
+      `flow-target-delegation:36` was a deterministic race, red alone at load
+      ~19 with one worker: both two-node cli children logged `runGraph ended
+      Review` before "orchestrator turn ended with no pending children —
+      completing node", so the coordinator correctly never parked and the wake
+      never ran. The delegated flow's first node now waits for
+      `e2e/_seed/delegated-release.ts`'s file, which the spec clears before the
+      launch and creates once it sees `WaitingOnChildren`; the log then reads
+      park → two `run.review` → "woke parked coordinator". `orchestrator-loop:56`
+      and `m11b-takeover:67` passed alone at load ~19 (18.6 s, 22.5 s) and had
+      failed only at load 40-72 with `--workers=2`, on the merge base too — the
+      30 s default budget, not the product (the branch's ~10-20 % slower run page
+      is T4.4's measurement); both carry 120 s now, and m11b waits 15 s for the
+      claim's refresh and 60 s for the post-return resume. All three passed
+      together twice at `--workers=2` (35.5 s, 32.2 s), flow-target-delegation
+      alone twice more. Noted, not fixed (another fixture's): the observatory
+      seed's task-less `Pending` flow run, which the scheduler promotes whenever
+      a slot frees. `web/CLAUDE.md`'s baseline records all of it.
 
 **Commit 9** — `fix(workbench-git): recover respects the one writer of a worktree` (T5.1)
 **Commit 10** — `feat(workbench-git): a Failed workbench expires like a finished one` (T5.2)

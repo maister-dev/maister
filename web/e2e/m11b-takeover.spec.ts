@@ -33,6 +33,12 @@ import { test, expect } from "@playwright/test";
 
 const execFileAsync = promisify(execFile);
 
+// The whole loop takes ~22 s on a quiet host, so the 30 s default left ~8 s of
+// slack; in a loaded lane (load 40-72, --workers=2, 2026-09-23) it ran out at
+// the post-claim refresh or at the post-return resume, identically on `master`.
+// The run-detail specs' 120 s budget (m27-workbench-lifecycle).
+test.setTimeout(120_000);
+
 type FixtureRecord = {
   runId: string;
   hitlRequestId: string;
@@ -61,7 +67,7 @@ async function reloadUntilPendingReview(
     await expect(
       page.getByRole("button", { name: "Take over", exact: true }),
     ).toBeVisible({ timeout: 2_000 });
-  }).toPass({ timeout: 25_000 });
+  }).toPass({ timeout: 60_000 });
 }
 
 test("manual takeover loop: claim → board → commit → return → diff → stale+rerun → fresh review", async ({
@@ -92,7 +98,9 @@ test("manual takeover loop: claim → board → commit → return → diff → s
 
   const returnBtn = page.getByRole("button", { name: "Return", exact: true });
 
-  await expect(returnBtn).toBeVisible();
+  // The claim's router.refresh re-renders the whole run page: 2-4.5 s at load
+  // ~50 (measured), against the 5 s default.
+  await expect(returnBtn).toBeVisible({ timeout: 15_000 });
   // The run status pill now reads HumanWorking (run-detail header). Target the
   // pill by testid: the run inspector renders the same status text in its own
   // <dd>, so a bare `getByText("HumanWorking", { exact: true })` matched two

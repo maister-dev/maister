@@ -30,6 +30,7 @@ import { promisify } from "node:util";
 import bcrypt from "bcryptjs";
 import { Pool } from "pg";
 
+import { DELEGATED_FLOW_RELEASE } from "./delegated-release";
 import { resetFakeGhState } from "./fake-gh";
 import { E2E_EXECUTION_HOST_SLUG } from "./fixtures";
 
@@ -603,7 +604,9 @@ const ORCHESTRATOR_MANIFEST = {
 // fixture, not a third-party package: REQ-23 keeps production Flow packages out
 // of this repository, and a two-node graph is enough to prove the whole chain
 // (a governed child that provisions a worktree, produces a diff, and parks in
-// `Review` so the parent's wake edge fires).
+// `Review` so the parent's wake edge fires). Its first node waits for the spec's
+// release file (`delegated-release.ts`): released only after the coordinator
+// parks, the children reach `Review` in the order the wake exists for.
 const E2E_DELEGATED_FLOW_REF = "e2e-delegated-flow";
 
 const DELEGATED_FLOW_MANIFEST = {
@@ -614,7 +617,9 @@ const DELEGATED_FLOW_MANIFEST = {
     {
       id: "touch",
       type: "cli",
-      action: { command: "echo delegated > delegated.txt" },
+      action: {
+        command: `while [ ! -e '${DELEGATED_FLOW_RELEASE}' ]; do sleep 0.2; done; echo delegated > delegated.txt`,
+      },
       transitions: { success: "verify" },
     },
     {
