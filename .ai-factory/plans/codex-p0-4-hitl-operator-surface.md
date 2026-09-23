@@ -3,7 +3,7 @@
 Branch: `codex/p0-4-hitl-operator-surface`
 Created: 2026-09-23
 Base: `ae99f9d0704a47ce7c502e4ef0f0a64904bf535e` (the supplied master baseline)
-Status: Implementing; Phase 0 specifications frozen and validated.
+Status: Implemented and qualified; Tasks 1–14 complete.
 Refinement: 2026-09-23 — SDD contracts, acceptance traceability and incremental TDD.
 
 ## Goal
@@ -11,7 +11,9 @@ Refinement: 2026-09-23 — SDD contracts, acceptance traceability and incrementa
 Expose the reason for a refused or delayed HITL answer in EN/RU on board,
 inbox, run and scratch surfaces, preserve it through external REST and MCP,
 and render a persisted, undelivered answer as read-only after submission and
-refresh. Preserve all ADR-180 state transitions and delivery ownership.
+refresh. The P0-4 operator surface preserves ADR-180 delivery ownership; the
+later review-fix request also corrected a separate web agent-resume evidence
+race that could falsely mark an undelivered permission as delivered.
 
 ## Settings
 
@@ -20,12 +22,13 @@ refresh. Preserve all ADR-180 state transitions and delivery ownership.
 - Logging: standard structured operational logs, existing `LOG_LEVEL` control;
   add public reason fields at the refusal boundaries, without answer bodies,
   private delivery metadata, tokens or host handles. No new telemetry pipeline.
-- Docs: yes; mandatory docs-first freeze and completion checkpoint through
-  `$aif-docs`. This planning invocation stops at the plan.
+- Docs: yes; specifications were frozen before implementation and checked
+  again with the as-built ADR and analytics.
 - Git: local branch created from the current isolated worktree's exact baseline;
   no base checkout, pull, merge, push or extra worktree is needed.
-- Deployment wiring: none. No dependency, binary, port, mount, environment
-  variable, DB column, migration, host contract or supervisor code change.
+- Deployment wiring: none. Ajv is a root development dependency for official
+  contract-example validation. No runtime binary, port, mount, environment
+  variable, DB column, migration, host contract or supervisor code changed.
 - Workflow: serial implementation and validation; quiet machine, never beside
   an isolation slice. Existing test infrastructure is authoritative.
 - Design discipline: pure typed projections and message resolution, small
@@ -51,7 +54,7 @@ baseline and can move during implementation.
 | C1: service discriminators/anonymous conflicts | `web/lib/services/hitl.ts:906-975,1468-1483,1710-1732,3048`; `web/lib/execution-host/prompt-owners.ts:56-72` | Preserve existing reasons; label claim refusals at their throws; label service-built delivery errors. |
 | C1: external/MCP surface | `web/app/api/v1/ext/runs/[runId]/hitl/[hitlRequestId]/respond/route.ts:190-206`; `mcp/src/tools.ts:1305-1322` | Keep external authorization/status behavior; test the actual MCP result. |
 | C1: opaque UI and dead map | `web/components/board/run-hitl-response.tsx:131-176`; `web/lib/ui-error-message.ts:7-27`; `web/lib/scratch-runs/dialog.ts:112-116`; `web/components/board/hitl-actions.tsx` | One shared resolver, remove dead component, retain per-code fallback. |
-| C4: checkpoint/resume versus terminal | `docs/decisions/adr-180.md`; `docs/system-analytics/hitl.md:970-984,1073-1082,1205-1231`; `web/lib/services/hitl.ts:1537-1650` | Do not change classification, transactions, CAS, sweeps or drivers. |
+| C4: checkpoint/resume versus terminal | `docs/decisions/adr-180.md`; `docs/system-analytics/hitl.md:970-984,1073-1082,1205-1231`; `web/lib/services/hitl.ts:1537-1650` | P0-4 changes no claim/park/sweep arm. The later review-fix correction requires confirmed input before a web agent permission result grant; ADR-180 records this separate change. |
 | C2: pending rows hide stored answers | `web/lib/queries/hitl.ts:79,90,408`; `web/lib/queries/run.ts:585` | Derive state before client work; never treat stored as delivered. |
 | B6: no durable run-level cause | `web/lib/db/schema.ts:1778-1900`; `web/components/runs/flow-run-center.tsx:249` | Choose 5(b); persistent terminal-run cause remains a named limitation. |
 | Wire namespace boundary | `docs/api/web.openapi.yaml:20558-20585`; `web/lib/execution-host/types.ts:151-162` | Add nested web details, never extend top-level workspace reason or host ReasonToken. |
@@ -536,15 +539,15 @@ T1 is the sole selected deferral, not an implementation pass.
 | --- | --- | --- | --- |
 | AC1 — reasons reach both REST routes and MCP | D1/D6/D8; web/ext respond contracts | serializer, service throw sites, MCP call result; 4–6 | W1 real permission_resume_in_flight claim through web/ext; actual MCP JSON body equality; foreign detail fields absent |
 | AC2 — honest terminal/saved bodies | D1/D7; HITL reason table and 410/503 examples | post-claim service body arms; 4–5 | W2 terminal flow/scratch and 503 bodies; stored row confirmed; CHECKPOINT and pre-claim errors unchanged |
-| AC3 — one bilingual reason map | D2; EN/RU catalogs + screen contract | resolver and callers; 8–9 | U1 all nine pairs in EN/RU, unknown/mismatched reason fallback, causeCode only as mono diagnostic; no server message/token rendered |
+| AC3 — one bilingual reason map | D2; EN/RU catalogs + screen contract | resolver and callers; 8–9 | U1 all enumerated pairs in EN/RU, unknown/mismatched reason fallback, causeCode only as mono diagnostic; no server message/token rendered |
 | AC4 — stored survives a fresh read | D3/D8; read schemas and hitl.md | SELECT projection and every mapper; 4/7 | U3 same committed row via board/global inbox/run/scratch/ext; fresh unmount+mount read-only; SQL NULL versus JSON null; private keys absent |
 | AC5 — pending is immediate and cannot be answered twice | D4; screen contract | local request-scoped state before refresh/callback; 8/10–11 | U2 three pending 202 states and 503; stale props/late responses cannot restore choices; another request starts open |
 | AC6 — retry means the same stored answer | D3/D4; replay table | public payload projection and existing service replay; 4/7/10–12 | U3 DOM POST equals public stored payload, DB idempotent branch returns 200/202; negative different-option 409; no lossy structured retry |
 | AC7 — delivered row disappears without count drift | D3/D8; read-state table | canonical queries and existing respondedAt write; 4/7/12 | U3 pending count retained through Running resume, then row/count removed; project/relation/auth exclusions preserved |
 | AC8 — scratch shows reasons and preserves terminal feedback | D2/D4; scratch screen/analytics | conversation error owner and panel; 8–11 | S1 POST 409/410/503 reason rendering; subsequent loadDetail/card removal does not erase terminal message |
-| AC9 — ADR-180 arms preserve execution outcomes | D7; ADR-180 and hitl.md | unchanged drivers/sweep plus public body/DTO; 4/12 | R1 real supervisor/Postgres race/post-grace, exact same retry then delivery, no run.failed for that run |
+| AC9 — ADR-180 arms preserve execution outcomes | D7; ADR-180 and hitl.md | unchanged drivers/sweep plus public body/DTO; separate agent input-evidence correction; 4/12/review fix | R1 real supervisor/Postgres race/post-grace, exact same retry then delivery, no run.failed for that run; confirmed input required before agent result handoff |
 | AC10 — existing contracts/auth remain valid | D6/D8; original ext shared responses | unchanged authorization/status mappings; 2/4–7 | existing positive/negative route cases incl. requiredScope, hidden 404 and user/token-kind gates; unknown details do not escape |
-| AC11 — no durable-model or transition change | D5/D9; ADR amendment | plan scope and final diff; 1/14 | schema/migration/host/transition diff audit, existing lifecycle suites green, db:erd --check |
+| AC11 — no durable-model or supervisor change | D5/D9; ADR amendment | P0-4 scope and final diff; separate review-fix agent grant correction; 1/14 | no schema/migration/host diff, existing lifecycle suites green, db:erd --check; web grant classification correction recorded in ADR-180 |
 | AC12 — terminal run cause limitation recorded | D5; taxonomy/screen/ADR | explicit 5(b) record; 1/3/14 | T1 deferred B6, fresh run page not claimed fixed; transient refusal remains visible |
 
 Mandatory read-state edge rows: SQL NULL→open; empty/false/zero/JSON null or
@@ -632,7 +635,9 @@ first point where existing assertions are repaired.
   inner catch currently has no reason log). Keep its mapper and auth wrapper.
   Logging: warn with runId, hitlRequestId, code, status, details.reason; service
   delivery logs use the same public reason and existing latency context.
-  Acceptance: W1 web/ext and W2 green, no supervisor/transition diff.
+  Acceptance at this phase: W1 web/ext and W2 green, no supervisor or
+  transition diff from the P0-4 surface. A later separately committed
+  agent-input evidence correction is recorded in ADR-180.
 - [x] **Task 6: Preserve errors through the complete MCP response.**
   Depends on 5. Update `mcp/src/rest.ts`, `tools.ts` dispatch result and
   `main.ts` hitl_respond failure rendering as required by D6; reuse existing
@@ -703,7 +708,7 @@ first point where existing assertions are repaired.
   supervisor harness into jsdom or introduce a second harness. T1 is recorded
   as deferred 5(b), explicitly excluded from the green implementation count.
   Logging: existing supervisor tail and assertion context only on failure.
-- [ ] **Task 13: Audit migrated assertions and run falsification/regression gates.**
+- [x] **Task 13: Audit migrated assertions and run falsification/regression gates.**
   Depends on 12. Confirm each owning slice already migrated its assertions;
   run the commands below, confirming
   runner inclusion. Temporarily undo each feature seam on the implementation
@@ -712,19 +717,20 @@ first point where existing assertions are repaired.
   every fix cycle against the locked boundaries. Logging: record command,
   revision, result and intended failure assertion; no secrets. All promised
   tests must execute; no passWithNoTests or skipped suite counts as evidence.
-  The P0-4 owner suites and falsification checks are complete. The full web
-  integration gate remains red in unrelated recovery fixtures, as recorded
-  below; this task stays open rather than treating isolated passes as a full
-  project pass.
-- [ ] **Task 14: Close docs and report exact qualification.** Depends on 13.
+  The P0-4 owner suites and falsification checks passed. The final complete
+  web integration run passed 512/512 files and 4,490/4,490 tests on the
+  committed source; its earlier load-sensitive failures also passed in
+  isolated reruns.
+- [x] **Task 14: Close docs and report exact qualification.** Depends on 13.
   Mark verified operator surface Implemented in the amendment/analytics;
   retain explicit B6/crash-grace/A4/watchdog/P0-5 follow-ups. Run contracts,
   docs, lint/typecheck and smoke gates; inspect the final diff for forbidden
   state/host/schema changes. Logging: concise validation record and exact
   environmental blockers if any. Stop at this increment; do not implement
   follow-ups or publish remotely.
-  The as-built docs and all static/smoke gates are complete; final qualification
-  remains open with Task 13's full integration gate.
+  The as-built docs, static gates, authenticated smoke and complete integration
+  gate passed. No supervisor or database-schema change was made. A separate
+  web agent-resume evidence correction is documented in ADR-180.
 
 Each behavioral phase exits with its named targeted tests green, then the
 existing full web unit and integration suites green, run sequentially. MCP
@@ -752,35 +758,27 @@ a product pass; do not quietly quarantine the required acceptance tests.
   forcing the DTO projector to return `open` made real-Postgres U3 fail on the
   claimed row. The restored route/card owner tests passed 101/101. No
   mutation remains in the working tree.
-- Final web unit passed 831 files / 8,601 tests. Web and MCP typechecks passed;
-  MCP ESLint passed; web ESLint exited 0 with 26 warnings outside the changed
-  P0-4 files. Contract validation passed 5/5, including both HITL respond
-  examples; docs/ADR/link/index and ERD checks passed. MCP unit 259/259 and
-  stdio integration 6/6 passed; supervisor permission roundtrip passed 14/14;
-  authenticated board/inbox Playwright smoke passed 8/8.
-- First complete web integration pass ran all 512 files: 510 files and 4,487
-  tests passed, two tests failed. The external inbox exact-shape assertion
-  omitted its newly documented `answerState`; it was corrected and reran 4/4.
-  One unrelated flow prompt-owner `SIGKILL after_apply` case missed a 30-second
-  fixture count under two workers; its isolated rerun passed 1/1 in 38 seconds
-  without code changes.
-- A second complete run with the corrected assertion and macOS sleep prevention
-  (`caffeinate -dimsu pnpm exec vitest run --project integration --maxWorkers 2
-  --minWorkers 1`) ran all 512 files: 511 files and 4,488 tests passed. Its
-  sole test failure was pre-existing ADR-180 RED 14: the agent resume grant
-  classified `result` rather than the test's expected `continue`. The same
-  file passed 10/10 on a separate full-file run and failed 9/10 on another;
-  RED 14 alone and RED 13+14 together passed. No production state-transition
-  or supervisor change was made. Vitest also reported one unhandled Postgres
-  `57P01` during cross-file teardown after the scratch transcript tests had
-  passed; that file passed 8/8 when run alone.
-- A one-worker sleep-protected complete run was stopped after its first,
-  unrelated 58-test flow prompt-owner file failed a 30-second `skill_check`
-  recovery matcher. The exact case then also failed in isolation with a
-  projection transaction deadline. Earlier complete and isolated runs had
-  passed this file/case. This is an unresolved full-suite regression gate,
-  not a P0-4 acceptance pass. The P0-4 route, DTO, card, scratch, MCP,
-  deadline 202/503, contract, docs, unit, and smoke gates above are green.
+- Committed-source final web unit passed **833/833 files and 8,625/8,625
+  tests**. Web/supervisor/MCP typechecks, web lint and MCP build passed;
+  contract validation passed 7/7 plus five adapter mirrors; docs/ADR/link/
+  index and ERD checks passed. MCP unit 259/259 and stdio integration 6/6,
+  supervisor permission roundtrip 14/14, and authenticated board/inbox
+  Playwright smoke 8/8 passed.
+- Review-fix qualification exposed an ADR-180 agent checkpoint race: a
+  permission prompt could settle `succeeded` without confirmed `session.input`
+  and falsely grant `result`. The web handoff now takes `continue` until input
+  is confirmed, and authorization rejects a result without input. The real
+  supervisor deadline file passed 10/10; confirmed-result cases passed 2/2.
+  This correction is separate from the P0-4 surface and changes no supervisor
+  code or database schema.
+- The final committed-source complete web integration command
+  (`caffeinate -dimsu pnpm --dir web test:integration --maxWorkers=2
+  --minWorkers=1`) passed **512/512 files, 4,490/4,490 tests**, with no skipped
+  test or teardown error. Two earlier post-fix complete attempts exposed
+  load-sensitive failures in unchanged projection, deliverer, Docker setup
+  and admission fixtures. All affected files passed in quiet isolated reruns
+  before the final complete pass. No fixture was quarantined or assertion
+  weakened.
 
 ### Review-fix pass (2026-09-23)
 
@@ -792,45 +790,40 @@ a product pass; do not quietly quarantine the required acceptance tests.
 - [x] Scratch shows the shared EN/RU reason copy with a monospaced prompt-owner
   `causeCode` diagnostic, and request-scoped feedback ignores old refusals and
   late POST completions after another request appears.
-- [x] The focused board/inbox/scratch jsdom suite passed 53/53 after fixes;
-  the full web unit suite passed 831 files / 8,609 tests before the final
-  scratch request-order guard, then the affected focused suite re-passed.
-  `validate:docs:all`, contracts 5/5, web/supervisor/MCP typechecks, MCP build,
-  scoped ESLint and `git diff --check` passed.
-- [ ] The complete web integration gate remains open under Task 13. A fresh
-  real-supervisor deadline run passed 9/10: RED13's unchanged checkpoint grant
-  asserted `continue` but observed `result`. In the isolated RED13+14 run,
-  RED13 passed and RED14 failed with the same classification. The affected
-  execution code and those assertions are identical to master; no P0-4 state
-  transition or supervisor code changed. This is not recorded as a green
-  qualification or repaired by weakening the ADR-180 assertion.
-
-A later committed-tree run also passed 9/10 (RED13 observed `result`). A
-diagnostic full-file run passed 9/10 with RED14 observing `result`; its source
-`session.prompt` command was `succeeded` while the immutable terminal witness
-ordered it **after** the checkpoint. `readCheckpointSource` therefore chooses
-`result` instead of `continue`; `authorizeAgentPermissionResume` marks the
-original row `responded_at` and the `continue`-only reissued-permission path
-does not deliver the operator's answer. This is a concrete ADR-180 agent
-resume classification defect in code unchanged from master, not an obsolete
-test assertion. P0-4's locked no-state-transition rule forbids fixing it in
-this item. The full integration gate and Tasks 13–14 remain open until that
-follow-up is repaired and the complete suite is green.
+- [x] Focused board/inbox/scratch jsdom checks passed after each fix cycle;
+  the final scratch 410 copy and resolver checks passed 48/48. The committed
+  full web unit suite passed 833 files / 8,625 tests. `validate:docs:all`,
+  contracts 7/7, web/supervisor/MCP typechecks, MCP build, web lint and
+  `git diff --check` passed.
+- [x] Review findings addressed: the saved-answer 503 directs an identical
+  retry; scratch viewers cannot submit; stale refusals refresh; inbox cards
+  distinguish scratch copy; plan-review `resume-queued` does not offer a
+  delivery retry; and the idle 410 has its own reason. EN/RU reason rendering,
+  private-detail filtering, external read-state shape and OpenAPI examples
+  have focused tests. An ADR-180 agent permission grant now requires confirmed
+  input before a result handoff; the real-supervisor deadline suite passed
+  10/10 and the final complete web integration suite passed 4,490/4,490.
+- [x] Final static and smoke gates: web unit 8,625/8,625, contracts 7/7 plus five adapter mirrors,
+  docs/ADR/link/index and ERD, web lint and web/supervisor/MCP typechecks,
+  MCP build, MCP unit 259/259 and stdio integration 6/6, supervisor permission
+  roundtrip 14/14, authenticated board/inbox Playwright 8/8, and
+  `git diff --check`. The committed tree has no supervisor or migration
+  change.
 
 ## Test placement, migration and falsification
 
-| Gate | Existing file to extend / planned new file | Runner and evidence |
+| Gate | As-built test owner | Runner and evidence |
 | --- | --- | --- |
 | W1 web, W2 | `web/app/api/runs/[runId]/hitl/[hitlRequestId]/respond/__tests__/route.test.ts` | web unit; existing injected service/route fixtures; body/status/private-data assertions. |
 | W1 ext | `web/app/api/v1/ext/runs/[runId]/hitl/__tests__/route.integration.test.ts` | web integration, real Postgres and real claim; retain 403/404/422/transient 409 coverage. |
 | W1 MCP | `mcp/src/__tests__/tools.test.ts`, `mcp/src/__tests__/stdio.integration.test.ts` | MCP unit/integration; actual callTool content JSON equals upstream public body, not only dispatch output. Extend existing local HTTP fixture to serve 409/410/503 and 202 bodies. |
-| W2 examples | new `web/lib/__tests__/hitl-response-contract.test.ts` | web unit; parse actual web/ext YAML using existing yaml, validate named examples and actual route bodies with the shared Zod contract schemas. Assert schema enum/required/pattern/closed-details parity and a missing-reason negative. Keep root validate:contracts as the independent document parser gate. |
-| U1/U2 | `web/components/board/__tests__/hitl-response-stale-view.dom.test.ts`, new `hitl-response-stored.dom.test.ts` beside it | web unit/jsdom, .test.ts naming with createElement; use actual next-intl catalogs, not a mock that echoes keys. |
+| W2 examples | `scripts/validate-contracts.test.mjs`, `web/lib/__tests__/hitl-response-error.test.ts` | Root contract gate uses official Ajv JSON Schema validation of real web/ext examples and code/YAML reason-enum parity; the web unit covers the public detail allow-list. |
+| U1/U2 | `web/components/board/__tests__/run-hitl-operator.dom.test.ts`, existing `hitl-response-stale-view.dom.test.ts` | web unit/jsdom with actual EN/RU catalogs; distinct reason copy, fallback, 202 and 503 stored-card behavior. |
 | Inbox U2 | `web/components/inbox/__tests__/hitl-panel.dom.test.ts` | web unit/jsdom; both card mounts, callback executes after immediate stored rendering. |
 | U3 DTO + replay | `web/lib/queries/__tests__/board-hitl.integration.test.ts`, `portfolio-inbox.integration.test.ts` | web integration; extend board fixture to import getHitlInbox (the actual board HITL DTO) alongside getRunDetail. Read the same row through project/global projections; actually POST the public envelope, then query again. Preserve assertions that getBoardData has no inline HITL fields. |
 | U3 external projection/count parity | `web/app/api/v1/ext/hitl/__tests__/route.integration.test.ts`, run-scoped ext HITL suite, `web/lib/queries/__tests__/decisions.integration.test.ts` | Existing integration fixtures: discovery exposes state only, detailed list exposes sanitized envelope, canonical project/global count retains stored eligible rows; no duplicate full lifecycle harness. |
-| Scratch read/U3 | new `web/app/api/scratch-runs/[runId]/__tests__/route.integration.test.ts` | web integration; real committed scratch/HITL rows through the actual GET; use startMainPostgresTestDb and existing seed helpers. Existing route.test.ts needs fixture-shape migration only. |
-| S1 | new `web/components/scratch/__tests__/scratch-hitl-response.dom.test.ts` | web unit/jsdom; conversation fetch path plus permission panel, localized 409/410/503, stored state and retry. |
+| Scratch read/U3 | `web/app/api/scratch-runs/[runId]/__tests__/route.integration.test.ts` | web integration; real committed scratch/HITL rows through the actual GET and existing database helpers. |
+| S1 | `web/components/scratch/__tests__/scratch-hitl-operator.dom.test.ts` | web unit/jsdom; conversation fetch path plus permission panel, localized 409/410/503, stored state and retry. |
 | R1 | `web/lib/__tests__/permission-deadline.integration.test.ts` | web integration, existing real supervisor + Postgres + ProjectionWorker; preserve the supplied 10/10 baseline scenarios, add assertions/scenarios explicitly. |
 | T1 | Task 1/3/14 B6 deferral record | No runtime pass claimed. Future B6 test must cover durable cause after a fresh terminal-run visit. |
 
@@ -840,11 +833,11 @@ Coverage boundaries keep the suite small:
   same real resume-owned claim plus its authorization/status boundary. MCP
   owns transport/body preservation for one 409, one 410, one 503 and one 202;
   do not repeat the full service scenario matrix inside MCP.
-- W2 owns example/runtime-schema parity. Follow the existing YAML→Zod pattern
-  in supervisor openapi-examples.test.ts using web's existing yaml/Zod deps;
-  no supervisor edits, new validation package or homemade JSON-Schema engine.
-  Compare actual OpenAPI component constraints to the exported contract and
-  validate real route bodies. Do not test only a copied enum against itself.
+- W2 owns example/runtime-schema parity. The root contract gate parses the
+  actual web/ext YAML, validates named examples with official Ajv JSON Schema,
+  and compares their reason enums to the exported TypeScript contract. The
+  public-detail sanitizer has separate negative cases for unknown reasons and
+  private fields; no copied enum or homemade validator stands in for the wire.
 - U1 owns all localized code/reason combinations and malformed/unknown input;
   inbox needs its two mounts and callback wiring, scratch needs representative
   409/410/503 plus its separate state lifecycle. Neither repeats U1's matrix.
@@ -954,7 +947,8 @@ Full integration execution can be expensive; measure actual serial runtime
 and preserve fixture lifecycle cleanup. No arbitrary timeout inflation,
 parallel isolation slice, skipped required test or unexplained count delta.
 If runtime/DB/supervisor prerequisites block a command, report the specific
-prerequisite and remaining gate; this plan does not claim these tests ran.
+prerequisite and remaining gate. The final execution evidence above records
+the completed gates.
 
 ## Commit plan
 
@@ -993,5 +987,7 @@ Explicit follow-ups, not implementation tasks in this plan:
 - **P0-5 consensus** and the duplicated httpStatusForCode helpers remain separate.
 
 Completion requires all selected gates, authoritative saved-state behavior on
-every listed surface, zero private-key leaks and an unchanged state-transition
-diff. It does not claim B6 or the crash-grace classification has been fixed.
+every listed surface, zero private-key leaks and no P0-4 delivery-arm changes.
+The separately authorized web agent input-evidence correction is recorded in
+ADR-180. Completion does not claim B6 or the crash-grace classification has
+been fixed.
