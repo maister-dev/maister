@@ -537,6 +537,152 @@ describe("workspace release after removal (ADR-166 N5)", () => {
   });
 });
 
+// ADR-181 C31 (RED 17): a reattach adds the worktree BEFORE it clears
+// `removed_at`, so "removed row + present worktree" is also a reattach in
+// flight, or one that crashed between `worktree add` and its row write. The
+// removal arm must read the lifecycle claim before it deletes anything.
+describe("removed row with a present worktree — reattach (ADR-181 C31)", () => {
+  async function seedReattachShape(claim: {
+    state: "claiming" | "failed";
+    name: string;
+    leaseExpiresAt: Date | null;
+  }): Promise<{ workspaceId: string; worktreePath: string }> {
+    const runId = randomUUID();
+    const workspaceId = randomUUID();
+    const worktreePath = path.join(worktreesRoot, projectSlug, runId);
+    const branch = `maister/${runId}`;
+
+    await seedRun(runId);
+    await addWorktree({
+      projectRepoPath: repoPath,
+      branch,
+      worktreePath,
+      startPoint: "main",
+      provenance: {
+        version: 2,
+        runId,
+        parentRepoPath: repoPath,
+        projectId,
+        branch,
+        workspaceKind: "flow",
+        createdAt: "2026-06-01T12:00:00.000Z",
+      },
+    });
+    await db.insert(schema.workspaces).values({
+      id: workspaceId,
+      runId,
+      projectId,
+      branch,
+      worktreePath: await realpath(worktreePath),
+      parentRepoPath: repoPath,
+      removedAt: new Date("2026-07-16T11:00:00.000Z"),
+      scheduledRemovalAt: new Date("2026-07-23T11:00:00.000Z"),
+      removalKind: "drop",
+      preservationOutcome: "not_needed",
+      lifecycleOperationState: claim.state,
+      lifecycleOperationName: claim.name,
+      lifecycleOperationAttemptId: randomUUID(),
+      lifecycleOperationClaimedAt: new Date(),
+      lifecycleOperationLeaseExpiresAt: claim.leaseExpiresAt,
+      lifecycleOperationExpectedRunStatus: "Review",
+    });
+
+    return { workspaceId, worktreePath };
+  }
+
+  async function sweep() {
+    return runWorkspaceReconciliationSweep({
+      database: db,
+      root: worktreesRoot,
+      now: () => new Date("2026-07-16T12:00:00.000Z"),
+    });
+  }
+
+  async function workspaceRow(workspaceId: string) {
+    return (
+      await db
+        .select()
+        .from(schema.workspaces)
+        .where(eq(schema.workspaces.id, workspaceId))
+    )[0];
+  }
+
+  async function finding() {
+    return (await db.select().from(schema.workspaceReconciliationFindings))[0];
+  }
+
+  it("holds the worktree while a lifecycle claim is live (a reattach mid-flight)", async () => {
+    const { workspaceId, worktreePath } = await seedReattachShape({
+      state: "claiming",
+      name: "reattach",
+      leaseExpiresAt: new Date(Date.now() + 60_000),
+    });
+
+    const summary = await sweep();
+
+    expect(summary).toMatchObject({ retained: 1, removed: 0 });
+    await expect(lstat(worktreePath)).resolves.toBeDefined();
+    expect((await workspaceRow(workspaceId)).removedAt).not.toBeNull();
+    expect(await finding()).toMatchObject({
+      state: "held",
+      resultCode: "lifecycle_operation_live",
+    });
+  });
+
+  it.each([
+    [
+      "a stale reattach claim",
+      {
+        state: "claiming" as const,
+        leaseExpiresAt: new Date(Date.now() - 60_000),
+      },
+    ],
+    [
+      "a failed reattach claim",
+      { state: "failed" as const, leaseExpiresAt: null },
+    ],
+  ])(
+    "completes a crashed reattach from %s instead of removing its worktree",
+    async (_label, claim) => {
+      const { workspaceId, worktreePath } = await seedReattachShape({
+        ...claim,
+        name: "reattach",
+      });
+
+      const summary = await sweep();
+
+      expect(summary).toMatchObject({ recovered: 1, removed: 0 });
+      await expect(lstat(worktreePath)).resolves.toBeDefined();
+      expect(await workspaceRow(workspaceId)).toMatchObject({
+        removedAt: null,
+        scheduledRemovalAt: null,
+        lifecycleOperationState: "none",
+        lifecycleOperationName: null,
+      });
+      expect(await finding()).toMatchObject({
+        state: "resolved",
+        resultCode: "workspace_reattached",
+      });
+    },
+  );
+
+  // GUARD: only a reattach's crash is completed — the stale claim of any other
+  // operation still leaves an orphan the arm removes, exactly as before.
+  it("still removes the worktree behind a stale claim of another operation", async () => {
+    const { workspaceId, worktreePath } = await seedReattachShape({
+      state: "claiming",
+      name: "drop",
+      leaseExpiresAt: new Date(Date.now() - 60_000),
+    });
+
+    const summary = await sweep();
+
+    expect(summary).toMatchObject({ removed: 1, resolved: 1 });
+    await expect(lstat(worktreePath)).rejects.toMatchObject({ code: "ENOENT" });
+    expect((await workspaceRow(workspaceId)).removedAt).not.toBeNull();
+  });
+});
+
 async function releaseCommandRows(runId: string) {
   return await db
     .select({

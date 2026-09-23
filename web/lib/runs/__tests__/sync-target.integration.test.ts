@@ -263,6 +263,10 @@ type SeedRunOpts = {
   lifecycleOperationLeaseExpiresAt?: Date;
   lifecycleOperationExpectedRunStatus?: string | null;
   lifecycleOperationAttemptId?: string;
+  // ADR-181: the run's base branch (null = unknown) and its publication.
+  baseBranch?: string | null;
+  published?: { branch: string; remote: string; at?: Date } | null;
+  removedAt?: Date | null;
 };
 
 async function seedRun(opts: SeedRunOpts): Promise<{
@@ -300,8 +304,17 @@ async function seedRun(opts: SeedRunOpts): Promise<{
     branch: opts.branch,
     worktreePath: opts.worktreePath,
     parentRepoPath: opts.parentRepoPath,
-    baseBranch: "main",
+    baseBranch: opts.baseBranch === undefined ? "main" : opts.baseBranch,
     baseCommit: opts.baseCommit,
+    removedAt: opts.removedAt ?? null,
+    removalKind: opts.removedAt ? "drop" : null,
+    ...(opts.published
+      ? {
+          publishedBranch: opts.published.branch,
+          publishedRemote: opts.published.remote,
+          publishedAt: opts.published.at ?? new Date(),
+        }
+      : {}),
     targetBranch: opts.targetBranch ?? "main",
     prUrl: opts.prUrl ?? null,
     promotionState: opts.promotionState ?? "none",
@@ -1424,6 +1437,425 @@ describe("verifySyncGate", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// ADR-181 D9 (RED 14–16): Update is the ADR-141 sync admitted by the ONE git
+// policy (any parked status, not Review only), with an explicit `onto` —
+// target (default), base, or the run's own publication.
+// ---------------------------------------------------------------------------
+
+describe("ADR-181 — update onto base | target | published", () => {
+  // Push one commit to `branch` on the remote from a throwaway clone.
+  async function advanceRemote(
+    remote: string,
+    branch: string,
+    file: string,
+  ): Promise<string> {
+    const c = join(root, `adv-${randomUUID()}`);
+
+    await git(root, ["clone", "-b", branch, remote, c]);
+    await identity(c);
+    await writeFile(join(c, file), `${file}\n`);
+    await git(c, ["add", file]);
+    await git(c, ["commit", "-m", `advance ${file}`]);
+    await git(c, ["push", "origin", branch]);
+    const sha = await headSha(c);
+
+    await rm(c, { recursive: true, force: true });
+
+    return sha;
+  }
+
+  async function isAncestor(
+    wt: string,
+    ancestor: string,
+    ref = "HEAD",
+  ): Promise<boolean> {
+    return git(wt, ["merge-base", "--is-ancestor", ancestor, ref]).then(
+      () => true,
+      () => false,
+    );
+  }
+
+  async function refusal(p: Promise<unknown>): Promise<MaisterError> {
+    const err = await p.then(
+      () => {
+        throw new Error("expected a refusal");
+      },
+      (e: unknown) => e,
+    );
+
+    expect(err).toBeInstanceOf(MaisterError);
+
+    return err as MaisterError;
+  }
+
+  it("onto base rebases onto the run's base branch and records it as target_ref", async () => {
+    const { remote, parent, baseSha } = await initRepoWithRemote();
+
+    await git(parent, ["branch", "develop", "main"]);
+    await git(parent, ["push", "-u", "origin", "develop"]);
+    const wt = await addRunWorktree(parent, "sync/onto-base");
+    const developTip = await advanceRemote(remote, "develop", "dev.txt");
+    const { projectId, flowId } = await seedGraph(parent);
+    const { runId } = await seedRun({
+      projectId,
+      flowId,
+      worktreePath: wt,
+      branch: "sync/onto-base",
+      parentRepoPath: parent,
+      baseCommit: baseSha,
+      baseBranch: "develop",
+      status: "Failed",
+    });
+
+    const out = await syncRunTarget({
+      runId,
+      actor: actor(),
+      onto: "base",
+      admission: "workbench",
+      db,
+    });
+
+    expect(out).toMatchObject({ outcome: "synced", behind: 1 });
+    expect(await isAncestor(wt, developTip)).toBe(true);
+    expect((await attemptRows(runId))[0].targetRef).toBe("develop");
+  });
+
+  it("onto published brings the operator's pushes to the public branch back", async () => {
+    const { remote, parent, baseSha } = await initRepoWithRemote();
+    const wt = await addRunWorktree(parent, "sync/onto-pub");
+
+    await git(wt, [
+      "push",
+      "--set-upstream",
+      "origin",
+      "refs/heads/sync/onto-pub:refs/heads/feature/PUB-1",
+    ]);
+    const laptop = await advanceRemote(remote, "feature/PUB-1", "laptop.txt");
+    const { projectId, flowId } = await seedGraph(parent);
+    const { runId } = await seedRun({
+      projectId,
+      flowId,
+      worktreePath: wt,
+      branch: "sync/onto-pub",
+      parentRepoPath: parent,
+      baseCommit: baseSha,
+      status: "Failed",
+      published: { branch: "feature/PUB-1", remote: "origin" },
+    });
+
+    const out = await syncRunTarget({
+      runId,
+      actor: actor(),
+      onto: "published",
+      admission: "workbench",
+      push: false,
+      db,
+    });
+
+    expect(out).toMatchObject({ outcome: "synced", behind: 1 });
+    expect(await headSha(wt)).toBe(laptop);
+    expect((await attemptRows(runId))[0].targetRef).toBe(
+      "origin/feature/PUB-1",
+    );
+  });
+
+  it("onto base refuses a run that records no base branch", async () => {
+    const { parent, baseSha } = await initRepoWithRemote();
+    const wt = await addRunWorktree(parent, "sync/no-base");
+    const { projectId, flowId } = await seedGraph(parent);
+    const { runId } = await seedRun({
+      projectId,
+      flowId,
+      worktreePath: wt,
+      branch: "sync/no-base",
+      parentRepoPath: parent,
+      baseCommit: baseSha,
+      baseBranch: null,
+      status: "Failed",
+    });
+
+    const err = await refusal(
+      syncRunTarget({
+        runId,
+        actor: actor(),
+        onto: "base",
+        admission: "workbench",
+        db,
+      }),
+    );
+
+    expect(err.code).toBe("PRECONDITION");
+    expect(err.details?.reason).toBe("base_branch_unknown");
+    expect(await attemptRows(runId)).toHaveLength(0);
+  });
+
+  it("onto published refuses an unpublished run", async () => {
+    const { parent, baseSha } = await initRepoWithRemote();
+    const wt = await addRunWorktree(parent, "sync/unpub");
+    const { projectId, flowId } = await seedGraph(parent);
+    const { runId } = await seedRun({
+      projectId,
+      flowId,
+      worktreePath: wt,
+      branch: "sync/unpub",
+      parentRepoPath: parent,
+      baseCommit: baseSha,
+      status: "Failed",
+    });
+
+    const err = await refusal(
+      syncRunTarget({
+        runId,
+        actor: actor(),
+        onto: "published",
+        admission: "workbench",
+        db,
+      }),
+    );
+
+    expect(err.code).toBe("PRECONDITION");
+    expect(err.details?.reason).toBe("not_published");
+    expect(await attemptRows(runId)).toHaveLength(0);
+  });
+
+  it("refuses the AI resolver outside Review, before any attempt", async () => {
+    const { remote, parent, baseSha } = await initRepoWithRemote();
+    const wt = await addRunWorktree(parent, "sync/agent-failed");
+
+    await advanceOriginMain(remote);
+    const { projectId, flowId } = await seedGraph(parent);
+    const { runId } = await seedRun({
+      projectId,
+      flowId,
+      worktreePath: wt,
+      branch: "sync/agent-failed",
+      parentRepoPath: parent,
+      baseCommit: baseSha,
+      status: "Failed",
+    });
+
+    const err = await refusal(
+      syncRunTarget({
+        runId,
+        actor: actor(),
+        agent: true,
+        admission: "workbench",
+        db,
+      }),
+    );
+
+    expect(err.code).toBe("PRECONDITION");
+    expect(err.details?.reason).toBe("agent_requires_review");
+    expect(await attemptRows(runId)).toHaveLength(0);
+  });
+
+  it("updates a Failed run onto its target", async () => {
+    const { remote, parent, baseSha } = await initRepoWithRemote();
+    const wt = await addRunWorktree(parent, "sync/failed");
+
+    await advanceOriginMain(remote);
+    const { projectId, flowId } = await seedGraph(parent);
+    const { runId } = await seedRun({
+      projectId,
+      flowId,
+      worktreePath: wt,
+      branch: "sync/failed",
+      parentRepoPath: parent,
+      baseCommit: baseSha,
+      status: "Failed",
+    });
+
+    const out = await syncRunTarget({
+      runId,
+      actor: actor(),
+      admission: "workbench",
+      db,
+    });
+
+    expect(out).toMatchObject({ outcome: "synced", behind: 1 });
+    expect((await attemptRows(runId))[0].targetRef).toBe("main");
+    // The status is untouched: an update is not a status transition.
+    expect(await readRun(runId)).toMatchObject({ status: "Failed" });
+  });
+
+  // C17: the ext API keeps ADR-141's Review-only admission verbatim.
+  it("keeps the Review-only admission for the ext surface", async () => {
+    const { remote, parent, baseSha } = await initRepoWithRemote();
+    const wt = await addRunWorktree(parent, "sync/ext-failed");
+
+    await advanceOriginMain(remote);
+    const { projectId, flowId } = await seedGraph(parent);
+    const { runId } = await seedRun({
+      projectId,
+      flowId,
+      worktreePath: wt,
+      branch: "sync/ext-failed",
+      parentRepoPath: parent,
+      baseCommit: baseSha,
+      status: "Failed",
+    });
+
+    const err = await refusal(
+      syncRunTarget({ runId, actor: actor(), admission: "review", db }),
+    );
+
+    expect(err.code).toBe("PRECONDITION");
+    expect(err.message).toMatch(/must be Review/);
+  });
+
+  // The five shape arms and the removed arm survive the status arm's move.
+  it("still refuses a scratch run, an orchestrator child, a shared tree and a removed workspace", async () => {
+    const { parent, baseSha } = await initRepoWithRemote();
+    const { projectId, flowId } = await seedGraph(parent);
+    const parentRun = await seedRun({
+      projectId,
+      flowId,
+      worktreePath: join(root, `p-${randomUUID()}`),
+      branch: `sync/parent-${randomUUID().slice(0, 6)}`,
+      parentRepoPath: parent,
+      baseCommit: baseSha,
+      status: "Failed",
+    });
+    const shapes: Partial<SeedRunOpts>[] = [
+      { runKind: "scratch" },
+      { parentRunId: parentRun.runId },
+      { workspaceMode: "shared" },
+      { removedAt: new Date() },
+    ];
+
+    for (const shape of shapes) {
+      const branch = `sync/shape-${randomUUID().slice(0, 8)}`;
+      const wt = await addRunWorktree(parent, branch);
+      const { runId } = await seedRun({
+        projectId,
+        flowId,
+        worktreePath: wt,
+        branch,
+        parentRepoPath: parent,
+        baseCommit: baseSha,
+        status: "Failed",
+        ...shape,
+      });
+
+      const err = await refusal(
+        syncRunTarget({ runId, actor: actor(), admission: "workbench", db }),
+      );
+
+      expect(err.code, JSON.stringify(shape)).toBe("PRECONDITION");
+      expect(await attemptRows(runId)).toHaveLength(0);
+    }
+  });
+
+  // RED 15 (C3): a mechanical conflict aborts AND restores the pre-update
+  // HEAD, leaves the tree clean, and names the conflicted paths.
+  it("restores HEAD and names the conflicted paths on a conflict", async () => {
+    const { remote, parent, baseSha } = await initRepoWithRemote();
+    const wt = await addRunWorktree(parent, "sync/conflict-failed", {
+      feature: false,
+    });
+
+    await writeFile(join(wt, "conf.txt"), "run side\n");
+    await git(wt, ["add", "conf.txt"]);
+    await git(wt, ["commit", "-m", "run edits conf"]);
+    const before = await headSha(wt);
+    const c = join(root, `conf-${randomUUID()}`);
+
+    await git(root, ["clone", remote, c]);
+    await identity(c);
+    await writeFile(join(c, "conf.txt"), "main side\n");
+    await git(c, ["add", "conf.txt"]);
+    await git(c, ["commit", "-m", "main edits conf"]);
+    await git(c, ["push", "origin", "main"]);
+    await rm(c, { recursive: true, force: true });
+
+    const { projectId, flowId } = await seedGraph(parent);
+    const { runId } = await seedRun({
+      projectId,
+      flowId,
+      worktreePath: wt,
+      branch: "sync/conflict-failed",
+      parentRepoPath: parent,
+      baseCommit: baseSha,
+      status: "Failed",
+    });
+
+    // No `agent` flag: outside Review the default is mechanical.
+    const out = await syncRunTarget({
+      runId,
+      actor: actor(),
+      admission: "workbench",
+      db,
+    });
+
+    expect(out).toMatchObject({
+      outcome: "conflict",
+      pushed: false,
+      conflictedFiles: ["conf.txt"],
+    });
+    expect(await headSha(wt)).toBe(before);
+    expect(await syncOperationInProgress(wt)).toBe(false);
+    expect((await git(wt, ["status", "--porcelain"])).stdout.trim()).toBe("");
+  });
+
+  // RED 16 — a GUARD on the Phase-1 tree (T1.7 already moved the push, and a
+  // `Review` run is admitted by both arms): the update's push leases and
+  // pushes the PUBLIC name and records the publication; the internal name
+  // never reaches the remote.
+  it("pushes the update under the public name and records it", async () => {
+    const { remote, parent, baseSha } = await initRepoWithRemote();
+    const wt = await addRunWorktree(parent, "sync/push-pub");
+
+    await git(wt, [
+      "push",
+      "--set-upstream",
+      "origin",
+      "refs/heads/sync/push-pub:refs/heads/feature/PUB-2",
+    ]);
+    await advanceOriginMain(remote);
+    const { projectId, flowId } = await seedGraph(parent);
+    const stale = new Date(Date.now() - 3_600_000);
+    const { runId, workspaceId } = await seedRun({
+      projectId,
+      flowId,
+      worktreePath: wt,
+      branch: "sync/push-pub",
+      parentRepoPath: parent,
+      baseCommit: baseSha,
+      status: "Review",
+      published: { branch: "feature/PUB-2", remote: "origin", at: stale },
+    });
+
+    const out = await syncRunTarget({
+      runId,
+      actor: actor(),
+      admission: "workbench",
+      db,
+    });
+
+    expect(out).toMatchObject({ outcome: "synced", pushed: true });
+    expect(
+      (
+        await git(remote, ["rev-parse", "refs/heads/feature/PUB-2"])
+      ).stdout.trim(),
+    ).toBe(await headSha(wt));
+    await expect(
+      git(remote, ["rev-parse", "--verify", "refs/heads/sync/push-pub"]),
+    ).rejects.toThrow();
+    expect(remoteBranchHead).toHaveBeenCalledWith(
+      expect.objectContaining({ remote: "origin", branch: "feature/PUB-2" }),
+    );
+
+    const [ws] = await db
+      .select()
+      .from(workspaces)
+      .where(eq(workspaces.id, workspaceId));
+
+    expect(ws.publishedBranch).toBe("feature/PUB-2");
+    expect((ws.publishedAt as Date).getTime()).toBeGreaterThan(stale.getTime());
+  });
+});
+
 describe("POST /api/runs/[runId]/sync route", () => {
   // Captured so the authorization CONTRACT can be asserted. The stub used to be
   // anonymous and nothing checked its arguments, so rebinding the route to
@@ -1480,6 +1912,29 @@ describe("POST /api/runs/[runId]/sync route", () => {
       projectId,
       "promoteRun",
     );
+  });
+
+  // ADR-181 D9: the route takes `onto` and forwards the refusal token.
+  it("accepts onto and forwards details.reason on a refusal", async () => {
+    const { parent, baseSha } = await initRepoWithRemote();
+    const wt = await addRunWorktree(parent, "sync/route-onto");
+    const { projectId, flowId } = await seedGraph(parent);
+    const { runId } = await seedRun({
+      projectId,
+      flowId,
+      worktreePath: wt,
+      branch: "sync/route-onto",
+      parentRepoPath: parent,
+      baseCommit: baseSha,
+      status: "Failed",
+    });
+
+    const res = await invokePost(runId, { onto: "published" });
+
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as any).details).toEqual({
+      reason: "not_published",
+    });
   });
 
   it("(j) 422 on an invalid body", async () => {

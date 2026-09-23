@@ -1490,7 +1490,7 @@ route; `Failed` listed on portfolio / project list / rail / Backlog card; the
 dialog is gone; a `Failed` run updates onto base / target / published and re-attaches
 after drop; refactor gate passed.
 
-- [ ] **T2.0 — RED battery (Phase 2).** RED 14–17, red on the Phase-1 tree.
+- [x] **T2.0 — RED battery (Phase 2).** RED 14–17, red on the Phase-1 tree.
       **AC**: as T1.0.
 
 **Commit 4** — `test(workbench-git): RED — update is Review-only, removed worktrees are dead ends`

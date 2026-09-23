@@ -316,6 +316,9 @@ describe("POST /api/v1/ext/runs/sync", () => {
       // an actor row claiming a human did it while naming nobody is a corrupt
       // audit trail, indistinguishable from a genuine user-attributed sync.
       actor: { type: "system", id: null },
+      // ADR-181 C17: the ext surface keeps ADR-141's Review-only admission;
+      // only the web route admits the git policy's wider set.
+      admission: "review",
     });
 
     const rows = await auditRows();
