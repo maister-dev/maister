@@ -270,7 +270,7 @@ status handling.
 ### Permission HITL in scratch dialog (Implemented)
 
 P0-4's read-only saved-answer and reason feedback contract is specified in
-[HITL](hitl.md#respond-refusal-reasons-p0-4--designed). Scratch uses that
+[HITL](hitl.md#respond-refusal-reasons-p0-4--implemented). Scratch uses that
 shared reason map; a terminal 410 names the ended session and Recover/relaunch
 action, while a pending 202 or saved 503 retains the answer and offers only
 identical-payload retry. The scratch detail refresh must not clear refusal

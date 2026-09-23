@@ -79,7 +79,7 @@ what makes them comparable at a glance.
 
 ### The HITL card
 
-**P0-4 (Designed):** A pending card whose answer is already stored remains in
+**P0-4 (Implemented):** A pending card whose answer is already stored remains in
 “Needs you” until delivery, but displays its selected option and “Answer saved
 — delivering on resume” read-only. Choices and structured fields are disabled;
 one “Retry delivery” action sends the identical sanitized answer when the

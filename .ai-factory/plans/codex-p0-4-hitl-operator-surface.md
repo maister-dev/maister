@@ -691,7 +691,7 @@ first point where existing assertions are repaired.
 
 ### Phase 3 — full delivery qualification and as-built verification
 
-- [ ] **Task 12: Qualify U3 replay and R1 with the existing real harness.**
+- [x] **Task 12: Qualify U3 replay and R1 with the existing real harness.**
   Depends on 5–11. Finish qualifying the R1 tests added in Task 4, in
   `permission-deadline.integration.test.ts`:
   race-window host checkpoint → web 202 → public stored DTO → delivery, and
@@ -712,6 +712,10 @@ first point where existing assertions are repaired.
   every fix cycle against the locked boundaries. Logging: record command,
   revision, result and intended failure assertion; no secrets. All promised
   tests must execute; no passWithNoTests or skipped suite counts as evidence.
+  The P0-4 owner suites and falsification checks are complete. The full web
+  integration gate remains red in unrelated recovery fixtures, as recorded
+  below; this task stays open rather than treating isolated passes as a full
+  project pass.
 - [ ] **Task 14: Close docs and report exact qualification.** Depends on 13.
   Mark verified operator surface Implemented in the amendment/analytics;
   retain explicit B6/crash-grace/A4/watchdog/P0-5 follow-ups. Run contracts,
@@ -719,6 +723,8 @@ first point where existing assertions are repaired.
   state/host/schema changes. Logging: concise validation record and exact
   environmental blockers if any. Stop at this increment; do not implement
   follow-ups or publish remotely.
+  The as-built docs and all static/smoke gates are complete; final qualification
+  remains open with Task 13's full integration gate.
 
 Each behavioral phase exits with its named targeted tests green, then the
 existing full web unit and integration suites green, run sequentially. MCP
@@ -726,6 +732,55 @@ full suites are also required after its phase. A newly red existing assertion
 must be classified as obsolete contract text or a broken invariant and fixed
 accordingly. Environment-blocked execution is incomplete qualification, not
 a product pass; do not quietly quarantine the required acceptance tests.
+
+### Execution evidence (2026-09-23)
+
+- Phase 0 contract and docs validators passed before implementation.
+- Phase 1: web route/service unit 98/98; ext, portfolio and scratch real-DB
+  integration 39/39; HITL service integration 15/15; ADR-180 real-supervisor
+  deadline integration 10/10; MCP unit 259/259 and integration 6/6. The full
+  web unit project passed 831 files / 8,593 tests with bounded workers.
+- Phase 2: board, inbox, scratch, run and error resolver unit/DOM suites passed
+  60 files / 565 tests; web typecheck and targeted ESLint passed.
+- Phase 3 R1: `permission-deadline.integration.test.ts` passed 10/10 with a
+  nonconditional 202 public-DTO assertion, delivered-row disappearance, and
+  post-grace 503 identical retry/no-Failed assertions.
+- Falsification on `404b468f`, one temporary mutation at a time, followed by
+  source restoration: removing route `details` made W1 fail at the missing
+  `permission_resume_in_flight`; disabling reason selection made U1 fail at
+  per-code fallback; ignoring 202 made U2 fail with live Allow/Deny buttons;
+  forcing the DTO projector to return `open` made real-Postgres U3 fail on the
+  claimed row. The restored route/card owner tests passed 101/101. No
+  mutation remains in the working tree.
+- Final web unit passed 831 files / 8,601 tests. Web and MCP typechecks passed;
+  MCP ESLint passed; web ESLint exited 0 with 26 warnings outside the changed
+  P0-4 files. Contract validation passed 5/5, including both HITL respond
+  examples; docs/ADR/link/index and ERD checks passed. MCP unit 259/259 and
+  stdio integration 6/6 passed; supervisor permission roundtrip passed 14/14;
+  authenticated board/inbox Playwright smoke passed 8/8.
+- First complete web integration pass ran all 512 files: 510 files and 4,487
+  tests passed, two tests failed. The external inbox exact-shape assertion
+  omitted its newly documented `answerState`; it was corrected and reran 4/4.
+  One unrelated flow prompt-owner `SIGKILL after_apply` case missed a 30-second
+  fixture count under two workers; its isolated rerun passed 1/1 in 38 seconds
+  without code changes.
+- A second complete run with the corrected assertion and macOS sleep prevention
+  (`caffeinate -dimsu pnpm exec vitest run --project integration --maxWorkers 2
+  --minWorkers 1`) ran all 512 files: 511 files and 4,488 tests passed. Its
+  sole test failure was pre-existing ADR-180 RED 14: the agent resume grant
+  classified `result` rather than the test's expected `continue`. The same
+  file passed 10/10 on a separate full-file run and failed 9/10 on another;
+  RED 14 alone and RED 13+14 together passed. No production state-transition
+  or supervisor change was made. Vitest also reported one unhandled Postgres
+  `57P01` during cross-file teardown after the scratch transcript tests had
+  passed; that file passed 8/8 when run alone.
+- A one-worker sleep-protected complete run was stopped after its first,
+  unrelated 58-test flow prompt-owner file failed a 30-second `skill_check`
+  recovery matcher. The exact case then also failed in isolation with a
+  projection transaction deadline. Earlier complete and isolated runs had
+  passed this file/case. This is an unresolved full-suite regression gate,
+  not a P0-4 acceptance pass. The P0-4 route, DTO, card, scratch, MCP,
+  deadline 202/503, contract, docs, unit, and smoke gates above are green.
 
 ## Test placement, migration and falsification
 

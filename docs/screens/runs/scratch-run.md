@@ -125,7 +125,7 @@ state, unmount, and run replacement cancel retry work. This does not change
 
 ## States
 
-**Stored permission answer (P0-4 — Designed).** A scratch HITL card with
+**Stored permission answer (P0-4 — Implemented).** A scratch HITL card with
 `answerState: "answer_stored"` shows the selected answer and the localized
 “Answer saved — delivering on resume” status, disables fresh choices and
 offers an identical-payload “Retry delivery” only to an authorized operator.

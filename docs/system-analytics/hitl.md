@@ -956,7 +956,7 @@ boolean | enum | array`; unknown type refused with `CONFIG` at Flow
   the fields entirely, so the rule is vacuous there.
 - **(Implemented)** `hitl_requests.response` and `.responded_at`
   use two-phase commit semantics:
-  - **(P0-4 — Designed) Operator read state.** A pending row has
+  - **(P0-4 — Implemented) Operator read state.** A pending row has
     `answerState = "open"` when `response IS NULL`, or `"answer_stored"` when
     `response IS NOT NULL AND responded_at IS NULL`. Derivation uses SQL null,
     not JSON truthiness. A delivered row leaves pending lists. The board,
@@ -1233,7 +1233,7 @@ never becomes a guessed Allow/Deny option.
 | 410 `agent_session_ended` | Absent after terminal marker | Explain the ended session and next action. |
 | 503 `delivery_unavailable` | `answer_stored` | Show saved answer; identical retry is allowed. |
 
-### Respond refusal reasons (P0-4 — Designed)
+### Respond refusal reasons (P0-4 — Implemented)
 
 These are web `details.reason` tokens, not the two top-level workspace
 `reason` values or execution-host `ReasonToken`. The web and external respond

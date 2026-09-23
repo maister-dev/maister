@@ -449,14 +449,10 @@ describe("permission deadline — one owner (ADR-180)", () => {
 
     expect(res.status).toBe(202);
     expect(await res.json()).toMatchObject({ state: "resume-in-progress" });
-    const stored = await publicStoredAnswer(runId, hitl.id);
-
-    if (stored) {
-      expect(stored).toMatchObject({
-        answerState: "answer_stored",
-        storedResponse: { optionId: "allow" },
-      });
-    }
+    expect(await publicStoredAnswer(runId, hitl.id)).toMatchObject({
+      answerState: "answer_stored",
+      storedResponse: { optionId: "allow" },
+    });
     // The resumed session re-issues the permission and the driver delivers
     // the stored answer against it: the OUTCOME, not just the 202.
     await waitFor(
@@ -468,6 +464,7 @@ describe("permission deadline — one owner (ADR-180)", () => {
     expect(after.status).not.toBe("Failed");
     expect(after.status).not.toBe("Crashed");
     expect(await failedEvents(runId)).toHaveLength(0);
+    expect(await publicStoredAnswer(runId, hitl.id)).toBeUndefined();
   }, 180_000);
 
   // RED 4b. After the grace the registry entry is gone: the answer is a

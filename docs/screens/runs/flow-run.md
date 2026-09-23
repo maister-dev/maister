@@ -169,7 +169,7 @@ readiness, target-drift, and diff-completeness guards before submitting.
 
 ## States
 
-**Pending HITL answer read state (P0-4 — Designed).** `answerState` distinguishes
+**Pending HITL answer read state (P0-4 — Implemented).** `answerState` distinguishes
 an open request from a stored answer whose `responded_at` is still NULL.
 The run-page card shows the chosen option read-only and an authorized,
 single identical-payload “Retry delivery” action; 202 resume/delivery states
