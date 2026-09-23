@@ -17,6 +17,8 @@ import {
 import { readPromptRequest } from "@/lib/execution-host/command-request";
 import { PromptOwnerInvariantError } from "@/lib/execution-host/prompt-owners";
 
+import { CONSENSUS_PROMPT_TEXT_CAP_BYTES } from "./text";
+
 type ConsensusInputEvidence = Readonly<{
   version: 1;
   runId: string;
@@ -27,6 +29,7 @@ type ConsensusInputEvidence = Readonly<{
   sourceId: string;
   valueSha256: string;
   promptSha256: string;
+  valueSpan: Readonly<{ start: number; end: number }>;
   textBounds: ConsensusTextBounds;
 }>;
 
@@ -50,13 +53,45 @@ function decodeEvidence(value: unknown): ConsensusInputEvidence {
 
   if (typeof text !== "string")
     throw new PromptOwnerInvariantError("consensus_input_evidence_text");
-  const parsed: unknown = JSON.parse(text);
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(text) as unknown;
+  } catch {
+    throw new PromptOwnerInvariantError("consensus_input_evidence_json");
+  }
 
   if (
     parsed === null ||
     typeof parsed !== "object" ||
     Array.isArray(parsed) ||
     (parsed as { version?: unknown }).version !== 1
+  )
+    throw new PromptOwnerInvariantError("consensus_input_evidence_schema");
+
+  const evidence = parsed as Record<string, unknown>;
+  const span = evidence.valueSpan as Record<string, unknown> | null;
+  const bounds = evidence.textBounds as Record<string, unknown> | null;
+
+  if (
+    typeof evidence.runId !== "string" ||
+    typeof evidence.nodeAttemptId !== "string" ||
+    !Number.isInteger(evidence.round) ||
+    typeof evidence.generationId !== "string" ||
+    (evidence.role !== "verifier" && evidence.role !== "synthesis") ||
+    typeof evidence.sourceId !== "string" ||
+    typeof evidence.valueSha256 !== "string" ||
+    typeof evidence.promptSha256 !== "string" ||
+    span === null ||
+    typeof span !== "object" ||
+    !Number.isInteger(span.start) ||
+    !Number.isInteger(span.end) ||
+    bounds === null ||
+    typeof bounds !== "object" ||
+    !Number.isInteger(bounds.bytes) ||
+    !Number.isInteger(bounds.retainedBytes) ||
+    !Number.isInteger(bounds.droppedBytes) ||
+    bounds.cap !== CONSENSUS_PROMPT_TEXT_CAP_BYTES
   )
     throw new PromptOwnerInvariantError("consensus_input_evidence_schema");
 
@@ -80,6 +115,10 @@ export async function prepareConsensusInputEvidence(
     textBounds: ConsensusTextBounds;
   },
 ): Promise<void> {
+  const valueStart = input.renderedPrompt.indexOf(input.value);
+
+  if (valueStart < 0)
+    throw new PromptOwnerInvariantError("consensus_input_value_not_rendered");
   const evidence: ConsensusInputEvidence = {
     version: 1,
     runId: input.runId,
@@ -90,6 +129,7 @@ export async function prepareConsensusInputEvidence(
     sourceId: input.sourceId,
     valueSha256: digest(input.value),
     promptSha256: digest(input.renderedPrompt),
+    valueSpan: { start: valueStart, end: valueStart + input.value.length },
     textBounds: input.textBounds,
   };
   const serialized = JSON.stringify(evidence);
@@ -146,12 +186,19 @@ export async function prepareConsensusInputEvidence(
 export async function verifyConsensusInputEvidence(
   db: Db,
   command: ExecutionCommand,
-  generationId: string,
+  owner: {
+    generationId: string;
+    nodeAttemptId: string;
+    round: number;
+    role: "verifier" | "synthesis";
+  },
 ): Promise<ConsensusInputEvidence | null> {
   const [artifact] = await db
     .select({ locator: artifactInstances.locator })
     .from(artifactInstances)
-    .where(eq(artifactInstances.id, consensusInputEvidenceId(generationId)));
+    .where(
+      eq(artifactInstances.id, consensusInputEvidenceId(owner.generationId)),
+    );
 
   if (!artifact) return null;
   const evidence = decodeEvidence(artifact.locator);
@@ -163,11 +210,34 @@ export async function verifyConsensusInputEvidence(
   if (!host)
     throw new PromptOwnerInvariantError("consensus_input_host_missing");
   const request = readPromptRequest(command, host.hostKey);
+  const value = request.payload.prompt.slice(
+    evidence.valueSpan.start,
+    evidence.valueSpan.end,
+  );
+  const bounds = evidence.textBounds;
+  const marker = `\n[consensus text truncated: dropped ${bounds.droppedBytes} UTF-8 bytes; cap ${bounds.cap} bytes]`;
 
   if (
     evidence.runId !== command.runId ||
-    evidence.generationId !== generationId ||
-    evidence.promptSha256 !== digest(request.payload.prompt)
+    evidence.nodeAttemptId !== owner.nodeAttemptId ||
+    evidence.round !== owner.round ||
+    evidence.role !== owner.role ||
+    evidence.generationId !== owner.generationId ||
+    evidence.valueSpan.start < 0 ||
+    evidence.valueSpan.end < evidence.valueSpan.start ||
+    evidence.valueSpan.end > request.payload.prompt.length ||
+    evidence.promptSha256 !== digest(request.payload.prompt) ||
+    evidence.valueSha256 !== digest(value) ||
+    bounds.bytes < 0 ||
+    bounds.retainedBytes < 0 ||
+    bounds.droppedBytes < 0 ||
+    bounds.bytes !== bounds.retainedBytes + bounds.droppedBytes ||
+    (bounds.droppedBytes > 0
+      ? !value.endsWith(marker) ||
+        Buffer.byteLength(value, "utf8") > bounds.cap ||
+        Buffer.byteLength(value.slice(0, -marker.length), "utf8") !==
+          bounds.retainedBytes
+      : Buffer.byteLength(value, "utf8") !== bounds.bytes)
   )
     throw new PromptOwnerInvariantError("consensus_input_request_mismatch");
 

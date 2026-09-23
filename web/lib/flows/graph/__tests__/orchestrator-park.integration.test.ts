@@ -35,6 +35,7 @@ import {
 import { buildOrchestratorResumeConsumer } from "@/lib/domain-events/orchestrator-resume";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { startFlowContinuationWorker } from "@/lib/flows/graph/continuation-worker";
+import { ConsensusGenerationPending } from "@/lib/flows/graph/consensus/prompt-owner";
 import {
   readCoordinatorWakeIntent,
   wakeParkedCoordinator,
@@ -344,6 +345,36 @@ async function getRun(runId: string): Promise<any> {
 }
 
 describe("orchestrator park-vs-complete (M37 T5.1)", () => {
+  it("yields a typed pending consensus generation without failing its node", async () => {
+    runConsensusNode.mockReset();
+    runConsensusNode.mockRejectedValueOnce(
+      new ConsensusGenerationPending("pending-verdict"),
+    );
+    const { runId } = await seedOrchestratorRun(consensusFlow);
+    const { hosts } = await bindCoordinatorHost(runId, "decide");
+    const { runFlow } = await import("@/lib/flows/runner");
+
+    try {
+      await runFlow(runId, {
+        db,
+        runtimeRoot: process.cwd(),
+        executionHosts: hosts,
+      });
+      expect((await getRun(runId)).status).toBe("Running");
+      const attempts = await db
+        .select()
+        .from(schema.nodeAttempts)
+        .where(eq(schema.nodeAttempts.runId, runId));
+
+      expect(attempts).toHaveLength(1);
+      expect(attempts[0]).toMatchObject({
+        nodeType: "consensus",
+        status: "Running",
+      });
+    } finally {
+      runConsensusNode.mockReset();
+    }
+  }, 90_000);
   it("retains an early failed-child wake intent while another child is pending", async () => {
     const { runId } = await seedOrchestratorRun();
     const failed = await seedChild(runId, "Running");

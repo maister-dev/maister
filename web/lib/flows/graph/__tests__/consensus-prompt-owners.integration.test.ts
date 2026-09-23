@@ -26,6 +26,7 @@ import { buildOrchestratorResumeConsumer } from "@/lib/domain-events/orchestrato
 import { startPromptOwnerWorker } from "@/lib/execution-host/prompt-owner-recovery";
 import { flowPromptOwners } from "@/lib/flows/graph/prompt-owner";
 import { consensusDraftPromptOwners } from "@/lib/flows/graph/consensus/draft-prompt-owner";
+import { verifyConsensusInputEvidence } from "@/lib/flows/graph/consensus/input-evidence";
 import {
   isConsensusHumanIntentApplied,
   markConsensusHumanIntentApplied,
@@ -1159,6 +1160,76 @@ describe("Consensus prompt owners through the production graph driver", () => {
       truncated: true,
       inputTextBounds: { cap: 65_536 },
     });
+    const synthesisId = `run:${attempt.id}:consensus-synthesis:r1:consensus`;
+    const [prepared] = await database.db
+      .select()
+      .from(artifactInstances)
+      .where(eq(artifactInstances.id, `${synthesisId}:input`));
+    const expectedOwner = {
+      generationId: synthesisId,
+      nodeAttemptId: attempt.id,
+      round: 1,
+      role: "synthesis" as const,
+    };
+
+    expect(
+      await verifyConsensusInputEvidence(
+        database.db as unknown as Db,
+        synthesisCommand!,
+        expectedOwner,
+      ),
+    ).toMatchObject({ textBounds: { droppedBytes: expect.any(Number) } });
+    if (prepared.locator.kind !== "inline")
+      throw new Error("consensus input evidence must be inline");
+    const originalLocator = prepared.locator;
+    const forged = JSON.parse(originalLocator.text) as Record<string, unknown>;
+
+    await database.db
+      .update(artifactInstances)
+      .set({
+        locator: {
+          kind: "inline",
+          text: JSON.stringify({ ...forged, valueSha256: "0".repeat(64) }),
+        },
+      })
+      .where(eq(artifactInstances.id, prepared.id));
+    await expect(
+      verifyConsensusInputEvidence(
+        database.db as unknown as Db,
+        synthesisCommand!,
+        expectedOwner,
+      ),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      details: { causeCode: "consensus_input_request_mismatch" },
+    });
+    await database.db
+      .update(artifactInstances)
+      .set({ locator: originalLocator })
+      .where(eq(artifactInstances.id, prepared.id));
+    await database.db
+      .update(artifactInstances)
+      .set({
+        locator: {
+          kind: "inline",
+          text: JSON.stringify({ ...forged, valueSpan: undefined }),
+        },
+      })
+      .where(eq(artifactInstances.id, prepared.id));
+    await expect(
+      verifyConsensusInputEvidence(
+        database.db as unknown as Db,
+        synthesisCommand!,
+        expectedOwner,
+      ),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      details: { causeCode: "consensus_input_evidence_schema" },
+    });
+    await database.db
+      .update(artifactInstances)
+      .set({ locator: originalLocator })
+      .where(eq(artifactInstances.id, prepared.id));
     expect(() =>
       JSON.parse((debate.locator as { text: string }).text),
     ).not.toThrow();
@@ -1291,6 +1362,7 @@ describe("Consensus prompt owners through the production graph driver", () => {
           eq(hitlRequests.stepId, "decide"),
         ),
       );
+    expect(request).toBeDefined();
     const requestSchema = request.schema as {
       round: number;
       technicalFailures: Array<{ errorCode: string; parseStatus: string }>;

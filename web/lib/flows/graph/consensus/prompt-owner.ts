@@ -333,11 +333,13 @@ export async function prepareConsensusPrompt(input: {
     ref.variant === "consensus_verifier"
       ? await consensusMaterialAxes(db, ref)
       : [];
-  const inputEvidence = await verifyConsensusInputEvidence(
-    db,
-    command,
-    ref.variant === "consensus_verifier" ? ref.verdictId : ref.synthesisId,
-  );
+  const inputEvidence = await verifyConsensusInputEvidence(db, command, {
+    generationId:
+      ref.variant === "consensus_verifier" ? ref.verdictId : ref.synthesisId,
+    nodeAttemptId: ref.nodeAttemptId,
+    round: ref.round,
+    role: ref.variant === "consensus_verifier" ? "verifier" : "synthesis",
+  });
   let retained: RetainedConsensusOutput = {
     text: "",
     retainedBytes: 0,
