@@ -776,7 +776,7 @@ Each commit is gated on the phase exit criteria. Merge goes to master with `--no
 
 ### Phase 4: B.7 recovery feed and the C.8 watchdog predicate
 
-- [ ] **T4.1: Recovery settles on host evidence (D-B7).**
+- [x] **T4.1: Recovery settles on host evidence (D-B7).**
   - Files: `web/lib/reconcile-evidence.ts` (`resolvePromptEvidence`) and `web/lib/reconcile-evidence-db.ts`.
   - **RED** (real supervisor + fault proxy hold): a sessionless `Running` run whose newest prompt has a completed receipt and a readable, signal-free span.
     - **Stream `lost`, span readable** → the resolver settles through the feed. The run is **not** crashed `stream-lost`, and the node advances through the continuation worker.
@@ -786,7 +786,7 @@ Each commit is gated on the phase exit criteria. Merge goes to master with `--no
   - **Existing suites:** the ADR-177 classification suites stay green. Any changed expectation is named obsolete (the old `pending_ingest` for a readable span) with the reason.
   - **Logging:** INFO `reconcile-evidence-settled-from-host {runId, commandId}`.
 
-- [ ] **T4.2: Watchdog predicate (D-C1), rewritten after C24.**
+- [x] **T4.2: Watchdog predicate (D-C1), rewritten after C24.**
   - Files:
     - `web/lib/reconcile-evidence-db.ts`: the `variants` option on `loadPromptEvidence`, defaulting to `['node']`;
     - `web/lib/runs/keepalive-sweeper.ts`: `runTimeLimitPass` and `SweepResult.deferredCompletedCount`;
@@ -811,6 +811,8 @@ Each commit is gated on the phase exit criteria. Merge goes to master with `--no
     - Coordination: the separate ADR-177 variant task (Out of scope) will change that default. If it lands first, rebase and keep the watchdog's explicit list.
   - **Logging:** INFO `time-limit-deferred-completed-turn` (D-C1).
   - **Phase 4 exit:** full lanes are green as in Phase 1.
+
+  - **As done (2026-09-23) — Phase 4 record.** T4.1: `resolvePromptEvidence` offers a stream-lost `pending_ingest` + `completed`-probe command to `reconcilePromptCommand` once (direct binding, then host span) and re-classifies (`reconcile-host-evidence.integration.test.ts`: readable span → `pending_application` with `settled_from = host_span`; pruned span → still `pending_ingest` under a lost stream; live stream → no span read). The cases stop at the resolver: the class-to-decision mapping (`pending_application` skips, `pending_ingest` + lost crashes) is the unchanged ADR-177 table its suites pin (reconcile-sweep 56/56, turn-lost-boundary, crash-recover-turn-lost, classify 145 unit, all green with the default `variants`). T4.2: `loadPromptEvidence({variants})` (default `['node']`), `FLOW_NODE_ATTEMPT_VARIANTS` from the owner contract, `completedTurnWitness` before any teardown, `SweepResult.deferredCompletedCount`; the seven C1 rows plus "no probe under the cap" are in `time-limit-watchdog.integration.test.ts` (18/18).
 
 <!-- Commit checkpoint 5 -->
 

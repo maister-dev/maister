@@ -6,11 +6,12 @@ import type {
   PromptReceiptProbe,
 } from "./reconcile-evidence";
 
-import { and, desc, eq, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import pino from "pino";
 
 import * as schemaModule from "@/lib/db/schema";
 import { commandStreamLost } from "@/lib/execution-host/events/stream-health";
+import { reconcilePromptCommand } from "@/lib/execution-host/prompt-reconciliation";
 import {
   classifyPromptEvidence,
   isTurnLostError,
@@ -94,8 +95,16 @@ export type PromptEvidenceLookup = {
  */
 export async function loadPromptEvidence(
   db: Db,
-  input: { runId: string; nodeAttemptId: string },
+  input: {
+    runId: string;
+    nodeAttemptId: string;
+    // Crash classification reads the node action only; the duration watchdog
+    // (ADR-167 D5 amendment, D-C1) passes every flow_node_attempt variant.
+    variants?: readonly string[];
+  },
 ): Promise<PromptEvidenceLookup | null> {
+  const variants = input.variants ?? ["node"];
+
   const [row] = await db
     .select({
       id: executionCommands.id,
@@ -111,7 +120,7 @@ export async function loadPromptEvidence(
       and(
         eq(executionCommands.runId, input.runId),
         eq(executionCommands.kind, "session.prompt"),
-        sql`${executionCommands.ownerRef}->>'variant' = 'node'`,
+        inArray(sql`${executionCommands.ownerRef}->>'variant'`, [...variants]),
         sql`${executionCommands.ownerRef}->>'nodeAttemptId' = ${input.nodeAttemptId}`,
       ),
     )
@@ -124,7 +133,7 @@ export async function loadPromptEvidence(
 /** Does this row still need a host call to be classified? Only an `accepted`
  * row with no ingested terminal evidence does — every other shape is answered
  * by the ledger alone, which is what keeps the probe per-rare-candidate. */
-function needsReceiptProbe(row: PromptEvidenceLookup): boolean {
+export function needsReceiptProbe(row: PromptEvidenceLookup): boolean {
   return (
     row.state === "accepted" &&
     !row.terminalEvidenceSha256 &&
@@ -286,7 +295,7 @@ export async function resolvePromptEvidence(
   if (!row) return NO_PROMPT_EVIDENCE;
   const probed = needsReceiptProbe(row);
   const probe = probed ? await probeReceipt(transport, row.id) : undefined;
-  const evidence = classifyPromptEvidence(row, probe);
+  let evidence = classifyPromptEvidence(row, probe);
 
   if (evidence === "none")
     return { evidence, streamLost: false, commandId: row.id, nodeAttemptId };
@@ -294,6 +303,31 @@ export async function resolvePromptEvidence(
   // The ONLY bound on the skip arms: the state `runEventStreamHealthSweep`
   // writes when this manager gives up on a host's stream. Never a timer.
   const streamLost = await commandStreamLost({ db, commandId: row.id });
+
+  // ADR-167 D5 amendment (D-B7): a turn the host completed is not lost with
+  // the stream. Before the stream-lost arm crashes it, offer it once to the
+  // host-evidence feeds (the direct binding, then the verified host span) and
+  // classify again. With a live stream `pending_ingest` keeps its meaning —
+  // the waiting writer owes the next move — so nothing is read here.
+  if (streamLost && evidence === "pending_ingest" && probe === "completed") {
+    await reconcilePromptCommand({
+      db,
+      commandId: row.id,
+      lookupReceipt: (id) => transport.getCommandReceipt(id),
+    });
+    const settled = await loadPromptEvidence(db, {
+      runId: input.runId,
+      nodeAttemptId,
+    });
+
+    if (settled?.terminalEvidenceSha256) {
+      evidence = classifyPromptEvidence(settled);
+      log.info(
+        { runId: input.runId, commandId: row.id, evidence },
+        "reconcile-evidence-settled-from-host",
+      );
+    }
+  }
 
   if (probed) {
     log.info(
