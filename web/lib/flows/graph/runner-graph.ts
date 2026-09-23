@@ -84,6 +84,7 @@ import {
   markNodeNeedsInput,
   markNodeReworked,
   markNodeRunning,
+  markCoordinatorResumedRunning,
   resetReworkBaseline,
   setCheckpointRef,
   setEnforcementSnapshot,
@@ -3168,7 +3169,17 @@ export async function runGraph(
       // work; a normal NeedsInput resume still re-enters Running before its
       // action is dispatched again.
       if (!reusesCompletedAttempt) {
-        await markNodeRunning(nodeAttemptId, db);
+        if (
+          resumingThisNode &&
+          (isConsensusResume || isOrchestratorResume) &&
+          opts.driver
+        )
+          await markCoordinatorResumedRunning(
+            nodeAttemptId,
+            opts.driver.claim.assignmentId,
+            db,
+          );
+        else await markNodeRunning(nodeAttemptId, db);
       }
 
       // M11c (ADR-032): per-node enforcement gate. For capability-bearing

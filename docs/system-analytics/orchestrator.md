@@ -254,7 +254,7 @@ sequenceDiagram
     Note over R: concurrent manual-resume + event-resume converge to one (CONFLICT on the loser)
 ```
 
-#### Early settlement and post-park catch-up (Designed, P0-5 v2)
+#### Early settlement and post-park catch-up (Implemented, P0-5 v2)
 
 The child event consumer and the coordinator post-park path use one pending-child
 query and one CAS wake helper for both `orchestrator` and `consensus` parents.
@@ -271,9 +271,11 @@ NeedsInput attempt, `wait_resume` assignment and released source assignment
 with `waiting_on_children`. The continuation worker selects and revalidates
 that tuple after claim release, including a parent with no verifier command
 and a parked parent with a deferred resume marker. A stale node/attempt or
-second racer cannot dispatch. Death between park commit and the one-shot
+second racer cannot dispatch. For an orchestrator woken by a failed child,
+the wake intent remains valid while siblings are pending; consensus requires
+all draft children settled. Death between park commit and the one-shot
 catch-up remains a reconcile window; no new polling worker or DB field is
-introduced. See [consensus protocol](consensus.md#p0-5-v2-execution-contract-designed-acceptance-before-implemented).
+introduced. See [consensus protocol](consensus.md#p0-5-v2-execution-contract-implemented).
 
 ### (d) cancel / abandon cascade down the run-tree (Implemented)
 

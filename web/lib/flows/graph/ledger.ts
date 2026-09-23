@@ -155,6 +155,38 @@ export async function markNodeRunning(
   log.debug({ nodeAttemptId, status: "Running" }, "node-attempt transition");
 }
 
+/** A parked coordinator reuses its visit under the newly minted wait epoch. */
+export async function markCoordinatorResumedRunning(
+  nodeAttemptId: string,
+  assignmentId: string,
+  db?: Db,
+): Promise<void> {
+  const d = db ?? getDb();
+  const [updated] = await d
+    .update(nodeAttempts)
+    .set({ status: "Running", executionAssignmentId: assignmentId })
+    .where(
+      and(
+        eq(nodeAttempts.id, nodeAttemptId),
+        eq(nodeAttempts.status, "NeedsInput"),
+      ),
+    )
+    .returning({ id: nodeAttempts.id });
+
+  if (!updated)
+    throw new MaisterError(
+      "CONFLICT",
+      `coordinator attempt ${nodeAttemptId} is no longer parked for assignment ${assignmentId}`,
+      {
+        details: {
+          reason: "coordinator_resume_attempt_changed",
+          nodeAttemptId,
+          assignmentId,
+        },
+      },
+    );
+}
+
 export async function markNodeSucceeded(
   nodeAttemptId: string,
   args: {

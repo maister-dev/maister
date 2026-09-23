@@ -45,7 +45,7 @@ import {
 } from "@/lib/agents/permission-resume";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { hitlRequests, runs, workspaces, runSyncAttempts } =
+const { hitlRequests, runs, workspaces, runSyncAttempts, nodeAttempts } =
   schemaModule as unknown as Record<string, any>;
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
@@ -150,6 +150,7 @@ async function releaseSyncClaimOnTerminal(
 
 export type StateTransitionOptions = {
   db?: Db;
+  expectedCoordinator?: { nodeId: string; nodeAttemptId: string };
   recordSuccessAudit?: (db: Db) => Promise<void>;
   // ADR-166 D3: a claim transition that starts a new driver generation mints
   // its epoch inside the CAS tx. A caller that already resolved the local host
@@ -484,6 +485,32 @@ export async function markResumedFromWait(
   return await (db as { transaction: any }).transaction(
     async (tx: Db): Promise<StateTransitionResult> => {
       await takeSchedulerLock(tx);
+      if (opts.expectedCoordinator) {
+        const [current] = await tx
+          .select({ status: runs.status, currentStepId: runs.currentStepId })
+          .from(runs)
+          .where(eq(runs.id, runId))
+          .for("update");
+        const [attempt] = await tx
+          .select({ id: nodeAttempts.id, status: nodeAttempts.status })
+          .from(nodeAttempts)
+          .where(
+            and(
+              eq(nodeAttempts.runId, runId),
+              eq(nodeAttempts.nodeId, opts.expectedCoordinator.nodeId),
+            ),
+          )
+          .orderBy(sql`${nodeAttempts.attempt} DESC`)
+          .limit(1);
+
+        if (
+          current?.status !== "WaitingOnChildren" ||
+          current.currentStepId !== opts.expectedCoordinator.nodeId ||
+          attempt?.id !== opts.expectedCoordinator.nodeAttemptId ||
+          attempt.status !== "NeedsInput"
+        )
+          return { ok: false, reason: "status-guard-mismatch" };
+      }
       if ((await countLiveRuns(tx, "flow")) >= capForPool("flow")) {
         const deferred = await tx
           .update(runs)

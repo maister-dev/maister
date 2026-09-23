@@ -25,6 +25,7 @@ import pino from "pino";
 import { runFlow } from "../runner";
 
 import { openFlowPromptExists } from "./prompt-permission";
+import { readCoordinatorWakeIntent } from "./coordinator-wake";
 import { pendingGatePermissionResumeExists } from "./gate-permission-resume";
 
 import {
@@ -91,6 +92,7 @@ export function startFlowContinuationWorker(input: {
               currentStepId: runs.currentStepId,
               crashRecoverAttempts: runs.crashRecoverAttempts,
               crashRecoverNextRetryAt: runs.crashRecoverNextRetryAt,
+              placementReason: executionAssignments.placementReason,
             })
             .from(runs)
             .innerJoin(
@@ -163,9 +165,16 @@ export function startFlowContinuationWorker(input: {
                             and(
                               eq(nodeAttempts.runId, runs.id),
                               eq(nodeAttempts.nodeId, runs.currentStepId),
-                              eq(
-                                nodeAttempts.executionAssignmentId,
-                                executionAssignments.id,
+                              or(
+                                eq(
+                                  nodeAttempts.executionAssignmentId,
+                                  executionAssignments.id,
+                                ),
+                                and(
+                                  eq(runs.status, "WaitingOnChildren"),
+                                  eq(nodeAttempts.nodeType, "consensus"),
+                                  eq(nodeAttempts.status, "NeedsInput"),
+                                ),
                               ),
                               or(
                                 and(
@@ -182,6 +191,7 @@ export function startFlowContinuationWorker(input: {
                                         "ai_coding",
                                         "judge",
                                         "orchestrator",
+                                        "consensus",
                                       ]),
                                     ),
                                     exists(
@@ -210,6 +220,25 @@ export function startFlowContinuationWorker(input: {
                           ),
                       ),
                     ),
+                  ),
+                  and(
+                    eq(runs.status, "Running"),
+                    eq(executionAssignments.state, "active"),
+                    eq(executionAssignments.placementReason, "wait_resume"),
+                    sql`EXISTS (
+                      SELECT 1 FROM node_attempts wake_attempt
+                      JOIN execution_assignments source_assignment
+                        ON source_assignment.id = wake_attempt.execution_assignment_id
+                      WHERE wake_attempt.run_id = ${runs.id}
+                        AND wake_attempt.node_id = ${runs.currentStepId}
+                        AND wake_attempt.status = 'NeedsInput'
+                        AND wake_attempt.node_type IN ('consensus', 'orchestrator')
+                        AND source_assignment.run_id = ${runs.id}
+                        AND source_assignment.state = 'released'
+                        AND source_assignment.released_reason = 'waiting_on_children'
+                        AND source_assignment.execution_host_id = ${executionAssignments.executionHostId}
+                        AND source_assignment.epoch < ${executionAssignments.epoch}
+                    )`,
                   ),
                   // ADR-176 C: the committed recover intent. It satisfies NONE
                   // of the evidence arms above — the crashed attempt is bound to
@@ -287,7 +316,21 @@ export function startFlowContinuationWorker(input: {
 
           if (!resumed.ok) continue;
         }
-        await runFlow(candidate.id, { ...input, signal: controller.signal });
+        const wakeIntent =
+          candidate.status === "WaitingOnChildren" ||
+          candidate.placementReason === "wait_resume"
+            ? await readCoordinatorWakeIntent(input.db, candidate.id)
+            : null;
+
+        await runFlow(candidate.id, {
+          ...input,
+          signal: controller.signal,
+          ...(wakeIntent?.nodeType === "consensus"
+            ? { consensusResume: { targetStepId: wakeIntent.nodeId } }
+            : wakeIntent?.nodeType === "orchestrator"
+              ? { orchestratorResume: { targetStepId: wakeIntent.nodeId } }
+              : {}),
+        });
         failures.delete(slot);
       } catch (error) {
         const reason = isMaisterError(error) ? error.code : "service_failure";
