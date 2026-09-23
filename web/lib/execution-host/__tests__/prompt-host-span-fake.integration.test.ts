@@ -283,6 +283,59 @@ describe("host-span settlement on the fake host", () => {
     });
   });
 
+  it("B-write-failed: a host-span write the database refuses leaves the command waiting for the canonical feed", async () => {
+    const { client, hostSessionId } = await laggingSession();
+    const handle = await prompt(client, hostSessionId);
+
+    await expect
+      .poll(
+        async () =>
+          (await fake.transport.getCommandReceipt(handle.commandId))?.phase,
+        { timeout: 10_000 },
+      )
+      .toBe("completed");
+    await database.pool.query(`
+      CREATE FUNCTION fail_host_span_write() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF NEW.settled_from = 'host_span' THEN
+          RAISE EXCEPTION 'fixture host-span write failure' USING ERRCODE = '40001';
+        END IF;
+        RETURN NEW;
+      END $$`);
+    await database.pool.query(`
+      CREATE TRIGGER fail_host_span_write BEFORE UPDATE ON execution_commands
+      FOR EACH ROW EXECUTE FUNCTION fail_host_span_write()`);
+    try {
+      // The span is readable and verified; only the write fails. That is no
+      // evidence against the command, so the waiter keeps waiting.
+      await expect(reconcile(handle.commandId)).resolves.toMatchObject({
+        disposition: "waiting",
+      });
+      expect(await command(handle.commandId)).toMatchObject({
+        terminalEvidenceSha256: null,
+        settledFrom: null,
+        applicationError: null,
+      });
+    } finally {
+      await database.pool.query(
+        "DROP TRIGGER fail_host_span_write ON execution_commands",
+      );
+      await database.pool.query("DROP FUNCTION fail_host_span_write()");
+    }
+
+    await fake.releaseIngest();
+    expect(
+      (
+        await client.waitForPrompt(handle, {
+          signal: AbortSignal.timeout(10_000),
+        })
+      ).stopReason,
+    ).toBe("end_turn");
+    expect(await command(handle.commandId)).toMatchObject({
+      settledFrom: "canonical",
+    });
+  });
+
   it("B-failed: a rejected turn is never read from the host span; it settles canonically", async () => {
     const { client, hostSessionId } = await laggingSession();
 

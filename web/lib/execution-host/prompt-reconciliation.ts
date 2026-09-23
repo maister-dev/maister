@@ -265,7 +265,32 @@ async function attemptHostSpan(
     { commandId, feed: "host_span", reason: "span_verified" },
     "prompt-evidence-feed-selected",
   );
-  const result = await reduceHostSpanEvidence(db, commandId, terminal);
+  let result;
+
+  try {
+    result = await reduceHostSpanEvidence(db, commandId, terminal);
+  } catch (error) {
+    if (signal.aborted) throw error;
+    // A failed fast-feed write is no more evidence than an unreadable span:
+    // the canonical feed still settles the command. Surface it here, because
+    // a flow wait turns any thrown error into a cause-less continuation yield.
+    const sqlState = (error as { code?: unknown } | null)?.code;
+
+    log.warn(
+      {
+        commandId,
+        causeCode:
+          typeof sqlState === "string"
+            ? sqlState
+            : error instanceof Error
+              ? error.name
+              : "unknown",
+      },
+      "prompt-host-span-settlement-failed",
+    );
+
+    return null;
+  }
 
   if (result.settledHere) {
     const [stream] = terminal.eventStreamId
