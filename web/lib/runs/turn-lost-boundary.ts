@@ -2,12 +2,16 @@ import "server-only";
 
 import type { CrashReason } from "@/lib/runs/state-transitions";
 
-import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import pino from "pino";
 
 import * as schemaModule from "@/lib/db/schema";
 import { TURN_LOST_DECISION } from "@/lib/flows/graph/attempt-decisions";
-import { resolveEvidenceAttemptId } from "@/lib/reconcile-evidence-db";
+import {
+  CURRENT_TURN_VARIANTS,
+  loadPromptEvidence,
+  resolveEvidenceAttemptId,
+} from "@/lib/reconcile-evidence-db";
 import { crashRunningRun } from "@/lib/runs/state-transitions";
 import { MaisterError } from "@/lib/errors";
 
@@ -32,7 +36,7 @@ export type TurnLostBoundaryResult = "applied" | "not-claimed" | "lost-cas";
 // the graph on a row the ledger still calls `Running`, and an attempt closed
 // without its command discharged strands the command `owner_unapplied` forever.
 export class TurnLostCasLost extends MaisterError {
-  constructor(readonly guard: "attempt" | "run" | "command") {
+  constructor(readonly guard: "attempt" | "run" | "command" | "gate") {
     super("CONFLICT", "turn-lost boundary lost a guard", {
       details: { reason: "turn_lost_cas_lost", guard },
     });
@@ -185,31 +189,35 @@ export async function applyTurnLostBoundary(input: {
 
     return "not-claimed";
   }
-  const [command] = input.commandId
+  // The SAME lookup the sweep classified from when the caller names no command.
+  const targetId =
+    input.commandId ??
+    (
+      await loadPromptEvidence(db, {
+        runId,
+        nodeAttemptId: attempt.id,
+        variants: CURRENT_TURN_VARIANTS,
+      })
+    )?.id;
+  const [command] = targetId
     ? await db
         .select({
           id: executionCommands.id,
           applicationState: executionCommands.applicationState,
+          ownerRef: executionCommands.ownerRef,
         })
         .from(executionCommands)
-        .where(eq(executionCommands.id, input.commandId))
-    : await db
-        .select({
-          id: executionCommands.id,
-          applicationState: executionCommands.applicationState,
-        })
-        .from(executionCommands)
-        .where(
-          and(
-            eq(executionCommands.runId, runId),
-            eq(executionCommands.kind, "session.prompt"),
-            sql`${executionCommands.ownerRef}->>'variant' = 'node'`,
-            sql`${executionCommands.ownerRef}->>'nodeAttemptId' = ${attempt.id}`,
-          ),
-        )
-        .orderBy(desc(executionCommands.createdAt))
-        .limit(1);
+        .where(eq(executionCommands.id, targetId))
+    : [];
   const commandId: string | null = command?.id ?? null;
+  // A gate turn is the attempt's turn too, but it runs AFTER the action applied
+  // its completion, and its evaluation must not be left `running`: the gate
+  // owner's lost-turn arm (`flows/graph/prompt-owner.ts`) makes the same writes.
+  const gateEvaluationId =
+    command?.ownerRef?.variant === "gate_ai" ||
+    command?.ownerRef?.variant === "gate_skill"
+      ? String(command.ownerRef.evaluationId)
+      : null;
   // Already `applied` or `superseded` means the discharge obligation is MET,
   // not that a race was lost. It is reachable on exactly one arm: `quarantine()`
   // writes `application_state = completion_applied_at ? "applied" : "poisoned"`,
@@ -232,14 +240,53 @@ export async function applyTurnLostBoundary(input: {
     return "not-claimed";
   }
 
+  // Resolved on the gate path only: the gate store's module graph (artifacts,
+  // webhooks) and the `gate_results` table must not ride every caller of this
+  // boundary — suites that partially mock the schema load it, and a vitest mock
+  // throws on any read of an export it does not define.
+  const gateStore = gateEvaluationId
+    ? await import("@/lib/flows/graph/gate-store")
+    : null;
+  const gateResults = gateEvaluationId
+    ? // FIXME(any): dual drizzle-orm peer-dep variants.
+      (schemaModule as unknown as Record<string, any>).gateResults
+    : null;
   const applied = await db
     .transaction(async (tx: Db) => {
+      const [evaluation] = gateEvaluationId
+        ? await tx
+            .select({
+              runId: gateResults.runId,
+              nodeAttemptId: gateResults.nodeAttemptId,
+              status: gateResults.status,
+            })
+            .from(gateResults)
+            .where(eq(gateResults.id, gateEvaluationId))
+            .for("update")
+        : [];
+
+      // The gate owner's identity check: the evaluation belongs to this attempt.
+      if (
+        gateEvaluationId &&
+        (evaluation?.runId !== runId ||
+          evaluation?.nodeAttemptId !== attempt.id)
+      )
+        throw new TurnLostCasLost("gate");
       await closeTurnLostAttempt(tx, {
         runId,
         nodeAttemptId: attempt.id,
         reason: input.reason,
         fromStatuses: input.fromStatuses,
+        // The action's completion is the node's real result and is preserved.
+        admitCompletedAction: gateEvaluationId !== null,
       });
+      // `stale`, never `failed`: the gate was invalidated, not decided. A
+      // verdict already recorded (a conflict found after application) stays.
+      if (
+        gateEvaluationId &&
+        (evaluation.status === "pending" || evaluation.status === "running")
+      )
+        await gateStore!.markGateStale(gateEvaluationId, tx);
 
       if (alreadyDischarged) return true;
 

@@ -254,6 +254,67 @@ describe("the quarantine refusal survives the attempt close (Codex review)", () 
     ).toBe("quarantined");
   }, 60_000);
 
+  // ADR-177 amendment (2026-09-23): the sweep now classifies the attempt's
+  // CURRENT turn, so its `owner-poisoned` boundary can close an attempt whose
+  // quarantined command is a permission resume or a gate — newer than, and
+  // different from, the attempt's `node` command.
+  it.each([
+    ["permission_resume", { hitlRequestId: randomUUID() }],
+    ["gate_ai", { gateId: "review", evaluationId: randomUUID() }],
+  ] as const)(
+    "a quarantined %s command on a CLOSED attempt still refuses the re-prompt",
+    async (variant, extra) => {
+      const seeded = await seedCrashed();
+      const base = (
+        await testDatabase.db
+          .select()
+          .from(executionCommands)
+          .where(eq(executionCommands.id, seeded.commandId))
+      )[0];
+
+      await testDatabase.db.insert(executionCommands).values({
+        id: randomUUID(),
+        runId: seeded.runId,
+        executionAssignmentId: base.executionAssignmentId,
+        executionHostId: base.executionHostId,
+        assignmentEpoch: base.assignmentEpoch,
+        kind: "session.prompt",
+        targetSessionId: base.targetSessionId,
+        payload: {},
+        maxAttempts: 3,
+        ownerKind: "flow_node_attempt",
+        ownerRef: { ...base.ownerRef, variant, ...extra },
+        logicalOperationKey: `flow_node_attempt:${variant}:${randomUUID()}:0`,
+        requestSchema: "maister.command.request.v1",
+        requestSha256: "e".repeat(64),
+        state: "accepted",
+        acceptedAt: new Date(Date.now() - 60_000),
+        createdAt: new Date(Date.now() + 1_000),
+        applicationState: "poisoned",
+        applicationError: {
+          reason: "prompt_terminal_conflict",
+          phase: "prepare",
+          causeCode: "x",
+        },
+      });
+      await testDatabase.db
+        .update(nodeAttempts)
+        .set({ status: "Reworked", decision: "turn_lost", endedAt: new Date() })
+        .where(eq(nodeAttempts.id, seeded.nodeAttemptId));
+      const assignmentId = await mintResume(seeded.runId);
+
+      expect(
+        await applyCrashedTurnEvidence(db, {
+          runId: seeded.runId,
+          nodeId: "implement",
+          assignmentId,
+        }),
+        "`absent` here routes to a fresh dispatch and re-prompts a disagreeing turn",
+      ).toBe("quarantined");
+    },
+    60_000,
+  );
+
   it("a CLOSED attempt with no quarantine still answers absent", async () => {
     // The negative: closing an attempt must not start refusing ordinary
     // recovers. Without this the fix would block every re-dispatch.

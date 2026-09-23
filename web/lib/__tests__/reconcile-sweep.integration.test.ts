@@ -1562,7 +1562,13 @@ async function seedOwnedPrompt(
   runId: string,
   hostId: string,
   overrides: Record<string, unknown> = {},
-  opts: { attemptStartedAt?: Date; nodeAttemptId?: string } = {},
+  opts: {
+    attemptStartedAt?: Date;
+    nodeAttemptId?: string;
+    // A non-`node` owner (permission_resume, a gate): merged over the node ref.
+    ownerRef?: Record<string, unknown>;
+    logicalOperationKey?: string;
+  } = {},
 ): Promise<SeededPrompt> {
   const { mintAssignment } = await import("@/lib/execution-host/assignments");
   const existing = await db
@@ -1620,8 +1626,10 @@ async function seedOwnedPrompt(
       incarnationId: randomUUID(),
       assignmentId,
       assignmentEpoch,
+      ...opts.ownerRef,
     },
-    logicalOperationKey: `flow_node_attempt:node:${nodeAttemptId}:0`,
+    logicalOperationKey:
+      opts.logicalOperationKey ?? `flow_node_attempt:node:${nodeAttemptId}:0`,
     requestSchema: "maister.command.request.v1",
     requestSha256: "a".repeat(64),
     state: "accepted",
@@ -1673,6 +1681,34 @@ async function markHostStreamLost(hostId: string): Promise<void> {
     state: "lost",
   });
 }
+
+// A v1 `accepted` + `inflight:false` receipt: the host restarted mid-turn.
+// Answered for ANY command, so only the command the lookup picks is probed.
+const turnLostReceipt =
+  (runId: string) =>
+  async (commandId: string): Promise<unknown> => ({
+    commandId,
+    runId,
+    kind: "session.prompt",
+    assignmentEpoch: 1,
+    phase: "accepted",
+    httpStatus: 202,
+    body: {},
+    receivedAt: new Date().toISOString(),
+    completedAt: null,
+    eventId: null,
+    inflight: false,
+  });
+
+// The pre-permission action turn a permission resume or a gate follows: it was
+// applied, and it is OLDER than the turn that is live now.
+const APPLIED_EARLIER = {
+  state: "succeeded" as const,
+  createdAt: new Date(Date.now() - 200_000),
+  completedAt: new Date(Date.now() - 190_000),
+  applicationState: "applied" as const,
+  completionAppliedAt: new Date(Date.now() - 180_000),
+};
 
 describe("runReconcileSweep — evidence-first crash classification (ADR-177)", () => {
   it("RED 1: a settled turn_lost past grace crashes turn-lost through ONE boundary — attempt closed, command discharged", async () => {
@@ -2244,5 +2280,165 @@ describe("runReconcileSweep — evidence-first crash classification (ADR-177)", 
         graceMs: 0,
       }),
     ).toBeNull();
+  }, 60_000);
+  // ADR-177 amendment 2026-09-23: "the current attempt's newest owned
+  // session.prompt" is the turn that is live NOW — a permission-resumed action
+  // or a gate evaluation runs on the same attempt as a NEWER command than the
+  // applied `node` turn before it. Reading `node` alone answered `applied` for
+  // a turn the classifier never looked at.
+  it("RED 7: a permission-resumed action turn the host lost crashes turn-lost — not skipped as the applied pre-permission turn", async () => {
+    const runId = await seedRun({ acpSessionId: null });
+
+    await seedWorkspace(runId, "/worktrees/permission-resume-lost");
+    const { opts, hostId } = await makeOpts({
+      worktreePaths: ["/worktrees/permission-resume-lost"],
+      liveSessions: [],
+      getCommandReceipt: turnLostReceipt(runId),
+    });
+    const before = await seedOwnedPrompt(runId, hostId, APPLIED_EARLIER);
+    const hitlRequestId = randomUUID();
+    const resumed = await seedOwnedPrompt(
+      runId,
+      hostId,
+      { createdAt: new Date(Date.now() - 100_000) },
+      {
+        nodeAttemptId: before.nodeAttemptId,
+        ownerRef: { variant: "permission_resume", hitlRequestId },
+        logicalOperationKey: `flow_node_attempt:permission_resume:${before.nodeAttemptId}:0`,
+      },
+    );
+
+    const summary = await runReconcileSweep(opts);
+    const run = await readRun(runId);
+
+    expect(
+      run.status,
+      "the live turn is the permission_resume command; the applied node turn before it is history",
+    ).toBe("Crashed");
+    expect(summary.turnLost).toBeGreaterThanOrEqual(1);
+    expect(await readAttempt(before.nodeAttemptId)).toMatchObject({
+      status: "Reworked",
+      decision: "turn_lost",
+      errorCode: "CRASH",
+    });
+    expect(
+      (await readCommand(resumed.commandId)).applicationState,
+      "the boundary discharges the command it classified",
+    ).toBe("applied");
+    expect(
+      (await readCommand(before.commandId)).completionAppliedAt?.getTime(),
+      "the earlier applied turn is not rewritten",
+    ).toBe(APPLIED_EARLIER.completionAppliedAt.getTime());
+  }, 60_000);
+
+  it("RED 8: a gate turn the host lost stales its evaluation and crashes turn-lost, keeping the action's completion", async () => {
+    const runId = await seedRun({ acpSessionId: null });
+
+    await seedWorkspace(runId, "/worktrees/gate-lost");
+    const { opts, hostId } = await makeOpts({
+      worktreePaths: ["/worktrees/gate-lost"],
+      liveSessions: [],
+      getCommandReceipt: turnLostReceipt(runId),
+    });
+    const action = await seedOwnedPrompt(runId, hostId, APPLIED_EARLIER);
+
+    // Gates run AFTER the action persisted its completion on the SAME attempt.
+    await db
+      .update(nodeAttempts)
+      .set({
+        actionCompletion: {
+          version: 1,
+          commandId: action.commandId,
+          promptOrdinal: 0,
+          result: { ok: true, stdout: "action done", vars: {} },
+          originalOutput: { kind: "sentinel", text: "done", truncated: false },
+        },
+      })
+      .where(eq(nodeAttempts.id, action.nodeAttemptId));
+    const evaluationId = randomUUID();
+
+    await db.insert(schema.gateResults).values({
+      id: evaluationId,
+      runId,
+      nodeAttemptId: action.nodeAttemptId,
+      gateId: "review",
+      kind: "ai_judgment",
+      mode: "blocking",
+      status: "running",
+    });
+    const gate = await seedOwnedPrompt(
+      runId,
+      hostId,
+      { createdAt: new Date(Date.now() - 100_000) },
+      {
+        nodeAttemptId: action.nodeAttemptId,
+        ownerRef: { variant: "gate_ai", gateId: "review", evaluationId },
+        logicalOperationKey: `flow_node_attempt:gate_ai:${evaluationId}:0`,
+      },
+    );
+
+    const summary = await runReconcileSweep(opts);
+    const attempt = await readAttempt(action.nodeAttemptId);
+    const [evaluation] = await db
+      .select()
+      .from(schema.gateResults)
+      .where(eq(schema.gateResults.id, evaluationId));
+
+    expect((await readRun(runId)).status).toBe("Crashed");
+    expect(summary.turnLost).toBeGreaterThanOrEqual(1);
+    expect(attempt).toMatchObject({
+      status: "Reworked",
+      decision: "turn_lost",
+    });
+    expect(
+      attempt.actionCompletion,
+      "a lost gate turn does not discard the action's own result",
+    ).not.toBeNull();
+    // `stale`, not `failed`: a host restart is not a gate verdict (ADR-177 D3).
+    expect(evaluation.status).toBe("stale");
+    expect((await readCommand(gate.commandId)).applicationState).toBe(
+      "applied",
+    );
+  }, 60_000);
+
+  it("an APPLIED gate turn after the action is still SKIPPED (evidence-applied) — the continuation worker owns it", async () => {
+    const runId = await seedRun({ acpSessionId: null });
+
+    await seedWorkspace(runId, "/worktrees/gate-applied");
+    const { opts, hostId } = await makeOpts({
+      worktreePaths: ["/worktrees/gate-applied"],
+      liveSessions: [],
+    });
+    const action = await seedOwnedPrompt(runId, hostId, APPLIED_EARLIER);
+    const evaluationId = randomUUID();
+
+    await db.insert(schema.gateResults).values({
+      id: evaluationId,
+      runId,
+      nodeAttemptId: action.nodeAttemptId,
+      gateId: "review",
+      kind: "ai_judgment",
+      mode: "blocking",
+      status: "passed",
+    });
+    await seedOwnedPrompt(
+      runId,
+      hostId,
+      {
+        ...APPLIED_EARLIER,
+        createdAt: new Date(Date.now() - 100_000),
+        completionAppliedAt: new Date(Date.now() - 90_000),
+      },
+      {
+        nodeAttemptId: action.nodeAttemptId,
+        ownerRef: { variant: "gate_ai", gateId: "review", evaluationId },
+        logicalOperationKey: `flow_node_attempt:gate_ai:${evaluationId}:0`,
+      },
+    );
+
+    const summary = await runReconcileSweep(opts);
+
+    expect((await readRun(runId)).status).toBe("Running");
+    expect(summary.evidenceApplied).toBeGreaterThanOrEqual(1);
   }, 60_000);
 });

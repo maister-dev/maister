@@ -759,6 +759,24 @@ was before ADR-177.
 attempt's newest owned `session.prompt` row plus — for an `accepted` row with no
 terminal evidence — one `GET /commands/{id}` receipt probe. It is resolved in the
 sweep's per-candidate enrichment block, so the classifier itself stays pure.
+
+"The current attempt's newest owned `session.prompt`" is the newest command of
+the open `Running` attempt at `current_step_id` whose owner variant is in
+`CURRENT_TURN_VARIANTS` (`web/lib/reconcile-evidence-db.ts`): the action
+(`node`), the same action resumed after a permission answer
+(`permission_resume` — a newer command with the same attempt and prompt
+ordinal), and the gate evaluations that run on the attempt after its action
+applied (`gate_ai`, `gate_skill`). Reading `node` alone answered `applied` from
+the finished turn before a resume or a gate (ADR-177 amendment, 2026-09-23).
+The consensus variants are not included: a consensus node is outside the
+evidence gate. When the classified command is a gate's, the crash boundary
+makes the gate owner's writes as well: the evaluation must belong to the
+attempt (otherwise nothing is written), the attempt closes with the action's
+`action_completion` preserved, and an undecided evaluation becomes `stale` —
+never `failed`, since a host restart is not a verdict; a verdict already
+recorded stays. Recover's refusal to re-prompt a quarantined turn on a closed
+attempt reads the same set of variants, so a resume or gate turn the boundary
+closed as `owner-poisoned` is not re-prompted either.
 Every class names the writer that owes the next move and the shape the run ends
 in if that writer never comes.
 

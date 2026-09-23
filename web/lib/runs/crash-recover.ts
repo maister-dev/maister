@@ -2,7 +2,7 @@ import "server-only";
 
 import type { FlowActionCompletion } from "@/lib/flows/graph/action-completion";
 
-import { and, desc, eq, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import pino from "pino";
 
 import * as schemaModule from "@/lib/db/schema";
@@ -11,6 +11,7 @@ import { decodeNodePromptCompletion } from "@/lib/flows/graph/node-prompt-owner"
 import { readPromptOutput } from "@/lib/execution-host/prompt-output";
 import { reconcilePromptCommand } from "@/lib/execution-host/prompt-reconciliation";
 import { isTurnLostError } from "@/lib/reconcile-evidence";
+import { CURRENT_TURN_VARIANTS } from "@/lib/reconcile-evidence-db";
 import { resolveNodeResumeSessionId } from "@/lib/runs/node-resume-session";
 import { MaisterError } from "@/lib/errors";
 
@@ -102,7 +103,11 @@ async function quarantinedOnClosedAttempt(
       and(
         eq(executionCommands.runId, input.runId),
         eq(executionCommands.kind, "session.prompt"),
-        sql`${executionCommands.ownerRef}->>'variant' = 'node'`,
+        // Every turn the sweep's boundary can close on: since the ADR-177
+        // amendment (2026-09-23) that is a permission resume or a gate too.
+        inArray(sql`${executionCommands.ownerRef}->>'variant'`, [
+          ...CURRENT_TURN_VARIANTS,
+        ]),
         sql`${executionCommands.applicationError}->>'reason' = 'prompt_terminal_conflict'`,
         eq(nodeAttempts.nodeId, input.nodeId),
       ),

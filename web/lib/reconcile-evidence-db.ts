@@ -78,7 +78,22 @@ export type PromptEvidenceLookup = {
   terminalEvidenceSha256: string | null;
 };
 
-/** The current attempt's newest OWNED `session.prompt`.
+/** ADR-177 (amended 2026-09-23): the owned prompts that ARE the current
+ * attempt's turn on an agent node. The action (`node`); the same action
+ * continued after a permission answer (`permission_resume` — same attempt, same
+ * prompt ordinal, a NEWER command); and the gate evaluations that run on the
+ * attempt after its action applied (`gate_ai`, `gate_skill`). Reading `node`
+ * alone answered `applied` from the finished turn before them. The consensus
+ * variants are not the attempt's turn here: a consensus node is outside the
+ * sweep's evidence gate. */
+export const CURRENT_TURN_VARIANTS = [
+  "node",
+  "permission_resume",
+  "gate_ai",
+  "gate_skill",
+] as const;
+
+/** The current attempt's newest OWNED `session.prompt` among `variants`.
  *
  * Attempt-scoped by `owner_ref->>'nodeAttemptId'`, which is what makes a
  * command orphaned on a CLOSED attempt invisible here — and therefore what
@@ -98,13 +113,12 @@ export async function loadPromptEvidence(
   input: {
     runId: string;
     nodeAttemptId: string;
-    // Crash classification reads the node action only; the duration watchdog
-    // (ADR-167 D5 amendment, D-C1) passes every flow_node_attempt variant.
-    variants?: readonly string[];
+    // Required, never defaulted: crash classification passes
+    // CURRENT_TURN_VARIANTS, the duration watchdog (ADR-167 D5 amendment,
+    // D-C1) every flow_node_attempt variant.
+    variants: readonly string[];
   },
 ): Promise<PromptEvidenceLookup | null> {
-  const variants = input.variants ?? ["node"];
-
   const [row] = await db
     .select({
       id: executionCommands.id,
@@ -120,7 +134,9 @@ export async function loadPromptEvidence(
       and(
         eq(executionCommands.runId, input.runId),
         eq(executionCommands.kind, "session.prompt"),
-        inArray(sql`${executionCommands.ownerRef}->>'variant'`, [...variants]),
+        inArray(sql`${executionCommands.ownerRef}->>'variant'`, [
+          ...input.variants,
+        ]),
         sql`${executionCommands.ownerRef}->>'nodeAttemptId' = ${input.nodeAttemptId}`,
       ),
     )
@@ -290,6 +306,7 @@ export async function resolvePromptEvidence(
   const row = await loadPromptEvidence(db, {
     runId: input.runId,
     nodeAttemptId,
+    variants: CURRENT_TURN_VARIANTS,
   });
 
   if (!row) return NO_PROMPT_EVIDENCE;
@@ -318,6 +335,7 @@ export async function resolvePromptEvidence(
     const settled = await loadPromptEvidence(db, {
       runId: input.runId,
       nodeAttemptId,
+      variants: CURRENT_TURN_VARIANTS,
     });
 
     if (settled?.terminalEvidenceSha256) {
