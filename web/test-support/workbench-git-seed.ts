@@ -30,6 +30,9 @@ export type WorkbenchRunSeed = {
   archivedBranch?: string | null;
   workspaceMode?: "own" | "shared" | null;
   parentRunId?: string | null;
+  // The allocator of a shared writable tree (ADR-102): `shared` + `worktree`,
+  // rooted at itself, so siblings join it by `root_run_id = runId`.
+  sharedTreeAllocator?: boolean;
 };
 
 export type SeededWorkbenchRun = {
@@ -91,7 +94,12 @@ export async function seedWorkbenchRun(
     flowVersion: "v1.0.0",
     status: seed.status ?? "Failed",
     runKind: seed.runKind ?? "flow",
-    workspaceMode: seed.workspaceMode ?? null,
+    workspaceMode: seed.sharedTreeAllocator
+      ? "shared"
+      : (seed.workspaceMode ?? null),
+    ...(seed.sharedTreeAllocator
+      ? { agentWorkspace: "worktree", rootRunId: runId }
+      : {}),
     parentRunId: seed.parentRunId ?? null,
     startedAt: new Date(),
     endedAt: new Date(),

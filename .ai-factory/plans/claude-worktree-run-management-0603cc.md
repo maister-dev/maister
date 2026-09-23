@@ -1603,9 +1603,16 @@ after drop; refactor gate passed.
 and the panel's publish → open PR → finalize converge on identical rows; scratch
 honours its three modes; refactor gate passed.
 
-- [ ] **T3.0 — RED battery (Phase 3).** RED 18–23, red on the Phase-2 tree.
+- [x] **T3.0 — RED battery (Phase 3).** RED 18–23, red on the Phase-2 tree.
       **AC**: as T1.0; the provider boundary is mocked at `node:child_process` /
       `fetch` (RED 18) and at the service seam (RED 19–22).
+      **Confirmed 2026-09-23** against the Phase-2 `promote.ts` / `pr-adapter.ts`:
+      unit 9 red for the stated reasons (4 adapter, 3 scratch promotion incl. the
+      scratch claim's workbench fence, the promotion's `draft: false`, the
+      scratch PR), the two
+      foreign-target controls green by design; RED 19 (13) and RED 20 (16) red at
+      the absent routes; RED 23 green (a guard). The `seedCandidate` gains a
+      `status`, `seedWorkbenchRun` a `sharedTreeAllocator`.
 
 **Commit 6** — `test(workbench-git): RED — a PR is a promotion`
 

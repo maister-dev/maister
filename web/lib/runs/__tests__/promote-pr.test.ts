@@ -351,12 +351,14 @@ describe("promoteRun — pull_request happy path (github)", () => {
     expect(pushOrder).toBeLessThan(prOrder);
 
     // createOrUpdatePr received the source/target branches — the PR head is
-    // the public name the push created.
+    // the public name the push created. A promotion opens a ready PR (ADR-181
+    // D11: the panel's Open PR is where a draft is asked for).
     expect(createOrUpdatePr).toHaveBeenCalledWith(
       expect.objectContaining({
         repoPath: "/repos/demo",
         sourceBranch: "feature/DEMO-5-ship-it",
         targetBranch: "main",
+        draft: false,
       }),
     );
 
@@ -408,6 +410,138 @@ describe("promoteRun — pull_request happy path (github)", () => {
 
     // The PR url/number is captured in the recorded artifact (no new kind — Q3).
     expect(serialized).toContain("https://github.com/org/repo/pull/77");
+  });
+});
+
+// =============================================================================
+// ADR-181 D13 (RED 22): a scratch run promotes through a PR — the same publish
+// and open cores, onto its locked target, and the scratch dialog settles Done.
+// =============================================================================
+
+function seedGithubScratchRun(): string {
+  const runId = "run-scratch-pr";
+
+  dbState.tables.runs.push({
+    id: runId,
+    runKind: "scratch",
+    projectId: "project-1",
+    taskId: null,
+    status: "Review",
+    acpSessionId: "acp-2",
+    currentStepId: "scratch-dialog",
+    endedAt: null,
+  });
+  dbState.tables.scratch_runs.push({
+    runId,
+    projectId: "project-1",
+    baseBranch: "main",
+    baseCommit: "abc1234",
+    targetBranch: null,
+    dialogStatus: "Review",
+    supervisorSessionId: "sup-1",
+    updatedAt: null,
+  });
+  dbState.tables.projects.push({
+    id: "project-1",
+    slug: "demo",
+    taskKey: "DEMO",
+    mainBranch: "main",
+    provider: "github",
+    repoUrl: "https://github.com/org/repo.git",
+  });
+  dbState.tables.workspaces.push({
+    id: "workspace-2",
+    runId,
+    projectId: "project-1",
+    branch: "scratch/demo",
+    worktreePath: "/wt/scratch-demo",
+    parentRepoPath: "/repos/demo",
+    removedAt: null,
+    baseBranch: "main",
+    baseCommit: "abc1234",
+    targetBranch: "main",
+    promotionMode: "local_merge",
+    promotionState: "none",
+    promotionAttemptId: null,
+    promotionClaimedAt: null,
+    promotionOwnerUserId: null,
+    prUrl: null,
+    prNumber: null,
+    promotedAt: null,
+    scheduledRemovalAt: null,
+  });
+
+  return runId;
+}
+
+describe("promoteRun — scratch pull_request (ADR-181 D13)", () => {
+  it("publishes under the public name, opens the PR onto the locked target, and settles the dialog Done", async () => {
+    const runId = seedGithubScratchRun();
+    // A task-less run's `{task_key}` falls back to its run id.
+    const publicBranch = `feature/run-${runId.slice(0, 8)}`;
+
+    const res = await callPromote(runId, { mode: "pull_request" });
+
+    expect(res).toMatchObject({
+      ok: true,
+      mode: "pull_request",
+      pullRequestUrl: "https://github.com/org/repo/pull/77",
+      prNumber: 77,
+    });
+    expect(assertEvidenceReady).toHaveBeenCalledWith(
+      runId,
+      "merge",
+      expect.anything(),
+    );
+    expect(pushBranch).toHaveBeenCalledWith({
+      projectRepoPath: "/repos/demo",
+      remote: "origin",
+      branch: "scratch/demo",
+      remoteBranch: publicBranch,
+      setUpstream: true,
+    });
+    expect(createOrUpdatePr).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceBranch: publicBranch,
+        targetBranch: "main",
+        draft: false,
+      }),
+    );
+    expect(promoteLocalMerge).not.toHaveBeenCalled();
+    expect(dbState.tables.scratch_runs[0]).toMatchObject({
+      dialogStatus: "Done",
+      targetBranch: "main",
+      supervisorSessionId: null,
+    });
+    expect(dbState.tables.runs[0]).toMatchObject({
+      status: "Done",
+      promotedHeadSha: "source-head-000",
+      mergeCommitSha: null,
+    });
+    expect(dbState.tables.workspaces[0]).toMatchObject({
+      promotionState: "done",
+      prUrl: "https://github.com/org/repo/pull/77",
+      prNumber: 77,
+      publishedBranch: publicBranch,
+      publishedRemote: "origin",
+    });
+    expect(
+      emitWebhookEventMock.mock.calls.map(
+        (c) => (c[0] as { type: string }).type,
+      ),
+    ).toEqual(["run.promoted", "run.done"]);
+  });
+
+  it("refuses a scratch PR onto a target other than the locked one before any push", async () => {
+    const runId = seedGithubScratchRun();
+
+    await expectMaisterCode(
+      callPromote(runId, { mode: "pull_request", targetBranch: "release" }),
+      "PRECONDITION",
+    );
+
+    expect(pushBranch).not.toHaveBeenCalled();
+    expect(createOrUpdatePr).not.toHaveBeenCalled();
   });
 });
 
