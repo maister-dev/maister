@@ -161,7 +161,11 @@ export function RunHitlResponse({
   activeRequestKey.current = requestKey;
   const currentAnswer =
     localAnswer?.requestKey === requestKey ? localAnswer : null;
-  const isStored = answerState === "answer_stored" || currentAnswer !== null;
+  const budgetClaimCanBeReplaced =
+    kind === "budget_breach" && claimStage === "failed";
+  const isStored =
+    (answerState === "answer_stored" || currentAnswer !== null) &&
+    !budgetClaimCanBeReplaced;
   const schemaObject =
     schema !== null && typeof schema === "object"
       ? (schema as Record<string, unknown>)
@@ -691,9 +695,10 @@ export function RunHitlResponse({
     const savedOption =
       retryPayload && "optionId" in retryPayload
         ? options.find((option) => option.optionId === retryPayload.optionId)
-        : null;
+        : undefined;
     const validPayload =
-      retryPayload !== null && (kind !== "permission" || savedOption !== null);
+      retryPayload !== null &&
+      (kind !== "permission" || savedOption !== undefined);
     const reconciling =
       currentAnswer?.reconciling && answerState !== "answer_stored";
 

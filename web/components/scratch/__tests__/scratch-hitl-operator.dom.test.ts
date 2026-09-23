@@ -19,8 +19,10 @@ const TestIntlProvider = NextIntlClientProvider as ComponentType<{
   children?: ReactNode;
 }>;
 
+const { stream } = vi.hoisted(() => ({ stream: { eventCount: 0 } }));
+
 vi.mock("@/lib/use-run-stream", () => ({
-  useRunStream: () => ({ eventCount: 0 }),
+  useRunStream: () => ({ eventCount: stream.eventCount }),
 }));
 vi.mock("@/components/scratch/scratch-composer", () => ({
   ScratchComposer: () => null,
@@ -84,6 +86,7 @@ async function click(label: string): Promise<void> {
 }
 
 beforeEach(() => {
+  stream.eventCount = 0;
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   container = document.createElement("div");
   document.body.append(container);
@@ -183,6 +186,194 @@ describe("scratch HITL operator feedback", () => {
       optionId: "allow",
     });
   });
+
+  it("does not retry a saved permission option that no longer exists", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              ...openDetail,
+              pendingHitl: {
+                ...openDetail.pendingHitl,
+                answerState: "answer_stored",
+                storedResponse: { optionId: "obsolete" },
+              },
+            }),
+            { status: 200 },
+          ),
+      ),
+    );
+    mount();
+    await act(async () => {});
+
+    expect(container.textContent).toContain(en.run.savedInvalidOption);
+    expect(container.textContent).not.toContain(en.run.retryDelivery);
+  });
+
+  it.each(["en", "ru"] as const)(
+    "shows the %s prompt-owner diagnostic as a code detail",
+    async (locale) => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string) =>
+          url.endsWith("/respond")
+            ? new Response(
+                JSON.stringify({
+                  code: "CONFLICT",
+                  message: "opaque server text",
+                  details: {
+                    reason: "prompt_owner_invariant",
+                    causeCode: "owner_shape",
+                  },
+                }),
+                { status: 409 },
+              )
+            : new Response(JSON.stringify(openDetail), { status: 200 }),
+        ),
+      );
+      mount("run-1", locale);
+      await act(async () => {});
+      await click("Allow");
+
+      const messages = locale === "en" ? en : ru;
+
+      expect(container.textContent).toContain(
+        messages.run.errorReasons.prompt_owner_invariant,
+      );
+      expect(container.textContent).toContain(messages.run.errorDiagnostic);
+      expect(container.querySelector("code")?.textContent).toBe("owner_shape");
+      expect(container.textContent).not.toContain("opaque server text");
+    },
+  );
+
+  it("does not show an old refusal beside the next request on the same run", async () => {
+    let postSeen = false;
+    const nextDetail = {
+      ...openDetail,
+      pendingHitl: {
+        ...openDetail.pendingHitl!,
+        hitlRequestId: "hitl-2",
+        prompt: "Second permission prompt",
+      },
+    };
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.endsWith("/respond")) {
+          postSeen = true;
+
+          return new Response(
+            JSON.stringify({
+              code: "CONFLICT",
+              details: { reason: "option_mismatch" },
+            }),
+            { status: 409 },
+          );
+        }
+
+        return new Response(
+          JSON.stringify(postSeen ? nextDetail : openDetail),
+          {
+            status: 200,
+          },
+        );
+      }),
+    );
+    mount();
+    await act(async () => {});
+    await click("Allow");
+
+    expect(container.textContent).toContain("Second permission prompt");
+    expect(container.textContent).not.toContain(
+      en.run.errorReasons.option_mismatch,
+    );
+  });
+
+  it.each([
+    [409, "CONFLICT", "option_mismatch"],
+    [410, "HITL_TIMEOUT", "agent_session_ended"],
+  ] as const)(
+    "ignores a late %i refusal after a newer request",
+    async (status, code, reason) => {
+      let settleOld: ((response: Response) => void) | null = null;
+      let currentDetail = openDetail;
+      const postUrls: string[] = [];
+
+      vi.stubGlobal(
+        "fetch",
+        vi.fn((url: string) => {
+          if (url.endsWith("/respond")) {
+            postUrls.push(url);
+
+            return url.includes("hitl-1")
+              ? new Promise<Response>((resolve) => {
+                  settleOld = resolve;
+                })
+              : Promise.resolve(
+                  new Response(
+                    JSON.stringify({ ok: true, state: "resume-in-progress" }),
+                    { status: 202 },
+                  ),
+                );
+          }
+
+          return Promise.resolve(
+            new Response(JSON.stringify(currentDetail), { status: 200 }),
+          );
+        }),
+      );
+      mount();
+      await act(async () => {});
+      await click("Allow");
+
+      currentDetail = {
+        ...openDetail,
+        pendingHitl: {
+          ...openDetail.pendingHitl!,
+          hitlRequestId: "hitl-2",
+          prompt: "Second permission prompt",
+        },
+      };
+      stream.eventCount = 1;
+      mount();
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 275));
+      });
+      expect(container.textContent).toContain("Second permission prompt");
+      await click("Allow");
+      expect(postUrls).toHaveLength(2);
+
+      if (status === 410) {
+        currentDetail = { ...currentDetail, pendingHitl: null };
+        stream.eventCount = 2;
+        mount();
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 275));
+        });
+      }
+
+      await act(async () => {
+        settleOld?.(
+          new Response(
+            JSON.stringify({
+              code,
+              details: { reason },
+            }),
+            { status },
+          ),
+        );
+        await Promise.resolve();
+      });
+
+      if (status === 409) {
+        expect(container.textContent).toContain(en.run.answerSaved);
+      }
+      expect(container.textContent).not.toContain(en.run.errorReasons[reason]);
+    },
+  );
 
   it("retranslates a refusal after the scratch locale changes", async () => {
     vi.stubGlobal(

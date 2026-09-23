@@ -358,6 +358,59 @@ describe("RunHitlResponse stored answer", () => {
     expect(retryChoice?.disabled).toBe(true);
   });
 
+  it("lets a failed budget claim choose a different available recovery", async () => {
+    const fetchMock = vi.fn(
+      async (_url: string, _init?: RequestInit) =>
+        new Response(JSON.stringify({ ok: true }), { status: 200 }),
+    );
+
+    vi.stubGlobal("fetch", fetchMock);
+    render("en", {
+      kind: "budget_breach",
+      schema: {
+        kind: "budget_breach",
+        scope: "run",
+        meter: "tokens",
+        current: 1200,
+        limit: 1000,
+      },
+      answerState: "answer_stored",
+      storedResponse: null,
+      claimStage: "failed",
+      availableOptions: [
+        {
+          optionId: "restart",
+          label: "restart",
+          helperText: "restart",
+          destructive: false,
+          dropAllowed: false,
+          requiresBranchName: false,
+          modes: [],
+        },
+      ],
+    });
+
+    const restart = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent === en.run.budgetRestart,
+    );
+
+    expect(restart?.disabled).toBe(false);
+    await click(en.run.budgetRestart);
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+      optionId: "restart",
+    });
+  });
+
+  it("does not retry an option missing from the current permission choices", () => {
+    render("en", {
+      answerState: "answer_stored",
+      storedResponse: { optionId: "obsolete" },
+    });
+
+    expect(container.textContent).toContain(en.run.savedInvalidOption);
+    expect(container.textContent).not.toContain(en.run.retryDelivery);
+  });
+
   it("shows a prompt-owner cause only as a code detail", async () => {
     vi.stubGlobal(
       "fetch",
@@ -580,5 +633,62 @@ describe("inbox card response mounts", () => {
 
     expect(container.textContent).toContain(en.run.answerSaved);
     expect(container.textContent).not.toContain(en.inbox.respond);
+  });
+
+  it("keeps failed budget recovery in the expanded inbox controls", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              gates: [],
+              diff: null,
+              budgetProgress: null,
+              claimStage: null,
+              availableOptions: null,
+            }),
+            { status: 200 },
+          ),
+      ),
+    );
+    renderInbox(
+      {
+        ...inboxItem,
+        kind: "budget_breach",
+        answerState: "answer_stored",
+        claimStage: "failed",
+        schema: {
+          kind: "budget_breach",
+          scope: "run",
+          meter: "tokens",
+          current: 1200,
+          limit: 1000,
+        },
+        availableOptions: [
+          {
+            optionId: "restart",
+            label: "restart",
+            helperText: "restart",
+            destructive: false,
+            dropAllowed: false,
+            requiresBranchName: false,
+            modes: [],
+          },
+        ],
+      },
+      true,
+    );
+    await act(async () => {});
+
+    const restart = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent === en.run.budgetRestart,
+    );
+
+    expect(restart?.disabled).toBe(false);
+    expect(
+      container.querySelectorAll('[data-testid="budget-breach-card"]'),
+    ).toHaveLength(1);
+    expect(container.textContent).not.toContain(en.run.answerSaved);
   });
 });

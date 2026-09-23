@@ -180,6 +180,8 @@ the operator to relaunch. This feedback survives card removal, but the fresh
 terminal run page can still lack a persisted failure cause: B6 remains a
 separate run-level cause follow-up, because this item does not write attempt
 failure metadata or change a state transition.
+The replaceable budget-breach `stage: "failed"` is the exception: it retains
+the server-approved recovery controls instead of showing a delivery retry.
 
 ```mermaid
 stateDiagram-v2

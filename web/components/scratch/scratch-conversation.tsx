@@ -115,13 +115,33 @@ export function ScratchConversation({
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [hitlError, setHitlError] = useState<
-    | { runId: string; descriptor: HitlErrorMessage }
-    | { runId: string; key: "deliveryUnconfirmed" }
+    | {
+        requestKey: string;
+        terminal: boolean;
+        descriptor: HitlErrorMessage;
+      }
+    | {
+        requestKey: string;
+        terminal: false;
+        key: "deliveryUnconfirmed";
+      }
     | null
   >(null);
+  const [pendingHitlKey, setPendingHitlKey] = useState<string | null>(null);
   const activeRunId = useRef(runId);
 
   activeRunId.current = runId;
+  const currentHitlRequestKey =
+    detail?.run.id === runId && detail.pendingHitl
+      ? `${runId}:${detail.pendingHitl.hitlRequestId}`
+      : null;
+  const activeHitlRequestKey = useRef(currentHitlRequestKey);
+  const latestHitlRequestKey = useRef(currentHitlRequestKey);
+
+  activeHitlRequestKey.current = currentHitlRequestKey;
+  if (currentHitlRequestKey !== null) {
+    latestHitlRequestKey.current = currentHitlRequestKey;
+  }
   const [localAnswer, setLocalAnswer] = useState<{
     requestKey: string;
     payload: NonNullable<ScratchDetail["pendingHitl"]>["storedResponse"];
@@ -466,8 +486,11 @@ export function ScratchConversation({
     async (payload: Record<string, unknown>): Promise<void> => {
       if (!detail?.pendingHitl) return;
       const requestKey = `${runId}:${detail.pendingHitl.hitlRequestId}`;
+      const requestIsCurrent = (): boolean =>
+        activeRunId.current === runId &&
+        activeHitlRequestKey.current === requestKey;
 
-      setPendingAction("hitl");
+      setPendingHitlKey(requestKey);
       setHitlError(null);
 
       try {
@@ -483,10 +506,22 @@ export function ScratchConversation({
         if (!response.ok) {
           const body = await response.json().catch(() => null);
 
-          if (activeRunId.current !== runId) return;
+          const terminal = response.status === 410;
+
+          if (
+            !requestIsCurrent() &&
+            !(
+              terminal &&
+              activeRunId.current === runId &&
+              activeHitlRequestKey.current === null &&
+              latestHitlRequestKey.current === requestKey
+            )
+          ) {
+            return;
+          }
           const descriptor = hitlErrorText(body);
 
-          setHitlError({ runId, descriptor });
+          setHitlError({ requestKey, terminal, descriptor });
           if (body?.details?.reason === "delivery_unavailable") {
             setLocalAnswer({
               requestKey,
@@ -502,14 +537,14 @@ export function ScratchConversation({
             setLocalAnswer({ requestKey, payload: null });
             await loadDetail();
           }
-          if (response.status === 410) await loadDetail();
+          if (terminal) await loadDetail();
 
           return;
         }
 
         const accepted = await response.json().catch(() => null);
 
-        if (activeRunId.current !== runId) return;
+        if (!requestIsCurrent()) return;
 
         if (
           response.status === 202 &&
@@ -528,10 +563,17 @@ export function ScratchConversation({
         }
         await loadDetail();
       } catch {
-        if (activeRunId.current === runId)
-          setHitlError({ runId, key: "deliveryUnconfirmed" });
+        if (requestIsCurrent())
+          setHitlError({
+            requestKey,
+            terminal: false,
+            key: "deliveryUnconfirmed",
+          });
       } finally {
-        if (activeRunId.current === runId) setPendingAction(null);
+        if (activeRunId.current === runId)
+          setPendingHitlKey((current) =>
+            current === requestKey ? null : current,
+          );
       }
     },
     [detail?.pendingHitl, loadDetail, runId],
@@ -552,10 +594,13 @@ export function ScratchConversation({
         : detail.pendingHitl
       : null;
   const visibleHitlError =
-    hitlError?.runId === runId
-      ? "descriptor" in hitlError
-        ? tRun(hitlError.descriptor.key, hitlError.descriptor.values)
-        : tRun(hitlError.key)
+    hitlError &&
+    (hitlError.requestKey === currentHitlRequestKey ||
+      (hitlError.terminal &&
+        currentHitlRequestKey === null &&
+        hitlError.requestKey.startsWith(`${runId}:`) &&
+        latestHitlRequestKey.current === hitlError.requestKey))
+      ? hitlError
       : null;
 
   if (loading && !detail) {
@@ -659,7 +704,7 @@ export function ScratchConversation({
       {visiblePendingHitl ? (
         <div className="min-w-0 border-t border-line-soft px-4 py-3">
           <ScratchPermissionPanel
-            pending={pendingAction === "hitl"}
+            pending={pendingHitlKey === currentHitlRequestKey}
             pendingHitl={visiblePendingHitl}
             onAnswer={(payload) => void answerHitl(payload)}
             onRefresh={() => void loadDetail()}
@@ -674,8 +719,26 @@ export function ScratchConversation({
       ) : null}
 
       {visibleHitlError || error ? (
-        <div className="mx-4 mt-3 min-w-0 rounded-lg border border-[#d9534f]/40 bg-[#d9534f]/10 px-3 py-2 text-[12px] leading-[1.5] text-[#d9534f]">
-          {visibleHitlError ?? error}
+        <div
+          className="mx-4 mt-3 min-w-0 rounded-lg border border-[#d9534f]/40 bg-[#d9534f]/10 px-3 py-2 text-[12px] leading-[1.5] text-[#d9534f]"
+          role="alert"
+        >
+          {visibleHitlError
+            ? "descriptor" in visibleHitlError
+              ? tRun(
+                  visibleHitlError.descriptor.key,
+                  visibleHitlError.descriptor.values,
+                )
+              : tRun(visibleHitlError.key)
+            : error}
+          {visibleHitlError &&
+          "descriptor" in visibleHitlError &&
+          visibleHitlError.descriptor.causeCode ? (
+            <p className="mt-1 text-mute">
+              {tRun("errorDiagnostic")}:{" "}
+              <code>{visibleHitlError.descriptor.causeCode}</code>
+            </p>
+          ) : null}
         </div>
       ) : null}
 

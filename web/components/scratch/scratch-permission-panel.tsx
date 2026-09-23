@@ -71,9 +71,10 @@ export function ScratchPermissionPanel({
         ? pendingHitl.options.find(
             (option) => option.optionId === saved.optionId,
           )
-        : null;
+        : undefined;
     const canRetry =
-      saved !== null && (pendingHitl.kind !== "permission" || chosen !== null);
+      saved !== null &&
+      (pendingHitl.kind !== "permission" || chosen !== undefined);
 
     return (
       <section

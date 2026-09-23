@@ -1224,6 +1224,11 @@ that survives removal of the card. Form/human replay retains the exact
 canonical response and confidence; if sanitizing a legacy answer changes
 its canonical value, no replay action is offered. Invalid permission data
 never becomes a guessed Allow/Deny option.
+The budget-breach `stage: "failed"` is a replaceable claim, not a delivery
+retry: the expanded card retains the server-approved recovery options even
+though the response column is non-null. Active stages and `relaunch_failed`
+remain read-only. Scratch refusal feedback is scoped to its request id; a
+terminal 410 remains visible after card removal until a newer request appears.
 
 | Respond outcome | Durable read state | Card behavior |
 | --- | --- | --- |

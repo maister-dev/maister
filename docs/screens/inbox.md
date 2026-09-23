@@ -95,6 +95,9 @@ monospaced diagnostic. No raw reason token, host handle or `_delivery` value
 is rendered. Saved/delivery feedback uses `aria-live`, keeps keyboard focus
 on the available retry or refresh control, and disables repeat submission
 while a POST is in flight. The per-project board uses the same card contract.
+A budget-breach claim at `stage: "failed"` remains replaceable despite its
+stored response; it keeps the existing authorized recovery options in the
+expanded card. Active and terminalized budget claims remain read-only.
 
 A unified `HitlCard` (shared with the per-project board, which renders it without
 the project-group header) with three disclosure tiers:

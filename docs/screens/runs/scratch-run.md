@@ -134,7 +134,8 @@ uses the shared `(code, details.reason)` EN/RU copy, not a generic error; a
 terminal 410 says the agent session ended and directs the operator to Recover
 or relaunch. Its feedback persists after the pending card disappears. An
 unknown reason uses the localized per-code fallback; prompt-owner `causeCode`
-can appear only as a monospaced diagnostic.
+appears only as a monospaced diagnostic. A refusal from an older permission
+request does not appear beside a newer request on the same run.
 
 ```mermaid
 stateDiagram-v2

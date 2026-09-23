@@ -782,6 +782,29 @@ a product pass; do not quietly quarantine the required acceptance tests.
   not a P0-4 acceptance pass. The P0-4 route, DTO, card, scratch, MCP,
   deadline 202/503, contract, docs, unit, and smoke gates above are green.
 
+### Review-fix pass (2026-09-23)
+
+- [x] A failed budget-breach claim remains replaceable on the board and in the
+  expanded inbox card; the existing real-Postgres inbox projection exposes
+  `claimStage: "failed"` (11/11 query tests green).
+- [x] Board and scratch permission cards suppress Retry when the saved option
+  no longer exists in the current choices.
+- [x] Scratch shows the shared EN/RU reason copy with a monospaced prompt-owner
+  `causeCode` diagnostic, and request-scoped feedback ignores old refusals and
+  late POST completions after another request appears.
+- [x] The focused board/inbox/scratch jsdom suite passed 53/53 after fixes;
+  the full web unit suite passed 831 files / 8,609 tests before the final
+  scratch request-order guard, then the affected focused suite re-passed.
+  `validate:docs:all`, contracts 5/5, web/supervisor/MCP typechecks, MCP build,
+  scoped ESLint and `git diff --check` passed.
+- [ ] The complete web integration gate remains open under Task 13. A fresh
+  real-supervisor deadline run passed 9/10: RED13's unchanged checkpoint grant
+  asserted `continue` but observed `result`. In the isolated RED13+14 run,
+  RED13 passed and RED14 failed with the same classification. The affected
+  execution code and those assertions are identical to master; no P0-4 state
+  transition or supervisor code changed. This is not recorded as a green
+  qualification or repaired by weakening the ADR-180 assertion.
+
 ## Test placement, migration and falsification
 
 | Gate | Existing file to extend / planned new file | Runner and evidence |

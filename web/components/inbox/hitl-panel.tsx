@@ -165,6 +165,8 @@ export function HitlPanel({
   const isPermission = item.kind === "permission";
   const isAgentQuestion = item.kind === "agent_question";
   const isReview = isReviewGate(item);
+  const budgetClaimCanBeReplaced =
+    item.kind === "budget_breach" && item.claimStage === "failed";
   const reviewHref = runReviewHref(item.runId);
 
   return (
@@ -178,7 +180,9 @@ export function HitlPanel({
             {t("reviewCode")}
             <ArrowTopRightOnSquareIcon className="h-3.5 w-3.5" />
           </a>
-        ) : (isPermission && canAct) || item.answerState === "answer_stored" ? (
+        ) : (isPermission && canAct) ||
+          (item.answerState === "answer_stored" &&
+            !budgetClaimCanBeReplaced) ? (
           <RunHitlResponse
             compact
             answerState={item.answerState}
@@ -262,7 +266,7 @@ export function HitlPanel({
 
           {!isReview &&
           !isPermission &&
-          item.answerState !== "answer_stored" &&
+          (item.answerState !== "answer_stored" || budgetClaimCanBeReplaced) &&
           canAct ? (
             <div className="mt-3.5 border-t border-line pt-3.5">
               <RunHitlResponse
