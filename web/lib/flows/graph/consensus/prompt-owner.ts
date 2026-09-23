@@ -19,6 +19,7 @@ import { compileManifest } from "../compile";
 import { recordArtifact } from "../artifact-store";
 import { loadRun } from "../runner-core";
 import { lockFlowPromptOwner } from "../prompt-owner-authority";
+import { closeAppliedFlowPromptSession } from "../prompt-session-cleanup";
 
 import { consensusVerdictLedgerId, writeConsensusVerdict } from "./ledger";
 import {
@@ -33,6 +34,7 @@ import { verifyConsensusInputEvidence } from "./input-evidence";
 import {
   artifactInstances,
   consensusRoundVerdicts,
+  executionCommands,
   nodeAttempts,
   runSessionIncarnations,
   runSessions,
@@ -44,6 +46,7 @@ import {
 } from "@/lib/execution-host/session-binding";
 import { PromptOwnerInvariantError } from "@/lib/execution-host/prompt-owners";
 import { MaisterError } from "@/lib/errors";
+import { createExecutionHosts } from "@/lib/execution-host/client";
 import { agentMessageText } from "@/lib/run-transcript/agent-text";
 
 const log = pino({
@@ -183,6 +186,42 @@ export function consensusPromptOperationKey(
   return `flow_node_attempt:${owner.variant}:${
     owner.variant === "consensus_verifier" ? owner.verdictId : owner.synthesisId
   }`;
+}
+
+/** A continuation can consume an already-applied cell without re-entering
+ * runAgentStep, so it must close that paid turn's exact host session here.
+ */
+export async function closeAppliedConsensusSession(input: {
+  db: Db;
+  runId: string;
+  owner: ConsensusPromptOwner;
+  execution?: { client: BoundClient };
+  bindExecution?: () => Promise<{ client: BoundClient }>;
+}): Promise<void> {
+  const [command] = await input.db
+    .select({ id: executionCommands.id })
+    .from(executionCommands)
+    .where(
+      and(
+        eq(executionCommands.runId, input.runId),
+        eq(
+          executionCommands.logicalOperationKey,
+          consensusPromptOperationKey(input.owner),
+        ),
+        eq(executionCommands.applicationState, "applied"),
+      ),
+    )
+    .limit(1);
+
+  // Unpaid partial/unavailable cells have no prompt command to close.
+  if (!command) return;
+  const client =
+    input.execution?.client ??
+    (input.bindExecution
+      ? (await input.bindExecution()).client
+      : await createExecutionHosts({ db: input.db }).forRun(input.runId));
+
+  await closeAppliedFlowPromptSession(input.db, client, command.id);
 }
 
 type ConsensusOwnerRef = Extract<

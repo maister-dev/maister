@@ -619,6 +619,16 @@ describe("Consensus prompt owners through the production graph driver", () => {
     );
 
     const resuming = settleDraftsAndResume(seeded.runId);
+    let resumeOutcome: "pending" | "fulfilled" | "rejected" = "pending";
+
+    void resuming.then(
+      () => {
+        resumeOutcome = "fulfilled";
+      },
+      () => {
+        resumeOutcome = "rejected";
+      },
+    );
 
     try {
       await expect
@@ -656,6 +666,9 @@ describe("Consensus prompt owners through the production graph driver", () => {
 
       expect(run.status).toBe("Running");
       expect(attempt.status).toBe("Running");
+      await expect
+        .poll(() => resumeOutcome, { timeout: 10_000, interval: 100 })
+        .toBe("fulfilled");
     } finally {
       await database.pool.query(
         `DROP TRIGGER IF EXISTS ${trigger} ON consensus_round_verdicts`,
@@ -690,6 +703,30 @@ describe("Consensus prompt owners through the production graph driver", () => {
           { timeout: 60_000, interval: 100 },
         )
         .toBe("Review");
+      const verifierCommands = await database.db
+        .select({ ownerRef: executionCommands.ownerRef })
+        .from(executionCommands)
+        .where(eq(executionCommands.runId, seeded.runId));
+
+      expect(
+        verifierCommands.filter(
+          (command) =>
+            (command.ownerRef as { variant?: string } | null)?.variant ===
+            "consensus_verifier",
+        ),
+      ).toHaveLength(2);
+      const liveSessions = await createExecutionHosts({
+        db: database.db as unknown as Db,
+      })
+        .local()
+        .listSessions();
+
+      expect(
+        liveSessions.filter(
+          (session) =>
+            session.runId === seeded.runId && session.status === "live",
+        ),
+      ).toHaveLength(0);
     } finally {
       await continuation.stop();
       await owners.stop();
@@ -724,6 +761,16 @@ describe("Consensus prompt owners through the production graph driver", () => {
       `CREATE TRIGGER ${trigger} BEFORE INSERT ON artifact_instances FOR EACH ROW EXECUTE FUNCTION ${trigger}()`,
     );
     const resuming = settleDraftsAndResume(seeded.runId);
+    let resumeOutcome: "pending" | "fulfilled" | "rejected" = "pending";
+
+    void resuming.then(
+      () => {
+        resumeOutcome = "fulfilled";
+      },
+      () => {
+        resumeOutcome = "rejected";
+      },
+    );
 
     try {
       await expect
@@ -756,6 +803,9 @@ describe("Consensus prompt owners through the production graph driver", () => {
 
       expect(run.status).toBe("Running");
       expect(attempt.status).toBe("Running");
+      await expect
+        .poll(() => resumeOutcome, { timeout: 10_000, interval: 100 })
+        .toBe("fulfilled");
     } finally {
       await database.pool.query(
         `DROP TRIGGER IF EXISTS ${trigger} ON artifact_instances`,
@@ -790,6 +840,30 @@ describe("Consensus prompt owners through the production graph driver", () => {
           { timeout: 60_000, interval: 100 },
         )
         .toBe("Review");
+      const synthesisCommands = await database.db
+        .select({ ownerRef: executionCommands.ownerRef })
+        .from(executionCommands)
+        .where(eq(executionCommands.runId, seeded.runId));
+
+      expect(
+        synthesisCommands.filter(
+          (command) =>
+            (command.ownerRef as { variant?: string } | null)?.variant ===
+            "consensus_synthesis",
+        ),
+      ).toHaveLength(1);
+      const liveSessions = await createExecutionHosts({
+        db: database.db as unknown as Db,
+      })
+        .local()
+        .listSessions();
+
+      expect(
+        liveSessions.filter(
+          (session) =>
+            session.runId === seeded.runId && session.status === "live",
+        ),
+      ).toHaveLength(0);
     } finally {
       await continuation.stop();
       await owners.stop();
@@ -1362,6 +1436,7 @@ describe("Consensus prompt owners through the production graph driver", () => {
           eq(hitlRequests.stepId, "decide"),
         ),
       );
+
     expect(request).toBeDefined();
     const requestSchema = request.schema as {
       round: number;

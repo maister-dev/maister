@@ -99,6 +99,42 @@ export async function waitForGateApplication(
   }
 }
 
+/** A settled consensus turn with a deferred owner application releases the
+ * graph driver; the application and continuation workers own its retry.
+ */
+export async function waitForConsensusApplication(
+  db: Db,
+  client: BoundClient,
+  commandId: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  try {
+    const result = await client.waitForPromptOwnerApplication(
+      { commandId },
+      { owners: flowPromptOwners, signal },
+    );
+
+    if (result === null)
+      throw new FlowPromptContinuationPending(
+        commandId,
+        new PromptOwnerInvariantError("consensus_application_pending"),
+      );
+  } catch (cause) {
+    if (cause instanceof FlowPromptContinuationPending) throw cause;
+    try {
+      const [command] = await db
+        .select({ applicationState: executionCommands.applicationState })
+        .from(executionCommands)
+        .where(eq(executionCommands.id, commandId));
+
+      if (command?.applicationState === "applied") return;
+    } catch (readCause) {
+      throw new FlowPromptContinuationPending(commandId, readCause);
+    }
+    throw new FlowPromptContinuationPending(commandId, cause);
+  }
+}
+
 const log = pino({
   name: "flow-prompt-owner",
   level: process.env.LOG_LEVEL ?? "info",

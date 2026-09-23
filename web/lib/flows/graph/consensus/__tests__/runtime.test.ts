@@ -26,6 +26,7 @@ const loadConsensusVerdicts = vi.hoisted(() => vi.fn());
 const recordConsensusVerdict = vi.hoisted(() => vi.fn());
 const loadConsensusVerdictCell = vi.hoisted(() => vi.fn());
 const loadConsensusSynthesis = vi.hoisted(() => vi.fn());
+const closeAppliedConsensusSession = vi.hoisted(() => vi.fn());
 const runAgentStep = vi.hoisted(() => vi.fn());
 const recordCurrentArtifact = vi.hoisted(() => vi.fn());
 const prepareConsensusInputEvidence = vi.hoisted(() => vi.fn());
@@ -76,7 +77,7 @@ vi.mock("@/lib/flows/graph/consensus/prompt-owner", async (importOriginal) => {
       typeof import("@/lib/flows/graph/consensus/prompt-owner")
     >();
 
-  return { ...actual, loadConsensusSynthesis };
+  return { ...actual, loadConsensusSynthesis, closeAppliedConsensusSession };
 });
 
 vi.mock("@/lib/flows/runner-agent", () => ({ runAgentStep }));
@@ -575,7 +576,11 @@ describe("runConsensusNode", () => {
     latestConsensusRound.mockResolvedValue(1);
     loadConsensusDraftEvidence.mockResolvedValue([
       partial("architect", "partial architecture"),
-      partial("qa", "partial QA"),
+      {
+        ...partial("qa", "partial QA"),
+        stopReason: "end_turn",
+        reason: "output_cap_exceeded",
+      },
     ]);
     recordConsensusVerdict.mockImplementation(async (args) =>
       verdict(args.verifierId, args.targetParticipantId, {
@@ -584,6 +589,20 @@ describe("runConsensusNode", () => {
         errorCode: args.errorCode,
         axes: { scope: false, risk: false },
       }),
+    );
+    loadConsensusVerdicts.mockImplementation(async () =>
+      recordConsensusVerdict.mock.calls.length === 2
+        ? [
+            verdict("qa", "architect", {
+              verdict: "disagree",
+              errorCode: "draft_partial",
+            }),
+            verdict("architect", "qa", {
+              verdict: "disagree",
+              errorCode: "draft_partial",
+            }),
+          ]
+        : [],
     );
     launchConsensusDraftRuns.mockResolvedValue([
       {
@@ -611,6 +630,9 @@ describe("runConsensusNode", () => {
     expect(
       prompts.find((item) => item.participantId === "qa")?.prompt,
     ).toContain("partial QA");
+    expect(
+      prompts.find((item) => item.participantId === "qa")?.prompt,
+    ).toContain("draft exceeded the 1048576-byte output cap");
     expect(
       prompts.find((item) => item.participantId === "qa")?.prompt,
     ).not.toContain("partial architecture");
@@ -1144,11 +1166,12 @@ describe("runConsensusNode", () => {
       ...consensusDef(),
       rounds: { mode: "iterate", max: 2 },
     } as ConsensusNodeDef;
+    const qaPrior = `{{ literal }}${"X".repeat(70_000)}`;
 
     latestConsensusRound.mockResolvedValue(1);
     loadConsensusDraftEvidence.mockResolvedValue([
       draft("architect", "Plan A"),
-      draft("qa", "Plan B"),
+      draft("qa", qaPrior),
     ]);
     loadConsensusVerdicts.mockResolvedValue([
       verdict("architect", "qa", {
@@ -1211,10 +1234,12 @@ describe("runConsensusNode", () => {
     expect(architect).not.toContain(
       "Verifier architect on architect:\naxis scope judged false",
     );
-    expect(qa).toContain("Your previous draft:\n\nPlan B");
+    expect(qa).toContain("Your previous draft:\n\n{{ literal }}");
+    expect(qa).toContain("consensus text truncated: dropped");
+    expect(qa).not.toContain(qaPrior);
     expect(qa).not.toContain("Plan A");
     expect(architect).toContain("Your previous draft:\n\nPlan A");
-    expect(architect).not.toContain("Plan B");
+    expect(architect).not.toContain("{{ literal }}");
   });
 
   it("escalates a verifier-only invalid JSON round without buying another draft", async () => {

@@ -2,11 +2,15 @@ import "server-only";
 
 import type { Db } from "@/lib/execution-host/db";
 import type { ExecutionCommand } from "@/lib/db/schema";
-import type { ConsensusTextBounds } from "./text";
 
 import { createHash } from "node:crypto";
 
 import { eq } from "drizzle-orm";
+
+import {
+  CONSENSUS_PROMPT_TEXT_CAP_BYTES,
+  type ConsensusTextBounds,
+} from "./text";
 
 import {
   artifactInstances,
@@ -16,8 +20,6 @@ import {
 } from "@/lib/db/schema";
 import { readPromptRequest } from "@/lib/execution-host/command-request";
 import { PromptOwnerInvariantError } from "@/lib/execution-host/prompt-owners";
-
-import { CONSENSUS_PROMPT_TEXT_CAP_BYTES } from "./text";
 
 type ConsensusInputEvidence = Readonly<{
   version: 1;

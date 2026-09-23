@@ -49,6 +49,7 @@ import {
   type ConsensusVerdictEvidence,
 } from "./ledger";
 import {
+  closeAppliedConsensusSession,
   ConsensusGenerationPending,
   consensusSynthesisOwner,
   consensusVerifierOwner,
@@ -788,6 +789,18 @@ async function verifyConsensusRound(
     const cached = byPair.get(key);
 
     if (cached) {
+      await closeAppliedConsensusSession({
+        db: args.db,
+        runId: args.loaded.run.id,
+        owner: consensusVerifierOwner({
+          nodeAttemptId: args.nodeAttemptId,
+          round: args.round,
+          verifierId: assignment.verifierId,
+          targetParticipantId: assignment.targetParticipantId,
+        }),
+        execution: args.execution,
+        bindExecution: args.bindExecution,
+      });
       verdicts.push(cached);
       continue;
     }
@@ -1072,7 +1085,15 @@ async function synthesizeConsensus(
     synthesisId: owner.synthesisId,
   });
 
-  if (applied !== null)
+  if (applied !== null) {
+    await closeAppliedConsensusSession({
+      db: args.db,
+      runId: args.loaded.run.id,
+      owner,
+      execution: args.execution,
+      bindExecution: args.bindExecution,
+    });
+
     return finishConsensusSynthesis({
       ...args,
       debateLog,
@@ -1095,6 +1116,7 @@ async function synthesizeConsensus(
       synthesizerRef: synthesizer.roleRef,
       synthesizerKind: synthesizer.roleKind,
     });
+  }
   const release = await acquireConsensusAgentCapacity({
     runId: args.loaded.run.id,
     nodeId: args.node.id,

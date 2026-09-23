@@ -2741,6 +2741,7 @@ export function memoryBoundClient(args: {
 
       return completion;
     },
+    waitForPromptOwnerApplication: (handle) => client.waitForPrompt(handle),
     deliverInput: (sessionId, payload) =>
       fake.transport.deliverInput(
         sessionId,

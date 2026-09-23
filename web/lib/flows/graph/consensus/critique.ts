@@ -5,7 +5,11 @@ import type {
 
 import pino from "pino";
 
-import { boundConsensusText, CONSENSUS_PROMPT_TEXT_CAP_BYTES } from "./text";
+import {
+  boundConsensusText,
+  CONSENSUS_DRAFT_OUTPUT_CAP_BYTES,
+  CONSENSUS_PROMPT_TEXT_CAP_BYTES,
+} from "./text";
 
 export type ConsensusTechnicalFailure = Readonly<{
   verifierId: string;
@@ -117,8 +121,13 @@ function addressedVerdict(
   );
   const draft = drafts.find((item) => item.participantId === participantId);
 
-  if (verdict?.errorCode === "draft_partial")
-    return `Your round-${round} draft was cut by ${draft?.stopReason ?? "an unknown stop reason"} after ${Buffer.byteLength(draft?.artifactText ?? "", "utf8")} UTF-8 bytes; deliver a complete draft.`;
+  if (verdict?.errorCode === "draft_partial") {
+    const retainedBytes = Buffer.byteLength(draft?.artifactText ?? "", "utf8");
+
+    return draft?.reason === "output_cap_exceeded"
+      ? `Your round-${round} draft exceeded the ${CONSENSUS_DRAFT_OUTPUT_CAP_BYTES}-byte output cap after ${retainedBytes} retained UTF-8 bytes; deliver a complete draft.`
+      : `Your round-${round} draft was cut by ${draft?.stopReason ?? "an unknown stop reason"} after ${retainedBytes} UTF-8 bytes; deliver a complete draft.`;
+  }
   if (verdict?.errorCode === "draft_unavailable")
     return `Your round-${round} draft was unavailable; deliver a complete draft.`;
   if (!verdict) return `No verdict on your round-${round} draft is available.`;

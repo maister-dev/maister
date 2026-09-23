@@ -17,6 +17,7 @@ import pino from "pino";
 import { recordArtifact } from "../artifact-store";
 
 import {
+  CONSENSUS_DRAFT_OUTPUT_CAP_BYTES,
   finishConsensusOutput,
   retainConsensusOutput,
   type RetainedConsensusOutput,
@@ -37,12 +38,12 @@ import { agentTurns, runs } from "@/lib/db/schema";
 import { PromptOwnerInvariantError } from "@/lib/execution-host/prompt-owners";
 import { agentMessageText } from "@/lib/run-transcript/agent-text";
 
+export { CONSENSUS_DRAFT_OUTPUT_CAP_BYTES } from "./text";
+
 const log = pino({
   name: "consensus-draft-prompt-owner",
   level: process.env.LOG_LEVEL ?? "info",
 });
-
-export const CONSENSUS_DRAFT_OUTPUT_CAP_BYTES = 1024 * 1024;
 
 type DraftRef = Extract<
   Extract<PromptOwner, { kind: "agent_turn" }>["ref"],

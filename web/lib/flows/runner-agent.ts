@@ -28,12 +28,15 @@ import {
   flowPromptOwners,
   FlowPromptContinuationPending,
   gatePromptOperationKey,
+  waitForConsensusApplication,
   waitForGateApplication,
   waitForPromptIncarnation,
   type GatePromptOwner,
 } from "./graph/prompt-owner";
 import {
   admitConsensusPrompt,
+  consensusPromptOperationKey,
+  ConsensusGenerationPending,
   type ConsensusPromptOwner,
 } from "./graph/consensus/prompt-owner";
 function isConsensusOwner(
@@ -1158,6 +1161,36 @@ export async function reattachGatePrompt(
   return { ok: true, stdout: "", vars: {}, durationMs: 0 };
 }
 
+async function reattachConsensusPrompt(
+  ctx: Pick<RunAgentStepCtx, "db" | "runId" | "bindExecution">,
+  owner: ConsensusPromptOwner,
+  execution?: AgentExecution,
+): Promise<StepResult | null> {
+  const db = ctx.db ?? getDb();
+  const existing = await findOwnedPrompt(
+    db,
+    ctx.runId,
+    consensusPromptOperationKey(owner),
+  );
+
+  if (!existing) return null;
+  if (existing.applicationState !== "applied")
+    throw new ConsensusGenerationPending(
+      owner.variant === "consensus_verifier"
+        ? owner.verdictId
+        : owner.synthesisId,
+    );
+  const bound =
+    execution ??
+    (ctx.bindExecution
+      ? await ctx.bindExecution()
+      : await bindExecution(createExecutionHosts({ db }), ctx.runId));
+
+  await closeAppliedFlowPromptSession(db, bound.client, existing.id);
+
+  return { ok: true, stdout: "", vars: {}, durationMs: 0 };
+}
+
 export async function runAgentStep(
   step: AgentStepLike,
   ctx: RunAgentStepCtx,
@@ -1170,10 +1203,11 @@ export async function runAgentStep(
 > {
   // Existing immutable requests do not depend on today's template or context.
   // A consensus cell re-enters through its own logical operation key instead.
-  if (ctx.promptOwner && !isConsensusOwner(ctx.promptOwner)) {
-    const completed =
-      ctx.promptOwner.variant === "node" ||
-      ctx.promptOwner.variant === "permission_resume"
+  if (ctx.promptOwner) {
+    const completed = isConsensusOwner(ctx.promptOwner)
+      ? await reattachConsensusPrompt(ctx, ctx.promptOwner, execution)
+      : ctx.promptOwner.variant === "node" ||
+          ctx.promptOwner.variant === "permission_resume"
         ? await reattachNodePrompt(ctx, ctx.promptOwner, execution)
         : await reattachGatePrompt(ctx, ctx.promptOwner, execution);
 
@@ -1565,15 +1599,25 @@ async function runNewSession(
             );
           promptResult = { stopReason: "end_turn", meta: null };
         } else if (promptOwner) {
-          await waitForGateApplication(
-            ctx.db ?? getDb(),
-            client,
-            handle.commandId,
-            AbortSignal.any([
-              consumer.failureSignal,
-              ...(ctx.signal ? [ctx.signal] : []),
-            ]),
-          );
+          const ownerSignal = AbortSignal.any([
+            consumer.failureSignal,
+            ...(ctx.signal ? [ctx.signal] : []),
+          ]);
+
+          if (isConsensusOwner(promptOwner))
+            await waitForConsensusApplication(
+              ctx.db ?? getDb(),
+              client,
+              handle.commandId,
+              ownerSignal,
+            );
+          else
+            await waitForGateApplication(
+              ctx.db ?? getDb(),
+              client,
+              handle.commandId,
+              ownerSignal,
+            );
           if (!isConsensusOwner(promptOwner))
             await assertGatePermissionSettled(
               ctx.db ?? getDb(),

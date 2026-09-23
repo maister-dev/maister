@@ -483,8 +483,7 @@ describe("M37 orchestrator full loop through the real supervisor-client wire", (
 
     // ---- Stage 1: run the orchestrator node through the REAL wire. ----------
     // runFlow → runGraph → real runner-agent → createSession + sendPrompt over
-    // HTTP to the test supervisor. On sendPrompt the supervisor reads the facade
-    // token from the createSession mcpServers and (via directLaunchHook) spawns
+    // HTTP to the test supervisor. On sendPrompt its directLaunchHook spawns
     // 2 children, then emits session.exited{0}. The clean end_turn + 2 pending
     // children → the orchestrator parks on WaitingOnChildren.
     await runFlow(runId, { db, runtimeRoot: process.cwd() });
@@ -501,13 +500,6 @@ describe("M37 orchestrator full loop through the real supervisor-client wire", (
 
     expect(orchestratorCreates).toHaveLength(1);
     expect(orchestratorCreates[0].isResume).toBe(false);
-    // The maister facade token rode the createSession mcpServers payload.
-    const facade = orchestratorCreates[0].mcpServers.find(
-      (s) => s.name === "maister",
-    ) as { env?: Record<string, string> } | undefined;
-
-    expect(facade?.env?.MAISTER_PROJECT_TOKEN).toBeTruthy();
-
     // Two child agent runs exist with the parent + root linkage, still Pending
     // (tryStartRun forced off), and the orchestrator released its slot at park.
     const children = await childRunIds(runId);

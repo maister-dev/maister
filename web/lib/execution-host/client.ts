@@ -71,6 +71,7 @@ import {
   deliverCommand,
   startAsyncPrompt,
   waitForPromptCompletion,
+  waitForPromptOwnerApplication,
 } from "./deliverer";
 import {
   issueCommand,
@@ -172,6 +173,10 @@ export interface BoundClient {
     handle: PromptHandle,
     opts?: { signal?: AbortSignal; owners?: PromptOwnerRegistry },
   ): Promise<PromptResult>;
+  waitForPromptOwnerApplication(
+    handle: PromptHandle,
+    opts?: { signal?: AbortSignal; owners?: PromptOwnerRegistry },
+  ): Promise<PromptResult | null>;
   deliverInput(
     sessionId: HostSessionId | string,
     payload: InputPayload,
@@ -395,6 +400,40 @@ export function createExecutionHosts(
       timeoutMs: COMMAND_POLICY[kind].timeoutMs,
     });
 
+    async function assignmentIsCurrent(): Promise<boolean> {
+      const rows = await db
+        .select({ id: executionAssignments.id })
+        .from(executionAssignments)
+        .where(
+          and(
+            eq(executionAssignments.id, current.id),
+            eq(executionAssignments.runId, current.runId),
+            eq(executionAssignments.executionHostId, host.id),
+            eq(executionAssignments.epoch, current.epoch),
+            eq(executionAssignments.state, "active"),
+          ),
+        )
+        .limit(1);
+
+      return Boolean(rows[0]);
+    }
+
+    async function sealPromptRuntimeObjects(
+      result: PromptResult,
+    ): Promise<void> {
+      if (!result.runtimeObjects?.length) return;
+      await db.transaction(async (tx) => {
+        for (const metadata of result.runtimeObjects ?? []) {
+          await reduceRuntimeObjectEvidence(
+            tx,
+            objectBinding(metadata.objectId, metadata.generation),
+            { kind: "seal", source: "ack", metadata },
+          );
+        }
+      });
+      runEventWakeBus.wake(current.runId);
+    }
+
     const client: BoundClient = {
       get assignment() {
         return current;
@@ -548,43 +587,27 @@ export function createExecutionHosts(
           handle,
           owners: opts?.owners ?? deps.owners,
           signal: opts?.signal,
-          assignmentIsCurrent: async () => {
-            const rows = await db
-              .select({ id: executionAssignments.id })
-              .from(executionAssignments)
-              .where(
-                and(
-                  eq(executionAssignments.id, current.id),
-                  eq(executionAssignments.runId, current.runId),
-                  eq(executionAssignments.executionHostId, host.id),
-                  eq(executionAssignments.epoch, current.epoch),
-                  eq(executionAssignments.state, "active"),
-                ),
-              )
-              .limit(1);
-
-            return Boolean(rows[0]);
-          },
+          assignmentIsCurrent,
           lookupReceipt: (commandId) => transport.getCommandReceipt(commandId),
           logger,
         });
 
-        if (result.runtimeObjects?.length) {
-          await db.transaction(async (tx) => {
-            for (const metadata of result.runtimeObjects ?? []) {
-              await reduceRuntimeObjectEvidence(
-                tx,
-                objectBinding(metadata.objectId, metadata.generation),
-                {
-                  kind: "seal",
-                  source: "ack",
-                  metadata,
-                },
-              );
-            }
-          });
-          runEventWakeBus.wake(current.runId);
-        }
+        await sealPromptRuntimeObjects(result);
+
+        return result;
+      },
+      async waitForPromptOwnerApplication(handle, opts) {
+        const result = await waitForPromptOwnerApplication({
+          db,
+          handle,
+          owners: opts?.owners ?? deps.owners,
+          signal: opts?.signal,
+          assignmentIsCurrent,
+          lookupReceipt: (commandId) => transport.getCommandReceipt(commandId),
+          logger,
+        });
+
+        if (result) await sealPromptRuntimeObjects(result);
 
         return result;
       },
