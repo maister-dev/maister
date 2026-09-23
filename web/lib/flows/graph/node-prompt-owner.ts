@@ -11,7 +11,7 @@ import type {
 import type { FlowOwnerRef } from "./prompt-owner-authority";
 import type { FlowActionCompletion } from "./action-completion";
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import pino from "pino";
 
 import { lockFlowPromptOwner } from "./prompt-owner-authority";
@@ -30,6 +30,7 @@ import {
 } from "@/lib/db/schema";
 import { PromptOwnerInvariantError } from "@/lib/execution-host/prompt-owners";
 import {
+  ADMISSIBLE_PROMPT_INCARNATION_STATES,
   lockCurrentSessionAssignment,
   staleSessionBinding,
 } from "@/lib/execution-host/session-binding";
@@ -122,7 +123,9 @@ export async function admitNodePrompt(
         eq(runSessions.hostSessionId, hostSessionId),
         eq(runSessionIncarnations.hostSessionId, hostSessionId),
         eq(runSessionIncarnations.executionHostId, client.host.id),
-        eq(runSessionIncarnations.state, "active"),
+        inArray(runSessionIncarnations.state, [
+          ...ADMISSIBLE_PROMPT_INCARNATION_STATES,
+        ]),
       ),
     )
     .for("update")

@@ -13,7 +13,7 @@ import type { ConsensusNodeDef } from "./drafts";
 import type { ConsensusTextBounds } from "./text";
 import type { ParsedConsensusVerdict } from "./verdict";
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import pino from "pino";
 
 import { compileManifest } from "../compile";
@@ -45,6 +45,7 @@ import {
   runs,
 } from "@/lib/db/schema";
 import {
+  ADMISSIBLE_PROMPT_INCARNATION_STATES,
   lockCurrentSessionAssignment,
   staleSessionBinding,
 } from "@/lib/execution-host/session-binding";
@@ -350,7 +351,9 @@ export async function admitConsensusPrompt(
         eq(runSessions.hostSessionId, hostSessionId),
         eq(runSessionIncarnations.hostSessionId, hostSessionId),
         eq(runSessionIncarnations.executionHostId, client.host.id),
-        eq(runSessionIncarnations.state, "active"),
+        inArray(runSessionIncarnations.state, [
+          ...ADMISSIBLE_PROMPT_INCARNATION_STATES,
+        ]),
       ),
     )
     .for("update")

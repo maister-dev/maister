@@ -25,6 +25,8 @@ import {
 } from "@/lib/db/schema";
 import { buildOrchestratorResumeConsumer } from "@/lib/domain-events/orchestrator-resume";
 import { startPromptOwnerWorker } from "@/lib/execution-host/prompt-owner-recovery";
+import { startAgentContinuationWorker } from "@/lib/agents/continuation-worker";
+import { CANONICAL_PROJECTION_CONSUMERS } from "@/lib/execution-host/events/projection-consumers";
 import { flowPromptOwners } from "@/lib/flows/graph/prompt-owner";
 import { consensusDraftPromptOwners } from "@/lib/flows/graph/consensus/draft-prompt-owner";
 import { verifyConsensusInputEvidence } from "@/lib/flows/graph/consensus/input-evidence";
@@ -422,6 +424,69 @@ async function killAtDatabaseWrite(input: {
     );
     await database.pool.query(`DROP FUNCTION IF EXISTS ${trigger}()`);
   }
+}
+
+/** Force the prompt-admission timeout window for every draft child of
+ * `parentRunId`: their incarnation inserts are dropped (and counted, so the
+ * re-drive cadence is observable), and their lifecycle cursor is pre-claimed so
+ * the projector cannot run into the dropped row. Release restores both. */
+async function holdChildAdmission(parentRunId: string) {
+  const tag = randomUUID().replaceAll("-", "");
+  const attempts = `test_admission_attempts_${tag}`;
+  const suppress = `test_suppress_child_incarnation_${tag}`;
+  const hold = `test_hold_child_lifecycle_${tag}`;
+  const child = `EXISTS (SELECT 1 FROM runs r WHERE r.id = NEW.run_id AND r.parent_run_id = '${parentRunId}')`;
+
+  await database.pool.query(
+    `CREATE TABLE ${attempts} (run_id text NOT NULL, at timestamptz NOT NULL DEFAULT clock_timestamp())`,
+  );
+  await database.pool.query(
+    `CREATE FUNCTION ${suppress}() RETURNS trigger LANGUAGE plpgsql AS $$
+     BEGIN IF ${child} THEN INSERT INTO ${attempts} (run_id) VALUES (NEW.run_id); RETURN NULL; END IF; RETURN NEW; END $$`,
+  );
+  await database.pool.query(
+    `CREATE TRIGGER ${suppress} BEFORE INSERT ON run_session_incarnations FOR EACH ROW EXECUTE FUNCTION ${suppress}()`,
+  );
+  await database.pool.query(
+    `CREATE FUNCTION ${hold}() RETURNS trigger LANGUAGE plpgsql AS $$
+     BEGIN IF NEW.consumer_name = '${CANONICAL_PROJECTION_CONSUMERS.lifecycle}' AND ${child} THEN
+       NEW.claim_owner := 'test-hold:${tag}';
+       NEW.claim_expires_at := clock_timestamp() + interval '1 hour';
+     END IF; RETURN NEW; END $$`,
+  );
+  await database.pool.query(
+    `CREATE TRIGGER ${hold} BEFORE INSERT ON execution_event_consumers FOR EACH ROW EXECUTE FUNCTION ${hold}()`,
+  );
+  let released = false;
+
+  return {
+    /** Dropped insert attempts per child within the last `windowMs`. */
+    async recentAttempts(windowMs: number): Promise<number[]> {
+      const { rows } = await database.pool.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM ${attempts} WHERE at > clock_timestamp() - ($1::int * interval '1 millisecond') GROUP BY run_id`,
+        [windowMs],
+      );
+
+      return rows.map((row) => row.n);
+    },
+    async release(): Promise<void> {
+      if (released) return;
+      released = true;
+      await database.pool.query(
+        `DROP TRIGGER IF EXISTS ${suppress} ON run_session_incarnations`,
+      );
+      await database.pool.query(`DROP FUNCTION IF EXISTS ${suppress}()`);
+      await database.pool.query(
+        `DROP TRIGGER IF EXISTS ${hold} ON execution_event_consumers`,
+      );
+      await database.pool.query(`DROP FUNCTION IF EXISTS ${hold}()`);
+      await database.pool.query(`DROP TABLE IF EXISTS ${attempts}`);
+      await database.pool.query(
+        "UPDATE execution_event_consumers SET claim_owner = NULL, claim_expires_at = NULL WHERE claim_owner = $1",
+        [`test-hold:${tag}`],
+      );
+    },
+  };
 }
 
 describe("Consensus prompt owners through the production graph driver", () => {
@@ -2174,4 +2239,67 @@ describe("Consensus prompt owners through the production graph driver", () => {
         .where(eq(nodeAttempts.id, attempt.id));
     }
   }, 180_000);
+  // ADR-167 D5 amendment (2026-09-23): a draft child whose session has no
+  // durable incarnation yet must YIELD, never finalize Failed; the agent
+  // continuation worker re-drives the claimed turn once the incarnation exists.
+  it("owner-consensus-draft: an admission fence timeout yields the draft child and the agent worker re-drives it", async () => {
+    const seeded = await seedConsensusFlow(consensusPrompt("agree"));
+    const fault = await holdChildAdmission(seeded.runId);
+    const agents = startAgentContinuationWorker({
+      db: database.db as unknown as Db,
+      executionHosts: createExecutionHosts({
+        db: database.db as unknown as Db,
+      }),
+    });
+
+    try {
+      await drive(seeded.runId);
+      // The fence budget is ~60 s; wait past it with no durable incarnation.
+      await new Promise((resolve) => setTimeout(resolve, 75_000));
+      const children = await database.db
+        .select({ id: runs.id, status: runs.status })
+        .from(runs)
+        .where(eq(runs.parentRunId, seeded.runId));
+
+      expect(children).toHaveLength(2);
+      expect(children.map((child) => child.status)).toEqual([
+        "Running",
+        "Running",
+      ]);
+      // Each re-drive pass is bounded by the worker's 5 s abort, never a spin.
+      for (const count of await fault.recentAttempts(10_000))
+        expect(count).toBeLessThan(3);
+
+      await fault.release();
+      await settleDraftsAndResume(seeded.runId);
+      for (const child of children) {
+        const prompts = await database.db
+          .select({ id: executionCommands.id })
+          .from(executionCommands)
+          .where(
+            and(
+              eq(executionCommands.runId, child.id),
+              eq(executionCommands.kind, "session.prompt"),
+            ),
+          );
+
+        expect(prompts).toHaveLength(1);
+        // A `created` live incarnation dispatches; it never opens a second session.
+        expect(
+          await database.db
+            .select({ id: executionCommands.id })
+            .from(executionCommands)
+            .where(
+              and(
+                eq(executionCommands.runId, child.id),
+                eq(executionCommands.kind, "session.create"),
+              ),
+            ),
+        ).toHaveLength(1);
+      }
+    } finally {
+      await agents.stop();
+      await fault.release();
+    }
+  }, 300_000);
 });

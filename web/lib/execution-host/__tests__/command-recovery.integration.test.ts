@@ -31,6 +31,7 @@ import { retireEligibleCommands } from "@/lib/execution-host/retirement";
 import { OPEN_COMMANDS_PAGE_SIZE } from "@/lib/execution-host/commands";
 import { resetRegistrarStateForTests } from "@/lib/execution-host/registrar";
 import { resetResolverForTests } from "@/lib/execution-host/resolver";
+import { CANONICAL_PROJECTION_CONSUMERS } from "@/lib/execution-host/events/projection-consumers";
 import { canonicalProjectors } from "@/lib/execution-host/events/projection-runtime";
 import {
   startProjectionWorker,
@@ -61,6 +62,7 @@ import {
   startRealSupervisor,
   useRealSupervisorUrl,
 } from "@/test-support/real-supervisor";
+import { holdProjection } from "@/test-support/projection-hold";
 import { seedNodePromptOwner } from "@/test-support/prompt-owner-fixture";
 
 const schema = fullSchema as unknown as Record<string, any>;
@@ -124,6 +126,7 @@ async function runSessionRow(runId: string) {
     .select()
     .from(schema.runSessions)
     .where(eq(schema.runSessions.runId, runId))) as unknown as Array<{
+    id: string;
     hostSessionId: string | null;
     acpSessionId: string | null;
     executionAssignmentId: string | null;
@@ -238,14 +241,42 @@ describe("execution-command recovery (real supervisor)", () => {
     expect(await runSessionRow(runId)).toBeNull();
     expect((await attemptRow(nodeAttemptId))?.executionAssignmentId).toBeNull();
 
-    const summary = await recoverExecutionCommands({ db, graceMs: 0 });
+    // Only the fold may write the incarnation: the lifecycle projector is held.
+    const release = await holdProjection(testDatabase.pool, {
+      consumerName: CANONICAL_PROJECTION_CONSUMERS.lifecycle,
+      runId,
+    });
+    let summary: Awaited<ReturnType<typeof recoverExecutionCommands>>;
+    let session: Awaited<ReturnType<typeof runSessionRow>>;
+
+    try {
+      summary = await recoverExecutionCommands({ db, graceMs: 0 });
+      session = await runSessionRow(runId);
+      const [incarnation] = await db
+        .select()
+        .from(schema.runSessionIncarnations)
+        .where(
+          eq(
+            schema.runSessionIncarnations.hostSessionId,
+            session!.hostSessionId,
+          ),
+        );
+
+      // ADR-167 D5 amendment 2026-09-23: the fold authors the admission row.
+      expect(incarnation).toMatchObject({
+        state: "created",
+        runSessionId: session!.id,
+        executionAssignmentId: assignment.id,
+        assignmentEpoch: assignment.epoch,
+      });
+    } finally {
+      await release();
+    }
 
     expect(summary.folded).toBe(1);
     const folded = await getCommand(db, createRow.id);
 
     expect(folded!.state).toBe("succeeded");
-    const session = await runSessionRow(runId);
-
     expect(session?.hostSessionId).toBeTruthy();
     expect(session?.executionAssignmentId).toBe(assignment.id);
     expect((await attemptRow(nodeAttemptId))?.executionAssignmentId).toBe(

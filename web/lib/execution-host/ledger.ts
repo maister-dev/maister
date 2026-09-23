@@ -15,11 +15,12 @@ import type { SendPromptInput } from "@/lib/supervisor-client";
 
 import { randomUUID } from "node:crypto";
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import pino, { type Logger } from "pino";
 
 import { canonicalCommandJson } from "../../../runtime/command-json";
 
+import { ADMISSIBLE_PROMPT_INCARNATION_STATES } from "./session-binding";
 import { isAdmissible } from "./assignments";
 import { insertCommand, markFenced } from "./commands";
 import { asAssignmentId, asCommandId } from "./types";
@@ -331,7 +332,9 @@ export async function issueOwnedPrompt(
           eq(runSessionIncarnations.assignmentEpoch, ref.assignmentEpoch),
           eq(runSessionIncarnations.executionHostId, input.host.id),
           eq(runSessionIncarnations.hostSessionId, input.targetSessionId),
-          eq(runSessionIncarnations.state, "active"),
+          inArray(runSessionIncarnations.state, [
+            ...ADMISSIBLE_PROMPT_INCARNATION_STATES,
+          ]),
         ),
       )
       .for("update")

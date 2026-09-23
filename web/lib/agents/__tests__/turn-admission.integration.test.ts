@@ -18,6 +18,7 @@ import { acceptAgentMessage } from "@/lib/agents/turns";
 import { claimAgentMessage } from "@/lib/agents/turn-claim";
 import { mintAssignment } from "@/lib/execution-host/assignments";
 import { issueOwnedPrompt } from "@/lib/execution-host/ledger";
+import { applyCreateAck } from "@/lib/execution-host/create-ack";
 import { seedLocalHost } from "@/test-support/execution-host-seed";
 import {
   startMainPostgresTestDb,
@@ -61,6 +62,67 @@ async function seedRun(): Promise<string> {
 }
 
 describe("Durable agent turn admission", () => {
+  // ADR-167 D5 amendment (2026-09-23): a message accepted before the launch
+  // create is acknowledged waits for an ADMISSIBLE session, not for lifecycle
+  // projection — the ACK-authored `created` incarnation is enough to claim it.
+  it("defers a message until the launch ACK writes the created incarnation, then claims it", async () => {
+    const runId = randomUUID();
+
+    await db.insert(runs).values({
+      id: runId,
+      runKind: "agent",
+      flowVersion: "agent",
+      flowRevision: "manual",
+      status: "Running",
+      persistent: true,
+    });
+    const assignment = await db.transaction((tx) =>
+      mintAssignment(tx as unknown as Db, {
+        runId,
+        hostId: host.id,
+        reason: "launch",
+      }),
+    );
+
+    // The launch inserts the logical session before its create is acknowledged.
+    await db
+      .insert(runSessions)
+      .values({ id: randomUUID(), runId, sessionName: "default" });
+    const turn = await acceptAgentMessage(db, runId, "early message");
+    const early = await claimAgentMessage(db, turn.id, host);
+
+    expect(early).toMatchObject({
+      kind: "queued",
+      reason: "session_not_admissible",
+    });
+    expect(
+      (await db.select().from(runs).where(eq(runs.id, runId)))[0]
+        .resumeRequestedAt,
+    ).not.toBeNull();
+
+    await db.transaction((tx) =>
+      applyCreateAck(tx as unknown as Db, {
+        runId,
+        sessionName: "default",
+        assignmentId: assignment.id,
+        nodeAttemptId: null,
+        result: { sessionId: `host-${runId}`, acpSessionId: `acp-${runId}` },
+      }),
+    );
+    const [incarnation] = await db
+      .select()
+      .from(runSessionIncarnations)
+      .where(eq(runSessionIncarnations.runId, runId));
+
+    expect(incarnation.state).toBe("created");
+    expect(await claimAgentMessage(db, turn.id, host)).toMatchObject({
+      kind: "claimed",
+      turn: { id: turn.id, executionAssignmentId: assignment.id },
+    });
+    // Later cases measure the agent pool from zero live runs.
+    await db.update(runs).set({ status: "Done" }).where(eq(runs.id, runId));
+  });
+
   it("concurrent capacity claims keep accepted input queued and reuse the winning generation", async () => {
     const previousCap = process.env.MAISTER_MAX_CONCURRENT_AGENTS;
     const runIds = [await seedRun(), await seedRun()];

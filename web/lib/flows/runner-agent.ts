@@ -103,6 +103,7 @@ import { staleSessionBinding } from "@/lib/execution-host/session-binding";
 import { PromptOwnerInvariantError } from "@/lib/execution-host/prompt-owners";
 import { isMaisterError } from "@/lib/errors";
 import { SessionCreatePending } from "@/lib/execution-host/owned-session-create";
+import { PromptIncarnationPending } from "@/lib/execution-host/prompt-incarnation";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 
 const log = pino({
@@ -1820,6 +1821,25 @@ async function runNewSession(
       continuationPending = true;
       throw new FlowPromptContinuationPending(
         String(err.details?.commandId),
+        err,
+      );
+    }
+    // No durable incarnation yet: the session is live and still ours, so it
+    // must survive for the continuation worker's re-drive, which re-admits the
+    // same attempt once the create ACK (or its fold) is durable.
+    if (err instanceof PromptIncarnationPending) {
+      continuationPending = true;
+      log.warn(
+        {
+          runId: ctx.runId,
+          stepId: ctx.stepId,
+          assignmentId: client.assignment.id,
+          hostSessionId: session?.hostSessionId ?? null,
+        },
+        "flow-prompt-admission-yielded",
+      );
+      throw new FlowPromptContinuationPending(
+        String(err.details?.hostSessionId),
         err,
       );
     }

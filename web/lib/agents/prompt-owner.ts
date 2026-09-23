@@ -22,7 +22,7 @@ import type {
   PromptOwnerRegistry,
 } from "@/lib/execution-host/prompt-owners";
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import pino from "pino";
 
 import { prepareAgentRunFinalization } from "./finalization";
@@ -42,6 +42,7 @@ import {
   agentTurns,
 } from "@/lib/db/schema";
 import {
+  ADMISSIBLE_PROMPT_INCARNATION_STATES,
   lockCurrentSessionAssignment,
   staleSessionBinding,
 } from "@/lib/execution-host/session-binding";
@@ -132,7 +133,9 @@ export async function lockAgentPromptSession(
         eq(runSessionIncarnations.executionAssignmentId, assignment.id),
         eq(runSessionIncarnations.assignmentEpoch, assignment.epoch),
         eq(runSessionIncarnations.executionHostId, assignment.executionHostId),
-        eq(runSessionIncarnations.state, "active"),
+        inArray(runSessionIncarnations.state, [
+          ...ADMISSIBLE_PROMPT_INCARNATION_STATES,
+        ]),
       ),
     )
     .for("update")

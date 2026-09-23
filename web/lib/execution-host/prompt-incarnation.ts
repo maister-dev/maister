@@ -8,13 +8,36 @@ import { and, eq } from "drizzle-orm";
 import { runEventWakeBus } from "./events/run-wake";
 import { RUNTIME_EVENT_CLAIM_LEASE_MS } from "./events/consumer";
 import { projectionLimitsFromEnv } from "./events/projection-limits";
-import { staleSessionBinding } from "./session-binding";
+import {
+  ADMISSIBLE_PROMPT_INCARNATION_STATES,
+  staleSessionBinding,
+} from "./session-binding";
 
 import { runSessionIncarnations } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 
-/** The create ACK can precede lifecycle projection. Wait for its exact durable
- * incarnation before admitting a v2 prompt; never guess the latest session.
+/** The admission fence found no durable incarnation for the session yet. It is
+ * a yield, never a run outcome: every caller leaves its run for the owner that
+ * re-drives it (the flow and agent continuation workers, or the scratch user).
+ */
+export class PromptIncarnationPending extends MaisterError {
+  constructor(input: {
+    runId: string;
+    assignmentId: string;
+    hostSessionId: string;
+  }) {
+    super(
+      "EXECUTOR_UNAVAILABLE",
+      "session incarnation is not durable yet for prompt admission",
+      { details: { reason: "prompt_incarnation_pending", ...input } },
+    );
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+/** The create ACK writes the exact incarnation as `created` in its own
+ * transaction, so this normally returns on the first read. It waits only for
+ * the window in which no ACK is durable yet; never guess the latest session.
  */
 export async function waitForPromptIncarnation(
   db: Db,
@@ -47,7 +70,13 @@ export async function waitForPromptIncarnation(
       .limit(1);
 
     signal?.throwIfAborted();
-    if (incarnation?.state === "active") return;
+    if (
+      incarnation &&
+      (ADMISSIBLE_PROMPT_INCARNATION_STATES as readonly string[]).includes(
+        incarnation.state,
+      )
+    )
+      return;
     if (incarnation)
       throw staleSessionBinding(client.assignment.runId, client.assignment.id);
     await runEventWakeBus.wait(
@@ -56,15 +85,9 @@ export async function waitForPromptIncarnation(
       signal,
     );
   }
-  throw new MaisterError(
-    "EXECUTOR_UNAVAILABLE",
-    "session incarnation projection is not ready for prompt admission",
-    {
-      details: {
-        reason: "prompt_incarnation_pending",
-        runId: client.assignment.runId,
-        assignmentId: client.assignment.id,
-      },
-    },
-  );
+  throw new PromptIncarnationPending({
+    runId: client.assignment.runId,
+    assignmentId: client.assignment.id,
+    hostSessionId,
+  });
 }

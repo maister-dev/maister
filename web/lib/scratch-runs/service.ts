@@ -28,6 +28,7 @@ import pino from "pino";
 
 import { assertRuntimeObjectsReferenceable } from "@/lib/execution-host/runtime-object-holds";
 import { assertCurrentSessionBinding } from "@/lib/execution-host/session-binding";
+import { PromptIncarnationPending } from "@/lib/execution-host/prompt-incarnation";
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { ensureLocalPackageGitExclude } from "@/lib/local-packages/git";
 import { assertHoldsLock } from "@/lib/local-packages/lock";
@@ -662,6 +663,16 @@ export async function markScratchCrashed(args: {
   });
 }
 
+/** A prompt-admission fence timeout is a yield: the message stays persisted
+ * and the dialog retryable. Logged once per yield at every scratch caller. */
+export function noteScratchAdmissionYield(runId: string, err: unknown): void {
+  if (err instanceof PromptIncarnationPending)
+    log.warn(
+      { runId, hostSessionId: err.details?.hostSessionId },
+      "scratch-prompt-admission-yielded",
+    );
+}
+
 export async function markScratchPromptRetryable(args: {
   db?: Db;
   runId: string;
@@ -1247,6 +1258,7 @@ export async function* launchScratchRunStaged(
       isMaisterError(err) &&
       err.code === "EXECUTOR_UNAVAILABLE"
     ) {
+      noteScratchAdmissionYield(runId, err);
       await markScratchPromptRetryable({ db, runId, err }).catch((markErr) =>
         log.error(
           {
@@ -1845,6 +1857,22 @@ export async function* launchLocalPackageAssistantStaged(
       log.warn({ runId }, "driver-yielded");
       throw err;
     }
+    // No prompt was admitted, so no deferred exists and the live session is
+    // kept for the resend; the dialog stays retryable instead of crashing.
+    if (err instanceof PromptIncarnationPending) {
+      noteScratchAdmissionYield(runId, err);
+      await markScratchPromptRetryable({ db, runId, err }).catch((markErr) =>
+        log.error(
+          {
+            runId,
+            markErr:
+              markErr instanceof Error ? markErr.message : String(markErr),
+          },
+          "failed to mark local-package assistant prompt retryable",
+        ),
+      );
+      throw err;
+    }
     // Release any open permission deferred the turn created: deleting the
     // supervisor session purges all pending deferreds for it (purgeSession).
     if (createdSessionId) {
@@ -2226,6 +2254,7 @@ export async function sendScratchUserMessage(args: {
       throw err;
     }
     if (isMaisterError(err) && err.code === "EXECUTOR_UNAVAILABLE") {
+      noteScratchAdmissionYield(args.runId, err);
       await markScratchPromptRetryable({ db, runId: args.runId, err }).catch(
         (markErr) =>
           log.error(
@@ -2372,6 +2401,7 @@ export async function sendLocalPackageAssistantMessage(args: {
       throw err;
     }
     if (isMaisterError(err) && err.code === "EXECUTOR_UNAVAILABLE") {
+      noteScratchAdmissionYield(args.runId, err);
       await markScratchPromptRetryable({ db, runId: args.runId, err }).catch(
         (markErr) =>
           log.error(

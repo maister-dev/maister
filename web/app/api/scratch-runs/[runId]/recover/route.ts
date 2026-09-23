@@ -12,6 +12,7 @@ import pino from "pino";
 import { z } from "zod";
 
 import { assertCurrentSessionBinding } from "@/lib/execution-host/session-binding";
+import { PromptIncarnationPending } from "@/lib/execution-host/prompt-incarnation";
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import {
   mergeRunnerAdapterLaunch,
@@ -33,6 +34,8 @@ import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import {
   assertLocalPackageAssistantActor,
   markScratchCrashed,
+  markScratchPromptRetryable,
+  noteScratchAdmissionYield,
 } from "@/lib/scratch-runs/service";
 import { readScratchDialogStatus } from "@/lib/scratch-runs/turn-completion";
 import {
@@ -541,6 +544,22 @@ export async function POST(
       // not ours to crash (E-EH-11).
       if (isFencedError(err)) {
         log.warn({ runId, assignmentId: claimed.id }, "driver-yielded");
+        throw err;
+      }
+      // The recovered session is live and nothing was admitted: keep the run
+      // for the user's resend rather than crashing a recovery that worked.
+      if (err instanceof PromptIncarnationPending) {
+        noteScratchAdmissionYield(runId, err);
+        await markScratchPromptRetryable({ db, runId, err }).catch((markErr) =>
+          log.error(
+            {
+              runId,
+              markErr:
+                markErr instanceof Error ? markErr.message : String(markErr),
+            },
+            "failed to mark scratch recovery prompt retryable",
+          ),
+        );
         throw err;
       }
       await markScratchCrashed({

@@ -4,6 +4,7 @@ import type { SessionBindingDisposition } from "./session-binding";
 import { randomUUID } from "node:crypto";
 
 import { and, eq, isNotNull, sql } from "drizzle-orm";
+import pino from "pino";
 
 import { currentCreateCommand, createIntentError } from "./create-intent";
 import {
@@ -19,6 +20,11 @@ import {
   runSessions,
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+
+const log = pino({
+  name: "create-ack",
+  level: process.env.LOG_LEVEL ?? "info",
+});
 
 /** Apply the create receipt in its ledger transaction. Stale outcomes remain
  * historical command evidence and cannot replace a successor binding/attempt.
@@ -113,11 +119,24 @@ export async function applyCreateAck(
         },
       );
   }
-  if (session)
-    await retireSupersededSessionIncarnations(tx, {
+  if (session) {
+    const retired = await retireSupersededSessionIncarnations(tx, {
       runSessionId: session.id,
       assignmentEpoch: assignment.epoch,
+      hostSessionId: input.result.sessionId,
     });
+
+    if (retired > 0)
+      log.info(
+        {
+          runId: input.runId,
+          assignmentId: assignment.id,
+          hostSessionId: input.result.sessionId,
+          retired,
+        },
+        "create-ack-superseded-incarnations",
+      );
+  }
   const now = new Date();
   const binding = {
     hostSessionId: input.result.sessionId,
@@ -125,6 +144,7 @@ export async function applyCreateAck(
     executionAssignmentId: assignment.id,
     updatedAt: now,
   };
+  const runSessionId = session?.id ?? randomUUID();
 
   if (session)
     await tx
@@ -133,12 +153,38 @@ export async function applyCreateAck(
       .where(eq(runSessions.id, session.id));
   else
     await tx.insert(runSessions).values({
-      id: randomUUID(),
+      id: runSessionId,
       runId: input.runId,
       sessionName: input.sessionName,
       ...binding,
       createdAt: now,
     });
+  // Prompt admission binds to this exact incarnation. Writing it here, in the
+  // ACK transaction under the assignment lock, is what lets admission proceed
+  // without waiting for the lifecycle projector to reach `session.created`.
+  if (!incarnation) {
+    await tx.insert(runSessionIncarnations).values({
+      id: randomUUID(),
+      runSessionId,
+      runId: input.runId,
+      executionAssignmentId: assignment.id,
+      assignmentEpoch: assignment.epoch,
+      executionHostId: assignment.executionHostId,
+      hostSessionId: input.result.sessionId,
+      acpSessionId: input.result.acpSessionId,
+      state: "created",
+      origin: "native",
+      createdAt: now,
+    });
+    log.info(
+      {
+        runId: input.runId,
+        assignmentId: assignment.id,
+        hostSessionId: input.result.sessionId,
+      },
+      "create-ack-incarnation-created",
+    );
+  }
   if (input.nodeAttemptId)
     await tx
       .update(nodeAttempts)

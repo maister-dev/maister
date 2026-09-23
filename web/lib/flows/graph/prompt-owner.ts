@@ -6,7 +6,7 @@ import type { PromptOwnerAdmission } from "@/lib/execution-host/ledger";
 import type { GateResult } from "@/lib/db/schema";
 import type { GateDef } from "@/lib/config.schema";
 
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import pino from "pino";
 
 import { decodeGatePromptCompletion } from "./gate-prompt-completion";
@@ -37,6 +37,7 @@ import {
   TurnLostCasLost,
 } from "@/lib/runs/turn-lost-boundary";
 import {
+  ADMISSIBLE_PROMPT_INCARNATION_STATES,
   lockCurrentSessionAssignment,
   staleSessionBinding,
 } from "@/lib/execution-host/session-binding";
@@ -339,7 +340,9 @@ export async function admitGatePrompt(
         eq(runSessions.hostSessionId, hostSessionId),
         eq(runSessionIncarnations.hostSessionId, hostSessionId),
         eq(runSessionIncarnations.executionHostId, client.host.id),
-        eq(runSessionIncarnations.state, "active"),
+        inArray(runSessionIncarnations.state, [
+          ...ADMISSIBLE_PROMPT_INCARNATION_STATES,
+        ]),
       ),
     )
     .for("update")

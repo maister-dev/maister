@@ -5,6 +5,7 @@ import type { AgentTurn, ExecutionHost } from "@/lib/db/schema";
 
 import { and, eq, inArray, lt, sql } from "drizzle-orm";
 
+import { ADMISSIBLE_PROMPT_INCARNATION_STATES } from "@/lib/execution-host/session-binding";
 import {
   agentTurns,
   executionAssignments,
@@ -23,7 +24,11 @@ export type AgentTurnClaim =
   | Readonly<{
       kind: "queued";
       turn: AgentTurn;
-      reason: "capacity" | "prior_turn" | "run_state" | "session_projection";
+      reason:
+        | "capacity"
+        | "prior_turn"
+        | "run_state"
+        | "session_not_admissible";
     }>;
 
 /** Serialize input binding with the same admission lock used by the scheduler. */
@@ -198,12 +203,14 @@ export async function claimAgentMessage(
           and(
             eq(runSessionIncarnations.runSessionId, session.id),
             eq(runSessionIncarnations.executionAssignmentId, assignment.id),
-            eq(runSessionIncarnations.state, "active"),
+            inArray(runSessionIncarnations.state, [
+              ...ADMISSIBLE_PROMPT_INCARNATION_STATES,
+            ]),
           ),
         )
         .limit(1);
 
-      if (!incarnation) return defer("session_projection");
+      if (!incarnation) return defer("session_not_admissible");
     }
     const [claimed] = await tx
       .update(agentTurns)

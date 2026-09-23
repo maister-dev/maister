@@ -527,7 +527,7 @@ Each commit is gated on the phase exit criteria. Merge goes to master with `--no
 
 ### Phase 1: Scope A — admission never waits for the lifecycle projector
 
-- [ ] **T1.1: RED tests A1 / A3, plus the site-widening pins.**
+- [x] **T1.1: RED tests A1 / A3, plus the site-widening pins.**
   - **New file** `web/lib/execution-host/__tests__/prompt-admission-incarnation.integration.test.ts` (integration project). Confirm with `pnpm --filter maister-web exec vitest list --project integration <file>`; per memory, do not use `pnpm test:integration -- <file>`. It runs against the real supervisor.
     - **Hold mechanism:** `claimNextExecutionProjection` for the lifecycle consumer, released by the manual `UPDATE` used in `projection-worker.integration.test.ts:371-387` (C27). Extract it into `test-support/projection-hold.ts` so every RED in this plan shares one helper.
     - **A1:** hold the lifecycle projector. After a real create ACK, a node prompt is admitted within one 250 ms wake, and the incarnation is `created`. Release the projector: it becomes `active` with the same id, and `hostBootId` and `activatedAt` are set.
@@ -540,8 +540,9 @@ Each commit is gated on the phase exit criteria. Merge goes to master with `--no
     - **A3:** AT-08 (`deliverer.integration.test.ts:114`) stays green unchanged. Add: a delayed ACK for a superseded assignment inserts **no** incarnation. Add: a current-assignment `session.created` whose ACK is stale moves `created → lost` (one row, no unique violation), and a later prompt against it is refused `assignment_fenced`.
   - Add one parameterized case per admission path of C1 sites 3–9: with the projector held, admission succeeds. The fixture is shared through `test-support/prompt-owner-fixture.ts`. Remove that fixture's own `waitForPromptIncarnation` precondition only if it becomes redundant, and name the change.
   - **Expected on master:** A1 times out and ends as `EXECUTOR_UNAVAILABLE prompt_incarnation_pending`. The site cases fail with their `*_admission_incarnation` cause.
+  - **As done (2026-09-23), deviation from the per-site cases:** seven bespoke domain seeds (sites 3–9) would re-test one predicate seven times. Coverage is instead: the node path end to end (A1, real supervisor, projector held); the agent path (`turn-admission.integration.test.ts`, the claim on a `created` row; `consensus-prompt-owners`, a yielded draft child re-driven with one `session.create` and one prompt); the scratch path (`local-package-assistant.integration.test.ts`); and the unit drift guard `admission-incarnation-sites.test.ts`, which fails if any of the 11 sites reads a literal `active` instead of `ADMISSIBLE_PROMPT_INCARNATION_STATES`. The allow-list refusal of `checkpointed` is the A3 checkpointed case. `prompt-owner-fixture.ts` keeps its `waitForPromptIncarnation` precondition: it now returns on the ACK row immediately, and it still proves the fence.
 
-- [ ] **T1.2: ACK-authored incarnation, same-epoch supersession and projector transitions (D-A1, D-A1a, D-A2).**
+- [x] **T1.2: ACK-authored incarnation, same-epoch supersession and projector transitions (D-A1, D-A1a, D-A2).**
   - Files: `web/lib/execution-host/create-ack.ts`, `web/lib/execution-host/session-binding.ts` (`retireSupersededSessionIncarnations` signature and predicate), `web/lib/execution-host/events/lifecycle-projector.ts` (activation, and the `projectTerminal` allow-list map).
   - **Logging:**
     - INFO `create-ack-incarnation-created {runId, assignmentId, hostSessionId}` in `applyCreateAck`, once per insert. It needs a logger parameter or a module pino, matching `prompt-evidence.ts`.
@@ -549,14 +550,14 @@ Each commit is gated on the phase exit criteria. Merge goes to master with `--no
     - WARN `session-incarnation-lost-on-stale-create {runId, incarnationId}`.
   - **Acceptance:** A1, A3 and A5 are green. The `recovery.ts` W2-fold test (command-recovery V1) now asserts the `created` row too.
 
-- [ ] **T1.3: Widen the 11 admission sites (D-A3).**
+- [x] **T1.3: Widen the 11 admission sites (D-A3).**
   - Files are the sites of C1. The constant lives in `session-binding.ts`.
   - `launch.ts:2997`: a `created` live incarnation now dispatches instead of issuing a second owned create. Assert "no second `session.create`" in the agent suite.
   - `turn-claim.ts:201`: a `created` incarnation claims.
   - **Logging:** no new lines. The existing refusal causes stay.
   - **Acceptance:** the T1.1 site cases are green, and an allow-list test proves `checkpointed` is still refused at site 2.
 
-- [ ] **T1.4: RED A2, then the typed yield on every path (D-A4, D-A5).**
+- [x] **T1.4: RED A2, then the typed yield on every path (D-A4, D-A5).**
   - **RED A2**, added to T1.1's file. Force the window: delete the `created` row after a real ACK, and hold the projector.
     - **Flow:** the attempt stays `Running`. There is no `markNodeFailed`, no `deleteSession`, and exactly one `recordDispatchedPrompt` row. Release the projector, which inserts the `active` row through the insert branch. The **production** continuation worker (`startFlowContinuationWorker`, as in the ADR-176 boot suites) re-drives, admits once and settles.
     - **Agent:** `startConsensusRunnerDraftSession` does not finalize `Failed`. Pin the agent worker's re-observe cadence: fewer than 3 dispatch attempts per 10 s.
@@ -570,8 +571,11 @@ Each commit is gated on the phase exit criteria. Merge goes to master with `--no
     - `web/lib/scratch-runs/service.ts` (`:1238-1273`, `:1841-1876`, `:2221-2276`, `:2367-2415`);
     - `web/app/api/scratch-runs/[runId]/recover/route.ts:539-561`.
   - **Logging:** WARN, once per yield, for each of `flow-prompt-admission-yielded`, `agent-prompt-admission-yielded` and `scratch-prompt-admission-yielded`, with `{runId, assignmentId, hostSessionId}`.
+  - **Widened (found by the agent A2 case, 2026-09-23):** `startConsensusRunnerDraftSession` also finalized a draft child `Failed` on `SessionCreatePending`. That error means another caller (the agent continuation worker, whose launch arm selects a just-launched draft child) owns the in-flight create; the child was failed while its turn was still being driven. It is reachable in production because both run in one process. The launcher now yields on it (WARN `consensus-draft-create-pending-yielded`), like `startAgentSession` already did.
+  - **Widened (same case, 2026-09-23):** the worker's re-drive of a draft turn that already holds its `commandId` waited through `waitForAgentPrompt`, whose `agentPromptOwners` registry refuses the `consensus_draft` variant, so the completed draft was poisoned (`agent_variant_not_implemented`) and the consensus never resumed. `startAgentSession` now picks the waiter by variant, the same choice `dispatchStoredAgentTurn` makes. Reachable in production: the worker's claimed/dispatched-turn arm selects every running draft child.
+  - **As done (2026-09-23):** the flow window is forced with a `BEFORE INSERT` trigger that drops the run's incarnation insert (equivalent to deleting the row after the ACK, and it also covers the projector's insert branch), plus `holdProjection`. The agent window uses the same trigger per draft child. The scratch window mocks only `waitForPromptIncarnation` to throw the typed yield; the persisted-message, dialog and resend assertions run against real PG.
 
-- [ ] **T1.5: RED A4, then the deferred agent message re-drive (D-A6).**
+- [x] **T1.5: RED A4, then the deferred agent message re-drive (D-A6).**
   - **RED A4**, in `web/lib/agents/__tests__/agent-session-reobserve.integration.test.ts` or a new sibling file (integration project), against the real supervisor with the production agent continuation worker:
     - Send an agent message while the launch `session.create` is still delivering. Hold the create ACK with the fault proxy (`test-support/supervisor-fault-proxy.ts`). The claim defers.
     - Release the ACK. The queued turn is claimed and dispatched without the run parking, within 2 worker passes.
@@ -580,13 +584,30 @@ Each commit is gated on the phase exit criteria. Merge goes to master with `--no
   - **Race:** the worker arm and a concurrent `sendAgentMessage` claim of the same turn produce exactly one `claimed` transition and one prompt command. Assert with `pg_stat_activity` that the loser is parked on the turn row lock, not merely serialized by chance (memory: "race guards need the window open").
   - **Files:** `web/lib/agents/continuation-worker.ts` (new arm), `web/lib/agents/turn-claim.ts` (reason rename; the admissible-state constant comes from T1.3), and every consumer of the reason literal (grep `session_projection`).
   - **Logging:** INFO `agent-deferred-turn-redriven {runId, turnId}`, once per re-drive.
+  - **As found (characterization, 2026-09-23) — the arm is withdrawn.** `session_not_admissible` is returned only on a `launch`/`legacy_backfill` assignment whose `default` session has no admissible incarnation, i.e. while the launch turn's own create is in flight. Only a persistent agent accepts messages (`acceptAgentMessage`), and every deferral already writes `runs.resume_requested_at`; the launch turn's park (`applyPersistentAgentPark`) re-arms it from the oldest queued turn, and the continuation worker's existing `NeedsInputIdle` + `resume_requested_at` arm re-drives the message through the same `claimAgentMessage`. The turn is therefore never orphaned; it runs after the launch turn, which is the order a `prior_turn` deferral gives. A fifth arm would re-select a turn that cannot be claimed without racing the launch turn, so it is not added, and the loop-guard and racer cases (which test that arm) are not written. What ships: the rename to `session_not_admissible` and the claim test in `turn-admission.integration.test.ts` (defer with `resume_requested_at` set before the ACK; claim on the ACK-authored `created` row after it). The docs (lifecycle agent-turn section, ADR-167 bullet) state this mechanism.
 
-- [ ] **T1.6: Re-derive every reader of `run_session_incarnations.state` (patch 2026-09-22 20.35).**
+- [x] **T1.6: Re-derive every reader of `run_session_incarnations.state` (patch 2026-09-22 20.35).**
   - Two meanings move in this phase: `created` rows now exist, and same-epoch rows become `lost` at the next ACK instead of at exit projection.
   - Grep every reader: `rg "runSessionIncarnations\.state|rsi\.state|run_session_incarnations.*state" web/lib web/app`. Known readers include `runs/active-run-session.ts:63`, `execution-host/runtime-object-holds.ts:169-171`, `runs/keepalive-sweeper.ts:230`, `agents/permission.ts:682`, `agents/prompt-owner.ts:410,429`, `flows/graph/prompt-session-cleanup.ts`, and the C1 sites.
   - Record a verdict table in the PR note: reader → what it means by the state → unchanged / widened / needs change, with the reason.
   - **Mandatory check:** `runtime-object-holds.ts` releases holds when a row leaves `created | active | checkpointed`. Prove that no reader still needs the objects of a same-epoch-superseded session. The node was applied before the next create, so `readPromptOutput` of its command is complete. `crash-recover.ts:301` and `permission-resume.ts:462` read only commands of the current or checkpointed session. If that proof fails, D-A1a must keep the objects' hold (fix in the holds predicate, test in the same task).
   - **Logging:** none. This is analysis plus a possible predicate fix.
+  - **Verdict table (2026-09-23).** Two meanings moved: a `created` row exists from the ACK, and a same-epoch predecessor becomes `lost` (`session_superseded`) at the successor's ACK instead of at its exit projection.
+
+    | Reader | What it means by the state | Verdict |
+    |---|---|---|
+    | 11 admission sites (C1) | may this session take a prompt | **widened** to `ADMISSIBLE_PROMPT_INCARNATION_STATES` (T1.3) |
+    | `create-ack.ts` (idempotent re-ACK) | is the bound row still open | own code (D-A1) |
+    | `lifecycle-projector.ts` | transition source | own code (D-A2) |
+    | `runs/active-run-session.ts:63` `liveIncarnationFor` | which logical session is live, ranking key 1 | **unchanged, now correct under lag**: before, the successor had no row until projection and the predecessor still read `active`, so the ranking picked the old session |
+    | `runtime-object-holds.ts:168` `live_session` hold | does the RUN still have any open incarnation | **unchanged**: run-scoped, and the superseding row is itself `created`, so a same-epoch supersession never drops the hold while the successor lives; rows now enter the set earlier (safer) |
+    | `runs/keepalive-sweeper.ts:230` | positive `checkpointed` witness on the current assignment | **unchanged**: `checkpointed` is written only by projected `session.exited{checkpoint}`, and D-A2 refuses it for a `lost` row, so a superseded row can never become a witness |
+    | `agents/permission.ts:682` | ADR-180 host park witness for the command's target session | **unchanged**, same reason |
+    | `agents/prompt-owner.ts` `lockAgentOwner` | application waits for `exited`/`crashed`; `lost` answers superseded | **unchanged**: a second agent session on the same assignment cannot be created before the turn applies (the claim defers `prior_turn` on any unapplied `agent_turn` prompt, and a persistent turn parks — new epoch — before the next) |
+    | `flows/graph/prompt-session-cleanup.ts:73` | skip the delete for an ended session | **unchanged**: it runs for node N before node N+1's create in the same pass (`runner-agent.ts` after application, `runner-graph.ts:3460` on re-entry of the completed attempt), so a same-epoch `lost` never reaches it; gate sessions use their own name (`gate-<id>`), a different run session |
+    | `crash-recover.ts:301`, permission-resume / handoff sources, `prompt-owner-authority.ts` | read by id or identity columns only | **unchanged** (no state predicate) |
+
+    No reader needs the objects of a same-epoch-superseded session after the next ACK: node N is applied (its output read) before N+1 is created. No predicate fix is required.
 
   - **Phase 1 exit:**
     - A1, A2, A3, A4 and A5 are green, and the T1.6 verdict table is recorded.
@@ -636,6 +657,7 @@ Each commit is gated on the phase exit criteria. Merge goes to master with `--no
     - `web/lib/flows/runner-agent.ts`: export `CONSUMER_SIGNAL_EVENT_TYPES` with its drift-guard unit test.
     - `events/prompt-projector.ts`: it calls `recordPromptEvent`; nothing else changes.
   - **Logging:** INFO `prompt-terminal-bound-directly {commandId, eventId}`.
+  - **As done (2026-09-23):** `CONSUMER_SIGNAL_EVENT_TYPES` lives in `web/lib/execution-host/prompt-signal-events.ts`, not in `runner-agent.ts`: the reducer in `execution-host` must not import from `flows`. The drift guard `web/lib/flows/__tests__/consumer-signal-types.test.ts` reads `startEventConsumer`'s `ev.type` branches and requires every non-text branch to be in the list (text-only: `session.update`, `session.line`). The constraint test is `prompt-settled-from.integration.test.ts`; shapes no code path can produce yet (a pre-`0176` row, a host-span row) are seeded with `session_replication_role = replica`, which suspends only triggers, so the CHECKs under test still run.
   - **Phase 2 exit:** B1 is green. `command-recovery.integration` RED 1–3 ("both orders") and the projector/consumer suites are green. Full lanes are green as in Phase 1.
 
 <!-- Commit checkpoint 3 -->
