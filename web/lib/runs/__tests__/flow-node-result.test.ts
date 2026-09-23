@@ -319,6 +319,8 @@ describe("buildFlowNodeResult", () => {
       pendingHitl: {
         hitlRequestId: "hitl-1",
         kind: "human",
+        answerState: "open",
+        storedResponse: null,
         assignmentId: "assignment-1",
         assignmentStatus: "open",
         assignmentActionKind: "human_review",

@@ -262,7 +262,10 @@ export default async function ScratchRunDetailLayout({
       title={detail.branch}
     >
       <div className="grid min-w-0 max-w-full gap-5">
-        <ScratchConversation runId={detail.runId} />
+        <ScratchConversation
+          canAct={role === "owner" || role === "admin" || role === "member"}
+          runId={detail.runId}
+        />
 
         <section className="min-w-0 max-w-full" data-testid="run-workbench">
           <WorkbenchPanel

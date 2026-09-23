@@ -59,6 +59,8 @@ function render(over: Partial<ResponseProps> = {}): string {
     runId: "run-1",
     hitlRequestId: "hitl-1",
     kind: "human",
+    answerState: "open",
+    storedResponse: null,
     options: [],
     schema: REVIEW_SCHEMA,
     canAct: true,

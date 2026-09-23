@@ -1,8 +1,13 @@
 import type { AdapterId } from "@/lib/acp-runners/adapter-support";
 import type { WorkbenchLifecycleActionId } from "@/lib/workbench-lifecycle/policy";
 import type { WorkbenchRunStatus } from "@/lib/workbench-lifecycle/policy";
+import type { HitlAnswerState } from "@/lib/hitl-response-contract";
 
 import { deriveWorkbenchLifecycleActions } from "@/lib/workbench-lifecycle/policy";
+import {
+  resolveHitlErrorMessage,
+  type HitlErrorMessage,
+} from "@/lib/ui-error-message";
 
 // Client-safe scratch-detail shapes + pure status helpers shared by the
 // scratch conversation, composer, and permission-panel components (M35 T3.2).
@@ -88,6 +93,11 @@ export type ScratchDetail = {
     prompt: string;
     schema: unknown;
     options: HitlOption[];
+    answerState: "open" | "answer_stored";
+    storedResponse:
+      | { optionId: string }
+      | { response: unknown; confidence?: number }
+      | null;
   } | null;
   capabilityProfile: {
     selectedMcpIds: string[];
@@ -107,12 +117,25 @@ export type ComposerAttachment = {
 export type ApiError = {
   code?: string;
   message?: string;
+  details?: { reason?: string; causeCode?: string };
 };
 
 export function errorText(payload: ApiError | null): string {
   void payload;
 
   return "errorGeneric";
+}
+
+export function hitlErrorText(
+  payload: ApiError | null,
+  answerState: HitlAnswerState,
+): HitlErrorMessage {
+  return resolveHitlErrorMessage({
+    code: payload?.code,
+    details: payload?.details,
+    surface: "scratch",
+    answerState,
+  });
 }
 
 export function canSend(status: ScratchDialogStatus): boolean {

@@ -1,12 +1,17 @@
 import "server-only";
 
 import type { HitlRequest } from "@/lib/db/schema";
+import type {
+  HitlAnswerState,
+  HitlStoredResponse,
+} from "@/lib/hitl-response-contract";
 
 import { and, eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
+import { projectHitlAnswer } from "@/lib/hitl-answer-view";
 import { extractOptions, getHitlRequestsForRun } from "@/lib/queries/hitl";
 import { handleExt } from "@/lib/tokens/ext-handler";
 
@@ -28,9 +33,13 @@ type ExtHitlRequestDTO = {
   options: { optionId: string; label: string }[];
   criticality: "low" | "medium" | "high" | "critical" | null;
   requestedAt: string;
+  answerState: HitlAnswerState;
+  storedResponse: HitlStoredResponse | null;
 };
 
-function toExtHitlDTO(row: HitlRequest): ExtHitlRequestDTO {
+function toExtHitlDTO(
+  row: HitlRequest & { responseIsNotNull: boolean },
+): ExtHitlRequestDTO {
   return {
     hitlRequestId: row.id,
     stepId: row.stepId,
@@ -44,6 +53,14 @@ function toExtHitlDTO(row: HitlRequest): ExtHitlRequestDTO {
     options: extractOptions(row.kind, row.schema),
     criticality: row.criticality ?? null,
     requestedAt: row.createdAt.toISOString(),
+    ...projectHitlAnswer({
+      kind: row.kind,
+      schema: row.schema,
+      response: row.response,
+      responseIsNotNull: row.responseIsNotNull,
+      respondedAt: row.respondedAt,
+      confidence: row.humanConfidence,
+    }),
   };
 }
 

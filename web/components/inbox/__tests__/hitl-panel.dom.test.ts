@@ -46,7 +46,10 @@ import { HitlPanel } from "@/components/inbox/hitl-panel";
 const ITEM: HitlItem = {
   hitlRequestId: "h1",
   runId: "run-7",
+  runKind: "flow",
   kind: "human",
+  answerState: "open",
+  storedResponse: null,
   assignmentId: null,
   assignmentStatus: null,
   assignmentActionKind: null,

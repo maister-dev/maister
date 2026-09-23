@@ -23,6 +23,7 @@ import {
 } from "@/lib/__tests__/runner-fixtures";
 import * as schemaModule from "@/lib/db/schema";
 import { runFlow } from "@/lib/flows/runner";
+import { getHitlInbox } from "@/lib/queries/hitl";
 import {
   reconcilePlanReviewDecisionHandoffs,
   respondToHitl,
@@ -284,6 +285,56 @@ async function seedPlanReviewHitls(runId: string): Promise<{
 }
 
 describe("respondToHitl integration — form response with real Postgres", () => {
+  it("replays a projected claimed form envelope through the existing idempotent path", async () => {
+    const projectId = await seedProject("test-form-replay");
+    const runId = await seedRun(projectId);
+    const hitlRequestId = await seedFormHitl(runId, "review");
+    const actor: HitlActor = {
+      kind: "user",
+      userId: "u-1",
+      label: "Test User",
+    };
+
+    await (db as any)
+      .update(schema.hitlRequests)
+      .set({
+        response: { approved: true, confidence: 0 },
+        humanConfidence: 0,
+      })
+      .where(eq(schema.hitlRequests.id, hitlRequestId));
+    const item = (await getHitlInbox(projectId)).items.find(
+      (candidate) => candidate.hitlRequestId === hitlRequestId,
+    );
+
+    expect(item).toMatchObject({
+      answerState: "answer_stored",
+      storedResponse: {
+        response: { approved: true, confidence: 0 },
+        confidence: 0,
+      },
+    });
+    const response = await respondToHitl(
+      { runId, hitlRequestId, body: item!.storedResponse! },
+      actor,
+      { db },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ ok: true });
+    const [row] = await (db as any)
+      .select()
+      .from(schema.hitlRequests)
+      .where(eq(schema.hitlRequests.id, hitlRequestId));
+
+    expect(row.response).toEqual({ approved: true, confidence: 0 });
+    expect(row.respondedAt).toBeInstanceOf(Date);
+    expect(
+      (await getHitlInbox(projectId)).items.some(
+        (candidate) => candidate.hitlRequestId === hitlRequestId,
+      ),
+    ).toBe(false);
+  });
+
   it("form response → row.response set + respondedAt set + input-<stepId>.json written", async () => {
     const projectId = await seedProject("test-form");
     const runId = await seedRun(projectId);

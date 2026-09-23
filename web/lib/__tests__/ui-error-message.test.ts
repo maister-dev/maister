@@ -15,7 +15,6 @@ describe("UI error-message resolver", () => {
     "CRASH",
     "CONFLICT",
     "CONFIG",
-    "EXECUTOR_UNAVAILABLE",
     "FLOW_INSTALL",
     "ACP_PROTOCOL",
     "CHECKPOINT",
@@ -29,6 +28,13 @@ describe("UI error-message resolver", () => {
   ])("maps known code %s to its run translation key", (code) => {
     expect(resolveUiErrorMessageKey(code)).toBe(`error.${code}`);
     expect(isMaisterErrorCode(code)).toBe(true);
+  });
+
+  it("preserves the generic executor copy outside the HITL surface", () => {
+    expect(isMaisterErrorCode("EXECUTOR_UNAVAILABLE")).toBe(true);
+    expect(resolveUiErrorMessageKey("EXECUTOR_UNAVAILABLE")).toBe(
+      "error.EXECUTOR_UNAVAILABLE",
+    );
   });
 
   it.each([undefined, null, "NOT_A_CODE", 503, { code: "CRASH" }])(

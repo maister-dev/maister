@@ -1,6 +1,6 @@
 import "server-only";
 
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import pino from "pino";
 
@@ -8,6 +8,7 @@ import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
+import { projectHitlAnswer } from "@/lib/hitl-answer-view";
 import { extractOptions } from "@/lib/queries/hitl";
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import { assertLocalPackageAssistantActor } from "@/lib/scratch-runs/service";
@@ -65,6 +66,9 @@ type PendingHitlRow = {
   prompt: string;
   schema: unknown;
   respondedAt: Date | null;
+  response: unknown;
+  responseIsNotNull: boolean;
+  humanConfidence: number | null;
 };
 type PublicRunnerSnapshot = {
   id: string;
@@ -298,7 +302,19 @@ export async function GET(
         .select()
         .from(scratchCapabilityProfiles)
         .where(eq(scratchCapabilityProfiles.runId, runId)),
-      db.select().from(hitlRequests).where(eq(hitlRequests.runId, runId)),
+      db
+        .select({
+          id: hitlRequests.id,
+          kind: hitlRequests.kind,
+          prompt: hitlRequests.prompt,
+          schema: hitlRequests.schema,
+          respondedAt: hitlRequests.respondedAt,
+          response: hitlRequests.response,
+          responseIsNotNull: sql<boolean>`${hitlRequests.response} is not null`,
+          humanConfidence: hitlRequests.humanConfidence,
+        })
+        .from(hitlRequests)
+        .where(eq(hitlRequests.runId, runId)),
       (run.createdByUserId ?? scratch.createdByUserId)
         ? db
             .select()
@@ -360,6 +376,14 @@ export async function GET(
             prompt: pendingHitl.prompt,
             schema: publicHitlSchema(pendingHitl),
             options: extractOptions(pendingHitl.kind, pendingHitl.schema),
+            ...projectHitlAnswer({
+              kind: pendingHitl.kind,
+              schema: pendingHitl.schema,
+              response: pendingHitl.response,
+              responseIsNotNull: pendingHitl.responseIsNotNull,
+              respondedAt: pendingHitl.respondedAt,
+              confidence: pendingHitl.humanConfidence,
+            }),
           }
         : null,
     });

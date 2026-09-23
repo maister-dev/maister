@@ -7510,7 +7510,13 @@ paths:
             no response/artifact/runner wake is written.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+              schema: { $ref: "#/components/schemas/HitlRespondErrorBody" }
+              examples:
+                resume-owns-delivery:
+                  value:
+                    code: CONFLICT
+                    message: this permission answer is already being delivered by a resume
+                    details: { reason: permission_resume_in_flight }
         "202":
           description: |
             Idle-branch: a capacity claim authorizes resume. Owned graph node
@@ -7560,9 +7566,25 @@ paths:
             `resumeRun` failed terminally (`CHECKPOINT`) — supervisor
             400 / 404 / 201-with-empty-acpSessionId. The idle-branch
             response includes `terminal: true`.
+            A rejected original delivery after checkpoint returns
+            `HITL_TIMEOUT` with `details.reason: permission_delivery_rejected`;
+            the operator must relaunch the run.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+              schema: { $ref: "#/components/schemas/HitlRespondErrorBody" }
+              examples:
+                agent-session-ended:
+                  summary: Terminal HITL_TIMEOUT example; validated against HitlRespondTerminalError
+                  value:
+                    code: HITL_TIMEOUT
+                    message: The agent session ended before your answer arrived. Relaunch the run.
+                    details: { reason: agent_session_ended }
+                permission-delivery-rejected:
+                  value:
+                    code: HITL_TIMEOUT
+                    message: The checkpointed permission could not accept your answer. Relaunch the run.
+                    details: { reason: permission_delivery_rejected }
+                    terminal: true
         "422":
           description: |
             Response payload did not validate against the stored HITL
@@ -7584,14 +7606,22 @@ paths:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "503":
           description: |
-            Retryable failure (`EXECUTOR_UNAVAILABLE`). Examples:
-            supervisor unreachable on permission delivery, artifact
-            write failed with I/O error. `respondedAt` remains null;
-            response is durably stored so a retry replays the same
-            value.
+            Post-claim delivery unavailable (`EXECUTOR_UNAVAILABLE`) may mean
+            supervisor restart, parking, post-grace absence or artifact I/O.
+            The response is already stored and `respondedAt` remains null;
+            delivery is pending. Retry the identical answer to send it;
+            agent runs may also resume automatically. Pre-claim failures do
+            not claim that an answer was saved.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+              schema: { $ref: "#/components/schemas/HitlRespondErrorBody" }
+              examples:
+                answer-saved:
+                  summary: Post-claim EXECUTOR_UNAVAILABLE example; validated against HitlRespondSavedError
+                  value:
+                    code: EXECUTOR_UNAVAILABLE
+                    message: Your answer is saved; delivery is pending. Retry delivery to send it.
+                    details: { reason: delivery_unavailable }
   /api/runs/{runId}/review-comments:
     get:
       tags: [review-comments]
@@ -18806,12 +18836,14 @@ components:
         defaultRunnerId: { type: string, nullable: true }
     ScratchPendingHitl:
       type: object
-      required: [hitlRequestId, kind, prompt, schema, options]
+      required: [hitlRequestId, kind, prompt, schema, options, answerState, storedResponse]
       properties:
         hitlRequestId: { type: string, format: uuid }
         kind: { type: string, enum: [permission, form, human] }
         prompt: { type: string }
         schema: {}
+        answerState: { $ref: "#/components/schemas/HitlAnswerState" }
+        storedResponse: { $ref: "#/components/schemas/HitlStoredResponse" }
         options:
           type: array
           items:
@@ -20599,6 +20631,79 @@ components:
             the discriminator that separates a lock refusal from a stale-CAS
             refusal, since both surface as 409 `CONFLICT`.
             Never a server-only handle.
+            HITL respond errors refine this open object to the bounded
+            `HitlRespondDetails` contract; unrelated error details remain open.
+
+    HitlRespondReason:
+      type: string
+      enum:
+        - permission_resume_in_flight
+        - assignment_fenced
+        - prompt_owner_deferred
+        - prompt_owner_invariant
+        - already_delivered
+        - option_mismatch
+        - not_awaiting_input
+        - agent_session_ended
+        - delivery_unavailable
+        - permission_delivery_rejected
+    HitlAnswerState:
+      type: string
+      enum: [open, answer_stored]
+    HitlStoredResponse:
+      type: object
+      nullable: true
+      additionalProperties: false
+      description: |
+        Sanitized public POST envelope; permission uses optionId, structured
+        answers use response (including JSON null) and optional confidence.
+        Null with answer_stored means legacy data cannot safely be replayed.
+      properties:
+        optionId: { type: string }
+        response: {}
+        confidence: { type: number, minimum: 0, maximum: 1 }
+    HitlRespondDetails:
+      type: object
+      required: [reason]
+      additionalProperties: false
+      properties:
+        reason: { $ref: "#/components/schemas/HitlRespondReason" }
+        causeCode:
+          type: string
+          pattern: '^[a-z][a-z0-9_]{0,63}$'
+    HitlRespondErrorBody:
+      allOf:
+        - { $ref: "#/components/schemas/MaisterErrorBody" }
+        - type: object
+          properties:
+            details: { $ref: "#/components/schemas/HitlRespondDetails" }
+            terminal: { type: boolean }
+    HitlRespondTerminalError:
+      allOf:
+        - { $ref: "#/components/schemas/HitlRespondErrorBody" }
+        - type: object
+          required: [details]
+          properties:
+            code: { type: string, enum: [HITL_TIMEOUT] }
+            details:
+              type: object
+              required: [reason]
+              additionalProperties: false
+              properties:
+                reason: { type: string, enum: [agent_session_ended, permission_delivery_rejected] }
+    HitlRespondSavedError:
+      allOf:
+        - { $ref: "#/components/schemas/HitlRespondErrorBody" }
+        - type: object
+          required: [details]
+          properties:
+            code: { type: string, enum: [EXECUTOR_UNAVAILABLE] }
+            details:
+              type: object
+              required: [reason]
+              additionalProperties: false
+              properties:
+                reason: { type: string, enum: [delivery_unavailable] }
 
     CloneFailureReason:
       type: string

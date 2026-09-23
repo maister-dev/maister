@@ -165,12 +165,14 @@ export function HitlPanel({
   const isPermission = item.kind === "permission";
   const isAgentQuestion = item.kind === "agent_question";
   const isReview = isReviewGate(item);
+  const budgetClaimCanBeReplaced =
+    item.kind === "budget_breach" && item.claimStage === "failed";
   const reviewHref = runReviewHref(item.runId);
 
   return (
     <>
       <div className="flex flex-wrap items-center gap-2 px-4 pb-3.5 pt-2.5">
-        {isReview ? (
+        {isReview && item.answerState === "open" ? (
           <a
             className="inline-flex items-center gap-1.5 rounded-md border border-amber bg-amber px-2.5 py-1 font-mono text-[11px] font-semibold text-white transition-colors hover:bg-amber-2"
             href={reviewHref}
@@ -178,9 +180,12 @@ export function HitlPanel({
             {t("reviewCode")}
             <ArrowTopRightOnSquareIcon className="h-3.5 w-3.5" />
           </a>
-        ) : isPermission && canAct ? (
+        ) : (isPermission && canAct) ||
+          (item.answerState === "answer_stored" &&
+            !budgetClaimCanBeReplaced) ? (
           <RunHitlResponse
             compact
+            answerState={item.answerState}
             availableOptions={item.availableOptions}
             canAct={canAct}
             claimStage={item.claimStage}
@@ -190,6 +195,8 @@ export function HitlPanel({
             options={item.options}
             runId={item.runId}
             schema={item.schema}
+            storedResponse={item.storedResponse}
+            surface={item.runKind === "scratch" ? "scratch" : "flow"}
             // `router.refresh()`, not `window.location.reload()`: this panel now
             // renders inside a Desk row whose expansion is client state, and a
             // full reload would collapse every open row on the page. The RSC
@@ -258,10 +265,14 @@ export function HitlPanel({
             <ExpandedContext context={context} stale={stale} t={t} />
           ) : null}
 
-          {!isReview && !isPermission && canAct ? (
+          {!isReview &&
+          !isPermission &&
+          (item.answerState !== "answer_stored" || budgetClaimCanBeReplaced) &&
+          canAct ? (
             <div className="mt-3.5 border-t border-line pt-3.5">
               <RunHitlResponse
                 compact
+                answerState={item.answerState}
                 availableOptions={
                   item.kind === "budget_breach"
                     ? (context?.availableOptions ?? item.availableOptions)
@@ -277,6 +288,7 @@ export function HitlPanel({
                 options={item.options}
                 runId={item.runId}
                 schema={item.schema}
+                storedResponse={item.storedResponse}
                 onRespond={() => router.refresh()}
               />
             </div>

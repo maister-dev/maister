@@ -28,6 +28,7 @@
   "devDependencies": {
     "@apidevtools/swagger-parser": "10.1.1",
     "@asyncapi/parser": "3.4.0",
+    "ajv": "8.20.0",
     "jsdom": "^25.0.1",
     "mermaid": "^11.4.1",
     "yaml": "^2.9.0"

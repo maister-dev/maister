@@ -268,7 +268,7 @@ export async function resumeRun(
       code: "HITL_TIMEOUT",
       retryable: false,
       message:
-        "The original permission delivery was rejected; the run has failed",
+        "The checkpointed permission could not accept your answer. Relaunch the run.",
     };
   }
   if (permissionResult?.kind === "pending") {

@@ -231,6 +231,10 @@ export async function authorizeAgentPermissionResume(
 
   if (source.kind === "rejected")
     throw new PromptOwnerInvariantError("agent_permission_rejection_pending");
+  if (!source.pause && source.kind === "result" && source.input === null)
+    throw new PromptOwnerInvariantError(
+      "agent_permission_result_without_input",
+    );
   const [run] = await tx
     .select()
     .from(runs)

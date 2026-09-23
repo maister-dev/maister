@@ -53,7 +53,10 @@ const WEB_ROOT = path.resolve(__dirname, "../../..");
 const BASE: HitlItem = {
   hitlRequestId: "h1",
   runId: "run-1",
+  runKind: "flow",
   kind: "permission",
+  answerState: "open",
+  storedResponse: null,
   assignmentId: null,
   assignmentStatus: null,
   assignmentActionKind: null,

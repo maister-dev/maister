@@ -68,3 +68,7 @@ export function useFeedback(): FeedbackContextValue {
 
   return feedback;
 }
+
+export function useOptionalFeedback(): FeedbackContextValue | null {
+  return useContext(FeedbackContext);
+}

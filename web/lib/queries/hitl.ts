@@ -3,11 +3,26 @@ import "server-only";
 import type { AdapterId } from "@/lib/acp-runners/adapter-support";
 import type { Assignment, HitlRequest, RunnerSnapshot } from "@/lib/db/schema";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
+import type {
+  HitlAnswerState,
+  HitlStoredResponse,
+} from "@/lib/hitl-response-contract";
 
-import { and, asc, eq, inArray, isNull, or, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  eq,
+  getTableColumns,
+  inArray,
+  isNotNull,
+  isNull,
+  or,
+  sql,
+} from "drizzle-orm";
 
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
+import { projectHitlAnswer } from "@/lib/hitl-answer-view";
 import {
   activeSessionCapabilityAgent,
   activeSessionRunnerSnapshot,
@@ -53,7 +68,7 @@ export async function getHitlRequestsForRun(
   runId: string,
   projectId: string,
   deps?: { db?: NodePgDatabase<typeof schema> },
-): Promise<HitlRequest[]> {
+): Promise<(HitlRequest & { responseIsNotNull: boolean })[]> {
   const client = deps?.db ?? db();
 
   // A normal HITL is visible only while its run awaits input. A task-bound
@@ -73,7 +88,10 @@ export async function getHitlRequestsForRun(
 
   if (run.status === "NeedsInput" || run.status === "NeedsInputIdle") {
     return client
-      .select()
+      .select({
+        ...getTableColumns(hitlRequests),
+        responseIsNotNull: sql<boolean>`${hitlRequests.response} is not null`,
+      })
       .from(hitlRequests)
       .where(
         and(eq(hitlRequests.runId, runId), isNull(hitlRequests.respondedAt)),
@@ -82,15 +100,29 @@ export async function getHitlRequestsForRun(
   }
 
   return client
-    .select()
+    .select({
+      ...getTableColumns(hitlRequests),
+      responseIsNotNull: sql<boolean>`${hitlRequests.response} is not null`,
+    })
     .from(hitlRequests)
     .where(
       and(
         eq(hitlRequests.runId, runId),
         isNull(hitlRequests.respondedAt),
-        eq(hitlRequests.kind, "agent_question"),
-        eq(hitlRequests.activationState, "active"),
-        isNull(hitlRequests.supersededAt),
+        or(
+          and(
+            eq(hitlRequests.kind, "agent_question"),
+            eq(hitlRequests.activationState, "active"),
+            isNull(hitlRequests.supersededAt),
+          ),
+          run.status === "Running"
+            ? and(
+                eq(hitlRequests.kind, "permission"),
+                isNotNull(hitlRequests.response),
+                isNull(hitlRequests.supersededAt),
+              )
+            : sql<boolean>`false`,
+        ),
       ),
     )
     .orderBy(asc(hitlRequests.createdAt));
@@ -106,7 +138,10 @@ export interface HitlOption {
 export interface HitlItem {
   hitlRequestId: string;
   runId: string;
+  runKind: BudgetBreachAvailabilityContext["runKind"];
   kind: HitlRequest["kind"];
+  answerState: HitlAnswerState;
+  storedResponse: HitlStoredResponse | null;
   assignmentId: string | null;
   assignmentStatus: Assignment["status"] | null;
   assignmentActionKind: Assignment["actionKind"] | null;
@@ -224,6 +259,8 @@ export type HitlRowBase = {
   prompt: string;
   rawSchema: unknown;
   storedResponse: unknown;
+  responseIsNotNull: boolean;
+  humanConfidence?: number | null;
   criticality: "low" | "medium" | "high" | "critical" | null;
   createdAt: Date;
   capabilityAgent: AdapterId | null;
@@ -281,6 +318,14 @@ export function mapRowsToHitlItems(
     const activeBudgetClaim =
       row.kind === "budget_breach" &&
       isActiveBudgetBreachClaim(row.storedResponse);
+    const answer = projectHitlAnswer({
+      kind: row.kind,
+      schema: row.rawSchema,
+      response: row.storedResponse,
+      responseIsNotNull: row.responseIsNotNull,
+      respondedAt: null,
+      confidence: row.humanConfidence,
+    });
     const budgetAvailableOptions =
       row.kind === "budget_breach"
         ? activeBudgetClaim
@@ -299,9 +344,11 @@ export function mapRowsToHitlItems(
         : undefined;
 
     return {
+      runKind: row.runKind,
       hitlRequestId: row.hitlRequestId,
       runId: row.runId,
       kind: row.kind,
+      ...answer,
       assignmentId: assignment?.id ?? null,
       assignmentStatus: assignment?.status ?? null,
       assignmentActionKind: assignment?.actionKind ?? null,
@@ -376,6 +423,8 @@ export async function getHitlInbox(
       prompt: hitlRequests.prompt,
       rawSchema: hitlRequests.schema,
       storedResponse: hitlRequests.response,
+      responseIsNotNull: sql<boolean>`${hitlRequests.response} is not null`,
+      humanConfidence: hitlRequests.humanConfidence,
       criticality: hitlRequests.criticality,
       createdAt: hitlRequests.createdAt,
       capabilityAgent: activeSessionCapabilityAgent(runs.id),
@@ -409,6 +458,12 @@ export async function getHitlInbox(
         eq(runs.projectId, projectId),
         or(
           inArray(runs.status, ["NeedsInput", "NeedsInputIdle"]),
+          and(
+            eq(runs.status, "Running"),
+            eq(hitlRequests.kind, "permission"),
+            isNotNull(hitlRequests.response),
+            isNull(hitlRequests.supersededAt),
+          ),
           and(
             eq(hitlRequests.kind, "agent_question"),
             eq(hitlRequests.activationState, "active"),

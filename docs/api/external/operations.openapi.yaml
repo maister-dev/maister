@@ -2857,6 +2857,7 @@ paths:
                         runId: "6ba7b810-9dad-41d1-80b4-00c04fd430c8"
                         hitlRequestId: "7c9e6679-7425-40de-944b-e07fc1f90ae7"
                         kind: "human"
+                        answerState: "open"
                         title: "Review deployment plan"
                         createdAt: "2026-06-23T12:00:00.000Z"
         "401":
@@ -3232,13 +3233,16 @@ paths:
               schema: { $ref: "#/components/schemas/ExtHitlRespondResponse" }
         "202":
           description: |
-            Idle-resume scheduled — the run was checkpointed (`NeedsInputIdle`)
-            and a fresh supervisor session was spawned to deliver against the
-            new request. Same-payload retries keep returning 202 until
-            auto-delivery completes, then return 200 idempotent.
+            Delivery is pending for `resume-in-progress` or
+            `delivery-in-progress`. Plan-review `resume-queued` means the
+            answer was recorded and the run's resume is queued; the card
+            refreshes away without a delivery retry. The checkpointed-host 410 becomes 202
+            after web parks and schedules resume; session creation need not
+            have completed. Identical retries remain safe until delivery is
+            marked, then return 200 idempotent.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/ExtHitlRespondResponse" }
+              schema: { $ref: "#/components/schemas/ExtHitlRespondAccepted" }
         "401":
           $ref: "#/components/responses/TokenUnauthorized"
         "403":
@@ -3253,29 +3257,49 @@ paths:
             code and preview verified feedback.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/ExtErrorBody" }
+              schema: { $ref: "#/components/schemas/ExtHitlRespondErrorBody" }
         "410":
           description: |
-            Terminal idle-resume failure (`HITL_TIMEOUT`/`CHECKPOINT`): the
-            `NeedsInputIdle` run could not be resumed to deliver the response
-            and was transitioned to a terminal state. Not retryable. Surfaced
-            verbatim from the shared `respondToHitl` service (same as the
-            session-auth respond route).
+            A terminal `HITL_TIMEOUT` means the agent session ended before
+            delivery (`details.reason: agent_session_ended`); relaunch the
+            flow run or Recover/relaunch scratch. Existing terminal idle
+            `CHECKPOINT` failures retain their body without this reason. A
+            rejected original permission delivery after checkpoint carries
+            `permission_delivery_rejected` and requires relaunch.
+            Host `410 session_checkpointed` instead becomes web 202.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/ExtErrorBody" }
+              schema: { $ref: "#/components/schemas/ExtHitlRespondErrorBody" }
+              examples:
+                agent-session-ended:
+                  value:
+                    code: HITL_TIMEOUT
+                    message: The agent session ended before your answer arrived. Relaunch the run.
+                    details: { reason: agent_session_ended }
+                permission-delivery-rejected:
+                  value:
+                    code: HITL_TIMEOUT
+                    message: The checkpointed permission could not accept your answer. Relaunch the run.
+                    details: { reason: permission_delivery_rejected }
+                    terminal: true
         "422":
           $ref: "#/components/responses/UnprocessableEntity"
         "503":
           description: |
-            Retryable transient failure (`EXECUTOR_UNAVAILABLE`): the supervisor
-            was unreachable for permission delivery, the idle-resume spawn
-            failed retryably, or the form input artifact could not be written.
-            Safe to retry. Surfaced verbatim from the shared `respondToHitl`
-            service.
+            Post-claim delivery unavailability (`EXECUTOR_UNAVAILABLE`) leaves
+            the answer stored and `responded_at` null. Retry the identical
+            answer to send it; agent runs may also resume automatically. The web gives
+            one `delivery_unavailable` reason for restart, parking and
+            post-grace host absence.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/ExtErrorBody" }
+              schema: { $ref: "#/components/schemas/ExtHitlRespondErrorBody" }
+              examples:
+                answer-saved:
+                  value:
+                    code: EXECUTOR_UNAVAILABLE
+                    message: Your answer is saved; delivery is pending. Retry delivery to send it.
+                    details: { reason: delivery_unavailable }
 
   /api/v1/ext/projects/{slug}/tasks/{taskId}/human-asks:
     post:
@@ -3482,6 +3506,52 @@ components:
                 The route's required scope label, e.g. `flows:read`. Identical
                 for every caller; also printed in this spec and in the route
                 source.
+
+    HitlRespondReason:
+      type: string
+      enum: [permission_resume_in_flight, assignment_fenced, prompt_owner_deferred, prompt_owner_invariant, already_delivered, option_mismatch, not_awaiting_input, agent_session_ended, delivery_unavailable, permission_delivery_rejected]
+    HitlRespondDetails:
+      type: object
+      required: [reason]
+      additionalProperties: false
+      properties:
+        reason: { $ref: "#/components/schemas/HitlRespondReason" }
+        causeCode:
+          type: string
+          pattern: '^[a-z][a-z0-9_]{0,63}$'
+    ExtHitlRespondErrorBody:
+      allOf:
+        - { $ref: "#/components/schemas/ExtErrorBody" }
+        - type: object
+          properties:
+            details: { $ref: "#/components/schemas/HitlRespondDetails" }
+            terminal: { type: boolean }
+    ExtHitlRespondTerminalError:
+      allOf:
+        - { $ref: "#/components/schemas/ExtHitlRespondErrorBody" }
+        - type: object
+          required: [details]
+          properties:
+            code: { type: string, enum: [HITL_TIMEOUT] }
+            details:
+              type: object
+              required: [reason]
+              additionalProperties: false
+              properties:
+                reason: { type: string, enum: [agent_session_ended, permission_delivery_rejected] }
+    ExtHitlRespondSavedError:
+      allOf:
+        - { $ref: "#/components/schemas/ExtHitlRespondErrorBody" }
+        - type: object
+          required: [details]
+          properties:
+            code: { type: string, enum: [EXECUTOR_UNAVAILABLE] }
+            details:
+              type: object
+              required: [reason]
+              additionalProperties: false
+              properties:
+                reason: { type: string, enum: [delivery_unavailable] }
 
     ExtRecoverAccepted:
       type: object
@@ -5373,7 +5443,7 @@ components:
         crosses this boundary. NEVER includes `acp_session_id`, absolute
         worktree paths, token material, or supervisor-internal handles.
       required:
-        [projectId, projectSlug, runId, hitlRequestId, kind, title, createdAt]
+        [projectId, projectSlug, runId, hitlRequestId, kind, title, createdAt, answerState]
       properties:
         projectId:
           type: string
@@ -5408,6 +5478,24 @@ components:
         createdAt:
           type: string
           format: date-time
+        answerState: { $ref: "#/components/schemas/HitlAnswerState" }
+
+    HitlAnswerState:
+      type: string
+      enum: [open, answer_stored]
+    HitlStoredResponse:
+      type: object
+      nullable: true
+      additionalProperties: false
+      description: |
+        Public replay POST envelope. Permission uses optionId; structured
+        answers use response (which may itself be JSON null) and optional
+        confidence. Null means open or stored but unsafe to replay; inspect
+        answerState to distinguish them. Private underscore keys never appear.
+      properties:
+        optionId: { type: string }
+        response: {}
+        confidence: { type: number, minimum: 0, maximum: 1 }
 
     ExtHitlRequestDTO:
       type: object
@@ -5421,6 +5509,8 @@ components:
         - kind
         - prompt
         - requestedAt
+        - answerState
+        - storedResponse
       properties:
         hitlRequestId:
           type: string
@@ -5482,6 +5572,8 @@ components:
           type: string
           format: date-time
           description: When the request was created.
+        answerState: { $ref: "#/components/schemas/HitlAnswerState" }
+        storedResponse: { $ref: "#/components/schemas/HitlStoredResponse" }
 
     ExtHitlRespondBody:
       type: object
@@ -5519,7 +5611,7 @@ components:
 
     ExtHitlRespondResponse:
       type: object
-      required: [ok, runStatus]
+      required: [ok]
       description: |
         (M17) Result of an ext HITL response. Mirrors the session route — the
         runner (not this route) owns the `NeedsInput → Running` transition.
@@ -5532,12 +5624,22 @@ components:
           enum: [true]
         runStatus:
           type: string
-          enum: [NeedsInput, Done]
+          enum: [NeedsInput, NeedsInputIdle, Running, Done]
           description: Row state at response time.
         state:
           type: string
-          enum: [resume-in-progress]
-          description: Present only on the 202 idle-resume branch.
+          enum: [delivered, resume-in-progress, resume-queued, delivery-in-progress, rework-scheduled]
+          description: Present when the service reports a delivery or pending state.
+
+    ExtHitlRespondAccepted:
+      allOf:
+        - { $ref: "#/components/schemas/ExtHitlRespondResponse" }
+        - type: object
+          required: [ok, state]
+          properties:
+            state:
+              type: string
+              enum: [resume-in-progress, resume-queued, delivery-in-progress, rework-scheduled]
 
     FormSchemaV1:
       type: object

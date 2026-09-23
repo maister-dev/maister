@@ -33,6 +33,7 @@ import {
   workspaces as workspacesTable,
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import { hasFlowPermissionResume } from "@/lib/flows/graph/permission-resume";
 
 vi.mock("@/lib/review-comments/feedback-packet", () => ({
   assertReviewFeedbackPresent: vi.fn(),
@@ -340,6 +341,11 @@ vi.mock("@/lib/flows/graph/permission-resume", async (importOriginal) => ({
   hasFlowPermissionResume: vi.fn(async () => false),
 }));
 
+vi.mock("@/lib/agents/permission-resume", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/agents/permission-resume")>()),
+  reconcileAgentPermissionResume: vi.fn(async () => undefined),
+}));
+
 // ADR-166: the permission delivery is a `session.input` command queued in the
 // Phase-1 claim tx (`prepareInput`) and delivered after it commits; the ack
 // callback runs the Phase-2 domain writes. The fake client below keeps the
@@ -449,6 +455,7 @@ beforeEach(async () => {
     evaluation_participants: [],
   };
   dbState.updates = [];
+  vi.mocked(hasFlowPermissionResume).mockResolvedValue(false);
   deliverPermissionSpy.mockReset();
   deliverPermissionSpy.mockImplementation(async () => ({ ok: true }));
   prepareInputSpy.mockReset();
@@ -701,6 +708,24 @@ async function invokePost(runId: string, hitlRequestId: string, body: unknown) {
 }
 
 describe("HITL respond route — kind=permission", () => {
+  it("serializes the resume-owned claim reason without private throw context", async () => {
+    const { runId, hitlRequestId } = seedPermissionRow();
+
+    vi.mocked(hasFlowPermissionResume).mockResolvedValueOnce(true);
+    const response = await invokePost(runId, hitlRequestId, {
+      optionId: "allow",
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(body).toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "permission_resume_in_flight" },
+    });
+    expect(body.details).toEqual({ reason: "permission_resume_in_flight" });
+    expect(deliverPermissionSpy).not.toHaveBeenCalled();
+  });
+
   it("happy two-phase: stores response, delivers, marks respondedAt; returns 200", async () => {
     const { runId, hitlRequestId } = seedPermissionRow();
 
@@ -919,6 +944,12 @@ describe("HITL respond route — kind=permission", () => {
     const res = await invokePost(runId, hitlRequestId, { optionId: "allow" });
 
     expect(res.status).toBe(410);
+    expect(await res.json()).toEqual({
+      code: "HITL_TIMEOUT",
+      message:
+        "The agent session ended before your answer arrived. Relaunch the run.",
+      details: { reason: "agent_session_ended" },
+    });
     expect(dbState.tables.runs[0].status).toBe("Failed");
     expect(dbState.tables.hitl_requests[0].respondedAt).toBeInstanceOf(Date);
   });
@@ -935,6 +966,12 @@ describe("HITL respond route — kind=permission", () => {
     const res = await invokePost(runId, hitlRequestId, { optionId: "allow" });
 
     expect(res.status).toBe(410);
+    expect(await res.json()).toEqual({
+      code: "HITL_TIMEOUT",
+      message:
+        "The agent session ended before your answer arrived. Recover the run or relaunch it.",
+      details: { reason: "agent_session_ended" },
+    });
     expect(dbState.tables.runs[0].status).toBe("Crashed");
     expect(dbState.tables.scratch_runs[0]).toMatchObject({
       dialogStatus: "Crashed",
@@ -953,6 +990,12 @@ describe("HITL respond route — kind=permission", () => {
     const res = await invokePost(runId, hitlRequestId, { optionId: "allow" });
 
     expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({
+      code: "EXECUTOR_UNAVAILABLE",
+      message:
+        "Your answer is saved; delivery is pending. Retry delivery to send it.",
+      details: { reason: "delivery_unavailable" },
+    });
     expect(dbState.tables.runs[0].status).toBe("NeedsInput");
     expect(dbState.tables.hitl_requests[0].respondedAt).toBeNull();
     expect(dbState.tables.hitl_requests[0].response).toEqual({
@@ -981,6 +1024,10 @@ describe("HITL respond route — kind=permission", () => {
     });
 
     expect(second.status).toBe(409);
+    expect(await second.json()).toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "option_mismatch" },
+    });
     expect(deliverPermissionSpy).toHaveBeenCalledTimes(1);
   });
 
@@ -1015,6 +1062,7 @@ describe("HITL respond route — kind=permission", () => {
     const res = await invokePost(runId, hitlRequestId, { optionId: "allow" });
 
     expect(res.status).toBe(409);
+    expect((await res.json()).details).toEqual({ reason: "already_delivered" });
     expect(deliverPermissionSpy).not.toHaveBeenCalled();
   });
 
@@ -1052,6 +1100,9 @@ describe("HITL respond route — kind=permission", () => {
     const res = await invokePost(runId, hitlRequestId, { optionId: "allow" });
 
     expect(res.status).toBe(409);
+    expect((await res.json()).details).toEqual({
+      reason: "not_awaiting_input",
+    });
     expect(deliverPermissionSpy).not.toHaveBeenCalled();
   });
 
@@ -1126,6 +1177,7 @@ describe("HITL respond route — kind=form / kind=human", () => {
     });
 
     expect(res.status).toBe(409);
+    expect((await res.json()).details).toEqual({ reason: "already_delivered" });
   });
 
   it("form with terminal run state → 409", async () => {
@@ -1138,6 +1190,9 @@ describe("HITL respond route — kind=form / kind=human", () => {
     });
 
     expect(res.status).toBe(409);
+    expect((await res.json()).details).toEqual({
+      reason: "not_awaiting_input",
+    });
   });
 
   it("missing response body returns 400 CONFIG", async () => {
@@ -1264,9 +1319,27 @@ describe("HITL respond route — kind=form / kind=human", () => {
     });
 
     expect(second.status).toBe(409);
+    expect((await second.json()).details).toEqual({
+      reason: "already_delivered",
+    });
     const after = JSON.parse(await readFile(artifactPath, "utf8"));
 
     expect(after).toEqual({ approved: true });
+  });
+
+  it("rejects a different response while a form answer is stored but undelivered", async () => {
+    const { runId, hitlRequestId } = seedFormRow("form", {
+      response: { approved: true },
+    });
+    const res = await invokePost(runId, hitlRequestId, {
+      response: { approved: false },
+    });
+
+    expect(res.status).toBe(409);
+    expect((await res.json()).details).toEqual({ reason: "option_mismatch" });
+    expect(dbState.tables.hitl_requests[0].response).toEqual({
+      approved: true,
+    });
   });
 
   it("same-payload retry on an already-delivered row re-queues runFlow when the run is still NeedsInput", async () => {
@@ -1313,6 +1386,10 @@ describe("HITL respond route — kind=form / kind=human", () => {
     const res = await invokePost(runId, hitlRequestId, { response: payload });
 
     expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({
+      code: "EXECUTOR_UNAVAILABLE",
+      details: { reason: "delivery_unavailable" },
+    });
     expect(dbState.tables.hitl_requests[0].respondedAt).toBeNull();
     // Response IS stored — the user's intent is captured durably
     // so a retry replays the same value.
@@ -1591,6 +1668,30 @@ describe("HITL respond route — error cases", () => {
 });
 
 describe("HITL respond route — NeedsInputIdle branch", () => {
+  it("identifies an unavailable agent idle host after saving the answer", async () => {
+    const { runId, hitlRequestId } = seedPermissionRow({
+      runKind: "agent",
+      runStatus: "NeedsInputIdle",
+    });
+    const { localHost } = await import("@/lib/execution-host");
+
+    vi.mocked(localHost).mockRejectedValueOnce(
+      new MaisterError("EXECUTOR_UNAVAILABLE", "host not ready"),
+    );
+    const res = await invokePost(runId, hitlRequestId, { optionId: "allow" });
+
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({
+      code: "EXECUTOR_UNAVAILABLE",
+      message:
+        "Your answer is saved; delivery is pending. Retry delivery to send it.",
+      details: { reason: "delivery_unavailable" },
+      terminal: false,
+    });
+    expect(dbState.tables.hitl_requests[0].response).toEqual({
+      optionId: "allow",
+    });
+  });
   it("schedules the driver and returns 202 on resumeRun success", async () => {
     const { runId, hitlRequestId } = seedPermissionRow({
       runStatus: "NeedsInputIdle",
@@ -1651,9 +1752,13 @@ describe("HITL respond route — NeedsInputIdle branch", () => {
     const res = await invokePost(runId, hitlRequestId, { optionId: "allow" });
 
     expect(res.status).toBe(503);
-    const body = (await res.json()) as { terminal?: boolean };
-
-    expect(body.terminal).toBe(false);
+    expect(await res.json()).toEqual({
+      code: "EXECUTOR_UNAVAILABLE",
+      message:
+        "Your answer is saved; delivery is pending. Retry delivery to send it.",
+      details: { reason: "delivery_unavailable" },
+      terminal: false,
+    });
     expect(scheduleResumedSessionDriveSpy).not.toHaveBeenCalled();
   });
 
@@ -1676,6 +1781,30 @@ describe("HITL respond route — NeedsInputIdle branch", () => {
 
     expect(body.terminal).toBe(true);
     expect(scheduleResumedSessionDriveSpy).not.toHaveBeenCalled();
+  });
+
+  it("terminal rejected permission delivery identifies its own 410 reason", async () => {
+    const { runId, hitlRequestId } = seedPermissionRow({
+      runStatus: "NeedsInputIdle",
+    });
+
+    resumeRunSpy.mockResolvedValueOnce({
+      ok: false,
+      code: "HITL_TIMEOUT",
+      retryable: false,
+      message:
+        "The checkpointed permission could not accept your answer. Relaunch the run.",
+    });
+    const res = await invokePost(runId, hitlRequestId, { optionId: "allow" });
+
+    expect(res.status).toBe(410);
+    expect(await res.json()).toEqual({
+      code: "HITL_TIMEOUT",
+      message:
+        "The checkpointed permission could not accept your answer. Relaunch the run.",
+      details: { reason: "permission_delivery_rejected" },
+      terminal: true,
+    });
   });
 
   it("[FIX-PASS2-F1] same-payload retry after resume started: noop-idempotent + NeedsInput + supervisor 404 → 202 (NOT Failed)", async () => {

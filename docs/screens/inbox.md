@@ -79,6 +79,27 @@ what makes them comparable at a glance.
 
 ### The HITL card
 
+**P0-4 (Implemented):** A pending card whose answer is already stored remains in
+“Needs you” until delivery, but displays its selected option and “Answer saved
+— delivery pending” read-only. Choices and structured fields are disabled;
+one “Retry delivery” action sends the identical sanitized answer when the
+operator can act. Read-only viewers still see the saved state without a retry
+control. Structured saved values appear under “Saved response” in a bounded,
+formatted view. A recognized 202 pending-delivery state updates the card before inbox refresh,
+including the `onRespond` path. A 409 for a competing answer refreshes the
+authoritative stored choice, never assumes the losing tab's selection won.
+An unsuccessful refresh keeps choices locked and offers refresh. A terminal
+410 names the ended agent session and relaunch action in feedback that remains
+after the card disappears. Refusal copy uses localized `(code, details.reason)`
+with a per-code fallback; prompt-owner `causeCode` alone may appear as a
+monospaced diagnostic. No raw reason token, host handle or `_delivery` value
+is rendered. Saved/delivery feedback uses `aria-live`, keeps keyboard focus
+on the available retry or refresh control, and disables repeat submission
+while a POST is in flight. The per-project board uses the same card contract.
+A budget-breach claim at `stage: "failed"` remains replaceable despite its
+stored response; it keeps the existing authorized recovery options in the
+expanded card. Active and terminalized budget claims remain read-only.
+
 A unified `HitlCard` (shared with the per-project board, which renders it without
 the project-group header) with three disclosure tiers:
 

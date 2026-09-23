@@ -956,6 +956,17 @@ boolean | enum | array`; unknown type refused with `CONFIG` at Flow
   the fields entirely, so the rule is vacuous there.
 - **(Implemented)** `hitl_requests.response` and `.responded_at`
   use two-phase commit semantics:
+  - **(P0-4 — Implemented) Operator read state.** A pending row has
+    `answerState = "open"` when `response IS NULL`, or `"answer_stored"` when
+    `response IS NOT NULL AND responded_at IS NULL`. Derivation uses SQL null,
+    not JSON truthiness. A delivered row leaves pending lists. The board,
+    project/global inbox, run page and scratch detail expose a sanitized
+    `storedResponse` public POST envelope alongside this state; the external
+    run-scoped read does likewise, while external discovery exposes only
+    `answerState`. `_`-prefixed keys are private at every depth. A stored
+    legacy value that cannot be losslessly replayed remains read-only with
+    `storedResponse: null`. Counts retain `responded_at IS NULL`, including
+    stored permission answers during a live resume.
   - **Phase 1 (atomic claim).** `response` is stored under a row-level
     `SELECT ... FOR UPDATE` only if the row is unclaimed, or claimed
     with the same payload (idempotent retry). Different payload on
@@ -981,7 +992,10 @@ boolean | enum | array`; unknown type refused with `CONFIG` at Flow
     window takes the same arm;
     supervisor 503 / network → `EXECUTOR_UNAVAILABLE`
     retryable (row stays claimed, `responded_at` NULL); artifact
-    write I/O failure → 503 retryable.
+    write I/O failure → 503 retryable. The operator-facing response says the
+    answer is saved but delivery is pending and asks for an identical retry;
+    agent runs may also resume automatically. It does not identify which host
+    failure occurred.
   - Same-payload retry on an already-delivered row re-queues
     `runFlow` so a process crash between Phase 3 commit and the
     original microtask cannot strand the run in `NeedsInput`.
@@ -1069,18 +1083,26 @@ type}`; the stage `type` MUST be resolved by compiling each distinct flow
 - **(Implemented, ADR-078) Agent mutates the workspace during a chat turn** → L3
   reverts to the first-turn baseline, marks `mutation_reverted=true`, and emits an
   audit signal; the turn's answer still renders with a revert notice.
-- **Supervisor restart while the user response is in-flight** —
-  supervisor returns 503 `EXECUTOR_UNAVAILABLE` for the
-  "unknown session" case (distinct from 410 `HITL_TIMEOUT` for a
-  released deferred). The web tier treats 503 as retryable: the
-  `responded_at` marker stays NULL, the response column holds the
-  user's intent, and a retry replays through the normal flow. The same 503 is
-  what an answer gets once the checkpointed session's registry entry has been
-  removed after its 30 s terminal grace; the sweeper's checkpointed arm parks
-  the run on its next tick, and the operator's retry then resumes it: the idle
-  resume withdraws the delivery intent the refused input left behind (the host
-  never admitted that command, so no receipt will ever arrive) and re-delivers
-  the stored answer to the resumed session (Implemented — ADR-180).
+- **Permission delivery returns 503** — the host may be restarting, parking,
+  or past its 30-second registry grace. The web answer is already claimed:
+  `responded_at` remains NULL and `response` holds the answer. The operator
+  sees “Your answer is saved; delivery is pending. Retry delivery to send it,”
+  with `details.reason = delivery_unavailable`. An identical retry is needed
+  to resume a parked flow run after the terminal grace or to retry a failed
+  form/human artifact write; agent runs can also resume automatically. The
+  sweeper's checkpointed arm parks
+  the run on its next tick after the registry disappears. Idle resume
+  withdraws the unadmitted delivery intent and sends the stored answer to the
+  resumed session (Implemented — ADR-180). The host's own 503 bodies remain
+  reason-less; the web does not claim to know which host case occurred.
+- **Agent checkpoint handoff (ADR-180 correction, Implemented):** the real
+  supervisor may record an original permission prompt as `succeeded` after
+  checkpoint cancellation without a confirmed original `session.input`. A
+  permission source with no confirmed input takes `continue` regardless of
+  prompt/checkpoint order, reissues the permission, and marks the saved answer
+  delivered only after the reissued input is acknowledged. A `result` grant
+  without confirmed input is rejected as an invariant violation. Other pause
+  kinds retain their existing classification.
 - **Agent reads a malformed `input-<stepId>.json`** — adapter exits
   non-zero → `Crashed`. Operator decides whether to Recover or
   Discard.
@@ -1201,6 +1223,64 @@ supervisor and does not await Phase 3. Owned graph resumes use the durable
 authorization described above and do not require synchronous session creation.
 
 ### Idempotency guards (idle branch)
+
+The operator card follows this read sequence: claim answer → receive 202/503 →
+show the chosen answer read-only immediately → refresh from the authoritative
+row → retry delivery with the **identical public POST envelope** if needed →
+remove the card only after `responded_at` is set. A failed refresh keeps the
+card read-only and offers refresh; a new request id resets only that request's
+local state. Loss of response permission removes the retry control but does
+not hide a readable saved answer. A terminal 410 is shown through feedback
+that survives removal of the card. Form/human replay retains the exact
+canonical response and confidence; if sanitizing a legacy answer changes
+its canonical value, no replay action is offered. Invalid permission data
+never becomes a guessed Allow/Deny option.
+The budget-breach `stage: "failed"` is a replaceable claim, not a delivery
+retry: the expanded card retains the server-approved recovery options even
+though the response column is non-null. Active stages and `relaunch_failed`
+remain read-only. Scratch refusal feedback is scoped to its request id; a
+terminal 410 remains visible after card removal until a newer request appears.
+
+| Respond outcome | Durable read state | Card behavior |
+| --- | --- | --- |
+| 200 delivered | Absent after `responded_at` | Complete and refresh. |
+| 202 `resume-in-progress`, `delivery-in-progress` | `answer_stored` | Show choice and retry delivery, disable new choices. |
+| 202 `resume-queued` | Absent after `responded_at` (plan review) | Show a read-only recorded state until refresh removes the card; do not offer retry delivery. |
+| 409 existing answer | `answer_stored` after reconciliation | Show the authoritative saved choice, not the losing tab's choice. |
+| 410 `agent_session_ended` | Absent after terminal marker | Explain the ended session and next action. |
+| 503 `delivery_unavailable` | `answer_stored` | Show saved answer; identical retry is allowed. |
+
+### Respond refusal reasons (P0-4 — Implemented)
+
+These are web `details.reason` tokens, not the two top-level workspace
+`reason` values or execution-host `ReasonToken`. The web and external respond
+routes expose only `reason` and optional prompt-owner `causeCode`; MCP preserves
+the public JSON body. Clients choose copy from `(code, details.reason)`, never
+from `message`, and fall back to localized per-code copy for unknown reasons.
+
+| Code | Token | Situation | Operator action | HTTP |
+| --- | --- | --- | --- | --- |
+| CONFLICT | `permission_resume_in_flight` | A resume owns delivery. | Wait for the run to continue. | 409 |
+| CONFLICT | `assignment_fenced` | A newer execution owns the run. | Check the refreshed run. | 409 |
+| PRECONDITION | `prompt_owner_deferred` | A recorded state change is pending. | Wait, then retry delivery if needed. | 409 |
+| CONFLICT | `prompt_owner_invariant` | Execution consistency failed. | Inspect the diagnostic, then retry. | 409 |
+| CONFLICT | `already_delivered` | The answer was delivered. | Check the refreshed run. | 409 |
+| CONFLICT | `option_mismatch` | A different answer was saved. | Retry delivery of the stored answer. | 409 |
+| CONFLICT | `not_awaiting_input` | The run or request no longer awaits input. | Check the refreshed run. | 409 |
+| HITL_TIMEOUT | `agent_session_ended` | The agent session ended before delivery. | Relaunch a flow run; Recover or relaunch scratch. | 410 |
+| HITL_TIMEOUT | `permission_delivery_rejected` | The checkpointed permission refused the original delivery during idle resume. | Relaunch a flow run; Recover or relaunch scratch. | 410 |
+| EXECUTOR_UNAVAILABLE | `delivery_unavailable` | The claimed answer could not yet be delivered. | Retry delivery with the identical answer; agent resume may also finish automatically. | 503 |
+
+The `session_checkpointed` token belongs to the **host's** 410; web converts
+that arm to 202 and never exposes it as a terminal HITL refusal. A crash during
+the 30-second grace can still reach the terminal 410/Failed arm, while later
+ADR-177 crash reconciliation would offer Crashed/Recover. That classification
+is a separate follow-up. P0-4 makes no run/attempt state transition change.
+There is no schema migration: `response`, `responded_at`, `human_confidence`
+and `superseded_at` already hold the required read inputs. The terminal flow
+run's durable cause remains a separate B6 follow-up: the existing attempt
+failure helpers would change its execution ledger, so P0-4 shows the 410
+through response feedback without writing attempt metadata.
 
 - Retry with same payload while `respondedAt IS NULL` AND
   `runs.status='NeedsInput'` (resume already in progress; runner-agent

@@ -1190,6 +1190,8 @@ export async function getCrossProjectHitlInbox(
       prompt: hitlRequests.prompt,
       rawSchema: hitlRequests.schema,
       storedResponse: hitlRequests.response,
+      responseIsNotNull: sql<boolean>`${hitlRequests.response} is not null`,
+      humanConfidence: hitlRequests.humanConfidence,
       criticality: hitlRequests.criticality,
       createdAt: hitlRequests.createdAt,
       capabilityAgent: activeSessionCapabilityAgent(runs.id),
@@ -1224,6 +1226,12 @@ export async function getCrossProjectHitlInbox(
         isNull(hitlRequests.respondedAt),
         or(
           inArray(runs.status, ["NeedsInput", "NeedsInputIdle"]),
+          and(
+            eq(runs.status, "Running"),
+            eq(hitlRequests.kind, "permission"),
+            isNotNull(hitlRequests.response),
+            isNull(hitlRequests.supersededAt),
+          ),
           and(
             eq(hitlRequests.kind, "agent_question"),
             eq(hitlRequests.activationState, "active"),
@@ -1310,7 +1318,7 @@ export async function getCrossProjectHitlInbox(
   });
 
   // `count` is the size of THIS inbox list — pending hitl_requests rows in
-  // NeedsInput/NeedsInputIdle. It is intentionally narrower than
+  // NeedsInput/NeedsInputIdle/Running (for a stored permission answer). It is intentionally narrower than
   // getPortfolio.totalNeeds (the actionable-ASSIGNMENT total, which also counts
   // HumanWorking/Review runs): the home "needs you" headline reflects
   // totalNeeds, while this `count` titles the HITL inbox block specifically.

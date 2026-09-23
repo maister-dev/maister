@@ -342,6 +342,7 @@ describe("GET /api/v1/ext/hitl", () => {
         kind: "human",
         title: "Review deployment plan",
         createdAt: expect.any(String),
+        answerState: "open",
       },
     ]);
     // `count` mirrors items.length (documented invariant) and createdAt is

@@ -91,14 +91,28 @@ function buildServer(transportType: "stdio" | "http"): Server {
     });
 
     if (result.isError) {
-      log.error({ tool: toolName, status: result.status }, "tool-error");
+      log.error(
+        {
+          tool: toolName,
+          status: result.status,
+          reason:
+            result.publicBody?.details &&
+            typeof result.publicBody.details === "object"
+              ? (result.publicBody.details as { reason?: unknown }).reason
+              : undefined,
+        },
+        "tool-error",
+      );
 
       return {
         isError: true,
         content: [
           {
             type: "text" as const,
-            text: result.message ?? `Error ${result.status}`,
+            text:
+              toolName === "hitl_respond" && result.publicBody
+                ? JSON.stringify(result.publicBody)
+                : (result.message ?? `Error ${result.status}`),
           },
         ],
       };

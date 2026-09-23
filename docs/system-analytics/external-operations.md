@@ -675,6 +675,14 @@ scope, audit, and MCP forwarding for that surface.
   otherwise 403. No body field can make another project visible.
 - **Global personal HITL inbox** → `GET /api/v1/ext/hitl` writes audit with
   `project_id IS NULL`; project and agent tokens get 403.
+- **HITL answer refusal (P0-4 — Implemented)** → `hitl_respond` preserves a
+  valid upstream public JSON error body as JSON text in MCP `CallToolResult.content`
+  and sets `isError: true`; the nested `details.reason` is the stable copy
+  discriminator. Missing bearer, network and non-JSON upstream failures use
+  plain-text tool errors. The cross-project inbox exposes only `answerState`; clients
+  obtain a sanitized replay envelope through the authorized run-scoped read.
+  The canonical reason/action and read-state contract is
+  [HITL](hitl.md#respond-refusal-reasons-p0-4--implemented).
 - **Relations body carries both `toNumber` and `toTaskKey`, or neither** → 422
   `CONFIG`; failure audit written; no relation mutation. (Designed)
 - **`toTaskKey` malformed, unknown, or archived** (does not parse as `KEY-N`, no

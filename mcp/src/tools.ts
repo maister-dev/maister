@@ -1,7 +1,7 @@
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 
 import { type AuthContext, resolveAuthHeader } from "./auth";
-import { callExt, restResponseToToolError } from "./rest";
+import { callExt, hitlRespondToolError, restResponseToToolError } from "./rest";
 
 export type ToolSpec = {
   description: string;
@@ -600,7 +600,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
   },
   hitl_respond: {
     description:
-      "Answer a pending permission/form HITL request for a run. Human-kind requests require a global personal token with exact hitl:respond:human scope; project tokens and wildcard scopes are refused for human gates.",
+      "Answer a pending permission/form HITL request for a run. Human-kind requests require a global personal token with exact hitl:respond:human scope; project tokens and wildcard scopes are refused for human gates. A valid upstream JSON error body is returned unchanged in tool content with isError=true; clients can use code and details.reason without parsing message text. Missing-token, network and non-JSON upstream failures use plain-text tool errors.",
     inputSchema: {
       type: "object",
       properties: {
@@ -750,7 +750,13 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
 
 type DispatchResult =
   | { isError?: false; [key: string]: unknown }
-  | { isError: true; status: number; code?: string; message?: string };
+  | {
+      isError: true;
+      status: number;
+      code?: string;
+      message?: string;
+      publicBody?: Record<string, unknown>;
+    };
 
 export async function dispatchTool(opts: {
   name: string;
@@ -783,6 +789,8 @@ export async function dispatchTool(opts: {
   }
 
   if (!res.ok) {
+    if (name === "hitl_respond") return hitlRespondToolError(res);
+
     return restResponseToToolError(res);
   }
 

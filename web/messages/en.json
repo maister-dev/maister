@@ -2580,9 +2580,10 @@
       "generic": "Something went wrong. Try again.",
       "SPAWN": "Could not start the run. Try again.",
       "CRASH": "Something went wrong. Try again.",
-      "EXECUTOR_UNAVAILABLE": "The supervisor is unreachable. Retry in a moment.",
+      "EXECUTOR_UNAVAILABLE": "The execution service is unavailable. Retry when it is ready.",
+      "EXECUTOR_UNAVAILABLE_HITL": "{answerState, select, answer_stored {Your answer is saved; delivery is pending. Retry delivery to send it.} other {Delivery could not be confirmed. Refresh the run to check whether your answer was saved.}}",
       "ACP_PROTOCOL": "The agent rejected the response. Reload and try again.",
-      "HITL_TIMEOUT": "This request expired before your response was delivered.",
+      "HITL_TIMEOUT": "The agent session ended before your answer arrived. Relaunch the run.",
       "CONFLICT": "This conflicts with the run's current state. Check the refreshed view before retrying.",
       "CONFIG": "The request or configuration is invalid. Check the values and settings.",
       "FLOW_INSTALL": "The Flow is not ready to run. Check its installation and try again.",
@@ -2597,6 +2598,29 @@
       "PASSWORD_CHANGE_REQUIRED": "Change your password before continuing.",
       "ACCOUNT_INACTIVE": "Your account is inactive."
     },
+    "errorReasons": {
+      "permission_resume_in_flight": "Your answer is already being delivered as the run resumes. Wait for the run to continue.",
+      "assignment_fenced": "A newer execution has taken over this run. Check the refreshed run before retrying delivery.",
+      "prompt_owner_deferred": "Execution is waiting for a recorded state change. Wait, then retry delivery if the answer is still pending.",
+      "prompt_owner_invariant": "Execution failed a consistency check. Check the diagnostic detail before retrying delivery.",
+      "already_delivered": "This request has already been answered. Check the refreshed run.",
+      "option_mismatch": "A different answer is already saved for this request. Retry delivery of the saved answer.",
+      "not_awaiting_input": "This run is no longer waiting for this answer. Check the refreshed run.",
+      "agent_session_ended": "The agent session ended before your answer arrived. Relaunch the run.",
+      "agent_session_ended_scratch": "The agent session ended before your answer arrived. Recover the run or relaunch it.",
+      "delivery_unavailable": "Your answer is saved; delivery is pending. Retry delivery to send it.",
+      "permission_delivery_rejected": "The checkpointed permission could not accept your answer. Relaunch the run.",
+      "permission_delivery_rejected_scratch": "The checkpointed permission could not accept your answer. Recover the run or relaunch it."
+    },
+    "errorDiagnostic": "Diagnostic",
+    "answerSaved": "Answer saved — delivery pending",
+    "answerRecorded": "Answer recorded — run resume queued",
+    "savedResponse": "Saved response",
+    "retryDelivery": "Retry delivery",
+    "refreshAnswer": "Refresh status",
+    "savedNoReplay": "This saved answer cannot be retried from this card. Refresh the run to inspect delivery.",
+    "savedInvalidOption": "The saved option is no longer available. Refresh the run to inspect delivery.",
+    "deliveryUnconfirmed": "Delivery could not be confirmed. Refresh the run to check whether your answer was saved.",
     "resolvedSet": {
       "title": "Resolved capability set",
       "flowRevision": "Flow revision",
@@ -2699,7 +2723,7 @@
         "BUDGET_EXCEEDED": "The run reached its budget limit. Review the budget before restarting.",
         "CHECKPOINT": "The agent session could not resume from its checkpoint. Check adapter resume support and supervisor logs.",
         "PRECONDITION": "A prerequisite for this step was not met. Check the Flow inputs and required resources.",
-        "HITL_TIMEOUT": "The time allowed for human input expired. Restart after checking the input timeout.",
+        "HITL_TIMEOUT": "The agent session ended before the answer arrived. Relaunch the run.",
         "CONFLICT": "The step encountered a conflicting operation. Check the run state and active operations."
       }
     }

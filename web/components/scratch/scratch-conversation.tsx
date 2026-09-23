@@ -9,8 +9,9 @@ import type { AdapterId } from "@/lib/acp-runners/adapter-support";
 import type { ProjectCapabilityCatalogEntry } from "@/lib/capabilities/project-catalog";
 import type { RunningLiveCommand } from "@/lib/capabilities/running-catalog";
 import type { ReactElement } from "react";
+import type { HitlErrorMessage } from "@/lib/ui-error-message";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import clsx from "clsx";
 
@@ -24,6 +25,7 @@ import {
   attachmentSummary,
   canCompose,
   errorText,
+  hitlErrorText,
 } from "@/lib/scratch-runs/dialog";
 import { buildRunningCommandCatalog } from "@/lib/capabilities/running-catalog";
 import { getAdapterSupportById } from "@/lib/acp-runners/adapter-support";
@@ -33,6 +35,11 @@ import {
   type ScratchFlowActionResultPayload,
 } from "@/lib/scratch-runs/transcript";
 import { useRunStream } from "@/lib/use-run-stream";
+import { isStaleViewErrorCode } from "@/lib/ui-error-message";
+import {
+  canReplayHitlAnswer,
+  isPendingHitlDeliveryState,
+} from "@/lib/hitl-response-contract";
 
 const shell =
   "rounded-lg border border-line-soft bg-[color-mix(in_oklab,var(--ivory)_35%,var(--paper))]";
@@ -76,6 +83,7 @@ function formatUsageCount(locale: string, value: number): string {
 // shared run inspector + workbench rendered by the scratch layout.
 export function ScratchConversation({
   runId,
+  canAct,
   compact = false,
   messageEndpoint,
   messageBodyExtras,
@@ -89,6 +97,7 @@ export function ScratchConversation({
   onHeaderInfo,
 }: {
   runId: string;
+  canAct: boolean;
   compact?: boolean;
   messageEndpoint?: string;
   messageBodyExtras?: Record<string, unknown>;
@@ -107,10 +116,44 @@ export function ScratchConversation({
 }): ReactElement {
   const locale = useLocale();
   const t = useTranslations("scratch");
+  const tRun = useTranslations("run");
   const [detail, setDetail] = useState<ScratchDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [hitlError, setHitlError] = useState<
+    | {
+        requestKey: string;
+        terminal: boolean;
+        descriptor: HitlErrorMessage;
+      }
+    | {
+        requestKey: string;
+        terminal: false;
+        key: "deliveryUnconfirmed";
+      }
+    | null
+  >(null);
+  const [pendingHitlKey, setPendingHitlKey] = useState<string | null>(null);
+  const activeRunId = useRef(runId);
+
+  const currentHitlRequestKey =
+    detail?.run.id === runId && detail.pendingHitl
+      ? `${runId}:${detail.pendingHitl.hitlRequestId}`
+      : null;
+  const activeHitlRequestKey = useRef(currentHitlRequestKey);
+  const latestHitlRequestKey = useRef(currentHitlRequestKey);
+
+  useEffect(() => {
+    activeRunId.current = runId;
+    activeHitlRequestKey.current = currentHitlRequestKey;
+    if (currentHitlRequestKey !== null)
+      latestHitlRequestKey.current = currentHitlRequestKey;
+  }, [runId, currentHitlRequestKey]);
+  const [localAnswer, setLocalAnswer] = useState<{
+    requestKey: string;
+    payload: NonNullable<ScratchDetail["pendingHitl"]>["storedResponse"];
+  } | null>(null);
   const [detailRevision, setDetailRevision] = useState(0);
   const [commandCatalog, setCommandCatalog] = useState<
     ProjectCapabilityCatalogEntry[]
@@ -132,18 +175,23 @@ export function ScratchConversation({
     try {
       const response = await fetch(`/api/scratch-runs/${runId}`);
 
+      if (activeRunId.current !== runId) return;
+
       if (!response.ok) {
         setError(t(errorText(await response.json().catch(() => null))));
 
         return;
       }
 
-      setDetail((await response.json()) as ScratchDetail);
+      const nextDetail = (await response.json()) as ScratchDetail;
+
+      if (activeRunId.current !== runId) return;
+      setDetail(nextDetail);
       setDetailRevision((current) => current + 1);
     } catch {
-      setError(t("errorGeneric"));
+      if (activeRunId.current === runId) setError(t("errorGeneric"));
     } finally {
-      setLoading(false);
+      if (activeRunId.current === runId) setLoading(false);
     }
   }, [runId]);
 
@@ -444,9 +492,14 @@ export function ScratchConversation({
 
   const answerHitl = useCallback(
     async (payload: Record<string, unknown>): Promise<void> => {
-      if (!detail?.pendingHitl) return;
-      setPendingAction("hitl");
-      setError(null);
+      if (!detail?.pendingHitl || !canAct) return;
+      const requestKey = `${runId}:${detail.pendingHitl.hitlRequestId}`;
+      const requestIsCurrent = (): boolean =>
+        activeRunId.current === runId &&
+        activeHitlRequestKey.current === requestKey;
+
+      setPendingHitlKey(requestKey);
+      setHitlError(null);
 
       try {
         const response = await fetch(
@@ -459,20 +512,109 @@ export function ScratchConversation({
         );
 
         if (!response.ok) {
-          setError(t(errorText(await response.json().catch(() => null))));
+          const body = await response.json().catch(() => null);
+
+          const terminal = response.status === 410;
+
+          if (
+            !requestIsCurrent() &&
+            !(
+              terminal &&
+              activeRunId.current === runId &&
+              activeHitlRequestKey.current === null &&
+              latestHitlRequestKey.current === requestKey
+            )
+          ) {
+            return;
+          }
+          const descriptor = hitlErrorText(
+            body,
+            detail.pendingHitl.answerState,
+          );
+
+          setHitlError({ requestKey, terminal, descriptor });
+          if (body?.details?.reason === "delivery_unavailable") {
+            setLocalAnswer({
+              requestKey,
+              payload: canReplayHitlAnswer(
+                detail.pendingHitl.kind,
+                detail.pendingHitl.schema,
+              )
+                ? (payload as NonNullable<
+                    ScratchDetail["pendingHitl"]
+                  >["storedResponse"])
+                : null,
+            });
+          }
+          if (isStaleViewErrorCode(body?.code)) {
+            setLocalAnswer({ requestKey, payload: null });
+            await loadDetail();
+          }
 
           return;
         }
 
+        const accepted = await response.json().catch(() => null);
+
+        if (!requestIsCurrent()) return;
+
+        if (
+          response.status === 202 &&
+          isPendingHitlDeliveryState(accepted?.state)
+        ) {
+          setLocalAnswer({
+            requestKey,
+            payload: canReplayHitlAnswer(
+              detail.pendingHitl.kind,
+              detail.pendingHitl.schema,
+            )
+              ? (payload as NonNullable<
+                  ScratchDetail["pendingHitl"]
+                >["storedResponse"])
+              : null,
+          });
+        }
         await loadDetail();
       } catch {
-        setError(t("errorGeneric"));
+        if (requestIsCurrent())
+          setHitlError({
+            requestKey,
+            terminal: false,
+            key: "deliveryUnconfirmed",
+          });
       } finally {
-        setPendingAction(null);
+        if (activeRunId.current === runId)
+          setPendingHitlKey((current) =>
+            current === requestKey ? null : current,
+          );
       }
     },
-    [detail?.pendingHitl, loadDetail, runId],
+    [canAct, detail?.pendingHitl, loadDetail, runId],
   );
+
+  const visiblePendingHitl =
+    detail?.run.id === runId && detail.pendingHitl
+      ? localAnswer?.requestKey ===
+        `${runId}:${detail.pendingHitl.hitlRequestId}`
+        ? {
+            ...detail.pendingHitl,
+            answerState: "answer_stored" as const,
+            storedResponse:
+              detail.pendingHitl.answerState === "answer_stored"
+                ? detail.pendingHitl.storedResponse
+                : localAnswer.payload,
+          }
+        : detail.pendingHitl
+      : null;
+  const visibleHitlError =
+    hitlError &&
+    (hitlError.requestKey === currentHitlRequestKey ||
+      (hitlError.terminal &&
+        currentHitlRequestKey === null &&
+        hitlError.requestKey.startsWith(`${runId}:`) &&
+        latestHitlRequestKey.current === hitlError.requestKey))
+      ? hitlError
+      : null;
 
   if (loading && !detail) {
     return (
@@ -572,12 +714,14 @@ export function ScratchConversation({
         />
       )}
 
-      {detail.pendingHitl ? (
+      {visiblePendingHitl ? (
         <div className="min-w-0 border-t border-line-soft px-4 py-3">
           <ScratchPermissionPanel
-            pending={pendingAction === "hitl"}
-            pendingHitl={detail.pendingHitl}
+            canAct={canAct}
+            pending={pendingHitlKey === currentHitlRequestKey}
+            pendingHitl={visiblePendingHitl}
             onAnswer={(payload) => void answerHitl(payload)}
+            onRefresh={() => void loadDetail()}
           />
         </div>
       ) : null}
@@ -588,9 +732,27 @@ export function ScratchConversation({
         </div>
       ) : null}
 
-      {error ? (
-        <div className="mx-4 mt-3 min-w-0 rounded-lg border border-[#d9534f]/40 bg-[#d9534f]/10 px-3 py-2 text-[12px] leading-[1.5] text-[#d9534f]">
-          {error}
+      {visibleHitlError || error ? (
+        <div
+          className="mx-4 mt-3 min-w-0 rounded-lg border border-[#d9534f]/40 bg-[#d9534f]/10 px-3 py-2 text-[12px] leading-[1.5] text-[#d9534f]"
+          role="alert"
+        >
+          {visibleHitlError
+            ? "descriptor" in visibleHitlError
+              ? tRun(
+                  visibleHitlError.descriptor.key,
+                  visibleHitlError.descriptor.values,
+                )
+              : tRun(visibleHitlError.key)
+            : error}
+          {visibleHitlError &&
+          "descriptor" in visibleHitlError &&
+          visibleHitlError.descriptor.causeCode ? (
+            <p className="mt-1 text-mute">
+              {tRun("errorDiagnostic")}:{" "}
+              <code>{visibleHitlError.descriptor.causeCode}</code>
+            </p>
+          ) : null}
         </div>
       ) : null}
 

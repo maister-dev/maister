@@ -61,6 +61,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
           kind: item.kind,
           title: item.prompt,
           createdAt: item.createdAt,
+          answerState: item.answerState,
         }));
 
       return NextResponse.json({ items, count: items.length }, { status: 200 });
