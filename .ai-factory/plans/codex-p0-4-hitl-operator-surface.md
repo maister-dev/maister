@@ -805,6 +805,18 @@ a product pass; do not quietly quarantine the required acceptance tests.
   transition or supervisor code changed. This is not recorded as a green
   qualification or repaired by weakening the ADR-180 assertion.
 
+A later committed-tree run also passed 9/10 (RED13 observed `result`). A
+diagnostic full-file run passed 9/10 with RED14 observing `result`; its source
+`session.prompt` command was `succeeded` while the immutable terminal witness
+ordered it **after** the checkpoint. `readCheckpointSource` therefore chooses
+`result` instead of `continue`; `authorizeAgentPermissionResume` marks the
+original row `responded_at` and the `continue`-only reissued-permission path
+does not deliver the operator's answer. This is a concrete ADR-180 agent
+resume classification defect in code unchanged from master, not an obsolete
+test assertion. P0-4's locked no-state-transition rule forbids fixing it in
+this item. The full integration gate and Tasks 13–14 remain open until that
+follow-up is repaired and the complete suite is green.
+
 ## Test placement, migration and falsification
 
 | Gate | Existing file to extend / planned new file | Runner and evidence |

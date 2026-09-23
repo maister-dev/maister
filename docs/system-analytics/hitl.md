@@ -1092,6 +1092,14 @@ type}`; the stage `type` MUST be resolved by compiling each distinct flow
   withdraws the unadmitted delivery intent and sends the stored answer to the
   resumed session (Implemented — ADR-180). The host's own 503 bodies remain
   reason-less; the web does not claim to know which host case occurred.
+- **Open ADR-180 agent handoff defect (2026-09-23 qualification):** the real
+  supervisor sometimes records the original `session.prompt` as `succeeded`
+  after the checkpoint terminal witness. The agent resume classifier grants
+  `result` instead of `continue`, marks the original HITL row `responded_at`,
+  and skips the reissued-permission delivery of the answer. RED13/RED14 detect
+  this intermittently. P0-4 changes only the operator surface; the agent
+  checkpoint classification and its tests remain a separate required fix
+  before full integration qualification can be claimed.
 - **Agent reads a malformed `input-<stepId>.json`** — adapter exits
   non-zero → `Crashed`. Operator decides whether to Recover or
   Discard.
