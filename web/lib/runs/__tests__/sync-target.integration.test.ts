@@ -33,12 +33,14 @@ const execFileAsync = promisify(execFile);
 // the real impl). Both double as deterministic seams for injecting a concurrent
 // abandon at an EXACT point in the sync — the only way to test the abandon↔sync
 // race without racing real threads and hoping for the interleave:
-//   - `remoteBranchHead` is the network ls-remote read at sync-target.ts:633,
-//     inside the window between the unlocked eligibility read and the claim tx.
-//     (It also lets the lease-fail test force a stale `remoteShaBefore` capture.)
-//   - `aheadBehindCounts` FIRST runs at sync-target.ts:760 — after the claim
-//     commits, before the rebase. Its other call site (:240, inside
-//     `verifySyncGate`) runs later, so a `...Once` impl always lands on :760.
+//   - `remoteBranchHead` is the network ls-remote read of `syncRunTarget`'s
+//     step 2 (the lease capture), inside the window between the unlocked
+//     eligibility read and the claim tx. (It also lets the lease-fail test force
+//     a stale `remoteShaBefore` capture.) The workbench admission's fact loader
+//     reads only local refs, so it never consumes a `...Once`.
+//   - `aheadBehindCounts` FIRST runs at step 5 (the behind/ahead count) — after
+//     the claim commits, before the rebase. Its other call site (inside
+//     `verifySyncGate`) runs later, so a `...Once` impl always lands on step 5.
 vi.mock("@/lib/worktree", async (orig) => {
   const actual = await orig<typeof import("@/lib/worktree")>();
 
@@ -46,6 +48,8 @@ vi.mock("@/lib/worktree", async (orig) => {
     ...actual,
     remoteBranchHead: vi.fn(actual.remoteBranchHead),
     aheadBehindCounts: vi.fn(actual.aheadBehindCounts),
+    // The seam for losing the operation's own state inside a conflict (C3).
+    rebaseOntoRef: vi.fn(actual.rebaseOntoRef),
   };
 });
 
@@ -56,6 +60,7 @@ vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
 const {
   addWorktree,
   aheadBehindCounts,
+  rebaseOntoRef,
   remoteBranchHead,
   syncOperationInProgress,
 } = await import("@/lib/worktree");
@@ -1795,6 +1800,95 @@ describe("ADR-181 — update onto base | target | published", () => {
     });
     expect(await headSha(wt)).toBe(before);
     expect(await syncOperationInProgress(wt)).toBe(false);
+    expect((await git(wt, ["status", "--porcelain"])).stdout.trim()).toBe("");
+  });
+
+  // ADR-181 D9: the workbench admission IS the git policy. The status arm alone
+  // admits `HumanWorking` (for the rework-claim owner), so only the policy stops
+  // everyone else from rewriting a tree a human has claimed.
+  it("refuses a HumanWorking run to anyone but the rework claim's owner", async () => {
+    const { parent, baseSha } = await initRepoWithRemote();
+    const wt = await addRunWorktree(parent, "sync/human");
+    const { projectId, flowId } = await seedGraph(parent);
+    const { runId } = await seedRun({
+      projectId,
+      flowId,
+      worktreePath: wt,
+      branch: "sync/human",
+      parentRepoPath: parent,
+      baseCommit: baseSha,
+      status: "HumanWorking",
+    });
+
+    const err = await refusal(
+      syncRunTarget({
+        runId,
+        actor: actor(),
+        agent: false,
+        admission: "workbench",
+        db,
+      }),
+    );
+
+    expect(err.code).toBe("PRECONDITION");
+    expect(err.details?.reason).toBe("human_owned");
+    expect(await attemptRows(runId)).toHaveLength(0);
+  });
+
+  // C3, falsifiable: when the operation's own state is gone by the time the
+  // update aborts (an operator's `git rebase --quit` in the window), `--abort`
+  // finds nothing to undo — only the reset returns the pre-update HEAD.
+  it("restores the pre-update HEAD even when the rebase state is gone", async () => {
+    const { remote, parent, baseSha } = await initRepoWithRemote();
+    const wt = await addRunWorktree(parent, "sync/conflict-quit", {
+      feature: false,
+    });
+
+    await writeFile(join(wt, "conf.txt"), "run side\n");
+    await git(wt, ["add", "conf.txt"]);
+    await git(wt, ["commit", "-m", "run edits conf"]);
+    const before = await headSha(wt);
+    const c = join(root, `conf-${randomUUID()}`);
+
+    await git(root, ["clone", remote, c]);
+    await identity(c);
+    await writeFile(join(c, "conf.txt"), "main side\n");
+    await git(c, ["add", "conf.txt"]);
+    await git(c, ["commit", "-m", "main edits conf"]);
+    await git(c, ["push", "origin", "main"]);
+    await rm(c, { recursive: true, force: true });
+
+    const { projectId, flowId } = await seedGraph(parent);
+    const { runId } = await seedRun({
+      projectId,
+      flowId,
+      worktreePath: wt,
+      branch: "sync/conflict-quit",
+      parentRepoPath: parent,
+      baseCommit: baseSha,
+      status: "Failed",
+    });
+
+    vi.mocked(rebaseOntoRef).mockImplementationOnce(async (worktree, ref) => {
+      const applied = await actualWorktree.rebaseOntoRef(worktree, ref);
+
+      await git(worktree, ["rebase", "--quit"]);
+
+      return applied;
+    });
+
+    const out = await syncRunTarget({
+      runId,
+      actor: actor(),
+      admission: "workbench",
+      db,
+    });
+
+    expect(out).toMatchObject({
+      outcome: "conflict",
+      conflictedFiles: ["conf.txt"],
+    });
+    expect(await headSha(wt)).toBe(before);
     expect((await git(wt, ["status", "--porcelain"])).stdout.trim()).toBe("");
   });
 

@@ -18,12 +18,11 @@ import {
   markSyncReviewFromNeedsInput,
   markSyncReviewFromRunning,
 } from "@/lib/runs/state-transitions";
+import { pushWithLease, verifySyncGate } from "@/lib/runs/sync-target";
 import {
-  pushWithLease,
-  syncPushTarget,
-  verifySyncGate,
-} from "@/lib/runs/sync-target";
-import { recordPublished } from "@/lib/workbench-git/publication";
+  publishedTarget,
+  recordPublished,
+} from "@/lib/workbench-git/publication";
 import { poolForRunKind, promoteNextPending } from "@/lib/scheduler";
 import {
   createExecutionHosts,
@@ -66,6 +65,9 @@ type AttemptRow = {
   headShaBefore: string | null;
   remoteShaBefore: string | null;
   agentRunningSince: Date | null;
+  // ADR-181 D9: the ref this attempt updated onto (`<branch>` or
+  // `<remote>/<public>`); null on a row written before it was recorded.
+  targetRef?: string | null;
   // The lifecycle slot's fence token AS OBSERVED when this attempt was loaded: a
   // separate uuid minted with the claim (NOT this row's id), readable only from
   // the workspace. `releaseClaim` fences on it so a pass can only free the claim
@@ -99,6 +101,7 @@ async function loadActiveAttempt(
       headShaBefore: runSyncAttempts.headShaBefore,
       remoteShaBefore: runSyncAttempts.remoteShaBefore,
       agentRunningSince: runSyncAttempts.agentRunningSince,
+      targetRef: runSyncAttempts.targetRef,
       lifecycleAttemptId: workspaces.lifecycleOperationAttemptId,
     })
     .from(runSyncAttempts)
@@ -416,11 +419,16 @@ export async function recoverSyncAttemptOnReconcile(args: {
   }
 
   // --- W2/W3: no live session — idempotent re-verify → finalize or abort -------
+  // ADR-181 D9: against the ref THIS attempt updated onto — an update onto the
+  // base or the publication records its own `target_ref`. A local branch
+  // resolves to its head; `<remote>/<public>` is left for git to read as the
+  // remote-tracking ref.
+  const targetRef = attempt.targetRef ?? ctx.targetBranch;
   const targetSha =
     (await localBranchHead({
       projectRepoPath: ctx.repo,
-      branch: ctx.targetBranch,
-    })) ?? ctx.targetBranch;
+      branch: targetRef,
+    })) ?? targetRef;
   // `ctx.branch` is REQUIRED here, exactly as on the live path. Recovery pushes
   // `refs/heads/<branch>` but measures HEAD: a crash that left HEAD DETACHED on
   // the resolution (e.g. the resolver ran `git rebase --quit`) leaves the branch
@@ -455,7 +463,7 @@ export async function recoverSyncAttemptOnReconcile(args: {
     repo: ctx.repo,
     branch: ctx.branch,
   }).catch(() => false);
-  const pushTarget = syncPushTarget({
+  const pushTarget = publishedTarget({
     branch: ctx.branch,
     publishedBranch: ctx.publishedBranch,
     publishedRemote: ctx.publishedRemote,
@@ -567,7 +575,8 @@ export interface SyncRecoverySweepOptions {
 export interface SyncRecoverySweepSummary {
   candidates: number;
   // W1/W4: mechanical syncs orphaned by a restart (attempt starting/rebasing, no
-  // in-proc driver) — aborted, attempt failed, claim released. Run stays Review.
+  // in-proc driver) — aborted, attempt failed, claim released. The run's status
+  // is untouched.
   orphanOperationsAborted: number;
   // W5: agent resolvers that exceeded the continuous-Running active-time cap —
   // session killed, restored, attempt failed, run returned to Review.
@@ -640,13 +649,14 @@ function liveSyncSessionFor(
 /**
  * ADR-141 — the system-sweep branch-sync recovery pass, run from
  * `runSystemSweep` on the polymorphic scheduler clock. It owns the crash windows
- * reconcile cannot see (the MECHANICAL sync never leaves `Review`, so it is not a
+ * reconcile cannot see (the MECHANICAL sync never changes the run's status —
+ * `Review`, or since ADR-181 any parked one — so it is not a
  * `Running` reconcile candidate) plus the active-time runaway:
  *
  *  - **W1/W4** — a mechanical sync orphaned by a web restart (attempt
  *    `starting`/`rebasing`, `mode='mechanical'`, no in-proc driver): abort the
  *    on-disk rebase, restore the pre-sync HEAD, fail the attempt, release the
- *    claim. The run stays `Review` (mechanical never held a pool slot).
+ *    claim. The run keeps its status (mechanical never held a pool slot).
  *  - **W5** — an agent resolver past the continuous-Running active-time cap
  *    (`phase='agent_running'`, run `Running`, `agent_running_since` older than
  *    `SYNC_ATTEMPT_MAX_MINUTES`): kill the session, restore, fail the attempt,
@@ -800,7 +810,7 @@ export async function runSyncRecoverySweep(
     //
     // EVERY non-terminal mechanical phase must reach this arm. The mechanical
     // driver writes starting → rebasing → verifying → pushing, and a mechanical
-    // sync never leaves `Review` — so reconcile, which only owns `Running` rows,
+    // sync never changes the run's status — so reconcile, which only owns `Running` rows,
     // never classifies it, and every other `releaseSyncClaim` lives in
     // `sync-target.ts` and dies with the process. This is its ONLY cross-restart
     // release: a phase omitted here strands `lifecycle_operation_state='claiming'`
@@ -824,7 +834,7 @@ export async function runSyncRecoverySweep(
         );
         // ADR-181 D7: ask where the live path pushed — the publication, not
         // `origin` under the internal name.
-        const pushTarget = pushCtx ? syncPushTarget(pushCtx) : null;
+        const pushTarget = pushCtx ? publishedTarget(pushCtx) : null;
         const remoteHead =
           pushCtx && pushTarget
             ? await remoteBranchHead({
@@ -896,7 +906,7 @@ export async function runSyncRecoverySweep(
           attempt: attempt.id,
           restored: attempt.phase !== "pushing",
         },
-        "sync recovery: aborted orphaned mechanical sync, released claim (run stays Review)",
+        "sync recovery: aborted orphaned mechanical sync, released claim (run status untouched)",
       );
     }
   }

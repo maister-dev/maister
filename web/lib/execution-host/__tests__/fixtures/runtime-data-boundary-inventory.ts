@@ -1633,6 +1633,20 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
         ],
       ],
     ),
+    // ADR-181 C31: a reattach first asks whether its own worktree path is
+    // occupied (by its own crashed attempt, or by anything else).
+    ...classified(
+      "lib/workbench-git/service.ts",
+      "repository-worktree",
+      "a reattach stats the run's recorded worktree path before re-creating it — Stage C repository cut",
+      [
+        [
+          "adoptsOwnAttempt",
+          "lib/workbench-git/presence.ts#worktreePresence",
+          "wrapper",
+        ],
+      ],
+    ),
     ...classified(
       "lib/queries/portfolio.ts",
       "repository-worktree",
@@ -2378,6 +2392,7 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
     ["resolveBaseRef", false],
     ["resolveRefSha", false],
     ["restoreWorktreeToCommit", false],
+    ["setBranchUpstream", false],
     ["showFileAtHead", false],
     ["snapshotDirtyWorktree", false],
     ["squashRunBranch", false],

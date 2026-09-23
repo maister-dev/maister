@@ -12,6 +12,7 @@ import {
   type WorkbenchGitAction,
 } from "@/lib/workbench-git/policy";
 import { resolvePublishName } from "@/lib/workbench-git/publication";
+import { resolveSyncRef, type SyncOnto } from "@/lib/runs/sync-ref";
 import {
   aheadBehindCounts,
   branchUpstream,
@@ -229,16 +230,34 @@ export async function loadGitState(args: {
   });
   const mainBranch: string = project?.mainBranch ?? "main";
   // D3: scratch base/target live on `scratch_runs` (the workspace row has none).
-  const baseRef: string | null =
-    run.runKind === "scratch"
-      ? (scratch?.baseBranch ?? null)
-      : (workspace?.baseBranch ?? workspace?.baseCommit ?? null);
   const targetBranch: string =
     run.runKind === "scratch"
       ? (scratch?.targetBranch ?? scratch?.baseBranch ?? mainBranch)
       : (workspace?.targetBranch ?? mainBranch);
   const publicBranch: string | null = workspace?.publishedBranch ?? null;
   const publishedRemote: string | null = workspace?.publishedRemote ?? null;
+  // ADR-181 D9: an update's ahead/behind is counted against the very ref that
+  // update applies onto (`resolveSyncRef` — null where it would refuse). A
+  // scratch run cannot update, so it keeps its `scratch_runs` refs (D3).
+  const countRef = (
+    onto: SyncOnto,
+    scratchRef: string | null,
+  ): string | null => {
+    if (run.runKind === "scratch" || workspace === null) return scratchRef;
+    try {
+      return resolveSyncRef(onto, run.id, workspace, project).ref;
+    } catch {
+      return null;
+    }
+  };
+  const baseRef = countRef("base", scratch?.baseBranch ?? null);
+  const targetRef = countRef("target", targetBranch);
+  const publishedRef = countRef(
+    "published",
+    publicBranch && publishedRemote
+      ? `refs/remotes/${publishedRemote}/${publicBranch}`
+      : null,
+  );
   const remotes = facts.remotes ?? [];
   const usable =
     workspace !== null && workspace.removedAt === null && facts.worktreePresent;
@@ -297,16 +316,14 @@ export async function loadGitState(args: {
               aheadBehindCounts(wt, baseRef, "HEAD"),
             )
           : null,
-        read("aheadBehind.target", () =>
-          aheadBehindCounts(wt, targetBranch, "HEAD"),
-        ),
-        trackingHead && publicBranch && publishedRemote
+        targetRef
+          ? read("aheadBehind.target", () =>
+              aheadBehindCounts(wt, targetRef, "HEAD"),
+            )
+          : null,
+        trackingHead && publishedRef
           ? read("aheadBehind.published", () =>
-              aheadBehindCounts(
-                wt,
-                `refs/remotes/${publishedRemote}/${publicBranch}`,
-                "HEAD",
-              ),
+              aheadBehindCounts(wt, publishedRef, "HEAD"),
             )
           : null,
       ]);

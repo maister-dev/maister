@@ -120,6 +120,25 @@ export function resolvePublishName(input: PublishNameInput): {
   };
 }
 
+// ADR-181 D7: where a run's branch lives on a remote — its publication when
+// recorded, else `origin` under the internal name (the pre-ADR-181 shape). The
+// sync push and its recovery, the re-attach revival and the reattach-source
+// fact all read the branch back from here.
+export type PublishedTarget = { remote: string; remoteBranch: string };
+
+export function publishedTarget(workspace: {
+  branch: string;
+  publishedBranch?: string | null;
+  publishedRemote?: string | null;
+}): PublishedTarget {
+  return workspace.publishedBranch && workspace.publishedRemote
+    ? {
+        remote: workspace.publishedRemote,
+        remoteBranch: workspace.publishedBranch,
+      }
+    : { remote: "origin", remoteBranch: workspace.branch };
+}
+
 export type RecordPublishedInput = {
   database?: Db;
   workspaceId: string;

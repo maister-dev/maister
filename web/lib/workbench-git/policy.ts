@@ -1,6 +1,8 @@
 import type { RunKind, ScratchDialogStatus } from "@/lib/db/schema";
 import type { RunStatusValue } from "@/lib/runs/run-status-values";
 
+import { MaisterError } from "@/lib/errors-core";
+
 // ADR-181 D1 — THE predicate for every run workbench git action. Pure and
 // client-safe: facts come from the D1a loader (`facts.ts`) or, on cards and rail
 // rows, from the row itself. `lib/workbench-lifecycle/policy.ts` re-exports it,
@@ -272,4 +274,19 @@ export function disabledReasonToken(
   reason: WorkbenchGitDisabledReason,
 ): string {
   return reason.replace(/-/g, "_");
+}
+
+// C19: the typed refusal of a disabled action, carrying its reason as the token
+// the UI branches on. Another writer holding the tree is a CONFLICT (retry
+// later); anything else is a PRECONDITION (the run is not in that shape).
+export function gitActionRefusal(
+  runId: string,
+  id: WorkbenchGitActionId,
+  reason: WorkbenchGitDisabledReason,
+): MaisterError {
+  return new MaisterError(
+    reason === "busy" ? "CONFLICT" : "PRECONDITION",
+    `workbench action ${id} is not allowed for run ${runId}: ${reason}`,
+    { details: { reason: disabledReasonToken(reason) } },
+  );
 }

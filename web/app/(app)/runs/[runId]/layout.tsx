@@ -140,6 +140,7 @@ import {
   statusPorcelain,
 } from "@/lib/worktree";
 import { buildRunSyncPanelData } from "@/lib/runs/sync-panel-data";
+import { gitPanelHref } from "@/lib/workbench-git/panel-link";
 import { deliveryPolicyFromLegacyPromotionMode } from "@/lib/runs/delivery-policy";
 import {
   computeDirtySummary,
@@ -815,10 +816,7 @@ export default async function RunDetailLayout({
         parentRepoPath: detail.parentRepoPath,
         branch: detail.branch,
         targetBranch: reviewData.targetBranch,
-        syncStrategyDefault: detail.syncStrategyDefault,
         syncRunnerId: detail.syncRunnerId,
-        prUrl: detail.prUrl,
-        publishedBranch: detail.lifecycleFacts.publishedBranch ?? null,
       });
     }
   }
@@ -846,16 +844,6 @@ export default async function RunDetailLayout({
         })
       : "",
     syncBranch: t("syncBranch"),
-    syncTitle: t("syncTitle"),
-    syncStrategy: t("syncStrategy"),
-    syncStrategyRebase: t("syncStrategyRebase"),
-    syncStrategyMerge: t("syncStrategyMerge"),
-    syncRunner: t("syncRunner"),
-    syncRunnerDefault: t("syncRunnerDefault"),
-    syncPush: t("syncPush"),
-    syncResolveWithAgent: t("syncResolveWithAgent"),
-    syncStart: t("syncStart"),
-    syncCancel: t("syncCancel"),
     syncInProgress: syncPanel?.sync.inProgress
       ? t("syncInProgress", { phase: syncPanel.sync.inProgress.phase })
       : "",
@@ -1542,6 +1530,11 @@ export default async function RunDetailLayout({
               actions={viewerLifecycleActions}
               runId={detail.runId}
               runKind={detail.runKind}
+              syncDefaults={{
+                strategy: detail.syncStrategyDefault,
+                runnerOptions: syncPanel?.sync.runnerOptions ?? [],
+                defaultRunnerId: syncPanel?.sync.defaultRunnerId ?? null,
+              }}
               variant="detail"
               workspaceAvailable={
                 Boolean(detail.worktreePath) && !detail.pruned
@@ -2072,6 +2065,11 @@ export default async function RunDetailLayout({
               runId={detail.runId}
               sync={syncPanel?.sync ?? null}
               targetBranch={reviewData.targetBranch}
+              updateHref={gitPanelHref({
+                runId: detail.runId,
+                runKind: detail.runKind,
+                actionId: "update",
+              })}
             />
           ) : null}
 

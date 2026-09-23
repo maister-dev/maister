@@ -466,6 +466,56 @@ record.
     same target the live path and the W3 arm use. Pinned by a
     `sync-recovery.integration.test.ts` case on a publication at `fork`
     (reverting the read fails it).
+- **C45–C53 — found during Phase 2 (2026-09-23).**
+  - **C45 — `admission` defaults to `review`.** Only the web route opts into
+    the policy (`workbench`); the ext API passes `review` explicitly (C17) and
+    every internal caller — the `ai_rebase_merge` delegation — keeps ADR-141's
+    arm by default. The RED 14–15 cases pass `admission: "workbench"`.
+  - **C46 — RED 15 cannot falsify the restore.** For a plain conflict
+    `git rebase --abort` already returns HEAD, so reverting to abort-only left
+    RED 15 green. The reset exists for the case where the operation's own
+    state is gone before the abort (an operator's `git rebase --quit`); a twin
+    control drops it mid-conflict through a `rebaseOntoRef` seam, and
+    falsification 9 runs against the twin (abort-only leaves HEAD on the
+    target's tip).
+  - **C47 — an update onto the run's own publication may land on it.** The
+    verify gate's "identical to the target" refusal guards the run's own
+    commits; for `onto:"published"` with nothing local past the ref
+    (`aheadBefore === 0`) landing exactly on it IS the update, so the check is
+    waived there only. Local-only commits must still survive.
+  - **C48 — the workbench admission is the policy, and only the policy stops a
+    non-owner.** The status set re-checked under the row lock admits
+    `HumanWorking` (for the claim owner); a control pins that anyone else gets
+    `human_owned` (dropping the policy call fails it).
+  - **C49 — recovery re-verifies against the attempt's own `target_ref`.** A
+    resolver may now run for `onto` base or published (in `Review`); W3 read the
+    promotion target. A local branch resolves to its head, `<remote>/<public>`
+    to the tracking ref.
+  - **C50 — one revival for reattach and reopen, with reattach's contract.**
+    `publishedTarget` (moved from `sync-target.ts` to `publication.ts`) names
+    where a branch lives on a remote — the recorded publication, else
+    `origin/<internal>` — for the revival, the sync push and the
+    reattach-source fact alike. A failed fetch is `EXECUTOR_UNAVAILABLE` (the
+    OpenAPI 503), where reopen used to swallow it and revive from a possibly
+    stale tracking ref; reopen also gains the archive source and the upstream
+    re-set.
+  - **C51 — a stamped tree is never compensated.** Reattach removes the
+    worktree it added only when the provenance stamp failed; once the tree
+    names the run it is an adoptable attempt (C31). A failed `worktree add`
+    behind the claim (the branch checked out elsewhere) pins that the row stays
+    removed (falsification 10).
+  - **C52 — the review panel links into the git panel.** Its three sync entry
+    points (chip, conflict card, drift card) are links to `?git=update`
+    (`gitPanelHref`); the detail host opens on a `?git=` change without a
+    remount. The resolver runner choice moved into the Update section (Review
+    only) through `syncDefaults`, so no ADR-141 capability is lost.
+    `buildRunSyncPanelData` drops the dialog's seeds (`strategyDefault`,
+    `published`), ten `run.sync*` keys are removed, and `e2e/pr-reopen.spec.ts`
+    — which drove the dialog too — is migrated with `run-sync.spec.ts`.
+  - **C53 — one `onto` → ref mapping.** `resolveSyncRef` lives in
+    `lib/runs/sync-ref.ts`; the git-state read model counts each update option
+    against the same ref, so it drops the `baseCommit` fallback: a base the
+    update would refuse (`base_branch_unknown`) shows no counts.
 - **Token set (final, T0.1).** Service refusals: `public_name_fixed`,
   `public_branch_template_invalid` (400 `CONFIG`), `clean_worktree`,
   `dirty_worktree`, `not_published`, `published_remote_not_origin`,
@@ -1495,7 +1545,7 @@ after drop; refactor gate passed.
 
 **Commit 4** — `test(workbench-git): RED — update is Review-only, removed worktrees are dead ends`
 
-- [ ] **T2.1 — `sync` gains `onto`, admission, restore.** `sync/route.ts:22-28`
+- [x] **T2.1 — `sync` gains `onto`, admission, restore.** `sync/route.ts:22-28`
       `+ onto`; `sync-target.ts`: `assertSyncEligible:175` → D1 predicate;
       `agent` default and `agent_requires_review`; ref resolution per `onto`
       (`:710-713` becomes a `resolveSyncRef(onto)`), `target_ref`/`target_sha`;
@@ -1511,7 +1561,7 @@ after drop; refactor gate passed.
       `HEAD === headShaBefore`, tree clean, `outcome:"conflict"` with paths; a
       `Failed` run may update), RED 16 (push after update leases and pushes the
       public name and records `published_*`) green; `sync-target.integration.test.ts:33-41` spy sites updated.
-- [ ] **T2.2 — Reattach + revival helper + reconciler arm.**
+- [x] **T2.2 — Reattach + revival helper + reconciler arm.**
       `lib/runs/revive-worktree.ts` per D10; `reattachWorkbench` + route
       `reattach/route.ts` (family A, `recoverRun`); `reopen.ts:158-188` re-based on
       the helper (own writes kept); provenance v2 rebuilt from DB;
@@ -1522,7 +1572,7 @@ after drop; refactor gate passed.
       path → 409 and the directory untouched; reopen still clears `archived_*`;
       the reconciler restores a re-attached-but-unrecorded row); `reopen.integration.test.ts`
       green unchanged.
-- [ ] **T2.3 — Panel Update + Reattach sections; ReviewPanel sync dialog removed.**
+- [x] **T2.3 — Panel Update + Reattach sections; ReviewPanel sync dialog removed.**
       `review-panel.tsx:403-530` deleted, `review-sync-open` → panel deep link;
       `git-panel.tsx` Update (`onto` with per-option ahead/behind, strategy, push,
       resolver toggle only in `Review`) and Reattach.
@@ -1530,8 +1580,20 @@ after drop; refactor gate passed.
       outside `Review`; Reattach lists sources); `review-panel.test.ts:293-324`
       migrated (obsolete → deleted, chip cases kept); `run-sync.spec.ts` testids
       re-pointed at the panel (`review-sync-*` → `git-panel-update-*`).
-- [ ] **T2.R — REFACTOR gate (Phase 2).** As T1.R; verify `resolveSyncRef` is the
+- [x] **T2.R — REFACTOR gate (Phase 2).** As T1.R; verify `resolveSyncRef` is the
       only place that maps `onto` to a ref.
+      **Verified 2026-09-23.** `resolveSyncRef` is the one mapping: `syncRunTarget`
+      and the git-state read model call it; the route and the panel carry only
+      the enum. The orphans this phase made are gone (`syncPushTarget` →
+      `publishedTarget`; the review panel's dialog, its state and ten `run.sync*`
+      keys; `isBranchPublished` in `sync-panel-data`). Lanes: unit 825 files /
+      8586 tests green. The full integration lane ran at load 100–384 and ended
+      9 files / 64 tests red, every one timeout-shaped, and every one green idle:
+      `deliverer` 4, `run-transcript-projector` 10, `launch-paths` 4,
+      `projection-worker` 12, `permission-resume` 9, `permission-result-failure`
+      23 (one batch); `permission-deadline` 10/10 alone twice (its RED 14 missed
+      again inside that batch — load-sensitive; the branch touches none of that
+      path); `prompt-owners` agents 50/50 and flows 58/58 alone.
 
 **Commit 5** — `feat(workbench-git): update onto base|target|published; re-attach a removed worktree`
 
@@ -1867,8 +1929,23 @@ the whole supervisor suite (untouched).
 
 ## Follow-ups
 
-None. Everything above ships in this plan; the two R9 TODOs are recorded defects,
-not deferred work of this change.
+Everything above ships in this plan; the two R9 TODOs are recorded defects, not
+deferred work of this change. One scope question was found during Phase 2 and is
+put to the owner rather than widened silently:
+
+- **Recover does not respect the workspace lifecycle slot (found in T2.1).**
+  `resumeCrashedRun` flips `Crashed → Running` without reading
+  `workspaces.lifecycle_operation_*`, and `claimLifecycleOperation` does not
+  re-check the run's status under its lock (`expectedRunStatus` is recorded,
+  never compared; `recordDrop` alone re-checks, at its final write). So an agent
+  can be resumed into a worktree a lifecycle op is rewriting. This is
+  pre-existing (M27: archive / drop / export on a `Crashed` run), widened by
+  this plan: discard (Phase 1) and update (Phase 2) now also run on `Crashed`.
+  Sync's own claim re-validates the status under the run lock, so the gap is
+  only "claim first, recover second". The fix is two fences: recover refuses
+  while a live lifecycle claim holds the workspace (a new recover refusal —
+  OpenAPI, error taxonomy, the ext twin), and the lifecycle claim compares
+  `expectedRunStatus` under a run row lock.
 
 ---
 

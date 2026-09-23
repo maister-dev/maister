@@ -6,7 +6,6 @@ import { loadRunnerCatalog } from "@/lib/acp-runners/catalog";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { RUN_SYNC_TERMINAL_PHASES } from "@/lib/db/schema";
-import { isBranchPublished } from "@/lib/runs/branch-published";
 import { aheadBehindCounts } from "@/lib/worktree";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
@@ -18,28 +17,23 @@ type Db = any;
 export type RunSyncPanelData = {
   aheadBehind: { ahead: number; behind: number } | null;
   sync: {
-    strategyDefault: "rebase" | "merge";
     runnerOptions: { id: string; label: string }[];
     defaultRunnerId: string | null;
-    published: boolean;
     inProgress: { phase: string } | null;
   };
 };
 
-// ADR-141: assemble the ReviewPanel branch-sync props — the
-// behind/ahead of the run branch vs its target (git), the dialog seed (project
-// strategy default + resolver runner options + published-ness), and the live
-// in-progress phase off the latest attempt. Git failures degrade to null/false
-// (the chip hides, the dialog still offers a sync).
+// ADR-141: assemble the review surface's branch-sync props — the
+// behind/ahead of the run branch vs its target (git), the resolver runner
+// options the git panel's Update section offers in Review (ADR-181 D9), and
+// the live in-progress phase off the latest attempt. A git failure degrades
+// to null (the chip hides; the panel still offers the update).
 export async function buildRunSyncPanelData(input: {
   runId: string;
   parentRepoPath: string;
   branch: string;
   targetBranch: string;
-  syncStrategyDefault: "rebase" | "merge";
   syncRunnerId: string | null;
-  prUrl: string | null;
-  publishedBranch: string | null;
   db?: Db;
 }): Promise<RunSyncPanelData> {
   const db = (input.db ?? getDb()) as Db;
@@ -54,22 +48,6 @@ export async function buildRunSyncPanelData(input: {
     );
   } catch {
     aheadBehind = null;
-  }
-
-  let published = false;
-
-  try {
-    // THE shared predicate — the checkbox this seeds is consumed as
-    // `input.push ?? published`, so reading anything narrower than what the push
-    // path reads silently drops the push.
-    published = await isBranchPublished({
-      prUrl: input.prUrl,
-      publishedBranch: input.publishedBranch,
-      repo: input.parentRepoPath,
-      branch: input.branch,
-    });
-  } catch {
-    published = false;
   }
 
   const catalog = await loadRunnerCatalog(db).catch(() => []);
@@ -97,10 +75,8 @@ export async function buildRunSyncPanelData(input: {
   return {
     aheadBehind,
     sync: {
-      strategyDefault: input.syncStrategyDefault,
       runnerOptions,
       defaultRunnerId: input.syncRunnerId,
-      published,
       inProgress,
     },
   };

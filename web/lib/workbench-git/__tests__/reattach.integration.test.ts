@@ -274,6 +274,31 @@ describe("POST /api/runs/{runId}/reattach", () => {
     expect((await workspaceRow(db, run.workspaceId)).removedAt).not.toBeNull();
   });
 
+  // D10 step 5: the row turns usable only AFTER `worktree add` — an add that
+  // fails behind the claim (the branch is checked out in another worktree)
+  // leaves it removed, and the failed claim does not hold the slot.
+  it("leaves the row removed when the worktree add fails behind the claim", async () => {
+    const run = await removedRun({ keepLocal: true });
+
+    await gitIn(repo.parent, [
+      "worktree",
+      "add",
+      "-q",
+      join(root, "elsewhere"),
+      run.branch,
+    ]);
+
+    const res = await post(run.runId);
+
+    expect(res.status).toBe(409);
+    expect(await exists(run.worktree)).toBe(false);
+
+    const ws = await workspaceRow(db, run.workspaceId);
+
+    expect(ws.removedAt).not.toBeNull();
+    expect(ws.lifecycleOperationState).not.toBe("claiming");
+  });
+
   // C31: a retry after a crash between `worktree add` and the row write finds
   // its OWN worktree — registered, on the internal branch, provenance naming
   // this run — and adopts it rather than refusing or adding a second one.

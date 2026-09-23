@@ -4066,6 +4066,40 @@ export async function branchHasUpstream(
   return (await branchUpstream(repo, branch)) !== null;
 }
 
+// ADR-181 D10: point `branch`'s upstream at `<remote>/<upstream.branch>` —
+// the same two keys `branchUpstream` reads, written directly: a remote name
+// may contain `/`, so `--set-upstream-to=<remote>/<branch>` could not say
+// which part is the remote.
+export async function setBranchUpstream(
+  repo: string,
+  branch: string,
+  upstream: BranchUpstream,
+): Promise<void> {
+  const repoPath = validate(absolutePathSchema, repo, "repo");
+  const br = validate(branchNameSchema, branch, "branch");
+  const remote = validate(remoteNameSchema, upstream.remote, "remote");
+  const remoteBranch = validate(
+    branchNameSchema,
+    upstream.branch,
+    "upstream branch",
+  );
+
+  await runGit(repoPath, ["config", `branch.${br}.remote`, remote]);
+  await runGit(repoPath, [
+    "config",
+    `branch.${br}.merge`,
+    `refs/heads/${remoteBranch}`,
+  ]);
+  log.debug(
+    {
+      projectRepoPath: repoPath,
+      branch: br,
+      upstream: { remote, remoteBranch },
+    },
+    "setBranchUpstream",
+  );
+}
+
 export type ForceWithLeaseResult =
   | { pushed: true }
   | { pushed: false; leaseFailed: true };

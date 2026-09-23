@@ -79,6 +79,28 @@ type ErrorBody = {
   canForce?: boolean;
 };
 
+// ADR-181 D9: the refs an update applies onto.
+type UpdateOnto = "target" | "base" | "published";
+
+const UPDATE_ONTO: readonly UpdateOnto[] = ["target", "base", "published"];
+
+// `POST /sync`'s 200/202 body (`SyncRunResponse`).
+type UpdateResult = {
+  attemptId: string;
+  outcome: "noop" | "synced" | "conflict" | "agent_launched";
+  behind: number;
+  pushed: boolean;
+  conflictedFiles: string[];
+};
+
+// The update's seeds the page already knows: the project strategy default and,
+// for the Review-only AI resolver, the runner choice (ADR-141).
+export type WorkbenchGitSyncDefaults = {
+  strategy: "rebase" | "merge";
+  runnerOptions: { id: string; label: string }[];
+  defaultRunnerId: string | null;
+};
+
 export interface WorkbenchGitPanelProps {
   runId: string;
   runKind: RunKind;
@@ -86,6 +108,7 @@ export interface WorkbenchGitPanelProps {
   refreshTick?: number;
   // The section the URL named (`?git=`), brought into view on open.
   initialSection?: GitPanelSection | null;
+  syncDefaults?: WorkbenchGitSyncDefaults | null;
 }
 
 // The debounce for the refresh tick — a burst of stream events is one read.
@@ -209,6 +232,7 @@ export function WorkbenchGitPanel({
   runId,
   refreshTick = 0,
   initialSection = null,
+  syncDefaults = null,
 }: WorkbenchGitPanelProps): ReactElement {
   const t = useTranslations("workbenchGit");
   const tl = useTranslations("workbenchLifecycle");
@@ -233,6 +257,14 @@ export function WorkbenchGitPanel({
   const [force, setForce] = useState(false);
   const [publishedRef, setPublishedRef] = useState<string | null>(null);
   const [handoffOpen, setHandoffOpen] = useState(false);
+  const [onto, setOnto] = useState<UpdateOnto>("target");
+  const [strategy, setStrategy] = useState<"rebase" | "merge">(
+    syncDefaults?.strategy ?? "rebase",
+  );
+  const [push, setPush] = useState<boolean | null>(null);
+  const [resolver, setResolver] = useState(true);
+  const [runnerId, setRunnerId] = useState(syncDefaults?.defaultRunnerId ?? "");
+  const [updateResult, setUpdateResult] = useState<UpdateResult | null>(null);
   const reqIdRef = useRef(0);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastTickRef = useRef(refreshTick);
@@ -290,6 +322,11 @@ export function WorkbenchGitPanel({
           : (state.remotes[0] ?? null)),
     );
     setNameValue((current) => current ?? state.suggestedPublicBranch ?? "");
+    // The server pushes a published branch by default (`push ?? published`).
+    setPush(
+      (current) =>
+        current ?? (state.publicBranch !== null || state.pr !== null),
+    );
   }, [state]);
 
   useEffect(() => {
@@ -315,12 +352,14 @@ export function WorkbenchGitPanel({
   }
 
   // One mutation shape: POST, then re-read git-state + refresh the route on
-  // success; the typed refusal resolves to copy.
+  // success; the typed refusal resolves to copy. `onOk` returning false marks
+  // an answered-but-unsuccessful outcome (an update's conflict): no success
+  // toast, the section renders it instead.
   async function mutate<T>(
     id: WorkbenchGitActionId,
     path: string,
     body: Record<string, unknown>,
-    onOk: (result: T | null) => void,
+    onOk: (result: T | null) => boolean | void,
   ): Promise<ErrorBody | null> {
     setBusy(id);
     setError(null);
@@ -340,11 +379,12 @@ export function WorkbenchGitPanel({
         return failure;
       }
 
-      onOk(await readJson<T>(res));
-      feedback.success({
-        message: t(`done.${id}`),
-        mutationId: newMutationId(),
-      });
+      if (onOk(await readJson<T>(res)) !== false) {
+        feedback.success({
+          message: t(`done.${id}`),
+          mutationId: newMutationId(),
+        });
+      }
       await load();
       router.refresh();
 
@@ -458,6 +498,28 @@ export function WorkbenchGitPanel({
 
   function reattach(): void {
     void mutate("reattach", "reattach", {}, () => undefined);
+  }
+
+  function update(): void {
+    const inReview = state?.runStatus === "Review";
+
+    void mutate<UpdateResult>(
+      "update",
+      "sync",
+      {
+        onto,
+        strategy,
+        push: push ?? false,
+        // D9: the resolver's Review→Running CAS exists only in Review.
+        agent: inReview && resolver,
+        ...(inReview && resolver && runnerId ? { runnerId } : {}),
+      },
+      (result) => {
+        setUpdateResult(result);
+
+        return result?.outcome !== "conflict";
+      },
+    );
   }
 
   const usable = state
@@ -677,6 +739,145 @@ export function WorkbenchGitPanel({
               </p>
             ) : null}
             {handoffOpen ? <HandoffBranchForm runId={runId} /> : null}
+          </Section>
+
+          <Section id="update" title={t("section.update")}>
+            <fieldset className="m-0 flex flex-col gap-1 border-0 p-0">
+              <legend className="mb-1 font-mono text-[10px] font-bold uppercase tracking-[0.08em] text-mute">
+                {t("update.onto")}
+              </legend>
+              {UPDATE_ONTO.map((option) => {
+                const counts = state.aheadBehind[option];
+                // D9: `published` needs a publication (`not_published`).
+                const unavailable =
+                  option === "published" && state.publicBranch === null;
+
+                return (
+                  <label
+                    key={option}
+                    className={clsx(
+                      "flex items-center gap-2 font-mono text-[10px] text-ink-2",
+                      unavailable && "opacity-50",
+                    )}
+                  >
+                    <input
+                      checked={onto === option}
+                      data-testid={`git-panel-update-onto-${option}`}
+                      disabled={unavailable}
+                      name={`git-panel-update-onto-${runId}`}
+                      type="radio"
+                      value={option}
+                      onChange={() => setOnto(option)}
+                    />
+                    {t(`update.${option}`)}
+                    <span className="text-mute">
+                      {counts
+                        ? t("update.aheadBehind", {
+                            ahead: counts.ahead,
+                            behind: counts.behind,
+                          })
+                        : "—"}
+                    </span>
+                  </label>
+                );
+              })}
+            </fieldset>
+            <label className="flex flex-col gap-1">
+              <span className="font-mono text-[10px] font-bold uppercase tracking-[0.08em] text-mute">
+                {t("update.strategy")}
+              </span>
+              <select
+                className={inputClass}
+                data-testid="git-panel-update-strategy"
+                value={strategy}
+                onChange={(event) =>
+                  setStrategy(
+                    event.target.value === "merge" ? "merge" : "rebase",
+                  )
+                }
+              >
+                <option value="rebase">{t("update.rebase")}</option>
+                <option value="merge">{t("update.merge")}</option>
+              </select>
+            </label>
+            <label className="flex items-center gap-2 font-mono text-[10px] text-ink-2">
+              <input
+                checked={push ?? false}
+                data-testid="git-panel-update-push"
+                type="checkbox"
+                onChange={(event) => setPush(event.target.checked)}
+              />
+              {t("update.push")}
+            </label>
+            {state.runStatus === "Review" ? (
+              <>
+                <label className="flex items-center gap-2 font-mono text-[10px] text-ink-2">
+                  <input
+                    checked={resolver}
+                    data-testid="git-panel-update-agent"
+                    type="checkbox"
+                    onChange={(event) => setResolver(event.target.checked)}
+                  />
+                  {t("update.agent")}
+                </label>
+                {resolver &&
+                syncDefaults &&
+                syncDefaults.runnerOptions.length > 0 ? (
+                  <label className="flex flex-col gap-1">
+                    <span className="font-mono text-[10px] font-bold uppercase tracking-[0.08em] text-mute">
+                      {t("update.runner")}
+                    </span>
+                    <select
+                      className={inputClass}
+                      data-testid="git-panel-update-runner"
+                      value={runnerId}
+                      onChange={(event) => setRunnerId(event.target.value)}
+                    >
+                      <option value="">{t("update.runnerDefault")}</option>
+                      {syncDefaults.runnerOptions.map((option) => (
+                        <option key={option.id} value={option.id}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
+              </>
+            ) : null}
+            <div className="flex flex-wrap gap-2">
+              {actionButton({
+                id: "update",
+                tone: primary,
+                blockedBy:
+                  dirtyCount > 0 ? t("hint.commitOrDiscardFirst") : null,
+                icon: (
+                  <ArrowPathIcon aria-hidden="true" className="h-3.5 w-3.5" />
+                ),
+                onClick: update,
+              })}
+            </div>
+            {updateResult ? (
+              <div
+                className="flex flex-col gap-1 font-mono text-[10px] text-ink-2"
+                data-testid="git-panel-update-result"
+                role="status"
+              >
+                <span>
+                  {t(`update.outcome.${updateResult.outcome}`, {
+                    behind: updateResult.behind,
+                  })}
+                </span>
+                {updateResult.conflictedFiles.length > 0 ? (
+                  <ul className="m-0 list-none p-0">
+                    {updateResult.conflictedFiles.map((file) => (
+                      <li key={file}>
+                        <code>{file}</code>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+            ) : null}
           </Section>
 
           <Section id="commands" title={t("section.commands")}>

@@ -24,7 +24,10 @@ import { useTranslations } from "next-intl";
 import clsx from "clsx";
 
 import { useRunPageStream } from "@/components/runs/run-stream-provider";
-import { WorkbenchGitPanel } from "@/components/workbench/git-panel";
+import {
+  WorkbenchGitPanel,
+  type WorkbenchGitSyncDefaults,
+} from "@/components/workbench/git-panel";
 import { isMaisterErrorCode } from "@/lib/errors-core";
 import {
   gitPanelHref,
@@ -46,6 +49,8 @@ export interface WorkbenchLifecycleActionsProps {
   taskNumber?: number | null;
   runLabel?: string;
   workspaceAvailable?: boolean;
+  // Detail variant: the git panel's update seeds (ADR-181 D9).
+  syncDefaults?: WorkbenchGitSyncDefaults | null;
 }
 
 type UiActionId =
@@ -432,10 +437,12 @@ function DetailGitHost({
   runId,
   runKind,
   label,
+  syncDefaults,
 }: {
   runId: string;
   runKind: RunKind;
   label: string;
+  syncDefaults: WorkbenchGitSyncDefaults | null;
 }): ReactElement {
   const searchParams = useSearchParams();
   const urlSection = searchParams?.get("git") ?? null;
@@ -443,6 +450,12 @@ function DetailGitHost({
     ? urlSection
     : null;
   const [open, setOpen] = useState(initialSection !== null);
+
+  // A deep link on the same page (the review panel's "Sync branch") changes the
+  // query without remounting this host, so the section it names opens here.
+  useEffect(() => {
+    if (initialSection !== null) setOpen(true);
+  }, [initialSection]);
   // The run page's stream ticks re-read git-state (debounced in the panel).
   const { eventCount } = useRunPageStream(runId, false);
 
@@ -468,6 +481,7 @@ function DetailGitHost({
             refreshTick={eventCount}
             runId={runId}
             runKind={runKind}
+            syncDefaults={syncDefaults}
           />
         </div>
       ) : null}
@@ -486,6 +500,7 @@ export function WorkbenchLifecycleActions({
   taskNumber,
   runLabel,
   workspaceAvailable = false,
+  syncDefaults = null,
 }: WorkbenchLifecycleActionsProps): ReactElement | null {
   const t = useTranslations("workbenchLifecycle");
   const tg = useTranslations("workbenchGit");
@@ -730,7 +745,12 @@ export function WorkbenchLifecycleActions({
         );
       })}
       {variant === "detail" && gitActions.length > 0 ? (
-        <DetailGitHost label={tg("title")} runId={runId} runKind={runKind} />
+        <DetailGitHost
+          label={tg("title")}
+          runId={runId}
+          runKind={runKind}
+          syncDefaults={syncDefaults}
+        />
       ) : null}
       {variant === "compact"
         ? gitActions.map((id) => {

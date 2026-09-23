@@ -21,6 +21,8 @@ const log = pino({
 
 const syncBodySchema = z
   .object({
+    // ADR-181 D9: what the branch is updated onto (default the target).
+    onto: z.enum(["target", "base", "published"]).optional(),
     strategy: z.enum(["rebase", "merge"]).optional(),
     agent: z.boolean().optional(),
     push: z.boolean().optional(),
@@ -133,6 +135,9 @@ export async function POST(
 
     const result = await syncRunTarget({
       runId,
+      onto: body.onto,
+      // C17: the panel's update is admitted by the workbench git policy.
+      admission: "workbench",
       strategy: body.strategy,
       agent: body.agent,
       push: body.push,
@@ -146,6 +151,7 @@ export async function POST(
         outcome: result.outcome,
         behind: result.behind,
         pushed: result.pushed,
+        conflictedFiles: result.conflictedFiles,
       },
       { status: result.outcome === "agent_launched" ? 202 : 200 },
     );

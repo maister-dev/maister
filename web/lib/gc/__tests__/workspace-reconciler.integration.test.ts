@@ -544,7 +544,7 @@ describe("workspace release after removal (ADR-166 N5)", () => {
 describe("removed row with a present worktree — reattach (ADR-181 C31)", () => {
   async function seedReattachShape(claim: {
     state: "claiming" | "failed";
-    name: string;
+    name: schema.WorkspaceLifecycleOperationName;
     leaseExpiresAt: Date | null;
   }): Promise<{ workspaceId: string; worktreePath: string }> {
     const runId = randomUUID();

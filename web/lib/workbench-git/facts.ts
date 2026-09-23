@@ -14,6 +14,7 @@ import { openReworkClaimOwnerUserId } from "@/lib/runs/rework-claim";
 import { countUnsettledSharedSiblings } from "@/lib/runs/shared-tree";
 import { syncShapeRefusal } from "@/lib/runs/sync-shape";
 import { worktreePresence } from "@/lib/workbench-git/presence";
+import { publishedTarget } from "@/lib/workbench-git/publication";
 import {
   listRemotes,
   localBranchHead,
@@ -127,15 +128,17 @@ async function resolveReattachSources(
     probe("reattachSources", runId, degraded, () =>
       localBranchHead({ projectRepoPath: repo, branch: workspace.branch }),
     ),
-    workspace.publishedBranch && workspace.publishedRemote
-      ? probe("reattachSources", runId, degraded, () =>
-          remoteTrackingBranchHead({
-            projectRepoPath: repo,
-            remote: workspace.publishedRemote!,
-            branch: workspace.publishedBranch!,
-          }),
-        )
-      : null,
+    // The revival's own rule (`publishedTarget`): the recorded publication,
+    // else a pre-ADR-181 push of the internal name to `origin`.
+    probe("reattachSources", runId, degraded, () => {
+      const published = publishedTarget(workspace);
+
+      return remoteTrackingBranchHead({
+        projectRepoPath: repo,
+        remote: published.remote,
+        branch: published.remoteBranch,
+      });
+    }),
     workspace.archivedBranch
       ? probe("reattachSources", runId, degraded, () =>
           localBranchHead({

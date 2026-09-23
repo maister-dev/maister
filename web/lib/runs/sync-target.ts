@@ -18,9 +18,24 @@ import { RUN_SYNC_TERMINAL_PHASES, type RunSyncPhase } from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { isLaunchedLineageRun } from "@/lib/evaluations/membership";
 import { syncShapeRefusal } from "@/lib/runs/sync-shape";
+import {
+  resolveSyncRef,
+  type SyncOnto,
+  type SyncRef,
+} from "@/lib/runs/sync-ref";
 import { promotionClaimTimeoutSeconds } from "@/lib/instance-config";
 import { isBranchPublished } from "@/lib/runs/branch-published";
-import { recordPublished } from "@/lib/workbench-git/publication";
+import { loadWorkbenchGitFacts } from "@/lib/workbench-git/facts";
+import {
+  deriveWorkbenchGitActions,
+  gitActionRefusal,
+  WORKTREE_ACTION_STATUSES,
+} from "@/lib/workbench-git/policy";
+import {
+  publishedTarget,
+  recordPublished,
+  type PublishedTarget,
+} from "@/lib/workbench-git/publication";
 import { lifecycleClaimIsStale } from "@/lib/runs/lifecycle-claim";
 import {
   markSyncFromReview,
@@ -105,16 +120,32 @@ export type SyncRunOutcome = {
   outcome: "noop" | "synced" | "conflict" | "agent_launched";
   behind: number;
   pushed: boolean;
+  // ADR-181 D9: the paths a mechanical conflict stopped on — non-empty only for
+  // `conflict`, where the worktree is back at its pre-operation SHA.
+  conflictedFiles: string[];
 };
+
+// C17: who admits the run. `workbench` is the ONE git policy (the web panel —
+// every parked status, plus the rework-claim owner); `review` is ADR-141's
+// Review-only arm, kept verbatim for the ext API and every internal caller.
+export type SyncAdmission = "workbench" | "review";
 
 export type SyncRunInput = {
   runId: string;
+  // ADR-181 D9 (default `target`, the promotion target).
+  onto?: SyncOnto;
+  // C17 (default `review`).
+  admission?: SyncAdmission;
   strategy?: SyncStrategy;
   // ADR-141: on a conflict the AI resolver launches by DEFAULT
   // (`outcome:"agent_launched"`) — the contract default is agent-on (matches
   // the OpenAPI `agent` "(default)" and the UI "resolve with AI" checkbox
   // default ON). ONLY an explicit `agent:false` keeps the mechanical behavior:
   // a clean abort restoring the pre-sync SHA (`outcome:"conflict"`).
+  // ADR-181 D9: that default holds in `Review` only. The resolver's
+  // Review→Running CAS is the one path that changes a run's status, so outside
+  // `Review` the default is mechanical and `agent:true` is refused
+  // (`agent_requires_review`).
   agent?: boolean;
   push?: boolean;
   runnerId?: string;
@@ -169,18 +200,37 @@ function claimHeartbeatMs(): number {
   );
 }
 
+// ADR-181 D9: the statuses whose tree an update may operate on — every parked
+// status, plus `HumanWorking` for the open rework claim's owner. WHO may is the
+// git policy's call (run before the claim); this set is the part the claim tx
+// re-checks under the run's row lock.
+const WORKBENCH_UPDATE_STATUSES: ReadonlySet<string> = new Set([
+  ...WORKTREE_ACTION_STATUSES,
+  "HumanWorking",
+]);
+
 // The shared readiness contract Task 9 needs from a run row + its workspace. A
-// sync targets exactly a top-level, non-shared, non-launched-lineage Review
-// flow/agent run whose worktree is still present. (`isLaunchedLineage` carries
-// the launched-lineage predicate — a launched evaluation participant.)
+// sync targets exactly a top-level, non-shared, non-launched-lineage flow/agent
+// run whose worktree is still present — in `Review` (ADR-141, the `review`
+// admission) or, through the workbench git policy, in any status it lets the
+// tree be operated in (ADR-181 D9). (`isLaunchedLineage` carries the
+// launched-lineage predicate — a launched evaluation participant.)
 export function assertSyncEligible(
   run: SyncEligibilityRun,
   workspace: { removedAt: Date | null },
+  admission: SyncAdmission = "review",
 ): void {
-  if (run.status !== "Review") {
+  if (admission === "review" && run.status !== "Review") {
     throw new MaisterError(
       "PRECONDITION",
       `run must be Review to sync (is ${run.status})`,
+    );
+  }
+  if (admission === "workbench" && !WORKBENCH_UPDATE_STATUSES.has(run.status)) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `run cannot be updated while ${run.status}`,
+      { details: { reason: "unsupported_status" } },
     );
   }
   const shapeRefusal = syncShapeRefusal(run);
@@ -207,6 +257,9 @@ export async function verifySyncGate(
   worktree: string,
   targetSha: string,
   branch: string,
+  // ADR-181 D9: an update onto the run's OWN publication that had nothing
+  // local to replay legitimately lands exactly on it (see the last check).
+  opts: { allowIdentical?: boolean } = {},
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
   if (await syncOperationInProgress(worktree)) {
     return { ok: false, reason: "a rebase or merge is still in progress" };
@@ -249,7 +302,9 @@ export async function verifySyncGate(
   // conflict hint suggests) drops the conflicting commit; skipping every commit
   // leaves the branch identical to the target and passes every check above, so the
   // force-push would erase the user's committed work from the branch and its PR.
-  if (ahead === 0) {
+  // The one exception is the run's own publication: when the branch carried no
+  // commit of its own past it, landing on it IS the update.
+  if (ahead === 0 && !opts.allowIdentical) {
     return {
       ok: false,
       reason:
@@ -258,23 +313,6 @@ export async function verifySyncGate(
   }
 
   return { ok: true };
-}
-
-// ADR-181 D7: where a run's branch lives on a remote — its publication when
-// recorded, else `origin` under the internal name (the pre-ADR-181 shape).
-export type SyncPushTarget = { remote: string; remoteBranch: string };
-
-export function syncPushTarget(workspace: {
-  branch: string;
-  publishedBranch?: string | null;
-  publishedRemote?: string | null;
-}): SyncPushTarget {
-  return workspace.publishedBranch && workspace.publishedRemote
-    ? {
-        remote: workspace.publishedRemote,
-        remoteBranch: workspace.publishedBranch,
-      }
-    : { remote: "origin", remoteBranch: workspace.branch };
 }
 
 // Explicit-SHA force-with-lease push. A lease rejection (the remote moved off
@@ -296,6 +334,55 @@ export async function pushWithLease(
       ? { remote: target.remote, remoteBranch: target.remoteBranch }
       : {}),
   });
+}
+
+// The SHA an update applies onto, as the last fetch left it.
+async function syncRefHead(
+  repo: string,
+  syncRef: SyncRef,
+): Promise<string | null> {
+  return syncRef.kind === "branch"
+    ? localBranchHead({ projectRepoPath: repo, branch: syncRef.branch })
+    : remoteTrackingBranchHead({
+        projectRepoPath: repo,
+        remote: syncRef.remote,
+        branch: syncRef.branch,
+      });
+}
+
+// ADR-181 D9: the web panel's admission IS the git policy's `update` — the same
+// predicate that enabled the button, over the ONE fact loader.
+async function requireUpdateAllowed(
+  db: Db,
+  run: any,
+  workspace: any,
+  actor: SyncActor,
+): Promise<void> {
+  const facts = await loadWorkbenchGitFacts({
+    db,
+    run: {
+      id: run.id,
+      runKind: run.runKind,
+      status: run.status,
+      workspaceMode: run.workspaceMode ?? null,
+      agentWorkspace: run.agentWorkspace ?? null,
+      rootRunId: run.rootRunId ?? null,
+      parentRunId: run.parentRunId ?? null,
+    },
+    workspace,
+  });
+  const action = deriveWorkbenchGitActions({
+    ...facts.policy,
+    viewerUserId: actor.type === "user" ? actor.id : null,
+  }).find((candidate) => candidate.id === "update");
+
+  if (action?.enabled) return;
+
+  throw gitActionRefusal(
+    run.id,
+    "update",
+    action?.disabledReason ?? "unsupported-status",
+  );
 }
 
 async function loadRun(db: Db, runId: string): Promise<any> {
@@ -519,7 +606,7 @@ async function settleAttempt(
     pushed?: boolean;
     // ADR-181 D4: where the push landed, recorded in the SAME transaction as
     // the settle — a push under a public name is never left unrecorded.
-    pushedTo?: SyncPushTarget;
+    pushedTo?: PublishedTarget;
     now: () => Date;
     // The resolver path additionally owns the run's status: it flipped Review→Running
     // to work, so its success must hand the run back. Kept as a flag on the ONE
@@ -554,14 +641,18 @@ async function settleAttempt(
       );
     }
 
+    // The resolver hands the run back first, so its moved HEAD restarts the
+    // grace window like a mechanical sync's. ADR-181 C25: the stamp is the
+    // auto-promotion grace window of a `Review` run — an update of any other
+    // status (it has none) leaves the column alone.
+    if (args.flipRunningToReview) {
+      await markSyncReviewFromRunning(args.runId, { db: tx });
+    }
     if (args.headMoved) {
       await tx
         .update(runs)
         .set({ reviewEnteredAt: args.now() })
-        .where(eq(runs.id, args.runId));
-    }
-    if (args.flipRunningToReview) {
-      await markSyncReviewFromRunning(args.runId, { db: tx });
+        .where(and(eq(runs.id, args.runId), eq(runs.status, "Review")));
     }
     if (args.pushed === true && args.pushedTo) {
       await recordPublished({
@@ -578,7 +669,7 @@ async function settleAttempt(
 }
 
 // Terminal write for an aborted attempt (divergence / clean conflict abort):
-// record `aborted`, then release the claim. No run mutation — status stays Review.
+// record `aborted`, then release the claim. No run mutation — the status is untouched.
 // ONE transaction — see `settleAttempt`: a half-applied terminal strands the claim
 // beyond every recovery arm's reach.
 async function abortAttempt(
@@ -679,9 +770,12 @@ async function terminalizeSafetyNet(
 /**
  * The MECHANICAL branch-sync service (ADR-141, Task 9) — and the reusable shared
  * core (`assertSyncEligible` / `verifySyncGate` / `pushWithLease`) Tasks 10/13
- * build on. Rebases (or merges) a Review run's branch onto its promotion target
- * inside the run's worktree, fast-forwarding the local target from origin first,
- * and force-with-lease pushing when the branch is published. Concurrency is the
+ * build on. Rebases (or merges) a run's branch inside its worktree onto its
+ * promotion target — or, since ADR-181 D9, onto its base branch or its own
+ * publication (`onto`) — fast-forwarding a local branch from origin first, and
+ * force-with-lease pushing when the branch is published. A `Review` run is
+ * admitted by ADR-141's arm; the web panel's `workbench` admission is the git
+ * policy's `update` (every parked status). Concurrency is the
  * keystone: the claim runs in ONE `FOR UPDATE` transaction that mints exactly one
  * `run_sync_attempts` row and takes the shared workspace lifecycle slot, so a
  * double-launch serializes and the loser is refused CONFLICT. The double fence
@@ -710,6 +804,7 @@ export async function syncRunTarget(
   // not rebase/force-push mid-study — it would rewrite the tip later evidence
   // captures read.
   const isLaunchedLineage = await isLaunchedLineageRun(db, runId);
+  const admission: SyncAdmission = input.admission ?? "review";
 
   assertSyncEligible(
     {
@@ -720,21 +815,41 @@ export async function syncRunTarget(
       isLaunchedLineage,
     },
     workspace,
+    admission,
   );
+
+  if (admission === "workbench") {
+    await requireUpdateAllowed(db, run, workspace, input.actor);
+  }
+
+  const agent = input.agent ?? run.status === "Review";
+
+  if (agent && run.status !== "Review") {
+    throw new MaisterError(
+      "PRECONDITION",
+      `the AI resolver can only run for a Review run (run ${runId} is ${run.status}) — update mechanically`,
+      { details: { reason: "agent_requires_review" } },
+    );
+  }
 
   const project = await loadProject(db, run.projectId ?? null);
   const repo = workspace.parentRepoPath as string;
   const worktree = workspace.worktreePath as string;
   const branch = workspace.branch as string;
-  const targetBranch =
-    (workspace.targetBranch as string | null) ?? project?.mainBranch ?? "main";
+  const syncRef = resolveSyncRef(
+    input.onto ?? "target",
+    runId,
+    workspace,
+    project,
+  );
   const strategy: SyncStrategy =
     input.strategy ?? project?.syncStrategyDefault ?? "rebase";
 
   if ((await statusPorcelain({ worktreePath: worktree })).trim() !== "") {
     throw new MaisterError(
       "PRECONDITION",
-      `worktree has uncommitted changes — snapshot-commit before syncing run ${runId}`,
+      `worktree has uncommitted changes — snapshot-commit (or discard) before syncing run ${runId}`,
+      { details: { reason: "dirty_worktree" } },
     );
   }
 
@@ -749,7 +864,7 @@ export async function syncRunTarget(
   });
   // ADR-181 D7: the lease and the push name the SAME remote ref — the public
   // name when the branch was published under one.
-  const pushTarget = syncPushTarget({
+  const pushTarget = publishedTarget({
     branch,
     publishedBranch: workspace.publishedBranch as string | null,
     publishedRemote: workspace.publishedRemote as string | null,
@@ -785,8 +900,10 @@ export async function syncRunTarget(
     // this tx is open now waits for it, and then terminalizes the attempt this tx
     // created, which the driver's phase CAS detects.
     //
-    // This lock is what `releaseSyncClaimOnTerminal`'s "a sync can only ever be
-    // claimed by a `Review` run" actually rests on; until now nothing enforced it.
+    // This lock is what `releaseSyncClaimOnTerminal`'s `name='sync'` fence rests
+    // on: the sync holding a slot was admitted for the run's status as of THIS
+    // lock (ADR-181 C25: any parked status, not only `Review`), so the
+    // terminalization that later takes the same row lock cancels exactly it.
     const lockedRun = await loadRunForUpdate(tx, runId);
 
     assertSyncEligible(
@@ -798,6 +915,7 @@ export async function syncRunTarget(
         isLaunchedLineage,
       },
       ws,
+      admission,
     );
 
     // (a) promotion↔sync fence — a promotion in progress or already done blocks a
@@ -844,7 +962,7 @@ export async function syncRunTarget(
       strategy,
       mode: "mechanical",
       phase: "starting",
-      targetRef: targetBranch,
+      targetRef: syncRef.label,
       remoteShaBefore,
       runnerId: input.runnerId ?? null,
       autoFinalize: input.autoFinalize ?? false,
@@ -892,42 +1010,62 @@ export async function syncRunTarget(
   let handedOffDriver = false;
 
   try {
-    // 4. Fetch the target and fast-forward the LOCAL target from origin/<target>.
-    //    Skipped for a purely local repo (no origin).
-    const hasOrigin =
-      (await getRemoteUrl({ projectRepoPath: repo, name: "origin" })) !== null;
+    // 4. Fetch what the branch is updated onto. A local branch (target, base) is
+    //    fast-forwarded from `origin/<branch>` — skipped for a purely local repo
+    //    (no origin); the publication is read from its own remote's tracking ref.
+    if (syncRef.kind === "branch") {
+      const hasOrigin =
+        (await getRemoteUrl({ projectRepoPath: repo, name: "origin" })) !==
+        null;
 
-    if (hasOrigin) {
-      await fetchRemote({ projectRepoPath: repo, name: "origin" });
-      const targetRemoteSha = await remoteTrackingBranchHead({
-        projectRepoPath: repo,
-        remote: "origin",
-        branch: targetBranch,
-      });
-
-      if (targetRemoteSha) {
-        const localTargetHead = await localBranchHead({
+      if (hasOrigin) {
+        await fetchRemote({ projectRepoPath: repo, name: "origin" });
+        const targetRemoteSha = await remoteTrackingBranchHead({
           projectRepoPath: repo,
-          branch: targetBranch,
+          remote: "origin",
+          branch: syncRef.branch,
         });
 
-        try {
-          await ffUpdateLocalBranch(repo, targetBranch, targetRemoteSha);
-        } catch (err) {
-          if (isMaisterError(err) && err.code === "PRECONDITION") {
-            await abortAttempt(db, claim);
-            throw new MaisterError(
-              "PRECONDITION",
-              `local target '${targetBranch}' diverged from origin — local ${localTargetHead} is not fast-forwardable to ${targetRemoteSha}; reconcile the target branch first`,
-            );
+        if (targetRemoteSha) {
+          const localTargetHead = await localBranchHead({
+            projectRepoPath: repo,
+            branch: syncRef.branch,
+          });
+
+          try {
+            await ffUpdateLocalBranch(repo, syncRef.branch, targetRemoteSha);
+          } catch (err) {
+            if (isMaisterError(err) && err.code === "PRECONDITION") {
+              await abortAttempt(db, claim);
+              throw new MaisterError(
+                "PRECONDITION",
+                `local target '${syncRef.branch}' diverged from origin — local ${localTargetHead} is not fast-forwardable to ${targetRemoteSha}; reconcile the target branch first`,
+              );
+            }
+            throw err;
           }
-          throw err;
         }
+      }
+    } else {
+      await fetchRemote({ projectRepoPath: repo, name: syncRef.remote });
+
+      if ((await syncRefHead(repo, syncRef)) === null) {
+        await abortAttempt(db, claim);
+        throw new MaisterError(
+          "PRECONDITION",
+          `the published branch ${syncRef.label} no longer exists on its remote`,
+          { details: { reason: "not_published" } },
+        );
       }
     }
 
-    // 5. behind===0 → no-op (run stays Review, no push).
-    const { behind } = await aheadBehindCounts(repo, targetBranch, branch);
+    // 5. behind===0 → no-op (the run's status is untouched, no push).
+    // `ahead` is the run's own work past the ref, before anything is replayed.
+    const { ahead: aheadBefore, behind } = await aheadBehindCounts(
+      repo,
+      syncRef.ref,
+      branch,
+    );
 
     if (behind === 0) {
       await settleAttempt(db, claim, { runId, headMoved: false, now });
@@ -941,6 +1079,7 @@ export async function syncRunTarget(
         outcome: "noop",
         behind: 0,
         pushed: false,
+        conflictedFiles: [],
       };
     }
 
@@ -951,15 +1090,15 @@ export async function syncRunTarget(
 
     const applied =
       strategy === "merge"
-        ? await mergeFromRef(worktree, targetBranch)
-        : await rebaseOntoRef(worktree, targetBranch);
+        ? await mergeFromRef(worktree, syncRef.ref)
+        : await rebaseOntoRef(worktree, syncRef.ref);
 
-    // 8. Conflict. The AI resolver launches by DEFAULT against the LEFT-in-place
-    //    conflicted rebase (contract default agent-on); ONLY explicit
-    //    `agent:false` aborts cleanly (rebase/merge --abort restores the
-    //    pre-sync HEAD) and returns `conflict`.
+    // 8. Conflict. The AI resolver launches by DEFAULT in `Review` against the
+    //    LEFT-in-place conflicted rebase (contract default agent-on); otherwise
+    //    the update aborts, restores the pre-operation HEAD and returns
+    //    `conflict` with the paths it stopped on.
     if (!applied.ok) {
-      if (input.agent !== false) {
+      if (agent) {
         const resolverArgs: SyncResolverArgs = {
           db,
           now,
@@ -971,7 +1110,7 @@ export async function syncRunTarget(
           worktree,
           repo,
           branch,
-          targetBranch,
+          targetBranch: syncRef.ref,
           strategy,
           behind,
           conflictedFiles: applied.conflictedFiles,
@@ -1046,10 +1185,13 @@ export async function syncRunTarget(
           outcome: "agent_launched",
           behind,
           pushed: false,
+          conflictedFiles: [],
         };
       }
 
-      await abortSyncOperation(worktree);
+      // C3: `--abort` alone leaves whatever a partly applied operation moved;
+      // the reset returns the branch to its exact pre-operation commit.
+      await restoreWorktreeToCommit(worktree, headShaBefore);
       await abortAttempt(db, claim, {
         conflictedFiles: applied.conflictedFiles,
       });
@@ -1059,7 +1201,7 @@ export async function syncRunTarget(
           attemptId: claim.attemptId,
           conflicted: applied.conflictedFiles.length,
         },
-        "sync conflict — aborted (agent=false)",
+        "sync conflict — aborted and restored (mechanical)",
       );
 
       return {
@@ -1067,25 +1209,24 @@ export async function syncRunTarget(
         outcome: "conflict",
         behind,
         pushed: false,
+        conflictedFiles: applied.conflictedFiles,
       };
     }
 
     // 7. Clean apply → verify gate → decide push → succeed.
     await advancePhaseOrCancel(db, claim, runId, "verifying");
-    const targetSha = await localBranchHead({
-      projectRepoPath: repo,
-      branch: targetBranch,
-    });
+    const targetSha = await syncRefHead(repo, syncRef);
     const gate = await verifySyncGate(
       worktree,
-      targetSha ?? targetBranch,
+      targetSha ?? syncRef.ref,
       branch,
+      { allowIdentical: syncRef.kind === "published" && aheadBefore === 0 },
     );
 
     if (!gate.ok) {
       // Defensively unreachable after a clean rebase (clean tree, no markers,
-      // target is an ancestor). abortSyncOperation is a no-op here; status stays
-      // Review.
+      // target is an ancestor). abortSyncOperation is a no-op here; the run's
+      // status is untouched.
       await abortSyncOperation(worktree);
       await failAttempt(
         db,
@@ -1156,7 +1297,13 @@ export async function syncRunTarget(
       "sync synced",
     );
 
-    return { attemptId: claim.attemptId, outcome: "synced", behind, pushed };
+    return {
+      attemptId: claim.attemptId,
+      outcome: "synced",
+      behind,
+      pushed,
+      conflictedFiles: [],
+    };
   } catch (err) {
     // Safety net: the explicit terminal sites above already released + terminalized
     // (idempotent no-ops here); this only fires for an UNHANDLED throw so no path
@@ -1283,7 +1430,7 @@ type SyncResolverArgs = {
   conflictedFiles: string[];
   headShaBefore: string;
   published: boolean;
-  pushTarget: SyncPushTarget;
+  pushTarget: PublishedTarget;
   remoteShaBefore: string | null;
   remoteShaIndeterminate: boolean;
   push?: boolean;
@@ -1818,6 +1965,7 @@ async function driveSyncResolver(
     outcome: "agent_launched",
     behind,
     pushed,
+    conflictedFiles: [],
   };
 }
 

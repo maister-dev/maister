@@ -67,7 +67,7 @@ import {
 } from "@/lib/workbench-git/facts";
 import {
   deriveWorkbenchGitActions,
-  disabledReasonToken,
+  gitActionRefusal,
   type WorkbenchGitPolicyInput,
 } from "@/lib/workbench-git/policy";
 import {
@@ -505,15 +505,10 @@ export function requireActionAllowed(
     return;
   }
 
-  const reason = action?.disabledReason ?? "unsupported-status";
-
-  // C19: the refusal carries its reason as a token the UI branches on; another
-  // writer holding the tree is a CONFLICT (retry later), anything else a
-  // PRECONDITION (the run is not in a shape that allows it).
-  throw new MaisterError(
-    reason === "busy" ? "CONFLICT" : "PRECONDITION",
-    `workbench action ${id} is not allowed for run ${ctx.run.id}: ${reason}`,
-    { details: { reason: disabledReasonToken(reason) } },
+  throw gitActionRefusal(
+    ctx.run.id,
+    id,
+    action?.disabledReason ?? "unsupported-status",
   );
 }
 

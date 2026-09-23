@@ -26,24 +26,28 @@ test.describe("branch sync (ADR-141)", () => {
     await expect(chip).toBeVisible();
     await expect(chip).toContainText("1 behind");
 
-    // (2) Sync entry point → dialog seeded from the project default (rebase).
+    // (2) ADR-181 D9: the sync entry point is a link into the run git panel's
+    // Update section, seeded from the project default (rebase).
     await page.getByTestId("review-sync-open").first().click();
-    await expect(page.getByTestId("review-sync-dialog")).toBeVisible();
-    // The control is a HeroUI Select, not a native <select> — `toHaveValue`
-    // answers "Not an input element". Assert the seeded choice the way a reader
-    // sees it: the trigger renders the selected option's label.
-    await expect(page.getByTestId("review-sync-strategy")).toContainText(
-      "Rebase",
+    await expect(page.getByTestId("git-panel-section-update")).toBeVisible();
+    await expect(page.getByTestId("git-panel-update-strategy")).toHaveValue(
+      "rebase",
     );
 
-    // (3) Start the sync — a clean rebase resolves mechanically (no agent).
-    await page.getByTestId("review-sync-start").click();
+    // (3) Start the update onto the target — a clean rebase resolves
+    // mechanically (the resolver only acts on a conflict).
+    const synced = page.waitForResponse((r) =>
+      r.url().includes(`/api/runs/${fx.runId}/sync`),
+    );
+
+    await page.getByTestId("git-panel-action-update").click();
+    expect((await synced).status()).toBe(200);
 
     // (4) The DRIFT clears: the run branch is rebased on top of the target, so
     // it is 0 behind. It stays 1 ahead — that is its own commit, which is the
     // whole point of promoting it — so the chip remains, now reading "0 behind".
     await expect(chip).toContainText("0 behind", { timeout: 30_000 });
-    await expect(page.getByTestId("review-sync-dialog")).toBeHidden();
+    await expect(page.getByTestId("git-panel-update-result")).toBeVisible();
 
     // (5) The promote action is live again (no sync claim held) and succeeds —
     // the run leaves Review for a terminal Done.

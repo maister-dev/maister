@@ -6,16 +6,11 @@ import pino from "pino";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import { reviveWorktreeForWorkspace } from "@/lib/runs/revive-worktree";
 import { markReopenFromDone } from "@/lib/runs/state-transitions";
+import { publishedTarget } from "@/lib/workbench-git/publication";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
-import {
-  addWorktreeForBranch,
-  createLocalBranchAt,
-  fetchRemote,
-  localBranchHead,
-  remoteTrackingBranchHead,
-  removeWorktree,
-} from "@/lib/worktree";
+import { removeWorktree } from "@/lib/worktree";
 
 // FIXME(any): dual drizzle-orm peer-dep variants — mirror sync-target.ts.
 const { runs, workspaces, tasks } = schemaModule as unknown as Record<
@@ -29,8 +24,6 @@ const log = pino({
   name: "run-reopen",
   level: process.env.LOG_LEVEL ?? "info",
 });
-
-const ORIGIN = "origin";
 
 export type ReopenEligibilityRun = {
   status: string;
@@ -145,6 +138,9 @@ export async function reopenRun(args: {
       worktreePath: workspaces.worktreePath,
       parentRepoPath: workspaces.parentRepoPath,
       branch: workspaces.branch,
+      publishedBranch: workspaces.publishedBranch,
+      publishedRemote: workspaces.publishedRemote,
+      archivedBranch: workspaces.archivedBranch,
     })
     .from(workspaces)
     .where(eq(workspaces.runId, runId));
@@ -156,36 +152,19 @@ export async function reopenRun(args: {
   assertReopenEligible(run, ws);
 
   // GC'd-worktree revival (git side effect) runs BEFORE the DB state flip so a
-  // git failure leaves the run untouched at Done.
+  // git failure leaves the run untouched at Done. ADR-181 D10: the revival is
+  // reattach's — local branch, then the publication, then the archive ref —
+  // while the row write below stays reopen's own (C7).
   let worktreeRevived = false;
 
   if (ws.removedAt) {
-    const localHead = await localBranchHead({
-      projectRepoPath: ws.parentRepoPath,
+    await reviveWorktreeForWorkspace({
+      parentRepoPath: ws.parentRepoPath,
+      worktreePath: ws.worktreePath,
       branch: ws.branch,
+      published: publishedTarget(ws),
+      archivedBranch: ws.archivedBranch ?? null,
     });
-
-    if (!localHead) {
-      await fetchRemote({
-        projectRepoPath: ws.parentRepoPath,
-        name: ORIGIN,
-      }).catch(() => undefined);
-      const remoteHead = await remoteTrackingBranchHead({
-        projectRepoPath: ws.parentRepoPath,
-        branch: ws.branch,
-        remote: ORIGIN,
-      });
-
-      if (!remoteHead) {
-        throw new MaisterError(
-          "PRECONDITION",
-          `run branch is gone from both local and remote: ${ws.branch}`,
-        );
-      }
-      await createLocalBranchAt(ws.parentRepoPath, ws.branch, remoteHead);
-    }
-
-    await addWorktreeForBranch(ws.parentRepoPath, ws.worktreePath, ws.branch);
     worktreeRevived = true;
   }
 

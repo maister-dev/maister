@@ -528,3 +528,164 @@ describe("WorkbenchGitPanel", () => {
     );
   });
 });
+
+// ADR-181 D9 (RED 12 extension): the Update section. The ref choice carries
+// its own ahead/behind; the AI resolver exists only in Review, where its
+// Review→Running CAS can run; a conflict shows its paths and is not a success.
+describe("WorkbenchGitPanel — Update", () => {
+  const CLEAN = { tracked: 0, untracked: 0 };
+  const SYNCED = {
+    attemptId: "att-1",
+    outcome: "synced",
+    behind: 1,
+    pushed: false,
+    conflictedFiles: [],
+  };
+
+  async function choose(el: HTMLSelectElement, value: string): Promise<void> {
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(
+        HTMLSelectElement.prototype,
+        "value",
+      )!.set!.call(el, value);
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+  }
+
+  it("offers each ref with its own ahead/behind, the publication only once published", async () => {
+    states = [
+      gitState({
+        dirty: CLEAN,
+        aheadBehind: {
+          base: { ahead: 2, behind: 1 },
+          target: { ahead: 2, behind: 3 },
+          published: null,
+        },
+      }),
+    ];
+    render();
+    await settle();
+
+    const target = must<HTMLInputElement>("git-panel-update-onto-target");
+
+    expect(target.checked).toBe(true);
+    expect(target.closest("label")!.textContent).toContain(
+      '{"ahead":2,"behind":3}',
+    );
+    expect(
+      must("git-panel-update-onto-base").closest("label")!.textContent,
+    ).toContain('{"ahead":2,"behind":1}');
+    expect(
+      must<HTMLInputElement>("git-panel-update-onto-published").disabled,
+    ).toBe(true);
+  });
+
+  it("has no AI resolver outside Review and always sends agent:false there", async () => {
+    states = [gitState({ runStatus: "Failed", dirty: CLEAN })];
+    mutation = (call) =>
+      call.url.endsWith("/sync") ? json(SYNCED) : json({ ok: true });
+    render();
+    await settle();
+
+    expect(byTestId("git-panel-update-agent")).toBeNull();
+    expect(byTestId("git-panel-update-runner")).toBeNull();
+    await click(must("git-panel-update-onto-base"));
+    await click(must("git-panel-action-update"));
+
+    expect(posts()).toEqual([
+      {
+        url: `/api/runs/${RUN}/sync`,
+        method: "POST",
+        body: { onto: "base", strategy: "rebase", push: false, agent: false },
+      },
+    ]);
+    expect(feedbackSuccess).toHaveBeenCalledTimes(1);
+    expect(refreshMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers the resolver in Review, on by default, with the runner and the project strategy", async () => {
+    states = [
+      gitState({
+        runStatus: "Review",
+        dirty: CLEAN,
+        publicBranch: PUBLIC,
+        publishedRemote: "origin",
+        publishedAt: new Date().toISOString(),
+        upstream: { remote: "origin", branch: PUBLIC },
+        aheadBehind: {
+          base: null,
+          target: { ahead: 1, behind: 0 },
+          published: { ahead: 0, behind: 1 },
+        },
+      }),
+    ];
+    mutation = (call) =>
+      call.url.endsWith("/sync") ? json(SYNCED) : json({ ok: true });
+    render({
+      syncDefaults: {
+        strategy: "merge",
+        runnerOptions: [{ id: "runner-1", label: "claude · sonnet" }],
+        defaultRunnerId: null,
+      },
+    });
+    await settle();
+
+    expect(must<HTMLInputElement>("git-panel-update-agent").checked).toBe(true);
+    expect(must<HTMLSelectElement>("git-panel-update-strategy").value).toBe(
+      "merge",
+    );
+    // A published branch pushes by default — the server's `push ?? published`.
+    expect(must<HTMLInputElement>("git-panel-update-push").checked).toBe(true);
+
+    await choose(
+      must<HTMLSelectElement>("git-panel-update-runner"),
+      "runner-1",
+    );
+    await click(must("git-panel-update-onto-published"));
+    await click(must("git-panel-action-update"));
+
+    expect(posts()[0].body).toEqual({
+      onto: "published",
+      strategy: "merge",
+      push: true,
+      agent: true,
+      runnerId: "runner-1",
+    });
+  });
+
+  it("names a conflict's paths and does not report it as a success", async () => {
+    states = [gitState({ dirty: CLEAN })];
+    mutation = (call) =>
+      call.url.endsWith("/sync")
+        ? json({
+            ...SYNCED,
+            outcome: "conflict",
+            behind: 2,
+            conflictedFiles: ["conf.txt", "src/app.ts"],
+          })
+        : json({ ok: true });
+    render();
+    await settle();
+
+    await click(must("git-panel-action-update"));
+
+    const result = must("git-panel-update-result");
+
+    expect(result.textContent).toContain(
+      "workbenchGit.update.outcome.conflict",
+    );
+    expect(result.textContent).toContain("conf.txt");
+    expect(result.textContent).toContain("src/app.ts");
+    expect(feedbackSuccess).not.toHaveBeenCalled();
+  });
+
+  it("blocks the update on a dirty tree, naming Commit and Discard", async () => {
+    render();
+    await settle();
+
+    const update = must<HTMLButtonElement>("git-panel-action-update");
+
+    expect(update.disabled).toBe(true);
+    expect(update.title).toBe("workbenchGit.hint.commitOrDiscardFirst");
+  });
+});

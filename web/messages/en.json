@@ -2323,16 +2323,6 @@
     "promotionAiRebaseMerge": "AI rebase + merge",
     "behindAhead": "{behind} behind · {ahead} ahead",
     "syncBranch": "Sync branch",
-    "syncTitle": "Sync branch onto target",
-    "syncStrategy": "Strategy",
-    "syncStrategyRebase": "Rebase",
-    "syncStrategyMerge": "Merge",
-    "syncRunner": "Resolver runner",
-    "syncRunnerDefault": "Project default",
-    "syncPush": "Push after sync (published branches)",
-    "syncResolveWithAgent": "Resolve conflicts with AI agent",
-    "syncStart": "Start sync",
-    "syncCancel": "Cancel",
     "syncInProgress": "Sync in progress: {phase}",
     "resolveWithAgent": "Resolve with agent",
     "autoFinalize": "Auto-finalize after resolve",
@@ -3953,6 +3943,26 @@
       "unpushed": "{count} commits are not on the remote",
       "done": "Published {ref}",
       "handoff": "Handoff branch…"
+    },
+    "update": {
+      "onto": "Update onto",
+      "target": "Target branch",
+      "base": "Base branch",
+      "published": "Published branch",
+      "aheadBehind": "{behind} behind · {ahead} ahead",
+      "strategy": "Strategy",
+      "rebase": "Rebase",
+      "merge": "Merge",
+      "push": "Push the result (published branches)",
+      "agent": "Resolve conflicts with AI agent",
+      "runner": "Resolver runner",
+      "runnerDefault": "Project default",
+      "outcome": {
+        "noop": "Already up to date.",
+        "synced": "Updated: {behind} new commits applied.",
+        "conflict": "Conflict: the update was aborted and the worktree is back at its commit.",
+        "agent_launched": "Conflict: the AI resolver is working on it."
+      }
     },
     "reattach": {
       "local": "Local branch",

@@ -2323,16 +2323,6 @@
     "promotionAiRebaseMerge": "AI rebase + merge",
     "behindAhead": "позади {behind} · впереди {ahead}",
     "syncBranch": "Синхронизировать ветку",
-    "syncTitle": "Синхронизировать ветку с целевой",
-    "syncStrategy": "Стратегия",
-    "syncStrategyRebase": "Rebase",
-    "syncStrategyMerge": "Merge",
-    "syncRunner": "Раннер-резолвер",
-    "syncRunnerDefault": "По умолчанию проекта",
-    "syncPush": "Push после синхронизации (для опубликованных веток)",
-    "syncResolveWithAgent": "Разрешить конфликты с помощью ИИ-агента",
-    "syncStart": "Запустить синхронизацию",
-    "syncCancel": "Отмена",
     "syncInProgress": "Идёт синхронизация: {phase}",
     "resolveWithAgent": "Разрешить агентом",
     "autoFinalize": "Автозавершение после разрешения",
@@ -3953,6 +3943,26 @@
       "unpushed": "Коммитов нет на remote: {count}",
       "done": "Опубликовано: {ref}",
       "handoff": "Handoff-ветка…"
+    },
+    "update": {
+      "onto": "Обновить из",
+      "target": "Целевая ветка",
+      "base": "Базовая ветка",
+      "published": "Опубликованная ветка",
+      "aheadBehind": "позади {behind} · впереди {ahead}",
+      "strategy": "Стратегия",
+      "rebase": "Rebase",
+      "merge": "Merge",
+      "push": "Push результата (для опубликованных веток)",
+      "agent": "Разрешить конфликты с помощью ИИ-агента",
+      "runner": "Раннер-резолвер",
+      "runnerDefault": "По умолчанию проекта",
+      "outcome": {
+        "noop": "Уже актуально.",
+        "synced": "Обновлено: применено новых коммитов — {behind}.",
+        "conflict": "Конфликт: обновление прервано, рабочая копия возвращена к исходному коммиту.",
+        "agent_launched": "Конфликт: его разбирает ИИ-резолвер."
+      }
     },
     "reattach": {
       "local": "Локальная ветка",
