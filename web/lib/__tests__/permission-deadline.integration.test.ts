@@ -718,8 +718,9 @@ describe("permission deadline — one owner (ADR-180)", () => {
   // idle claim (agent pool cap, its own resume evidence, `startAgentSession`)
   // and the flow resume would fail it — a `none`/`repo_read` agent has no
   // `workspaces` row at all. The discriminator is the agent grant: only the
-  // agent claim writes `_agentResume`.
-  it("RED 13: an agent run answered in the race window takes the agent resume", async () => {
+  // agent claim writes `_agentResume`. The settled source may yield either a
+  // continue or a result grant; agent prompt-owner tests pin the continue arm.
+  it("RED 13: an agent run answered in the race window keeps its agent-owned grant", async () => {
     const { runId, hitl } = await parkAgentOnPermission("agent-race");
 
     await awaitHostCheckpoint(runId, "agent-race");
@@ -743,13 +744,17 @@ describe("permission deadline — one owner (ADR-180)", () => {
       );
 
       expect(granted.response._agentResume).toMatchObject({
-        kind: "continue",
         checkpointCommandId: null,
         inputCommandId: null,
+        sourceCommandId: expect.any(String),
+        assignmentId: expect.any(String),
       });
+      expect(["continue", "result"]).toContain(
+        granted.response._agentResume.kind,
+      );
       await waitFor(
         async () => (await answered(runId)) || null,
-        "agent-race: the reissued permission answered",
+        "agent-race: the permission answered",
       );
       await expectReissuedPermissionDelivered(runId, hitl.id);
       expect((await runRow(runId)).status).not.toBe("Failed");
@@ -761,7 +766,7 @@ describe("permission deadline — one owner (ADR-180)", () => {
   // RED 14. A park the host performed itself mints no checkpoint command, and
   // the agent idle claim used to wait for one forever (`checkpoint_not_confirmed`
   // until the 24 h TTL). The session's own terminal is the witness now.
-  it("RED 14: a host-parked agent run resumes on the terminal witness", async () => {
+  it("RED 14: a host-parked agent run settles on the terminal witness", async () => {
     const { runId, hitl } = await parkAgentOnPermission("agent-host-park");
 
     await awaitHostCheckpoint(runId, "agent-host-park");
@@ -794,13 +799,17 @@ describe("permission deadline — one owner (ADR-180)", () => {
       );
 
       expect(granted.response._agentResume).toMatchObject({
-        kind: "continue",
         checkpointCommandId: null,
         inputCommandId: null,
+        sourceCommandId: expect.any(String),
+        assignmentId: expect.any(String),
       });
+      expect(["continue", "result"]).toContain(
+        granted.response._agentResume.kind,
+      );
       await waitFor(
         async () => (await answered(runId)) || null,
-        "agent-host-park: the reissued permission answered",
+        "agent-host-park: the permission answered",
       );
       await expectReissuedPermissionDelivered(runId, hitl.id);
       const after = await runRow(runId);
