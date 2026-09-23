@@ -256,15 +256,20 @@ sequenceDiagram
 
 #### Early settlement and post-park catch-up (Implemented, P0-5 v2)
 
-The child event consumer and the coordinator post-park path use one pending-child
-query and one CAS wake helper for both `orchestrator` and `consensus` parents.
-After the `WaitingOnChildren` park commits and the original driver claim is
-released, the runner checks once: zero pending children permits only the
-current node/latest attempt's `WaitingOnChildren → Running` CAS. An event seen
-while a coordinator parent is still Running emits a structured WARN; catch-up
-owns that wake. The consumer and catch-up may overlap, but the CAS grants one
-winner. Preserve the consumer's orchestrator HITL/fail-fast exceptions, parent-
-wide pending count, capacity deferral and terminal/cancellation guards.
+The child event consumer, coordinator post-park path and existing continuation
+worker use one pending-child predicate and one CAS wake helper for both
+`orchestrator` and `consensus` parents. A failed, crashed or abandoned child
+arms the current orchestrator's `resumeRequestedAt` in the same transaction as
+its terminal event. The intent survives an early event with pending siblings;
+the event consumer emits a structured WARN while the parent is Running. After
+park commit and driver-claim release, the runner checks once. The continuation
+worker also selects a parked coordinator when no children remain pending or a
+failed-child intent exists, then calls the same wake helper. Consensus requires
+zero pending children; the orchestrator's failed-child intent bypasses that
+count. A successful wake clears the marker, and a new node attempt clears a
+stale marker if the prior node advanced without parking. Event, catch-up and
+worker races grant one winner. Capacity deferral and terminal/cancellation
+guards remain in force.
 
 A successful consensus wake is durable in the existing Running status, current
 NeedsInput attempt, `wait_resume` assignment and released source assignment
@@ -273,9 +278,9 @@ that tuple after claim release, including a parent with no verifier command
 and a parked parent with a deferred resume marker. A stale node/attempt or
 second racer cannot dispatch. For an orchestrator woken by a failed child,
 the wake intent remains valid while siblings are pending; consensus requires
-all draft children settled. Death between park commit and the one-shot
-catch-up remains a reconcile window; no new polling worker or DB field is
-introduced. See [consensus protocol](consensus.md#p0-5-v2-execution-contract-implemented).
+all draft children settled. The continuation worker closes the death window
+between park commit and one-shot catch-up through its existing keyset scan;
+no new worker or DB field is introduced. See [consensus protocol](consensus.md#p0-5-v2-execution-contract-implemented).
 
 ### (d) cancel / abandon cascade down the run-tree (Implemented)
 

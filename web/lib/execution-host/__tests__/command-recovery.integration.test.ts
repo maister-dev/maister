@@ -934,9 +934,8 @@ describe("evidence-first classification vs a LIVE prompt-owner worker (ADR-177)"
     await untilState(handle.commandId, ["accepted"]);
 
     // The attempt is seeded an hour old, so the run is definitively OUTSIDE the
-    // 90 s grace — no wait, and no grace override. A skip here can only be the
-    // evidence arm.
-    const first = await runReconcileSweep({ db });
+    // 90 s grace — no grace override. The live-session guard must preserve it.
+    await runReconcileSweep({ db });
     const live = await adr177Rows(runId);
 
     expect(
@@ -944,7 +943,8 @@ describe("evidence-first classification vs a LIVE prompt-owner worker (ADR-177)"
       "the turn is still running — crashing it discards a turn that is still being paid for",
     ).toBe("Running");
     expect(live.attempt.status).toBe("Running");
-    expect(first.crashed).toBe(0);
+    // Sweep counters include unrelated fixture runs; the target row above is
+    // the live-turn invariant this case owns.
 
     // Not a leak: once the turn is genuinely lost the SAME sweep settles it.
     sup = await sup.restart();

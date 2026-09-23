@@ -818,7 +818,12 @@ nodes:
 - **`rounds`** — `mode: single_pass | iterate` (default `single_pass`) plus
   bounded `max`. A partial draft is retained with its stop reason, cannot be verified or agree, and can be picked by a human. Automatic iteration carries each participant's addressed verdict and own prior draft. Parsed material rows/failed axes or drafter-side reasons justify re-fan; verifier-side technical failures alone escalate immediately to HITL, even with rounds remaining. Human `re-run-round` explicitly carries the pinned source-round critique.
 - **`on_no_consensus`** — v1 supports `escalate`; the engine creates a bounded
-  HITL payload with draft/debate artifact refs, capped labeled excerpts, draft `complete | partial | unavailable` state and additive `technicalFailures[]` (`verifierId`, `targetParticipantId`, `parseStatus`, `errorCode`). Partial draft choices are labeled and pickable; unavailable slots retain their original `pick-draft-N` numbering but cannot be selected. Existing response decisions and API validation are unchanged.
+  HITL payload with draft/debate artifact refs, capped labeled excerpts, draft
+  `complete | partial | unavailable` state and additive `technicalFailures[]`
+  (`verifierId`, `targetParticipantId`, `parseStatus`, `errorCode`). Partial
+  draft choices are labeled and pickable; unavailable slots retain their
+  original `pick-draft-N` numbering but server validation rejects their
+  selection with `NEEDS_INPUT`. Response shape and decision names are unchanged.
 - **`synthesizer`** — a non-voting role declared as `agent` or `runner`. It writes
   the mandatory `consensus_plan` (`kind: plan`) and `debate_log`
   (`kind: human_note`) artifacts before the node follows `transitions.success`.

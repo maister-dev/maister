@@ -75,10 +75,11 @@ stateDiagram-v2
     Tallying --> Synthesizing: unanimous
     Tallying --> Drafting: iterate and rounds remain
     Tallying --> NeedsInput: no consensus and escalate
-    NeedsInput --> Tallying: rerun round
+    NeedsInput --> Drafting: re-run round
     NeedsInput --> Synthesizing: pick draft or provide resolution
     NeedsInput --> Failed: abort
     Synthesizing --> Succeeded: artifacts durable
+    Synthesizing --> Failed: incomplete synthesis CRASH
     Running --> Failed: config/precondition failure
     Drafting --> Failed: parent cancel or abandon
     Verifying --> Failed: parent cancel or abandon
@@ -265,7 +266,9 @@ flowchart LR
    error code separately from content disagreements. The round debate artifact
    exists when its reference is published. Draft payload links use child run
    IDs; debate payload links use the parent run ID. Existing decisions and
-   response validation remain unchanged.
+   response shape and stable decision slots remain unchanged. The server
+   rejects a pick whose stored classification is `unavailable`; `partial` and
+   legacy choices without classification remain pickable.
 10. Once a verifier or synthesis turn has settled, a deferred owner application
     makes its dedicated owned prompt wait return a pending outcome. The driver
     yields with `flow_prompt_continuation_pending` while the node stays Running.
@@ -276,13 +279,17 @@ flowchart LR
     cell or synthesis. The production owner worker applies or poisons the
     command, and the continuation worker re-drives; ADR-177 poisoning remains
     a finite owner-poisoned crash. No coordinator auto-retry policy changes.
-11. After either coordinator kind parks, one shared zero-pending query and CAS
-    wake checks for child settlement that arrived before the park. Event
-    consumer and catch-up race to a single winner. A Running parent on an
-    early settled-child event emits a WARN; capacity deferral and successful
-    wake intent remain durable through the existing assignment and worker.
-    A process death strictly between park commit and catch-up remains an
-    acknowledged reconcile window.
+11. After either coordinator kind parks, one shared pending-child predicate and
+    CAS wake checks for child settlement that arrived before the park. A failed
+    orchestrator child arms `resumeRequestedAt` in its terminal-event
+    transaction, so the parent wakes even with a pending sibling; consensus
+    still waits for every child. A Running parent on an early settled-child
+    event emits a WARN. The existing continuation worker selects a parked
+    coordinator with this failure intent or zero pending children and calls the
+    same wake helper. It recovers a process death after park commit and before
+    one-shot catch-up; event, catch-up and worker race to a single CAS winner.
+    A new node attempt clears stale failure intent, and a successful wake clears
+    it while retaining the assignment-backed re-drive intent.
 12. Applied empty or non-`end_turn` synthesis retains partial generation text
     and real stop reason and fails the node as `CRASH` with
     `details.reason = consensus_synthesis_incomplete` and `synthesisId`.
