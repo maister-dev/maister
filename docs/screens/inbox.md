@@ -81,10 +81,11 @@ what makes them comparable at a glance.
 
 **P0-4 (Implemented):** A pending card whose answer is already stored remains in
 “Needs you” until delivery, but displays its selected option and “Answer saved
-— delivering on resume” read-only. Choices and structured fields are disabled;
+— delivery pending” read-only. Choices and structured fields are disabled;
 one “Retry delivery” action sends the identical sanitized answer when the
-viewer can act. Read-only viewers still see the saved state without a retry
-control. A recognized 202 pending state updates the card before inbox refresh,
+operator can act. Read-only viewers still see the saved state without a retry
+control. Structured saved values appear under “Saved response” in a bounded,
+formatted view. A recognized 202 pending-delivery state updates the card before inbox refresh,
 including the `onRespond` path. A 409 for a competing answer refreshes the
 authoritative stored choice, never assumes the losing tab's selection won.
 An unsuccessful refresh keeps choices locked and offers refresh. A terminal

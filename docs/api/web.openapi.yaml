@@ -7515,7 +7515,7 @@ paths:
                 resume-owns-delivery:
                   value:
                     code: CONFLICT
-                    message: permission resume already in flight
+                    message: this permission answer is already being delivered by a resume
                     details: { reason: permission_resume_in_flight }
         "202":
           description: |
@@ -7566,6 +7566,9 @@ paths:
             `resumeRun` failed terminally (`CHECKPOINT`) — supervisor
             400 / 404 / 201-with-empty-acpSessionId. The idle-branch
             response includes `terminal: true`.
+            A rejected original delivery after checkpoint returns
+            `HITL_TIMEOUT` with `details.reason: permission_delivery_rejected`;
+            the operator must relaunch the run.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/HitlRespondErrorBody" }
@@ -7576,6 +7579,12 @@ paths:
                     code: HITL_TIMEOUT
                     message: The agent session ended before your answer arrived. Relaunch the run.
                     details: { reason: agent_session_ended }
+                permission-delivery-rejected:
+                  value:
+                    code: HITL_TIMEOUT
+                    message: The checkpointed permission could not accept your answer. Relaunch the run.
+                    details: { reason: permission_delivery_rejected }
+                    terminal: true
         "422":
           description: |
             Response payload did not validate against the stored HITL
@@ -7600,8 +7609,9 @@ paths:
             Post-claim delivery unavailable (`EXECUTOR_UNAVAILABLE`) may mean
             supervisor restart, parking, post-grace absence or artifact I/O.
             The response is already stored and `respondedAt` remains null;
-            it will be delivered when the run resumes. Identical retry remains
-            available. Pre-claim failures do not claim that an answer was saved.
+            delivery is pending. Retry the identical answer to send it;
+            agent runs may also resume automatically. Pre-claim failures do
+            not claim that an answer was saved.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/HitlRespondErrorBody" }
@@ -7610,7 +7620,7 @@ paths:
                   summary: Post-claim EXECUTOR_UNAVAILABLE example; validated against HitlRespondSavedError
                   value:
                     code: EXECUTOR_UNAVAILABLE
-                    message: Your answer is saved and will be delivered when the run resumes.
+                    message: Your answer is saved; delivery is pending. Retry delivery to send it.
                     details: { reason: delivery_unavailable }
   /api/runs/{runId}/review-comments:
     get:
@@ -20636,6 +20646,7 @@ components:
         - not_awaiting_input
         - agent_session_ended
         - delivery_unavailable
+        - permission_delivery_rejected
     HitlAnswerState:
       type: string
       enum: [open, answer_stored]
@@ -20679,7 +20690,7 @@ components:
               required: [reason]
               additionalProperties: false
               properties:
-                reason: { type: string, enum: [agent_session_ended] }
+                reason: { type: string, enum: [agent_session_ended, permission_delivery_rejected] }
     HitlRespondSavedError:
       allOf:
         - { $ref: "#/components/schemas/HitlRespondErrorBody" }

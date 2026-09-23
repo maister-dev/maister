@@ -138,6 +138,7 @@ export interface HitlOption {
 export interface HitlItem {
   hitlRequestId: string;
   runId: string;
+  runKind: BudgetBreachAvailabilityContext["runKind"];
   kind: HitlRequest["kind"];
   answerState: HitlAnswerState;
   storedResponse: HitlStoredResponse | null;
@@ -258,7 +259,7 @@ export type HitlRowBase = {
   prompt: string;
   rawSchema: unknown;
   storedResponse: unknown;
-  responseIsNotNull?: boolean;
+  responseIsNotNull: boolean;
   humanConfidence?: number | null;
   criticality: "low" | "medium" | "high" | "critical" | null;
   createdAt: Date;
@@ -321,7 +322,7 @@ export function mapRowsToHitlItems(
       kind: row.kind,
       schema: row.rawSchema,
       response: row.storedResponse,
-      responseIsNotNull: row.responseIsNotNull ?? row.storedResponse !== null,
+      responseIsNotNull: row.responseIsNotNull,
       respondedAt: null,
       confidence: row.humanConfidence,
     });
@@ -343,6 +344,7 @@ export function mapRowsToHitlItems(
         : undefined;
 
     return {
+      runKind: row.runKind,
       hitlRequestId: row.hitlRequestId,
       runId: row.runId,
       kind: row.kind,

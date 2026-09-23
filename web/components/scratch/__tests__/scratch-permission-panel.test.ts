@@ -21,6 +21,7 @@ function render(pendingHitl: PendingHitl): string {
     createElement(ScratchPermissionPanel, {
       pendingHitl,
       pending: false,
+      canAct: true,
       onAnswer: () => {},
       onRefresh: () => {},
     }),

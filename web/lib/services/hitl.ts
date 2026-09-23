@@ -809,7 +809,7 @@ async function markScratchPermissionTimedOut(
     .set({
       dialogStatus: "Crashed",
       errorCode: "HITL_TIMEOUT",
-      errorMessage: "permission window expired before response was delivered",
+      errorMessage: "agent session ended before the permission answer arrived",
       updatedAt: now,
     })
     .where(eq(scratchRuns.runId, runId));
@@ -1208,7 +1208,7 @@ async function handlePermissionResponse(
         {
           code: r.code,
           message:
-            "Your answer is saved and will be delivered when the run resumes.",
+            "Your answer is saved; delivery is pending. Retry delivery to send it.",
           details: { reason: "delivery_unavailable" },
           terminal: false,
         },
@@ -1234,7 +1234,14 @@ async function handlePermissionResponse(
     });
 
     return NextResponse.json(
-      { code: r.code, message: r.message, terminal: true },
+      {
+        code: r.code,
+        message: r.message,
+        ...(r.code === "HITL_TIMEOUT"
+          ? { details: { reason: "permission_delivery_rejected" } }
+          : {}),
+        terminal: true,
+      },
       { status: 410 },
     );
   };
@@ -1244,15 +1251,44 @@ async function handlePermissionResponse(
   // resume: it requires a `workspaces` row a `none` / `repo_read` agent does
   // not have, and would fail the run terminally on an answered permission.
   const runAgentIdleResume = async (): Promise<NextResponse> => {
-    await reconcileAgentPermissionResume(
-      db,
-      runId,
-      args.executionHosts.transport,
-    );
-    const placementHost = await localHost({
-      db,
-      transport: args.executionHosts.transport,
-    });
+    let placementHost: Awaited<ReturnType<typeof localHost>>;
+
+    try {
+      await reconcileAgentPermissionResume(
+        db,
+        runId,
+        args.executionHosts.transport,
+      );
+      placementHost = await localHost({
+        db,
+        transport: args.executionHosts.transport,
+      });
+    } catch (err) {
+      if (!isMaisterError(err) || err.code !== "EXECUTOR_UNAVAILABLE")
+        throw err;
+      log.warn(
+        {
+          runId,
+          hitlRequestId,
+          branch: "agent-idle",
+          phase: "resume-retryable",
+          details: { reason: "delivery_unavailable" },
+          latencyMs: Date.now() - startedAt,
+        },
+        "agent idle permission resume unavailable",
+      );
+
+      return NextResponse.json(
+        {
+          code: "EXECUTOR_UNAVAILABLE",
+          message:
+            "Your answer is saved; delivery is pending. Retry delivery to send it.",
+          details: { reason: "delivery_unavailable" },
+          terminal: false,
+        },
+        { status: 503 },
+      );
+    }
 
     // ADR-121 (T14, G4): cap-gate the agent idle-resume claim atomically (closes
     // the D2 over-cap bypass on the agent pool too). Under the scheduler lock,
@@ -1742,7 +1778,7 @@ async function handlePermissionResponse(
         {
           code: "EXECUTOR_UNAVAILABLE",
           message:
-            "Your answer is saved and will be delivered when the run resumes.",
+            "Your answer is saved; delivery is pending. Retry delivery to send it.",
           details: { reason: "delivery_unavailable" },
         },
         { status: 503 },
@@ -2615,7 +2651,7 @@ async function handlePlanReviewDecisionResponse(
       {
         code: "EXECUTOR_UNAVAILABLE",
         message:
-          "Your answer is saved and will be delivered when the run resumes.",
+          "Your answer is saved; delivery is pending. Retry delivery to send it.",
         details: { reason: "delivery_unavailable" },
       },
       { status: 503 },
@@ -2855,7 +2891,7 @@ async function handlePlanReviewParentResponse(
       {
         code: "EXECUTOR_UNAVAILABLE",
         message:
-          "Your answer is saved and will be delivered when the run resumes.",
+          "Your answer is saved; delivery is pending. Retry delivery to send it.",
         details: { reason: "delivery_unavailable" },
       },
       { status: 503 },
@@ -3275,7 +3311,7 @@ async function handleFormHumanResponse(
       {
         code: "EXECUTOR_UNAVAILABLE",
         message:
-          "Your answer is saved and will be delivered when the run resumes.",
+          "Your answer is saved; delivery is pending. Retry delivery to send it.",
         details: { reason: "delivery_unavailable" },
       },
       { status: 503 },

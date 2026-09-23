@@ -1796,6 +1796,7 @@ export default async function RunDetailLayout({
                       decision={
                         <RunHitlResponse
                           restoreFocusAfterResponse
+                          answerState={detail.pendingHitl.answerState}
                           availableOptions={detail.pendingHitl.availableOptions}
                           budgetProgress={detail.pendingHitl.budgetProgress}
                           canAct={canAct}
@@ -1805,11 +1806,10 @@ export default async function RunDetailLayout({
                           kind={detail.pendingHitl.kind}
                           nodeInterrupt={detail.pendingHitl.nodeInterrupt}
                           options={detail.pendingHitl.options}
-                          answerState={detail.pendingHitl.answerState}
-                          storedResponse={detail.pendingHitl.storedResponse}
                           reviewCounts={reviewGateCounts}
                           runId={detail.runId}
                           schema={detail.pendingHitl.schema}
+                          storedResponse={detail.pendingHitl.storedResponse}
                         />
                       }
                       diffLabels={
@@ -1826,6 +1826,7 @@ export default async function RunDetailLayout({
                   ) : (
                     <RunHitlResponse
                       restoreFocusAfterResponse
+                      answerState={detail.pendingHitl.answerState}
                       availableOptions={detail.pendingHitl.availableOptions}
                       budgetProgress={detail.pendingHitl.budgetProgress}
                       canAct={canAct}
@@ -1835,11 +1836,10 @@ export default async function RunDetailLayout({
                       kind={detail.pendingHitl.kind}
                       nodeInterrupt={detail.pendingHitl.nodeInterrupt}
                       options={detail.pendingHitl.options}
-                      answerState={detail.pendingHitl.answerState}
-                      storedResponse={detail.pendingHitl.storedResponse}
                       reviewCounts={reviewGateCounts}
                       runId={detail.runId}
                       schema={detail.pendingHitl.schema}
+                      storedResponse={detail.pendingHitl.storedResponse}
                     />
                   )}
                   {canClaim ? (
@@ -1893,6 +1893,7 @@ export default async function RunDetailLayout({
               </div>
               <RunHitlResponse
                 restoreFocusAfterResponse
+                answerState={pendingHitl.answerState}
                 availableOptions={pendingHitl.availableOptions}
                 budgetProgress={pendingHitl.budgetProgress}
                 canAct={canAct}
@@ -1902,13 +1903,12 @@ export default async function RunDetailLayout({
                 kind={pendingHitl.kind}
                 nodeInterrupt={pendingHitl.nodeInterrupt}
                 options={pendingHitl.options}
-                answerState={pendingHitl.answerState}
-                storedResponse={pendingHitl.storedResponse}
                 reviewCounts={
                   pendingHitl.kind === "human" ? reviewGateCounts : null
                 }
                 runId={detail.runId}
                 schema={pendingHitl.schema}
+                storedResponse={pendingHitl.storedResponse}
               />
             </section>
           ))}

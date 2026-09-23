@@ -600,7 +600,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
   },
   hitl_respond: {
     description:
-      "Answer a pending permission/form HITL request for a run. Human-kind requests require a global personal token with exact hitl:respond:human scope; project tokens and wildcard scopes are refused for human gates. A failure returns the upstream public JSON error body unchanged in tool content with isError=true; clients can use code and details.reason without parsing message text.",
+      "Answer a pending permission/form HITL request for a run. Human-kind requests require a global personal token with exact hitl:respond:human scope; project tokens and wildcard scopes are refused for human gates. A valid upstream JSON error body is returned unchanged in tool content with isError=true; clients can use code and details.reason without parsing message text. Missing-token, network and non-JSON upstream failures use plain-text tool errors.",
     inputSchema: {
       type: "object",
       properties: {

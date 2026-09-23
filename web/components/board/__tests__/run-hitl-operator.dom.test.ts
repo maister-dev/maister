@@ -39,6 +39,7 @@ const cases = [
   ["CONFLICT", "option_mismatch"],
   ["CONFLICT", "not_awaiting_input"],
   ["HITL_TIMEOUT", "agent_session_ended"],
+  ["HITL_TIMEOUT", "permission_delivery_rejected"],
   ["EXECUTOR_UNAVAILABLE", "delivery_unavailable"],
 ] as const;
 
@@ -219,6 +220,44 @@ describe("RunHitlResponse operator reasons", () => {
 });
 
 describe("RunHitlResponse stored answer", () => {
+  it("locks choices after a 503 and retries the identical saved answer", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            code: "EXECUTOR_UNAVAILABLE",
+            details: { reason: "delivery_unavailable" },
+          }),
+          { status: 503 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ ok: true, state: "resume-in-progress" }),
+          {
+            status: 202,
+          },
+        ),
+      );
+
+    vi.stubGlobal("fetch", fetchMock);
+    render("en");
+    await click("Allow");
+
+    expect(
+      container.querySelector('[data-testid="hitl-answer-stored"]'),
+    ).not.toBeNull();
+    expect(container.textContent).toContain(
+      en.run.errorReasons.delivery_unavailable,
+    );
+    expect(container.textContent).not.toContain("Deny");
+    await click(en.run.retryDelivery);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[1]?.[1]?.body).toBe(
+      fetchMock.mock.calls[0]?.[1]?.body,
+    );
+  });
   it("holds a 202 answer read-only through stale props and retries the same payload", async () => {
     const fetchMock = vi.fn(
       async (_url: string, _init?: RequestInit) =>
@@ -289,7 +328,7 @@ describe("RunHitlResponse stored answer", () => {
     );
   });
 
-  it.each(["resume-in-progress", "delivery-in-progress", "resume-queued"])(
+  it.each(["resume-in-progress", "delivery-in-progress"])(
     "keeps a %s reply read-only after a fresh remount from server DTO",
     async (state) => {
       vi.stubGlobal(
@@ -317,6 +356,27 @@ describe("RunHitlResponse stored answer", () => {
       expect(container.textContent).not.toContain("Deny");
     },
   );
+
+  it("treats resume-queued as a delivered plan-review answer awaiting refresh", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ ok: true, state: "resume-queued" }), {
+            status: 202,
+          }),
+      ),
+    );
+    render("en");
+    await click("Allow");
+
+    expect(
+      container.querySelector('[data-testid="hitl-answer-recorded"]'),
+    ).not.toBeNull();
+    expect(container.textContent).toContain(en.run.answerRecorded);
+    expect(container.textContent).not.toContain(en.run.retryDelivery);
+    expect(container.textContent).not.toContain(en.run.answerSaved);
+  });
 
   it("uses the authoritative answer after a losing-tab mismatch", async () => {
     vi.stubGlobal(
@@ -517,6 +577,7 @@ describe("RunHitlResponse stored answer", () => {
 const inboxItem: HitlItem = {
   hitlRequestId: "hitl-1",
   runId: "run-1",
+  runKind: "flow",
   kind: "permission",
   answerState: "open",
   storedResponse: null,
@@ -562,6 +623,55 @@ function renderInbox(item: HitlItem, expanded: boolean): void {
 }
 
 describe("inbox card response mounts", () => {
+  it("uses scratch recovery copy for an inbox scratch permission 410", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              code: "HITL_TIMEOUT",
+              details: { reason: "agent_session_ended" },
+            }),
+            { status: 410 },
+          ),
+      ),
+    );
+    renderInbox({ ...inboxItem, runKind: "scratch" }, false);
+    await click("Allow");
+
+    expect(container.textContent).toContain(
+      en.run.errorReasons.agent_session_ended_scratch,
+    );
+    expect(container.textContent).not.toContain(
+      en.run.errorReasons.agent_session_ended,
+    );
+  });
+
+  it("locks the inbox choice immediately after a retryable 503", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              code: "EXECUTOR_UNAVAILABLE",
+              details: { reason: "delivery_unavailable" },
+            }),
+            { status: 503 },
+          ),
+      ),
+    );
+    renderInbox(inboxItem, false);
+    await click("Allow");
+
+    expect(
+      container.querySelector('[data-testid="hitl-answer-stored"]'),
+    ).not.toBeNull();
+    expect(container.textContent).toContain(en.run.retryDelivery);
+    expect(container.textContent).not.toContain("Deny");
+  });
+
   it("keeps the collapsed permission card read-only through onRespond refresh", async () => {
     vi.stubGlobal(
       "fetch",

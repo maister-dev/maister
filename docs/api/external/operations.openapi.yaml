@@ -2857,6 +2857,7 @@ paths:
                         runId: "6ba7b810-9dad-41d1-80b4-00c04fd430c8"
                         hitlRequestId: "7c9e6679-7425-40de-944b-e07fc1f90ae7"
                         kind: "human"
+                        answerState: "open"
                         title: "Review deployment plan"
                         createdAt: "2026-06-23T12:00:00.000Z"
         "401":
@@ -3232,8 +3233,10 @@ paths:
               schema: { $ref: "#/components/schemas/ExtHitlRespondResponse" }
         "202":
           description: |
-            Delivery is pending (`resume-in-progress`, `resume-queued` or
-            `delivery-in-progress`). The checkpointed-host 410 becomes 202
+            Delivery is pending for `resume-in-progress` or
+            `delivery-in-progress`. Plan-review `resume-queued` means the
+            answer was recorded and the run's resume is queued; the card
+            refreshes away without a delivery retry. The checkpointed-host 410 becomes 202
             after web parks and schedules resume; session creation need not
             have completed. Identical retries remain safe until delivery is
             marked, then return 200 idempotent.
@@ -3260,7 +3263,9 @@ paths:
             A terminal `HITL_TIMEOUT` means the agent session ended before
             delivery (`details.reason: agent_session_ended`); relaunch the
             flow run or Recover/relaunch scratch. Existing terminal idle
-            `CHECKPOINT` failures retain their body without this reason.
+            `CHECKPOINT` failures retain their body without this reason. A
+            rejected original permission delivery after checkpoint carries
+            `permission_delivery_rejected` and requires relaunch.
             Host `410 session_checkpointed` instead becomes web 202.
           content:
             application/json:
@@ -3271,13 +3276,19 @@ paths:
                     code: HITL_TIMEOUT
                     message: The agent session ended before your answer arrived. Relaunch the run.
                     details: { reason: agent_session_ended }
+                permission-delivery-rejected:
+                  value:
+                    code: HITL_TIMEOUT
+                    message: The checkpointed permission could not accept your answer. Relaunch the run.
+                    details: { reason: permission_delivery_rejected }
+                    terminal: true
         "422":
           $ref: "#/components/responses/UnprocessableEntity"
         "503":
           description: |
             Post-claim delivery unavailability (`EXECUTOR_UNAVAILABLE`) leaves
-            the answer stored and `responded_at` null. It will be delivered
-            when the run resumes; identical retry is also safe. The web gives
+            the answer stored and `responded_at` null. Retry the identical
+            answer to send it; agent runs may also resume automatically. The web gives
             one `delivery_unavailable` reason for restart, parking and
             post-grace host absence.
           content:
@@ -3287,7 +3298,7 @@ paths:
                 answer-saved:
                   value:
                     code: EXECUTOR_UNAVAILABLE
-                    message: Your answer is saved and will be delivered when the run resumes.
+                    message: Your answer is saved; delivery is pending. Retry delivery to send it.
                     details: { reason: delivery_unavailable }
 
   /api/v1/ext/projects/{slug}/tasks/{taskId}/human-asks:
@@ -3498,7 +3509,7 @@ components:
 
     HitlRespondReason:
       type: string
-      enum: [permission_resume_in_flight, assignment_fenced, prompt_owner_deferred, prompt_owner_invariant, already_delivered, option_mismatch, not_awaiting_input, agent_session_ended, delivery_unavailable]
+      enum: [permission_resume_in_flight, assignment_fenced, prompt_owner_deferred, prompt_owner_invariant, already_delivered, option_mismatch, not_awaiting_input, agent_session_ended, delivery_unavailable, permission_delivery_rejected]
     HitlRespondDetails:
       type: object
       required: [reason]
@@ -3527,7 +3538,7 @@ components:
               required: [reason]
               additionalProperties: false
               properties:
-                reason: { type: string, enum: [agent_session_ended] }
+                reason: { type: string, enum: [agent_session_ended, permission_delivery_rejected] }
     ExtHitlRespondSavedError:
       allOf:
         - { $ref: "#/components/schemas/ExtHitlRespondErrorBody" }

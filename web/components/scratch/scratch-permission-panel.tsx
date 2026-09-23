@@ -6,6 +6,10 @@ import type { KeyboardEvent, ReactElement } from "react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import clsx from "clsx";
+import { Button } from "@heroui/react";
+import { ArrowPathIcon } from "@heroicons/react/24/outline";
+
+import { canReplayHitlAnswer } from "@/lib/hitl-response-contract";
 
 const shell =
   "rounded-lg border border-line-soft bg-[color-mix(in_oklab,var(--ivory)_35%,var(--paper))]";
@@ -15,6 +19,7 @@ const inputBase =
 export interface ScratchPermissionPanelProps {
   pendingHitl: NonNullable<ScratchDetail["pendingHitl"]>;
   pending: boolean;
+  canAct: boolean;
   onAnswer: (payload: Record<string, unknown>) => void;
   onRefresh: () => void;
 }
@@ -26,6 +31,7 @@ export interface ScratchPermissionPanelProps {
 export function ScratchPermissionPanel({
   pendingHitl,
   pending,
+  canAct,
   onAnswer,
   onRefresh,
 }: ScratchPermissionPanelProps): ReactElement {
@@ -61,7 +67,7 @@ export function ScratchPermissionPanel({
     if (event.key !== "Enter" || !(event.metaKey || event.ctrlKey)) return;
 
     event.preventDefault();
-    if (!pending) submitJson();
+    if (!pending && canAct) submitJson();
   }
 
   if (pendingHitl.answerState === "answer_stored") {
@@ -74,6 +80,7 @@ export function ScratchPermissionPanel({
         : undefined;
     const canRetry =
       saved !== null &&
+      canReplayHitlAnswer(pendingHitl.kind, pendingHitl.schema) &&
       (pendingHitl.kind !== "permission" || chosen !== undefined);
 
     return (
@@ -81,17 +88,25 @@ export function ScratchPermissionPanel({
         className={`${shell} p-3`}
         data-testid="scratch-permission-panel"
       >
-        <p className="mb-2 text-[13px] text-ink">{pendingHitl.prompt}</p>
-        <p aria-live="polite" className="text-[12px] text-ink-2">
+        <span aria-live="polite" className="sr-only">
           {tRun("answerSaved")}
-        </p>
+        </span>
+        <p className="mb-2 text-[13px] text-ink">{pendingHitl.prompt}</p>
+        <p className="text-[12px] text-ink-2">{tRun("answerSaved")}</p>
         {chosen ? (
           <p className="mt-2 font-semibold text-ink">{chosen.label}</p>
         ) : null}
         {saved && "response" in saved ? (
-          <pre className="mt-2 whitespace-pre-wrap text-xs text-ink-2">
-            {JSON.stringify(saved.response)}
-          </pre>
+          <div className="mt-2">
+            <p className="mb-1 text-xs font-semibold text-ink-2">
+              {tRun("savedResponse")}
+            </p>
+            <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-md border border-line bg-paper p-2 text-xs text-ink-2">
+              {typeof saved.response === "string"
+                ? saved.response
+                : JSON.stringify(saved.response, null, 2)}
+            </pre>
+          </div>
         ) : null}
         {!canRetry ? (
           <>
@@ -100,26 +115,31 @@ export function ScratchPermissionPanel({
                 ? tRun("savedInvalidOption")
                 : tRun("savedNoReplay")}
             </p>
-            <button
+            <Button
               ref={storedActionRef}
-              className="mt-2 rounded border border-line px-3 py-1.5 text-sm"
+              className="mt-2 border-line bg-paper text-sm text-ink-2"
+              size="sm"
               type="button"
+              variant="outline"
               onClick={onRefresh}
             >
+              <ArrowPathIcon aria-hidden="true" className="size-4" />
               {tRun("refreshAnswer")}
-            </button>
+            </Button>
           </>
-        ) : (
-          <button
+        ) : canAct ? (
+          <Button
             ref={storedActionRef}
-            className="mt-2 rounded border border-amber px-3 py-1.5 text-sm disabled:opacity-60"
-            disabled={pending}
+            className="mt-2 border-amber bg-amber text-sm text-white"
+            isDisabled={pending}
+            size="sm"
             type="button"
             onClick={() => onAnswer(saved as Record<string, unknown>)}
           >
+            <ArrowPathIcon aria-hidden="true" className="size-4" />
             {tRun("retryDelivery")}
-          </button>
-        )}
+          </Button>
+        ) : null}
       </section>
     );
   }
@@ -129,6 +149,7 @@ export function ScratchPermissionPanel({
       className={`${shell} border-amber-line bg-[color-mix(in_oklab,var(--amber-soft)_45%,var(--paper))] p-3`}
       data-testid="scratch-permission-panel"
     >
+      <span aria-live="polite" className="sr-only" />
       <div className="mb-2 font-mono text-[10.5px] font-semibold uppercase tracking-[0.08em] text-amber">
         {t("permission")}
       </div>
@@ -138,7 +159,7 @@ export function ScratchPermissionPanel({
       {pendingHitl.kind === "permission" ? (
         <div className="flex flex-wrap gap-2">
           {pendingHitl.options.map((option) => (
-            <button
+            <Button
               key={option.optionId}
               className={clsx(
                 "rounded-lg border px-3 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.06em]",
@@ -146,12 +167,13 @@ export function ScratchPermissionPanel({
                   ? "border-line bg-paper text-mute hover:border-mute hover:text-ink-2"
                   : "border-amber bg-amber text-white shadow-[0_4px_12px_-6px_var(--amber)] hover:bg-amber-2",
               )}
-              disabled={pending}
+              isDisabled={pending || !canAct}
+              size="sm"
               type="button"
               onClick={() => onAnswer({ optionId: option.optionId })}
             >
               {option.label}
-            </button>
+            </Button>
           ))}
         </div>
       ) : (
@@ -159,6 +181,7 @@ export function ScratchPermissionPanel({
           <textarea
             aria-label={t("permissionResponseAria")}
             className={clsx(inputBase, "min-h-[120px]")}
+            disabled={!canAct}
             value={hitlJson}
             onChange={(event) => setHitlJson(event.target.value)}
             onKeyDown={handleJsonKeyDown}
@@ -168,14 +191,15 @@ export function ScratchPermissionPanel({
               {parseError}
             </p>
           ) : null}
-          <button
+          <Button
             className="w-max rounded-full bg-amber px-4 py-2 text-[13px] font-semibold text-white transition hover:bg-amber-2 disabled:opacity-60"
-            disabled={pending}
+            isDisabled={pending || !canAct}
+            size="sm"
             type="button"
             onClick={submitJson}
           >
             {t("submit")}
-          </button>
+          </Button>
         </div>
       )}
     </section>

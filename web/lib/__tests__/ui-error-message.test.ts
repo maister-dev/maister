@@ -30,10 +30,10 @@ describe("UI error-message resolver", () => {
     expect(isMaisterErrorCode(code)).toBe(true);
   });
 
-  it("uses a neutral fallback for non-HITL executor failures", () => {
+  it("preserves the generic executor copy outside the HITL surface", () => {
     expect(isMaisterErrorCode("EXECUTOR_UNAVAILABLE")).toBe(true);
     expect(resolveUiErrorMessageKey("EXECUTOR_UNAVAILABLE")).toBe(
-      "error.EXECUTOR_UNAVAILABLE_UNKNOWN",
+      "error.EXECUTOR_UNAVAILABLE",
     );
   });
 

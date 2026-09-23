@@ -196,6 +196,7 @@ export function HitlPanel({
             runId={item.runId}
             schema={item.schema}
             storedResponse={item.storedResponse}
+            surface={item.runKind === "scratch" ? "scratch" : "flow"}
             // `router.refresh()`, not `window.location.reload()`: this panel now
             // renders inside a Desk row whose expansion is client state, and a
             // full reload would collapse every open row on the page. The RSC

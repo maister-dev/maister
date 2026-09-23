@@ -58,7 +58,11 @@ const openDetail = {
 let root: Root;
 let container: HTMLDivElement;
 
-function mount(runId = "run-1", locale: "en" | "ru" = "en"): void {
+function mount(
+  runId = "run-1",
+  locale: "en" | "ru" = "en",
+  canAct = true,
+): void {
   act(() => {
     root.render(
       createElement(
@@ -67,7 +71,7 @@ function mount(runId = "run-1", locale: "en" | "ru" = "en"): void {
           locale,
           messages: locale === "en" ? en : ru,
         },
-        createElement(ScratchConversation, { runId }),
+        createElement(ScratchConversation, { runId, canAct }),
       ),
     );
   });
@@ -97,12 +101,14 @@ afterEach(() => {
   act(() => root.unmount());
   container.remove();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 describe("scratch HITL operator feedback", () => {
   it.each([
     [409, "CONFLICT", "permission_resume_in_flight"],
     [410, "HITL_TIMEOUT", "agent_session_ended"],
+    [410, "HITL_TIMEOUT", "permission_delivery_rejected"],
     [503, "EXECUTOR_UNAVAILABLE", "delivery_unavailable"],
   ] as const)(
     "renders the %i/%s reason after POST",
@@ -144,8 +150,9 @@ describe("scratch HITL operator feedback", () => {
       await click("Allow");
 
       const key =
-        reason === "agent_session_ended"
-          ? "agent_session_ended_scratch"
+        reason === "agent_session_ended" ||
+        reason === "permission_delivery_rejected"
+          ? (`${reason}_scratch` as const)
           : reason;
 
       expect(container.textContent).toContain(en.run.errorReasons[key]);
@@ -155,8 +162,38 @@ describe("scratch HITL operator feedback", () => {
         expect(container.textContent).toContain(en.run.answerSaved);
         expect(container.textContent).not.toContain("Deny");
       }
+      if (status === 410)
+        expect(
+          container.querySelector('[data-testid="scratch-permission-panel"]'),
+        ).toBeNull();
     },
   );
+
+  it("shows a stored answer to a viewer without a retry action", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            ...openDetail,
+            pendingHitl: {
+              ...openDetail.pendingHitl,
+              answerState: "answer_stored",
+              storedResponse: { optionId: "allow" },
+            },
+          }),
+          { status: 200 },
+        ),
+    );
+
+    vi.stubGlobal("fetch", fetchMock);
+    mount("run-1", "en", false);
+    await act(async () => {});
+
+    expect(container.textContent).toContain(en.run.answerSaved);
+    expect(container.textContent).toContain("Allow");
+    expect(container.textContent).not.toContain(en.run.retryDelivery);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
 
   it("keeps a 202 answer read-only through a stale detail refresh and retries it", async () => {
     const fetchMock = vi.fn(async (url: string, _init?: RequestInit) =>
@@ -298,6 +335,7 @@ describe("scratch HITL operator feedback", () => {
   ] as const)(
     "ignores a late %i refusal after a newer request",
     async (status, code, reason) => {
+      vi.useFakeTimers();
       let settleOld: ((response: Response) => void) | null = null;
       let currentDetail = openDetail;
       const postUrls: string[] = [];
@@ -340,7 +378,7 @@ describe("scratch HITL operator feedback", () => {
       stream.eventCount = 1;
       mount();
       await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 275));
+        await vi.advanceTimersByTimeAsync(250);
       });
       expect(container.textContent).toContain("Second permission prompt");
       await click("Allow");
@@ -351,7 +389,7 @@ describe("scratch HITL operator feedback", () => {
         stream.eventCount = 2;
         mount();
         await act(async () => {
-          await new Promise((resolve) => setTimeout(resolve, 275));
+          await vi.advanceTimersByTimeAsync(250);
         });
       }
 

@@ -10,9 +10,6 @@ export { isMaisterErrorCode } from "@/lib/errors-core";
 export type UiErrorMessageKey = `error.${string}`;
 
 export function resolveUiErrorMessageKey(value: unknown): UiErrorMessageKey {
-  if (value === "EXECUTOR_UNAVAILABLE")
-    return "error.EXECUTOR_UNAVAILABLE_UNKNOWN";
-
   return isMaisterErrorCode(value) ? `error.${value}` : "error.generic";
 }
 
@@ -32,6 +29,7 @@ const REASON_CODES: Record<HitlRespondReason, string> = {
   not_awaiting_input: "CONFLICT",
   agent_session_ended: "HITL_TIMEOUT",
   delivery_unavailable: "EXECUTOR_UNAVAILABLE",
+  permission_delivery_rejected: "HITL_TIMEOUT",
 };
 
 export function resolveHitlErrorMessage(input: {
@@ -45,8 +43,10 @@ export function resolveHitlErrorMessage(input: {
 
   if (isHitlRespondReason(reason) && REASON_CODES[reason] === code) {
     const key =
-      reason === "agent_session_ended" && surface === "scratch"
-        ? "errorReasons.agent_session_ended_scratch"
+      surface === "scratch" &&
+      (reason === "agent_session_ended" ||
+        reason === "permission_delivery_rejected")
+        ? (`errorReasons.${reason}_scratch` as const)
         : (`errorReasons.${reason}` as const);
     const causeCode = details?.causeCode;
 
@@ -62,7 +62,7 @@ export function resolveHitlErrorMessage(input: {
 
   if (code === "EXECUTOR_UNAVAILABLE") {
     return {
-      key: "error.EXECUTOR_UNAVAILABLE",
+      key: "error.EXECUTOR_UNAVAILABLE_HITL",
       values: { answerState },
     };
   }

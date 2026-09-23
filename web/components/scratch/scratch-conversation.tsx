@@ -35,6 +35,11 @@ import {
   type ScratchFlowActionResultPayload,
 } from "@/lib/scratch-runs/transcript";
 import { useRunStream } from "@/lib/use-run-stream";
+import { isStaleViewErrorCode } from "@/lib/ui-error-message";
+import {
+  canReplayHitlAnswer,
+  isPendingHitlDeliveryState,
+} from "@/lib/hitl-response-contract";
 
 const shell =
   "rounded-lg border border-line-soft bg-[color-mix(in_oklab,var(--ivory)_35%,var(--paper))]";
@@ -78,6 +83,7 @@ function formatUsageCount(locale: string, value: number): string {
 // shared run inspector + workbench rendered by the scratch layout.
 export function ScratchConversation({
   runId,
+  canAct,
   compact = false,
   messageEndpoint,
   messageBodyExtras,
@@ -91,6 +97,7 @@ export function ScratchConversation({
   onHeaderInfo,
 }: {
   runId: string;
+  canAct: boolean;
   compact?: boolean;
   messageEndpoint?: string;
   messageBodyExtras?: Record<string, unknown>;
@@ -130,7 +137,6 @@ export function ScratchConversation({
   const [pendingHitlKey, setPendingHitlKey] = useState<string | null>(null);
   const activeRunId = useRef(runId);
 
-  activeRunId.current = runId;
   const currentHitlRequestKey =
     detail?.run.id === runId && detail.pendingHitl
       ? `${runId}:${detail.pendingHitl.hitlRequestId}`
@@ -138,10 +144,12 @@ export function ScratchConversation({
   const activeHitlRequestKey = useRef(currentHitlRequestKey);
   const latestHitlRequestKey = useRef(currentHitlRequestKey);
 
-  activeHitlRequestKey.current = currentHitlRequestKey;
-  if (currentHitlRequestKey !== null) {
-    latestHitlRequestKey.current = currentHitlRequestKey;
-  }
+  useEffect(() => {
+    activeRunId.current = runId;
+    activeHitlRequestKey.current = currentHitlRequestKey;
+    if (currentHitlRequestKey !== null)
+      latestHitlRequestKey.current = currentHitlRequestKey;
+  }, [runId, currentHitlRequestKey]);
   const [localAnswer, setLocalAnswer] = useState<{
     requestKey: string;
     payload: NonNullable<ScratchDetail["pendingHitl"]>["storedResponse"];
@@ -484,7 +492,7 @@ export function ScratchConversation({
 
   const answerHitl = useCallback(
     async (payload: Record<string, unknown>): Promise<void> => {
-      if (!detail?.pendingHitl) return;
+      if (!detail?.pendingHitl || !canAct) return;
       const requestKey = `${runId}:${detail.pendingHitl.hitlRequestId}`;
       const requestIsCurrent = (): boolean =>
         activeRunId.current === runId &&
@@ -519,25 +527,29 @@ export function ScratchConversation({
           ) {
             return;
           }
-          const descriptor = hitlErrorText(body);
+          const descriptor = hitlErrorText(
+            body,
+            detail.pendingHitl.answerState,
+          );
 
           setHitlError({ requestKey, terminal, descriptor });
           if (body?.details?.reason === "delivery_unavailable") {
             setLocalAnswer({
               requestKey,
-              payload: payload as NonNullable<
-                ScratchDetail["pendingHitl"]
-              >["storedResponse"],
+              payload: canReplayHitlAnswer(
+                detail.pendingHitl.kind,
+                detail.pendingHitl.schema,
+              )
+                ? (payload as NonNullable<
+                    ScratchDetail["pendingHitl"]
+                  >["storedResponse"])
+                : null,
             });
           }
-          if (
-            body?.details?.reason === "option_mismatch" ||
-            body?.details?.reason === "permission_resume_in_flight"
-          ) {
+          if (isStaleViewErrorCode(body?.code)) {
             setLocalAnswer({ requestKey, payload: null });
             await loadDetail();
           }
-          if (terminal) await loadDetail();
 
           return;
         }
@@ -548,17 +560,18 @@ export function ScratchConversation({
 
         if (
           response.status === 202 &&
-          [
-            "resume-in-progress",
-            "delivery-in-progress",
-            "resume-queued",
-          ].includes(accepted?.state)
+          isPendingHitlDeliveryState(accepted?.state)
         ) {
           setLocalAnswer({
             requestKey,
-            payload: payload as NonNullable<
-              ScratchDetail["pendingHitl"]
-            >["storedResponse"],
+            payload: canReplayHitlAnswer(
+              detail.pendingHitl.kind,
+              detail.pendingHitl.schema,
+            )
+              ? (payload as NonNullable<
+                  ScratchDetail["pendingHitl"]
+                >["storedResponse"])
+              : null,
           });
         }
         await loadDetail();
@@ -576,7 +589,7 @@ export function ScratchConversation({
           );
       }
     },
-    [detail?.pendingHitl, loadDetail, runId],
+    [canAct, detail?.pendingHitl, loadDetail, runId],
   );
 
   const visiblePendingHitl =
@@ -704,6 +717,7 @@ export function ScratchConversation({
       {visiblePendingHitl ? (
         <div className="min-w-0 border-t border-line-soft px-4 py-3">
           <ScratchPermissionPanel
+            canAct={canAct}
             pending={pendingHitlKey === currentHitlRequestKey}
             pendingHitl={visiblePendingHitl}
             onAnswer={(payload) => void answerHitl(payload)}

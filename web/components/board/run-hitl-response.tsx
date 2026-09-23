@@ -20,6 +20,8 @@ import type {
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
 import { useTranslations } from "next-intl";
+import { Button } from "@heroui/react";
+import { ArrowPathIcon } from "@heroicons/react/24/outline";
 
 import {
   HitlDecisionControls,
@@ -30,6 +32,10 @@ import {
   formFieldsFromSchema,
 } from "@/components/board/hitl-decision-controls";
 import { requestPendingHitlFocus } from "@/components/board/pending-hitl-focus-restorer";
+import {
+  canReplayHitlAnswer,
+  isPendingHitlDeliveryState,
+} from "@/lib/hitl-response-contract";
 import { ConfirmDialog } from "@/components/feedback/confirm-dialog";
 import { useOptionalFeedback } from "@/components/feedback/feedback-provider";
 import {
@@ -84,6 +90,7 @@ export interface RunHitlResponseProps {
   claimStage?: BudgetBreachClaimStage | null;
   schema: unknown;
   canAct: boolean;
+  surface?: "flow" | "scratch";
   onRespond?: () => void;
   restoreFocusAfterResponse?: boolean;
   compact?: boolean;
@@ -107,6 +114,7 @@ export function RunHitlResponse({
   claimStage,
   schema,
   canAct,
+  surface = "flow",
   onRespond,
   restoreFocusAfterResponse = false,
   compact,
@@ -135,6 +143,7 @@ export function RunHitlResponse({
     requestKey: string;
     payload: HitlStoredResponse | null;
     reconciling: boolean;
+    completed?: boolean;
   } | null>(null);
   const requestKey = `${runId}:${hitlRequestId}`;
   const busy = busyRequestKey === requestKey;
@@ -150,6 +159,7 @@ export function RunHitlResponse({
   function setError(message: string | null): void {
     setRefusal(null);
     setErrorState({ requestKey, message });
+    setDiagnosticState({ requestKey, code: null });
   }
 
   function setDiagnostic(code: string | null): void {
@@ -158,7 +168,9 @@ export function RunHitlResponse({
   const activeRequestKey = useRef(requestKey);
   const storedActionRef = useRef<HTMLButtonElement | null>(null);
 
-  activeRequestKey.current = requestKey;
+  useEffect(() => {
+    activeRequestKey.current = requestKey;
+  }, [requestKey]);
   const currentAnswer =
     localAnswer?.requestKey === requestKey ? localAnswer : null;
   const budgetClaimCanBeReplaced =
@@ -166,18 +178,7 @@ export function RunHitlResponse({
   const isStored =
     (answerState === "answer_stored" || currentAnswer !== null) &&
     !budgetClaimCanBeReplaced;
-  const schemaObject =
-    schema !== null && typeof schema === "object"
-      ? (schema as Record<string, unknown>)
-      : null;
-  const canReplaySubmittedAnswer =
-    kind === "permission" ||
-    kind === "form" ||
-    kind === "agent_question" ||
-    (kind === "human" &&
-      schemaObject?.review !== true &&
-      schemaObject?.kind !== "consensus" &&
-      schemaObject?.kind !== "consensus_resolution");
+  const canReplaySubmittedAnswer = canReplayHitlAnswer(kind, schema);
   const retryPayload =
     answerState === "answer_stored"
       ? storedResponse
@@ -223,6 +224,7 @@ export function RunHitlResponse({
   ): void {
     const descriptor = resolveHitlErrorMessage({
       ...body,
+      surface,
       answerState: isStored ? "answer_stored" : "open",
     });
     const message = t(descriptor.key, descriptor.values);
@@ -293,13 +295,16 @@ export function RunHitlResponse({
 
       if (activeRequestKey.current !== requestKey) return;
 
-      if (
+      if (res.status === 202 && accepted?.state === "resume-queued") {
+        setLocalAnswer({
+          requestKey,
+          payload: null,
+          reconciling: true,
+          completed: true,
+        });
+      } else if (
         res.status === 202 &&
-        [
-          "resume-in-progress",
-          "delivery-in-progress",
-          "resume-queued",
-        ].includes(accepted?.state ?? "")
+        isPendingHitlDeliveryState(accepted?.state)
       ) {
         setLocalAnswer({
           requestKey,
@@ -703,66 +708,96 @@ export function RunHitlResponse({
       currentAnswer?.reconciling && answerState !== "answer_stored";
 
     return (
-      <div
-        className="grid gap-2 rounded-lg border border-line bg-ivory p-3"
-        data-testid="hitl-answer-stored"
-      >
-        <p aria-live="polite" className="text-sm text-ink-2">
-          {t("answerSaved")}
-        </p>
-        {savedOption ? (
-          <p className="font-semibold text-ink">{savedOption.label}</p>
-        ) : null}
-        {retryPayload && "response" in retryPayload ? (
-          <pre className="whitespace-pre-wrap text-xs text-ink-2">
-            {JSON.stringify(retryPayload.response)}
-          </pre>
-        ) : null}
-        {!validPayload && !reconciling ? (
-          <p className="text-xs text-mute" role="status">
-            {retryPayload && "optionId" in retryPayload
-              ? t("savedInvalidOption")
-              : t("savedNoReplay")}
-          </p>
-        ) : null}
-        {error ? (
-          <p className="text-sm text-[var(--status-red)]" role="alert">
-            {error}
-          </p>
-        ) : null}
-        {diagnostic ? (
-          <p className="text-xs text-mute">
-            {t("errorDiagnostic")}: <code>{diagnostic}</code>
-          </p>
-        ) : null}
-        {specialized ? decisionControls : null}
-        <div className="flex gap-2">
-          {canAct && validPayload && !reconciling ? (
-            <button
-              ref={storedActionRef}
-              disabled={busy || pending}
-              type="button"
-              onClick={() => void post(retryPayload as Record<string, unknown>)}
-            >
-              {t("retryDelivery")}
-            </button>
+      <>
+        <span aria-live="polite" className="sr-only">
+          {t(currentAnswer?.completed ? "answerRecorded" : "answerSaved")}
+        </span>
+        <div
+          className="grid gap-2 rounded-lg border border-line bg-ivory p-3"
+          data-testid={
+            currentAnswer?.completed
+              ? "hitl-answer-recorded"
+              : "hitl-answer-stored"
+          }
+        >
+          {refusal?.requestKey === requestKey &&
+          refusal.descriptor.key ===
+            "errorReasons.delivery_unavailable" ? null : (
+            <p className="text-sm text-ink-2">
+              {t(currentAnswer?.completed ? "answerRecorded" : "answerSaved")}
+            </p>
+          )}
+          {savedOption ? (
+            <p className="font-semibold text-ink">{savedOption.label}</p>
           ) : null}
-          {reconciling ? (
-            <button
-              ref={storedActionRef}
-              type="button"
-              onClick={() => router.refresh()}
-            >
-              {t("refreshAnswer")}
-            </button>
+          {retryPayload && "response" in retryPayload ? (
+            <div>
+              <p className="mb-1 text-xs font-semibold text-ink-2">
+                {t("savedResponse")}
+              </p>
+              <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-md border border-line bg-paper p-2 text-xs text-ink-2">
+                {typeof retryPayload.response === "string"
+                  ? retryPayload.response
+                  : JSON.stringify(retryPayload.response, null, 2)}
+              </pre>
+            </div>
           ) : null}
+          {!validPayload && !reconciling ? (
+            <p className="text-xs text-mute" role="status">
+              {retryPayload && "optionId" in retryPayload
+                ? t("savedInvalidOption")
+                : t("savedNoReplay")}
+            </p>
+          ) : null}
+          {error ? (
+            <p className="text-sm text-[var(--status-red)]" role="alert">
+              {error}
+            </p>
+          ) : null}
+          {diagnostic ? (
+            <p className="text-xs text-mute">
+              {t("errorDiagnostic")}: <code>{diagnostic}</code>
+            </p>
+          ) : null}
+          {specialized ? decisionControls : null}
+          <div className="flex gap-2">
+            {canAct && validPayload && !reconciling ? (
+              <Button
+                ref={storedActionRef}
+                className="border-amber bg-amber font-mono text-xs font-semibold text-white"
+                isDisabled={busy || pending}
+                size="sm"
+                type="button"
+                onClick={() =>
+                  void post(retryPayload as Record<string, unknown>)
+                }
+              >
+                <ArrowPathIcon aria-hidden="true" className="size-4" />
+                {t("retryDelivery")}
+              </Button>
+            ) : null}
+            {reconciling ? (
+              <Button
+                ref={storedActionRef}
+                className="border-line bg-paper font-mono text-xs font-semibold text-ink-2"
+                size="sm"
+                type="button"
+                variant="outline"
+                onClick={() => router.refresh()}
+              >
+                <ArrowPathIcon aria-hidden="true" className="size-4" />
+                {t("refreshAnswer")}
+              </Button>
+            ) : null}
+          </div>
         </div>
-      </div>
+      </>
     );
   }
 
   return (
     <>
+      <span aria-live="polite" className="sr-only" />
       {decisionControls}
       {diagnostic ? (
         <p className="text-xs text-mute">

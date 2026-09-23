@@ -396,6 +396,7 @@ export function StudioAiTab({
         </div>
         <div className="min-h-0 flex-1">
           <ScratchConversation
+            canAct
             compact
             attachmentsEnabled={false}
             interruptEndpoint={`/api/studio/local-packages/${packageId}/assistant/${runId}/interrupt`}

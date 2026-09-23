@@ -2580,7 +2580,8 @@
       "generic": "Something went wrong. Try again.",
       "SPAWN": "Could not start the run. Try again.",
       "CRASH": "Something went wrong. Try again.",
-      "EXECUTOR_UNAVAILABLE": "{answerState, select, answer_stored {Your answer is saved and will be delivered when the run resumes. Wait for the run to resume.} other {Delivery could not be confirmed. Refresh the run to check whether your answer was saved.}}",
+      "EXECUTOR_UNAVAILABLE": "The execution service is unavailable. Retry when it is ready.",
+      "EXECUTOR_UNAVAILABLE_HITL": "{answerState, select, answer_stored {Your answer is saved; delivery is pending. Retry delivery to send it.} other {Delivery could not be confirmed. Refresh the run to check whether your answer was saved.}}",
       "ACP_PROTOCOL": "The agent rejected the response. Reload and try again.",
       "HITL_TIMEOUT": "The agent session ended before your answer arrived. Relaunch the run.",
       "CONFLICT": "This conflicts with the run's current state. Check the refreshed view before retrying.",
@@ -2595,8 +2596,7 @@
       "UNAUTHENTICATED": "Your session has expired. Sign in and try again.",
       "UNAUTHORIZED": "You do not have permission to answer this request.",
       "PASSWORD_CHANGE_REQUIRED": "Change your password before continuing.",
-      "ACCOUNT_INACTIVE": "Your account is inactive.",
-      "EXECUTOR_UNAVAILABLE_UNKNOWN": "The execution service is unavailable. Check the run before retrying."
+      "ACCOUNT_INACTIVE": "Your account is inactive."
     },
     "errorReasons": {
       "permission_resume_in_flight": "Your answer is already being delivered as the run resumes. Wait for the run to continue.",
@@ -2608,14 +2608,18 @@
       "not_awaiting_input": "This run is no longer waiting for this answer. Check the refreshed run.",
       "agent_session_ended": "The agent session ended before your answer arrived. Relaunch the run.",
       "agent_session_ended_scratch": "The agent session ended before your answer arrived. Recover the run or relaunch it.",
-      "delivery_unavailable": "Your answer is saved and will be delivered when the run resumes. Wait for the run to resume."
+      "delivery_unavailable": "Your answer is saved; delivery is pending. Retry delivery to send it.",
+      "permission_delivery_rejected": "The checkpointed permission could not accept your answer. Relaunch the run.",
+      "permission_delivery_rejected_scratch": "The checkpointed permission could not accept your answer. Recover the run or relaunch it."
     },
     "errorDiagnostic": "Diagnostic",
-    "answerSaved": "Answer saved — delivering on resume",
+    "answerSaved": "Answer saved — delivery pending",
+    "answerRecorded": "Answer recorded — run resume queued",
+    "savedResponse": "Saved response",
     "retryDelivery": "Retry delivery",
-    "refreshAnswer": "Refresh answer",
-    "savedNoReplay": "This saved answer cannot be retried from this card. Open the run to inspect delivery.",
-    "savedInvalidOption": "The saved option is no longer available. Open the run to inspect delivery.",
+    "refreshAnswer": "Refresh status",
+    "savedNoReplay": "This saved answer cannot be retried from this card. Refresh the run to inspect delivery.",
+    "savedInvalidOption": "The saved option is no longer available. Refresh the run to inspect delivery.",
     "deliveryUnconfirmed": "Delivery could not be confirmed. Refresh the run to check whether your answer was saved.",
     "resolvedSet": {
       "title": "Resolved capability set",

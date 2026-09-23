@@ -8,6 +8,7 @@ export const HITL_RESPOND_REASONS = [
   "not_awaiting_input",
   "agent_session_ended",
   "delivery_unavailable",
+  "permission_delivery_rejected",
 ] as const;
 
 export type HitlRespondReason = (typeof HITL_RESPOND_REASONS)[number];
@@ -38,3 +39,22 @@ export type HitlStoredResponse =
   | HitlStructuredResponse;
 
 export type HitlAnswerState = "open" | "answer_stored";
+
+export function isPendingHitlDeliveryState(value: unknown): boolean {
+  return value === "resume-in-progress" || value === "delivery-in-progress";
+}
+
+export function canReplayHitlAnswer(kind: string, schema: unknown): boolean {
+  if (kind === "permission" || kind === "form" || kind === "agent_question")
+    return true;
+  if (kind !== "human") return false;
+  if (schema === null || typeof schema !== "object") return true;
+
+  const value = schema as Record<string, unknown>;
+
+  return (
+    value.review !== true &&
+    value.kind !== "consensus" &&
+    value.kind !== "consensus_resolution"
+  );
+}

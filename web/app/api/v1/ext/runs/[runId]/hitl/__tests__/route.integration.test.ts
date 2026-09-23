@@ -641,6 +641,45 @@ describe("GET /api/v1/ext/runs/[runId]/hitl", () => {
     });
   });
 
+  it("shows a claimed Running permission with only its public replay answer", async () => {
+    const { projectId, flowId } = await seedProject(
+      `ext-hitl-stored-${randomUUID().slice(0, 8)}`,
+    );
+    const { runId } = await seedRun(projectId, flowId, "Running");
+    const hitlRequestId = await seedHitlRequest(runId, "permission");
+
+    await db
+      .update(schema.hitlRequests)
+      .set({
+        response: {
+          optionId: "approve",
+          _delivery: { commandId: "private-command" },
+          _agentResume: { assignmentId: "private-assignment" },
+        },
+      })
+      .where(eq(schema.hitlRequests.id, hitlRequestId));
+    const token = await issueToken(
+      { projectId, name: "stored-read", createdByUserId: null },
+      db,
+    );
+    const res = await GET(makeGetRequest(runId, token.secret), {
+      params: Promise.resolve({ runId }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    const item = body.hitl.find(
+      (row: { hitlRequestId: string }) => row.hitlRequestId === hitlRequestId,
+    );
+
+    expect(item).toMatchObject({
+      answerState: "answer_stored",
+      storedResponse: { optionId: "approve" },
+    });
+    expect(JSON.stringify(item)).not.toContain("private-command");
+    expect(JSON.stringify(item)).not.toContain("private-assignment");
+  });
+
   it("lists an active agent question after its source run has completed", async () => {
     const { projectId, flowId } = await seedProject(
       `ext-hitl-agent-question-get-${randomUUID().slice(0, 8)}`,
@@ -1198,10 +1237,11 @@ describe("POST /api/v1/ext/runs/[runId]/hitl/[hitlRequestId]/respond", () => {
     });
 
     expect(res2.status).toBe(409);
-    expect(await res2.json()).toMatchObject({
-      code: "CONFLICT",
-      details: { reason: "already_delivered" },
-    });
+    const refusal = await res2.json();
+
+    expect(Object.keys(refusal).sort()).toEqual(["code", "details", "message"]);
+    expect(refusal.code).toBe("CONFLICT");
+    expect(refusal.details).toEqual({ reason: "already_delivered" });
   });
 
   it("carries the resume-owned refusal reason through the external route", async () => {

@@ -22,40 +22,15 @@ export async function callExt(opts: {
   return fetch(`${baseUrl}${path}`, init);
 }
 
-export async function restResponseToToolError(res: Response): Promise<{
-  isError: true;
-  status: number;
-  code: string;
-  message: string;
-}> {
-  const text = await res.text();
-
-  try {
-    const json = JSON.parse(text) as { code: string; message: string };
-
-    return {
-      isError: true,
-      status: res.status,
-      code: json.code,
-      message: json.message,
-    };
-  } catch {
-    return {
-      isError: true,
-      status: res.status,
-      code: "UPSTREAM",
-      message: res.statusText || text.slice(0, 200),
-    };
-  }
-}
-
-export async function hitlRespondToolError(res: Response): Promise<{
+type ParsedUpstreamError = {
   isError: true;
   status: number;
   code: string;
   message: string;
   publicBody?: Record<string, unknown>;
-}> {
+};
+
+async function parseUpstreamError(res: Response): Promise<ParsedUpstreamError> {
   const raw = await res.text();
 
   try {
@@ -79,7 +54,7 @@ export async function hitlRespondToolError(res: Response): Promise<{
       };
     }
   } catch {
-    // Fall through to the existing upstream-error presentation.
+    // Present malformed upstream responses as an ordinary transport failure.
   }
 
   return {
@@ -88,4 +63,21 @@ export async function hitlRespondToolError(res: Response): Promise<{
     code: "UPSTREAM",
     message: res.statusText || raw.slice(0, 200),
   };
+}
+
+export async function restResponseToToolError(res: Response): Promise<{
+  isError: true;
+  status: number;
+  code: string;
+  message: string;
+}> {
+  const { isError, status, code, message } = await parseUpstreamError(res);
+
+  return { isError, status, code, message };
+}
+
+export async function hitlRespondToolError(
+  res: Response,
+): Promise<ParsedUpstreamError> {
+  return parseUpstreamError(res);
 }

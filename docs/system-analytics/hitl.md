@@ -993,8 +993,9 @@ boolean | enum | array`; unknown type refused with `CONFIG` at Flow
     supervisor 503 / network → `EXECUTOR_UNAVAILABLE`
     retryable (row stays claimed, `responded_at` NULL); artifact
     write I/O failure → 503 retryable. The operator-facing response says the
-    answer is saved and will be delivered **when the run resumes**; it does
-    not promise an automatic retry or identify which host failure occurred.
+    answer is saved but delivery is pending and asks for an identical retry;
+    agent runs may also resume automatically. It does not identify which host
+    failure occurred.
   - Same-payload retry on an already-delivered row re-queues
     `runFlow` so a process crash between Phase 3 commit and the
     original microtask cannot strand the run in `NeedsInput`.
@@ -1085,21 +1086,23 @@ type}`; the stage `type` MUST be resolved by compiling each distinct flow
 - **Permission delivery returns 503** — the host may be restarting, parking,
   or past its 30-second registry grace. The web answer is already claimed:
   `responded_at` remains NULL and `response` holds the answer. The operator
-  sees “Your answer is saved and will be delivered when the run resumes,”
-  with `details.reason = delivery_unavailable`; an identical retry remains
-  available when delivery needs a nudge. The sweeper's checkpointed arm parks
+  sees “Your answer is saved; delivery is pending. Retry delivery to send it,”
+  with `details.reason = delivery_unavailable`. An identical retry is needed
+  to resume a parked flow run after the terminal grace or to retry a failed
+  form/human artifact write; agent runs can also resume automatically. The
+  sweeper's checkpointed arm parks
   the run on its next tick after the registry disappears. Idle resume
   withdraws the unadmitted delivery intent and sends the stored answer to the
   resumed session (Implemented — ADR-180). The host's own 503 bodies remain
   reason-less; the web does not claim to know which host case occurred.
-- **Open ADR-180 agent handoff defect (2026-09-23 qualification):** the real
-  supervisor sometimes records the original `session.prompt` as `succeeded`
-  after the checkpoint terminal witness. The agent resume classifier grants
-  `result` instead of `continue`, marks the original HITL row `responded_at`,
-  and skips the reissued-permission delivery of the answer. RED13/RED14 detect
-  this intermittently. P0-4 changes only the operator surface; the agent
-  checkpoint classification and its tests remain a separate required fix
-  before full integration qualification can be claimed.
+- **Agent checkpoint handoff (ADR-180 correction, Implemented):** the real
+  supervisor may record an original permission prompt as `succeeded` after
+  checkpoint cancellation without a confirmed original `session.input`. A
+  permission source with no confirmed input takes `continue` regardless of
+  prompt/checkpoint order, reissues the permission, and marks the saved answer
+  delivered only after the reissued input is acknowledged. A `result` grant
+  without confirmed input is rejected as an invariant violation. Other pause
+  kinds retain their existing classification.
 - **Agent reads a malformed `input-<stepId>.json`** — adapter exits
   non-zero → `Crashed`. Operator decides whether to Recover or
   Discard.
@@ -1241,7 +1244,8 @@ terminal 410 remains visible after card removal until a newer request appears.
 | Respond outcome | Durable read state | Card behavior |
 | --- | --- | --- |
 | 200 delivered | Absent after `responded_at` | Complete and refresh. |
-| 202 `resume-in-progress`, `delivery-in-progress`, `resume-queued` | `answer_stored` | Show choice and retry delivery, disable new choices. |
+| 202 `resume-in-progress`, `delivery-in-progress` | `answer_stored` | Show choice and retry delivery, disable new choices. |
+| 202 `resume-queued` | Absent after `responded_at` (plan review) | Show a read-only recorded state until refresh removes the card; do not offer retry delivery. |
 | 409 existing answer | `answer_stored` after reconciliation | Show the authoritative saved choice, not the losing tab's choice. |
 | 410 `agent_session_ended` | Absent after terminal marker | Explain the ended session and next action. |
 | 503 `delivery_unavailable` | `answer_stored` | Show saved answer; identical retry is allowed. |
@@ -1264,7 +1268,8 @@ from `message`, and fall back to localized per-code copy for unknown reasons.
 | CONFLICT | `option_mismatch` | A different answer was saved. | Retry delivery of the stored answer. | 409 |
 | CONFLICT | `not_awaiting_input` | The run or request no longer awaits input. | Check the refreshed run. | 409 |
 | HITL_TIMEOUT | `agent_session_ended` | The agent session ended before delivery. | Relaunch a flow run; Recover or relaunch scratch. | 410 |
-| EXECUTOR_UNAVAILABLE | `delivery_unavailable` | The claimed answer could not yet be delivered. | Wait for resume or retry the identical answer. | 503 |
+| HITL_TIMEOUT | `permission_delivery_rejected` | The checkpointed permission refused the original delivery during idle resume. | Relaunch a flow run; Recover or relaunch scratch. | 410 |
+| EXECUTOR_UNAVAILABLE | `delivery_unavailable` | The claimed answer could not yet be delivered. | Retry delivery with the identical answer; agent resume may also finish automatically. | 503 |
 
 The `session_checkpointed` token belongs to the **host's** 410; web converts
 that arm to 202 and never exposes it as a terminal HITL refusal. A crash during

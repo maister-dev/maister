@@ -1318,7 +1318,7 @@ export async function getCrossProjectHitlInbox(
   });
 
   // `count` is the size of THIS inbox list — pending hitl_requests rows in
-  // NeedsInput/NeedsInputIdle. It is intentionally narrower than
+  // NeedsInput/NeedsInputIdle/Running (for a stored permission answer). It is intentionally narrower than
   // getPortfolio.totalNeeds (the actionable-ASSIGNMENT total, which also counts
   // HumanWorking/Review runs): the home "needs you" headline reflects
   // totalNeeds, while this `count` titles the HITL inbox block specifically.

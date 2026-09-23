@@ -4,6 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import YAML from "yaml";
+import Ajv from "ajv";
+
+import { HITL_RESPOND_REASONS } from "../web/lib/hitl-response-contract.ts";
 
 import {
   validateAsyncApi,
@@ -49,123 +52,128 @@ test("rejects an AsyncAPI document that fails official meta-schema validation", 
   );
 });
 
-function assertExample(schema, value, document) {
-  if (schema.$ref) {
-    const parts = schema.$ref.split("/").slice(1);
-    const target = parts.reduce((current, part) => current?.[part], document);
-
-    assert.ok(target, `unresolved example schema ${schema.$ref}`);
-    assertExample(target, value, document);
-  }
-  for (const member of schema.allOf ?? [])
-    assertExample(member, value, document);
-  if (value === null) {
-    assert.equal(schema.nullable, true);
-    return;
-  }
-  if (schema.type === "object") {
-    assert.equal(typeof value, "object");
-    assert.equal(Array.isArray(value), false);
-    for (const key of schema.required ?? [])
-      assert.ok(Object.hasOwn(value, key), `missing ${key}`);
-    for (const [key, child] of Object.entries(value)) {
-      const property = schema.properties?.[key];
-
-      if (!property) {
-        assert.notEqual(
-          schema.additionalProperties,
-          false,
-          `unexpected ${key}`,
-        );
-        continue;
-      }
-      assertExample(property, child, document);
-    }
-  } else if (schema.type === "string") {
-    assert.equal(typeof value, "string");
-    if (schema.pattern) assert.match(value, new RegExp(schema.pattern));
-  } else if (schema.type === "boolean") {
-    assert.equal(typeof value, "boolean");
-  } else if (schema.type === "number" || schema.type === "integer") {
-    assert.equal(typeof value, "number");
-    if (schema.type === "integer") assert.equal(Number.isInteger(value), true);
-    if (schema.minimum !== undefined) assert.ok(value >= schema.minimum);
-    if (schema.maximum !== undefined) assert.ok(value <= schema.maximum);
-  }
-  if (schema.enum)
-    assert.ok(schema.enum.includes(value), `unexpected enum value ${value}`);
+function readContract(file) {
+  return YAML.parse(readFileSync(new URL(file, import.meta.url), "utf8"));
 }
 
-test("HITL respond refusal examples satisfy both public response contracts", () => {
-  for (const [file, path, prefix] of [
+function schemaValidator(document, namespace, component) {
+  const ajv = new Ajv({
+    strict: false,
+    allErrors: true,
+    validateFormats: false,
+  });
+
+  ajv.addSchema(document, namespace);
+  const validate = ajv.getSchema(
+    `${namespace}#/components/schemas/${component}`,
+  );
+
+  assert.ok(validate, `missing schema ${component}`);
+  return validate;
+}
+
+function assertValidExample(validate, body) {
+  assert.equal(validate(body), true, JSON.stringify(validate.errors));
+}
+
+test("HITL respond reason enums agree with the TypeScript contract", () => {
+  for (const file of [
+    "../docs/api/web.openapi.yaml",
+    "../docs/api/external/operations.openapi.yaml",
+  ]) {
+    const document = readContract(file);
+
+    assert.deepEqual(
+      document.components.schemas.HitlRespondReason.enum,
+      [...HITL_RESPOND_REASONS],
+      file,
+    );
+  }
+});
+
+test("HITL refusal examples satisfy real JSON Schema validation", () => {
+  for (const [file, route, namespace, prefix] of [
     [
       "../docs/api/web.openapi.yaml",
       "/api/runs/{runId}/hitl/{hitlRequestId}/respond",
+      "web",
       "HitlRespond",
     ],
     [
       "../docs/api/external/operations.openapi.yaml",
       "/api/v1/ext/runs/{runId}/hitl/{hitlRequestId}/respond",
+      "external",
       "ExtHitlRespond",
     ],
   ]) {
-    const document = YAML.parse(
-      readFileSync(new URL(file, import.meta.url), "utf8"),
-    );
-    const responses = document.paths[path].post.responses;
+    const document = readContract(file);
+    const responses = document.paths[route].post.responses;
     const examples = [
       ["410", "agent-session-ended", `${prefix}TerminalError`],
+      ["410", "permission-delivery-rejected", `${prefix}TerminalError`],
       ["503", "answer-saved", `${prefix}SavedError`],
     ];
 
-    if (prefix === "HitlRespond")
+    if (namespace === "web")
       examples.push(["409", "resume-owns-delivery", `${prefix}ErrorBody`]);
     for (const [status, name, component] of examples) {
       const value =
         responses[status].content["application/json"].examples[name].value;
+      const validate = schemaValidator(document, namespace, component);
 
-      assertExample(document.components.schemas[component], value, document);
-      assert.throws(() =>
-        assertExample(
-          document.components.schemas[component],
-          {
-            ...value,
-            details: {
-              reason: "not_a_public_reason",
-              privateSessionId: "secret",
-            },
-          },
-          document,
-        ),
+      assertValidExample(validate, value);
+      assert.equal(
+        validate({ ...value, details: { reason: "not_a_public_reason" } }),
+        false,
+        `${component} must reject an unknown reason`,
+      );
+      assert.equal(
+        validate({
+          ...value,
+          details: { ...value.details, privateSessionId: "secret" },
+        }),
+        false,
+        `${component} must reject private detail fields`,
       );
     }
   }
 });
 
+test("external HITL inbox example includes every required read-state field", () => {
+  const document = readContract("../docs/api/external/operations.openapi.yaml");
+  const body =
+    document.paths["/api/v1/ext/hitl"].get.responses["200"].content[
+      "application/json"
+    ].examples.default.value;
+  const validate = schemaValidator(document, "external", "ExtHitlInboxItem");
+
+  assert.equal(body.count, body.items.length);
+  for (const item of body.items) assertValidExample(validate, item);
+  assert.equal(validate({ ...body.items[0], answerState: undefined }), false);
+});
+
 test("external HITL success and pending bodies accept the shipped runStatus variants", () => {
-  const document = YAML.parse(
-    readFileSync(
-      new URL("../docs/api/external/operations.openapi.yaml", import.meta.url),
-      "utf8",
-    ),
+  const document = readContract("../docs/api/external/operations.openapi.yaml");
+  const delivered = schemaValidator(
+    document,
+    "external",
+    "ExtHitlRespondResponse",
   );
-  const schemas = document.components.schemas;
+  const pending = schemaValidator(
+    document,
+    "external",
+    "ExtHitlRespondAccepted",
+  );
 
   for (const body of [
     { ok: true, state: "delivered" },
     { ok: true, state: "delivered", runStatus: "Done" },
   ])
-    assertExample(schemas.ExtHitlRespondResponse, body, document);
+    assertValidExample(delivered, body);
   for (const body of [
     { ok: true, state: "delivery-in-progress" },
     { ok: true, state: "resume-in-progress", runStatus: "NeedsInputIdle" },
   ])
-    assertExample(schemas.ExtHitlRespondAccepted, body, document);
-  assert.throws(() =>
-    assertExample(
-      schemas.ExtHitlRespondAccepted,
-      { ok: true, state: "delivered" },
-      document,
-    ),
-  );
+    assertValidExample(pending, body);
+  assert.equal(pending({ ok: true, state: "delivered" }), false);
 });

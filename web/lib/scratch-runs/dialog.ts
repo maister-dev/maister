@@ -1,6 +1,7 @@
 import type { AdapterId } from "@/lib/acp-runners/adapter-support";
 import type { WorkbenchLifecycleActionId } from "@/lib/workbench-lifecycle/policy";
 import type { WorkbenchRunStatus } from "@/lib/workbench-lifecycle/policy";
+import type { HitlAnswerState } from "@/lib/hitl-response-contract";
 
 import { deriveWorkbenchLifecycleActions } from "@/lib/workbench-lifecycle/policy";
 import {
@@ -125,11 +126,15 @@ export function errorText(payload: ApiError | null): string {
   return "errorGeneric";
 }
 
-export function hitlErrorText(payload: ApiError | null): HitlErrorMessage {
+export function hitlErrorText(
+  payload: ApiError | null,
+  answerState: HitlAnswerState,
+): HitlErrorMessage {
   return resolveHitlErrorMessage({
     code: payload?.code,
     details: payload?.details,
     surface: "scratch",
+    answerState,
   });
 }
 
