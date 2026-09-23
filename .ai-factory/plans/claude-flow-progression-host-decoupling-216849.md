@@ -837,13 +837,14 @@ Each commit is gated on the phase exit criteria. Merge goes to master with `--no
 
   - **As done (2026-09-23) — T5.1/T5.2.** `commands.hostSpan[]` per host (`HostSpanSettlementCounts`) from one grouped query over `settled_from = 'host_span'`, served by the partial index (EXPLAIN-pinned). **Deviation:** `postHocConflicts` counts only host-span rows — the canonical feed binds the very event it would disagree with, so a post-hoc conflict can only follow a host-span settlement, and the restriction keeps all three counts on the partial index. Admin panel rows + EN/RU copy; the i18n suite now pins the whole `adminExecutionHost.fields` namespace. `host-span-counts.integration.test.ts` asserts per seeded host, excludes canonical and aged rows, and tests the unconfirmed count closing. T5.2: every Phase 0 `Designed` tag of this amendment is `Implemented`; the lifecycle doc gains the T1.6 verdict table, the targeted owner-claim wait and the output source selection; test citations point at the shipped files; `loadConfirmedTerminalEvent` → `assertTerminalEventConfirmed`. No `file:line` citation was added by this branch. `validate:docs:all` and `validate:contracts` green.
 
-- [ ] **T5.3: Load control** (real supervisor, quiet machine, not beside an isolation slice; check `pmset` for sleep per memory).
+- [x] **T5.3: Load control** (real supervisor, quiet machine, not beside an isolation slice; check `pmset` for sleep per memory).
   - (Counts in this task are read from `settled_from`.) Hold ingest lag at 120 s: claim the consumer and release it after 120 s. Run 6 flow runs with one `ai_coding` turn each (mock ACP adapter).
   - **Report numbers:**
     - per-node completion latency, which must not depend on the lag: p95 under 10 s from host completion;
     - host-span settlements: exactly the 6 command ids of these runs have `settled_from='host_span'` (asserted per id, not through the global counter; the admin read model is cross-checked);
     - post-hoc conflicts, which must be 0.
   - This is a script plus an assertion file; it is not in the default lane. Record the command in `docs/system-analytics/execution-prompt-lifecycle.md` "Verification".
+  - **As done (2026-09-23).** `host-span-load.integration.test.ts`, opt-in (`MAISTER_HOST_SPAN_LOAD=1`); command and numbers in the lifecycle doc "Verification". **First run failed the budget:** p95 10 387 ms (`[5206, 5217, 5181, 5133, 10387, 10293]`); all six settled `host_span` with no conflict. The two slow turns' first span verification met the host's object-read backpressure (`command_in_progress`, the host caps concurrent object reads at 2) and waited out the 5 s claim — found by adding the bounded `reason` to `prompt-host-span-unverified`. **Fixed** (`a229202b`): the verification re-reads a busy object inside the held claim (linear 100 ms, ≤ 5 attempts); B5-busy guards it (red with the retry disabled). **After the fix, two runs:** p95 **6345 ms** and **5410 ms**, 6/6 `host_span` per command id, 0 post-hoc conflicts, 0 unverified spans, load 16–24, no sleep in `pmset`. The ~5 s floor is the receipt-read claim cadence, independent of the 120 s lag.
 
 - [ ] **T5.4: Falsification, then the final gate.**
   - Revert each guard in a throwaway commit and confirm its test goes red. Record the counts in the PR/merge note:
@@ -876,6 +877,40 @@ Each commit is gated on the phase exit criteria. Merge goes to master with `--no
     - `pnpm lint` at 0 errors.
   - Expect **zero** integration failures on this Mac (memory baseline 2026-09-20). Any red is classified in the same increment.
   - A lane is green only when the process **exit code is 0 and the `Errors` line is absent**. A pass count alone is not evidence (patch 2026-09-21 21.55: an unhandled rejection exits non-zero with every test passing).
+  - **Falsification record (2026-09-23, tree `5ef2e9ce`, one mutation at a time in a throwaway worktree, `scratchpad/falsify.py`): 24 mutations, 23 red for the named reason, 1 green by design.**
+
+    | Guard removed | Guard test | Verdict |
+    |---|---|---|
+    | A1's `created` insert | A1 | red: no incarnation while projection is held |
+    | D-A3 widening at site 3 (`node-prompt-owner.ts`) | site drift guard | red |
+    | D-A4 flow mapping | A2 | red: attempt `Failed`, not `Running` |
+    | B.4 direct binding | B1 | red: never settles while the projector is held |
+    | host-span branch, both call sites | B2 | red |
+    | host-span retry only (`settleFromHostSpanWhenDue`) | B2 | **green by design**: B2 settles on the first attempt inside the receipt claim → guarded by B5-retry below |
+    | host-span retry only | B5-retry | red: no span read on the due retry |
+    | D-B5 claim cadence (`next_attempt_at` ignored) | B5-retry | red: a second read before the retry is due |
+    | host-span write failure rethrown | B-write-failed | red: the reconcile rejects instead of waiting |
+    | D-B6 row lock (`lockPrompt` → unlocked read) | racer, canonical parked first | red: the evidence trigger refuses the stale write |
+    | watchdog predicate | C1-completed, C1-settled, C1-gate, C1-gate-done | red (4) |
+    | `settled_from` always `canonical` | B2 | red; WARN `prompt-host-span-settlement-failed` `23514` |
+    | D-A1a same-epoch supersession | A5 (consecutive sessions) | red: `run_session_incarnations_active_run_session_uq` |
+    | `projectTerminal` allow-list | A5 (late checkpoint exit) | red |
+    | D-B8 signal-free rule (B.5) | B7 | red |
+    | D-B8 count (B.4) | B1-signal | red |
+    | D-B9 `assertTerminalEventConfirmed` | B8 | red |
+    | D-B10 re-anchor wiring in `bindTerminalEvent` | B9-wired | red: anchor stays `0` |
+    | C19 CHECK restored to the 0141 text | B2 | red; WARN `prompt-host-span-settlement-failed` `23514` |
+    | D-C1 variants | C1-gate, C1-gate-done | red |
+    | D-B7 stream-lost retry | reconcile-host-evidence case 1 | red: stays `pending_ingest` |
+    | targeted owner-claim wait (`SKIP LOCKED` always) | bounded-output S2.5 (expired-claim recovery, stale commit, stale failure, unavailable storage) | red (4) |
+    | consensus draft `SessionCreatePending` yield | held-create case | red: both children `Failed` |
+    | consensus draft waiter choice | A2 (consensus) | red |
+    | busy object read re-read (added after T5.3, `a229202b`; falsified in the main tree) | B5-busy | red: not settled on the first claim |
+
+    The D-A6 worker arm and mirror predicate have no row: the arm was withdrawn (T1.5).
+  - **Guards that did not fail on the first pass, fixed in this increment (commits `e6c27e67`, `91105575`, `5ef2e9ce`):** (1) B2 could not see the claimed retry → B5-retry; (2) the racer always parked the host-span writer first, where the reducer's own `UPDATE` still serializes → the racer runs in both orders, with `releaseIngest({before})` so the parked canonical writer is the terminal settlement; (3) B9 called `reanchorDispatchedPrompts` directly → B9-wired goes through `bindTerminalEvent`; (4) the consensus `SessionCreatePending` yield was race-guarded (window open in 2 of 4 historical runs, 0 of 2 since) → a trigger-held create makes it deterministic; (5) the C19 and `settled_from` mutations failed B2 only as a silent timeout — a database error in the host-span write escaped `attemptHostSpan`, and the flow wait turns any wait error into a cause-less continuation yield → the write failure is now WARN + keep waiting (B-write-failed).
+  - **Deviation (docs):** PRM-13…16 are not separate bullets — the docs gate caps Expectations at 12. They are folded: PRM-13 → PRM-01 (+ EDGE-PRM-08), PRM-14 → PRM-03, PRM-15 → EDGE-PRM-06, PRM-16 → EDGE-PRM-10 (added 2026-09-23).
+  - **Lane reds classified (Phase 2 lane + idle re-runs):** `runtime-object-declarations-migration` — **broken by 0176** (a 0159-lineage seed went through the current ORM shape) → fixed `82a2c230`; `deliverer` D3 — **pre-existing race** (delete before the projected seal; the documented "standing load-sensitive name") → fixed `82a2c230`; projection-worker, permission-deadline, run-transcript-projector, execution-ab-partitions, agents `prompt-owners` (50/50) — green idle, load.
 
 <!-- Commit checkpoint 6 -->
 
@@ -883,22 +918,25 @@ Each commit is gated on the phase exit criteria. Merge goes to master with `--no
 
 ## Test-integrity map
 
+As built (2026-09-23). The planned `prompt-host-settlement.integration.test.ts` was split by seam into the two `prompt-host-span*` files; A4 has no row because the D-A6 arm was withdrawn (T1.5).
+
 | RED | File (runner project) | Real seam |
 |---|---|---|
-| A4, racer | `web/lib/agents/__tests__/agent-session-reobserve.integration.test.ts` (integration, extended) | real PG + real supervisor + fault proxy + production agent worker |
-| settled_from constraint | T2.0 constraint test (integration) | real PG |
-| A5 (same-epoch supersession) | `prompt-admission-incarnation.integration.test.ts` (integration) | real PG + real supervisor; `test-support/projection-hold.ts` |
-| B1-signal, B6–B9, B5-503, B-failed | `prompt-host-settlement.integration.test.ts` (integration) | real supervisor + fault proxy `hold-events`; B8 seeds the DB shape; B5 uses fake `holdIngest`/`setPrunedFloor` |
+| A1, A3, A5 (both) | `web/lib/execution-host/__tests__/prompt-admission-incarnation.integration.test.ts` (integration) | real PG + real supervisor; `test-support/projection-hold.ts` |
+| site cases | `web/lib/execution-host/__tests__/admission-incarnation-sites.test.ts` (unit drift guard) | source text of the 11 sites |
+| A2 (flow) | `web/lib/flows/graph/__tests__/prompt-admission-yield.integration.test.ts` (integration) | real PG + real supervisor + production continuation worker |
+| A2 (agent), held create | `web/lib/flows/graph/__tests__/consensus-prompt-owners.integration.test.ts` (integration) | real supervisor + production agent continuation worker; DB triggers force the window |
+| settled_from constraint, 0141 guard re-creation | `web/lib/execution-host/__tests__/prompt-settled-from.integration.test.ts` (integration) | real PG |
+| B1, B1-signal, B2, B7 | `web/lib/execution-host/__tests__/prompt-host-span.integration.test.ts` (integration) | real supervisor + fault proxy (`hold-events`, dropped span reads) |
+| B5, B5-retry, B-failed, B-write-failed, B3 ×2, B4 row equality, racer ×2 orders, B6, B8, B9, B9-wired | `web/lib/execution-host/__tests__/prompt-host-span-fake.integration.test.ts` (integration) | real PG + fake `holdIngest` / `releaseIngest({before})` / `setPrunedFloor` |
 | signal-type drift guard | `web/lib/flows/__tests__/consumer-signal-types.test.ts` (unit) | pure |
-| 0141 guard re-creation | T2.0 constraint test (integration) | real PG |
-| A1, A2, A3, site cases | `web/lib/execution-host/__tests__/prompt-admission-incarnation.integration.test.ts` (integration) | real PG + real supervisor + production continuation workers |
-| B1–B5, racer | `web/lib/execution-host/__tests__/prompt-host-settlement.integration.test.ts` (integration) | real supervisor (B1, B2, B4); fake tamper/prune hooks (B3, B5) |
 | span route | `supervisor/src/__tests__/runtime-event-span.integration.test.ts` (supervisor integration) | real SQLite outbox |
 | parity | `web/lib/execution-host/__tests__/host-parity.integration.test.ts` (new span rows) | fake **and** real |
 | verifier | `web/lib/execution-host/__tests__/prompt-span-verifier.test.ts` (unit) | pure |
-| recovery | ADR-177 suite (extended) | real PG + real supervisor |
-| C1 table (7 rows) | `web/lib/runs/__tests__/time-limit-watchdog.integration.test.ts` (extended) | real PG, probe stub + transport spy |
-| counts | `lag-read-model` integration (extended) + i18n parity (unit) | real PG |
+| recovery (D-B7) | `web/lib/__tests__/reconcile-host-evidence.integration.test.ts` (integration) | real PG + fake host |
+| C1 table | `web/lib/runs/__tests__/time-limit-watchdog.integration.test.ts` (extended) | real PG, probe stub + transport spy |
+| counts | `web/lib/execution-host/events/__tests__/host-span-counts.integration.test.ts` + i18n parity (unit) | real PG |
+| load control (T5.3, opt-in) | `web/lib/execution-host/__tests__/host-span-load.integration.test.ts` | real supervisor + fault proxy, 120 s hold |
 
 **Existing assertions expected to migrate** (each must be named obsolete or broken in the phase that changes it):
 - **Classified obsolete (Phase 1, 2026-09-23):** `ingest.integration.test.ts` asserted that a same-epoch session reusing the run's `default` name WEDGES the lifecycle cursor. That wedge is the hazard D-A1a closes (C20); the case now asserts the older incarnation is superseded, the stream keeps moving and the superseded session's own exit still projects (`lost → exited`).
