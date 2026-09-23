@@ -153,6 +153,12 @@ state = 'active'`: at most one active assignment per run (E-EH-02).
   `execution_commands_state_check` (six states), and
   `execution_commands_terminal_shape_check` — `(state IN ('succeeded',
 'failed', 'fenced')) = (completed_at IS NOT NULL)`.
+- `execution_commands_request_v2_check` and
+  `execution_commands_terminal_evidence_check` (`0140`/`0141`, amended by
+  `0175`) require the v2 request bytes and the receipt on a settled prompt,
+  except on a retired tombstone (`retired_at` set), which keeps only the
+  request digest, the terminal event and the evidence digest. The `0140`/`0141`
+  immutability triggers exempt only the compaction that sets `retired_at`.
 - Indexes: `execution_assignments_host_state_idx (execution_host_id, state)`
   (the registrar's "does the old row still own active work" scan),
   `execution_commands_open_idx (state, next_attempt_at) WHERE state IN

@@ -120,7 +120,7 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 
 | `execution_hosts` | **(ADR-166 — Implemented, migration `0130`)** Registered execution hosts. Stage A: exactly one non-retired `kind='local_direct'` row (partial unique index), identity `host_key` minted by the supervisor, readiness + capabilities refreshed by the web registrar. The supervisor URL is env, never a column. | (none — retired via `retired_at`, never deleted while referenced) |
 | `execution_assignments` | **(ADR-166 — Implemented, migration `0130`)** Append-only per-run placement ledger: one row per `(run_id, epoch)`, `state ∈ active|superseded|released`, `placement_reason`, the opaque `execution_workspace_id` handle. At most one `active` row per run (partial unique index). | `runs.id`, `execution_hosts.id` (RESTRICT), self-ref `superseded_by_id` (SET NULL) |
-| `execution_commands` | **(ADR-166 — Implemented, migration `0130`)** Host-bound command intent + delivery ledger (`queued → delivering → accepted → succeeded|failed|fenced`), one row per wire `command.id`, REDACTED payload, per-kind retry budget, `driverless` recovery flag. **(ADR-167 S2.11/S2.12 — Implemented, migrations `0158`/`0159`)** Reclamation is the two-sided retirement handshake below, never age: `retired_at` marks the compacted tombstone, deleting a run or assignment around it is refused by `execution_commands_protected_evidence`, and every new `session.prompt` row must carry an owner (`execution_commands_prompt_owner_required`, NOT VALID so pre-v2 history is preserved unreconstructed). | `runs.id`, `execution_assignments.id`, `execution_hosts.id` (RESTRICT) |
+| `execution_commands` | **(ADR-166 — Implemented, migration `0130`)** Host-bound command intent + delivery ledger (`queued → delivering → accepted → succeeded|failed|fenced`), one row per wire `command.id`, REDACTED payload, per-kind retry budget, `driverless` recovery flag. **(ADR-167 S2.11/S2.12 — Implemented, migrations `0158`/`0159`)** Reclamation is the two-sided retirement handshake below, never age: `retired_at` marks the compacted tombstone, deleting a run or assignment around it is refused by `execution_commands_protected_evidence`, and every new `session.prompt` row must carry an owner (`execution_commands_prompt_owner_required`, NOT VALID so pre-v2 history is preserved unreconstructed). **(Migration `0175`, Implemented)** The compaction to a tombstone is the only transition exempt from the `0140`/`0141` request and evidence guards: `request_canonical_json`, `receipt_evidence`, `result` and `last_error` may become NULL only in the same UPDATE that sets `retired_at`, identity/digests/terminal event/state stay frozen, and a settled tombstone is final. | `runs.id`, `execution_assignments.id`, `execution_hosts.id` (RESTRICT) |
 | `execution_event_streams` | **(ADR-167 — Implemented, migrations `0131`–`0132`)** Manager-side host stream identity, durable received/contiguous/acknowledged cursors, gap state, boot observation, and consumer claim fields. | `execution_hosts.id` (RESTRICT) |
 | `execution_events` | **(ADR-167 — Implemented, migrations `0131`–`0132`)** Canonical redacted host/manager/import event facts. Partial unique host position and per-run sequence indexes make at-least-once delivery exactly-one at storage. | `runs.id` (CASCADE), host/stream (RESTRICT), assignment/incarnation (SET NULL) |
 | `execution_event_consumers` | **(ADR-167 — Implemented, migration `0131`)** Per-consumer, per-run projection cursor with poison/retry claim state; it is deliberately distinct from ingestion. | `runs.id` (CASCADE), poison event (SET NULL) |
@@ -1898,8 +1898,9 @@ spawn, unlike `acp_session_id`), and `node_attempts.execution_assignment_id`
 `execution_commands_state_check`, `execution_commands_terminal_shape_check`;
 FKs follow drizzle's `<table>_<col>_<reftable>_<refcol>_fk` convention. The
 indexes are listed in [Indexes](#indexes). Retention: terminal
-`execution_commands` rows older than 7 days are pruned by the `system_sweep`
-pass; assignments and hosts are kept.
+`execution_commands` rows are never deleted by age; the `system_sweep` pass
+compacts eligible rows to tombstones through the two-sided S2.11 retirement
+handshake; assignments and hosts are kept.
 
 ## Evaluation Lab tables (Implemented — ADR-142..147, migrations `0107`–`0114`)
 
@@ -4449,8 +4450,10 @@ adapters are wired and legacy rows are classified. Migration 0141 adds
 receipt identity, and protects recorded evidence and agreed results with a
 trigger. The terminal event FK restricts deletion. The shared reducer currently
 stores normalized legacy receipts and strict request-bound v2 evidence. The
-registered owner engine uses the existing application claim/marker fields;
-production owner activation, retirement and object additions remain designed. The
+registered owner engine uses the existing application claim/marker fields.
+Owner activation (S2.12) and retirement (S2.11) are implemented; migration
+`0175` lets retirement compaction, and nothing else, drop the request and
+evidence bodies these guards protect. The
 [command reducer and recovery windows](system-analytics/execution-prompt-lifecycle.md)
 define transition authority. New prompt rows activate only after every owner
 adapter supports the contract and existing accepted/unknown rows are drained or
@@ -4458,10 +4461,10 @@ explicitly held for repair. They cannot be backfilled from redacted payloads.
 
 | Table / column | Type / initial value | Constraint and purpose |
 | --- | --- | --- |
-| `execution_commands.request_canonical_json` | `text`, nullable only before activation or for existing non-prompt commands | Immutable exact JCS UTF-8 request; `request_schema = maister.command.request.v2`, SHA-256 must match; private, excluded from DTOs/logs. |
+| `execution_commands.request_canonical_json` | `text`, nullable only before activation, for existing non-prompt commands, or on a retired tombstone (`0175`) | Immutable exact JCS UTF-8 request until retirement compaction drops it; `request_schema = maister.command.request.v2`, SHA-256 must match; private, excluded from DTOs/logs. |
 | `execution_commands.transport_state` | `text`, `not_sent` | CHECK `not_sent|dispatching|acknowledged|unknown|reconciliation_required`; implemented prompt delivery/recovery preserves open execution after unknown admission. |
 | `execution_commands.next_attempt_at` | Existing `timestamptz`, null | Prompt send backoff or receipt-read due/claim CAS token (30-second read claim, then 5-second delay). Terminal agreement clears it; outbound exhaustion does not stop evidence reads. |
-| `execution_commands.receipt_evidence` | `jsonb`, null | Normalized terminal receipt identity/outcome, independent of event order; conflicting replay quarantines without overwrite. Legacy and strict request-bound v2 storage are implemented. |
+| `execution_commands.receipt_evidence` | `jsonb`, null | Normalized terminal receipt identity/outcome, independent of event order; conflicting replay quarantines without overwrite. Required while `terminal_evidence_sha256` is set, except on a retired tombstone, which drops it (`0175`). Legacy and strict request-bound v2 storage are implemented. |
 | `execution_commands.terminal_event_id` | `text`, null | Exact canonical event ID, resolved against the same command/fence/target; event cannot be pruned while referenced. |
 | `execution_commands.terminal_evidence_sha256` | `text`, null | Lowercase 64-hex digest of the agreed versioned terminal identity. |
 | `execution_commands.application_state` | `text`, `pending` | CHECK `pending|applying|applied|superseded|poisoned`; `applied` iff `completion_applied_at` nonnull. Non-prompt rows have no application obligation. |

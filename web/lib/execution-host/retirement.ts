@@ -49,7 +49,8 @@ export type CommandProtectedReason =
   | "run_retained"
   | "replay_grace"
   | "host_evidence_missing"
-  | "host_refused";
+  | "host_refused"
+  | "manager_compaction_failed";
 
 export type CommandRetirementSummary = {
   examined: number;
@@ -217,6 +218,24 @@ async function compact(db: Db, commandId: string, retiredAt: Date) {
     );
 }
 
+// A constraint error's DETAIL carries the failing row, which for a prompt holds
+// the protected request text — only the identifying fields are logged.
+function databaseFailure(error: unknown): {
+  code: string;
+  constraint?: string;
+  message: string;
+} {
+  const record = (error ?? {}) as { code?: unknown; constraint?: unknown };
+
+  return {
+    code: typeof record.code === "string" ? record.code : "UNKNOWN",
+    ...(typeof record.constraint === "string"
+      ? { constraint: record.constraint }
+      : {}),
+    message: error instanceof Error ? error.message : String(error),
+  };
+}
+
 export async function retireEligibleCommands(
   opts: CommandRetirementOptions = {},
 ): Promise<CommandRetirementSummary> {
@@ -299,7 +318,25 @@ export async function retireEligibleCommands(
       continue;
     }
 
-    await compact(db, row.id, now);
+    // The host half is already retired and idempotent, and the compaction is a
+    // single UPDATE: on failure the manager row keeps all of its evidence and
+    // the next pass repeats both halves. It must not abort the rows behind it.
+    try {
+      await compact(db, row.id, now);
+    } catch (error) {
+      note("manager_compaction_failed");
+      summary.failed += 1;
+      log.error(
+        {
+          commandId: row.id,
+          runId: row.runId,
+          kind: row.kind,
+          ...databaseFailure(error),
+        },
+        "command-retirement-compaction-failed",
+      );
+      continue;
+    }
     summary.retired += 1;
     log.info(
       {

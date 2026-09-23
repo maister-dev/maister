@@ -2446,7 +2446,7 @@ export const executionCommands = pgTable(
     ),
     terminalEvidenceCheck: check(
       "execution_commands_terminal_evidence_check",
-      sql`${t.terminalEvidenceSha256} IS NULL OR (${t.terminalEvidenceSha256} ~ '^[a-f0-9]{64}$' AND ${t.terminalEventId} IS NOT NULL AND ${t.receiptEvidence} IS NOT NULL)`,
+      sql`${t.terminalEvidenceSha256} IS NULL OR (${t.terminalEvidenceSha256} ~ '^[a-f0-9]{64}$' AND ${t.terminalEventId} IS NOT NULL AND (${t.receiptEvidence} IS NOT NULL OR ${t.retiredAt} IS NOT NULL))`,
     ),
     receiptEvidenceCheck: check(
       "execution_commands_receipt_evidence_check",
@@ -2508,9 +2508,11 @@ export const executionCommands = pgTable(
       "execution_commands_request_v2_check",
       sql`(((${t.requestSchema} IS DISTINCT FROM 'maister.command.request.v2') AND ${t.requestCanonicalJson} IS NULL) OR
         (${t.requestSchema} = 'maister.command.request.v2' AND ${t.kind} = 'session.prompt'
-        AND ${t.requestCanonicalJson} IS NOT NULL AND ${t.targetSessionId} IS NOT NULL
+        AND ${t.targetSessionId} IS NOT NULL
         AND ${t.ownerKind} IS NOT NULL AND ${t.ownerRef} IS NOT NULL
         AND length(${t.logicalOperationKey}) BETWEEN 1 AND 256
+        AND ((${t.retiredAt} IS NOT NULL AND ${t.requestCanonicalJson} IS NULL AND ${t.requestSha256} ~ '^[a-f0-9]{64}$')
+        OR (${t.requestCanonicalJson} IS NOT NULL
         AND ${t.requestSha256} = encode(sha256(convert_to(${t.requestCanonicalJson}, 'UTF8')), 'hex')
         AND (${t.requestCanonicalJson}::jsonb->'requestVersion') = '2'::jsonb
         AND (${t.requestCanonicalJson}::jsonb->'command'->>'id') = ${t.id}
@@ -2518,7 +2520,7 @@ export const executionCommands = pgTable(
         AND (${t.requestCanonicalJson}::jsonb->'fence'->>'runId') = ${t.runId}
         AND (${t.requestCanonicalJson}::jsonb->'fence'->>'assignmentId') = ${t.executionAssignmentId}
         AND (${t.requestCanonicalJson}::jsonb->'fence'->'assignmentEpoch') = to_jsonb(${t.assignmentEpoch})
-        AND (${t.requestCanonicalJson}::jsonb->'target'->>'hostSessionId') = ${t.targetSessionId}
+        AND (${t.requestCanonicalJson}::jsonb->'target'->>'hostSessionId') = ${t.targetSessionId}))
         AND (${t.ownerRef}->>'runId') = ${t.runId}
         AND (${t.ownerRef}->>'assignmentId') = ${t.executionAssignmentId}
         AND (${t.ownerRef}->'assignmentEpoch') = to_jsonb(${t.assignmentEpoch})

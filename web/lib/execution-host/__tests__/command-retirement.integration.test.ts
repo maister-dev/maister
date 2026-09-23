@@ -17,6 +17,12 @@ import { isMaisterError } from "@/lib/errors";
 import { mintAssignment } from "@/lib/execution-host/assignments";
 import { createExecutionHosts } from "@/lib/execution-host/client";
 import { getCommand, insertCommand } from "@/lib/execution-host/commands";
+import { stopRuntimeEventConsumers } from "@/lib/execution-host/events/consumer";
+import { canonicalProjectors } from "@/lib/execution-host/events/projection-runtime";
+import {
+  startProjectionWorker,
+  type ProjectionWorker,
+} from "@/lib/execution-host/events/projection-worker";
 import { resetRegistrarStateForTests } from "@/lib/execution-host/registrar";
 import { resetResolverForTests } from "@/lib/execution-host/resolver";
 import {
@@ -34,6 +40,7 @@ import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
+import { seedNodePromptOwner } from "@/test-support/prompt-owner-fixture";
 import {
   startRealSupervisor,
   useRealSupervisorUrl,
@@ -42,6 +49,7 @@ import {
 const schema = fullSchema as unknown as Record<string, any>;
 
 let testDatabase: StartedPostgresTestDb;
+let projectionWorker: ProjectionWorker;
 let db: Db;
 let sup: RealSupervisor;
 let restoreUrl: () => void = () => {};
@@ -69,10 +77,18 @@ beforeAll(async () => {
   });
   hosts = createExecutionHosts({ db });
   hostId = (await seedLocalHost(testDatabase.db)).id;
+  // Settling a real prompt needs the canonical prompt projector to bind its
+  // terminal event and digest — the exact row shape the evidence guards protect.
+  projectionWorker = startProjectionWorker({
+    db,
+    projectors: canonicalProjectors,
+  });
 }, 240_000);
 
 afterAll(async () => {
   restoreUrl();
+  await stopRuntimeEventConsumers();
+  await projectionWorker?.stop();
   await sup?.stop();
   await testDatabase?.stop();
 });
@@ -543,7 +559,227 @@ describe("AT-10 state-aware command retirement", () => {
 
     expect(await reportUnreconciledCommands({ db })).toBeGreaterThanOrEqual(1);
   }, 120_000);
+
+  it("retires a settled v2 prompt to a tombstone that keeps identity, digests and disposition", async () => {
+    const commandId = await settledPromptCommand("settled-prompt");
+    const before = await readPrompt(commandId);
+
+    expect(before.terminalEvidenceSha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(before.requestCanonicalJson).not.toBeNull();
+    expect(before.receiptEvidence).not.toBeNull();
+
+    // `completed_at` is frozen by the evidence trigger once the digest is set,
+    // so the replay grace is crossed by moving the clock, not the row.
+    await retireEligibleCommands({ db, hosts, now: pastGrace(), limit: 500 });
+
+    const after = await readPrompt(commandId);
+
+    expect(after.retiredAt).toBeInstanceOf(Date);
+    // The replayable request and every copied body are gone...
+    expect(after.requestCanonicalJson).toBeNull();
+    expect(after.receiptEvidence).toBeNull();
+    expect(after.result).toBeNull();
+    expect(after.lastError).toBeNull();
+    expect(after.payload).toEqual({});
+    // ...while identity, both digests and the outcome disposition survive.
+    expect(after).toMatchObject({
+      requestSchema: before.requestSchema,
+      requestSha256: before.requestSha256,
+      ownerKind: before.ownerKind,
+      ownerRef: before.ownerRef,
+      logicalOperationKey: before.logicalOperationKey,
+      terminalEventId: before.terminalEventId,
+      terminalEvidenceSha256: before.terminalEvidenceSha256,
+      state: "succeeded",
+      applicationState: "applied",
+      completedAt: before.completedAt,
+    });
+    // The host half is a tombstone too: repeating its retirement is a no-op.
+    const again = await hosts.local().retireCommand(commandId, {
+      expectedRequestSha256: before.requestSha256 as string,
+      expectedPhase: "completed",
+      assignmentEpoch: before.assignmentEpoch as number,
+    });
+
+    expect(again.compacted).toBe(false);
+  }, 180_000);
+
+  it("keeps a failed manager compaction to its own row and recovers it on the next pass", async () => {
+    const run = await seedFlowRun("compaction-fault");
+    const client = await bindRun(run);
+    const first = await deleteSessionCommandId(
+      client,
+      (await client.createSession(CREATE_PAYLOAD)).hostSessionId,
+    );
+    const second = await deleteSessionCommandId(
+      client,
+      (await client.createSession(CREATE_PAYLOAD)).hostSessionId,
+    );
+
+    // The faulted row sorts first in the keyset scan, so an unisolated failure
+    // would also starve the healthy row behind it.
+    for (const [id, days] of [
+      [first, 101],
+      [second, 100],
+    ] as const)
+      await db
+        .update(schema.executionCommands)
+        .set({ completedAt: new Date(Date.now() - days * DAY_MS) })
+        .where(eq(schema.executionCommands.id, id));
+    await injectCompactionFault(first);
+
+    try {
+      const summary = await retireEligibleCommands({ db, hosts, limit: 500 });
+
+      expect(summary.reasons.manager_compaction_failed).toBeGreaterThanOrEqual(
+        1,
+      );
+      expect((await readRow(first))?.retiredAt).toBeNull();
+      expect((await readRow(second))?.retiredAt).toBeInstanceOf(Date);
+      // The host half already went through; the manager kept every byte of
+      // its own evidence, so nothing recoverable was lost on either side.
+      expect((await hosts.local().getCommandReceipt(first))?.body).toEqual({
+        retired: true,
+      });
+    } finally {
+      await clearCompactionFault();
+    }
+
+    // The host operation is idempotent, so the next pass simply completes it.
+    await retireEligibleCommands({ db, hosts, limit: 500 });
+
+    expect((await readRow(first))?.retiredAt).toBeInstanceOf(Date);
+  }, 180_000);
+
+  it("admits only the retirement transition: live evidence cannot be shed and a tombstone is final", async () => {
+    const commandId = await settledPromptCommand("guard-narrowness");
+    const shed = (assignments: string) =>
+      testDatabase.pool.query(
+        `update execution_commands set ${assignments} where id = $1`,
+        [commandId],
+      );
+
+    // Without retirement, the settled evidence stays immutable.
+    await expect(
+      shed("receipt_evidence = null, result = null, last_error = null"),
+    ).rejects.toThrow(/verified prompt evidence is immutable/);
+    // Retiring may only DROP bodies, never rewrite them or the identity.
+    await expect(
+      shed(
+        `retired_at = now(), request_canonical_json = null, result = '{"stopReason":"end_turn","forged":true}'`,
+      ),
+    ).rejects.toThrow(/immutable/);
+    await expect(
+      shed(
+        `retired_at = now(), request_canonical_json = null, request_sha256 = '${"c".repeat(64)}'`,
+      ),
+    ).rejects.toThrow(/immutable/);
+
+    await retireEligibleCommands({ db, hosts, now: pastGrace(), limit: 500 });
+    expect((await readPrompt(commandId)).retiredAt).toBeInstanceOf(Date);
+
+    // A tombstone can neither regain a request or a receipt nor be un-retired.
+    await expect(shed(`request_canonical_json = '{}'`)).rejects.toThrow(
+      /immutable/,
+    );
+    // Well-formed on purpose: the shape CHECK must not be what refuses it.
+    await expect(
+      shed(
+        `receipt_evidence = jsonb_build_object('commandId', id, 'runId', run_id, 'kind', kind, 'assignmentEpoch', assignment_epoch, 'phase', 'completed')`,
+      ),
+    ).rejects.toThrow(/immutable/);
+    await expect(shed("retired_at = null")).rejects.toThrow(/check constraint/);
+  }, 180_000);
 });
+
+// A REAL settled v2 prompt: the host holds its v2 receipt, and the manager holds
+// the immutable request, the receipt, the bound terminal event and the digest —
+// the exact row the request and evidence guards protect.
+async function settledPromptCommand(name: string): Promise<string> {
+  const runId = await seedFlowRun(name, "Running");
+  const client = await bindRun(runId);
+  const session = await client.createSession(CREATE_PAYLOAD);
+  const handle = await client.prompt(
+    session.hostSessionId,
+    { stepId: "s1", prompt: "hello" },
+    {
+      admitOwner: await seedNodePromptOwner(db, client, session.hostSessionId),
+    },
+  );
+
+  await client.waitForPrompt(handle, { signal: AbortSignal.timeout(60_000) });
+  // Owner application semantics belong to the owner suites; retirement only
+  // reads the recorded disposition, so it is recorded directly.
+  await db
+    .update(schema.executionCommands)
+    .set({ applicationState: "applied", completionAppliedAt: new Date() })
+    .where(eq(schema.executionCommands.id, handle.commandId));
+  await db
+    .update(schema.runs)
+    .set({ status: "Done" })
+    .where(eq(schema.runs.id, runId));
+  // The host retires a v2 receipt only once its terminal event is ACKed.
+  await expect
+    .poll(() => terminalEventAcked(handle.commandId), { timeout: 60_000 })
+    .toBe(true);
+
+  return handle.commandId;
+}
+
+async function terminalEventAcked(commandId: string): Promise<boolean> {
+  const { rows } = await testDatabase.pool.query<{ acked: boolean | null }>(
+    `select s.last_ack_confirmed_sequence >= e.host_sequence as acked
+       from execution_commands c
+       join execution_events e on e.id = c.terminal_event_id
+       join execution_event_streams s on s.id = e.event_stream_id
+      where c.id = $1`,
+    [commandId],
+  );
+
+  return rows[0]?.acked === true;
+}
+
+function pastGrace(): Date {
+  return new Date(Date.now() + 30 * DAY_MS);
+}
+
+async function readPrompt(id: string) {
+  const [row] = (await db
+    .select()
+    .from(schema.executionCommands)
+    .where(eq(schema.executionCommands.id, id))) as unknown as Array<
+    Record<string, unknown> & { retiredAt: Date | null }
+  >;
+
+  if (!row) throw new Error(`command ${id} is gone`);
+
+  return row;
+}
+
+// A fault at the manager half ONLY: the host retirement has already succeeded
+// when the compaction UPDATE is refused.
+async function injectCompactionFault(commandId: string) {
+  await testDatabase.pool.query(`
+    create or replace function test_refuse_compaction() returns trigger
+    language plpgsql as $$
+    begin
+      if new.id = '${commandId}' and new.retired_at is not null then
+        raise exception 'injected compaction fault';
+      end if;
+      return new;
+    end;
+    $$;
+    create trigger test_refuse_compaction before update on execution_commands
+    for each row execute function test_refuse_compaction();
+  `);
+}
+
+async function clearCompactionFault() {
+  await testDatabase.pool.query(`
+    drop trigger if exists test_refuse_compaction on execution_commands;
+    drop function if exists test_refuse_compaction();
+  `);
+}
 
 // The delete of a freshly created session is a real host round-trip that leaves
 // a terminal receipt on BOTH sides without needing a scripted agent turn.
