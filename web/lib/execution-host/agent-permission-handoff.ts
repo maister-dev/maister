@@ -355,10 +355,12 @@ export async function readCheckpointSource(
         input?.receiptEvidence &&
         isRejectedPermissionInputReceipt(input.receiptEvidence)
           ? "rejected"
-          : (resolved.order === "after_checkpoint" || halt !== null) &&
-              isPermissionCheckpointInterruption(command)
+          : source.kind === "permission" && input === null
             ? "continue"
-            : "result",
+            : (resolved.order === "after_checkpoint" || halt !== null) &&
+                isPermissionCheckpointInterruption(command)
+              ? "continue"
+              : "result",
     },
   };
 }

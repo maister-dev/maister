@@ -209,6 +209,26 @@ async function grantOn(hitlId: string) {
   return row?.response?._agentResume ? row : null;
 }
 
+async function expectReissuedPermissionDelivered(
+  runId: string,
+  originalHitlId: string,
+): Promise<void> {
+  const original = await grantOn(originalHitlId);
+  const grant = original?.response?._agentResume;
+  const rows = await hitlRows(runId);
+  const reissued = rows.find((row) => row.id === grant?.reissuedHitlRequestId);
+  const inputs = (await commandsOf(runId)).filter(
+    (command) =>
+      command.kind === "session.input" && command.state === "succeeded",
+  );
+
+  expect(grant).toMatchObject({ kind: "continue", inputCommandId: null });
+  expect(original?.respondedAt).not.toBeNull();
+  expect(reissued?.respondedAt).not.toBeNull();
+  expect(inputs).toHaveLength(1);
+  expect(inputs[0]?.assignmentEpoch).toBeGreaterThan(1);
+}
+
 async function checkpointedIncarnationOf(runId: string) {
   const rows = (await db
     .select()
@@ -499,7 +519,7 @@ describe("permission deadline — one owner (ADR-180)", () => {
     expect(body).toEqual({
       code: "EXECUTOR_UNAVAILABLE",
       message:
-        "Your answer is saved and will be delivered when the run resumes.",
+        "Your answer is saved; delivery is pending. Retry delivery to send it.",
       details: { reason: "delivery_unavailable" },
     });
     expect(resolveHitlErrorMessage(body)).toEqual({
@@ -527,7 +547,10 @@ describe("permission deadline — one owner (ADR-180)", () => {
     );
 
     expect(retry.status).toBe(202);
-    expect(JSON.stringify(await retry.json())).toContain("resume");
+    expect(await retry.json()).toMatchObject({
+      ok: true,
+      state: "resume-in-progress",
+    });
     await waitFor(
       async () => (await answered(runId)) || null,
       "race-503: the retried answer delivered to the resumed session",
@@ -722,11 +745,13 @@ describe("permission deadline — one owner (ADR-180)", () => {
       expect(granted.response._agentResume).toMatchObject({
         kind: "continue",
         checkpointCommandId: null,
+        inputCommandId: null,
       });
       await waitFor(
         async () => (await answered(runId)) || null,
         "agent-race: the reissued permission answered",
       );
+      await expectReissuedPermissionDelivered(runId, hitl.id);
       expect((await runRow(runId)).status).not.toBe("Failed");
     } finally {
       await continuation.stop();
@@ -771,11 +796,13 @@ describe("permission deadline — one owner (ADR-180)", () => {
       expect(granted.response._agentResume).toMatchObject({
         kind: "continue",
         checkpointCommandId: null,
+        inputCommandId: null,
       });
       await waitFor(
         async () => (await answered(runId)) || null,
         "agent-host-park: the reissued permission answered",
       );
+      await expectReissuedPermissionDelivered(runId, hitl.id);
       const after = await runRow(runId);
 
       expect(after.status).not.toBe("Failed");
