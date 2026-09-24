@@ -59,7 +59,9 @@ export type GatePromptOwner = Readonly<{
  * resolve it; an unavailable reader must not manufacture a failed gate.
  */
 export class FlowPromptContinuationPending extends MaisterError {
-  constructor(commandId: string, cause: unknown) {
+  /** `commandId` is null when the yield precedes any prompt command (an
+   * admission that found no durable incarnation yet). */
+  constructor(commandId: string | null, cause: unknown) {
     super("PRECONDITION", "Flow prompt awaits durable owner application", {
       details: { reason: "flow_prompt_continuation_pending", commandId },
       ...(cause instanceof Error ? { cause } : {}),

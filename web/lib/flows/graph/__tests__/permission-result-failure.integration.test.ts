@@ -812,23 +812,27 @@ describe("Owned Flow completed-command failure handoff", () => {
           try {
             await expect(
               db.transaction((tx) =>
-                lockCreateOwner(tx, {
-                  runId: seeded.runId,
-                  assignmentId: parked.executionAssignmentId!,
-                  owner:
-                    owner === "node"
-                      ? {
-                          variant: "node",
-                          nodeAttemptId: parent.id,
-                          promptOrdinal: 1,
-                        }
-                      : {
-                          variant: "gate_ai",
-                          nodeAttemptId: parent.id,
-                          gateId: gates[0].gateId,
-                          evaluationId: gates[0].id,
-                        },
-                }),
+                lockCreateOwner(
+                  tx,
+                  {
+                    runId: seeded.runId,
+                    assignmentId: parked.executionAssignmentId!,
+                    owner:
+                      owner === "node"
+                        ? {
+                            variant: "node",
+                            nodeAttemptId: parent.id,
+                            promptOrdinal: 1,
+                          }
+                        : {
+                            variant: "gate_ai",
+                            nodeAttemptId: parent.id,
+                            gateId: gates[0].gateId,
+                            evaluationId: gates[0].id,
+                          },
+                  },
+                  "create",
+                ),
               ),
             ).rejects.toMatchObject({
               code: "CONFLICT",

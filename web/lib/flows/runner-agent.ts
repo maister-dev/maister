@@ -1825,8 +1825,11 @@ async function runNewSession(
       );
     }
     // No durable incarnation yet: the session is live and still ours, so it
-    // must survive for the continuation worker's re-drive, which re-admits the
-    // same attempt once the create ACK (or its fold) is durable.
+    // must survive for the continuation worker's re-drive. An OWNED create is
+    // re-admitted on the same session once its ACK (or its fold) is durable; an
+    // unowned one (consensus substeps, the resume fallback) is re-created by
+    // the re-drive, and the ACK-authored row makes this yield practically
+    // unreachable there (SDD C4).
     if (err instanceof PromptIncarnationPending) {
       continuationPending = true;
       log.warn(
@@ -1838,10 +1841,7 @@ async function runNewSession(
         },
         "flow-prompt-admission-yielded",
       );
-      throw new FlowPromptContinuationPending(
-        String(err.details?.hostSessionId),
-        err,
-      );
+      throw new FlowPromptContinuationPending(null, err);
     }
     if (err instanceof FlowPromptContinuationPending) {
       continuationPending = true;

@@ -139,8 +139,19 @@ async function lifecycleConsumerState(runId: string): Promise<string | null> {
   return rows[0]?.state ?? null;
 }
 
+async function lifecycleClaimOwner(runId: string): Promise<string | null> {
+  const { rows } = await testDatabase.pool.query<{
+    claim_owner: string | null;
+  }>(
+    "SELECT claim_owner FROM execution_event_consumers WHERE consumer_name = $1 AND run_id = $2",
+    [CANONICAL_PROJECTION_CONSUMERS.lifecycle, runId],
+  );
+
+  return rows[0]?.claim_owner ?? null;
+}
+
 describe("prompt admission on the ACK-authored incarnation", () => {
-  it("A1: admits a node prompt within one wake while lifecycle projection is held, then activates the same row", async () => {
+  it("A1: admits a node prompt while lifecycle projection is held, then activates the same row", async () => {
     const runId = await seedFlowRun("a1");
     const client = await hosts.forRun(runId, { reason: "launch" });
     const release = await holdProjection(testDatabase.pool, {
@@ -163,12 +174,17 @@ describe("prompt admission on the ACK-authored incarnation", () => {
         activatedAt: null,
       });
 
-      const started = performance.now();
       const admitOwner = await seedNodePromptOwner(db, client, hostSessionId);
 
-      // One 250 ms wake is the admission budget; the projector is held, so
-      // only the ACK-authored row could have satisfied the fence.
-      expect(performance.now() - started).toBeLessThan(1_000);
+      // Admission returned while the lifecycle projector is still held and the
+      // row it admitted is still the unactivated ACK row: it did not wait for
+      // projection, which could not have run yet.
+      expect(await incarnation(hostSessionId)).toMatchObject({
+        id: createdId,
+        state: "created",
+        activatedAt: null,
+      });
+      expect(await lifecycleClaimOwner(runId)).toMatch(/^test-hold:/);
 
       const handle = await client.prompt(
         hostSessionId,
@@ -325,6 +341,69 @@ describe("prompt admission on the ACK-authored incarnation", () => {
     // Moving the superseded row back into `checkpointed` would re-enter the
     // partial unique set beside the live replacement: a permanent poison.
     expect((await incarnation(firstId)).state).toBe("lost");
+    expect(await lifecycleConsumerState(runId)).not.toBe("poisoned");
+  }, 180_000);
+
+  it("A3-paused: an owner paused for input still owns its session — session.created activates the row instead of losing it", async () => {
+    // Review finding: the projector re-asked the CREATE question ("may this
+    // owner open a session now?"), which a permission pause answers no, and
+    // marked a live, admitted session `lost`. An acknowledgement asks whether
+    // the session is still the owner's.
+    const runId = await seedFlowRun("a3-paused");
+    const client = await hosts.forRun(runId, { reason: "launch" });
+    const [attempt] = (await db
+      .insert(schema.nodeAttempts)
+      .values({
+        id: randomUUID(),
+        runId,
+        nodeId: "s1",
+        nodeType: "ai_coding",
+        attempt: 1,
+        status: "Running",
+        executionAssignmentId: client.assignment.id,
+        actionPromptOrdinal: 0,
+        startedAt: new Date(),
+      })
+      .returning({ id: schema.nodeAttempts.id })) as Array<{ id: string }>;
+
+    await db
+      .update(schema.runs)
+      .set({ currentStepId: "s1" })
+      .where(eq(schema.runs.id, runId));
+    const release = await holdProjection(testDatabase.pool, {
+      consumerName: CANONICAL_PROJECTION_CONSUMERS.lifecycle,
+      runId,
+    });
+    let hostSessionId: string;
+
+    try {
+      const session = await client.createOwnedSession(
+        { variant: "node", nodeAttemptId: attempt.id, promptOrdinal: 0 },
+        async () => ({ ...CREATE_PAYLOAD, nodeAttemptId: attempt.id }),
+      );
+
+      hostSessionId = session.hostSessionId;
+      expect((await incarnation(hostSessionId)).state).toBe("created");
+      // The agent asked for permission before the projector reached the
+      // session's canonical `session.created`: run and attempt both park.
+      await db
+        .update(schema.runs)
+        .set({ status: "NeedsInput" })
+        .where(eq(schema.runs.id, runId));
+      await db
+        .update(schema.nodeAttempts)
+        .set({ status: "NeedsInput" })
+        .where(eq(schema.nodeAttempts.id, attempt.id));
+    } finally {
+      await release();
+    }
+
+    await expect
+      .poll(async () => (await incarnation(hostSessionId)).state, {
+        timeout: 60_000,
+      })
+      .toBe("active");
+    expect((await incarnation(hostSessionId)).terminalReason).toBeNull();
     expect(await lifecycleConsumerState(runId)).not.toBe("poisoned");
   }, 180_000);
 

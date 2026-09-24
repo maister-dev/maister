@@ -8,6 +8,7 @@ import { and, eq } from "drizzle-orm";
 import pino from "pino";
 
 import {
+  ADMISSIBLE_PROMPT_INCARNATION_STATES,
   lockCurrentSessionAssignment,
   lockLogicalRunSession,
 } from "../session-binding";
@@ -349,8 +350,9 @@ async function projectTerminal(tx: Db, event: ExecutionEvent): Promise<void> {
   // one-open-row-per-session index and poison this projector permanently.
   if (
     nextState === "checkpointed" &&
-    incarnation.state !== "created" &&
-    incarnation.state !== "active"
+    !(ADMISSIBLE_PROMPT_INCARNATION_STATES as readonly string[]).includes(
+      incarnation.state,
+    )
   ) {
     await tx
       .update(runSessionIncarnations)
