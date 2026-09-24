@@ -597,7 +597,13 @@ type Probe = "completed" | "indeterminate" | "rejected";
 async function seedAttemptPrompt(
   runId: string,
   variant: "node" | "gate_skill" | "gate_ai",
-  shape: "accepted" | "settled" | "applied",
+  shape:
+    | "accepted"
+    | "settled"
+    | "applied"
+    | "poisoned"
+    | "quarantined"
+    | "turn_lost",
   createdAt: Date,
 ): Promise<string> {
   const { mintAssignment } = await import("@/lib/execution-host/assignments");
@@ -664,6 +670,39 @@ async function seedAttemptPrompt(
           settledFrom: "host_span",
           ...(shape === "applied"
             ? { applicationState: "applied", completionAppliedAt: createdAt }
+            : {}),
+          ...(shape === "poisoned"
+            ? {
+                applicationState: "poisoned",
+                applicationError: {
+                  reason: "prompt_owner_poisoned",
+                  phase: "apply",
+                  causeCode: "PRECONDITION",
+                },
+              }
+            : {}),
+          // What `quarantine()` writes when the conflict is found before
+          // application.
+          ...(shape === "quarantined"
+            ? {
+                applicationState: "poisoned",
+                applicationError: {
+                  reason: "prompt_terminal_conflict",
+                  phase: "prepare",
+                  causeCode: "terminal_v2_agreement",
+                },
+              }
+            : {}),
+          ...(shape === "turn_lost"
+            ? {
+                state: "failed",
+                result: null,
+                lastError: {
+                  code: "PRECONDITION",
+                  message: "turn lost",
+                  details: { reason: "turn_lost" },
+                },
+              }
             : {}),
         }
       : { state: "accepted", acceptedAt: createdAt }),
@@ -795,6 +834,66 @@ describe("time-limit watchdog — a finished turn is never killed (ADR-167 D5 am
 
     expect((await getRun(runId)).status).toBe("Running");
     expect(result.deferredCompletedCount).toBe(1);
+  }, 60_000);
+
+  it.each(["poisoned", "quarantined", "turn_lost"] as const)(
+    "C1-%s: a settled turn no owner will ever apply is killed without a probe",
+    async (shape) => {
+      // Nothing moves these: the owner gave up (poisoned), refused disagreeing
+      // evidence (quarantined), or the host lost the turn. Deferring would
+      // remove the only bound a live-session or judge node has.
+      const { runId } = await overCap();
+
+      await seedAttemptPrompt(runId, "node", shape, later);
+      const result = await tick();
+
+      expect((await getRun(runId)).status).toBe("Failed");
+      expect(result.deferredCompletedCount).toBe(0);
+      expect(receiptSpy).not.toHaveBeenCalled();
+    },
+    60_000,
+  );
+
+  it("C1-stream-lost: a completed receipt on a host whose stream is lost is killed — its evidence can never arrive", async () => {
+    const { runId } = await overCap();
+    const commandId = await seedAttemptPrompt(runId, "node", "accepted", later);
+    const streams = await db
+      .select({
+        id: schema.executionEventStreams.id,
+        state: schema.executionEventStreams.state,
+      })
+      .from(schema.executionEventStreams)
+      .where(eq(schema.executionEventStreams.executionHostId, hostId));
+
+    scriptProbe(commandId, "completed");
+    try {
+      if (streams.length === 0)
+        await db.insert(schema.executionEventStreams).values({
+          id: randomUUID(),
+          executionHostId: hostId,
+          streamId: `c1-lost-${runId.slice(0, 8)}`,
+          state: "lost",
+        });
+      else
+        await db
+          .update(schema.executionEventStreams)
+          .set({ state: "lost" })
+          .where(eq(schema.executionEventStreams.executionHostId, hostId));
+      const result = await tick();
+
+      expect((await getRun(runId)).status).toBe("Failed");
+      expect(result.deferredCompletedCount).toBe(0);
+    } finally {
+      if (streams.length === 0)
+        await db
+          .delete(schema.executionEventStreams)
+          .where(eq(schema.executionEventStreams.executionHostId, hostId));
+      for (const stream of streams)
+        await db
+          .update(schema.executionEventStreams)
+          .set({ state: stream.state })
+          .where(eq(schema.executionEventStreams.id, stream.id));
+    }
   }, 60_000);
 
   it("C1-applied: an applied newest command means the driver sits between prompts — killed without a probe", async () => {

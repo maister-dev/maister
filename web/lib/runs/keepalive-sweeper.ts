@@ -35,12 +35,14 @@ import * as schemaModule from "@/lib/db/schema";
 import { RUN_SYNC_TERMINAL_PHASES, agentTurns } from "@/lib/db/schema";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { isMaisterError, MaisterError } from "@/lib/errors";
+import { commandStreamLost } from "@/lib/execution-host/events/stream-health";
 import { FLOW_NODE_ATTEMPT_VARIANTS } from "@/lib/execution-host/prompt-owner-contract";
 import {
   loadPromptEvidence,
   needsReceiptProbe,
   probeReceipt,
 } from "@/lib/reconcile-evidence-db";
+import { classifyPromptEvidence } from "@/lib/reconcile-evidence";
 import { compileManifest } from "@/lib/flows/graph/compile";
 import { markNodeFailed, markNodeNeedsInput } from "@/lib/flows/graph/ledger";
 import { loadRunManifest } from "@/lib/queries/run-manifest";
@@ -625,10 +627,15 @@ async function fetchActiveAttempt(
 // Cost limits stay record-only — never a kill trigger.
 /** ADR-167 D5 amendment (D-C1): a positive witness that the attempt's newest
  * owned prompt — of any flow_node_attempt variant, so a gate prompt after the
- * applied action counts — already finished on the host. Only a settled but
- * unapplied command or a `completed` receipt answer; a running v2 turn probes
- * `indeterminate`, and an applied newest command means the driver sits between
- * prompts. No settlement and no host call beyond the receipt probe. */
+ * applied action counts — already finished on the host AND that a writer will
+ * still move it. A settled command defers only while its owner can apply it
+ * (`pending_application` / `applying`); poisoned, quarantined and lost turns
+ * have no applier, and deferring them would leave a live-session or judge node
+ * with no bound at all. A `completed` receipt defers only while the host's
+ * stream is alive, because only then can its evidence still be settled. A
+ * running v2 turn probes `indeterminate`, and an applied newest command means
+ * the driver sits between prompts. No settlement and no host call beyond the
+ * receipt probe. */
 async function completedTurnWitness(
   db: Db,
   hosts: ExecutionHosts,
@@ -645,14 +652,13 @@ async function completedTurnWitness(
   });
 
   if (!newest) return null;
-  if (
-    newest.terminalEvidenceSha256 &&
-    newest.applicationState !== "applied" &&
-    newest.applicationState !== "superseded"
-  )
+  const evidence = classifyPromptEvidence(newest);
+
+  if (evidence === "pending_application" || evidence === "applying")
     return { commandId: newest.id, witness: "settled" };
   if (
     needsReceiptProbe(newest) &&
+    !(await commandStreamLost({ db, commandId: newest.id })) &&
     (await probeReceipt(hosts.transport, newest.id)) === "completed"
   )
     return { commandId: newest.id, witness: "receipt_completed" };
@@ -692,8 +698,9 @@ async function runTimeLimitPass(
     );
 
     if (elapsedMs <= cap * 60_000) return;
-    // A finished turn is never killed: its settlement belongs to the waiting
-    // driver or the continuation worker, bounded by ADR-177 stream-lost.
+    // A finished turn a writer will still move is never killed: the owner
+    // applies or poisons a settled one, and a completed receipt settles only
+    // while the host's stream is alive (see `completedTurnWitness`).
     const completed = await completedTurnWitness(db, hosts, row.id, attempt.id);
 
     if (completed) {
