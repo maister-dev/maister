@@ -139,7 +139,6 @@ export type E2EM23Fixture = {
   failedRunId: string;
   abandonedRunId: string;
   crashedRunId: string;
-  pendingRunId: string;
   platformScratchRunId: string;
   thirdTaskId: string;
 };

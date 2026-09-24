@@ -6327,15 +6327,17 @@ type M23FixtureRecord = {
   nodeId: string;
   scratchRunId: string;
   noCacheProjectSlug: string;
-  // ADR-178: one run per settled outcome bucket plus a queued one, and a
-  // project-less scratch run for the admin-only Platform row.
+  // ADR-178: one run per settled outcome bucket, and a project-less scratch
+  // run for the admin-only Platform row. No queued run: `Pending` is transient —
+  // the real scheduler promotes a Pending flow run the moment a slot frees (the
+  // cap is 64 here), and a task-less one fails its dispatch ("task not found")
+  // and strands as Running.
   deliveredRunId: string;
   prOpenRunId: string;
   resultOnlyRunId: string;
   failedRunId: string;
   abandonedRunId: string;
   crashedRunId: string;
-  pendingRunId: string;
   platformScratchRunId: string;
   thirdTaskId: string;
 };
@@ -6425,7 +6427,6 @@ async function seedM23Fixture(
     failedRun: randomUUID(),
     abandonedRun: randomUUID(),
     crashedRun: randomUUID(),
-    pendingRun: randomUUID(),
     platformScratchRun: randomUUID(),
     deliveredWorkspace: randomUUID(),
     prOpenWorkspace: randomUUID(),
@@ -6697,9 +6698,7 @@ async function seedM23Fixture(
        ($7, null, $2, $3, 'flow', 'Review', 'v0.0.1',
         now() - interval '12 hours', now() - interval '11 hours'),
        ($8, null, $2, $3, 'flow', 'Crashed', 'v0.0.1',
-        now() - interval '10 hours', now() - interval '9 hours'),
-       ($10, null, $2, $3, 'flow', 'Pending', 'v0.0.1',
-        now() - interval '8 hours', null)`,
+        now() - interval '10 hours', now() - interval '9 hours')`,
     [
       ids.deliveredRun,
       ids.project,
@@ -6710,7 +6709,6 @@ async function seedM23Fixture(
       ids.abandonedRun,
       ids.crashedRun,
       ids.thirdTask,
-      ids.pendingRun,
     ],
   );
   await pool.query(
@@ -6758,7 +6756,6 @@ async function seedM23Fixture(
     failedRunId: ids.failedRun,
     abandonedRunId: ids.abandonedRun,
     crashedRunId: ids.crashedRun,
-    pendingRunId: ids.pendingRun,
     platformScratchRunId: ids.platformScratchRun,
     thirdTaskId: ids.thirdTask,
   };

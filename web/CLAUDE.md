@@ -527,9 +527,9 @@ budget at load 40-72 with `--workers=2`; both now carry 120 s (m11b also waits
 (`Notification.permission === "denied"` at mount). What found the race was the
 dev server's own log — temporarily set `webServer.stdout: "pipe"` in
 `playwright.config.ts` ("orchestrator turn ended with no pending children").
-Unrelated noise that log also shows: the observatory fixture seeds a task-less
-`Pending` flow run, which the real scheduler promotes whenever a slot frees
-(`promoteNextPending runFlow dispatch failed — task not found`).
+That log also showed the observatory fixture's task-less `Pending` flow run
+being promoted whenever a slot freed (`promoteNextPending runFlow dispatch
+failed — task not found`); the fixture seeds no queued run any more.
 
 **`pnpm lint` on `master` c4216cd5 is RED: 3 errors**, all
 `react/no-children-prop` in `components/observatory/__tests__/` — 2 in

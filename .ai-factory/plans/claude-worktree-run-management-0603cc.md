@@ -2032,6 +2032,20 @@ honours its three modes; refactor gate passed.
       idempotent, so both specs' tick helper retries once on a fresh connection.
       The four specs then passed together twice at `--workers=2`, at load 62 and
       39.
+- [x] **T5.4 — The observatory seed queues no run (owner, 2026-09-24: fix).**
+      T5.3's log showed the M23 fixture's task-less `Pending` flow run promoted by
+      the real scheduler whenever a slot freed, failing its dispatch (`task not
+      found`) and stranding as `Running`. `Pending` is transient under a live
+      scheduler (the e2e cap is 64), so the fixture cannot hold one; no spec read
+      `pendingRunId` and `m23-observatory` asserts only settled buckets. The row,
+      its id and the fixture field are gone.
+      **AC**: the promotion failure is absent from the dev server's log on the
+      spec pair that produced it; the Observatory spec stays green.
+      **Verified 2026-09-24.** `orchestrator-loop` + `m23-observatory` with a
+      temporary `webServer.stdout: "pipe"` (reverted): 12/12, zero `task not
+      found`; the same pair over `HEAD`'s seed: 12/12 and one `promoteNextPending
+      runFlow dispatch failed — task not found` (the falsification). tsc clean,
+      eslint 0/0 on both seed files.
 
 **Phase 5 lanes (final tree, 2026-09-23).** Unit 826 files / 8611 tests, 0
 failed, 0 skipped (a run overlapping a load spike to 151 timed out 17 cases in
@@ -2051,6 +2065,9 @@ green.
 **Commit 9** — `fix(workbench-git): recover respects the one writer of a worktree` (T5.1)
 **Commit 10** — `feat(workbench-git): a Failed workbench expires like a finished one` (T5.2)
 **Commit 11** — the T5.3 fixes (separate, as the owner asked)
+**Commit 12** — `fix(scratch-runs): the recover fence reads the workspace row as its route does` (T5.1, found by the final unit lane)
+**Commit 13** — `test(e2e): survive a reset dispatcher tick; budget the rework-claim loop` (T5.3, found by the final e2e lane)
+**Commit 14** — `test(e2e): the observatory seed queues no run` (T5.4)
 
 ---
 
@@ -2355,3 +2372,9 @@ are put to the owner rather than widened silently:
 | 3 | T4.2 live provider check | **after rollout** | T4.2 |
 | 4 | Unbounded `Failed` rows (Follow-up 2) | **TTL for `Failed`** (over pagination) | T5.2, Commit 10 |
 | 5 | The three master-side e2e names | **diagnose here**, own commit | T5.3, Commit 11 |
+
+## Post-implementation decisions (owner, 2026-09-24, after Commit 13)
+
+| # | Question | Answer | Where it landed |
+|---|---|---|---|
+| 1 | The observatory seed's task-less `Pending` run | **fix** | T5.4, Commit 14 |
