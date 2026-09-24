@@ -260,9 +260,11 @@ function serviceFailure(error: unknown): boolean {
     if (!current || typeof current !== "object") return false;
     const code = "code" in current ? current.code : null;
 
+    // `40P01`: the deadlock victim's work rolled back whole; the retry is a
+    // clean attempt, never evidence against the owner.
     if (
       typeof code === "string" &&
-      /^(08|53|57P0|ECONN|EPIPE|ETIMEDOUT)/.test(code)
+      /^(08|53|57P0|40P01|ECONN|EPIPE|ETIMEDOUT)/.test(code)
     )
       return true;
     current = "cause" in current ? current.cause : null;

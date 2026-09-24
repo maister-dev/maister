@@ -523,7 +523,8 @@ Successful application sets `application_state=applied` and
 `completion_applied_at` together. Explicit supersession retains the historical
 outcome without marking it applied. Transient application failures roll back
 and retry after 1, 2, 4 and 8 seconds; the fifth failure poisons application.
-Invariant failures poison immediately. Host/DB unavailability leaves the owner
+Invariant failures poison immediately. Host/DB unavailability, and a deadlock
+that picked the apply transaction as its victim (`40P01`), leave the owner
 retryable without consuming failure attempts. `PromptOwnerDeferred` retains a
 valid owner awaiting another durable domain transition, clears its claim and
 retries after one second without increasing the failure count. The canonical command outcome is

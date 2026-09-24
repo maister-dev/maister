@@ -432,7 +432,7 @@ Response 200 JSON:
 
 - **Commit 1** (T0.1–T0.4): `docs(execution): SDD for ACK-authored incarnations and host-evidence settlement (ADR-167 D5 / ADR-177 amendments)`
 - **Commit 2** (T1.1–T1.6): `fix(execution-host): admit prompts on the ACK-authored incarnation; admission timeout is a yield; re-drive deferred agent messages`
-- **Commit 3** (T2.0–T2.2): `fix(execution-host): record which evidence feed settled a prompt (migration 0176); bind the receipt-named terminal event directly`
+- **Commit 3** (T2.0–T2.2): `fix(execution-host): record which evidence feed settled a prompt (migration 0177); bind the receipt-named terminal event directly`
 - **Commit 4** (T3.1–T3.5): `feat(execution-host): settle completed turns from the host's verified event span (signal-free spans only); re-anchor dispatched prompts on confirmation`
 - **Commit 5** (T4.1–T4.2): `fix(runs): recovery and the duration watchdog settle completed turns instead of killing them`
 - **Commit 6** (T5.1–T5.4): `feat(admin): host-span settlement counts; docs as-built; load control`
