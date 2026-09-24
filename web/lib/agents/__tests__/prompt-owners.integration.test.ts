@@ -2466,46 +2466,17 @@ describe("Agent owned prompts through the production launcher", () => {
     }
   }, 90_000);
 
-  it("owner-agent-initial cannot finalize a successor assignment from historical output", async () => {
-    const runId = await seedAgent({ bytes: 0, terminalDelayMs: 3_000 });
-    const first = startDriver(runId);
+  it(
+    "owner-agent-initial cannot finalize a successor assignment from historical output",
+    async () => {
+      const runId = await seedAgent({ bytes: 0, terminalDelayMs: 3_000 });
+      const first = startDriver(runId);
 
-    await expect
-      .poll(
-        async () => {
-          const [command] = await db
-            .select({ state: executionCommands.state })
-            .from(executionCommands)
-            .where(
-              and(
-                eq(executionCommands.runId, runId),
-                eq(executionCommands.kind, "session.prompt"),
-              ),
-            );
-
-          return command?.state;
-        },
-        { timeout: 30_000, interval: 25 },
-      )
-      .toBe("accepted");
-    first.child.kill("SIGKILL");
-    await first.exited;
-    const hosts = createExecutionHosts({ db });
-    const host = await localHost({ db, transport: hosts.transport });
-    const successor = await db.transaction((tx) =>
-      mintAssignment(tx, { runId, hostId: host.id, reason: "recover" }),
-    );
-    const recovering = startPromptOwnerWorker({
-      db,
-      owners: agentPromptOwners,
-    });
-
-    try {
       await expect
         .poll(
           async () => {
             const [command] = await db
-              .select({ applicationState: executionCommands.applicationState })
+              .select({ state: executionCommands.state })
               .from(executionCommands)
               .where(
                 and(
@@ -2514,42 +2485,79 @@ describe("Agent owned prompts through the production launcher", () => {
                 ),
               );
 
-            return command?.applicationState;
+            return command?.state;
           },
-          { timeout: 30_000, interval: 50 },
+          { timeout: 30_000, interval: 25 },
         )
-        .toBe("superseded");
-      const [run] = await db.select().from(runs).where(eq(runs.id, runId));
-
-      const [source] = await db
-        .select()
-        .from(executionCommands)
-        .where(
-          and(
-            eq(executionCommands.runId, runId),
-            eq(executionCommands.kind, "session.prompt"),
-          ),
-        );
-
-      expect(source.state).toBe("succeeded");
-      expect(run).toMatchObject({
-        status: "Running",
-        executionAssignmentId: successor.id,
-        endedAt: null,
+        .toBe("accepted");
+      first.child.kill("SIGKILL");
+      await first.exited;
+      const hosts = createExecutionHosts({ db });
+      const host = await localHost({ db, transport: hosts.transport });
+      const successor = await db.transaction((tx) =>
+        mintAssignment(tx, { runId, hostId: host.id, reason: "recover" }),
+      );
+      const recovering = startPromptOwnerWorker({
+        db,
+        owners: agentPromptOwners,
       });
-      expect(
-        await db.select().from(runResults).where(eq(runResults.runId, runId)),
-      ).toHaveLength(0);
-      expect(
-        await db
+
+      try {
+        await expect
+          .poll(
+            async () => {
+              const [command] = await db
+                .select({
+                  applicationState: executionCommands.applicationState,
+                })
+                .from(executionCommands)
+                .where(
+                  and(
+                    eq(executionCommands.runId, runId),
+                    eq(executionCommands.kind, "session.prompt"),
+                  ),
+                );
+
+              return command?.applicationState;
+            },
+            // The killed driver may hold the stream claim, so the terminal event
+            // is ingested only once its lease lapses.
+            { timeout: 30_000 + KILLED_CLAIM_WAIT_MS, interval: 50 },
+          )
+          .toBe("superseded");
+        const [run] = await db.select().from(runs).where(eq(runs.id, runId));
+
+        const [source] = await db
           .select()
-          .from(domainEvents)
-          .where(eq(domainEvents.runId, runId)),
-      ).toHaveLength(0);
-    } finally {
-      await recovering.stop();
-    }
-  }, 60_000);
+          .from(executionCommands)
+          .where(
+            and(
+              eq(executionCommands.runId, runId),
+              eq(executionCommands.kind, "session.prompt"),
+            ),
+          );
+
+        expect(source.state).toBe("succeeded");
+        expect(run).toMatchObject({
+          status: "Running",
+          executionAssignmentId: successor.id,
+          endedAt: null,
+        });
+        expect(
+          await db.select().from(runResults).where(eq(runResults.runId, runId)),
+        ).toHaveLength(0);
+        expect(
+          await db
+            .select()
+            .from(domainEvents)
+            .where(eq(domainEvents.runId, runId)),
+        ).toHaveLength(0);
+      } finally {
+        await recovering.stop();
+      }
+    },
+    60_000 + 2 * KILLED_CLAIM_WAIT_MS,
+  );
   it.each([
     { name: "non-end-turn response", stopReason: "max_tokens" },
     {

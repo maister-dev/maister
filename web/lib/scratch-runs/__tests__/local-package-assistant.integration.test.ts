@@ -86,6 +86,9 @@ const supervisorMock = vi.hoisted(() => ({
 // window (no durable incarnation yet) without faking what follows it.
 const admission = vi.hoisted(() => ({
   wait: null as null | ReturnType<typeof vi.fn>,
+  real: null as
+    | null
+    | typeof import("@/lib/execution-host/prompt-incarnation").waitForPromptIncarnation,
 }));
 
 vi.mock("@/lib/execution-host/prompt-incarnation", async (importOriginal) => {
@@ -94,6 +97,7 @@ vi.mock("@/lib/execution-host/prompt-incarnation", async (importOriginal) => {
       typeof import("@/lib/execution-host/prompt-incarnation")
     >();
 
+  admission.real = actual.waitForPromptIncarnation;
   admission.wait = vi.fn(actual.waitForPromptIncarnation);
 
   return { ...actual, waitForPromptIncarnation: admission.wait };
@@ -320,6 +324,8 @@ beforeEach(async () => {
     .mockResolvedValue({ stopReason: "end_turn" });
   supervisorMock.cancelPermission.mockReset().mockResolvedValue({ ok: true });
   supervisorMock.listSessions.mockReset().mockResolvedValue([]);
+  // A one-shot admission fault a case never consumed must not reach the next.
+  admission.wait!.mockReset().mockImplementation(admission.real!);
 });
 
 // Insert a project-less local-package scratch run mirroring the single launch

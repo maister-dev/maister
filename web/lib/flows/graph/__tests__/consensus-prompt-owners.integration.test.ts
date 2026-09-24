@@ -9,7 +9,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 
 import { and, eq, inArray, sql } from "drizzle-orm";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import {
   agentTurns,
@@ -27,6 +27,8 @@ import { buildOrchestratorResumeConsumer } from "@/lib/domain-events/orchestrato
 import { startPromptOwnerWorker } from "@/lib/execution-host/prompt-owner-recovery";
 import { startAgentContinuationWorker } from "@/lib/agents/continuation-worker";
 import { CANONICAL_PROJECTION_CONSUMERS } from "@/lib/execution-host/events/projection-consumers";
+import { PromptIncarnationPending } from "@/lib/execution-host/prompt-incarnation";
+import { SessionCreatePending } from "@/lib/execution-host/owned-session-create";
 import { flowPromptOwners } from "@/lib/flows/graph/prompt-owner";
 import { consensusDraftPromptOwners } from "@/lib/flows/graph/consensus/draft-prompt-owner";
 import { verifyConsensusInputEvidence } from "@/lib/flows/graph/consensus/input-evidence";
@@ -55,6 +57,10 @@ import { resetResolverForTests } from "@/lib/execution-host/resolver";
 import { seedGraphRun } from "@/test-support/graph-run-seed";
 import { addWorktree, initRepo } from "@/test-support/git-fixture";
 import {
+  holdChildProjection,
+  suppressIncarnations,
+} from "@/test-support/projection-hold";
+import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
@@ -62,6 +68,122 @@ import {
   startRealSupervisor,
   useRealSupervisorUrl,
 } from "@/test-support/real-supervisor";
+
+// The draft launcher's yields leave no durable trace — a yield is precisely
+// "write nothing" — so the cases below observe them at the seams that raise
+// them. Each wrapper forwards to the real function unchanged and records, per
+// run, how it settled; `until` resolves on the recording itself, not a clock.
+const probe = vi.hoisted(() => {
+  type Seam = "create" | "admission" | "session";
+  const outcomes: Array<{ runId: string; seam: Seam; error: unknown }> = [];
+  const waiters = new Set<() => void>();
+
+  return {
+    record(runId: string, seam: Seam, error: unknown): void {
+      outcomes.push({ runId, seam, error });
+      for (const wake of [...waiters]) wake();
+    },
+    /** Errors `seam` raised for `runId` (a settled session records `null`). */
+    of(runId: string, seam: Seam): unknown[] {
+      return outcomes
+        .filter((outcome) => outcome.runId === runId && outcome.seam === seam)
+        .map((outcome) => outcome.error);
+    },
+    until(predicate: () => boolean, timeoutMs: number): Promise<void> {
+      return new Promise((resolve, reject) => {
+        const check = (): void => {
+          if (!predicate()) return;
+          clearTimeout(timer);
+          waiters.delete(check);
+          resolve();
+        };
+        const timer = setTimeout(() => {
+          waiters.delete(check);
+          reject(
+            new Error(
+              `probe condition not reached in ${timeoutMs} ms; recorded ${JSON.stringify(
+                outcomes.map((outcome) => ({
+                  runId: outcome.runId,
+                  seam: outcome.seam,
+                  error:
+                    (outcome.error as { details?: { reason?: unknown } } | null)
+                      ?.details?.reason ?? String(outcome.error),
+                })),
+              )}`,
+            ),
+          );
+        }, timeoutMs);
+
+        waiters.add(check);
+        check();
+      });
+    },
+  };
+});
+
+vi.mock("@/lib/execution-host/owned-session-create", async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import("@/lib/execution-host/owned-session-create")
+    >();
+
+  return {
+    ...actual,
+    createOwnedSession: async (
+      input: Parameters<typeof actual.createOwnedSession>[0],
+    ) => {
+      try {
+        return await actual.createOwnedSession(input);
+      } catch (error) {
+        probe.record(input.client.assignment.runId, "create", error);
+        throw error;
+      }
+    },
+  };
+});
+
+vi.mock("@/lib/execution-host/prompt-incarnation", async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import("@/lib/execution-host/prompt-incarnation")
+    >();
+
+  return {
+    ...actual,
+    waitForPromptIncarnation: async (
+      ...args: Parameters<typeof actual.waitForPromptIncarnation>
+    ) => {
+      try {
+        return await actual.waitForPromptIncarnation(...args);
+      } catch (error) {
+        probe.record(args[1].assignment.runId, "admission", error);
+        throw error;
+      }
+    },
+  };
+});
+
+vi.mock("@/lib/agents/launch", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/agents/launch")>();
+
+  return {
+    ...actual,
+    startAgentSession: async (
+      ...args: Parameters<typeof actual.startAgentSession>
+    ) => {
+      try {
+        const result = await actual.startAgentSession(...args);
+
+        probe.record(args[0], "session", null);
+
+        return result;
+      } catch (error) {
+        probe.record(args[0], "session", error);
+        throw error;
+      }
+    },
+  };
+});
 
 let database: StartedPostgresTestDb;
 let supervisor: RealSupervisor;
@@ -431,62 +553,28 @@ async function killAtDatabaseWrite(input: {
  * re-drive cadence is observable), and their lifecycle cursor is pre-claimed so
  * the projector cannot run into the dropped row. Release restores both. */
 async function holdChildAdmission(parentRunId: string) {
-  const tag = randomUUID().replaceAll("-", "");
-  const attempts = `test_admission_attempts_${tag}`;
-  const suppress = `test_suppress_child_incarnation_${tag}`;
-  const hold = `test_hold_child_lifecycle_${tag}`;
-  const child = `EXISTS (SELECT 1 FROM runs r WHERE r.id = NEW.run_id AND r.parent_run_id = '${parentRunId}')`;
-
-  await database.pool.query(
-    `CREATE TABLE ${attempts} (run_id text NOT NULL, at timestamptz NOT NULL DEFAULT clock_timestamp())`,
-  );
-  await database.pool.query(
-    `CREATE FUNCTION ${suppress}() RETURNS trigger LANGUAGE plpgsql AS $$
-     BEGIN IF ${child} THEN INSERT INTO ${attempts} (run_id) VALUES (NEW.run_id); RETURN NULL; END IF; RETURN NEW; END $$`,
-  );
-  await database.pool.query(
-    `CREATE TRIGGER ${suppress} BEFORE INSERT ON run_session_incarnations FOR EACH ROW EXECUTE FUNCTION ${suppress}()`,
-  );
-  await database.pool.query(
-    `CREATE FUNCTION ${hold}() RETURNS trigger LANGUAGE plpgsql AS $$
-     BEGIN IF NEW.consumer_name = '${CANONICAL_PROJECTION_CONSUMERS.lifecycle}' AND ${child} THEN
-       NEW.claim_owner := 'test-hold:${tag}';
-       NEW.claim_expires_at := clock_timestamp() + interval '1 hour';
-     END IF; RETURN NEW; END $$`,
-  );
-  await database.pool.query(
-    `CREATE TRIGGER ${hold} BEFORE INSERT ON execution_event_consumers FOR EACH ROW EXECUTE FUNCTION ${hold}()`,
-  );
-  let released = false;
+  const incarnations = await suppressIncarnations(database.pool, {
+    parentRunId,
+  });
+  const releaseProjection = await holdChildProjection(database.pool, {
+    consumerName: CANONICAL_PROJECTION_CONSUMERS.lifecycle,
+    parentRunId,
+  });
 
   return {
-    /** Dropped insert attempts per child within the last `windowMs`. */
-    async recentAttempts(windowMs: number): Promise<number[]> {
-      const { rows } = await database.pool.query<{ n: number }>(
-        `SELECT count(*)::int AS n FROM ${attempts} WHERE at > clock_timestamp() - ($1::int * interval '1 millisecond') GROUP BY run_id`,
-        [windowMs],
-      );
-
-      return rows.map((row) => row.n);
-    },
+    recentAttempts: incarnations.recentAttempts,
     async release(): Promise<void> {
-      if (released) return;
-      released = true;
-      await database.pool.query(
-        `DROP TRIGGER IF EXISTS ${suppress} ON run_session_incarnations`,
-      );
-      await database.pool.query(`DROP FUNCTION IF EXISTS ${suppress}()`);
-      await database.pool.query(
-        `DROP TRIGGER IF EXISTS ${hold} ON execution_event_consumers`,
-      );
-      await database.pool.query(`DROP FUNCTION IF EXISTS ${hold}()`);
-      await database.pool.query(`DROP TABLE IF EXISTS ${attempts}`);
-      await database.pool.query(
-        "UPDATE execution_event_consumers SET claim_owner = NULL, claim_expires_at = NULL WHERE claim_owner = $1",
-        [`test-hold:${tag}`],
-      );
+      await incarnations.release();
+      await releaseProjection();
     },
   };
+}
+
+async function childRuns(parentRunId: string) {
+  return database.db
+    .select({ id: runs.id, status: runs.status })
+    .from(runs)
+    .where(eq(runs.parentRunId, parentRunId));
 }
 
 describe("Consensus prompt owners through the production graph driver", () => {
@@ -2274,19 +2362,30 @@ describe("Consensus prompt owners through the production graph driver", () => {
     );
     try {
       await drive(seeded.runId);
-      await expect
-        .poll(async () => (await childCreates()).length, { timeout: 30_000 })
-        .toBe(2);
-      // Both launchers have met the claim; a child they failed is final by now.
-      await new Promise((resolve) => setTimeout(resolve, 3_000));
+      const children = await childRuns(seeded.runId);
+
+      expect(children).toHaveLength(2);
+      // Each launcher has returned: whatever it did with the claim is final.
+      await probe.until(
+        () => children.every((child) => probe.of(child.id, "session").length),
+        60_000,
+      );
+      for (const child of children) {
+        // It yielded on the held create — before any prompt admission.
+        expect(probe.of(child.id, "session")).toEqual([null]);
+        expect(probe.of(child.id, "admission")).toEqual([]);
+        const [pending] = probe.of(child.id, "create");
+
+        expect(pending).toBeInstanceOf(SessionCreatePending);
+        expect(pending).toMatchObject({
+          code: "PRECONDITION",
+          details: { reason: "session_create_pending" },
+        });
+      }
       expect(
-        (
-          await database.db
-            .select({ status: runs.status })
-            .from(runs)
-            .where(eq(runs.parentRunId, seeded.runId))
-        ).map((child) => child.status),
+        (await childRuns(seeded.runId)).map((child) => child.status),
       ).toEqual(["Running", "Running"]);
+      expect(await childCreates()).toHaveLength(2);
     } finally {
       await database.pool.query(
         `DROP TRIGGER IF EXISTS ${claim} ON execution_commands`,
@@ -2318,27 +2417,50 @@ describe("Consensus prompt owners through the production graph driver", () => {
   it("owner-consensus-draft: an admission fence timeout yields the draft child and the agent worker re-drives it", async () => {
     const seeded = await seedConsensusFlow(consensusPrompt("agree"));
     const fault = await holdChildAdmission(seeded.runId);
-    const agents = startAgentContinuationWorker({
-      db: database.db as unknown as Db,
-      executionHosts: createExecutionHosts({
-        db: database.db as unknown as Db,
-      }),
-    });
+    let agents: ReturnType<typeof startAgentContinuationWorker> | null = null;
 
     try {
       await drive(seeded.runId);
-      // The fence budget is ~60 s; wait past it with no durable incarnation.
-      await new Promise((resolve) => setTimeout(resolve, 75_000));
-      const children = await database.db
-        .select({ id: runs.id, status: runs.status })
-        .from(runs)
-        .where(eq(runs.parentRunId, seeded.runId));
+      const children = await childRuns(seeded.runId);
 
       expect(children).toHaveLength(2);
-      expect(children.map((child) => child.status)).toEqual([
-        "Running",
-        "Running",
-      ]);
+      // The launcher's admission waits out its whole fence budget (~60 s) with
+      // no durable incarnation. Await the launcher's return itself, with no
+      // re-driver running yet, so it alone decides what happened.
+      await probe.until(
+        () => children.every((child) => probe.of(child.id, "session").length),
+        150_000,
+      );
+      for (const child of children) {
+        // The create went through (the create-pending yield never fired); the
+        // admission fence timed out, and the launcher returned without failing.
+        expect(probe.of(child.id, "create")).toEqual([]);
+        expect(probe.of(child.id, "session")).toEqual([null]);
+        const admission = probe.of(child.id, "admission");
+
+        expect(admission).toHaveLength(1);
+        expect(admission[0]).toBeInstanceOf(PromptIncarnationPending);
+        expect(admission[0]).toMatchObject({
+          code: "EXECUTOR_UNAVAILABLE",
+          details: { reason: "prompt_incarnation_pending", runId: child.id },
+        });
+      }
+      expect(
+        (await childRuns(seeded.runId)).map((child) => child.status),
+      ).toEqual(["Running", "Running"]);
+
+      agents = startAgentContinuationWorker({
+        db: database.db as unknown as Db,
+        executionHosts: createExecutionHosts({
+          db: database.db as unknown as Db,
+        }),
+      });
+      // Let the worker re-drive each child twice while the fault holds.
+      await probe.until(
+        () =>
+          children.every((child) => probe.of(child.id, "session").length >= 3),
+        120_000,
+      );
       // Each re-drive pass is bounded by the worker's 5 s abort, never a spin.
       for (const count of await fault.recentAttempts(10_000))
         expect(count).toBeLessThan(3);
@@ -2371,8 +2493,8 @@ describe("Consensus prompt owners through the production graph driver", () => {
         ).toHaveLength(1);
       }
     } finally {
-      await agents.stop();
+      await agents?.stop();
       await fault.release();
     }
-  }, 300_000);
+  }, 360_000);
 });

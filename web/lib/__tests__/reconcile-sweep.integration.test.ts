@@ -1673,6 +1673,22 @@ async function readAttempt(nodeAttemptId: string): Promise<any> {
   return rows[0];
 }
 
+/** The cause crashRunningRun recorded for THIS run. `summary.turnLost` counts
+ * every run the sweep crashed on that path, so it cannot say which one. */
+async function crashReasonOf(runId: string): Promise<unknown> {
+  const events = await db
+    .select({
+      kind: schema.domainEvents.kind,
+      payload: schema.domainEvents.payload,
+    })
+    .from(schema.domainEvents)
+    .where(eq(schema.domainEvents.runId, runId));
+
+  return events
+    .filter((event) => event.kind === "run.crashed")
+    .map((event) => (event.payload as { reason?: unknown }).reason);
+}
+
 async function markHostStreamLost(hostId: string): Promise<void> {
   await db.insert(schema.executionEventStreams).values({
     id: randomUUID(),
@@ -2308,14 +2324,14 @@ describe("runReconcileSweep — evidence-first crash classification (ADR-177)", 
       },
     );
 
-    const summary = await runReconcileSweep(opts);
+    await runReconcileSweep(opts);
     const run = await readRun(runId);
 
     expect(
       run.status,
       "the live turn is the permission_resume command; the applied node turn before it is history",
     ).toBe("Crashed");
-    expect(summary.turnLost).toBeGreaterThanOrEqual(1);
+    expect(await crashReasonOf(runId)).toEqual(["turn-lost"]);
     expect(await readAttempt(before.nodeAttemptId)).toMatchObject({
       status: "Reworked",
       decision: "turn_lost",
@@ -2377,7 +2393,7 @@ describe("runReconcileSweep — evidence-first crash classification (ADR-177)", 
       },
     );
 
-    const summary = await runReconcileSweep(opts);
+    await runReconcileSweep(opts);
     const attempt = await readAttempt(action.nodeAttemptId);
     const [evaluation] = await db
       .select()
@@ -2385,7 +2401,7 @@ describe("runReconcileSweep — evidence-first crash classification (ADR-177)", 
       .where(eq(schema.gateResults.id, evaluationId));
 
     expect((await readRun(runId)).status).toBe("Crashed");
-    expect(summary.turnLost).toBeGreaterThanOrEqual(1);
+    expect(await crashReasonOf(runId)).toEqual(["turn-lost"]);
     expect(attempt).toMatchObject({
       status: "Reworked",
       decision: "turn_lost",

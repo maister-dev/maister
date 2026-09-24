@@ -36,7 +36,10 @@ import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
-import { holdProjection } from "@/test-support/projection-hold";
+import {
+  holdProjection,
+  suppressIncarnations,
+} from "@/test-support/projection-hold";
 import {
   startRealSupervisor,
   useRealSupervisorUrl,
@@ -115,28 +118,6 @@ async function seedAgentFlow() {
 
 /** No incarnation row can be written for this run while the trigger exists:
  * neither the ACK nor the projector can produce the durable admission row. */
-async function suppressIncarnations(
-  runId: string,
-): Promise<() => Promise<void>> {
-  const name = `test_suppress_incarnation_${randomUUID().replaceAll("-", "")}`;
-
-  await database.pool.query(
-    `CREATE FUNCTION ${name}() RETURNS trigger LANGUAGE plpgsql AS $$
-     BEGIN IF NEW.run_id = '${runId}' THEN RETURN NULL; END IF; RETURN NEW; END $$`,
-  );
-  await database.pool.query(
-    `CREATE TRIGGER ${name} BEFORE INSERT ON run_session_incarnations
-     FOR EACH ROW EXECUTE FUNCTION ${name}()`,
-  );
-
-  return async () => {
-    await database.pool.query(
-      `DROP TRIGGER IF EXISTS ${name} ON run_session_incarnations`,
-    );
-    await database.pool.query(`DROP FUNCTION IF EXISTS ${name}()`);
-  };
-}
-
 async function commandsOf(runId: string, kind: ExecutionCommand["kind"]) {
   return database.db
     .select()
@@ -154,7 +135,9 @@ describe("prompt admission fence timeout on the flow path", () => {
       consumerName: CANONICAL_PROJECTION_CONSUMERS.lifecycle,
       runId,
     });
-    const allowIncarnations = await suppressIncarnations(runId);
+    const allowIncarnations = (
+      await suppressIncarnations(database.pool, { runId })
+    ).release;
     let continuation: ReturnType<typeof startFlowContinuationWorker> | null =
       null;
 

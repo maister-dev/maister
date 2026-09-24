@@ -76,51 +76,55 @@ describe("Durable agent turn admission", () => {
       status: "Running",
       persistent: true,
     });
-    const assignment = await db.transaction((tx) =>
-      mintAssignment(tx as unknown as Db, {
-        runId,
-        hostId: host.id,
-        reason: "launch",
-      }),
-    );
+    try {
+      const assignment = await db.transaction((tx) =>
+        mintAssignment(tx as unknown as Db, {
+          runId,
+          hostId: host.id,
+          reason: "launch",
+        }),
+      );
 
-    // The launch inserts the logical session before its create is acknowledged.
-    await db
-      .insert(runSessions)
-      .values({ id: randomUUID(), runId, sessionName: "default" });
-    const turn = await acceptAgentMessage(db, runId, "early message");
-    const early = await claimAgentMessage(db, turn.id, host);
+      // The launch inserts the logical session before its create is acknowledged.
+      await db
+        .insert(runSessions)
+        .values({ id: randomUUID(), runId, sessionName: "default" });
+      const turn = await acceptAgentMessage(db, runId, "early message");
+      const early = await claimAgentMessage(db, turn.id, host);
 
-    expect(early).toMatchObject({
-      kind: "queued",
-      reason: "session_not_admissible",
-    });
-    expect(
-      (await db.select().from(runs).where(eq(runs.id, runId)))[0]
-        .resumeRequestedAt,
-    ).not.toBeNull();
+      expect(early).toMatchObject({
+        kind: "queued",
+        reason: "session_not_admissible",
+      });
+      expect(
+        (await db.select().from(runs).where(eq(runs.id, runId)))[0]
+          .resumeRequestedAt,
+      ).not.toBeNull();
 
-    await db.transaction((tx) =>
-      applyCreateAck(tx as unknown as Db, {
-        runId,
-        sessionName: "default",
-        assignmentId: assignment.id,
-        nodeAttemptId: null,
-        result: { sessionId: `host-${runId}`, acpSessionId: `acp-${runId}` },
-      }),
-    );
-    const [incarnation] = await db
-      .select()
-      .from(runSessionIncarnations)
-      .where(eq(runSessionIncarnations.runId, runId));
+      await db.transaction((tx) =>
+        applyCreateAck(tx as unknown as Db, {
+          runId,
+          sessionName: "default",
+          assignmentId: assignment.id,
+          nodeAttemptId: null,
+          result: { sessionId: `host-${runId}`, acpSessionId: `acp-${runId}` },
+        }),
+      );
+      const [incarnation] = await db
+        .select()
+        .from(runSessionIncarnations)
+        .where(eq(runSessionIncarnations.runId, runId));
 
-    expect(incarnation.state).toBe("created");
-    expect(await claimAgentMessage(db, turn.id, host)).toMatchObject({
-      kind: "claimed",
-      turn: { id: turn.id, executionAssignmentId: assignment.id },
-    });
-    // Later cases measure the agent pool from zero live runs.
-    await db.update(runs).set({ status: "Done" }).where(eq(runs.id, runId));
+      expect(incarnation.state).toBe("created");
+      expect(await claimAgentMessage(db, turn.id, host)).toMatchObject({
+        kind: "claimed",
+        turn: { id: turn.id, executionAssignmentId: assignment.id },
+      });
+    } finally {
+      // Later cases measure the agent pool from zero live runs, so the run must
+      // leave `Running` even when an assertion above fails.
+      await db.update(runs).set({ status: "Done" }).where(eq(runs.id, runId));
+    }
   });
 
   it("concurrent capacity claims keep accepted input queued and reuse the winning generation", async () => {
