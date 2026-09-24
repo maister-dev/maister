@@ -1,7 +1,9 @@
 // ADR-167 D5 amendment (2026-09-23), D-C2: the per-host host-span settlement
 // counts on /admin/execution-host. Every assertion is scoped to a host this
 // file seeded (never a table-wide total), and the unconfirmed count is tested
-// closing as well as opening.
+// closing as well as opening. The two state counts are disjoint, every count
+// is windowed on `completed_at` from the read model's own `now`, and an
+// unretired host with nothing in the window is listed with explicit zeros.
 import type { PlatformStatus } from "@/types/platform-status";
 
 import { randomUUID } from "node:crypto";
@@ -13,6 +15,7 @@ import {
   collectExecutionEventLag,
   hostSpanQuery,
 } from "@/lib/execution-host/events/lag-read-model";
+import { COMMAND_REPLAY_GRACE_DAYS } from "@/lib/execution-host/retirement";
 import {
   seedLocalHost,
   seedProject,
@@ -22,29 +25,37 @@ import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
+import { HOST_SPAN_ANOMALY_WINDOW_DAYS } from "@/types/execution-host-observability";
 
 const NOW = new Date();
-const HOUR = 60 * 60 * 1000;
+const MINUTE = 60 * 1000;
+const HOUR = 60 * MINUTE;
+const DAY = 24 * HOUR;
 
 let database: StartedPostgresTestDb;
 let projectId: string;
 let hostA: string;
 let hostB: string;
+let hostAKey: string;
+let hostBKey: string;
 let health: PlatformStatus;
 let unconfirmedOnA: string;
 let unconfirmedEventOnA: string;
 
-async function seedHost(local: boolean): Promise<string> {
-  if (local) return (await seedLocalHost(database.db)).id;
+async function seedHost(
+  local: boolean,
+): Promise<{ id: string; hostKey: string }> {
+  if (local) return seedLocalHost(database.db);
   const id = randomUUID();
+  const hostKey = `eh_${randomUUID().replaceAll("-", "")}`;
 
   await database.db.execute(sql`
     INSERT INTO execution_hosts (id, host_key, kind, display_name, transport, retired_at)
-    VALUES (${id}, ${`eh_${randomUUID().replaceAll("-", "")}`}, 'local_direct',
-            'second host', '{"kind":"local_direct"}', now())
+    VALUES (${id}, ${hostKey}, 'local_direct',
+            'retired host', '{"kind":"local_direct"}', now())
   `);
 
-  return id;
+  return { id, hostKey };
 }
 
 async function terminalEvent(runId: string): Promise<string> {
@@ -69,7 +80,8 @@ async function settledPrompt(input: {
   settledFrom: "canonical" | "host_span";
   bound: boolean;
   completedAt: Date;
-  postHocConflict?: boolean;
+  /** Quarantined after settlement, before or after the owner applied it. */
+  conflict?: "applied" | "unapplied";
 }): Promise<{ commandId: string; eventId: string }> {
   const runId = await seedRun(database.db, { projectId, status: "Running" });
   const assignmentId = randomUUID();
@@ -113,14 +125,23 @@ async function settledPrompt(input: {
         phase: "completed",
       })}::jsonb,
       ${input.bound ? eventId : null}, ${"b".repeat(64)}, ${input.settledFrom},
-      ${input.postHocConflict ? "applied" : "pending"},
-      ${input.postHocConflict ? input.completedAt : null},
       ${
-        input.postHocConflict
+        input.conflict === "applied"
+          ? "applied"
+          : input.conflict === "unapplied"
+            ? "poisoned"
+            : "pending"
+      },
+      ${input.conflict === "applied" ? input.completedAt : null},
+      ${
+        input.conflict
           ? JSON.stringify({
               reason: "prompt_terminal_conflict",
               phase: "prepare",
-              causeCode: "terminal_v2_agreement",
+              causeCode:
+                input.conflict === "applied"
+                  ? "terminal_v2_agreement"
+                  : "event_binding",
             })
           : null
       }::jsonb
@@ -130,17 +151,15 @@ async function settledPrompt(input: {
   return { commandId, eventId };
 }
 
-async function countsFor(hostId: string) {
-  const model = await collectExecutionEventLag({ db: database.db, health });
+/** Absent means the read model did not list the host — never read as zero. */
+async function countsFor(hostId: string, now: Date = NOW) {
+  const model = await collectExecutionEventLag({
+    db: database.db,
+    health,
+    now,
+  });
 
-  return (
-    model.commands.hostSpan.find((row) => row.executionHostId === hostId) ?? {
-      executionHostId: hostId,
-      hostSpanUnconfirmed: 0,
-      hostSpanSettled1h: 0,
-      postHocConflicts: 0,
-    }
-  );
+  return model.commands.hostSpan.find((row) => row.executionHostId === hostId);
 }
 
 beforeAll(async () => {
@@ -148,8 +167,8 @@ beforeAll(async () => {
     databaseName: "execution_host_span_counts",
   });
   projectId = await seedProject(database.db);
-  hostA = await seedHost(true);
-  hostB = await seedHost(false);
+  ({ id: hostA, hostKey: hostAKey } = await seedHost(true));
+  ({ id: hostB, hostKey: hostBKey } = await seedHost(false));
   health = { kind: "unavailable" } as unknown as PlatformStatus;
 
   const opened = await settledPrompt({
@@ -161,7 +180,7 @@ beforeAll(async () => {
 
   unconfirmedOnA = opened.commandId;
   unconfirmedEventOnA = opened.eventId;
-  // Confirmed and older than the window: in neither count.
+  // Confirmed and older than the hour: in no count.
   await settledPrompt({
     hostId: hostA,
     settledFrom: "host_span",
@@ -174,8 +193,33 @@ beforeAll(async () => {
     settledFrom: "host_span",
     bound: true,
     completedAt: NOW,
-    postHocConflict: true,
+    conflict: "applied",
   });
+  // Refused before the canonical event bound: unbound AND quarantined — a
+  // conflict, never also "awaiting canonical event".
+  await settledPrompt({
+    hostId: hostA,
+    settledFrom: "host_span",
+    bound: false,
+    completedAt: new Date(NOW.getTime() - 30 * MINUTE),
+    conflict: "unapplied",
+  });
+  // Unconfirmed for days: still inside the anomaly window.
+  await settledPrompt({
+    hostId: hostA,
+    settledFrom: "host_span",
+    bound: false,
+    completedAt: new Date(NOW.getTime() - 3 * DAY),
+  });
+  // Past the anomaly window: the retirement pass reports these, not the page.
+  for (const conflict of [undefined, "applied", "applied"] as const)
+    await settledPrompt({
+      hostId: hostA,
+      settledFrom: "host_span",
+      bound: conflict !== undefined,
+      completedAt: new Date(NOW.getTime() - 8 * DAY),
+      conflict,
+    });
   // A canonical settlement never counts.
   await settledPrompt({
     hostId: hostA,
@@ -196,19 +240,34 @@ afterAll(async () => {
 });
 
 describe("host-span settlement counts (D-C2)", () => {
-  it("counts each host's own host-span rows, excluding canonical rows and the aged-out window", async () => {
+  it("windows the state counts on the retirement pass's replay grace", () => {
+    expect(HOST_SPAN_ANOMALY_WINDOW_DAYS).toBe(COMMAND_REPLAY_GRACE_DAYS);
+  });
+
+  it("counts each host's own host-span rows: disjoint state counts, windowed, canonical rows excluded", async () => {
     expect(await countsFor(hostA)).toEqual({
       executionHostId: hostA,
-      hostSpanUnconfirmed: 1,
-      hostSpanSettled1h: 2,
-      postHocConflicts: 1,
+      hostKey: hostAKey,
+      displayName: "test local host",
+      hostSpanUnconfirmed: 2,
+      hostSpanSettled1h: 3,
+      postHocConflicts: 2,
     });
     expect(await countsFor(hostB)).toEqual({
       executionHostId: hostB,
+      hostKey: hostBKey,
+      displayName: "retired host",
       hostSpanUnconfirmed: 1,
       hostSpanSettled1h: 1,
       postHocConflicts: 0,
     });
+  });
+
+  it("anchors the one-hour window at the read model's now, not the database clock", async () => {
+    expect(
+      (await countsFor(hostA, new Date(NOW.getTime() + 45 * MINUTE)))
+        ?.hostSpanSettled1h,
+    ).toBe(2);
   });
 
   it("closes: the canonical confirmation takes a row out of the unconfirmed count", async () => {
@@ -218,22 +277,50 @@ describe("host-span settlement counts (D-C2)", () => {
     `);
 
     expect(await countsFor(hostA)).toMatchObject({
-      hostSpanUnconfirmed: 0,
-      hostSpanSettled1h: 2,
+      hostSpanUnconfirmed: 1,
+      hostSpanSettled1h: 3,
     });
-    expect((await countsFor(hostB)).hostSpanUnconfirmed).toBe(1);
+    expect((await countsFor(hostB))?.hostSpanUnconfirmed).toBe(1);
   });
 
-  it("is served by the partial host-span index", async () => {
+  it("lists an unretired host with nothing in the window as explicit zeros, and drops a retired one", async () => {
+    const later = new Date(NOW.getTime() + 30 * DAY);
+
+    expect(await countsFor(hostA, later)).toMatchObject({
+      hostSpanUnconfirmed: 0,
+      hostSpanSettled1h: 0,
+      postHocConflicts: 0,
+    });
+    expect(await countsFor(hostB, later)).toBeUndefined();
+  });
+
+  // `enable_seqscan = off` makes the planner take any usable index on this
+  // tiny table, so this proves only that the window is an INDEX CONDITION of
+  // the partial index — the scan is bounded by the window instead of reading
+  // every host-span row ever written — not which plan production picks.
+  it("bounds the scan by the window through the partial host-span index", async () => {
     const plan = await database.db.transaction(async (tx) => {
       await tx.execute(sql`SET LOCAL enable_seqscan = off`);
       const explained = await tx.execute<{ "QUERY PLAN": unknown }>(
-        sql`EXPLAIN (FORMAT JSON) ${hostSpanQuery()}`,
+        sql`EXPLAIN (FORMAT JSON) ${hostSpanQuery(NOW)}`,
       );
 
-      return JSON.stringify(explained.rows);
+      return explained.rows[0]?.["QUERY PLAN"];
     });
+    const scans: Record<string, unknown>[] = [];
+    const walk = (node: unknown): void => {
+      if (Array.isArray(node)) return node.forEach(walk);
+      if (node === null || typeof node !== "object") return;
+      const record = node as Record<string, unknown>;
 
-    expect(plan).toContain("execution_commands_host_span_settled_idx");
+      if (record["Index Name"] === "execution_commands_host_span_settled_idx")
+        scans.push(record);
+      Object.values(record).forEach(walk);
+    };
+
+    walk(plan);
+    expect(scans.length).toBeGreaterThan(0);
+    for (const scan of scans)
+      expect(String(scan["Index Cond"])).toMatch(/completed_at >/);
   });
 });

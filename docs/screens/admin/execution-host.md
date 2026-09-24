@@ -39,7 +39,31 @@ details. There is no API or mutation route for this screen.
    an explanation and no command.
 5. Current-process durable worker health plus the latest persisted sweep
    snapshot; each is labeled with observer and sample time.
-6. Open command counts, oldest accepted age and timestamped last-sweep impasse.
+6. Open command counts, oldest accepted age and timestamped last-sweep impasse,
+   then one labelled group per execution host (display name + host key) with
+   three host-span settlement counts (ADR-167 D5 amendment). Each counts that
+   host's `settled_from = 'host_span'` prompt commands, windowed on
+   `completed_at` (the settlement time) from the collector's sample time, and
+   carries EN/RU help text:
+   - **Awaiting canonical event (7 d)** — `terminal_event_id` still unbound and
+     not quarantined. Clears within minutes when ingestion keeps up; if it stays
+     above zero, check that host's stream lag. Past 7 d (=
+     `COMMAND_REPLAY_GRACE_DAYS`) a row leaves the count and the reconcile sweep
+     logs it as `command-terminal-evidence-missing`.
+   - **Settled from host span (1 h)** — every host-span settlement in the last
+     hour, in any state. Volume only; near zero while canonical ingestion keeps
+     up, and it overlaps the other two.
+   - **Conflicts after settlement (7 d)** — rows carrying
+     `application_error.reason = 'prompt_terminal_conflict'`, bound or not,
+     applied or not: the canonical event, a replayed receipt or a protocol
+     check disagreed after the host-span settlement. Never expected; read
+     `application_error.causeCode`, and treat an applied row as a run that
+     advanced on disputed evidence.
+
+   The two state counts are disjoint: an unbound quarantined row is a conflict
+   only. Every unretired host is listed, with zeros when it has nothing in the
+   window, and a retired host only while it has rows in the 7-day window; with
+   neither, the group renders an explicit empty line.
 7. Scheduler clock summary and link.
 
 ## States and data

@@ -3,9 +3,16 @@ import type { AdminExecutionHostStatus } from "@/lib/execution-host/admin-status
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
+// Echoes interpolation values so a dropped or misnamed parameter fails.
 vi.mock("next-intl/server", () => ({
   getLocale: async () => "ru-RU",
-  getTranslations: async () => (key: string) => key,
+  getTranslations:
+    async () => (key: string, values?: Record<string, unknown>) =>
+      values === undefined
+        ? key
+        : `${key}(${Object.entries(values)
+            .map(([name, value]) => `${name}=${String(value)}`)
+            .join(",")})`,
 }));
 
 import { ExecutionHostStatus } from "@/components/admin/execution-host-status";
@@ -56,6 +63,8 @@ const status: AdminExecutionHostStatus = {
       hostSpan: [
         {
           executionHostId: "host-1",
+          hostKey: "eh_local",
+          displayName: "Local",
           hostSpanUnconfirmed: 3,
           hostSpanSettled1h: 7,
           postHocConflicts: 1,
@@ -86,6 +95,10 @@ const status: AdminExecutionHostStatus = {
   },
   poisonCursor: null,
 };
+const lag = status.lag as Exclude<
+  AdminExecutionHostStatus["lag"],
+  { unavailable: true }
+>;
 
 describe("ExecutionHostStatus", () => {
   it("renders explicit legends, compact durations, and locale-stable UTC dates", async () => {
@@ -103,18 +116,78 @@ describe("ExecutionHostStatus", () => {
     expect(markup).not.toContain("90s");
   });
 
-  it("renders each host's host-span settlement counts as numbers", async () => {
-    const html = renderToStaticMarkup(await ExecutionHostStatus({ status }));
+  it("renders each host's host-span counts under its own named group, with windows and help", async () => {
+    const html = renderToStaticMarkup(
+      await ExecutionHostStatus({
+        status: {
+          ...status,
+          lag: {
+            ...lag,
+            commands: {
+              ...lag.commands,
+              hostSpan: [
+                ...lag.commands.hostSpan,
+                {
+                  executionHostId: "host-2",
+                  hostKey: "eh_remote",
+                  displayName: "Remote",
+                  hostSpanUnconfirmed: 0,
+                  hostSpanSettled1h: 0,
+                  postHocConflicts: 0,
+                },
+              ],
+            },
+          },
+        },
+      }),
+    );
 
-    expect(html).toContain("commands.hostSpan");
-    for (const [label, value] of [
-      ["fields.hostSpanUnconfirmed", "3"],
-      ["fields.hostSpanSettled1h", "7"],
-      ["fields.postHocConflicts", "1"],
-    ])
-      expect(html).toMatch(
-        new RegExp(`${label.replace(".", "\\.")}</dt><dd[^>]*>${value}</dd>`),
+    for (const [id, name, key, values] of [
+      ["host-1", "Local", "eh_local", ["3", "7", "1"]],
+      ["host-2", "Remote", "eh_remote", ["0", "0", "0"]],
+    ] as const) {
+      const group = html.match(
+        new RegExp(
+          `<section aria-labelledby="host-span-${id}"[^>]*>(.*?)</section>`,
+        ),
+      )?.[1];
+
+      expect(group, id).toBeDefined();
+      // The group is named by the same identity the hosts panel shows.
+      expect(group).toMatch(
+        new RegExp(
+          `<h3[^>]*id="host-span-${id}"[^>]*>commands\\.hostSpan\\(host=${name}\\)</h3>`,
+        ),
       );
+      expect(group).toContain(key);
+      // A valid <dl>: each <div> holds only its <dt> and <dd>s — an explicit
+      // zero is a rendered value, not an absent row.
+      for (const [index, [label, period]] of [
+        ["hostSpanUnconfirmed", "days=7"],
+        ["hostSpanSettled1h", "hours=1"],
+        ["postHocConflicts", "days=7"],
+      ].entries())
+        expect(group).toMatch(
+          new RegExp(
+            `<div[^>]*><dt[^>]*>fields\\.${label}\\(${period}\\)</dt><dd[^>]*>${values[index]}</dd><dd[^>]*>hostSpanHelp\\.${label}\\(${period}\\)</dd></div>`,
+          ),
+        );
+    }
+    expect(html).not.toMatch(/<dl[^>]*>(?:(?!<\/dl>).)*<p[\s>]/);
+  });
+
+  it("renders an explicit empty state when no host has host-span data", async () => {
+    const html = renderToStaticMarkup(
+      await ExecutionHostStatus({
+        status: {
+          ...status,
+          lag: { ...lag, commands: { ...lag.commands, hostSpan: [] } },
+        },
+      }),
+    );
+
+    expect(html).toContain("commands.hostSpanEmpty(days=7)");
+    expect(html).not.toContain("host-span-");
   });
 
   it("D6: renders per-panel unavailability instead of failing the page", async () => {

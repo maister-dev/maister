@@ -75,11 +75,34 @@ export type PoisonedExecutionConsumer = Readonly<{
   lastErrorReason: string | null;
 }>;
 
-/** ADR-167 D5 amendment: prompts one host's span settled before its canonical
- * event was ingested. `hostSpanUnconfirmed` still awaits the canonical terminal;
- * `postHocConflicts` were applied before the canonical event disagreed. */
+/** Window of `hostSpanSettled1h`, anchored at the read model's `sampledAt`. */
+export const HOST_SPAN_SETTLED_WINDOW_HOURS = 1;
+/** Window of `hostSpanUnconfirmed` and `postHocConflicts`. Equal to
+ * `COMMAND_REPLAY_GRACE_DAYS`: past it the retirement pass reports every
+ * still-unbound prompt as `command-terminal-evidence-missing`, so the page and
+ * that log together cover a row's whole life. */
+export const HOST_SPAN_ANOMALY_WINDOW_DAYS = 7;
+
+/** ADR-167 D5 amendment: one host's prompt commands with
+ * `settled_from = 'host_span'` (settled from the host's verified event span
+ * before the canonical terminal event was bound), windowed on `completed_at`,
+ * the settlement time. A host appears while it is unretired or has a row in
+ * the anomaly window, so a zero is a measured zero.
+ *
+ * - `hostSpanUnconfirmed` — `terminal_event_id IS NULL` and not quarantined:
+ *   still waiting for the canonical event to bind.
+ * - `postHocConflicts` — `application_error.reason = 'prompt_terminal_conflict'`,
+ *   bound or not, applied or not: evidence arriving after the host-span
+ *   settlement disagreed and quarantined the row — the canonical event
+ *   (`terminal_*`, `event_*`), a replayed receipt (`receipt_*`) or a protocol
+ *   check (`*_protocol`); `application_error.causeCode` names which.
+ *   Disjoint from `hostSpanUnconfirmed`.
+ * - `hostSpanSettled1h` — every host-span settlement in the last hour,
+ *   whatever its state: a volume count that overlaps the other two. */
 export type HostSpanSettlementCounts = Readonly<{
   executionHostId: string;
+  hostKey: string;
+  displayName: string;
   hostSpanUnconfirmed: number;
   hostSpanSettled1h: number;
   postHocConflicts: number;

@@ -7,6 +7,7 @@ import type {
   ExecutionConsumerLag,
   ExecutionEventLagReadModel,
   ExecutionEventStreamLag,
+  HostSpanSettlementCounts,
   PoisonedExecutionConsumer,
 } from "@/types/execution-host-observability";
 import type { SchedulerClockStatus } from "@/types/scheduler";
@@ -25,6 +26,10 @@ import {
   formatProjectionRearmCommand,
   isPanelUnavailable,
 } from "@/lib/execution-host/admin-status";
+import {
+  HOST_SPAN_ANOMALY_WINDOW_DAYS,
+  HOST_SPAN_SETTLED_WINDOW_HOURS,
+} from "@/types/execution-host-observability";
 
 type Tone = "good" | "warn" | "danger" | "neutral";
 type Translate = Awaited<ReturnType<typeof getTranslations>>;
@@ -537,6 +542,68 @@ function WorkerRows({
   );
 }
 
+const HOST_SPAN_COUNTS = [
+  ["hostSpanUnconfirmed", { days: HOST_SPAN_ANOMALY_WINDOW_DAYS }],
+  ["hostSpanSettled1h", { hours: HOST_SPAN_SETTLED_WINDOW_HOURS }],
+  ["postHocConflicts", { days: HOST_SPAN_ANOMALY_WINDOW_DAYS }],
+] as const;
+
+function HostSpanCounts({
+  hosts,
+  format,
+}: {
+  hosts: readonly HostSpanSettlementCounts[];
+  format: Format;
+}): ReactElement {
+  const { t } = format;
+
+  if (hosts.length === 0)
+    return (
+      <p className="border-t border-line px-5 py-4 text-sm text-mute">
+        {t("commands.hostSpanEmpty", { days: HOST_SPAN_ANOMALY_WINDOW_DAYS })}
+      </p>
+    );
+
+  return (
+    <>
+      {hosts.map((host) => {
+        const headingId = `host-span-${host.executionHostId}`;
+
+        return (
+          <section
+            key={host.executionHostId}
+            aria-labelledby={headingId}
+            className="border-t border-line px-5 py-4 text-sm"
+          >
+            <h3 className="m-0 text-sm font-semibold text-ink" id={headingId}>
+              {t("commands.hostSpan", { host: host.displayName })}
+            </h3>
+            <p className="mt-1 font-mono text-[11px] text-mute">
+              {host.hostKey}
+            </p>
+            <dl className="mt-3 flex flex-col gap-3">
+              {HOST_SPAN_COUNTS.map(([field, period]) => (
+                <div
+                  key={field}
+                  className="grid grid-cols-[1fr_auto] gap-x-4 gap-y-1"
+                >
+                  <dt className="text-mute">{t(`fields.${field}`, period)}</dt>
+                  <dd className="text-xl font-semibold tabular-nums">
+                    {host[field]}
+                  </dd>
+                  <dd className="col-span-2 text-xs leading-[1.5] text-mute">
+                    {t(`hostSpanHelp.${field}`, period)}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          </section>
+        );
+      })}
+    </>
+  );
+}
+
 export async function ExecutionHostStatus({
   status,
   poisonCursor,
@@ -609,66 +676,35 @@ export async function ExecutionHostStatus({
           {lag === null ? (
             <PanelUnavailable t={t} />
           ) : (
-            <dl className="grid grid-cols-2 gap-4 px-5 py-4 text-sm">
-              <div>
-                <dt className="text-mute">{t("fields.open")}</dt>
-                <dd className="mt-1 text-xl font-semibold">
-                  {lag.commands.total}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-mute">{t("fields.accepted")}</dt>
-                <dd className="mt-1 text-xl font-semibold">
-                  {lag.commands.accepted}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-mute">{t("fields.oldest")}</dt>
-                <dd className="mt-1">
-                  {format.span(lag.commands.oldestAcceptedAgeMs)}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-mute">{t("fields.impasse")}</dt>
-                <dd className="mt-1 text-xl font-semibold">
-                  {observation?.commands.impasse ?? "—"}
-                </dd>
-              </div>
-              {lag.commands.hostSpan.map((host) => (
-                <div
-                  key={host.executionHostId}
-                  className="col-span-2 grid grid-cols-3 gap-4 border-t border-line pt-3"
-                >
-                  <p className="col-span-3 font-mono text-xs text-mute">
-                    {t("commands.hostSpan", { hostId: host.executionHostId })}
-                  </p>
-                  <div>
-                    <dt className="text-mute">
-                      {t("fields.hostSpanUnconfirmed")}
-                    </dt>
-                    <dd className="mt-1 text-xl font-semibold">
-                      {host.hostSpanUnconfirmed}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="text-mute">
-                      {t("fields.hostSpanSettled1h")}
-                    </dt>
-                    <dd className="mt-1 text-xl font-semibold">
-                      {host.hostSpanSettled1h}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="text-mute">
-                      {t("fields.postHocConflicts")}
-                    </dt>
-                    <dd className="mt-1 text-xl font-semibold">
-                      {host.postHocConflicts}
-                    </dd>
-                  </div>
+            <>
+              <dl className="grid grid-cols-2 gap-4 px-5 py-4 text-sm">
+                <div>
+                  <dt className="text-mute">{t("fields.open")}</dt>
+                  <dd className="mt-1 text-xl font-semibold">
+                    {lag.commands.total}
+                  </dd>
                 </div>
-              ))}
-            </dl>
+                <div>
+                  <dt className="text-mute">{t("fields.accepted")}</dt>
+                  <dd className="mt-1 text-xl font-semibold">
+                    {lag.commands.accepted}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-mute">{t("fields.oldest")}</dt>
+                  <dd className="mt-1">
+                    {format.span(lag.commands.oldestAcceptedAgeMs)}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-mute">{t("fields.impasse")}</dt>
+                  <dd className="mt-1 text-xl font-semibold">
+                    {observation?.commands.impasse ?? "—"}
+                  </dd>
+                </div>
+              </dl>
+              <HostSpanCounts format={format} hosts={lag.commands.hostSpan} />
+            </>
           )}
           <p className="border-t border-line px-5 py-3 text-xs text-mute">
             {observation
