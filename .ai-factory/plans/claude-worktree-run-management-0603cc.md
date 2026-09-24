@@ -2091,6 +2091,29 @@ honours its three modes; refactor gate passed.
       172-215); the fixture's other users idle — web 5 files / 43 tests,
       supervisor 2 files / 5 tests; eslint 0/0 on both files.
 
+**Post-verify fix lanes (merged tree, 2026-09-25, Commits 16-19).** Battery:
+`validate:docs:all`, `validate:contracts`, `@maister/mcp` typecheck + build, web
+and supervisor typecheck, `next build` — all exit 0. Web unit 850 files / 8835
+tests green. Supervisor unit 449/449; the post-merge run's one red was master's
+missing `stream_health_unavailable` enum value (`29858e11`, Commit 19), and one
+intermittent `spawn.test` case passed 5/5 alone. Supervisor integration 246/247
+(`permission-cap` RED 3 once, 5/5 alone; the supervisor sources are master's).
+Web integration 523 files / 4641 tests, 14 red in 5 files, and every file passed
+alone on a quiet host:
+- `consensus-prompt-owners` (2 reds, 21/21 alone);
+- `cost-rollups` (Docker port starvation, 7/7 alone);
+- `durable-workers-concurrency` E (3/3 alone);
+- `execution-ab-partitions` (5) and `execution-ab-process-death` (6), 6/6 each
+  alone. These are master's production-boot suites, which the AB lane runs
+  alone because their `next build` owns `web/.next`; in the shared lane a
+  concurrent build removed the stamp (`ENOENT .maister-lane-build`).
+
+e2e: 197 passed, 4 failed (all in the documented set), 3 flaky. **Master moved
+again during these lanes** (`9925b041` → `8ff196d4`, 33 commits, migrations
+`0176`-`0178`), so the final sync before the merge renumbers to the next free
+number (`0179` as of `8ff196d4`; a trial merge has 3 textual conflicts:
+`error-taxonomy.md`, the journal, the `0176` snapshot) and re-runs these lanes.
+
 **Phase 5 lanes (final tree, 2026-09-23).** Unit 826 files / 8611 tests, 0
 failed, 0 skipped (a run overlapping a load spike to 151 timed out 17 cases in
 10 untouched files; the idle re-run is this one). Integration 511 files / 4544
@@ -2116,6 +2139,7 @@ green.
 **Commit 16** — `Merge master into claude/worktree-run-management-0603cc` (`/aif-verify` blocker 2: 46 master commits, 8 conflicts, `0173` → `0176`)
 **Commit 17** — `test(permission-deadline): drop the T5.5 fixture setting` (`/aif-verify` blocker 3)
 **Commit 18** — `fix(workbench-git): a commit needs no remote` (`/aif-verify` blocker 1)
+**Commit 19** — `docs(supervisor): publish stream_health_unavailable in the ReasonToken enum` (master's `29858e11` gap, surfaced by the post-merge supervisor lane)
 
 ---
 
@@ -2416,7 +2440,7 @@ are put to the owner rather than widened silently:
 | # | Question | Answer | Where it landed |
 |---|---|---|---|
 | 1 | Recover vs the lifecycle slot (Follow-up 1) | **fix** | T5.1, Commit 9 |
-| 2 | `0173` vs `master`'s `0173`/`0174` | **renumber at merge** (to `0175`) | merge step — became `0176` (master reached `0175`), Commit 16 |
+| 2 | `0173` vs `master`'s `0173`/`0174` | **renumber at merge** (to `0175`) | merge step — became `0176` (master reached `0175`), Commit 16; master reached `0178` during the lanes, so the final sync takes the next free number (`0179` as of `8ff196d4`) |
 | 3 | T4.2 live provider check | **after rollout** | T4.2 |
 | 4 | Unbounded `Failed` rows (Follow-up 2) | **TTL for `Failed`** (over pagination) | T5.2, Commit 10 |
 | 5 | The three master-side e2e names | **diagnose here**, own commit | T5.3, Commit 11 |
