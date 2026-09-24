@@ -2046,6 +2046,34 @@ honours its three modes; refactor gate passed.
       found`; the same pair over `HEAD`'s seed: 12/12 and one `promoteNextPending
       runFlow dispatch failed — task not found` (the falsification). tsc clean,
       eslint 0/0 on both seed files.
+- [x] **T5.5 — `permission-deadline` RED 13/14 stop going red (owner,
+      2026-09-24: "make it not red").** Event order dumped under 16 `yes`
+      burners: in a red run the mock's reply to the cap's cancelled permission
+      (`end_turn`) reached the host before the SIGTERM, so the prompt COMPLETED
+      and the agent grant read `kind: "result"` — the manager's own rule, "a
+      complete response … retains its result even during checkpoint teardown"
+      (`permission-handoff-evidence.ts`), deterministically controlled by
+      `permission-result-failure`'s `MOCK_ACP_COMPLETE_ON_CHECKPOINT` cases. Not a
+      product race: once teardown starts (the same tick as the cancel)
+      `runAsyncPromptCommand` holds every prompt terminal behind `outputDrained`
+      (`supervisor/src/http-api.ts`), so it lands after `session.exited` whatever
+      the adapter answers and the order stays `after_checkpoint`; only a
+      complete answer changes the kind. A real adapter cannot give one in that
+      window — claude-agent-acp turns a cancelled outcome into "Tool use aborted"
+      and asks the model again. The resumable mock gains an opt-in
+      `MOCK_ACP_HOLD_AFTER_CANCELLED` (a turn whose permission was cancelled ends
+      only by the teardown), set in this suite alone; the six other suites on
+      the fixture do not set it.
+      **AC**: RED 13/14 green in every loaded round in which the same runs
+      without the knob go red; the whole suite and every other fixture user
+      green.
+      **Verified 2026-09-24.** RED 13+14, 8 rounds alternating with a temporary
+      copy of the suite minus the knob (deleted), load 100-246: with the knob
+      16/16 green; without it 8/16 red in 6 of 8 rounds, every one
+      `expected { kind: 'result' } to match { kind: 'continue' }`, no timeout.
+      Whole suite idle 10/10 twice and under the burners 10/10 three times (load
+      172-215); the fixture's other users idle — web 5 files / 43 tests,
+      supervisor 2 files / 5 tests; eslint 0/0 on both files.
 
 **Phase 5 lanes (final tree, 2026-09-23).** Unit 826 files / 8611 tests, 0
 failed, 0 skipped (a run overlapping a load spike to 151 timed out 17 cases in
@@ -2068,6 +2096,7 @@ green.
 **Commit 12** — `fix(scratch-runs): the recover fence reads the workspace row as its route does` (T5.1, found by the final unit lane)
 **Commit 13** — `test(e2e): survive a reset dispatcher tick; budget the rework-claim loop` (T5.3, found by the final e2e lane)
 **Commit 14** — `test(e2e): the observatory seed queues no run` (T5.4)
+**Commit 15** — `test(permission-deadline): only the teardown ends a turn whose permission the cap cancelled` (T5.5)
 
 ---
 
@@ -2378,3 +2407,4 @@ are put to the owner rather than widened silently:
 | # | Question | Answer | Where it landed |
 |---|---|---|---|
 | 1 | The observatory seed's task-less `Pending` run | **fix** | T5.4, Commit 14 |
+| 2 | `permission-deadline` RED 13 red under load | **make it not red** | T5.5, Commit 15 |

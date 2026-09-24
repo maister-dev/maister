@@ -435,11 +435,17 @@ for compilation — the failure is warm-up, not behaviour.
 
 **Measured 2026-09-23 (ADR-181 branch, this Mac): two more load-sensitive
 integration names, both in code that branch does not touch.**
-`lib/__tests__/permission-deadline.integration.test.ts` RED 13 (and RED 14 in
-one lane) — ADR-180's race-window cases — failed at load ≥ 28 and passed at
-≤ 20, four idle rounds; `lib/flows/graph/__tests__/permission-resume.integration.test.ts`
+`lib/flows/graph/__tests__/permission-resume.integration.test.ts`
 "owner-flow-repeated-permission" failed once in a lane that started at load 157
-and passed in every re-run. Re-run a hit idle before reading anything into it.
+and passed in every re-run — re-run a hit idle before reading anything into it.
+`lib/__tests__/permission-deadline.integration.test.ts` RED 13/14 (red at load
+≥ 28, green at ≤ 20) was a fixture race instead, fixed 2026-09-24: the
+resumable mock answered the cap's cancelled permission with `end_turn`, which
+under load beat the SIGTERM, so the turn COMPLETED and the manager — rightly —
+kept it as a `result`, not an interruption. The suite now sets
+`MOCK_ACP_HOLD_AFTER_CANCELLED` (only the teardown ends that turn, as with a
+real adapter). The tell was a stable red rate with one wrong VALUE
+(`kind: 'result'`) and no timeout — a load flake does not pick an answer.
 The lane totals were 511 files / 4544 tests.
 
 **Budget ~25 min for the integration lane and do not mistake it for a hang.** It
