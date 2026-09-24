@@ -33,6 +33,8 @@ import {
 import { MaisterError } from "@/lib/errors";
 import { releaseAssignmentForRun } from "@/lib/execution-host/assignments";
 import { findAgentPromptHalt } from "@/lib/execution-host/agent-pause-source";
+import { CANONICAL_PROJECTION_CONSUMERS } from "@/lib/execution-host/events/projection-consumers";
+import { projectCanonicalPromptCommands } from "@/lib/execution-host/events/prompt-projector";
 import { reanchorDispatchedPrompts } from "@/lib/execution-host/events/run-message-store";
 import { permissionCheckpointOrder } from "@/lib/execution-host/permission-handoff-evidence";
 import { reduceHostSpanEvidence } from "@/lib/execution-host/prompt-evidence";
@@ -588,6 +590,77 @@ describe("host-span settlement on the fake host", () => {
       }
     },
   );
+
+  it("B-lock-order: the canonical confirmation takes the run before the command, as the owner applying the turn does", async () => {
+    const lagging = await laggingSession();
+    const handle = await prompt(lagging.client, lagging.hostSessionId);
+
+    await lagging.client.waitForPrompt(handle, {
+      signal: AbortSignal.timeout(10_000),
+    });
+    expect((await command(handle.commandId)).settledFrom).toBe("host_span");
+    // Ingest the canonical terminal with the prompt projector held off it, so
+    // the confirmation below runs in the projector's own transaction, after
+    // ingest committed — as in production.
+    const held = await database.pool.query(
+      `UPDATE execution_event_consumers
+          SET claim_owner = 'test-hold', claim_expires_at = clock_timestamp() + interval '1 hour'
+        WHERE consumer_name = $1 AND run_id = $2`,
+      [CANONICAL_PROJECTION_CONSUMERS.prompt, lagging.runId],
+    );
+
+    expect(held.rowCount).toBe(1);
+    await fake.releaseIngest();
+    await database.pool.query(
+      "UPDATE execution_event_consumers SET claim_owner = NULL, claim_expires_at = NULL WHERE claim_owner = 'test-hold'",
+    );
+    expect((await command(handle.commandId)).terminalEventId).toBeNull();
+    // The owner applying this settled turn holds the run first and writes the
+    // command last (`lockFlowPromptOwner`, then the application marker).
+    const owner = await database.pool.connect();
+    let confirmation: Promise<unknown> | null = null;
+
+    try {
+      await owner.query("BEGIN");
+      await owner.query("SELECT id FROM runs WHERE id = $1 FOR UPDATE", [
+        lagging.runId,
+      ]);
+      confirmation = projectCanonicalPromptCommands({
+        db,
+        runId: lagging.runId,
+      });
+      // The confirming writer is parked behind the owner's run: on the run
+      // itself, or on the foreign-key re-check its second write of the command
+      // row runs while it already holds that row.
+      await expect
+        .poll(
+          async () =>
+            (
+              await database.pool.query<{ n: number }>(
+                `SELECT count(*)::int AS n FROM pg_stat_activity
+                  WHERE datname = current_database() AND wait_event_type = 'Lock'
+                    AND (query ILIKE '%for key share%' OR query ILIKE 'update "execution_commands"%')`,
+              )
+            ).rows[0].n,
+          { timeout: 10_000 },
+        )
+        .toBe(1);
+      await owner.query(
+        "UPDATE execution_commands SET updated_at = clock_timestamp() WHERE id = $1",
+        [handle.commandId],
+      );
+      await owner.query("COMMIT");
+      await confirmation;
+    } finally {
+      await owner.query("ROLLBACK").catch(() => undefined);
+      owner.release();
+      await confirmation?.catch(() => undefined);
+    }
+    const row = await command(handle.commandId);
+
+    expect(row.terminalEventId).toBe(row.receiptEvidence?.eventId);
+    expect(row.applicationError).toBeNull();
+  }, 60_000);
 
   it("B6: a released assignment's completed turn settles the historical ledger only", async () => {
     const { runId, client, hostSessionId } = await laggingSession();

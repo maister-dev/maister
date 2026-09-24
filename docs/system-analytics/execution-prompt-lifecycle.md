@@ -498,7 +498,8 @@ Normal due ordering and retry deadlines let other commands make progress.
 
 Preparation verifies the original request-bound response, manifest and entire
 event span. The span comes from the canonical rows once the contiguous frontier
-covers the terminal; before that — a turn settled from the host's span — the same
+covers the terminal; before that (a stream with no contiguous frontier yet
+included) — a turn settled from the host's span — the same
 verifier (`commandEvents`) reads it from the host, and an unreadable or
 signal-bearing span answers `event_frontier` exactly as the canonical path does. That answer is late evidence, not a failed application: while the stream is not `lost`, owner application defers it without counting a failure (`PromptOwnerDeferred('event_frontier_pending')`, `prompt-owners.ts`); once the stream is lost nothing will deliver the output, and the refusal counts toward poisoning — the bound (`prompt-output-frontier.integration.test.ts`). Adapters must exhaust the output iterator; a prefix cannot produce
 an applicable result. Their DB-only callback locks the domain authority in its
@@ -507,6 +508,16 @@ any successor readiness. The final command marker compares claim token, source
 digest, terminal digest and unexpired lease in that same five-second bounded
 transaction. A lost marker CAS rolls back all domain writes, including a late
 callback after another worker has already applied the command.
+
+That order starts at the run and ends at the command row, so every
+prompt-evidence writer — the prompt projector, the direct binding and the
+host-span settlement — takes the command's run `FOR KEY SHARE` before the
+command row (`lockPrompt`, `prompt-evidence.ts`). Binding and confirming write
+the row twice in one transaction, which re-runs its foreign-key checks, and
+with host-span settlement an owner can already be applying the turn — holding
+the run, waiting for the row — while the canonical event confirms it. Taking
+the row first deadlocked the two (`prompt-host-span-fake` B-lock-order; ADR-167
+D5 amendment).
 
 Successful application sets `application_state=applied` and
 `completion_applied_at` together. Explicit supersession retains the historical

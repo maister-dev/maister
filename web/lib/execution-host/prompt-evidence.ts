@@ -33,6 +33,7 @@ import {
   executionEvents,
   executionHosts,
   executionEventStreams,
+  runs,
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 
@@ -158,6 +159,23 @@ async function lockPrompt(
   tx: Db,
   commandId: string,
 ): Promise<ExecutionCommand> {
+  // The run first, in the owner application's order (`lockFlowPromptOwner`).
+  // Binding and confirming write this row twice in one transaction, which
+  // re-runs its foreign-key checks; the one on `runs` needs KEY SHARE, and an
+  // owner applying a host-span-settled turn holds the run while it waits for
+  // this row — a deadlock unless the run is queued for before the row.
+  const [target] = await tx
+    .select({ runId: executionCommands.runId })
+    .from(executionCommands)
+    .where(eq(executionCommands.id, commandId))
+    .limit(1);
+
+  if (target)
+    await tx
+      .select({ id: runs.id })
+      .from(runs)
+      .where(eq(runs.id, target.runId))
+      .for("key share");
   const [row] = await tx
     .select()
     .from(executionCommands)
