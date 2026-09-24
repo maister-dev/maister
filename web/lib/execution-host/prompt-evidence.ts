@@ -6,7 +6,7 @@ import type { ExecutionCommand, ExecutionEvent } from "@/lib/db/schema";
 
 import { createHash } from "node:crypto";
 
-import { and, count, eq, gte, inArray, lte } from "drizzle-orm";
+import { and, count, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import pino from "pino";
 
 import {
@@ -410,7 +410,16 @@ async function reducePromptEvidence(
       state: outcome.status,
       result: outcome.result,
       lastError: outcome.error,
-      completedAt: command.completedAt ?? new Date(),
+      // Set once, from the database clock, because the transcript re-anchor
+      // (D-B10) compares it with `run_messages.created_at`, which Postgres
+      // stamps. Millisecond precision so the value survives a round trip
+      // through a JS Date; a confirming re-reduce leaves it out entirely, since
+      // the evidence trigger refuses any change to it.
+      ...(command.completedAt
+        ? {}
+        : {
+            completedAt: sql`date_trunc('milliseconds', clock_timestamp())`,
+          }),
       terminalEvidenceSha256: digest,
       // Recorded once, by the feed that settled first; a confirming re-reduce
       // never rewrites it (the evidence trigger refuses a change).
@@ -468,8 +477,15 @@ export async function recordPromptEvent(
   const bound = await bindTerminalEvent(tx, command, event);
 
   if ("refused" in bound) return bound.refused;
+  const reduced = await reducePromptEvidence(tx, bound.command, {
+    feed: "canonical",
+    event,
+  });
 
-  return reducePromptEvidence(tx, bound.command, { feed: "canonical", event });
+  if (bound.boundHere)
+    await confirmHostSpanSettlement(tx, bound.command, event, reduced);
+
+  return reduced;
 }
 
 /** The single writer of `terminal_event_id`: the exact canonical terminal
@@ -479,12 +495,16 @@ async function bindTerminalEvent(
   tx: Db,
   command: ExecutionCommand,
   event: ExecutionEvent,
-): Promise<{ command: ExecutionCommand } | { refused: PromptEvidenceResult }> {
+): Promise<
+  | { command: ExecutionCommand; boundHere: boolean }
+  | { refused: PromptEvidenceResult }
+> {
   if (!eventMatches(command, event))
     return { refused: await quarantine(tx, command, "event_binding") };
   if (!outcomeFromEvent(event))
     return { refused: await quarantine(tx, command, "event_shape") };
-  if (command.terminalEventId === event.id) return { command };
+  if (command.terminalEventId === event.id)
+    return { command, boundHere: false };
   if (command.terminalEventId)
     return { refused: await quarantine(tx, command, "event_replacement") };
   const [stored] = await tx
@@ -493,32 +513,46 @@ async function bindTerminalEvent(
     .where(eq(executionCommands.id, command.id))
     .returning();
 
-  if (command.settledFrom === "host_span") {
-    log.info(
-      { commandId: command.id, eventId: event.id },
-      "prompt-host-span-confirmed",
-    );
-    if (event.runSequence !== null && command.completedAt) {
-      const rows = await reanchorDispatchedPrompts(tx, {
-        runId: command.runId,
-        settledAt: command.completedAt,
-        anchor: event.runSequence,
-      });
+  return { command: stored, boundHere: true };
+}
 
-      if (rows > 0)
-        log.info(
-          {
-            runId: command.runId,
-            commandId: command.id,
-            anchor: event.runSequence.toString(),
-            rows,
-          },
-          "transcript-prompts-reanchored",
-        );
-    }
+/** ADR-167 D5 amendment (D-B10): once the canonical terminal AGREES with a
+ * host-span settlement, prompts dispatched since the settlement move up to the
+ * terminal's run sequence. Run only after the reduce: a disagreeing terminal is
+ * a quarantine, not a confirmation, and moves nothing. */
+async function confirmHostSpanSettlement(
+  tx: Db,
+  command: ExecutionCommand,
+  event: ExecutionEvent,
+  reduced: PromptEvidenceResult,
+): Promise<void> {
+  if (
+    command.settledFrom !== "host_span" ||
+    reduced.disposition === "quarantined"
+  )
+    return;
+  log.info(
+    { commandId: command.id, eventId: event.id },
+    "prompt-host-span-confirmed",
+  );
+  if (event.runSequence !== null && command.completedAt) {
+    const rows = await reanchorDispatchedPrompts(tx, {
+      runId: command.runId,
+      settledAt: command.completedAt,
+      anchor: event.runSequence,
+    });
+
+    if (rows > 0)
+      log.info(
+        {
+          runId: command.runId,
+          commandId: command.id,
+          anchor: event.runSequence.toString(),
+          rows,
+        },
+        "transcript-prompts-reanchored",
+      );
   }
-
-  return { command: stored };
 }
 
 /** ADR-167 D5 amendment (D-B5): settle from the host's verified span. The
@@ -697,10 +731,15 @@ export async function reconcileStoredPromptEvidence(
         "prompt-terminal-bound-directly",
       );
 
-      return reducePromptEvidence(tx, bound.command, {
+      const reduced = await reducePromptEvidence(tx, bound.command, {
         feed: "canonical",
         event: prepared,
       });
+
+      if (bound.boundHere)
+        await confirmHostSpanSettlement(tx, bound.command, prepared, reduced);
+
+      return reduced;
     }
 
     return reducePromptEvidence(tx, locked, {

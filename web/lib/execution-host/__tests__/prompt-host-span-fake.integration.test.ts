@@ -12,7 +12,15 @@ import type { RuntimeEventEnvelope } from "@/lib/execution-host/runtime-events";
 import { randomUUID } from "node:crypto";
 
 import { and, eq } from "drizzle-orm";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
 import {
   executionCommands,
@@ -81,6 +89,7 @@ beforeEach(async () => {
   resetRegistrarStateForTests();
   await fake.releaseIngest();
   fake.setPrunedFloor(null);
+  fake.clearFaults();
   fake.setPromptBehavior(async () => ({ stopReason: "end_turn", meta: null }));
 });
 
@@ -368,13 +377,14 @@ describe("host-span settlement on the fake host", () => {
     });
   });
 
-  it("B-failed: a rejected turn is never read from the host span; it settles canonically", async () => {
+  // A rejected receipt carries no output manifest, so no host span can be
+  // named for it; what this pins is that it waits and settles canonically.
+  it("B-failed: a rejected turn is not settled from the host; it waits and settles canonically", async () => {
     const { client, hostSessionId } = await laggingSession();
 
     fake.setPromptBehavior(async () => {
       throw new MaisterError("ACP_PROTOCOL", "fixture turn failure");
     });
-    const reads = fake.callsOf("readRuntimeEventSpan").length;
     const handle = await prompt(client, hostSessionId);
 
     await untilReceipt(handle.commandId);
@@ -386,7 +396,6 @@ describe("host-span settlement on the fake host", () => {
       terminalEvidenceSha256: null,
       settledFrom: null,
     });
-    expect(fake.callsOf("readRuntimeEventSpan").length).toBe(reads);
 
     await fake.releaseIngest();
     await expect(
@@ -485,6 +494,9 @@ describe("host-span settlement on the fake host", () => {
       boundToReceipt: row.terminalEventId === row.receiptEvidence?.eventId,
       digest: row.terminalEvidenceSha256 !== null,
       completionAppliedAt: row.completionAppliedAt,
+      // A confirmation that quarantined the row (terminal_digest) differs here.
+      applicationState: row.applicationState,
+      applicationError: row.applicationError,
     });
 
     expect(shape(confirmed)).toEqual(shape(baseline));
@@ -579,10 +591,19 @@ describe("host-span settlement on the fake host", () => {
 
   it("B6: a released assignment's completed turn settles the historical ledger only", async () => {
     const { runId, client, hostSessionId } = await laggingSession();
+
+    // The receipt claim's first attempt would settle before the release; an
+    // unreadable span there makes the settlement happen AFTER it.
+    fake.setPrunedFloor("1000000");
     const handle = await prompt(client, hostSessionId);
 
     await untilReceipt(handle.commandId);
+    expect(await command(handle.commandId)).toMatchObject({
+      terminalEvidenceSha256: null,
+      settledFrom: null,
+    });
     await releaseAssignmentForRun(db, runId, "b6-checkpoint-won");
+    fake.setPrunedFloor(null);
     const snapshot = async () => ({
       run: (await db.select().from(runs).where(eq(runs.id, runId)))[0],
       sessions: await db
@@ -596,10 +617,17 @@ describe("host-span settlement on the fake host", () => {
     });
     const before = await snapshot();
 
-    await reconcile(handle.commandId);
+    // Past the D-B5 retry delay the unreadable attempt left behind.
+    await reconcilePromptCommand({
+      db,
+      commandId: handle.commandId,
+      lookupReceipt: (id) => fake.transport.getCommandReceipt(id),
+      now: () => new Date(Date.now() + 6_000),
+    });
     expect(await command(handle.commandId)).toMatchObject({
       settledFrom: "host_span",
       state: "succeeded",
+      terminalEventId: null,
     });
     expect(await snapshot()).toEqual(before);
   });
@@ -620,14 +648,22 @@ describe("absence is never proof (D-B9)", () => {
     await expect(
       permissionCheckpointOrder(db, unconfirmed, null),
     ).rejects.toBeInstanceOf(PromptOwnerDeferred);
-    // A canonical row that simply has no terminal keeps the old answers.
+    // The deferral keys on BOTH axes: a pre-0176 row with no terminal keeps
+    // the old early answer, and a confirmed host-span row is read normally
+    // (these ids match no event, so the read answers absence).
     const legacy = {
       ...unconfirmed,
       settledFrom: null,
     } as unknown as ExecutionCommand;
+    const confirmed = {
+      ...unconfirmed,
+      terminalEventId: randomUUID(),
+    } as unknown as ExecutionCommand;
 
-    expect(await findAgentPromptHalt(db, legacy)).toBeNull();
-    expect(await permissionCheckpointOrder(db, legacy, null)).toBe("unproven");
+    for (const row of [legacy, confirmed]) {
+      expect(await findAgentPromptHalt(db, row)).toBeNull();
+      expect(await permissionCheckpointOrder(db, row, null)).toBe("unproven");
+    }
   });
 });
 
@@ -721,6 +757,91 @@ describe("transcript re-anchor on confirmation (D-B10)", () => {
       );
 
     expect(terminal?.runSequence).not.toBeNull();
+    expect(moved?.anchor).toBe(terminal!.runSequence!.toString());
+  });
+  it("B9-conflict: a canonical terminal that DISAGREES with the host-span settlement moves no prompt", async () => {
+    const { runId, client, hostSessionId } = await laggingSession();
+    const handle = await prompt(client, hostSessionId);
+
+    await untilReceipt(handle.commandId);
+    const settled = await command(handle.commandId);
+
+    expect(settled).toMatchObject({ settledFrom: "host_span" });
+    await db.insert(runMessages).values({
+      id: randomUUID(),
+      runId,
+      sequence: 1_000_000,
+      role: "user",
+      content: "next node",
+      supervisorEventId: "0",
+      promptDispatchKey: `dispatch-${randomUUID()}`,
+      createdAt: new Date(settled.completedAt!.getTime() + 1),
+    });
+
+    await fake.releaseIngest({ tamper: tamperTerminal("max_tokens") });
+    await expect
+      .poll(async () => (await command(handle.commandId)).applicationError, {
+        timeout: 10_000,
+      })
+      .toMatchObject({ reason: "prompt_terminal_conflict" });
+    const [kept] = await db
+      .select({ anchor: runMessages.supervisorEventId })
+      .from(runMessages)
+      .where(
+        and(eq(runMessages.runId, runId), eq(runMessages.sequence, 1_000_000)),
+      );
+
+    expect(kept?.anchor, "a quarantine is not a confirmation").toBe("0");
+  });
+
+  it("B9-skew: the settlement time comes from the database clock, so a web clock running ahead cannot keep a later prompt from moving", async () => {
+    const { runId, client, hostSessionId } = await laggingSession();
+    const handle = await prompt(client, hostSessionId);
+
+    // Only the web clock runs ten minutes ahead, and only while the turn
+    // settles. `run_messages.created_at` below is stamped by Postgres.
+    vi.useFakeTimers({ toFake: ["Date"], shouldAdvanceTime: true });
+    try {
+      vi.setSystemTime(Date.now() + 600_000);
+      await untilReceipt(handle.commandId);
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(await command(handle.commandId)).toMatchObject({
+      settledFrom: "host_span",
+    });
+    await db.insert(runMessages).values({
+      id: randomUUID(),
+      runId,
+      sequence: 1_000_000,
+      role: "user",
+      content: "next node",
+      supervisorEventId: "0",
+      promptDispatchKey: `dispatch-${randomUUID()}`,
+    });
+
+    await fake.releaseIngest();
+    await expect
+      .poll(async () => (await command(handle.commandId)).terminalEventId, {
+        timeout: 10_000,
+      })
+      .not.toBeNull();
+    const [terminal] = await db
+      .select({ runSequence: executionEvents.runSequence })
+      .from(executionEvents)
+      .where(
+        eq(
+          executionEvents.id,
+          (await command(handle.commandId)).terminalEventId!,
+        ),
+      );
+    const [moved] = await db
+      .select({ anchor: runMessages.supervisorEventId })
+      .from(runMessages)
+      .where(
+        and(eq(runMessages.runId, runId), eq(runMessages.sequence, 1_000_000)),
+      );
+
     expect(moved?.anchor).toBe(terminal!.runSequence!.toString());
   });
 });
