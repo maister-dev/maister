@@ -190,12 +190,17 @@ let supervisor: RealSupervisor;
 let worker: ProjectionWorker;
 let restoreUrl: () => void = () => {};
 let originalFlowCap: string | undefined;
+let originalAgentCap: string | undefined;
 
 beforeAll(async () => {
   // Every case seeds its own project and leaves its parent parked; the global
-  // flow cap is not under test here and would defer later cases' wakes.
+  // flow cap is not under test here and would defer later cases' wakes. The
+  // agent cap likewise: the yield cases leave their draft children Running, and
+  // a later case's drafts would queue behind them.
   originalFlowCap = process.env.MAISTER_MAX_CONCURRENT_RUNS;
   process.env.MAISTER_MAX_CONCURRENT_RUNS = "64";
+  originalAgentCap = process.env.MAISTER_MAX_CONCURRENT_AGENTS;
+  process.env.MAISTER_MAX_CONCURRENT_AGENTS = "64";
   database = await startMainPostgresTestDb({
     databaseName: "consensus_prompt_owners",
   });
@@ -220,6 +225,9 @@ afterAll(async () => {
   if (originalFlowCap === undefined)
     delete process.env.MAISTER_MAX_CONCURRENT_RUNS;
   else process.env.MAISTER_MAX_CONCURRENT_RUNS = originalFlowCap;
+  if (originalAgentCap === undefined)
+    delete process.env.MAISTER_MAX_CONCURRENT_AGENTS;
+  else process.env.MAISTER_MAX_CONCURRENT_AGENTS = originalAgentCap;
 });
 
 const AXES = ["scope", "risk"] as const;
@@ -2036,7 +2044,8 @@ describe("Consensus prompt owners through the production graph driver", () => {
     const attempts = await database.db
       .select()
       .from(nodeAttempts)
-      .where(eq(nodeAttempts.runId, seeded.runId));
+      .where(eq(nodeAttempts.runId, seeded.runId))
+      .orderBy(nodeAttempts.attempt);
 
     expect(attempts).toHaveLength(2);
     expect(attempts[1].id).not.toBe(failed.id);
