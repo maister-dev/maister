@@ -10,12 +10,17 @@ import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import pino from "pino";
 
 import * as schemaModule from "@/lib/db/schema";
+import { getCommand } from "@/lib/execution-host/commands";
 import { commandStreamLost } from "@/lib/execution-host/events/stream-health";
-import { reconcilePromptCommand } from "@/lib/execution-host/prompt-reconciliation";
+import {
+  hostSpanEligible,
+  reconcilePromptCommand,
+} from "@/lib/execution-host/prompt-reconciliation";
 import {
   classifyPromptEvidence,
   isTurnLostError,
 } from "@/lib/reconcile-evidence";
+import { isMaisterError } from "@/lib/errors";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { executionCommands, nodeAttempts } = schemaModule as unknown as Record<
@@ -224,6 +229,10 @@ export async function probeReceipt(
 
 export type ResolvedPromptEvidence = {
   evidence: PromptEvidenceClass;
+  /** The bound on the skip arms: the holding host's stream is `lost` AND no
+   * host-evidence read of this command is still owed an answer. False while
+   * such a read is in flight, the host last answered busy, or the receipt is
+   * still being read (D-B7), because the evidence can then still arrive. */
   streamLost: boolean;
   commandId: string | null;
   /** The attempt this classification is ABOUT. Carried to the writer so it
@@ -326,11 +335,32 @@ export async function resolvePromptEvidence(
   // host-evidence feeds (the direct binding, then the verified host span) and
   // classify again. With a live stream `pending_ingest` keeps its meaning —
   // the waiting writer owes the next move — so nothing is read here.
+  let hostReadPending = false;
+
   if (streamLost && evidence === "pending_ingest" && probe === "completed") {
-    await reconcilePromptCommand({
+    // Never throws, like `probeReceipt`: a host that could not answer is no
+    // evidence, and one candidate's throw would reject the whole sweep pass
+    // (`runWithConcurrency` is a Promise.all). A failed offer settles nothing;
+    // the verdict rule below decides from the row as it stands.
+    const offered = await reconcilePromptCommand({
       db,
       commandId: row.id,
       lookupReceipt: (id) => transport.getCommandReceipt(id),
+    }).catch((error: unknown) => {
+      log.warn(
+        {
+          runId: input.runId,
+          commandId: row.id,
+          causeCode: isMaisterError(error)
+            ? error.code
+            : error instanceof Error
+              ? error.name
+              : "unknown",
+        },
+        "reconcile-evidence-host-offer-failed",
+      );
+
+      return null;
     });
     const settled = await loadPromptEvidence(db, {
       runId: input.runId,
@@ -344,6 +374,30 @@ export async function resolvePromptEvidence(
         { runId: input.runId, commandId: row.id, evidence },
         "reconcile-evidence-settled-from-host",
       );
+    } else {
+      // Only a read that ANSWERED is a verdict. A missing receipt means
+      // another reader holds the receipt claim; an eligible command with no
+      // verdict has a read in flight (a claim clears it) — that reader may be
+      // settling a readable result right now; `busy` asked for a retry. Every
+      // read ends in a verdict or a settlement and the sweep reads itself
+      // whenever the claim is free, so this waits on the next answer, never
+      // on a timer. A recorded refusal, or a command the host span cannot
+      // settle at all, leaves nothing to wait for.
+      const current = offered?.command ?? (await getCommand(db, row.id));
+
+      hostReadPending =
+        !!current &&
+        (!current.receiptEvidence ||
+          (hostSpanEligible(current) && current.hostSpanVerdict !== "refused"));
+      if (hostReadPending)
+        log.info(
+          {
+            runId: input.runId,
+            commandId: row.id,
+            hostSpanVerdict: current?.hostSpanVerdict ?? null,
+          },
+          "reconcile-evidence-host-read-pending",
+        );
     }
   }
 
@@ -354,11 +408,17 @@ export async function resolvePromptEvidence(
         commandId: row.id,
         evidence,
         streamLost,
+        hostReadPending,
         probe,
       },
       "reconcile: prompt evidence probed",
     );
   }
 
-  return { evidence, streamLost, commandId: row.id, nodeAttemptId };
+  return {
+    evidence,
+    streamLost: streamLost && !hostReadPending,
+    commandId: row.id,
+    nodeAttemptId,
+  };
 }

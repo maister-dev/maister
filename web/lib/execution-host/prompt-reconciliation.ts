@@ -4,6 +4,7 @@ import type { Logger } from "pino";
 import type { Db } from "./db";
 import type { CommandReceipt } from "./contracts";
 import type { PromptEvidenceResult } from "./prompt-evidence";
+import type { HostSpanVerdict } from "./types";
 import type { ExecutionCommand, ExecutionEvent } from "@/lib/db/schema";
 
 import { setTimeout as delay } from "node:timers/promises";
@@ -35,15 +36,31 @@ const log = pino({
 });
 const RECEIPT_CLAIM_MS = 30_000;
 const RECEIPT_RETRY_MS = 5_000;
+
 // Both sides cap concurrent object reads (the host at 2) and answer a busy
 // read `command_in_progress`, "retry the read". Waiting out RECEIPT_RETRY_MS
 // for it doubled host-span settlement latency under concurrency (T5.3).
-const HOST_SPAN_BUSY_ATTEMPTS = 5;
+export const HOST_SPAN_BUSY_ATTEMPTS = 5;
 const HOST_SPAN_BUSY_BACKOFF_MS = 100;
+// A settlement write that failed on one of these can succeed on a retry, so it
+// is no verdict on the span: serialization/deadlock (class 40), lock or
+// statement timeout, lost connection (class 08).
+const RETRYABLE_WRITE_SQLSTATE = /^(40|08|55P03$|57014$)/;
 
 export type PromptReconciliationResult = PromptEvidenceResult & {
   receiptRead: "not_due" | "missing" | "present" | "unavailable";
 };
+
+/** A command the host-span feed may settle: a completed v2 receipt naming its
+ * terminal event. Failed and fenced receipts carry no output manifest, so no
+ * bounded span proves them signal-free: they settle canonically (D-B4 scope). */
+export function hostSpanEligible(
+  command: Pick<ExecutionCommand, "receiptEvidence">,
+): boolean {
+  const receipt = command.receiptEvidence?.evidenceV2;
+
+  return receipt?.phase === "completed" && Boolean(receipt.terminal);
+}
 
 /** Query, wait and restart recovery acquire the same bounded receipt-read
  * claim. The due timestamp is a CAS token; a late read cannot overwrite a
@@ -91,7 +108,7 @@ export async function reconcilePromptCommand(input: {
   const claimUntil = new Date(at.getTime() + RECEIPT_CLAIM_MS);
   const [claimed] = await input.db
     .update(executionCommands)
-    .set({ nextAttemptAt: claimUntil })
+    .set({ nextAttemptAt: claimUntil, hostSpanVerdict: null })
     .where(
       and(
         eq(executionCommands.id, row.id),
@@ -108,6 +125,7 @@ export async function reconcilePromptCommand(input: {
   if (!claimed) return { ...existing, receiptRead: "not_due" };
   let receipt: CommandReceipt | null = null;
   let receiptRead: PromptReconciliationResult["receiptRead"] = "missing";
+  let verdict: HostSpanVerdict | null = null;
 
   try {
     receipt = await input.lookupReceipt(row.id);
@@ -137,12 +155,13 @@ export async function reconcilePromptCommand(input: {
     const bound = await reconcileStoredPromptEvidence(input.db, row.id, signal);
 
     if (bound.disposition === "waiting")
-      await attemptHostSpan(input.db, row.id, signal, now);
+      verdict = verdictOf(await attemptHostSpan(input.db, row.id, signal, now));
   }
   await input.db
     .update(executionCommands)
     .set({
       nextAttemptAt: new Date(now().getTime() + RECEIPT_RETRY_MS),
+      hostSpanVerdict: verdict,
       transportState: sql`CASE WHEN ${executionCommands.transportState} = 'acknowledged' THEN 'acknowledged'
       WHEN ${executionCommands.attempts} >= ${executionCommands.maxAttempts} THEN 'reconciliation_required'
       ELSE ${executionCommands.transportState} END`,
@@ -172,15 +191,13 @@ async function settleFromHostSpanWhenDue(
 ): Promise<PromptEvidenceResult> {
   const pending = await getCommand(db, commandId);
 
-  // Failed and fenced receipts carry no output manifest, so no bounded span
-  // proves them signal-free: they settle canonically (D-B4 scope).
-  if (pending?.receiptEvidence?.evidenceV2?.phase !== "completed")
+  if (!pending || !hostSpanEligible(pending))
     return reconcileStoredPromptEvidence(db, commandId, signal);
   const at = now();
   const claimUntil = new Date(at.getTime() + RECEIPT_CLAIM_MS);
   const [claimed] = await db
     .update(executionCommands)
-    .set({ nextAttemptAt: claimUntil })
+    .set({ nextAttemptAt: claimUntil, hostSpanVerdict: null })
     .where(
       and(
         eq(executionCommands.id, commandId),
@@ -197,11 +214,14 @@ async function settleFromHostSpanWhenDue(
     .returning({ id: executionCommands.id });
 
   if (!claimed) return reconcileStoredPromptEvidence(db, commandId, signal);
-  const settled = await attemptHostSpan(db, commandId, signal, now);
+  const attempt = await attemptHostSpan(db, commandId, signal, now);
 
   await db
     .update(executionCommands)
-    .set({ nextAttemptAt: new Date(now().getTime() + RECEIPT_RETRY_MS) })
+    .set({
+      nextAttemptAt: new Date(now().getTime() + RECEIPT_RETRY_MS),
+      hostSpanVerdict: verdictOf(attempt),
+    })
     .where(
       and(
         eq(executionCommands.id, commandId),
@@ -210,7 +230,15 @@ async function settleFromHostSpanWhenDue(
       ),
     );
 
-  return settled ?? reconcileStoredPromptEvidence(db, commandId, signal);
+  return typeof attempt === "object" && attempt !== null
+    ? attempt
+    : reconcileStoredPromptEvidence(db, commandId, signal);
+}
+
+function verdictOf(
+  attempt: PromptEvidenceResult | HostSpanVerdict | null,
+): HostSpanVerdict | null {
+  return attempt === "busy" || attempt === "refused" ? attempt : null;
 }
 
 /** A capped object read answers `command_in_progress`; it is re-read after a
@@ -238,13 +266,17 @@ async function verifySpanRetryingBusyReads(
 
 /** One host-span attempt under a held claim. A span that is unreadable,
  * unverifiable or signal-bearing is never evidence against the command: the
- * command keeps waiting for the canonical feed. */
+ * command keeps waiting for the canonical feed. The answer is the verdict the
+ * claim's release records (`HOST_SPAN_VERDICTS`): `busy` when the host kept
+ * asking for a retry or a retryable write failed — no verdict on the span —
+ * and `refused` when the span itself could not settle the command. `null`
+ * means no read ran (already settled, or not a host-span command). */
 async function attemptHostSpan(
   db: Db,
   commandId: string,
   signal: AbortSignal,
   now: () => Date,
-): Promise<PromptEvidenceResult | null> {
+): Promise<PromptEvidenceResult | HostSpanVerdict | null> {
   const command = await getCommand(db, commandId);
 
   if (!command || command.terminalEvidenceSha256) return null;
@@ -270,7 +302,18 @@ async function attemptHostSpan(
         "prompt-evidence-feed-selected",
       );
 
-      return null;
+      return "refused";
+    }
+    if (
+      isMaisterError(error) &&
+      error.details?.reason === "command_in_progress"
+    ) {
+      log.warn(
+        { commandId, attempts: HOST_SPAN_BUSY_ATTEMPTS },
+        "prompt-host-span-busy",
+      );
+
+      return "busy";
     }
     if (error instanceof HostSpanUnavailable)
       log.warn(
@@ -293,7 +336,7 @@ async function attemptHostSpan(
         "prompt-host-span-unverified",
       );
 
-    return null;
+    return "refused";
   }
   log.debug(
     { commandId, feed: "host_span", reason: "span_verified" },
@@ -309,6 +352,8 @@ async function attemptHostSpan(
     // the canonical feed still settles the command. Surface it here, because
     // a flow wait turns any thrown error into a cause-less continuation yield.
     const sqlState = (error as { code?: unknown } | null)?.code;
+    const retryable =
+      typeof sqlState === "string" && RETRYABLE_WRITE_SQLSTATE.test(sqlState);
 
     log.warn(
       {
@@ -319,11 +364,12 @@ async function attemptHostSpan(
             : error instanceof Error
               ? error.name
               : "unknown",
+        retryable,
       },
       "prompt-host-span-settlement-failed",
     );
 
-    return null;
+    return retryable ? "busy" : "refused";
   }
 
   if (result.settledHere) {

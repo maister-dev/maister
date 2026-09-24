@@ -167,6 +167,12 @@ state = 'active'`: at most one active assignment per run (E-EH-02).
   column immutable once set. Partial index
   `execution_commands_host_span_settled_idx (execution_host_id, completed_at)
   WHERE settled_from = 'host_span'` serves the per-host counts.
+- `execution_commands.host_span_verdict` (`0177`, Implemented — ADR-177
+  amendment 2026-09-23): `busy | refused`, the answer of the latest host-span
+  read that did not settle the prompt (`execution_commands_host_span_verdict_check`).
+  Cleared when a read claims the command and written when that claim is
+  released, so NULL also means a read is in flight; the stream-lost resolver
+  crashes only on `refused`.
 - Indexes: `execution_assignments_host_state_idx (execution_host_id, state)`
   (the registrar's "does the old row still own active work" scan),
   `execution_commands_open_idx (state, next_attempt_at) WHERE state IN

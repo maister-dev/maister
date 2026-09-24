@@ -74,6 +74,7 @@ import {
   OPEN_COMMAND_STATES,
   PLACEMENT_REASONS,
   PROMPT_SETTLEMENT_FEEDS,
+  HOST_SPAN_VERDICTS,
   RUNTIME_OBJECT_KINDS,
   RUNTIME_OBJECT_RETENTION_CLASSES,
   type RuntimeObjectRetentionHold,
@@ -2329,6 +2330,7 @@ export const executionCommands = pgTable(
     terminalEvidenceSha256: text("terminal_evidence_sha256"),
     // Written once, by the reducer, in the UPDATE that first sets the digest.
     settledFrom: text("settled_from", { enum: PROMPT_SETTLEMENT_FEEDS }),
+    hostSpanVerdict: text("host_span_verdict", { enum: HOST_SPAN_VERDICTS }),
     transportState: text("transport_state", { enum: COMMAND_TRANSPORT_STATES })
       .notNull()
       .default("not_sent"),
@@ -2458,6 +2460,10 @@ export const executionCommands = pgTable(
     settledFromCheck: check(
       "execution_commands_settled_from_check",
       sql`${t.settledFrom} IS NULL OR (${inLiteralList(t.settledFrom, PROMPT_SETTLEMENT_FEEDS)} AND ${t.terminalEvidenceSha256} IS NOT NULL)`,
+    ),
+    hostSpanVerdictCheck: check(
+      "execution_commands_host_span_verdict_check",
+      sql`${t.hostSpanVerdict} IS NULL OR ${inLiteralList(t.hostSpanVerdict, HOST_SPAN_VERDICTS)}`,
     ),
     receiptEvidenceCheck: check(
       "execution_commands_receipt_evidence_check",
