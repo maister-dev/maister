@@ -372,11 +372,6 @@ beforeAll(async () => {
     fixture: "mock-acp-adapter-resumable.mjs",
     env: {
       MOCK_ACP_REQUEST_PERMISSION: "1",
-      // Only the cap's SIGTERM may end a parked turn. Without it the mock
-      // answers the cancelled permission with `end_turn`, which under load
-      // lands before the SIGTERM — a completed turn the manager rightly
-      // keeps as a `result`, so RED 13/14 read no interruption.
-      MOCK_ACP_HOLD_AFTER_CANCELLED: "1",
       MOCK_ACP_STATE_DIR: journalDir,
       // ~8 s. Long enough for RED 2 to bump, sweep and answer against a LIVE
       // agent (it needs ~0.5 s), short enough that the five cap-driven

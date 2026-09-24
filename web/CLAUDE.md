@@ -439,14 +439,18 @@ integration names, both in code that branch does not touch.**
 "owner-flow-repeated-permission" failed once in a lane that started at load 157
 and passed in every re-run — re-run a hit idle before reading anything into it.
 `lib/__tests__/permission-deadline.integration.test.ts` RED 13/14 (red at load
-≥ 28, green at ≤ 20) was a fixture race instead, fixed 2026-09-24: the
-resumable mock answered the cap's cancelled permission with `end_turn`, which
-under load beat the SIGTERM, so the turn COMPLETED and the manager — rightly —
-kept it as a `result`, not an interruption. The suite now sets
-`MOCK_ACP_HOLD_AFTER_CANCELLED` (only the teardown ends that turn, as with a
-real adapter). The tell was a stable red rate with one wrong VALUE
-(`kind: 'result'`) and no timeout — a load flake does not pick an answer.
-The lane totals were 511 files / 4544 tests.
+≥ 28, green at ≤ 20) was not load noise but a product bug the load exposed:
+the resumable mock answered the cap's cancelled permission with `end_turn`,
+which under load beat the SIGTERM, so the prompt settled `succeeded` and the
+agent grant took `kind: "result"` — marking the operator's stored answer
+delivered although no `session.input` ever carried it. Master's ADR-180
+correction (`04a3a39a`) fixed it: a checkpointed permission without confirmed
+input resumes as `continue` whatever the prompt's outcome — 12/12 at load
+75-278 after the fix, with the succeeded-prompt race firing in 7 of 12 cases.
+The tell was a stable red rate with one wrong VALUE and no timeout: a load
+flake does not pick an answer. Ask whether the "by-rule" outcome tells the
+operator the truth before blaming the fixture. The lane totals were 511 files
+/ 4544 tests.
 
 **Budget ~25 min for the integration lane and do not mistake it for a hang.** It
 is gated by two very slow files — `lib/flows/graph/__tests__/prompt-owners.integration.test.ts`

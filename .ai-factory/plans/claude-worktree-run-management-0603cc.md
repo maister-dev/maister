@@ -54,6 +54,9 @@ the scratch promote modes the UI already offers are honoured by the server.
   "No schema changes" afterwards (schema.ts is the fourth leg).
   If `master` gains a `0173` before this branch merges, the triple is regenerated as
   `0174` in the rebase session (renumber pass), never edited in place.
+  **As merged (2026-09-25, Commit 16):** `master` had claimed `0173`-`0175`, so the
+  triple was regenerated as `0176_workbench_git_publication` on master's `0175`
+  (same five statements, a newer journal `when`, `drizzle-kit generate` clean).
 
 ## Roadmap Linkage
 
@@ -2047,7 +2050,20 @@ honours its three modes; refactor gate passed.
       runFlow dispatch failed — task not found` (the falsification). tsc clean,
       eslint 0/0 on both seed files.
 - [x] **T5.5 — `permission-deadline` RED 13/14 stop going red (owner,
-      2026-09-24: "make it not red").** Event order dumped under 16 `yes`
+      2026-09-24: "make it not red").**
+      **Superseded 2026-09-25 (`/aif-verify` blocker 3; owner: drop the
+      knob).** The diagnosis below is wrong about the product. The `result`
+      grant it calls correct-by-rule marked the operator's stored answer
+      delivered although no `session.input` ever carried it — a product bug,
+      which master fixed the same day in its ADR-180 correction (`04a3a39a`): a
+      checkpointed permission without confirmed input resumes as `continue`
+      whatever the prompt's outcome. Measured on a scratch `master` worktree
+      under the same 16 burners (load 75-278): RED 13+14 12/12 twice with no
+      knob, and the succeeded-prompt race fired in 7 of 12 cases — so the knob
+      would have hidden master's fix from this suite. It was reverted after the
+      master merge (Commit 16, Commit 17); `web/CLAUDE.md` and the memory note
+      carry the corrected account. What follows is the 2026-09-24 record.
+      Event order dumped under 16 `yes`
       burners: in a red run the mock's reply to the cap's cancelled permission
       (`end_turn`) reached the host before the SIGTERM, so the prompt COMPLETED
       and the agent grant read `kind: "result"` — the manager's own rule, "a
@@ -2096,7 +2112,10 @@ green.
 **Commit 12** — `fix(scratch-runs): the recover fence reads the workspace row as its route does` (T5.1, found by the final unit lane)
 **Commit 13** — `test(e2e): survive a reset dispatcher tick; budget the rework-claim loop` (T5.3, found by the final e2e lane)
 **Commit 14** — `test(e2e): the observatory seed queues no run` (T5.4)
-**Commit 15** — `test(permission-deadline): only the teardown ends a turn whose permission the cap cancelled` (T5.5)
+**Commit 15** — `test(permission-deadline): only the teardown ends a turn whose permission the cap cancelled` (T5.5; superseded by Commit 17)
+**Commit 16** — `Merge master into claude/worktree-run-management-0603cc` (`/aif-verify` blocker 2: 46 master commits, 8 conflicts, `0173` → `0176`)
+**Commit 17** — `test(permission-deadline): drop the T5.5 fixture setting` (`/aif-verify` blocker 3)
+**Commit 18** — `fix(workbench-git): a commit needs no remote` (`/aif-verify` blocker 1)
 
 ---
 
@@ -2397,7 +2416,7 @@ are put to the owner rather than widened silently:
 | # | Question | Answer | Where it landed |
 |---|---|---|---|
 | 1 | Recover vs the lifecycle slot (Follow-up 1) | **fix** | T5.1, Commit 9 |
-| 2 | `0173` vs `master`'s `0173`/`0174` | **renumber at merge** (to `0175`) | merge step |
+| 2 | `0173` vs `master`'s `0173`/`0174` | **renumber at merge** (to `0175`) | merge step — became `0176` (master reached `0175`), Commit 16 |
 | 3 | T4.2 live provider check | **after rollout** | T4.2 |
 | 4 | Unbounded `Failed` rows (Follow-up 2) | **TTL for `Failed`** (over pagination) | T5.2, Commit 10 |
 | 5 | The three master-side e2e names | **diagnose here**, own commit | T5.3, Commit 11 |
@@ -2407,4 +2426,11 @@ are put to the owner rather than widened silently:
 | # | Question | Answer | Where it landed |
 |---|---|---|---|
 | 1 | The observatory seed's task-less `Pending` run | **fix** | T5.4, Commit 14 |
-| 2 | `permission-deadline` RED 13 red under load | **make it not red** | T5.5, Commit 15 |
+| 2 | `permission-deadline` RED 13 red under load | **make it not red** | T5.5, Commit 15; resolved by master's `04a3a39a`, Commit 17 |
+
+## Post-verify decisions (owner, 2026-09-25, after `/aif-verify`)
+
+| # | Question | Answer | Where it landed |
+|---|---|---|---|
+| 1 | The three verify blockers (Commit without a remote; the master sync + renumber; T5.5 vs master) | **`/aif-fix`, fix now** | Commits 16-18 |
+| 2 | `MOCK_ACP_HOLD_AFTER_CANCELLED` after the master sync | **drop it** | Commit 17 |

@@ -25,13 +25,6 @@
 //   MOCK_ACP_STOP_REASON      stopReason returned from prompt(). Default "end_turn".
 //   MOCK_ACP_REQUEST_PERMISSION  "1" → call requestPermission on first prompt.
 //   MOCK_ACP_HOLD_AFTER_PERMISSION  "1" → retain the selected turn until teardown.
-//   MOCK_ACP_HOLD_AFTER_CANCELLED   "1" → retain a turn whose permission was
-//                             cancelled until teardown. A real adapter's turn
-//                             outlives the refusal (claude-agent-acp answers it
-//                             "Tool use aborted" and asks the model again), so
-//                             the SIGTERM ends it — never a same-tick
-//                             `end_turn`, which the manager rightly keeps as
-//                             the turn's result rather than an interruption.
 //   MOCK_ACP_FAIL_AFTER_PERMISSION  ACP request error after a selected permission.
 //   MOCK_ACP_COMPLETE_ON_CHECKPOINT "1" → finish the held turn during teardown.
 //   MOCK_ACP_PERMISSION_MALFORMED "1" → emit a session/request_permission frame
@@ -51,7 +44,6 @@ const STOP_REASON = process.env.MOCK_ACP_STOP_REASON ?? "end_turn";
 const REQUEST_PERMISSION = process.env.MOCK_ACP_REQUEST_PERMISSION === "1";
 const HOLD_AFTER_PERMISSION =
   process.env.MOCK_ACP_HOLD_AFTER_PERMISSION === "1";
-const HOLD_AFTER_CANCELLED = process.env.MOCK_ACP_HOLD_AFTER_CANCELLED === "1";
 const FAIL_AFTER_PERMISSION = process.env.MOCK_ACP_FAIL_AFTER_PERMISSION;
 const COMPLETE_ON_CHECKPOINT =
   process.env.MOCK_ACP_COMPLETE_ON_CHECKPOINT === "1";
@@ -201,7 +193,6 @@ class MockAgent {
     const session = this.sessions.get(params.sessionId);
     let completionText = readJournal(params.sessionId)?.completionText;
     let permissionSelected = HOLD_AFTER_PERMISSION && session?.resumed === true;
-    let permissionCancelled = false;
 
     if (session) session.prompts += 1;
 
@@ -233,7 +224,6 @@ class MockAgent {
       const outcome = result?.outcome;
 
       permissionSelected = outcome?.outcome === "selected";
-      permissionCancelled = outcome?.outcome === "cancelled";
 
       if (outcome?.outcome === "selected") {
         writeJournal(params.sessionId, {
@@ -262,7 +252,6 @@ class MockAgent {
           });
 
           permissionSelected = nextResult?.outcome?.outcome === "selected";
-          permissionCancelled = nextResult?.outcome?.outcome === "cancelled";
           if (permissionSelected)
             writeJournal(params.sessionId, { acpSessionId: params.sessionId });
           await this.connection.sessionUpdate({
@@ -340,7 +329,6 @@ class MockAgent {
       const outcome = result?.outcome;
 
       permissionSelected = outcome?.outcome === "selected";
-      permissionCancelled = outcome?.outcome === "cancelled";
 
       if (outcome?.outcome === "selected") {
         writeJournal(params.sessionId, { acpSessionId: params.sessionId });
@@ -389,9 +377,6 @@ class MockAgent {
     if (permissionSelected && FAIL_AFTER_PERMISSION) {
       throw new acp.RequestError(-32001, FAIL_AFTER_PERMISSION);
     }
-
-    if (permissionCancelled && HOLD_AFTER_CANCELLED)
-      await new Promise(() => {});
 
     return { stopReason: STOP_REASON };
   }
