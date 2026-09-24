@@ -1102,7 +1102,9 @@ export async function snapshotWorkbenchCommit(
   ctx.viewerUserId = sessionUser.id;
 
   await deps.authorize(ctx.run.projectId, "promoteRun");
-  requireActionAllowed(ctx, "exportBranch", {
+  // Its own id, as the panel shows it: a commit is local, and the publish id
+  // (`exportBranch`) refuses a repo with no remote.
+  requireActionAllowed(ctx, "snapshotCommit", {
     allowPausedBudgetRun: args.allowPausedBudgetRun,
   });
 
