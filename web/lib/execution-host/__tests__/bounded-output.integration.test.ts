@@ -11,7 +11,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { and, eq, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
-import { Pool } from "pg";
+import { DatabaseError, Pool } from "pg";
 
 import { issueOwnedPrompt } from "../ledger";
 import { defaultTransport } from "../default-transport";
@@ -1218,6 +1218,58 @@ describe("AT-01 bounded output on the production supervisor", () => {
         proxy.close((error) => (error ? reject(error) : resolve())),
       );
     }
+    expect(await queryPrompt({ db, handle, owners })).toMatchObject({
+      state: "succeeded",
+    });
+    const [completed] = await db
+      .select()
+      .from(executionCommands)
+      .where(eq(executionCommands.id, handle.commandId));
+
+    expect(completed.applicationState).toBe("applied");
+    expect(completed.applicationAttempts).toBe(0);
+    await producer.client.deleteSession(producer.session.hostSessionId);
+  });
+
+  it("S2.5: a deadlock in the owner's apply keeps it retryable without consuming failure attempts", async () => {
+    const { db, producer, handle } = await settledOwnerFixture(
+      "owner-apply-deadlock",
+    );
+    let deadlocked = false;
+    const owners = createPromptOwnerRegistry([
+      definePromptOwnerAdapter("agent_turn", async ({ outcome }) => {
+        if (outcome.state === "succeeded")
+          for await (const event of outcome.events) void event;
+
+        return {
+          apply: async () => {
+            if (deadlocked) return "applied";
+            deadlocked = true;
+            // Postgres picked this transaction as the deadlock victim.
+            throw Object.assign(
+              new DatabaseError("deadlock detected", 0, "error"),
+              { code: "40P01" },
+            );
+          },
+        };
+      }),
+    ]);
+
+    await expect(queryPrompt({ db, handle, owners })).rejects.toMatchObject({
+      code: "40P01",
+    });
+    const [waiting] = await db
+      .select()
+      .from(executionCommands)
+      .where(eq(executionCommands.id, handle.commandId));
+
+    expect(waiting).toMatchObject({
+      state: "succeeded",
+      applicationState: "pending",
+      applicationAttempts: 0,
+      applicationClaimOwner: null,
+      completionAppliedAt: null,
+    });
     expect(await queryPrompt({ db, handle, owners })).toMatchObject({
       state: "succeeded",
     });
