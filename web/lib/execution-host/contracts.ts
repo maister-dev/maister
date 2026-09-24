@@ -141,6 +141,27 @@ export type CheckpointResult = {
   monotonicId: number;
 };
 
+/** Why a host span could not be read. The host's own answers plus the web's
+ * `request_failed` for any transport, status or shape failure: a span read is
+ * an optimisation, so every failure falls back to the canonical feed. */
+export type RuntimeEventSpanUnavailableReason =
+  | "replay_floor_lost"
+  | "stream_identity_changed"
+  | "beyond_emitted"
+  | "request_failed";
+
+/** ADR-167 D5 amendment: one page of the host's retained `(after, through]`. */
+export type RuntimeEventSpanPage =
+  | Readonly<{
+      state: "complete" | "partial";
+      nextAfter: string | null;
+      events: RuntimeEventEnvelope[];
+    }>
+  | Readonly<{
+      state: "unavailable";
+      reason: RuntimeEventSpanUnavailableReason;
+    }>;
+
 export type RuntimeEventAckResult = {
   streamId: string;
   acknowledgedThrough: string;
@@ -243,6 +264,13 @@ export interface ExecutionHostTransport {
     streamId: string;
     throughSequence: string;
   }): Promise<RuntimeEventAckResult>;
+  // Read-only; never throws for an unreadable span (see the page type).
+  readRuntimeEventSpan(input: {
+    streamId: string;
+    after: string;
+    through: string;
+    signal?: AbortSignal;
+  }): Promise<RuntimeEventSpanPage>;
   getCommandReceipt(commandId: string): Promise<CommandReceipt | null>;
   retireCommand(
     commandId: string,

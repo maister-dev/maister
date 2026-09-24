@@ -160,11 +160,24 @@ describe("applyTurnLostBoundary — the winner", () => {
     // `application_state = completion_applied_at ? "applied" : "poisoned"`, so
     // a conflict found after application arrives here already stamped. Treating
     // that as a lost race would leave the run `Running` forever with a
-    // disagreeing turn nobody can see.
+    // disagreeing turn nobody can see. Seeded with the quarantine that arm
+    // writes: an `applied` command WITHOUT it is a successful application, and
+    // the boundary yields to it (the case below).
     const seeded = await seed({
       applicationState: "applied",
       completionAppliedAt: new Date(),
     });
+
+    await testDatabase.db
+      .update(executionCommands)
+      .set({
+        applicationError: {
+          reason: "prompt_terminal_conflict",
+          phase: "prepare",
+          causeCode: "terminal_v2_agreement",
+        },
+      })
+      .where(eq(executionCommands.id, seeded.commandId));
 
     expect(
       await boundary({ runId: seeded.runId, reason: "owner-poisoned" }),
@@ -452,6 +465,60 @@ describe("applyTurnLostBoundary — every loser writes NOTHING", () => {
     ).toBe("pending");
   }, 60_000);
 
+  it("a turn the host span settled after classification is not discharged over it (Codex review)", async () => {
+    // Classified `stream-lost` while still `accepted` with no terminal
+    // evidence; a concurrent host-span reader then settled it. Its result is
+    // readable and the owner worker owes its application — the command's
+    // `completion_applied_at IS NULL` guard alone would still have let the
+    // boundary stamp it applied and crash the run over it.
+    const seeded = await seed({
+      commandState: "accepted",
+      terminalEvidence: false,
+      streamState: "lost",
+    });
+    const settledAt = new Date();
+
+    await testDatabase.db
+      .update(executionCommands)
+      .set({
+        state: "succeeded",
+        completedAt: settledAt,
+        lastError: null,
+        terminalEvidenceSha256: "e".repeat(64),
+        settledFrom: "host_span",
+        receiptEvidence: {
+          commandId: seeded.commandId,
+          runId: seeded.runId,
+          kind: "session.prompt",
+          assignmentEpoch: seeded.assignmentEpoch,
+          phase: "completed",
+          httpStatus: 200,
+          body: {},
+          receivedAt: settledAt.toISOString(),
+          completedAt: settledAt.toISOString(),
+          inflight: false,
+        },
+      })
+      .where(eq(executionCommands.id, seeded.commandId));
+
+    expect(
+      await boundary({
+        runId: seeded.runId,
+        commandId: seeded.commandId,
+        expectedAttemptId: seeded.nodeAttemptId,
+        reason: "stream-lost",
+      }),
+    ).toBe("lost-cas");
+    expect((await read(runs, seeded.runId)).status).toBe("Running");
+    expect((await read(nodeAttempts, seeded.nodeAttemptId)).status).toBe(
+      "Running",
+    );
+    expect(
+      await read(executionCommands, seeded.commandId),
+      "the settled result stays for its owner to apply",
+    ).toMatchObject({ applicationState: "pending", completionAppliedAt: null });
+  }, 60_000);
+
   it("an attempt with no owned prompt yields rather than crashing on thin evidence", async () => {
     const seeded = await seed();
 
@@ -465,4 +532,310 @@ describe("applyTurnLostBoundary — every loser writes NOTHING", () => {
     ).toBe("not-claimed");
     expect((await read(runs, seeded.runId)).status).toBe("Running");
   }, 60_000);
+});
+
+// ADR-177 amendment (2026-09-23): the sweep classifies the attempt's CURRENT
+// turn — a permission-resumed action or a gate evaluation is a newer command on
+// the same attempt — so the boundary must act on that command, and a gate's
+// needs the gate owner's writes.
+describe("applyTurnLostBoundary — the attempt's current turn", () => {
+  /** A newer command on the seeded attempt, still `accepted` on the host. */
+  async function sibling(
+    seeded: Awaited<ReturnType<typeof seed>>,
+    ref: Record<string, unknown>,
+    logicalOperationKey: string,
+    overrides: Record<string, unknown> = {},
+  ): Promise<string> {
+    const base = await read(executionCommands, seeded.commandId);
+    const id = randomUUID();
+
+    await testDatabase.db.insert(executionCommands).values({
+      id,
+      runId: seeded.runId,
+      executionAssignmentId: base.executionAssignmentId,
+      executionHostId: base.executionHostId,
+      assignmentEpoch: base.assignmentEpoch,
+      kind: "session.prompt",
+      targetSessionId: base.targetSessionId,
+      payload: {},
+      maxAttempts: 3,
+      ownerKind: "flow_node_attempt",
+      ownerRef: { ...base.ownerRef, ...ref },
+      logicalOperationKey,
+      requestSchema: "maister.command.request.v1",
+      requestSha256: "d".repeat(64),
+      state: "accepted",
+      acceptedAt: new Date(Date.now() - 60_000),
+      createdAt: new Date(Date.now() + 1_000),
+      ...overrides,
+    });
+
+    return id;
+  }
+
+  async function gateEvaluation(
+    runId: string,
+    nodeAttemptId: string,
+    status: string,
+  ): Promise<string> {
+    const id = randomUUID();
+
+    await testDatabase.db.insert(schema.gateResults).values({
+      id,
+      runId,
+      nodeAttemptId,
+      gateId: "ci",
+      kind: "ai_judgment",
+      mode: "blocking",
+      status,
+    });
+
+    return id;
+  }
+
+  it("with no named command it discharges the live permission_resume turn, not the node turn before it", async () => {
+    const seeded = await seed();
+    const resumed = await sibling(
+      seeded,
+      { variant: "permission_resume", hitlRequestId: randomUUID() },
+      `flow_node_attempt:permission_resume:${seeded.nodeAttemptId}:0`,
+    );
+
+    expect(await boundary({ runId: seeded.runId })).toBe("applied");
+    expect((await read(executionCommands, resumed)).applicationState).toBe(
+      "applied",
+    );
+    expect(
+      (await read(executionCommands, seeded.commandId)).applicationState,
+      "the earlier node turn is not the one this boundary acted on",
+    ).toBe("pending");
+  }, 60_000);
+
+  it("refuses a gate turn whose evaluation belongs to another attempt, and writes nothing", async () => {
+    const seeded = await seed();
+    const otherAttempt = randomUUID();
+
+    await testDatabase.db.insert(nodeAttempts).values({
+      id: otherAttempt,
+      runId: seeded.runId,
+      nodeId: "implement",
+      nodeType: "ai_coding",
+      attempt: 0,
+      status: "Reworked",
+      executionAssignmentId: seeded.assignmentId,
+      actionPromptOrdinal: 0,
+      startedAt: new Date(Date.now() - 900_000),
+      endedAt: new Date(Date.now() - 800_000),
+    });
+    const evaluationId = await gateEvaluation(
+      seeded.runId,
+      otherAttempt,
+      "running",
+    );
+    const gate = await sibling(
+      seeded,
+      { variant: "gate_ai", gateId: "ci", evaluationId },
+      `flow_node_attempt:gate_ai:${evaluationId}:0`,
+    );
+
+    expect(await boundary({ runId: seeded.runId, commandId: gate })).toBe(
+      "lost-cas",
+    );
+    expect((await read(runs, seeded.runId)).status).toBe("Running");
+    expect((await read(nodeAttempts, seeded.nodeAttemptId)).status).toBe(
+      "Running",
+    );
+    expect((await read(schema.gateResults, evaluationId)).status).toBe(
+      "running",
+    );
+    expect((await read(executionCommands, gate)).applicationState).toBe(
+      "pending",
+    );
+  }, 60_000);
+
+  it.each(["stream-lost", "turn-lost", "owner-poisoned"])(
+    "a gate turn that APPLIED after its %s classification yields and writes nothing (Codex review)",
+    async (reason) => {
+      // The interleaving: the sweep classified the gate turn, then the gate
+      // owner applied it (verdict recorded, command stamped applied). With the
+      // action's completion admitted for a gate, an `applied` command read as
+      // "already discharged" was the only thing left between a passed gate and
+      // a crash. Only a quarantine stamped after application justifies it —
+      // the case below.
+      const seeded = await seed();
+      const evaluationId = await gateEvaluation(
+        seeded.runId,
+        seeded.nodeAttemptId,
+        "passed",
+      );
+      const appliedAt = new Date();
+      const gate = await sibling(
+        seeded,
+        { variant: "gate_ai", gateId: "ci", evaluationId },
+        `flow_node_attempt:gate_ai:${evaluationId}:0`,
+        {
+          state: "succeeded",
+          completedAt: appliedAt,
+          applicationState: "applied",
+          completionAppliedAt: appliedAt,
+        },
+      );
+
+      await testDatabase.db
+        .update(nodeAttempts)
+        .set({
+          actionCompletion: {
+            version: 1,
+            commandId: seeded.commandId,
+            promptOrdinal: 0,
+            result: { ok: true, stdout: "action done", vars: {} },
+            originalOutput: {
+              kind: "sentinel",
+              text: "done",
+              truncated: false,
+            },
+          },
+        })
+        .where(eq(nodeAttempts.id, seeded.nodeAttemptId));
+
+      expect(
+        await boundary({ runId: seeded.runId, commandId: gate, reason }),
+      ).toBe("lost-cas");
+      expect((await read(runs, seeded.runId)).status).toBe("Running");
+      expect(await read(nodeAttempts, seeded.nodeAttemptId)).toMatchObject({
+        status: "Running",
+        endedAt: null,
+      });
+      expect((await read(schema.gateResults, evaluationId)).status).toBe(
+        "passed",
+      );
+    },
+    60_000,
+  );
+
+  it("keeps a gate verdict already recorded when a post-application conflict crashes the run", async () => {
+    const seeded = await seed();
+    const evaluationId = await gateEvaluation(
+      seeded.runId,
+      seeded.nodeAttemptId,
+      "passed",
+    );
+    const appliedAt = new Date(Date.now() - 30_000);
+    const gate = await sibling(
+      seeded,
+      { variant: "gate_ai", gateId: "ci", evaluationId },
+      `flow_node_attempt:gate_ai:${evaluationId}:0`,
+      {
+        state: "succeeded",
+        completedAt: appliedAt,
+        applicationState: "applied",
+        completionAppliedAt: appliedAt,
+        applicationError: {
+          reason: "prompt_terminal_conflict",
+          phase: "prepare",
+          causeCode: "terminal_v2_agreement",
+        },
+      },
+    );
+
+    await testDatabase.db
+      .update(nodeAttempts)
+      .set({
+        actionCompletion: {
+          version: 1,
+          commandId: seeded.commandId,
+          promptOrdinal: 0,
+          result: { ok: true, stdout: "action done", vars: {} },
+          originalOutput: { kind: "sentinel", text: "done", truncated: false },
+        },
+      })
+      .where(eq(nodeAttempts.id, seeded.nodeAttemptId));
+
+    expect(
+      await boundary({
+        runId: seeded.runId,
+        commandId: gate,
+        reason: "owner-poisoned",
+      }),
+    ).toBe("applied");
+    expect((await read(runs, seeded.runId)).status).toBe("Crashed");
+    expect((await read(nodeAttempts, seeded.nodeAttemptId)).status).toBe(
+      "Reworked",
+    );
+    expect(
+      (await read(schema.gateResults, evaluationId)).status,
+      "a recorded verdict is evidence; only an undecided gate becomes stale",
+    ).toBe("passed");
+  }, 60_000);
+
+  // The owner's apply locks run → assignment → session → attempt → gate (via
+  // `lockFlowPromptOwner`); the boundary used to take the attempt (and a
+  // gate's evaluation) first and reach the run only inside the crash. A second
+  // connection replays the owner's order while the boundary waits on the run.
+  it.each(["node", "gate_ai"] as const)(
+    "takes the run lock first, as the owner does: a concurrent %s owner apply cannot deadlock it",
+    async (variant) => {
+      const seeded = await seed();
+      const evaluationId =
+        variant === "gate_ai"
+          ? await gateEvaluation(seeded.runId, seeded.nodeAttemptId, "running")
+          : null;
+      const commandId = evaluationId
+        ? await sibling(
+            seeded,
+            { variant: "gate_ai", gateId: "ci", evaluationId },
+            `flow_node_attempt:gate_ai:${evaluationId}:0`,
+          )
+        : seeded.commandId;
+      const owner = await testDatabase.pool.connect();
+
+      try {
+        await owner.query("BEGIN");
+        await owner.query("SET LOCAL lock_timeout = '15s'");
+        const {
+          rows: [{ pid }],
+        } = await owner.query<{ pid: number }>(
+          "SELECT pg_backend_pid() AS pid",
+        );
+
+        await owner.query("SELECT id FROM runs WHERE id = $1 FOR UPDATE", [
+          seeded.runId,
+        ]);
+        const crashing = boundary({ runId: seeded.runId, commandId });
+
+        // Proceed only once the boundary is blocked on the run row the owner
+        // holds — the moment the old order already held the attempt.
+        await expect
+          .poll(
+            async () =>
+              (
+                await testDatabase.pool.query<{ n: number }>(
+                  `SELECT count(*)::int AS n FROM pg_stat_activity
+                   WHERE wait_event_type = 'Lock' AND pid <> $1
+                     AND query ILIKE '%"runs"%'`,
+                  [pid],
+                )
+              ).rows[0]!.n,
+            { timeout: 15_000, interval: 25 },
+          )
+          .toBe(1);
+        await owner.query(
+          "SELECT id FROM node_attempts WHERE id = $1 FOR UPDATE",
+          [seeded.nodeAttemptId],
+        );
+        if (evaluationId)
+          await owner.query(
+            "SELECT id FROM gate_results WHERE id = $1 FOR UPDATE",
+            [evaluationId],
+          );
+        await owner.query("COMMIT");
+        expect(await crashing).toBe("applied");
+      } finally {
+        await owner.query("ROLLBACK").catch(() => undefined);
+        owner.release();
+      }
+      expect((await read(runs, seeded.runId)).status).toBe("Crashed");
+    },
+    60_000,
+  );
 });

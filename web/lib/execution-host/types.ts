@@ -119,6 +119,16 @@ export const COMMAND_APPLICATION_STATES = [
   "superseded",
   "poisoned",
 ] as const;
+/** Which evidence first settled a prompt: its ingested canonical terminal
+ * event, or the host's verified event span (ADR-167 D5 amendment). */
+export const PROMPT_SETTLEMENT_FEEDS = ["canonical", "host_span"] as const;
+export type PromptSettlementFeed = (typeof PROMPT_SETTLEMENT_FEEDS)[number];
+/** The outcome of the latest host-span read that ran to an answer without
+ * settling the prompt. `busy` is no verdict on the span (the host asked for a
+ * retry); `refused` is one. Cleared when a new read claims the command, so NULL
+ * also means a read is in flight or none has finished (ADR-177 amendment). */
+export const HOST_SPAN_VERDICTS = ["busy", "refused"] as const;
+export type HostSpanVerdict = (typeof HOST_SPAN_VERDICTS)[number];
 export type CommandApplicationError = Readonly<{
   reason: string;
   phase: "prepare" | "apply" | "continuation";

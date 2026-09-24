@@ -386,8 +386,9 @@ therefore no longer safe by virtue of being alone — both writers take the same
 readers of one `next_sequence` collide on
 `run_messages_run_node_attempt_sequence_uq`. Prompt rows are additionally keyed
 by a nullable `prompt_dispatch_key` under a partial unique index; the
-projector's own rows leave it NULL and stay outside that index.
-See [`run-trace.md`](run-trace.md).
+projector's own rows leave it NULL and stay outside that index. A third writer,
+the host-span confirmation, only moves existing prompt rows' anchors and
+allocates no sequence (below). See [`run-trace.md`](run-trace.md).
 
 The cost consumer applies each accepted usage event with its cursor in the
 same transaction. Existing rollups are rebuilt per touched aggregate key using
@@ -474,6 +475,46 @@ log line), never by "the sweep has not ticked yet".
 
 Use the same scheduling primitives for command evidence reconciliation and owner application, with separate predicates and fairness indexes; do not conflate their status sets with event consumers. A transport retry budget may enter `reconciliation_required`, but canonical evidence arriving later still wakes reconciliation automatically. Manual rearm is needed for another exhausted outbound dispatch cycle, never to apply already durable successful evidence.
 
+## Prompt settlement from host evidence (Implemented — ADR-167 D5 amendment 2026-09-23)
+
+The host stream is one per host and totally ordered, so a finished turn's
+terminal event can queue behind other runs' events. Prompt **settlement** no
+longer waits for that queue; the event plane itself is unchanged:
+
+- **Direct binding.** When the receipt-named terminal event is already
+  ingested (`execution_events.id = receipt terminal.eventId`,
+  `ingest_disposition = 'accepted'`) but the prompt projector has not reached
+  it, the prompt reconciler binds it itself through the same reducer.
+- **Host span.** When it is not ingested yet, the reconciler reads the turn's
+  span `[acceptedSequence, terminalSequence]` from the host through the
+  read-only `GET /runtime-events/span` (bounded pages of the same retained
+  envelopes the SSE replays; see [execution hosts](execution-hosts.md)). Every
+  envelope passes the ingest normalizer and disposition classifier, and the
+  span passes the same verifier `readPromptOutput` applies to ingested rows.
+  Nothing is written to `execution_events`, stream watermarks or the ACK
+  ledger; contiguity, ACK and pruning are exactly as above.
+- **Signal-free only.** Either fast feed settles a command only when its span
+  holds no `session.hook_trip`, `session.permission_request`,
+  `session.exited` or `session.crashed` event for the command's host session;
+  such a span settles through the prompt projector as before.
+- **Confirmation.** The prompt projector later binds the canonical event and
+  recomputes the same digest; `execution_commands.settled_from` keeps the feed
+  that settled first. Disagreement is the existing `prompt_terminal_conflict`
+  quarantine, whether or not the owner already applied the settlement.
+  `/admin/execution-host` counts, per host, the unbound and the quarantined
+  host-span settlements of the last 7 days as two disjoint numbers, plus the
+  last hour's host-span volume ([screen](../screens/admin/execution-host.md)).
+  Settlement, and reading the settled turn's output for its owner before
+  canonical ingest reaches it, are the only new uses of host evidence;
+  transcripts, cost, artifacts, runtime objects and browser replay still come
+  from canonical rows only.
+
+The transcript projector is no longer the only writer of prompt-row anchors:
+confirming a host-span-settled command re-anchors dispatched prompts recorded
+after its settlement to the confirming event's `runSequence`, so a prompt
+dispatched before the previous reply was ingested still sorts after it.
+Contract and state detail: [prompt lifecycle](execution-prompt-lifecycle.md).
+
 ## Expectations
 
 - **EVT-01:** Postgres is canonical for browser and projector event reads, never supervisor memory or runtime files.
@@ -487,7 +528,7 @@ Use the same scheduling primitives for command evidence reconciliation and owner
 - **EVT-09:** Bounded outbox pressure rejects new mutating admissions before existing session events are lost.
 - **EVT-10:** Each projector owns a durable per-run cursor and poison state independent of accepted ingest.
 - **EVT-11:** Browser replay is authorized, exclusive-after-cursor, bounded, and sourced only from canonical user-safe rows.
-- **EVT-12:** Canonical events retain with the run while host outbox rows prune only after confirmed ACK and grace.
+- **EVT-12:** Canonical events retain with the run while host outbox rows prune only after confirmed ACK and grace; the read-only span route neither ACKs nor prunes (Implemented).
 
 ## Edge cases
 

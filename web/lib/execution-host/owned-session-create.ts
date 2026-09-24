@@ -107,7 +107,7 @@ export async function createOwnedSession(input: {
   };
   const assertOwner = async (tx: Db): Promise<void> => {
     await input.options?.assertCommit?.(tx);
-    if (!(await lockCreateOwner(tx, authority)))
+    if (!(await lockCreateOwner(tx, authority, "create")))
       throw staleSessionBinding(authority.runId, authority.assignmentId);
   };
   let original = await db.transaction(async (tx) => {

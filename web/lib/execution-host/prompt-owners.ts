@@ -4,10 +4,11 @@ import type { Db } from "./db";
 import type { PromptOwner } from "./prompt-owner-contract";
 import type { ExecutionCommand, ExecutionEvent } from "@/lib/db/schema";
 
+import { commandStreamLost } from "./events/stream-health";
 import { PromptOwnerSchema } from "./prompt-owner-contract";
 import { readPromptOutput } from "./prompt-output";
 
-import { MaisterError } from "@/lib/errors";
+import { isMaisterError, MaisterError } from "@/lib/errors";
 
 export type PromptOwnerDisposition = "applied" | "superseded";
 export type PromptOwnerOutcome =
@@ -57,6 +58,41 @@ export class PromptOwnerDeferred extends MaisterError {
     });
     Object.setPrototypeOf(this, new.target.prototype);
   }
+}
+
+/** ADR-167 D5 amendment (D-B9): absence is never proof. A turn settled from
+ * the host's span has no canonical terminal row until the canonical event
+ * confirms it; a check that reads that row waits instead of reading "none". */
+export function assertTerminalEventConfirmed(
+  command: Readonly<{
+    terminalEventId: string | null;
+    settledFrom: string | null;
+  }>,
+): void {
+  if (command.terminalEventId === null && command.settledFrom === "host_span")
+    throw new PromptOwnerDeferred("terminal_event_unconfirmed");
+}
+
+/** ADR-167 D5 amendment: a turn settled from the host's span can reach its
+ * owner before canonical ingest reaches the terminal event, and the span may
+ * be unreadable by then. That output is late, not failed, while the stream can
+ * still deliver it — so it defers without counting. Once the stream is lost
+ * nothing will deliver it, and the refusal counts toward poisoning: that is the
+ * bound. */
+async function frontierDeferral(
+  db: Db,
+  commandId: string,
+  error: unknown,
+): Promise<unknown> {
+  if (
+    isMaisterError(error) &&
+    error.details?.reason === "required_output_incomplete" &&
+    error.details?.causeCode === "event_frontier" &&
+    !(await commandStreamLost({ db, commandId }))
+  )
+    return new PromptOwnerDeferred("event_frontier_pending");
+
+  return error;
 }
 
 export class PromptOwnerInvariantError extends MaisterError {
@@ -136,11 +172,17 @@ export async function preparePromptOwner(input: {
       db,
       commandId: command.id,
       signal,
+    }).catch(async (error: unknown) => {
+      throw await frontierDeferral(db, command.id, error);
     });
     const events = async function* (): AsyncGenerator<ExecutionEvent> {
-      for await (const event of output.events) {
-        signal.throwIfAborted();
-        yield event;
+      try {
+        for await (const event of output.events) {
+          signal.throwIfAborted();
+          yield event;
+        }
+      } catch (error) {
+        throw await frontierDeferral(db, command.id, error);
       }
       outputComplete = true;
     };

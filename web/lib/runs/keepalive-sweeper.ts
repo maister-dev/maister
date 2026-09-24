@@ -35,6 +35,14 @@ import * as schemaModule from "@/lib/db/schema";
 import { RUN_SYNC_TERMINAL_PHASES, agentTurns } from "@/lib/db/schema";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { isMaisterError, MaisterError } from "@/lib/errors";
+import { commandStreamLost } from "@/lib/execution-host/events/stream-health";
+import { FLOW_NODE_ATTEMPT_VARIANTS } from "@/lib/execution-host/prompt-owner-contract";
+import {
+  loadPromptEvidence,
+  needsReceiptProbe,
+  probeReceipt,
+} from "@/lib/reconcile-evidence-db";
+import { classifyPromptEvidence } from "@/lib/reconcile-evidence";
 import { compileManifest } from "@/lib/flows/graph/compile";
 import { markNodeFailed, markNodeNeedsInput } from "@/lib/flows/graph/ledger";
 import { loadRunManifest } from "@/lib/queries/run-manifest";
@@ -617,15 +625,57 @@ async function fetchActiveAttempt(
 // started_at) is terminated via supervisor DELETE (which drives teardown so no
 // permission deferred leaks), the attempt marked Failed, the run ended Failed.
 // Cost limits stay record-only — never a kill trigger.
+/** ADR-167 D5 amendment (D-C1): a positive witness that the attempt's newest
+ * owned prompt — of any flow_node_attempt variant, so a gate prompt after the
+ * applied action counts — already finished on the host AND that a writer will
+ * still move it. A settled command defers only while its owner can apply it
+ * (`pending_application` / `applying`); poisoned, quarantined and lost turns
+ * have no applier, and deferring them would leave a live-session or judge node
+ * with no bound at all. A `completed` receipt defers only while the host's
+ * stream is alive, because only then can its evidence still be settled. A
+ * running v2 turn probes `indeterminate`, and an applied newest command means
+ * the driver sits between prompts. No settlement and no host call beyond the
+ * receipt probe. */
+async function completedTurnWitness(
+  db: Db,
+  hosts: ExecutionHosts,
+  runId: string,
+  nodeAttemptId: string,
+): Promise<{
+  commandId: string;
+  witness: "settled" | "receipt_completed";
+} | null> {
+  const newest = await loadPromptEvidence(db, {
+    runId,
+    nodeAttemptId,
+    variants: FLOW_NODE_ATTEMPT_VARIANTS,
+  });
+
+  if (!newest) return null;
+  const evidence = classifyPromptEvidence(newest);
+
+  if (evidence === "pending_application" || evidence === "applying")
+    return { commandId: newest.id, witness: "settled" };
+  if (
+    needsReceiptProbe(newest) &&
+    !(await commandStreamLost({ db, commandId: newest.id })) &&
+    (await probeReceipt(hosts.transport, newest.id)) === "completed"
+  )
+    return { commandId: newest.id, witness: "receipt_completed" };
+
+  return null;
+}
+
 async function runTimeLimitPass(
   db: Db,
   hosts: ExecutionHosts,
-): Promise<number> {
+): Promise<{ killed: number; deferredCompleted: number }> {
   const candidates = await fetchTimeLimitCandidates(db);
 
-  if (candidates.length === 0) return 0;
+  if (candidates.length === 0) return { killed: 0, deferredCompleted: 0 };
 
   let killed = 0;
+  let deferredCompleted = 0;
 
   await runWithConcurrency(candidates, PER_PASS_CONCURRENCY, async (row) => {
     const manifest = await resolveRunManifest(db, row);
@@ -648,6 +698,26 @@ async function runTimeLimitPass(
     );
 
     if (elapsedMs <= cap * 60_000) return;
+    // A finished turn a writer will still move is never killed: the owner
+    // applies or poisons a settled one, and a completed receipt settles only
+    // while the host's stream is alive (see `completedTurnWitness`).
+    const completed = await completedTurnWitness(db, hosts, row.id, attempt.id);
+
+    if (completed) {
+      deferredCompleted += 1;
+      log.info(
+        {
+          runId: row.id,
+          nodeId: row.currentStepId,
+          nodeAttemptId: attempt.id,
+          commandId: completed.commandId,
+          witness: completed.witness,
+        },
+        "time-limit-deferred-completed-turn",
+      );
+
+      return;
+    }
 
     // Match the live host session by the server-owned (runId, stepId) through
     // the run's bound client: only the EXACT capped node's session is torn
@@ -797,7 +867,7 @@ async function runTimeLimitPass(
     await promoteAfterTimeoutKill(db);
   });
 
-  return killed;
+  return { killed, deferredCompleted };
 }
 
 // Promote the next Pending run after a watchdog kill freed a slot. Lazy-imports
@@ -2409,6 +2479,7 @@ export type SweepResult = {
   abandonedCount: number;
   killedCount: number;
   budgetActedCount: number;
+  deferredCompletedCount: number;
 };
 
 export async function runSweepTick(
@@ -2419,7 +2490,8 @@ export async function runSweepTick(
   const idledCount =
     (await runPass1(db, hosts)) + (await runPass1Checkpointed(db));
   const abandonedCount = await runPass2(db);
-  const killedCount = await runTimeLimitPass(db, hosts);
+  const { killed: killedCount, deferredCompleted: deferredCompletedCount } =
+    await runTimeLimitPass(db, hosts);
   const budgetActedCount = await runBudgetPass(db, hosts);
   const scannedRunsCount =
     idledCount + abandonedCount + killedCount + budgetActedCount;
@@ -2431,6 +2503,7 @@ export async function runSweepTick(
       abandonedCount,
       killedCount,
       budgetActedCount,
+      deferredCompletedCount,
     },
     "sweeper tick complete",
   );
@@ -2441,5 +2514,6 @@ export async function runSweepTick(
     abandonedCount,
     killedCount,
     budgetActedCount,
+    deferredCompletedCount,
   };
 }

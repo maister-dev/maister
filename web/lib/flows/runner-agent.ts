@@ -103,6 +103,7 @@ import { staleSessionBinding } from "@/lib/execution-host/session-binding";
 import { PromptOwnerInvariantError } from "@/lib/execution-host/prompt-owners";
 import { isMaisterError } from "@/lib/errors";
 import { SessionCreatePending } from "@/lib/execution-host/owned-session-create";
+import { PromptIncarnationPending } from "@/lib/execution-host/prompt-incarnation";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 
 const log = pino({
@@ -1822,6 +1823,25 @@ async function runNewSession(
         String(err.details?.commandId),
         err,
       );
+    }
+    // No durable incarnation yet: the session is live and still ours, so it
+    // must survive for the continuation worker's re-drive. An OWNED create is
+    // re-admitted on the same session once its ACK (or its fold) is durable; an
+    // unowned one (consensus substeps, the resume fallback) is re-created by
+    // the re-drive, and the ACK-authored row makes this yield practically
+    // unreachable there (SDD C4).
+    if (err instanceof PromptIncarnationPending) {
+      continuationPending = true;
+      log.warn(
+        {
+          runId: ctx.runId,
+          stepId: ctx.stepId,
+          assignmentId: client.assignment.id,
+          hostSessionId: session?.hostSessionId ?? null,
+        },
+        "flow-prompt-admission-yielded",
+      );
+      throw new FlowPromptContinuationPending(null, err);
     }
     if (err instanceof FlowPromptContinuationPending) {
       continuationPending = true;

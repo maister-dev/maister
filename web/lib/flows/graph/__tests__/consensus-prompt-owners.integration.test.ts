@@ -9,7 +9,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 
 import { and, eq, inArray, sql } from "drizzle-orm";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import {
   agentTurns,
@@ -25,6 +25,10 @@ import {
 } from "@/lib/db/schema";
 import { buildOrchestratorResumeConsumer } from "@/lib/domain-events/orchestrator-resume";
 import { startPromptOwnerWorker } from "@/lib/execution-host/prompt-owner-recovery";
+import { startAgentContinuationWorker } from "@/lib/agents/continuation-worker";
+import { CANONICAL_PROJECTION_CONSUMERS } from "@/lib/execution-host/events/projection-consumers";
+import { PromptIncarnationPending } from "@/lib/execution-host/prompt-incarnation";
+import { SessionCreatePending } from "@/lib/execution-host/owned-session-create";
 import { flowPromptOwners } from "@/lib/flows/graph/prompt-owner";
 import { consensusDraftPromptOwners } from "@/lib/flows/graph/consensus/draft-prompt-owner";
 import { verifyConsensusInputEvidence } from "@/lib/flows/graph/consensus/input-evidence";
@@ -53,6 +57,10 @@ import { resetResolverForTests } from "@/lib/execution-host/resolver";
 import { seedGraphRun } from "@/test-support/graph-run-seed";
 import { addWorktree, initRepo } from "@/test-support/git-fixture";
 import {
+  holdChildProjection,
+  suppressIncarnations,
+} from "@/test-support/projection-hold";
+import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
@@ -61,17 +69,138 @@ import {
   useRealSupervisorUrl,
 } from "@/test-support/real-supervisor";
 
+// The draft launcher's yields leave no durable trace — a yield is precisely
+// "write nothing" — so the cases below observe them at the seams that raise
+// them. Each wrapper forwards to the real function unchanged and records, per
+// run, how it settled; `until` resolves on the recording itself, not a clock.
+const probe = vi.hoisted(() => {
+  type Seam = "create" | "admission" | "session";
+  const outcomes: Array<{ runId: string; seam: Seam; error: unknown }> = [];
+  const waiters = new Set<() => void>();
+
+  return {
+    record(runId: string, seam: Seam, error: unknown): void {
+      outcomes.push({ runId, seam, error });
+      for (const wake of [...waiters]) wake();
+    },
+    /** Errors `seam` raised for `runId` (a settled session records `null`). */
+    of(runId: string, seam: Seam): unknown[] {
+      return outcomes
+        .filter((outcome) => outcome.runId === runId && outcome.seam === seam)
+        .map((outcome) => outcome.error);
+    },
+    until(predicate: () => boolean, timeoutMs: number): Promise<void> {
+      return new Promise((resolve, reject) => {
+        const check = (): void => {
+          if (!predicate()) return;
+          clearTimeout(timer);
+          waiters.delete(check);
+          resolve();
+        };
+        const timer = setTimeout(() => {
+          waiters.delete(check);
+          reject(
+            new Error(
+              `probe condition not reached in ${timeoutMs} ms; recorded ${JSON.stringify(
+                outcomes.map((outcome) => ({
+                  runId: outcome.runId,
+                  seam: outcome.seam,
+                  error:
+                    (outcome.error as { details?: { reason?: unknown } } | null)
+                      ?.details?.reason ?? String(outcome.error),
+                })),
+              )}`,
+            ),
+          );
+        }, timeoutMs);
+
+        waiters.add(check);
+        check();
+      });
+    },
+  };
+});
+
+vi.mock("@/lib/execution-host/owned-session-create", async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import("@/lib/execution-host/owned-session-create")
+    >();
+
+  return {
+    ...actual,
+    createOwnedSession: async (
+      input: Parameters<typeof actual.createOwnedSession>[0],
+    ) => {
+      try {
+        return await actual.createOwnedSession(input);
+      } catch (error) {
+        probe.record(input.client.assignment.runId, "create", error);
+        throw error;
+      }
+    },
+  };
+});
+
+vi.mock("@/lib/execution-host/prompt-incarnation", async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import("@/lib/execution-host/prompt-incarnation")
+    >();
+
+  return {
+    ...actual,
+    waitForPromptIncarnation: async (
+      ...args: Parameters<typeof actual.waitForPromptIncarnation>
+    ) => {
+      try {
+        return await actual.waitForPromptIncarnation(...args);
+      } catch (error) {
+        probe.record(args[1].assignment.runId, "admission", error);
+        throw error;
+      }
+    },
+  };
+});
+
+vi.mock("@/lib/agents/launch", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/agents/launch")>();
+
+  return {
+    ...actual,
+    startAgentSession: async (
+      ...args: Parameters<typeof actual.startAgentSession>
+    ) => {
+      try {
+        const result = await actual.startAgentSession(...args);
+
+        probe.record(args[0], "session", null);
+
+        return result;
+      } catch (error) {
+        probe.record(args[0], "session", error);
+        throw error;
+      }
+    },
+  };
+});
+
 let database: StartedPostgresTestDb;
 let supervisor: RealSupervisor;
 let worker: ProjectionWorker;
 let restoreUrl: () => void = () => {};
 let originalFlowCap: string | undefined;
+let originalAgentCap: string | undefined;
 
 beforeAll(async () => {
   // Every case seeds its own project and leaves its parent parked; the global
-  // flow cap is not under test here and would defer later cases' wakes.
+  // flow cap is not under test here and would defer later cases' wakes. The
+  // agent cap likewise: the yield cases leave their draft children Running, and
+  // a later case's drafts would queue behind them.
   originalFlowCap = process.env.MAISTER_MAX_CONCURRENT_RUNS;
   process.env.MAISTER_MAX_CONCURRENT_RUNS = "64";
+  originalAgentCap = process.env.MAISTER_MAX_CONCURRENT_AGENTS;
+  process.env.MAISTER_MAX_CONCURRENT_AGENTS = "64";
   database = await startMainPostgresTestDb({
     databaseName: "consensus_prompt_owners",
   });
@@ -96,6 +225,9 @@ afterAll(async () => {
   if (originalFlowCap === undefined)
     delete process.env.MAISTER_MAX_CONCURRENT_RUNS;
   else process.env.MAISTER_MAX_CONCURRENT_RUNS = originalFlowCap;
+  if (originalAgentCap === undefined)
+    delete process.env.MAISTER_MAX_CONCURRENT_AGENTS;
+  else process.env.MAISTER_MAX_CONCURRENT_AGENTS = originalAgentCap;
 });
 
 const AXES = ["scope", "risk"] as const;
@@ -422,6 +554,35 @@ async function killAtDatabaseWrite(input: {
     );
     await database.pool.query(`DROP FUNCTION IF EXISTS ${trigger}()`);
   }
+}
+
+/** Force the prompt-admission timeout window for every draft child of
+ * `parentRunId`: their incarnation inserts are dropped (and counted, so the
+ * re-drive cadence is observable), and their lifecycle cursor is pre-claimed so
+ * the projector cannot run into the dropped row. Release restores both. */
+async function holdChildAdmission(parentRunId: string) {
+  const incarnations = await suppressIncarnations(database.pool, {
+    parentRunId,
+  });
+  const releaseProjection = await holdChildProjection(database.pool, {
+    consumerName: CANONICAL_PROJECTION_CONSUMERS.lifecycle,
+    parentRunId,
+  });
+
+  return {
+    recentAttempts: incarnations.recentAttempts,
+    async release(): Promise<void> {
+      await incarnations.release();
+      await releaseProjection();
+    },
+  };
+}
+
+async function childRuns(parentRunId: string) {
+  return database.db
+    .select({ id: runs.id, status: runs.status })
+    .from(runs)
+    .where(eq(runs.parentRunId, parentRunId));
 }
 
 describe("Consensus prompt owners through the production graph driver", () => {
@@ -1883,7 +2044,8 @@ describe("Consensus prompt owners through the production graph driver", () => {
     const attempts = await database.db
       .select()
       .from(nodeAttempts)
-      .where(eq(nodeAttempts.runId, seeded.runId));
+      .where(eq(nodeAttempts.runId, seeded.runId))
+      .orderBy(nodeAttempts.attempt);
 
     expect(attempts).toHaveLength(2);
     expect(attempts[1].id).not.toBe(failed.id);
@@ -2174,4 +2336,174 @@ describe("Consensus prompt owners through the production graph driver", () => {
         .where(eq(nodeAttempts.id, attempt.id));
     }
   }, 180_000);
+  // ADR-167 D5 amendment (2026-09-23): a draft child whose session has no
+  // durable incarnation yet must YIELD, never finalize Failed; the agent
+  // continuation worker re-drives the claimed turn once the incarnation exists.
+  it("owner-consensus-draft: a create another caller holds yields the draft child, and the agent worker finishes it", async () => {
+    const seeded = await seedConsensusFlow(consensusPrompt("agree"));
+    const claim = `test_claimed_child_create_${randomUUID().replaceAll("-", "")}`;
+    const childCreates = () =>
+      database.db
+        .select({ id: executionCommands.id })
+        .from(executionCommands)
+        .innerJoin(runs, eq(runs.id, executionCommands.runId))
+        .where(
+          and(
+            eq(runs.parentRunId, seeded.runId),
+            eq(executionCommands.kind, "session.create"),
+          ),
+        );
+
+    // Another caller's live claim on the create (the agent continuation
+    // worker's, in production): a launcher that meets it gets
+    // SessionCreatePending before any delivery.
+    await database.pool.query(
+      `CREATE FUNCTION ${claim}() RETURNS trigger LANGUAGE plpgsql AS $$
+       BEGIN
+         IF NEW.kind = 'session.create' AND EXISTS (
+           SELECT 1 FROM runs r WHERE r.id = NEW.run_id AND r.parent_run_id = '${seeded.runId}'
+         ) THEN NEW.next_attempt_at := clock_timestamp() + interval '1 hour'; END IF;
+         RETURN NEW;
+       END $$`,
+    );
+    await database.pool.query(
+      `CREATE TRIGGER ${claim} BEFORE INSERT ON execution_commands FOR EACH ROW EXECUTE FUNCTION ${claim}()`,
+    );
+    try {
+      await drive(seeded.runId);
+      const children = await childRuns(seeded.runId);
+
+      expect(children).toHaveLength(2);
+      // Each launcher has returned: whatever it did with the claim is final.
+      await probe.until(
+        () => children.every((child) => probe.of(child.id, "session").length),
+        60_000,
+      );
+      for (const child of children) {
+        // It yielded on the held create — before any prompt admission.
+        expect(probe.of(child.id, "session")).toEqual([null]);
+        expect(probe.of(child.id, "admission")).toEqual([]);
+        const [pending] = probe.of(child.id, "create");
+
+        expect(pending).toBeInstanceOf(SessionCreatePending);
+        expect(pending).toMatchObject({
+          code: "PRECONDITION",
+          details: { reason: "session_create_pending" },
+        });
+      }
+      expect(
+        (await childRuns(seeded.runId)).map((child) => child.status),
+      ).toEqual(["Running", "Running"]);
+      expect(await childCreates()).toHaveLength(2);
+    } finally {
+      await database.pool.query(
+        `DROP TRIGGER IF EXISTS ${claim} ON execution_commands`,
+      );
+      await database.pool.query(`DROP FUNCTION IF EXISTS ${claim}()`);
+    }
+
+    // The claim lapses; the worker re-drives each claimed turn on its create.
+    await database.pool.query(
+      `UPDATE execution_commands c SET next_attempt_at = NULL FROM runs r
+        WHERE r.id = c.run_id AND r.parent_run_id = $1 AND c.kind = 'session.create'`,
+      [seeded.runId],
+    );
+    const agents = startAgentContinuationWorker({
+      db: database.db as unknown as Db,
+      executionHosts: createExecutionHosts({
+        db: database.db as unknown as Db,
+      }),
+    });
+
+    try {
+      await settleDraftsAndResume(seeded.runId);
+      expect(await childCreates()).toHaveLength(2);
+    } finally {
+      await agents.stop();
+    }
+  }, 300_000);
+
+  it("owner-consensus-draft: an admission fence timeout yields the draft child and the agent worker re-drives it", async () => {
+    const seeded = await seedConsensusFlow(consensusPrompt("agree"));
+    const fault = await holdChildAdmission(seeded.runId);
+    let agents: ReturnType<typeof startAgentContinuationWorker> | null = null;
+
+    try {
+      await drive(seeded.runId);
+      const children = await childRuns(seeded.runId);
+
+      expect(children).toHaveLength(2);
+      // The launcher's admission waits out its whole fence budget (~60 s) with
+      // no durable incarnation. Await the launcher's return itself, with no
+      // re-driver running yet, so it alone decides what happened.
+      await probe.until(
+        () => children.every((child) => probe.of(child.id, "session").length),
+        150_000,
+      );
+      for (const child of children) {
+        // The create went through (the create-pending yield never fired); the
+        // admission fence timed out, and the launcher returned without failing.
+        expect(probe.of(child.id, "create")).toEqual([]);
+        expect(probe.of(child.id, "session")).toEqual([null]);
+        const admission = probe.of(child.id, "admission");
+
+        expect(admission).toHaveLength(1);
+        expect(admission[0]).toBeInstanceOf(PromptIncarnationPending);
+        expect(admission[0]).toMatchObject({
+          code: "EXECUTOR_UNAVAILABLE",
+          details: { reason: "prompt_incarnation_pending", runId: child.id },
+        });
+      }
+      expect(
+        (await childRuns(seeded.runId)).map((child) => child.status),
+      ).toEqual(["Running", "Running"]);
+
+      agents = startAgentContinuationWorker({
+        db: database.db as unknown as Db,
+        executionHosts: createExecutionHosts({
+          db: database.db as unknown as Db,
+        }),
+      });
+      // Let the worker re-drive each child twice while the fault holds.
+      await probe.until(
+        () =>
+          children.every((child) => probe.of(child.id, "session").length >= 3),
+        120_000,
+      );
+      // Each re-drive pass is bounded by the worker's 5 s abort, never a spin.
+      for (const count of await fault.recentAttempts(10_000))
+        expect(count).toBeLessThan(3);
+
+      await fault.release();
+      await settleDraftsAndResume(seeded.runId);
+      for (const child of children) {
+        const prompts = await database.db
+          .select({ id: executionCommands.id })
+          .from(executionCommands)
+          .where(
+            and(
+              eq(executionCommands.runId, child.id),
+              eq(executionCommands.kind, "session.prompt"),
+            ),
+          );
+
+        expect(prompts).toHaveLength(1);
+        // A `created` live incarnation dispatches; it never opens a second session.
+        expect(
+          await database.db
+            .select({ id: executionCommands.id })
+            .from(executionCommands)
+            .where(
+              and(
+                eq(executionCommands.runId, child.id),
+                eq(executionCommands.kind, "session.create"),
+              ),
+            ),
+        ).toHaveLength(1);
+      }
+    } finally {
+      await agents?.stop();
+      await fault.release();
+    }
+  }, 360_000);
 });

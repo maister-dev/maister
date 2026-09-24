@@ -3,7 +3,7 @@ import "server-only";
 import type { Db } from "./db";
 import type { ExecutionAssignment, RunSession } from "@/lib/db/schema";
 
-import { and, eq, inArray, lt } from "drizzle-orm";
+import { and, eq, inArray, lt, ne, or, sql } from "drizzle-orm";
 
 import {
   executionAssignments,
@@ -14,6 +14,15 @@ import {
 import { MaisterError } from "@/lib/errors";
 
 export type SessionBindingDisposition = "applied" | "stale";
+
+/** The incarnation states a new prompt may be admitted against. `created` is
+ * written by the create ACK itself, so admission never waits for lifecycle
+ * projection; everything else (checkpointed, ended, superseded) is refused.
+ */
+export const ADMISSIBLE_PROMPT_INCARNATION_STATES = [
+  "created",
+  "active",
+] as const;
 
 /** Serialize binding writes with assignment mint/release using their run-first
  * lock order. A historical receipt never grants current binding authority.
@@ -109,30 +118,45 @@ export async function assertCurrentSessionBinding(
     throw staleSessionBinding(input.runId, input.assignmentId);
 }
 
-/** A new current binding retires the previous assignment's projection slot.
- * This records loss of binding authority, not a fabricated host exit outcome.
- * The old incarnation, ACP handle and terminal evidence remain retained.
+/** A new current binding retires every other open slot of the logical
+ * session: a lower assignment epoch, or — because consecutive flow nodes reuse
+ * one session name on one assignment — the same epoch with another host
+ * session whose exit may not be projected yet. This records loss of binding
+ * authority, not a fabricated host exit outcome. The old incarnation, ACP
+ * handle and terminal evidence remain retained.
  */
 export async function retireSupersededSessionIncarnations(
   tx: Db,
-  input: { runSessionId: string; assignmentEpoch: number },
-): Promise<void> {
-  await tx
+  input: {
+    runSessionId: string;
+    assignmentEpoch: number;
+    hostSessionId: string;
+  },
+): Promise<number> {
+  const retired = await tx
     .update(runSessionIncarnations)
     .set({
       state: "lost",
       endedAt: new Date(),
-      terminalReason: { reason: "assignment_superseded" },
+      terminalReason: sql`CASE WHEN ${runSessionIncarnations.assignmentEpoch} < ${input.assignmentEpoch}
+        THEN '{"reason":"assignment_superseded"}'::jsonb
+        ELSE '{"reason":"session_superseded"}'::jsonb END`,
     })
     .where(
       and(
         eq(runSessionIncarnations.runSessionId, input.runSessionId),
-        lt(runSessionIncarnations.assignmentEpoch, input.assignmentEpoch),
+        or(
+          lt(runSessionIncarnations.assignmentEpoch, input.assignmentEpoch),
+          ne(runSessionIncarnations.hostSessionId, input.hostSessionId),
+        ),
         inArray(runSessionIncarnations.state, [
           "created",
           "active",
           "checkpointed",
         ]),
       ),
-    );
+    )
+    .returning({ id: runSessionIncarnations.id });
+
+  return retired.length;
 }

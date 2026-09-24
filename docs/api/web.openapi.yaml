@@ -5647,12 +5647,28 @@ paths:
                         refusal,
                         cancelled,
                       ]
+        "400":
+          description: Malformed JSON or schema (`CONFIG`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "401":
           $ref: "#/components/responses/Unauthenticated"
         "403":
           $ref: "#/components/responses/Forbidden"
         "409":
           description: Scratch run has no resume handle or cannot be recovered.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "503":
+          description: |
+            The execution host is unavailable retryably (`code:
+            EXECUTOR_UNAVAILABLE`; the body carries only `code` and `message`).
+            This includes a recovered session whose incarnation was not durable
+            yet when the prompt was admitted (ADR-167 D5 amendment): the session
+            is live, nothing was dispatched, and the run is kept for the user to
+            resend — it is NOT crashed.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }

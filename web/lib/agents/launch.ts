@@ -47,8 +47,12 @@ import {
   sharedAgentWorktreesDirectory,
 } from "./workspace-paths";
 
+import { ADMISSIBLE_PROMPT_INCARNATION_STATES } from "@/lib/execution-host/session-binding";
 import { createHitlRequest } from "@/lib/runs/hitl-create";
-import { waitForPromptIncarnation } from "@/lib/execution-host/prompt-incarnation";
+import {
+  PromptIncarnationPending,
+  waitForPromptIncarnation,
+} from "@/lib/execution-host/prompt-incarnation";
 import { latestOwnedCreate } from "@/lib/execution-host/create-intent";
 import { SessionCreatePending } from "@/lib/execution-host/owned-session-create";
 import {
@@ -2216,6 +2220,26 @@ async function startConsensusRunnerDraftSession(args: {
 
       return;
     }
+    // The claimed draft turn stays claimed; the agent continuation worker
+    // re-drives it once its session incarnation is durable.
+    if (err instanceof PromptIncarnationPending) {
+      log.warn(
+        { runId, hostSessionId: err.details?.hostSessionId },
+        "agent-prompt-admission-yielded",
+      );
+
+      return;
+    }
+    // Another caller — the agent continuation worker re-driving this claimed
+    // turn — owns the in-flight create; it finishes the turn, not this one.
+    if (err instanceof SessionCreatePending) {
+      log.warn(
+        { runId, commandId: err.details?.commandId },
+        "consensus-draft-create-pending-yielded",
+      );
+
+      return;
+    }
     log.error(
       { runId, err: err instanceof Error ? err.message : String(err) },
       "consensus runner draft session spawn/prompt failed",
@@ -2920,12 +2944,13 @@ export async function startAgentSession(
           command.targetSessionId,
           opts.signal,
         );
-      await waitForAgentPrompt(
-        _db,
-        execution.client,
-        agentTurn.commandId,
-        opts.signal,
-      );
+      // A re-driven consensus draft must apply through the draft registry;
+      // the ordinary agent owner refuses the variant and poisons the turn.
+      await (
+        agentTurn.variant === "consensus_draft"
+          ? waitForConsensusDraftPrompt
+          : waitForAgentPrompt
+      )(_db, execution.client, agentTurn.commandId, opts.signal);
 
       return;
     }
@@ -2971,7 +2996,8 @@ export async function startAgentSession(
         if (
           isFencedError(error) ||
           error instanceof SessionCreatePending ||
-          error instanceof AgentPromptContinuationPending
+          error instanceof AgentPromptContinuationPending ||
+          error instanceof PromptIncarnationPending
         ) {
           log.warn(
             { runId, turnId: agentTurn.id, commandId: originalCreate.id },
@@ -2994,7 +3020,9 @@ export async function startAgentSession(
         and(
           eq(runSessionIncarnations.runSessionId, agentTurn.runSessionId ?? ""),
           eq(runSessionIncarnations.executionAssignmentId, assignmentId ?? ""),
-          eq(runSessionIncarnations.state, "active"),
+          inArray(runSessionIncarnations.state, [
+            ...ADMISSIBLE_PROMPT_INCARNATION_STATES,
+          ]),
         ),
       )
       .limit(1);
@@ -3441,11 +3469,18 @@ export async function startAgentSession(
     }
     if (
       err instanceof AgentPromptContinuationPending ||
-      err instanceof SessionCreatePending
+      err instanceof SessionCreatePending ||
+      err instanceof PromptIncarnationPending
     ) {
       log.warn(
-        { runId, commandId: err.details?.commandId },
-        "agent prompt retained for owner recovery",
+        {
+          runId,
+          commandId: err.details?.commandId,
+          hostSessionId: err.details?.hostSessionId,
+        },
+        err instanceof PromptIncarnationPending
+          ? "agent-prompt-admission-yielded"
+          : "agent prompt retained for owner recovery",
       );
 
       return;

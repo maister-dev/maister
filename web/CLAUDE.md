@@ -280,6 +280,11 @@ insertion adding only `checkEnvRefs`/`EnvRefPresence`/`EnvRefs`, with no line
 touching the runtime-object or deliverer path. It reproduced identically after
 the rebase, so it is now a standing load-sensitive name, not a branch artefact:
 treat a recurrence as load, and re-run the file idle before filing it.
+**Root-caused and fixed 2026-09-23:** an ACK seal never makes the manager's
+runtime-object row `available` — only the projected canonical event does — and
+D3 deleted straight after publishing, so under load the delete was refused from
+`pending`. The case now waits for the projected state; it is no longer a
+standing name.
 
 **A first-hit Next-dev compile can exhaust a 10s e2e timeout.** Before calling
 such a failure a regression, re-run the spec in isolation and read the RETRY

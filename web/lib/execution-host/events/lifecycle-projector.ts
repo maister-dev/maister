@@ -5,8 +5,10 @@ import type { Db } from "@/lib/execution-host/db";
 import { randomUUID } from "node:crypto";
 
 import { and, eq } from "drizzle-orm";
+import pino from "pino";
 
 import {
+  ADMISSIBLE_PROMPT_INCARNATION_STATES,
   lockCurrentSessionAssignment,
   lockLogicalRunSession,
 } from "../session-binding";
@@ -29,6 +31,11 @@ import {
   type ExecutionEvent,
   type RunSessionIncarnation,
 } from "@/lib/db/schema";
+
+const log = pino({
+  name: "lifecycle-projector",
+  level: process.env.LOG_LEVEL ?? "info",
+});
 
 export const canonicalLifecycleProjector: ExecutionEventProjector = {
   consumerName: CANONICAL_PROJECTION_CONSUMERS.lifecycle,
@@ -143,6 +150,36 @@ async function projectCreated(tx: Db, event: ExecutionEvent): Promise<void> {
     ) {
       throw permanent(
         "host session incarnation belongs to another run session",
+      );
+    }
+    // The create ACK wrote this row as `created`; the canonical event is what
+    // proves the ACP session initialized, so it alone activates the row.
+    if (incarnation.state === "created" && disposition === "applied") {
+      await tx
+        .update(runSessionIncarnations)
+        .set({
+          state: "active",
+          activatedAt: event.occurredAt,
+          hostBootId: event.hostBootId,
+          acpSessionId: incarnation.acpSessionId ?? acpSessionId,
+        })
+        .where(eq(runSessionIncarnations.id, incarnation.id));
+      log.info(
+        { runId: event.runId, incarnationId: incarnation.id },
+        "session-incarnation-activated",
+      );
+    } else if (incarnation.state === "created") {
+      await tx
+        .update(runSessionIncarnations)
+        .set({
+          state: "lost",
+          endedAt: event.occurredAt,
+          terminalReason: { reason: "create_owner_superseded" },
+        })
+        .where(eq(runSessionIncarnations.id, incarnation.id));
+      log.warn(
+        { runId: event.runId, incarnationId: incarnation.id },
+        "session-incarnation-lost-on-stale-create",
       );
     }
     await bindEventToIncarnation(tx, event, incarnation.id);
@@ -308,7 +345,29 @@ async function projectTerminal(tx: Db, event: ExecutionEvent): Promise<void> {
         ? "checkpointed"
         : "exited";
 
-  if (incarnation.state !== nextState) {
+  // Only an open row may become checkpointed: a superseded (`lost`) or ended
+  // row re-entering the open set would collide with its successor on the
+  // one-open-row-per-session index and poison this projector permanently.
+  if (
+    nextState === "checkpointed" &&
+    !(ADMISSIBLE_PROMPT_INCARNATION_STATES as readonly string[]).includes(
+      incarnation.state,
+    )
+  ) {
+    await tx
+      .update(runSessionIncarnations)
+      .set({ terminalReason: event.payload ?? {} })
+      .where(eq(runSessionIncarnations.id, incarnation.id));
+    log.warn(
+      {
+        runId: event.runId,
+        incarnationId: incarnation.id,
+        state: incarnation.state,
+        eventType: event.eventType,
+      },
+      "session-incarnation-terminal-on-superseded",
+    );
+  } else if (incarnation.state !== nextState) {
     await tx
       .update(runSessionIncarnations)
       .set({

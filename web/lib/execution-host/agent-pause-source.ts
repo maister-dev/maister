@@ -7,7 +7,10 @@ import { and, eq, gt, lt, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import { agentPermissionSourceSchema } from "./agent-permission-source";
-import { PromptOwnerInvariantError } from "./prompt-owners";
+import {
+  assertTerminalEventConfirmed,
+  PromptOwnerInvariantError,
+} from "./prompt-owners";
 import { staleSessionBinding } from "./session-binding";
 
 import {
@@ -118,6 +121,7 @@ export async function findAgentPromptHalt(
   db: Db,
   command: Readonly<ExecutionCommand>,
 ): Promise<{ id: string; rule: string } | null> {
+  assertTerminalEventConfirmed(command);
   if (!command.terminalEventId || !command.targetSessionId) return null;
   const boundary = and(
     eq(executionEvents.source, "host"),

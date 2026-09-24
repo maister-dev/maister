@@ -54,6 +54,7 @@ import { createExecutionHosts } from "@/lib/execution-host/client";
 import { resetRegistrarStateForTests } from "@/lib/execution-host/registrar";
 import { resetResolverForTests } from "@/lib/execution-host/resolver";
 import {
+  executionEventStreams,
   executionEvents,
   executionEventConsumers,
   executionCommands,
@@ -221,6 +222,42 @@ async function admitOwnedFixturePrompt(
   });
 
   return admitted;
+}
+
+/** A turn may settle from the host's span before its events are ingested
+ * (ADR-167 D5 amendment); a case reading canonical rows waits for them. */
+async function untilIngested(commandId: string): Promise<void> {
+  await expect
+    .poll(
+      async () => {
+        const [command] = await database.db
+          .select()
+          .from(executionCommands)
+          .where(eq(executionCommands.id, commandId));
+        const terminal = command?.receiptEvidence?.evidenceV2?.terminal;
+
+        if (!command || !terminal) return false;
+        const [stream] = await database.db
+          .select()
+          .from(executionEventStreams)
+          .where(
+            and(
+              eq(
+                executionEventStreams.executionHostId,
+                command.executionHostId,
+              ),
+              eq(executionEventStreams.streamId, terminal.streamId),
+            ),
+          );
+
+        return (
+          stream?.lastContiguousSequence != null &&
+          stream.lastContiguousSequence >= BigInt(terminal.sequence)
+        );
+      },
+      { timeout: 30_000 },
+    )
+    .toBe(true);
 }
 
 async function startOwnedFixturePrompt(
@@ -1585,6 +1622,7 @@ describe("AT-01 bounded output on the production supervisor", () => {
         signal: AbortSignal.timeout(15_000),
       }),
     ).resolves.toMatchObject({ stopReason: "end_turn" });
+    await untilIngested(handle.commandId);
     const [stored] = await database.db
       .select()
       .from(executionCommands)
@@ -1680,6 +1718,7 @@ describe("AT-01 bounded output on the production supervisor", () => {
     await producer.client.waitForPrompt(handle, {
       signal: AbortSignal.timeout(15_000),
     });
+    await untilIngested(handle.commandId);
     await worker.stop();
     try {
       const events = await database.db
@@ -1872,6 +1911,7 @@ describe("AT-01 bounded output on the production supervisor", () => {
         signal: AbortSignal.timeout(10_000),
       }),
     ).resolves.toMatchObject({ stopReason: "end_turn" });
+    await untilIngested(handle.commandId);
     await projectCanonicalRuntimeObjects({
       db: database.db as unknown as Db,
       runId: producer.runId,

@@ -447,6 +447,27 @@ the existing supervisor `DELETE /sessions/:id` (no new supervisor route; the
 `DELETE` drives teardown so no permission deferred leaks), marks the node
 `Failed`, and ends the run terminal. Cost limits stay record-only.
 
+A turn that already FINISHED on the host is not killed (Implemented — ADR-167 D5
+amendment 2026-09-23). For a candidate over its cap, before any teardown, the
+pass reads the attempt's newest owned `session.prompt` across every
+`flow_node_attempt` variant (node, permission_resume, gate_skill, gate_ai,
+consensus_verifier, consensus_synthesis). It defers the kill only on a positive
+witness that the turn finished AND still has a writer: the command is settled
+and its owner can still apply it (ADR-177 class `pending_application` or
+`applying`), or it is `accepted`, the host's stream is not `lost`, and the one
+ADR-177 receipt probe answers `completed`. Every other shape kills as before:
+`indeterminate` (a running v2 turn), `inflight`, `unknown`, an ordinary rejected
+failure, a settled `turn_lost`, a poisoned or quarantined application (no
+applier is left), a `completed` receipt on a lost stream (its evidence can never
+arrive), an already-applied newest prompt (the driver sits between prompts), or
+no prompt. The pass settles nothing and makes no host call beyond that probe.
+The deferral is bounded by the writers it names: the owner applies or poisons a
+settled turn, and canonical ingest reaches a completed one while the stream
+lives. ADR-177 stream-lost alone could not bound it — its evidence arm covers
+only sessionless `ai_coding` / `orchestrator` nodes, not live sessions or `judge`
+nodes. Each deferral logs `time-limit-deferred-completed-turn` and counts
+`deferredCompletedCount` in the sweep summary.
+
 ### Context-repo declaration to release (Implemented — ADR-157)
 
 `settings.context_repos` is declared in the manifest, gated at manifest load by
@@ -514,8 +535,13 @@ flowchart TD
   `enforced / instructed / refused` and MUST NOT serialize any secret
   (`*TOKEN*`/`*KEY*`/`*SECRET*`) field.
 - A run whose elapsed exceeds `limits.maxDurationMinutes` MUST be terminated
-  `Failed`; a run under cap MUST NOT be killed; absence of `limits` MUST NOT arm
-  the watchdog. Cost caps remain record-only.
+  `Failed` unless its attempt's newest owned prompt finished and still has a
+  writer (settled with an owner able to apply it, or a `completed` receipt probe
+  on a live stream — Implemented, 2026-09-23; enforced by
+  `completedTurnWitness` in `keepalive-sweeper.ts`,
+  `time-limit-watchdog.integration.test.ts` C1-*); a run under cap MUST
+  NOT be killed; absence of `limits` MUST NOT arm the watchdog. Cost caps remain
+  record-only.
 - `settings.context_repos` MUST be accepted only on `ai_coding`, `judge`, and
   `orchestrator` nodes and MUST be rejected by the schema on every other node
   type, including `cli` and `check`. (Implemented — ADR-157)

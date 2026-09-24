@@ -150,6 +150,12 @@ export const PromptOwnerSchema = z.discriminatedUnion("kind", [
 export type PromptOwner = z.infer<typeof PromptOwnerSchema>;
 export type PromptOwnerReference = PromptOwner["ref"];
 
+/** Every prompt a Flow node attempt can own: its action, a permission resume,
+ * its gates and its consensus substeps. */
+export const FLOW_NODE_ATTEMPT_VARIANTS = flowRefs.map(
+  (ref) => ref.shape.variant.value,
+);
+
 // The database CHECK derives required/allowed keys from these same closed schemas.
 export const PROMPT_OWNER_SHAPES = [
   ...flowRefs.map((ref) => ({ kind: "flow_node_attempt", ref })),

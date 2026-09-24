@@ -73,6 +73,8 @@ import {
   EXECUTION_HOST_READINESS,
   OPEN_COMMAND_STATES,
   PLACEMENT_REASONS,
+  PROMPT_SETTLEMENT_FEEDS,
+  HOST_SPAN_VERDICTS,
   RUNTIME_OBJECT_KINDS,
   RUNTIME_OBJECT_RETENTION_CLASSES,
   type RuntimeObjectRetentionHold,
@@ -2326,6 +2328,9 @@ export const executionCommands = pgTable(
       { onDelete: "restrict" },
     ),
     terminalEvidenceSha256: text("terminal_evidence_sha256"),
+    // Written once, by the reducer, in the UPDATE that first sets the digest.
+    settledFrom: text("settled_from", { enum: PROMPT_SETTLEMENT_FEEDS }),
+    hostSpanVerdict: text("host_span_verdict", { enum: HOST_SPAN_VERDICTS }),
     transportState: text("transport_state", { enum: COMMAND_TRANSPORT_STATES })
       .notNull()
       .default("not_sent"),
@@ -2397,6 +2402,10 @@ export const executionCommands = pgTable(
       .where(
         sql`${t.retiredAt} IS NULL AND ${inLiteralList(t.state, TERMINAL_COMMAND_STATES)}`,
       ),
+    // Per-host host-span settlement counts on /admin/execution-host.
+    idxHostSpanSettled: index("execution_commands_host_span_settled_idx")
+      .on(t.executionHostId, t.completedAt)
+      .where(sql`${t.settledFrom} = 'host_span'`),
     uniqCreateOperation: uniqueIndex("execution_commands_create_operation_uq")
       .on(
         t.runId,
@@ -2446,7 +2455,15 @@ export const executionCommands = pgTable(
     ),
     terminalEvidenceCheck: check(
       "execution_commands_terminal_evidence_check",
-      sql`${t.terminalEvidenceSha256} IS NULL OR (${t.terminalEvidenceSha256} ~ '^[a-f0-9]{64}$' AND ${t.terminalEventId} IS NOT NULL AND ${t.receiptEvidence} IS NOT NULL)`,
+      sql`${t.terminalEvidenceSha256} IS NULL OR (${t.terminalEvidenceSha256} ~ '^[a-f0-9]{64}$' AND (${t.terminalEventId} IS NOT NULL OR ${t.settledFrom} IS NOT DISTINCT FROM 'host_span') AND (${t.receiptEvidence} IS NOT NULL OR ${t.retiredAt} IS NOT NULL))`,
+    ),
+    settledFromCheck: check(
+      "execution_commands_settled_from_check",
+      sql`${t.settledFrom} IS NULL OR (${inLiteralList(t.settledFrom, PROMPT_SETTLEMENT_FEEDS)} AND ${t.terminalEvidenceSha256} IS NOT NULL)`,
+    ),
+    hostSpanVerdictCheck: check(
+      "execution_commands_host_span_verdict_check",
+      sql`${t.hostSpanVerdict} IS NULL OR ${inLiteralList(t.hostSpanVerdict, HOST_SPAN_VERDICTS)}`,
     ),
     receiptEvidenceCheck: check(
       "execution_commands_receipt_evidence_check",
@@ -2508,9 +2525,11 @@ export const executionCommands = pgTable(
       "execution_commands_request_v2_check",
       sql`(((${t.requestSchema} IS DISTINCT FROM 'maister.command.request.v2') AND ${t.requestCanonicalJson} IS NULL) OR
         (${t.requestSchema} = 'maister.command.request.v2' AND ${t.kind} = 'session.prompt'
-        AND ${t.requestCanonicalJson} IS NOT NULL AND ${t.targetSessionId} IS NOT NULL
+        AND ${t.targetSessionId} IS NOT NULL
         AND ${t.ownerKind} IS NOT NULL AND ${t.ownerRef} IS NOT NULL
         AND length(${t.logicalOperationKey}) BETWEEN 1 AND 256
+        AND ((${t.retiredAt} IS NOT NULL AND ${t.requestCanonicalJson} IS NULL AND ${t.requestSha256} ~ '^[a-f0-9]{64}$')
+        OR (${t.requestCanonicalJson} IS NOT NULL
         AND ${t.requestSha256} = encode(sha256(convert_to(${t.requestCanonicalJson}, 'UTF8')), 'hex')
         AND (${t.requestCanonicalJson}::jsonb->'requestVersion') = '2'::jsonb
         AND (${t.requestCanonicalJson}::jsonb->'command'->>'id') = ${t.id}
@@ -2518,7 +2537,7 @@ export const executionCommands = pgTable(
         AND (${t.requestCanonicalJson}::jsonb->'fence'->>'runId') = ${t.runId}
         AND (${t.requestCanonicalJson}::jsonb->'fence'->>'assignmentId') = ${t.executionAssignmentId}
         AND (${t.requestCanonicalJson}::jsonb->'fence'->'assignmentEpoch') = to_jsonb(${t.assignmentEpoch})
-        AND (${t.requestCanonicalJson}::jsonb->'target'->>'hostSessionId') = ${t.targetSessionId}
+        AND (${t.requestCanonicalJson}::jsonb->'target'->>'hostSessionId') = ${t.targetSessionId}))
         AND (${t.ownerRef}->>'runId') = ${t.runId}
         AND (${t.ownerRef}->>'assignmentId') = ${t.executionAssignmentId}
         AND (${t.ownerRef}->'assignmentEpoch') = to_jsonb(${t.assignmentEpoch})

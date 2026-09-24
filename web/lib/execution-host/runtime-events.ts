@@ -423,3 +423,81 @@ export const RuntimeEventAckSchema = z
   .strict();
 
 export type RuntimeEventAck = z.infer<typeof RuntimeEventAckSchema>;
+
+const RuntimeEventSequenceSchema = z
+  .string()
+  .regex(SEQUENCE)
+  .refine(
+    (value) =>
+      SEQUENCE.test(value) && BigInt(value) <= 9_223_372_036_854_775_807n,
+  );
+
+const RUNTIME_EVENT_SPAN_BOUNDS = {
+  streamId: z.string().uuid(),
+  after: RuntimeEventSequenceSchema,
+  through: RuntimeEventSequenceSchema,
+};
+
+const RUNTIME_EVENT_SPAN_PAGE = z
+  .array(RuntimeEventEnvelopeSchema)
+  .min(1)
+  .max(500);
+
+// ADR-167 D5 amendment (2026-09-23): mirror of the supervisor's
+// `GET /runtime-events/span` body. Envelopes parse exactly as SSE ones do. The
+// cursor rules make a page that cannot advance a parse failure: a host that
+// answered one would otherwise be re-read until the caller's abort.
+export const RuntimeEventSpanSchema = z
+  .discriminatedUnion("state", [
+    z
+      .object({
+        ...RUNTIME_EVENT_SPAN_BOUNDS,
+        state: z.literal("complete"),
+        nextAfter: z.null(),
+        events: RUNTIME_EVENT_SPAN_PAGE,
+      })
+      .strict(),
+    z
+      .object({
+        ...RUNTIME_EVENT_SPAN_BOUNDS,
+        state: z.literal("partial"),
+        nextAfter: RuntimeEventSequenceSchema,
+        events: RUNTIME_EVENT_SPAN_PAGE,
+      })
+      .strict(),
+    z
+      .object({
+        ...RUNTIME_EVENT_SPAN_BOUNDS,
+        state: z.literal("unavailable"),
+        reason: z.enum([
+          "replay_floor_lost",
+          "stream_identity_changed",
+          "beyond_emitted",
+        ]),
+        nextAfter: z.null(),
+        events: z.array(RuntimeEventEnvelopeSchema).max(0),
+      })
+      .strict(),
+  ])
+  .superRefine((span, context) => {
+    if (span.state === "unavailable") return;
+    const cursors = [span.after, span.through, span.nextAfter];
+
+    // A field that failed its own schema already carries an issue.
+    if (cursors.some((cursor) => cursor !== null && !SEQUENCE.test(cursor)))
+      return;
+    const last = span.events.at(-1)?.sequence;
+    const valid =
+      span.state === "complete"
+        ? last === span.through
+        : last === span.nextAfter &&
+          BigInt(span.after) < BigInt(span.nextAfter) &&
+          BigInt(span.nextAfter) < BigInt(span.through);
+
+    if (!valid)
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["nextAfter"],
+        message: "span page cursor does not advance to its last row",
+      });
+  });

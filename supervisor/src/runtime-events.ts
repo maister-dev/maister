@@ -479,6 +479,63 @@ export const RuntimeEventAckSchema = z
 
 export type RuntimeEventAck = z.infer<typeof RuntimeEventAckSchema>;
 
+// ADR-167 D5 amendment (2026-09-23): the read-only span a manager verifies to
+// settle a finished turn before the shared stream is ingested.
+export const RuntimeEventSpanQuerySchema = z
+  .object({
+    streamId: z.string().uuid(),
+    after: RuntimeEventSequenceSchema,
+    through: RuntimeEventSequenceSchema,
+  })
+  .strict()
+  // Zod 3 still runs an object refinement after a field regex failed.
+  .refine(
+    (query) =>
+      !SEQUENCE.test(query.after) ||
+      !SEQUENCE.test(query.through) ||
+      BigInt(query.after) < BigInt(query.through),
+  );
+
+const RUNTIME_EVENT_SPAN_BOUNDS = {
+  streamId: z.string().uuid(),
+  after: RuntimeEventSequenceSchema,
+  through: RuntimeEventSequenceSchema,
+};
+
+export const RuntimeEventSpanSchema = z.discriminatedUnion("state", [
+  z
+    .object({
+      ...RUNTIME_EVENT_SPAN_BOUNDS,
+      state: z.literal("complete"),
+      nextAfter: z.null(),
+      events: z.array(RuntimeEventEnvelopeSchema).max(500),
+    })
+    .strict(),
+  z
+    .object({
+      ...RUNTIME_EVENT_SPAN_BOUNDS,
+      state: z.literal("partial"),
+      nextAfter: RuntimeEventSequenceSchema,
+      events: z.array(RuntimeEventEnvelopeSchema).min(1).max(500),
+    })
+    .strict(),
+  z
+    .object({
+      ...RUNTIME_EVENT_SPAN_BOUNDS,
+      state: z.literal("unavailable"),
+      reason: z.enum([
+        "replay_floor_lost",
+        "stream_identity_changed",
+        "beyond_emitted",
+      ]),
+      nextAfter: z.null(),
+      events: z.array(RuntimeEventEnvelopeSchema).max(0),
+    })
+    .strict(),
+]);
+
+export type RuntimeEventSpan = z.infer<typeof RuntimeEventSpanSchema>;
+
 function uuidFromSha1(hash: Buffer): string {
   const bytes = Buffer.from(hash.subarray(0, 16));
 

@@ -6,7 +6,7 @@ import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, it } from "vitest";
 
 import { mintAssignment } from "../assignments";
-import { issueCommand } from "../ledger";
+import { redactPayload } from "../redact";
 
 import { executionCommands, executionHosts } from "@/lib/db/schema";
 import {
@@ -48,6 +48,37 @@ it("backfills only the original provable declaration without inventing one from 
   // Exact, compacted, producer-only, changed expiry, ambiguous first timestamp,
   // and an exact ephemeral declaration exercise independent proof boundaries.
   const objectIds = Array.from({ length: 6 }, () => randomUUID());
+  // RAW SQL naming only the ledger's own insert columns: this database stops at
+  // 0159, and a Drizzle insert names every column the CURRENT schema declares
+  // (0177 `settled_from` does not exist here yet).
+  const reserveCommand = async (
+    objectId: string,
+    payload: Record<string, unknown>,
+    at: Date,
+  ): Promise<string> => {
+    const id = randomUUID();
+
+    await database.pool.query(
+      `INSERT INTO execution_commands
+      (id, run_id, execution_assignment_id, execution_host_id, assignment_epoch,
+       kind, target_session_id, payload, state, attempts, max_attempts,
+       driverless, created_at, updated_at)
+      VALUES ($1, $2, $3, $4, $5, 'runtime_object.reserve', $6, $7, 'queued',
+        0, 1, false, $8, $8)`,
+      [
+        id,
+        runId,
+        assignment.id,
+        host.id,
+        assignment.epoch,
+        objectId,
+        JSON.stringify(redactPayload("runtime_object.reserve", payload)),
+        at,
+      ],
+    );
+
+    return id;
+  };
 
   for (const [index, objectId] of objectIds.entries()) {
     await database.pool.query(
@@ -87,32 +118,22 @@ it("backfills only the original provable declaration without inventing one from 
       sizeBytes: 42,
       sha256: "a".repeat(64),
     };
-    const original = await issueCommand(db, {
-      assignment,
-      host,
-      kind: "runtime_object.reserve",
-      targetSessionId: objectId,
+    const originalId = await reserveCommand(
+      objectId,
       payload,
-      maxAttempts: 1,
-      now: new Date("2026-09-08T12:00:00Z"),
-    });
+      new Date("2026-09-08T12:00:00Z"),
+    );
 
-    await issueCommand(db, {
-      assignment,
-      host,
-      kind: "runtime_object.reserve",
-      targetSessionId: objectId,
-      payload: { ...payload, sizeBytes: 43, sha256: "b".repeat(64) },
-      maxAttempts: 1,
-      now: new Date(
-        index === 4 ? "2026-09-08T12:00:00Z" : "2026-09-08T12:00:01Z",
-      ),
-    });
+    await reserveCommand(
+      objectId,
+      { ...payload, sizeBytes: 43, sha256: "b".repeat(64) },
+      new Date(index === 4 ? "2026-09-08T12:00:00Z" : "2026-09-08T12:00:01Z"),
+    );
     if (index === 1)
       await db
         .update(executionCommands)
         .set({ payload: {} })
-        .where(eq(executionCommands.id, original.row.id));
+        .where(eq(executionCommands.id, originalId));
   }
   const before = await database.pool.query(
     "SELECT id, state, size_bytes, sha256, sealed_at FROM execution_runtime_objects ORDER BY id",

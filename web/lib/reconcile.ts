@@ -6,7 +6,10 @@ import type {
   ExecutionHosts,
   SupervisorSessionRecord,
 } from "@/lib/execution-host";
-import type { PromptEvidenceClass } from "@/lib/reconcile-evidence";
+import type {
+  EvidenceCrashReason,
+  PromptEvidenceClass,
+} from "@/lib/reconcile-evidence";
 import type { WorktreeInfo } from "@/lib/worktree";
 
 import { randomUUID } from "node:crypto";
@@ -37,6 +40,7 @@ import {
   resolveConsensusPoisonEvidence,
   resolvePromptEvidence,
 } from "@/lib/reconcile-evidence-db";
+import { EVIDENCE_CRASH_REASONS } from "@/lib/reconcile-evidence";
 import { listGraphOnlyCutoverRunIds } from "@/lib/queries/run-cutover";
 import { systemCloseActiveAssignmentsForRun } from "@/lib/assignments/service";
 import { reconcileGraceSeconds } from "@/lib/instance-config";
@@ -1647,14 +1651,13 @@ export async function runReconcileSweep(
 
   // ADR-177: the evidence-driven crash reasons. They share ONE boundary because
   // each of them owes the same three writes in one transaction.
-  const EVIDENCE_CRASH_REASONS = new Set<ReconcileReason>([
-    "turn-lost",
-    "stream-lost",
-    "owner-poisoned",
-  ]);
+  const isEvidenceCrashReason = (
+    reason: ReconcileReason,
+  ): reason is EvidenceCrashReason =>
+    (EVIDENCE_CRASH_REASONS as readonly string[]).includes(reason);
   const evidenceCrash = async (
     cand: { runId: string; currentStepId: string | null; status: string },
-    reason: ReconcileReason,
+    reason: EvidenceCrashReason,
     classified: { nodeAttemptId: string | null; commandId: string | null },
   ): Promise<{ ok: boolean; reason?: string }> => {
     if (!cand.currentStepId) return { ok: false, reason: "no-current-step" };
@@ -1665,7 +1668,7 @@ export async function runReconcileSweep(
       db,
       runId: cand.runId,
       nodeId: cand.currentStepId,
-      reason: mapReasonToCrashReason(reason),
+      reason,
       fromStatuses: [cand.status],
       // The identity this tick CLASSIFIED. Without it the boundary re-derives
       // the attempt, and a Recover landing in between would hand A's diagnosis
@@ -2026,7 +2029,7 @@ export async function runReconcileSweep(
           // that transaction, so every terminal side effect it owns (HITL
           // close, sync-claim and assignment release, the `run.crashed` webhook
           // and domain event) is inherited rather than re-implemented.
-          const crashResult = EVIDENCE_CRASH_REASONS.has(reason)
+          const crashResult = isEvidenceCrashReason(reason)
             ? await evidenceCrash(cand, reason, promptEvidence)
             : await crashRunningRun(
                 cand.runId,

@@ -701,7 +701,7 @@ describe("runtime event ingestion", () => {
     expect(exitedIncarnation.rows).toEqual([{ state: "exited", ended: true }]);
   });
 
-  it("admits a concurrent substep session only under its own logical name, and wedges the stream when it reuses the run's", async () => {
+  it("admits a concurrent substep session under its own logical name, and a reused name supersedes the older incarnation instead of wedging the stream", async () => {
     const overlapRunId = randomUUID();
     const overlapHostId = randomUUID();
     const overlapAssignmentId = randomUUID();
@@ -798,30 +798,25 @@ describe("runtime event ingestion", () => {
       },
     ]);
 
-    // The same substep under the run's own session name: a SECOND non-terminal
-    // incarnation of one logical session, which the active-incarnation index
-    // forbids. The refusal is a raw database error, so the projector reads it as
-    // transient and stops the cursor dead.
+    // The same substep under the run's own session name. Before ADR-167 D5
+    // (2026-09-23) this was a SECOND non-terminal incarnation of one logical
+    // session: the active-incarnation index refused it and the lifecycle cursor
+    // wedged, stranding every later event of the run. The newer binding now
+    // retires the older incarnation (`session_superseded`) in the same
+    // transaction, so the stream keeps moving.
     await ingestRuntimeEvent({
       db: testDatabase.db,
       executionHostId: overlapHostId,
       envelope: created("2", collidingSessionId, "default"),
     });
 
-    expect(await project()).toMatchObject({ projected: 0, deferred: true });
-    const wedged = await testDatabase.pool.query(
-      `select state, last_error->>'type' as type from execution_event_consumers
-        where run_id = $1 and consumer_name = 'canonical-session-lifecycle-v1'`,
-      [overlapRunId],
-    );
-
-    expect(wedged.rows[0]).toEqual({
-      state: "retrying",
-      type: "unexpected_error",
+    expect(await project()).toMatchObject({
+      projected: 1,
+      deferred: false,
+      poisoned: false,
     });
 
-    // Everything behind the wedge is unreachable — including the node session's
-    // own terminal event, which is why such a run never settles.
+    // The superseded session's own exit still projects behind it.
     await ingestRuntimeEvent({
       db: testDatabase.db,
       executionHostId: overlapHostId,
@@ -832,20 +827,30 @@ describe("runtime event ingestion", () => {
         payload: { exitCode: 0, reason: "intentional" },
       },
     });
-    await project();
+    expect(await project()).toMatchObject({ projected: 1, poisoned: false });
 
-    expect(await incarnations()).toEqual([
-      {
-        host_session_id: nodeSessionId,
-        state: "active",
-        session_name: "default",
-      },
-      {
-        host_session_id: substepSessionId,
-        state: "active",
-        session_name: "gate-judge",
-      },
-    ]);
+    const rows = await incarnations();
+
+    expect(rows).toHaveLength(3);
+    expect(rows).toEqual(
+      expect.arrayContaining([
+        {
+          host_session_id: nodeSessionId,
+          state: "exited",
+          session_name: "default",
+        },
+        {
+          host_session_id: collidingSessionId,
+          state: "active",
+          session_name: "default",
+        },
+        {
+          host_session_id: substepSessionId,
+          state: "active",
+          session_name: "gate-judge",
+        },
+      ]),
+    );
   });
 
   it("accepts a late terminal event for its exact released-assignment command while quarantining unrelated stale events", async () => {

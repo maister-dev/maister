@@ -467,6 +467,21 @@ describe("bound client over the real wire", () => {
       sessionName: "runtime-object-next-epoch",
     });
 
+    // An ACK seal never makes the manager's row `available` — only the projected
+    // canonical event does — so a delete issued before that projection is
+    // refused `pending`. Under load the projection trails the ACK.
+    await expect
+      .poll(
+        async () =>
+          (
+            await testDatabase.pool.query(
+              "select state from execution_runtime_objects where id = $1",
+              [objectId],
+            )
+          ).rows[0]?.state,
+        { timeout: 30_000 },
+      )
+      .toBe("available");
     // Runtime-object cleanup is object-scoped: the original assignment may
     // delete its own immutable object after a newer run epoch is active.
     await client.deleteRuntimeObject({ objectId, generation: 1 });

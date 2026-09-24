@@ -153,6 +153,26 @@ state = 'active'`: at most one active assignment per run (E-EH-02).
   `execution_commands_state_check` (six states), and
   `execution_commands_terminal_shape_check` — `(state IN ('succeeded',
 'failed', 'fenced')) = (completed_at IS NOT NULL)`.
+- `execution_commands_request_v2_check` and
+  `execution_commands_terminal_evidence_check` (`0140`/`0141`, amended by
+  `0176`) require the v2 request bytes and the receipt on a settled prompt,
+  except on a retired tombstone (`retired_at` set), which keeps only the
+  request digest, the terminal event and the evidence digest. The `0140`/`0141`
+  immutability triggers exempt only the compaction that sets `retired_at`.
+- `execution_commands.settled_from` (`0177`, Implemented — ADR-167 D5 amendment
+  2026-09-23): `canonical | host_span`, written once by the evidence reducer
+  when it first sets the digest (`execution_commands_settled_from_check`). The
+  re-created `terminal_evidence_check` lets a `host_span` row hold the digest
+  before `terminal_event_id` is bound; the re-created `0141` trigger makes the
+  column immutable once set. Partial index
+  `execution_commands_host_span_settled_idx (execution_host_id, completed_at)
+  WHERE settled_from = 'host_span'` serves the per-host counts.
+- `execution_commands.host_span_verdict` (`0178`, Implemented — ADR-177
+  amendment 2026-09-23): `busy | refused`, the answer of the latest host-span
+  read that did not settle the prompt (`execution_commands_host_span_verdict_check`).
+  Cleared when a read claims the command and written when that claim is
+  released, so NULL also means a read is in flight; the stream-lost resolver
+  crashes only on `refused`.
 - Indexes: `execution_assignments_host_state_idx (execution_host_id, state)`
   (the registrar's "does the old row still own active work" scan),
   `execution_commands_open_idx (state, next_attempt_at) WHERE state IN

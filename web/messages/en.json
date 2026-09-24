@@ -3148,8 +3148,10 @@
     },
     "commands": {
       "title": "Open commands",
-      "subtitle": "Current manager counts plus the latest scheduler impasse observation.",
-      "latestSweep": "Impasse sampled {sampledAt}"
+      "subtitle": "Current manager counts, per-host host-span settlements over the window in each label, and the latest scheduler impasse observation.",
+      "latestSweep": "Impasse sampled {sampledAt}",
+      "hostSpan": "Host-span settlements · {host}",
+      "hostSpanEmpty": "No host-span settlements to show: no active host, and none settled in the last {days} d."
     },
     "clock": {
       "title": "Scheduler clock",
@@ -3182,7 +3184,15 @@
       "open": "Open",
       "accepted": "Accepted",
       "oldest": "Oldest accepted",
-      "impasse": "Last impasse"
+      "impasse": "Last impasse",
+      "hostSpanUnconfirmed": "Awaiting canonical event ({days} d)",
+      "hostSpanSettled1h": "Settled from host span ({hours} h)",
+      "postHocConflicts": "Conflicts after settlement ({days} d)"
+    },
+    "hostSpanHelp": {
+      "hostSpanUnconfirmed": "Settled from the host's event span; the canonical terminal event is not bound yet. Normally clears within minutes. If it stays above zero, check this host's stream lag above. Rows older than {days} d leave this count and the reconcile sweep logs them as command-terminal-evidence-missing.",
+      "hostSpanSettled1h": "Every prompt this host settled from its event span in the last {hours} h, in any state. Informational: near zero while canonical ingestion keeps up; a sustained value means ingestion is behind the host.",
+      "postHocConflicts": "Settled from the host span, then quarantined because later evidence disagreed (the canonical event, a replayed receipt or a protocol check). Never expected. Find the rows with application_error.reason = prompt_terminal_conflict and read causeCode; if the result was already applied, the run advanced on disputed evidence."
     },
     "forbidden": {
       "title": "Admin access required",

@@ -40,6 +40,7 @@ const checkpointSessionSpy = vi.fn(async (_id: string) => ({}) as unknown);
 // assertions while the real ledger/binding path runs underneath.
 function spyBackedTransport(fake: FakeExecutionHost): void {
   Object.assign(fake.transport, {
+    getCommandReceipt: (commandId: string) => receiptSpy(commandId),
     listSessions: () => listSessionsSpy(),
     deleteSession: async (sessionId: string) => {
       await deleteSessionSpy(sessionId);
@@ -60,6 +61,9 @@ function spyBackedTransport(fake: FakeExecutionHost): void {
 // a lazy import of runFlow; mock it to a spy so the dispatch is observable and
 // no real flow execution runs in the test.
 const runFlowSpy = vi.fn(async (_runId: string) => undefined);
+// ADR-167 D5 amendment (D-C1): the watchdog probes the newest owned prompt's
+// receipt before a kill; each case scripts what the host answers.
+const receiptSpy = vi.fn(async (_commandId: string) => null as unknown);
 
 vi.mock("@/lib/flows/runner", () => ({
   runFlow: (id: string) => runFlowSpy(id),
@@ -70,6 +74,8 @@ let runSweepTick: (opts?: {
   executionHosts?: ExecutionHosts;
 }) => Promise<unknown>;
 let hosts: ExecutionHosts;
+let hostId: string;
+let fake: FakeExecutionHost;
 
 import * as schemaModule from "@/lib/db/schema";
 import {
@@ -148,10 +154,10 @@ beforeAll(async () => {
     .insert(schema.platformAcpRunners)
     .values(testPlatformRunnerRow(executorId, "claude"));
 
-  const fake = createFakeExecutionHost();
+  fake = createFakeExecutionHost();
 
   spyBackedTransport(fake);
-  ({ hosts } = await fakeExecutionHosts(db, { fake }));
+  ({ hosts, hostId } = await fakeExecutionHosts(db, { fake }));
 
   ({ runSweepTick } = await import("../keepalive-sweeper"));
 }, 180_000);
@@ -173,6 +179,8 @@ beforeEach(async () => {
   listSessionsSpy.mockResolvedValue([]);
   checkpointSessionSpy.mockReset();
   runFlowSpy.mockClear();
+  receiptSpy.mockReset();
+  receiptSpy.mockResolvedValue(null);
 });
 
 // Seed a Running run with one active node_attempts row. `attemptStartedAt`
@@ -579,5 +587,336 @@ describe("time-limit watchdog — kill-on-cap (3B.1 / 3B.2)", () => {
     // the task queue before asserting the dispatch fired.
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(runFlowSpy).toHaveBeenCalledWith(pendingRunId);
+  }, 60_000);
+});
+
+type Probe = "completed" | "indeterminate" | "rejected";
+
+/** A v1-schema owned prompt of `variant` on the run's active attempt: the
+ * watchdog classifies it by shape, not by canonical request identity. */
+async function seedAttemptPrompt(
+  runId: string,
+  variant: "node" | "gate_skill" | "gate_ai",
+  shape:
+    | "accepted"
+    | "settled"
+    | "applied"
+    | "poisoned"
+    | "quarantined"
+    | "turn_lost",
+  createdAt: Date,
+): Promise<string> {
+  const { mintAssignment } = await import("@/lib/execution-host/assignments");
+  const [existing] = await db
+    .select()
+    .from(schema.executionAssignments)
+    .where(eq(schema.executionAssignments.runId, runId));
+  const assignment =
+    existing ??
+    (await db.transaction((tx) =>
+      mintAssignment(tx as never, { runId, hostId, reason: "launch" }),
+    ));
+  const attempt = await getAttempt(runId);
+  const commandId = randomUUID();
+  const settled = shape !== "accepted";
+
+  await db.insert(schema.executionCommands).values({
+    id: commandId,
+    runId,
+    executionAssignmentId: assignment.id,
+    executionHostId: hostId,
+    assignmentEpoch: assignment.epoch,
+    kind: "session.prompt",
+    targetSessionId: `sess-${runId.slice(0, 8)}`,
+    payload: {},
+    maxAttempts: 3,
+    ownerKind: "flow_node_attempt",
+    ownerRef: {
+      version: 1,
+      variant,
+      nodeAttemptId: attempt.id,
+      promptOrdinal: 0,
+      runId,
+      runSessionId: randomUUID(),
+      incarnationId: randomUUID(),
+      assignmentId: assignment.id,
+      assignmentEpoch: assignment.epoch,
+      ...(variant === "node"
+        ? {}
+        : { gateId: "g1", evaluationId: randomUUID() }),
+    },
+    logicalOperationKey: `flow_node_attempt:${variant}:${commandId}`,
+    requestSchema: "maister.command.request.v1",
+    requestSha256: "a".repeat(64),
+    createdAt,
+    ...(settled
+      ? {
+          state: "succeeded",
+          acceptedAt: createdAt,
+          completedAt: createdAt,
+          result: { stopReason: "end_turn" },
+          receiptEvidence: {
+            commandId,
+            runId,
+            kind: "session.prompt",
+            assignmentEpoch: assignment.epoch,
+            phase: "completed",
+            httpStatus: 200,
+            body: { stopReason: "end_turn" },
+            receivedAt: createdAt.toISOString(),
+            inflight: false,
+          },
+          terminalEvidenceSha256: "b".repeat(64),
+          settledFrom: "host_span",
+          ...(shape === "applied"
+            ? { applicationState: "applied", completionAppliedAt: createdAt }
+            : {}),
+          ...(shape === "poisoned"
+            ? {
+                applicationState: "poisoned",
+                applicationError: {
+                  reason: "prompt_owner_poisoned",
+                  phase: "apply",
+                  causeCode: "PRECONDITION",
+                },
+              }
+            : {}),
+          // What `quarantine()` writes when the conflict is found before
+          // application.
+          ...(shape === "quarantined"
+            ? {
+                applicationState: "poisoned",
+                applicationError: {
+                  reason: "prompt_terminal_conflict",
+                  phase: "prepare",
+                  causeCode: "terminal_v2_agreement",
+                },
+              }
+            : {}),
+          ...(shape === "turn_lost"
+            ? {
+                state: "failed",
+                result: null,
+                lastError: {
+                  code: "PRECONDITION",
+                  message: "turn lost",
+                  details: { reason: "turn_lost" },
+                },
+              }
+            : {}),
+        }
+      : { state: "accepted", acceptedAt: createdAt }),
+  });
+
+  return commandId;
+}
+
+function scriptProbe(commandId: string, probe: Probe): void {
+  receiptSpy.mockImplementation(async (id: string) => {
+    if (id !== commandId) return null;
+    if (probe === "completed")
+      return { phase: "completed", body: { stopReason: "end_turn" } };
+    if (probe === "rejected")
+      return {
+        phase: "rejected",
+        body: { code: "ACP_PROTOCOL", message: "ordinary failure" },
+      };
+
+    return { phase: "accepted", evidenceV2: {}, inflight: false };
+  });
+}
+
+describe("time-limit watchdog — a finished turn is never killed (ADR-167 D5 amendment, D-C1)", () => {
+  const overCap = () =>
+    seedRunningNode({
+      maxDurationMinutes: 10,
+      attemptStartedAt: new Date(Date.now() - 30 * 60_000),
+      acpSessionId: null,
+    });
+  const earlier = new Date(Date.now() - 20 * 60_000);
+  const later = new Date(Date.now() - 5 * 60_000);
+
+  async function tick() {
+    return (await runSweepTick({ db, executionHosts: hosts })) as {
+      killedCount: number;
+      deferredCompletedCount: number;
+    };
+  }
+
+  it("C1-completed: an accepted turn whose receipt completed is deferred, and nothing but the probe reads the host", async () => {
+    const { runId } = await overCap();
+    const commandId = await seedAttemptPrompt(runId, "node", "accepted", later);
+
+    scriptProbe(commandId, "completed");
+    const spans = fake.callsOf("readRuntimeEventSpan").length;
+    const result = await tick();
+
+    expect((await getRun(runId)).status).toBe("Running");
+    expect(deleteSessionSpy).not.toHaveBeenCalled();
+    expect(result.deferredCompletedCount).toBe(1);
+    expect(receiptSpy).toHaveBeenCalledWith(commandId);
+    expect(fake.callsOf("readRuntimeEventSpan").length).toBe(spans);
+    // No settlement or deposit either: the waiting driver owns that.
+    const [row] = await db
+      .select()
+      .from(schema.executionCommands)
+      .where(eq(schema.executionCommands.id, commandId));
+
+    expect(row.receiptEvidence).toBeNull();
+  }, 60_000);
+
+  it("C1-settled: a settled but unapplied turn is deferred without a probe", async () => {
+    const { runId } = await overCap();
+
+    await seedAttemptPrompt(runId, "node", "settled", later);
+    const result = await tick();
+
+    expect((await getRun(runId)).status).toBe("Running");
+    expect(result.deferredCompletedCount).toBe(1);
+    expect(receiptSpy).not.toHaveBeenCalled();
+  }, 60_000);
+
+  it.each([
+    [
+      "C1-running: a running v2 turn (indeterminate) is killed",
+      "indeterminate",
+    ],
+    [
+      "C1-failed: an ordinary rejected turn is killed (failed turns settle canonically)",
+      "rejected",
+    ],
+  ] as const)(
+    "%s",
+    async (_name, probe) => {
+      const { runId } = await overCap();
+      const commandId = await seedAttemptPrompt(
+        runId,
+        "node",
+        "accepted",
+        later,
+      );
+
+      scriptProbe(commandId, probe);
+      const result = await tick();
+
+      expect((await getRun(runId)).status).toBe("Failed");
+      expect(result.deferredCompletedCount).toBe(0);
+    },
+    60_000,
+  );
+
+  it("C1-gate: the newest prompt across variants decides — a running gate prompt after the applied action is killed", async () => {
+    const { runId } = await overCap();
+
+    await seedAttemptPrompt(runId, "node", "applied", earlier);
+    const gate = await seedAttemptPrompt(runId, "gate_ai", "accepted", later);
+
+    scriptProbe(gate, "indeterminate");
+    await tick();
+
+    expect((await getRun(runId)).status).toBe("Failed");
+    expect(receiptSpy).toHaveBeenCalledWith(gate);
+  }, 60_000);
+
+  it("C1-gate-done: a gate prompt that completed after the applied action is deferred", async () => {
+    const { runId } = await overCap();
+
+    await seedAttemptPrompt(runId, "node", "applied", earlier);
+    const gate = await seedAttemptPrompt(
+      runId,
+      "gate_skill",
+      "accepted",
+      later,
+    );
+
+    scriptProbe(gate, "completed");
+    const result = await tick();
+
+    expect((await getRun(runId)).status).toBe("Running");
+    expect(result.deferredCompletedCount).toBe(1);
+  }, 60_000);
+
+  it.each(["poisoned", "quarantined", "turn_lost"] as const)(
+    "C1-%s: a settled turn no owner will ever apply is killed without a probe",
+    async (shape) => {
+      // Nothing moves these: the owner gave up (poisoned), refused disagreeing
+      // evidence (quarantined), or the host lost the turn. Deferring would
+      // remove the only bound a live-session or judge node has.
+      const { runId } = await overCap();
+
+      await seedAttemptPrompt(runId, "node", shape, later);
+      const result = await tick();
+
+      expect((await getRun(runId)).status).toBe("Failed");
+      expect(result.deferredCompletedCount).toBe(0);
+      expect(receiptSpy).not.toHaveBeenCalled();
+    },
+    60_000,
+  );
+
+  it("C1-stream-lost: a completed receipt on a host whose stream is lost is killed — its evidence can never arrive", async () => {
+    const { runId } = await overCap();
+    const commandId = await seedAttemptPrompt(runId, "node", "accepted", later);
+    const streams = await db
+      .select({
+        id: schema.executionEventStreams.id,
+        state: schema.executionEventStreams.state,
+      })
+      .from(schema.executionEventStreams)
+      .where(eq(schema.executionEventStreams.executionHostId, hostId));
+
+    scriptProbe(commandId, "completed");
+    try {
+      if (streams.length === 0)
+        await db.insert(schema.executionEventStreams).values({
+          id: randomUUID(),
+          executionHostId: hostId,
+          streamId: `c1-lost-${runId.slice(0, 8)}`,
+          state: "lost",
+        });
+      else
+        await db
+          .update(schema.executionEventStreams)
+          .set({ state: "lost" })
+          .where(eq(schema.executionEventStreams.executionHostId, hostId));
+      const result = await tick();
+
+      expect((await getRun(runId)).status).toBe("Failed");
+      expect(result.deferredCompletedCount).toBe(0);
+    } finally {
+      if (streams.length === 0)
+        await db
+          .delete(schema.executionEventStreams)
+          .where(eq(schema.executionEventStreams.executionHostId, hostId));
+      for (const stream of streams)
+        await db
+          .update(schema.executionEventStreams)
+          .set({ state: stream.state })
+          .where(eq(schema.executionEventStreams.id, stream.id));
+    }
+  }, 60_000);
+
+  it("C1-applied: an applied newest command means the driver sits between prompts — killed without a probe", async () => {
+    const { runId } = await overCap();
+
+    await seedAttemptPrompt(runId, "node", "applied", later);
+    await tick();
+
+    expect((await getRun(runId)).status).toBe("Failed");
+    expect(receiptSpy).not.toHaveBeenCalled();
+  }, 60_000);
+
+  it("probes nothing for a candidate under its cap", async () => {
+    const { runId } = await seedRunningNode({
+      maxDurationMinutes: 60,
+      attemptStartedAt: new Date(Date.now() - 5 * 60_000),
+      acpSessionId: null,
+    });
+
+    await seedAttemptPrompt(runId, "node", "accepted", later);
+    await tick();
+
+    expect(receiptSpy).not.toHaveBeenCalled();
+    expect((await getRun(runId)).status).toBe("Running");
   }, 60_000);
 });

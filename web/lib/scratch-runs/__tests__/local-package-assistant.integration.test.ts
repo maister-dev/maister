@@ -82,6 +82,27 @@ const supervisorMock = vi.hoisted(() => ({
   listSessions: vi.fn(),
 }));
 
+// The real prompt-admission fence, spied so one case can force the timeout
+// window (no durable incarnation yet) without faking what follows it.
+const admission = vi.hoisted(() => ({
+  wait: null as null | ReturnType<typeof vi.fn>,
+  real: null as
+    | null
+    | typeof import("@/lib/execution-host/prompt-incarnation").waitForPromptIncarnation,
+}));
+
+vi.mock("@/lib/execution-host/prompt-incarnation", async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import("@/lib/execution-host/prompt-incarnation")
+    >();
+
+  admission.real = actual.waitForPromptIncarnation;
+  admission.wait = vi.fn(actual.waitForPromptIncarnation);
+
+  return { ...actual, waitForPromptIncarnation: admission.wait };
+});
+
 // Partial: the execution-host transport binds the whole client surface at
 // module load; only the members this suite scripts are replaced.
 vi.mock("@/lib/supervisor-client", async (importOriginal) => ({
@@ -303,6 +324,8 @@ beforeEach(async () => {
     .mockResolvedValue({ stopReason: "end_turn" });
   supervisorMock.cancelPermission.mockReset().mockResolvedValue({ ok: true });
   supervisorMock.listSessions.mockReset().mockResolvedValue([]);
+  // A one-shot admission fault a case never consumed must not reach the next.
+  admission.wait!.mockReset().mockImplementation(admission.real!);
 });
 
 // Insert a project-less local-package scratch run mirroring the single launch
@@ -920,6 +943,67 @@ describe("launchLocalPackageAssistant + a turn (ADR-097 T5.7)", () => {
     const diff = await diffWorkingDir(fresh!);
 
     expect(diff.files.some((f) => f.path.endsWith("rules/more.md"))).toBe(true);
+  });
+
+  // ADR-167 D5 amendment (2026-09-23): an admission fence timeout is a yield.
+  // The launch keeps its live session and a retryable dialog, and the user's
+  // next message is an ordinary turn.
+  it("keeps the launched assistant retryable when prompt admission yields, and the next message dispatches", async () => {
+    const { PromptIncarnationPending } = await import(
+      "@/lib/execution-host/prompt-incarnation"
+    );
+    const pkg = await createLocalPackage({
+      name: `assistant-yield-${randomUUID().slice(0, 8)}`,
+      createdBy: userId,
+      db: db as never,
+    });
+    const sessionId = await lockLocalPackage(pkg.id, "assistant-yield");
+
+    admission.wait!.mockRejectedValueOnce(
+      new PromptIncarnationPending({
+        runId: "pending",
+        assignmentId: "pending",
+        hostSessionId: "pending",
+      }),
+    );
+    await expect(
+      launchLocalPackageAssistant({
+        body: { localPackageId: pkg.id, sessionId, prompt: "first" },
+        userId,
+      }),
+    ).rejects.toBeInstanceOf(PromptIncarnationPending);
+
+    const [run] = await db
+      .select()
+      .from(runs)
+      .where(eq(runs.localPackageId, pkg.id));
+    const [dialog] = await db
+      .select()
+      .from(scratchRuns)
+      .where(eq(scratchRuns.runId, run.id));
+    const commandKinds = async () =>
+      (
+        await db
+          .select({ kind: executionCommands.kind })
+          .from(executionCommands)
+          .where(eq(executionCommands.runId, run.id))
+      ).map((row) => row.kind);
+
+    expect(run.status).toBe("Running");
+    expect(dialog.dialogStatus).toBe("WaitingForUser");
+    expect(await commandKinds()).not.toContain("session.delete");
+    expect(await commandKinds()).not.toContain("session.prompt");
+
+    streamAssistantText("done");
+    const res = await sendLocalPackageAssistantMessage({
+      runId: run.id,
+      body: { localPackageId: pkg.id, sessionId, content: "again" },
+    });
+
+    expect(res.ok).toBe(true);
+    expect(
+      (await commandKinds()).filter((kind) => kind === "session.prompt"),
+    ).toHaveLength(1);
   });
 
   it("refreshes file inventory hashes before a follow-up edit", async () => {

@@ -20,6 +20,7 @@ import {
   SessionCommandEventSchema,
   StartSessionRequestSchema,
 } from "../types";
+import { RuntimeEventSpanSchema } from "../runtime-events";
 
 const DOCS = resolve(fileURLToPath(import.meta.url), "../../../../docs/api");
 const openapi = parse(
@@ -117,6 +118,85 @@ describe("supervisor OpenAPI 0.8.0 examples ↔ Zod", () => {
         CommandEnvelopeSchema.safeParse(example).success,
         `${method} ${path}`,
       ).toBe(true);
+    }
+  });
+
+  // ADR-167 D5 amendment: every documented span shape — complete, partial and
+  // each unavailable reason — is a response the route may actually send.
+  it("runtime event span examples parse", () => {
+    const examples = openapi.paths["/runtime-events/span"].get.responses["200"]
+      .content["application/json"].examples as Record<
+      string,
+      { value: unknown }
+    >;
+
+    expect(Object.keys(examples).sort()).toEqual([
+      "beyondEmitted",
+      "complete",
+      "partial",
+      "replayFloorLost",
+      "streamIdentityChanged",
+    ]);
+    for (const { value } of Object.values(examples))
+      expect(RuntimeEventSpanSchema.safeParse(value).success).toBe(true);
+  });
+
+  // The schema carries the route's invariants, so a malformed example (or a
+  // host answer the manager must refuse) cannot parse.
+  it("runtime event span schema refuses a state its fields contradict", () => {
+    const examples = openapi.paths["/runtime-events/span"].get.responses["200"]
+      .content["application/json"].examples as Record<
+      string,
+      { value: Record<string, unknown> }
+    >;
+    const complete = examples.complete.value;
+    const partial = examples.partial.value;
+    const unavailable = examples.replayFloorLost.value;
+    const envelope = (complete.events as unknown[])[0];
+
+    for (const broken of [
+      { ...unavailable, reason: undefined },
+      { ...complete, reason: "beyond_emitted" },
+      { ...partial, reason: "beyond_emitted" },
+      { ...partial, nextAfter: null },
+      { ...complete, nextAfter: "41" },
+      { ...unavailable, nextAfter: "41" },
+      { ...unavailable, events: [envelope] },
+      { ...partial, events: Array.from({ length: 501 }, () => envelope) },
+    ])
+      expect(RuntimeEventSpanSchema.safeParse(broken).success).toBe(false);
+  });
+
+  it("runtime event span refusal examples carry a published reason", () => {
+    const responses = openapi.paths["/runtime-events/span"].get.responses;
+    const documented = new Set<string>(
+      openapi.components.schemas.ReasonToken.enum as string[],
+    );
+    const refusals = [
+      ["409", "PRECONDITION"],
+      ["503", "EXECUTOR_UNAVAILABLE"],
+    ] as const;
+
+    for (const [status, code] of refusals) {
+      const examples = Object.values(
+        responses[status].content["application/json"].examples as Record<
+          string,
+          {
+            value: {
+              code: string;
+              message: string;
+              details: { reason: string };
+            };
+          }
+        >,
+      );
+
+      expect(examples.length, status).toBeGreaterThan(0);
+      for (const { value } of examples) {
+        expect(value.code, status).toBe(code);
+        expect(typeof value.message, status).toBe("string");
+        expect(documented.has(value.details.reason), status).toBe(true);
+      }
     }
   });
 

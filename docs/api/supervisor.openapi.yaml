@@ -180,6 +180,162 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+  /runtime-events/span:
+    get:
+      tags: [execution-host]
+      summary: Read a bounded range of retained runtime events (Implemented — ADR-167 D5 amendment 2026-09-23)
+      description: |
+        Read-only JSON page of the SAME retained outbox envelopes the SSE replay
+        serves, for the host sequence range `(after, through]`. The manager uses
+        it to settle a finished prompt turn from host evidence when the shared
+        stream has not been ingested yet; it verifies every envelope exactly as
+        it verifies ingested rows. The route never acknowledges, prunes or opens
+        SSE, and it takes no command id: every retained envelope in the range is
+        returned (other runs' events included, as on the SSE replay), because
+        contiguity and source binding can only be proven over the whole range.
+        A page is bounded like the replay (≤ 500 rows, ≤ 1 MiB); `partial` with
+        `nextAfter` means "request again from `nextAfter`". A range the host can
+        no longer or cannot yet serve answers `200 unavailable` with a reason —
+        it is never a command outcome. Loopback trusted-admin transport only,
+        like `/runtime-events`.
+      operationId: readExecutionHostRuntimeEventSpan
+      parameters:
+        - name: streamId
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+          description: Query-supplied (untrusted); compared with the host's current stream, never used to open another.
+        - name: after
+          in: query
+          required: true
+          schema: { $ref: "#/components/schemas/RuntimeEventSequence" }
+          description: Exclusive lower bound (untrusted); must be below `through`.
+        - name: through
+          in: query
+          required: true
+          schema: { $ref: "#/components/schemas/RuntimeEventSequence" }
+          description: Inclusive upper bound (untrusted); a value past the host's highest emitted sequence answers `unavailable/beyond_emitted`.
+      responses:
+        "200":
+          description: A bounded page, or a typed unavailability.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RuntimeEventSpan" }
+              examples:
+                complete:
+                  summary: The whole range fits one page.
+                  value:
+                    streamId: 3a1f0c2e-5b6d-4e7f-8a9b-0c1d2e3f4a5b
+                    after: "40"
+                    through: "41"
+                    state: complete
+                    nextAfter: null
+                    events:
+                    - envelopeVersion: 1
+                      eventId: 6f1c2a9e-4b7d-5e21-9c3a-1d2e3f4a5b6c
+                      hostKey: host_local_01
+                      hostBootId: 0b7e9a1c-2d3f-4e5a-8b6c-7d8e9f0a1b2c
+                      streamId: 3a1f0c2e-5b6d-4e7f-8a9b-0c1d2e3f4a5b
+                      sequence: "41"
+                      runId: run_01
+                      assignmentId: 7c1d2e3f-4a5b-4c6d-8e9f-0a1b2c3d4e5f
+                      assignmentEpoch: 1
+                      hostSessionId: sess_01
+                      eventType: session.update
+                      occurredAt: "2026-09-23T10:00:00.000Z"
+                      payloadSchema: maister.session.update.v1
+                      payload: {}
+                partial:
+                  summary: The page ended at the row or byte bound before `through`.
+                  value:
+                    streamId: 3a1f0c2e-5b6d-4e7f-8a9b-0c1d2e3f4a5b
+                    after: "40"
+                    through: "900"
+                    state: partial
+                    nextAfter: "41"
+                    events:
+                    - envelopeVersion: 1
+                      eventId: 6f1c2a9e-4b7d-5e21-9c3a-1d2e3f4a5b6c
+                      hostKey: host_local_01
+                      hostBootId: 0b7e9a1c-2d3f-4e5a-8b6c-7d8e9f0a1b2c
+                      streamId: 3a1f0c2e-5b6d-4e7f-8a9b-0c1d2e3f4a5b
+                      sequence: "41"
+                      runId: run_01
+                      assignmentId: 7c1d2e3f-4a5b-4c6d-8e9f-0a1b2c3d4e5f
+                      assignmentEpoch: 1
+                      hostSessionId: sess_01
+                      eventType: session.update
+                      occurredAt: "2026-09-23T10:00:00.000Z"
+                      payloadSchema: maister.session.update.v1
+                      payload: {}
+                replayFloorLost:
+                  summary: The range was pruned after its ACK and replay grace.
+                  value:
+                    streamId: 3a1f0c2e-5b6d-4e7f-8a9b-0c1d2e3f4a5b
+                    after: "40"
+                    through: "41"
+                    state: unavailable
+                    reason: replay_floor_lost
+                    nextAfter: null
+                    events: []
+                streamIdentityChanged:
+                  summary: The requested stream is not the host's current stream.
+                  value:
+                    streamId: 9d8c7b6a-5f4e-4d3c-8b2a-1f0e9d8c7b6a
+                    after: "40"
+                    through: "41"
+                    state: unavailable
+                    reason: stream_identity_changed
+                    nextAfter: null
+                    events: []
+                beyondEmitted:
+                  summary: "`through` is past the host's highest emitted sequence."
+                  value:
+                    streamId: 3a1f0c2e-5b6d-4e7f-8a9b-0c1d2e3f4a5b
+                    after: "40"
+                    through: "5000"
+                    state: unavailable
+                    reason: beyond_emitted
+                    nextAfter: null
+                    events: []
+        "409":
+          description: |
+            Malformed or empty range: `after >= through`, a missing or non-UUID
+            `streamId`, or a sequence that is not a canonical signed-BIGINT
+            decimal (`-1`, `01`, `abc`, `1.5`, `1e3`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+              examples:
+                invalidSpan:
+                  value:
+                    code: PRECONDITION
+                    message: runtime event span must name a stream and satisfy after < through
+                    details: { reason: invalid_event_span }
+        "503":
+          description: |
+            The host cannot read a range it promises to retain. Either a row
+            above the replay floor and below the head is missing or unreadable
+            (the host stays ready — `/health` is unaffected), or the SQLite
+            store failed and the host is now unavailable until repaired. Both
+            carry `runtime_storage_unavailable`; the manager falls back to
+            canonical ingest.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+              examples:
+                rangeNotRetained:
+                  summary: Rows the host still promises to retain are gone.
+                  value:
+                    code: EXECUTOR_UNAVAILABLE
+                    message: runtime event span (40, 41] has no retained rows on stream 3a1f0c2e-5b6d-4e7f-8a9b-0c1d2e3f4a5b
+                    details: { reason: runtime_storage_unavailable }
+                storageFailed:
+                  summary: The SQLite store failed; every route answers this until repair.
+                  value:
+                    code: EXECUTOR_UNAVAILABLE
+                    message: runtime storage requires repair
+                    details: { reason: runtime_storage_unavailable }
   /runtime-objects:
     post:
       tags: [execution-host]
@@ -3026,6 +3182,33 @@ components:
               type: string
               nullable: true
               description: Terminal resume handle; null when ACP initialization never completed.
+    RuntimeEventSpan:
+      type: object
+      additionalProperties: false
+      required: [streamId, after, through, state, nextAfter, events]
+      description: |
+        Implemented (ADR-167 D5 amendment 2026-09-23). `events` holds retained
+        envelopes with `after < sequence <= through` in ascending order, the
+        same bytes the SSE replay sends. `reason` is present exactly when
+        `state = unavailable` (then `events` is empty); `nextAfter` is non-null
+        exactly when `state = partial` and equals the last returned sequence.
+        A `complete` or `partial` page carries at least one row, and a
+        `complete` page's last row is `through`.
+      properties:
+        streamId: { type: string, format: uuid, description: Echo of the requested stream id. }
+        after: { $ref: "#/components/schemas/RuntimeEventSequence" }
+        through: { $ref: "#/components/schemas/RuntimeEventSequence" }
+        state: { type: string, enum: [complete, partial, unavailable] }
+        reason:
+          type: string
+          enum: [replay_floor_lost, stream_identity_changed, beyond_emitted]
+        nextAfter:
+          allOf: [{ $ref: "#/components/schemas/RuntimeEventSequence" }]
+          nullable: true
+        events:
+          type: array
+          maxItems: 500
+          items: { $ref: "#/components/schemas/RuntimeEventEnvelope" }
     RuntimeEventAck:
       type: object
       additionalProperties: false
@@ -3174,7 +3357,9 @@ components:
         - workspace_rejected
         - legacy_field
         - missing_envelope
+        - stream_health_unavailable
         - invalid_event_sequence
+        - invalid_event_span
         - replay_floor_lost
         - stream_identity_conflict
         - ack_not_contiguous

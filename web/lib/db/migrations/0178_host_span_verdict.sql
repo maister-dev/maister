@@ -1,0 +1,2 @@
+ALTER TABLE "execution_commands" ADD COLUMN "host_span_verdict" text;--> statement-breakpoint
+ALTER TABLE "execution_commands" ADD CONSTRAINT "execution_commands_host_span_verdict_check" CHECK ("execution_commands"."host_span_verdict" IS NULL OR "execution_commands"."host_span_verdict" in ('busy', 'refused'));

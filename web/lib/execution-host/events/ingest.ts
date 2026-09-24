@@ -123,6 +123,19 @@ function encodedPayloadBytes(payload: Record<string, unknown>): number {
   return new TextEncoder().encode(JSON.stringify(payload)).byteLength;
 }
 
+// ADR-167 D5 amendment (D-B4): a host-span reader derives the same stored
+// digest and size as ingest, so both feeds verify identical rows.
+export {
+  payloadHash as runtimeEventPayloadSha256,
+  encodedPayloadBytes as runtimeEventPayloadBytes,
+};
+
+/** The one envelope normalization: schema parse, then the jsonb-safe escape
+ * `execution_events.payload` needs (U+0000 and lone surrogates). */
+export function normalizeRuntimeEnvelope(raw: unknown): RuntimeEventEnvelope {
+  return encodeJsonbSafe(RuntimeEventEnvelopeSchema.parse(raw));
+}
+
 function invariantError(
   message: string,
   details: Record<string, unknown>,
@@ -293,6 +306,24 @@ async function resolveAssignment(
         payload: input.envelope.payload,
         hostSessionId: input.envelope.hostSessionId,
       })),
+  };
+}
+
+/** Read-only: the assignment and disposition ingest would give this envelope
+ * now, through the same resolver. */
+export async function classifyEnvelopeDisposition(
+  tx: Db,
+  executionHostId: string,
+  envelope: RuntimeEventEnvelope,
+): Promise<{
+  assignmentId: string | null;
+  disposition: "accepted" | "stale_epoch";
+}> {
+  const assignment = await resolveAssignment(tx, { executionHostId, envelope });
+
+  return {
+    assignmentId: assignment.id,
+    disposition: assignment.accepted ? "accepted" : "stale_epoch",
   };
 }
 
@@ -726,9 +757,7 @@ export async function ingestRuntimeEvent(input: {
     // surrogate. Escaping here — before the identity hash, the duplicate probe
     // and the insert all read it — keeps every derived value describing the same
     // stored bytes. Readers restore the original through decodeJsonbSafe.
-    envelope = encodeJsonbSafe(
-      RuntimeEventEnvelopeSchema.parse(input.envelope),
-    );
+    envelope = normalizeRuntimeEnvelope(input.envelope);
   } catch (error) {
     await recordIngestFailure(input.db, {
       executionHostId: input.executionHostId,

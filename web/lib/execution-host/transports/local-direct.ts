@@ -12,18 +12,60 @@ import type {
 } from "../contracts";
 import type { CommandEnvelope, CommandKind, WorkspaceKind } from "../types";
 
+import pino, { type Logger } from "pino";
+import { ZodError } from "zod";
+
 import { normalizeCommandReceiptV2 } from "../command-receipt";
 import { asExecutionWorkspaceId } from "../types";
-import { RuntimeEventEnvelopeSchema } from "../runtime-events";
+import {
+  RuntimeEventEnvelopeSchema,
+  RuntimeEventSpanSchema,
+} from "../runtime-events";
 
 import * as wire from "@/lib/supervisor-client";
-import { MaisterError } from "@/lib/errors";
+import { isMaisterError, MaisterError } from "@/lib/errors";
 
 // ADR-166 D10: the local-direct transport — the only importer of the
 // enveloped `supervisor-client` wire. Pure adaptation: no DB, no ledger, no
 // retry; classification (definitive vs unknown-outcome) is the wire's job and
 // the deliverer's to act on. `MAISTER_SUPERVISOR_URL` is read by the wire at
 // call time — transport configuration, never a domain concept.
+
+const defaultLog = pino({
+  name: "execution-host",
+  level: process.env.LOG_LEVEL ?? "info",
+}).child({ component: "local-direct" });
+
+const MAX_LOGGED_ISSUE_PATH = 120;
+
+/** Bounded, body-free fields naming why a span read was refused. */
+function spanFailureFields(error: unknown): Record<string, unknown> {
+  if (error instanceof ZodError) {
+    const path = (error.issues[0]?.path ?? []).join(".");
+
+    return {
+      failure: "schema",
+      issuePath: path.slice(0, MAX_LOGGED_ISSUE_PATH),
+    };
+  }
+  if (isMaisterError(error)) {
+    const details = error.details ?? {};
+
+    return {
+      failure: "wire",
+      code: error.code,
+      ...(typeof details.httpStatus === "number"
+        ? { httpStatus: details.httpStatus }
+        : {}),
+      ...(typeof details.reason === "string" ? { reason: details.reason } : {}),
+    };
+  }
+
+  return {
+    failure: "unexpected",
+    error: error instanceof Error ? error.name : typeof error,
+  };
+}
 
 function toHostHealth(status: wire.PlatformStatus): HostHealth {
   if (status.kind !== "ready") return status;
@@ -72,8 +114,10 @@ function toRuntimeObjectMetadata(
 }
 
 export function createLocalDirectTransport(
-  options: Readonly<{ lagAgeMs?: number }> = {},
+  options: Readonly<{ lagAgeMs?: number; logger?: Logger }> = {},
 ): ExecutionHostTransport {
+  const log = options.logger ?? defaultLog;
+
   return {
     async health(opts) {
       return toHostHealth(
@@ -162,6 +206,56 @@ export function createLocalDirectTransport(
     },
     acknowledgeRuntimeEvents(input) {
       return wire.acknowledgeRuntimeEvents(input);
+    },
+    // A span read is an optimisation over the canonical feed, so every wire,
+    // status, shape or identity failure is an unavailable page, never a throw.
+    // The cause is logged: `request_failed` alone cannot tell a transient blip
+    // from an older host or schema drift that will never read.
+    async readRuntimeEventSpan(input) {
+      const failed = (fields: Record<string, unknown>) => {
+        log.warn(
+          {
+            streamId: input.streamId,
+            after: input.after,
+            through: input.through,
+            ...fields,
+          },
+          "runtime-event-span-read-failed",
+        );
+
+        return { state: "unavailable", reason: "request_failed" } as const;
+      };
+
+      try {
+        const health = toHostHealth(
+          await wire.checkSupervisorHealth({ lagAgeMs: options.lagAgeMs }),
+        );
+
+        if (health.kind !== "ready" || !health.identity)
+          return failed({ failure: "health", health: health.kind });
+        const hostKey = health.identity.hostKey;
+        const body = RuntimeEventSpanSchema.parse(
+          await wire.readRuntimeEventSpan(input),
+        );
+
+        if (
+          body.streamId !== input.streamId ||
+          body.after !== input.after ||
+          body.through !== input.through ||
+          body.events.some((event) => event.hostKey !== hostKey)
+        )
+          return failed({ failure: "identity" });
+        if (body.state === "unavailable")
+          return { state: "unavailable", reason: body.reason };
+
+        return {
+          state: body.state,
+          nextAfter: body.nextAfter,
+          events: body.events,
+        };
+      } catch (error) {
+        return failed(spanFailureFields(error));
+      }
     },
     async getCommandReceipt(commandId) {
       const receipt = await wire.getCommandReceipt(commandId);

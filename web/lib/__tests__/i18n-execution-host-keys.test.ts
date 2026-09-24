@@ -41,6 +41,18 @@ const JOB_STATUSES = [
   "Skipped",
 ] as const;
 
+const HOST_SPAN_KEYS = [
+  "hostSpanUnconfirmed",
+  "hostSpanSettled1h",
+  "postHocConflicts",
+] as const;
+// Each count's label names its window: the component supplies these values.
+const WINDOWS = {
+  hostSpanUnconfirmed: "days",
+  hostSpanSettled1h: "hours",
+  postHocConflicts: "days",
+} as const;
+
 type Catalog = Record<string, Record<string, unknown>>;
 
 function ns(
@@ -64,6 +76,13 @@ const GROUPS: ReadonlyArray<readonly [readonly string[], readonly string[]]> = [
   [["adminExecutionHost", "workerState"], WORKER_STATES],
   [["adminExecutionHost", "verdict"], VERDICTS],
   [["adminExecutionHost", "driver"], DRIVERS],
+  // ADR-167 D5 amendment: the per-host host-span settlement counts.
+  [["adminExecutionHost", "fields"], HOST_SPAN_KEYS],
+  [["adminExecutionHost", "hostSpanHelp"], HOST_SPAN_KEYS],
+  [
+    ["adminExecutionHost", "commands"],
+    ["hostSpan", "hostSpanEmpty"],
+  ],
   [["adminScheduler", "clockCard", "jobStatus"], JOB_STATUSES],
 ];
 
@@ -93,6 +112,32 @@ describe("i18n — every rendered execution-host enum member has copy", () => {
       );
     });
   }
+
+  // The window and host name are interpolated; a placeholder missing from one
+  // catalog silently drops the count's window from that locale's label.
+  it("host-span copy carries the same placeholders in EN and RU", () => {
+    const placeholders = (value: unknown) =>
+      [...String(value).matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort();
+
+    for (const [path, keys, expected] of [
+      [["adminExecutionHost", "fields"], HOST_SPAN_KEYS, WINDOWS],
+      [["adminExecutionHost", "hostSpanHelp"], HOST_SPAN_KEYS, null],
+      [["adminExecutionHost", "commands"], ["hostSpan", "hostSpanEmpty"], null],
+    ] as const) {
+      for (const key of keys) {
+        const enValue = ns(en as unknown as Catalog, path)[key];
+        const ruValue = ns(ru as unknown as Catalog, path)[key];
+
+        expect(placeholders(ruValue), `${path.join(".")}.${key}`).toEqual(
+          placeholders(enValue),
+        );
+        if (expected !== null)
+          expect(placeholders(enValue), `${path.join(".")}.${key}`).toEqual([
+            expected[key as keyof typeof expected],
+          ]);
+      }
+    }
+  });
 
   it("RU never ships the EN string for a status word", () => {
     for (const [path] of GROUPS) {

@@ -20,6 +20,10 @@ import pino from "pino";
 import { calculateStreamLag } from "./lag";
 
 import { OPEN_COMMAND_STATES } from "@/lib/execution-host/types";
+import {
+  HOST_SPAN_ANOMALY_WINDOW_DAYS,
+  HOST_SPAN_SETTLED_WINDOW_HOURS,
+} from "@/types/execution-host-observability";
 import { TERMINAL_RUN_STATUSES } from "@/lib/runs/run-status-sets";
 
 const STREAM_LIMIT = 20;
@@ -95,6 +99,15 @@ type PoisonJsonRow = {
   errorEventId: string | null;
   errorGeneration: string | null;
   lastErrorReason: string | null;
+};
+
+type HostSpanQueryRow = {
+  execution_host_id: string;
+  host_key: string;
+  display_name: string;
+  host_span_unconfirmed: number;
+  host_span_settled_1h: number;
+  post_hoc_conflicts: number;
 };
 
 type CommandQueryRow = {
@@ -389,6 +402,54 @@ function commandsQuery(): SQL {
   `;
 }
 
+const HOUR_MS = 60 * 60 * 1000;
+const CONFLICTED = sql`ec.application_error->>'reason' IS NOT DISTINCT FROM 'prompt_terminal_conflict'`;
+
+// Every count is bounded to rows settled inside the anomaly window, so each
+// host is one range scan of `execution_commands_host_span_settled_idx` on
+// `(execution_host_id, completed_at)` rather than every host-span row ever
+// written; `completed_at` is the settlement time and immutable once settled.
+// Windows start at the caller's `now`, like every other age on the model. The
+// two state counts are disjoint: a quarantined row is a conflict even while
+// its canonical event is unbound, since the reducer will never confirm it. An
+// unretired host is listed with zeros so a zero reads as measured.
+export function hostSpanQuery(now: Date): SQL {
+  const settledSince = new Date(
+    now.getTime() - HOST_SPAN_SETTLED_WINDOW_HOURS * HOUR_MS,
+  );
+  const anomalySince = new Date(
+    now.getTime() - HOST_SPAN_ANOMALY_WINDOW_DAYS * 24 * HOUR_MS,
+  );
+
+  return sql`
+    SELECT
+      h.id AS execution_host_id,
+      h.host_key,
+      h.display_name,
+      c.host_span_unconfirmed,
+      c.host_span_settled_1h,
+      c.post_hoc_conflicts
+    FROM execution_hosts h
+    CROSS JOIN LATERAL (
+      SELECT
+        COUNT(*)::int AS in_window,
+        COUNT(*) FILTER (
+          WHERE ec.terminal_event_id IS NULL AND NOT (${CONFLICTED})
+        )::int AS host_span_unconfirmed,
+        COUNT(*) FILTER (
+          WHERE ec.completed_at > ${settledSince}
+        )::int AS host_span_settled_1h,
+        COUNT(*) FILTER (WHERE ${CONFLICTED})::int AS post_hoc_conflicts
+      FROM execution_commands ec
+      WHERE ec.execution_host_id = h.id
+        AND ec.settled_from = 'host_span'
+        AND ec.completed_at > ${anomalySince}
+    ) c
+    WHERE h.retired_at IS NULL OR c.in_window > 0
+    ORDER BY h.retired_at IS NOT NULL, h.display_name, h.id
+  `;
+}
+
 function iso(value: Date | string | null): string | null {
   if (value === null) return null;
 
@@ -571,6 +632,9 @@ export async function collectExecutionEventLag(input: {
         poisonQuery(input.poisonAfter),
       );
       const commandResult = await tx.execute<CommandQueryRow>(commandsQuery());
+      const hostSpanResult = await tx.execute<HostSpanQueryRow>(
+        hostSpanQuery(sampledAt),
+      );
       const consumer = consumerResult.rows[0];
       const poison = poisonResult.rows[0];
       const commands = commandResult.rows[0];
@@ -627,6 +691,14 @@ export async function collectExecutionEventLag(input: {
           acceptedWithoutTimestamp: commands.accepted_without_timestamp,
           oldestAcceptedAt: iso(commands.oldest_accepted_at),
           oldestAcceptedAgeMs: ageMs(sampledAt, commands.oldest_accepted_at),
+          hostSpan: hostSpanResult.rows.map((row) => ({
+            executionHostId: row.execution_host_id,
+            hostKey: row.host_key,
+            displayName: row.display_name,
+            hostSpanUnconfirmed: row.host_span_unconfirmed,
+            hostSpanSettled1h: row.host_span_settled_1h,
+            postHocConflicts: row.post_hoc_conflicts,
+          })),
         },
       } satisfies ExecutionEventLagReadModel;
     });

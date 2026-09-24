@@ -11,10 +11,12 @@ import type {
   ExecutionHostTransport,
   HostHealth,
   InputDeliveryResult,
+  RuntimeEventSpanPage,
   RuntimeObjectContent,
   RuntimeObjectMetadata,
   WorkspaceRecord,
 } from "@/lib/execution-host/contracts";
+import type { RuntimeEventEnvelope } from "@/lib/execution-host/runtime-events";
 import type {
   CommandEnvelope,
   CommandKind,
@@ -187,16 +189,20 @@ export type FakeExecutionHost = {
   // Per-run epoch high-water (the host's `run_fences`). A suite may seed it.
   fences: Map<string, number>;
   failOnce(method: TransportMethod, error: unknown): void;
+  // Drops every queued `failOnce` fault and `loseResponseOnce` loss, so a case
+  // that failed before consuming its faults cannot poison the next one.
+  clearFaults(): void;
   // The host executes the next call of `method` (its receipt is written) but
   // the response is lost: the same-id retry then meets a replay. For
   // `sendPrompt` the response is lost right after acceptance while the turn
   // keeps running in flight (the retry JOINS it). Not applicable to
   // `streamSession`.
   loseResponseOnce(method: TransportMethod): void;
+  /** Returns the hook's removal. */
   onCall(
     method: TransportMethod,
     hook: (call: FakeCall) => void | Promise<void>,
-  ): void;
+  ): () => void;
   setHealth(health: HostHealth | null): void;
   setDiagnostics(status: SupervisorDiagnosticsStatus | null): void;
   // ADR-179: script host env-var PRESENCE. A name not in the set reads absent,
@@ -222,6 +228,23 @@ export type FakeExecutionHost = {
     event: FakeCanonicalEvent,
   ): Promise<void>;
   waitForCanonicalEvents(): Promise<void>;
+  // ADR-167 D5 amendment: the manager lags the host. While held, canonical
+  // envelopes stay retained (the span route serves them) but are neither
+  // ingested nor projected; release drains them through the same path, each
+  // optionally rewritten first. `before` drains only the prefix up to the
+  // first matching envelope, which stays held with everything after it. The
+  // floor models an ACKed-and-pruned prefix.
+  holdIngest(): void;
+  releaseIngest(opts?: {
+    tamper?: (envelope: RuntimeEventEnvelope) => RuntimeEventEnvelope;
+    before?: (envelope: RuntimeEventEnvelope) => boolean;
+  }): Promise<void>;
+  setPrunedFloor(sequence: string | null): void;
+  /** The DB wiring's hand-off: retain, then ingest now or once released. */
+  deliverCanonical(
+    envelope: RuntimeEventEnvelope,
+    ingest: (envelope: RuntimeEventEnvelope) => Promise<void>,
+  ): Promise<void>;
   publishPromptReceipt(receipt: CommandReceipt): void;
   sealPromptJson(runId: string, value: unknown): ImmutableObjectReference;
   writeRuntimeOutput(objectId: string, bytes: Uint8Array): void;
@@ -433,6 +456,12 @@ type CanonicalStreamState = {
   nextSequence: bigint;
 };
 
+// The span route's page bounds and cursor grammar (`runtimeEventPage`,
+// `RuntimeEventSequenceSchema`).
+const SPAN_PAGE_ROWS = 500;
+const SPAN_PAGE_BYTES = 1_048_576;
+const SPAN_SEQUENCE = /^(0|[1-9][0-9]{0,18})$/;
+
 const canonicalStreamStates = new WeakMap<
   FakeExecutionHost,
   CanonicalStreamState
@@ -579,6 +608,13 @@ export function createFakeExecutionHost(
 
     if (queue && queue.length > 0) throw queue.shift();
   };
+
+  const retainedEnvelopes: RuntimeEventEnvelope[] = [];
+  let prunedFloor: bigint | null = null;
+  let heldEnvelopes: Array<{
+    envelope: RuntimeEventEnvelope;
+    ingest: (envelope: RuntimeEventEnvelope) => Promise<void>;
+  }> | null = null;
 
   const settleInflightPrompts = (sessionId: string, err: MaisterError) => {
     for (const turn of inflightPrompts.get(sessionId) ?? []) turn.reject(err);
@@ -1060,6 +1096,77 @@ export function createFakeExecutionHost(
     async *streamRuntimeEvents(opts) {
       await record("streamRuntimeEvents", null, [opts?.afterSequence]);
       if (opts?.signal?.aborted) return;
+    },
+    // Mirrors the supervisor route (`runtimeEventsInRange`) AND the
+    // local-direct mapping of its refusals, rule by rule: the health gate, a
+    // 409 range, a scripted fault and a 503 unreadable range all read as
+    // `request_failed`; the typed unavailabilities keep the route's order.
+    async readRuntimeEventSpan(input): Promise<RuntimeEventSpanPage> {
+      const failed = {
+        state: "unavailable",
+        reason: "request_failed",
+      } as const;
+
+      try {
+        await record("readRuntimeEventSpan", null, [input]);
+      } catch {
+        return failed;
+      }
+      const current = health ?? { kind: "ready" as const, identity };
+
+      if (current.kind !== "ready" || !current.identity) return failed;
+      const hostKey = current.identity.hostKey;
+
+      if (
+        !SPAN_SEQUENCE.test(input.after) ||
+        !SPAN_SEQUENCE.test(input.through) ||
+        BigInt(input.after) >= BigInt(input.through)
+      )
+        return failed;
+      const after = BigInt(input.after);
+      const through = BigInt(input.through);
+      // The host owns one stream from its first boot, whether or not it has
+      // emitted into it yet.
+      const streamId =
+        canonicalStreamStates.get(fake)?.streamId ??
+        retainedEnvelopes.at(-1)?.streamId;
+
+      if (streamId !== input.streamId)
+        return { state: "unavailable", reason: "stream_identity_changed" };
+      const stream = retainedEnvelopes.filter(
+        (envelope) => envelope.streamId === streamId,
+      );
+      const head = stream.at(-1);
+
+      if (head === undefined || through > BigInt(head.sequence))
+        return { state: "unavailable", reason: "beyond_emitted" };
+      if (prunedFloor !== null && after < prunedFloor)
+        return { state: "unavailable", reason: "replay_floor_lost" };
+      const events: RuntimeEventEnvelope[] = [];
+      let bytes = 0;
+
+      for (const envelope of stream) {
+        const sequence = BigInt(envelope.sequence);
+
+        if (sequence <= after || sequence > through) continue;
+        const size = Buffer.byteLength(JSON.stringify(envelope), "utf8");
+
+        if (events.length === SPAN_PAGE_ROWS || bytes + size > SPAN_PAGE_BYTES)
+          break;
+        bytes += size;
+        events.push(envelope);
+      }
+      const last = events.at(-1)?.sequence;
+
+      // The route's rows are never deleted between the floor and the head, so
+      // it answers an empty page 503 (`stream_corrupt`).
+      if (last === undefined) return failed;
+      if (events.some((envelope) => envelope.hostKey !== hostKey))
+        return failed;
+
+      return last === input.through
+        ? { state: "complete", nextAfter: null, events }
+        : { state: "partial", nextAfter: last, events };
     },
     async acknowledgeRuntimeEvents(input) {
       await record("acknowledgeRuntimeEvents", null, [input]);
@@ -1971,7 +2078,7 @@ export function createFakeExecutionHost(
     },
   };
 
-  return {
+  const fake: FakeExecutionHost = {
     transport,
     identity,
     calls,
@@ -1983,6 +2090,10 @@ export function createFakeExecutionHost(
     failOnce(method, error) {
       faults.set(method, [...(faults.get(method) ?? []), error]);
     },
+    clearFaults() {
+      faults.clear();
+      lostResponses.clear();
+    },
     loseResponseOnce(method) {
       if (method === "streamSession") {
         throw new Error(
@@ -1993,6 +2104,12 @@ export function createFakeExecutionHost(
     },
     onCall(method, hook) {
       hooks.set(method, [...(hooks.get(method) ?? []), hook]);
+
+      return () =>
+        hooks.set(
+          method,
+          (hooks.get(method) ?? []).filter((installed) => installed !== hook),
+        );
     },
     setHealth(next) {
       health = next;
@@ -2007,6 +2124,32 @@ export function createFakeExecutionHost(
       promptBehavior = behavior;
     },
     publishCanonical,
+    holdIngest() {
+      heldEnvelopes ??= [];
+    },
+    async releaseIngest(opts) {
+      const all = heldEnvelopes ?? [];
+      const cut = opts?.before
+        ? all.findIndex(({ envelope }) => opts.before!(envelope))
+        : -1;
+      const held = cut === -1 ? all : all.slice(0, cut);
+
+      heldEnvelopes = cut === -1 ? null : all.slice(cut);
+      for (const { envelope, ingest } of held)
+        await ingest(opts?.tamper ? opts.tamper(envelope) : envelope);
+    },
+    setPrunedFloor(sequence) {
+      prunedFloor = sequence === null ? null : BigInt(sequence);
+    },
+    async deliverCanonical(envelope, ingest) {
+      retainedEnvelopes.push(envelope);
+      if (heldEnvelopes) {
+        heldEnvelopes.push({ envelope, ingest });
+
+        return;
+      }
+      await ingest(envelope);
+    },
     setCanonicalEventSink(sink) {
       canonicalEventSink = sink;
     },
@@ -2090,6 +2233,8 @@ export function createFakeExecutionHost(
       scriptedEnd = opts?.end ?? false;
     },
   };
+
+  return fake;
 }
 
 // A `BoundClient` over the fake transport, bound to a real assignment row.
@@ -2433,47 +2578,42 @@ export async function fakeExecutionHosts(
           }),
         );
       }
-      await ingestRuntimeEvent({
-        db,
-        executionHostId: hostId,
-        envelope: {
-          envelopeVersion: 1,
-          eventId,
-          hostKey: fake.identity.hostKey,
-          hostBootId: fake.identity.bootId,
-          streamId: canonicalStreamState.streamId,
-          sequence: currentSequence.toString(),
-          runId: envelope.fence.runId,
-          assignmentId: envelope.fence.assignmentId,
-          assignmentEpoch: envelope.fence.assignmentEpoch,
-          hostSessionId:
-            event.type === "runtime_object.available" ? null : sessionId,
-          eventType,
-          occurredAt: new Date().toISOString(),
-          payloadSchema,
-          payload,
-        },
-      });
-      if (event.type === "runtime_object.available")
-        await projectCanonicalRuntimeObjects({
-          db,
-          runId: envelope.fence.runId,
-        });
-      await projectExecutionEvents({
-        db,
+      const canonical = {
+        envelopeVersion: 1,
+        eventId,
+        hostKey: fake.identity.hostKey,
+        hostBootId: fake.identity.bootId,
+        streamId: canonicalStreamState.streamId,
+        sequence: currentSequence.toString(),
         runId: envelope.fence.runId,
-        projector: canonicalTranscriptProjector,
+        assignmentId: envelope.fence.assignmentId,
+        assignmentEpoch: envelope.fence.assignmentEpoch,
+        hostSessionId:
+          event.type === "runtime_object.available" ? null : sessionId,
+        eventType,
+        occurredAt: new Date().toISOString(),
+        payloadSchema,
+        payload,
+      } as RuntimeEventEnvelope;
+
+      await fake.deliverCanonical(canonical, async (delivered) => {
+        await ingestRuntimeEvent({
+          db,
+          executionHostId: hostId,
+          envelope: delivered,
+        });
+        if (delivered.eventType === "runtime_object.available")
+          await projectCanonicalRuntimeObjects({ db, runId: delivered.runId });
+        await projectExecutionEvents({
+          db,
+          runId: delivered.runId,
+          projector: canonicalTranscriptProjector,
+        });
+        await Promise.all([
+          projectCanonicalPromptCommands({ db, runId: delivered.runId }),
+          projectCanonicalSessionLifecycle({ db, runId: delivered.runId }),
+        ]);
       });
-      await Promise.all([
-        projectCanonicalPromptCommands({
-          db,
-          runId: envelope.fence.runId,
-        }),
-        projectCanonicalSessionLifecycle({
-          db,
-          runId: envelope.fence.runId,
-        }),
-      ]);
     },
   );
 

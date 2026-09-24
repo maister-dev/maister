@@ -81,6 +81,8 @@ import {
 import {
   RuntimeEventAckSchema,
   RuntimeEventSequenceSchema,
+  RuntimeEventSpanQuerySchema,
+  type RuntimeEventSpan,
 } from "./runtime-events";
 import { spawnSession } from "./spawn";
 import {
@@ -1841,6 +1843,77 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
         BigInt(left.sequence) < BigInt(right.sequence) ? -1 : 1,
       )
       .forEach(send);
+  });
+
+  // ADR-167 D5 amendment: the same retained envelopes the SSE replay serves,
+  // as one bounded JSON page. No command filter — contiguity and source
+  // binding are only provable over the whole range — and no ACK or prune.
+  app.get("/runtime-events/span", async (req, reply) => {
+    const query = RuntimeEventSpanQuerySchema.safeParse(req.query);
+
+    if (!query.success)
+      throw new SupervisorError(
+        "PRECONDITION",
+        "runtime event span must name a stream and satisfy after < through",
+        { details: { reason: "invalid_event_span" } },
+      );
+    const { streamId, after, through } = query.data;
+    let page: ReturnType<typeof hostState.runtimeEventsInRange>;
+
+    try {
+      page = hostState.runtimeEventsInRange(streamId, after, through, 500);
+    } catch (error) {
+      const failure = runtimeEventSupervisorError(error);
+
+      // A range the host promises to retain but cannot read is a storage
+      // fault, never a protocol one: the manager falls back to canonical
+      // ingest. The cause rides along so the error handler still marks a
+      // failed SQLite store unavailable.
+      if (failure.code !== "ACP_PROTOCOL") throw failure;
+      throw new SupervisorError("EXECUTOR_UNAVAILABLE", failure.message, {
+        cause: error,
+        details: { reason: "runtime_storage_unavailable" },
+      });
+    }
+    const body: RuntimeEventSpan =
+      page.state === "unavailable"
+        ? {
+            streamId,
+            after,
+            through,
+            state: "unavailable",
+            reason: page.reason,
+            nextAfter: null,
+            events: [],
+          }
+        : page.nextAfter === null
+          ? {
+              streamId,
+              after,
+              through,
+              state: "complete",
+              nextAfter: null,
+              events: page.events.map(
+                (event) => event.envelope as RuntimeEventSpan["events"][number],
+              ),
+            }
+          : {
+              streamId,
+              after,
+              through,
+              state: "partial",
+              nextAfter: page.nextAfter,
+              events: page.events.map(
+                (event) => event.envelope as RuntimeEventSpan["events"][number],
+              ),
+            };
+
+    if (page.state === "unavailable")
+      logger.warn(
+        { reason: page.reason, after, through },
+        "runtime-event-span-unavailable",
+      );
+    reply.status(200).send(body);
   });
 
   app.post("/runtime-events/ack", async (req, reply) => {

@@ -10,6 +10,7 @@ import {
   workspaces as workspacesTable,
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import { PromptIncarnationPending } from "@/lib/execution-host/prompt-incarnation";
 import { sendScratchPromptAndProjectEvents } from "@/lib/scratch-runs/events";
 import { checkSupervisorHealth, listSessions } from "@/lib/supervisor-client";
 
@@ -572,6 +573,41 @@ describe("POST /api/scratch-runs/[runId]/recover", () => {
     expect(dbState.tables.runs[0].status).toBe("Running");
     expect(releaseAssignmentForRunSpy).not.toHaveBeenCalled();
     expect(sendScratchPromptAndProjectEvents).not.toHaveBeenCalled();
+  });
+
+  // ADR-167 D5 amendment (2026-09-23): an admission fence timeout after the
+  // create succeeded is a yield. The recovered session is live and nothing was
+  // admitted, so the route answers a retryable 503 and leaves the run for the
+  // user's resend instead of crashing a recovery that worked.
+  it("answers a retryable 503 without crashing the run when prompt admission yields", async () => {
+    const runId = seedScratchRun();
+    const pending = new PromptIncarnationPending({
+      runId,
+      assignmentId: "assignment-recover",
+      hostSessionId: "sup-new",
+    });
+
+    vi.mocked(sendScratchPromptAndProjectEvents).mockRejectedValueOnce(pending);
+
+    const res = await invokePost(runId, { prompt: "continue from here" });
+
+    expect(sendScratchPromptAndProjectEvents).toHaveBeenCalledTimes(1);
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({
+      code: "EXECUTOR_UNAVAILABLE",
+      message: pending.message,
+    });
+    expect(dbState.tables.runs[0]).toMatchObject({
+      status: "Running",
+      acpSessionId: "acp-new",
+      currentStepId: "dialog",
+    });
+    expect(dbState.tables.scratch_runs[0]).toMatchObject({
+      dialogStatus: "WaitingForUser",
+      errorCode: "EXECUTOR_UNAVAILABLE",
+      errorMessage: pending.message,
+    });
+    expect(releaseAssignmentForRunSpy).not.toHaveBeenCalled();
   });
 
   it("requires a prompt for recovery", async () => {

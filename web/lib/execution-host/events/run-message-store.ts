@@ -4,7 +4,7 @@ import type { Db } from "../db";
 
 import { createHash, randomUUID } from "node:crypto";
 
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { ExecutionEventProjectionError } from "./projector";
@@ -185,4 +185,30 @@ export async function appendRunMessage(
   );
 
   return { sequence, inserted: true };
+}
+
+/** ADR-167 D5 amendment (D-B10). A prompt dispatched after a turn settled
+ * from the host's span was anchored at the highest INGESTED run sequence,
+ * below that turn's reply, whose events were ingested later. It was
+ * necessarily sent after the turn's terminal, so when the canonical terminal
+ * confirms the turn every prompt dispatched since the settlement moves up to
+ * the terminal's run sequence. Rows dispatched before it are untouched. */
+export async function reanchorDispatchedPrompts(
+  tx: Db,
+  input: { runId: string; settledAt: Date; anchor: bigint },
+): Promise<number> {
+  const moved = await tx
+    .update(runMessages)
+    .set({ supervisorEventId: input.anchor.toString() })
+    .where(
+      and(
+        eq(runMessages.runId, input.runId),
+        isNotNull(runMessages.promptDispatchKey),
+        sql`coalesce(${runMessages.supervisorEventId}, '0')::bigint < ${input.anchor.toString()}::bigint`,
+        sql`${runMessages.createdAt} >= ${input.settledAt}`,
+      ),
+    )
+    .returning({ id: runMessages.id });
+
+  return moved.length;
 }

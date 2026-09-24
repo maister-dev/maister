@@ -31,6 +31,17 @@ export const PROMPT_EVIDENCE_CLASSES = [
 
 export type PromptEvidenceClass = (typeof PROMPT_EVIDENCE_CLASSES)[number];
 
+/** The crash reasons the evidence classes produce. ONE list, because the sweep
+ * routes exactly these through `applyTurnLostBoundary` and the boundary keeps a
+ * row per reason of the classes that still justify it: a reason added here
+ * without its row is a compile error, not a crash refused forever. */
+export const EVIDENCE_CRASH_REASONS = [
+  "turn-lost",
+  "stream-lost",
+  "owner-poisoned",
+] as const;
+export type EvidenceCrashReason = (typeof EVIDENCE_CRASH_REASONS)[number];
+
 /** The row fields the derivation reads, and nothing else. */
 export type PromptEvidenceRow = {
   state: string;

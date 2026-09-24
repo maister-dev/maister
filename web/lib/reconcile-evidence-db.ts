@@ -6,15 +6,21 @@ import type {
   PromptReceiptProbe,
 } from "./reconcile-evidence";
 
-import { and, desc, eq, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import pino from "pino";
 
 import * as schemaModule from "@/lib/db/schema";
+import { getCommand } from "@/lib/execution-host/commands";
 import { commandStreamLost } from "@/lib/execution-host/events/stream-health";
+import {
+  hostSpanEligible,
+  reconcilePromptCommand,
+} from "@/lib/execution-host/prompt-reconciliation";
 import {
   classifyPromptEvidence,
   isTurnLostError,
 } from "@/lib/reconcile-evidence";
+import { isMaisterError } from "@/lib/errors";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { executionCommands, nodeAttempts } = schemaModule as unknown as Record<
@@ -77,7 +83,22 @@ export type PromptEvidenceLookup = {
   terminalEvidenceSha256: string | null;
 };
 
-/** The current attempt's newest OWNED `session.prompt`.
+/** ADR-177 (amended 2026-09-23): the owned prompts that ARE the current
+ * attempt's turn on an agent node. The action (`node`); the same action
+ * continued after a permission answer (`permission_resume` — same attempt, same
+ * prompt ordinal, a NEWER command); and the gate evaluations that run on the
+ * attempt after its action applied (`gate_ai`, `gate_skill`). Reading `node`
+ * alone answered `applied` from the finished turn before them. The consensus
+ * variants are not the attempt's turn here: a consensus node is outside the
+ * sweep's evidence gate. */
+export const CURRENT_TURN_VARIANTS = [
+  "node",
+  "permission_resume",
+  "gate_ai",
+  "gate_skill",
+] as const;
+
+/** The current attempt's newest OWNED `session.prompt` among `variants`.
  *
  * Attempt-scoped by `owner_ref->>'nodeAttemptId'`, which is what makes a
  * command orphaned on a CLOSED attempt invisible here — and therefore what
@@ -94,7 +115,14 @@ export type PromptEvidenceLookup = {
  */
 export async function loadPromptEvidence(
   db: Db,
-  input: { runId: string; nodeAttemptId: string },
+  input: {
+    runId: string;
+    nodeAttemptId: string;
+    // Required, never defaulted: crash classification passes
+    // CURRENT_TURN_VARIANTS, the duration watchdog (ADR-167 D5 amendment,
+    // D-C1) every flow_node_attempt variant.
+    variants: readonly string[];
+  },
 ): Promise<PromptEvidenceLookup | null> {
   const [row] = await db
     .select({
@@ -111,7 +139,9 @@ export async function loadPromptEvidence(
       and(
         eq(executionCommands.runId, input.runId),
         eq(executionCommands.kind, "session.prompt"),
-        sql`${executionCommands.ownerRef}->>'variant' = 'node'`,
+        inArray(sql`${executionCommands.ownerRef}->>'variant'`, [
+          ...input.variants,
+        ]),
         sql`${executionCommands.ownerRef}->>'nodeAttemptId' = ${input.nodeAttemptId}`,
       ),
     )
@@ -124,7 +154,7 @@ export async function loadPromptEvidence(
 /** Does this row still need a host call to be classified? Only an `accepted`
  * row with no ingested terminal evidence does — every other shape is answered
  * by the ledger alone, which is what keeps the probe per-rare-candidate. */
-function needsReceiptProbe(row: PromptEvidenceLookup): boolean {
+export function needsReceiptProbe(row: PromptEvidenceLookup): boolean {
   return (
     row.state === "accepted" &&
     !row.terminalEvidenceSha256 &&
@@ -199,6 +229,10 @@ export async function probeReceipt(
 
 export type ResolvedPromptEvidence = {
   evidence: PromptEvidenceClass;
+  /** The bound on the skip arms: the holding host's stream is `lost` AND no
+   * host-evidence read of this command is still owed an answer. False while
+   * such a read is in flight, the host last answered busy, or the receipt is
+   * still being read (D-B7), because the evidence can then still arrive. */
   streamLost: boolean;
   commandId: string | null;
   /** The attempt this classification is ABOUT. Carried to the writer so it
@@ -281,12 +315,13 @@ export async function resolvePromptEvidence(
   const row = await loadPromptEvidence(db, {
     runId: input.runId,
     nodeAttemptId,
+    variants: CURRENT_TURN_VARIANTS,
   });
 
   if (!row) return NO_PROMPT_EVIDENCE;
   const probed = needsReceiptProbe(row);
   const probe = probed ? await probeReceipt(transport, row.id) : undefined;
-  const evidence = classifyPromptEvidence(row, probe);
+  let evidence = classifyPromptEvidence(row, probe);
 
   if (evidence === "none")
     return { evidence, streamLost: false, commandId: row.id, nodeAttemptId };
@@ -295,6 +330,77 @@ export async function resolvePromptEvidence(
   // writes when this manager gives up on a host's stream. Never a timer.
   const streamLost = await commandStreamLost({ db, commandId: row.id });
 
+  // ADR-167 D5 amendment (D-B7): a turn the host completed is not lost with
+  // the stream. Before the stream-lost arm crashes it, offer it once to the
+  // host-evidence feeds (the direct binding, then the verified host span) and
+  // classify again. With a live stream `pending_ingest` keeps its meaning —
+  // the waiting writer owes the next move — so nothing is read here.
+  let hostReadPending = false;
+
+  if (streamLost && evidence === "pending_ingest" && probe === "completed") {
+    // Never throws, like `probeReceipt`: a host that could not answer is no
+    // evidence, and one candidate's throw would reject the whole sweep pass
+    // (`runWithConcurrency` is a Promise.all). A failed offer settles nothing;
+    // the verdict rule below decides from the row as it stands.
+    const offered = await reconcilePromptCommand({
+      db,
+      commandId: row.id,
+      lookupReceipt: (id) => transport.getCommandReceipt(id),
+    }).catch((error: unknown) => {
+      log.warn(
+        {
+          runId: input.runId,
+          commandId: row.id,
+          causeCode: isMaisterError(error)
+            ? error.code
+            : error instanceof Error
+              ? error.name
+              : "unknown",
+        },
+        "reconcile-evidence-host-offer-failed",
+      );
+
+      return null;
+    });
+    const settled = await loadPromptEvidence(db, {
+      runId: input.runId,
+      nodeAttemptId,
+      variants: CURRENT_TURN_VARIANTS,
+    });
+
+    if (settled?.terminalEvidenceSha256) {
+      evidence = classifyPromptEvidence(settled);
+      log.info(
+        { runId: input.runId, commandId: row.id, evidence },
+        "reconcile-evidence-settled-from-host",
+      );
+    } else {
+      // Only a read that ANSWERED is a verdict. A missing receipt means
+      // another reader holds the receipt claim; an eligible command with no
+      // verdict has a read in flight (a claim clears it) — that reader may be
+      // settling a readable result right now; `busy` asked for a retry. Every
+      // read ends in a verdict or a settlement and the sweep reads itself
+      // whenever the claim is free, so this waits on the next answer, never
+      // on a timer. A recorded refusal, or a command the host span cannot
+      // settle at all, leaves nothing to wait for.
+      const current = offered?.command ?? (await getCommand(db, row.id));
+
+      hostReadPending =
+        !!current &&
+        (!current.receiptEvidence ||
+          (hostSpanEligible(current) && current.hostSpanVerdict !== "refused"));
+      if (hostReadPending)
+        log.info(
+          {
+            runId: input.runId,
+            commandId: row.id,
+            hostSpanVerdict: current?.hostSpanVerdict ?? null,
+          },
+          "reconcile-evidence-host-read-pending",
+        );
+    }
+  }
+
   if (probed) {
     log.info(
       {
@@ -302,11 +408,17 @@ export async function resolvePromptEvidence(
         commandId: row.id,
         evidence,
         streamLost,
+        hostReadPending,
         probe,
       },
       "reconcile: prompt evidence probed",
     );
   }
 
-  return { evidence, streamLost, commandId: row.id, nodeAttemptId };
+  return {
+    evidence,
+    streamLost: streamLost && !hostReadPending,
+    commandId: row.id,
+    nodeAttemptId,
+  };
 }
