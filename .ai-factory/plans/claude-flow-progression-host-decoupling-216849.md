@@ -264,6 +264,7 @@ The confirming re-reduce keeps all five frozen columns equal (`completedAt: comm
   | `checkpointed` | `exited`, `crashed` | — |
 
   Moving a superseded row into `checkpointed` would put it back into the partial-unique set, and the unique violation would become a permanent projection poison (CLAUDE.md §2). The event is still bound to the row. Every other terminal state is terminal.
+  - **As built (review, 2026-09-23):** the guard is an inline predicate, not a map, and only `checkpointed` is restricted — to the admissible states (`ADMISSIBLE_PROMPT_INCARNATION_STATES`, D-A3). `exited`/`crashed` may end ANY row, which is what EDGE-PRM-07 requires (`lost → exited` for a superseded session's late exit) and what the pre-branch projector already did (`exited ↔ crashed`); the "every other terminal state is terminal" sentence above was never implemented and would have refused EDGE-PRM-07. The lifecycle state diagram records the as-built transitions.
 
 **D-A3. One admissible-state constant.** `ADMISSIBLE_PROMPT_INCARNATION_STATES = ["created","active"] as const` lives in `session-binding.ts`. The 11 sites of C1 use `inArray(state, ADMISSIBLE…)`. It is an allow-list: `checkpointed`, `lost`, `exited`, `crashed` and `deleted` stay refused.
 
@@ -283,6 +284,7 @@ The confirming re-reduce keeps all five frozen columns equal (`completedAt: comm
   - canonical requires `command.terminalEventId === event.id`;
   - host_span requires `command.terminalEventId === null` and writes nothing to it.
 - Both feeds require `receiptEvidence.eventId === event.id`. Every other check runs for both feeds, byte for byte: `eventMatches`, `receiptMatches`, stream/sequence/`sourceCommandId`, v2 terminal agreement, outcome agreement, digest and terminal state.
+  - *As built (review, 2026-09-23):* the CHECKS are shared, the INPUT is not quite. The host also serves envelopes the manager recorded in `execution_event_skips` (an unknown run, an unstorable payload) and passes other sessions' rows through unclassified, so a span the host verifies can later read as `event_span_gap` once canonical ingest catches up. The verdicts can differ on such a span; that later canonical refusal is the pre-branch behaviour.
 
 **D-B2. Direct terminal binding (B.4).**
 - In `reconcileStoredPromptEvidence`: when `terminalEventId IS NULL` and `receiptEvidence` is terminal, it loads `execution_events` by `receiptEvidence.eventId`.
@@ -376,13 +378,14 @@ Response 200 JSON:
 - Before crashing, the resolver (DB layer: `reconcile-evidence-db.ts`) calls `reconcilePromptCommand` once, which runs the B.4 then B.5 feeds. It then re-classifies.
   - A settled command becomes `pending_application`, `applying` or `applied` per the existing table.
   - An unreadable or unverifiable span crashes `stream-lost` as today.
+  - **Amended after the review rounds (2026-09-23):** only a read that ANSWERED decides, and its answer is durable. `execution_commands.host_span_verdict` (`busy | refused`, migration `0177`) holds the outcome of the latest read that ran without settling; a read clears it when it claims the command (both claim paths) and writes it when it releases the claim. The resolver crashes `stream-lost` on a recorded `refused` — whoever recorded it — and on a command `hostSpanEligible` rejects; it SKIPs `evidence-pending` while a read is in flight (no verdict), after `busy`, or while another reader holds the receipt claim (nothing deposited). A retryable settlement-write failure (SQLSTATE class `40`/`08`, `55P03`, `57014`) is `busy`; a transport failure is `refused`, since it cannot be told from a host gone for good (EDGE-PRM-11). The first cut deferred on any DENIED claim (`hostReadDeferred`); a flow continuation re-drives the wait and re-takes the claim every 5 s, so the crash then happened only when the sweep won the claim by chance — the bound was probabilistic.
 - In the non-lost branch `pending_ingest` keeps its ADR-177 meaning: skip, because the named writer owes the next move. The waiting driver or the continuation worker settles through D-B5.
 - Cost: one probe (existing) plus at most `ceil(span / 500)` range pages, only for stream-lost candidates with a `completed` probe. The first draft's claim of "no new host call" was wrong and is withdrawn.
 
 **D-C1. Watchdog predicate (C.8), rewritten after C24.**
 - In `runTimeLimitPass`, only for a candidate **already over its cap**, and before `liveSessionFor` / `deleteSession`: load the attempt's newest prompt across **all** `flow_node_attempt` variants.
   - Variants: `node`, `permission_resume`, `gate_skill`, `gate_ai`, `consensus_verifier`, `consensus_synthesis`.
-  - Mechanism: `loadPromptEvidence(db, {runId, nodeAttemptId, variants})` gains an optional `variants` parameter. It defaults to `['node']`, so the ADR-177 behaviour is untouched and pinned by its suite. The watchdog passes the full list from `prompt-owner-contract.ts`.
+  - Mechanism: `loadPromptEvidence(db, {runId, nodeAttemptId, variants})` gains a `variants` parameter. The watchdog passes the full list from `prompt-owner-contract.ts`. *(As built: `variants` is REQUIRED with no default — the ADR-177 current-turn amendment (`39cd1ff1`) retired the `['node']` default; the classifier passes `CURRENT_TURN_VARIANTS`.)*
 - **Defer the kill only on a positive witness that the attempt's in-flight turn finished on the host:**
   - the newest command is settled (`terminal_evidence_sha256` set) with `application_state` not in `applied | superseded`; or
   - `needsReceiptProbe` holds and `probeReceipt` returns `completed`.
@@ -393,6 +396,7 @@ Response 200 JSON:
 - **The watchdog performs no settlement and no host call beyond the probe** (request trap). Settlement belongs to the waiting driver's D-B5 loop or, for a dead driver, to the continuation worker's Running-attempt arm (C5).
 - Log INFO `time-limit-deferred-completed-turn {runId, nodeId, nodeAttemptId, commandId, witness: "settled" | "receipt_completed"}` and increment `SweepResult.deferredCompletedCount`.
 - **Bound:** the deferral lasts until the canonical event arrives or ADR-177 marks the stream `lost`. With a readable span, the driver settles first; otherwise the run crashes `stream-lost`. This is the same accepted residual as ADR-177's wedged-consumer case, stated in the amendment.
+  - **Amended after the review (2026-09-23):** that bound was false for live-session runs and `judge` nodes, which the ADR-177 evidence arm never reaches, and a `poisoned` command satisfied the settled witness forever. As built, the witness is a turn that finished AND still has a writer: the settled command's ADR-177 class is `pending_application` or `applying` (the owner applies or poisons it), or a `completed` receipt while `commandStreamLost` is false (canonical ingest can still settle it). Poisoned, quarantined and lost turns, and a completed receipt on a lost stream, are killed (`time-limit-watchdog.integration.test.ts` C1-poisoned, C1-quarantined, C1-turn_lost, C1-stream-lost).
 - **Rationale for not measuring the completion time against the cap:** a turn that finishes seconds past the cap, before the next 60 s tick, is already settled today when there is no lag. A completed turn is therefore never killed, and killing a finished turn saves nothing.
 
 **D-C2. Observability.**
@@ -408,7 +412,7 @@ Response 200 JSON:
 
 **D-A6. Deferred agent message re-drive (owner Q3).**
 - `claimAgentMessage` defers a turn with `session_projection` when the launch session is not yet admissible (`turn-claim.ts:193-206`). For a `Running` run nothing re-drives it until the run parks (C6).
-- The agent continuation worker (`agents/continuation-worker.ts:76-166`) gains one arm, arm 5. All of these must hold:
+- *(Withdrawn at T1.5 — see its record: the existing parked-run arm re-drives the deferred message. Owner decision #3 below said "in scope, RED first"; the withdrawal replaced that plan and still needs the owner's explicit confirmation — see the review record's open question.)* The agent continuation worker (`agents/continuation-worker.ts:76-166`) gains one arm, arm 5. All of these must hold:
   - `runs.status='Running'`;
   - a `queued` agent turn exists on the run;
   - an incarnation in `ADMISSIBLE_PROMPT_INCARNATION_STATES` exists for the run's `default` run session on the run's active assignment;
@@ -788,7 +792,7 @@ Each commit is gated on the phase exit criteria. Merge goes to master with `--no
 
 - [x] **T4.2: Watchdog predicate (D-C1), rewritten after C24.**
   - Files:
-    - `web/lib/reconcile-evidence-db.ts`: the `variants` option on `loadPromptEvidence`, defaulting to `['node']`;
+    - `web/lib/reconcile-evidence-db.ts`: the `variants` option on `loadPromptEvidence` (required as built, no default — see D-C1);
     - `web/lib/runs/keepalive-sweeper.ts`: `runTimeLimitPass` and `SweepResult.deferredCompletedCount`;
     - `web/lib/scheduler/system-sweeps.ts`: summary passthrough.
   - **RED C1**, in `web/lib/runs/__tests__/time-limit-watchdog.integration.test.ts`, real PG plus a transport stub for the probe. Each row is a distinct witness, with no overlap:
@@ -807,7 +811,7 @@ Each commit is gated on the phase exit criteria. Merge goes to master with `--no
   - **Acceptance:**
     - All 10 existing cases (`:340-559`) are green.
     - No host call is made for candidates under their cap (transport spy).
-    - The ADR-177 suites are green with the default `variants`, which pins that the change does not leak into crash classification.
+    - The ADR-177 suites are green with `CURRENT_TURN_VARIANTS`, which pins that the watchdog's wider list does not leak into crash classification.
     - Coordination: the separate ADR-177 variant task (Out of scope) will change that default. If it lands first, rebase and keep the watchdog's explicit list.
   - **Logging:** INFO `time-limit-deferred-completed-turn` (D-C1).
   - **Phase 4 exit:** full lanes are green as in Phase 1.
@@ -942,7 +946,14 @@ As built (2026-09-23). The planned `prompt-host-settlement.integration.test.ts` 
 | span route | `supervisor/src/__tests__/runtime-event-span.integration.test.ts` (supervisor integration) | real SQLite outbox |
 | parity | `web/lib/execution-host/__tests__/host-parity.integration.test.ts` (new span rows) | fake **and** real |
 | verifier | `web/lib/execution-host/__tests__/prompt-span-verifier.test.ts` (unit) | pure |
-| recovery (D-B7) | `web/lib/__tests__/reconcile-host-evidence.integration.test.ts` (integration) | real PG + fake host |
+| recovery (D-B7), incl. the denied-read deferral (concurrent reader, busy host) | `web/lib/__tests__/reconcile-host-evidence.integration.test.ts` (integration) | real PG + fake host; an `onCall` hook parks the concurrent reader mid span read |
+| boundary evidence re-read (settled after classification, applied gate ×3 reasons, quarantine after application) | `web/lib/runs/__tests__/turn-lost-boundary.integration.test.ts` (integration) | real PG |
+| stream-lost verdict (recorded refusal, refusal cleared by a new read, receipt claim held) | `web/lib/__tests__/reconcile-host-evidence.integration.test.ts` (integration) | real PG + fake host; `onCall` barrier |
+| owner output behind the canonical frontier (defer while the stream lives, count once lost) | `web/lib/execution-host/__tests__/prompt-output-frontier.integration.test.ts` (integration) | real PG + fake host, a minimal owner adapter |
+| watchdog witness needs a writer (poisoned, quarantined, turn_lost, stream lost) | `web/lib/runs/__tests__/time-limit-watchdog.integration.test.ts` C1-* (integration) | real PG, probe stub |
+| paused owner keeps its session (A3-paused) | `web/lib/execution-host/__tests__/prompt-admission-incarnation.integration.test.ts` (integration) | real supervisor + held lifecycle projection |
+| late unowned create ACK is stale; supersession CASE arms | `web/lib/execution-host/__tests__/session-binding.integration.test.ts` (integration) | real PG |
+| re-anchor only on agreement, on the database clock (B9-conflict, B9-skew) | `web/lib/execution-host/__tests__/prompt-host-span-fake.integration.test.ts` (integration) | real PG + fake host; `vi.useFakeTimers({ toFake: ["Date"] })` |
 | C1 table | `web/lib/runs/__tests__/time-limit-watchdog.integration.test.ts` (extended) | real PG, probe stub + transport spy |
 | counts | `web/lib/execution-host/events/__tests__/host-span-counts.integration.test.ts` + i18n parity (unit) | real PG |
 | load control (T5.3, opt-in) | `web/lib/execution-host/__tests__/host-span-load.integration.test.ts` | real supervisor + fault proxy, 120 s hold |
@@ -968,7 +979,7 @@ As built (2026-09-23). The planned `prompt-host-settlement.integration.test.ts` 
 - Scratch and agent turns applying before projection: their adapters wait for the transcript / lifecycle projectors **by design** (C22). D4 removes failures there, not latency.
 - **Separate tasks raised by `/aif-improve` (chips created):**
   - Retirement compaction vs the 0140/0141 guards: fixed on `claude/retirement-tombstone-guards` by migration `0175`. It is a prerequisite: T2.0 re-derives its CHECK and trigger text from `0175`.
-  - The ADR-177 classifier sees only `variant='node'`, so a `permission_resume` current turn is classified from a stale command. It touches `loadPromptEvidence`, like T4.2.
+  - The ADR-177 classifier sees only `variant='node'`, so a `permission_resume` current turn is classified from a stale command. It touches `loadPromptEvidence`, like T4.2. *(Shipped on this branch after all — `39cd1ff1`, the ADR-177 current-turn amendment; covered by `reconcile-sweep` RED 7/8 and the `turn-lost-boundary` current-turn cases.)*
 
 ## Follow-up (separate)
 
@@ -1004,4 +1015,57 @@ The owner applied every item:
   - D-A6: the mirror predicate plus the loop guard;
   - D-B5: the exact claim predicate, and the first attempt inside the receipt claim.
 - **Test infrastructure:** fake `holdIngest` / `releaseIngest` / `setPrunedFloor`; the shared `test-support/projection-hold.ts`; fault-proxy `hold-events` for real-supervisor ingest lag; entity-scoped count assertions; exit code plus `Errors` line as the green criterion.
-- **Docs:** PRM-03, EDGE-PRM-03 and EDGE-PRM-04 amended; PRM-13…16 added; the per-adapter earliest-application table; `docs/supervisor.md` is a definite update; AsyncAPI explicitly unchanged.
+- **Docs:** PRM-03, EDGE-PRM-03 and EDGE-PRM-04 amended; PRM-13…16 planned, then folded into existing Expectations (the T5 deviation — the docs gate caps Expectations at 12); the per-adapter earliest-application table; `docs/supervisor.md` is a definite update; AsyncAPI explicitly unchanged.
+
+## Adversarial review fixes (2026-09-23)
+
+Codex adversarial review of the branch over `master` (tree `39cd1ff1`): two high findings, both reproduced on real Postgres before any edit, both fixed.
+
+- **F1 — a denied settlement read was treated as lost evidence** (`reconcile-evidence-db.ts`). On a lost stream with a `completed` probe, `reconcilePromptCommand` returned without reading the span whenever another reader held the claim, its retry delay was pending, or the host stayed busy; the resolver still reported `pending_ingest` + stream lost, and the sweep crashed the run while the other reader was settling a readable result. **Fix:** `reconcilePromptCommand` reports `hostReadDeferred`; the resolver then returns the stream bound as not holding for that tick (D-B7 amended, EDGE-PRM-11). Transport failures stay refusals: they cannot be told from a host that is gone for good.
+- **F2 — the boundary trusted a pre-transaction read of its command** (`turn-lost-boundary.ts`). A command settled by a host-span reader after classification still had `completion_applied_at IS NULL`, so the CAS stamped it applied and discarded the result. A gate applied after classification read as "already discharged", and the gate close admits the action's completion, so the run crashed over a passed gate. **Fix:** the command row is locked last in the boundary transaction and re-classified; the crash proceeds only when the class still justifies its reason (`CRASH_EVIDENCE`), else `lost-cas` with guard `command` (ADR-177 amendment, EDGE-PRM-12).
+- **Lenient seed corrected:** the boundary's "ALREADY-discharged" case seeded `applied` without the quarantine `quarantine()` always writes; it now carries `prompt_terminal_conflict`, and the applied-without-quarantine shape is its own yield case.
+- **Class sweep** (`rg "await reconcilePromptCommand\("`; `rg "completionAppliedAt: (new Date|sql)"`):
+  - `reconcile-evidence-db.ts` resolver — **fixed** (F1).
+  - `deliverer.ts` `queryPrompt`, `prompt-owner-application.ts`, `crash-recover.ts` evidence-first, `agents/permission-resume.ts`, `flows/graph/permission-resume.ts` ×2 — **already safe**: each acts only on `disposition === "settled"`, so a denied read leaves them pending.
+  - `recovery.ts` — **already safe**: its terminal write needs `receiptRead` `unavailable` or `missing`; a denied claim answers `not_due`.
+  - `crash-recover.ts:362` discharge — **not the same exposure**: it adopts a settled `node` result as the completion rather than crashing over one, and its attempt CAS (`action_completion IS NULL`) already yields to a concurrent owner.
+- **Falsification (one mutation at a time, restored and verified by a marker grep after each):**
+
+    | Guard removed | Guard test | Verdict |
+    |---|---|---|
+    | held-claim deferral (`settleFromHostSpanWhenDue` answers `false`) | concurrent-reader barrier | red: `streamLost: true` |
+    | busy-host deferral (`"busy"` → `null`) | busy-host case | red: `streamLost: true` |
+    | locked evidence check disabled | settled-after-classification, applied gate ×3 | red (4): `applied`, not `lost-cas` |
+    | `quarantined` dropped from `owner-poisoned` | ALREADY-discharged, kept gate verdict | red (2): the legitimate discharge path still needs it |
+
+### Round 2 — `/aif-review` of the whole branch (2026-09-23)
+
+Six parallel reviewers (admission, host-span settlement, span route, recovery, docs, UI + test quality), each finding verified in source before any edit. Owner decisions for this round: fix every branch-introduced finding; pre-existing master findings stay flagged; the stream-lost deferral persists the last read's verdict (new column); the watchdog never defers a poisoned or quarantined turn.
+
+- **Blockers fixed:**
+  - *Paused owner lost its session.* The projector's create-ACK re-applied the CREATE owner check, which a permission pause fails, and marked a live, admitted session `lost`. `lockCreateOwner` takes a REQUIRED `create | ack` check; the ACK path admits `NeedsInput` / `NeedsInputIdle` runs and a `NeedsInput` attempt (EDGE-PRM-13, A3-paused; A3 keeps a failed creator → `lost`).
+  - *Transient span outage poisoned a completed turn.* `frontierFallback`'s `PRECONDITION` counted toward `MAX_FAILURES`. `preparePromptOwner` now defers an `event_frontier` refusal (`PromptOwnerDeferred('event_frontier_pending')`) while the stream is not lost and lets it count once it is (EDGE-PRM-15).
+  - *Watchdog deferred forever.* See D-C1's amendment (EDGE-PRM-10).
+  - *Round 1's deferral bound was probabilistic.* See D-B7's amendment and migration `0177` (EDGE-PRM-11).
+  - *PRM-05 contradicted the boundary.* Rewritten to the locked evidence re-read.
+- **Mediums and lows fixed:** late unowned create ACK retired the live successor (`newestUnownedCreate`, EDGE-PRM-14); the D-B10 re-anchor compared a Node-clock settlement with a Postgres-clock `created_at` and re-anchored even on a disagreeing terminal (DB clock via `date_trunc('milliseconds', clock_timestamp())`, confirmation only after an agreeing reduce and only on a fresh bind); `CRASH_EVIDENCE` is total over one shared `EVIDENCE_CRASH_REASONS` list; the admission yield no longer passes a host session id as a command id; span route malformed input → 409, corrupt storage → 503, strict discriminated span schema on both sides, stuck page cursor refused, span failures logged with a bounded cause, fake parity; admin host-span counts windowed, disjoint, labelled per host with helper text; B6 now exercises D-B11; the test-hygiene items (deterministic consensus yields, structural A1, scoped RED 7/8, exact retirement guards, the recover-route 503 case, shared suppressor fixture).
+- **Declined, with reasons:** memoizing `classifyEnvelopeDisposition` per span read (no key makes the answer provably identical: a mid-read release changes it); replacing the `APPLIED_EARLIER` seed (the classifier never reads it; a realistic row needs a v2 rewrite of the shared seed); removing the ingest test that overlaps A5 (it covers the no-ACK projector path A5 does not).
+- **Flagged, pre-existing on master (not fixed):** Recover's quarantine check is node-scoped, not attempt-scoped; the scratch recover route parses the body before auth; the boundary and the owner take `runs` / `node_attempts` (and `gate_results`) locks in opposite orders (chip "Isolate reconcile evidence-arm failures per candidate").
+- **Found during the fix, fixed:** `clock_timestamp()` has microsecond precision, a JS `Date` millisecond — the confirming re-reduce wrote back a different `completed_at`, the `0176` evidence trigger refused it, and the canonical prompt projector failed. `completed_at` is now truncated to milliseconds and omitted from the confirming write.
+- **Open question for the owner:** confirm the T1.5 withdrawal of D-A6 arm 5, which replaced owner decision #3 ("in scope, RED first").
+- **Falsification (each restored and marker-grepped):**
+
+    | Guard removed | Guard test | Verdict |
+    |---|---|---|
+    | ACK uses the `create` check | A3-paused | red: `lost` |
+    | unowned create always current | late unowned ACK | red: `applied` |
+    | frontier deferral ignores a lost stream | frontier "counts once lost" | red |
+    | resolver ignores a recorded refusal | recorded refusal, pruned span | red (2) |
+    | receipt-claim branch dropped | receipt claim held | red |
+    | settle claim keeps the old verdict | refusal cleared by a new read | red |
+    | a quarantine re-anchors | B9-conflict | red |
+    | web clock for `completed_at` | B9-skew | red |
+    | watchdog witness unnarrowed (pre-fix code) | C1-poisoned/quarantined/turn_lost/stream-lost | red (4) |
+- **Gates (2026-09-24, working tree over `39cd1ff1`):** `validate:docs:all`, `validate:contracts`, `tsc` in web and supervisor, eslint on every changed file, `git diff --check` — all exit 0. Web unit **833 files / 8621 tests**, supervisor **73 / 704** — exit 0, no `Errors` line. Web integration **521 files: 3 failed / 4567 passed**, 1 unhandled error (the known ledger "pool after end" teardown class). Classified:
+  - `permission-deadline` RED 14 and `execution-ab-process-cleanup` O-exit — pass idle (10/10, 13/13): load (the lane started at load 116).
+  - `agents/prompt-owners` "owner-agent-initial cannot finalize a successor assignment from historical output" — failed 3 of 3 on this tree, passed on committed HEAD. Not a product regression: the case SIGKILLs a driver that may hold the runtime-event stream claim, and its 30 s poll equalled the claim lease, so ingest resumed at 30.3 s (debug trace). A 75 s probe passed in 32.3 s with the expected `superseded`. The case now budgets `KILLED_CLAIM_WAIT_MS` like every other SIGKILL wait in that file; the file then passed 50/50 with `prompt-admission-yield` 1/1. Timing shifts from this round decided which process won the claim; nothing here changes the claim itself.

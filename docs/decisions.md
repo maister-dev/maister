@@ -1708,7 +1708,7 @@ Full record: [`decisions/adr-166.md`](decisions/adr-166.md)
 
 ### ADR-167: Durable execution-host event and runtime-data plane
 
-**Status:** Implemented; amended 2026-09-23 (host-evidence settlement)
+**Status:** Implemented; amended 2026-09-23 (retirement tombstone guards; host-evidence settlement)
 **Date:** 2026-09-04
 
 Full record: [`decisions/adr-167.md`](decisions/adr-167.md)
@@ -1793,7 +1793,7 @@ Full record: [`decisions/adr-176.md`](decisions/adr-176.md)
 
 ### ADR-177: Evidence-first crash classification
 
-**Status:** Implemented; amended 2026-09-23 (host-evidence settlement; the current turn across `node`, `permission_resume` and gate variants)
+**Status:** Implemented; amended 2026-09-23 (host-evidence settlement; the current turn across `node`, `permission_resume` and gate variants; the boundary re-reads its command under lock)
 **Date:** 2026-09-21
 
 The reconcile sweep classifies a sessionless `Running` flow run from the current

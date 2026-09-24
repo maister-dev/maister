@@ -784,7 +784,7 @@ in if that writer never comes.
 | --- | --- | --- | --- |
 | `none` | no owned prompt for this attempt, the row is still `queued`/`delivering`, or the probe was **indeterminate** — a **v2** `accepted` receipt, which carries no liveness in either direction | the deliverer (W1/W2); nobody at all for the v2 case | falls through to the grace arms — `grace-window` inside, `agent-session-gone` past it |
 | `inflight` | receipt `accepted` + `inflight:true` | the host — the turn is running | none while it holds; `stream-lost` if the stream dies |
-| `pending_ingest` | receipt `completed`/`404`/unreachable, or `rejected` WITHOUT a `turn_lost` reason (an ordinary errored turn), and no ingested terminal event | the event consumer; since the ADR-167 D5 amendment (Implemented, 2026-09-23) also the waiting driver or continuation worker settling from host evidence | none while it holds; if the stream dies, a `completed` probe is first offered to host-evidence settlement (settles → re-classified), else `stream-lost` |
+| `pending_ingest` | receipt `completed`/`404`/unreachable, or `rejected` WITHOUT a `turn_lost` reason (an ordinary errored turn), and no ingested terminal event | the event consumer; since the ADR-167 D5 amendment (Implemented, 2026-09-23) also the waiting driver or continuation worker settling from host evidence | none while it holds; if the stream dies, a `completed` probe is first offered to host-evidence settlement (settles → re-classified; otherwise `execution_commands.host_span_verdict`, the answer of the latest read that ran, decides: a recorded `refused` — whoever read it — or a command the host span cannot settle crashes `stream-lost`; no verdict (a read in flight), `busy`, or a receipt another reader is still reading SKIPs `evidence-pending` until the next answer; the offer never throws — a failed one settles nothing and the same rule decides) |
 | `pending_application` | command settled (`succeeded`/`failed`/`fenced`), `application_state='pending'` | the prompt-owner worker (~1 s) | none — a dead stream does NOT bound it: the evidence is already ingested and the worker reads it from Postgres |
 | `applying` | `application_state='applying'` | the worker holding the application claim | none — as `pending_application` |
 | `applied` | `application_state ∈ {applied, superseded}` | the flow continuation worker (~1 s) | none — the graph advances |
@@ -802,6 +802,23 @@ something to wait for.
 `turn_lost` is matched on the **reason**, never on an HTTP status and never on
 the error code: the code is `PRECONDITION` when the host committed a rejected
 receipt and `ACP_PROTOCOL` when the accepted-with-no-terminal fallback wrote it.
+
+**The boundary re-reads the command under lock (ADR-177 amendment,
+2026-09-23).** The sweep classifies outside any transaction, and a host-span
+reader can settle the turn, or its owner can apply it, before
+`applyTurnLostBoundary` writes. Neither was refused: a freshly settled command
+still has `completion_applied_at IS NULL`, and a gate's close admits the
+action's completion. So the boundary locks the command row last in its
+transaction and re-classifies it without a probe. Its FIRST statement locks the
+run row, as every owner apply does (`lockFlowPromptOwner`): the boundary and the
+owner's own lost-turn arm race on the same turn, and taking the attempt or gate
+evaluation before the run deadlocked them (`40P01`), which threw out of the
+sweep and rejected its whole pass (2026-09-24). `turn-lost` needs `turn_lost` or an unchanged
+`pending_ingest`; `stream-lost` an unchanged `pending_ingest`;
+`owner-poisoned` `quarantined` or `poisoned`. Any other class rolls the whole
+transaction back (`lost-cas`, guard `command`, the observed class logged) and
+the next tick classifies the new state. Only a quarantine stamped after
+application arrives already `applied`; its discharge is then met.
 ## Linked artifacts
 
 - **Sweep pass order (`runSystemSweep`, `web/lib/scheduler/system-sweeps.ts`).**

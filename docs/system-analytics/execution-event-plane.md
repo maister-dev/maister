@@ -386,8 +386,9 @@ therefore no longer safe by virtue of being alone — both writers take the same
 readers of one `next_sequence` collide on
 `run_messages_run_node_attempt_sequence_uq`. Prompt rows are additionally keyed
 by a nullable `prompt_dispatch_key` under a partial unique index; the
-projector's own rows leave it NULL and stay outside that index.
-See [`run-trace.md`](run-trace.md).
+projector's own rows leave it NULL and stay outside that index. A third writer,
+the host-span confirmation, only moves existing prompt rows' anchors and
+allocates no sequence (below). See [`run-trace.md`](run-trace.md).
 
 The cost consumer applies each accepted usage event with its cursor in the
 same transaction. Existing rollups are rebuilt per touched aggregate key using
@@ -499,9 +500,14 @@ longer waits for that queue; the event plane itself is unchanged:
 - **Confirmation.** The prompt projector later binds the canonical event and
   recomputes the same digest; `execution_commands.settled_from` keeps the feed
   that settled first. Disagreement is the existing `prompt_terminal_conflict`
-  quarantine (post-hoc after application). Settlement is the only new use of
-  host evidence; transcripts, cost, artifacts, runtime objects and browser
-  replay still come from canonical rows only.
+  quarantine, whether or not the owner already applied the settlement.
+  `/admin/execution-host` counts, per host, the unbound and the quarantined
+  host-span settlements of the last 7 days as two disjoint numbers, plus the
+  last hour's host-span volume ([screen](../screens/admin/execution-host.md)).
+  Settlement, and reading the settled turn's output for its owner before
+  canonical ingest reaches it, are the only new uses of host evidence;
+  transcripts, cost, artifacts, runtime objects and browser replay still come
+  from canonical rows only.
 
 The transcript projector is no longer the only writer of prompt-row anchors:
 confirming a host-span-settled command re-anchors dispatched prompts recorded

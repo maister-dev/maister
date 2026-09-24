@@ -437,7 +437,7 @@ cell with no arm is a defect, not a default.
 | `Running` (no session) | `applied` | SKIP `evidence-applied` | the flow continuation worker (~1 s) |
 | `Running` (no session) | `applying` / `pending_application` / `pending_ingest` | SKIP `evidence-pending` | the claim holder, the prompt-owner worker, or the event consumer |
 | `Running` (no session) | `inflight` | SKIP `evidence-inflight` | the host — the turn is still running |
-| `Running` (no session) | `pending_ingest` or `inflight` ∧ host stream `lost` | CRASH `stream-lost` | an operator, via Recover |
+| `Running` (no session) | `pending_ingest` or `inflight` ∧ host stream `lost` | CRASH `stream-lost` (a `completed` turn is first offered to host-evidence settlement; only a recorded refusal crashes, while a read in flight or a busy host SKIPs) | an operator, via Recover |
 | `Running` (no session) | `turn_lost` | CRASH `turn-lost` via `applyTurnLostBoundary` | an operator, via Recover |
 | `Running` (no session) | `quarantined` / `poisoned` | CRASH `owner-poisoned` via `applyTurnLostBoundary` | an operator; Recover refuses to re-prompt from disagreeing evidence |
 | `Running`, current node `consensus` (live session or not) | a `consensus_verifier` / `consensus_synthesis` command of the open attempt `poisoned`, or quarantined (`application_error.reason = prompt_terminal_conflict`, also after application) | CRASH `owner-poisoned` through the same evidence boundary, BEFORE the live-session arm (`resolveConsensusPoisonEvidence` → `classifyPromptEvidence`) | an operator; Recover follows the consensus table above |
