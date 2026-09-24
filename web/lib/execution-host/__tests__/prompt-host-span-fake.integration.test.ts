@@ -648,7 +648,7 @@ describe("absence is never proof (D-B9)", () => {
     await expect(
       permissionCheckpointOrder(db, unconfirmed, null),
     ).rejects.toBeInstanceOf(PromptOwnerDeferred);
-    // The deferral keys on BOTH axes: a pre-0176 row with no terminal keeps
+    // The deferral keys on BOTH axes: a pre-0177 row with no terminal keeps
     // the old early answer, and a confirmed host-span row is read normally
     // (these ids match no event, so the read answers absence).
     const legacy = {

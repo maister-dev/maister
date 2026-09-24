@@ -17,7 +17,7 @@ Rationale: this is item D4 (P1-6 + P2-1) of the execution-seam stabilization led
 ## Numbering
 
 - **No new ADR.** This follows owner decision 3 (2026-09-23). The plan writes dated `**Amendments:**` bullets in `docs/decisions/adr-167.md` and `docs/decisions/adr-177.md`. It updates the hub stub `**Status:**` in `docs/decisions.md` (1709-1716, 1794-1806) and the matching index rows (211, 221). The ADR-index gate (`scripts/validate-docs-adr-anchors.mjs`, `checkAdrIndexRows`) exempts row status. An amendment adds no row.
-- **One migration: `0176_prompt_settled_from`.** Owner decision Q1, 2026-09-23, amends the lock "No migration". `0175` is taken by the retirement-tombstone fix (branch `claude/retirement-tombstone-guards`, migration `0175_retirement_tombstone_guards`), so this plan uses the next number; re-derive it from `max(_journal.json)` on master at implementation time. The migration is a triad: SQL + `_journal.json` entry + `meta/0176_snapshot.json`. `schema.ts` is the fourth leg, and `drizzle-kit generate` must then report "No schema changes". **Renumber risk:** P0-4 and P0-5 run in parallel and may also claim `0176`. Before merge, rebase onto master and re-derive the number; if it moved, run a renumber pass over the SQL name, the journal tag, the snapshot and every prose mention.
+- **One migration: `0177_prompt_settled_from`.** Owner decision Q1, 2026-09-23, amends the lock "No migration". `0176` is taken by the retirement-tombstone fix (branch `claude/retirement-tombstone-guards`, migration `0176_retirement_tombstone_guards`), so this plan uses the next number; re-derive it from `max(_journal.json)` on master at implementation time. The migration is a triad: SQL + `_journal.json` entry + `meta/0177_snapshot.json`. `schema.ts` is the fourth leg, and `drizzle-kit generate` must then report "No schema changes". **Renumber risk (realised 2026-09-24):** P0-4 and P0-5 ran in parallel, and P0-5 merged `0175_failed_child_wake` first. The rebase onto master therefore moved the tombstone fix to `0176`, this migration to `0177` and the later `0178_host_span_verdict` (see D-B7), and the renumber pass covered the SQL names, the journal tags, the snapshots and every prose mention.
   - Column `execution_commands.settled_from text NULL`.
   - `CHECK execution_commands_settled_from_check (settled_from IS NULL OR (settled_from IN ('canonical','host_span') AND terminal_evidence_sha256 IS NOT NULL))`.
   - Partial index `execution_commands_host_span_settled_idx ON (execution_host_id, completed_at) WHERE settled_from = 'host_span'`, for the per-host counts.
@@ -27,7 +27,7 @@ Rationale: this is item D4 (P1-6 + P2-1) of the execution-seam stabilization led
     - `DROP TRIGGER` / `CREATE TRIGGER execution_commands_immutable_terminal_evidence`: `settled_from` is added to the `BEFORE UPDATE OF` column list.
     - The trigger and the function are hand-written SQL that the drizzle snapshot does not carry. They are appended to the generated SQL, and the CHECK text in `schema.ts` must match the SQL byte for byte.
     - These DROP/ADD statements target a shared table. At rebase the text is re-derived from `schema.ts` and from the newest migration that touched these objects (skill-context rule).
-    - **Re-derive from `0175`, not from `0141`:** `0175_retirement_tombstone_guards` already re-created `execution_commands_terminal_evidence_check` (adding `OR retired_at IS NOT NULL` for the receipt), `execution_commands_request_v2_check`, `guard_prompt_terminal_evidence()` (the retirement-transition exemption and the settled-tombstone-final clause) and `guard_immutable_command_request()`. This plan's CHECK becomes `terminal_evidence_sha256 IS NULL OR (sha ~ regex AND (terminal_event_id IS NOT NULL OR settled_from = 'host_span') AND (receipt_evidence IS NOT NULL OR retired_at IS NOT NULL))`. Its trigger change adds the `settled_from` clause to the `0175` function body verbatim. A host_span row that is later retired keeps `settled_from`.
+    - **Re-derive from `0176`, not from `0141`:** `0176_retirement_tombstone_guards` already re-created `execution_commands_terminal_evidence_check` (adding `OR retired_at IS NOT NULL` for the receipt), `execution_commands_request_v2_check`, `guard_prompt_terminal_evidence()` (the retirement-transition exemption and the settled-tombstone-final clause) and `guard_immutable_command_request()`. This plan's CHECK becomes `terminal_evidence_sha256 IS NULL OR (sha ~ regex AND (terminal_event_id IS NOT NULL OR settled_from = 'host_span') AND (receipt_evidence IS NOT NULL OR retired_at IS NOT NULL))`. Its trigger change adds the `settled_from` clause to the `0176` function body verbatim. A host_span row that is later retired keeps `settled_from`.
   - **No backfill:** NULL means "settled before this change / unknown". The constraint accepts that.
   - Live data is not touched: nothing is dropped and nothing is re-keyed.
 - The `created` state needs no schema change. It already exists in the `run_session_incarnations.state` enum and is covered by the partial unique index `run_session_incarnations_active_run_session_uq` (0131).
@@ -118,7 +118,7 @@ The request was re-verified on `ae99f9d0`. Its core claims hold. **The findings 
 **C14. `settled_from` has no safe home "in the existing evidence JSON".**
 - `receiptEvidence` is compared whole with `sameJson` at deposit (`receipt_replacement`) and in `receiptMatches`. `result` is compared with the event outcome. `applicationError` is the quarantine carrier. Any of them would break an existing agreement check.
 - A marker derived from timestamps was rejected. Ingest captures `now` before its transaction, so a host-span settlement that commits inside an in-flight ingest transaction gets `received_at < completed_at` and would be misclassified as canonical. That is exactly the near-zero-lag case the counter exists to see.
-- **Resolution (owner Q1):** a dedicated column `settled_from` (migration `0176`, see Numbering), written **only** by the reducer (D-B7a).
+- **Resolution (owner Q1):** a dedicated column `settled_from` (migration `0177`, see Numbering), written **only** by the reducer (D-B7a).
 
 **C15. The watchdog has no command lookup, and the ADR-177 probe already exists as a function.**
 - The probe is `loadPromptEvidence` / `needsReceiptProbe` / `probeReceipt` in `web/lib/reconcile-evidence-db.ts:95-198`. A `completed` probe classifies as `pending_ingest` (`reconcile-evidence.ts:89-143`).
@@ -161,7 +161,7 @@ The request was re-verified on `ae99f9d0`. Its core claims hold. **The findings 
 - `terminal_event_id` is a non-deferrable FK to `execution_events.id`.
 - The trigger `guard_prompt_terminal_evidence` makes `receipt_evidence` and `terminal_event_id` immutable once set, and makes `(digest, state, result, last_error, completed_at)` immutable once the digest is set. Setting `terminal_event_id` from NULL is allowed.
 
-The confirming re-reduce keeps all five frozen columns equal (`completedAt: command.completedAt ?? now`), so confirmation passes the trigger. Migration `0176` therefore amends the CHECK and the trigger (see Numbering).
+The confirming re-reduce keeps all five frozen columns equal (`completedAt: command.completedAt ?? now`), so confirmation passes the trigger. Migration `0177` therefore amends the CHECK and the trigger (see Numbering).
 
 **C20. Scope A as drafted breaks every multi-node flow under lag.**
 - **Same session on the same epoch.** One `runGraph` pass binds the execution once (`runner-graph.ts:2231-2244`, no placement mint). Every node's session is named `node.session ?? "default"` (`:2979`). Auto-retry (`:3580-3592`), in-pass rework (`:3960-4019`), gate re-visits (`gate-${id}`, `gates-exec.ts:346`) and `sessionFallback` replacements (`owned-session-create.ts:148-178`) all create **the same session name on the same assignment epoch**.
@@ -378,7 +378,7 @@ Response 200 JSON:
 - Before crashing, the resolver (DB layer: `reconcile-evidence-db.ts`) calls `reconcilePromptCommand` once, which runs the B.4 then B.5 feeds. It then re-classifies.
   - A settled command becomes `pending_application`, `applying` or `applied` per the existing table.
   - An unreadable or unverifiable span crashes `stream-lost` as today.
-  - **Amended after the review rounds (2026-09-23):** only a read that ANSWERED decides, and its answer is durable. `execution_commands.host_span_verdict` (`busy | refused`, migration `0177`) holds the outcome of the latest read that ran without settling; a read clears it when it claims the command (both claim paths) and writes it when it releases the claim. The resolver crashes `stream-lost` on a recorded `refused` — whoever recorded it — and on a command `hostSpanEligible` rejects; it SKIPs `evidence-pending` while a read is in flight (no verdict), after `busy`, or while another reader holds the receipt claim (nothing deposited). A retryable settlement-write failure (SQLSTATE class `40`/`08`, `55P03`, `57014`) is `busy`; a transport failure is `refused`, since it cannot be told from a host gone for good (EDGE-PRM-11). The first cut deferred on any DENIED claim (`hostReadDeferred`); a flow continuation re-drives the wait and re-takes the claim every 5 s, so the crash then happened only when the sweep won the claim by chance — the bound was probabilistic.
+  - **Amended after the review rounds (2026-09-23):** only a read that ANSWERED decides, and its answer is durable. `execution_commands.host_span_verdict` (`busy | refused`, migration `0178`) holds the outcome of the latest read that ran without settling; a read clears it when it claims the command (both claim paths) and writes it when it releases the claim. The resolver crashes `stream-lost` on a recorded `refused` — whoever recorded it — and on a command `hostSpanEligible` rejects; it SKIPs `evidence-pending` while a read is in flight (no verdict), after `busy`, or while another reader holds the receipt claim (nothing deposited). A retryable settlement-write failure (SQLSTATE class `40`/`08`, `55P03`, `57014`) is `busy`; a transport failure is `refused`, since it cannot be told from a host gone for good (EDGE-PRM-11). The first cut deferred on any DENIED claim (`hostReadDeferred`); a flow continuation re-drives the wait and re-takes the claim every 5 s, so the crash then happened only when the sweep won the claim by chance — the bound was probabilistic.
 - In the non-lost branch `pending_ingest` keeps its ADR-177 meaning: skip, because the named writer owes the next move. The waiting driver or the continuation worker settles through D-B5.
 - Cost: one probe (existing) plus at most `ceil(span / 500)` range pages, only for stream-lost candidates with a `completed` probe. The first draft's claim of "no new host call" was wrong and is withdrawn.
 
@@ -514,10 +514,10 @@ Each commit is gated on the phase exit criteria. Merge goes to master with `--no
   - `.ai-factory/plans/stage-ab-stabilization.md` §D1 (from `:319`): the evidence-table row and the "one reconciliation reducer" paragraph now cover the host-span feed (C17).
   - `docs/system-analytics/agents.md` (or the agent-turn section it links): the `session_not_admissible` defer and its re-drive arm (D-A6).
   - **ERD, both artifacts:**
-    - `docs/database-schema.md` `execution_commands` row (`:123`) and its Mermaid block (`:1842`, with the CHECK list at `:1882`): add `settled_from`, the CHECK and the partial index, tagged "migration `0176`, Designed".
+    - `docs/database-schema.md` `execution_commands` row (`:123`) and its Mermaid block (`:1842`, with the CHECK list at `:1882`): add `settled_from`, the CHECK and the partial index, tagged "migration `0177`, Designed".
     - `docs/db/execution-hosts-domain.md`.
     - `docs/db/erd.dbml` is regenerated with `pnpm --filter maister-web db:erd` in T2.0, since it is generated from `schema.ts`. The `db:erd --check` gate is part of `validate:docs`.
-  - **As done (2026-09-23):** the `database-schema.md` row `:123`, the `0141` column table (`settled_from` row, `terminal_event_id` note) and the Indexes table carry the `0176` column, CHECK and partial index, tagged Designed. The `execution_commands` code block at `:1842` is the `0130` column snapshot (it lists none of the `0140`/`0141` columns), so `settled_from` goes into the `0141` column table instead of that block. `agents.md` names no claim-deferral reason; the agent-turn claim section of `execution-prompt-lifecycle.md` owns it and carries the D-A6 text.
+  - **As done (2026-09-23):** the `database-schema.md` row `:123`, the `0141` column table (`settled_from` row, `terminal_event_id` note) and the Indexes table carry the `0177` column, CHECK and partial index, tagged Designed. The `execution_commands` code block at `:1842` is the `0130` column snapshot (it lists none of the `0140`/`0141` columns), so `settled_from` goes into the `0141` column table instead of that block. `agents.md` names no claim-deferral reason; the agent-turn claim section of `execution-prompt-lifecycle.md` owns it and carries the D-A6 text.
 
 - [x] **T0.4: Contracts.**
   - `docs/api/supervisor.openapi.yaml`: add path `/runtime-events/span` next to `/runtime-events` (123-150) and reuse `RuntimeEventEnvelope` (2983). Examples: `complete`, `partial` (with `nextAfter`), `unavailable/replay_floor_lost`, `unavailable/stream_identity_changed`, and 400 `invalid_event_span`. Also document the query parameters and `security: []`.
@@ -624,11 +624,11 @@ Each commit is gated on the phase exit criteria. Merge goes to master with `--no
 
 ### Phase 2: B.4 — direct terminal binding
 
-- [x] **T2.0: Migration `0176_prompt_settled_from` (see Numbering).**
+- [x] **T2.0: Migration `0177_prompt_settled_from` (see Numbering).**
   - **Files:**
     - `web/lib/db/schema.ts`: `executionCommands.settledFrom`, the check and the partial index;
-    - `web/lib/db/migrations/0176_prompt_settled_from.sql`;
-    - `meta/_journal.json` and `meta/0176_snapshot.json`, both from `drizzle-kit generate`, with the SQL reviewed by hand;
+    - `web/lib/db/migrations/0177_prompt_settled_from.sql`;
+    - `meta/_journal.json` and `meta/0177_snapshot.json`, both from `drizzle-kit generate`, with the SQL reviewed by hand;
     - `docs/db/erd.dbml`, regenerated.
   - **Acceptance:**
     - `pnpm --filter maister-web db:migrate` applies cleanly on the dev DB and on the test template.
@@ -647,7 +647,7 @@ Each commit is gated on the phase exit criteria. Merge goes to master with `--no
     - setting `terminal_event_id` from NULL to an id on a host_span row, with all frozen columns equal → accepted (the confirmation shape);
     - changing `result` after the digest is set → still refused (regression pin on the re-created trigger).
   - **Logging:** none. This is schema only.
-  - **As done (2026-09-23):** the constraint test caught a three-valued-logic hole in the first draft of the CHECK: `settled_from = 'host_span'` is NULL for a NULL `settled_from`, so the whole CHECK evaluated NULL and a pre-`0176` row could drop its `terminal_event_id`. The shipped text uses `settled_from IS NOT DISTINCT FROM 'host_span'`. **Deviation:** the migration is applied by every integration file's test template, not to the shared dev DB, which other worktrees use (a branch-only migration there desyncs their journals, memory "dev DB desyncs when a branch is rebased").
+  - **As done (2026-09-23):** the constraint test caught a three-valued-logic hole in the first draft of the CHECK: `settled_from = 'host_span'` is NULL for a NULL `settled_from`, so the whole CHECK evaluated NULL and a pre-`0177` row could drop its `terminal_event_id`. The shipped text uses `settled_from IS NOT DISTINCT FROM 'host_span'`. **Deviation:** the migration is applied by every integration file's test template, not to the shared dev DB, which other worktrees use (a branch-only migration there desyncs their journals, memory "dev DB desyncs when a branch is rebased").
 
 - [x] **T2.1: RED B1.**
   - New file `web/lib/execution-host/__tests__/prompt-host-settlement.integration.test.ts`, run against the real supervisor.
@@ -662,7 +662,7 @@ Each commit is gated on the phase exit criteria. Merge goes to master with `--no
     - `web/lib/flows/runner-agent.ts`: export `CONSUMER_SIGNAL_EVENT_TYPES` with its drift-guard unit test.
     - `events/prompt-projector.ts`: it calls `recordPromptEvent`; nothing else changes.
   - **Logging:** INFO `prompt-terminal-bound-directly {commandId, eventId}`.
-  - **As done (2026-09-23):** `CONSUMER_SIGNAL_EVENT_TYPES` lives in `web/lib/execution-host/prompt-signal-events.ts`, not in `runner-agent.ts`: the reducer in `execution-host` must not import from `flows`. The drift guard `web/lib/flows/__tests__/consumer-signal-types.test.ts` reads `startEventConsumer`'s `ev.type` branches and requires every non-text branch to be in the list (text-only: `session.update`, `session.line`). The constraint test is `prompt-settled-from.integration.test.ts`; shapes no code path can produce yet (a pre-`0176` row, a host-span row) are seeded with `session_replication_role = replica`, which suspends only triggers, so the CHECKs under test still run.
+  - **As done (2026-09-23):** `CONSUMER_SIGNAL_EVENT_TYPES` lives in `web/lib/execution-host/prompt-signal-events.ts`, not in `runner-agent.ts`: the reducer in `execution-host` must not import from `flows`. The drift guard `web/lib/flows/__tests__/consumer-signal-types.test.ts` reads `startEventConsumer`'s `ev.type` branches and requires every non-text branch to be in the list (text-only: `session.update`, `session.line`). The constraint test is `prompt-settled-from.integration.test.ts`; shapes no code path can produce yet (a pre-`0177` row, a host-span row) are seeded with `session_replication_role = replica`, which suspends only triggers, so the CHECKs under test still run.
   - **Widened (found by `bounded-output.integration`, 2026-09-23):** once the waiter's direct bind settles a command, the prompt projector processes that command's events later, and its transaction locks the row while the waiter's own targeted owner claim runs. The claim used `FOR UPDATE SKIP LOCKED` for every caller, so the waiter reported a settled turn as `pending` (five S2.5 cases red). A claim that names its command now waits for the row (READ COMMITTED, bounded by the transaction's `lock_timeout`); the worker's scan keeps `SKIP LOCKED`. Falsified by the same five cases.
   - **Test-fixture note:** the host-settlement suite starts its supervisor with `--hang`. The default mock adapter exits 10 ms after each turn, and that `session.exited` can land inside the turn's own span, where the signal-free rule correctly leaves the turn to the projector.
   - **Phase 2 exit:** B1 is green. `command-recovery.integration` RED 1–3 ("both orders") and the projector/consumer suites are green. Full lanes are green as in Phase 1.
@@ -914,7 +914,7 @@ Each commit is gated on the phase exit criteria. Merge goes to master with `--no
     The D-A6 worker arm and mirror predicate have no row: the arm was withdrawn (T1.5).
   - **Guards that did not fail on the first pass, fixed in this increment (commits `e6c27e67`, `91105575`, `5ef2e9ce`):** (1) B2 could not see the claimed retry → B5-retry; (2) the racer always parked the host-span writer first, where the reducer's own `UPDATE` still serializes → the racer runs in both orders, with `releaseIngest({before})` so the parked canonical writer is the terminal settlement; (3) B9 called `reanchorDispatchedPrompts` directly → B9-wired goes through `bindTerminalEvent`; (4) the consensus `SessionCreatePending` yield was race-guarded (window open in 2 of 4 historical runs, 0 of 2 since) → a trigger-held create makes it deterministic; (5) the C19 and `settled_from` mutations failed B2 only as a silent timeout — a database error in the host-span write escaped `attemptHostSpan`, and the flow wait turns any wait error into a cause-less continuation yield → the write failure is now WARN + keep waiting (B-write-failed).
   - **Deviation (docs):** PRM-13…16 are not separate bullets — the docs gate caps Expectations at 12. They are folded: PRM-13 → PRM-01 (+ EDGE-PRM-08), PRM-14 → PRM-03, PRM-15 → EDGE-PRM-06, PRM-16 → EDGE-PRM-10 (added 2026-09-23).
-  - **Lane reds classified (Phase 2 lane + idle re-runs):** `runtime-object-declarations-migration` — **broken by 0176** (a 0159-lineage seed went through the current ORM shape) → fixed `82a2c230`; `deliverer` D3 — **pre-existing race** (delete before the projected seal; the documented "standing load-sensitive name") → fixed `82a2c230`; projection-worker, permission-deadline, run-transcript-projector, execution-ab-partitions, agents `prompt-owners` (50/50) — green idle, load.
+  - **Lane reds classified (Phase 2 lane + idle re-runs):** `runtime-object-declarations-migration` — **broken by 0177** (a 0159-lineage seed went through the current ORM shape) → fixed `82a2c230`; `deliverer` D3 — **pre-existing race** (delete before the projected seal; the documented "standing load-sensitive name") → fixed `82a2c230`; projection-worker, permission-deadline, run-transcript-projector, execution-ab-partitions, agents `prompt-owners` (50/50) — green idle, load.
   - **Final gate (2026-09-23, tree `00feda5a` / `ff84a6c8`; this Mac shared with other sessions' lanes, load 15–350).**
     - **Green (exit 0, no `Errors` line):** web unit **832 files / 8587 tests**; supervisor **45 / 450** unit + **28 / 251** integration; `validate:contracts`; `validate:docs:all`; `tsc` in both packages; eslint on the 67 changed web files and the 6 changed supervisor files (0 problems).
     - **Not green — web integration lane** (519 files, 6 failed / 5 files, 5 unhandled errors, load 45–70) **and the AB lane** (33 files, 29 failed / 2 files, 2 errors, load peak 220). Every red was classified; none traces to D4:
@@ -978,7 +978,7 @@ As built (2026-09-23). The planned `prompt-host-settlement.integration.test.ts` 
 - Host-evidence settlement for **failed/fenced** receipts (D-B4 scope: no manifest, so there is no bounded span in which to prove D-B8).
 - Scratch and agent turns applying before projection: their adapters wait for the transcript / lifecycle projectors **by design** (C22). D4 removes failures there, not latency.
 - **Separate tasks raised by `/aif-improve` (chips created):**
-  - Retirement compaction vs the 0140/0141 guards: fixed on `claude/retirement-tombstone-guards` by migration `0175`. It is a prerequisite: T2.0 re-derives its CHECK and trigger text from `0175`.
+  - Retirement compaction vs the 0140/0141 guards: fixed on `claude/retirement-tombstone-guards` by migration `0176`. It is a prerequisite: T2.0 re-derives its CHECK and trigger text from `0176`.
   - The ADR-177 classifier sees only `variant='node'`, so a `permission_resume` current turn is classified from a stale command. It touches `loadPromptEvidence`, like T4.2. *(Shipped on this branch after all — `39cd1ff1`, the ADR-177 current-turn amendment; covered by `reconcile-sweep` RED 7/8 and the `turn-lost-boundary` current-turn cases.)*
 
 ## Follow-up (separate)
@@ -990,7 +990,7 @@ As built (2026-09-23). The planned `prompt-host-settlement.integration.test.ts` 
 
 ## Решения владельца (2026-09-23)
 
-1. **`settled_from`:** a dedicated column (migration `0176`). This amends the lock "No migration", and the amendment is recorded in the ADR-167 D5 bullet (D-B7a, T2.0).
+1. **`settled_from`:** a dedicated column (migration `0177`). This amends the lock "No migration", and the amendment is recorded in the ADR-167 D5 bullet (D-B7a, T2.0).
 2. **Host route:** no `sourceCommandId` filter. It returns the full range, like the SSE replay (D-B3, C11).
 3. **Deferred agent message re-drive:** in scope, RED first (D-A6, T1.5).
 4. **Canonical conflict before application:** the existing poison rule stays (D-B6; B3 variant).
@@ -1003,7 +1003,7 @@ Open questions: none.
 The owner applied every item:
 
 - **Blocking fixes:**
-  - C19 → the `0176` CHECK and trigger amendment (T2.0);
+  - C19 → the `0177` CHECK and trigger amendment (T2.0);
   - C20 → same-epoch supersession (D-A1a, A5, T1.6);
   - C21 → the signal-free span rule (D-B8, B1-signal, B7);
   - C22 → absence is never proof (D-B9, B8).
@@ -1046,12 +1046,12 @@ Six parallel reviewers (admission, host-span settlement, span route, recovery, d
   - *Paused owner lost its session.* The projector's create-ACK re-applied the CREATE owner check, which a permission pause fails, and marked a live, admitted session `lost`. `lockCreateOwner` takes a REQUIRED `create | ack` check; the ACK path admits `NeedsInput` / `NeedsInputIdle` runs and a `NeedsInput` attempt (EDGE-PRM-13, A3-paused; A3 keeps a failed creator → `lost`).
   - *Transient span outage poisoned a completed turn.* `frontierFallback`'s `PRECONDITION` counted toward `MAX_FAILURES`. `preparePromptOwner` now defers an `event_frontier` refusal (`PromptOwnerDeferred('event_frontier_pending')`) while the stream is not lost and lets it count once it is (EDGE-PRM-15).
   - *Watchdog deferred forever.* See D-C1's amendment (EDGE-PRM-10).
-  - *Round 1's deferral bound was probabilistic.* See D-B7's amendment and migration `0177` (EDGE-PRM-11).
+  - *Round 1's deferral bound was probabilistic.* See D-B7's amendment and migration `0178` (EDGE-PRM-11).
   - *PRM-05 contradicted the boundary.* Rewritten to the locked evidence re-read.
 - **Mediums and lows fixed:** late unowned create ACK retired the live successor (`newestUnownedCreate`, EDGE-PRM-14); the D-B10 re-anchor compared a Node-clock settlement with a Postgres-clock `created_at` and re-anchored even on a disagreeing terminal (DB clock via `date_trunc('milliseconds', clock_timestamp())`, confirmation only after an agreeing reduce and only on a fresh bind); `CRASH_EVIDENCE` is total over one shared `EVIDENCE_CRASH_REASONS` list; the admission yield no longer passes a host session id as a command id; span route malformed input → 409, corrupt storage → 503, strict discriminated span schema on both sides, stuck page cursor refused, span failures logged with a bounded cause, fake parity; admin host-span counts windowed, disjoint, labelled per host with helper text; B6 now exercises D-B11; the test-hygiene items (deterministic consensus yields, structural A1, scoped RED 7/8, exact retirement guards, the recover-route 503 case, shared suppressor fixture).
 - **Declined, with reasons:** memoizing `classifyEnvelopeDisposition` per span read (no key makes the answer provably identical: a mid-read release changes it); replacing the `APPLIED_EARLIER` seed (the classifier never reads it; a realistic row needs a v2 rewrite of the shared seed); removing the ingest test that overlaps A5 (it covers the no-ACK projector path A5 does not).
 - **Flagged, pre-existing on master (not fixed):** Recover's quarantine check is node-scoped, not attempt-scoped; the scratch recover route parses the body before auth; the boundary and the owner take `runs` / `node_attempts` (and `gate_results`) locks in opposite orders (chip "Isolate reconcile evidence-arm failures per candidate").
-- **Found during the fix, fixed:** `clock_timestamp()` has microsecond precision, a JS `Date` millisecond — the confirming re-reduce wrote back a different `completed_at`, the `0176` evidence trigger refused it, and the canonical prompt projector failed. `completed_at` is now truncated to milliseconds and omitted from the confirming write.
+- **Found during the fix, fixed:** `clock_timestamp()` has microsecond precision, a JS `Date` millisecond — the confirming re-reduce wrote back a different `completed_at`, the `0177` evidence trigger refused it, and the canonical prompt projector failed. `completed_at` is now truncated to milliseconds and omitted from the confirming write.
 - **Open question for the owner:** confirm the T1.5 withdrawal of D-A6 arm 5, which replaced owner decision #3 ("in scope, RED first").
 - **Falsification (each restored and marker-grepped):**
 

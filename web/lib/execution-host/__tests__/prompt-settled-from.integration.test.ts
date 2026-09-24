@@ -1,9 +1,9 @@
-// ADR-167 D5 amendment (2026-09-23), migration 0176. `settled_from` records the
+// ADR-167 D5 amendment (2026-09-23), migration 0177. `settled_from` records the
 // evidence feed that first settled a prompt, and a `host_span` settlement may
 // hold its digest before the canonical terminal event is bound. Each case names
 // the database guard that must accept or refuse the shape. One real settled
 // prompt supplies a row every CHECK and FK already accepts; shapes that no code
-// path can produce yet (a pre-0176 row, a host-span row) are seeded with
+// path can produce yet (a pre-0177 row, a host-span row) are seeded with
 // triggers suspended, because the row guards under test are CHECKs and those
 // still run. The trigger cases run with triggers on. Every case starts from the
 // same canonical shape, restored before it, so no case depends on another's
@@ -180,12 +180,12 @@ beforeEach(async () => {
     throw new Error(`the fixture row was not restored: ${restored}`);
 });
 
-describe("execution_commands.settled_from guards (migration 0176)", () => {
+describe("execution_commands.settled_from guards (migration 0177)", () => {
   it("records the feed only on a settled prompt, and only a known feed", async () => {
     expect(await refusedBy("settled_from = 'host_span'", createId)).toBe(
       "execution_commands_settled_from_check",
     );
-    // Pre-0176 history: a settled row with no recorded feed stays valid.
+    // Pre-0177 history: a settled row with no recorded feed stays valid.
     expect(
       await refusedBy("settled_from = NULL", promptId, {
         suspendTriggers: true,

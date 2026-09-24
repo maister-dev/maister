@@ -50,7 +50,7 @@ it("backfills only the original provable declaration without inventing one from 
   const objectIds = Array.from({ length: 6 }, () => randomUUID());
   // RAW SQL naming only the ledger's own insert columns: this database stops at
   // 0159, and a Drizzle insert names every column the CURRENT schema declares
-  // (0176 `settled_from` does not exist here yet).
+  // (0177 `settled_from` does not exist here yet).
   const reserveCommand = async (
     objectId: string,
     payload: Record<string, unknown>,

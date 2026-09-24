@@ -59,7 +59,7 @@ let project: { id: string; slug: string; repoPath: string };
 let hostId: string;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-// The two trigger guards raise under these names (migrations 0175/0176).
+// The two trigger guards raise under these names (migrations 0176/0177).
 const REQUEST_GUARD = "execution_commands_immutable_request";
 const TERMINAL_EVIDENCE_GUARD =
   "execution_commands_immutable_terminal_evidence";

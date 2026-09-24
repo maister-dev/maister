@@ -8,7 +8,7 @@ ALTER TABLE "execution_commands" ADD CONSTRAINT "execution_commands_terminal_evi
 -- verified event span before its canonical terminal event is ingested, so the
 -- digest may precede `terminal_event_id` on a `host_span` row (CHECK above).
 -- `settled_from` records the first feed and is immutable once written; every
--- other clause is the 0175 body verbatim.
+-- other clause is the 0176 body verbatim.
 CREATE OR REPLACE FUNCTION guard_prompt_terminal_evidence() RETURNS trigger
 LANGUAGE plpgsql AS $$
 DECLARE
