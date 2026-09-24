@@ -89,8 +89,10 @@ afterAll(async () => {
 });
 
 /** A turn settled from the host's span while canonical ingest is held, whose
- * span is then made unreadable. */
-async function settledAheadOfCanonical(): Promise<string> {
+ * span is then made unreadable unless the case needs it readable. */
+async function settledAheadOfCanonical(
+  span: "unreadable" | "readable" = "unreadable",
+): Promise<string> {
   const runId = await seedRun(database.db, {
     projectId,
     status: "Running",
@@ -137,7 +139,7 @@ async function settledAheadOfCanonical(): Promise<string> {
       { timeout: 10_000 },
     )
     .toBe("host_span");
-  fake.setPrunedFloor("1000000");
+  if (span === "unreadable") fake.setPrunedFloor("1000000");
 
   return handle.commandId;
 }
@@ -188,5 +190,44 @@ describe("output behind the canonical frontier (owner application)", () => {
       applicationAttempts: 1,
       applicationError: { reason: "prompt_owner_retry" },
     });
+  }, 60_000);
+
+  it("reads the host's span when the stream has no contiguous frontier yet", async () => {
+    const commandId = await settledAheadOfCanonical("readable");
+    const streamId = (await command(commandId)).receiptEvidence?.evidenceV2
+      ?.terminal?.streamId;
+    const [stream] = await db
+      .select()
+      .from(executionEventStreams)
+      .where(eq(executionEventStreams.streamId, streamId!));
+
+    // A stream the manager registered before ingesting any contiguous event:
+    // the host span is exactly as readable as it was for the settlement.
+    await db
+      .update(executionEventStreams)
+      .set({ lastContiguousSequence: null, lastAckConfirmedSequence: null })
+      .where(eq(executionEventStreams.id, stream!.id));
+    try {
+      expect(
+        await applyPromptOwner({
+          db,
+          owners,
+          commandId,
+          signal: AbortSignal.timeout(30_000),
+        }),
+      ).toBe("applied");
+      expect(await command(commandId)).toMatchObject({
+        applicationState: "applied",
+        applicationAttempts: 0,
+      });
+    } finally {
+      await db
+        .update(executionEventStreams)
+        .set({
+          lastContiguousSequence: stream!.lastContiguousSequence,
+          lastAckConfirmedSequence: stream!.lastAckConfirmedSequence,
+        })
+        .where(eq(executionEventStreams.id, stream!.id));
+    }
   }, 60_000);
 });

@@ -448,13 +448,17 @@ export async function readPromptOutput(input: {
   });
   const { manifest, stream, transport } = opened;
 
-  if (!stream || stream.lastContiguousSequence === null)
-    throw incomplete("event_frontier");
+  if (!stream) throw incomplete("event_frontier");
   // The receipt names the terminal event, so a turn settled from the host's
   // span before its canonical event was bound verifies the same identity.
   const terminalEventId = command.terminalEventId ?? receipt.terminal!.eventId;
 
-  if (stream.lastContiguousSequence < BigInt(manifest.terminalSequence))
+  // A stream with no contiguous frontier yet is behind the terminal too: the
+  // span that settled the turn is read from the host exactly as it was then.
+  if (
+    stream.lastContiguousSequence === null ||
+    stream.lastContiguousSequence < BigInt(manifest.terminalSequence)
+  )
     return {
       response: opened.response,
       events: frontierFallback(
