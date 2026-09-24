@@ -1,5 +1,9 @@
 import "server-only";
 
+import type {
+  EvidenceCrashReason,
+  PromptEvidenceClass,
+} from "@/lib/reconcile-evidence";
 import type { CrashReason } from "@/lib/runs/state-transitions";
 
 import { and, eq, inArray, isNull } from "drizzle-orm";
@@ -7,6 +11,7 @@ import pino from "pino";
 
 import * as schemaModule from "@/lib/db/schema";
 import { TURN_LOST_DECISION } from "@/lib/flows/graph/attempt-decisions";
+import { classifyPromptEvidence } from "@/lib/reconcile-evidence";
 import {
   CURRENT_TURN_VARIANTS,
   loadPromptEvidence,
@@ -36,13 +41,42 @@ export type TurnLostBoundaryResult = "applied" | "not-claimed" | "lost-cas";
 // the graph on a row the ledger still calls `Running`, and an attempt closed
 // without its command discharged strands the command `owner_unapplied` forever.
 export class TurnLostCasLost extends MaisterError {
-  constructor(readonly guard: "attempt" | "run" | "command" | "gate") {
+  constructor(
+    readonly guard: "attempt" | "run" | "command" | "gate",
+    /** The command's class under the row lock, when that is what refused. */
+    readonly observed?: PromptEvidenceClass,
+  ) {
     super("CONFLICT", "turn-lost boundary lost a guard", {
-      details: { reason: "turn_lost_cas_lost", guard },
+      details: { reason: "turn_lost_cas_lost", guard, observed },
     });
     Object.setPrototypeOf(this, TurnLostCasLost.prototype);
   }
 }
+
+/** The command classes that still justify each evidence crash, read under the
+ * row lock inside the boundary's transaction.
+ *
+ * The sweep classified the command outside any transaction, and two writers
+ * can land before this write: a host-span reader settling the turn, and the
+ * owner applying it. Neither is refused by the other guards — a freshly
+ * settled result still has `completion_applied_at IS NULL`, and a gate's close
+ * admits the action's completion — so a readable result was discarded, and an
+ * applied gate crashed its run.
+ *
+ * Read without a probe (no host call inside a transaction), so an `accepted`
+ * row with no terminal evidence reads `pending_ingest`: what a probe-proved
+ * lost turn and a stream-lost `pending_ingest`/`inflight` both are while
+ * nothing has moved. `quarantined` is the one class that may already be
+ * applied — `quarantine()` stamps `applied` on a conflict found after
+ * application — and its discharge obligation is then met. */
+const CRASH_EVIDENCE = {
+  "turn-lost": ["turn_lost", "pending_ingest"],
+  "stream-lost": ["pending_ingest"],
+  "owner-poisoned": ["quarantined", "poisoned"],
+} as const satisfies Record<
+  EvidenceCrashReason,
+  readonly PromptEvidenceClass[]
+>;
 
 /** The attempt close + run crash, inside a transaction the CALLER owns.
  *
@@ -78,7 +112,9 @@ export async function closeTurnLostAttempt(
      * action succeeds"), so requiring NULL there matches zero rows on EVERY
      * real lost gate turn. That threw, the owner retried, and the command
      * poisoned — a permanent stall. The gate's protection against acting on the
-     * wrong row is its evaluation identity, checked by the caller. */
+     * wrong row is its evaluation identity, checked by the caller, and — on the
+     * sweep side — the command's evidence re-read under lock
+     * (`applyTurnLostBoundary`). */
     admitCompletedAction?: boolean;
   },
 ): Promise<void> {
@@ -135,6 +171,11 @@ export async function closeTurnLostAttempt(
  * is keyed on exactly that object. It is the same guard `applyCrashedTurnEvidence`
  * relies on, which is what makes the two paths safe against each other.
  *
+ * Winning that guard is not enough to be RIGHT, though, so the command row is
+ * also read `FOR UPDATE` and re-classified against `CRASH_EVIDENCE` before the
+ * discharge. The transaction takes the owner application's own order: the run
+ * row first, the domain rows, the command last.
+ *
  * Two callers, both on the flow path, because those are the two that genuinely
  * race: the reconcile sweep's evidence arms and the flow prompt owner. Agent
  * and scratch runs have ONE writer each and keep their own choke points.
@@ -143,7 +184,7 @@ export async function applyTurnLostBoundary(input: {
   db: Db;
   runId: string;
   nodeId: string;
-  reason: CrashReason;
+  reason: EvidenceCrashReason;
   /** The status the caller CLASSIFIED the run in. Default `Running`. */
   fromStatuses?: readonly string[];
   /** The attempt the CALLER classified. Re-deriving it here is not the same
@@ -203,7 +244,6 @@ export async function applyTurnLostBoundary(input: {
     ? await db
         .select({
           id: executionCommands.id,
-          applicationState: executionCommands.applicationState,
           ownerRef: executionCommands.ownerRef,
         })
         .from(executionCommands)
@@ -218,15 +258,6 @@ export async function applyTurnLostBoundary(input: {
     command?.ownerRef?.variant === "gate_skill"
       ? String(command.ownerRef.evaluationId)
       : null;
-  // Already `applied` or `superseded` means the discharge obligation is MET,
-  // not that a race was lost. It is reachable on exactly one arm: `quarantine()`
-  // writes `application_state = completion_applied_at ? "applied" : "poisoned"`,
-  // so a conflict found after application arrives here already stamped. The
-  // guard that protects against crashing a run whose turn produced a REAL
-  // result is the attempt's `action_completion IS NULL`, not this one.
-  const alreadyDischarged =
-    command?.applicationState === "applied" ||
-    command?.applicationState === "superseded";
 
   if (!commandId) {
     // The boundary is named for the evidence it discharges. Without a command
@@ -251,8 +282,21 @@ export async function applyTurnLostBoundary(input: {
     ? // FIXME(any): dual drizzle-orm peer-dep variants.
       (schemaModule as unknown as Record<string, any>).gateResults
     : null;
+  // FIXME(any): dual drizzle-orm peer-dep variants. Read here, not at module
+  // scope, like `gateResults` below.
+  const runs = (schemaModule as unknown as Record<string, any>).runs;
   const applied = await db
     .transaction(async (tx: Db) => {
+      // Run first, as every owner apply takes it (`lockFlowPromptOwner` →
+      // `lockCurrentSessionAssignment`). The two writers that race on this
+      // turn then queue on one row; taking the attempt (and a gate's
+      // evaluation) first and the run only inside the crash was the opposite
+      // order, and deadlocked against a concurrent owner apply.
+      await tx
+        .select({ id: runs.id })
+        .from(runs)
+        .where(eq(runs.id, runId))
+        .for("update");
       const [evaluation] = gateEvaluationId
         ? await tx
             .select({
@@ -288,7 +332,29 @@ export async function applyTurnLostBoundary(input: {
       )
         await gateStore!.markGateStale(gateEvaluationId, tx);
 
-      if (alreadyDischarged) return true;
+      const [locked] = await tx
+        .select({
+          state: executionCommands.state,
+          applicationState: executionCommands.applicationState,
+          applicationError: executionCommands.applicationError,
+          lastError: executionCommands.lastError,
+          terminalEventId: executionCommands.terminalEventId,
+          terminalEvidenceSha256: executionCommands.terminalEvidenceSha256,
+          completionAppliedAt: executionCommands.completionAppliedAt,
+        })
+        .from(executionCommands)
+        .where(eq(executionCommands.id, commandId))
+        .for("update");
+      const observed = classifyPromptEvidence(locked ?? null);
+
+      const justifying: readonly PromptEvidenceClass[] =
+        CRASH_EVIDENCE[input.reason];
+
+      if (!justifying.includes(observed))
+        throw new TurnLostCasLost("command", observed);
+      // Only a quarantine stamped after application reaches here applied: the
+      // discharge obligation is met, not lost.
+      if (locked.completionAppliedAt) return true;
 
       const marked = await tx
         .update(executionCommands)
@@ -329,6 +395,7 @@ export async function applyTurnLostBoundary(input: {
             commandId,
             reason: input.reason,
             guard: error.guard,
+            observed: error.observed,
             outcome: "lost-cas",
           },
           "turn-lost boundary: another writer won — nothing written",
