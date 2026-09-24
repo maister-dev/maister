@@ -189,16 +189,20 @@ export type FakeExecutionHost = {
   // Per-run epoch high-water (the host's `run_fences`). A suite may seed it.
   fences: Map<string, number>;
   failOnce(method: TransportMethod, error: unknown): void;
+  // Drops every queued `failOnce` fault and `loseResponseOnce` loss, so a case
+  // that failed before consuming its faults cannot poison the next one.
+  clearFaults(): void;
   // The host executes the next call of `method` (its receipt is written) but
   // the response is lost: the same-id retry then meets a replay. For
   // `sendPrompt` the response is lost right after acceptance while the turn
   // keeps running in flight (the retry JOINS it). Not applicable to
   // `streamSession`.
   loseResponseOnce(method: TransportMethod): void;
+  /** Returns the hook's removal. */
   onCall(
     method: TransportMethod,
     hook: (call: FakeCall) => void | Promise<void>,
-  ): void;
+  ): () => void;
   setHealth(health: HostHealth | null): void;
   setDiagnostics(status: SupervisorDiagnosticsStatus | null): void;
   // ADR-179: script host env-var PRESENCE. A name not in the set reads absent,
@@ -451,6 +455,12 @@ type CanonicalStreamState = {
   streamId: string;
   nextSequence: bigint;
 };
+
+// The span route's page bounds and cursor grammar (`runtimeEventPage`,
+// `RuntimeEventSequenceSchema`).
+const SPAN_PAGE_ROWS = 500;
+const SPAN_PAGE_BYTES = 1_048_576;
+const SPAN_SEQUENCE = /^(0|[1-9][0-9]{0,18})$/;
 
 const canonicalStreamStates = new WeakMap<
   FakeExecutionHost,
@@ -1087,35 +1097,72 @@ export function createFakeExecutionHost(
       await record("streamRuntimeEvents", null, [opts?.afterSequence]);
       if (opts?.signal?.aborted) return;
     },
-    // Mirrors the supervisor route AND the local-direct mapping of its
-    // refusals: a malformed range or a scripted fault reads as unavailable.
+    // Mirrors the supervisor route (`runtimeEventsInRange`) AND the
+    // local-direct mapping of its refusals, rule by rule: the health gate, a
+    // 409 range, a scripted fault and a 503 unreadable range all read as
+    // `request_failed`; the typed unavailabilities keep the route's order.
     async readRuntimeEventSpan(input): Promise<RuntimeEventSpanPage> {
+      const failed = {
+        state: "unavailable",
+        reason: "request_failed",
+      } as const;
+
       try {
         await record("readRuntimeEventSpan", null, [input]);
       } catch {
-        return { state: "unavailable", reason: "request_failed" };
+        return failed;
       }
+      const current = health ?? { kind: "ready" as const, identity };
+
+      if (current.kind !== "ready" || !current.identity) return failed;
+      const hostKey = current.identity.hostKey;
+
+      if (
+        !SPAN_SEQUENCE.test(input.after) ||
+        !SPAN_SEQUENCE.test(input.through) ||
+        BigInt(input.after) >= BigInt(input.through)
+      )
+        return failed;
       const after = BigInt(input.after);
       const through = BigInt(input.through);
-      const head = retainedEnvelopes.at(-1);
+      // The host owns one stream from its first boot, whether or not it has
+      // emitted into it yet.
+      const streamId =
+        canonicalStreamStates.get(fake)?.streamId ??
+        retainedEnvelopes.at(-1)?.streamId;
 
-      if (after >= through)
-        return { state: "unavailable", reason: "request_failed" };
-      if (!head || head.streamId !== input.streamId)
+      if (streamId !== input.streamId)
         return { state: "unavailable", reason: "stream_identity_changed" };
-      if (through > BigInt(head.sequence))
+      const stream = retainedEnvelopes.filter(
+        (envelope) => envelope.streamId === streamId,
+      );
+      const head = stream.at(-1);
+
+      if (head === undefined || through > BigInt(head.sequence))
         return { state: "unavailable", reason: "beyond_emitted" };
       if (prunedFloor !== null && after < prunedFloor)
         return { state: "unavailable", reason: "replay_floor_lost" };
-      const events = retainedEnvelopes
-        .filter(
-          (envelope) =>
-            envelope.streamId === input.streamId &&
-            BigInt(envelope.sequence) > after &&
-            BigInt(envelope.sequence) <= through,
-        )
-        .slice(0, 500);
-      const last = events.at(-1)?.sequence ?? null;
+      const events: RuntimeEventEnvelope[] = [];
+      let bytes = 0;
+
+      for (const envelope of stream) {
+        const sequence = BigInt(envelope.sequence);
+
+        if (sequence <= after || sequence > through) continue;
+        const size = Buffer.byteLength(JSON.stringify(envelope), "utf8");
+
+        if (events.length === SPAN_PAGE_ROWS || bytes + size > SPAN_PAGE_BYTES)
+          break;
+        bytes += size;
+        events.push(envelope);
+      }
+      const last = events.at(-1)?.sequence;
+
+      // The route's rows are never deleted between the floor and the head, so
+      // it answers an empty page 503 (`stream_corrupt`).
+      if (last === undefined) return failed;
+      if (events.some((envelope) => envelope.hostKey !== hostKey))
+        return failed;
 
       return last === input.through
         ? { state: "complete", nextAfter: null, events }
@@ -2031,7 +2078,7 @@ export function createFakeExecutionHost(
     },
   };
 
-  return {
+  const fake: FakeExecutionHost = {
     transport,
     identity,
     calls,
@@ -2043,6 +2090,10 @@ export function createFakeExecutionHost(
     failOnce(method, error) {
       faults.set(method, [...(faults.get(method) ?? []), error]);
     },
+    clearFaults() {
+      faults.clear();
+      lostResponses.clear();
+    },
     loseResponseOnce(method) {
       if (method === "streamSession") {
         throw new Error(
@@ -2053,6 +2104,12 @@ export function createFakeExecutionHost(
     },
     onCall(method, hook) {
       hooks.set(method, [...(hooks.get(method) ?? []), hook]);
+
+      return () =>
+        hooks.set(
+          method,
+          (hooks.get(method) ?? []).filter((installed) => installed !== hook),
+        );
     },
     setHealth(next) {
       health = next;
@@ -2176,6 +2233,8 @@ export function createFakeExecutionHost(
       scriptedEnd = opts?.end ?? false;
     },
   };
+
+  return fake;
 }
 
 // A `BoundClient` over the fake transport, bound to a real assignment row.

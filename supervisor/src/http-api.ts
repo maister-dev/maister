@@ -1863,7 +1863,17 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     try {
       page = hostState.runtimeEventsInRange(streamId, after, through, 500);
     } catch (error) {
-      throw runtimeEventSupervisorError(error);
+      const failure = runtimeEventSupervisorError(error);
+
+      // A range the host promises to retain but cannot read is a storage
+      // fault, never a protocol one: the manager falls back to canonical
+      // ingest. The cause rides along so the error handler still marks a
+      // failed SQLite store unavailable.
+      if (failure.code !== "ACP_PROTOCOL") throw failure;
+      throw new SupervisorError("EXECUTOR_UNAVAILABLE", failure.message, {
+        cause: error,
+        details: { reason: "runtime_storage_unavailable" },
+      });
     }
     const body: RuntimeEventSpan =
       page.state === "unavailable"
@@ -1876,16 +1886,27 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
             nextAfter: null,
             events: [],
           }
-        : {
-            streamId,
-            after,
-            through,
-            state: page.state,
-            nextAfter: page.nextAfter,
-            events: page.events.map(
-              (event) => event.envelope as RuntimeEventSpan["events"][number],
-            ),
-          };
+        : page.nextAfter === null
+          ? {
+              streamId,
+              after,
+              through,
+              state: "complete",
+              nextAfter: null,
+              events: page.events.map(
+                (event) => event.envelope as RuntimeEventSpan["events"][number],
+              ),
+            }
+          : {
+              streamId,
+              after,
+              through,
+              state: "partial",
+              nextAfter: page.nextAfter,
+              events: page.events.map(
+                (event) => event.envelope as RuntimeEventSpan["events"][number],
+              ),
+            };
 
     if (page.state === "unavailable")
       logger.warn(

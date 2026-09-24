@@ -488,21 +488,51 @@ export const RuntimeEventSpanQuerySchema = z
     through: RuntimeEventSequenceSchema,
   })
   .strict()
-  .refine((query) => BigInt(query.after) < BigInt(query.through));
+  // Zod 3 still runs an object refinement after a field regex failed.
+  .refine(
+    (query) =>
+      !SEQUENCE.test(query.after) ||
+      !SEQUENCE.test(query.through) ||
+      BigInt(query.after) < BigInt(query.through),
+  );
 
-export const RuntimeEventSpanSchema = z
-  .object({
-    streamId: z.string().uuid(),
-    after: RuntimeEventSequenceSchema,
-    through: RuntimeEventSequenceSchema,
-    state: z.enum(["complete", "partial", "unavailable"]),
-    reason: z
-      .enum(["replay_floor_lost", "stream_identity_changed", "beyond_emitted"])
-      .optional(),
-    nextAfter: RuntimeEventSequenceSchema.nullable(),
-    events: z.array(RuntimeEventEnvelopeSchema),
-  })
-  .strict();
+const RUNTIME_EVENT_SPAN_BOUNDS = {
+  streamId: z.string().uuid(),
+  after: RuntimeEventSequenceSchema,
+  through: RuntimeEventSequenceSchema,
+};
+
+export const RuntimeEventSpanSchema = z.discriminatedUnion("state", [
+  z
+    .object({
+      ...RUNTIME_EVENT_SPAN_BOUNDS,
+      state: z.literal("complete"),
+      nextAfter: z.null(),
+      events: z.array(RuntimeEventEnvelopeSchema).max(500),
+    })
+    .strict(),
+  z
+    .object({
+      ...RUNTIME_EVENT_SPAN_BOUNDS,
+      state: z.literal("partial"),
+      nextAfter: RuntimeEventSequenceSchema,
+      events: z.array(RuntimeEventEnvelopeSchema).min(1).max(500),
+    })
+    .strict(),
+  z
+    .object({
+      ...RUNTIME_EVENT_SPAN_BOUNDS,
+      state: z.literal("unavailable"),
+      reason: z.enum([
+        "replay_floor_lost",
+        "stream_identity_changed",
+        "beyond_emitted",
+      ]),
+      nextAfter: z.null(),
+      events: z.array(RuntimeEventEnvelopeSchema).max(0),
+    })
+    .strict(),
+]);
 
 export type RuntimeEventSpan = z.infer<typeof RuntimeEventSpanSchema>;
 

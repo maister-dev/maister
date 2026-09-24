@@ -5,7 +5,9 @@
 // prompt supplies a row every CHECK and FK already accepts; shapes that no code
 // path can produce yet (a pre-0176 row, a host-span row) are seeded with
 // triggers suspended, because the row guards under test are CHECKs and those
-// still run. The trigger cases run with triggers on.
+// still run. The trigger cases run with triggers on. Every case starts from the
+// same canonical shape, restored before it, so no case depends on another's
+// committed UPDATE.
 
 import type { Db } from "@/lib/execution-host/db";
 import type { ExecutionHosts } from "@/lib/execution-host/client";
@@ -14,7 +16,7 @@ import type { RealSupervisor } from "@/test-support/real-supervisor";
 import { randomUUID } from "node:crypto";
 
 import { and, eq } from "drizzle-orm";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { executionCommands } from "@/lib/db/schema";
 import { createExecutionHosts } from "@/lib/execution-host/client";
@@ -100,10 +102,21 @@ beforeAll(async () => {
   );
 
   await client.waitForPrompt(handle, { signal: AbortSignal.timeout(60_000) });
-  const [prompt] = await db
+  // The waiter passes a receipt lookup, so under ingest lag it may settle from
+  // the host span first; the canonical confirmation binds the event later.
+  const confirmedBy = Date.now() + 60_000;
+  let [prompt] = await db
     .select()
     .from(executionCommands)
     .where(eq(executionCommands.id, handle.commandId));
+
+  while (!prompt?.terminalEventId && Date.now() < confirmedBy) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    [prompt] = await db
+      .select()
+      .from(executionCommands)
+      .where(eq(executionCommands.id, handle.commandId));
+  }
   const [create] = await db
     .select({ id: executionCommands.id })
     .from(executionCommands)
@@ -115,7 +128,7 @@ beforeAll(async () => {
     );
 
   if (!prompt?.terminalEvidenceSha256 || !prompt.terminalEventId || !create)
-    throw new Error("the fixture prompt did not settle canonically");
+    throw new Error("the fixture prompt was never confirmed canonically");
   promptId = prompt.id;
   terminalEventId = prompt.terminalEventId;
   createId = create.id;
@@ -156,6 +169,17 @@ async function refusedBy(
   }
 }
 
+beforeEach(async () => {
+  const restored = await refusedBy(
+    `settled_from = 'canonical', terminal_event_id = '${terminalEventId}'`,
+    promptId,
+    { suspendTriggers: true },
+  );
+
+  if (restored !== null)
+    throw new Error(`the fixture row was not restored: ${restored}`);
+});
+
 describe("execution_commands.settled_from guards (migration 0176)", () => {
   it("records the feed only on a settled prompt, and only a known feed", async () => {
     expect(await refusedBy("settled_from = 'host_span'", createId)).toBe(
@@ -195,6 +219,11 @@ describe("execution_commands.settled_from guards (migration 0176)", () => {
   });
 
   it("keeps the recorded feed and the settled outcome immutable", async () => {
+    expect(
+      await refusedBy("settled_from = 'host_span'", promptId, {
+        suspendTriggers: true,
+      }),
+    ).toBeNull();
     const [row] = await db
       .select({ settledFrom: executionCommands.settledFrom })
       .from(executionCommands)

@@ -299,7 +299,10 @@ paths:
                     nextAfter: null
                     events: []
         "409":
-          description: Malformed or empty range (`after >= through`, non-canonical sequence).
+          description: |
+            Malformed or empty range: `after >= through`, a missing or non-UUID
+            `streamId`, or a sequence that is not a canonical signed-BIGINT
+            decimal (`-1`, `01`, `abc`, `1.5`, `1e3`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
@@ -307,18 +310,31 @@ paths:
                 invalidSpan:
                   value:
                     code: PRECONDITION
-                    message: runtime event span must satisfy after < through
+                    message: runtime event span must name a stream and satisfy after < through
                     details: { reason: invalid_event_span }
         "503":
-          description: Host runtime storage is unavailable; the manager falls back to canonical ingest.
+          description: |
+            The host cannot read a range it promises to retain. Either a row
+            above the replay floor and below the head is missing or unreadable
+            (the host stays ready — `/health` is unaffected), or the SQLite
+            store failed and the host is now unavailable until repaired. Both
+            carry `runtime_storage_unavailable`; the manager falls back to
+            canonical ingest.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
               examples:
-                storageUnavailable:
+                rangeNotRetained:
+                  summary: Rows the host still promises to retain are gone.
                   value:
                     code: EXECUTOR_UNAVAILABLE
-                    message: runtime event storage is unavailable
+                    message: runtime event span (40, 41] has no retained rows on stream 3a1f0c2e-5b6d-4e7f-8a9b-0c1d2e3f4a5b
+                    details: { reason: runtime_storage_unavailable }
+                storageFailed:
+                  summary: The SQLite store failed; every route answers this until repair.
+                  value:
+                    code: EXECUTOR_UNAVAILABLE
+                    message: runtime storage requires repair
                     details: { reason: runtime_storage_unavailable }
   /runtime-objects:
     post:
@@ -3176,6 +3192,8 @@ components:
         same bytes the SSE replay sends. `reason` is present exactly when
         `state = unavailable` (then `events` is empty); `nextAfter` is non-null
         exactly when `state = partial` and equals the last returned sequence.
+        A `complete` or `partial` page carries at least one row, and a
+        `complete` page's last row is `through`.
       properties:
         streamId: { type: string, format: uuid, description: Echo of the requested stream id. }
         after: { $ref: "#/components/schemas/RuntimeEventSequence" }

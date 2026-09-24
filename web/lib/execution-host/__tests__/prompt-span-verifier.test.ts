@@ -106,7 +106,6 @@ describe("prompt span verifier", () => {
       "event_size",
     ],
     ["a hole in the span", [[event(12)]], "event_span_gap"],
-    ["rows out of order", [[event(12), event(11)]], "event_span_gap"],
     [
       "a row of another stream",
       [[event(11, { eventStreamId: "foreign-stream" })]],
@@ -141,6 +140,17 @@ describe("prompt span verifier", () => {
     await expect(
       verify(batches as unknown as ExecutionEvent[][]),
     ).rejects.toEqual(refusal(causeCode));
+  });
+
+  // Every row is present and the prefix is valid, so only the order check can
+  // refuse: the same rows in order verify.
+  it("refuses rows out of order", async () => {
+    await expect(verify([[event(11), event(13), event(12)]])).rejects.toEqual(
+      refusal("event_span_gap"),
+    );
+    await expect(
+      verify([[event(11), event(12), event(13)]]),
+    ).resolves.toHaveLength(2);
   });
 
   const bytes = new TextEncoder().encode(

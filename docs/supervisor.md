@@ -831,8 +831,17 @@ amendment 2026-09-23) returns the same retained envelopes for the range
 command id, so the manager can prove contiguity and source binding over the whole
 range. A foreign stream, a pruned floor or a range past the highest emitted
 sequence answers `200 unavailable` with `stream_identity_changed`,
-`replay_floor_lost` or `beyond_emitted`; `after >= through` is `409
-PRECONDITION/invalid_event_span`; storage failure is `503`.
+`replay_floor_lost` or `beyond_emitted`; `after >= through` or any
+non-canonical sequence (`abc`, `1.5`, `1e3`) is `409
+PRECONDITION/invalid_event_span`. A range the host promises to retain but cannot
+read — rows missing between the replay floor and the head, or a failed SQLite
+store — is `503 EXECUTOR_UNAVAILABLE/runtime_storage_unavailable`; only the
+failed store also turns the host unavailable. The manager's local-direct
+transport reads every non-200, and any page whose `nextAfter` is not its last
+row strictly inside the range, as `request_failed`, logs the cause as
+`runtime-event-span-read-failed` (`failure: health | schema | identity | wire |
+unexpected`, with the HTTP status, error code and reason or the first schema
+issue path), and never throws.
 The ring remains a local diagnostic surface only; it is neither browser replay nor
 run-state authority. The supervisor no longer writes `run.events.jsonl`.
 
@@ -1201,7 +1210,9 @@ through a `PassThrough` so both consumers see every chunk.
 `GET /capabilities` is additive and keeps `/health` protocol v1 unchanged.
 It advertises `eventStream`, `asyncPrompt`, and `runtimeObjects`; admission
 requires the complete canonical set. `GET /runtime-events` replays host-global SQLite outbox events strictly after
-the decimal `Last-Event-ID`, and `POST /runtime-events/ack` confirms an
+the decimal `Last-Event-ID`, `GET /runtime-events/span` serves the same
+retained envelopes for one bounded `(after, through]` range as JSON (read-only,
+ADR-167 D5 amendment), and `POST /runtime-events/ack` confirms an
 absolute contiguous stream watermark. A socket is never lifecycle authority:
 the host writes its outbox before publishing and the manager ACKs only after a
 Postgres transaction commits.

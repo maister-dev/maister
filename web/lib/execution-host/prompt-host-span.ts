@@ -108,7 +108,14 @@ export async function* hostSpanPages(input: {
     }
     if (events.length > 0) yield events;
     if (page.state === "complete") return;
-    if (page.nextAfter === null) throw new HostSpanUnavailable("page_cursor");
+    // A cursor that does not advance to this page's last row would re-read
+    // the same page until the caller's abort.
+    if (
+      page.nextAfter === null ||
+      page.nextAfter !== page.events.at(-1)?.sequence ||
+      BigInt(page.nextAfter) <= BigInt(after)
+    )
+      throw new HostSpanUnavailable("page_cursor");
     after = page.nextAfter;
   }
 }

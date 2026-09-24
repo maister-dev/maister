@@ -142,31 +142,37 @@ describe.skipIf(!enabled)(
         },
         "hold-events",
       );
-      const lagEnds = Date.now() + LAG_MS;
-      const flows = runIds.map((runId) =>
-        runFlow(runId, {
-          db: database.db,
-          runtimeRoot: supervisor.runtimeRoot,
-          executionHosts: createExecutionHosts({ db }),
-        }),
-      );
 
-      await Promise.all(flows);
-      const reviewed = await db
-        .select({ id: runs.id, status: runs.status })
-        .from(runs)
-        .where(inArray(runs.id, runIds));
+      // A failed assertion must not leave the stream held while afterAll
+      // tears the consumer down.
+      try {
+        const lagEnds = Date.now() + LAG_MS;
+        const flows = runIds.map((runId) =>
+          runFlow(runId, {
+            db: database.db,
+            runtimeRoot: supervisor.runtimeRoot,
+            executionHosts: createExecutionHosts({ db }),
+          }),
+        );
 
-      expect(reviewed.map((run) => run.status)).toEqual(
-        runIds.map(() => "Review"),
-      );
-      // Every turn finished while the manager still lagged by the whole window.
-      expect(Date.now()).toBeLessThan(lagEnds);
+        await Promise.all(flows);
+        const reviewed = await db
+          .select({ id: runs.id, status: runs.status })
+          .from(runs)
+          .where(inArray(runs.id, runIds));
 
-      await new Promise((resolve) =>
-        setTimeout(resolve, Math.max(0, lagEnds - Date.now())),
-      );
-      held.release();
+        expect(reviewed.map((run) => run.status)).toEqual(
+          runIds.map(() => "Review"),
+        );
+        // Every turn finished while the manager still lagged by the whole window.
+        expect(Date.now()).toBeLessThan(lagEnds);
+
+        await new Promise((resolve) =>
+          setTimeout(resolve, Math.max(0, lagEnds - Date.now())),
+        );
+      } finally {
+        held.release();
+      }
       const prompts = () =>
         db
           .select()

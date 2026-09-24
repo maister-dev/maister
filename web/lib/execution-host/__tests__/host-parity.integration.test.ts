@@ -14,10 +14,12 @@ import type { RealSupervisor } from "@/test-support/real-supervisor";
 import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { isMaisterError } from "@/lib/errors";
+import { checkSupervisorHealth } from "@/lib/supervisor-client";
 import { buildEnvelope } from "@/lib/execution-host/ledger";
 import { createLocalDirectTransport } from "@/lib/execution-host/transports/local-direct";
 import { asExecutionWorkspaceId } from "@/lib/execution-host/types";
@@ -32,6 +34,15 @@ type Lab = {
   transport: ExecutionHostTransport;
   hostKey: string;
   root: string;
+  // Makes the host emit at least two events; answers its current stream and
+  // highest emitted sequence.
+  emit: () => Promise<{ streamId: string; head: bigint }>;
+  // ACKs and prunes the stream through `sequence`: the real host prunes an
+  // ACKed prefix past its grace at boot.
+  prune: (streamId: string, sequence: bigint) => Promise<void>;
+  // Emits like `emit`, then loses the retained row just below the head — rows
+  // the host still promises to retain.
+  emitWithHole: () => Promise<{ streamId: string; hole: bigint }>;
 };
 
 type Normalized =
@@ -410,22 +421,57 @@ const SCENARIOS: Array<{
   // ADR-167 D5 amendment: a span read never throws — both hosts answer an
   // unreadable range as a typed unavailable page, which the manager treats as
   // "settle canonically instead".
+  // `request_failed` is what ANY failure reads as, so the same stream's valid
+  // range must read — the refusal is the range's, not a broken transport's.
   {
-    name: "span with after >= through → unavailable (request_failed)",
+    name: "span with after >= through → request_failed, while the same stream's valid range reads complete",
     expected: {
       ok: true,
-      body: { state: "unavailable", reason: "request_failed" },
+      body: { refused: "request_failed", valid: "complete", rows: 1 },
     },
-    run: async (lab) =>
-      normalize(
+    run: async (lab) => {
+      const { streamId, head } = await lab.emit();
+
+      return normalize(
+        async () => ({
+          refused: await lab.transport.readRuntimeEventSpan({
+            streamId,
+            after: head.toString(),
+            through: head.toString(),
+          }),
+          valid: await lab.transport.readRuntimeEventSpan({
+            streamId,
+            after: (head - 1n).toString(),
+            through: head.toString(),
+          }),
+        }),
+        ({ refused, valid }) => ({
+          refused: refused.state === "unavailable" ? refused.reason : null,
+          valid: valid.state,
+          rows: valid.state === "unavailable" ? null : valid.events.length,
+        }),
+      );
+    },
+  },
+  {
+    name: "span past the highest emitted sequence → beyond_emitted",
+    expected: {
+      ok: true,
+      body: { state: "unavailable", reason: "beyond_emitted" },
+    },
+    run: async (lab) => {
+      const { streamId, head } = await lab.emit();
+
+      return normalize(
         () =>
           lab.transport.readRuntimeEventSpan({
-            streamId: randomUUID(),
-            after: "5",
-            through: "5",
+            streamId,
+            after: head.toString(),
+            through: (head + 1_000n).toString(),
           }),
         (page) => ({ ...page }),
-      ),
+      );
+    },
   },
   {
     name: "span on a stream the host does not own → stream_identity_changed",
@@ -447,6 +493,51 @@ const SCENARIOS: Array<{
       );
     },
   },
+  // Restarts the real host, so only the corrupting case follows it.
+  {
+    name: "span below the replay floor → replay_floor_lost",
+    expected: {
+      ok: true,
+      body: { state: "unavailable", reason: "replay_floor_lost" },
+    },
+    run: async (lab) => {
+      const { streamId, head } = await lab.emit();
+
+      await lab.prune(streamId, head);
+
+      return normalize(
+        () =>
+          lab.transport.readRuntimeEventSpan({
+            streamId,
+            after: (head - 1n).toString(),
+            through: head.toString(),
+          }),
+        (page) => ({ ...page }),
+      );
+    },
+  },
+  // Corrupts the real host's outbox (an ACK can no longer cross the hole), so
+  // it runs last. The route answers 503; the transport, request_failed.
+  {
+    name: "span over rows the host lost → request_failed",
+    expected: {
+      ok: true,
+      body: { state: "unavailable", reason: "request_failed" },
+    },
+    run: async (lab) => {
+      const { streamId, hole } = await lab.emitWithHole();
+
+      return normalize(
+        () =>
+          lab.transport.readRuntimeEventSpan({
+            streamId,
+            after: (hole - 1n).toString(),
+            through: hole.toString(),
+          }),
+        (page) => ({ ...page }),
+      );
+    },
+  },
 ];
 
 let sup: RealSupervisor;
@@ -463,6 +554,28 @@ beforeAll(async () => {
     throw new Error("real supervisor not ready");
   }
   const fake = createFakeExecutionHost();
+  const fakeStreamId = randomUUID();
+  let fakeHead = -1n;
+  const fakeEvent = async (sequence: bigint) =>
+    fake.deliverCanonical(
+      {
+        envelopeVersion: 1,
+        eventId: randomUUID(),
+        hostKey: fake.identity.hostKey,
+        hostBootId: fake.identity.bootId,
+        streamId: fakeStreamId,
+        sequence: sequence.toString(),
+        runId: "run-parity-span",
+        assignmentId: randomUUID(),
+        assignmentEpoch: 1,
+        hostSessionId: null,
+        eventType: "session.created",
+        occurredAt: new Date().toISOString(),
+        payloadSchema: "maister.session.created.v1",
+        payload: { sourceMonotonicId: Number(sequence) },
+      },
+      async () => {},
+    );
 
   labs = {
     fake: {
@@ -470,12 +583,70 @@ beforeAll(async () => {
       transport: fake.transport,
       hostKey: fake.identity.hostKey,
       root: sup.runtimeRoot,
+      emit: async () => {
+        for (let index = 0; index < 2; index += 1) {
+          fakeHead += 1n;
+          await fakeEvent(fakeHead);
+        }
+
+        return { streamId: fakeStreamId, head: fakeHead };
+      },
+      prune: async (_streamId, sequence) =>
+        fake.setPrunedFloor(sequence.toString()),
+      emitWithHole: async () => {
+        const hole = fakeHead + 2n;
+
+        await fakeEvent(fakeHead + 1n);
+        fakeHead += 3n;
+        await fakeEvent(fakeHead);
+
+        return { streamId: fakeStreamId, hole };
+      },
     },
     real: {
       name: "real",
       transport: real,
       hostKey: health.identity.hostKey,
       root: sup.runtimeRoot,
+      emit: async () => {
+        await liveSession(labs.real, newRun());
+        const status = await checkSupervisorHealth({ includeStream: true });
+        const stream =
+          status.kind === "ready" ? status.health.stream : undefined;
+
+        if (!stream?.headSequence) throw new Error("real host emitted nothing");
+
+        return {
+          streamId: stream.streamId,
+          head: BigInt(stream.headSequence),
+        };
+      },
+      prune: async (streamId, sequence) => {
+        await real.acknowledgeRuntimeEvents({
+          streamId,
+          throughSequence: sequence.toString(),
+        });
+        sup = await sup.restart({
+          env: { ...sup.options.env, MAISTER_EVENT_ACK_GRACE_MS: "1" },
+        });
+      },
+      emitWithHole: async () => {
+        const { streamId, head } = await labs.real.emit();
+        const state = new DatabaseSync(path.join(sup.stateDir, "state.sqlite"));
+
+        try {
+          state.exec("PRAGMA busy_timeout = 5000");
+          state
+            .prepare(
+              "DELETE FROM runtime_event_outbox WHERE stream_id = ? AND sequence = ?",
+            )
+            .run(streamId, (head - 1n).toString());
+        } finally {
+          state.close();
+        }
+
+        return { streamId, hole: head - 1n };
+      },
     },
   };
 }, 180_000);

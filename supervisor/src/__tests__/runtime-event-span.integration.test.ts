@@ -3,8 +3,13 @@
 // verify a finished turn before the shared stream is ingested. It is a read:
 // the acknowledgement, the retained rows and the replay floor never move.
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
+import { parse } from "yaml";
 
 import {
   RuntimeEventSpanSchema,
@@ -14,6 +19,26 @@ import {
 import { bootHost, type BootedHost } from "./_fixtures/boot-host";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** The documented refusal examples, so the wire answer and the docs agree. */
+function documentedRefusal(
+  status: "409" | "503",
+  name: string,
+): Record<string, unknown> {
+  const openapi = parse(
+    readFileSync(
+      resolve(
+        fileURLToPath(import.meta.url),
+        "../../../../docs/api/supervisor.openapi.yaml",
+      ),
+      "utf8",
+    ),
+  );
+
+  return openapi.paths["/runtime-events/span"].get.responses[status].content[
+    "application/json"
+  ].examples[name].value;
+}
 
 let host: BootedHost | null = null;
 
@@ -211,16 +236,42 @@ describe("GET /runtime-events/span", () => {
       { streamId, after: "1", through: "0" },
       { streamId, after: "-1", through: "1" },
       { streamId, after: "01", through: "1" },
+      { streamId, after: "abc", through: "1" },
+      { streamId, after: "0.5", through: "1" },
+      { streamId, after: "0", through: "1e3" },
       { streamId: "not-a-uuid", after: "0", through: "1" },
       { streamId, after: "0" },
     ]) {
       const { status, body } = await span(query);
 
       expect(status).toBe(409);
-      expect(body).toMatchObject({
-        code: "PRECONDITION",
-        details: { reason: "invalid_event_span" },
-      });
+      expect(body).toEqual(documentedRefusal("409", "invalidSpan"));
     }
+  });
+
+  it("answers 503 runtime_storage_unavailable for a range whose retained rows are gone", async () => {
+    host = await bootHost();
+    for (let index = 0; index < 4; index += 1) append(host.hostState);
+    const streamId = host.hostState.getRuntimeEventStreamId();
+    const sqlite = new DatabaseSync(join(host.stateDir, "state.sqlite"));
+
+    try {
+      sqlite
+        .prepare(
+          "DELETE FROM runtime_event_outbox WHERE stream_id = ? AND sequence IN ('2', '3')",
+        )
+        .run(streamId);
+    } finally {
+      sqlite.close();
+    }
+    const { status, body } = await span({ streamId, after: "1", through: "3" });
+
+    expect(status).toBe(503);
+    expect(body).toEqual({
+      ...documentedRefusal("503", "rangeNotRetained"),
+      message: `runtime event span (1, 3] has no retained rows on stream ${streamId}`,
+    });
+    // A corrupt range is not a failed store: the host stays ready.
+    expect(host.hostState.runtimeStorageAvailable()).toBe(true);
   });
 });
