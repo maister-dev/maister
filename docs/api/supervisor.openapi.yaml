@@ -3369,6 +3369,7 @@ components:
         - event_payload_oversize
         - event_outbox_backpressure
         - health_query_invalid
+        - stream_health_unavailable
         - runtime_storage_unavailable
         - runtime_storage_pressure
         - runtime_output_buffer_capacity
