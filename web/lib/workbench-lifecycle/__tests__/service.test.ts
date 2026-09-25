@@ -554,6 +554,36 @@ describe("workbench lifecycle service", () => {
     });
   });
 
+  // The push is the one step nothing undoes: the lease is re-proven between the
+  // network read and it, so a publish that lost its slot never pushes.
+  it("export renews its lease after the remote read and never pushes on a lost one", async () => {
+    const d = deps(taskContext());
+
+    vi.mocked(d.renewLifecycleOperationLease).mockRejectedValueOnce(
+      new MaisterError(
+        "CONFLICT",
+        "lifecycle operation lease lost for workspace workspace-1",
+      ),
+    );
+
+    await expect(
+      exportWorkbenchBranch("run-1", {
+        remote: "origin",
+        snapshotDirty: false,
+        commitMessage: null,
+        deps: d,
+      }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+
+    expect(
+      vi.mocked(d.remoteBranchHead).mock.invocationCallOrder[0],
+    ).toBeLessThan(
+      vi.mocked(d.renewLifecycleOperationLease).mock.invocationCallOrder[0],
+    );
+    expect(d.pushBranch).not.toHaveBeenCalled();
+    expect(d.recordPublished).not.toHaveBeenCalled();
+  });
+
   it("export leaves transient push failures retryable", async () => {
     const d = deps(context());
 

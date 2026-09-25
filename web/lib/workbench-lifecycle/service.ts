@@ -1653,7 +1653,12 @@ export async function exportWorkbenchBranch(
       },
       "workbench publish",
     );
-
+    // Nothing undoes the push: re-prove the slot after the snapshot and the
+    // network read, so a publish whose lease lapsed never pushes.
+    await deps.renewLifecycleOperationLease({
+      workspaceId: workspace.id,
+      attemptId: claim.attemptId,
+    });
     await deps.pushBranch({
       projectRepoPath: workspace.parentRepoPath,
       remote,

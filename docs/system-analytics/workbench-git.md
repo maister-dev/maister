@@ -153,6 +153,7 @@ sequenceDiagram
     end
     Svc->>DB: claim lifecycle slot (exportBranch)
     Svc->>Git: ls-remote remote refs/heads/public (lease SHA, before push)
+    Svc->>DB: renew the lifecycle lease (a lapsed one refuses CONFLICT, nothing pushed)
     Svc->>Git: push --set-upstream [--force-with-lease=refs/heads/public:sha] remote internal:public
     alt non-fast-forward
         Git-->>Svc: rejected
