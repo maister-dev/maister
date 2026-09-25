@@ -167,5 +167,5 @@ states — lives under `workbenchGit`. EN + RU parity required.
 - Screens: [`flow-run.md`](flow-run.md), [`scratch-run.md`](scratch-run.md),
   [`run-inspector.md`](run-inspector.md), [`workbench.md`](workbench.md),
   [`../projects/project-board.md`](../projects/project-board.md).
-- Source (Designed): `web/components/workbench/git-panel.tsx`,
+- Source: `web/components/workbench/git-panel.tsx`,
   `web/lib/workbench-git/{policy,facts,read-model,service,public-branch-name}.ts`.
