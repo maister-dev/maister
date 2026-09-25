@@ -107,6 +107,11 @@ function httpStatusForCode(code: string): number {
   }
 }
 
+// ADR-181 C26: the one reason token this route's body carries — `busy`, a
+// live workbench claim owning the worktree. Every other typed error keeps the
+// documented `{code, message}` body.
+const FORWARDED_REASONS: ReadonlySet<string> = new Set(["busy"]);
+
 function errorResponse(err: unknown, runId: string): NextResponse {
   if (isMaisterError(err)) {
     const reason = (err.details as { reason?: unknown } | undefined)?.reason;
@@ -115,7 +120,9 @@ function errorResponse(err: unknown, runId: string): NextResponse {
       {
         code: err.code,
         message: err.message,
-        ...(typeof reason === "string" ? { details: { reason } } : {}),
+        ...(typeof reason === "string" && FORWARDED_REASONS.has(reason)
+          ? { details: { reason } }
+          : {}),
       },
       { status: httpStatusForCode(err.code) },
     );
