@@ -39,6 +39,13 @@ test("every lane still declares its owning suites and package", () => {
   }
 });
 
+test("the web lane runs the batched-ingest controls and never the opt-in load harness", () => {
+  for (const name of ["ingest-batch", "ingest-batch-walk", "ingest-batch-locks", "consumer-batching"])
+    assert.ok(laneSuites.web.includes(`lib/execution-host/events/__tests__/${name}.integration.test.ts`), name);
+  for (const files of Object.values(laneSuites))
+    assert.ok(!files.some((file) => file.includes("event-plane-load")), "the R20 harness is opt-in");
+});
+
 // The isolation suite builds the production web and owns two process trees,
 // so it never shares the host with a sibling worker.
 test("the isolation slice runs serially on any host", () => {

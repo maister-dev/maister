@@ -40,7 +40,10 @@ export const laneSuites = {
     "lib/runs/__tests__/resume-recovery.integration.test.ts",
     ...["commands", "immutable-commands", "command-recovery", "deliverer", "lifecycle-regression", "bounded-output", "runtime-object-retention", "runtime-object-lifecycle", "runtime-object-declarations-migration", "command-retirement", "prompt-owner-activation"]
       .map((name) => `lib/execution-host/__tests__/${name}.integration.test.ts`),
-    ...["ingest", "event-claim-lock", "projection-worker"]
+    // ADR-167 amendment 2026-09-25: the batched-ingest controls run on every
+    // push. The opt-in R20 load harness is never listed — its skip would fail
+    // the lane.
+    ...["ingest", "ingest-batch", "ingest-batch-walk", "ingest-batch-locks", "consumer-batching", "event-claim-lock", "projection-worker"]
       .map((name) => `lib/execution-host/events/__tests__/${name}.integration.test.ts`),
   ],
   // AT-16: one real production web (fresh `next build`, `server.ts`) under a

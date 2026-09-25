@@ -553,7 +553,7 @@ releases a reader waiting for space, so the reader cannot outlive it.
 | `B` — payload bytes per batch | 4 MiB | constant |
 | `T` — wait after a batch's first row | 250 ms (≤ half the 30 s claim lease) | constant |
 | Reader buffer | `4 × N` rows, 16 MiB | constants |
-| Pending-row page of the contiguity walk | 500 rows | constant |
+| Contiguity-walk window | 500 sequence positions (≤ 500 rows) | constant |
 
 **One batch transaction.** Envelopes are schema-validated before the
 transaction; an invalid one is recorded in `execution_event_ingest_failures`
@@ -579,9 +579,13 @@ and the call fails `ACP_PROTOCOL`, as before. Inside one transaction, in order:
 6. Insert every storable new envelope as `pending_gap` in one multi-row
    `INSERT … ON CONFLICT DO NOTHING RETURNING id`; the returned ids must equal
    the classified-new set, and a difference is a `CONFLICT` invariant.
-7. Walk the contiguous prefix: pending rows are read in pages of 500 from the
-   expected sequence, and the next page is read only when a full page was
-   consumed without a gap. Accepted rows allocate run sequences with one update
+7. Walk the contiguous prefix: each read covers the sequence window
+   `[expected, expected + 500)`. `host_sequence` is unique per stream, so a
+   window holds at most 500 rows whatever plan PostgreSQL chooses — a `LIMIT`
+   alone bounds the result, not the scan, and on fresh statistics the planner
+   was measured bitmap-scanning all 10 000 held rows to return 500. The next
+   window is read only when the walk reached the end of this one without a
+   gap. Accepted rows allocate run sequences with one update
    per distinct run. A run first met on a later page is locked, ascending,
    before that page allocates. The first remaining gap is one indexed probe.
    Then seed projection consumers once per promoted run.

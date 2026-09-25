@@ -2,6 +2,7 @@ import "server-only";
 
 import type { ExecutionHostTransport } from "@/lib/execution-host/contracts";
 import type { Db } from "@/lib/execution-host/db";
+import type { RuntimeEventEnvelope } from "@/lib/execution-host/runtime-events";
 
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
@@ -9,11 +10,13 @@ import { setTimeout as delay } from "node:timers/promises";
 import { and, eq, gt, isNull, lt, or } from "drizzle-orm";
 import pino, { type Logger } from "pino";
 
-import { ingestRuntimeEvent } from "./ingest";
+import { IngestBuffer, ingestBatchLimits } from "./batching";
+import { ingestRuntimeEventBatch } from "./ingest";
 import { runEventWakeBus } from "./run-wake";
 
 import { MaisterError } from "@/lib/errors";
 import { executionEventStreams } from "@/lib/db/schema";
+import { eventIngestBatchRows } from "@/lib/instance-config";
 import { isApplicationStopping } from "@/lib/server-lifecycle";
 
 const CLAIM_LEASE_MS = 30_000;
@@ -61,6 +64,8 @@ export type RuntimeEventStreamClaim = {
 
 export type RuntimeEventConsumerSummary = {
   received: number;
+  /** Committed ingest batches (ADR-167 amendment 2026-09-25). */
+  batches: number;
   acknowledged: number;
   duplicates: number;
   staleEpochs: number;
@@ -253,6 +258,17 @@ async function recordConsumerFailure(input: {
     );
 }
 
+type BufferedEnvelope = {
+  envelope: RuntimeEventEnvelope;
+  streamId: string;
+  bytes: number;
+};
+
+// One pass holds one claim per host stream. A reader pulls the stream into a
+// bounded buffer while a batcher commits it: one transaction and at most one
+// ACK per batch (ADR-167 amendment 2026-09-25). A full buffer stops the reader,
+// the socket fills, and the host pauses this subscriber — the durable outbox is
+// the buffer, never manager memory.
 export async function consumeRuntimeEventStreamOnce(input: {
   db: Db;
   executionHostId: string;
@@ -262,11 +278,14 @@ export async function consumeRuntimeEventStreamOnce(input: {
   signal?: AbortSignal;
   now?: () => Date;
   logger?: Logger;
+  /** Called after every committed batch and every confirmed ACK. */
+  onProgress?: () => void;
 }): Promise<RuntimeEventConsumerSummary> {
   const now = input.now ?? (() => new Date());
   const logger = input.logger ?? defaultLog;
   const summary: RuntimeEventConsumerSummary = {
     received: 0,
+    batches: 0,
     acknowledged: 0,
     duplicates: 0,
     staleEpochs: 0,
@@ -284,6 +303,37 @@ export async function consumeRuntimeEventStreamOnce(input: {
 
   input.signal?.addEventListener("abort", stop, { once: true });
   const maxEvents = input.maxEvents ?? Number.POSITIVE_INFINITY;
+  const acknowledge = async (
+    through: string,
+  ): Promise<"confirmed" | "unrecorded"> => {
+    const ack = await input.transport.acknowledgeRuntimeEvents({
+      streamId: claim!.streamId,
+      throughSequence: through,
+    });
+
+    if (
+      ack.streamId !== claim!.streamId ||
+      ack.acknowledgedThrough !== through
+    ) {
+      throw new MaisterError(
+        "ACP_PROTOCOL",
+        "execution host returned a mismatched runtime event acknowledgement",
+      );
+    }
+    const recorded = await recordConfirmedRuntimeEventAck({
+      db: input.db,
+      claim: claim!,
+      owner: input.owner,
+      throughSequence: ack.acknowledgedThrough,
+      now: now(),
+    });
+
+    if (!recorded) return "unrecorded";
+    summary.acknowledged += 1;
+    input.onProgress?.();
+
+    return "confirmed";
+  };
 
   try {
     // An abort received while the claim transaction waited is not replayed
@@ -295,106 +345,138 @@ export async function consumeRuntimeEventStreamOnce(input: {
         { details: { reason: "aborted" } },
       );
     }
+    // The last ACK this pass sent or found confirmed: a batch acknowledges only
+    // when it moves the contiguous watermark above it.
+    let lastAck =
+      claim?.acknowledgedThrough === undefined
+        ? null
+        : BigInt(claim.acknowledgedThrough);
+
     if (
       claim?.afterSequence !== undefined &&
       claim.acknowledgedThrough !== claim.afterSequence
     ) {
-      const ack = await input.transport.acknowledgeRuntimeEvents({
-        streamId: claim.streamId,
-        throughSequence: claim.afterSequence,
-      });
-
-      if (
-        ack.streamId !== claim.streamId ||
-        ack.acknowledgedThrough !== claim.afterSequence
-      ) {
-        throw new MaisterError(
-          "ACP_PROTOCOL",
-          "execution host returned a mismatched runtime event acknowledgement",
-        );
-      }
-      const recorded = await recordConfirmedRuntimeEventAck({
-        db: input.db,
-        claim,
-        owner: input.owner,
-        throughSequence: ack.acknowledgedThrough,
-        now: now(),
-      });
-
-      if (!recorded) {
+      if ((await acknowledge(claim.afterSequence)) === "unrecorded") {
         summary.reconnectRequired = true;
         summary.reconnectReason = "ack_record_failed";
 
         return summary;
       }
-      summary.acknowledged += 1;
+      lastAck = BigInt(claim.afterSequence);
     }
-    for await (const envelope of input.transport.streamRuntimeEvents({
-      afterSequence: claim?.afterSequence,
-      signal: controller.signal,
-    })) {
-      if (input.signal?.aborted) break;
-      const result = await ingestRuntimeEvent({
-        db: input.db,
-        executionHostId: input.executionHostId,
-        envelope,
-        now: now(),
-        logger,
-      });
+    const buffer = new IngestBuffer<BufferedEnvelope>(
+      ingestBatchLimits(eventIngestBatchRows()),
+    );
+    let readerFailure: { error: unknown } | null = null;
+    const reader = (async (): Promise<void> => {
+      let read = 0;
 
-      summary.received += 1;
-      summary.duplicates += result.disposition === "duplicate" ? 1 : 0;
-      summary.staleEpochs += result.staleEpochCount;
-
-      // A bootstrap connection has no stream row to claim until its first
-      // durable insert. Claim before ACK so only one manager owns the durable
-      // acknowledgement watermark thereafter.
-      claim ??= await claimRuntimeEventStream({
-        db: input.db,
-        executionHostId: input.executionHostId,
-        owner: input.owner,
-        now: now(),
-      });
-      if (!claim || claim.streamId !== result.streamId) {
-        summary.reconnectRequired = true;
-        summary.reconnectReason = "claim_lost";
-        break;
+      try {
+        for await (const envelope of input.transport.streamRuntimeEvents({
+          afterSequence: claim?.afterSequence,
+          signal: controller.signal,
+        })) {
+          if (buffer.isClosed) break;
+          buffer.push({
+            envelope,
+            streamId: envelope.streamId,
+            bytes: Buffer.byteLength(JSON.stringify(envelope.payload)),
+          });
+          read += 1;
+          // Never read past the pass's budget: maxEvents stays exact.
+          if (read >= maxEvents) break;
+          await buffer.space();
+        }
+      } catch (error) {
+        if (!controller.signal.aborted) readerFailure = { error };
+      } finally {
+        // Frames that arrived intact still commit before a failure surfaces.
+        buffer.end();
       }
-      if (result.contiguousThrough !== null) {
-        const ack = await input.transport.acknowledgeRuntimeEvents({
-          streamId: claim.streamId,
-          throughSequence: result.contiguousThrough,
+    })();
+
+    try {
+      for (;;) {
+        const batch = await buffer.next(maxEvents - summary.received);
+
+        if (!batch || input.signal?.aborted) break;
+        const result = await ingestRuntimeEventBatch({
+          db: input.db,
+          executionHostId: input.executionHostId,
+          envelopes: batch.map((frame) => frame.envelope),
+          claim: claim
+            ? {
+                streamRowId: claim.streamRowId,
+                owner: input.owner,
+                leaseMs: CLAIM_LEASE_MS,
+              }
+            : undefined,
+          now: now(),
+          logger,
         });
 
-        if (
-          ack.streamId !== claim.streamId ||
-          ack.acknowledgedThrough !== result.contiguousThrough
-        ) {
-          throw new MaisterError(
-            "ACP_PROTOCOL",
-            "execution host returned a mismatched runtime event acknowledgement",
-          );
-        }
-        const recorded = await recordConfirmedRuntimeEventAck({
+        summary.batches += 1;
+        summary.received += batch.length;
+        summary.duplicates += result.results.filter(
+          (row) => row.disposition === "duplicate",
+        ).length;
+        summary.staleEpochs += result.staleEpochCount;
+        input.onProgress?.();
+
+        // A bootstrap connection has no stream row to claim until its first
+        // durable insert. Claim before ACK so only one manager owns the
+        // durable acknowledgement watermark thereafter.
+        claim ??= await claimRuntimeEventStream({
           db: input.db,
-          claim,
+          executionHostId: input.executionHostId,
           owner: input.owner,
-          throughSequence: ack.acknowledgedThrough,
           now: now(),
         });
-
-        if (!recorded) {
+        if (!claim || claim.streamId !== result.streamId) {
           summary.reconnectRequired = true;
+          summary.reconnectReason = "claim_lost";
           break;
         }
-        summary.acknowledged += 1;
+        if (result.claimRenewed === false) {
+          // The batch committed (ingest is idempotent under the stream lock);
+          // the ACK is no longer this consumer's to send.
+          logger.warn(
+            {
+              hostId: input.executionHostId,
+              streamId: result.streamId,
+              owner: input.owner,
+            },
+            "runtime-event-consumer-claim-renew-missed",
+          );
+          summary.reconnectRequired = true;
+          summary.reconnectReason = "claim_lost";
+          break;
+        }
+        if (
+          result.contiguousThrough !== null &&
+          (lastAck === null || BigInt(result.contiguousThrough) > lastAck)
+        ) {
+          if ((await acknowledge(result.contiguousThrough)) === "unrecorded") {
+            summary.reconnectRequired = true;
+            summary.reconnectReason = "ack_record_failed";
+            break;
+          }
+          lastAck = BigInt(result.contiguousThrough);
+        }
+        // ACK is deliberately independent from every read-model reducer. The
+        // durable ingest row is sufficient for replay; a projection failure is
+        // retried through its own cursor and cannot trap the host outbox.
+        if (result.acceptedCount > 0) runEventWakeBus.wakeProjection();
+        if (summary.received >= maxEvents) break;
       }
-      // ACK is deliberately independent from every read-model reducer. The
-      // durable ingest row is sufficient for replay; a projection failure is
-      // retried through its own cursor and cannot trap the host outbox.
-      if (result.acceptedCount > 0) runEventWakeBus.wakeProjection();
-      if (summary.received >= maxEvents) break;
+    } finally {
+      buffer.close();
+      controller.abort();
+      await reader;
     }
+    const failed = readerFailure as { error: unknown } | null;
+
+    if (failed) throw failed.error;
   } catch (error) {
     const retryAt = new Date(now().getTime() + RECONNECT_MIN_MS);
 
@@ -422,13 +504,17 @@ type ConsumerLoop = {
   promise: Promise<void>;
   /** Last time this loop ingested or acknowledged anything. A loop that is
    * reconnect-spinning never advances it, which is the only way a caller can
-   * tell a wedged consumer from a healthy idle one. */
+   * tell a wedged consumer from a healthy idle one. A pass now stays open under
+   * load, so it advances per committed batch and per confirmed ACK — not only
+   * when a pass returns. */
   lastProgressAt: number;
 };
 
 /** A consumer that has made no progress for longer than this is replaced on the
  * next activation rather than left spinning. Matches the stream stall window. */
 const CONSUMER_STALL_MS = 300_000;
+
+export const RUNTIME_EVENT_CONSUMER_STALL_MS = CONSUMER_STALL_MS;
 
 export function runtimeEventConsumerStalled(
   loop: { lastProgressAt: number },
@@ -493,6 +579,9 @@ export function startRuntimeEventConsumer(input: {
           owner,
           signal: controller.signal,
           logger,
+          onProgress: () => {
+            loop.lastProgressAt = Date.now();
+          },
         });
 
         if (summary.received > 0 || summary.acknowledged > 0)
