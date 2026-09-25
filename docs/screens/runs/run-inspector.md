@@ -127,7 +127,9 @@ inspector must not repeat branch/worktree facts already visible there.
    `finalizePr`, `reattach`) link to `/runs/{runId}?git=<section>`
    ([`git-panel.md`](git-panel.md)), which is where Update — the former Sync
    branch dialog — now lives. An item with no target is not listed at all,
-   rather than rendered as inert text.
+   rather than rendered as inert text. A disabled item keeps its link, because
+   the section it opens says why; its reason describes the link
+   (`aria-describedby`), which is never marked `aria-disabled`.
 
 The inspector should keep text compact and use icons for repeated controls. It
 must not duplicate the main Flow result, conversation, or full diff.
