@@ -34,6 +34,11 @@ function payloadPath(runId: string, artifactId: string): string {
 }
 
 test.describe("P0-5 consensus inbox evidence", () => {
+  // One seed for both locales: under `fullyParallel` each worker runs its own
+  // `beforeAll`, so two workers raced the task number
+  // (`tasks_project_number_uq`) or left two identical cards in the inbox.
+  test.describe.configure({ mode: "serial" });
+
   test.beforeAll(async () => {
     const projectId = loadFixtures().byKey.m17.project2Id;
     const { rows } = await pool.query<{ flow_id: string }>(
