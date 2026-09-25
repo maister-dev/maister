@@ -2185,6 +2185,32 @@ red, restored.
 - Verified: the rebased tree equals a trial merge of the pre-rebase head with
   `8ff196d4`, renumbered the same way, except the regenerated snapshot. The
   pre-rebase head is kept as `backup/run-management-pre-rebase-2026-09-25`.
+- The first lane on the rebased tree found a semantic conflict that no text
+  merge shows (Commit 39 `85a3e45f`). To carry its `busy` refusal, the branch
+  made the scratch recover route forward every thrown `details.reason`.
+  Master had since documented that route's ADR-167 D5 503 as "the body carries
+  only `code` and `message`", and its new case failed on the leaked
+  `prompt_incarnation_pending`. The route now forwards only `busy`.
+- **Lanes on the rebased tree (final tree `85a3e45f`).**
+  - Web unit: 855 files / 8936 tests, 0 red.
+  - Supervisor unit: 45 / 449, 0 red. Supervisor integration: 27 / 247, 0 red.
+  - Web integration: 533 files / 4741 tests, 2 red and 1 file whose setup
+    failed. Each passed alone:
+    - `execution-ab-partitions` P4, 6/6 alone;
+    - `durable-workers-concurrency` E, 3/3 alone;
+    - `ext/projects/[slug]/flows`: Docker ran out of host ports at setup,
+      4/4 alone.
+  - e2e (`--workers=2`, no `CI`; re-run after a clamshell sleep at 19:20 had
+    frozen the first run's dev server): 196 passed, 4 failed, 4 flaky.
+    - The four failures are the documented set: `desk:205`,
+      `platform-agents-page:26`, `review-diff-scopes:43`,
+      `studio-ai-assistant:69`.
+    - Flaky: `desk:454`, `desk:485`, `push-notifications:103`, `work-table:97`.
+      `desk:485` is master's Desk code (no line of this branch). It failed 1
+      of 2 solo runs because two `desk-empty` copies rendered, one hidden; it
+      is flagged as a separate task.
+  - Battery, all exit 0: `next build`, the web, supervisor and mcp
+    typechecks, the mcp build, `validate:docs:all` and `validate:contracts`.
 
 **Post-review fix lanes (the pre-rebase tree `2a42866c`, 2026-09-25; re-run on the rebased tree below).**
 - Battery, all exit 0: `next build`, the web, supervisor and mcp typechecks,
