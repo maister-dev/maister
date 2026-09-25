@@ -283,7 +283,8 @@ is `CONFLICT`, the rest `PRECONDITION`), and an unknown run is 404 with
   route) refuse `CONFLICT` `details.reason:"busy"` while either claim is live;
   two concurrent writers on one workspace MUST yield one success and one
   `MaisterError("CONFLICT")` (enforced by `claimLifecycleOperation`, the
-  promotion reverse fence and `workbenchClaimHoldsTree`, the `workspaces` row
+  promotion reverse fence and `workbenchClaimHolder` — the one "who holds the
+  tree" rule the facts' `busy` and both recovers read — the `workspaces` row
   lock before the `runs` row lock).
 - Publish MUST push `refs/heads/<internal>:refs/heads/<public>` with
   `--set-upstream`, lease against the `ls-remote` SHA captured BEFORE the push,

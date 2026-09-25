@@ -103,21 +103,46 @@ export function promotionClaimIsLive(workspace: {
   );
 }
 
-/**
- * ADR-181 C26: whether a live workbench claim owns the worktree right now — a
- * lifecycle operation inside its lease, or a promotion inside its window. Both
- * recovers read it before they put an agent back into the tree; it is the rule
- * the git policy's `busy` and both claims apply, so none of them can disagree.
- */
-export function workbenchClaimHoldsTree(workspace: {
+type WorkbenchClaimSlots = {
   lifecycleOperationState?: string | null;
+  lifecycleOperationName?: string | null;
+  lifecycleOperationClaimedAt?: Date | null;
   lifecycleOperationLeaseExpiresAt?: Date | null;
   promotionState?: string | null;
   promotionClaimedAt?: Date | null;
-}): boolean {
-  return (
-    ((workspace.lifecycleOperationState ?? "none") === "claiming" &&
-      !canReclaimLifecycle(workspace)) ||
-    promotionClaimIsLive(workspace)
-  );
+};
+
+/**
+ * ADR-181 C26: the live workbench claim that owns the worktree right now — a
+ * lifecycle operation inside its lease, else a promotion inside its window —
+ * or null. It is the rule the git policy's `busy`, both claims and both
+ * recovers apply, so none of them can disagree.
+ */
+export function workbenchClaimHolder(
+  workspace: WorkbenchClaimSlots,
+): { name: string; claimedAt: Date | null } | null {
+  if (
+    (workspace.lifecycleOperationState ?? "none") === "claiming" &&
+    !canReclaimLifecycle(workspace)
+  ) {
+    return {
+      name: workspace.lifecycleOperationName ?? "unknown",
+      claimedAt: workspace.lifecycleOperationClaimedAt ?? null,
+    };
+  }
+  if (promotionClaimIsLive(workspace)) {
+    return {
+      name: "promotion",
+      claimedAt: workspace.promotionClaimedAt ?? null,
+    };
+  }
+
+  return null;
+}
+
+// Both recovers read it before they put an agent back into the tree.
+export function workbenchClaimHoldsTree(
+  workspace: WorkbenchClaimSlots,
+): boolean {
+  return workbenchClaimHolder(workspace) !== null;
 }

@@ -6,10 +6,7 @@ import pino from "pino";
 
 import { isLaunchedLineageRun } from "@/lib/evaluations/membership";
 import { getActiveAssignment } from "@/lib/execution-host/assignments";
-import {
-  canReclaimLifecycle,
-  promotionClaimIsLive,
-} from "@/lib/runs/lifecycle-claim";
+import { workbenchClaimHolder } from "@/lib/runs/lifecycle-claim";
 import { openReworkClaimOwnerUserId } from "@/lib/runs/rework-claim";
 import { countUnsettledSharedSiblings } from "@/lib/runs/shared-tree";
 import { syncShapeRefusal } from "@/lib/runs/sync-shape";
@@ -187,22 +184,7 @@ export async function loadWorkbenchGitFacts(args: {
     ? presence.get(workspace.worktreePath) === true
     : false;
   const hasLiveSharedSibling = siblings > 0;
-  const lifecycleHeld =
-    workspace !== null &&
-    (workspace.lifecycleOperationState ?? "none") === "claiming" &&
-    !canReclaimLifecycle(workspace);
-  const promotionHeld = workspace !== null && promotionClaimIsLive(workspace);
-  const busy = lifecycleHeld
-    ? {
-        name: workspace.lifecycleOperationName ?? "unknown",
-        claimedAt: workspace.lifecycleOperationClaimedAt ?? null,
-      }
-    : promotionHeld
-      ? {
-          name: "promotion",
-          claimedAt: workspace.promotionClaimedAt ?? null,
-        }
-      : null;
+  const busy = workspace ? workbenchClaimHolder(workspace) : null;
   const usable =
     workspace !== null && workspace.removedAt === null && worktreePresent;
   const reattachSources =
