@@ -209,6 +209,15 @@ export async function loadWorkbenchGitFacts(args: {
     workspace && !usable
       ? await resolveReattachSources(run.id, workspace, degraded)
       : NO_SOURCES;
+  // No source found is "none" only when every probe answered; a failed probe
+  // leaves it unknown, and the revival re-probes (C32).
+  const reattachSource = usable
+    ? null
+    : Object.values(reattachSources).some((sha) => sha !== null)
+      ? true
+      : degraded.includes("reattachSources")
+        ? null
+        : false;
   const updateSupported =
     syncShapeRefusal({
       runKind: run.runKind,
@@ -236,9 +245,7 @@ export async function loadWorkbenchGitFacts(args: {
       prUrl: workspace?.prUrl ?? null,
       prState: prStateOf(workspace?.prState),
       updateSupported,
-      reattachSource: usable
-        ? null
-        : Object.values(reattachSources).some((sha) => sha !== null),
+      reattachSource,
     },
     claimOwnerUserId,
     worktreePresent,

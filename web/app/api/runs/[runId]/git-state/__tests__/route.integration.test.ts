@@ -53,6 +53,38 @@ vi.mock("@/lib/authz", () => ({
   requireProjectAction: (...args: unknown[]) => requireProjectAction(...args),
 }));
 
+type ProbedRead = "listRemotes" | "localBranchHead";
+
+// The facts loader's own git reads run real git unless a case names one here,
+// which then rejects the way a broken repo would.
+let failingRead: {
+  name: ProbedRead;
+  when: (args: Record<string, unknown>) => boolean;
+} | null = null;
+
+vi.mock("@/lib/worktree", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/lib/worktree")>();
+
+  function failable<A extends Record<string, unknown>, R>(
+    name: ProbedRead,
+    read: (args: A) => Promise<R>,
+  ): (args: A) => Promise<R> {
+    return async (args) => {
+      if (failingRead?.name === name && failingRead.when(args)) {
+        throw new Error(`${name} failed: bad config line 1`);
+      }
+
+      return read(args);
+    };
+  }
+
+  return {
+    ...real,
+    listRemotes: failable("listRemotes", real.listRemotes),
+    localBranchHead: failable("localBranchHead", real.localBranchHead),
+  };
+});
+
 let testDatabase: StartedPostgresTestDb;
 let root: string;
 let repo: BareRemoteRepo;
@@ -77,6 +109,7 @@ beforeEach(async () => {
   await testDatabase.pool.query(`DELETE FROM "execution_hosts"`);
   root = await mkdtemp(join(tmpdir(), "wg-state-"));
   repo = await initRepoWithBareRemote(root);
+  failingRead = null;
   requireProjectAction.mockReset();
   requireProjectAction.mockImplementation(async () => undefined);
 });
@@ -282,6 +315,53 @@ describe("GET /api/runs/{runId}/git-state", () => {
     expect(state.warnings).toContain("publishedRemoteHead");
     // The tracking ref still answers the local questions.
     expect(state.unpushedCommits).toBe(1);
+  });
+
+  // C32: a fact the loader could not establish is "not probed" — it never
+  // hides an action (the action re-probes) and never costs the request.
+  it("reads a failed remote listing as not probed: 200, a warning, publish still offered", async () => {
+    const run = await publishedFailedRun();
+
+    failingRead = { name: "listRemotes", when: () => true };
+
+    const state = await body(run.runId);
+
+    expect(state.remotes).toEqual([]);
+    expect(state.warnings).toEqual(["remotes"]);
+    expect(enabled(state)).toEqual(
+      expect.arrayContaining(["exportBranch", "openPr"]),
+    );
+  });
+
+  it("reads a failed re-attach source probe as not probed, not as no source", async () => {
+    const branch = "maister/task-unprobed/attempt-1";
+    const worktree = await addRunWorktree(root, repo.parent, branch);
+
+    await gitIn(repo.parent, ["worktree", "remove", "--force", worktree]);
+
+    const seed = await seedWorkbenchRun(db, {
+      parentRepoPath: repo.parent,
+      worktreePath: worktree,
+      branch,
+      status: "Abandoned",
+      removedAt: new Date(),
+    });
+
+    // Only the run's own branch read fails; the target head still resolves.
+    failingRead = {
+      name: "localBranchHead",
+      when: (args) => args.branch === branch,
+    };
+
+    const state = await body(seed.runId);
+
+    expect(state.reattachSources).toEqual({
+      local: null,
+      published: null,
+      archive: null,
+    });
+    expect(state.warnings).toEqual(["reattachSources"]);
+    expect(enabled(state)).toEqual(["reattach"]);
   });
 
   it("offers only reattach for a removed workspace, naming the local source", async () => {

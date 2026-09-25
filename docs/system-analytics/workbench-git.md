@@ -408,6 +408,11 @@ is `CONFLICT`, the rest `PRECONDITION`), and an unknown run is 404 with
 - `ls-remote` of the public branch fails → `git-state` answers 200 with
   `remoteReachable:false`, `publishedRemoteHead:null` and a warning; the route
   never errors on a degraded sub-read.
+- The remote listing or a re-attach source probe fails → `git-state` answers
+  200 and names `remotes` / `reattachSources` in `warnings`; the policy reads
+  the fact as not probed, so Publish, Open PR and Re-attach stay offered and the
+  action re-probes (a re-attach with nothing resolvable still refuses
+  `no_reattach_source`). "No source" needs every probe to have answered.
 - Transient push, fetch or provider failure → `MaisterError("EXECUTOR_UNAVAILABLE")`
   (503); the claim stays retryable and no after-side row is written.
 - Viewer role → `MaisterError("UNAUTHORIZED")` (403) on every route, including
