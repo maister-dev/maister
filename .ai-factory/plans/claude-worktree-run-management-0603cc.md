@@ -2212,6 +2212,67 @@ red, restored.
   - Battery, all exit 0: `next build`, the web, supervisor and mcp
     typechecks, the mcp build, `validate:docs:all` and `validate:contracts`.
 
+**Option C — no force-push drops the publication's own commits (owner,
+2026-09-25: "C, now, everywhere").** The follow-up below ("Update with push
+drops remote-only commits without asking") is decided as C, which covers every
+force-push of a run branch, not only the panel's Update.
+
+| # | Change | Commit |
+|---|---|---|
+| C1 | One guard, `lib/runs/publication-guard.ts`, before every forced run-branch push. After a fetch it counts the commits reachable from the lease head that are in neither the pushed result's ref, nor any head the run branch's reflog records, nor the same patch as one of the run's own; merges do not count. The sync refuses `CONFLICT` `publication_diverged` (`remoteHead`, `remoteRef`, `remoteOnlyCommits`) before its claim; only the web route's `expectedRemoteHead` confirms, and only for the `workbench` admission, and the push then leases exactly that head. The squashing PR promotion refuses before its squash and releases its claim. The ext API, `ai_rebase_merge` and the resolver cannot confirm. | 40 `36bfa05b` |
+| C2 | The panel's Update refusal dialog: the same update onto the publication first (primary), or "Overwrite N commits" with `expectedRemoteHead`; a moved publication re-asks with its new head. The review panel and the header's one-click Promote show a refused promotion as that, never as the merge-conflict card. | 41 `d21430d6` |
+| C3 | One step further than the primary way out: after the update onto the publication, the update onto the target asks nothing and keeps the reviewer's commit. | 42 `48f792af` |
+| C4 | D10's static guard lists every exported filesystem wrapper; `remoteOnlyCommitCount` was missing (found by the full unit lane on Commit 40). | 43 `a97fee20` |
+
+- Publish needed no new check: every publish force was already confirmed
+  against the exact head (M1, Commit 20). The handoff branch never forces.
+- Found before C1 was committed: counting by patch alone refused a retry after
+  an update whose push never landed. A clean rebase that shifts a hunk's
+  context changes its patch id, so the run's own old commit on the remote
+  counted as the publication's (scratch repo: count 1; sync suite: refused).
+  The branch's reflog records every head the branch had, so the count now
+  excludes them. The same record covers the squash reclaim, so the
+  pre-squash ref the first draft wrote (`refs/maister/pre-squash/<runId>`,
+  plus a `squashRunBranch` option) was removed before the commit. With
+  reflogs expired or off, only the patch match is left and such a push is
+  refused, never guessed.
+- Falsified, each seen red and restored: without the reflog exclusion (the
+  rewrite case and the squash case, 2 instead of 0); without `--cherry-pick`
+  (the expired-reflog case); without the known reason, without the dialog's
+  head check, and with the promote helper keyed on the code (the plain
+  `CONFLICT` controls).
+- **Lanes on the C tree (2026-09-26; two other sessions ran vitest lanes
+  and a VM held ~430 % CPU, load 9–270).**
+  - Battery, all exit 0: `next build`, the web, supervisor and mcp
+    typechecks, the mcp build, `validate:docs:all` and `validate:contracts`.
+  - Supervisor unit: 45 files / 452 tests, 0 red. Supervisor integration: 28
+    files / 252 tests, 0 red.
+  - Web unit: 857 files / 8950 tests.
+    - The first run, on Commit 42, had 1 red: D10's wrapper inventory lacked
+      `remoteOnlyCommitCount`. Fixed by Commit 43.
+    - The re-run on Commit 43 had 1 different red: `continuation-observability`
+      hit its 5 s timeout at load 270. The same file failed on `master` at
+      load 212 (1 of 2 runs) and passed 2/2 alone at load 13.
+  - Web integration: 533 files / 4753 tests, 3 red, 1 skipped. The skip is
+    `host-span-load`'s opt-in `describe.skipIf`. The reds were
+    `bounded-output` AT-07 and `launch-paths` P2/P3, at load ~120. Alone at
+    load ~15 they passed 26/26 and 4/4. Neither file is touched by this
+    branch.
+  - e2e (`--workers=2`, no `CI`, load 81 at start): 195 passed, 3 failed, 7
+    flaky.
+    - Failed, all documented: `platform-agents-page:26`,
+      `studio-ai-assistant:69` and `review-diff-scopes:99`. That file's
+      failing case trades between `:43` and `:99`.
+    - Flaky, passed on retry: `admin-execution-host:46` and
+      `studio-package-viewer:56` (both 2/2 alone), `review-diff-scopes:43`,
+      `scratch-detail:50`, and three in one class.
+    - That class is `desk:454` and `push-notifications:103/218`: strict-mode
+      violations on page content. React parks a streamed copy of every `(app)`
+      page outside `<main>`, and the attention stream's first refresh renders
+      another copy into it. The Desk is fixed on its own branch off `master`
+      (`claude/desk-empty-streamed-duplicate`, `3232dcac`). The other specs in
+      that class are not scoped yet.
+
 **Post-review fix lanes (the pre-rebase tree `2a42866c`, 2026-09-25; re-run on the rebased tree below).**
 - Battery, all exit 0: `next build`, the web, supervisor and mcp typechecks,
   the mcp build, `validate:docs:all` and `validate:contracts`.
@@ -2466,7 +2527,8 @@ are put to the owner rather than widened silently:
   already loose (`Review` / `Crashed` hold no slot) and is looser now.
 
 - **Update with push drops remote-only commits without asking (found while
-  sweeping force paths for review finding M1; owner's call).**
+  sweeping force paths for review finding M1) → option C, every run-branch
+  force-push (owner, 2026-09-25): Commits 40-43.**
   - What happens: `syncRunTarget` force-pushes the rebased branch with an
     explicit-SHA lease. That is ADR-141's rule, and ADR-181 D9 made it reachable
     from the panel in every parked status. The lease is the `ls-remote` head
@@ -2576,3 +2638,4 @@ are put to the owner rather than widened silently:
 |---|---|---|---|
 | 1 | Fix the MAJOR findings now, or together with codex's | **now** | Commits 20-36 |
 | 2 | MINOR too | **all** | Commits 20-36 |
+| 3 | An update's push drops commits only the publication has: A (keep ADR-141), B (confirm when behind), or C (count them, refuse, confirm only in the panel) | **C, now, everywhere** | Commits 40-43 |
