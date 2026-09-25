@@ -944,6 +944,40 @@ describe("WorkbenchGitPanel — Pull request", () => {
     expect(byTestId("git-panel-pr-finalize-anyway")).toBeNull();
   });
 
+  // D13: the server refuses any other target (`target_locked`), so the panel
+  // never offers an edit it would refuse.
+  it("shows a scratch run's PR target read-only, locked to its branch", async () => {
+    states = [
+      published({
+        runKind: "scratch",
+        prDefaults: {
+          title: "Scratch",
+          body: "http://localhost/runs/run-1",
+          targetBranch: "release",
+        },
+      }),
+    ];
+    render();
+    await settle();
+
+    const target = must<HTMLInputElement>("git-panel-pr-target");
+
+    expect(target.value).toBe("release");
+    expect(target.readOnly).toBe(true);
+    expect(must("git-panel-pr-target-locked").textContent).toBe(
+      "workbenchGit.pr.targetLocked",
+    );
+  });
+
+  it("keeps a flow run's PR target editable, with no lock note", async () => {
+    states = [published()];
+    render();
+    await settle();
+
+    expect(must<HTMLInputElement>("git-panel-pr-target").readOnly).toBe(false);
+    expect(byTestId("git-panel-pr-target-locked")).toBeNull();
+  });
+
   it("marks a scratch run's PR as not tracked (the scan skips scratch)", async () => {
     states = [
       published({

@@ -127,6 +127,7 @@ const KNOWN_REASONS = new Set([
   "published_remote_not_origin",
   "publish_stale",
   "target_branch_unknown",
+  "target_locked",
   "provider_unsupported",
   "agent_requires_review",
   "base_branch_unknown",
@@ -583,6 +584,8 @@ export function WorkbenchGitPanel({
     ? state.worktreePresent && !state.workspaceRemoved
     : false;
   const nameFixed = state?.upstream != null && state.upstream.remote === remote;
+  // D13: a scratch run's PR target is locked by its scratch row.
+  const targetLocked = state?.runKind === "scratch";
 
   return (
     <div
@@ -1007,11 +1010,24 @@ export function WorkbenchGitPanel({
                     {t("pr.target")}
                   </span>
                   <input
+                    aria-describedby={
+                      targetLocked ? "git-panel-pr-target-locked" : undefined
+                    }
                     className={inputClass}
                     data-testid="git-panel-pr-target"
+                    readOnly={targetLocked}
                     value={prTarget ?? ""}
                     onChange={(event) => setPrTarget(event.target.value)}
                   />
+                  {targetLocked ? (
+                    <span
+                      className="font-mono text-[10px] text-ink-2"
+                      data-testid="git-panel-pr-target-locked"
+                      id="git-panel-pr-target-locked"
+                    >
+                      {t("pr.targetLocked")}
+                    </span>
+                  ) : null}
                 </label>
                 <label className="flex items-center gap-2 font-mono text-[10px] text-ink-2">
                   <input

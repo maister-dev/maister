@@ -357,8 +357,10 @@ is `CONFLICT`, the rest `PRECONDITION`), and an unknown run is 404 with
   `pull_request` promotion does (one resolution, `preflightedPrAdapter`).
 - A scratch run's Open PR targets its locked branch
   (`scratch_runs.target_branch ?? base_branch`), as its promotion does; another
-  target is refused `MaisterError("PRECONDITION")`, so a later finalize from
-  `Review` finds the same PR by head/base.
+  target is refused `MaisterError("PRECONDITION")` `target_locked` (enforced by
+  `scratchPromotionTarget`, shared with the promotion), so a later finalize from
+  `Review` finds the same PR by head/base. The panel shows that target
+  read-only.
 - Branch published to a remote other than `origin` → open PR refuses
   `MaisterError("PRECONDITION")` `published_remote_not_origin`; cross-repository
   PRs are out of scope.

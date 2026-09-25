@@ -33,6 +33,9 @@ export type WorkbenchRunSeed = {
   // The allocator of a shared writable tree (ADR-102): `shared` + `worktree`,
   // rooted at itself, so siblings join it by `root_run_id = runId`.
   sharedTreeAllocator?: boolean;
+  // Required for `runKind: "scratch"`: no production writer creates a scratch
+  // run without its `scratch_runs` row, which locks its promote and PR target.
+  scratch?: { createdByUserId: string; targetBranch?: string | null };
 };
 
 export type SeededWorkbenchRun = {
@@ -104,6 +107,24 @@ export async function seedWorkbenchRun(
     startedAt: new Date(),
     endedAt: new Date(),
   });
+
+  if (seed.runKind === "scratch") {
+    if (!seed.scratch || !seed.baseCommit) {
+      throw new Error(
+        "seedWorkbenchRun: a scratch run needs seed.scratch and seed.baseCommit for its scratch_runs row",
+      );
+    }
+    await db.insert(schema.scratchRuns).values({
+      runId,
+      projectId,
+      initialPrompt: "p",
+      baseBranch: seed.baseBranch ?? "main",
+      baseCommit: seed.baseCommit,
+      targetBranch: seed.scratch.targetBranch ?? null,
+      dialogStatus: "Review",
+      createdByUserId: seed.scratch.createdByUserId,
+    });
+  }
 
   const published = seed.published ?? null;
 

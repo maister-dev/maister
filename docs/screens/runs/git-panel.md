@@ -91,7 +91,9 @@ An unknown value opens the default section.
 5. **PR** — once the branch is published, the section is the Open PR form:
    title, body, target and a draft checkbox, pre-filled by the server
    (`prDefaults`: the task key and title, the run link); before that it says
-   to publish first. A `reused` answer says the existing PR was returned
+   to publish first. A scratch run's target is read-only, with a note that it
+   is locked to the run's branch (the server refuses any other as
+   `target_locked`). A `reused` answer says the existing PR was returned
    untouched and nothing was applied. **Finalize** is shown while a PR is
    recorded and disabled with a reason when the PR is closed or the run is not
    finalizable. From `Review` it sends the target head the panel rendered, and

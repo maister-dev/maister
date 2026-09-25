@@ -6550,8 +6550,9 @@ paths:
             (ADR-181 — Implemented) The body carries `details.reason` where a
             token exists: `target_drift` (the target advanced since review),
             `target_branch_unknown` (the target does not resolve to a commit),
-            `provider_unsupported` (PR mode with no usable provider) — the only
-            `details` field forwarded.
+            `target_locked` (a scratch run promoted onto a branch other than its
+            locked target), `provider_unsupported` (PR mode with no usable
+            provider) — the only `details` field forwarded.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -9959,6 +9960,8 @@ paths:
             head differs from the local `HEAD` — publish first),
             `target_branch_unknown` (the target does not resolve to a commit —
             the same rule `promoteRun` applies to a `targetBranch` override),
+            `target_locked` (a scratch run's PR onto a branch other than its
+            locked `scratch_runs.target_branch ?? base_branch`),
             `provider_unsupported` (a `generic` provider, or the provider CLI or
             token is missing — exactly as `pull_request` promotion refuses), or
             a workbench git policy refusal (`live_workbench`, `human_owned`,

@@ -541,6 +541,7 @@ export function scratchPromotionTarget(
     throw new MaisterError(
       "PRECONDITION",
       `promotion target branch is outside project policy: ${target}`,
+      { details: { reason: "target_locked" } },
     );
   }
 

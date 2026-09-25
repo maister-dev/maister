@@ -144,13 +144,17 @@ function post(runId: string, body: unknown = {}) {
   );
 }
 
-// A Failed run whose branch is pushed under its public name and recorded.
+const SCRATCH_OWNER = "user-1";
+
+// A Failed run whose branch is pushed under its public name and recorded. With
+// `scratch`, a Review scratch run whose `scratch_runs` row locks the target.
 async function publishedRun(
   opts: {
     published?: boolean;
     publishedRemote?: string;
     prUrl?: string | null;
     provider?: string;
+    scratch?: { targetBranch: string | null };
   } = {},
 ) {
   const branch = `maister/task-${randomUUID().slice(0, 8)}/attempt-1`;
@@ -170,14 +174,39 @@ async function publishedRun(
     ]);
   }
 
+  if (opts.scratch) {
+    await db
+      .insert(schema.users)
+      .values({
+        id: SCRATCH_OWNER,
+        email: `${SCRATCH_OWNER}@maister.test`,
+        role: "member",
+        accountStatus: "active",
+        passwordHash: "x",
+      })
+      .onConflictDoNothing();
+  }
+
   const seed = await seedWorkbenchRun(db, {
     parentRepoPath: repo.parent,
     worktreePath: worktree,
     branch,
     baseCommit: repo.baseSha,
-    status: "Failed",
-    taskKey: "ABC",
-    task: { number: 1, title: "Open a PR" },
+    ...(opts.scratch
+      ? {
+          runKind: "scratch" as const,
+          status: "Review",
+          task: null,
+          scratch: {
+            createdByUserId: SCRATCH_OWNER,
+            targetBranch: opts.scratch.targetBranch,
+          },
+        }
+      : {
+          status: "Failed",
+          taskKey: "ABC",
+          task: { number: 1, title: "Open a PR" },
+        }),
     published: opts.published === false ? null : { branch: PUBLIC, remote },
     prUrl: opts.prUrl ?? null,
     prNumber: opts.prUrl ? 1 : null,
@@ -323,6 +352,47 @@ describe("POST /api/runs/{runId}/pr", () => {
 
     expect(ws.prUrl).toBeNull();
     // A typed refusal before the provider call never holds the slot.
+    expect(ws.lifecycleOperationState).not.toBe("claiming");
+  });
+
+  // D13: a scratch run's target is locked by its `scratch_runs` row, never by
+  // the workspace's own `target_branch` (seeded as `main` here).
+  it("opens a scratch run's PR onto the target its scratch row locks", async () => {
+    await gitIn(repo.parent, ["branch", "release", "main"]);
+    await gitIn(repo.parent, ["push", "-q", "origin", "release"]);
+    const run = await publishedRun({ scratch: { targetBranch: "release" } });
+
+    const res = await post(run.runId);
+
+    expect(res.status).toBe(200);
+    expect((await res.json()).targetBranch).toBe("release");
+    expect(createOrUpdatePr).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceBranch: PUBLIC,
+        targetBranch: "release",
+      }),
+    );
+    expect((await workspaceRow(db, run.workspaceId)).targetBranch).toBe(
+      "release",
+    );
+  });
+
+  it("refuses a scratch PR onto any other target as target_locked, before a claim or a provider call", async () => {
+    await gitIn(repo.parent, ["branch", "release", "main"]);
+    await gitIn(repo.parent, ["push", "-q", "origin", "release"]);
+    const run = await publishedRun({ scratch: { targetBranch: "release" } });
+
+    const res = await post(run.runId, { targetBranch: "main" });
+    const body = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(body.code).toBe("PRECONDITION");
+    expect(body.details?.reason).toBe("target_locked");
+    expect(createOrUpdatePr).not.toHaveBeenCalled();
+
+    const ws = await workspaceRow(db, run.workspaceId);
+
+    expect(ws.prUrl).toBeNull();
     expect(ws.lifecycleOperationState).not.toBe("claiming");
   });
 
