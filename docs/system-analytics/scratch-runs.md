@@ -151,6 +151,8 @@ stateDiagram-v2
 
     Running --> WaitingForUser: prompt completed
     WaitingForUser --> Running: user sends message
+    Running --> Running: user message steered or queued
+    WaitingForUser --> Running: queued message dispatched
     Running --> NeedsInput: ACP permission request
     NeedsInput --> Running: operator responds
     NeedsInput --> Crashed: HITL timeout
@@ -173,7 +175,7 @@ stateDiagram-v2
 | `scratch_runs.dialog_status` | `runs.status` | Active workspace label | Meaning |
 | --- | --- | --- | --- |
 | `Starting` | `Running` | `Running` | Setup, worktree, session, or first prompt is in flight. |
-| `Running` | `Running` | `Running` | A prompt is actively running in the supervisor session. |
+| `Running` | `Running` | `Running` | A prompt is actively running in the supervisor session. A message sent now is appended at once and steered into the running turn or queued for the next one (`run_messages.delivery`); the status does not change (Implemented — ADR-182). |
 | `WaitingForUser` | `Running` | `WaitingForUser` | Session is live and idle between dialog turns. |
 
 A project scratch turn's `Running -> WaitingForUser` transition is applied by
@@ -266,6 +268,22 @@ File-write failure happens before the message row is visible and returns a
 retryable `EXECUTOR_UNAVAILABLE`. Prompt-delivery failure after the DB commit
 keeps the user message visible and uses the existing retryable/crashed dialog
 status handling.
+
+Message rules while the agent is busy (Implemented — [ADR-182](../decisions/adr-182.md)):
+
+- `WaitingForUser` → `mode: "prompt"`: the message becomes the next turn at
+  once — unless older rows are still `delivery = 'queued'`; then the new row is
+  appended `queued` behind them and the oldest is dispatched first.
+- `Starting | Running` → `mode: "busy"`: the row is appended with
+  `delivery = 'steered'` (a `session.steer` names the running scratch prompt,
+  whose incarnation advertised steering) or `delivery = 'queued'`; the dialog
+  status is unchanged and the route answers 202 at acceptance with `delivery`
+  (no `stopReason`). A refused steer flips the row `steered → queued`.
+- `NeedsInput`, `Review`, `Crashed`, `Done`, `Abandoned` → `409 CONFLICT`.
+- Queued rows are dispatched oldest first by `dispatchQueuedScratchMessages`
+  after the previous turn's `WaitingForUser` commit, after a refused steer,
+  and by the next send; the CAS `queued → prompted` guarantees one prompt per
+  row. The composer has no client-side queue: a reload loses nothing.
 
 ### Permission HITL in scratch dialog (Implemented)
 
@@ -463,8 +481,12 @@ history automatically.
   never write them under `workspaces.worktree_path`.
 - Scratch uploaded-file API responses MUST expose client-safe metadata and a
   rootless `artifactRef`; absolute `storage_path` is server-only.
-- Scratch dialog message sends MUST be serialized by row lock and dialog
-  status, allowing at most one active prompt per run.
+- Scratch dialog message sends MUST be serialized by the run and
+  `scratch_runs` row locks, allowing at most one OWNED prompt per run; steers
+  ride inside it and a queued row owns no prompt until
+  `dispatchQueuedScratchMessages` CASes it `queued → prompted`
+  (`run_messages_queued_idx`, `run_messages_steer_command_uq`; Implemented —
+  ADR-182).
 - Scratch messages MUST be append-only with monotonic sequence per run.
 - Scratch capability selection MUST snapshot platform/project/Flow-package
   capability choices before the supervisor session starts.
@@ -502,11 +524,13 @@ history automatically.
 | Empty prompt or malformed JSON/multipart payload | `400 CONFIG`; no launch/message side effects. |
 | Invalid base branch or branch name | `409 PRECONDITION`; no worktree is created. |
 | Scratch branch already exists or worktree path is occupied | `409 PRECONDITION` or `409 CONFLICT`; no supervisor session is started. |
-| Shared live-session capacity is full | `409 CONFLICT` or `409 PRECONDITION`; scratch V1 does not queue. |
+| Shared live-session capacity is full | `409 CONFLICT` or `409 PRECONDITION`; launch capacity is not queued (the message queue is per dialog and server-side — ADR-182). |
 | Too many files, oversized file, or oversized multipart payload | `409 PRECONDITION`; no DB attachment row is committed. |
 | Unsafe upload filename/path after sanitization | `409 PRECONDITION`; no file is written outside the run artifact tree. |
 | File write failure | `503 EXECUTOR_UNAVAILABLE`; launch cleanup is best effort and message rows remain invisible. |
-| Second prompt while `Running` or terminal dialog state | `409 PRECONDITION`; the existing prompt/session is left untouched. |
+| Second message while `Starting` / `Running` | `202` with `delivery: "steered"` or `"queued"`; the running prompt is untouched and the row is appended at once (Implemented — ADR-182). A message in a terminal or `NeedsInput` dialog state stays `409 CONFLICT`. |
+| Steer refused after the turn ended | The row flips `steered → queued` and, the dialog being `WaitingForUser`, is dispatched by the conversion; a concurrent dispatcher loses the `delivery` CAS — one prompt (`CONFLICT`). |
+| Web process dies between the previous turn's completion and the queued dispatch | The row stays `queued` and visible ("Queued"); the next send flushes the queue. Automatic re-drive belongs to A4 (ADR-182 Consequences). |
 | Supervisor unavailable before launch | `503 EXECUTOR_UNAVAILABLE`; no worktree, DB run, or upload side effect occurs. |
 | Supervisor prompt delivery fails after message commit | Retryable or crashed dialog status follows existing scratch service behavior; the user message stays visible. |
 | Permission deferred released terminally (host 410 without `session_checkpointed`) | `HITL_TIMEOUT`; scratch transitions to `Crashed` with error metadata. A `session_checkpointed` 410 — the session was parked with its deferreds cancelled (Implemented — ADR-180) — parks and resumes instead, never `Crashed`. |

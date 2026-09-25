@@ -135,7 +135,10 @@ still a later responsive pass.
    `consensus_plan` / `debate_log` artifacts. Draft and debate bodies are
    capped; full payloads open through Evidence/Workbench artifact routes.
    Standalone agent runs instead show session status, latest activity, evidence,
-   and review or diff entry points.
+   and review or diff entry points. Their transcript is the full dialog
+   (Implemented — ADR-182): every prompt the agent was sent (initial, resume,
+   rework, message) appears as a user row at dispatch, and a message steered
+   into a running turn appears where the operator sent it.
 3. **Review entry point** - when the selected node is a review or human gate,
    the node result shows open threads, dirty-state warnings, readiness status,
    and a clear **Review changes** action that opens the Diff tab.

@@ -1604,6 +1604,129 @@ paths:
                   value:
                     code: "EXECUTOR_UNAVAILABLE"
                     message: "unknown session — supervisor may have restarted"
+  /sessions/{id}/steer:
+    post:
+      tags: [sessions]
+      summary: Inject a message into the session's running owned turn (session.steer)
+      description: |
+        (Implemented — ADR-182) A v1 command envelope of kind `session.steer`,
+        run through the same fence → receipt → execute → receipt path as
+        `/input`. Checks, in order and before any ACP call: the session is
+        live with an ACP connection (`409 PRECONDITION`), the connection
+        advertised `_meta.steering.supported` on `initialize`
+        (`409 CONFLICT steer_unsupported`), and `parentCommandId` is the
+        session's active prompt (`409 CONFLICT steer_no_active_turn`). Then
+        calls the ACP extension request `_session/steering` with
+        `_meta.steering.idleBehavior: "promptRequired"`, bounded by 30 s.
+        Only `injected` succeeds; `promptRequired`, `startedNewTurn`,
+        `failed` and an ACP error are `steer_no_active_turn` (a
+        `startedNewTurn` turn is cancelled by the host, with every pending
+        permission of the session, before the refusal is written); no answer
+        within 30 s is `steer_timeout`. Every outcome writes a receipt and a
+        `session.command{kind: "session.steer"}` pair and replays by command
+        id. The next prompt on the session waits for an in-flight steer
+        before it is written to the adapter.
+      operationId: steerSession
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SteerCommand" }
+            examples:
+              enveloped:
+                value:
+                  command:
+                    id: "9d0e1f2a-3b4c-4d5e-8f6a-7b8c9d0e1f2a"
+                    kind: "session.steer"
+                    issuedAt: "2026-09-25T10:05:00.000Z"
+                  fence:
+                    hostKey: "eh_0f1e2d3c4b5a69788796a5b4c3d2e1f0"
+                    assignmentId: "6a7b8c9d-0e1f-4a2b-8c3d-4e5f6a7b8c9d"
+                    assignmentEpoch: 1
+                    runId: "run-abc"
+                  payload:
+                    contentBlocks:
+                      - type: "text"
+                        text: "Also update the changelog before you finish."
+                    parentCommandId: "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f"
+      responses:
+        "200":
+          description: The message reached the running turn.
+          headers:
+            X-Maister-Command-Replayed:
+              $ref: "#/components/headers/CommandReplayed"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SteerResponse" }
+              examples:
+                injected:
+                  value:
+                    outcome: "injected"
+                    parentCommandId: "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f"
+                    latencyMs: 42
+        "404":
+          description: No session with that id.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+        "409":
+          description: |
+            A steer refusal (`CONFLICT`: `steer_unsupported`,
+            `steer_no_active_turn`, `steer_timeout` — definitive, never
+            retried); a session that is not live, a body validation failure or
+            a missing envelope (`PRECONDITION`); a fence refusal
+            (`host_mismatch`, `run_mismatch`, `assignment_mismatch`); or a
+            stale epoch (`FENCED`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+              examples:
+                steerNoActiveTurn:
+                  value:
+                    code: "CONFLICT"
+                    message: "the parent prompt is not the session's running turn"
+                    details:
+                      reason: "steer_no_active_turn"
+                      parentCommandId: "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f"
+                      activePromptCommandId: null
+                steerStartedNewTurn:
+                  value:
+                    code: "CONFLICT"
+                    message: "the adapter answered startedNewTurn instead of injecting"
+                    details:
+                      reason: "steer_no_active_turn"
+                      parentCommandId: "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f"
+                      adapterOutcome: "startedNewTurn"
+                steerUnsupported:
+                  value:
+                    code: "CONFLICT"
+                    message: "the session's adapter did not advertise steering"
+                    details:
+                      reason: "steer_unsupported"
+                      parentCommandId: "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f"
+                steerTimeout:
+                  value:
+                    code: "CONFLICT"
+                    message: "the adapter did not answer the steer within 30000 ms"
+                    details:
+                      reason: "steer_timeout"
+                      parentCommandId: "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f"
+                fenced:
+                  value:
+                    code: "FENCED"
+                    message: "assignment epoch 1 is below the host high-water 2 for run run-abc"
+                    details:
+                      reason: "assignment_fenced"
+                      runId: "run-abc"
+                      commandEpoch: 1
+                      hostEpoch: 2
+        "503":
+          description: Unknown session — the host lost it (typically a restart).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
   /model-catalog/resolve:
     post:
       tags: [model-catalog]
@@ -2294,6 +2417,26 @@ components:
                       protocolVersion:
                         type: integer
                         nullable: true
+                  steering:
+                    type: object
+                    required: [supported, checkedAt]
+                    additionalProperties: false
+                    description: |
+                      (Implemented — ADR-182) Informational: whether the smoke
+                      script observed `_meta.steering.supported` on this
+                      adapter family's `initialize`. `supported: null` means the
+                      cache holds no steering evidence. Optional — absent from
+                      hosts older than the steering contract. The per-session
+                      advertisement (`SessionRecord.capabilities`) is what the
+                      manager acts on; this field never gates a launch.
+                    properties:
+                      supported:
+                        type: boolean
+                        nullable: true
+                      checkedAt:
+                        type: string
+                        format: date-time
+                        nullable: true
         envRefs:
           type: array
           items:
@@ -2890,8 +3033,15 @@ components:
           description: Adapter arguments appended after supervisor-managed args.
     StartSessionResponse:
       type: object
-      required: [sessionId, pid, acpSessionId]
+      required: [sessionId, pid, acpSessionId, steeringSupported]
       properties:
+        steeringSupported:
+          type: boolean
+          description: |
+            (Implemented — ADR-182) Whether the adapter advertised
+            `_meta.steering.supported` on this connection's `initialize`. The
+            manager persists it on the incarnation at the create ACK
+            (`run_session_incarnations.steering_supported`).
         sessionId:
           type: string
           format: uuid
@@ -3027,8 +3177,25 @@ components:
           assignmentId,
           assignmentEpoch,
           createdByCommandId,
+          capabilities,
         ]
       properties:
+        capabilities:
+          type: object
+          required: [steering]
+          additionalProperties: false
+          description: |
+            (Implemented — ADR-182) What this session's ACP connection
+            advertised on `initialize`. `steering.supported` is `false` until
+            the handshake completes and for adapters that do not advertise
+            `_meta.steering.supported`.
+          properties:
+            steering:
+              type: object
+              required: [supported]
+              additionalProperties: false
+              properties:
+                supported: { type: boolean }
         sessionId: { type: string, format: uuid }
         adapter: { $ref: "#/components/schemas/ExecutorAgent" }
         runId: { type: string }
@@ -3323,6 +3490,7 @@ components:
         - CRASH
         - HITL_TIMEOUT
         - FENCED
+        - CONFLICT
       description: |
         Subset of the web-tier `MaisterErrorCode`. The web client translates
         this body into `MaisterError({ code })` at the boundary.
@@ -3337,6 +3505,11 @@ components:
         to the web alone. On the `details.reason: "session_checkpointed"` arm
         the code is the same but the meaning is NOT terminal — the answer
         resumes the parked session.
+
+        `CONFLICT` (HTTP 409, Implemented — ADR-182) is minted only by
+        `POST /sessions/{id}/steer`: `steer_unsupported`,
+        `steer_no_active_turn` or `steer_timeout`. It is definitive — the web
+        tier never retries it and converts the message into a queued one.
 
         `FENCED` (Implemented — ADR-166, HTTP 409) is returned when
         `fence.assignmentEpoch` is below the host's persisted high-water for
@@ -3394,6 +3567,9 @@ components:
         - import_seal_conflict
         - import_chunk_too_large
         - session_checkpointed
+        - steer_unsupported
+        - steer_no_active_turn
+        - steer_timeout
       description: |
         (Implemented — ADR-166) Machine-readable refusal discriminator carried in
         `SupervisorErrorBody.details.reason`. Tests assert the token, never
@@ -3550,6 +3726,19 @@ components:
         runId: { type: string }
         commandEpoch: { type: integer, minimum: 0 }
         hostEpoch: { type: integer, minimum: 0 }
+        parentCommandId:
+          type: string
+          format: uuid
+          description: (Implemented — ADR-182) The steer's parent prompt command id, echoed on every steer refusal.
+        activePromptCommandId:
+          type: string
+          format: uuid
+          nullable: true
+          description: (`steer_no_active_turn`) The session's active prompt at refusal time, or null when none runs.
+        adapterOutcome:
+          type: string
+          enum: [promptRequired, startedNewTurn, failed, error]
+          description: (`steer_no_active_turn`) What the adapter answered instead of `injected`; absent when the host refused before the ACP call.
     SupervisorErrorBody:
       type: object
       required: [code, message]
@@ -3588,10 +3777,11 @@ components:
         - session.create
         - session.prompt
         - session.input
+        - session.steer
         - session.cancel
         - session.checkpoint
         - session.delete
-      description: (Implemented — ADR-166) Must match the route the envelope is posted to.
+      description: (Implemented — ADR-166; `session.steer` ADR-182) Must match the route the envelope is posted to.
     CommandFence:
       type: object
       required: [hostKey, assignmentId, assignmentEpoch, runId]
@@ -3841,6 +4031,60 @@ components:
             issuedAt: { type: string, format: date-time }
         fence: { $ref: "#/components/schemas/CommandFence" }
         payload: { $ref: "#/components/schemas/InputBody" }
+    SteerCommand:
+      type: object
+      required: [command, fence, payload]
+      additionalProperties: false
+      description: (Implemented — ADR-182) Enveloped `POST /sessions/{id}/steer` body.
+      properties:
+        command:
+          type: object
+          required: [id, kind, issuedAt]
+          additionalProperties: false
+          properties:
+            id: { type: string, format: uuid }
+            kind: { type: string, enum: [session.steer] }
+            issuedAt: { type: string, format: date-time }
+        fence: { $ref: "#/components/schemas/CommandFence" }
+        payload: { $ref: "#/components/schemas/SteerBody" }
+    SteerBody:
+      type: object
+      required: [contentBlocks, parentCommandId]
+      additionalProperties: false
+      description: |
+        (Implemented — ADR-182) The message to inject and the prompt it must
+        land in. `contentBlocks` has the prompt route's shape and is confined
+        and resolved exactly like a prompt's; `parentCommandId` is compared
+        with the session's active prompt — never trusted.
+      properties:
+        contentBlocks:
+          type: array
+          minItems: 1
+          maxItems: 64
+          description: The prompt route's content-block shape (`SendPromptRequest.contentBlocks`).
+          items:
+            type: object
+            required: [type]
+            additionalProperties: true
+            properties:
+              type: { type: string, enum: [text, resource_link, resource, runtime_object] }
+              text: { type: string }
+              uri: { type: string }
+              name: { type: string }
+              mimeType: { type: string }
+              objectId: { type: string, format: uuid }
+        parentCommandId:
+          type: string
+          format: uuid
+    SteerResponse:
+      type: object
+      required: [outcome, parentCommandId, latencyMs]
+      additionalProperties: false
+      description: (Implemented — ADR-182) The steer reached the running turn.
+      properties:
+        outcome: { type: string, enum: [injected] }
+        parentCommandId: { type: string, format: uuid }
+        latencyMs: { type: integer, minimum: 0 }
     CancelCommand:
       type: object
       required: [command, fence, payload]

@@ -120,11 +120,11 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 
 | `execution_hosts` | **(ADR-166 — Implemented, migration `0130`)** Registered execution hosts. Stage A: exactly one non-retired `kind='local_direct'` row (partial unique index), identity `host_key` minted by the supervisor, readiness + capabilities refreshed by the web registrar. The supervisor URL is env, never a column. | (none — retired via `retired_at`, never deleted while referenced) |
 | `execution_assignments` | **(ADR-166 — Implemented, migration `0130`)** Append-only per-run placement ledger: one row per `(run_id, epoch)`, `state ∈ active|superseded|released`, `placement_reason`, the opaque `execution_workspace_id` handle. At most one `active` row per run (partial unique index). | `runs.id`, `execution_hosts.id` (RESTRICT), self-ref `superseded_by_id` (SET NULL) |
-| `execution_commands` | **(ADR-166 — Implemented, migration `0130`)** Host-bound command intent + delivery ledger (`queued → delivering → accepted → succeeded|failed|fenced`), one row per wire `command.id`, REDACTED payload, per-kind retry budget, `driverless` recovery flag. **(ADR-167 S2.11/S2.12 — Implemented, migrations `0158`/`0159`)** Reclamation is the two-sided retirement handshake below, never age: `retired_at` marks the compacted tombstone, deleting a run or assignment around it is refused by `execution_commands_protected_evidence`, and every new `session.prompt` row must carry an owner (`execution_commands_prompt_owner_required`, NOT VALID so pre-v2 history is preserved unreconstructed). **(Migration `0176`, Implemented)** The compaction to a tombstone is the only transition exempt from the `0140`/`0141` request and evidence guards: `request_canonical_json`, `receipt_evidence`, `result` and `last_error` may become NULL only in the same UPDATE that sets `retired_at`, identity/digests/terminal event/state stay frozen, and a settled tombstone is final. **(Migration `0177`, Implemented — ADR-167 D5 amendment 2026-09-23)** `settled_from` records which evidence feed first settled a prompt (`canonical | host_span`); a `host_span` row may hold its digest before the canonical event binds `terminal_event_id`. **(Migration `0178`, Implemented — ADR-177 amendment 2026-09-23)** `host_span_verdict` (`busy | refused`, `execution_commands_host_span_verdict_check`) is the answer of the latest host-span read that ran without settling the prompt; a read clears it when it claims the command, and the stream-lost reconcile resolver crashes only on a recorded `refused`. | `runs.id`, `execution_assignments.id`, `execution_hosts.id` (RESTRICT) |
+| `execution_commands` | **(ADR-166 — Implemented, migration `0130`)** Host-bound command intent + delivery ledger (`queued → delivering → accepted → succeeded|failed|fenced`), one row per wire `command.id`, REDACTED payload, per-kind retry budget, `driverless` recovery flag. **(ADR-167 S2.11/S2.12 — Implemented, migrations `0158`/`0159`)** Reclamation is the two-sided retirement handshake below, never age: `retired_at` marks the compacted tombstone, deleting a run or assignment around it is refused by `execution_commands_protected_evidence`, and every new `session.prompt` row must carry an owner (`execution_commands_prompt_owner_required`, NOT VALID so pre-v2 history is preserved unreconstructed). **(Migration `0176`, Implemented)** The compaction to a tombstone is the only transition exempt from the `0140`/`0141` request and evidence guards: `request_canonical_json`, `receipt_evidence`, `result` and `last_error` may become NULL only in the same UPDATE that sets `retired_at`, identity/digests/terminal event/state stay frozen, and a settled tombstone is final. **(Migration `0177`, Implemented — ADR-167 D5 amendment 2026-09-23)** `settled_from` records which evidence feed first settled a prompt (`canonical | host_span`); a `host_span` row may hold its digest before the canonical event binds `terminal_event_id`. **(Migration `0178`, Implemented — ADR-177 amendment 2026-09-23)** `host_span_verdict` (`busy | refused`, `execution_commands_host_span_verdict_check`) is the answer of the latest host-span read that ran without settling the prompt; a read clears it when it claims the command, and the stream-lost reconcile resolver crashes only on a recorded `refused`. **(Migration `0180`, Implemented — ADR-182)** `execution_commands_kind_check` gains `session.steer`: a v1, owner-less command that injects a message into the run's accepted prompt; its payload projection keeps `parentCommandId`, `promptBytes` and `contentBlockCount` only. | `runs.id`, `execution_assignments.id`, `execution_hosts.id` (RESTRICT) |
 | `execution_event_streams` | **(ADR-167 — Implemented, migrations `0131`–`0132`)** Manager-side host stream identity, durable received/contiguous/acknowledged cursors, gap state, boot observation, and consumer claim fields. | `execution_hosts.id` (RESTRICT) |
 | `execution_events` | **(ADR-167 — Implemented, migrations `0131`–`0132`)** Canonical redacted host/manager/import event facts. Partial unique host position and per-run sequence indexes make at-least-once delivery exactly-one at storage. | `runs.id` (CASCADE), host/stream (RESTRICT), assignment/incarnation (SET NULL) |
 | `execution_event_consumers` | **(ADR-167 — Implemented, migration `0131`)** Per-consumer, per-run projection cursor with poison/retry claim state; it is deliberately distinct from ingestion. | `runs.id` (CASCADE), poison event (SET NULL) |
-| `run_session_incarnations` | **(ADR-167 — Implemented, migration `0131`)** Canonical host-session incarnation history across same-host restart/checkpoint/loss. | `run_sessions.id`, `runs.id` (CASCADE), host (RESTRICT), assignment (SET NULL) |
+| `run_session_incarnations` | **(ADR-167 — Implemented, migration `0131`)** Canonical host-session incarnation history across same-host restart/checkpoint/loss. **(ADR-182 — Implemented, migration `0180`)** `steering_supported boolean NULL`: the adapter's `initialize` advertisement (`_meta.steering.supported`) for THIS incarnation, written by `applyCreateAck` (an existing row's NULL is filled, a value is never overwritten); NULL = not observed (pre-`0180` rows, older hosts) and is treated as unsupported. | `run_sessions.id`, `runs.id` (CASCADE), host (RESTRICT), assignment (SET NULL) |
 | `execution_runtime_objects` | **(ADR-167 — Implemented, migration `0133`)** Manager-owned opaque catalog for host-owned runtime bytes: run/assignment/incarnation binding, MIME, hash, byte count, retention, lifecycle state, and source event. It deliberately contains no host path. | `runs.id` (CASCADE), host (RESTRICT), assignment/incarnation/source event (SET NULL) |
 | `scratch_runs` cutover | **(ADR-167 — Implemented, migration `0134`)** Guarded destructive preservation of `scratch_runs.supervisor_session_id`: an active legacy run, ambiguous assignment, conflicting canonical pointer, or cross-run host session aborts the migration. A uniquely proven value backfills the default logical session and `legacy_backfill` incarnation before the mirror is dropped. | `run_sessions.id`, `execution_assignments.id`, `run_session_incarnations.id` |
 | `execution_data_plane_imports` | **(ADR-167 — Implemented, migration `0131`)** One preserved legacy import lane for every historical run and source kind; missing history is explicit rather than silently discarded. | `runs.id` (CASCADE) |
@@ -1866,8 +1866,11 @@ execution_commands {
   executionHostId,                // execution_hosts FK RESTRICT
   assignmentEpoch,                // fence epoch snapshotted at issue
   kind: 'workspace.adopt' | 'workspace.release' | 'session.create'
-      | 'session.prompt' | 'session.input' | 'session.cancel'
-      | 'session.checkpoint' | 'session.delete',
+      | 'session.prompt' | 'session.input' | 'session.steer'
+      | 'session.cancel' | 'session.checkpoint' | 'session.delete'
+      | 'runtime_object.reserve' | 'runtime_object.upload'
+      | 'runtime_object.delete',  // CHECK from runtime/command-kinds.ts;
+                                  //   session.steer since migration 0180 (ADR-182)
   targetSessionId?,               // host session id for session.* kinds
   payload,                        // jsonb DEFAULT {}; per-kind ALLOW-list projection
                                   //   at insert (ids, names, adapter/model, counts,
@@ -2520,8 +2523,9 @@ uses the run lock to allocate an ordinal and retain the original input.
 | Columns | Contract |
 | --- | --- |
 | `id`, `run_id`, `ordinal` | Server-generated ID, owning agent run and immutable run-local order. |
-| `variant`, `logical_key`, `prompt` | Immutable operation kind (`initial`, `resume`, `rework`, `live_message`, `persistent_message`, and `consensus_draft` since migration `0156_consensus_draft_turn`), same-run retry key and original input; prompts are private server data and never logged. |
-| `state` | `queued` → `claimed` → `dispatched` → `applied`; any unfinished state may become `superseded`. |
+| `variant`, `logical_key`, `prompt` | Immutable operation kind (`initial`, `resume`, `rework`, `live_message`, `persistent_message`, `consensus_draft` since migration `0156_consensus_draft_turn`, and `steer` since migration `0180_agent_turn_steering`), same-run retry key and original input; prompts are private server data and never logged. |
+| `state` | `queued` → `claimed` → `dispatched` → `applied`; any unfinished state may become `superseded`. A `steer` row never passes through `claimed`: `queued → dispatched → applied \| superseded`, all within the issue transaction and its settlement. |
+| `parent_turn_id` | **(migration `0180`, ADR-182)** Set exactly for `variant = 'steer'` (`agent_turns_steer_parent_check`): the dispatched turn the message was injected into. Self-FK `ON DELETE CASCADE` (same run). |
 | `execution_assignment_id`, `assignment_epoch`, `run_session_id` | All null while queued; fixed together on claim and checked against the owning run. |
 | `incarnation_id`, `command_id` | Fixed together at prompt admission; the command must match the exact turn, variant, ordinal, assignment and incarnation. |
 | `created_at`, `updated_at`, `completed_at` | UTC timestamps; terminal turn state requires `completed_at`, which cannot be rewritten. |
@@ -2529,7 +2533,12 @@ uses the run lock to allocate an ordinal and retain the original input.
 Unique `(run_id, logical_key)` makes retrying the same accepted input return its
 existing turn; different text under the same key is a conflict. Unique
 `(run_id, ordinal)` preserves distinct message order. A partial unique index
-permits at most one claimed/dispatched turn per run, and `command_id` is unique.
+(`agent_turns_active_run_uq`) permits at most one claimed/dispatched NON-steer
+turn per run — migration `0180` re-created it with `AND variant <> 'steer'`, so
+a dispatched steer can sit beside its dispatched parent — and `command_id` is
+unique. A steer's `command_id` is its `session.steer` ledger row; a refusal
+supersedes it and inserts a successor `live_message | persistent_message` whose
+`logical_key` is `message:requeue:<steerTurnId>` (ADR-182).
 The due index covers unfinished turns. Postgres guards reject source/binding
 rewrites, phase regression and cross-run bindings. Run deletion cascades to its
 turns; individual referenced assignments, sessions, incarnations and commands
@@ -2581,9 +2590,25 @@ transcript ledger shared by scratch AND flow `ai_coding` node sessions.
   supervisorEventId?,          // run-event position; see EDGE-TRC-08 below
   projectionToolKey?,
   promptDispatchKey?,            // TRC-06; NULL on every projector-written row
+  delivery?: 'queued' | 'prompted' | 'steered',  // user rows only (0180, ADR-182)
+  steerCommandId?,               // FK -> execution_commands.id RESTRICT (0180)
   createdAt
 }
 ```
+
+**Delivery (migration `0180`, ADR-182).** `delivery` records how a USER row
+reached the agent; `run_messages_delivery_check` allows it only on `role =
+'user'` rows. Scratch: `queued` — accepted while the dialog was busy and waiting
+for the turn to end; `prompted` — sent as its own turn (the dispatcher CASes
+`queued → prompted`); `steered` — injected into the running turn, with
+`steer_command_id` naming the `session.steer` command (a refusal CASes it back
+to `queued`). Agent runs: the acceptance-time row of a steer
+(`prompt_dispatch_key = steer:<commandId>`, `delivery = 'steered'`) and every
+recorded dispatch prompt (`delivery = 'prompted'`). NULL on rows written before
+`0180` and on non-user rows. `run_messages_queued_idx` (partial, `(run_id,
+sequence) WHERE delivery = 'queued'`) serves the FIFO dispatcher;
+`run_messages_steer_command_uq` (partial unique on `steer_command_id`) lets
+recovery find the scratch row by its steer command.
 
 Messages are append/upsert. `run_messages_run_node_attempt_sequence_uq`
 (`UNIQUE NULLS NOT DISTINCT (runId, nodeAttemptId, sequence)`) prevents duplicate
@@ -2604,9 +2629,10 @@ NULL`, declared `NULLS NOT DISTINCT`. Both halves are load-bearing: the
 predicate keeps the projector's untagged rows entirely outside the index, and
 `NULLS NOT DISTINCT` keeps it in step with the sequence key for a row whose
 `node_attempt_id` is NULL (under the default, such a row would be unique
-regardless of its dispatch key). Only the flow dispatcher records prompts today
-and it always names an attempt, so no such row exists yet — the clause is what
-keeps that from becoming a hole the day one does. Drizzle can express the option only on
+regardless of its dispatch key). The flow dispatcher always names an attempt;
+agent runs (ADR-182) record their prompts with `node_attempt_id` NULL
+(`agent_turn:<variant>:<turnId>:<ordinal>` and `steer:<commandId>` keys), which
+is exactly the case this clause keeps unique. Drizzle can express the option only on
 `unique()` constraints, which cannot be partial, so the clause lives in the
 migration SQL and NOT in the `uniqueIndex()` declaration — regenerating that DDL
 from `schema.ts` alone will drop it.

@@ -155,7 +155,7 @@ validate:docs` enforces stub ↔ body equality and the file bijection.
 | [ADR-111](#adr-111-generic-agent-configuration-framework--declared-config-params-per-instance-values-resolved-snapshot-prompt-injection)                     | Generic agent configuration framework — declared config params, per-instance values, resolved snapshot, prompt injection                       | Implemented                                                          | 2026-06-25 |
 | [ADR-112](#adr-112-triager-agent--duplicateofflagged-dedup-substrate-autolaunchtriaged-tick-flowrunner-discovery-no-silent-stall-guards)                     | Triager agent — duplicate_of/flagged dedup substrate, auto_launch_triaged tick, flow/runner discovery, no-silent-stall guards                  | Implemented                                                          | 2026-06-25 |
 | [ADR-113](#adr-113-pr-to-source-for-local-packages--trusted-source-picker--stable-publish-branch)                                                            | PR-to-source for local packages — trusted-source picker + stable publish branch                                                                | Implemented                                                          | 2026-06-25 |
-| [ADR-114](#adr-114-unified-flow-runner-config-first-class-sessions-per-project-connect-time-bindings-and-runsessions-as-the-sole-run-runner-source-of-truth) | Unified Flow runner config, first-class sessions, per-project connect-time bindings, and `run_sessions` as the sole run-runner source of truth | Implemented                                                          | 2026-06-26 |
+| [ADR-114](#adr-114-unified-flow-runner-config-first-class-sessions-per-project-connect-time-bindings-and-runsessions-as-the-sole-run-runner-source-of-truth) | Unified Flow runner config, first-class sessions, per-project connect-time bindings, and `run_sessions` as the sole run-runner source of truth | Implemented; amended 2026-09-25                                      | 2026-06-26 |
 | [ADR-115](#adr-115-strict-template-default-operator-for-prompt-authoring)                                                                                    | Strict template default operator for prompt authoring                                                                                          | Partially superseded by ADR-164                                       | 2026-06-28 |
 | [ADR-116](#adr-116-local-package-composition-view-shared-package-bom-source-abstraction-tabbed-editor-ia)                                                    | Local-package composition view: shared package BOM source abstraction, tabbed editor IA                                                        | Implemented                                                          | 2026-06-28 |
 | [ADR-117](#adr-117-reliable-cost-rollup-reconciliation-and-per-runner-cost-attribution)                                                                      | Reliable cost-rollup reconciliation and per-runner cost attribution                                                                            | Implemented                                                          | 2026-06-29 |
@@ -208,7 +208,7 @@ validate:docs` enforces stub ↔ body equality and the file bijection.
 | [ADR-164](#adr-164-remove-managed-claude-code-router-support)                                                                                                | Remove managed Claude Code Router support                                                                                                      | Implemented                                                          | 2026-09-02 |
 | [ADR-165](#adr-165-governed-recursive-agent-harness--public-run-results-result-profiles-effective-recursion-bounds-result-only-completion)                   | Governed recursive agent harness — public run results, result profiles, effective recursion bounds, result-only completion                     | Implemented                                                          | 2026-09-02 |
 | [ADR-166](#adr-166-local-execution-host-contract--durable-host-identity-epoch-fenced-assignments-command-ledger-opaque-adopted-workspaces) | Local execution-host contract — durable host identity, epoch-fenced assignments, command ledger, opaque adopted workspaces | Implemented | 2026-09-02 |
-| [ADR-167](#adr-167-durable-execution-host-event-and-runtime-data-plane) | Durable execution-host event and runtime-data plane | Implemented; amended 2026-09-23 | 2026-09-04 |
+| [ADR-167](#adr-167-durable-execution-host-event-and-runtime-data-plane) | Durable execution-host event and runtime-data plane | Implemented; amended 2026-09-23, 2026-09-25 | 2026-09-04 |
 | [ADR-168](#adr-168-post-issuance-mutation-of-api-tokens) | Post-issuance mutation of API tokens | Implemented | 2026-09-11 |
 | [ADR-169](#adr-169-two-canonical-attention-counters-decisions-and-updates) | Two canonical attention counters, `decisions` and `updates` | Accepted | 2026-09-10 |
 | [ADR-170](#adr-170-derived-work-stage-vocabulary-distinct-from-the-board-columns) | Derived work-stage vocabulary distinct from the board columns | Accepted | 2026-09-10 |
@@ -223,6 +223,7 @@ validate:docs` enforces stub ↔ body equality and the file bijection.
 | [ADR-179](#adr-179-mcp-configuration-values--literal-or-reference-envheader-maps-a-bearer-token-field-value-replacing-project-overlays-host-env-ref-readiness-and-an-adapter-transport-gate) | MCP configuration values — literal-or-reference env/header maps, a bearer token field, value-replacing project overlays, host env-ref readiness, and an adapter transport gate | Implemented | 2026-09-21 |
 | [ADR-180](#adr-180-permission-deadline-has-one-owner) | Permission deadline has one owner | Implemented | 2026-09-22 |
 | [ADR-181](#adr-181-run-git-panel-status-independent-worktree-git-operations-public-branch-names-and-pr-before-promotion) | Run git panel: status-independent worktree git operations, public branch names, and PR before promotion | Implemented | 2026-09-22 |
+| [ADR-182](#adr-182-steering-a-running-agent-turn-as-a-durable-fenced-command) | Steering a running agent turn as a durable fenced command | Implemented | 2026-09-25 |
 
 ---
 
@@ -1245,7 +1246,7 @@ Full record: [`decisions/adr-113.md`](decisions/adr-113.md)
 
 ### ADR-114: Unified Flow runner config, first-class sessions, per-project connect-time bindings, and `run_sessions` as the sole run-runner source of truth
 
-**Status:** Implemented
+**Status:** Implemented; amended 2026-09-25 (per-incarnation steering capability)
 **Date:** 2026-06-26
 
 Full record: [`decisions/adr-114.md`](decisions/adr-114.md)
@@ -1709,7 +1710,7 @@ Full record: [`decisions/adr-166.md`](decisions/adr-166.md)
 
 ### ADR-167: Durable execution-host event and runtime-data plane
 
-**Status:** Implemented; amended 2026-09-23 (retirement tombstone guards; host-evidence settlement)
+**Status:** Implemented; amended 2026-09-23 (retirement tombstone guards; host-evidence settlement); amended 2026-09-25 (steer inside a prompt span)
 **Date:** 2026-09-04
 
 Full record: [`decisions/adr-167.md`](decisions/adr-167.md)
@@ -1841,6 +1842,15 @@ Full record: [`decisions/adr-180.md`](decisions/adr-180.md)
 **Date:** 2026-09-22
 
 Full record: [`decisions/adr-181.md`](decisions/adr-181.md)
+
+---
+
+### ADR-182: Steering a running agent turn as a durable fenced command
+
+**Status:** Implemented
+**Date:** 2026-09-25
+
+Full record: [`decisions/adr-182.md`](decisions/adr-182.md)
 
 ---
 

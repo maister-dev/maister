@@ -5359,9 +5359,21 @@ paths:
       summary: Implemented — send a scratch dialog message
       description: |
         Requires project membership at `member` or above. The route appends the
-        next user message under a row lock, rejects concurrent prompts, then
-        submits supervisor `POST /sessions/{sessionId}/prompts` and persists a
-        `PromptHandle`; terminal state is reconciled asynchronously. The body carries
+        next user message under the run and `scratch_runs` row locks. Two arms
+        (Implemented — ADR-182):
+
+        - **Prompt arm** (`WaitingForUser`): the message becomes the next turn —
+          the route submits supervisor `POST /sessions/{sessionId}/prompts` under
+          a `PromptHandle` and, today, answers after that turn completes with its
+          `stopReason`. When older rows are still queued the new row is appended
+          `delivery: "queued"` behind them and the oldest is dispatched first.
+        - **Busy arm** (`Starting` / `Running`): the row is appended at once and
+          either steered into the running turn (`delivery: "steered"`) or queued
+          for the next one (`delivery: "queued"`); the dialog status is not
+          changed and the route answers at acceptance, without `stopReason`.
+          A refused steer answers `delivery: "queued"`.
+
+        `NeedsInput` and terminal dialogs refuse with `409 CONFLICT`. The body carries
         message content and attachment refs only. It MUST NOT include session
         ids, project slug, worktree path, step id, or message sequence.
         Accepts JSON for text/metadata-only messages and multipart form data
@@ -5381,7 +5393,10 @@ paths:
             schema: { $ref: "#/components/schemas/ScratchMessageMultipartBody" }
       responses:
         "202":
-          description: Message accepted and prompt dispatch started.
+          description: |
+            Message accepted. Prompt arm: the turn ran and `stopReason` is set.
+            Busy arm: the message was steered or queued (`delivery`), no
+            `stopReason`.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ScratchMessageResponse" }
@@ -5396,10 +5411,11 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "409":
           description: |
-            Scratch run not found, not scratch, already has a prompt running,
-            not input-ready, invalid upload filename/path, too many files,
+            Scratch run not found, not scratch, `NeedsInput` or terminal dialog,
+            no live host session, invalid upload filename/path, too many files,
             oversized file, or oversized total multipart payload
-            (`PRECONDITION` / `CONFLICT`).
+            (`PRECONDITION` / `CONFLICT`). A message while the agent is busy is
+            never refused — it is steered or queued (ADR-182).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -19340,6 +19356,16 @@ components:
         content: { type: string }
         supervisorEventId: { type: string, nullable: true }
         createdAt: { type: string, format: date-time }
+        delivery:
+          type: string
+          nullable: true
+          enum: [queued, prompted, steered, null]
+          description: |
+            (Implemented — ADR-182) User rows only: `queued` — waiting for the
+            running turn to end (the UI badges it "Queued"); `steered` —
+            injected into a running turn; `prompted` — sent as its own turn.
+            Null for rows written before the steering contract and for
+            non-user rows.
     ScratchRun:
       type: object
       required:
@@ -19735,11 +19761,19 @@ components:
             - $ref: "#/components/schemas/ScratchPendingHitl"
     ScratchMessageResponse:
       type: object
-      required: [ok, messageId, sequence, dialogStatus, stopReason]
+      required: [ok, messageId, sequence, dialogStatus]
       properties:
         ok: { type: boolean, enum: [true] }
         messageId: { type: string, format: uuid }
         sequence: { type: integer, minimum: 1 }
+        delivery:
+          type: string
+          enum: [steered, queued, prompted]
+          description: |
+            (Implemented — ADR-182) How the message reached the agent:
+            `prompted` — it was sent as its own turn (prompt arm); `steered` —
+            injected into the running turn; `queued` — it waits for the current
+            turn to end and is dispatched automatically, oldest first.
         dialogStatus:
           type: string
           enum:
@@ -19756,9 +19790,11 @@ components:
         stopReason:
           type: string
           description: |
-            Scratch-dialog result. `cancelled` is a web/client-side dialog state
-            only; supervisor prompt success responses do not return `cancelled`
-            and map direct adapter cancellations to `ACP_PROTOCOL`.
+            Scratch-dialog result, present on the prompt arm only (absent when
+            the message was steered or queued — ADR-182). `cancelled` is a
+            web/client-side dialog state only; supervisor prompt success
+            responses do not return `cancelled` and map direct adapter
+            cancellations to `ACP_PROTOCOL`.
           enum: [end_turn, max_tokens, max_turn_requests, refusal, cancelled]
     RunChangeSummaryResponse:
       type: object

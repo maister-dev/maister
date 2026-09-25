@@ -17,7 +17,8 @@ info:
     - `session.command` (Implemented — ADR-166) — command acceptance and
       completion for the enveloped session routes (`session.prompt`,
       `session.cancel`, `session.checkpoint`, `session.input`,
-      `session.delete`): the durable completion signal. `session.exited.reason` gains `fenced` for
+      `session.delete`, and — Implemented, ADR-182 — `session.steer`): the
+      durable completion signal. `session.exited.reason` gains `fenced` for
       a session evicted by a higher assignment epoch.
 
     Permission deferreds age out after the absolute
@@ -601,6 +602,7 @@ components:
                 [
                   session.prompt,
                   session.input,
+                  session.steer,
                   session.cancel,
                   session.checkpoint,
                   session.delete,
@@ -624,6 +626,14 @@ components:
         (Implemented — ADR-166) Command acceptance/completion signal for the
         enveloped session routes. See `../supervisor.openapi.yaml`
         `CommandReceipt` for the durable equivalent.
+
+        (Implemented — ADR-182) A `session.steer` pair carries the parent link
+        in its body: `result = {outcome: "injected", parentCommandId,
+        latencyMs}` on success, `error.details = {reason:
+        steer_unsupported | steer_no_active_turn | steer_timeout,
+        parentCommandId, …}` on a refusal. The parent prompt's own events,
+        receipt and span are unchanged; output the steered agent produces
+        rides the parent's `sourceCommandId`.
     SessionHookTripEvent:
       allOf:
         - $ref: "#/components/schemas/EventBase"

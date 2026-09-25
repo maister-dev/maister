@@ -434,6 +434,8 @@ erDiagram
         text role "user|assistant|tool|system"
         text content
         text supervisor_event_id
+        text delivery "queued|prompted|steered, user rows only (0180, ADR-182)"
+        text steer_command_id FK "execution_commands RESTRICT, unique when set (0180)"
         timestamp created_at
     }
 

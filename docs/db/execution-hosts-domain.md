@@ -22,6 +22,12 @@ the host keeps runtime bytes and SQLite outbox files private. See
 [`execution-event-plane.md`](../system-analytics/execution-event-plane.md) and
 [`execution-data-cutover.md`](../system-analytics/execution-data-cutover.md).
 
+Migration `0180_agent_turn_steering` (ADR-182, Implemented) adds
+`run_session_incarnations.steering_supported boolean NULL` — the adapter's
+`initialize` advertisement for that incarnation, written at the create ACK
+(NULL = not observed, treated as unsupported) — and widens
+`execution_commands_kind_check` with `session.steer`.
+
 Migration `0137_execution_projection_workers` adds indexed service ordering
 on `execution_event_consumers.last_served_at` and the independent
 `execution_projection_backfills` keyset cursor. The bootstrap cursor has no
@@ -149,7 +155,7 @@ state = 'active'`: at most one active assignment per run (E-EH-02).
 (ended_at IS NULL)`, so an `active` row can never carry `ended_at` and a
   terminal row always does.
 - `execution_commands_create_operation_uq` uniquely binds a Flow create operation/generation within its run and assignment. `execution_commands_create_intent_check` validates the command/fence binding and original request digest; prompt-owner fields remain independent.
-- `execution_commands_kind_check` (eight kinds),
+- `execution_commands_kind_check` (twelve kinds from `runtime/command-kinds.ts`; `session.steer` since `0180`, ADR-182),
   `execution_commands_state_check` (six states), and
   `execution_commands_terminal_shape_check` — `(state IN ('succeeded',
 'failed', 'fenced')) = (completed_at IS NOT NULL)`.

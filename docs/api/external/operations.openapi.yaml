@@ -1945,6 +1945,17 @@ paths:
         different input under that key is a conflict. Omitting the key accepts
         a distinct message on every invocation.
 
+        (Implemented — ADR-182) `mode` selects the delivery. `queue` (the
+        default) is the behaviour above. `steer` injects the prompt into the
+        child's RUNNING turn when its session advertised steering and a prompt
+        is in flight (the child is `Running` or `NeedsInput`); otherwise — no
+        running turn, an adapter without the capability, or a host refusal —
+        it is accepted exactly like `queue`. `delivery` answers which happened
+        (`steered` | `queued`); the caller never learns the adapter. After a
+        refused steer the returned `messageId` is the queued successor, and a
+        same-`requestKey` retry answers the same identity. `NeedsInput`
+        children accept messages in both modes.
+
         **Identifiers (trust contour).** The `projectId` and the **caller**
         `runId` are derived SERVER-SIDE from the orchestrator's `agent:<id>`
         token — NEVER body fields. The target is resolved by `addressableKey` OR
@@ -1990,6 +2001,11 @@ paths:
                   minLength: 1
                   maxLength: 128
                   description: Optional retry key scoped to this child run; reuse only for identical input.
+                mode:
+                  type: string
+                  enum: [steer, queue]
+                  default: queue
+                  description: (Implemented — ADR-182) `steer` injects into the running turn when possible, else queues; `queue` always queues.
       responses:
         "200":
           description: Message accepted; its durable identity, application state and current child run status are returned.
@@ -1997,8 +2013,16 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [childRunId, messageId, status, messageState]
+                required: [childRunId, messageId, status, messageState, delivery]
                 properties:
+                  delivery:
+                    type: string
+                    enum: [steered, queued]
+                    description: |
+                      (Implemented — ADR-182) `steered` — the message was sent
+                      into the running turn (`messageState` `applied`, or
+                      `dispatched` while the host answer is pending); `queued`
+                      — it waits for the next turn.
                   childRunId:
                     type: string
                     format: uuid

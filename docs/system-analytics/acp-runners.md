@@ -359,6 +359,36 @@ sequenceDiagram
     A->>DB: read rows (now honest)
 ```
 
+## Steering (Implemented — ADR-182)
+
+Steering injects a user message into an agent's RUNNING turn
+([ADR-182](../decisions/adr-182.md)). Whether a session can be steered is an
+adapter advertisement, never an adapter id:
+
+- **Per session (authoritative).** The supervisor reads
+  `initialize` → `_meta.steering.supported === true` once per ACP connection and
+  records it on the session (`GET /sessions` `capabilities.steering.supported`,
+  `POST /sessions` 201 `steeringSupported`, `session.created` payload
+  `steeringSupported`). The manager persists it per incarnation
+  (`run_session_incarnations.steering_supported`) at the create ACK and steers
+  only when it is `TRUE`; NULL (not observed) and FALSE queue the message.
+- **Per adapter family (informational).** The smoke script
+  (`pnpm -C supervisor smoke:acp`) records the same field into the smoke cache
+  entry; `/diagnostics` exposes it as `smoke.steering: {supported, checkedAt}`
+  (`null` = no smoke evidence), and the admin runner-readiness surface shows it
+  as a read-only "Steering" glyph. It never gates a launch.
+
+The manager promises "delivered to the running turn", never "immediately":
+when an injected message takes effect is the adapter's decision. The table
+below is measured with `supervisor/scripts/measure-steering.ts`
+(`MAISTER_MEASURE_STEERING=1`, real adapters, quiet host).
+
+| Family | Advertised | Outcome during a running tool call | `injected` latency | In-flight tool call | While a permission is pending | Extension frames on steer |
+| --- | --- | --- | --- | --- | --- | --- |
+| claude | (pending measurement) | (pending measurement) | (pending measurement) | (pending measurement) | (pending measurement) | (pending measurement) |
+| codex | (pending measurement) | (pending measurement) | (pending measurement) | (pending measurement) | (pending measurement) | (pending measurement) |
+| gemini / opencode / mimo | not measured | — | — | — | — | — |
+
 ## Expectations
 
 - A `platform_acp_runners.id` MUST be unique and match `^[A-Za-z0-9._-]+$`; a
