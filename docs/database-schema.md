@@ -2613,7 +2613,8 @@ to `queued`). Agent runs: the acceptance-time row of a steer
 row per message) and every other recorded dispatch prompt
 (`prompt_dispatch_key = agent_turn:<variant>:<turnId>:<ordinal>`,
 `delivery = 'prompted'`). NULL on rows written before
-`0180` and on non-user rows. `run_messages_queued_idx` (partial, `(run_id,
+`0180`, on non-user rows, and on a scratch dialog's launch prompt (it is the
+launch turn itself, never queued or steered). `run_messages_queued_idx` (partial, `(run_id,
 sequence) WHERE delivery = 'queued'`) serves the FIFO dispatcher;
 `run_messages_steer_command_uq` (partial unique on `steer_command_id`) lets
 recovery find the scratch row by its steer command.

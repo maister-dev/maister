@@ -16,6 +16,16 @@ const inputReadyDialogStatuses = new Set<ScratchDialogStatus>([
   "WaitingForUser",
 ]);
 
+// ADR-182 D-D1: a message sent while the agent is busy is steered into the
+// running turn or queued for the next one — never refused.
+const busyDialogStatuses = new Set<ScratchDialogStatus>([
+  "Starting",
+  "Running",
+]);
+
+/** `prompt` — the message becomes the next turn; `busy` — a turn is running. */
+export type ScratchMessageArm = "prompt" | "busy";
+
 export function isTerminalScratchDialogStatus(
   status: ScratchDialogStatus,
 ): boolean {
@@ -24,7 +34,7 @@ export function isTerminalScratchDialogStatus(
 
 export function assertScratchCanAcceptUserMessage(
   state: ScratchRunState,
-): void {
+): ScratchMessageArm {
   if (isTerminalScratchDialogStatus(state.dialogStatus)) {
     throw new MaisterError(
       "CONFLICT",
@@ -32,7 +42,9 @@ export function assertScratchCanAcceptUserMessage(
     );
   }
 
-  if (!inputReadyDialogStatuses.has(state.dialogStatus)) {
+  const busy = busyDialogStatuses.has(state.dialogStatus);
+
+  if (!busy && !inputReadyDialogStatuses.has(state.dialogStatus)) {
     throw new MaisterError(
       "CONFLICT",
       `scratch run ${state.runId} is ${state.dialogStatus}; user input is not accepted now`,
@@ -45,6 +57,8 @@ export function assertScratchCanAcceptUserMessage(
       `scratch run ${state.runId} has no live supervisor session`,
     );
   }
+
+  return busy ? "busy" : "prompt";
 }
 
 export function dialogStatusAfterSupervisorStop(args: {

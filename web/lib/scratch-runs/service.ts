@@ -14,6 +14,7 @@ import type {
   ScratchUploadedFileInput,
 } from "@/lib/scratch-runs/types";
 import type { PromptStopReason } from "@/lib/execution-host";
+import type { PreparedSteer } from "@/lib/execution-host/client";
 import type { FlowAssistantFocus } from "@/lib/studio/flow-assistant/context";
 import type {
   FlowActionResultPayload,
@@ -23,7 +24,7 @@ import type {
 import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { assertRuntimeObjectsReferenceable } from "@/lib/execution-host/runtime-object-holds";
@@ -123,6 +124,10 @@ import {
   type HostAdminClient,
 } from "@/lib/execution-host";
 import { executionDataPlaneModeForHost } from "@/lib/execution-host/data-plane-capabilities";
+import {
+  settleSteerCommand,
+  steerRefusalReason,
+} from "@/lib/execution-host/steer-settlement";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 import {
@@ -138,11 +143,14 @@ import {
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const {
   capabilityImports,
+  executionCommands,
   localPackages,
   platformAcpRunners,
   platformRuntimeSettings,
   projects,
   runs,
+  runMessages,
+  runSessionIncarnations,
   runSessions,
   scratchAttachments,
   scratchCapabilityProfiles,
@@ -195,9 +203,14 @@ export type ScratchMessageResponse = {
   messageId: string;
   sequence: number;
   dialogStatus: ScratchDialogStatus;
-  stopReason: PromptStopReason;
+  // ADR-182: present on the prompt arm only; a steered or queued message
+  // answers at acceptance, before any turn ends.
+  stopReason?: PromptStopReason;
+  delivery?: ScratchMessageDelivery;
   actionResult?: FlowActionResultPayload | null;
 };
+
+export type ScratchMessageDelivery = "prompted" | "steered" | "queued";
 
 async function lockRunRows(tx: Db, runId: string): Promise<void> {
   await tx.execute(sql`SELECT id FROM runs WHERE id = ${runId} FOR UPDATE`);
@@ -244,7 +257,8 @@ function messageResponse(args: {
   messageId: string;
   sequence: number;
   dialogStatus: ScratchDialogStatus;
-  stopReason: PromptStopReason;
+  stopReason?: PromptStopReason;
+  delivery?: ScratchMessageDelivery;
   actionResult?: FlowActionResultPayload | null;
 }): ScratchMessageResponse {
   const response: ScratchMessageResponse = {
@@ -252,8 +266,10 @@ function messageResponse(args: {
     messageId: args.messageId,
     sequence: args.sequence,
     dialogStatus: args.dialogStatus,
-    stopReason: args.stopReason,
   };
+
+  if (args.stopReason !== undefined) response.stopReason = args.stopReason;
+  if (args.delivery !== undefined) response.delivery = args.delivery;
 
   if (args.actionResult !== undefined) {
     response.actionResult = args.actionResult;
@@ -2045,12 +2061,340 @@ async function loadScratchRows(db: Db, runId: string) {
   return { run, scratch, workspace };
 }
 
+/** ADR-182 D-D1/D-D2: the running turn a busy message can be steered into —
+ * the run's newest owned scratch prompt, accepted on the current assignment and
+ * session, on an incarnation that advertised steering. Anything else queues. */
+async function prepareBusyScratchSteer(
+  tx: Db,
+  input: {
+    runId: string;
+    assignmentId: string | null;
+    hostSessionId: string;
+    client: BoundClient;
+    contentBlocks: NonNullable<ReturnType<typeof scratchPromptContentBlocks>>;
+  },
+): Promise<(PreparedSteer & { parentCommandId: string }) | null> {
+  if (!input.assignmentId || input.client.assignment.id !== input.assignmentId)
+    return null;
+  const [parent] = await tx
+    .select()
+    .from(executionCommands)
+    .where(
+      and(
+        eq(executionCommands.runId, input.runId),
+        eq(executionCommands.kind, "session.prompt"),
+        eq(executionCommands.ownerKind, "scratch_message"),
+        eq(executionCommands.state, "accepted"),
+        eq(executionCommands.executionAssignmentId, input.assignmentId),
+        eq(executionCommands.targetSessionId, input.hostSessionId),
+      ),
+    )
+    .orderBy(desc(executionCommands.createdAt))
+    .limit(1);
+  const incarnationId = (parent?.ownerRef as { incarnationId?: unknown } | null)
+    ?.incarnationId;
+
+  if (!parent || typeof incarnationId !== "string") return null;
+  const [incarnation] = await tx
+    .select({ steeringSupported: runSessionIncarnations.steeringSupported })
+    .from(runSessionIncarnations)
+    .where(eq(runSessionIncarnations.id, incarnationId));
+
+  if (incarnation?.steeringSupported !== true) return null;
+  const prepared = await input.client.prepareSteer(tx, input.hostSessionId, {
+    contentBlocks: input.contentBlocks,
+    parentCommandId: parent.id,
+  });
+
+  return { ...prepared, parentCommandId: parent.id };
+}
+
+/** Deliver a busy-arm steer after its intent committed; the settlement runs in
+ * the transaction that writes the ledger's terminal state. A refusal has
+ * flipped the row back to `queued` — the turn may already have ended, so the
+ * dispatcher is woken (D-D3 caller 2). An unknown outcome settles nothing and
+ * surfaces as the delivery error; the receipt fold settles it later. */
+async function deliverBusyScratchSteer(
+  db: Db,
+  runId: string,
+  messageId: string,
+  steer: PreparedSteer,
+  executionHosts?: ExecutionHosts,
+): Promise<ScratchMessageDelivery> {
+  const command = { id: steer.commandId, runId };
+  let settled = false;
+
+  try {
+    await steer.deliver({
+      onAck: async (tx) => {
+        await settleSteerCommand(tx, command, { kind: "injected" });
+        settled = true;
+      },
+      onReject: async (tx, error) => {
+        await settleSteerCommand(tx, command, {
+          kind: "refused",
+          reason: steerRefusalReason(error),
+        });
+        settled = true;
+      },
+    });
+  } catch (err) {
+    if (!settled) throw err;
+  }
+  const [row] = await db
+    .select({ delivery: runMessages.delivery })
+    .from(runMessages)
+    .where(eq(runMessages.id, messageId));
+
+  if (row?.delivery !== "queued") return "steered";
+  log.info(
+    { runId, messageId, reason: "steer_refused" },
+    "scratch-message-queued",
+  );
+  wakeQueuedScratchDispatch(db, runId, executionHosts);
+
+  return "queued";
+}
+
+/** Detached: a dispatch awaits the whole next turn, and no caller of this
+ * waits for it (ADR-182 C27). */
+export function wakeQueuedScratchDispatch(
+  db: Db,
+  runId: string,
+  executionHosts?: ExecutionHosts,
+): void {
+  void dispatchQueuedScratchMessages(db, runId, executionHosts).catch(
+    (err: unknown) =>
+      log.warn(
+        {
+          runId,
+          code: isMaisterError(err) ? err.code : "UNKNOWN",
+          err: err instanceof Error ? err.message : String(err),
+        },
+        "scratch-queued-dispatch-failed",
+      ),
+  );
+}
+
+/**
+ * ADR-182 D-D3: send the oldest queued message as the next turn. ONE
+ * transaction under the run and `scratch_runs` locks requires the dialog to be
+ * waiting, CASes the row `queued → prompted` and flips the dialog to
+ * `Running`; the turn then runs outside it with the message's own owner, and
+ * fails exactly like a directly sent message. Callers: the previous turn's
+ * `afterCommit`, a refused steer, and a send that found older rows queued.
+ * Concurrent callers serialize on the locks; the loser answers
+ * `{dispatched: false}`.
+ */
+export async function dispatchQueuedScratchMessages(
+  db: Db,
+  runId: string,
+  executionHosts?: ExecutionHosts,
+): Promise<{ dispatched: boolean }> {
+  const claim = await db.transaction(async (tx: Db) => {
+    await lockRunRows(tx, runId);
+    const [scratch] = await tx
+      .select({ dialogStatus: scratchRuns.dialogStatus })
+      .from(scratchRuns)
+      .where(eq(scratchRuns.runId, runId));
+
+    if (scratch?.dialogStatus !== "WaitingForUser")
+      return { skipped: "not_waiting" as const };
+    const [oldest] = await tx
+      .select()
+      .from(runMessages)
+      .where(
+        and(eq(runMessages.runId, runId), eq(runMessages.delivery, "queued")),
+      )
+      .orderBy(asc(runMessages.sequence))
+      .limit(1);
+
+    if (!oldest) return { skipped: "nothing_queued" as const };
+    const [moved] = await tx
+      .update(runMessages)
+      .set({ delivery: "prompted" })
+      .where(
+        and(eq(runMessages.id, oldest.id), eq(runMessages.delivery, "queued")),
+      )
+      .returning({ id: runMessages.id });
+
+    if (!moved) return { skipped: "cas_lost" as const };
+    const activeSession = await loadActiveRunSession(tx, runId);
+
+    if (!activeSession?.hostSessionId)
+      throw new MaisterError(
+        "PRECONDITION",
+        `scratch run ${runId} has no live supervisor session`,
+      );
+    const now = new Date();
+
+    await tx
+      .update(scratchRuns)
+      .set({
+        dialogStatus: "Running",
+        updatedAt: now,
+        errorCode: null,
+        errorMessage: null,
+        errorMetadata: null,
+      })
+      .where(eq(scratchRuns.runId, runId));
+    await tx
+      .update(runs)
+      .set({ status: "Running", currentStepId: scratchStepId() })
+      .where(eq(runs.id, runId));
+    const [remaining] = await tx
+      .select({ count: sql<number>`count(*)::int` })
+      .from(runMessages)
+      .where(
+        and(eq(runMessages.runId, runId), eq(runMessages.delivery, "queued")),
+      );
+    const attachments = await tx
+      .select()
+      .from(scratchAttachments)
+      .where(eq(scratchAttachments.messageId, oldest.id));
+
+    return {
+      message: oldest as { id: string; sequence: number; content: string },
+      hostSessionId: activeSession.hostSessionId as string,
+      capabilityAgent: activeSession.capabilityAgent ?? null,
+      remaining: remaining?.count ?? 0,
+      // The prompt carries metadata attachments ahead of uploaded files, as
+      // a directly sent message does.
+      attachments: [
+        ...attachments.filter(
+          (row: { kind: string }) => row.kind !== "uploaded_file",
+        ),
+        ...attachments.filter(
+          (row: { kind: string }) => row.kind === "uploaded_file",
+        ),
+      ],
+    };
+  });
+
+  if ("skipped" in claim) {
+    log.info(
+      { runId, reason: claim.skipped },
+      "scratch-queued-dispatch-skipped",
+    );
+
+    return { dispatched: false };
+  }
+  const { message } = claim;
+
+  log.info(
+    {
+      runId,
+      messageId: message.id,
+      sequence: message.sequence,
+      remaining: claim.remaining,
+    },
+    "scratch-queued-message-dispatched",
+  );
+  const execution = await scratchExecution(db, runId, executionHosts);
+  const prompt = normalizeScratchPrompt(
+    message.content,
+    claim.capabilityAgent,
+    { runId },
+  );
+
+  try {
+    await sendScratchPromptAndProjectEvents({
+      runId,
+      sessionId: claim.hostSessionId,
+      stepId: scratchStepId(),
+      prompt,
+      contentBlocks: scratchPromptContentBlocks(prompt, claim.attachments),
+      execution,
+      owner: {
+        variant: "message",
+        messageId: message.id,
+        sequence: message.sequence,
+      },
+    });
+  } catch (err) {
+    await failScratchMessageTurn({
+      db,
+      runId,
+      hostSessionId: claim.hostSessionId,
+      isLocalPackageAssistant: false,
+      err,
+    });
+    throw err;
+  }
+
+  return { dispatched: true };
+}
+
+/** The shared failure path of a scratch message turn (sent directly or
+ * dispatched from the queue). The caller rethrows. */
+async function failScratchMessageTurn(args: {
+  db: Db;
+  runId: string;
+  hostSessionId: string;
+  isLocalPackageAssistant: boolean;
+  err: unknown;
+}): Promise<void> {
+  const { db, runId, err } = args;
+
+  // ADR-166 E-EH-11: a fenced turn belongs to a superseded generation — no
+  // teardown, no terminal write from this driver.
+  if (isFencedError(err)) {
+    log.warn({ runId }, "driver-yielded");
+
+    return;
+  }
+  if (isMaisterError(err) && err.code === "EXECUTOR_UNAVAILABLE") {
+    noteScratchAdmissionYield(runId, err);
+    await markScratchPromptRetryable({ db, runId, err }).catch((markErr) =>
+      log.error(
+        {
+          runId,
+          markErr: markErr instanceof Error ? markErr.message : String(markErr),
+        },
+        "failed to mark scratch message prompt retryable",
+      ),
+    );
+
+    return;
+  }
+
+  // ADR-097: a local-package assistant turn failure explicitly releases any
+  // open permission deferred by tearing down the supervisor session
+  // (purgeSession cancels all pending deferreds), THEN marks crashed —
+  // idempotent on an already-gone session. Project scratch runs keep their
+  // prior behavior (supervisor purge on the natural session exit).
+  if (args.isLocalPackageAssistant) {
+    await deleteScratchSupervisorSessionIfLive(args.hostSessionId, runId).catch(
+      (delErr) =>
+        log.error(
+          {
+            runId,
+            delErr: delErr instanceof Error ? delErr.message : String(delErr),
+          },
+          "failed to release supervisor session on assistant turn failure",
+        ),
+    );
+  }
+  await markScratchCrashed({ db, runId, err }).catch((markErr) =>
+    log.error(
+      {
+        runId,
+        markErr: markErr instanceof Error ? markErr.message : String(markErr),
+      },
+      "failed to mark scratch message prompt failure",
+    ),
+  );
+}
+
 async function appendScratchUserMessage(args: {
   db: Db;
   runId: string;
   body: ScratchMessageInput;
   uploadedFiles: readonly ScratchUploadedFileInput[];
   executionHosts?: ExecutionHosts;
+  // ADR-182 D-D5: local-package assistant runs keep the `WaitingForUser`-only
+  // gate (their actor/lock model and one-action-per-reply postprocessing).
+  acceptWhileBusy?: boolean;
 }) {
   const runRows = await args.db
     .select()
@@ -2107,7 +2451,7 @@ async function appendScratchUserMessage(args: {
       } = await loadScratchRows(tx, args.runId);
       const activeSession = await loadActiveRunSession(tx, args.runId);
 
-      assertScratchCanAcceptUserMessage({
+      const arm = assertScratchCanAcceptUserMessage({
         runId: args.runId,
         runStatus: lockedRun.status,
         dialogStatus: scratch.dialogStatus,
@@ -2117,19 +2461,75 @@ async function appendScratchUserMessage(args: {
         hostSessionId: activeSession?.hostSessionId ?? null,
       });
 
+      if (arm === "busy" && !args.acceptWhileBusy)
+        throw new MaisterError(
+          "CONFLICT",
+          `scratch run ${args.runId} is ${scratch.dialogStatus}; user input is not accepted now`,
+        );
+      const hostSessionId = activeSession?.hostSessionId as string;
+      const capabilityAgent = activeSession?.capabilityAgent ?? null;
+      const attachments = validateScratchAttachments(args.body.attachments, {
+        projectRepoPath: workspace.parentRepoPath,
+        worktreePath: workspace.worktreePath,
+      });
+      const metadataAttachments = attachments.map(metadataAttachmentRow);
+      // D-D3 caller 3: a message sent while older ones still wait joins the
+      // queue behind them, so nobody jumps it after a reload.
+      const [queuedAhead] =
+        arm === "prompt"
+          ? await tx
+              .select({ id: runMessages.id })
+              .from(runMessages)
+              .where(
+                and(
+                  eq(runMessages.runId, args.runId),
+                  eq(runMessages.delivery, "queued"),
+                ),
+              )
+              .limit(1)
+          : [];
+      const steer =
+        arm === "busy"
+          ? await prepareBusyScratchSteer(tx, {
+              runId: args.runId,
+              assignmentId: lockedRun.executionAssignmentId,
+              hostSessionId,
+              client: execution.client,
+              contentBlocks: scratchPromptContentBlocks(
+                normalizeScratchPrompt(args.body.content, capabilityAgent, {
+                  runId: args.runId,
+                }),
+                [...metadataAttachments, ...uploadedAttachments],
+              ) ?? [
+                {
+                  type: "text",
+                  text: normalizeScratchPrompt(
+                    args.body.content,
+                    capabilityAgent,
+                    { runId: args.runId },
+                  ),
+                },
+              ],
+            })
+          : null;
+      const delivery: ScratchMessageDelivery =
+        arm === "prompt"
+          ? queuedAhead
+            ? "queued"
+            : "prompted"
+          : steer
+            ? "steered"
+            : "queued";
       const { sequence } = await appendScratchMessage(tx, {
         id: messageId,
         runId: args.runId,
         role: "user",
         content: args.body.content,
+        delivery,
+        ...(steer ? { steerCommandId: steer.commandId } : {}),
       });
       const now = new Date();
-      const attachments = validateScratchAttachments(args.body.attachments, {
-        projectRepoPath: workspace.parentRepoPath,
-        worktreePath: workspace.worktreePath,
-      });
 
-      const metadataAttachments = attachments.map(metadataAttachmentRow);
       const storedAttachments = storedAttachmentValues({
         metadataAttachments,
         uploadedAttachments,
@@ -2144,27 +2544,54 @@ async function appendScratchUserMessage(args: {
         );
         await tx.insert(scratchAttachments).values(storedAttachments);
       }
-      await tx
-        .update(scratchRuns)
-        .set({
-          dialogStatus: "Running",
-          lastUserMessageAt: now,
-          updatedAt: now,
-          errorCode: null,
-          errorMessage: null,
-          errorMetadata: null,
-        })
-        .where(eq(scratchRuns.runId, args.runId));
-      await tx
-        .update(runs)
-        .set({ status: "Running", currentStepId: scratchStepId() })
-        .where(eq(runs.id, args.runId));
+      if (delivery === "prompted") {
+        await tx
+          .update(scratchRuns)
+          .set({
+            dialogStatus: "Running",
+            lastUserMessageAt: now,
+            updatedAt: now,
+            errorCode: null,
+            errorMessage: null,
+            errorMetadata: null,
+          })
+          .where(eq(scratchRuns.runId, args.runId));
+        await tx
+          .update(runs)
+          .set({ status: "Running", currentStepId: scratchStepId() })
+          .where(eq(runs.id, args.runId));
+      } else {
+        // D-D2: the dialog status is not touched — the running turn (or the
+        // dispatcher) owns it.
+        await tx
+          .update(scratchRuns)
+          .set({ lastUserMessageAt: now, updatedAt: now })
+          .where(eq(scratchRuns.runId, args.runId));
+        log.info(
+          steer
+            ? {
+                runId: args.runId,
+                messageId,
+                commandId: steer.commandId,
+                parentCommandId: steer.parentCommandId,
+              }
+            : {
+                runId: args.runId,
+                messageId,
+                reason: arm === "prompt" ? "queued_ahead" : "unsupported",
+              },
+          steer ? "scratch-steer-issued" : "scratch-message-queued",
+        );
+      }
 
       return {
         messageId,
         sequence,
-        hostSessionId: activeSession?.hostSessionId as string,
-        capabilityAgent: activeSession?.capabilityAgent ?? null,
+        delivery,
+        steer,
+        queuedBehind: arm === "prompt" && delivery === "queued",
+        hostSessionId,
+        capabilityAgent,
         // ADR-097: project-less ⇒ a local-package assistant run; its turn-failure
         // path explicitly releases the supervisor deferred (see caller).
         isLocalPackageAssistant: !run.projectId,
@@ -2214,7 +2641,33 @@ export async function sendScratchUserMessage(args: {
     body: args.body,
     uploadedFiles: args.uploadedFiles ?? [],
     executionHosts: args.executionHosts,
+    acceptWhileBusy: true,
   });
+
+  if (appended.delivery !== "prompted") {
+    // ADR-182: answered at acceptance. A queued row behind older ones wakes
+    // the dispatcher (D-D3 caller 3); a busy-arm queued row waits for the
+    // running turn's own completion to dispatch it.
+    const delivery = appended.steer
+      ? await deliverBusyScratchSteer(
+          db,
+          args.runId,
+          appended.messageId,
+          appended.steer,
+          args.executionHosts,
+        )
+      : appended.delivery;
+
+    if (!appended.steer && appended.queuedBehind)
+      wakeQueuedScratchDispatch(db, args.runId, args.executionHosts);
+
+    return messageResponse({
+      messageId: appended.messageId,
+      sequence: appended.sequence,
+      dialogStatus: await readScratchDialogStatus(db, args.runId),
+      delivery,
+    });
+  }
 
   try {
     const messagePrompt = normalizeScratchPrompt(
@@ -2245,62 +2698,16 @@ export async function sendScratchUserMessage(args: {
       sequence: appended.sequence,
       dialogStatus,
       stopReason: promptResult.stopReason,
+      delivery: "prompted",
     });
   } catch (err) {
-    // ADR-166 E-EH-11: a fenced turn belongs to a superseded generation — no
-    // teardown, no terminal write from this driver.
-    if (isFencedError(err)) {
-      log.warn({ runId: args.runId }, "driver-yielded");
-      throw err;
-    }
-    if (isMaisterError(err) && err.code === "EXECUTOR_UNAVAILABLE") {
-      noteScratchAdmissionYield(args.runId, err);
-      await markScratchPromptRetryable({ db, runId: args.runId, err }).catch(
-        (markErr) =>
-          log.error(
-            {
-              runId: args.runId,
-              markErr:
-                markErr instanceof Error ? markErr.message : String(markErr),
-            },
-            "failed to mark scratch message prompt retryable",
-          ),
-      );
-      throw err;
-    }
-
-    // ADR-097: a local-package assistant turn failure explicitly releases any
-    // open permission deferred by tearing down the supervisor session
-    // (purgeSession cancels all pending deferreds), THEN marks crashed —
-    // idempotent on an already-gone session. Project scratch runs keep their
-    // prior behavior (supervisor purge on the natural session exit).
-    if (appended.isLocalPackageAssistant) {
-      await deleteScratchSupervisorSessionIfLive(
-        appended.hostSessionId,
-        args.runId,
-      ).catch((delErr) =>
-        log.error(
-          {
-            runId: args.runId,
-            delErr: delErr instanceof Error ? delErr.message : String(delErr),
-          },
-          "failed to release supervisor session on assistant turn failure",
-        ),
-      );
-    }
-    await markScratchCrashed({
+    await failScratchMessageTurn({
       db,
       runId: args.runId,
+      hostSessionId: appended.hostSessionId,
+      isLocalPackageAssistant: appended.isLocalPackageAssistant,
       err,
-    }).catch((markErr) =>
-      log.error(
-        {
-          runId: args.runId,
-          markErr: markErr instanceof Error ? markErr.message : String(markErr),
-        },
-        "failed to mark scratch message prompt failure",
-      ),
-    );
+    });
     throw err;
   }
 }

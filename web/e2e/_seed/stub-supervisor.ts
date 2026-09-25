@@ -33,6 +33,10 @@ import path from "node:path";
 export const STUB_SUPERVISOR_PORT = 7788;
 export const STUB_SUPERVISOR_URL = `http://127.0.0.1:${STUB_SUPERVISOR_PORT}`;
 export const STUB_SESSIONS_DIR = path.resolve("e2e/.runtime/stub-sessions");
+// ADR-182 (T4.6): a scratch prompt carrying this marker keeps its turn open on
+// the test supervisor until the spec drops `<sessionId>.turn-release` in
+// STUB_SESSIONS_DIR, so the browser can send while the agent is busy.
+export const E2E_HOLD_TURN_MARKER = "[e2e:hold-turn]";
 // ADR-166 (transitional contract): a fixed execution-host identity so the web
 // registrar upserts ONE stable execution_hosts row across every spec.
 export const STUB_HOST_KEY = "eh_e2e_stub_supervisor_0001";

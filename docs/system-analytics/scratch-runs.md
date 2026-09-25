@@ -284,6 +284,15 @@ Message rules while the agent is busy (Implemented — [ADR-182](../decisions/ad
   after the previous turn's `WaitingForUser` commit, after a refused steer,
   and by the next send; the CAS `queued → prompted` guarantees one prompt per
   row. The composer has no client-side queue: a reload loses nothing.
+- The dispatch is detached from the turn that ends: the scratch prompt owner's
+  `afterCommit` wakes `dispatchQueuedScratchMessages` without awaiting it, so
+  the previous turn's application commits and returns while the dispatched
+  turn still runs. Busy-arm rows leave the running turn's open transcript rows
+  and usage alone — a steer's acceptance event closes the assistant row, a
+  queued row's own dispatch starts the next turn.
+- Local-package assistant runs (the Flow Studio dock, ADR-097) keep the
+  `WaitingForUser`-only gate: their send is refused `CONFLICT` while busy and
+  their composer offers only Stop while the agent works.
 
 ### Permission HITL in scratch dialog (Implemented)
 

@@ -23,6 +23,7 @@ export type TranscriptMessage = {
   role: TranscriptRole;
   content: string;
   createdAt: string;
+  delivery?: "queued" | "prompted" | "steered" | null;
 };
 
 export type TranscriptAttachmentBadge = {
@@ -42,6 +43,9 @@ export type TranscriptLabels = {
   // ADR-108 (M40): the scratch in-session guardrail-trip notice. Optional — only
   // the scratch surface emits hook_trip rows (gate-chat sessions never do).
   hookTrip?: (args: { rule: string; disposition: "deny" | "halt" }) => string;
+  // ADR-182: the badge of a user row sent while the agent was busy. Optional —
+  // only the scratch surface accepts such messages.
+  deliveryBadge?: (delivery: "queued" | "steered") => string;
 };
 
 const markdownComponents: Components = {
@@ -532,6 +536,12 @@ export function TranscriptView({
     if (parsed.kind !== "text") return null;
 
     const isUser = message.role === "user";
+    const deliveryBadge =
+      isUser &&
+      (message.delivery === "queued" || message.delivery === "steered") &&
+      labels.deliveryBadge
+        ? labels.deliveryBadge(message.delivery)
+        : null;
 
     return (
       <article
@@ -551,6 +561,15 @@ export function TranscriptView({
               : (assistantLabel ?? message.role)}
           </span>
           <div className="flex flex-none items-center gap-2">
+            {deliveryBadge ? (
+              <span
+                className="rounded-full border border-amber-line bg-paper px-2 py-0.5 normal-case tracking-normal text-amber"
+                data-delivery={message.delivery}
+                data-testid="scratch-delivery-badge"
+              >
+                {deliveryBadge}
+              </span>
+            ) : null}
             {!isUser ? <CopyButton labels={labels} text={parsed.text} /> : null}
             {message.createdAt ? (
               <span suppressHydrationWarning>

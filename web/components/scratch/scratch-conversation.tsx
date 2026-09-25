@@ -24,6 +24,7 @@ import { ScratchPermissionPanel } from "@/components/scratch/scratch-permission-
 import {
   attachmentSummary,
   canCompose,
+  canSendWhileBusy,
   errorText,
   hitlErrorText,
 } from "@/lib/scratch-runs/dialog";
@@ -135,6 +136,10 @@ export function ScratchConversation({
     | null
   >(null);
   const [pendingHitlKey, setPendingHitlKey] = useState<string | null>(null);
+  // ADR-182: how the last message sent while the agent was busy reached it.
+  const [deliveryNotice, setDeliveryNotice] = useState<
+    "steered" | "queued" | null
+  >(null);
   const activeRunId = useRef(runId);
 
   const currentHitlRequestKey =
@@ -320,6 +325,10 @@ export function ScratchConversation({
     clearedHistory: (count) => t("clearedHistory", { count }),
     hookTrip: ({ rule, disposition }) =>
       t("hookTripNotice", { rule, disposition }),
+    deliveryBadge: (delivery) =>
+      delivery === "queued"
+        ? t("deliveryQueuedBadge")
+        : t("deliverySteeredBadge"),
   };
   const quickReplies = useMemo(() => {
     if (!canCompose(status)) return [];
@@ -404,7 +413,15 @@ export function ScratchConversation({
 
           return false;
         }
+        const accepted = (await response.json().catch(() => null)) as {
+          delivery?: string;
+        } | null;
 
+        setDeliveryNotice(
+          accepted?.delivery === "steered" || accepted?.delivery === "queued"
+            ? accepted.delivery
+            : null,
+        );
         await loadDetail();
         onMessageSettled?.();
 
@@ -761,10 +778,14 @@ export function ScratchConversation({
         attachmentsEnabled={attachmentsEnabled}
         catalog={commandCatalog}
         compact={compact}
+        deliveryNotice={canSendWhileBusy(status) ? deliveryNotice : null}
         disabledReason={sendDisabledReason}
         pending={pendingAction === "send"}
         quickReplies={quickReplies}
         recoverEnabled={resolvedRecoverEndpoint !== null}
+        // ADR-182 D-D5: only project scratch runs accept a message while busy;
+        // the local-package assistant (its own endpoint) keeps the idle gate.
+        sendWhileBusy={messageEndpoint === undefined}
         status={status}
         onInterrupt={interrupt}
         onRecover={recover}

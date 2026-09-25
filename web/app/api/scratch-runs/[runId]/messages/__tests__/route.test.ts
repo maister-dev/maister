@@ -50,6 +50,10 @@ type FakeDb = {
     from: (table: unknown) => {
       where: (predicate: unknown) => {
         for: (mode: string) => Promise<Record<string, unknown>[]>;
+        limit: (count: number) => Promise<Record<string, unknown>[]>;
+        orderBy: (...order: unknown[]) => {
+          limit: (count: number) => Promise<Record<string, unknown>[]>;
+        };
         then: PromiseLike<Record<string, unknown>[]>["then"];
       };
     };
@@ -133,8 +137,17 @@ const fakeDb: FakeDb = {
 
         return [];
       };
+      // ADR-182: the only LIMITed reads on the send path are the queued-ahead
+      // probe (run_messages) and the busy arm's parent-prompt lookup
+      // (execution_commands); neither finds a row in this fake.
+      const limited = async () =>
+        ["run_messages", "execution_commands"].includes(tableName(table) ?? "")
+          ? []
+          : rows();
       const query = {
         for: async () => rows(),
+        limit: limited,
+        orderBy: () => ({ limit: limited }),
         then: <TResult1 = Record<string, unknown>[], TResult2 = never>(
           onfulfilled?:
             | ((
@@ -390,8 +403,48 @@ describe("POST /api/scratch-runs/[runId]/messages", () => {
     );
   });
 
-  it("rejects while a scratch prompt is already running", async () => {
+  // ADR-182 D-D1/D-D2: a message sent while the agent is busy is accepted —
+  // here the running turn is not steerable, so it is queued behind it. The
+  // dialog status is untouched and no turn is started.
+  it("accepts while running and reports delivery", async () => {
     state.scratchStatus = "Running";
+
+    const res = await POST(request("also check the migration"), ctx());
+    const body = (await res.json()) as {
+      ok?: boolean;
+      delivery?: string;
+      dialogStatus?: string;
+      stopReason?: string;
+    };
+
+    expect(res.status).toBe(202);
+    expect(body).toMatchObject({
+      ok: true,
+      delivery: "queued",
+      dialogStatus: "Running",
+    });
+    expect(body.stopReason).toBeUndefined();
+    expect(state.inserts[0]).toEqual(
+      expect.objectContaining({
+        runId,
+        role: "user",
+        content: "also check the migration",
+        delivery: "queued",
+        steerCommandId: null,
+      }),
+    );
+    expect(
+      state.updates.some(
+        (patch) =>
+          typeof (patch as { dialogStatus?: unknown }).dialogStatus ===
+          "string",
+      ),
+    ).toBe(false);
+    expect(mocks.sendScratchPromptAndProjectEvents).not.toHaveBeenCalled();
+  });
+
+  it("still refuses a dialog blocked on a permission", async () => {
+    state.scratchStatus = "NeedsInput";
 
     const res = await POST(request(), ctx());
     const body = (await res.json()) as { code?: string };
