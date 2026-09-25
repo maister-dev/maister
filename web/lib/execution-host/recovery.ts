@@ -44,6 +44,7 @@ import {
   RuntimeObjectEvidenceError,
 } from "./runtime-object-evidence";
 import { runEventWakeBus } from "./events/run-wake";
+import { settleSteerCommand, type SteerOutcome } from "./steer-settlement";
 
 import { parseRuntimeObjectWireMetadata } from "@/lib/supervisor-client";
 import { executionAssignments, runs } from "@/lib/db/schema";
@@ -185,6 +186,35 @@ async function applyRuntimeObjectReceipt(
   }
 }
 
+// ADR-182 C26: a kind whose terminal state has a domain outcome settles it in
+// the SAME transaction as the ledger write, run lock first (the live ack and
+// refusal paths use that order too). Every other kind writes the ledger alone.
+async function settleInLedgerTx(
+  db: Db,
+  row: ExecutionCommand,
+  outcome: SteerOutcome,
+  logger: Logger,
+  now: Date,
+  write: (tx: Db) => Promise<unknown>,
+): Promise<void> {
+  if (row.kind !== "session.steer") {
+    await write(db);
+
+    return;
+  }
+  await db.transaction(async (tx) => {
+    const txDb = tx as unknown as Db;
+
+    await tx
+      .select({ id: runs.id })
+      .from(runs)
+      .where(eq(runs.id, row.runId))
+      .for("update");
+    await write(txDb);
+    await settleSteerCommand(txDb, row, outcome, { logger, now });
+  });
+}
+
 // ADR-166 D5 W2/W4: fold a host receipt into the ledger together with the
 // result-derived domain writes the lost ack tx would have made.
 async function foldReceipt(
@@ -198,13 +228,23 @@ async function foldReceipt(
     await db.transaction(async (tx) => {
       const txDb = tx as unknown as Db;
 
-      if (row.kind === "session.create")
+      if (row.kind === "session.create" || row.kind === "session.steer")
         await tx
           .select({ id: runs.id })
           .from(runs)
           .where(eq(runs.id, row.runId))
           .for("update");
       await markSucceeded(txDb, row.id, null, receipt.body, { logger, now });
+      if (row.kind === "session.steer")
+        await settleSteerCommand(
+          txDb,
+          row,
+          { kind: "injected" },
+          {
+            logger,
+            now,
+          },
+        );
       if (row.kind === "session.create") {
         const payload = row.payload as {
           sessionName?: unknown;
@@ -213,6 +253,7 @@ async function foldReceipt(
         const body = receipt.body as {
           sessionId?: unknown;
           acpSessionId?: unknown;
+          steeringSupported?: unknown;
         };
 
         if (typeof body.sessionId === "string") {
@@ -233,6 +274,10 @@ async function foldReceipt(
               acpSessionId:
                 typeof body.acpSessionId === "string"
                   ? body.acpSessionId
+                  : null,
+              steeringSupported:
+                typeof body.steeringSupported === "boolean"
+                  ? body.steeringSupported
                   : null,
             },
           });
@@ -302,10 +347,18 @@ async function foldReceipt(
       ...(reason ? { reason } : {}),
     };
 
-    await (fenced ? markFenced : markFailed)(db, row.id, null, error, {
+    await settleInLedgerTx(
+      db,
+      row,
+      { kind: "refused", reason: reason ?? error.code },
       logger,
       now,
-    });
+      (tx) =>
+        (fenced ? markFenced : markFailed)(tx, row.id, null, error, {
+          logger,
+          now,
+        }),
+    );
     logger.warn(
       {
         commandId: row.id,
@@ -321,12 +374,20 @@ async function foldReceipt(
 
   if (receipt.inflight) return "skippedInFlight";
 
-  await markFailed(
+  await settleInLedgerTx(
     db,
-    row.id,
-    null,
-    { code: "ACP_PROTOCOL", reason: "turn_lost" },
-    { logger, now },
+    row,
+    { kind: "refused", reason: "turn_lost" },
+    logger,
+    now,
+    (tx) =>
+      markFailed(
+        tx,
+        row.id,
+        null,
+        { code: "ACP_PROTOCOL", reason: "turn_lost" },
+        { logger, now },
+      ),
   );
   logger.warn(
     {
@@ -348,12 +409,16 @@ async function orphan(
   now: Date,
   logger: Logger,
 ): Promise<void> {
-  await markFailed(
+  // ADR-182 W1: an orphaned steer never reached the host, so converting it
+  // delivers the message exactly once.
+  await settleInLedgerTx(
     db,
-    row.id,
-    null,
-    { code: "CRASH", reason },
-    { logger, now },
+    row,
+    { kind: "refused", reason },
+    logger,
+    now,
+    (tx) =>
+      markFailed(tx, row.id, null, { code: "CRASH", reason }, { logger, now }),
   );
   logger.warn(
     { commandId: row.id, commandKind: row.kind, runId: row.runId, reason },

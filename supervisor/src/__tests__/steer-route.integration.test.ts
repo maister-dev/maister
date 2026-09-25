@@ -376,6 +376,22 @@ describe("POST /sessions/:id/steer (ADR-182)", () => {
 
     await releasePrompt(stack, session, parent);
     expect(agentText(session)).toContain("steered:also update the changelog");
+    // C4: the steered output is attributed to the PARENT prompt, never to the
+    // steer — the parent's span evidence stays whole.
+    const updates = stack.host.hostState
+      .runtimeEventsAfter(stack.host.hostState.getRuntimeEventStreamId(), null)
+      .map((row) => row.envelope)
+      .filter(
+        (row) =>
+          row.eventType === "session.update" &&
+          row.hostSessionId === session.sessionId,
+      )
+      .map(
+        (row) => (row.payload as { sourceCommandId?: string }).sourceCommandId,
+      );
+
+    expect(updates.length).toBeGreaterThan(0);
+    expect(new Set(updates)).toEqual(new Set([parent]));
 
     stacks.splice(stacks.indexOf(stack), 1);
     await stack.host.stop();

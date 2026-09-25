@@ -4,6 +4,7 @@ import type {
   CreateSessionResult,
   ExecutionHostIdentity,
   PromptAccepted,
+  PromptContentBlock,
   SendPromptInput,
   SupervisorDiagnosticsStatus,
   SupervisorEnvRefPresence,
@@ -134,6 +135,21 @@ export type InputPayload = {
 // re-sent after an unknown outcome): the delivery happened on an earlier
 // attempt.
 export type InputDeliveryResult = { ok: true; replayed: boolean };
+
+// ADR-182: a message injected into the session's running owned prompt. The
+// content blocks have the prompt's shape; the host compares `parentCommandId`
+// with its active prompt and refuses (409 CONFLICT) otherwise.
+export type SteerPayload = {
+  contentBlocks: PromptContentBlock[];
+  parentCommandId: string;
+};
+
+export type SteerResult = {
+  outcome: "injected";
+  parentCommandId: string;
+  latencyMs: number;
+  replayed: boolean;
+};
 
 export type CheckpointResult = {
   alreadyCheckpointed: boolean;
@@ -327,6 +343,11 @@ export interface ExecutionHostTransport {
     envelope: CommandEnvelope<InputPayload>,
     opts?: CommandCallOptions,
   ): Promise<InputDeliveryResult>;
+  steer(
+    sessionId: string,
+    envelope: CommandEnvelope<SteerPayload>,
+    opts?: CommandCallOptions,
+  ): Promise<SteerResult>;
   cancelPrompt(
     sessionId: string,
     envelope: CommandEnvelope<EmptyPayload>,

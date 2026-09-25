@@ -209,6 +209,11 @@ export type DeliverOptions<TResult> = {
     tx: Db,
     result: TResult,
   ) => Promise<void | SessionBindingDisposition>;
+  // ADR-182 C26: refusal-derived domain writes commit in the SAME tx as the
+  // ledger's `failed` / `fenced` write, so no crash window separates them. A
+  // kind that passes it also keeps an exhausted UNKNOWN outcome open for the
+  // receipt fold instead of marking it failed — the effect may have happened.
+  onReject?: (tx: Db, error: unknown) => Promise<void>;
   resultSummary?: (result: TResult) => Record<string, unknown> | null;
   logger?: Logger;
   sleep?: (ms: number) => Promise<void>;
@@ -217,6 +222,52 @@ export type DeliverOptions<TResult> = {
 
 const defaultSleep = (ms: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+const RUN_LOCKED_ACK_KINDS: ReadonlySet<CommandKind> = new Set([
+  "session.input",
+  "session.create",
+  "session.steer",
+]);
+
+// The ledger's terminal refusal and, when the caller owns a domain outcome,
+// its settlement in ONE transaction (run lock first, like the ack path). A
+// throwing settlement rolls the ledger write back: the row stays open and the
+// recovery fold re-runs both from the host receipt.
+async function terminalWithRejection<TResult>(
+  opts: DeliverOptions<TResult>,
+  state: "failed" | "fenced",
+  attempts: number,
+  err: unknown,
+  transition: { logger: Logger; now: Date },
+): Promise<void> {
+  const write = (db: Db) =>
+    (state === "fenced" ? markFenced : markFailed)(
+      db,
+      opts.command.id,
+      attempts,
+      errorRecord(err),
+      transition,
+    );
+
+  if (!opts.onReject) {
+    await write(opts.db);
+
+    return;
+  }
+  const onReject = opts.onReject;
+
+  await opts.db.transaction(async (tx) => {
+    const txDb = tx as unknown as Db;
+
+    await tx
+      .select({ id: runs.id })
+      .from(runs)
+      .where(eq(runs.id, opts.command.runId))
+      .for("update");
+    await write(txDb);
+    await onReject(txDb, err);
+  });
+}
 
 function summarize<T>(
   result: T,
@@ -273,7 +324,7 @@ export async function deliverCommand<TResult>(
       const latencyMs = Date.now() - startedAt;
 
       if (isFencedError(err)) {
-        await markFenced(opts.db, opts.command.id, attempts, errorRecord(err), {
+        await terminalWithRejection(opts, "fenced", attempts, err, {
           logger,
           now: now(),
         });
@@ -293,6 +344,25 @@ export async function deliverCommand<TResult>(
       }
 
       if (isUnknownOutcome(err)) {
+        if (opts.onReject && attempts >= opts.command.maxAttempts) {
+          logger.warn(
+            {
+              commandId: opts.command.id,
+              commandKind: kind,
+              attempt: attempts,
+              latencyMs,
+              outcome: "left_for_recovery",
+            },
+            "command-unknown-outcome-left-for-recovery",
+          );
+          throw new MaisterError(
+            "EXECUTOR_UNAVAILABLE",
+            `command ${kind} ${opts.command.id} exhausted its delivery budget with an unknown outcome: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+            { cause: err, details: { reason: "delivery_budget_exhausted" } },
+          );
+        }
         if (opts.command.createIntent) {
           await casTransition(
             opts.db,
@@ -391,7 +461,7 @@ export async function deliverCommand<TResult>(
         );
       }
 
-      await markFailed(opts.db, opts.command.id, attempts, errorRecord(err), {
+      await terminalWithRejection(opts, "failed", attempts, err, {
         logger,
         now: now(),
       });
@@ -414,7 +484,8 @@ export async function deliverCommand<TResult>(
     const bindingDisposition = await opts.db.transaction(async (tx) => {
       // Permission intent/replay takes the run lock before its input row.
       // ACK application must use the same order when callers race a retry.
-      if (kind === "session.input" || kind === "session.create")
+      // ADR-182: a steer's settlement locks the run before its domain row too.
+      if (RUN_LOCKED_ACK_KINDS.has(kind))
         await tx
           .select({ id: runs.id })
           .from(runs)

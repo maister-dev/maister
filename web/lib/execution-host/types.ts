@@ -168,6 +168,10 @@ export const REASON_TOKENS = [
   // ADR-180: the host parked the session with its deferreds cancelled, so a
   // late answer RESUMES it instead of failing the run. Rides the unchanged 410.
   "session_checkpointed",
+  // ADR-182: the definitive `session.steer` refusals (409 CONFLICT).
+  "steer_unsupported",
+  "steer_no_active_turn",
+  "steer_timeout",
 ] as const;
 export type ReasonToken = (typeof REASON_TOKENS)[number];
 

@@ -104,6 +104,10 @@ async function projectCreated(tx: Db, event: ExecutionEvent): Promise<void> {
     typeof event.payload?.acpSessionId === "string"
       ? event.payload.acpSessionId
       : null;
+  const steeringSupported =
+    typeof event.payload?.steeringSupported === "boolean"
+      ? event.payload.steeringSupported
+      : null;
   const disposition = await applyCreateAck(tx, {
     ...(typeof event.payload?.createdByCommandId === "string"
       ? { commandId: event.payload.createdByCommandId }
@@ -112,7 +116,7 @@ async function projectCreated(tx: Db, event: ExecutionEvent): Promise<void> {
     sessionName: name,
     assignmentId: event.executionAssignmentId,
     nodeAttemptId: null,
-    result: { sessionId: event.hostSessionId, acpSessionId },
+    result: { sessionId: event.hostSessionId, acpSessionId, steeringSupported },
   });
 
   let session = await lockLogicalRunSession(tx, {
@@ -199,6 +203,7 @@ async function projectCreated(tx: Db, event: ExecutionEvent): Promise<void> {
       hostSessionId: event.hostSessionId,
       hostBootId: event.hostBootId,
       acpSessionId,
+      steeringSupported,
       state: disposition === "applied" ? "active" : "lost",
       origin: "native",
       createdAt: event.occurredAt,

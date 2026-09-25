@@ -7,6 +7,7 @@ import type {
   HostHealth,
   InputPayload,
   RuntimeObjectContent,
+  SteerPayload,
   RuntimeObjectMetadata,
   WorkspaceRecord,
 } from "../contracts";
@@ -320,6 +321,9 @@ export function createLocalDirectTransport(
     },
     deliverInput(sessionId, envelope: CommandEnvelope<InputPayload>, opts) {
       return wire.deliverInputEnveloped(sessionId, envelope, opts);
+    },
+    steer(sessionId, envelope: CommandEnvelope<SteerPayload>, opts) {
+      return wire.steerEnveloped(sessionId, envelope, opts);
     },
     cancelPrompt(sessionId, envelope, opts) {
       return wire.cancelPromptEnveloped(sessionId, envelope, opts);

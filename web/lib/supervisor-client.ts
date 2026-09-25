@@ -157,6 +157,9 @@ export type CreateSessionResult = {
   sessionId: string;
   pid: number;
   acpSessionId: string;
+  // ADR-182: the connection's `initialize` steering advertisement. Optional —
+  // absent from a host older than the steering contract (read as unknown).
+  steeringSupported?: boolean;
 };
 
 export type PromptStopReason =
@@ -261,6 +264,8 @@ export type SupervisorSessionRecord = {
   assignmentId?: string;
   assignmentEpoch?: number;
   createdByCommandId?: string;
+  // ADR-182: what the connection advertised on `initialize`.
+  capabilities?: { steering?: { supported?: boolean } };
 };
 
 export type SupervisorModelCatalogDraft = {
@@ -587,6 +592,7 @@ export type SupervisorEvent =
       kind:
         | "session.prompt"
         | "session.input"
+        | "session.steer"
         | "session.cancel"
         | "session.checkpoint"
         | "session.delete";
@@ -624,6 +630,8 @@ function baseUrl(): string {
 }
 
 const KNOWN_SUPERVISOR_CODES: ReadonlySet<MaisterErrorCode> = new Set([
+  // ADR-182: the host's definitive `session.steer` refusals.
+  "CONFLICT",
   "PRECONDITION",
   "SPAWN",
   "NEEDS_INPUT",
@@ -2146,6 +2154,51 @@ export async function deliverInputEnveloped(
 
     return definitiveUnavailable(err);
   }
+}
+
+export type SteerWireResult = {
+  outcome: "injected";
+  parentCommandId: string;
+  latencyMs: number;
+  replayed: boolean;
+};
+
+const SteerWireBodySchema = z
+  .object({
+    outcome: z.literal("injected"),
+    parentCommandId: z.string().uuid(),
+    latencyMs: z.number().int().nonnegative(),
+  })
+  .strict();
+
+// ADR-182 C14: a host refusal (409 CONFLICT steer_*, FENCED, PRECONDITION) is
+// DEFINITIVE through the shared mapping and is never retried; only a transport
+// failure is an unknown outcome. A 200 whose body does not parse is kept
+// unknown too — the host did answer, so converting the message could deliver
+// it twice; the same-id retry replays the receipt instead.
+export async function steerEnveloped(
+  sessionId: string,
+  envelope: WireEnvelope,
+  opts: CommandWireOptions = {},
+): Promise<SteerWireResult> {
+  const res = await request<unknown>({
+    method: "POST",
+    path: sessionPath(sessionId, "/steer"),
+    body: envelope,
+    ctx: "steer",
+    fallbackCode: "ACP_PROTOCOL",
+    timeoutMs: opts.timeoutMs,
+  });
+  const parsed = SteerWireBodySchema.safeParse(res.body);
+
+  if (!parsed.success)
+    throw unknownOutcomeError(
+      new Error("supervisor returned a malformed steer outcome"),
+      "steer",
+      "non_json_5xx",
+    );
+
+  return { ...parsed.data, replayed: res.replayed };
 }
 
 export async function cancelPromptEnveloped(

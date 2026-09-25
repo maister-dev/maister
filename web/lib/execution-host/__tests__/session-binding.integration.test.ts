@@ -203,3 +203,80 @@ describe("an unowned create's late acknowledgement (review finding)", () => {
     expect(session?.hostSessionId).toBe(live);
   }, 60_000);
 });
+
+// ADR-182 D-A3 (T2.2): the capability is a per-incarnation fact written by the
+// single create-ACK writer. The live ACK, the receipt fold and the lifecycle
+// projector all pass through `applyCreateAck`; a later write fills an
+// unobserved NULL and never rewrites a recorded value.
+describe("steering capability at the create ACK", () => {
+  async function steeringAck(
+    runId: string,
+    assignmentId: string,
+    hostSessionId: string,
+    steeringSupported: boolean | null | undefined,
+  ): Promise<void> {
+    await db.transaction((tx) =>
+      applyCreateAck(tx as unknown as Db, {
+        runId,
+        sessionName: "default",
+        assignmentId,
+        nodeAttemptId: null,
+        result: {
+          sessionId: hostSessionId,
+          acpSessionId: null,
+          ...(steeringSupported === undefined ? {} : { steeringSupported }),
+        },
+      }),
+    );
+  }
+
+  async function launchedRun(): Promise<{
+    runId: string;
+    assignmentId: string;
+  }> {
+    const runId = randomUUID();
+
+    await db.insert(runs).values({
+      id: runId,
+      runKind: "agent",
+      flowVersion: "agent",
+      flowRevision: "manual",
+      status: "Running",
+      persistent: true,
+    });
+    const assignment = await db.transaction((tx) =>
+      mintAssignment(tx as unknown as Db, { runId, hostId, reason: "launch" }),
+    );
+
+    return { runId, assignmentId: assignment.id };
+  }
+
+  it("records false as a fact and unknown as NULL", async () => {
+    const { runId, assignmentId } = await launchedRun();
+    const unsupported = `host-${randomUUID()}`;
+
+    await steeringAck(runId, assignmentId, unsupported, false);
+    expect((await incarnation(unsupported)).steeringSupported).toBe(false);
+
+    const unknown = `host-${randomUUID()}`;
+
+    await steeringAck(runId, assignmentId, unknown, undefined);
+    expect((await incarnation(unknown)).steeringSupported).toBeNull();
+  }, 60_000);
+
+  it("fills an unobserved capability and never overwrites a recorded one", async () => {
+    const { runId, assignmentId } = await launchedRun();
+    const hostSessionId = `host-${randomUUID()}`;
+
+    // An older host's ACK carried no capability; the event from a current
+    // host fills it.
+    await steeringAck(runId, assignmentId, hostSessionId, null);
+    expect((await incarnation(hostSessionId)).steeringSupported).toBeNull();
+    await steeringAck(runId, assignmentId, hostSessionId, true);
+    expect((await incarnation(hostSessionId)).steeringSupported).toBe(true);
+
+    // A replayed or lagging write never rewrites it.
+    await steeringAck(runId, assignmentId, hostSessionId, false);
+    expect((await incarnation(hostSessionId)).steeringSupported).toBe(true);
+  }, 60_000);
+});

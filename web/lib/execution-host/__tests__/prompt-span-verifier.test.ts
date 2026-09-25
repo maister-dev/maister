@@ -86,6 +86,69 @@ function refusal(causeCode: string) {
 }
 
 describe("prompt span verifier", () => {
+  // ADR-182 (C4 pin): a steer inside the parent's span is two
+  // `session.command` rows the verifier steps over, and the output the steered
+  // agent produces carries the PARENT's sourceCommandId, so the parent settles
+  // from its span unchanged. The tamper case proves the pin observes the
+  // binding: output stamped with the steer's id refuses the span.
+  describe("a steer inside the parent's span", () => {
+    const steer = randomUUID();
+    const spanManifest = {
+      ...manifest,
+      terminalSequence: "15",
+    } as CommandOutputManifestV2;
+    const at = (sequence: number, overrides: Partial<ExecutionEvent> = {}) =>
+      event(sequence, {
+        id: sequence === 15 ? TERMINAL : `event-${sequence}`,
+        eventType: sequence === 15 ? "session.command" : "session.update",
+        ...overrides,
+      });
+    const steerRow = (sequence: number, phase: "accepted" | "completed") =>
+      at(sequence, {
+        eventType: "session.command",
+        payloadSchema: "maister.session.command.v1",
+        payload: { commandId: steer, kind: "session.steer", phase },
+      });
+
+    async function verifySpan(steeredSource: string): Promise<bigint[]> {
+      const out: bigint[] = [];
+
+      for await (const verified of commandEvents({
+        command,
+        manifest: spanManifest,
+        terminalEventId: TERMINAL,
+        pages: pages(
+          [at(11), steerRow(12, "accepted")],
+          [
+            at(13, {
+              payload: {
+                sourceCommandId: steeredSource,
+                sourceMonotonicId: 13,
+              },
+            }),
+          ],
+          [steerRow(14, "completed"), at(15)],
+        ),
+        streamRowId: STREAM,
+        transport: {} as ExecutionHostTransport,
+        signal: AbortSignal.timeout(5_000),
+      }))
+        out.push(verified.hostSequence as bigint);
+
+      return out;
+    }
+
+    it("yields the parent's own output and nothing of the steer's command pair", async () => {
+      expect(await verifySpan(command.id)).toEqual([11n, 13n]);
+    });
+
+    it("refuses output stamped with the steer's command id", async () => {
+      await expect(verifySpan(steer)).rejects.toEqual(
+        refusal("source_command_binding"),
+      );
+    });
+  });
+
   it("yields the command's own session events across pages and consumes the terminal", async () => {
     const other = event(12, {
       hostSessionId: "another-session",

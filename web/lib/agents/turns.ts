@@ -1,7 +1,7 @@
 import "server-only";
 
 import type { Db } from "@/lib/execution-host/db";
-import type { AgentTurn } from "@/lib/db/schema";
+import type { AgentTurn, Run } from "@/lib/db/schema";
 
 import { randomUUID } from "node:crypto";
 
@@ -15,6 +15,35 @@ const log = pino({
   name: "agent-turns",
   level: process.env.LOG_LEVEL ?? "info",
 });
+
+/** Append a queued message at the run's next ordinal. The caller holds the run
+ * row lock, which serializes the `max + 1` allocation (ADR-182 trap 7). */
+export async function insertAgentMessageTurn(
+  tx: Db,
+  run: Pick<Run, "id" | "status">,
+  prompt: string,
+  logicalKey: string,
+): Promise<AgentTurn> {
+  const [sequence] = await tx
+    .select({
+      ordinal: sql<number>`coalesce(max(${agentTurns.ordinal}), 0) + 1`,
+    })
+    .from(agentTurns)
+    .where(eq(agentTurns.runId, run.id));
+  const [turn] = await tx
+    .insert(agentTurns)
+    .values({
+      id: randomUUID(),
+      runId: run.id,
+      ordinal: sequence.ordinal,
+      variant: run.status === "Running" ? "live_message" : "persistent_message",
+      logicalKey,
+      prompt,
+    })
+    .returning();
+
+  return turn;
+}
 
 /** Persist accepted input before a caller attempts any slot or host operation. */
 export async function acceptAgentMessage(
@@ -87,26 +116,8 @@ export async function acceptAgentMessage(
           details: { runId, status: run.status },
         },
       );
-    const [sequence] = await tx
-      .select({
-        ordinal: sql<number>`coalesce(max(${agentTurns.ordinal}), 0) + 1`,
-      })
-      .from(agentTurns)
-      .where(eq(agentTurns.runId, runId));
-    const [turn] = await tx
-      .insert(agentTurns)
-      .values({
-        id: randomUUID(),
-        runId,
-        ordinal: sequence.ordinal,
-        variant:
-          run.status === "Running" ? "live_message" : "persistent_message",
-        logicalKey,
-        prompt,
-      })
-      .returning();
 
-    return turn;
+    return insertAgentMessageTurn(tx as unknown as Db, run, prompt, logicalKey);
   });
 
   log.info(

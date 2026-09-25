@@ -64,6 +64,7 @@ const ResultSchema = z.object({
   sessionId: z.string().min(1),
   acpSessionId: z.string().min(1),
   pid: z.number().int(),
+  steeringSupported: z.boolean().optional(),
 });
 
 function storedFailure(command: ExecutionCommand): MaisterError {
