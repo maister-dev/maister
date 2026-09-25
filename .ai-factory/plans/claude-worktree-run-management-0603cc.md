@@ -2,7 +2,7 @@
 
 **Branch**: `claude/worktree-run-management-0603cc` (this worktree; the plan file is
 named after the branch so `/aif-implement` finds it)
-**Base**: `master` @ `c36ff5b1` + `65b1a8e5` (docs(adr-181), the branch's only commit —
+**Base**: `master` @ `c36ff5b1` + `40152869` (docs(adr-181), the branch's only commit —
 1 ahead / 0 behind)
 **Created**: 2026-09-22 · **Refined**: 2026-09-22 (`/aif-improve` pass 1 — 8 additions, 7
 improvements, 2 dependency fixes, 3 removals; corrections C14–C16 added)
@@ -69,7 +69,7 @@ the questions (Q6) and belongs to `/aif-roadmap`, not this plan.
 
 ## Ground truth — verified, and sixteen corrections
 
-Everything the request cites was re-read on this branch (`65b1a8e5` = `master`
+Everything the request cites was re-read on this branch (`40152869` = `master`
 `c36ff5b1` + docs). The mechanism is as stated. The following premises are refined
 or refuted by the code; the plan is built on the corrected ones.
 
@@ -1913,7 +1913,7 @@ honours its three modes; refactor gate passed.
       warnings, no `--fix` collateral; `tsc --noEmit` clean.
 
 **Commit 8** — `docs(workbench-git): ADR-181 Implemented — as-built sweep, e2e smoke, lane re-qualification`
-(as committed, `cd64cdc4`: the planned "live PR check" is T4.2, not executed).
+(as committed, `d35ccb6c`: the planned "live PR check" is T4.2, not executed).
 
 ### Phase 5 — owner follow-ups (decided 2026-09-23, after Commit 8)
 
@@ -2136,7 +2136,7 @@ green.
 **Commit 13** — `test(e2e): survive a reset dispatcher tick; budget the rework-claim loop` (T5.3, found by the final e2e lane)
 **Commit 14** — `test(e2e): the observatory seed queues no run` (T5.4)
 **Commit 15** — `test(permission-deadline): only the teardown ends a turn whose permission the cap cancelled` (T5.5; superseded by Commit 17)
-**Commit 16** — `Merge master into claude/worktree-run-management-0603cc` (`/aif-verify` blocker 2: 46 master commits, 8 conflicts, `0173` → `0176`)
+**Commit 16** — `Merge master into claude/worktree-run-management-0603cc` (`/aif-verify` blocker 2: 46 master commits, 8 conflicts, `0173` → `0176`). Gone since the rebase onto `8ff196d4` (below): its resolutions live in the replayed commits.
 **Commit 17** — `test(permission-deadline): drop the T5.5 fixture setting` (`/aif-verify` blocker 3)
 **Commit 18** — `fix(workbench-git): a commit needs no remote` (`/aif-verify` blocker 1)
 **Commit 19** — `docs(supervisor): publish stream_health_unavailable in the ReasonToken enum` (master's `29858e11` gap, surfaced by the post-merge supervisor lane)
@@ -2148,24 +2148,45 @@ red, restored.
 
 | # | Finding | Commit |
 |---|---|---|
-| M1 | Force publish was unconfirmed, and its lease was re-read at retry time. The refusal now names `remoteHead` + `remoteRef`, the shared dialog confirms, and the retry leases exactly `expectedHead` (400 without it). The handoff branch never forces. | 20 `4eb9c6a1` |
-| M2 | `git-state` 403 read as a load failure → the members-only state | 21 `75ea59d0` |
-| M3 | ADR-181 prose inside the supervisor-code table of `error-taxonomy.md` | 22 `2e81928a` (with m15 and the rules GC line) |
-| M4 | The scratch PR target branch had no test, and the seed wrote no `scratch_runs` row. The fix: `target_locked`, and the panel's target field is read-only | 23 `6d33107e` |
-| M5 | The facts loader's degrade path had no test. Found by the test: a failed probe hid Re-attach | 24 `bbb687f7` |
-| m6 | The publish pushed without re-proving its lease | 25 `6fd7c35d` |
-| m7 | ABA: HumanWorking claims re-checked only the status → `requireReworkClaimOwner` under the lock, in the lifecycle and sync claims | 26 `7ad5cc51`, 37 `2e09ad7c` (26 also gated the reconciler's actor-less claim; 37 exempts system callers and makes every workbench call name its actor) |
-| m8 | The "who holds the tree" rule duplicated in facts.ts → `workbenchClaimHolder` | 27 `77b9ab6a` |
-| m9 | The sync and promote routes copied the D24 body → `maisterErrorBody` | 28 `7cbdefb9` |
-| m10 | Bare `getDb()` in the git service → the injected `db` | 29 `541dee65` |
-| m11 | `warnings` fetched, never rendered | 30 `2315f60f` |
-| m12 | Disabled inspector links carried `aria-disabled` while still navigating → `aria-describedby` | 31 `7fe7c192` |
-| m13 | A 1300-line panel → one component per section | 32 `d7bd874e` |
-| m14 | Text-only Handoff toggle → icon + `aria-expanded` | 33 `2b879f10`, 34 `52faebce` (33 was committed with its new test red; 34 fixes the test) |
-| m16 | A template without `{task_key}` could collide across tasks | 35 `1a73f06c` |
-| + | `branchNameSchema` accepted names git refuses. That became reachable once the operator types the public name. | 36 `c08bcbd7` |
+| M1 | Force publish was unconfirmed, and its lease was re-read at retry time. The refusal now names `remoteHead` + `remoteRef`, the shared dialog confirms, and the retry leases exactly `expectedHead` (400 without it). The handoff branch never forces. | 20 `c0378b52` |
+| M2 | `git-state` 403 read as a load failure → the members-only state | 21 `10822bf5` |
+| M3 | ADR-181 prose inside the supervisor-code table of `error-taxonomy.md` | 22 `0306ffe2` (with m15 and the rules GC line) |
+| M4 | The scratch PR target branch had no test, and the seed wrote no `scratch_runs` row. The fix: `target_locked`, and the panel's target field is read-only | 23 `9b4b87d7` |
+| M5 | The facts loader's degrade path had no test. Found by the test: a failed probe hid Re-attach | 24 `d371142a` |
+| m6 | The publish pushed without re-proving its lease | 25 `ea431d3e` |
+| m7 | ABA: HumanWorking claims re-checked only the status → `requireReworkClaimOwner` under the lock, in the lifecycle and sync claims | 26 `3a3de34e`, 37 `3e8a6902` (26 also gated the reconciler's actor-less claim; 37 exempts system callers and makes every workbench call name its actor) |
+| m8 | The "who holds the tree" rule duplicated in facts.ts → `workbenchClaimHolder` | 27 `7b06859c` |
+| m9 | The sync and promote routes copied the D24 body → `maisterErrorBody` | 28 `d9615ecd` |
+| m10 | Bare `getDb()` in the git service → the injected `db` | 29 `615c0437` |
+| m11 | `warnings` fetched, never rendered | 30 `af7b3cf5` |
+| m12 | Disabled inspector links carried `aria-disabled` while still navigating → `aria-describedby` | 31 `b0df94c0` |
+| m13 | A 1300-line panel → one component per section | 32 `ec1a358d` |
+| m14 | Text-only Handoff toggle → icon + `aria-expanded` | 33 `c6553c97`, 34 `d4b3774c` (33 was committed with its new test red; 34 fixes the test) |
+| m16 | A template without `{task_key}` could collide across tasks | 35 `574514ec` |
+| + | `branchNameSchema` accepted names git refuses. That became reachable once the operator types the public name. | 36 `80ccb02b` |
 
-**Post-review fix lanes (final tree `2a42866c`, 2026-09-25).**
+**Rebased onto `master` `8ff196d4` (owner, 2026-09-25).**
+- The branch is linear on `master`: 43 commits, no merge commit. Commit 16's
+  merge is gone. Its 8 conflict resolutions were re-applied where each change
+  first appears, and master's 33 newer commits added one more conflict (the
+  `error-taxonomy.md` `EXECUTOR_UNAVAILABLE` row; master's text precedes the
+  branch's).
+- The migration takes the next free number, `0179_workbench_git_publication`,
+  from the commit that introduces it:
+  - the SQL is byte-identical;
+  - the journal `when` `1790286237211` is newer than master's `0178`;
+  - the snapshot was regenerated by drizzle-kit and chains to `0178`
+    ("No schema changes");
+  - the RED commit's migration test is renamed `0179` with predecessor
+    `0178_host_span_verdict`;
+  - the docs freeze and the as-built sweep cite `0179`. Master's own `0173` and
+    `0176` mentions are untouched.
+- The SHAs cited in this plan are the rebased ones.
+- Verified: the rebased tree equals a trial merge of the pre-rebase head with
+  `8ff196d4`, renumbered the same way, except the regenerated snapshot. The
+  pre-rebase head is kept as `backup/run-management-pre-rebase-2026-09-25`.
+
+**Post-review fix lanes (the pre-rebase tree `2a42866c`, 2026-09-25; re-run on the rebased tree below).**
 - Battery, all exit 0: `next build`, the web, supervisor and mcp typechecks,
   the mcp build, `validate:docs:all` and `validate:contracts`.
 - Web unit: 851 files / 8873 tests, 0 red.
@@ -2183,7 +2204,7 @@ red, restored.
     `beforeAll` runs once per worker under `fullyParallel`, so two workers
     raced `tasks_project_number_uq` or seeded two identical cards. Measured
     with the spec alone: 1 worker green, 2 workers red. Serial describe:
-    2 workers green 3/3 (Commit 38 `a472d2c7`).
+    2 workers green 3/3 (Commit 38 `3efd0083`).
   - Flaky: `activity-feed:51` and `work-table:97` (documented) and `desk:454`
     (2/2 alone).
 
