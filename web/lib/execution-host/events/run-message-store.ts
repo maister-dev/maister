@@ -92,6 +92,8 @@ export type AppendRunMessageInput = {
    * projector's own untagged inserts unconstrained by it. */
   promptDispatchKey?: string | null;
   supervisorEventId?: string | null;
+  // ADR-182: how a USER row reached the agent (`run_messages_delivery_check`).
+  delivery?: "queued" | "prompted" | "steered" | null;
 };
 
 /**
@@ -124,6 +126,7 @@ export async function appendRunMessage(
       content: input.content,
       supervisorEventId: input.supervisorEventId ?? null,
       promptDispatchKey,
+      delivery: input.delivery ?? null,
     })
     // The conflict target names the PARTIAL index, predicate included, so an
     // untagged row can never be suppressed by it.

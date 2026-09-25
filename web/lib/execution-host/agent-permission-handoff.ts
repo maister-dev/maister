@@ -11,7 +11,7 @@ import type {
 
 import { createHash } from "node:crypto";
 
-import { and, asc, desc, eq, lt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, lt, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import { canonicalCommandJson } from "../../../runtime/command-json";
@@ -38,6 +38,7 @@ import {
   hitlRequests,
   runSessionIncarnations,
 } from "@/lib/db/schema";
+import { OWNED_TURN_VARIANTS } from "@/lib/agents/turn-variants";
 
 const id = z.string().min(1);
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
@@ -431,6 +432,8 @@ export async function assertAgentResumeTurn(
     .limit(2);
 
   if (grants.length === 0) {
+    // ADR-182: the repeated input is the previous OWNED turn — a steer between
+    // it and this resume rode that turn and is never a source.
     const [previous] = await db
       .select()
       .from(agentTurns)
@@ -438,6 +441,7 @@ export async function assertAgentResumeTurn(
         and(
           eq(agentTurns.runId, turn.runId),
           lt(agentTurns.ordinal, turn.ordinal),
+          inArray(agentTurns.variant, [...OWNED_TURN_VARIANTS]),
         ),
       )
       .orderBy(desc(agentTurns.ordinal))

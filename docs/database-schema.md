@@ -2608,8 +2608,11 @@ for the turn to end; `prompted` — sent as its own turn (the dispatcher CASes
 `queued → prompted`); `steered` — injected into the running turn, with
 `steer_command_id` naming the `session.steer` command (a refusal CASes it back
 to `queued`). Agent runs: the acceptance-time row of a steer
-(`prompt_dispatch_key = steer:<commandId>`, `delivery = 'steered'`) and every
-recorded dispatch prompt (`delivery = 'prompted'`). NULL on rows written before
+(`prompt_dispatch_key = steer:<commandId>`, `delivery = 'steered'`, CASed to
+`queued` on a refusal and to `prompted` when its successor is dispatched — one
+row per message) and every other recorded dispatch prompt
+(`prompt_dispatch_key = agent_turn:<variant>:<turnId>:<ordinal>`,
+`delivery = 'prompted'`). NULL on rows written before
 `0180` and on non-user rows. `run_messages_queued_idx` (partial, `(run_id,
 sequence) WHERE delivery = 'queued'`) serves the FIFO dispatcher;
 `run_messages_steer_command_uq` (partial unique on `steer_command_id`) lets

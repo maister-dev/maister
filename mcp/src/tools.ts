@@ -471,7 +471,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
   },
   run_message: {
     description:
-      "Send a follow-up to a PERSISTENT child agent in the calling orchestrator's run-tree by addressableKey or childRunId. Input is saved before dispatch. A busy session or full agent pool leaves it queued for normal resume; a completed turn re-parks the child. Reuse requestKey to retry the same message without duplicating it; different input under that key is refused. Addressing stays within the caller's own tree. Flow children have no addressable agent session and are refused PRECONDITION. Returns { childRunId, messageId, status, messageState }; messageState 'queued' means accepted and awaiting delivery.",
+      "Send a follow-up to a PERSISTENT child agent in the calling orchestrator's run-tree by addressableKey or childRunId. Input is saved before dispatch. A busy session or full agent pool leaves it queued for normal resume; a completed turn re-parks the child. Reuse requestKey to retry the same message without duplicating it; different input under that key is refused. Addressing stays within the caller's own tree. Flow children have no addressable agent session and are refused PRECONDITION. mode 'steer' injects the prompt into the child's RUNNING turn when its session supports it and queues it otherwise; mode 'queue' (default) always waits for the next turn. Returns { childRunId, messageId, status, messageState, delivery }; delivery 'steered' means it reached the running turn, 'queued' that it awaits the next turn.",
     inputSchema: {
       type: "object",
       properties: {
@@ -479,6 +479,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
         childRunId: { type: "string" },
         prompt: { type: "string", minLength: 1, maxLength: 1000000 },
         requestKey: { type: "string", minLength: 1, maxLength: 128 },
+        mode: { type: "string", enum: ["steer", "queue"] },
       },
       required: ["prompt"],
     },
@@ -1196,17 +1197,20 @@ function resolveRouting(
       };
     }
     case "run_message": {
-      const { addressableKey, childRunId, prompt, requestKey } = args as {
-        addressableKey?: string;
-        childRunId?: string;
-        prompt: string;
-        requestKey?: string;
-      };
+      const { addressableKey, childRunId, prompt, requestKey, mode } =
+        args as {
+          addressableKey?: string;
+          childRunId?: string;
+          prompt: string;
+          requestKey?: string;
+          mode?: "steer" | "queue";
+        };
       const body: Record<string, unknown> = { prompt };
 
       if (addressableKey !== undefined) body.addressableKey = addressableKey;
       if (childRunId !== undefined) body.childRunId = childRunId;
       if (requestKey !== undefined) body.requestKey = requestKey;
+      if (mode !== undefined) body.mode = mode;
 
       return { method: "POST", path: `/api/v1/ext/runs/message`, body };
     }

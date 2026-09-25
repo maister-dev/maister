@@ -51,6 +51,8 @@ void main().then(
     process.send?.({
       state: "error",
       message: error instanceof Error ? error.message : "agent launch failed",
+      details:
+        error instanceof Error && "details" in error ? error.details : null,
     });
     process.exit(1);
   },

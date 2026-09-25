@@ -3,7 +3,7 @@ import "server-only";
 import type { Db } from "./db";
 import type { ExecutionCommand } from "@/lib/db/schema";
 
-import { and, eq, gt, lt, sql } from "drizzle-orm";
+import { and, eq, gt, inArray, lt, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import { agentPermissionSourceSchema } from "./agent-permission-source";
@@ -20,6 +20,7 @@ import {
   runSessionIncarnations,
   runs,
 } from "@/lib/db/schema";
+import { OWNED_TURN_VARIANTS } from "@/lib/agents/turn-variants";
 
 export const agentPauseEnvelopeSchema = z.object({
   kind: z.enum(["hook_trip", "budget_breach"]),
@@ -58,6 +59,7 @@ export async function captureAgentPauseSource(
         eq(agentTurns.runId, run.id),
         eq(agentTurns.executionAssignmentId, input.assignmentId),
         eq(agentTurns.state, "dispatched"),
+        inArray(agentTurns.variant, [...OWNED_TURN_VARIANTS]),
       ),
     )
     .for("update");

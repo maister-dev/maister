@@ -709,6 +709,34 @@ describe("dispatchTool — per-tool outbound request mapping", () => {
     },
   );
 
+  // ADR-182: `mode` rides to the route verbatim; omitted, the route's default
+  // (`queue`) applies.
+  it("run_message forwards mode steer", async () => {
+    mockOnce(
+      {
+        childRunId: "child-1",
+        status: "Running",
+        messageId: "m-1",
+        messageState: "applied",
+        delivery: "steered",
+      },
+      200,
+    );
+
+    await dispatchTool({
+      name: "run_message",
+      args: { childRunId: "child-1", prompt: "also X", mode: "steer" },
+      ctx: httpCtx,
+      baseUrl: BASE_URL,
+    });
+
+    expect(parsedBody(lastRequest().init)).toEqual({
+      childRunId: "child-1",
+      prompt: "also X",
+      mode: "steer",
+    });
+  });
+
   it("run_promote → POST /api/v1/ext/runs/promote", async () => {
     mockOnce({ childRunId: "child-1", status: "Done" }, 200);
 

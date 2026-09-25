@@ -206,7 +206,12 @@ export async function getAgentRunTranscript(
   runId: string,
   opts: { client?: DbClient; runtimeRoot?: string } = {},
 ): Promise<RunNodeTranscript> {
-  const feed = await getWholeRunTranscriptMessages(runId, opts);
+  // ADR-182 D-C8: the recorded prompts and steered messages ARE the agent
+  // run's user side; without them its transcript shows replies to nothing.
+  const feed = await getWholeRunTranscriptMessages(runId, {
+    ...opts,
+    includeRecordedPrompts: true,
+  });
 
   // The events log carries no per-message wall-clock; `createdAt` is left empty
   // and the renderer guards it (no timestamp shown) — deliberate, not a gap.

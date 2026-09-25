@@ -30,6 +30,8 @@ const bodySchema = z
     childRunId: z.string().min(1).optional(),
     prompt: z.string().min(1).max(1_000_000),
     requestKey: z.string().min(1).max(128).optional(),
+    // ADR-182: `steer` reaches the child's running turn when it can.
+    mode: z.enum(["steer", "queue"]).optional(),
   })
   .strict()
   .refine((b) => b.addressableKey !== undefined || b.childRunId !== undefined, {
@@ -172,6 +174,7 @@ export async function POST(
         const result = await sendAgentMessage(child.id, body.prompt, {
           db,
           requestKey: body.requestKey,
+          mode: body.mode ?? "queue",
         });
 
         return NextResponse.json(result, { status: 200 });

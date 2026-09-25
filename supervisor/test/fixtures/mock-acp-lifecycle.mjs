@@ -28,6 +28,9 @@ let steering = false;
 let steerOutcome = "auto";
 let steerDelayMs = 0;
 let steerEcho = false;
+// Text the controlled prompt emits BEFORE it holds, so a steer lands between
+// assistant output the operator already saw and the reply to the steer.
+let preHoldText;
 let promptInFlight = false;
 const steerQueue = [];
 let unownedTurn;
@@ -79,6 +82,9 @@ for (let i = 0; i < args.length; i += 1) {
     steerDelayMs = Number.parseInt(args[++i], 10);
   } else if (arg === "--steer-echo") {
     steerEcho = true;
+  } else if (arg === "--pre-hold-text") {
+    preHoldText = args[++i];
+    if (preHoldText === undefined) throw new Error("--pre-hold-text requires a value");
   }
 }
 
@@ -279,6 +285,12 @@ class LifecycleAgent {
       })}\n`);
     }
     if (controlledPrompt) {
+      if (preHoldText !== undefined) {
+        await this.connection.sessionUpdate({
+          sessionId: params.sessionId,
+          update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: preHoldText } },
+        });
+      }
       const outcome = await held;
       if (outcome === "cancelled") return { stopReason: "cancelled" };
     }

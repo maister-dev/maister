@@ -1444,7 +1444,17 @@ Entities:
   dispatched parent turn); inserted `dispatched` in the issue transaction,
   already bound to its `session.steer` command, then `applied | superseded`;
   never `queued` or `claimed` (the `guard_agent_turn_source` transition rule
-  has no `queued → dispatched` edge, and a steer is never claimed).
+  has no `queued → dispatched` edge, and a steer is never claimed). Every
+  reader that means "the run's turn" selects through `OWNED_TURN_VARIANTS`
+  (`agents/turn-variants.ts`, an exhaustive map over the variant union): the
+  continuation worker's Running arm, `startAgentSession`'s turn selection,
+  the owned-permission recorder and the pause source, `claimAgentMessage`'s
+  `prior_turn` predicate, the completed-turn idle resume source
+  (`admitCompletedAgentResume`) and the resume turn's source proof
+  (`assertAgentResumeTurn`). The last two are why: after a steer the steer is
+  the run's highest applied ordinal, and an idle wake must repeat the PARENT's
+  input — an unfiltered reader repeated the steer's text or refused the resume
+  (`agent_resume_original_source_missing`).
 - `run_messages.delivery` (`queued | prompted | steered`, user rows only) and
   `run_messages.steer_command_id` (unique when set) — the scratch row IS the
   queued message; an agent steer's transcript row carries `delivery =
@@ -1552,6 +1562,19 @@ The CAS predicates (`state = 'dispatched' AND command_id = …`, `delivery =
 live path and recovery; a lost CAS logs `steer-settlement-already-applied`
 and returns the row as found. A successor is inserted only from a definitive
 host answer, never from an unknown one.
+
+An agent message keeps ONE transcript row whatever happens to it. The issue
+transaction writes it `delivery = 'steered'` under `prompt_dispatch_key =
+steer:<commandId>`; a refusal CASes it `steered → queued` in the settlement
+transaction; and when the successor turn is later dispatched, the dispatch
+recorder recognizes the successor (`logical_key = message:requeue:<steerTurnId>`)
+and CASes the same row `queued → prompted` instead of recording the prompt a
+second time. The recorder locks that row and writes only from `queued`: a
+redelivered bind of the successor (a second admission of the same command)
+finds it `prompted` and writes nothing, rather than falling through to a new
+row. Every other agent turn gets its own row at dispatch
+(`agent_turn:<variant>:<turnId>:<ordinal>`, `delivery = 'prompted'`), where
+`run_messages_prompt_dispatch_key_uq` makes a redelivery a no-op.
 
 Recovery windows (normative; each cell names its owner):
 

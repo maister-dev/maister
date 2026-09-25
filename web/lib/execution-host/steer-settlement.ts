@@ -208,6 +208,18 @@ async function settleAgentSteer(
       successor: null,
     };
   }
+  // The acceptance-time transcript row stays the message's only row: it
+  // waits as `queued` until its successor is dispatched (then `prompted`).
+  await tx
+    .update(runMessages)
+    .set({ delivery: "queued" })
+    .where(
+      and(
+        eq(runMessages.runId, steer.runId),
+        eq(runMessages.promptDispatchKey, `steer:${steer.commandId}`),
+        eq(runMessages.delivery, "steered"),
+      ),
+    );
   const [run] = await tx
     .select({ id: runs.id, status: runs.status })
     .from(runs)
