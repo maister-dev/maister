@@ -2149,6 +2149,39 @@ describe("ADR-181 — update onto base | target | published", () => {
       );
     });
 
+    // The panel's primary way out, one step further: once the publication's
+    // commits are in, the update onto the target asks nothing and keeps them.
+    it("then updates onto the target without asking, the publication's commits kept", async () => {
+      const run = await divergedRun("g");
+
+      await syncRunTarget({
+        runId: run.runId,
+        actor: actor(),
+        admission: "workbench",
+        onto: "published",
+        db,
+      });
+
+      await expect(
+        syncRunTarget({
+          runId: run.runId,
+          actor: actor(),
+          admission: "workbench",
+          db,
+        }),
+      ).resolves.toMatchObject({ outcome: "synced", pushed: true });
+      expect(await remoteRef(run.remote, run.publicName)).toBe(
+        await headSha(run.wt),
+      );
+      await expect(
+        git(run.remote, [
+          "cat-file",
+          "-e",
+          `refs/heads/${run.publicName}:review-g.txt`,
+        ]),
+      ).resolves.toBeDefined();
+    });
+
     // An update whose push never landed leaves the branch rewritten over the
     // run's own published commits. A rebase that moved their context changed
     // their patch, so only the branch's own record says they were the run's.
