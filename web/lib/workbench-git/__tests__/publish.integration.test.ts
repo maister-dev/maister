@@ -109,18 +109,32 @@ async function seeded(opts: { taskTitle?: string; status?: string } = {}) {
 
 function publish(
   runId: string,
-  over: { branchName?: string | null; force?: boolean } = {},
+  over: { branchName?: string | null; expectedHead?: string } = {},
 ) {
-  return exportWorkbenchBranch(runId, {
+  const common = {
     remote: "origin",
     branchName: over.branchName ?? null,
     snapshotDirty: false,
     commitMessage: null,
-    force: over.force ?? false,
-  });
+  };
+
+  // A force is always bound to the head the operator confirmed replacing.
+  return exportWorkbenchBranch(
+    runId,
+    over.expectedHead !== undefined
+      ? { ...common, force: true, expectedHead: over.expectedHead }
+      : common,
+  );
 }
 
-async function refusal(p: Promise<unknown>): Promise<MaisterError> {
+type PushRefusal = MaisterError & {
+  pushRejected?: string;
+  canForce?: boolean;
+  remoteHead?: string | null;
+  remoteRef?: string;
+};
+
+async function refusal(p: Promise<unknown>): Promise<PushRefusal> {
   const err = await p.then(
     () => {
       throw new Error("expected a refusal");
@@ -130,7 +144,7 @@ async function refusal(p: Promise<unknown>): Promise<MaisterError> {
 
   expect(err).toBeInstanceOf(MaisterError);
 
-  return err as MaisterError;
+  return err as PushRefusal;
 }
 
 describe("publish under a public branch name", () => {
@@ -229,7 +243,7 @@ describe("publish under a public branch name", () => {
     ).toBe(before);
   });
 
-  it("refuses a non-fast-forward publish with canForce, keeps the local branch, and records nothing", async () => {
+  it("refuses a non-fast-forward publish naming the remote head it would replace, and records nothing", async () => {
     const run = await seeded();
     const local = await gitIn(run.worktree, ["rev-parse", "HEAD"]);
     // A prior attempt left the public name at an unrelated head.
@@ -241,13 +255,13 @@ describe("publish under a public branch name", () => {
 
     const refused = await refusal(publish(run.runId));
 
-    expect(refused.code).toBe("CONFLICT");
-    expect(
-      (refused as MaisterError & { pushRejected?: string }).pushRejected,
-    ).toBe("non_fast_forward");
-    expect((refused as MaisterError & { canForce?: boolean }).canForce).toBe(
-      true,
-    );
+    expect(refused).toMatchObject({
+      code: "CONFLICT",
+      pushRejected: "non_fast_forward",
+      canForce: true,
+      remoteHead: foreign,
+      remoteRef: "origin/feature/ABC-12-fix-login-redirect",
+    });
     expect(await gitIn(run.worktree, ["rev-parse", "HEAD"])).toBe(local);
     expect(
       await remoteHead(repo.remote, "feature/ABC-12-fix-login-redirect"),
@@ -257,7 +271,7 @@ describe("publish under a public branch name", () => {
     ).toBeNull();
   });
 
-  it("overwrites on force with a fresh explicit-SHA lease", async () => {
+  it("overwrites on force exactly the head the operator confirmed", async () => {
     const run = await seeded();
     const local = await gitIn(run.worktree, ["rev-parse", "HEAD"]);
 
@@ -267,7 +281,10 @@ describe("publish under a public branch name", () => {
       "feature/ABC-12-fix-login-redirect",
     );
 
-    const result = await publish(run.runId, { force: true });
+    const refused = await refusal(publish(run.runId));
+    const result = await publish(run.runId, {
+      expectedHead: refused.remoteHead!,
+    });
 
     expect(result.publishedBranch).toBe("feature/ABC-12-fix-login-redirect");
     expect(
@@ -275,7 +292,43 @@ describe("publish under a public branch name", () => {
     ).toBe(local);
   });
 
-  it("refuses a forced publish whose lease went stale, and never overwrites the newer remote head", async () => {
+  // D4: the confirmation names one head. A remote that moved on after it was
+  // shown is someone else's work the operator never saw — the force is refused
+  // with the NEW head for a fresh confirmation, never taken by a live re-read.
+  it("refuses a confirmed force once the remote moved past the confirmed head, naming the new one", async () => {
+    const run = await seeded();
+    const local = await gitIn(run.worktree, ["rev-parse", "HEAD"]);
+
+    await advanceRemoteBranch(
+      root,
+      repo.remote,
+      "feature/ABC-12-fix-login-redirect",
+    );
+
+    const shown = (await refusal(publish(run.runId))).remoteHead!;
+    const newer = await advanceRemoteBranch(
+      root,
+      repo.remote,
+      "feature/ABC-12-fix-login-redirect",
+    );
+    const refused = await refusal(publish(run.runId, { expectedHead: shown }));
+
+    expect(refused).toMatchObject({
+      code: "CONFLICT",
+      pushRejected: "non_fast_forward",
+      canForce: true,
+      remoteHead: newer,
+    });
+    expect(
+      await remoteHead(repo.remote, "feature/ABC-12-fix-login-redirect"),
+    ).toBe(newer);
+    expect(await gitIn(run.worktree, ["rev-parse", "HEAD"])).toBe(local);
+    expect(
+      (await workspaceRow(db, run.workspaceId)).publishedBranch,
+    ).toBeNull();
+  });
+
+  it("refuses a confirmed force whose remote moved between the read and the push, never overwriting the newer head", async () => {
     const run = await seeded();
     const local = await gitIn(run.worktree, ["rev-parse", "HEAD"]);
     const seen = await advanceRemoteBranch(
@@ -284,7 +337,8 @@ describe("publish under a public branch name", () => {
       "feature/ABC-12-fix-login-redirect",
     );
 
-    // The lease is captured, THEN someone else pushes before our push lands.
+    // The read answers the confirmed head, THEN someone else pushes before our
+    // push lands: only the push's own lease can catch it.
     vi.mocked(remoteBranchHead).mockImplementationOnce(async () => {
       await advanceRemoteBranch(
         root,
@@ -295,12 +349,10 @@ describe("publish under a public branch name", () => {
       return seen;
     });
 
-    const refused = await refusal(publish(run.runId, { force: true }));
+    const refused = await refusal(publish(run.runId, { expectedHead: seen }));
 
     expect(refused.code).toBe("CONFLICT");
-    expect(
-      (refused as MaisterError & { pushRejected?: string }).pushRejected,
-    ).toBe("non_fast_forward");
+    expect(refused.pushRejected).toBe("non_fast_forward");
     const remoteNow = await remoteHead(
       repo.remote,
       "feature/ABC-12-fix-login-redirect",

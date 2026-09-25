@@ -18,6 +18,7 @@ import {
   type LifecycleContext,
   type WorkbenchLifecycleDeps,
 } from "@/lib/workbench-lifecycle/service";
+import { GitPushRejectedError } from "@/lib/worktree";
 
 function context(over: Partial<LifecycleContext> = {}): LifecycleContext {
   return {
@@ -531,14 +532,19 @@ describe("workbench lifecycle service", () => {
     });
   });
 
-  it("export forwards force-with-lease intent to git push", async () => {
+  // ADR-181 D4: the operator confirmed one head; the lease is that head, never
+  // the one the retry re-reads (which may be someone else's newer work).
+  it("export leases exactly the confirmed head on a forced push, not the one it re-reads", async () => {
     const d = deps(taskContext());
+
+    vi.mocked(d.remoteBranchHead).mockResolvedValueOnce("a".repeat(40));
 
     await exportWorkbenchBranch("run-1", {
       remote: "origin",
       snapshotDirty: false,
       commitMessage: null,
       force: true,
+      expectedHead: "b".repeat(40),
       deps: d,
     });
 
@@ -549,9 +555,35 @@ describe("workbench lifecycle service", () => {
       remoteBranch: "feature/ABC-7-fix-it",
       setUpstream: true,
       force: true,
-      // The ls-remote read before the push (no remote ref yet → expect absent).
-      leaseSha: null,
+      leaseSha: "b".repeat(40),
     });
+  });
+
+  it("export names the remote head and ref it observed on a non-fast-forward refusal", async () => {
+    const d = deps(taskContext());
+
+    vi.mocked(d.remoteBranchHead).mockResolvedValueOnce("a".repeat(40));
+    vi.mocked(d.pushBranch).mockRejectedValueOnce(
+      new GitPushRejectedError(
+        "git push origin maister/run-1:feature/ABC-7-fix-it rejected",
+      ),
+    );
+
+    await expect(
+      exportWorkbenchBranch("run-1", {
+        remote: "origin",
+        snapshotDirty: false,
+        commitMessage: null,
+        deps: d,
+      }),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      pushRejected: "non_fast_forward",
+      canForce: true,
+      remoteHead: "a".repeat(40),
+      remoteRef: "origin/feature/ABC-7-fix-it",
+    });
+    expect(d.recordPublished).not.toHaveBeenCalled();
   });
 
   // The push is the one step nothing undoes: the lease is re-proven between the

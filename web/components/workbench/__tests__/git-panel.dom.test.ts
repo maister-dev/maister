@@ -410,39 +410,153 @@ describe("WorkbenchGitPanel", () => {
     expect(must("git-panel-public-chip").textContent).toContain(PUBLIC);
   });
 
-  it("offers force only after a non-fast-forward refusal, then retries with force", async () => {
-    let first = true;
+  // ADR-181 D4: a force replaces someone's commits, so it is confirmed in the
+  // shared dialog — naming the ref, the head it replaces and an open PR — and
+  // the retry leases exactly that head.
+  describe("a force publish", () => {
+    const REMOTE_HEAD = "d".repeat(40);
 
-    mutation = (call) => {
-      if (call.url.endsWith("/export-branch") && first) {
-        first = false;
+    function refuseOnce(over: Record<string, unknown> = {}): void {
+      let first = true;
 
-        return json(
-          {
-            code: "CONFLICT",
-            message: "server text",
-            pushRejected: "non_fast_forward",
-            canForce: true,
+      mutation = (call) => {
+        if (call.url.endsWith("/export-branch") && first) {
+          first = false;
+
+          return json(
+            {
+              code: "CONFLICT",
+              message: "server text",
+              pushRejected: "non_fast_forward",
+              canForce: true,
+              remoteHead: REMOTE_HEAD,
+              remoteRef: `origin/${PUBLIC}`,
+              ...over,
+            },
+            409,
+          );
+        }
+
+        return json({ ok: true, publishedBranch: PUBLIC });
+      };
+    }
+
+    it("is confirmed naming the ref and the head it replaces, then leases that head", async () => {
+      refuseOnce();
+      states = [gitState({ dirty: { tracked: 0, untracked: 0 } })];
+      render();
+      await settle();
+
+      await click(must("git-panel-action-exportBranch"));
+
+      const dialog = must("git-panel-force-dialog");
+
+      expect(dialog.textContent).toContain(`origin/${PUBLIC}`);
+      expect(dialog.textContent).toContain(REMOTE_HEAD.slice(0, 12));
+      expect(byTestId("git-panel-force-pr")).toBeNull();
+      expect(document.body.textContent).not.toContain("server text");
+      expect(posts()).toHaveLength(1);
+
+      await click(must("git-panel-force-confirm"));
+
+      expect(posts()[1].body).toEqual({
+        remote: "origin",
+        snapshotDirty: false,
+        force: true,
+        expectedHead: REMOTE_HEAD,
+      });
+      expect(byTestId("git-panel-force-dialog")).toBeNull();
+    });
+
+    it("names the open pull request the force rewrites", async () => {
+      refuseOnce();
+      states = [
+        gitState({
+          dirty: { tracked: 0, untracked: 0 },
+          pr: {
+            url: "https://example.test/pr/7",
+            number: 7,
+            state: "open",
+            hasConflicts: null,
           },
-          409,
-        );
-      }
+        }),
+      ];
+      render();
+      await settle();
 
-      return json({ ok: true, publishedBranch: PUBLIC });
-    };
-    states = [gitState({ dirty: { tracked: 0, untracked: 0 } })];
-    render();
-    await settle();
+      await click(must("git-panel-action-exportBranch"));
 
-    expect(byTestId("git-panel-force")).toBeNull();
-    await click(must("git-panel-action-exportBranch"));
+      expect(must("git-panel-force-pr").textContent).toContain('"number":7');
+    });
 
-    const force = must<HTMLInputElement>("git-panel-force");
+    it("re-asks naming the new head when the remote moved on after the confirmation", async () => {
+      const NEWER = "e".repeat(40);
+      const refusals = [REMOTE_HEAD, NEWER];
 
-    expect(document.body.textContent).not.toContain("server text");
-    await click(force);
-    await click(must("git-panel-action-exportBranch"));
-    expect(posts()[1].body).toMatchObject({ force: true });
+      mutation = (call) => {
+        const head = call.url.endsWith("/export-branch")
+          ? refusals.shift()
+          : undefined;
+
+        return head
+          ? json(
+              {
+                code: "CONFLICT",
+                pushRejected: "non_fast_forward",
+                canForce: true,
+                remoteHead: head,
+                remoteRef: `origin/${PUBLIC}`,
+              },
+              409,
+            )
+          : json({ ok: true, publishedBranch: PUBLIC });
+      };
+      states = [gitState({ dirty: { tracked: 0, untracked: 0 } })];
+      render();
+      await settle();
+
+      await click(must("git-panel-action-exportBranch"));
+      await click(must("git-panel-force-confirm"));
+
+      expect(must("git-panel-force-dialog").textContent).toContain(
+        NEWER.slice(0, 12),
+      );
+
+      await click(must("git-panel-force-confirm"));
+
+      expect(posts().map((call) => (call.body as any).expectedHead)).toEqual([
+        undefined,
+        REMOTE_HEAD,
+        NEWER,
+      ]);
+    });
+
+    it("sends nothing when the operator cancels", async () => {
+      refuseOnce();
+      states = [gitState({ dirty: { tracked: 0, untracked: 0 } })];
+      render();
+      await settle();
+
+      await click(must("git-panel-action-exportBranch"));
+      await click(must("git-panel-force-cancel"));
+
+      expect(byTestId("git-panel-force-dialog")).toBeNull();
+      expect(posts()).toHaveLength(1);
+    });
+
+    it("offers no force when the refusal names no remote head", async () => {
+      refuseOnce({ remoteHead: null });
+      states = [gitState({ dirty: { tracked: 0, untracked: 0 } })];
+      render();
+      await settle();
+
+      await click(must("git-panel-action-exportBranch"));
+
+      expect(byTestId("git-panel-force-dialog")).toBeNull();
+      expect(must("git-panel-error").textContent).toBe(
+        "workbenchGit.errors.non_fast_forward",
+      );
+    });
   });
 
   it("disables publish on a dirty tree and names Commit and Discard as the way out", async () => {

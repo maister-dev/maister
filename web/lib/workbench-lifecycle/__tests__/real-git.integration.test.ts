@@ -420,15 +420,17 @@ describe("workbench lifecycle real git integration", () => {
       code: "CONFLICT",
       pushRejected: "non_fast_forward",
       canForce: true,
+      remoteHead: remoteSha,
     });
 
-    // No fetch first: the forced retry's lease is the SHA `ls-remote` reads
-    // before the push (ADR-181 D4), not a tracking ref the operator refreshed.
+    // No fetch first: the forced retry leases the head the refusal named and
+    // the operator confirmed (ADR-181 D4), not a tracking ref.
     await exportWorkbenchBranch(workbench.runId, {
       remote: "origin",
       snapshotDirty: false,
       commitMessage: null,
       force: true,
+      expectedHead: remoteSha,
       deps,
     });
 

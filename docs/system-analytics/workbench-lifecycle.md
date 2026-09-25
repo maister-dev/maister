@@ -245,7 +245,7 @@ is preserved, only same-payload completion is allowed.
 | `POST /api/runs/{runId}/stop-drop`       | Stop then drop a live flow run (Implemented); scratch reuses `/discard`                                                | `runId` is URL-param; body empty; project, session, and paths are DB state                  |
 | `POST /api/runs/{runId}/archive`         | Preserve worktree into `maister/archive/{runId}`                                                                       | branch, paths, base ref, and project are DB state                                           |
 | `POST /api/runs/{runId}/drop`            | Preserve then remove an owned worktree                                                                                 | worktree path and allowed root are server state                                             |
-| `POST /api/runs/{runId}/export-branch`   | Push the run branch; optional force-with-lease retry                                                                   | remote and force are body-controlled; branch and paths are DB state                         |
+| `POST /api/runs/{runId}/export-branch`   | Push the run branch; optional force-with-lease retry                                                                   | remote, force and `expectedHead` are body-controlled; branch and paths are DB state         |
 | `GET /api/runs/{runId}/handoff-metadata` | Read dirty state, remotes, suggested branch, and checkout preview                                                      | runId is URL-param; branch and paths are DB state                                           |
 | `POST /api/runs/{runId}/snapshot-commit` | Commit dirty work on the run branch                                                                                    | commit message is body-controlled; branch and paths are DB state                            |
 | `POST /api/runs/{runId}/handoff-branch`  | Create and push a continuation branch                                                                                  | remote and handoff branch are body-controlled; current branch, HEAD, and paths are DB state |
@@ -320,9 +320,10 @@ exists. Both directions are matrix-tested. See [`branch-sync.md`](branch-sync.md
 - Export refuses dirty work unless `snapshotDirty=true` and `commitMessage` is
   non-empty. The UI normally commits first through `snapshot-commit`, then pushes
   a clean run branch. Non-fast-forward push rejection is `409 CONFLICT` with
-  `pushRejected=non_fast_forward`, `canForce=true`, and a retry hint; retrying
-  with force uses `git push --force-with-lease`. Other transient push failures
-  are `503 EXECUTOR_UNAVAILABLE`.
+  `pushRejected=non_fast_forward`, `canForce=true`, a retry hint and the
+  observed `remoteHead` + `remoteRef`; a forced retry sends `force=true` with
+  that `expectedHead` and leases exactly it (ADR-181). Other transient push
+  failures are `503 EXECUTOR_UNAVAILABLE`.
 - Handoff metadata lists server-discovered remotes. `origin` is only the
   default when it exists; otherwise the first validated remote is the default.
 - Snapshot commit refuses clean worktrees and returns the new HEAD commit when

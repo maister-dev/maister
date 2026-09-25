@@ -3943,7 +3943,10 @@
     "publish": {
       "remote": "Remote",
       "name": "Публичное имя ветки",
-      "force": "Перезаписать удалённую ветку (force-with-lease)",
+      "forceTitle": "Перезаписать ветку на remote?",
+      "forceBody": "{ref} указывает на {head} — этого коммита нет в ветке прогона. Публикация с force заменит ветку на remote: коммиты, которые есть только там, из неё уйдут.",
+      "forcePr": "На этой ветке открыт pull request #{number} — в нём появится заменённая история.",
+      "forceConfirm": "Перезаписать {head}",
       "unpushed": "Коммитов нет на remote: {count}",
       "done": "Опубликовано: {ref}",
       "handoff": "Handoff-ветка…"

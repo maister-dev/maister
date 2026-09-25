@@ -79,6 +79,9 @@ type ErrorBody = {
   details?: { reason?: string };
   pushRejected?: string;
   canForce?: boolean;
+  // ADR-181 D4: what a force would replace — the head the retry leases.
+  remoteHead?: string | null;
+  remoteRef?: string;
 };
 
 // ADR-181 D9: the refs an update applies onto.
@@ -256,8 +259,12 @@ export function WorkbenchGitPanel({
   } | null>(null);
   const [remote, setRemote] = useState<string | null>(null);
   const [nameValue, setNameValue] = useState<string | null>(null);
-  const [forceAvailable, setForceAvailable] = useState(false);
-  const [force, setForce] = useState(false);
+  // D4: a non-fast-forward refusal's ref and remote head, while the operator
+  // decides whether to replace it.
+  const [forceTarget, setForceTarget] = useState<{
+    ref: string;
+    head: string;
+  } | null>(null);
   const [publishedRef, setPublishedRef] = useState<string | null>(null);
   const [handoffOpen, setHandoffOpen] = useState(false);
   const [onto, setOnto] = useState<UpdateOnto>("target");
@@ -456,7 +463,9 @@ export function WorkbenchGitPanel({
     );
   }
 
-  function publish(): void {
+  // `expectedHead`: the remote head the operator confirmed replacing — a force
+  // leases exactly it, so newer work that landed since is refused, not lost.
+  function publish(expectedHead?: string): void {
     const requested = (nameValue ?? "").trim();
     const suggested = state?.suggestedPublicBranch ?? "";
     const nameFixed =
@@ -472,17 +481,19 @@ export function WorkbenchGitPanel({
           ? { branchName: requested }
           : {}),
         snapshotDirty: false,
-        force,
+        ...(expectedHead ? { force: true, expectedHead } : { force: false }),
       },
-      (result) => {
-        setForceAvailable(false);
-        setForce(false);
-        setPublishedRef(result?.publishedRef ?? null);
-      },
+      (result) => setPublishedRef(result?.publishedRef ?? null),
     ).then((failure) => {
-      if (failure?.pushRejected === "non_fast_forward" && failure.canForce) {
-        setForceAvailable(true);
-      }
+      // A moved remote refuses again with its NEW head: confirm that one.
+      setForceTarget(
+        failure?.pushRejected === "non_fast_forward" &&
+          failure.canForce &&
+          typeof failure.remoteHead === "string" &&
+          typeof failure.remoteRef === "string"
+          ? { ref: failure.remoteRef, head: failure.remoteHead }
+          : null,
+      );
     });
   }
 
@@ -787,17 +798,6 @@ export function WorkbenchGitPanel({
                 {t("publish.unpushed", { count: state.unpushedCommits })}
               </p>
             ) : null}
-            {forceAvailable ? (
-              <label className="flex items-center gap-2 font-mono text-[10px] text-ink-2">
-                <input
-                  checked={force}
-                  data-testid="git-panel-force"
-                  type="checkbox"
-                  onChange={(event) => setForce(event.target.checked)}
-                />
-                {t("publish.force")}
-              </label>
-            ) : null}
             <div className="flex flex-wrap gap-2">
               {actionButton({
                 id: "exportBranch",
@@ -807,7 +807,7 @@ export function WorkbenchGitPanel({
                 icon: (
                   <ArrowUpTrayIcon aria-hidden="true" className="h-3.5 w-3.5" />
                 ),
-                onClick: publish,
+                onClick: () => publish(),
               })}
               <button
                 className={clsx(button, neutral)}
@@ -1196,6 +1196,53 @@ export function WorkbenchGitPanel({
             >
               <CheckIcon aria-hidden="true" className="h-3.5 w-3.5" />
               {t("pr.finalizeConfirm")}
+            </button>
+          </div>
+        </ConfirmDialog>
+      ) : null}
+
+      {forceTarget ? (
+        <ConfirmDialog
+          body={t("publish.forceBody", {
+            ref: forceTarget.ref,
+            head: forceTarget.head.slice(0, 12),
+          })}
+          busy={busy !== null}
+          cancelLabel={t("cancel")}
+          testId="git-panel-force-dialog"
+          title={t("publish.forceTitle")}
+          titleId="git-panel-force-title"
+          onClose={() => setForceTarget(null)}
+        >
+          {state?.pr?.state === "open" ? (
+            <p
+              className="m-0 text-[13px] leading-[1.5] text-body"
+              data-testid="git-panel-force-pr"
+            >
+              {t("publish.forcePr", { number: state.pr.number ?? "?" })}
+            </p>
+          ) : null}
+          <div className="flex justify-end gap-2">
+            <button
+              className={clsx(button, neutral)}
+              data-testid="git-panel-force-cancel"
+              disabled={busy !== null}
+              type="button"
+              onClick={() => setForceTarget(null)}
+            >
+              {t("cancel")}
+            </button>
+            <button
+              className={clsx(button, danger)}
+              data-testid="git-panel-force-confirm"
+              disabled={busy !== null}
+              type="button"
+              onClick={() => publish(forceTarget.head)}
+            >
+              <ArrowUpTrayIcon aria-hidden="true" className="h-3.5 w-3.5" />
+              {t("publish.forceConfirm", {
+                head: forceTarget.head.slice(0, 12),
+              })}
             </button>
           </div>
         </ConfirmDialog>

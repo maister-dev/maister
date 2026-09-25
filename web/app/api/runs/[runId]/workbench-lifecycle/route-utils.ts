@@ -44,6 +44,8 @@ function errorPayload(err: MaisterError): Record<string, unknown> {
     pushRejected?: unknown;
     canForce?: unknown;
     retryHint?: unknown;
+    remoteHead?: unknown;
+    remoteRef?: unknown;
   };
   const retryHint =
     typeof details.retryHint === "string"
@@ -64,6 +66,14 @@ function errorPayload(err: MaisterError): Record<string, unknown> {
       : {}),
     ...(typeof details.canForce === "boolean"
       ? { canForce: details.canForce }
+      : {}),
+    // ADR-181 D4: what a force would replace — the forced retry sends the
+    // head back as `expectedHead`.
+    ...(typeof details.remoteHead === "string" || details.remoteHead === null
+      ? { remoteHead: details.remoteHead }
+      : {}),
+    ...(typeof details.remoteRef === "string"
+      ? { remoteRef: details.remoteRef }
       : {}),
     ...(retryHint ? { retryHint } : {}),
     // D24: the UI branches on `code` + `details.reason`, so the token is

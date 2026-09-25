@@ -3943,7 +3943,10 @@
     "publish": {
       "remote": "Remote",
       "name": "Public branch name",
-      "force": "Overwrite the remote branch (force-with-lease)",
+      "forceTitle": "Overwrite the remote branch?",
+      "forceBody": "{ref} is at {head}, a commit this run's branch does not contain. Publishing with force replaces the remote branch: the commits only the remote has leave it.",
+      "forcePr": "Pull request #{number} is open on this branch — it will show the replaced history.",
+      "forceConfirm": "Overwrite {head}",
       "unpushed": "{count} commits are not on the remote",
       "done": "Published {ref}",
       "handoff": "Handoff branch…"

@@ -217,6 +217,7 @@ describe("workbench lifecycle route wrappers", () => {
         snapshotDirty: true,
         commitMessage: "maister: hand off run-1",
         force: true,
+        expectedHead: "a".repeat(40),
       }),
       { params: Promise.resolve({ runId: "run-1" }) },
     );
@@ -235,9 +236,32 @@ describe("workbench lifecycle route wrappers", () => {
         snapshotDirty: true,
         commitMessage: "maister: hand off run-1",
         force: true,
+        expectedHead: "a".repeat(40),
       },
     );
   });
+
+  // ADR-181 D4: a force is bound to one confirmed head — never sent without it,
+  // and a head is meaningless without a force.
+  it.each([
+    ["a force without expectedHead", { force: true }],
+    ["expectedHead without a force", { expectedHead: "a".repeat(40) }],
+    ["an abbreviated expectedHead", { force: true, expectedHead: "abc1234" }],
+  ])(
+    "POST /api/runs/[runId]/export-branch refuses %s",
+    async (_label, body) => {
+      const { POST } = await import(
+        "@/app/api/runs/[runId]/export-branch/route"
+      );
+      const res = await POST(postRequest({ remote: "origin", ...body }), {
+        params: Promise.resolve({ runId: "run-1" }),
+      });
+
+      expect(res.status).toBe(400);
+      expect(await json(res)).toMatchObject({ code: "CONFIG" });
+      expect(lifecycleService.exportWorkbenchBranch).not.toHaveBeenCalled();
+    },
+  );
 
   it.each(["workspace_preservation_failed", "workspace_git_identity_invalid"])(
     "POST /api/runs/[runId]/drop returns typed reason %s",
@@ -275,6 +299,8 @@ describe("workbench lifecycle route wrappers", () => {
           pushRejected: "non_fast_forward",
           canForce: true,
           retryHint: "Remote branch has newer commits.",
+          remoteHead: "d".repeat(40),
+          remoteRef: "origin/feature/ABC-1-x",
         },
       ),
     );
@@ -295,6 +321,8 @@ describe("workbench lifecycle route wrappers", () => {
       pushRejected: "non_fast_forward",
       canForce: true,
       retryHint: "Remote branch has newer commits.",
+      remoteHead: "d".repeat(40),
+      remoteRef: "origin/feature/ABC-1-x",
     });
   });
 

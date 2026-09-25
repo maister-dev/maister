@@ -141,7 +141,7 @@ sequenceDiagram
     participant Svc as workbench-lifecycle service
     participant Git as worktree/git
     participant DB as workspaces
-    Op->>Route: publish {remote?, branchName?, force?}
+    Op->>Route: publish {remote?, branchName?, force + expectedHead?}
     Route->>Svc: authorize promoteRun + policy(exportBranch)
     Svc->>Git: upstream of internal branch?
     alt upstream, recorded publication or legacy PR head on this remote
@@ -152,12 +152,13 @@ sequenceDiagram
         Svc->>Svc: public = render(projects.public_branch_template)
     end
     Svc->>DB: claim lifecycle slot (exportBranch)
-    Svc->>Git: ls-remote remote refs/heads/public (lease SHA, before push)
+    Svc->>Git: ls-remote remote refs/heads/public (the observed head, before push)
     Svc->>DB: renew the lifecycle lease (a lapsed one refuses CONFLICT, nothing pushed)
-    Svc->>Git: push --set-upstream [--force-with-lease=refs/heads/public:sha] remote internal:public
-    alt non-fast-forward
+    Svc->>Git: push --set-upstream [--force-with-lease=refs/heads/public:expectedHead] remote internal:public
+    alt non-fast-forward, or a force whose remote moved past expectedHead
         Git-->>Svc: rejected
-        Svc-->>Op: 409 CONFLICT pushRejected=non_fast_forward canForce=true
+        Svc-->>Op: 409 CONFLICT pushRejected=non_fast_forward canForce=true remoteHead=observed remoteRef
+        Op->>Op: confirm the force naming remoteRef, remoteHead and an open PR — retry with expectedHead=remoteHead
     else ok
         Svc->>DB: published_branch, published_remote, published_at, then release claim
         Svc-->>Op: 200 {publishedRef, nameSource, checkoutCommands}
@@ -293,10 +294,12 @@ is `CONFLICT`, the rest `PRECONDITION`), and an unknown run is 404 with
   tree" rule the facts' `busy` and both recovers read — the `workspaces` row
   lock before the `runs` row lock).
 - Publish MUST push `refs/heads/<internal>:refs/heads/<public>` with
-  `--set-upstream`, lease against the `ls-remote` SHA captured BEFORE the push,
-  and write `published_branch`, `published_remote`, `published_at` only after
-  the push succeeded; a non-fast-forward rejection MUST be `CONFLICT` with
-  `pushRejected:"non_fast_forward"` and `canForce:true` (enforced by
+  `--set-upstream` and write `published_branch`, `published_remote`,
+  `published_at` only after the push succeeded; a non-fast-forward rejection
+  MUST be `CONFLICT` with `pushRejected:"non_fast_forward"`, `canForce:true` and
+  the observed `remoteHead` + `remoteRef`, and a force MUST carry the confirmed
+  `expectedHead` and lease exactly it, never a head re-read at retry time
+  (enforced by the `export-branch` body schema, `exportWorkbenchBranch`,
   `pushBranch` and `recordPublished`, the one writer of `published_*`).
 - The public name MUST resolve an existing name first (the upstream, the
   recorded `published_*`, a pre-ADR-181 PR head — each on the pushed remote)
@@ -351,9 +354,11 @@ is `CONFLICT`, the rest `PRECONDITION`), and an unknown run is 404 with
   `not_published`; commit, discard and update onto base/target (local refs)
   still work.
 - Public name exists on the remote at another head (a prior attempt) →
-  `MaisterError("CONFLICT")` with `pushRejected:"non_fast_forward"`; retry with
-  `force:true` uses the explicit-SHA lease; a lease rejection is `CONFLICT` and
-  the local branch is kept.
+  `MaisterError("CONFLICT")` with `pushRejected:"non_fast_forward"` naming
+  `remoteHead`; the confirmed retry sends `force:true` + `expectedHead`, and a
+  remote that moved past it is the same refusal naming the new head — the local
+  branch is kept and nothing is recorded. `force` without `expectedHead` (or
+  the reverse) is `MaisterError("CONFIG")` (400).
 - A request `branchName` that differs from the name an upstream already fixes →
   `MaisterError("PRECONDITION")` `public_name_fixed`; the dialog hides the field
   when an upstream exists.

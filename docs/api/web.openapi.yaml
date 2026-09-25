@@ -9356,9 +9356,11 @@ paths:
         otherwise the route returns `409 PRECONDITION` and does not push. The
         selected remote must already exist and is checked before lifecycle claim.
         A non-fast-forward push returns `409 CONFLICT` with
-        `pushRejected=non_fast_forward` and `canForce=true`; retrying with
-        `force=true` uses `git push --force-with-lease`. Successful responses
-        include the pushed ref and two non-chained checkout commands.
+        `pushRejected=non_fast_forward`, `canForce=true`, and the remote head it
+        observed (`remoteHead`) and ref (`remoteRef`); a forced retry sends
+        `force=true` with that head as `expectedHead`, and the push leases
+        exactly it. Successful responses include the pushed ref and two
+        non-chained checkout commands.
 
         **(ADR-181 — Implemented) Publish.** Admitted by the workbench git policy
         (`exportBranch`) in every parked status. The internal branch stays the
@@ -9370,9 +9372,10 @@ paths:
         pre-ADR-181 PR was opened from — and a request `branchName` that
         differs is refused (`public_name_fixed`); (b) the request `branchName`;
         (c) the project template `projects.public_branch_template` (default
-        `feature/{task_key}-{slug}`). The lease is an explicit SHA captured by
-        `ls-remote` of the public name BEFORE the push — on the forced retry a
-        moved remote is the same non-fast-forward classification and the local
+        `feature/{task_key}-{slug}`). A force replaces exactly the head the
+        operator confirmed: the explicit-SHA lease is `expectedHead`, never a
+        head re-read at retry time, so a remote that moved past it is the same
+        non-fast-forward refusal naming its new `remoteHead`, and the local
         branch is kept. Only after the push succeeds are
         `workspaces.published_branch`, `published_remote` and `published_at`
         recorded; a crash in between is idempotent on retry (the upstream now
@@ -9411,6 +9414,14 @@ paths:
                 force:
                   type: boolean
                   default: false
+                expectedHead:
+                  type: string
+                  pattern: "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+                  description: |
+                    (ADR-181 — Implemented) The remote head a force replaces —
+                    the `remoteHead` of the non-fast-forward refusal the
+                    operator confirmed; the push leases exactly it. Required
+                    with `force: true` and refused without it (400 `CONFIG`).
       responses:
         "200":
           description: Branch pushed.
@@ -9481,10 +9492,11 @@ paths:
                 nameSource: template
         "400":
           description: |
-            Invalid body (`CONFIG`), or (ADR-181 — Implemented) the project
-            template rendered no valid branch name (`CONFIG` with
-            `details.reason: public_branch_template_invalid` — send an explicit
-            `branchName`).
+            Invalid body (`CONFIG`) — including `force` without a full-SHA
+            `expectedHead`, or `expectedHead` without `force` — or (ADR-181 —
+            Implemented) the project template rendered no valid branch name
+            (`CONFIG` with `details.reason: public_branch_template_invalid` —
+            send an explicit `branchName`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -9506,7 +9518,9 @@ paths:
             `missing_workspace`, `removed_workspace`, `worktree_missing`,
             `unsupported_status`, `no_remote`); `CONFLICT` with
             `details.reason: busy`. The non-fast-forward refusal keeps its
-            top-level `pushRejected` / `canForce`.
+            top-level `pushRejected` / `canForce` and adds the observed
+            `remoteHead` / `remoteRef` — also when a forced push's remote moved
+            past `expectedHead`.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -21674,6 +21688,18 @@ components:
           type: string
           enum: [non_fast_forward]
         canForce: { type: boolean }
+        remoteHead:
+          type: string
+          nullable: true
+          description: |
+            (ADR-181 — Implemented) With `pushRejected` on a publish: the remote
+            branch head the refused push observed (`ls-remote` just before it),
+            null when unknown. A forced retry sends it back as `expectedHead`.
+        remoteRef:
+          type: string
+          description: |
+            (ADR-181 — Implemented) With `pushRejected` on a publish:
+            `<remote>/<public branch>`, the ref a force would rewrite.
         details:
           type: object
           additionalProperties: true

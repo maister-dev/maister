@@ -78,8 +78,10 @@ An unknown value opens the default section.
    already written are listed newest first.
 3. **Publish** — a remote select (from `remotes`), and a name field pre-filled
    from the project template. The field is hidden when an upstream already
-   fixes the name, and the chip says so. A force checkbox appears only after a
-   `non_fast_forward` refusal; the forced retry is the explicit-SHA lease. A
+   fixes the name, and the chip says so. A `non_fast_forward` refusal opens the
+   shared destructive confirmation, naming the remote ref, the short head a
+   force replaces and an open PR on the branch; confirming retries with that
+   head as the lease, and a remote that moved on asks again with its new head. A
    secondary **Handoff branch…** action opens the existing handoff form (remote
    + handoff branch name), unchanged.
 4. **Update** — an `onto` choice (`target` / `base` / `published`), each option

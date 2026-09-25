@@ -50,6 +50,7 @@ import {
   branchNameSchema,
   branchUpstream,
   createBranchAtHead,
+  GitPushRejectedError,
   headCommit,
   listRemotes,
   localBranchHead,
@@ -361,8 +362,12 @@ export type ExportWorkbenchBranchInput = {
   branchName?: string | null;
   snapshotDirty: boolean;
   commitMessage: string | null;
-  force?: boolean;
-};
+} & (
+  | { force?: false; expectedHead?: undefined }
+  // ADR-181 D4: a force replaces exactly the remote head the operator
+  // confirmed (a refusal's `remoteHead`), never one re-read at retry time.
+  | { force: true; expectedHead: string }
+);
 
 export type ExportWorkbenchBranchResult = {
   ok: true;
@@ -1538,6 +1543,25 @@ async function removeWorkbenchForCtx(
   }
 }
 
+// D4: a non-fast-forward names what a force would replace — the remote head the
+// push observed and its ref — which the forced retry leases back exactly.
+function namingRemoteHead(
+  err: unknown,
+  remoteHead: string | null,
+  remoteRef: string,
+): unknown {
+  if (!(err instanceof GitPushRejectedError)) return err;
+
+  return new GitPushRejectedError(err.message, {
+    cause: err,
+    pushRejected: err.pushRejected,
+    canForce: err.canForce,
+    retryHint: err.retryHint,
+    remoteHead,
+    remoteRef,
+  });
+}
+
 export async function exportWorkbenchBranch(
   runId: string,
   args: ExportWorkbenchBranchInput & WorkbenchLifecycleOptions,
@@ -1632,9 +1656,9 @@ export async function exportWorkbenchBranch(
       });
     }
 
-    // D4 step 4 — the lease is what the operator SAW, captured before the
-    // push (ADR-141): a forced publish never overwrites a head it never read.
-    const leaseSha = await deps.remoteBranchHead({
+    // D4 step 4 — the remote head right before the push: a refusal names it,
+    // so the operator confirms what a force would replace.
+    const observedHead = await deps.remoteBranchHead({
       projectRepoPath: workspace.parentRepoPath,
       remote,
       branch: publicBranch,
@@ -1649,7 +1673,8 @@ export async function exportWorkbenchBranch(
         publicBranch,
         nameSource: publication.source,
         force: args.force === true,
-        leaseSha,
+        expectedHead: args.expectedHead ?? null,
+        observedHead,
       },
       "workbench publish",
     );
@@ -1659,15 +1684,21 @@ export async function exportWorkbenchBranch(
       workspaceId: workspace.id,
       attemptId: claim.attemptId,
     });
-    await deps.pushBranch({
-      projectRepoPath: workspace.parentRepoPath,
-      remote,
-      branch: workspace.branch,
-      remoteBranch: publicBranch,
-      setUpstream: true,
-      force: args.force,
-      ...(args.force ? { leaseSha } : {}),
-    });
+    try {
+      await deps.pushBranch({
+        projectRepoPath: workspace.parentRepoPath,
+        remote,
+        branch: workspace.branch,
+        remoteBranch: publicBranch,
+        setUpstream: true,
+        force: args.force,
+        // The explicit-SHA lease is the confirmed head: a remote that moved on
+        // since is refused, naming its new head for a fresh confirmation.
+        ...(args.force ? { leaseSha: args.expectedHead } : {}),
+      });
+    } catch (err) {
+      throw namingRemoteHead(err, observedHead, `${remote}/${publicBranch}`);
+    }
     // D4 step 6: recorded only AFTER the push landed, under this claim.
     await deps.recordPublished({
       workspaceId: workspace.id,

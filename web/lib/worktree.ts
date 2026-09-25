@@ -924,6 +924,10 @@ export class GitPushRejectedError extends MaisterError {
   readonly pushRejected: PushRejectedReason;
   readonly canForce: boolean;
   readonly retryHint: string;
+  // ADR-181 D4: what a force would replace, set by a caller that read it — the
+  // remote head (null when unknown) and `<remote>/<branch>`.
+  readonly remoteHead?: string | null;
+  readonly remoteRef?: string;
 
   constructor(
     message: string,
@@ -931,6 +935,8 @@ export class GitPushRejectedError extends MaisterError {
       pushRejected?: PushRejectedReason;
       canForce?: boolean;
       retryHint?: string;
+      remoteHead?: string | null;
+      remoteRef?: string;
     },
   ) {
     super("CONFLICT", message, options);
@@ -940,6 +946,8 @@ export class GitPushRejectedError extends MaisterError {
     this.retryHint =
       options?.retryHint ??
       "Remote branch has newer commits. Review the remote branch or retry with force-with-lease.";
+    if (options?.remoteHead !== undefined) this.remoteHead = options.remoteHead;
+    if (options?.remoteRef !== undefined) this.remoteRef = options.remoteRef;
     Object.setPrototypeOf(this, GitPushRejectedError.prototype);
   }
 }
