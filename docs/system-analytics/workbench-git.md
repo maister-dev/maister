@@ -45,7 +45,9 @@ re-entry ([`run-continuation.md`](run-continuation.md)).
   `run-<8hex>` without a task); `{slug}` is the task title transliterated
   Cyrillic → Latin by a fixed table, lower-cased, `[a-z0-9-]`, at most 40
   characters; `{attempt}` is the flow branch's `attempt-N` suffix, `1` for agent
-  and scratch runs.
+  and scratch runs. A template must contain `{task_key}` and render a valid name
+  both with a task and without one, or registration refuses it
+  (`public_branch_template_invalid`); attempts of one task share their name.
 - **Rescue ref** — `refs/maister/rescue/<runId>/<n>`: a detached snapshot commit
   of the dirty tree written before any discard. Repo-scoped, survives
   archive/drop, not garbage-collected by this domain.

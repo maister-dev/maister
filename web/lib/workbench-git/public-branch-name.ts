@@ -175,22 +175,28 @@ export function renderPublicBranchName(
   return parsed.data;
 }
 
-// Validation on the ACTION path's inputs: known placeholders only, at least one,
-// no stray brace, and a sample render must be a valid branch name.
+// Validation on the ACTION path's inputs: known placeholders only, no stray
+// brace, `{task_key}` among them — the one placeholder unique per task
+// (`run-<8hex>` without one), so two tasks never render one name — and a valid
+// branch name both for a run with a task and for one without.
 export function validatePublicBranchTemplate(template: string): void {
-  const names = placeholdersIn(template);
-
-  if (names.length === 0) {
-    throw refuse("public branch template must use at least one placeholder");
-  }
   if (template.replace(/\{[^{}]*\}/g, "").match(/[{}]/)) {
     throw refuse("public branch template has an unbalanced brace");
   }
 
+  const sample = { attempt: 1, runId: "00000000-0000-4000-8000-000000000000" };
+
   renderPublicBranchName(template, {
+    ...sample,
     taskKey: "ABC-1",
     title: "sample title",
-    attempt: 1,
-    runId: "00000000-0000-4000-8000-000000000000",
   });
+
+  if (!placeholdersIn(template).includes("task_key")) {
+    throw refuse(
+      "public branch template must use {task_key} — without it two tasks, or every task-less run, share one name",
+    );
+  }
+
+  renderPublicBranchName(template, { ...sample, taskKey: null, title: null });
 }

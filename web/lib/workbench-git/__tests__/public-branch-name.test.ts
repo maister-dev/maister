@@ -130,12 +130,13 @@ describe("renderPublicBranchName", () => {
 });
 
 describe("validatePublicBranchTemplate", () => {
-  it.each(["feature/{task_key}-{slug}", "{task_key}", "wip/{slug}-{attempt}"])(
-    "accepts %s",
-    (template) => {
-      expect(() => validatePublicBranchTemplate(template)).not.toThrow();
-    },
-  );
+  it.each([
+    "feature/{task_key}-{slug}",
+    "{task_key}",
+    "wip/{task_key}-a{attempt}",
+  ])("accepts %s", (template) => {
+    expect(() => validatePublicBranchTemplate(template)).not.toThrow();
+  });
 
   it.each([
     ["no placeholder", "feature/static"],
@@ -145,6 +146,12 @@ describe("validatePublicBranchTemplate", () => {
     ["a dot-dot", "a..b/{task_key}"],
     ["a trailing slash", "{task_key}/"],
     ["an empty template", ""],
+    // {task_key} is the one placeholder unique per task (run-<8hex> without
+    // one): without it two tasks — or every task-less run — share a name.
+    ["no {task_key}", "wip/{slug}-{attempt}"],
+    ["a slug alone", "feature/{slug}"],
+    // Valid with a title; a task-less run's empty slug leaves a trailing '/'.
+    ["a name no task-less run can take", "{task_key}/{slug}."],
   ])("refuses %s with CONFIG public_branch_template_invalid", (_label, t) => {
     const err = refusal(() => validatePublicBranchTemplate(t));
 
