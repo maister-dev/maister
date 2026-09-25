@@ -382,6 +382,28 @@ for compilation — the failure is warm-up, not behaviour.
   into a strict-mode violation, which reads like a missing element but is the
   opposite.
 
+  **A freshly loaded page can be in the DOM twice.** Every `(app)` page
+  streams behind `app/(app)/loading.tsx`. React 19.2 reveals a finished
+  boundary on a throttle (`$RC` queues it, `$RV` swaps it in up to ~300 ms
+  later), and until then the server's copy waits in a hidden
+  `<div id="S:0">` at the end of `<body>`. The attention stream's
+  connect-time snapshot calls `router.refresh()`, and an update that reaches
+  the still-dehydrated boundary makes React client-render the page into
+  `<main>`. For that window a page-level `getByTestId` or CSS locator matches
+  both copies (role locators skip the hidden one). The signature is
+  `strict mode violation: getByTestId('<page test id>') resolved to 2
+  elements`, the second one outside `<main>`, often after a `Received: hidden`
+  poll; a one-shot `count()` reads double. Measured on the Desk on 2026-09-26: the
+  refresh's RSC request at 308 ms, both copies at 487 ms, the hidden one
+  `display: none` under `div#S:0`. Read page content inside
+  `page.getByRole("main")`, as `desk.spec.ts` does; its
+  `holdStreamedReveal` test holds the window open and fails if the scoping
+  regresses. Scoping has one cost: a one-shot `count()` taken before the page
+  reaches `<main>` now reads 0, where it used to count the parked copy, so wait
+  for the region to be visible first. The same signature has been seen on `push-notifications:103/218`
+  (`notifications-panel`), `work-table:97` (`work-empty`), `activity-feed:51`
+  and `outbound-webhooks:363`, which are not scoped yet.
+
   **Assume things are collapsed.** Much of this UI now hides content behind a
   disclosure, a non-default tab, or a collapsed tree folder — the workbench
   Files/Diff tabs, the package viewer's raw YAML, the composition Files tab and

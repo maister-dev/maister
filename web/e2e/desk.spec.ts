@@ -16,7 +16,7 @@
 // the rail badge — the `ATN-05` equality that survives is the Desk's Decisions
 // region against that badge, and it is asserted on its own below.
 
-import type { Browser, Page } from "@playwright/test";
+import type { Browser, Locator, Page } from "@playwright/test";
 
 import { test, expect } from "@playwright/test";
 
@@ -53,8 +53,38 @@ async function signIn(
   return { page, landedOn: new URL(page.url()).pathname };
 }
 
-async function digits(page: Page, testid: string): Promise<number> {
-  const text = await page.getByTestId(testid).textContent();
+// React 19.2 reveals a streamed Suspense boundary on a throttle: `$RC` queues
+// it and `$RV` swaps it in up to ~300 ms later. Until then the server's copy
+// of the page waits in a hidden <div> at the end of <body>, and an update that
+// reaches the boundary first — the attention stream's initial refresh —
+// renders a second copy into <main>. Holding the reveal keeps that window open
+// for as long as a test needs it.
+async function holdStreamedReveal(page: Page, ms: number): Promise<void> {
+  await page.addInitScript((holdMs) => {
+    let reveal: ((batch: unknown) => void) | undefined;
+
+    Object.defineProperty(window, "$RV", {
+      configurable: true,
+      get: () => reveal,
+      set: (fn: (batch: unknown) => void) => {
+        reveal = (batch) => void setTimeout(() => fn(batch), holdMs);
+      },
+    });
+  }, ms);
+}
+
+// Where the Desk renders: inside the shell's <main>. For a moment after a
+// load the document can hold the page twice — React's parked copy outside
+// <main> and the one the attention stream's first refresh rendered into it
+// (see `holdStreamedReveal`) — so page content is read here, never from the
+// whole page. The rail, the top nav and their badges are the layout's, outside
+// that boundary, and stay page-level.
+function desk(page: Page): Locator {
+  return page.getByRole("main");
+}
+
+async function digits(scope: Page | Locator, testid: string): Promise<number> {
+  const text = await scope.getByTestId(testid).textContent();
 
   return Number((text ?? "").trim());
 }
@@ -76,20 +106,19 @@ test("E2E-NAV-01 the Desk is home, and every region it promises is on it", async
 
   await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
   // ADR-174 D3: no digest sentence, no window, no period selector.
-  await expect(page.getByTestId("desk-digest")).toHaveCount(0);
+  await expect(desk(page).getByTestId("desk-digest")).toHaveCount(0);
 
   // Five Now tiles — the in-flight partition — each filtering `/` in place.
-  await expect(page.getByTestId("now-tiles")).toBeVisible();
-  await expect(page.locator("[data-now-tile]")).toHaveCount(5);
+  await expect(desk(page).getByTestId("now-tiles")).toBeVisible();
+  await expect(desk(page).locator("[data-now-tile]")).toHaveCount(5);
   for (const stage of IN_FLIGHT_STAGES) {
-    await expect(page.locator(`[data-now-tile="${stage}"]`)).toHaveAttribute(
-      "href",
-      `/?stage=${stage}`,
-    );
+    await expect(
+      desk(page).locator(`[data-now-tile="${stage}"]`),
+    ).toHaveAttribute("href", `/?stage=${stage}`);
   }
 
-  await expect(page.getByTestId("desk-work")).toBeVisible();
-  await expect(page.getByTestId("desk-activity")).toBeVisible();
+  await expect(desk(page).getByTestId("desk-work")).toBeVisible();
+  await expect(desk(page).getByTestId("desk-activity")).toBeVisible();
 
   // `T-D22` / `EDGE-NAV-01`, the other half: absent even WITH projects.
   await expect(
@@ -99,9 +128,12 @@ test("E2E-NAV-01 the Desk is home, and every region it promises is on it", async
   // Busy: the admin has work in flight, and it is rendered ONCE — as rows.
   // ADR-174 D2 removed the Decisions region because three of its four
   // populations were these same rows under another name.
-  await expect(page.getByTestId("desk-decisions")).toHaveCount(0);
+  await expect(desk(page).getByTestId("desk-decisions")).toHaveCount(0);
   await expect(
-    page.getByTestId("desk-work").locator('[data-testid="work-row"]').first(),
+    desk(page)
+      .getByTestId("desk-work")
+      .locator('[data-testid="work-row"]')
+      .first(),
   ).toBeVisible();
 
   // The Desk | Projects switch is the explicit control for the two meanings
@@ -124,10 +156,13 @@ test("E2E-NAV-01 the Desk is home, and every region it promises is on it", async
 const DESK_WORK_ROWS = 12;
 
 async function deskRows(page: Page): Promise<number> {
-  return page
-    .getByTestId("desk-work")
-    .locator('[data-testid="work-row"]')
-    .count();
+  const work = desk(page).getByTestId("desk-work");
+
+  // `count()` does not wait, and until the page is in <main> it would count
+  // nothing: read once the Desk has rendered there.
+  await expect(work).toBeVisible();
+
+  return work.locator('[data-testid="work-row"]').count();
 }
 
 test("T-D3 a Now tile filters the Desk in place, and a bad value does not", async ({
@@ -140,12 +175,12 @@ test("T-D3 a Now tile filters the Desk in place, and a bad value does not", asyn
   expect(unfiltered).toBeGreaterThan(0);
 
   // 1 — the filter narrows to exactly its stage, and the URL stays on `/`.
-  await page.locator('[data-now-tile="Crashed"]').click();
+  await desk(page).locator('[data-now-tile="Crashed"]').click();
   await expect(page).toHaveURL(/\/\?stage=Crashed$/u);
 
-  const crashedTile = await digits(page, "now-tile-Crashed");
+  const crashedTile = await digits(desk(page), "now-tile-Crashed");
   const crashedRows = await deskRows(page);
-  const work = page.getByTestId("desk-work");
+  const work = desk(page).getByTestId("desk-work");
 
   // Every row rendered under the filter really is that stage — a row count
   // alone would pass for a filter that narrowed to the wrong population.
@@ -164,7 +199,7 @@ test("T-D3 a Now tile filters the Desk in place, and a bad value does not", asyn
     await page.goto(`/?stage=${value}`);
     expect(await deskRows(page), value).toBe(unfiltered);
     await expect(
-      page.locator("[data-now-tile][aria-current]"),
+      desk(page).locator("[data-now-tile][aria-current]"),
       value,
     ).toHaveCount(0);
   }
@@ -177,7 +212,7 @@ test("T-D5 an active filter survives a re-render that discards client state", as
 
   const before = await deskRows(page);
 
-  await expect(page.locator('[data-now-tile="Crashed"]')).toHaveAttribute(
+  await expect(desk(page).locator('[data-now-tile="Crashed"]')).toHaveAttribute(
     "aria-current",
     "true",
   );
@@ -195,7 +230,7 @@ test("T-D5 an active filter survives a re-render that discards client state", as
   await page.reload();
 
   await expect(page).toHaveURL(/\/\?stage=Crashed$/u);
-  await expect(page.locator('[data-now-tile="Crashed"]')).toHaveAttribute(
+  await expect(desk(page).locator('[data-now-tile="Crashed"]')).toHaveAttribute(
     "aria-current",
     "true",
   );
@@ -213,14 +248,14 @@ test("T-D6 a filter matching nothing says so, distinctly, and offers a way back"
   try {
     await page.goto("/");
 
-    const unfilteredEmpty = page.getByTestId("desk-work-empty");
+    const unfilteredEmpty = desk(page).getByTestId("desk-work-empty");
 
     // Precondition: unfiltered, this reader's Desk is NOT empty.
     await expect(unfilteredEmpty).toHaveCount(0);
 
     await page.goto("/?stage=Crashed");
 
-    const filtered = page.getByTestId("desk-work-filtered");
+    const filtered = desk(page).getByTestId("desk-work-filtered");
 
     // Distinct from the unfiltered empty state — a filtered Desk that reads
     // "Nothing is running." tells the reader the platform is dead (`REQ-D6`).
@@ -270,10 +305,12 @@ test("T-D14 each stage expands to its own panel, and Review never promotes inlin
 }) => {
   await page.goto("/");
 
-  const work = page.getByTestId("desk-work");
+  const work = desk(page).getByTestId("desk-work");
   const expandable = work.locator('tr[data-testid="work-row"][aria-expanded]');
 
-  // The Desk opts in; every row it renders can be opened.
+  // The Desk opts in; every row it renders can be opened — counted once it has
+  // rendered in <main>, since `count()` does not wait.
+  await expect(work).toBeVisible();
   expect(await expandable.count()).toBeGreaterThan(0);
 
   const seen = new Set<string>();
@@ -336,7 +373,7 @@ test("E2E-EDGE-NAV-02 narrow keeps every region, stacked strip then Work then He
   // decision kind no work row carries — so it is included when present rather
   // than required, and the ORDER is asserted over whatever is there.
   for (const id of ["now-tiles", "desk-work", "desk-held", "desk-activity"]) {
-    const region = page.getByTestId(id);
+    const region = desk(page).getByTestId(id);
 
     if (id === "desk-held" && (await region.count()) === 0) continue;
 
@@ -376,7 +413,7 @@ test("E2E-EDGE-NAV-02 narrow keeps every region, stacked strip then Work then He
   // INVERTED by ADR-174 `REQ-D11`: the table no longer scrolls inside its own
   // container — it drops columns by priority instead. A horizontal scroller on
   // a phone hides data behind a gesture nobody makes.
-  const work = page.getByTestId("desk-work");
+  const work = desk(page).getByTestId("desk-work");
 
   await expect(work.locator("div.overflow-x-auto")).toHaveCount(0);
 
@@ -461,22 +498,24 @@ test("the quiet Desk says so instead of rendering an empty Decisions region", as
     await page.goto("/");
 
     // Quiet: projects exist, work is in flight, nothing is blocked on the reader.
-    expect(await digits(page, "desk-work-count")).toBeGreaterThan(0);
-    await expect(page.getByTestId("desk-work")).toContainText(fx.alphaName);
+    expect(await digits(desk(page), "desk-work-count")).toBeGreaterThan(0);
+    await expect(desk(page).getByTestId("desk-work")).toContainText(
+      fx.alphaName,
+    );
 
     // No Held region — `Held` is the one decision kind no work row carries, and
     // this reader has none of it. Quiet is now the ABSENCE of that region
     // rather than a region saying it is empty.
-    await expect(page.getByTestId("desk-held")).toHaveCount(0);
+    await expect(desk(page).getByTestId("desk-held")).toHaveCount(0);
 
     // And the tiles that mean "a human is needed" are zero, while the strip
     // itself still renders all five — `REQ-D1`.
     for (const stage of ["WaitingOnHuman", "Review", "Crashed"]) {
-      expect(await digits(page, `now-tile-${stage}`), stage).toBe(0);
+      expect(await digits(desk(page), `now-tile-${stage}`), stage).toBe(0);
     }
     // The Desk renders for a member too — only the LANDING route forks by role.
-    await expect(page.getByTestId("now-tiles")).toBeVisible();
-    await expect(page.getByTestId("desk-empty")).toHaveCount(0);
+    await expect(desk(page).getByTestId("now-tiles")).toBeVisible();
+    await expect(desk(page).getByTestId("desk-empty")).toHaveCount(0);
   } finally {
     await page.context().close();
   }
@@ -491,7 +530,7 @@ test("E2E-EDGE-NAV-01 the empty Desk reuses the first-run frame and drops the co
   try {
     await page.goto("/");
 
-    const empty = page.getByTestId("desk-empty");
+    const empty = desk(page).getByTestId("desk-empty");
 
     await expect(empty).toBeVisible();
     // The first-run checklist and the empty-state card, INSIDE the Desk frame.
@@ -506,13 +545,52 @@ test("E2E-EDGE-NAV-01 the empty Desk reuses the first-run frame and drops the co
 
     // The Desk frame itself survives: all five tiles render at zero, not
     // missing — `REQ-D1`. A reader with no projects still sees the shape.
-    await expect(page.getByTestId("now-tiles")).toBeVisible();
-    await expect(page.locator("[data-now-tile]")).toHaveCount(5);
+    await expect(desk(page).getByTestId("now-tiles")).toBeVisible();
+    await expect(desk(page).locator("[data-now-tile]")).toHaveCount(5);
     for (const stage of IN_FLIGHT_STAGES) {
-      expect(await digits(page, `now-tile-${stage}`), stage).toBe(0);
+      expect(await digits(desk(page), `now-tile-${stage}`), stage).toBe(0);
     }
-    await expect(page.getByTestId("desk-digest")).toHaveCount(0);
+    await expect(desk(page).getByTestId("desk-digest")).toHaveCount(0);
   } finally {
+    await page.context().close();
+  }
+});
+
+// The flake E2E-EDGE-NAV-01 met one run in two, made certain. Holding the
+// attention stream until React has parked the server's copy orders the race:
+// the stream's connect-time snapshot refreshes the router, and the refresh
+// renders the Desk into <main> while the parked copy is still in the document.
+test("E2E-EDGE-NAV-01 the empty Desk is read where it renders while React parks its streamed copy", async ({
+  browser,
+}) => {
+  const fx = loadFixtures().byKey.desk;
+  const { page } = await signIn(browser, fx.nobody);
+  const parkedCopy = page.locator('[hidden] [data-testid="desk-empty"]');
+  let releaseStream = (): void => {};
+  const parked = new Promise<void>((resolve) => {
+    releaseStream = resolve;
+  });
+
+  try {
+    await holdStreamedReveal(page, 15_000);
+    await page.route("**/api/attention/stream**", async (route) => {
+      await parked;
+      await route.continue();
+    });
+    await page.goto("/");
+
+    // The server's copy is parked, hidden, outside <main>.
+    await expect(parkedCopy).toHaveCount(1);
+    releaseStream();
+
+    await expect(desk(page).getByTestId("desk-empty")).toBeVisible({
+      timeout: 15_000,
+    });
+    // And it still is: the Desk read above coexisted with it, so this test
+    // exercised the race rather than a reveal that ended it.
+    await expect(parkedCopy).toHaveCount(1);
+  } finally {
+    releaseStream();
     await page.context().close();
   }
 });
@@ -533,7 +611,7 @@ test("E2E-NAV-08 a task in flight and blocked on a human is ONE object", async (
 }) => {
   await page.goto("/");
 
-  const work = page.getByTestId("desk-work");
+  const work = desk(page).getByTestId("desk-work");
   const blocked = work
     .locator('tr[data-testid="work-row"][data-stage="WaitingOnHuman"]')
     .first();
@@ -551,7 +629,7 @@ test("E2E-NAV-08 a task in flight and blocked on a human is ONE object", async (
   expect(key, "the row names its task").not.toBe("");
 
   // Every object on the Desk that renders this task, OUTSIDE the activity log.
-  const objects = page.locator(
+  const objects = desk(page).locator(
     [
       `[data-testid="work-row"]:has-text("${key}")`,
       `[data-testid="hitl-card"]:has-text("${key}")`,
