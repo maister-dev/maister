@@ -4,6 +4,8 @@ import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 import { z } from "zod";
 
+import { maisterErrorBody } from "../workbench-lifecycle/route-utils";
+
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { deliveryPolicyOverrideSchema } from "@/lib/runs/delivery-policy";
@@ -52,18 +54,9 @@ function httpStatusForCode(code: string): number {
 
 function errorResponse(err: unknown, runId: string): NextResponse {
   if (isMaisterError(err)) {
-    return NextResponse.json(
-      {
-        code: err.code,
-        message: err.message,
-        // ADR-181 D24: the reason token only (e.g. `target_drift`) — the UI's
-        // branch key; no other server-side context crosses this boundary.
-        ...(typeof err.details?.reason === "string"
-          ? { details: { reason: err.details.reason } }
-          : {}),
-      },
-      { status: httpStatusForCode(err.code) },
-    );
+    return NextResponse.json(maisterErrorBody(err), {
+      status: httpStatusForCode(err.code),
+    });
   }
   const message = err instanceof Error ? err.message : String(err);
 

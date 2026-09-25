@@ -39,6 +39,25 @@ function httpStatusForCode(code: string, reason?: unknown): number {
   }
 }
 
+// ADR-181 D24: the body every run workbench route answers a typed error with —
+// the code, the message and the `details.reason` token the UI branches on, and
+// ONLY that token: other `details` fields are server-side context and never
+// cross this boundary. The sync and promote routes keep their own status maps
+// and share this body.
+export function maisterErrorBody(err: MaisterError): {
+  code: string;
+  message: string;
+  details?: { reason: string };
+} {
+  return {
+    code: err.code,
+    message: err.message,
+    ...(typeof err.details?.reason === "string"
+      ? { details: { reason: err.details.reason } }
+      : {}),
+  };
+}
+
 function errorPayload(err: MaisterError): Record<string, unknown> {
   const details = err as MaisterError & {
     pushRejected?: unknown;
@@ -54,9 +73,11 @@ function errorPayload(err: MaisterError): Record<string, unknown> {
         ? "Check executor or remote availability, then retry."
         : null;
 
+  const body = maisterErrorBody(err);
+
   return {
-    code: err.code,
-    message: err.message,
+    code: body.code,
+    message: body.message,
     ...(err.details?.reason === "workspace_preservation_failed" ||
     err.details?.reason === "workspace_git_identity_invalid"
       ? { reason: err.details.reason }
@@ -76,13 +97,8 @@ function errorPayload(err: MaisterError): Record<string, unknown> {
       ? { remoteRef: details.remoteRef }
       : {}),
     ...(retryHint ? { retryHint } : {}),
-    // D24: the UI branches on `code` + `details.reason`, so the token is
-    // forwarded — and ONLY the token: other `details` fields are server-side
-    // context and never cross this boundary. The top-level `reason` enum above
-    // is untouched.
-    ...(typeof err.details?.reason === "string"
-      ? { details: { reason: err.details.reason } }
-      : {}),
+    // The top-level `reason` enum above is untouched.
+    ...(body.details ? { details: body.details } : {}),
   };
 }
 

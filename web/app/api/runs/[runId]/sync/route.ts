@@ -5,6 +5,8 @@ import { eq } from "drizzle-orm";
 import pino from "pino";
 import { z } from "zod";
 
+import { maisterErrorBody } from "../workbench-lifecycle/route-utils";
+
 import { loadRunnerCatalog } from "@/lib/acp-runners/catalog";
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
@@ -53,17 +55,9 @@ function httpStatusForCode(code: string): number {
 
 function errorResponse(err: unknown, runId: string): NextResponse {
   if (isMaisterError(err)) {
-    return NextResponse.json(
-      {
-        code: err.code,
-        message: err.message,
-        // ADR-181 D24: the reason token only — the panel's branch key.
-        ...(typeof err.details?.reason === "string"
-          ? { details: { reason: err.details.reason } }
-          : {}),
-      },
-      { status: httpStatusForCode(err.code) },
-    );
+    return NextResponse.json(maisterErrorBody(err), {
+      status: httpStatusForCode(err.code),
+    });
   }
   const message = err instanceof Error ? err.message : String(err);
 
