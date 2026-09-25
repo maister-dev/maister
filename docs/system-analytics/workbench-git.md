@@ -284,7 +284,8 @@ is `CONFLICT`, the rest `PRECONDITION`), and an unknown run is 404 with
   owns the open claim: a return and a re-claim between admission and claim
   keep the status `HumanWorking` but change the owner, and the former owner
   gets `PRECONDITION` `details.reason:"human_owned"` with nothing written
-  (enforced by `requireReworkClaimOwner`).
+  (enforced by `requireReworkClaimOwner`); a system caller — the reconciler
+  recording a vanished tree — names no actor and is not owner-gated.
 - Every mutating action MUST run under the `workspaces.lifecycle_operation_*`
   claim, which MUST refuse a live promotion claim and decide on the admitted
   `runs.status` under the run's row lock, while `promoteRun` refuses any live

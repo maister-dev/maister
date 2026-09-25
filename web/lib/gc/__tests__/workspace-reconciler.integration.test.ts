@@ -334,6 +334,65 @@ describe("runWorkspaceReconciliationSweep", () => {
     expect(workspace.removedAt).not.toBeNull();
   });
 
+  // ADR-181 D2: the lifecycle claim re-checks a HumanWorking claim's OWNER for
+  // a user's operation. The reconciler is a system actor the policy never
+  // gated on ownership, so a HumanWorking row whose tree vanished still
+  // records as removed.
+  it("recovers a vanished row of a HumanWorking run, as a system actor", async () => {
+    const runId = randomUUID();
+    const ownerId = randomUUID();
+    const missingPath = path.join(worktreesRoot, projectSlug, runId);
+
+    await db.insert(schema.users).values({
+      id: ownerId,
+      email: `${ownerId}@maister.test`,
+      role: "member",
+      accountStatus: "active",
+      passwordHash: "x",
+    });
+    await db.insert(schema.runs).values({
+      id: runId,
+      projectId,
+      status: "HumanWorking",
+      flowVersion: "reconciler",
+      flowRevision: "test",
+    });
+    await db.insert(schema.nodeAttempts).values({
+      id: randomUUID(),
+      runId,
+      nodeId: "review",
+      nodeType: "human",
+      attempt: 1,
+      status: "NeedsInput",
+      ownerUserId: ownerId,
+      decision: "review_rework_claim",
+    });
+    await db.insert(schema.workspaces).values({
+      id: randomUUID(),
+      runId,
+      projectId,
+      branch: `maister/${runId}`,
+      worktreePath: missingPath,
+      parentRepoPath: repoPath,
+      preservationOutcome: "not_needed",
+    });
+
+    const summary = await runWorkspaceReconciliationSweep({
+      database: db,
+      root: worktreesRoot,
+      now: () => new Date("2026-07-16T12:00:00.000Z"),
+    });
+    const workspace = (
+      await db
+        .select()
+        .from(schema.workspaces)
+        .where(eq(schema.workspaces.runId, runId))
+    )[0];
+
+    expect(summary).toMatchObject({ removed: 1, resolved: 1, quarantined: 0 });
+    expect(workspace.removedAt).not.toBeNull();
+  });
+
   it("retains rescue evidence across a crash after deletion and resolves it on retry", async () => {
     const runId = randomUUID();
     const worktreePath = path.join(worktreesRoot, projectSlug, runId);

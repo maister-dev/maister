@@ -294,7 +294,9 @@ export type WorkbenchLifecycleDeps = {
     workspaceId: string;
     operation: LifecycleOperationName;
     expectedRunStatus: WorkbenchRunStatus;
-    actorUserId?: string | null;
+    // Every workbench operation is a user's; a missing viewer (null) is
+    // refused on a HumanWorking run, never treated as a system caller.
+    actorUserId: string | null;
   }) => Promise<LifecycleOperationClaim>;
   renewLifecycleOperationLease: (args: {
     workspaceId: string;
@@ -944,7 +946,7 @@ async function archiveWorkbenchForCtx(
     workspaceId: workspace.id,
     operation: "archive",
     expectedRunStatus: ctx.run.status,
-    actorUserId: ctx.viewerUserId,
+    actorUserId: ctx.viewerUserId ?? null,
   });
 
   try {
@@ -1133,7 +1135,7 @@ export async function snapshotWorkbenchCommit(
     workspaceId: workspace.id,
     operation: "snapshotCommit",
     expectedRunStatus: ctx.run.status,
-    actorUserId: ctx.viewerUserId,
+    actorUserId: ctx.viewerUserId ?? null,
   });
 
   try {
@@ -1286,7 +1288,7 @@ export async function createWorkbenchHandoffBranch(
     workspaceId: workspace.id,
     operation: "handoffBranch",
     expectedRunStatus: ctx.run.status,
-    actorUserId: ctx.viewerUserId,
+    actorUserId: ctx.viewerUserId ?? null,
   });
 
   try {
@@ -1446,7 +1448,7 @@ async function removeWorkbenchForCtx(
     workspaceId: workspace.id,
     operation,
     expectedRunStatus: ctx.run.status,
-    actorUserId: ctx.viewerUserId,
+    actorUserId: ctx.viewerUserId ?? null,
   });
 
   try {
@@ -1636,7 +1638,7 @@ export async function exportWorkbenchBranch(
     workspaceId: workspace.id,
     operation: "exportBranch",
     expectedRunStatus: ctx.run.status,
-    actorUserId: ctx.viewerUserId,
+    actorUserId: ctx.viewerUserId ?? null,
   });
 
   try {
@@ -2581,7 +2583,9 @@ export async function claimLifecycleOperation(args: {
   workspaceId: string;
   operation: LifecycleOperationName;
   expectedRunStatus: WorkbenchRunStatus;
-  // Who acts: a `HumanWorking` claim must still be theirs under the run lock.
+  // The acting user, whose `HumanWorking` claim must still be theirs under the
+  // run lock; omitted by a system caller (GC, the reconciler recording a
+  // vanished tree), which the policy never gated on the claim's owner.
   actorUserId?: string | null;
 }): Promise<LifecycleOperationClaim> {
   const client = args.database ?? db();
@@ -2656,7 +2660,7 @@ export async function claimLifecycleOperation(args: {
       );
     }
 
-    if (runStatus === "HumanWorking") {
+    if (runStatus === "HumanWorking" && args.actorUserId !== undefined) {
       await requireReworkClaimOwner(args.runId, args.actorUserId, tx);
     }
 
