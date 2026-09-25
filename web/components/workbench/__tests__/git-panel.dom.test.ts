@@ -615,6 +615,19 @@ describe("WorkbenchGitPanel", () => {
     });
   });
 
+  // web/CLAUDE.md: icon + label for actions; a disclosure says whether it is open.
+  it("renders the Handoff toggle with its icon and its open state", async () => {
+    render();
+    await settle();
+
+    const toggle = must<HTMLButtonElement>("git-panel-handoff-open");
+
+    expect(toggle.querySelector("svg")).not.toBeNull();
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    await click(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+  });
+
   it("disables publish on a dirty tree and names Commit and Discard as the way out", async () => {
     render();
     await settle();

@@ -13,6 +13,7 @@ import {
   ArrowUpTrayIcon,
   CheckIcon,
   ClipboardDocumentIcon,
+  ShareIcon,
   TrashIcon,
 } from "@heroicons/react/24/outline";
 import { useRouter } from "next/navigation";
@@ -863,12 +864,14 @@ export function WorkbenchGitPanel({
                 onClick: () => publish(),
               })}
               <button
+                aria-expanded={handoffOpen}
                 className={clsx(button, neutral)}
                 data-testid="git-panel-handoff-open"
                 disabled={busy !== null}
                 type="button"
                 onClick={() => setHandoffOpen((open) => !open)}
               >
+                <ShareIcon aria-hidden="true" className="h-3.5 w-3.5" />
                 {t("publish.handoff")}
               </button>
             </div>
