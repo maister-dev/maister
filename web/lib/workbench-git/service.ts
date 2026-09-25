@@ -69,6 +69,8 @@ const log = pino({
 export type WorkbenchGitDeps = {
   writeRescueRef: typeof writeRescueRef;
   discardWorktreeChanges: typeof discardWorktreeChanges;
+  // The one database handle this module's own reads and writes go through.
+  db: () => Db;
 };
 
 export type WorkbenchGitOptions = WorkbenchLifecycleOptions & {
@@ -84,7 +86,13 @@ export type DiscardWorkbenchChangesResult = {
 };
 
 function gitDepsFromOptions(options?: WorkbenchGitOptions): WorkbenchGitDeps {
-  return options?.gitDeps ?? { writeRescueRef, discardWorktreeChanges };
+  return (
+    options?.gitDeps ?? {
+      writeRescueRef,
+      discardWorktreeChanges,
+      db: getDb as () => Db,
+    }
+  );
 }
 
 // ADR-181 D8 — discard is PRESERVE-FIRST: every change (staged, unstaged,
@@ -266,10 +274,11 @@ async function adoptsOwnAttempt(
 // run also names its task and flow revision, which promotion's commit
 // trailers read back.
 async function reattachProvenance(
+  db: Db,
   ctx: LifecycleContext,
   workspace: LifecycleWorkspace,
 ): Promise<MaisterProvenance> {
-  const rows = await (getDb() as Db)
+  const rows = await db
     .select({
       createdAt: workspaces.createdAt,
       flowRevision: runs.flowRevision,
@@ -308,6 +317,7 @@ export async function reattachWorkbench(
   options?: WorkbenchGitOptions,
 ): Promise<ReattachWorkbenchResult> {
   const deps = depsFromOptions(options);
+  const git = gitDepsFromOptions(options);
   const sessionUser = await deps.requireActiveSession();
   const ctx = await deps.loadContext(runId);
 
@@ -355,7 +365,7 @@ export async function reattachWorkbench(
     unstampedTree = !adopting;
     await installWorktreeProvenance({
       worktreePath: workspace.worktreePath,
-      metadata: await reattachProvenance(ctx, workspace),
+      metadata: await reattachProvenance(git.db(), ctx, workspace),
     });
     unstampedTree = false;
     await deps.renewLifecycleOperationLease({
@@ -365,6 +375,7 @@ export async function reattachWorkbench(
 
     if (
       !(await recordReattached({
+        database: git.db(),
         workspaceId: workspace.id,
         attemptId: claim.attemptId,
         liveLease: true,
@@ -448,13 +459,14 @@ export type OpenPullRequestResult = {
 // lease). A different PR resets the previous PR's ADR-140 evidence — null is
 // "unknown until scanned", never the old PR's merge or conflict.
 async function recordPullRequestOpened(args: {
+  database: Db;
   workspaceId: string;
   attemptId: string;
   pr: PrResult;
   targetBranch: string;
   previousPrUrl: string | null;
 }): Promise<boolean> {
-  const rows = await (getDb() as Db)
+  const rows = await args.database
     .update(workspaces)
     .set({
       prUrl: args.pr.url,
@@ -484,6 +496,7 @@ async function recordPullRequestOpened(args: {
 // recorded one, else the project main branch; a scratch run is target-locked
 // exactly as its promotion is (D13), so a later finalize finds the same PR.
 async function pullRequestTarget(
+  db: Db,
   ctx: LifecycleContext,
   workspace: LifecycleWorkspace,
   requested: string | undefined,
@@ -492,7 +505,7 @@ async function pullRequestTarget(
     return requested ?? workspace.targetBranch ?? ctx.project.mainBranch;
   }
 
-  const rows = await (getDb() as Db)
+  const rows = await db
     .select({
       baseBranch: scratchRuns.baseBranch,
       targetBranch: scratchRuns.targetBranch,
@@ -520,6 +533,7 @@ export async function openPullRequest(
   options: WorkbenchGitOptions & { origin: string },
 ): Promise<OpenPullRequestResult> {
   const deps = depsFromOptions(options);
+  const git = gitDepsFromOptions(options);
   const sessionUser = await deps.requireActiveSession();
   const ctx = await deps.loadContext(runId);
 
@@ -585,6 +599,7 @@ export async function openPullRequest(
   }
 
   const targetBranch = await pullRequestTarget(
+    git.db(),
     ctx,
     workspace,
     input.targetBranch,
@@ -633,6 +648,7 @@ export async function openPullRequest(
 
     if (
       !(await recordPullRequestOpened({
+        database: git.db(),
         workspaceId: workspace.id,
         attemptId: claim.attemptId,
         pr,
