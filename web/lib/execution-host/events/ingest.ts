@@ -581,13 +581,17 @@ async function lockRuns(
   if (wanted.length === 0) return new Set();
   // One statement, ascending id: every writer that can race this one (the
   // owner apply, idle-resume CAS) takes a run lock first, so a peer's order is
-  // never inverted inside a batch.
+  // never inverted inside a batch. NO KEY UPDATE is exactly the lock the
+  // allocator's `UPDATE runs` takes: it still serializes against those peers
+  // (FOR UPDATE, NO KEY UPDATE), but not against a projector's FK check
+  // (KEY SHARE) — with FOR UPDATE, every batch queued behind each projection
+  // transaction that had inserted a child row of one of its runs.
   const rows = await tx
     .select({ id: runs.id })
     .from(runs)
     .where(inArray(runs.id, wanted))
     .orderBy(asc(runs.id))
-    .for("update");
+    .for("no key update");
   const found = new Set(rows.map((row) => row.id));
 
   for (const runId of found) locked.add(runId);

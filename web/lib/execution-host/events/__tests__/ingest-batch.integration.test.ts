@@ -251,11 +251,15 @@ describe("runtime event batch ingest (ADR-167 amendment 2026-09-25)", () => {
     expect(count(/^commit$/i)).toBe(1);
     expect(count(/from "execution_event_streams".*for update/is)).toBe(1);
     // Runs are locked once, ascending, before any insert — including run 2,
-    // which is only in the batch because the gap filler releases its row.
+    // which is only in the batch because the gap filler releases its row —
+    // FOR NO KEY UPDATE: the allocator's own lock, which a projector's FK
+    // check (KEY SHARE) does not wait on.
     const runLocks = log.statements
       .map((statement, index) => ({ statement, index }))
       .filter(({ statement }) =>
-        /from "runs".*order by "runs"\."id" asc.*for update/is.test(statement),
+        /from "runs".*order by "runs"\."id" asc.*for no key update/is.test(
+          statement,
+        ),
       );
     const firstInsert = log.statements.findIndex((statement) =>
       /^insert into "execution_events"/i.test(statement),

@@ -131,7 +131,7 @@ paths:
         a cursor before that floor or on another stream fails explicitly.
         Each event is redacted, ≤1 MiB, and uses SSE `id = sequence`.
 
-        (Designed — ADR-167 amendment 2026-09-25) One connection pages through
+        (Implemented — ADR-167 amendment 2026-09-25) One connection pages through
         the retained outbox (≤500 events and ≤1 MiB per read) until an empty
         page, then serves committed appends live. When the socket's `write()`
         returns `false` the subscriber is paused until `drain` and resumes from
@@ -503,7 +503,7 @@ paths:
         event-stream head and bounded outbox counters. Empty, repeated, or
         other values are refused with PRECONDITION.
 
-        (Designed — ADR-167 amendment 2026-09-25) The block also carries
+        (Implemented — ADR-167 amendment 2026-09-25) The block also carries
         `subscriberPauses` and `closes` by reason for `GET /runtime-events`
         subscribers, counted since this boot. They are transport telemetry,
         never lifecycle authority; a web tier reading an older host treats them
@@ -2246,7 +2246,6 @@ components:
           minimum: 0
           maximum: 9007199254740991
         subscriberPauses:
-          x-implementation-status: Designed
           description: |
             Times a `GET /runtime-events` subscriber was paused because its
             socket stopped draining, since this boot (ADR-167 amendment
@@ -2256,7 +2255,6 @@ components:
           minimum: 0
           maximum: 9007199254740991
         closes:
-          x-implementation-status: Designed
           description: |
             `GET /runtime-events` connections closed since this boot, by reason
             (ADR-167 amendment 2026-09-25). The host never closes on

@@ -46,7 +46,7 @@ channels:
         `invalid_event_sequence`; a replay-floor miss fails explicitly rather
         than skipping a gap.
 
-        (Designed — ADR-167 amendment 2026-09-25) One connection serves
+        (Implemented — ADR-167 amendment 2026-09-25) One connection serves
         retained pages until an empty page, then live appends. A subscriber
         whose socket stops draining is paused until `drain` and resumes from
         the last sequence written; the host never closes on backpressure or at

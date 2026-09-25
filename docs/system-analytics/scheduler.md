@@ -476,7 +476,7 @@ executionObservability = {
 ```
 
 Each source reports a safe `available | unsupported | unavailable` status; the
-top-level `errors[]` carries the reason codes. (Designed — ADR-167 amendment
+top-level `errors[]` carries the reason codes. (Implemented — ADR-167 amendment
 2026-09-25) The `stream` source's host backlog also carries the host's
 `subscriberPauses` and `closes` by reason when the host reports them. They are
 monotonic within one `bootId`, which the sample already carries, so an operator

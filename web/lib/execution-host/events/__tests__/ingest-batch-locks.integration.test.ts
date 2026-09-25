@@ -278,4 +278,33 @@ describe("batch ingest lock order (ADR-167 amendment 2026-09-25)", () => {
       { holds_runs: true, count: String(2 * ITERATIONS) },
     ]);
   }, 300_000);
+
+  it("I5b: a projector's FK check on a run does not hold a batch back", async () => {
+    // A projection transaction that inserted a child row of a run holds
+    // KEY SHARE on it until it commits. The batch's run lock must not wait
+    // for it: under FOR UPDATE every batch queued behind every such holder.
+    const holder = await testDatabase.pool.connect();
+    const base = 10_000_000;
+
+    try {
+      await holder.query("BEGIN");
+      await holder.query("SELECT 1 FROM runs WHERE id = $1 FOR KEY SHARE", [
+        runIds[0],
+      ]);
+      const batch = ingestRuntimeEventBatch({
+        db,
+        executionHostId: hostId,
+        envelopes: [envelope(base, 0), envelope(base + 1, 1)],
+      });
+      const outcome = await Promise.race([
+        batch.then(() => "committed" as const),
+        delay(5_000).then(() => "blocked" as const),
+      ]);
+
+      expect(outcome).toBe("committed");
+    } finally {
+      await holder.query("ROLLBACK");
+      holder.release();
+    }
+  });
 });

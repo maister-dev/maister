@@ -21,6 +21,7 @@ import {
 } from "vitest";
 
 import { buildEnvelope } from "@/lib/execution-host/ledger";
+import { INGEST_BATCH_WAIT_MS } from "@/lib/execution-host/events/batching";
 import {
   consumeRuntimeEventStreamOnce,
   RUNTIME_EVENT_CONSUMER_STALL_MS,
@@ -42,7 +43,7 @@ import {
   useRealSupervisorUrl as pointTransportAtSupervisor,
 } from "@/test-support/real-supervisor";
 
-const T_MS = 250;
+const T_MS = INGEST_BATCH_WAIT_MS;
 
 let database: StartedPostgresTestDb;
 let db: Db;

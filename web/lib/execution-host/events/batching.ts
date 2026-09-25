@@ -19,7 +19,10 @@ export type IngestBatchLimits = Readonly<{
 }>;
 
 export const INGEST_BATCH_BYTES = 4 * 1_048_576;
-export const INGEST_BATCH_WAIT_MS = 250;
+// Chosen by the R20 sweep (2026-09-26): at N = 200 the smallest wait whose
+// host-to-manager lag stayed at or below N (T = 100: max 60 rows; 250: 122;
+// 500: 214 > N).
+export const INGEST_BATCH_WAIT_MS = 100;
 export const INGEST_BUFFER_BYTES = 16 * 1_048_576;
 
 export function ingestBatchLimits(rows: number): IngestBatchLimits {

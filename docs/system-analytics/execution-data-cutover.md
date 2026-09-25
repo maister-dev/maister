@@ -137,8 +137,8 @@ The retained identifiers below are historical scenario aliases, not executed tes
 | EVT-03      | event unique constraints | ingest T0.4/T1.3                  | IT-EVT-03    | Acceptance unverified |
 | EVT-04      | decimal/run counter      | allocator/lock T1.1/T1.3          | IT-EVT-04    | Acceptance unverified |
 | EVT-05      | stale disposition        | ingest/projectors T1.3/T2.1       | IT-EVT-05    | Acceptance unverified |
-| EVT-06      | replay/ACK/gap schema; batch granularity (Designed 2026-09-25) | consumer T1.2/T1.3; batch ingest + bounded walk | IT-EVT-06; I1, I2, I6 | Acceptance unverified |
-| EVT-07      | SSE/ACK cursors; pausing subscriber (Designed 2026-09-25) | host/manager recovery T1.1–T1.3; subscriber pump | IT-EVT-07; H1, H2, H3 | Acceptance unverified |
+| EVT-06      | replay/ACK/gap schema; batch granularity (Implemented 2026-09-26) | consumer T1.2/T1.3; batch ingest + bounded walk | IT-EVT-06; I1, I2, I6 | Acceptance unverified |
+| EVT-07      | SSE/ACK cursors; pausing subscriber (Implemented 2026-09-26) | host/manager recovery T1.1–T1.3; subscriber pump | IT-EVT-07; H1, H2, H3 | Acceptance unverified |
 | EVT-08      | payload/error schema     | redactors T0.3/T1.1/T1.3          | CT-EVT-08    | Acceptance unverified |
 | EVT-09      | capability limits        | outbox pressure T1.1              | IT-EVT-09    | Acceptance unverified |
 | EVT-10      | consumer schema          | projector CAS T1.4                | IT-EVT-10    | Acceptance unverified |
@@ -190,9 +190,9 @@ The retained identifiers below are historical scenario aliases, not executed tes
 | EDGE-EVT-05 | sequence/timestamp schema | boundary parser T0.3/T1.3     | CT-EVT-05           | Acceptance unverified |
 | EDGE-EVT-06 | quarantine schema         | ingest T0.3/T1.3              | CT-EVT-08           | Acceptance unverified |
 | EDGE-EVT-07 | command/assignment fence  | ingest/projector T1.3/T1.4    | IT-EVT-05           | Acceptance unverified |
-| EDGE-EVT-08 | jsonb-unstorable payload  | ingest escape + skip ledger   | IT-EVT-08-UNSTORABLE | Verified (`ingest-unstorable-payload.integration.test.ts`); batch split Designed 2026-09-25 (I3) |
-| EDGE-EVT-09 | subscriber pause/resume   | host subscriber pump (Designed 2026-09-25) | H1, H2 | Designed |
-| EDGE-EVT-10 | mid-stream floor/protocol close | host subscriber pump (Designed 2026-09-25) | `runtime-event-ack` mid-stream floor case | Designed |
+| EDGE-EVT-08 | jsonb-unstorable payload  | ingest escape + skip ledger   | IT-EVT-08-UNSTORABLE | Verified (`ingest-unstorable-payload.integration.test.ts`); batch split Verified (`ingest-batch.integration.test.ts` I3, `ingest-unstorable-payload.integration.test.ts`) |
+| EDGE-EVT-09 | subscriber pause/resume   | host subscriber pump | H1, H2 | Verified (`runtime-event-subscribers.test.ts`, `runtime-event-backpressure.integration.test.ts`) |
+| EDGE-EVT-10 | mid-stream floor/protocol close | host subscriber pump | `runtime-event-ack` mid-stream floor case | Verified (`runtime-event-ack.integration.test.ts`, `runtime-event-subscribers.test.ts`) |
 | EDGE-PRM-01 | receipt/event contract    | prompt reconcile T3.1/T3.2    | IT-PRM-02-ACK-LOSS  | Acceptance unverified |
 | EDGE-PRM-02 | turn_lost schema          | startup repair T3.1           | IT-PRM-05           | Acceptance unverified |
 | EDGE-PRM-03 | terminal conflict error   | reconciliation T1.4/T3.2      | IT-PRM-06           | Acceptance unverified |

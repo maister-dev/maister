@@ -123,8 +123,8 @@ advances `last_seen_at` (it proves the stream is alive even though no watermark
 moves, so a replay loop is no longer indistinguishable from an idle host), and
 the consumer's two silent reconnect paths — a failed post-ACK watermark record,
 and a lost or changed claim — now log and record instead of retrying every 2 s
-in complete silence. (Designed — ADR-167 amendment 2026-09-25.) Every committed
-ingest batch advances `last_seen_at` too, and a batch is cut at most 250 ms
+in complete silence. (Implemented — ADR-167 amendment 2026-09-25.) Every committed
+ingest batch advances `last_seen_at` too, and a batch is cut at most 100 ms
 after its first row arrives, so batching never manufactures silence.
 
 ### Lag versus stall (Implemented — P0-7, 2026-09-22)
@@ -363,7 +363,7 @@ while waiting for that claim. A cancelled consumer refuses to open SSE with type
 `EXECUTOR_UNAVAILABLE` / `aborted` and expires only its own claim through the
 existing failure recorder. A stopped consumer releases its own claim when its loop exits, whether the last pass ended in an error or the host closed the stream, so a successor claims at once instead of replaying from the floor for the 30 s lease (S3.6 gate finding). A real row-lock barrier test verifies both refusal and
 immediate acquisition by a successor without waiting for lease expiry.
-(Designed — ADR-167 amendment 2026-09-25.) A pass may now stay open far longer
+(Implemented — ADR-167 amendment 2026-09-25.) A pass may now stay open far longer
 than the lease, so every ingest batch renews the lease inside its own
 transaction while the locked stream row still names this consumer; a renewal
 miss commits the batch and ends the pass as `claim_lost`. A killed consumer
@@ -527,7 +527,7 @@ Contract and state detail: [prompt lifecycle](execution-prompt-lifecycle.md).
 
 ## Batched ingest and a pausing subscriber
 
-**Status:** Designed — [ADR-167](../decisions/adr-167.md) amendment 2026-09-25.
+**Status:** Implemented — [ADR-167](../decisions/adr-167.md) amendment 2026-09-25.
 The ordering, ACK and replay semantics above are unchanged; this section fixes
 the granularity at which the manager commits and acknowledges, and how the host
 serves a subscriber that reads slower than the host writes.
@@ -537,7 +537,7 @@ host stream. Inside the pass a reader pulls frames continuously into a buffer
 bounded by `4 × N` rows and 16 MiB of payload; at either bound it stops pulling
 until the batcher drains, so the socket fills and the host pauses the
 subscriber. A batcher waits for the first buffered row and cuts a batch at the
-first of: `N` rows, 4 MiB of payload, 250 ms since the batch's first row was
+first of: `N` rows, 4 MiB of payload, 100 ms since the batch's first row was
 buffered, a `streamId` change (cut before the differing envelope), the pass's
 `maxEvents` remainder, the end of the stream, or abort. It then ingests the
 batch, acknowledges it and records progress. At stream end the batcher commits
@@ -549,9 +549,9 @@ releases a reader waiting for space, so the reader cannot outlive it.
 
 | Bound | Value | Where set |
 | --- | --- | --- |
-| `N` — rows per batch | 200 (provisional until R20 measures it) | `MAISTER_EVENT_INGEST_BATCH_ROWS`, 1–1000 ([configuration](../configuration.md)) |
+| `N` — rows per batch | 200, chosen by the R20 sweep | `MAISTER_EVENT_INGEST_BATCH_ROWS`, 1–1000 ([configuration](../configuration.md)) |
 | `B` — payload bytes per batch | 4 MiB | constant |
-| `T` — wait after a batch's first row | 250 ms (≤ half the 30 s claim lease) | constant |
+| `T` — wait after a batch's first row | 100 ms, chosen by the R20 sweep (≤ half the 30 s claim lease) | constant |
 | Reader buffer | `4 × N` rows, 16 MiB | constants |
 | Contiguity-walk window | 500 sequence positions (≤ 500 rows) | constant |
 
@@ -571,9 +571,14 @@ and the call fails `ACP_PROTOCOL`, as before. Inside one transaction, in order:
    of its first occurrence.
 4. Read the first pending page from the expected sequence, then lock every run
    of the batch's new envelopes and of that page in one
-   `SELECT … ORDER BY id FOR UPDATE`, before any insert. Runs not found are
-   unknown: their envelopes go to the skip ledger as `unknown_run` in one
-   insert.
+   `SELECT … ORDER BY id FOR NO KEY UPDATE`, before any insert. That is the
+   lock the allocator's `UPDATE runs` takes: it serializes against the owner
+   apply (`FOR UPDATE`) and the idle-resume CAS, but not against a projector's
+   foreign-key check (`KEY SHARE`), which under `FOR UPDATE` made every batch
+   wait for every projection transaction touching one of its runs (measured:
+   a 200 ms `KEY SHARE` holder turned 5–65 ms batches into 206–262 ms). Runs
+   not found are unknown: their envelopes go to the skip ledger as
+   `unknown_run` in one insert.
 5. Resolve assignments in one read; the historical-command check still runs
    per envelope for a non-active match.
 6. Insert every storable new envelope as `pending_gap` in one multi-row
@@ -603,7 +608,7 @@ per-event ingest is a batch of one — there is no second write path. After
 commit the manager wakes each promoted run once and the projection worker once
 per batch.
 
-Lock order: host row read → stream row → runs ascending → inserts → event
+Lock order: host row read → stream row → runs ascending (`NO KEY UPDATE`) → inserts → event
 updates → one stream-row and one host-row write. A batch is bounded by `N`, so
 the owner apply (run-first), the projection worker and the stall repair wait at
 most one batch.
@@ -687,6 +692,7 @@ token.
 | `runtime-event-consumer-claim-renew-missed` | WARN | manager |
 | `runtime-event-stream-opened` | INFO | host |
 | `runtime-event-stream-paused`, `runtime-event-stream-resumed` | DEBUG | host |
+| `runtime-event-stream-read-failed` — cursor, reason | WARN | host, before a `floor` or `protocol` close |
 | `runtime-event-stream-closed` — cursor, reason, pauses | INFO | host |
 | `runtime-event-acknowledged` | INFO, now per batch | host |
 
@@ -698,13 +704,30 @@ MAISTER_EVENT_PLANE_LOAD=1 pnpm --filter maister-web exec vitest run --project i
 ```
 
 Six flow runs and three agent runs — the concurrency caps — stream from a real
-supervisor with no fault proxy in the path, at 10 frames per second each (at
-least 360 rows per second at the host), for at least five minutes. Over the
-window after a 30 s warm-up the gate requires host-to-manager lag of at most
-`2 × N` that does not grow, no more ACKs than committed batches, no
-server-ended stream close, no host-span settlement, no `EXECUTOR_UNAVAILABLE`
-node error, the stream `active` with no error throughout, and bounded host
-backlog and manager memory.
+supervisor with no fault proxy in the path for at least five minutes. The
+profile is stated in host rows per second: one mock frame commits ~2 outbox
+rows, so the harness sends 22 frames/s per session (45 ms apart) for ~394
+rows/s, above both the 360 rows/s profile and the 10 frames/s floor, and fails
+the run as invalid below either. It raises the host's outbox row budget
+(soft 400 000, hard 500 000): the profile commits more than 108 000 rows and
+ACKed rows are retained for the 24 h grace, so the default budget would turn
+the run into an outbox-pressure test. Over the window after a 30 s warm-up
+the gate requires host-to-manager lag of at most `2 × N` whose last-minute p95
+stays within the first minute's maximum, no more ACKs than committed batches,
+no server-ended stream close, no host-span settlement, no
+`EXECUTOR_UNAVAILABLE` node error, the stream `active` with no error
+throughout, and bounded host backlog and manager memory (last minute within
+1.25× of the first).
+
+Measured 2026-09-26 on this project's development Mac (1-minute load 6–12,
+shared with other sessions): at `N = 200, T = 100 ms` the lag per minute peaked
+at 48/52/60/58/46 rows; 3 153 committed batches of ~41 rows (16.8 ms each)
+and 3 153 ACKs covered 129 943 events on one connection with no close and no
+pause; all nine prompts settled canonically. The same harness against
+`master`: lag 29 345 → 49 217 → 67 083 rows over three minutes, 203
+server-ended closes (all `slow_client`), 12 761 ACKs for 12 754 events, no
+prompt finished. The run-by-run results, including the N/T sweep, are in the
+implementation plan's results table.
 
 ## Expectations
 
@@ -713,8 +736,8 @@ backlog and manager memory.
 - **EVT-03:** At-least-once delivery creates one canonical event and conflicting ID or stream-position reuse is a typed protocol failure.
 - **EVT-04:** Host order is `(streamId, sequence)` and run order is manager-allocated `runSequence`, never occurrence timestamp.
 - **EVT-05:** A stale assignment epoch remains ACKable audit evidence but ordinarily has no current-run sequence or state mutation. Only an exact late terminal `session.command` match may receive ordering and settle its already-accepted historical command row; it cannot mutate current run/session, cost, artifact, HITL, or prompt-owner state.
-- **EVT-06:** A persisted gap blocks ACK/projection past the contiguous prefix and replays or fails explicitly at the replay floor; ingest commits one bounded batch per transaction and ACKs at most once per batch, and the contiguity walk reads pending rows in bounded pages (Designed — ADR-167 amendment 2026-09-25).
-- **EVT-07:** Host and manager restarts resume from durable outbox/watermark state, and lost ACKs cause harmless replay; a slow subscriber is paused and served from the durable outbox on the same connection, and the host never closes a stream on backpressure or at a page boundary (Designed — ADR-167 amendment 2026-09-25).
+- **EVT-06:** A persisted gap blocks ACK/projection past the contiguous prefix and replays or fails explicitly at the replay floor; ingest commits one bounded batch per transaction and ACKs at most once per batch, and the contiguity walk reads pending rows in bounded pages (Implemented — ADR-167 amendment 2026-09-25).
+- **EVT-07:** Host and manager restarts resume from durable outbox/watermark state, and lost ACKs cause harmless replay; a slow subscriber is paused and served from the durable outbox on the same connection, and the host never closes a stream on backpressure or at a page boundary (Implemented — ADR-167 amendment 2026-09-25).
 - **EVT-08:** Only negotiated type/schema pairs persist after deterministic redaction, and unsafe raw payloads are neither stored nor logged.
 - **EVT-09:** Bounded outbox pressure rejects new mutating admissions before existing session events are lost.
 - **EVT-10:** Each projector owns a durable per-run cursor and poison state independent of accepted ingest.
@@ -726,18 +749,18 @@ backlog and manager memory.
 - **EDGE-EVT-01:** An identical duplicate is a no-op insert and is covered by the pass's current contiguous ACK — the catch-up ACK at pass start, or the batch ACK when the watermark moved; a duplicate inside one batch is classified against its first occurrence (`IT-EVT-03`).
 - **EDGE-EVT-02:** A conflicting event ID or stream position degrades the stream without ACKing past it (`IT-EVT-03-CONFLICT`).
 - **EDGE-EVT-03:** A missing sequence below replay floor produces `event_gap_unrecoverable` and explicit recovery work (`IT-EVT-06-FLOOR`). An ABSENT cursor is not a lost cursor: omission starts at the retained floor, as the route contract states. Conflating the two refused every cursor-less consumer against any host that had ever pruned.
-- **EDGE-EVT-08:** A payload PostgreSQL cannot represent is escaped losslessly at ingest; one it still refuses is skipped as `payload_unstorable` and the walk advances. Inside a batch the poisoned event alone is quarantined: the batch is re-run as single-envelope batches and the others commit (Designed — ADR-167 amendment 2026-09-25).
+- **EDGE-EVT-08:** A payload PostgreSQL cannot represent is escaped losslessly at ingest; one it still refuses is skipped as `payload_unstorable` and the walk advances. Inside a batch the poisoned event alone is quarantined: the batch is re-run as single-envelope batches and the others commit (Implemented — ADR-167 amendment 2026-09-25).
 - **EDGE-EVT-04:** An ACK for a replaced stream fails with `event_stream_mismatch` (`IT-EVT-07-ACK-RACE`).
 - **EDGE-EVT-05:** Invalid decimal sequences fail with `invalid_event_sequence`; valid skew is metadata and increments a metric (`CT-EVT-05`).
 - **EDGE-EVT-06:** Unknown schema or redaction failure retains only bounded spine/error metadata (`CT-EVT-08`, `IT-EVT-08-QUARANTINE`).
 - **EDGE-EVT-07:** Release or checkpoint may race terminal publication; the manager accepts the late event only when all durable command and fence fields match, and continues to quarantine an unrelated stale event (`IT-EVT-05`).
-- **EDGE-EVT-09 (Designed — ADR-167 amendment 2026-09-25):** A subscriber whose socket stops draining is paused, not closed. The host stops paging for that connection until `drain`, resumes from the last sequence written to the socket (the frame whose `write()` returned `false` was buffered and counts as written), and goes live at an empty page. The manager's claim and pass are unaffected (`H1`, `H2`). No `MaisterError` is raised: nothing failed.
-- **EDGE-EVT-10 (Designed — ADR-167 amendment 2026-09-25):** A catch-up read that falls below the replay floor mid-stream closes the connection `floor`; a page read that finds the stream replaced or corrupt, or a live event naming another stream, closes it `protocol`. The manager reconnects from its durable cursor, and the next open answers the existing refusal: `PRECONDITION/replay_floor_lost` (EDGE-EVT-03) or `stream_identity_conflict`, which ingest degrades as `CONFLICT/event_stream_mismatch` (EDGE-EVT-04).
+- **EDGE-EVT-09 (Implemented — ADR-167 amendment 2026-09-25):** A subscriber whose socket stops draining is paused, not closed. The host stops paging for that connection until `drain`, resumes from the last sequence written to the socket (the frame whose `write()` returned `false` was buffered and counts as written), and goes live at an empty page. The manager's claim and pass are unaffected (`H1`, `H2`). No `MaisterError` is raised: nothing failed.
+- **EDGE-EVT-10 (Implemented — ADR-167 amendment 2026-09-25):** A catch-up read that falls below the replay floor mid-stream closes the connection `floor`; a page read that finds the stream replaced or corrupt, or a live event naming another stream, closes it `protocol`. The manager reconnects from its durable cursor: after a lost floor the next open answers `409 PRECONDITION/replay_floor_lost` (EDGE-EVT-03); after a replacement the open serves the new stream and its first envelope reaches ingest, which degrades the host as `CONFLICT/event_stream_mismatch` (EDGE-EVT-04).
 
 ## Linked artifacts
 
 - [ADR-167](../decisions/adr-167.md) records ownership, transport, and deferred trust boundaries.
-- [`web/lib/execution-host/__tests__/event-plane-load.integration.test.ts`](../../web/lib/execution-host/__tests__/event-plane-load.integration.test.ts) is the opt-in R20 load control for batched ingest and the pausing subscriber (Designed).
+- [`web/lib/execution-host/__tests__/event-plane-load.integration.test.ts`](../../web/lib/execution-host/__tests__/event-plane-load.integration.test.ts) is the opt-in R20 load control for batched ingest and the pausing subscriber (Implemented).
 - [Execution-host contract](execution-hosts.md) supplies host identity and assignment fencing.
 - [Host event AsyncAPI](../api/async/execution-host-events.asyncapi.yaml) and [web run AsyncAPI](../api/async/web-runs.asyncapi.yaml) define the wire and browser surfaces.
 - [Database schema](../database-schema.md) and [execution-host ERD domain](../db/execution-hosts-domain.md) define durable records.

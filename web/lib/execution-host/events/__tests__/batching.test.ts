@@ -68,7 +68,7 @@ describe("cutBatch", () => {
     expect(ingestBatchLimits(200)).toMatchObject({
       rows: 200,
       bufferRows: 800,
-      waitMs: 250,
+      waitMs: 100,
     });
   });
 });

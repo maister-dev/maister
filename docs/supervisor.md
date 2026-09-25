@@ -98,7 +98,7 @@ returns `503 EXECUTOR_UNAVAILABLE` and leaves the task in `Backlog`.
 
 `GET /health?includeStream=true` negotiates an additive `stream` block with
 `streamId`, `headSequence`, `unacknowledgedCount`, `retainedCount`, `pressured`,
-and `oldestUnacknowledgedAgeMs`, plus (Designed — ADR-167 amendment 2026-09-25)
+and `oldestUnacknowledgedAgeMs`, plus (Implemented — ADR-167 amendment 2026-09-25)
 `subscriberPauses` and `closes: {disconnect, protocol, floor, shutdown}`, the
 `/runtime-events` subscriber counters since boot. Omission or the literal `false` keeps the
 legacy response for rolling upgrades. Empty, repeated, and non-literal values
@@ -886,7 +886,7 @@ The supervisor writes externally observable events to its private SQLite
 outbox before live publication. `GET /runtime-events` replays host-global
 events after an exclusive decimal cursor and `POST /runtime-events/ack`
 advances a stream-bound contiguous watermark. Each replay page is at most 500
-events and 1 MiB. (Designed — ADR-167 amendment 2026-09-25.) One connection
+events and 1 MiB. (Implemented — ADR-167 amendment 2026-09-25.) One connection
 pages through the retained outbox until an empty page and then goes live; a
 socket whose `write()` returns `false` pauses the subscriber until `drain`,
 which resumes from the last sequence written. The route never closes a

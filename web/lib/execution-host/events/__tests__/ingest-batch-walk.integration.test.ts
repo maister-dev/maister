@@ -136,7 +136,10 @@ describe("bounded contiguity walk (ADR-167 amendment 2026-09-25)", () => {
       expect(held.contiguousThrough).toBeNull();
     }
     // The reads the gap filler is about to repeat, measured on the held state
-    // (before promotion rewrites every row).
+    // (before promotion rewrites every row). Supplementary: the plan PostgreSQL
+    // picks varies with statistics — a bare LIMIT was once planned as a
+    // bitmap scan of every held row — so the window assertion below is the
+    // guard and this only shows the index serves the read.
     const heldPage = pageReads().at(-1)!;
     const heldProbe = gapProbes().at(-1)!;
 
@@ -177,8 +180,14 @@ describe("bounded contiguity walk (ADR-167 amendment 2026-09-25)", () => {
     );
     expect(pageReads().length).toBeGreaterThanOrEqual(windows);
     expect(pageReads().length).toBeLessThanOrEqual(windows + 1);
-    for (const read of pageReads())
-      expect(read.params.at(-1)).toBe(PROMOTE_READ_ROWS);
+    for (const read of pageReads()) {
+      const [, from, to, limit] = read.params.map((value) => String(value));
+
+      // The bound is structural, whatever plan PostgreSQL picks: the read
+      // covers exactly one window of sequence positions.
+      expect(BigInt(to!) - BigInt(from!)).toBe(BigInt(PROMOTE_READ_ROWS));
+      expect(Number(limit)).toBe(PROMOTE_READ_ROWS);
+    }
     // The work is shaped by pages: a per-row statement anywhere would add
     // ~10 000 to this.
     expect(statements.length).toBeLessThanOrEqual(8 * windows + 40);
