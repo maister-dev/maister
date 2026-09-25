@@ -361,6 +361,10 @@ is `CONFLICT`, the rest `PRECONDITION`), and an unknown run is 404 with
   remote that moved past it is the same refusal naming the new head — the local
   branch is kept and nothing is recorded. `force` without `expectedHead` (or
   the reverse) is `MaisterError("CONFIG")` (400).
+- A request `branchName` git would refuse (a trailing `.`, `//`, a component
+  starting with `.` or ending in `.lock`) → `MaisterError("CONFIG")` (400) at the
+  route, before any claim: `branchNameSchema` refuses every name
+  `git check-ref-format --branch` refuses.
 - A request `branchName` that differs from the name an upstream already fixes →
   `MaisterError("PRECONDITION")` `public_name_fixed`; the dialog hides the field
   when an upstream exists.
