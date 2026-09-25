@@ -468,7 +468,7 @@ is `CONFLICT`, the rest `PRECONDITION`), and an unknown run is 404 with
   [`workspaces.md`](workspaces.md), [`scratch-runs.md`](scratch-runs.md),
   [`run-continuation.md`](run-continuation.md), [`attention.md`](attention.md).
 - Source: `web/lib/workbench-git/{policy,facts,read-model,service,publication,public-branch-name,presence,pull-request,panel-link}.ts`,
-  `web/components/workbench/git-panel.tsx`, the routes
+  `web/components/workbench/git-panel{,-kit,-tree,-publish,-update,-pr,-commands,-reattach}.tsx`, the routes
   `web/app/api/runs/[runId]/{git-state,discard-changes,pr,pr/finalize,reattach}/route.ts`,
   and extensions in `web/lib/workbench-lifecycle/service.ts`,
   `web/lib/runs/{sync-target,sync-ref,sync-recovery,promote,pr-adapter,branch-published,rework-claim-ingest,revive-worktree,reopen}.ts`,

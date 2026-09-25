@@ -4,7 +4,10 @@
 - **Routes:** shared by `/runs/{runId}` (flow and agent runs) and
   `/scratch-runs/{runId}`; deep-linked with `?git=<section>`.
 - **Status:** Implemented (ADR-181).
-- **Source:** `web/components/workbench/git-panel.tsx`, hosted by
+- **Source:** `web/components/workbench/git-panel.tsx` (the read, the one
+  mutation shape, the header) composing one component per section —
+  `git-panel-{tree,publish,update,pr,commands,reattach}.tsx` over
+  `git-panel-kit.tsx` — hosted by
   `web/components/workbench/lifecycle-actions.tsx` (`variant="detail"`).
 
 ## JTBD
@@ -174,5 +177,5 @@ states — lives under `workbenchGit`. EN + RU parity required.
 - Screens: [`flow-run.md`](flow-run.md), [`scratch-run.md`](scratch-run.md),
   [`run-inspector.md`](run-inspector.md), [`workbench.md`](workbench.md),
   [`../projects/project-board.md`](../projects/project-board.md).
-- Source: `web/components/workbench/git-panel.tsx`,
+- Source: `web/components/workbench/git-panel{,-kit,-tree,-publish,-update,-pr,-commands,-reattach}.tsx`,
   `web/lib/workbench-git/{policy,facts,read-model,service,public-branch-name}.ts`.
