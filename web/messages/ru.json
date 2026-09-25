@@ -3907,6 +3907,26 @@
     "loading": "Читаю состояние git…",
     "loadFailed": "Не удалось прочитать состояние git.",
     "membersOnly": "Git-состояние видно только участникам проекта.",
+    "warnings": {
+      "note": "Не удалось прочитать: {facts}. Действия доступны, сервер перепроверит каждое.",
+      "fact": {
+        "head": "HEAD",
+        "targetHead": "коммит целевой ветки",
+        "dirty": "изменения рабочего дерева",
+        "upstream": "upstream",
+        "remotes": "список remote",
+        "aheadBehind": {
+          "base": "расхождение с базовой веткой",
+          "target": "расхождение с целевой веткой",
+          "published": "расхождение с публикацией"
+        },
+        "unpushedCommits": "неотправленные коммиты",
+        "publishedRemoteHead": "коммит публикации на remote",
+        "reattachSources": "источники для восстановления",
+        "rescueRefs": "rescue-ссылки",
+        "other": "прочие сведения git"
+      }
+    },
     "cancel": "Отмена",
     "publicChip": "Опубликовано как {remote}/{branch}",
     "prChip": "PR #{number} · {state}",

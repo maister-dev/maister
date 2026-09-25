@@ -156,6 +156,23 @@ const KNOWN_REASONS = new Set([
   "workspace_preservation_failed",
 ]);
 
+// D3: the sub-reads `git-state` names when they degraded; a token without copy
+// reads as "other git facts".
+const KNOWN_WARNINGS = new Set([
+  "head",
+  "targetHead",
+  "dirty",
+  "upstream",
+  "remotes",
+  "aheadBehind.base",
+  "aheadBehind.target",
+  "aheadBehind.published",
+  "unpushedCommits",
+  "publishedRemoteHead",
+  "reattachSources",
+  "rescueRefs",
+]);
+
 // The error codes with panel copy; any other code reads as the generic error.
 const KNOWN_CODES = new Set([
   "PRECONDITION",
@@ -660,6 +677,25 @@ export function WorkbenchGitPanel({
         ) : null}
       </header>
 
+      {state && state.warnings.length > 0 ? (
+        <p
+          className="m-0 font-mono text-[10px] text-amber"
+          data-testid="git-panel-warnings"
+          role="status"
+        >
+          {t("warnings.note", {
+            facts: [
+              ...new Set(
+                state.warnings.map((warning) =>
+                  KNOWN_WARNINGS.has(warning)
+                    ? t(`warnings.fact.${warning}`)
+                    : t("warnings.fact.other"),
+                ),
+              ),
+            ].join(", "),
+          })}
+        </p>
+      ) : null}
       {!state && !loadFailed && !membersOnly ? (
         <p aria-busy="true" className="font-mono text-[10px] text-mute">
           {t("loading")}

@@ -70,7 +70,10 @@ An unknown value opens the default section.
    `template` — is the publish response's `nameSource`), the PR chip
    (`open` / `merged` / `closed`, or "open (not tracked)" for a scratch run,
    whose PRs `pr_state_scan` does not track), and a busy chip naming the
-   operation that owns the worktree.
+   operation that owns the worktree. Below it, a status note names the git
+   facts `git-state` could not read (its `warnings`), so a blank count reads as
+   "could not read", not "nothing there"; the actions stay enabled and each
+   re-checks on the server.
 2. **Tree** — dirty counts (tracked / untracked). **Commit** opens the existing
    snapshot-commit form. **Discard** opens the shared destructive confirmation,
    which says every change is saved to a rescue ref first; after success the

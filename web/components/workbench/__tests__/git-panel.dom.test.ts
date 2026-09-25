@@ -294,6 +294,28 @@ describe("WorkbenchGitPanel", () => {
     expect(byTestId("git-panel-section-tree")).toBeNull();
   });
 
+  // D3: a sub-read that degraded is named, so a blank count reads as "could
+  // not read", never as "nothing there".
+  it("names the git facts the server could not read", async () => {
+    states = [gitState({ warnings: ["remotes", "aheadBehind.target"] })];
+    render();
+    await settle();
+
+    expect(must("git-panel-warnings").textContent).toBe(
+      `workbenchGit.warnings.note ${JSON.stringify({
+        facts:
+          "workbenchGit.warnings.fact.remotes, workbenchGit.warnings.fact.aheadBehind.target",
+      })}`,
+    );
+  });
+
+  it("shows no warning when every git fact was read", async () => {
+    render();
+    await settle();
+
+    expect(byTestId("git-panel-warnings")).toBeNull();
+  });
+
   it("still reads any other failed read as a load failure", async () => {
     gitStateStatus = 500;
     render();

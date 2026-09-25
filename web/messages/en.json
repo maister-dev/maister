@@ -3907,6 +3907,26 @@
     "loading": "Reading the git state…",
     "loadFailed": "Could not read the git state.",
     "membersOnly": "The git state is shown to project members only.",
+    "warnings": {
+      "note": "Could not read: {facts}. The actions stay available, and each re-checks on the server.",
+      "fact": {
+        "head": "HEAD",
+        "targetHead": "the target head",
+        "dirty": "the worktree changes",
+        "upstream": "the upstream",
+        "remotes": "the remotes",
+        "aheadBehind": {
+          "base": "ahead/behind the base",
+          "target": "ahead/behind the target",
+          "published": "ahead/behind the publication"
+        },
+        "unpushedCommits": "the unpushed commits",
+        "publishedRemoteHead": "the publication's remote head",
+        "reattachSources": "the re-attach sources",
+        "rescueRefs": "the rescue refs",
+        "other": "other git facts"
+      }
+    },
     "cancel": "Cancel",
     "publicChip": "Published as {remote}/{branch}",
     "prChip": "PR #{number} · {state}",
