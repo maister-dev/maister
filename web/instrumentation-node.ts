@@ -20,7 +20,7 @@ export async function registerNodeRuntime(): Promise<void> {
   const { assertSupportedNode } = await import("../runtime/node-version");
 
   assertSupportedNode(process.versions.node);
-  const { initializeEventStreamLagConfig } = await import(
+  const { eventIngestBatchRows, initializeEventStreamLagConfig } = await import(
     "@/lib/instance-config"
   );
 
@@ -34,6 +34,7 @@ export async function registerNodeRuntime(): Promise<void> {
   // would throw from `startSchedulerTimer()` far below — after the durable
   // workers are already running.
   initializeEventStreamLagConfig();
+  eventIngestBatchRows();
   readSchedulerClockStatus();
   const { projectionLimitsFromEnv } = await import(
     "@/lib/execution-host/events/projection-limits"

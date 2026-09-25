@@ -150,7 +150,14 @@ EXECUTOR_UNAVAILABLE`; the host must not omit the block and impersonate an old
 binary.
 
 The additive block is
-`{streamId,headSequence,unacknowledgedCount,retainedCount,pressured,oldestUnacknowledgedAgeMs}`.
+`{streamId,headSequence,unacknowledgedCount,retainedCount,pressured,oldestUnacknowledgedAgeMs}`,
+plus (Designed — ADR-167 amendment 2026-09-25) `subscriberPauses` and
+`closes: {disconnect, protocol, floor, shutdown}`: how often a
+`GET /runtime-events` subscriber was paused because its socket stopped
+draining, and why its connections closed, counted since boot. The host always
+emits both inside the block; the web parser treats them as optional so an older
+host still parses, and reads their absence as unknown. They are transport
+telemetry — no lag verdict or lifecycle decision reads them.
 `headSequence` is the last committed sequence (`next_sequence - 1`), encoded as
 a canonical nonnegative decimal string bounded by signed BIGINT, and is `null`
 only for a never-written stream. Purging ACKed rows cannot reduce it. Counts and
@@ -738,7 +745,7 @@ Classification vocabulary: **URL-selected** = `url-param`; **principal-derived**
 | `POST /sessions/{id}/prompts` | URL session ID; body command/fence/content object IDs; derive run/step/project and incarnation from session registry, compare fence/objects; owner remains manager-derived | Wrong run/session/object generation → 409 typed mismatch, no ACP call; wrong host/fence → existing fenced refusal. |
 | `POST /sessions/{id}/input`, `/cancel`, `/checkpoint`; `DELETE /sessions/{id}` | URL session; body command/fence/request ID or cancel target; derive run/step/project from registry and validate pending deferred ownership | Repeated identical decision replays; different decision/key conflicts; explicit missing deferred proven by authoritative receipt/session state uses the domain's existing gone disposition. Failed reads are retryable. |
 | `GET /commands/{commandId}` and proposed `POST /commands/{commandId}/retirement` | URL command; receipt binding server-derived; retirement body contains expected digest/evidence generation, compared to host receipt/ACK | Existing loopback trusted-admin transport only; this is not remote enrollment/auth. Wrong identity →409; not eligible →409; absent retained evidence → typed reconciliation condition. |
-| `GET /runtime-events` and `POST /runtime-events/ack` | Cursor/stream supplied by request; selected transport and health derive host; stream identity/private high-water server-derived | Stream mismatch or ACK beyond proven frontier refused. ACK never depends on projection success. |
+| `GET /runtime-events` and `POST /runtime-events/ack` | Cursor/stream supplied by request; selected transport and health derive host; stream identity/private high-water server-derived | Stream mismatch or ACK beyond proven frontier refused. ACK never depends on projection success. (Designed — ADR-167 amendment 2026-09-25) `Last-Event-ID` is validated by grammar and floor-checked before headers; a slow subscriber is paused on the same connection, never closed; a mid-stream floor loss or stream replacement closes it (`floor`/`protocol`). |
 | `GET /runtime-events/span?streamId&after&through` (Implemented — ADR-167 D5 amendment 2026-09-23) | `streamId`, `after`, `through` are query parameters (untrusted); the current stream identity and replay floor are server-derived; no command id is accepted, so every retained envelope of the range is returned | Read-only: never ACKs, prunes or opens SSE. Pages are bounded like the SSE replay (≤ 500 rows, ≤ 1 MiB). A foreign `streamId` answers `unavailable/stream_identity_changed` and `after` below the replay floor answers `unavailable/replay_floor_lost` (200); `through` past the highest emitted sequence answers `unavailable/beyond_emitted`; `after >= through` or a malformed sequence (`-1`, `01`, `abc`, `1.5`, `1e3`) → 409 `PRECONDITION`/`invalid_event_span`; a range the host still promises to retain but cannot read (rows missing between the floor and the head, or a failed SQLite store) → 503 `EXECUTOR_UNAVAILABLE`/`runtime_storage_unavailable`. The manager treats any non-200, and any page whose `nextAfter` is not its last row strictly inside the range, as "feed unavailable" (`request_failed`, logged with its cause as `runtime-event-span-read-failed`) and falls back to canonical ingest. |
 | Host canonical event | Body envelope IDs are untrusted peer input; selected transport derives host, Postgres joins derive run/project/assignment/session/command/object ownership | Exact dedup/content checks; stale audit retention; only documented historical exceptions can settle old records. Unknown type/schema/identity quarantined. |
 | `POST /runtime-objects` | Body object/command/fence and owner declarations; host derives run/assignment and validates immutable object scope | Reservation conflict/foreign reference →409; pressure →503 before effect. |

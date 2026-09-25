@@ -264,6 +264,33 @@ export function eventStreamLagSeconds(): number {
   return parsed;
 }
 
+const DEFAULT_EVENT_INGEST_BATCH_ROWS = 200;
+const MAX_EVENT_INGEST_BATCH_ROWS = 1_000;
+
+// ADR-167 amendment 2026-09-25: runtime events committed per ingest
+// transaction and acknowledged per ACK. The reader buffer (4x) and the ACK
+// cadence both scale with it, so an out-of-range value refuses boot rather
+// than being clamped.
+export function eventIngestBatchRows(): number {
+  const raw = process.env.MAISTER_EVENT_INGEST_BATCH_ROWS;
+
+  if (raw === undefined) return DEFAULT_EVENT_INGEST_BATCH_ROWS;
+  const parsed = Number(raw);
+
+  if (
+    !/^[1-9][0-9]*$/.test(raw) ||
+    !Number.isSafeInteger(parsed) ||
+    parsed > MAX_EVENT_INGEST_BATCH_ROWS
+  ) {
+    throw new MaisterError(
+      "CONFIG",
+      `MAISTER_EVENT_INGEST_BATCH_ROWS must be an integer from 1 through ${MAX_EVENT_INGEST_BATCH_ROWS}`,
+    );
+  }
+
+  return parsed;
+}
+
 export function initializeEventStreamLagConfig(): number {
   initializedEventStreamLagAgeMs = eventStreamLagSeconds() * 1_000;
 

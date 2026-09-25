@@ -98,7 +98,9 @@ returns `503 EXECUTOR_UNAVAILABLE` and leaves the task in `Backlog`.
 
 `GET /health?includeStream=true` negotiates an additive `stream` block with
 `streamId`, `headSequence`, `unacknowledgedCount`, `retainedCount`, `pressured`,
-and `oldestUnacknowledgedAgeMs`. Omission or the literal `false` keeps the
+and `oldestUnacknowledgedAgeMs`, plus (Designed — ADR-167 amendment 2026-09-25)
+`subscriberPauses` and `closes: {disconnect, protocol, floor, shutdown}`, the
+`/runtime-events` subscriber counters since boot. Omission or the literal `false` keeps the
 legacy response for rolling upgrades. Empty, repeated, and non-literal values
 return `409 PRECONDITION {reason: health_query_invalid}`. A negotiated snapshot
 read failure returns `503`; it is never disguised as an older host.
@@ -883,10 +885,18 @@ domain: [`system-analytics/model-catalog.md`](system-analytics/model-catalog.md)
 The supervisor writes externally observable events to its private SQLite
 outbox before live publication. `GET /runtime-events` replays host-global
 events after an exclusive decimal cursor and `POST /runtime-events/ack`
-advances a stream-bound contiguous watermark. The in-memory per-session SSE
-Each replay page is at most 500 events and 1 MiB; a response closes at a page
-boundary while backlog remains, so reconnect continues from its last delivered
-cursor. Startup audits iterate individual envelopes and verify persisted quota
+advances a stream-bound contiguous watermark. Each replay page is at most 500
+events and 1 MiB. (Designed — ADR-167 amendment 2026-09-25.) One connection
+pages through the retained outbox until an empty page and then goes live; a
+socket whose `write()` returns `false` pauses the subscriber until `drain`,
+which resumes from the last sequence written. The route never closes a
+connection on backpressure or at a page boundary; it closes only for
+`disconnect`, `floor` (a catch-up read fell below the replay floor), `protocol`
+(the stream was replaced or is corrupt, or a live event names another stream)
+and `shutdown`, logging `runtime-event-stream-closed` with the cursor and reason
+(`runtime-event-stream-paused` / `-resumed` at DEBUG). The manager acknowledges
+once per committed batch, so `runtime-event-acknowledged` is logged per batch.
+Startup audits iterate individual envelopes and verify persisted quota
 counters against retained rows.
 `GET /runtime-events/span?streamId&after&through` (Implemented — ADR-167 D5
 amendment 2026-09-23) returns the same retained envelopes for the range
@@ -906,7 +916,7 @@ row strictly inside the range, as `request_failed`, logs the cause as
 `runtime-event-span-read-failed` (`failure: health | schema | identity | wire |
 unexpected`, with the HTTP status, error code and reason or the first schema
 issue path), and never throws.
-The ring remains a local diagnostic surface only; it is neither browser replay nor
+The in-memory per-session SSE ring remains a local diagnostic surface only; it is neither browser replay nor
 run-state authority. The supervisor no longer writes `run.events.jsonl`.
 
 ### Execution-host state store _(Implemented — ADR-166)_
