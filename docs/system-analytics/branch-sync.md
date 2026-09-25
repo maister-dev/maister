@@ -82,6 +82,10 @@ sequenceDiagram
     Op->>Route: sync {strategy, agent, push}
     Route->>Svc: eligibility + double fence
     Svc->>Git: ls-remote origin refs/heads/<branch> (capture remote_sha_before, published branch only)
+    Svc->>Git: fetch + count commits only the publication has (push onto target/base only)
+    alt some would be dropped and no human confirmed exactly remote_sha_before
+        Svc-->>Op: 409 CONFLICT publication_diverged {remoteHead, remoteRef, remoteOnlyCommits}
+    end
     Svc->>Svc: one tx {attempt#, starting row, "sync" claim}
     Svc->>Git: fetch origin (all refs — refreshes origin/<branch> too)
     Svc->>Git: ff local target from origin/<target>
@@ -187,7 +191,15 @@ sequenceDiagram
   tracking ref), and push the internal branch under that public name; an
   indeterminate SHA with `pr_url` set MUST refuse the push, and a lease rejection
   MUST fail the attempt (`CONFLICT`) while keeping the local rebase result (see
-  ADR-141, ADR-181).
+  ADR-141, ADR-181). Before the claim, a push onto the target or base MUST NOT
+  drop commits only the publication has — commits the run branch never had
+  (its reflog keeps the heads a rebase or a squash replaced), counted by patch,
+  excluding the update's ref and merges — unless a human confirmed exactly
+  `remote_sha_before`
+  through the web route's `expectedRemoteHead`; otherwise it is `CONFLICT`
+  `publication_diverged` with nothing moved, for every caller (the ext API, the
+  resolver-backed `ai_rebase_merge` and the panel alike; enforced by
+  `assertPushKeepsPublication`).
 - The agent path MUST hold its run-kind slot while `Running` or `NeedsInput`, MUST be
   cap-gated on `Review→Running` (refuse `CONFLICT` at cap, no queue), and MUST call
   `promoteNextPending` on finalize.
@@ -214,6 +226,15 @@ sequenceDiagram
 - **Verification failure** (markers, incomplete rebase, non-ancestor) → attempt
   `failed`; deterministic abort.
 - **Push lease rejected** (branch moved remotely) → `CONFLICT`; local result kept.
+- **Publication has commits the push would drop** (a reviewer's fixup, a
+  suggestion committed on the PR) → `CONFLICT` `publication_diverged` before the
+  claim, nothing moved; the operator updates onto the publication or confirms
+  that head in the git panel. The resolver's finalize and the recovery sweep
+  push on the lease the admission checked. A retry after a lease rejection
+  keeps the run's own commits its kept rebase replaced — the run branch's
+  reflog records them; once it no longer does (expired, or
+  `core.logAllRefUpdates` off), a clean rebase's copies still match by patch
+  and anything else is refused, never guessed.
 - **W1–W7 crash windows** → recovered by reconcile/sweep per the predicate table in
   ADR-141; a sync row never enters the flow reattach/redispatch arms, and is
   classified before the `worktree-gone → Crashed` arm.

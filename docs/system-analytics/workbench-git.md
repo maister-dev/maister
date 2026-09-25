@@ -178,6 +178,9 @@ sequenceDiagram
     Op->>Route: update {onto, strategy, agent?, push?}
     Route->>Svc: admission workbench — policy(update), agent allowed only in Review
     Svc->>Git: dirty? refuse PRECONDITION (commit or discard first)
+    opt push onto target or base, and the publication has commits the push would drop
+        Svc-->>Op: 409 CONFLICT publication_diverged {remoteHead, remoteRef, remoteOnlyCommits} unless expectedRemoteHead = remoteHead
+    end
     Svc->>Svc: one tx: attempt row (target_ref = chosen ref) + sync claim
     Svc->>Git: fetch remote (origin for base/target, published_remote for published)
     Svc->>Git: rebase or merge internal branch onto ref
@@ -362,6 +365,15 @@ is `CONFLICT`, the rest `PRECONDITION`), and an unknown run is 404 with
   remote that moved past it is the same refusal naming the new head — the local
   branch is kept and nothing is recorded. `force` without `expectedHead` (or
   the reverse) is `MaisterError("CONFIG")` (400).
+- The publication carries commits the update's push would drop (a reviewer's
+  fixup, a suggestion committed on the PR) → `MaisterError("CONFLICT")`
+  `publication_diverged` naming the head, the ref and the count, before
+  anything moves; the panel offers updating onto the publication first, or
+  confirming exactly that head (`expectedRemoteHead`). Commits the update's ref
+  brings anyway (a provider's "Update branch" merge) and the run's own
+  commits — any head the run branch's reflog records, a rebased copy by its
+  patch — do not count. A squashing PR promotion refuses the same way, before
+  the squash, and releases its claim.
 - A request `branchName` git would refuse (a trailing `.`, `//`, a component
   starting with `.` or ending in `.lock`) → `MaisterError("CONFIG")` (400) at the
   route, before any claim: `branchNameSchema` refuses every name

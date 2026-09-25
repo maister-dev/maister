@@ -1052,6 +1052,99 @@ export async function pushBranch(args: PushBranchArgs): Promise<void> {
   }
 }
 
+export type RemoteOnlyCommitsArgs = {
+  projectRepoPath: string;
+  // The run branch a force-push would put on the remote, as it stands now.
+  localBranch: string;
+  // The remote head that push would replace (its objects fetched first).
+  remoteSha: string;
+  // Refs the pushed result will contain (an update's base or target).
+  keptRefs?: readonly string[];
+};
+
+// ADR-181 (C): the commits a force-push of `localBranch` would drop — reachable
+// from `remoteSha`, from none of `keptRefs`, from no head the branch's reflog
+// records, and not the same patch as one of the branch's own. A rebase or a
+// squash that never reached the remote replaced the run's own commits, not the
+// publication's, and the reflog is what still knows them; once it no longer
+// records a head (expired, or reflogs off), only the patch match is left and
+// the push is refused rather than guessed. Merges author no change of their
+// own and are not counted. A `remoteSha` missing from the object store (the
+// remote moved after the fetch) is a CONFLICT, never a silent zero.
+export async function remoteOnlyCommitCount(
+  args: RemoteOnlyCommitsArgs,
+): Promise<number> {
+  const repo = validate(
+    absolutePathSchema,
+    args.projectRepoPath,
+    "projectRepoPath",
+  );
+  const local = `refs/heads/${validate(branchNameSchema, args.localBranch, "localBranch")}`;
+  const remoteSha = validate(gitCommitSchema, args.remoteSha, "remoteSha");
+
+  try {
+    await runGit(repo, ["cat-file", "-e", `${remoteSha}^{commit}`]);
+  } catch (err) {
+    throw new MaisterError(
+      "CONFLICT",
+      `commit ${remoteSha} is not in ${repo} — the remote moved after the fetch`,
+      { cause: asError(err) },
+    );
+  }
+
+  const kept: string[] = [];
+
+  for (const ref of args.keptRefs ?? []) {
+    const name = validate(gitRefSchema, ref, "keptRef");
+    const sha = await runGit(repo, [
+      "rev-parse",
+      "--verify",
+      "--quiet",
+      "--end-of-options",
+      `${name}^{commit}`,
+    ]).then(
+      (out) => out.stdout.trim(),
+      () => null,
+    );
+
+    if (sha) kept.push(sha);
+  }
+
+  const reflog = await runGit(repo, [
+    "log",
+    "--walk-reflogs",
+    "--format=%H",
+    "--end-of-options",
+    local,
+  ]);
+  const formerHeads = new Set(reflog.stdout.split("\n").filter(Boolean));
+
+  const { stdout } = await runGit(repo, [
+    "rev-list",
+    "--count",
+    "--no-merges",
+    "--cherry-pick",
+    "--right-only",
+    `${local}...${remoteSha}`,
+    ...[...kept, ...formerHeads].map((sha) => `^${sha}`),
+  ]);
+  const count = Number.parseInt(stdout.trim(), 10);
+
+  log.debug(
+    {
+      projectRepoPath: repo,
+      localBranch: local,
+      remoteSha,
+      kept,
+      formerHeads: formerHeads.size,
+      count,
+    },
+    "remoteOnlyCommitCount",
+  );
+
+  return count;
+}
+
 export type ListRemotesArgs = {
   projectRepoPath: string;
 };

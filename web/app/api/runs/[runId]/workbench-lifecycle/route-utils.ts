@@ -58,14 +58,40 @@ export function maisterErrorBody(err: MaisterError): {
   };
 }
 
-function errorPayload(err: MaisterError): Record<string, unknown> {
-  const details = err as MaisterError & {
+// ADR-181 D4 / C: what a refused push names — the rejection, whether a force
+// is on offer, and what a force would replace (the remote head, its ref, the
+// commits only it has). The panel confirms exactly that head and sends it back.
+export function pushConflictFields(err: MaisterError): Record<string, unknown> {
+  const fields = err as MaisterError & {
     pushRejected?: unknown;
     canForce?: unknown;
-    retryHint?: unknown;
     remoteHead?: unknown;
     remoteRef?: unknown;
+    remoteOnlyCommits?: unknown;
   };
+
+  return {
+    ...(typeof fields.pushRejected === "string"
+      ? { pushRejected: fields.pushRejected }
+      : {}),
+    ...(typeof fields.canForce === "boolean"
+      ? { canForce: fields.canForce }
+      : {}),
+    ...(typeof fields.remoteHead === "string" || fields.remoteHead === null
+      ? { remoteHead: fields.remoteHead }
+      : {}),
+    ...(typeof fields.remoteRef === "string"
+      ? { remoteRef: fields.remoteRef }
+      : {}),
+    ...(typeof fields.remoteOnlyCommits === "number" ||
+    fields.remoteOnlyCommits === null
+      ? { remoteOnlyCommits: fields.remoteOnlyCommits }
+      : {}),
+  };
+}
+
+function errorPayload(err: MaisterError): Record<string, unknown> {
+  const details = err as MaisterError & { retryHint?: unknown };
   const retryHint =
     typeof details.retryHint === "string"
       ? details.retryHint
@@ -82,20 +108,7 @@ function errorPayload(err: MaisterError): Record<string, unknown> {
     err.details?.reason === "workspace_git_identity_invalid"
       ? { reason: err.details.reason }
       : {}),
-    ...(typeof details.pushRejected === "string"
-      ? { pushRejected: details.pushRejected }
-      : {}),
-    ...(typeof details.canForce === "boolean"
-      ? { canForce: details.canForce }
-      : {}),
-    // ADR-181 D4: what a force would replace — the forced retry sends the
-    // head back as `expectedHead`.
-    ...(typeof details.remoteHead === "string" || details.remoteHead === null
-      ? { remoteHead: details.remoteHead }
-      : {}),
-    ...(typeof details.remoteRef === "string"
-      ? { remoteRef: details.remoteRef }
-      : {}),
+    ...pushConflictFields(err),
     ...(retryHint ? { retryHint } : {}),
     // The top-level `reason` enum above is untouched.
     ...(body.details ? { details: body.details } : {}),

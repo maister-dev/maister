@@ -6553,6 +6553,11 @@ paths:
             `target_locked` (a scratch run promoted onto a branch other than its
             locked target), `provider_unsupported` (PR mode with no usable
             provider) — the only `details` field forwarded.
+            (ADR-181 — Implemented) Also `CONFLICT` `details.reason:
+            publication_diverged` when a squashing `pull_request` promotion's
+            forced PR-branch update would drop commits only that branch has:
+            refused before the squash, the claim released, nothing rewritten —
+            update onto the publication first. No override on this route.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -6608,6 +6613,23 @@ paths:
         and re-records the publication. The ext twin
         (`POST /api/v1/ext/runs/sync`) keeps `status='Review'` eligibility and
         has no `onto`.
+
+        **(ADR-181 — Implemented) A push never drops the publication's own
+        commits silently.** Before any claim, when the update would push onto
+        `target` or `base`, the server counts the commits only the publication
+        has — reachable from the lease head, from neither the update's ref nor
+        `origin/<ref>` nor any head the run branch's reflog records (a rebase
+        or squash that never reached the remote replaced the run's own
+        commits), and not the same patch as one of the run's own; merges do not
+        count. A non-zero count refuses `409 CONFLICT`
+        `details.reason: publication_diverged` with `remoteHead`, `remoteRef`
+        and `remoteOnlyCommits`, and nothing moves. `onto: published` brings
+        those commits in and `push: false` pushes nothing, so neither is
+        checked. A human confirms dropping them by retrying with
+        `expectedRemoteHead` equal to the refused `remoteHead`; the push then
+        leases exactly it, and a remote that moved on is refused again with
+        its new head. The ext twin has no `expectedRemoteHead`: automation's
+        drop is always refused.
       operationId: syncRun
       parameters:
         - name: runId
@@ -6642,6 +6664,14 @@ paths:
                 push:
                   type: boolean
                   description: Overrides the auto push-iff-published policy.
+                expectedRemoteHead:
+                  type: string
+                  pattern: "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+                  description: |
+                    (ADR-181 — Implemented) The publication head the operator
+                    confirmed replacing — the `remoteHead` of a
+                    `publication_diverged` refusal. Only this route takes it;
+                    a malformed value is 422.
                 runnerId:
                   type: string
                   description: Overrides the resolver runner; validated against the platform runner catalog (unknown → 422).
@@ -6678,7 +6708,11 @@ paths:
             (snapshot-commit first). Or `CONFLICT` — a competing sync/promotion
             claim is active, the run-kind concurrency cap is reached, or the
             force-with-lease push was rejected (branch moved remotely; the local
-            rebase result is kept). Both map to HTTP 409 via `httpStatusForCode`.
+            rebase result is kept). (ADR-181 — Implemented) Also `CONFLICT`
+            `details.reason: publication_diverged` when the push would drop
+            commits only the publication has, refused before anything moved,
+            with top-level `remoteHead`, `remoteRef` and `remoteOnlyCommits`
+            (`remoteHead: null` when the head vanished after the fetch — retry). Both map to HTTP 409 via `httpStatusForCode`.
             (ADR-181 — Implemented) The error body now carries `details`;
             `details.reason` on `PRECONDITION`: `agent_requires_review`,
             `base_branch_unknown` (`onto:"base"` with no recorded base branch),
@@ -21698,8 +21732,16 @@ components:
         remoteRef:
           type: string
           description: |
-            (ADR-181 — Implemented) With `pushRejected` on a publish:
+            (ADR-181 — Implemented) With `pushRejected` on a publish, or with
+            `details.reason: publication_diverged` on an update:
             `<remote>/<public branch>`, the ref a force would rewrite.
+        remoteOnlyCommits:
+          type: integer
+          nullable: true
+          description: |
+            (ADR-181 — Implemented) With `details.reason: publication_diverged`:
+            how many commits only the publication has, which a force would
+            drop; null when the head vanished after the fetch.
         details:
           type: object
           additionalProperties: true

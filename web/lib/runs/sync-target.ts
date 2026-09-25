@@ -25,6 +25,7 @@ import {
 } from "@/lib/runs/sync-ref";
 import { promotionClaimTimeoutSeconds } from "@/lib/instance-config";
 import { isBranchPublished } from "@/lib/runs/branch-published";
+import { assertPushKeepsPublication } from "@/lib/runs/publication-guard";
 import { requireReworkClaimOwner } from "@/lib/runs/rework-claim";
 import { loadWorkbenchGitFacts } from "@/lib/workbench-git/facts";
 import {
@@ -149,6 +150,10 @@ export type SyncRunInput = {
   // (`agent_requires_review`).
   agent?: boolean;
   push?: boolean;
+  // ADR-181 (C): the publication head the operator confirmed replacing, when
+  // the push would drop commits only the publication has. Honoured for the
+  // `workbench` admission alone — automation has no human to confirm with.
+  expectedRemoteHead?: string;
   runnerId?: string;
   // ADR-141: set by the resolver-backed `ai_rebase_merge` promotion.
   // Persisted on the attempt; on a verified agent resolution the resolver
@@ -884,6 +889,25 @@ export async function syncRunTarget(
       // Could not read the remote head — record it; the eventual push refuses.
       remoteShaIndeterminate = true;
     }
+  }
+
+  // ADR-181 (C): the push is a force-with-lease, so commits only the
+  // publication has would leave the branch. Refused BEFORE anything moves,
+  // unless a human confirmed exactly that head. Onto the publication the update
+  // brings them in, and without a push nothing leaves.
+  if ((input.push ?? published) && published && syncRef.kind === "branch") {
+    await assertPushKeepsPublication({
+      runId,
+      repo,
+      localBranch: branch,
+      remote: pushTarget.remote,
+      remoteBranch: pushTarget.remoteBranch,
+      remoteHead: remoteShaBefore,
+      keptRefs: [syncRef.ref, `refs/remotes/origin/${syncRef.branch}`],
+      fetchRemotes: [pushTarget.remote, "origin"],
+      confirmedHead:
+        admission === "workbench" ? (input.expectedRemoteHead ?? null) : null,
+    });
   }
 
   // 3. THE CLAIM (one FOR UPDATE tx): double fence + attempt allocation + slot.

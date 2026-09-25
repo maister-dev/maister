@@ -5,7 +5,10 @@ import { eq } from "drizzle-orm";
 import pino from "pino";
 import { z } from "zod";
 
-import { maisterErrorBody } from "../workbench-lifecycle/route-utils";
+import {
+  maisterErrorBody,
+  pushConflictFields,
+} from "../workbench-lifecycle/route-utils";
 
 import { loadRunnerCatalog } from "@/lib/acp-runners/catalog";
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
@@ -28,6 +31,15 @@ const syncBodySchema = z
     strategy: z.enum(["rebase", "merge"]).optional(),
     agent: z.boolean().optional(),
     push: z.boolean().optional(),
+    // ADR-181 (C): the publication head the operator confirmed replacing — the
+    // `remoteHead` of a `publication_diverged` refusal, a full SHA.
+    expectedRemoteHead: z
+      .string()
+      .regex(
+        /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/,
+        "expectedRemoteHead must be a full SHA",
+      )
+      .optional(),
     runnerId: z.string().min(1).max(255).optional(),
   })
   .strict();
@@ -55,9 +67,10 @@ function httpStatusForCode(code: string): number {
 
 function errorResponse(err: unknown, runId: string): NextResponse {
   if (isMaisterError(err)) {
-    return NextResponse.json(maisterErrorBody(err), {
-      status: httpStatusForCode(err.code),
-    });
+    return NextResponse.json(
+      { ...maisterErrorBody(err), ...pushConflictFields(err) },
+      { status: httpStatusForCode(err.code) },
+    );
   }
   const message = err instanceof Error ? err.message : String(err);
 
@@ -135,6 +148,7 @@ export async function POST(
       strategy: body.strategy,
       agent: body.agent,
       push: body.push,
+      expectedRemoteHead: body.expectedRemoteHead,
       runnerId: body.runnerId,
       actor: { type: "user", id: sessionUser.id },
     });

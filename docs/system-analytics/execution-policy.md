@@ -249,7 +249,12 @@ field-by-field instead of returning 5xx.
   pull-request strategies (a PR branch is force-updated with `--force-with-lease`
   whenever the commit policy squashes — derived from the immutable policy, NOT a
   per-attempt squash result, so a reclaim after a transient push failure still
-  force-updates the already-rewritten branch).
+  force-updates the already-rewritten branch). That forced update MUST NOT drop
+  commits only the PR branch has: the publication guard runs before the squash
+  and refuses `CONFLICT` `publication_diverged`, releasing the claim; the run
+  branch's reflog still records the head the squash replaced, so a reclaim
+  recognises the run's own pre-squash commits, and the push leases exactly the
+  head the guard checked (ADR-181).
 - `crashRetry=auto_retry` MUST re-dispatch a failed `retry_safe` node IN-RUN on a
   transient code (`SPAWN`/`EXECUTOR_UNAVAILABLE`/`CHECKPOINT`/`ACP_PROTOCOL`),
   bounded by `MAISTER_AUTO_RETRY_MAX_ATTEMPTS` total ledger attempts; an explicit

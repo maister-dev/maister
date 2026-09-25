@@ -17,10 +17,15 @@ import { MaisterError } from "@/lib/errors";
 import { assertEvidenceReady } from "@/lib/flows/graph/evidence-readiness";
 import { selectPrAdapter } from "@/lib/runs/pr-adapter";
 import {
+  assertPushKeepsPublication,
+  PublicationDivergedError,
+} from "@/lib/runs/publication-guard";
+import {
   branchExists,
   headCommit,
   promoteLocalMerge,
   pushBranch,
+  remoteBranchHead,
   resolveBaseCommit,
   squashRunBranch,
 } from "@/lib/worktree";
@@ -173,6 +178,13 @@ vi.mock("@/lib/worktree", () => ({
   squashRunBranch: vi.fn(async () => ({ squashed: false, collapsed: 0 })),
 }));
 
+// ADR-181 (C): the guard's own git behaviour is proven against real git in the
+// sync suite; here only its wiring into the squash PR promotion is observed.
+vi.mock("@/lib/runs/publication-guard", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/runs/publication-guard")>()),
+  assertPushKeepsPublication: vi.fn(async () => undefined),
+}));
+
 vi.mock("@/lib/flows/graph/evidence-readiness", () => ({
   assertEvidenceReady: vi.fn(async () => ({ ready: true, reasons: [] })),
 }));
@@ -276,6 +288,10 @@ beforeEach(() => {
   vi.mocked(headCommit).mockReset().mockResolvedValue("source-head-000");
   vi.mocked(promoteLocalMerge).mockReset().mockResolvedValue("merged00");
   vi.mocked(pushBranch).mockReset().mockResolvedValue(undefined);
+  vi.mocked(remoteBranchHead).mockReset().mockResolvedValue(null);
+  vi.mocked(assertPushKeepsPublication)
+    .mockReset()
+    .mockResolvedValue(undefined);
   vi.mocked(resolveBaseCommit).mockReset().mockResolvedValue("tip00000");
   vi.mocked(squashRunBranch)
     .mockReset()
@@ -772,6 +788,83 @@ describe("promoteRun — pull_request + commits=squash_rework (C2)", () => {
     );
     expect(res.ok).toBe(true);
     expect(dbState.tables.runs[0].status).toBe("Done");
+  });
+
+  // ADR-181 (C): the forced PR update would drop commits only the PR branch
+  // has, so the guard runs BEFORE the squash rewrites anything, keeps the
+  // target's commits, and the push leases exactly the head it checked — one
+  // read, no second look.
+  it("asks the publication guard before the squash, and leases exactly the head it checked", async () => {
+    const runId = seedGithubFlowRun();
+    const head = "f".repeat(40);
+
+    dbState.tables.runs[0].executionPolicy = { preset: "unattended" };
+    vi.mocked(remoteBranchHead).mockResolvedValue(head);
+    vi.mocked(squashRunBranch).mockResolvedValueOnce({
+      squashed: true,
+      collapsed: 2,
+    });
+
+    await callPromote(runId, {
+      mode: "pull_request",
+      reviewedTargetCommit: "tip00000",
+    });
+
+    expect(assertPushKeepsPublication).toHaveBeenCalledWith(
+      expect.objectContaining({
+        localBranch: "maister/flow-1",
+        remote: "origin",
+        remoteHead: head,
+        keptRefs: ["main", "refs/remotes/origin/main"],
+      }),
+    );
+    const guardOrder = vi.mocked(assertPushKeepsPublication).mock
+      .invocationCallOrder[0];
+    const squashOrder = vi.mocked(squashRunBranch).mock.invocationCallOrder[0];
+
+    expect(guardOrder).toBeLessThan(squashOrder);
+    expect(remoteBranchHead).toHaveBeenCalledTimes(1);
+    expect(pushBranch).toHaveBeenCalledWith(
+      expect.objectContaining({ force: true, leaseSha: head }),
+    );
+  });
+
+  it("rewrites nothing and releases the claim when the guard refuses", async () => {
+    const runId = seedGithubFlowRun();
+
+    dbState.tables.runs[0].executionPolicy = { preset: "unattended" };
+    vi.mocked(remoteBranchHead).mockResolvedValue("f".repeat(40));
+    vi.mocked(assertPushKeepsPublication).mockRejectedValueOnce(
+      new PublicationDivergedError({
+        remoteHead: "f".repeat(40),
+        remoteRef: "origin/feature/DEMO-5-ship-it",
+        remoteOnlyCommits: 1,
+      }),
+    );
+
+    await expect(
+      callPromote(runId, {
+        mode: "pull_request",
+        reviewedTargetCommit: "tip00000",
+      }),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "publication_diverged" },
+    });
+    expect(squashRunBranch).not.toHaveBeenCalled();
+    expect(pushBranch).not.toHaveBeenCalled();
+    expect(dbState.tables.workspaces[0].promotionState).toBe("failed");
+  });
+
+  it("asks nothing for a promotion that does not force (keep_all)", async () => {
+    const runId = seedGithubFlowRun();
+
+    await callPromote(runId, {
+      mode: "pull_request",
+      reviewedTargetCommit: "tip00000",
+    });
+
+    expect(assertPushKeepsPublication).not.toHaveBeenCalled();
   });
 
   it("still force-pushes when this attempt's squash is a no-op under a squash policy (retry-stable)", async () => {
