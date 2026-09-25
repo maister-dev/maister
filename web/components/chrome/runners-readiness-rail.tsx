@@ -5,7 +5,11 @@ import type {
 } from "@/lib/acp-runners/readiness-summary";
 import type { ReactElement } from "react";
 
-import { CheckCircleIcon, NoSymbolIcon } from "@heroicons/react/24/outline";
+import {
+  ArrowTurnDownRightIcon,
+  CheckCircleIcon,
+  NoSymbolIcon,
+} from "@heroicons/react/24/outline";
 import Link from "next/link";
 import clsx from "clsx";
 
@@ -19,6 +23,9 @@ export type RunnersReadinessLabels = {
   readonly disabledLabel: string;
   readonly configureCta: string;
   readonly readiness: Record<RailRunnerDTO["readinessStatus"], string>;
+  // ADR-182: read-only glyph shown when the adapter family advertises steering.
+  readonly steering: string;
+  readonly steeringHint: string;
 };
 
 export interface RunnersReadinessRailViewProps {
@@ -128,6 +135,19 @@ function RunnerPopover({
           {causeLabel}
         </span>
       </div>
+      {adapter.steering === true ? (
+        <div
+          className="mb-1.5 flex items-center gap-1 font-mono text-[9.5px] text-ink-2"
+          data-testid={`runner-steering-${adapter.adapter}`}
+          title={labels.steeringHint}
+        >
+          <ArrowTurnDownRightIcon
+            aria-hidden="true"
+            className="h-3 w-3 text-accent-4"
+          />
+          {labels.steering}
+        </div>
+      ) : null}
       {adapter.runners.length > 0 ? (
         <ul className="m-0 flex list-none flex-col gap-1.5 p-0">
           {adapter.runners.map((runner) => (

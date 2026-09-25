@@ -282,7 +282,8 @@ export async function admitAgentTurnPrompt(
       ? initialAgentPromptKey(session.assignmentId)
       : `agent_turn:${turn.variant}:${turn.id}:${turn.ordinal}`;
 
-  if (turn.variant === "consensus_draft")
+  // ADR-182: a steer rides its parent's prompt and never owns one.
+  if (turn.variant === "consensus_draft" || turn.variant === "steer")
     throw new PromptOwnerInvariantError("agent_message_variant");
   const source = { ...session, turnId: turn.id, promptOrdinal: turn.ordinal };
   const ref: Exclude<AdmittedAgentRef, { variant: "consensus_draft" }> =

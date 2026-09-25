@@ -26,7 +26,12 @@ import { z, ZodError, type ZodType, type ZodTypeDef } from "zod";
 import { safeDownloadHeaders } from "../../runtime/safe-download";
 import { objectDigest, objectEtag } from "../../runtime/object-integrity";
 
-import { createAcpConnection, sendPromptOnConnection } from "./acp-client";
+import {
+  createAcpConnection,
+  sendPromptOnConnection,
+  STEER_ACP_TIMEOUT_MS,
+  steerOnConnection,
+} from "./acp-client";
 import { retainedOutputBudget } from "./bounded-acp-stream";
 import {
   adapterSmokeCachePath,
@@ -98,6 +103,8 @@ import {
   McpProbeRequestSchema,
   parseGateChatHitlId,
   SendPromptRequestSchema,
+  sessionSteeringSupported,
+  SteerBodySchema,
   CommandRetirementProofSchema,
   ReserveRuntimeObjectPayloadSchema,
   RuntimeObjectUploadHeadersSchema,
@@ -115,6 +122,8 @@ import {
   type SupervisorErrorBody,
   type SupervisorHealthResponse,
   type SendPromptRequest,
+  type SteerAdapterOutcome,
+  type SteerBody,
   type WorkspaceKind,
   type WorkspaceRecordResponse,
 } from "./types";
@@ -1097,6 +1106,266 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     reply.status(outcome.status).send(outcome.body);
   }
 
+  // ADR-182: the prompt and steer routes confine and resolve content blocks
+  // through one helper, so a steer can carry exactly what a prompt can.
+  async function preparePromptContentBlocks(input: {
+    entry: RegistryEntry;
+    sessionId: string;
+    fence: CommandEnvelope["fence"];
+    blocks: readonly unknown[] | undefined;
+    route: "prompt" | "steer";
+  }): Promise<acp.ContentBlock[] | undefined> {
+    const { entry } = input;
+    const uriViolation = contentBlockUriViolation(input.blocks, {
+      worktreePath: entry.record.worktreePath,
+      repoPath: entry.record.repoPath,
+      runDir: dirname(entry.record.logPath),
+      confineRoot: entry.record.confineRoot,
+    });
+
+    if (uriViolation) {
+      logger.warn(
+        { sessionId: input.sessionId, status: 409, message: uriViolation },
+        `${input.route} route: content-block URI confinement violation`,
+      );
+      throw new SupervisorError("PRECONDITION", uriViolation);
+    }
+
+    return resolvePromptRuntimeObjects({
+      blocks: input.blocks,
+      resolver: runtimeObjects,
+      runId: entry.record.runId,
+      assignmentId: input.fence.assignmentId,
+      assignmentEpoch: input.fence.assignmentEpoch,
+    });
+  }
+
+  // ADR-182 D-B6: a prompt is never written to the adapter while a steer's ACP
+  // call is unanswered, so a steer can never land in the NEXT owned turn.
+  async function awaitSteerBarrier(entry: RegistryEntry): Promise<void> {
+    const barrier = entry.record.steerInFlight;
+
+    if (!barrier) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    try {
+      await Promise.race([
+        barrier,
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, STEER_ACP_TIMEOUT_MS);
+          timer.unref();
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  function steerRefusal(args: {
+    sessionId: string;
+    commandId: string;
+    parentCommandId: string;
+    reason: "steer_unsupported" | "steer_no_active_turn" | "steer_timeout";
+    message: string;
+    activePromptCommandId?: string | null;
+    adapterOutcome?: SteerAdapterOutcome;
+  }): SupervisorError {
+    logger.warn(
+      {
+        sessionId: args.sessionId,
+        commandId: args.commandId,
+        parentCommandId: args.parentCommandId,
+        reason: args.reason,
+        adapterOutcome: args.adapterOutcome ?? null,
+      },
+      "steer-refused",
+    );
+
+    return new SupervisorError("CONFLICT", args.message, {
+      details: {
+        reason: args.reason,
+        parentCommandId: args.parentCommandId,
+        ...(args.activePromptCommandId !== undefined
+          ? { activePromptCommandId: args.activePromptCommandId }
+          : {}),
+        ...(args.adapterOutcome ? { adapterOutcome: args.adapterOutcome } : {}),
+      },
+    });
+  }
+
+  // ADR-182 D-B2: only the active OWNED prompt can be steered; the checks run
+  // before any ACP call and again, synchronously, right before it.
+  function assertSteerable(
+    entry: RegistryEntry,
+    sessionId: string,
+    commandId: string,
+    parentCommandId: string,
+  ): void {
+    if (
+      entry.record.status !== "live" ||
+      entry.child.exitCode !== null ||
+      entry.child.signalCode !== null ||
+      !entry.connection ||
+      !entry.acpSessionId
+    ) {
+      throw new SupervisorError("PRECONDITION", "session not live");
+    }
+    if (!sessionSteeringSupported(entry.record)) {
+      throw steerRefusal({
+        sessionId,
+        commandId,
+        parentCommandId,
+        reason: "steer_unsupported",
+        message: "the session's adapter did not advertise steering",
+      });
+    }
+    if (entry.record.activePromptCommandId !== parentCommandId) {
+      throw steerRefusal({
+        sessionId,
+        commandId,
+        parentCommandId,
+        reason: "steer_no_active_turn",
+        message: "the parent prompt is not the session's running turn",
+        activePromptCommandId: entry.record.activePromptCommandId ?? null,
+      });
+    }
+  }
+
+  async function executeSteer(input: {
+    entry: RegistryEntry;
+    sessionId: string;
+    parsed: ParsedCommand<SteerBody>;
+  }): Promise<CommandOutcome> {
+    const { entry, sessionId, parsed } = input;
+    const commandId = parsed.envelope.command.id;
+    const { parentCommandId } = parsed.payload;
+    const startedAt = Date.now();
+
+    assertSteerable(entry, sessionId, commandId, parentCommandId);
+    const contentBlocks = (await preparePromptContentBlocks({
+      entry,
+      sessionId,
+      fence: parsed.envelope.fence,
+      blocks: parsed.payload.contentBlocks,
+      route: "steer",
+    })) as acp.ContentBlock[];
+
+    assertSteerable(entry, sessionId, commandId, parentCommandId);
+    const connection = entry.connection as acp.ClientSideConnection;
+    const acpSessionId = entry.acpSessionId as string;
+    let release: () => void = () => undefined;
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const previous = entry.record.steerInFlight;
+    const barrier = previous
+      ? Promise.all([previous, current]).then(() => undefined)
+      : current;
+
+    entry.record.steerInFlight = barrier;
+
+    try {
+      const attempt = await steerOnConnection(
+        connection,
+        { adapter: entry.record.adapter, acpSessionId, contentBlocks },
+        logger,
+      );
+
+      throwIfFenced(entry, parsed.envelope);
+      if (attempt.kind === "injected") {
+        const latencyMs = Date.now() - startedAt;
+
+        logger.info(
+          {
+            sessionId,
+            commandId,
+            parentCommandId,
+            promptBytes: Buffer.byteLength(
+              JSON.stringify(parsed.payload.contentBlocks),
+            ),
+            latencyMs,
+          },
+          "steer-injected",
+        );
+
+        return {
+          status: 200,
+          body: { outcome: "injected", parentCommandId, latencyMs },
+        };
+      }
+      if (attempt.kind === "timeout") {
+        logger.warn({ sessionId, commandId, parentCommandId }, "steer-timeout");
+        throw steerRefusal({
+          sessionId,
+          commandId,
+          parentCommandId,
+          reason: "steer_timeout",
+          message: `the adapter did not answer the steer within ${STEER_ACP_TIMEOUT_MS} ms`,
+        });
+      }
+      if (attempt.adapterOutcome === "startedNewTurn") {
+        await cancelUnownedTurn({
+          entry,
+          sessionId,
+          acpSessionId,
+          commandId,
+          parentCommandId,
+        });
+      }
+      throw steerRefusal({
+        sessionId,
+        commandId,
+        parentCommandId,
+        reason: "steer_no_active_turn",
+        message: `the adapter answered ${attempt.adapterOutcome} instead of injecting`,
+        adapterOutcome: attempt.adapterOutcome,
+      });
+    } finally {
+      release();
+      if (entry.record.steerInFlight === barrier)
+        delete entry.record.steerInFlight;
+    }
+  }
+
+  // ADR-182 D-B5: `startedNewTurn` means the adapter found no running turn and
+  // started one nobody owns. It is cancelled before the refusal is written, and
+  // any permission it raised is released rather than leaked.
+  async function cancelUnownedTurn(args: {
+    entry: RegistryEntry;
+    sessionId: string;
+    acpSessionId: string;
+    commandId: string;
+    parentCommandId: string;
+  }): Promise<void> {
+    logger.warn(
+      {
+        sessionId: args.sessionId,
+        commandId: args.commandId,
+        parentCommandId: args.parentCommandId,
+      },
+      "steer-started-unowned-turn",
+    );
+    try {
+      await args.entry.connection?.cancel({ sessionId: args.acpSessionId });
+    } catch (err) {
+      logger.error(
+        {
+          sessionId: args.sessionId,
+          commandId: args.commandId,
+          err: err instanceof Error ? err.message : String(err),
+        },
+        "steer-unowned-turn-cancel-failed",
+      );
+    }
+    for (const requestId of pendingPermissions.requestIds(args.sessionId)) {
+      pendingPermissions.cancel(
+        args.sessionId,
+        requestId,
+        "steer-unowned-turn",
+      );
+    }
+  }
+
   async function executePromptTurn(input: {
     entry: RegistryEntry;
     sessionId: string;
@@ -1118,26 +1387,12 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
         "session has no ACP connection",
       );
     }
-    const uriViolation = contentBlockUriViolation(body.contentBlocks, {
-      worktreePath: entry.record.worktreePath,
-      repoPath: entry.record.repoPath,
-      runDir: dirname(entry.record.logPath),
-      confineRoot: entry.record.confineRoot,
-    });
-
-    if (uriViolation) {
-      logger.warn(
-        { sessionId, status: 409, message: uriViolation },
-        "prompt route: content-block URI confinement violation",
-      );
-      throw new SupervisorError("PRECONDITION", uriViolation);
-    }
-    const contentBlocks = await resolvePromptRuntimeObjects({
+    const contentBlocks = await preparePromptContentBlocks({
+      entry,
+      sessionId,
+      fence: parsed.envelope.fence,
       blocks: body.contentBlocks,
-      resolver: runtimeObjects,
-      runId: entry.record.runId,
-      assignmentId: parsed.envelope.fence.assignmentId,
-      assignmentEpoch: parsed.envelope.fence.assignmentEpoch,
+      route: "prompt",
     });
 
     entry.record.stepId = body.stepId;
@@ -1182,6 +1437,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     let response: Awaited<ReturnType<typeof sendPromptOnConnection>>;
     let responseReference: ImmutableObjectReference | undefined;
 
+    await awaitSteerBarrier(entry);
     try {
       response = await sendPromptOnConnection(
         entry.connection,
@@ -2338,6 +2594,9 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
 
         let connection: acp.ClientSideConnection;
         let acpSessionId: string;
+        let capabilities: Awaited<
+          ReturnType<typeof createAcpConnection>
+        >["capabilities"];
 
         try {
           const result = await createAcpConnection({
@@ -2356,6 +2615,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
 
           connection = result.connection;
           acpSessionId = result.acpSessionId;
+          capabilities = result.capabilities;
         } catch (err) {
           const entry = registry.get(sessionId);
           const message = err instanceof Error ? err.message : String(err);
@@ -2380,7 +2640,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
           throw err;
         }
 
-        registry.attachAcp(sessionId, connection, acpSessionId);
+        registry.attachAcp(sessionId, connection, acpSessionId, capabilities);
         runtimeEvents.publishSessionCreated(record);
 
         logger.info(
@@ -2401,7 +2661,12 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
 
         return {
           status: 201,
-          body: { sessionId, pid: record.pid, acpSessionId },
+          body: {
+            sessionId,
+            pid: record.pid,
+            acpSessionId,
+            steeringSupported: capabilities.steering.supported,
+          },
         };
       },
     });
@@ -2804,6 +3069,42 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
 
         return { status: 200, body: { ok: true } };
       },
+    });
+  });
+
+  // ADR-182: inject a message into the session's running owned prompt. A v1
+  // enveloped, fenced, receipted command exactly like /input; every refusal is
+  // a definitive 409 CONFLICT the manager converts into a queued message.
+  app.post<SessionIdParams>("/sessions/:id/steer", async (req, reply) => {
+    const sessionId = req.params.id;
+    const parsed = parseCommandBody(
+      req.body,
+      "session.steer",
+      SteerBodySchema,
+      { route: "POST /sessions/:id/steer" },
+    );
+    const entry = registry.get(sessionId);
+
+    if (!entry) {
+      logger.warn(
+        { sessionId, commandId: parsed.envelope.command.id },
+        "steer route: unknown session — likely supervisor restart",
+      );
+      reply.status(503).send({
+        code: "EXECUTOR_UNAVAILABLE",
+        message: "unknown session — supervisor may have restarted",
+      });
+
+      return;
+    }
+
+    await runCommand({
+      reply,
+      parsed,
+      kind: "session.steer",
+      expectedRunId: entry.record.runId,
+      entry,
+      execute: () => executeSteer({ entry, sessionId, parsed }),
     });
   });
 

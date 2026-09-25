@@ -732,6 +732,10 @@ export const REASON_TOKENS = [
   // cancelled, so a late answer is a RESUME, not a failure. It rides the
   // unchanged 410 HITL_TIMEOUT.
   "session_checkpointed",
+  // ADR-182: the three definitive `session.steer` refusals (409 CONFLICT).
+  "steer_unsupported",
+  "steer_no_active_turn",
+  "steer_timeout",
 ] as const;
 
 export type ReasonToken = (typeof REASON_TOKENS)[number];
@@ -777,7 +781,20 @@ export type SupervisorErrorDetails = {
   runId?: string;
   commandEpoch?: number;
   hostEpoch?: number;
+  // ADR-182: every steer refusal names the parent prompt it targeted.
+  parentCommandId?: string;
+  activePromptCommandId?: string | null;
+  adapterOutcome?: SteerAdapterOutcome;
 };
+
+export const STEER_ADAPTER_OUTCOMES = [
+  "promptRequired",
+  "startedNewTurn",
+  "failed",
+  "error",
+] as const;
+
+export type SteerAdapterOutcome = (typeof STEER_ADAPTER_OUTCOMES)[number];
 
 export const WORKSPACE_KINDS = [
   "git_worktree",
@@ -864,6 +881,7 @@ export type CommandReceiptResponse = z.infer<typeof CommandReceiptSchema>;
 export const SESSION_COMMAND_KINDS = [
   "session.prompt",
   "session.input",
+  "session.steer",
   "session.cancel",
   "session.checkpoint",
   "session.delete",
@@ -941,6 +959,18 @@ export const SendPromptRequestSchema = z
     readOnlyTurn: z.boolean().optional(),
   })
   .strict();
+
+// ADR-182: a message injected into the session's running owned prompt. The
+// content-block shape is the prompt route's; `parentCommandId` is compared with
+// the session's active prompt, never trusted.
+export const SteerBodySchema = z
+  .object({
+    contentBlocks: z.array(PromptContentBlockSchema).min(1).max(64),
+    parentCommandId: z.string().uuid(),
+  })
+  .strict();
+
+export type SteerBody = z.infer<typeof SteerBodySchema>;
 
 // M30 (ADR-078 DD4): gate-chat prompts are tagged with this server-derived
 // stepId marker (dash, not colon — SAFE_PATH_SEGMENT). The suffix is the web
@@ -1097,6 +1127,15 @@ const AdapterSmokeDiagnosticSchema = z
         protocolVersion: z.number().int().positive().nullable(),
       })
       .strict(),
+    // ADR-182: informational family-level steering evidence from the smoke
+    // cache; `supported: null` = no evidence. The per-session advertisement is
+    // what the manager acts on.
+    steering: z
+      .object({
+        supported: z.boolean().nullable(),
+        checkedAt: z.string().datetime().nullable(),
+      })
+      .strict(),
   })
   .strict();
 
@@ -1134,6 +1173,11 @@ export type SupervisorDiagnosticsResponse = z.infer<
   typeof SupervisorDiagnosticsResponseSchema
 >;
 
+// ADR-182: what the session's ACP connection advertised on `initialize`.
+export type SessionCapabilities = {
+  steering: { supported: boolean };
+};
+
 export type SessionRecord = {
   sessionId: string;
   adapter: ExecutorAgent;
@@ -1166,6 +1210,11 @@ export type SessionRecord = {
   assignmentEpoch: number;
   createdByCommandId: string;
   activePromptCommandId?: string;
+  // ADR-182: recorded from `initialize` when the ACP connection attaches.
+  capabilities?: SessionCapabilities;
+  // ADR-182 stdin-order barrier: set while a steer's ACP call is in flight so
+  // the next prompt is never written to the adapter before the steer answers.
+  steerInFlight?: Promise<void>;
   outputDrained?: Promise<void>;
   outputEventReservationId?: string;
   stopOutputForTeardown?: () => void;
@@ -1274,7 +1323,11 @@ export type SessionListEntry = Pick<
   | "assignmentId"
   | "assignmentEpoch"
   | "createdByCommandId"
->;
+> & { capabilities: SessionCapabilities };
+
+export function sessionSteeringSupported(record: SessionRecord): boolean {
+  return record.capabilities?.steering.supported === true;
+}
 
 export function toSessionListEntry(record: SessionRecord): SessionListEntry {
   return {
@@ -1297,6 +1350,9 @@ export function toSessionListEntry(record: SessionRecord): SessionListEntry {
     assignmentId: record.assignmentId,
     assignmentEpoch: record.assignmentEpoch,
     createdByCommandId: record.createdByCommandId,
+    capabilities: {
+      steering: { supported: sessionSteeringSupported(record) },
+    },
   };
 }
 
@@ -1412,7 +1468,9 @@ export type SupervisorErrorCode =
   | "CRASH"
   | "HITL_TIMEOUT"
   // ADR-166: stale assignment epoch at the execution boundary (HTTP 409).
-  | "FENCED";
+  | "FENCED"
+  // ADR-182: a definitive `session.steer` refusal (HTTP 409), never retried.
+  | "CONFLICT";
 
 export class SupervisorError extends Error {
   readonly code: SupervisorErrorCode;
@@ -1453,6 +1511,7 @@ export function httpStatusForCode(code: SupervisorErrorCode): number {
   switch (code) {
     case "PRECONDITION":
     case "FENCED":
+    case "CONFLICT":
       return 409;
     case "EXECUTOR_UNAVAILABLE":
       return 503;

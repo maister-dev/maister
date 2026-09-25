@@ -560,6 +560,8 @@ export async function LeftRail({
             NotReady: tPortfolio("runnerStatusNotReady"),
             Unknown: tPortfolio("runnerStatusUnknown"),
           },
+          steering: tPortfolio("runnerSteering"),
+          steeringHint: tPortfolio("runnerSteeringHint"),
         }}
       />
 

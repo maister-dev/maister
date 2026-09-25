@@ -872,6 +872,8 @@
     "runnerConfigureCta": "Настроить в настройках",
     "runnerStatusNotReady": "Не готов",
     "runnerStatusUnknown": "Неизвестно",
+    "runnerSteering": "Управление ходом",
+    "runnerSteeringHint": "Адаптер поддерживает управление ходом: сообщение доходит до текущего хода",
     "launchRun": "Запустить",
     "launchScratch": "Черновой run",
     "startScratchInProject": "Запустить черновой воркспейс в {project}",

@@ -3944,10 +3944,17 @@ export const agentTurns = pgTable(
         "live_message",
         "persistent_message",
         "consensus_draft",
+        // ADR-182: a message injected into the running parent turn. It owns no
+        // prompt and is invisible to every owned-turn reader.
+        "steer",
       ],
     }).notNull(),
     logicalKey: text("logical_key").notNull(),
     prompt: text("prompt").notNull(),
+    parentTurnId: text("parent_turn_id").references(
+      (): AnyPgColumn => agentTurns.id,
+      { onDelete: "cascade" },
+    ),
     state: text("state", {
       enum: ["queued", "claimed", "dispatched", "applied", "superseded"],
     })
@@ -3986,17 +3993,24 @@ export const agentTurns = pgTable(
       t.logicalKey,
     ),
     commandUnique: unique("agent_turns_command_uq").on(t.commandId),
+    // ADR-182: a dispatched steer sits beside its dispatched parent.
     activeUnique: uniqueIndex("agent_turns_active_run_uq")
       .on(t.runId)
-      .where(sql`${t.state} IN ('claimed', 'dispatched')`),
+      .where(
+        sql`${t.state} IN ('claimed', 'dispatched') AND ${t.variant} <> 'steer'`,
+      ),
     dueIndex: index("agent_turns_due_idx")
       .on(t.state, t.createdAt, t.runId)
       .where(sql`${t.state} IN ('queued', 'claimed', 'dispatched')`),
     sourceCheck: check(
       "agent_turns_source_check",
       sql`${t.ordinal} >= 0
-      AND ${t.variant} IN ('initial', 'resume', 'rework', 'live_message', 'persistent_message', 'consensus_draft')
+      AND ${t.variant} IN ('initial', 'resume', 'rework', 'live_message', 'persistent_message', 'consensus_draft', 'steer')
       AND length(${t.logicalKey}) BETWEEN 1 AND 256 AND length(${t.prompt}) BETWEEN 1 AND 1000000`,
+    ),
+    steerParentCheck: check(
+      "agent_turns_steer_parent_check",
+      sql`(${t.variant} = 'steer') = (${t.parentTurnId} IS NOT NULL)`,
     ),
     stateCheck: check(
       "agent_turns_state_check",
@@ -4154,6 +4168,9 @@ export const runSessionIncarnations = pgTable(
       ],
     }).notNull(),
     origin: text("origin", { enum: ["native", "legacy_backfill"] }).notNull(),
+    // ADR-182: this incarnation's `initialize` steering advertisement. NULL =
+    // not observed (pre-contract rows, older hosts) and reads as unsupported.
+    steeringSupported: boolean("steering_supported"),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
       .notNull()
       .defaultNow(),
@@ -5243,6 +5260,13 @@ export const runMessages = pgTable(
     // owner's existing operation-key function. NULL on every transcript-
     // projector row, which the partial index below leaves unconstrained.
     promptDispatchKey: text("prompt_dispatch_key"),
+    // ADR-182: how a USER row reached the agent. The scratch row IS the queued
+    // message; `steer_command_id` names the steer that carried a steered row.
+    delivery: text("delivery", { enum: ["queued", "prompted", "steered"] }),
+    steerCommandId: text("steer_command_id").references(
+      () => executionCommands.id,
+      { onDelete: "restrict" },
+    ),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
       .notNull()
       .defaultNow(),
@@ -5272,6 +5296,16 @@ export const runMessages = pgTable(
     uniqPromptDispatchKey: uniqueIndex("run_messages_prompt_dispatch_key_uq")
       .on(t.runId, t.nodeAttemptId, t.promptDispatchKey)
       .where(sql`${t.promptDispatchKey} IS NOT NULL`),
+    deliveryCheck: check(
+      "run_messages_delivery_check",
+      sql`${t.delivery} IS NULL OR (${t.role} = 'user' AND ${t.delivery} IN ('queued', 'prompted', 'steered'))`,
+    ),
+    queuedIdx: index("run_messages_queued_idx")
+      .on(t.runId, t.sequence)
+      .where(sql`${t.delivery} = 'queued'`),
+    steerCommandUnique: uniqueIndex("run_messages_steer_command_uq")
+      .on(t.steerCommandId)
+      .where(sql`${t.steerCommandId} IS NOT NULL`),
   }),
 );
 

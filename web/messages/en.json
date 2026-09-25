@@ -872,6 +872,8 @@
     "runnerConfigureCta": "Configure in Settings",
     "runnerStatusNotReady": "Not ready",
     "runnerStatusUnknown": "Unknown",
+    "runnerSteering": "Steering",
+    "runnerSteeringHint": "Adapter advertises steering: a message can reach a running turn",
     "launchRun": "Launch run",
     "launchScratch": "Scratch run",
     "startScratchInProject": "Start scratch workspace in {project}",

@@ -46,8 +46,10 @@ import {
   type McpServerInput,
   type PermissionOptionDescriptor,
   type RunnerLaunch,
+  type SessionCapabilities,
   type SessionEvent,
   type SessionRecord,
+  type SteerAdapterOutcome,
 } from "./types";
 
 export type CreateAcpConnectionArgs = {
@@ -74,7 +76,21 @@ export type CreateAcpConnectionArgs = {
 export type CreateAcpConnectionResult = {
   connection: acp.ClientSideConnection;
   acpSessionId: string;
+  capabilities: SessionCapabilities;
 };
+
+// ADR-182: the host records the advertisement and interprets nothing else in
+// `_meta`; no adapter id is consulted.
+export function readSessionCapabilities(initResp: {
+  _meta?: unknown;
+}): SessionCapabilities {
+  const meta = initResp._meta as
+    | { steering?: { supported?: unknown } | null }
+    | null
+    | undefined;
+
+  return { steering: { supported: meta?.steering?.supported === true } };
+}
 
 type ToolCallLike = {
   toolCallId?: string;
@@ -949,6 +965,17 @@ export async function createAcpConnection(
     "acp initialized",
   );
 
+  const capabilities = readSessionCapabilities(initResp);
+
+  logger.info(
+    {
+      sessionId,
+      adapter: args.adapter,
+      steering: capabilities.steering.supported,
+    },
+    "acp-capabilities-recorded",
+  );
+
   // M27/T-C4 + ADR-179: build the transport-appropriate ACP McpServer. A value
   // is `literal | env:NAME`; the VALUE behind a reference is resolved HERE,
   // host-side, from process.env — never received from the web tier. stdio
@@ -1025,7 +1052,7 @@ export async function createAcpConnection(
         logger,
       });
 
-      return { connection, acpSessionId: resumeSessionId };
+      return { connection, acpSessionId: resumeSessionId, capabilities };
     }
     // Unreachable for the bundled claude/codex adapters (both advertise
     // sessionCapabilities.resume). FAIL LOUD rather than silently falling
@@ -1070,7 +1097,11 @@ export async function createAcpConnection(
     logger,
   });
 
-  return { connection, acpSessionId: newSessionResp.sessionId };
+  return {
+    connection,
+    acpSessionId: newSessionResp.sessionId,
+    capabilities,
+  };
 }
 
 type ApplyModelArgs = {
@@ -1254,4 +1285,81 @@ export async function sendPromptOnConnection(
   }
 
   return resp;
+}
+
+// ADR-182: the host's own bound on one steer. The manager's transport timeout
+// for the kind is longer, so the host always answers first.
+export const STEER_ACP_TIMEOUT_MS = 30_000;
+
+export const STEER_METHOD = "_session/steering";
+
+export type SteerAttempt =
+  | { kind: "injected" }
+  | { kind: "refused"; adapterOutcome: SteerAdapterOutcome }
+  | { kind: "timeout" };
+
+type SteerResponse = { outcome?: unknown };
+
+const REFUSING_OUTCOMES: ReadonlySet<string> = new Set([
+  "promptRequired",
+  "startedNewTurn",
+  "failed",
+]);
+
+// Every answer other than `injected` is a refusal the caller turns into a
+// typed 409; an ACP error is the `error` outcome, a missed deadline `timeout`.
+// A late answer after the deadline is dropped (its promise is kept handled).
+export async function steerOnConnection(
+  conn: acp.ClientSideConnection,
+  args: {
+    adapter: ExecutorAgent;
+    acpSessionId: string;
+    contentBlocks: acp.ContentBlock[];
+    timeoutMs?: number;
+  },
+  logger: Logger,
+): Promise<SteerAttempt> {
+  const timeoutMs = args.timeoutMs ?? STEER_ACP_TIMEOUT_MS;
+  const request = conn.request<SteerResponse>(STEER_METHOD, {
+    sessionId: args.acpSessionId,
+    prompt: args.contentBlocks,
+    _meta: { steering: { idleBehavior: "promptRequired" } },
+  });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<"timeout">((resolve) => {
+    timer = setTimeout(() => resolve("timeout"), timeoutMs);
+    timer.unref();
+  });
+
+  request.catch(() => undefined);
+
+  try {
+    const answer = await Promise.race([request, deadline]);
+
+    if (answer === "timeout") return { kind: "timeout" };
+    const outcome =
+      typeof answer?.outcome === "string" ? answer.outcome : "unknown";
+
+    if (outcome === "injected") return { kind: "injected" };
+
+    return {
+      kind: "refused",
+      adapterOutcome: REFUSING_OUTCOMES.has(outcome)
+        ? (outcome as SteerAdapterOutcome)
+        : "error",
+    };
+  } catch (err) {
+    logger.warn(
+      {
+        adapter: args.adapter,
+        acpSessionId: args.acpSessionId,
+        err: err instanceof Error ? err.message : String(err),
+      },
+      "acp steer failed",
+    );
+
+    return { kind: "refused", adapterOutcome: "error" };
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }

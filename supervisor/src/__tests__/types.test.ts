@@ -521,6 +521,7 @@ describe("SupervisorDiagnosticsResponseSchema", () => {
               checkedAt: null,
               protocolVersion: null,
             },
+            steering: { supported: null, checkedAt: null },
           },
         },
         {
@@ -550,6 +551,7 @@ describe("SupervisorDiagnosticsResponseSchema", () => {
               checkedAt: null,
               protocolVersion: null,
             },
+            steering: { supported: null, checkedAt: null },
           },
         },
         {
@@ -579,6 +581,7 @@ describe("SupervisorDiagnosticsResponseSchema", () => {
               checkedAt: null,
               protocolVersion: null,
             },
+            steering: { supported: null, checkedAt: null },
           },
         },
         {
@@ -609,6 +612,7 @@ describe("SupervisorDiagnosticsResponseSchema", () => {
               checkedAt: null,
               protocolVersion: null,
             },
+            steering: { supported: null, checkedAt: null },
           },
         },
         {
@@ -638,6 +642,7 @@ describe("SupervisorDiagnosticsResponseSchema", () => {
               checkedAt: null,
               protocolVersion: null,
             },
+            steering: { supported: null, checkedAt: null },
           },
         },
       ],

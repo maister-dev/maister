@@ -1441,8 +1441,10 @@ Entities:
   owner (`owner_kind IS NULL`), payload projection `parentCommandId`,
   `promptBytes`, `contentBlockCount` only.
 - `agent_turns` row with `variant = 'steer'` and `parent_turn_id` (the
-  dispatched parent turn); `state` `queued → dispatched → applied |
-  superseded`; never `claimed`.
+  dispatched parent turn); inserted `dispatched` in the issue transaction,
+  already bound to its `session.steer` command, then `applied | superseded`;
+  never `queued` or `claimed` (the `guard_agent_turn_source` transition rule
+  has no `queued → dispatched` edge, and a steer is never claimed).
 - `run_messages.delivery` (`queued | prompted | steered`, user rows only) and
   `run_messages.steer_command_id` (unique when set) — the scratch row IS the
   queued message; an agent steer's transcript row carries `delivery =
@@ -1456,8 +1458,7 @@ supersedes the steer and hands the message to the ordinary queue.
 
 ```mermaid
 stateDiagram-v2
-  [*] --> queued: issue tx (intent)
-  queued --> dispatched: same issue tx (command id bound)
+  [*] --> dispatched: issue tx (intent, command bound)
   dispatched --> applied: host 200 injected
   dispatched --> superseded: host 409 refusal, FENCED, or orphaned intent
   superseded --> [*]: successor turn / scratch row delivery = queued

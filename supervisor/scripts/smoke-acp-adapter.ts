@@ -19,7 +19,10 @@ import { pathToFileURL } from "node:url";
 
 import * as acp from "@agentclientprotocol/sdk";
 
-import { resolveReadOnlySessionDecision } from "../src/acp-client";
+import {
+  readSessionCapabilities,
+  resolveReadOnlySessionDecision,
+} from "../src/acp-client";
 import {
   clientCapabilitiesForAdapter,
   getAdapterRuntime,
@@ -54,6 +57,8 @@ type SmokeResult = {
     reason?: string;
     protocolVersion?: number;
   };
+  // ADR-182: the family's `initialize` steering advertisement.
+  steering?: { supported: boolean };
 };
 
 type ReadOnlySessionSmokeResult = NonNullable<SmokeResult["readOnlySession"]>;
@@ -678,6 +683,7 @@ export async function smokeAdapter(
       binary: resolvedPath,
       protocolVersion: init.protocolVersion,
       acpSessionId: session.sessionId,
+      steering: readSessionCapabilities(init).steering,
       ...(readOnlySession ? { readOnlySession } : {}),
       ...(capabilityEnforcement ? { capabilityEnforcement } : {}),
     };
@@ -730,6 +736,7 @@ async function smokeAndCache(args: CliArgs): Promise<SmokeResult[]> {
         ...(result.capabilityEnforcement
           ? { capabilityEnforcement: result.capabilityEnforcement }
           : {}),
+        ...(result.steering ? { steering: result.steering } : {}),
       })),
     );
   }

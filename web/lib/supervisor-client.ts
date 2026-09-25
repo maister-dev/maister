@@ -437,6 +437,15 @@ const SupervisorDiagnosticsSchema = z
                   protocolVersion: z.number().int().positive().nullable(),
                 })
                 .strict(),
+              // ADR-182: optional so a host older than the steering contract
+              // still parses; `supported: null` = no smoke evidence.
+              steering: z
+                .object({
+                  supported: z.boolean().nullable(),
+                  checkedAt: z.string().datetime().nullable(),
+                })
+                .strict()
+                .optional(),
             })
             .strict(),
         })

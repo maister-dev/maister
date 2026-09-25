@@ -4,6 +4,7 @@ export const COMMAND_KINDS = [
   "session.create",
   "session.prompt",
   "session.input",
+  "session.steer",
   "session.cancel",
   "session.checkpoint",
   "session.delete",

@@ -90,6 +90,14 @@ export const COMMAND_POLICY: Readonly<Record<CommandKind, KindPolicy>> = {
     driverless: false,
     timeoutMs: 10_000,
   },
+  // ADR-182: longer than the host's own 30 s ACP bound, so the host always
+  // answers first — `injected` or the definitive `steer_timeout` refusal.
+  "session.steer": {
+    maxAttempts: 3,
+    backoffBaseMs: 500,
+    driverless: false,
+    timeoutMs: 45_000,
+  },
   "session.cancel": {
     maxAttempts: 3,
     backoffBaseMs: 500,

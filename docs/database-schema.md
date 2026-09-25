@@ -2524,7 +2524,7 @@ uses the run lock to allocate an ordinal and retain the original input.
 | --- | --- |
 | `id`, `run_id`, `ordinal` | Server-generated ID, owning agent run and immutable run-local order. |
 | `variant`, `logical_key`, `prompt` | Immutable operation kind (`initial`, `resume`, `rework`, `live_message`, `persistent_message`, `consensus_draft` since migration `0156_consensus_draft_turn`, and `steer` since migration `0180_agent_turn_steering`), same-run retry key and original input; prompts are private server data and never logged. |
-| `state` | `queued` → `claimed` → `dispatched` → `applied`; any unfinished state may become `superseded`. A `steer` row never passes through `claimed`: `queued → dispatched → applied \| superseded`, all within the issue transaction and its settlement. |
+| `state` | `queued` → `claimed` → `dispatched` → `applied`; any unfinished state may become `superseded`. A `steer` row is inserted `dispatched` (bound to its `session.steer` command in the issue transaction) and ends `applied \| superseded`; it is never `queued` or `claimed`. |
 | `parent_turn_id` | **(migration `0180`, ADR-182)** Set exactly for `variant = 'steer'` (`agent_turns_steer_parent_check`): the dispatched turn the message was injected into. Self-FK `ON DELETE CASCADE` (same run). |
 | `execution_assignment_id`, `assignment_epoch`, `run_session_id` | All null while queued; fixed together on claim and checked against the owning run. |
 | `incarnation_id`, `command_id` | Fixed together at prompt admission; the command must match the exact turn, variant, ordinal, assignment and incarnation. |
@@ -2540,7 +2540,12 @@ unique. A steer's `command_id` is its `session.steer` ledger row; a refusal
 supersedes it and inserts a successor `live_message | persistent_message` whose
 `logical_key` is `message:requeue:<steerTurnId>` (ADR-182).
 The due index covers unfinished turns. Postgres guards reject source/binding
-rewrites, phase regression and cross-run bindings. Run deletion cascades to its
+rewrites, phase regression and cross-run bindings. Migration `0180` extends
+the `guard_agent_turn_source` trigger: a `steer` row must bind an owner-less
+`session.steer` command on its parent's assignment and incarnation and name a
+non-steer parent of the same run (`agent_turns_steer_parent_scope`); every other
+variant keeps the agent-turn-owned `session.prompt` rule, and `parent_turn_id`
+joins the immutable source columns. Run deletion cascades to its
 turns; individual referenced assignments, sessions, incarnations and commands
 are restricted while retained by a turn.
 
