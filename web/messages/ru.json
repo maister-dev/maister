@@ -3906,6 +3906,7 @@
     "title": "Git-панель",
     "loading": "Читаю состояние git…",
     "loadFailed": "Не удалось прочитать состояние git.",
+    "membersOnly": "Git-состояние видно только участникам проекта.",
     "cancel": "Отмена",
     "publicChip": "Опубликовано как {remote}/{branch}",
     "prChip": "PR #{number} · {state}",

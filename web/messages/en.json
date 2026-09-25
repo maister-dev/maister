@@ -3906,6 +3906,7 @@
     "title": "Git panel",
     "loading": "Reading the git state…",
     "loadFailed": "Could not read the git state.",
+    "membersOnly": "The git state is shown to project members only.",
     "cancel": "Cancel",
     "publicChip": "Published as {remote}/{branch}",
     "prChip": "PR #{number} · {state}",

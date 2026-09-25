@@ -246,6 +246,9 @@ export function WorkbenchGitPanel({
   const feedback = useFeedback();
   const [state, setState] = useState<GitState | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
+  // `git-state` is member-level (`recoverRun`): a viewer's 403 is a role, not
+  // a failure.
+  const [membersOnly, setMembersOnly] = useState(false);
   const [busy, setBusy] = useState<WorkbenchGitActionId | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Typed input lives OUTSIDE the fetched state, so a git-state refresh never
@@ -293,6 +296,11 @@ export function WorkbenchGitPanel({
       const res = await fetch(`/api/runs/${runId}/git-state`);
 
       if (reqId !== reqIdRef.current) return;
+      if (res.status === 403) {
+        setMembersOnly(true);
+
+        return;
+      }
       if (!res.ok) {
         setLoadFailed(true);
 
@@ -652,9 +660,18 @@ export function WorkbenchGitPanel({
         ) : null}
       </header>
 
-      {!state && !loadFailed ? (
+      {!state && !loadFailed && !membersOnly ? (
         <p aria-busy="true" className="font-mono text-[10px] text-mute">
           {t("loading")}
+        </p>
+      ) : null}
+      {membersOnly ? (
+        <p
+          className="m-0 font-mono text-[10px] text-mute"
+          data-testid="git-panel-members-only"
+          role="status"
+        >
+          {t("membersOnly")}
         </p>
       ) : null}
       {loadFailed ? (

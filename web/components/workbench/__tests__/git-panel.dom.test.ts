@@ -139,6 +139,8 @@ function json(body: unknown, status = 200): Response {
 let calls: FetchCall[];
 let states: Array<Record<string, unknown>>;
 let mutation: (call: FetchCall) => Response;
+// The status every git-state read answers with (200 serves `states`).
+let gitStateStatus: number;
 
 function installFetch(): void {
   calls = [];
@@ -156,6 +158,13 @@ function installFetch(): void {
       calls.push(call);
 
       if (method === "GET" && url.endsWith(`/api/runs/${RUN}/git-state`)) {
+        if (gitStateStatus !== 200) {
+          return json(
+            { code: gitStateStatus === 403 ? "UNAUTHORIZED" : "CRASH" },
+            gitStateStatus,
+          );
+        }
+
         return json(states.length > 1 ? states.shift()! : states[0]);
       }
 
@@ -247,6 +256,7 @@ beforeEach(() => {
   feedbackError.mockReset();
   states = [gitState()];
   mutation = () => json({ ok: true });
+  gitStateStatus = 200;
   installFetch();
   Object.defineProperty(navigator, "clipboard", {
     configurable: true,
@@ -269,6 +279,30 @@ describe("WorkbenchGitPanel", () => {
 
     expect(gets()).toHaveLength(1);
     expect(must("git-panel").textContent).toContain(INTERNAL);
+  });
+
+  // The route answers 403 below `recoverRun`: a viewer sees why, not an error.
+  it("shows a viewer the members-only state when git-state answers 403", async () => {
+    gitStateStatus = 403;
+    render();
+    await settle();
+
+    expect(must("git-panel-members-only").textContent).toBe(
+      "workbenchGit.membersOnly",
+    );
+    expect(document.querySelector('[role="alert"]')).toBeNull();
+    expect(byTestId("git-panel-section-tree")).toBeNull();
+  });
+
+  it("still reads any other failed read as a load failure", async () => {
+    gitStateStatus = 500;
+    render();
+    await settle();
+
+    expect(byTestId("git-panel-members-only")).toBeNull();
+    expect(document.querySelector('[role="alert"]')?.textContent).toBe(
+      "workbenchGit.loadFailed",
+    );
   });
 
   it("disables every action while another writer owns the worktree, with the reason", async () => {

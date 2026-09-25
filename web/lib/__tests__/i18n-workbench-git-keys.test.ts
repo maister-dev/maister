@@ -83,6 +83,7 @@ const PANEL_KEYS = [
   "title",
   "loading",
   "loadFailed",
+  "membersOnly",
   "cancel",
   "publicChip",
   "prChip",
