@@ -256,4 +256,34 @@ describe("RunInspector", () => {
     expect(html).not.toContain("Terminate");
     expect(html).not.toMatch(/<span[^>]*>Publish<\/span>/);
   });
+
+  // A disabled item's link still opens its panel section (C34), so it must not
+  // announce itself as disabled: its reason describes it instead.
+  it("never marks a working link aria-disabled; the reason describes it", () => {
+    const html = renderToStaticMarkup(
+      createElement(RunInspector, {
+        runId: "run-1",
+        labels: LABELS,
+        facts: [],
+        changeSummary: null,
+        actions: [
+          {
+            id: "update",
+            label: "Update",
+            href: "/runs/run-1?git=update",
+            disabled: true,
+            disabledReason: "Another operation owns the worktree",
+          },
+        ],
+      }),
+    );
+
+    expect(html).not.toContain("aria-disabled");
+    expect(html).toMatch(
+      /<a aria-describedby="run-inspector-action-update-reason"[^>]*href="\/runs\/run-1\?git=update"/,
+    );
+    expect(html).toMatch(
+      /<p[^>]*id="run-inspector-action-update-reason"[^>]*>Another operation owns the worktree<\/p>/,
+    );
+  });
 });

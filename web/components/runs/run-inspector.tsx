@@ -183,6 +183,7 @@ function InspectorActionItem({
   danger?: boolean;
 }): ReactElement {
   const Icon = actionIcon(action.id);
+  const reasonId = `run-inspector-action-${action.id}-reason`;
 
   return (
     <li
@@ -200,8 +201,10 @@ function InspectorActionItem({
         )}
       />
       <div className="min-w-0">
+        {/* C34: a disabled item still opens its panel section, so the link is
+            never `aria-disabled` — its reason describes it instead. */}
         <a
-          aria-disabled={action.disabled ? "true" : undefined}
+          aria-describedby={action.disabled ? reasonId : undefined}
           className={clsx(
             "text-[13px] font-semibold hover:underline",
             danger ? "text-[#d9534f]" : "text-ink",
@@ -215,7 +218,7 @@ function InspectorActionItem({
           <p className="m-0 mt-1 text-[12px] text-mute">{action.description}</p>
         ) : null}
         {action.disabled ? (
-          <p className="m-0 mt-1 font-mono text-[10px] text-mute">
+          <p className="m-0 mt-1 font-mono text-[10px] text-mute" id={reasonId}>
             {action.disabledReason ?? labels.disabled}
           </p>
         ) : null}
