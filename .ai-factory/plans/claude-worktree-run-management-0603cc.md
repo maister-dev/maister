@@ -2143,7 +2143,7 @@ green.
 
 **Post-review fixes (`/aif-review` of the whole branch, 2026-09-25; the owner:
 fix now, every finding).** Five MAJOR, eleven MINOR, plus one gap found while
-fixing them. One commit per finding. Each guard was falsified: reverted, seen
+fixing them (and one regression caught in self-review, Commit 37). One commit per finding. Each guard was falsified: reverted, seen
 red, restored.
 
 | # | Finding | Commit |
@@ -2154,7 +2154,7 @@ red, restored.
 | M4 | The scratch PR target branch had no test, and the seed wrote no `scratch_runs` row. The fix: `target_locked`, and the panel's target field is read-only | 23 `6d33107e` |
 | M5 | The facts loader's degrade path had no test. Found by the test: a failed probe hid Re-attach | 24 `bbb687f7` |
 | m6 | The publish pushed without re-proving its lease | 25 `6fd7c35d` |
-| m7 | ABA: HumanWorking claims re-checked only the status → `requireReworkClaimOwner` under the lock, in the lifecycle and sync claims | 26 `7ad5cc51` |
+| m7 | ABA: HumanWorking claims re-checked only the status → `requireReworkClaimOwner` under the lock, in the lifecycle and sync claims | 26 `7ad5cc51`, 37 `2e09ad7c` (26 also gated the reconciler's actor-less claim; 37 exempts system callers and makes every workbench call name its actor) |
 | m8 | The "who holds the tree" rule duplicated in facts.ts → `workbenchClaimHolder` | 27 `77b9ab6a` |
 | m9 | The sync and promote routes copied the D24 body → `maisterErrorBody` | 28 `7cbdefb9` |
 | m10 | Bare `getDb()` in the git service → the injected `db` | 29 `541dee65` |
