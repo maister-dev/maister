@@ -5,12 +5,15 @@ import type {
   OpenExecutionCommands,
   PoisonedExecutionConsumer,
 } from "@/types/execution-host-observability";
+import type { RuntimeEventStreamCloses } from "@/types/platform-status";
 
 import {
   isHostBacklogLagEligible,
   LAG_BACKLOG_THRESHOLD,
   LAG_CONSECUTIVE_SWEEPS,
 } from "./lag";
+
+import { RUNTIME_EVENT_CLOSE_REASONS } from "@/types/platform-status";
 
 const DEFAULT_MAX_SAMPLE_GAP_MS = 120_000;
 const MAX_OBSERVATION_BYTES = 65_536;
@@ -44,6 +47,10 @@ export type LagObservationSample = Readonly<{
         status: "available";
         unacknowledgedCount: number;
         oldestUnacknowledgedAgeMs: number | null;
+        // ADR-167 amendment 2026-09-25: carried only when the host reports
+        // them. Monotonic within one bootId; no verdict reads them.
+        subscriberPauses?: number;
+        closes?: RuntimeEventStreamCloses;
       }>
     | Readonly<{ status: "unsupported" | "unavailable" }>;
   projectionBacklog:
@@ -392,8 +399,18 @@ function isBacklogSource(value: unknown, availableKey: string): boolean {
     Number.isInteger(value.unacknowledgedCount) &&
     value.unacknowledgedCount >= 0 &&
     (value.oldestUnacknowledgedAgeMs === null ||
-      typeof value.oldestUnacknowledgedAgeMs === "number")
+      typeof value.oldestUnacknowledgedAgeMs === "number") &&
+    (value.subscriberPauses === undefined || isCount(value.subscriberPauses)) &&
+    (value.closes === undefined ||
+      (isRecord(value.closes) &&
+        RUNTIME_EVENT_CLOSE_REASONS.every((reason) =>
+          isCount((value.closes as Record<string, unknown>)[reason]),
+        )))
   );
+}
+
+function isCount(value: unknown): boolean {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 
 // Validates EVERY member the reducer later reads. A shallow check let a
@@ -536,6 +553,12 @@ export function createExecutionObservability(
           unacknowledgedCount: stream.hostTelemetry.unacknowledgedCount,
           oldestUnacknowledgedAgeMs:
             stream.hostTelemetry.oldestUnacknowledgedAgeMs,
+          ...(stream.hostTelemetry.subscriberPauses === null
+            ? {}
+            : { subscriberPauses: stream.hostTelemetry.subscriberPauses }),
+          ...(stream.hostTelemetry.closes === null
+            ? {}
+            : { closes: { ...stream.hostTelemetry.closes } }),
         }
       : {
           status:

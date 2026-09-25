@@ -51,6 +51,9 @@ test("admin sees event-plane diagnostics, repair evidence, and both rail links",
   const eventId = randomUUID();
   const generation = randomUUID();
   const consumer = `e2e_projection_poison_${randomUUID()}`;
+  // ADR-167 amendment 2026-09-25: a stream row of the spec's own (retired)
+  // host, so the stream panel renders the subscriber pause/close cells.
+  const streamHostId = randomUUID();
 
   await withE2EDb(async (pool) => {
     const client = await pool.connect();
@@ -86,6 +89,16 @@ test("admin sees event-plane diagnostics, repair evidence, and both rail links",
           }),
         ],
       );
+      await client.query(
+        `INSERT INTO execution_hosts (id, host_key, kind, display_name, transport, retired_at)
+         VALUES ($1, $2, 'local_direct', 'e2e stream host', '{"kind":"local_direct"}', clock_timestamp())`,
+        [streamHostId, `eh_${streamHostId.replaceAll("-", "")}`],
+      );
+      await client.query(
+        `INSERT INTO execution_event_streams (id, execution_host_id, stream_id, state)
+         VALUES ($1, $2, $3, 'closed')`,
+        [randomUUID(), streamHostId, randomUUID()],
+      );
       await client.query("COMMIT");
     } catch (error) {
       await client.query("ROLLBACK");
@@ -107,6 +120,10 @@ test("admin sees event-plane diagnostics, repair evidence, and both rail links",
       page.getByRole("heading", { name: "Projection consumers" }),
     ).toBeVisible();
     await expect(page.getByText("e2e_projection_failure")).toBeVisible();
+    // The e2e supervisor reports no stream telemetry, so the cells read as
+    // missing — never as a fabricated zero.
+    await expect(page.getByText("pauses: unavailable").first()).toBeVisible();
+    await expect(page.getByText("closes: unavailable").first()).toBeVisible();
     await expect(
       page.getByText(
         `pnpm --filter maister-web execution:projection:rearm --consumer '${consumer}' --run '${runId}' --event '${eventId}' --cursor 'null' --error-generation '${generation}'`,
@@ -134,6 +151,8 @@ test("admin sees event-plane diagnostics, repair evidence, and both rail links",
     await expect(
       page.getByRole("heading", { name: "Хост исполнения", level: 1 }),
     ).toBeVisible();
+    await expect(page.getByText("паузы: недоступно").first()).toBeVisible();
+    await expect(page.getByText("закрытия: недоступно").first()).toBeVisible();
 
     await page.setViewportSize({ width: 390, height: 844 });
     await page.getByTestId("mobile-rail-toggle").click();
@@ -149,6 +168,13 @@ test("admin sees event-plane diagnostics, repair evidence, and both rail links",
         [consumer, runId],
       );
       await pool.query("DELETE FROM execution_events WHERE id = $1", [eventId]);
+      await pool.query(
+        "DELETE FROM execution_event_streams WHERE execution_host_id = $1",
+        [streamHostId],
+      );
+      await pool.query("DELETE FROM execution_hosts WHERE id = $1", [
+        streamHostId,
+      ]);
     });
   }
 });

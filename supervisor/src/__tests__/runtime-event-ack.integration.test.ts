@@ -1,3 +1,5 @@
+import { get } from "node:http";
+
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
@@ -205,6 +207,74 @@ describe("Stage B host runtime-event acknowledgement", () => {
     expect(malformed.status).toBe(409);
     expect(await malformed.json()).toMatchObject({
       details: { reason: "invalid_event_sequence" },
+    });
+  });
+
+  it("closes a paused subscriber whose catch-up read fell below a floor pruned under it", async () => {
+    // ADR-167 amendment 2026-09-25 (EDGE-EVT-10): a second, lagging
+    // subscriber can fall below the floor another subscriber's ACK moved.
+    let clock = Date.now();
+
+    host = await bootHost({ now: () => new Date(clock) });
+    const streamId = host.hostState.getRuntimeEventStreamId();
+
+    for (let index = 0; index < 5_000; index += 1)
+      appendEvent("session.created");
+    const received: string[] = [];
+    const response = await new Promise<import("node:http").IncomingMessage>(
+      (resolve, reject) => {
+        const request = get(`${host!.url}/runtime-events`, { agent: false });
+
+        request.once("error", reject);
+        request.once("response", resolve);
+      },
+    );
+
+    response.pause();
+    response.setEncoding("utf8");
+    response.on("data", (chunk: string) => {
+      for (const match of chunk.matchAll(/^id: (\d+)$/gm))
+        received.push(match[1]!);
+    });
+    const ended = new Promise<void>((resolve) => response.once("end", resolve));
+
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    host.hostState.ackRuntimeEvents(streamId, "4999");
+    clock += host.hostState.limits.eventAckGraceMs + 1;
+    let pruned = 0;
+
+    // Pruning is bounded per call; drain it.
+    for (;;) {
+      const batch = host.hostState.pruneAcknowledgedRuntimeEvents(
+        new Date(clock - host.hostState.limits.eventAckGraceMs),
+      );
+
+      if (batch === 0) break;
+      pruned += batch;
+    }
+    expect(pruned).toBe(5_000);
+    response.resume();
+    await ended;
+    const health = await host.app.inject({
+      method: "GET",
+      url: "/health?includeStream=true",
+    });
+
+    // The connection ends at the floor; the frames already buffered arrive.
+    expect(received.length).toBeGreaterThan(0);
+    expect(received.length).toBeLessThan(5_000);
+    expect(health.json().stream.closes).toMatchObject({
+      floor: 1,
+      protocol: 0,
+    });
+    // The manager's reconnect then meets the open-time refusal (EDGE-EVT-03).
+    const reopened = await fetch(`${host.url}/runtime-events`, {
+      headers: { "Last-Event-ID": received.at(-1)! },
+    });
+
+    expect(reopened.status).toBe(409);
+    expect(await reopened.json()).toMatchObject({
+      details: { reason: "replay_floor_lost" },
     });
   });
 });

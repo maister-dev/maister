@@ -30,6 +30,7 @@ import {
   HOST_SPAN_ANOMALY_WINDOW_DAYS,
   HOST_SPAN_SETTLED_WINDOW_HOURS,
 } from "@/types/execution-host-observability";
+import { RUNTIME_EVENT_CLOSE_REASONS } from "@/types/platform-status";
 
 type Tone = "good" | "warn" | "danger" | "neutral";
 type Translate = Awaited<ReturnType<typeof getTranslations>>;
@@ -281,6 +282,19 @@ function StreamsPanel({
                     {span(
                       stream.hostTelemetry?.oldestUnacknowledgedAgeMs ?? null,
                     )}
+                  </div>
+                  <div className="mt-1 text-mute">
+                    {t("streams.pauses")}:{" "}
+                    {stream.hostTelemetry?.subscriberPauses ?? missing}
+                  </div>
+                  <div className="text-mute" title={t("streams.closesLegend")}>
+                    {t("streams.closes")}:{" "}
+                    {stream.hostTelemetry?.closes
+                      ? RUNTIME_EVENT_CLOSE_REASONS.map(
+                          (reason) =>
+                            `${t(`closeReason.${reason}`)} ${stream.hostTelemetry!.closes![reason]}`,
+                        ).join(" · ")
+                      : missing}
                   </div>
                 </td>
                 <td className="px-3 py-3 font-mono text-xs leading-5">

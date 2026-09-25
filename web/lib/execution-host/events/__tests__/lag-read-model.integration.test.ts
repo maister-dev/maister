@@ -304,6 +304,69 @@ describe("execution event lag read model", () => {
     });
   });
 
+  it("H4: carries the host's subscriber counters to the admin model and the sweep summary with the boot id", async () => {
+    if (health.kind !== "ready") throw new Error("fixture health is ready");
+    const closes = { disconnect: 1, protocol: 0, floor: 0, shutdown: 0 };
+    const current: PlatformStatus = {
+      ...health,
+      health: {
+        ...health.health,
+        stream: { ...health.health.stream!, subscriberPauses: 1, closes },
+      },
+    };
+    const model = await collectExecutionEventLag({
+      db: database.db,
+      health: current,
+      now: NOW,
+    });
+    const observation = createExecutionObservability({
+      attemptId: "h4-attempt",
+      observerId: "h4-observer",
+      model,
+      previous: null,
+      workers: {},
+      impasse: 0,
+      lagAgeMs: 120_000,
+      maxSampleGapMs: 120_000,
+    });
+
+    expect(model.streams[0]!.hostTelemetry).toMatchObject({
+      subscriberPauses: 1,
+      closes,
+      bootId: BOOT_ID,
+    });
+    expect(observation.stream).toMatchObject({
+      identity: { bootId: BOOT_ID },
+      hostBacklog: { status: "available", subscriberPauses: 1, closes },
+    });
+    // An older host omits them: unknown on the admin page, absent from the
+    // summary — never a fabricated zero.
+    const older = await collectExecutionEventLag({
+      db: database.db,
+      health,
+      now: NOW,
+    });
+    const olderObservation = createExecutionObservability({
+      attemptId: "h4-older",
+      observerId: "h4-observer",
+      model: older,
+      previous: null,
+      workers: {},
+      impasse: 0,
+      lagAgeMs: 120_000,
+      maxSampleGapMs: 120_000,
+    });
+
+    expect(older.streams[0]!.hostTelemetry).toMatchObject({
+      subscriberPauses: null,
+      closes: null,
+    });
+    expect(olderObservation.stream?.hostBacklog).not.toHaveProperty(
+      "subscriberPauses",
+    );
+    expect(olderObservation.stream?.hostBacklog).not.toHaveProperty("closes");
+  });
+
   it("reports a cursor ahead of its accepted horizon instead of clamping it healthy", async () => {
     await database.db.execute(sql`
       UPDATE execution_event_consumers

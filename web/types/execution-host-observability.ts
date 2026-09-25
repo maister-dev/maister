@@ -1,4 +1,7 @@
-import type { SupervisorEventStreamHealth } from "@/types/platform-status";
+import type {
+  RuntimeEventStreamCloses,
+  SupervisorEventStreamHealth,
+} from "@/types/platform-status";
 
 export type StreamLagDiagnostic =
   | "host_head_behind_manager"
@@ -31,7 +34,10 @@ export type ExecutionEventStreamLag = Readonly<{
   claimOwner: string | null;
   claimExpiresAt: string | null;
   hostTelemetry:
-    | (SupervisorEventStreamHealth & {
+    | (Omit<SupervisorEventStreamHealth, "subscriberPauses" | "closes"> & {
+        /** Null when the host did not report subscriber telemetry. */
+        subscriberPauses: number | null;
+        closes: RuntimeEventStreamCloses | null;
         sampledAt: string;
         bootId: string;
       })

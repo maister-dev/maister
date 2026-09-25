@@ -378,6 +378,28 @@ describe("checkSupervisorHealth", () => {
     });
   });
 
+  it("passes a current host's subscriber counters through", async () => {
+    const stream = {
+      streamId: "1d243f70-235f-47bd-804b-33aa3c8c78db",
+      headSequence: "42",
+      unacknowledgedCount: 0,
+      retainedCount: 8,
+      pressured: false,
+      oldestUnacknowledgedAgeMs: null,
+      subscriberPauses: 3,
+      closes: { disconnect: 1, protocol: 0, floor: 0, shutdown: 2 },
+    };
+
+    mockOnce(
+      new Response(JSON.stringify({ ...readyHealth, stream }), { status: 200 }),
+    );
+
+    await expect(checkSupervisorHealth()).resolves.toMatchObject({
+      kind: "ready",
+      health: { stream },
+    });
+  });
+
   it("summarizes an aged host backlog without changing ready status", async () => {
     const health = {
       ...readyHealth,
@@ -521,6 +543,14 @@ describe("checkSupervisorHealth", () => {
       { ...validStream, retainedCount: 1.5 },
       { ...validStream, retainedCount: Number.MAX_SAFE_INTEGER + 1 },
       { ...validStream, oldestUnacknowledgedAgeMs: -1 },
+      // ADR-167 amendment 2026-09-25: optional, but validated when present.
+      { ...validStream, subscriberPauses: -1 },
+      { ...validStream, subscriberPauses: 1.5 },
+      {
+        ...validStream,
+        closes: { disconnect: 0, protocol: -1, floor: 0, shutdown: 0 },
+      },
+      { ...validStream, closes: { disconnect: 0 } },
     ];
 
     for (const stream of invalidStreams) {

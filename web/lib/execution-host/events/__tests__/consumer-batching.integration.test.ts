@@ -193,10 +193,9 @@ async function startCase(name: string): Promise<Case> {
 }
 
 describe("batched runtime-event consumer on a real supervisor", () => {
-  it("I6: a burst of 3N events is acknowledged once per batch, never per event", async () => {
+  it("I6: a burst of 3N events commits as three batches with one ACK each", async () => {
     const saved = process.env.MAISTER_EVENT_INGEST_BATCH_ROWS;
-    // N small enough that 3N fits one host replay page: the burst then reaches
-    // the manager on ONE connection whatever the host's paging does.
+    // A small N keeps the burst quick to produce; the bound is the ratio.
     const N = 100;
 
     process.env.MAISTER_EVENT_INGEST_BATCH_ROWS = String(N);
@@ -210,34 +209,23 @@ describe("batched runtime-event consumer on a real supervisor", () => {
     while ((await host.head()) + 1n < BigInt(3 * N)) await host.emit();
     expect(await host.head()).toBe(BigInt(3 * N - 1));
     const counting = countingTransport(createLocalDirectTransport());
-    const totals = { received: 0, batches: 0, acknowledged: 0, passes: 0 };
+    const summary = await consumeRuntimeEventStreamOnce({
+      db,
+      executionHostId: host.hostId,
+      transport: counting.transport,
+      owner: "i6-consumer",
+      maxEvents: 3 * N,
+    });
 
-    // Until the host serves a whole burst on one connection (T7) it may end
-    // the stream early; every pass still acknowledges per batch.
-    while (totals.received < 3 * N && totals.passes < 20) {
-      const pass = await consumeRuntimeEventStreamOnce({
-        db,
-        executionHostId: host.hostId,
-        transport: counting.transport,
-        owner: "i6-consumer",
-        maxEvents: 3 * N - totals.received,
-      });
-
-      expect(pass.reconnectRequired).toBe(false);
-      totals.received += pass.received;
-      totals.batches += pass.batches;
-      totals.acknowledged += pass.acknowledged;
-      totals.passes += 1;
-    }
-
-    expect(totals.received).toBe(3 * N);
-    expect(counting.counts.ackRequests).toBe(totals.acknowledged);
-    // One ACK per committed batch at most; a connection the host ends early
-    // splits at most one batch.
-    expect(totals.acknowledged).toBeLessThanOrEqual(totals.batches);
-    expect(totals.batches).toBeLessThanOrEqual(
-      3 + counting.counts.streamOpens - 1,
-    );
+    // The host serves the whole burst on one connection (it pauses a full
+    // socket instead of closing it), so the batches are exactly N rows each.
+    expect(summary).toMatchObject({
+      received: 3 * N,
+      batches: 3,
+      acknowledged: 3,
+      reconnectRequired: false,
+    });
+    expect(counting.counts).toMatchObject({ streamOpens: 1, ackRequests: 3 });
   });
 
   it("I4a: a trickle commits within T and never reads as a stall", async () => {

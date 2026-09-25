@@ -90,6 +90,7 @@ import {
   RuntimeEventSpanQuerySchema,
   type RuntimeEventSpan,
 } from "./runtime-events";
+import { RuntimeEventSubscribers } from "./runtime-event-subscribers";
 import { spawnSession } from "./spawn";
 import {
   AdoptWorkspacePayloadSchema,
@@ -158,7 +159,6 @@ export type CheckpointResponse = {
 export type InputBody = z.infer<typeof InputBodySchema>;
 
 const DEFAULT_KILL_GRACE_MS = 5_000;
-const MAX_RUNTIME_EVENT_SSE_PENDING = 500;
 const SUPERVISOR_STARTED_AT_MS = Date.now();
 const SUPERVISOR_VERSION = process.env.npm_package_version ?? "0.0.1";
 const DIAGNOSTIC_ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -218,6 +218,9 @@ export type RegisterRoutesOptions = {
   // main.ts (tests build their own).
   hostState: HostState;
   workspaceRoots: string[];
+  // ADR-167 amendment 2026-09-25: the per-boot `/runtime-events` subscriber
+  // registry. Injected only so a suite can read what a subscriber buffers.
+  runtimeEventSubscribers?: RuntimeEventSubscribers;
 };
 
 type SessionIdParams = { Params: { id: string } };
@@ -553,6 +556,15 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
   );
 
   app.addHook("onClose", async () => unsubscribeStorageFailure());
+  const runtimeEventSubscribers =
+    opts.runtimeEventSubscribers ?? new RuntimeEventSubscribers(logger);
+
+  // preClose, not onClose: Fastify's server close waits for open sockets
+  // before any onClose hook runs, so a paused subscriber would be forced shut
+  // and counted as a disconnect. Ending it here counts it as shutdown.
+  app.addHook("preClose", async () =>
+    runtimeEventSubscribers.closeAll("shutdown"),
+  );
   // D6 ordering invariant: `turn_lost` repair runs here, before the retirement
   // route below exists, so no reclamation can precede it. Boot no longer prunes
   // receipts at all — the only reclamation is that explicit handshake.
@@ -1655,7 +1667,10 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
 
     if (includeStream) {
       try {
-        stream = hostState.runtimeEventHealthSnapshot();
+        stream = {
+          ...hostState.runtimeEventHealthSnapshot(),
+          ...runtimeEventSubscribers.counters(),
+        };
       } catch (cause) {
         logger.warn({ err: cause }, "runtime-event-health-snapshot-failed");
         // The block is never omitted — an opt-in failure must not impersonate
@@ -2027,16 +2042,19 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
   });
 
   // Stage B host-global outbox transport. `Last-Event-ID` is an exclusive
-  // decimal sequence cursor; reconnect first replays durable SQLite rows, then
-  // receives only committed appends. A slow socket is closed rather than
-  // buffering payloads: reconnect resumes from the same durable cursor.
+  // decimal sequence cursor. One connection pages durable SQLite rows until an
+  // empty page, then receives committed appends live; a socket that stops
+  // draining pauses the subscriber instead of closing it (ADR-167 amendment
+  // 2026-09-25), so the outbox — not host memory — is the buffer.
   app.get("/runtime-events", (req, reply) => {
     const afterSequence = parseRuntimeEventCursor(req.headers["last-event-id"]);
     const streamId = hostState.getRuntimeEventStreamId();
-    let replay: ReturnType<typeof hostState.runtimeEventsAfter>;
+    let firstPage: ReturnType<typeof hostState.runtimeEventsAfter>;
 
+    // Read before the headers so a lost floor or a replaced stream still
+    // answers 409 instead of an empty 200 stream.
     try {
-      replay = hostState.runtimeEventsAfter(streamId, afterSequence, 500);
+      firstPage = hostState.runtimeEventsAfter(streamId, afterSequence, 500);
     } catch (error) {
       throw runtimeEventSupervisorError(error);
     }
@@ -2048,83 +2066,22 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       "X-Accel-Buffering": "no",
     });
     reply.raw.flushHeaders();
-
-    let closed = false;
-    let replaying = true;
-    let highestSequence = afterSequence;
-    const pending: ReturnType<typeof hostState.runtimeEventsAfter> = [];
-    const send = (
-      event: ReturnType<typeof hostState.runtimeEventsAfter>[number],
-    ): void => {
-      if (closed) return;
-      if (
-        highestSequence !== null &&
-        BigInt(event.sequence) <= BigInt(highestSequence)
-      ) {
-        return;
-      }
-
-      const frame = `id: ${event.sequence}\nevent: ${String(event.envelope.eventType)}\ndata: ${JSON.stringify(event.envelope)}\n\n`;
-
-      highestSequence = event.sequence;
-      if (!reply.raw.write(frame)) {
-        close("slow_client");
-      }
-    };
-    const close = (
-      reason: "disconnect" | "slow_client" | "replay_page",
-    ): void => {
-      if (closed) return;
-      closed = true;
-      unsubscribe();
-      logger.info(
-        {
-          streamId,
-          afterSequence,
-          highestSequence,
-          reason,
-          pending: pending.length,
-        },
-        "runtime-event-stream-closed",
-      );
-      if (!reply.raw.writableEnded) reply.raw.end();
-    };
-    const unsubscribe = hostState.subscribeRuntimeEvents((event) => {
-      if (event.streamId !== streamId || closed) return;
-
-      if (replaying) {
-        if (pending.length >= MAX_RUNTIME_EVENT_SSE_PENDING) {
-          close("slow_client");
-
-          return;
-        }
-        pending.push(event);
-
-        return;
-      }
-      send(event);
+    const subscriber = runtimeEventSubscribers.open({
+      streamId,
+      afterSequence,
+      firstPage,
+      source: {
+        page: (cursor) => hostState.runtimeEventsAfter(streamId, cursor, 500),
+        subscribe: (listener) => hostState.subscribeRuntimeEvents(listener),
+      },
+      sink: reply.raw,
     });
 
-    req.raw.once("close", () => close("disconnect"));
+    req.raw.once("close", () => subscriber.close("disconnect"));
     logger.info(
-      { streamId, afterSequence, replayCount: replay.length },
+      { streamId, afterSequence, replayCount: firstPage.length },
       "runtime-event-stream-opened",
     );
-
-    for (const event of replay) send(event);
-    if (
-      !closed &&
-      highestSequence !== null &&
-      hostState.hasRuntimeEventsAfter(streamId, highestSequence)
-    ) {
-      close("replay_page");
-    }
-    replaying = false;
-    pending
-      .sort((left, right) =>
-        BigInt(left.sequence) < BigInt(right.sequence) ? -1 : 1,
-      )
-      .forEach(send);
   });
 
   // ADR-167 D5 amendment: the same retained envelopes the SSE replay serves,

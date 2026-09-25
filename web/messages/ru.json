@@ -3120,8 +3120,17 @@
       "observation": "вердикт последнего sweep",
       "observationMeta": "{observer}, выборка {sampledAt}",
       "unacked": "не ACK на хосте",
+      "pauses": "паузы",
+      "closes": "закрытия",
+      "closesLegend": "Почему хост закрывал соединения потока событий с момента запуска",
       "watermarkLegend": "R получено · C непрерывно · A подтверждено ACK",
       "lagLegend": "H→M хост до менеджера · G разрыв · A подтверждение ACK"
+    },
+    "closeReason": {
+      "disconnect": "разрыв",
+      "protocol": "протокол",
+      "floor": "граница",
+      "shutdown": "остановка"
     },
     "consumers": {
       "title": "Потребители проекций",

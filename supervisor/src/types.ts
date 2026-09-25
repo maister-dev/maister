@@ -1033,6 +1033,19 @@ export const ExecutionHostIdentitySchema = z
 
 export type ExecutionHostIdentity = z.infer<typeof ExecutionHostIdentitySchema>;
 
+// ADR-167 amendment 2026-09-25: why the host closed a `GET /runtime-events`
+// connection. Exhaustive — the counters, this schema, the OpenAPI schema and
+// the web's parser and admin labels each spell every member.
+export const RUNTIME_EVENT_CLOSE_REASONS = [
+  "disconnect",
+  "protocol",
+  "floor",
+  "shutdown",
+] as const;
+
+export type RuntimeEventCloseReason =
+  (typeof RUNTIME_EVENT_CLOSE_REASONS)[number];
+
 export const SupervisorEventStreamHealthSchema = z
   .object({
     streamId: z.string().min(1),
@@ -1041,6 +1054,17 @@ export const SupervisorEventStreamHealthSchema = z
     retainedCount: z.number().int().nonnegative().safe(),
     pressured: z.boolean(),
     oldestUnacknowledgedAgeMs: z.number().int().nonnegative().safe().nullable(),
+    // ADR-167 amendment 2026-09-25: `GET /runtime-events` subscriber
+    // telemetry since boot; never lifecycle authority.
+    subscriberPauses: z.number().int().nonnegative().safe(),
+    closes: z
+      .object({
+        disconnect: z.number().int().nonnegative().safe(),
+        protocol: z.number().int().nonnegative().safe(),
+        floor: z.number().int().nonnegative().safe(),
+        shutdown: z.number().int().nonnegative().safe(),
+      } satisfies Record<RuntimeEventCloseReason, z.ZodTypeAny>)
+      .strict(),
   })
   .strict()
   .superRefine((value, ctx) => {

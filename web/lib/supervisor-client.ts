@@ -3,6 +3,7 @@ import "server-only";
 import type {
   PlatformStatus,
   PlatformUnavailableReason,
+  RuntimeEventCloseReason,
 } from "@/types/platform-status";
 import type { AgentMcpServer } from "@/lib/capabilities/agent-map";
 import type { ContextMountSnapshot } from "@/lib/context-mounts/types";
@@ -352,6 +353,18 @@ const SupervisorHealthSchema = z
           .nonnegative()
           .safe()
           .nullable(),
+        // ADR-167 amendment 2026-09-25: optional so an older host, which
+        // omits them, still parses; validated whenever present.
+        subscriberPauses: z.number().int().nonnegative().safe().optional(),
+        closes: z
+          .object({
+            disconnect: z.number().int().nonnegative().safe(),
+            protocol: z.number().int().nonnegative().safe(),
+            floor: z.number().int().nonnegative().safe(),
+            shutdown: z.number().int().nonnegative().safe(),
+          } satisfies Record<RuntimeEventCloseReason, z.ZodTypeAny>)
+          .passthrough()
+          .optional(),
       })
       .passthrough()
       .superRefine((value, ctx) => {

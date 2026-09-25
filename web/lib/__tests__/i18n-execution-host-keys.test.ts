@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import en from "@/messages/en.json";
 import ru from "@/messages/ru.json";
 import { EXECUTION_HOST_READINESS } from "@/lib/execution-host/types";
+import { RUNTIME_EVENT_CLOSE_REASONS } from "@/types/platform-status";
 
 // ---------------------------------------------------------------------------
 // CONTRACT under test — the admin execution-host view renders enum MEMBERS,
@@ -76,6 +77,8 @@ const GROUPS: ReadonlyArray<readonly [readonly string[], readonly string[]]> = [
   [["adminExecutionHost", "workerState"], WORKER_STATES],
   [["adminExecutionHost", "verdict"], VERDICTS],
   [["adminExecutionHost", "driver"], DRIVERS],
+  // ADR-167 amendment 2026-09-25: the host's subscriber close reasons.
+  [["adminExecutionHost", "closeReason"], RUNTIME_EVENT_CLOSE_REASONS],
   // ADR-167 D5 amendment: the per-host host-span settlement counts.
   [["adminExecutionHost", "fields"], HOST_SPAN_KEYS],
   [["adminExecutionHost", "hostSpanHelp"], HOST_SPAN_KEYS],
