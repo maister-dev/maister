@@ -2141,6 +2141,30 @@ green.
 **Commit 18** — `fix(workbench-git): a commit needs no remote` (`/aif-verify` blocker 1)
 **Commit 19** — `docs(supervisor): publish stream_health_unavailable in the ReasonToken enum` (master's `29858e11` gap, surfaced by the post-merge supervisor lane)
 
+**Post-review fixes (`/aif-review` of the whole branch, 2026-09-25; the owner:
+fix now, every finding).** Five MAJOR, eleven MINOR, plus one gap found while
+fixing them. One commit per finding. Each guard was falsified: reverted, seen
+red, restored.
+
+| # | Finding | Commit |
+|---|---|---|
+| M1 | Force publish was unconfirmed, and its lease was re-read at retry time. The refusal now names `remoteHead` + `remoteRef`, the shared dialog confirms, and the retry leases exactly `expectedHead` (400 without it). The handoff branch never forces. | 20 `4eb9c6a1` |
+| M2 | `git-state` 403 read as a load failure → the members-only state | 21 `75ea59d0` |
+| M3 | ADR-181 prose inside the supervisor-code table of `error-taxonomy.md` | 22 `2e81928a` (with m15 and the rules GC line) |
+| M4 | The scratch PR target branch had no test, and the seed wrote no `scratch_runs` row. The fix: `target_locked`, and the panel's target field is read-only | 23 `6d33107e` |
+| M5 | The facts loader's degrade path had no test. Found by the test: a failed probe hid Re-attach | 24 `bbb687f7` |
+| m6 | The publish pushed without re-proving its lease | 25 `6fd7c35d` |
+| m7 | ABA: HumanWorking claims re-checked only the status → `requireReworkClaimOwner` under the lock, in the lifecycle and sync claims | 26 `7ad5cc51` |
+| m8 | The "who holds the tree" rule duplicated in facts.ts → `workbenchClaimHolder` | 27 `77b9ab6a` |
+| m9 | The sync and promote routes copied the D24 body → `maisterErrorBody` | 28 `7cbdefb9` |
+| m10 | Bare `getDb()` in the git service → the injected `db` | 29 `541dee65` |
+| m11 | `warnings` fetched, never rendered | 30 `2315f60f` |
+| m12 | Disabled inspector links carried `aria-disabled` while still navigating → `aria-describedby` | 31 `7fe7c192` |
+| m13 | A 1300-line panel → one component per section | 32 `d7bd874e` |
+| m14 | Text-only Handoff toggle → icon + `aria-expanded` | 33 `2b879f10`, 34 `52faebce` (33 was committed with its new test red; 34 fixes the test) |
+| m16 | A template without `{task_key}` could collide across tasks | 35 `1a73f06c` |
+| + | `branchNameSchema` accepted names git refuses. That became reachable once the operator types the public name. | 36 `c08bcbd7` |
+
 ---
 
 ## Refactor gates (the R in RED → GREEN → REFACTOR)
@@ -2372,6 +2396,22 @@ are put to the owner rather than widened silently:
   (D14, accepted); its comment's "capped by `MAISTER_MAX_CONCURRENT_RUNS`" was
   already loose (`Review` / `Crashed` hold no slot) and is looser now.
 
+- **Update with push drops remote-only commits without asking (found while
+  sweeping force paths for review finding M1; owner's call).**
+  - What happens: `syncRunTarget` force-pushes the rebased branch with an
+    explicit-SHA lease. That is ADR-141's rule, and ADR-181 D9 made it reachable
+    from the panel in every parked status. The lease is the `ls-remote` head
+    read at the moment of the update, not the head the operator saw.
+  - The effect: an update onto `target` or `base` with push replaces commits
+    that exist only on the public branch (for example a reviewer's fixup).
+  - What the panel shows: those commits as `published: behind N`, and the
+    "remote moved" hint when the tracking ref lags. The push itself asks
+    nothing.
+  - Option A: keep ADR-141's rule.
+  - Option B: when `behind > 0` and `onto` is not `published`, confirm in the
+    shared dialog and bind the lease to the head the panel read, as publish now
+    does.
+
 ---
 
 ## Unresolved questions (batch — ALL answered 2026-09-22, see Resolved questions)
@@ -2458,3 +2498,12 @@ are put to the owner rather than widened silently:
 |---|---|---|---|
 | 1 | The three verify blockers (Commit without a remote; the master sync + renumber; T5.5 vs master) | **`/aif-fix`, fix now** | Commits 16-18 |
 | 2 | `MOCK_ACP_HOLD_AFTER_CANCELLED` after the master sync | **drop it** | Commit 17 |
+| 3 | The final master sync: now or right before the merge | **right before the merge** | merge step |
+| 4 | Run `/aif-review` from this session | **no** — the owner invoked `/aif-review` of the whole branch directly | the review below |
+
+## Post-review decisions (owner, 2026-09-25, after `/aif-review`)
+
+| # | Question | Answer | Where it landed |
+|---|---|---|---|
+| 1 | Fix the MAJOR findings now, or together with codex's | **now** | Commits 20-36 |
+| 2 | MINOR too | **all** | Commits 20-36 |
