@@ -123,6 +123,7 @@ export async function discardWorkbenchChanges(
     workspaceId: workspace.id,
     operation: "discardChanges",
     expectedRunStatus: ctx.run.status,
+    actorUserId: ctx.viewerUserId,
   });
 
   try {
@@ -330,6 +331,7 @@ export async function reattachWorkbench(
     workspaceId: workspace.id,
     operation: "reattach",
     expectedRunStatus: ctx.run.status,
+    actorUserId: ctx.viewerUserId,
   });
   // Set once this attempt's `worktree add` landed and cleared again once its
   // provenance names the run: from then on the tree is an adoptable attempt
@@ -615,6 +617,7 @@ export async function openPullRequest(
     workspaceId: workspace.id,
     operation: "prOpen",
     expectedRunStatus: ctx.run.status,
+    actorUserId: ctx.viewerUserId,
   });
 
   try {

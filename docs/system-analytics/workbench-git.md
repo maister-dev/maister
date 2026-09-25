@@ -275,7 +275,12 @@ is `CONFLICT`, the rest `PRECONDITION`), and an unknown run is 404 with
   finalizePr` only when `viewerUserId` equals the open `review_rework_claim`
   row's `owner_user_id`; every other viewer sees `human-owned`, and cards/rail
   never expose `HumanWorking` git actions (enforced by the policy's owner arm
-  and `lifecycleActionsForWorkspace`'s null viewer).
+  and `lifecycleActionsForWorkspace`'s null viewer). Under the run's row lock
+  the lifecycle claim and the sync claim MUST re-check that the actor still
+  owns the open claim: a return and a re-claim between admission and claim
+  keep the status `HumanWorking` but change the owner, and the former owner
+  gets `PRECONDITION` `details.reason:"human_owned"` with nothing written
+  (enforced by `requireReworkClaimOwner`).
 - Every mutating action MUST run under the `workspaces.lifecycle_operation_*`
   claim, which MUST refuse a live promotion claim and decide on the admitted
   `runs.status` under the run's row lock, while `promoteRun` refuses any live

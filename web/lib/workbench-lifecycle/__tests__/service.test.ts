@@ -161,6 +161,7 @@ describe("workbench lifecycle service", () => {
       workspaceId: "workspace-1",
       operation: "archive",
       expectedRunStatus: "Review",
+      actorUserId: "user-1",
     });
     expect(d.recordArchive).toHaveBeenCalledWith({
       workspaceId: "workspace-1",
@@ -275,6 +276,7 @@ describe("workbench lifecycle service", () => {
       workspaceId: "workspace-1",
       operation: "discard",
       expectedRunStatus: "Crashed",
+      actorUserId: "user-1",
     });
     expect(d.recordDrop).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -505,6 +507,7 @@ describe("workbench lifecycle service", () => {
       workspaceId: "workspace-1",
       operation: "exportBranch",
       expectedRunStatus: "Review",
+      actorUserId: "user-1",
     });
     expect(d.finalizeLifecycleOperation).toHaveBeenCalledWith({
       workspaceId: "workspace-1",

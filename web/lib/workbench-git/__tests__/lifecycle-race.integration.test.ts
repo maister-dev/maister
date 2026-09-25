@@ -20,6 +20,7 @@ import {
   vi,
 } from "vitest";
 
+import * as fullSchema from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import {
   addRunWorktree,
@@ -65,6 +66,13 @@ const { exportWorkbenchBranch } = await import(
 );
 const { discardWorkbenchChanges } = await import("@/lib/workbench-git/service");
 const { depsFromOptions } = await import("@/lib/workbench-lifecycle/service");
+const { syncRunTarget } = await import("@/lib/runs/sync-target");
+const { claimTakeover } = await import("@/lib/flows/graph/ledger");
+const { REVIEW_REWORK_CLAIM_DECISION } = await import(
+  "@/lib/flows/graph/attempt-decisions"
+);
+
+const schema = fullSchema as unknown as Record<string, any>;
 
 // The default deps load `@/lib/authz` lazily, and vitest 2.1.9 skips a manual
 // mock when the importer's shared callstack already holds it: two racers taking
@@ -307,6 +315,145 @@ describe("a lifecycle claim against a status that moved", () => {
     expect(
       await gitIn(worktree, ["status", "--porcelain", "--", "feature.txt"]),
     ).not.toBe("");
+    expect(
+      (await workspaceRow(db, run.workspaceId)).lifecycleOperationState,
+    ).toBe("none");
+  });
+});
+
+// ADR-181 D2: a HumanWorking operation is admitted for the open rework claim's
+// owner. A release and a re-claim between the admission and the claim leave the
+// status `HumanWorking` — a status re-check under the lock cannot see that the
+// tree now belongs to someone else, so both claims re-check the OWNER there.
+describe("a HumanWorking claim that changed hands before the claim", () => {
+  const OWNER = "user-1";
+  const NEXT = "user-2";
+
+  async function claimedRun(i: number, dirty: boolean) {
+    for (const id of [OWNER, NEXT]) {
+      await db
+        .insert(schema.users)
+        .values({
+          id,
+          email: `${id}@maister.test`,
+          role: "member",
+          accountStatus: "active",
+          passwordHash: "x",
+        })
+        .onConflictDoNothing();
+    }
+
+    const branch = `maister/task-race-owner-${i}/attempt-1`;
+    const worktree = await addRunWorktree(root, repo.parent, branch);
+
+    if (dirty) {
+      await writeFile(join(worktree, "feature.txt"), "operator edit\n");
+    }
+
+    const seed = await seedWorkbenchRun(db, {
+      parentRepoPath: repo.parent,
+      worktreePath: worktree,
+      branch,
+      baseCommit: repo.baseSha,
+      status: "HumanWorking",
+      taskKey: "RACE",
+      task: { number: 300 + i, title: `owner race ${i}` },
+    });
+    const claim = await claimTakeover({
+      runId: seed.runId,
+      nodeId: "review",
+      userId: OWNER,
+      nodeType: "human",
+      decision: REVIEW_REWORK_CLAIM_DECISION,
+      db: db as never,
+    });
+
+    return { ...seed, branch, worktree, claimId: claim.id };
+  }
+
+  // Past the admission (the policy read OWNER's claim), before the claim: the
+  // owner returns the run and NEXT claims it again — same status, new owner.
+  function handOverAtTheDirtyCheck(run: { runId: string; claimId: string }) {
+    let handedOver = false;
+
+    vi.mocked(worktreeModule.statusPorcelain).mockImplementation(
+      async (args) => {
+        if (!handedOver) {
+          handedOver = true;
+          await testDatabase.pool.query(
+            `UPDATE node_attempts SET ended_at = now(), status = 'Succeeded' WHERE id = $1`,
+            [run.claimId],
+          );
+          await claimTakeover({
+            runId: run.runId,
+            nodeId: "review",
+            userId: NEXT,
+            nodeType: "human",
+            decision: REVIEW_REWORK_CLAIM_DECISION,
+            db: db as never,
+          });
+        }
+
+        return actual.statusPorcelain(args);
+      },
+    );
+
+    return () => handedOver;
+  }
+
+  it("refuses the former owner's discard as human_owned, touching nothing", async () => {
+    const run = await claimedRun(1, true);
+    const handedOver = handOverAtTheDirtyCheck(run);
+
+    const outcome = await discardWorkbenchChanges(run.runId, {
+      deps: raceDeps(),
+    }).catch((err: unknown) => err);
+
+    expect(handedOver()).toBe(true);
+    expect(outcome).toBeInstanceOf(MaisterError);
+    expect(outcome).toMatchObject({
+      code: "PRECONDITION",
+      details: { reason: "human_owned" },
+    });
+    expect(
+      await gitIn(repo.parent, [
+        "for-each-ref",
+        `refs/maister/rescue/${run.runId}/`,
+      ]),
+    ).toBe("");
+    expect(
+      await gitIn(run.worktree, ["status", "--porcelain", "--", "feature.txt"]),
+    ).not.toBe("");
+    expect(
+      (await workspaceRow(db, run.workspaceId)).lifecycleOperationState,
+    ).toBe("none");
+  });
+
+  it("refuses the former owner's update as human_owned, minting no sync attempt", async () => {
+    const run = await claimedRun(2, false);
+    const handedOver = handOverAtTheDirtyCheck(run);
+
+    const outcome = await syncRunTarget({
+      runId: run.runId,
+      admission: "workbench",
+      actor: { type: "user", id: OWNER },
+      db: db as never,
+    }).catch((err: unknown) => err);
+
+    expect(handedOver()).toBe(true);
+    expect(outcome).toBeInstanceOf(MaisterError);
+    expect(outcome).toMatchObject({
+      code: "PRECONDITION",
+      details: { reason: "human_owned" },
+    });
+    expect(
+      (
+        await testDatabase.pool.query(
+          `SELECT count(*)::int AS n FROM run_sync_attempts WHERE run_id = $1`,
+          [run.runId],
+        )
+      ).rows[0].n,
+    ).toBe(0);
     expect(
       (await workspaceRow(db, run.workspaceId)).lifecycleOperationState,
     ).toBe("none");

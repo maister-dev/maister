@@ -25,6 +25,7 @@ import {
 } from "@/lib/runs/sync-ref";
 import { promotionClaimTimeoutSeconds } from "@/lib/instance-config";
 import { isBranchPublished } from "@/lib/runs/branch-published";
+import { requireReworkClaimOwner } from "@/lib/runs/rework-claim";
 import { loadWorkbenchGitFacts } from "@/lib/workbench-git/facts";
 import {
   deriveWorkbenchGitActions,
@@ -917,6 +918,15 @@ export async function syncRunTarget(
       ws,
       admission,
     );
+    // ADR-181 D2: the policy admitted a `HumanWorking` update for the claim's
+    // owner — the locked status alone cannot tell that it changed hands since.
+    if (admission === "workbench" && lockedRun.status === "HumanWorking") {
+      await requireReworkClaimOwner(
+        runId,
+        input.actor.type === "user" ? input.actor.id : null,
+        tx,
+      );
+    }
 
     // (a) promotion↔sync fence — a promotion in progress or already done blocks a
     // sync. `reopened` is neither, so a reopened run passes through.

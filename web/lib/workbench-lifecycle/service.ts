@@ -25,6 +25,7 @@ import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import { emitDelegatedReviewIfChild } from "@/lib/runs/delegated-review-emit";
+import { requireReworkClaimOwner } from "@/lib/runs/rework-claim";
 import { requireRunProjectId } from "@/lib/runs/run-kind-invariants";
 import { DISPOSABLE_WORKSPACE_RUN_STATUSES } from "@/lib/runs/run-status-sets";
 import {
@@ -292,6 +293,7 @@ export type WorkbenchLifecycleDeps = {
     workspaceId: string;
     operation: LifecycleOperationName;
     expectedRunStatus: WorkbenchRunStatus;
+    actorUserId?: string | null;
   }) => Promise<LifecycleOperationClaim>;
   renewLifecycleOperationLease: (args: {
     workspaceId: string;
@@ -937,6 +939,7 @@ async function archiveWorkbenchForCtx(
     workspaceId: workspace.id,
     operation: "archive",
     expectedRunStatus: ctx.run.status,
+    actorUserId: ctx.viewerUserId,
   });
 
   try {
@@ -1125,6 +1128,7 @@ export async function snapshotWorkbenchCommit(
     workspaceId: workspace.id,
     operation: "snapshotCommit",
     expectedRunStatus: ctx.run.status,
+    actorUserId: ctx.viewerUserId,
   });
 
   try {
@@ -1277,6 +1281,7 @@ export async function createWorkbenchHandoffBranch(
     workspaceId: workspace.id,
     operation: "handoffBranch",
     expectedRunStatus: ctx.run.status,
+    actorUserId: ctx.viewerUserId,
   });
 
   try {
@@ -1436,6 +1441,7 @@ async function removeWorkbenchForCtx(
     workspaceId: workspace.id,
     operation,
     expectedRunStatus: ctx.run.status,
+    actorUserId: ctx.viewerUserId,
   });
 
   try {
@@ -1606,6 +1612,7 @@ export async function exportWorkbenchBranch(
     workspaceId: workspace.id,
     operation: "exportBranch",
     expectedRunStatus: ctx.run.status,
+    actorUserId: ctx.viewerUserId,
   });
 
   try {
@@ -2538,6 +2545,8 @@ export async function claimLifecycleOperation(args: {
   workspaceId: string;
   operation: LifecycleOperationName;
   expectedRunStatus: WorkbenchRunStatus;
+  // Who acts: a `HumanWorking` claim must still be theirs under the run lock.
+  actorUserId?: string | null;
 }): Promise<LifecycleOperationClaim> {
   const client = args.database ?? db();
 
@@ -2609,6 +2618,10 @@ export async function claimLifecycleOperation(args: {
         `run ${args.runId} is ${runStatus ?? "missing"}, not ${args.expectedRunStatus} — another operation moved it`,
         { details: { reason: "busy" } },
       );
+    }
+
+    if (runStatus === "HumanWorking") {
+      await requireReworkClaimOwner(args.runId, args.actorUserId, tx);
     }
 
     const attemptId = randomUUID();

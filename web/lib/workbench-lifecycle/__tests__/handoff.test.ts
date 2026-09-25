@@ -181,6 +181,7 @@ describe("workbench lifecycle handoff services", () => {
       workspaceId: "workspace-1",
       operation: "snapshotCommit",
       expectedRunStatus: "Review",
+      actorUserId: "user-1",
     });
     expect(d.snapshotDirtyWorktree).toHaveBeenCalledWith({
       worktreePath: "/tmp/maister/worktrees/run-1",
@@ -385,6 +386,7 @@ describe("workbench lifecycle handoff services", () => {
       workspaceId: "workspace-1",
       operation: "handoffBranch",
       expectedRunStatus: "Review",
+      actorUserId: "user-1",
     });
     expect(d.createBranchAtHead).toHaveBeenCalledWith({
       worktreePath: "/tmp/maister/worktrees/run-1",
