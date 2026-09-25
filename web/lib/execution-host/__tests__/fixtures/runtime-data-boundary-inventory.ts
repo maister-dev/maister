@@ -2383,6 +2383,7 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
     ["remoteAdd", false],
     ["remoteBranchExists", false],
     ["remoteBranchHead", false],
+    ["remoteOnlyCommitCount", false],
     ["remoteRemove", false],
     ["remoteSetUrl", false],
     ["remoteTrackingBranchHead", false],
