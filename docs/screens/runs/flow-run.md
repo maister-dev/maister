@@ -312,6 +312,13 @@ this screen owns only the surface. All copy comes from the `run` namespace.
   today offering only **Promote anyway**) gains **Sync branch** as a primary
   action beside **Promote anyway** in `web/components/runs/review-panel.tsx`.
   `run-header-promotion-action.tsx` carries NO sync affordance.
+- **Diverged-publication notice** (ADR-181 — Implemented) — a squashing PR
+  promotion refused because the PR branch holds commits the run does not
+  (`CONFLICT` `details.reason: publication_diverged`) is NOT the merge-conflict
+  card: the review panel shows `review-publication-diverged`
+  (`run.publicationDiverged`) with **Sync branch** into the git panel's Update,
+  where the operator updates onto the publication first; the header's one-click
+  Promote reports the same copy. Any other `CONFLICT` keeps the conflict card.
 - **`ai_rebase_merge` promote dialog** — when the resolved promotion mode is
   `ai_rebase_merge`, the promote dialog gains an **auto-finalize after resolve**
   checkbox, **default OFF** (two-step default: a resolved conflict returns the run

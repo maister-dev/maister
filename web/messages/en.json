@@ -2337,6 +2337,7 @@
     "prConflicts": "PR conflicts",
     "prReopen": "Reopen pull request",
     "targetDrift": "The target branch advanced since this review. Re-review the updated diff, or promote anyway.",
+    "publicationDiverged": "The pull request's branch has commits this run does not — promoting would drop them, so nothing was changed. Update onto the published branch in the git panel first, then promote again.",
     "promoteAnyway": "Promote anyway",
     "relaunchToPromote": "This run predates branch targeting and has no promotion metadata. Relaunch the task to promote it.",
     "diffTruncated": "This diff is too large to show in full (over 4 MiB) and was truncated. Review the complete change in the pull request or via `git diff` before promoting.",
@@ -3991,7 +3992,12 @@
         "conflict": "Conflict: the update was aborted and the worktree is back at its commit.",
         "agent_launched": "Conflict: the AI resolver is working on it."
       },
-      "remoteMoved": "The published branch moved on the remote — update onto the publication to bring those commits in."
+      "remoteMoved": "The published branch moved on the remote — update onto the publication to bring those commits in.",
+      "divergedTitle": "The published branch has commits this run does not",
+      "divergedBody": "{ref} is at {head}, with {count, plural, one {# commit} other {# commits}} this run's branch does not have — a reviewer's fixup, a suggestion committed on the pull request. Pushing this update would drop them. Update onto the publication first to bring them in, or overwrite them.",
+      "divergedPr": "Pull request #{number} is open on this branch — those commits would leave it too.",
+      "divergedOnto": "Update onto the publication first",
+      "divergedConfirm": "Overwrite {count, plural, one {# commit} other {# commits}}"
     },
     "pr": {
       "title": "Title",
@@ -4088,6 +4094,7 @@
       "workspace_git_identity_invalid": "Configure user.name and user.email for the server user, then retry.",
       "workspace_preservation_failed": "The worktree could not be saved first, so nothing was changed.",
       "non_fast_forward": "The remote branch has newer commits.",
+      "publication_diverged": "The published branch has commits this run's branch does not — nothing was pushed. Update onto the publication first to keep them.",
       "PRECONDITION": "The run is not in a state that allows this.",
       "CONFLICT": "The current run state conflicts with this action.",
       "CONFIG": "The request was rejected as invalid.",

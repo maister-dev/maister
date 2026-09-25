@@ -98,3 +98,15 @@ export function isTargetDriftResponse(value: unknown): boolean {
     /target advanced/i.test(response.message)
   );
 }
+
+// ADR-181 (C): a squashing PR promotion refused because the PR branch holds
+// commits the run does not. It is a CONFLICT, but no merge conflict — the way
+// out is updating onto the publication, not resolving a merge.
+export function isPublicationDivergedResponse(value: unknown): boolean {
+  return (
+    !!value &&
+    typeof value === "object" &&
+    (value as { details?: { reason?: unknown } }).details?.reason ===
+      "publication_diverged"
+  );
+}

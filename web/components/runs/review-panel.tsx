@@ -19,6 +19,7 @@ import {
 import { resolveUiErrorMessageKey } from "@/lib/ui-error-message";
 import {
   buildPromotionRequestBody,
+  isPublicationDivergedResponse,
   isTargetDriftResponse,
   promotionBlockReason,
   type PromotionDeliveryPolicy,
@@ -166,6 +167,9 @@ export function ReviewPanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [drift, setDrift] = useState(driftDetected);
+  // ADR-181 (C): the last Promote was refused — the PR branch holds commits
+  // the run does not.
+  const [diverged, setDiverged] = useState(false);
   const [truncationAck, setTruncationAck] = useState(false);
   const [autoFinalize, setAutoFinalize] = useState(false);
   const syncClaimed = sync?.inProgress != null;
@@ -202,6 +206,7 @@ export function ReviewPanel({
 
     setBusy(true);
     setError(null);
+    setDiverged(false);
 
     try {
       const res = await fetch(`/api/runs/${runId}/promote`, {
@@ -224,6 +229,12 @@ export function ReviewPanel({
       if (isTargetDriftResponse(data)) {
         setDrift(true);
         router.refresh();
+
+        return;
+      }
+
+      if (isPublicationDivergedResponse(data)) {
+        setDiverged(true);
 
         return;
       }
@@ -597,6 +608,29 @@ export function ReviewPanel({
             type="hidden"
             value={reviewedTargetCommit ?? ""}
           />
+
+          {diverged ? (
+            <div
+              className="rounded-[10px] border border-amber-line bg-amber-soft p-4"
+              data-testid="review-publication-diverged"
+              role="alert"
+            >
+              <p className="mb-3 font-mono text-[11px] leading-[1.5] text-amber">
+                {t("publicationDiverged")}
+              </p>
+              {updateHref ? (
+                <Link
+                  className={syncLink}
+                  data-testid="review-publication-diverged-update"
+                  href={updateHref}
+                  scroll={false}
+                >
+                  <ArrowPathIcon aria-hidden="true" className="h-3.5 w-3.5" />
+                  {labels.syncBranch}
+                </Link>
+              ) : null}
+            </div>
+          ) : null}
 
           {error ? (
             <p

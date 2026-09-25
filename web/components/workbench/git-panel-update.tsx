@@ -1,13 +1,17 @@
 import type { ReactElement } from "react";
 
-import { ArrowPathIcon } from "@heroicons/react/24/outline";
+import { ArrowPathIcon, ArrowUpTrayIcon } from "@heroicons/react/24/outline";
 import { useState } from "react";
 import { useTranslations } from "next-intl";
 import clsx from "clsx";
 
+import { ConfirmDialog } from "@/components/feedback/confirm-dialog";
 import {
+  button,
+  danger,
   fieldLabel,
   inputClass,
+  neutral,
   primary,
   Section,
   type GitSectionProps,
@@ -36,10 +40,13 @@ export type WorkbenchGitSyncDefaults = {
 };
 
 // ADR-181 D9: update onto base, target or the publication; a conflict leaves
-// the tree where it started and lists the paths.
+// the tree where it started and lists the paths. (C) An update whose push
+// would drop commits only the publication has is refused before anything
+// moves: the operator brings them in first, or overwrites exactly that head.
 export function GitUpdateSection({
   runId,
   state,
+  busy,
   dirtyCount,
   mutate,
   actionButton,
@@ -60,27 +67,63 @@ export function GitUpdateSection({
   const [resolver, setResolver] = useState(true);
   const [runnerId, setRunnerId] = useState(syncDefaults?.defaultRunnerId ?? "");
   const [updateResult, setUpdateResult] = useState<UpdateResult | null>(null);
+  // (C) the refused update and what its push would drop, while the operator
+  // decides.
+  const [diverged, setDiverged] = useState<{
+    ref: string;
+    head: string;
+    count: number;
+    body: Record<string, unknown>;
+  } | null>(null);
 
-  function update(): void {
-    const inReview = state.runStatus === "Review";
-
+  // `expectedRemoteHead`: the publication head the operator confirmed
+  // replacing — the push leases exactly it, so commits that landed since are
+  // refused again, naming the new head.
+  function send(body: Record<string, unknown>, expectedRemoteHead?: string) {
     void mutate<UpdateResult>(
       "update",
       "sync",
-      {
-        onto,
-        strategy,
-        push,
-        // D9: the resolver's Review→Running CAS exists only in Review.
-        agent: inReview && resolver,
-        ...(inReview && resolver && runnerId ? { runnerId } : {}),
-      },
+      expectedRemoteHead ? { ...body, expectedRemoteHead } : body,
       (result) => {
         setUpdateResult(result);
 
         return result?.outcome !== "conflict";
       },
-    );
+    ).then((failure) => {
+      setDiverged(
+        failure?.details?.reason === "publication_diverged" &&
+          typeof failure.remoteHead === "string" &&
+          typeof failure.remoteRef === "string" &&
+          typeof failure.remoteOnlyCommits === "number"
+          ? {
+              ref: failure.remoteRef,
+              head: failure.remoteHead,
+              count: failure.remoteOnlyCommits,
+              body,
+            }
+          : null,
+      );
+    });
+  }
+
+  function update(): void {
+    const inReview = state.runStatus === "Review";
+
+    send({
+      onto,
+      strategy,
+      push,
+      // D9: the resolver's Review→Running CAS exists only in Review.
+      agent: inReview && resolver,
+      ...(inReview && resolver && runnerId ? { runnerId } : {}),
+    });
+  }
+
+  // The same update onto the publication brings its commits in — nothing is
+  // dropped, and the next update onto the target has nothing to ask about.
+  function updateOntoPublication(refused: Record<string, unknown>): void {
+    setOnto("published");
+    send({ ...refused, onto: "published" });
   }
 
   return (
@@ -220,6 +263,62 @@ export function GitUpdateSection({
             </ul>
           ) : null}
         </div>
+      ) : null}
+
+      {diverged ? (
+        <ConfirmDialog
+          body={t("update.divergedBody", {
+            ref: diverged.ref,
+            head: diverged.head.slice(0, 12),
+            count: diverged.count,
+          })}
+          busy={busy !== null}
+          cancelLabel={t("cancel")}
+          testId="git-panel-diverged-dialog"
+          title={t("update.divergedTitle")}
+          titleId="git-panel-diverged-title"
+          onClose={() => setDiverged(null)}
+        >
+          {state.pr?.state === "open" ? (
+            <p
+              className="m-0 text-[13px] leading-[1.5] text-body"
+              data-testid="git-panel-diverged-pr"
+            >
+              {t("update.divergedPr", { number: state.pr.number ?? "?" })}
+            </p>
+          ) : null}
+          <div className="flex flex-wrap justify-end gap-2">
+            <button
+              className={clsx(button, primary)}
+              data-testid="git-panel-diverged-onto"
+              disabled={busy !== null}
+              type="button"
+              onClick={() => updateOntoPublication(diverged.body)}
+            >
+              <ArrowPathIcon aria-hidden="true" className="h-3.5 w-3.5" />
+              {t("update.divergedOnto")}
+            </button>
+            <button
+              className={clsx(button, neutral)}
+              data-testid="git-panel-diverged-cancel"
+              disabled={busy !== null}
+              type="button"
+              onClick={() => setDiverged(null)}
+            >
+              {t("cancel")}
+            </button>
+            <button
+              className={clsx(button, danger)}
+              data-testid="git-panel-diverged-confirm"
+              disabled={busy !== null}
+              type="button"
+              onClick={() => send(diverged.body, diverged.head)}
+            >
+              <ArrowUpTrayIcon aria-hidden="true" className="h-3.5 w-3.5" />
+              {t("update.divergedConfirm", { count: diverged.count })}
+            </button>
+          </div>
+        </ConfirmDialog>
       ) : null}
     </Section>
   );

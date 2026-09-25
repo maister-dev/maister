@@ -941,6 +941,166 @@ describe("WorkbenchGitPanel — Update", () => {
     expect(update.disabled).toBe(true);
     expect(update.title).toBe("workbenchGit.hint.commitOrDiscardFirst");
   });
+
+  // ADR-181 (C): the update's push would drop commits only the publication has
+  // (a reviewer's fixup). The server refuses before anything moves; the panel
+  // offers bringing them in first, or overwriting exactly the head it named.
+  describe("an update that would drop the publication's commits", () => {
+    const HEAD = "d".repeat(40);
+    const PUBLISHED = {
+      dirty: CLEAN,
+      publicBranch: PUBLIC,
+      publishedRemote: "origin",
+      publishedAt: new Date().toISOString(),
+      upstream: { remote: "origin", branch: PUBLIC },
+      aheadBehind: {
+        base: null,
+        target: { ahead: 1, behind: 2 },
+        published: { ahead: 1, behind: 1 },
+      },
+    };
+
+    function diverged(head: string | null, count: number | null = 2) {
+      return json(
+        {
+          code: "CONFLICT",
+          message: "server text",
+          details: { reason: "publication_diverged" },
+          remoteHead: head,
+          remoteRef: `origin/${PUBLIC}`,
+          remoteOnlyCommits: count,
+        },
+        409,
+      );
+    }
+
+    // The first `refusals.length` updates are refused with those heads.
+    function refuse(...refusals: Array<string | null>): void {
+      mutation = (call) => {
+        if (!call.url.endsWith("/sync")) return json({ ok: true });
+        if (refusals.length > 0) return diverged(refusals.shift()!);
+
+        return json(SYNCED);
+      };
+    }
+
+    it("asks first, naming the ref, the head and how many commits would leave", async () => {
+      refuse(HEAD);
+      states = [gitState(PUBLISHED)];
+      render();
+      await settle();
+
+      await click(must("git-panel-action-update"));
+
+      const dialog = must("git-panel-diverged-dialog");
+
+      expect(dialog.textContent).toContain(
+        `"ref":"origin/${PUBLIC}","head":"${HEAD.slice(0, 12)}","count":2`,
+      );
+      expect(must("git-panel-diverged-confirm").textContent).toContain(
+        '{"count":2}',
+      );
+      expect(byTestId("git-panel-diverged-pr")).toBeNull();
+      expect(must("git-panel-error").textContent).toBe(
+        "workbenchGit.errors.publication_diverged",
+      );
+      expect(document.body.textContent).not.toContain("server text");
+      expect(posts()).toHaveLength(1);
+    });
+
+    it("brings those commits in first — the same update onto the publication", async () => {
+      refuse(HEAD);
+      states = [gitState(PUBLISHED)];
+      render();
+      await settle();
+
+      await click(must("git-panel-action-update"));
+      await click(must("git-panel-diverged-onto"));
+
+      expect(posts().map((call) => call.body)).toEqual([
+        { onto: "target", strategy: "rebase", push: true, agent: false },
+        { onto: "published", strategy: "rebase", push: true, agent: false },
+      ]);
+      expect(byTestId("git-panel-diverged-dialog")).toBeNull();
+      expect(
+        must<HTMLInputElement>("git-panel-update-onto-published").checked,
+      ).toBe(true);
+    });
+
+    it("overwrites exactly the head it named, and re-asks naming a newer one", async () => {
+      const NEWER = "e".repeat(40);
+
+      refuse(HEAD, NEWER);
+      states = [gitState(PUBLISHED)];
+      render();
+      await settle();
+
+      await click(must("git-panel-action-update"));
+      await click(must("git-panel-diverged-confirm"));
+
+      expect(must("git-panel-diverged-dialog").textContent).toContain(
+        NEWER.slice(0, 12),
+      );
+
+      await click(must("git-panel-diverged-confirm"));
+
+      expect(
+        posts().map((call) => (call.body as any).expectedRemoteHead),
+      ).toEqual([undefined, HEAD, NEWER]);
+      expect(posts()[2].body).toMatchObject({ onto: "target", push: true });
+      expect(byTestId("git-panel-diverged-dialog")).toBeNull();
+      expect(feedbackSuccess).toHaveBeenCalledTimes(1);
+    });
+
+    it("names the open pull request those commits would leave", async () => {
+      refuse(HEAD);
+      states = [
+        gitState({
+          ...PUBLISHED,
+          pr: {
+            url: "https://example.test/pr/7",
+            number: 7,
+            state: "open",
+            hasConflicts: null,
+          },
+        }),
+      ];
+      render();
+      await settle();
+
+      await click(must("git-panel-action-update"));
+
+      expect(must("git-panel-diverged-pr").textContent).toContain('"number":7');
+    });
+
+    it("sends nothing when the operator cancels", async () => {
+      refuse(HEAD);
+      states = [gitState(PUBLISHED)];
+      render();
+      await settle();
+
+      await click(must("git-panel-action-update"));
+      await click(must("git-panel-diverged-cancel"));
+
+      expect(byTestId("git-panel-diverged-dialog")).toBeNull();
+      expect(posts()).toHaveLength(1);
+    });
+
+    it("offers no overwrite when the head moved while it was checked", async () => {
+      mutation = (call) =>
+        call.url.endsWith("/sync") ? diverged(null, null) : json({ ok: true });
+      states = [gitState(PUBLISHED)];
+      render();
+      await settle();
+
+      await click(must("git-panel-action-update"));
+
+      expect(byTestId("git-panel-diverged-dialog")).toBeNull();
+      expect(must("git-panel-error").textContent).toBe(
+        "workbenchGit.errors.publication_diverged",
+      );
+    });
+  });
 });
 
 // ADR-181 D11/D12 (RED 12 extension): the PR section. Open PR exists only once

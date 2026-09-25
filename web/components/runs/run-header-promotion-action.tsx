@@ -11,6 +11,7 @@ import { useFeedback } from "@/components/feedback/feedback-provider";
 import { resolveUiErrorMessageKey } from "@/lib/ui-error-message";
 import {
   buildPromotionRequestBody,
+  isPublicationDivergedResponse,
   isTargetDriftResponse,
 } from "@/lib/runs/promotion-operation";
 
@@ -75,7 +76,11 @@ export function RunHeaderPromotionAction({
 
       feedback.error({
         mutationId: `run-promote:${operation.runId}:failure`,
-        message: t(resolveUiErrorMessageKey(data?.code)),
+        // ADR-181 (C): no merge conflict — the PR branch holds commits the run
+        // does not.
+        message: isPublicationDivergedResponse(data)
+          ? t("publicationDiverged")
+          : t(resolveUiErrorMessageKey(data?.code)),
       });
     } catch {
       feedback.error({

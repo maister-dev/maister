@@ -65,6 +65,9 @@ export type ErrorBody = {
   // ADR-181 D4: what a force would replace — the head the retry leases.
   remoteHead?: string | null;
   remoteRef?: string;
+  // ADR-181 (C): with `publication_diverged`, the commits only the publication
+  // has — what an update's push would drop.
+  remoteOnlyCommits?: number | null;
 };
 
 // One mutation shape: POST, then re-read git-state + refresh the route on

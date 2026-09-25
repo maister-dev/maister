@@ -95,7 +95,15 @@ An unknown value opens the default section.
    defaulting to "published"; and the AI-resolver toggle with its runner,
    rendered ONLY for a `Review` run. A "the remote moved" hint appears when
    `publishedRemoteHead` differs from `publishedTrackingHead`. A conflict result lists the conflicted paths,
-   and the tree is back where it started.
+   and the tree is back where it started. A push that would drop commits only
+   the publication has (`publication_diverged` — a reviewer's fixup, a
+   suggestion committed on the PR) opens the shared destructive confirmation,
+   naming the remote ref, the short head, how many commits would leave and an
+   open PR on the branch. Its primary action repeats the same update onto the
+   publication, which brings those commits in; **Overwrite N commits** retries
+   with that head as `expectedRemoteHead`, and a publication that moved on asks
+   again with its new head. A refusal whose head moved during the check offers
+   no overwrite, only the error copy.
 5. **PR** — once the branch is published, the section is the Open PR form:
    title, body, target and a draft checkbox, pre-filled by the server
    (`prDefaults`: the task key and title, the run link); before that it says

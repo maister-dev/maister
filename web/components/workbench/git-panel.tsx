@@ -90,6 +90,7 @@ const KNOWN_REASONS = new Set([
   "no_remote",
   "workspace_git_identity_invalid",
   "workspace_preservation_failed",
+  "publication_diverged",
 ]);
 
 // D3: the sub-reads `git-state` names when they degraded; a token without copy
