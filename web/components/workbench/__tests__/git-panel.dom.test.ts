@@ -617,6 +617,18 @@ describe("WorkbenchGitPanel", () => {
 
   // web/CLAUDE.md: icon + label for actions; a disclosure says whether it is open.
   it("renders the Handoff toggle with its icon and its open state", async () => {
+    // The opened form reads its metadata (`HandoffMetadataResponse`).
+    mutation = () =>
+      json({
+        ok: true,
+        runId: RUN,
+        branch: INTERNAL,
+        dirty: false,
+        remotes: ["origin"],
+        defaultRemote: "origin",
+        suggestedHandoffBranch: `maister/handoff/${RUN}`,
+        checkoutCommands: [],
+      });
     render();
     await settle();
 
