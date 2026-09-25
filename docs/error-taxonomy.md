@@ -526,8 +526,8 @@ identity_changed`) surfaces as **`EXECUTOR_UNAVAILABLE`** with
 > internal callers and tests (ADR-093 pattern). A driver receiving
 > `assignment_fenced` MUST yield — no run, attempt, HITL, or scratch write.
 
-Supervisor-side codes the web client translates (`FENCED` is the only
-addition; the full table lives in
+Supervisor-side codes the web client translates (`FENCED` and, with
+ADR-182, `CONFLICT` are the additions; the full table lives in
 [`supervisor.md` §Errors](supervisor.md#errors)):
 
 | Supervisor code        | HTTP | Web `MaisterError`                 | `details.reason`        |

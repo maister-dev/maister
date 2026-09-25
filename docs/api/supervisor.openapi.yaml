@@ -1666,11 +1666,6 @@ paths:
                     outcome: "injected"
                     parentCommandId: "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f"
                     latencyMs: 42
-        "404":
-          description: No session with that id.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
         "409":
           description: |
             A steer refusal (`CONFLICT`: `steer_unsupported`,
@@ -3506,10 +3501,12 @@ components:
         the code is the same but the meaning is NOT terminal — the answer
         resumes the parked session.
 
-        `CONFLICT` (HTTP 409, Implemented — ADR-182) is minted only by
-        `POST /sessions/{id}/steer`: `steer_unsupported`,
-        `steer_no_active_turn` or `steer_timeout`. It is definitive — the web
-        tier never retries it and converts the message into a queued one.
+        `CONFLICT` (HTTP 409) is minted by `POST /sessions/{id}/steer`
+        (Implemented — ADR-182: `steer_unsupported`, `steer_no_active_turn` or
+        `steer_timeout`; definitive — the web tier never retries it and
+        converts the message into a queued one) and by
+        `POST /commands/{commandId}/retirement` (a command not eligible for
+        retirement).
 
         `FENCED` (Implemented — ADR-166, HTTP 409) is returned when
         `fence.assignmentEpoch` is below the host's persisted high-water for

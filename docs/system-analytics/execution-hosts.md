@@ -540,7 +540,7 @@ a Stage-C deletion obligation (ADR-166 D9).
 | -------------------- | -------------------------------- | ---------------------------------------------------------------------------------------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------- |
 | `workspace.adopt`    | `POST /workspaces/adopt`         | register path → handle (idempotent on `(runId, realpath)` among ACTIVE handles; a released path mints a NEW one) | immediate    | HTTP 200                                                                                                      |
 | `workspace.release`  | `DELETE /workspaces/{id}`        | unregister handle                                                                                                | immediate    | HTTP 200                                                                                                      |
-| `session.create`     | `POST /sessions`                 | spawn + ACP handshake                                                                                            | ≤ 60 s       | HTTP 201 `{sessionId, pid, acpSessionId}`                                                                     |
+| `session.create`     | `POST /sessions`                 | spawn + ACP handshake                                                                                            | ≤ 60 s       | HTTP 201 `{sessionId, pid, acpSessionId, steeringSupported}`                                                  |
 | `session.prompt`     | `POST /sessions/{id}/prompts`    | start a turn                                                                                                     | long         | SSE `session.command{accepted}` → HTTP 200 `{stopReason}` and/or SSE `session.command{completed}` and receipt |
 | `session.input`      | `POST /sessions/{id}/input`      | resolve a deferred                                                                                               | immediate    | HTTP 200                                                                                                      |
 | `session.steer`      | `POST /sessions/{id}/steer`      | inject a message into the active owned turn (ADR-182)                                                            | ≤ 30 s       | HTTP 200 `{outcome:"injected", parentCommandId, latencyMs}` + SSE `session.command{completed}` and receipt    |
@@ -618,10 +618,11 @@ The first four rows are the fence, evaluated in that order: the run binding
 is checked BEFORE the epoch, so a wrong-run fence can never advance or evict
 another run's sessions. Rejection messages carry the offending path, never
 the configured roots. `FENCED → CONFLICT`; every other supervisor code keeps
-its existing mapping. The three steer refusals are the only rows the host mints
-with the `CONFLICT` code itself; they are definitive (never retried) and are
-checked in order: session live, advertisement, active prompt, then the ACP call
-(Implemented — ADR-182). The tokens the web mints itself
+its existing mapping. The three steer refusals mint the `CONFLICT` code on the
+session routes (command retirement's ineligible answer is the other
+`CONFLICT`); they are definitive (never retried) and are checked in order:
+session live, advertisement, active prompt, then the ACP call (Implemented —
+ADR-182). The tokens the web mints itself
 (`host_identity_mismatch`, `assignment_missing`, `delivery_deferred`,
 `receipt_lookup_failed`, …) never travel the wire — their table is in
 [`../error-taxonomy.md`](../error-taxonomy.md#execution-host-contract-implemented--adr-166).

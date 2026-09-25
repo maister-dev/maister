@@ -383,11 +383,23 @@ when an injected message takes effect is the adapter's decision. The table
 below is measured with `supervisor/scripts/measure-steering.ts`
 (`MAISTER_MEASURE_STEERING=1`, real adapters, quiet host).
 
+Measured 2026-09-26 on this host (adapter default models; `claude-agent-acp`
+0.75.1, `codex-acp` 1.10.0). Scenario: "run `sleep 20` with your shell tool,
+then print DONE", steered "print STEERED" on the first `tool_call` update.
+
 | Family | Advertised | Outcome during a running tool call | `injected` latency | In-flight tool call | While a permission is pending | Extension frames on steer |
 | --- | --- | --- | --- | --- | --- | --- |
-| claude | (pending measurement) | (pending measurement) | (pending measurement) | (pending measurement) | (pending measurement) | (pending measurement) |
-| codex | (pending measurement) | (pending measurement) | (pending measurement) | (pending measurement) | (pending measurement) | (pending measurement) |
-| gemini / opencode / mimo | not measured | — | — | — | — | — |
+| claude | yes | `injected`; the reply printed STEERED before DONE | 1 ms | not aborted — the prompt ran 35 s, past the 20 s sleep (the script observed no terminal `tool_call_update` status for it) | not observed — no permission was raised under this host's adapter configuration | none on steer (`_auth/status_update` only, emitted regardless) |
+| codex | yes | `injected`; the reply printed STEERED before DONE | 2 ms | completed (`tool_call_update` `completed`; prompt 30 s) | not observed — no permission was raised under this host's adapter configuration | none on steer (`_auth/status_update` only, emitted regardless) |
+| opencode | no (smoke 2026-09-26) | — (queued) | — | — | — | — |
+| gemini | not measured — its `initialize` fails on this host ("client is no longer supported") | — | — | — | — | — |
+| mimo | not measured — `initialize` timed out on this host | — | — | — | — | — |
+
+The `injected` latency is the adapter's acknowledgement, not the moment the
+model acts on the text: in both families the running tool call was not
+aborted (the sleep ran to its end) and the steered instruction was honoured in
+the reply that followed it (STEERED before DONE). How long that takes depends
+on what the turn is doing when the steer lands.
 
 ## Expectations
 

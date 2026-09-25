@@ -788,13 +788,15 @@ Injects a user message into the session's RUNNING owned prompt turn
   parentCommandId: <uuid> }
 ```
 
-`contentBlocks` are confined to the session's roots and runtime-object
-references are resolved exactly as for a prompt. The host then checks, in
-order, without touching the adapter: the session is `live` with an ACP
-connection (else `409 PRECONDITION`), the connection advertised
-`_meta.steering.supported` on `initialize` (else `409 CONFLICT
+The host checks, in order, without touching the adapter: the session is
+`live` with an ACP connection (else `409 PRECONDITION`), the connection
+advertised `_meta.steering.supported` on `initialize` (else `409 CONFLICT
 steer_unsupported`), and `parentCommandId` is the session's active prompt
-(else `409 CONFLICT steer_no_active_turn` with `activePromptCommandId`). The
+(else `409 CONFLICT steer_no_active_turn` with `activePromptCommandId`). Only
+then are `contentBlocks` confined to the session's roots and runtime-object
+references resolved exactly as for a prompt, after which the same checks run
+again right before the ACP call — so a steer to a session without the
+advertisement is refused `steer_unsupported` whatever its content. The
 active prompt is cleared only after the parent's terminal receipt, so a late
 steer never attaches to the next prompt.
 

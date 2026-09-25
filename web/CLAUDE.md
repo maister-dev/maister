@@ -286,10 +286,28 @@ D3 deleted straight after publishing, so under load the delete was refused from
 `pending`. The case now waits for the projected state; it is no longer a
 standing name.
 
+**Measured 2026-09-26 (ADR-182 steering branch on `master` 8ff196d4, this
+Mac).** unit **849 files / 8788 tests, 0 failures**; integration **528 files /
+4652 tests** (1 skipped: the opt-in `host-span-load`); supervisor **76 files /
+724 tests, 0 failures** (unit 45 / 455, integration 31 / 269). The full lane
+ran at load 75-240 and was killed (exit 144) after 526 files had reported, so
+its summary never printed: count the per-file lines, and run what is missing —
+here `lib/flows/graph/__tests__/prompt-owners.integration.test.ts` (58/58,
+23.5 min alone) and `host-span-load`. Under that load 8 tests in 4 files were
+red, and every one passed re-run idle: `lib/agents/__tests__/prompt-owners`
+"owner-agent-budget … resumes its exact interrupted source" (5 cases, each
+failing at ~15.8 s — just past a 15 s wait — and green at 20-77 s idle),
+`projection-worker` AT-03, `execution-ab-process-cleanup` O2 and
+`execution-ab-partitions` P4. Treat those names as load-sensitive: re-run the
+file idle before filing a recurrence.
+
 **A first-hit Next-dev compile can exhaust a 10s e2e timeout.** Before calling
 such a failure a regression, re-run the spec in isolation and read the RETRY
-time: `scratch-detail.spec.ts:50` fails at **10.8s** and passes on retry at
-**1.0s**, reproducibly, on BOTH this branch and plain `master` (2 runs each).
+time: `scratch-detail.spec.ts:50` ("suggests project skills"; `:57` since
+ADR-182) fails at **10.8s** and passes on retry at **1.0s**, reproducibly, on
+BOTH this branch and plain `master` (2 runs each; re-confirmed 2026-09-26 on
+the steering branch and `8ff196d4`: 11-14 s, then ~1 s on retry — at load 245
+the retry failed too).
 A retry that passes in a second proves the data was there and the first hit paid
 for compilation — the failure is warm-up, not behaviour.
 - **e2e** — **1 pre-existing failure in 1 spec file**, enumerated below,

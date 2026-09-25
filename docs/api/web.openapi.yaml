@@ -5394,9 +5394,11 @@ paths:
       responses:
         "202":
           description: |
-            Message accepted. Prompt arm: the turn ran and `stopReason` is set.
-            Busy arm: the message was steered or queued (`delivery`), no
-            `stopReason`.
+            Message accepted. Prompt arm: the turn ran and `stopReason` is set
+            (`delivery: "prompted"`) — unless older rows were still queued,
+            then the message was queued behind them and the route answers at
+            acceptance (`delivery: "queued"`, no `stopReason`). Busy arm: the
+            message was steered or queued (`delivery`), no `stopReason`.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ScratchMessageResponse" }

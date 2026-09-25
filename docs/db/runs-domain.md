@@ -631,6 +631,12 @@ BY started_at DESC LIMIT 1`; designed run-attempt schema switches to
   `scratch_messages`) — deterministic dialog replay; scratch rows keep their
   `(run_id, sequence)` invariant (NULL `node_attempt_id`), flow rows are unique
   per node attempt.
+- **(ADR-182, migration `0180`)** `run_messages_delivery_check` (`delivery`
+  only on `role = 'user'` rows, one of `queued | prompted | steered`),
+  `run_messages_queued_idx` (partial, `(run_id, sequence) WHERE delivery =
+  'queued'`) for the FIFO scratch dispatcher, and
+  `run_messages_steer_command_uq` (partial unique on `steer_command_id`) so
+  recovery finds a scratch row by its steer command.
 - Attachment indexes on `(run_id)` and `(message_id)` — run and
   message attachment lookups.
 - `run_transcript_states_run_attempt_uq` on `(run_id, node_attempt_id)`

@@ -271,10 +271,10 @@ status handling.
 
 Message rules while the agent is busy (Implemented — [ADR-182](../decisions/adr-182.md)):
 
-- `WaitingForUser` → `mode: "prompt"`: the message becomes the next turn at
+- `WaitingForUser` → the prompt arm: the message becomes the next turn at
   once — unless older rows are still `delivery = 'queued'`; then the new row is
   appended `queued` behind them and the oldest is dispatched first.
-- `Starting | Running` → `mode: "busy"`: the row is appended with
+- `Starting | Running` → the busy arm: the row is appended with
   `delivery = 'steered'` (a `session.steer` names the running scratch prompt,
   whose incarnation advertised steering) or `delivery = 'queued'`; the dialog
   status is unchanged and the route answers 202 at acceptance with `delivery`
@@ -538,7 +538,7 @@ history automatically.
 | Unsafe upload filename/path after sanitization | `409 PRECONDITION`; no file is written outside the run artifact tree. |
 | File write failure | `503 EXECUTOR_UNAVAILABLE`; launch cleanup is best effort and message rows remain invisible. |
 | Second message while `Starting` / `Running` | `202` with `delivery: "steered"` or `"queued"`; the running prompt is untouched and the row is appended at once (Implemented — ADR-182). A message in a terminal or `NeedsInput` dialog state stays `409 CONFLICT`. |
-| Steer refused after the turn ended | The row flips `steered → queued` and, the dialog being `WaitingForUser`, is dispatched by the conversion; a concurrent dispatcher loses the `delivery` CAS — one prompt (`CONFLICT`). |
+| Steer refused after the turn ended | The row flips `steered → queued` and, the dialog being `WaitingForUser`, is dispatched by the conversion; a concurrent dispatcher finds the dialog `Running` (or loses the `delivery` CAS) and returns `{dispatched: false}` — one prompt, no error. |
 | Web process dies between the previous turn's completion and the queued dispatch | The row stays `queued` and visible ("Queued"); the next send flushes the queue. Automatic re-drive belongs to A4 (ADR-182 Consequences). |
 | Supervisor unavailable before launch | `503 EXECUTOR_UNAVAILABLE`; no worktree, DB run, or upload side effect occurs. |
 | Supervisor prompt delivery fails after message commit | Retryable or crashed dialog status follows existing scratch service behavior; the user message stays visible. |
