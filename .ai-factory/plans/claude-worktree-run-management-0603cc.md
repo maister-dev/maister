@@ -2165,6 +2165,28 @@ red, restored.
 | m16 | A template without `{task_key}` could collide across tasks | 35 `1a73f06c` |
 | + | `branchNameSchema` accepted names git refuses. That became reachable once the operator types the public name. | 36 `c08bcbd7` |
 
+**Post-review fix lanes (final tree `2a42866c`, 2026-09-25).**
+- Battery, all exit 0: `next build`, the web, supervisor and mcp typechecks,
+  the mcp build, `validate:docs:all` and `validate:contracts`.
+- Web unit: 851 files / 8873 tests, 0 red.
+- Supervisor unit: 45 files / 449 tests, 0 red. Supervisor integration: 27
+  files / 247 tests, 0 red.
+- Web integration: 523 files / 4649 tests, 2 red. Both are master's
+  production-boot process fixtures, which the branch does not touch:
+  - `execution-ab-process-cleanup` "O-exit: 'success'" ("refusing
+    unverifiable fixture group"), 13/13 alone;
+  - `execution-ab-process-death` D3 (fixture cleanup), 6/6 alone.
+- e2e (`--workers=2`, no `CI`): 195 passed, 6 failed, 3 flaky.
+  - Four failures are the documented set: `platform-agents-page:26`,
+    `review-diff-scopes:43`, `studio-ai-assistant:69`, `scratch-detail:50`.
+  - Two were master's `consensus-resolution:209/264`. Its describe-level
+    `beforeAll` runs once per worker under `fullyParallel`, so two workers
+    raced `tasks_project_number_uq` or seeded two identical cards. Measured
+    with the spec alone: 1 worker green, 2 workers red. Serial describe:
+    2 workers green 3/3 (Commit 38 `a472d2c7`).
+  - Flaky: `activity-feed:51` and `work-table:97` (documented) and `desk:454`
+    (2/2 alone).
+
 ---
 
 ## Refactor gates (the R in RED → GREEN → REFACTOR)
