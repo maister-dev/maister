@@ -42,6 +42,7 @@ export type ProducerWalletBinding = Readonly<{
 }>;
 
 export type ReceiptAdmission =
+  | { kind: "new_work" }
   | { kind: "producer"; outputBindingCount: number }
   | { kind: "teardown"; walletId: string };
 
@@ -72,7 +73,7 @@ CREATE TABLE IF NOT EXISTS runtime_event_pressure (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   pressured INTEGER NOT NULL CHECK (pressured IN (0, 1))
 );
-INSERT OR IGNORE INTO runtime_event_pressure VALUES (1, 0);
+INSERT OR IGNORE INTO runtime_event_pressure (id, pressured) VALUES (1, 0);
 CREATE TABLE IF NOT EXISTS runtime_event_wallets (
   wallet_id TEXT PRIMARY KEY,
   run_id TEXT NOT NULL,
@@ -130,6 +131,54 @@ CREATE TRIGGER IF NOT EXISTS runtime_event_budget_ack AFTER UPDATE OF acknowledg
 END;
 `;
 
+// ADR-183, host schema v14. SQLite verifies a new column's CHECK against the
+// existing row, so the v13 → v14 migration clears the old bit first (it also
+// counted retained rows); open recomputes it under the unACKed-only predicate.
+export const RUNTIME_EVENT_PRESSURE_EPISODE_COLUMNS = `
+ALTER TABLE runtime_event_pressure ADD COLUMN since_ms INTEGER
+  CHECK ((since_ms IS NULL) = (pressured = 0) AND (since_ms IS NULL OR since_ms >= 0));
+ALTER TABLE runtime_event_pressure ADD COLUMN unacknowledged_count_at_start INTEGER
+  CHECK ((unacknowledged_count_at_start IS NULL) = (pressured = 0)
+    AND (unacknowledged_count_at_start IS NULL OR unacknowledged_count_at_start >= 0));
+ALTER TABLE runtime_event_pressure ADD COLUMN unacknowledged_bytes_at_start INTEGER
+  CHECK ((unacknowledged_bytes_at_start IS NULL) = (pressured = 0)
+    AND (unacknowledged_bytes_at_start IS NULL OR unacknowledged_bytes_at_start >= 0));
+ALTER TABLE runtime_event_pressure ADD COLUMN episodes INTEGER NOT NULL DEFAULT 0
+  CHECK (episodes >= 0);
+`;
+
+export type OutboxPressureEpisode = Readonly<{
+  pressured: boolean;
+  sinceMs: number | null;
+  unacknowledgedCountAtStart: number | null;
+  unacknowledgedBytesAtStart: number | null;
+  episodes: number;
+}>;
+
+export function outboxPressureEpisode(db: DatabaseSync): OutboxPressureEpisode {
+  const row = db
+    .prepare(
+      `SELECT pressured, since_ms, unacknowledged_count_at_start,
+        unacknowledged_bytes_at_start, episodes
+      FROM runtime_event_pressure WHERE id = 1`,
+    )
+    .get() as {
+    pressured: number;
+    since_ms: number | null;
+    unacknowledged_count_at_start: number | null;
+    unacknowledged_bytes_at_start: number | null;
+    episodes: number;
+  };
+
+  return {
+    pressured: row.pressured === 1,
+    sinceMs: row.since_ms,
+    unacknowledgedCountAtStart: row.unacknowledged_count_at_start,
+    unacknowledgedBytesAtStart: row.unacknowledged_bytes_at_start,
+    episodes: row.episodes,
+  };
+}
+
 type UsageDbRow = {
   retained_count: number;
   retained_bytes: number;
@@ -179,39 +228,66 @@ export function outboxBudgetSnapshot(db: DatabaseSync): OutboxBudgetSnapshot {
   };
 }
 
-function atThreshold(
+/** Pressure (ADR-183): the manager is behind. */
+export function unacknowledgedAtThreshold(
   used: PartitionUsage,
   bytes: number,
   rows: number,
 ): boolean {
-  return (
-    used.retainedBytes >= bytes ||
-    used.unacknowledgedBytes >= bytes ||
-    used.retainedCount >= rows ||
-    used.unacknowledgedCount >= rows
-  );
+  return used.unacknowledgedBytes >= bytes || used.unacknowledgedCount >= rows;
+}
+
+/** Housekeeping at soft, capacity at hard (ADR-183) — never pressure. */
+export function retainedAtThreshold(
+  used: PartitionUsage,
+  bytes: number,
+  rows: number,
+): boolean {
+  return used.retainedBytes >= bytes || used.retainedCount >= rows;
 }
 
 export function refreshOutboxPressure(
   db: DatabaseSync,
   limits: RuntimeLimits,
+  nowMs: number = Date.now(),
 ): boolean {
   const snapshot = outboxBudgetSnapshot(db);
   const regular = reservedRegularUsage(snapshot);
   const pressured = snapshot.pressured
-    ? atThreshold(regular, limits.eventLowBytes, limits.eventLowRows)
-    : atThreshold(regular, limits.eventSoftBytes, limits.eventSoftRows);
+    ? unacknowledgedAtThreshold(
+        regular,
+        limits.eventLowBytes,
+        limits.eventLowRows,
+      )
+    : unacknowledgedAtThreshold(
+        regular,
+        limits.eventSoftBytes,
+        limits.eventSoftRows,
+      );
 
   if (snapshot.pressured !== pressured) {
-    db.prepare(
-      "UPDATE runtime_event_pressure SET pressured = ? WHERE id = 1",
-    ).run(pressured ? 1 : 0);
+    if (pressured) {
+      db.prepare(
+        `UPDATE runtime_event_pressure SET pressured = 1, since_ms = ?,
+          unacknowledged_count_at_start = ?, unacknowledged_bytes_at_start = ?
+        WHERE id = 1`,
+      ).run(nowMs, regular.unacknowledgedCount, regular.unacknowledgedBytes);
+    } else {
+      db.prepare(
+        `UPDATE runtime_event_pressure SET pressured = 0, since_ms = NULL,
+          unacknowledged_count_at_start = NULL, unacknowledged_bytes_at_start = NULL,
+          episodes = episodes + 1
+        WHERE id = 1`,
+      ).run();
+    }
   }
 
   return pressured;
 }
 
-function reservedRegularUsage(snapshot: OutboxBudgetSnapshot): PartitionUsage {
+export function reservedRegularUsage(
+  snapshot: OutboxBudgetSnapshot,
+): PartitionUsage {
   return {
     retainedCount:
       snapshot.regular.retainedCount + snapshot.reservedRegularRows,
@@ -277,7 +353,28 @@ export function assertOutboxAdmission(
   if (refreshOutboxPressure(db, limits)) {
     throw new HostRuntimeEventError(
       "event_outbox_soft_limit",
-      "runtime event outbox is above the command admission soft limit or awaiting its low watermark",
+      "runtime event outbox unacknowledged rows are above the command admission soft limit or awaiting its low watermark",
+    );
+  }
+  assertRetainedBelowHard(db, limits);
+}
+
+// Retained rows never pressure the host, so without this check a stalled
+// retained prune would let admissions run on until an append failed.
+export function assertRetainedBelowHard(
+  db: DatabaseSync,
+  limits: RuntimeLimits,
+): void {
+  if (
+    retainedAtThreshold(
+      reservedRegularUsage(outboxBudgetSnapshot(db)),
+      limits.eventHardBytes,
+      limits.eventHardRows,
+    )
+  ) {
+    throw new HostRuntimeEventError(
+      "event_outbox_hard_limit",
+      "runtime event outbox retained rows are at the hard limit",
     );
   }
 }

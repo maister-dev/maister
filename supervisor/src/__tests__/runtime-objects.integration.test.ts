@@ -16,6 +16,7 @@ import { dirname, join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { HOST_STATE_SCHEMA_VERSION } from "../host-state";
 import { RuntimeObjectRegistry } from "../runtime-objects";
 
 import {
@@ -604,7 +605,7 @@ describe("runtime object transport", () => {
 
     try {
       expect(inspected.prepare("PRAGMA user_version").get()).toEqual({
-        user_version: 13,
+        user_version: HOST_STATE_SCHEMA_VERSION,
       });
     } finally {
       inspected.close();

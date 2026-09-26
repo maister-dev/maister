@@ -281,6 +281,9 @@ describe("AT-02 aggregate runtime file capacity", () => {
         )
         .toBe(true);
       expect(host.hostState.runtimeFileBudget().pressured).toBe(true);
+      // ADR-183: file pressure keeps its own refusal; the outbox pressure the
+      // manager reads (`stream.pressured`) stays the unACKed lane only.
+      expect(host.hostState.runtimeEventHealthSnapshot().pressured).toBe(false);
       expect(
         host.hostState.runtimeFileBudget().chargedBytes,
       ).toBeLessThanOrEqual(limits.objectMaxBytes);

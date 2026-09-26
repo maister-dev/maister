@@ -469,7 +469,7 @@ describe("Stage B durable host event outbox", () => {
     }
   });
 
-  it("resumes below the low watermark only after ACKed replay is pruned, including across restart", () => {
+  it("resumes below the low watermark on ACK — never on a prune — and keeps the pressure episode across restart", () => {
     const stateDir = mkdtempSync(join(tmpdir(), "maister-outbox-pressure-"));
     let clock = Date.now();
     let state = openHostState({
@@ -485,7 +485,12 @@ describe("Stage B durable host event outbox", () => {
       state.reserveProducerReceipt(receipt, 0);
       for (let index = 0; index < 4; index += 1)
         state.appendRuntimeEvent(eventDraft());
+      // ADR-183: unACKed 4 ≥ soft 4 enters; ACK through "1" leaves 2 = low,
+      // which the hysteresis still counts as pressured.
       state.ackRuntimeEvents(state.getRuntimeEventStreamId(), "1");
+      const since = state.runtimeEventHealthSnapshot().pressure?.since;
+
+      expect(since).toBeDefined();
       state.close();
       state = openHostState({
         stateDir,
@@ -501,24 +506,28 @@ describe("Stage B durable host event outbox", () => {
         reservedControlRows: 18,
       });
       // H1: the health SNAPSHOT is the manager's only view of pressure, so it
-      // must carry the flag too — the stats path above is host-private.
+      // must carry the flag and its unchanged episode too.
       expect(state.runtimeEventHealthSnapshot()).toMatchObject({
         pressured: true,
+        pressure: { since, unacknowledgedCountAtStart: 4, episodes: 0 },
       });
       clock += SMALL_LIMITS.eventAckGraceMs + 1;
-      state.pruneAcknowledgedRuntimeEvents(
-        new Date(clock - SMALL_LIMITS.eventAckGraceMs),
-      );
+      // Pruning the two ACKed rows relieves nothing: pressure is unACKed.
+      expect(
+        state.pruneAcknowledgedRuntimeEvents(
+          new Date(clock - SMALL_LIMITS.eventAckGraceMs),
+        ),
+      ).toBe(2);
       expect(() => state.assertCanAcceptMutatingCommand()).toThrow(
         /low watermark/,
       );
       state.ackRuntimeEvents(state.getRuntimeEventStreamId(), "2");
-      clock += SMALL_LIMITS.eventAckGraceMs + 1;
-      state.pruneAcknowledgedRuntimeEvents(
-        new Date(clock - SMALL_LIMITS.eventAckGraceMs),
-      );
       expect(() => state.assertCanAcceptMutatingCommand()).not.toThrow();
-      expect(snapshots).toEqual([true, true, false]);
+      expect(state.runtimeEventHealthSnapshot()).toMatchObject({
+        pressured: false,
+        pressure: null,
+      });
+      expect(snapshots).toEqual([true, false]);
       unsubscribe();
     } finally {
       state.close();
@@ -581,7 +590,7 @@ describe("Stage B durable host event outbox", () => {
     }
   });
 
-  it("refuses admission when acknowledged replay still occupies the soft budget", () => {
+  it("admits new work while only acknowledged replay occupies the soft budget (ADR-183)", () => {
     const state = openHostState({ inMemory: true, limits: SMALL_LIMITS });
 
     try {
@@ -601,9 +610,8 @@ describe("Stage B durable host event outbox", () => {
       }
       state.ackRuntimeEvents(state.getRuntimeEventStreamId(), lastSequence);
       expect(state.runtimeEventOutboxStats().unacknowledgedBytes).toBe(0);
-      expect(() => state.assertCanAcceptMutatingCommand()).toThrow(
-        /soft limit/,
-      );
+      expect(state.runtimeEventHealthSnapshot().pressured).toBe(false);
+      expect(() => state.assertCanAcceptMutatingCommand()).not.toThrow();
     } finally {
       state.close();
     }

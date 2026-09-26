@@ -24,7 +24,7 @@ import {
 } from "./_fixtures/boot-host";
 
 describe("AT-02 physical runtime storage", () => {
-  it("preserves default-scale retained pressure and terminal capacity across restart", () => {
+  it("preserves default-scale retained capacity and terminal capacity across restart", () => {
     const stateDir = mkdtempSync(join(tmpdir(), "maister-default-capacity-"));
     let state = openHostState({ stateDir });
     const receipt: CommandReceiptRow = {
@@ -74,21 +74,29 @@ describe("AT-02 physical runtime storage", () => {
       expect(state.runtimeStorageSnapshot().totalBytes).toBeLessThan(
         DEFAULT_RUNTIME_LIMITS.stateMaxBytes,
       );
-      expect(() => state.assertCanAcceptMutatingCommand()).toThrow();
+      // ADR-183: unACKed rows at soft are pressure …
+      expect(() => state.assertCanAcceptMutatingCommand()).toThrow(
+        /soft limit/,
+      );
       state.ackRuntimeEvents(streamId, lastSequence);
       expect(state.runtimeEventOutboxStats().unacknowledgedCount).toBe(0);
       expect(state.runtimeEventOutboxStats().retainedBytes).toBe(retainedBytes);
-      expect(() => state.assertCanAcceptMutatingCommand()).toThrow();
+      // … the same rows retained after their ACK are not.
+      expect(state.runtimeEventHealthSnapshot().pressured).toBe(false);
+      expect(() => state.assertCanAcceptMutatingCommand()).not.toThrow();
       state.close();
       state = openHostState({ stateDir });
       expect(state.runtimeEventOutboxStats().retainedCount).toBe(count);
       expect(state.pruneAcknowledgedRuntimeEvents(new Date())).toBe(0);
+      // Retained replay at the soft budget is housekeeping, not capacity: a
+      // new producer is still funded across the restart (ADR-183).
+      expect(state.runtimeEventHealthSnapshot().pressured).toBe(false);
       expect(() =>
         state.reserveProducerReceipt(
           { ...receipt, commandId: randomUUID() },
           0,
         ),
-      ).toThrow();
+      ).not.toThrow();
       const terminal = state.appendRuntimeEvent({
         draft: {
           ...draft,

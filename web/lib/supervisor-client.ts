@@ -365,9 +365,31 @@ const SupervisorHealthSchema = z
           } satisfies Record<RuntimeEventCloseReason, z.ZodTypeAny>)
           .passthrough()
           .optional(),
+        // ADR-183: the host's current pressure episode, null while not
+        // pressured. Optional so an older host, which omits it, still parses.
+        pressure: z
+          .object({
+            since: z.string().datetime(),
+            unacknowledgedCountAtStart: z.number().int().nonnegative().safe(),
+            unacknowledgedBytesAtStart: z.number().int().nonnegative().safe(),
+            episodes: z.number().int().nonnegative().safe(),
+          })
+          .passthrough()
+          .nullable()
+          .optional(),
       })
       .passthrough()
       .superRefine((value, ctx) => {
+        if (
+          value.pressure !== undefined &&
+          (value.pressure === null) === value.pressured
+        ) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["pressure"],
+            message: "pressure must be null exactly when pressured is false",
+          });
+        }
         if (value.unacknowledgedCount > value.retainedCount) {
           ctx.addIssue({
             code: z.ZodIssueCode.custom,

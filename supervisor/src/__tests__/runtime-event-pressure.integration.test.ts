@@ -126,6 +126,7 @@ describe("AT-02 real ACP pipe pressure", () => {
 
     expect(admitted.status).toBe(202);
     let cycles = 0;
+    let resumedByAck = 0;
 
     while (host.hostState.getReceipt(prompt.command.id)?.phase === "accepted") {
       await expect
@@ -139,21 +140,36 @@ describe("AT-02 real ACP pipe pressure", () => {
       if (!record.outputPaused) break;
       const stats = host.hostState.runtimeEventOutboxStats();
       const rows = host.hostState.pendingRuntimeEvents(stats.streamId);
+      // ADR-183: unACKed rows at soft are pressure (relieved by the ACK);
+      // retained rows at hard are capacity (relieved only by a prune).
+      const unacknowledgedPressure =
+        host.hostState.runtimeEventHealthSnapshot().pressured;
 
-      host.hostState.ackRuntimeEvents(stats.streamId, rows.at(-1)!.sequence);
-      expect(record.outputPaused).toBe(true);
-      expect(host.hostState.runtimeEventOutboxStats().retainedBytes).toBe(
-        stats.retainedBytes,
-      );
-      clock += PRESSURE_LIMITS.eventAckGraceMs + 1;
-      host.hostState.pruneAcknowledgedRuntimeEvents(
-        new Date(clock - PRESSURE_LIMITS.eventAckGraceMs),
-      );
+      if (rows.length > 0)
+        host.hostState.ackRuntimeEvents(stats.streamId, rows.at(-1)!.sequence);
+      if (unacknowledgedPressure) {
+        // Cleared by the ACK alone: the producer resumes and nothing was
+        // pruned (the replay floor did not move).
+        await expect
+          .poll(() => record.outputPaused, { timeout: 5000 })
+          .toBe(false);
+        expect(host.hostState.runtimeEventOutboxStats().replayFloor).toBe(
+          stats.replayFloor,
+        );
+        resumedByAck += 1;
+      } else {
+        expect(record.outputPaused).toBe(true);
+        clock += PRESSURE_LIMITS.eventAckGraceMs + 1;
+        host.hostState.pruneAcknowledgedRuntimeEvents(
+          new Date(clock - PRESSURE_LIMITS.eventAckGraceMs),
+        );
+      }
       cycles += 1;
-      expect(cycles).toBeLessThan(20);
+      expect(cycles).toBeLessThan(40);
     }
     unsubscribe();
     expect(cycles).toBeGreaterThan(1);
+    expect(resumedByAck).toBeGreaterThan(0);
     expect(updates).toBe(40);
     expect(host.hostState.getReceipt(prompt.command.id)).toMatchObject({
       phase: "completed",

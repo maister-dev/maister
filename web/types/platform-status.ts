@@ -12,16 +12,27 @@ export type RuntimeEventCloseReason =
 
 export type RuntimeEventStreamCloses = Record<RuntimeEventCloseReason, number>;
 
+/** ADR-183: the host's outbox-pressure episode (the manager is behind). */
+export type SupervisorEventStreamPressure = {
+  since: string;
+  unacknowledgedCountAtStart: number;
+  unacknowledgedBytesAtStart: number;
+  episodes: number;
+};
+
 export type SupervisorEventStreamHealth = {
   streamId: string;
   headSequence: string | null;
   unacknowledgedCount: number;
   retainedCount: number;
+  /** Unacknowledged rows at the soft budget — never retained rows (ADR-183). */
   pressured: boolean;
   oldestUnacknowledgedAgeMs: number | null;
   /** Subscriber telemetry since the host's boot; absent from an older host. */
   subscriberPauses?: number;
   closes?: RuntimeEventStreamCloses;
+  /** Null while not pressured; absent from an older host (ADR-183). */
+  pressure?: SupervisorEventStreamPressure | null;
 };
 
 export type SupervisorHealth = {

@@ -20,6 +20,7 @@ import {
   SessionCommandEventSchema,
   StartSessionRequestSchema,
   SteerBodySchema,
+  SupervisorHealthResponseSchema,
 } from "../types";
 import { RuntimeEventSpanSchema } from "../runtime-events";
 
@@ -42,6 +43,25 @@ function schemaExample(name: string): unknown {
 }
 
 describe("supervisor OpenAPI 0.8.0 examples ↔ Zod", () => {
+  // ADR-183: every documented `/health` body — including the pressured
+  // episode — must parse with the host's strict response schema, and the
+  // pressured example must carry the episode it documents.
+  it("GET /health examples parse with the strict host response schema", () => {
+    const examples = openapi.paths["/health"].get.responses["200"].content[
+      "application/json"
+    ].examples as Record<string, { value: unknown }>;
+
+    for (const [name, example] of Object.entries(examples)) {
+      expect(
+        SupervisorHealthResponseSchema.safeParse(example.value).success,
+        name,
+      ).toBe(true);
+    }
+    expect(examples.pressured?.value).toMatchObject({
+      stream: { pressured: true, pressure: { episodes: 2 } },
+    });
+  });
+
   // ADR-179: these four are only parity-checked because they carry an
   // `example` — a component without one is silently skipped by this harness.
   it("McpServerInput example parses", () => {

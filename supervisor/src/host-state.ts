@@ -25,8 +25,11 @@ import {
   assertStoredOutboxFits,
   closeProducerWallet,
   outboxBudgetSnapshot,
+  outboxPressureEpisode,
   OUTBOX_BUDGET_SCHEMA,
   refreshOutboxPressure,
+  retainedAtThreshold,
+  RUNTIME_EVENT_PRESSURE_EPISODE_COLUMNS,
   markProducerEnded,
   reserveFrameCapacity,
   settleReceiptBudget,
@@ -112,7 +115,7 @@ export type ReceiptRetirementOutcome =
     };
 export const EXECUTION_HOST_PROTOCOL_VERSION = 1;
 // `PRAGMA user_version` of the state file; bumped with every migration below.
-export const HOST_STATE_SCHEMA_VERSION = 13;
+export const HOST_STATE_SCHEMA_VERSION = 14;
 const MAX_HOST_EVENT_SEQUENCE = (1n << 63n) - 1n;
 const HOST_EVENT_SEQUENCE_SORT_WIDTH = 20;
 
@@ -287,6 +290,25 @@ export type RuntimeEventOutboxStats = {
   retainedBytes: number;
 };
 
+export type RuntimeEventPruneMode = "grace" | "retained_pressure";
+
+export type RuntimeEventPruneState = Readonly<{
+  retainedCount: number;
+  retainedBytes: number;
+  acknowledgedThrough: string | null;
+  // The smallest accepted sequence of a v2 command whose terminal is not yet
+  // ACKed: no prune ever reaches it.
+  protectedFromSequence: string | null;
+  oldestRetainedCreatedAt: string | null;
+}>;
+
+export type RuntimeEventPressureEpisode = Readonly<{
+  since: string;
+  unacknowledgedCountAtStart: number;
+  unacknowledgedBytesAtStart: number;
+  episodes: number;
+}>;
+
 export type RuntimeEventHealthSnapshot = Readonly<{
   streamId: string;
   headSequence: string | null;
@@ -294,6 +316,7 @@ export type RuntimeEventHealthSnapshot = Readonly<{
   retainedCount: number;
   pressured: boolean;
   oldestUnacknowledgedAgeMs: number | null;
+  pressure: RuntimeEventPressureEpisode | null;
 }>;
 
 type RuntimeEventHealthSnapshotDbRow = {
@@ -302,6 +325,10 @@ type RuntimeEventHealthSnapshotDbRow = {
   unacknowledged_count: number;
   retained_count: number;
   pressured: number;
+  since_ms: number | null;
+  unacknowledged_count_at_start: number | null;
+  unacknowledged_bytes_at_start: number | null;
+  episodes: number;
   oldest_unacknowledged_created_at: string | null;
 };
 
@@ -312,6 +339,10 @@ SELECT
   totals.unacknowledged_count,
   totals.retained_count,
   p.pressured,
+  p.since_ms,
+  p.unacknowledged_count_at_start,
+  p.unacknowledged_bytes_at_start,
+  p.episodes,
   (
     SELECT e.created_at
     FROM runtime_event_outbox e
@@ -442,7 +473,14 @@ export type HostState = {
   runtimeEventOutboxStats(): RuntimeEventOutboxStats;
   runtimeEventHealthSnapshot(): RuntimeEventHealthSnapshot;
   assertCanAcceptMutatingCommand(): void;
-  pruneAcknowledgedRuntimeEvents(olderThan: Date): number;
+  // One bounded page (≤ 100 rows / 1 MiB). `grace` prunes rows ACKed before
+  // `olderThan` and the replay grace; `retained_pressure` (ADR-183) prunes any
+  // confirmed-ACKed row, because retained rows reached the soft budget.
+  pruneAcknowledgedRuntimeEvents(
+    olderThan: Date,
+    options?: { mode?: RuntimeEventPruneMode },
+  ): number;
+  runtimeEventPruneState(): RuntimeEventPruneState;
   subscribeRuntimeEvents(
     listener: (event: HostRuntimeEventRow) => void,
   ): () => void;
@@ -589,6 +627,7 @@ CREATE INDEX IF NOT EXISTS runtime_event_outbox_stream_replay_idx
 CREATE INDEX IF NOT EXISTS runtime_event_outbox_stream_pending_idx
   ON runtime_event_outbox (stream_id, acknowledged_at, sequence_sort_key);
 ${OUTBOX_BUDGET_SCHEMA}
+${RUNTIME_EVENT_PRESSURE_EPISODE_COLUMNS}
 ${OUTBOX_ACK_SCHEMA}
 ${RUNTIME_FILE_BUDGET_SCHEMA}
 `;
@@ -773,6 +812,35 @@ PRAGMA user_version = 13;
 COMMIT;
 `;
 
+// Idempotent: a store reconstructed from the current schema may already carry
+// the columns. The v13 bit also counted retained rows, so it is cleared and
+// recomputed at open under the unACKed-only predicate (ADR-183).
+function migrateV13ToV14(db: DatabaseSync): void {
+  const columns = new Set(
+    (
+      db.prepare("PRAGMA table_info(runtime_event_pressure)").all() as Array<{
+        name: string;
+      }>
+    ).map((column) => column.name),
+  );
+
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    if (columns.has("since_ms")) {
+      db.exec(`UPDATE runtime_event_pressure SET pressured = 0, since_ms = NULL,
+        unacknowledged_count_at_start = NULL, unacknowledged_bytes_at_start = NULL`);
+    } else {
+      db.exec("UPDATE runtime_event_pressure SET pressured = 0");
+      db.exec(RUNTIME_EVENT_PRESSURE_EPISODE_COLUMNS);
+    }
+    db.exec("PRAGMA user_version = 14");
+    db.exec("COMMIT");
+  } catch (error) {
+    if (db.isTransaction) db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
 function applySchema(db: DatabaseSync): void {
   const fresh =
     db
@@ -811,6 +879,7 @@ function applySchema(db: DatabaseSync): void {
   if (Number(user_version) < 11) db.exec(MIGRATE_V10_TO_V11);
   if (Number(user_version) < 12) db.exec(MIGRATE_V11_TO_V12);
   if (Number(user_version) < 13) db.exec(MIGRATE_V12_TO_V13);
+  if (Number(user_version) < 14) migrateV13ToV14(db);
 }
 
 export function openHostState(opts: OpenHostStateOptions = {}): HostState {
@@ -926,11 +995,14 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
   // Its accepted commands retain their independent durable terminal wallets.
   db.exec("DELETE FROM runtime_frame_file_credits");
   db.exec("DELETE FROM runtime_event_frames");
-  refreshOutboxPressure(db, limits);
+  refreshOutboxPressure(db, limits, now().getTime());
   const capacityListeners = new Set<(snapshot: OutboxBudgetSnapshot) => void>();
+  // A flip can commit inside any admission transaction (or roll back with a
+  // refused one), so the change is logged from the durable row after each
+  // commit rather than at the write.
+  let observedPressure = outboxPressureEpisode(db);
   const notifyCapacity = (): void => {
-    const previous = outboxBudgetSnapshot(db).pressured;
-    const pressured = refreshOutboxPressure(db, limits);
+    refreshOutboxPressure(db, limits, now().getTime());
     const logical = outboxBudgetSnapshot(db);
     const previousFilePressure = runtimeFileBudgetSnapshot(db).pressured;
     const filePressure = refreshRuntimeFilePressure(db, limits);
@@ -941,9 +1013,35 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
       ...logical,
       pressured: logical.pressured || filePressure || !canAdmitPhysical(),
     };
+    const episode = outboxPressureEpisode(db);
 
-    if (previous !== pressured)
-      log?.info({ ...snapshot }, "runtime-event-pressure-changed");
+    if (
+      episode.pressured !== observedPressure.pressured ||
+      episode.episodes !== observedPressure.episodes
+    ) {
+      const partitions = [logical.regular, logical.control, logical.emergency];
+
+      log?.info(
+        {
+          pressured: episode.pressured,
+          unacknowledgedCount: partitions.reduce(
+            (sum, item) => sum + item.unacknowledgedCount,
+            0,
+          ),
+          unacknowledgedBytes: partitions.reduce(
+            (sum, item) => sum + item.unacknowledgedBytes,
+            0,
+          ),
+          retainedCount: partitions.reduce(
+            (sum, item) => sum + item.retainedCount,
+            0,
+          ),
+          episodes: episode.episodes,
+        },
+        "outbox-pressure-changed",
+      );
+    }
+    observedPressure = episode;
     for (const listener of capacityListeners) {
       try {
         listener(snapshot);
@@ -2006,30 +2104,29 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
         );
       }
     },
-    pruneAcknowledgedRuntimeEvents(olderThan) {
+    pruneAcknowledgedRuntimeEvents(olderThan, options) {
+      const mode = options?.mode ?? "grace";
+
       return storage.write(() => {
-        const cutoff = new Date(
-          Math.min(
-            olderThan.getTime(),
-            now().getTime() - limits.eventAckGraceMs,
-          ),
-        ).toISOString();
+        // Retained-pressure mode has no age cutoff: any confirmed-ACKed row
+        // outside a protected span is eligible (ADR-183 D3).
+        const cutoff =
+          mode === "retained_pressure"
+            ? null
+            : new Date(
+                Math.min(
+                  olderThan.getTime(),
+                  now().getTime() - limits.eventAckGraceMs,
+                ),
+              ).toISOString();
 
         db.exec("BEGIN IMMEDIATE");
         try {
           const stream = ensureRuntimeEventStream(db, now);
-          // An accepted v2 command owns its complete event span until the
-          // terminal event is ACKed. ACK alone does not retire the receipt.
-          const protectedSpan = db
-            .prepare(
-              `SELECT accepted_sequence AS sequence
-            FROM command_receipts WHERE request_version = 2 AND accepted_sequence IS NOT NULL
-            AND (terminal_sequence IS NULL OR CAST(terminal_sequence AS INTEGER) > CAST(? AS INTEGER))
-            ORDER BY length(accepted_sequence), accepted_sequence LIMIT 1`,
-            )
-            .get(stream.acknowledged_through ?? "-1") as
-            | { sequence: string }
-            | undefined;
+          const protectedSpan = protectedRuntimeEventSpan(
+            db,
+            stream.acknowledged_through,
+          );
           const candidates = db
             .prepare(
               `SELECT e.sequence, e.sequence_sort_key, e.encoded_bytes,
@@ -2051,7 +2148,7 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
               (protectedSpan !== undefined &&
                 BigInt(row.sequence) >= BigInt(protectedSpan.sequence)) ||
               row.acknowledged_at === null ||
-              row.acknowledged_at >= cutoff ||
+              (cutoff !== null && row.acknowledged_at >= cutoff) ||
               bytes + row.encoded_bytes > MAX_RUNTIME_EVENT_BYTES
             )
               break;
@@ -2096,6 +2193,26 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
           throw error;
         }
       });
+    },
+    runtimeEventPruneState() {
+      const stream = ensureRuntimeEventStream(db, now);
+      const regular = outboxBudgetSnapshot(db).regular;
+      const oldest = db
+        .prepare(
+          `SELECT created_at FROM runtime_event_outbox WHERE stream_id = ?
+          ORDER BY sequence_sort_key ASC LIMIT 1`,
+        )
+        .get(stream.stream_id) as { created_at: string } | undefined;
+
+      return {
+        retainedCount: regular.retainedCount,
+        retainedBytes: regular.retainedBytes,
+        acknowledgedThrough: stream.acknowledged_through,
+        protectedFromSequence:
+          protectedRuntimeEventSpan(db, stream.acknowledged_through)
+            ?.sequence ?? null,
+        oldestRetainedCreatedAt: oldest?.created_at ?? null,
+      };
     },
     subscribeRuntimeEvents(listener) {
       runtimeEventListeners.add(listener);
@@ -2201,6 +2318,22 @@ function ensureRuntimeEventStream(
   ).run(streamId, createdAt, createdAt);
 
   return getRuntimeEventStream(db, streamId);
+}
+
+// An accepted v2 command owns its complete event span until the terminal
+// event is ACKed. ACK alone does not retire the receipt.
+function protectedRuntimeEventSpan(
+  db: DatabaseSync,
+  acknowledgedThrough: string | null,
+): { sequence: string } | undefined {
+  return db
+    .prepare(
+      `SELECT accepted_sequence AS sequence
+    FROM command_receipts WHERE request_version = 2 AND accepted_sequence IS NOT NULL
+    AND (terminal_sequence IS NULL OR CAST(terminal_sequence AS INTEGER) > CAST(? AS INTEGER))
+    ORDER BY length(accepted_sequence), accepted_sequence LIMIT 1`,
+    )
+    .get(acknowledgedThrough ?? "-1") as { sequence: string } | undefined;
 }
 
 function runtimeEventOutboxStats(
@@ -2311,6 +2444,32 @@ function runtimeEventHealthSnapshot(
     retainedCount: row.retained_count,
     pressured: row.pressured === 1,
     oldestUnacknowledgedAgeMs,
+    pressure: runtimeEventPressureEpisode(row, streamId),
+  };
+}
+
+function runtimeEventPressureEpisode(
+  row: RuntimeEventHealthSnapshotDbRow,
+  streamId: string,
+): RuntimeEventPressureEpisode | null {
+  if (row.pressured !== 1) return null;
+  if (
+    row.since_ms === null ||
+    row.unacknowledged_count_at_start === null ||
+    row.unacknowledged_bytes_at_start === null ||
+    !Number.isSafeInteger(row.since_ms)
+  ) {
+    throw new HostRuntimeEventError(
+      "stream_corrupt",
+      `runtime event pressure episode is incomplete for stream ${streamId}`,
+    );
+  }
+
+  return {
+    since: new Date(row.since_ms).toISOString(),
+    unacknowledgedCountAtStart: row.unacknowledged_count_at_start,
+    unacknowledgedBytesAtStart: row.unacknowledged_bytes_at_start,
+    episodes: row.episodes,
   };
 }
 
@@ -2795,54 +2954,133 @@ function toHostRuntimeObjectRow(
   };
 }
 
-// Each pass has a bounded database write; subsequent pages yield to producers.
-function startBoundedPruner(input: {
-  prune: () => number;
+export type BoundedPrunerPass = Readonly<{
+  mode: RuntimeEventPruneMode;
+  pruned: number;
+  pages: number;
+}>;
+
+export type BoundedPruner = {
+  kick(mode: RuntimeEventPruneMode): void;
+  stop(): void;
+};
+
+// Each page is one bounded database write; the next page yields to producers
+// and ACKs with `setImmediate`. At most one pass is in flight: a kick during a
+// pass is remembered once (`retained_pressure` wins over `grace`) and starts
+// the next pass when this one ends. A pass ends when a page prunes nothing or
+// `continuePass` says the mode's target is met.
+export function startBoundedPruner(input: {
+  prunePage: (mode: RuntimeEventPruneMode) => number;
+  continuePass: (mode: RuntimeEventPruneMode) => boolean;
+  onPassEnd?: (pass: BoundedPrunerPass) => void;
   available: () => boolean;
   reportFailure: (error: unknown) => void;
   logger: Logger;
   message: string;
   intervalMs: number;
-}): () => void {
+}): BoundedPruner {
   let immediate: NodeJS.Immediate | undefined;
   let stopped = false;
-  const schedule = (): void => {
-    if (!stopped && !immediate) immediate = setImmediate(prune);
-  };
-  const prune = (): void => {
-    immediate = undefined;
-    if (stopped || !input.available()) return;
-    try {
-      const pruned = input.prune();
+  let inPage = false;
+  let active: {
+    mode: RuntimeEventPruneMode;
+    pruned: number;
+    pages: number;
+  } | null = null;
+  let pending: RuntimeEventPruneMode | null = null;
 
-      if (pruned > 0) {
-        input.logger.info({ pruned }, input.message);
-        schedule();
-      }
-    } catch (error) {
-      input.reportFailure(error);
-      input.logger.error(
-        {
-          reason:
-            error instanceof HostRuntimeEventError
-              ? error.reason
-              : "runtime_storage_failure",
-        },
-        "runtime-pruner-failed",
-      );
-      if (input.available()) throw error;
+  const endPass = (): void => {
+    const pass = active;
+
+    active = null;
+    if (pass) input.onPassEnd?.(pass);
+    if (pending && !stopped) {
+      const next = pending;
+
+      pending = null;
+      begin(next);
     }
   };
+  const runPage = (): void => {
+    immediate = undefined;
+    const pass = active;
 
-  prune();
-  const handle = setInterval(schedule, input.intervalMs);
+    if (stopped || !pass) return;
+    if (!input.available()) {
+      active = null;
+      pending = null;
+
+      return;
+    }
+    let pruned = 0;
+
+    if (input.continuePass(pass.mode)) {
+      inPage = true;
+      try {
+        pruned = input.prunePage(pass.mode);
+      } catch (error) {
+        active = null;
+        pending = null;
+        input.reportFailure(error);
+        input.logger.error(
+          {
+            mode: pass.mode,
+            reason:
+              error instanceof HostRuntimeEventError
+                ? error.reason
+                : "runtime_storage_failure",
+          },
+          "runtime-pruner-failed",
+        );
+        if (input.available()) throw error;
+
+        return;
+      } finally {
+        inPage = false;
+      }
+    }
+    if (pruned > 0) {
+      pass.pruned += pruned;
+      pass.pages += 1;
+      input.logger.info({ pruned, mode: pass.mode }, input.message);
+      if (!stopped) immediate = setImmediate(runPage);
+
+      return;
+    }
+    endPass();
+  };
+  const begin = (mode: RuntimeEventPruneMode): void => {
+    active = { mode, pruned: 0, pages: 0 };
+    immediate = setImmediate(runPage);
+  };
+  const kick = (mode: RuntimeEventPruneMode): void => {
+    // A page's own commit notifies capacity; it never re-kicks its pass.
+    if (stopped || inPage) return;
+    if (active) {
+      if (pending !== "retained_pressure") pending = mode;
+
+      return;
+    }
+    begin(mode);
+  };
+
+  // Boot keeps its synchronous first grace page.
+  active = { mode: "grace", pruned: 0, pages: 0 };
+  runPage();
+  const handle = setInterval(() => kick("grace"), input.intervalMs);
 
   handle.unref();
 
-  return () => {
-    stopped = true;
-    clearInterval(handle);
-    if (immediate) clearImmediate(immediate);
+  return {
+    kick,
+    stop() {
+      stopped = true;
+      clearInterval(handle);
+      if (immediate) clearImmediate(immediate);
+      active = null;
+      pending = null;
+    },
   };
 }
 
@@ -2851,15 +3089,117 @@ export function startRuntimeEventPruner(
   logger: Logger,
   now: () => Date = () => new Date(),
 ): () => void {
-  return startBoundedPruner({
-    prune: () =>
+  const { limits } = state;
+  const belowLow = (): boolean => {
+    const current = state.runtimeEventPruneState();
+
+    return (
+      current.retainedCount < limits.eventLowRows &&
+      current.retainedBytes < limits.eventLowBytes
+    );
+  };
+  // In memory: one retained-pressure episode runs from the first sighting of
+  // retained rows at soft until a pass leaves them below low (ADR-183 D3).
+  let episode: {
+    startedAtMs: number;
+    retainedBefore: number;
+    pruned: number;
+    pages: number;
+    // The ACK watermark at which a pass last stopped short of low; only a
+    // newer ACK can make more rows prunable, so kicks wait for one.
+    stalledAt: string | null | undefined;
+    stallLogged: boolean;
+  } | null = null;
+  const pruner = startBoundedPruner({
+    prunePage: (mode) =>
       state.pruneAcknowledgedRuntimeEvents(
-        new Date(now().getTime() - state.limits.eventAckGraceMs),
+        new Date(now().getTime() - limits.eventAckGraceMs),
+        { mode },
       ),
+    continuePass: (mode) => mode === "grace" || !belowLow(),
+    onPassEnd: (pass) => {
+      if (pass.mode !== "retained_pressure" || !episode) return;
+      const current = state.runtimeEventPruneState();
+
+      episode.pruned += pass.pruned;
+      episode.pages += pass.pages;
+      if (
+        current.retainedCount < limits.eventLowRows &&
+        current.retainedBytes < limits.eventLowBytes
+      ) {
+        logger.warn(
+          {
+            pruned: episode.pruned,
+            retainedBefore: episode.retainedBefore,
+            retainedAfter: current.retainedCount,
+            oldestAgeMs:
+              current.oldestRetainedCreatedAt === null
+                ? null
+                : Math.max(
+                    0,
+                    now().getTime() -
+                      Date.parse(current.oldestRetainedCreatedAt),
+                  ),
+            pages: episode.pages,
+            durationMs: Math.max(0, now().getTime() - episode.startedAtMs),
+          },
+          "outbox-retained-pressure-prune",
+        );
+        episode = null;
+
+        return;
+      }
+      episode.stalledAt = current.acknowledgedThrough;
+      if (pass.pruned === 0 && !episode.stallLogged) {
+        episode.stallLogged = true;
+        logger.warn(
+          {
+            retainedCount: current.retainedCount,
+            protectedFromSequence: current.protectedFromSequence,
+            acknowledgedThrough: current.acknowledgedThrough,
+          },
+          "outbox-retained-pressure-prune-stalled",
+        );
+      }
+    },
     available: state.runtimeStorageAvailable,
     reportFailure: state.reportRuntimeStorageFailure,
     logger,
     message: "runtime-event-outbox-pruned",
     intervalMs: RUNTIME_EVENT_PRUNE_INTERVAL_MS,
   });
+  const kickOnRetained = (snapshot: OutboxBudgetSnapshot): void => {
+    if (
+      !retainedAtThreshold(
+        snapshot.regular,
+        limits.eventSoftBytes,
+        limits.eventSoftRows,
+      )
+    )
+      return;
+    if (!episode) {
+      episode = {
+        startedAtMs: now().getTime(),
+        retainedBefore: snapshot.regular.retainedCount,
+        pruned: 0,
+        pages: 0,
+        stalledAt: undefined,
+        stallLogged: false,
+      };
+    } else if (
+      episode.stalledAt !== undefined &&
+      state.runtimeEventPruneState().acknowledgedThrough === episode.stalledAt
+    ) {
+      return;
+    }
+    pruner.kick("retained_pressure");
+  };
+  const unsubscribe = state.subscribeRuntimeCapacity(kickOnRetained);
+
+  kickOnRetained(state.runtimeEventOutboxStats().budget);
+
+  return () => {
+    unsubscribe();
+    pruner.stop();
+  };
 }

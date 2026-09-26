@@ -248,13 +248,6 @@ describe.skipIf(!enabled)("event-plane throughput under load (R20)", () => {
         // INFO keeps the host's stream open/close lines (with their reason) in
         // the captured supervisor log.
         LOG_LEVEL: "info",
-        // The profile commits >108 000 rows in five minutes and the host keeps
-        // ACKed rows for the 24 h replay grace, so the default 80 000-row soft
-        // budget turns the run into an outbox-pressure test — frozen scope,
-        // not what R20 measures. Bytes stay at their defaults (~140 MB used).
-        MAISTER_EVENT_OUTBOX_LOW_ROWS: "320000",
-        MAISTER_EVENT_OUTBOX_SOFT_ROWS: "400000",
-        MAISTER_EVENT_OUTBOX_HARD_ROWS: "500000",
       },
     });
     restoreUrl = useRealSupervisorUrl(supervisor.url);

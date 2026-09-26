@@ -1071,9 +1071,26 @@ export const SupervisorEventStreamHealthSchema = z
         shutdown: z.number().int().nonnegative().safe(),
       } satisfies Record<RuntimeEventCloseReason, z.ZodTypeAny>)
       .strict(),
+    // ADR-183: the pressure episode (SQLite v14), null while not pressured.
+    pressure: z
+      .object({
+        since: z.string().datetime(),
+        unacknowledgedCountAtStart: z.number().int().nonnegative().safe(),
+        unacknowledgedBytesAtStart: z.number().int().nonnegative().safe(),
+        episodes: z.number().int().nonnegative().safe(),
+      })
+      .strict()
+      .nullable(),
   })
   .strict()
   .superRefine((value, ctx) => {
+    if ((value.pressure === null) === value.pressured) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["pressure"],
+        message: "pressure must be null exactly when pressured is false",
+      });
+    }
     if (value.unacknowledgedCount > value.retainedCount) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
