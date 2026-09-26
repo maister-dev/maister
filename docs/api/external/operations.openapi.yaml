@@ -1773,8 +1773,9 @@ paths:
         are derived SERVER-SIDE from the orchestrator's `agent:<id>` token. With
         `childRunId` set, the named child MUST be a DIRECT child of the calling
         orchestrator; with `all: true`, every direct child of the calling
-        orchestrator is returned. Exactly one of `childRunId` / `all` MUST be
-        supplied.
+        orchestrator is returned. Exactly one of `childRunId` / `all: true` MUST
+        be supplied; both, or neither, is refused `CONFIG` → 422 (`all: false`
+        selects nothing).
 
         **Direct children only (Implemented — ADR-165).** A grandchild is invisible
         under `all: true` and, when named, is refused `PRECONDITION` → **409**
@@ -1884,7 +1885,8 @@ paths:
         **Identifiers (trust contour).** The `projectId` and the parent `runId`
         are derived SERVER-SIDE from the orchestrator's `agent:<id>` token; the
         body `childRunId` MUST be a child of the calling orchestrator (mismatch →
-        404, existence-hide). The cancel funnels through the same run-stop path as
+        `PRECONDITION` → 409, existence-hidden: an id naming no run gets the same
+        body). The cancel funnels through the same run-stop path as
         the session-auth surface; the returned `status` is the child's row state
         after the cancel was applied.
 
@@ -1977,7 +1979,8 @@ paths:
               additionalProperties: false
               required: [prompt]
               description: |
-                Exactly one of `addressableKey` / `childRunId` MUST be supplied.
+                Exactly one of `addressableKey` / `childRunId` MUST be supplied;
+                both, or neither, is refused `CONFIG` → 422.
               properties:
                 addressableKey:
                   type: string
@@ -6070,7 +6073,8 @@ components:
       type: object
       description: |
         (M37 — Implemented, ADR-098) `run_collect` selector. Exactly one of
-        `childRunId` / `all` MUST be supplied.
+        `childRunId` / `all: true` MUST be supplied; both, or neither, is
+        refused `CONFIG` → 422 (`all: false` selects nothing).
       additionalProperties: false
       properties:
         childRunId:

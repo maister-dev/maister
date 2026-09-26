@@ -1057,4 +1057,48 @@ describe("POST /api/v1/ext/runs/collect + /cancel", () => {
     expect(res.status).toBe(409);
     expect(((await res.json()) as { code: string }).code).toBe("PRECONDITION");
   });
+
+  // Existence is hidden by answering identically, not by a 404: a run outside
+  // the tree and an id naming no run at all get the same 409 body.
+  it("cancel refuses an id naming no run at all with the SAME 409 body as a non-child (existence-hidden)", async () => {
+    const orchestrator = await seedAgent({ id: "orchestrator" });
+    const { secret } = await seedOrchestratorRun({
+      orchestratorAgentId: orchestrator,
+      taskId: null,
+    });
+
+    const strayId = randomUUID();
+
+    await pool.query(
+      `INSERT INTO "runs" ("id", "run_kind", "agent_id", "project_id", "status", "flow_version", "flow_revision")
+       VALUES ($1, 'agent', $2, $3, 'Running', 'agent', 'manual')`,
+      [strayId, orchestrator, projectId],
+    );
+
+    const cancel = (childRunId: string) => {
+      const req = new NextRequest("http://localhost/api/v1/ext/runs/cancel", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ childRunId }),
+      });
+
+      req.headers.set("authorization", `Bearer ${secret}`);
+
+      return cancelPost(req, {});
+    };
+
+    const stray = await cancel(strayId);
+    const missing = await cancel(randomUUID());
+
+    expect(stray.status).toBe(409);
+    expect(missing.status).toBe(409);
+    expect(await missing.json()).toEqual(await stray.json());
+
+    const row = await pool.query(
+      `SELECT "status" FROM "runs" WHERE "id" = $1`,
+      [strayId],
+    );
+
+    expect(row.rows[0].status).toBe("Running");
+  });
 });

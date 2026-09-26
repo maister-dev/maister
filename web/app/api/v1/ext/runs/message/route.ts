@@ -34,10 +34,13 @@ const bodySchema = z
     mode: z.enum(["steer", "queue"]).optional(),
   })
   .strict()
-  .refine((b) => b.addressableKey !== undefined || b.childRunId !== undefined, {
-    message: "one of addressableKey or childRunId is required",
-    path: ["addressableKey"],
-  });
+  .refine(
+    (b) => (b.addressableKey !== undefined) !== (b.childRunId !== undefined),
+    {
+      message: "exactly one of addressableKey or childRunId is required",
+      path: ["addressableKey"],
+    },
+  );
 
 type MessageBody = z.infer<typeof bodySchema>;
 

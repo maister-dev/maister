@@ -670,6 +670,49 @@ describe("POST /api/v1/ext/runs/message (M37 Phase 8)", () => {
     expect(fake.callsOf("createSession")).toEqual([]);
   });
 
+  // Exactly one identifier, as on the delegate target (ADR-163 D4): when the
+  // key and the id name different children, honouring either one sends the
+  // prompt to a child the caller may not have meant.
+  it("(2f) addressableKey AND childRunId naming different children → CONFIG, nothing accepted", async () => {
+    const orchestrator = await seedAgent("orchestrator");
+    const worker = await seedAgent("reviewer-agent");
+    const { runId: rootRunId, secret } =
+      await seedOrchestratorRun(orchestrator);
+    const keyed = await seedRunningChild({
+      agentId: worker,
+      parentRunId: rootRunId,
+      rootRunId,
+      addressableKey: "reviewer",
+      acpSessionId: null,
+    });
+    const other = await seedRunningChild({
+      agentId: worker,
+      parentRunId: rootRunId,
+      rootRunId,
+      addressableKey: "writer",
+      acpSessionId: null,
+    });
+
+    const res = await messagePost(
+      jsonReq(MSG_URL, secret, {
+        addressableKey: "reviewer",
+        childRunId: other,
+        prompt: "which child is this for?",
+      }),
+      {},
+    );
+
+    expect(res.status).toBe(422);
+    expect(((await res.json()) as { code: string }).code).toBe("CONFIG");
+
+    const turns = await pool.query(
+      `SELECT count(*)::int AS n FROM "agent_turns" WHERE "run_id" = ANY($1)`,
+      [[keyed, other]],
+    );
+
+    expect(turns.rows[0].n).toBe(0);
+  });
+
   it("(3) two persistent delegations with the same key in one tree → 2nd is CONFLICT", async () => {
     const orchestrator = await seedAgent("orchestrator");
     const worker = await seedAgent("reviewer-agent");

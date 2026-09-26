@@ -25,8 +25,8 @@ const bodySchema = z
     all: z.boolean().optional(),
   })
   .strict()
-  .refine((b) => b.childRunId !== undefined || b.all === true, {
-    message: "either childRunId or all:true is required",
+  .refine((b) => (b.childRunId !== undefined) !== (b.all === true), {
+    message: "exactly one of childRunId or all:true is required",
   });
 
 type CollectBody = z.infer<typeof bodySchema>;

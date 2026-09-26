@@ -449,7 +449,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
   },
   run_collect: {
     description:
-      "Collect results, status, and produced artifacts from the orchestrator's delegated child runs. Pass childRunId for one child, or all:true for every child. result.value is the validated public result — use it, not outputText (deprecated); resultStatus says why it is absent (pending|valid|absent|missing|stale|invalid|unavailable) and resultFailure carries the reason. Collect is idempotent and shows only your DIRECT children. Research flow children finish by themselves when they publish a result and change nothing; collect BEFORE run_cancel — a failure-terminal child reports unavailable. Returns an array of { childRunId, status, settled, resultStatus, result, resultRevision, resultFailure, artifacts, diffRef?, outputText? }.",
+      "Collect results, status, and produced artifacts from the orchestrator's delegated child runs. Pass exactly one of childRunId (one child) or all:true (every child). result.value is the validated public result — use it, not outputText (deprecated); resultStatus says why it is absent (pending|valid|absent|missing|stale|invalid|unavailable) and resultFailure carries the reason. Collect is idempotent and shows only your DIRECT children. Research flow children finish by themselves when they publish a result and change nothing; collect BEFORE run_cancel — a failure-terminal child reports unavailable. Returns an array of { childRunId, status, settled, resultStatus, result, resultRevision, resultFailure, artifacts, diffRef?, outputText? }.",
     inputSchema: {
       type: "object",
       properties: {
@@ -471,7 +471,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
   },
   run_message: {
     description:
-      "Send a follow-up to a PERSISTENT child agent in the calling orchestrator's run-tree by addressableKey or childRunId. Input is saved before dispatch. A busy session or full agent pool leaves it queued for normal resume; a completed turn re-parks the child. Reuse requestKey to retry the same message without duplicating it; different input under that key is refused. Addressing stays within the caller's own tree. Flow children have no addressable agent session and are refused PRECONDITION. mode 'steer' injects the prompt into the child's RUNNING turn when its session supports it and queues it otherwise; mode 'queue' (default) always waits for the next turn. Returns { childRunId, messageId, status, messageState, delivery }; delivery 'steered' means it reached the running turn, 'queued' that it awaits the next turn.",
+      "Send a follow-up to a PERSISTENT child agent in the calling orchestrator's run-tree by exactly one of addressableKey or childRunId. Input is saved before dispatch. A busy session or full agent pool leaves it queued for normal resume; a completed turn re-parks the child. Reuse requestKey to retry the same message without duplicating it; different input under that key is refused. Addressing stays within the caller's own tree. Flow children have no addressable agent session and are refused PRECONDITION. mode 'steer' injects the prompt into the child's RUNNING turn when its session supports it and queues it otherwise; mode 'queue' (default) always waits for the next turn. Returns { childRunId, messageId, status, messageState, delivery }; delivery 'steered' means it reached the running turn, 'queued' that it awaits the next turn.",
     inputSchema: {
       type: "object",
       properties: {

@@ -538,3 +538,62 @@ describe("run_collect v2 — boundaries and idempotence (AC-32)", () => {
     expect(rows.rows[0].n).toBe(0);
   });
 });
+
+// The selector is exactly one of `childRunId` / `all: true` — the same
+// both-or-neither refusal as the delegate target (ADR-163 D4). Honouring one
+// and dropping the other would hand a coordinator that asked for every child a
+// silently partial answer.
+describe("run_collect selector — exactly one of childRunId / all:true", () => {
+  it("childRunId together with all:true is refused 422 CONFIG and collects nothing", async () => {
+    const parent = await orchestrator();
+    const named = await seedChildRun(ctx, {
+      parentRunId: parent.runId,
+      status: "Done",
+    });
+    const sibling = await seedChildRun(ctx, {
+      parentRunId: parent.runId,
+      status: "Done",
+    });
+
+    for (const child of [named, sibling]) {
+      await setContract(child, CONTRACT);
+      await insertResultRow({ runId: child, revision: 1, validity: "valid" });
+    }
+
+    const res = await collectPost(
+      collectRequest(parent.secret, { childRunId: named, all: true }),
+      {},
+    );
+
+    expect(res.status).toBe(422);
+    expect(((await res.json()) as { code: string }).code).toBe("CONFIG");
+
+    const stamped = await pool.query(
+      `SELECT count(*)::int AS n FROM "run_results"
+        WHERE "run_id" = ANY($1) AND "first_collected_at" IS NOT NULL`,
+      [[named, sibling]],
+    );
+
+    expect(stamped.rows[0].n).toBe(0);
+  });
+
+  it("childRunId with all:false collects exactly that child", async () => {
+    const parent = await orchestrator();
+    const named = await seedChildRun(ctx, {
+      parentRunId: parent.runId,
+      status: "Done",
+    });
+
+    await seedChildRun(ctx, { parentRunId: parent.runId, status: "Done" });
+
+    const res = await collectPost(
+      collectRequest(parent.secret, { childRunId: named, all: false }),
+      {},
+    );
+
+    expect(res.status).toBe(200);
+    expect(
+      ((await res.json()) as V2Item[]).map((item) => item.childRunId),
+    ).toEqual([named]);
+  });
+});
