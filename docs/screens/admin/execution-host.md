@@ -73,9 +73,10 @@ details. There is no API or mutation route for this screen.
    no owned turn claimed or dispatched and no agent prompt application open,
    read live through the lag read model (never the persisted observation), and
    up to 20 rows — run link, run status, message ordinal and age. Read-only; an
-   empty state says there are none. The scheduler's `system_sweep` logs the
-   same rows as WARN `agent-message-stranded` and carries the count as
-   `strandedAgentTurns` on its summary.
+   empty state says there are none. The scheduler's `system_sweep` runs the
+   same query, logs WARN `agent-message-stranded` once per stranded run (at
+   most 50 per pass) and carries the count as `strandedAgentTurns` on its
+   summary.
 7. Scheduler clock summary and link.
 
 ## States and data

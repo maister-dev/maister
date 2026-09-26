@@ -347,7 +347,9 @@ existing top-level `reason` / `errorCode` keys keep their values. `reason` is
 the emitter's own token, snake_case where MAIster mints it (`agent_turn_lost`,
 `turn_lost`, `agent_session_gone`, `budget_breach`, `ttl`, `max_duration`,
 `user`, `orphan`, `child_cancel`, `workbench`, `result_missing`,
-`consensus_no_draft_available`, `stop`, `discard`, …). `cause` never carries a
+`consensus_no_draft_available`, `stop`, `discard`, …; the orchestrator
+cascade writes `cascade/<token>`, the one two-segment form the reader accepts).
+`cause` never carries a
 message: payloads reach agent prompts (`agent_triggers`) and `distill`
 (`memory_harvest`), and the human copy is composed from `code` + `reason`; the
 raw message stays where it lives (`scratch_runs.error_message`,
@@ -368,10 +370,13 @@ through a legacy synthesis from `payload.reason` / `payload.errorCode`: `code`
 is whichever of the two is a `MaisterErrorCode` (else null), and `reason` is the
 old reason normalized to snake_case when it is not the code itself — kept only
 if it is a well-formed token, so an old prose reason (an error message) never
-reaches the cause: `{code, reason?, source: "legacy"}`. A
-project-less run can never have an event (`domain_events.project_id` is NOT
-NULL), so a scratch detail falls back to `{code: scratch_runs.error_code,
-source: "scratch"}`. The cause reaches the flow/agent run page, the scratch
+reaches the cause: `{code, reason?, source: "legacy"}`, or null when the old
+payload names neither. A project-less run can never have an event
+(`domain_events.project_id` is NOT NULL), so a `Crashed` or `Failed` scratch
+detail with no matching event falls back to `{code: scratch_runs.error_code,
+source: "scratch"}` when that column holds a `MaisterErrorCode` (an
+`Abandoned` one never does: a stop's cause is not the dialog's last error).
+The cause reaches the flow/agent run page, the scratch
 detail, the external `RunDTO.terminalCause` and MCP `run_get`; the webhook
 `data` is unchanged.
 

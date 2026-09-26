@@ -314,6 +314,27 @@ alone, neither side having touched `spawn.ts`; the 10 steering, migration,
 scratch-placement, local-package-assistant, ext-message and turn-admission
 integration files **100/100**.
 
+**Measured 2026-09-26 (ownership-residuals branch on `master` 881619a5, this
+Mac).** unit **867 files / 9066 tests, 0 failures**; supervisor **78 files /
+747 tests, 0 failures** (unit 46 / 466, integration 32 / 281); mcp **6 files /
+266 tests, 0 failures**; integration **552 files / 4905 tests** (2 files
+skipped). The integration lane ran at load 90-99 and 39 files were red; all 39
+passed re-run together at load ~10 (**499/499**), so none is a regression. 31
+were whole-file `TestDatabaseDockerUnavailableError: container runtime probe
+timed out` (one `No host port found for host IP`): every case SKIPPED in ~3 s,
+followed by `TypeError: The "path" argument … Received undefined` from the
+file's own teardown. That is the testcontainers probe, not a test — read a
+file's first error before counting its skips as failures. The other 47 cases
+were timeouts in 8 files: `lib/flows/graph/__tests__/prompt-owners` (32),
+`execution-ab-process-cleanup` (5), `permission-result-failure` (3),
+`execution-ab-process-death` (3), `gate-permission-result`, `workspace-reconciler`
+"processes a due candidate after more than one batch of quarantined paths",
+`projection-worker` AT-03 and `execution-ab-partitions` P3-live. New
+load-sensitive names for this Mac: the Docker probe timeout,
+`workspace-reconciler`'s batch case, `gate-permission-result` and
+`permission-result-failure` (a 767 s file under load, 190 s idle). e2e
+`m19-reconcile-gc` + `scratch-detail` **13 passed** (`--workers=2`).
+
 **A first-hit Next-dev compile can exhaust a 10s e2e timeout.** Before calling
 such a failure a regression, re-run the spec in isolation and read the RETRY
 time: `scratch-detail.spec.ts:50` ("suggests project skills"; `:57` since

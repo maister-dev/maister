@@ -216,5 +216,15 @@ describe("loadRunTerminalCause (D-B3)", () => {
     expect(
       await loadScratchTerminalCause(db, runId, "Running", "ACP_PROTOCOL"),
     ).toBeNull();
+    // A stop after a retryable failure leaves its code on the dialog: the
+    // abandon was the operator's, never that error.
+    expect(
+      await loadScratchTerminalCause(
+        db,
+        await seedRun("Abandoned"),
+        "Abandoned",
+        "EXECUTOR_UNAVAILABLE",
+      ),
+    ).toBeNull();
   });
 });

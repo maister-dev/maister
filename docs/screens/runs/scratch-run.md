@@ -200,7 +200,9 @@ stateDiagram-v2
 - `POST /api/scratch-runs/{runId}/recover` resumes a crashed scratch session
   with a user prompt; with messages still queued from before the crash it
   queues the prompt behind them and answers `delivery: "queued"`, so the
-  oldest is sent first. A run that is not `Crashed` is refused `409 CONFLICT
+  oldest is sent first. Past the existing answers (a removed workspace or an
+  ended dialog → `409 PRECONDITION`; a `Review` dialog or a live host session
+  → `open`), a run that is not `Crashed` is refused `409 CONFLICT
   {reason: "scratch_not_recoverable", status, next?}` (Implemented).
 - `POST /api/scratch-runs/{runId}/interrupt` interrupts the agent's in-flight
   turn (composer Stop) without ending the session; the dialog returns to

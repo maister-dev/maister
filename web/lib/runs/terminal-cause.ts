@@ -98,6 +98,8 @@ export async function loadRunTerminalCause(
 /**
  * A scratch dialog's cause: the run's own event when it has one, else — a
  * project-less assistant run emits no event — the dialog's stored error code.
+ * Only for a crash or a failure: an abandon (stop, discard, TTL) is never the
+ * dialog's error, and a retryable failure's code may still sit on the row.
  */
 export async function loadScratchTerminalCause(
   db: Db,
@@ -108,7 +110,7 @@ export async function loadScratchTerminalCause(
   if (!isTerminalStatus(status)) return null;
   const cause = await loadRunTerminalCause(db, runId, status);
 
-  if (cause) return cause;
+  if (cause || status === "Abandoned") return cause;
 
   return errorCode !== null && isMaisterErrorCode(errorCode)
     ? { code: errorCode, source: "scratch" }

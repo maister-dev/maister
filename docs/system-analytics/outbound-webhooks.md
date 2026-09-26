@@ -296,16 +296,16 @@ the 12), `occurredAt` (ISO-8601 UTC), `deliveryId`, `attempt` (int `≥1`),
 | `run.failed` | `{ errorCode: string \| null }` |
 | `run.crashed` | `{ errorCode: string \| null }` |
 | `run.abandoned` | `{ source: "user" \| "workbench" \| "ttl" }` |
-
-The `run.failed | run.crashed | run.abandoned` webhook `data` is unchanged;
-the run's typed terminal cause rides the paired domain event's `cause`
-([domain events](domain-events.md#terminal-cause-implemented)), not the
-webhook (Implemented).
 | `run.pr_merged` | `{ prNumber: number, prUrl: string \| null, mergeCommitSha: string \| null }` |
 | `run.pr_closed` | `{ prNumber: number, prUrl: string \| null }` |
 | `run.pr_conflicts` | `{ prNumber: number, prUrl: string \| null }` |
 | `gate.decided` | `{ gateId: string, kind: "command_check" \| "skill_check" \| "ai_judgment" \| "artifact_required" \| "external_check" \| "human_review", mode: "blocking" \| "advisory", status: "passed" \| "failed" \| "overridden", nodeAttemptId: string \| null }` |
 | `ping` | `{ message: string }` |
+
+The `run.failed | run.crashed | run.abandoned` webhook `data` is unchanged;
+the run's typed terminal cause rides the paired domain event's `cause`
+([domain events](domain-events.md#terminal-cause-implemented)), not the
+webhook (Implemented).
 
 ## Retry and backoff
 

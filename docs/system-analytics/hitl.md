@@ -979,7 +979,7 @@ boolean | enum | array`; unknown type refused with `CONFIG` at Flow
     back to `Running` — the runner owns that transition on resume so
     its `isResume` gate can match.
   - Retry classification: a supervisor 410 is dispatched on the host's
-    `details.reason` and the run session's newest incarnation, in ONE
+    `details.reason` and the permission's incarnation state, in ONE
     transaction that locks the run row first, then the HITL row, and **never
     writes `Failed` or `Crashed`** (Implemented — ADR-177 2026-09-26
     amendment). `session_checkpointed` (ADR-180) is the non-terminal
@@ -991,15 +991,19 @@ boolean | enum | array`; unknown type refused with `CONFIG` at Flow
     idle claim, never the flow resume), and answers 202
     `{state:"resume-in-progress"}`. The host itself waits for the child's exit
     before answering an input that lands between the deferred cancel and the
-    exit, so that window takes the same arm. `session_ended` — or any 410,
-    including a reason-less one from an older host, while the incarnation is
-    `crashed | exited | lost` or unknown (unproven is never terminal) — keeps
-    the stored answer (`responded_at` NULL), writes no run state and no event,
-    and answers 409 `CONFLICT {reason: "session_ended"}`: the crash boundary
-    that settles the run closes the row. `permission_not_pending` on a live
-    session (answered, cancelled or never raised) closes the HITL row only
-    (`responded_at = now()`) and answers 410 `HITL_TIMEOUT {reason:
-    "permission_not_pending"}`;
+    exit, so that window takes the same arm. `session_ended`, a reason-less
+    410 from an older host (unproven is never terminal), or
+    `permission_not_pending` while the permission's incarnation (the flow
+    prompt's own, else the newest of the row's host session) is `crashed |
+    exited | lost | deleted` keeps the stored answer (`responded_at` NULL),
+    writes no run state and no event, and answers 409 `CONFLICT {reason:
+    "session_ended"}`: the crash boundary that settles the run closes the row.
+    `permission_not_pending` otherwise (a live or unknown incarnation: answered,
+    cancelled or never raised) closes the HITL row (`responded_at = now()`)
+    and its response assignment and answers 410 `HITL_TIMEOUT {reason:
+    "permission_not_pending"}` — except a same-payload retry, which answers 202
+    `{state:"resume-in-progress"}` and closes nothing (the refusal may be the
+    stale deferred a background resume already re-issued);
     supervisor 503 / network → `EXECUTOR_UNAVAILABLE`
     retryable (row stays claimed, `responded_at` NULL); artifact
     write I/O failure → 503 retryable. The operator-facing response says the
@@ -1190,7 +1194,8 @@ on the locked `runs.status` read inside the atomic-claim transaction:
 The idle branch dispatches on `runs.run_kind`: `flow` → `resumeRun`, `agent`
 → `runAgentIdleResume`, `scratch` → `runScratchIdleResume` (Implemented). The
 scratch arm cap-gates under the scheduler lock (at cap: `resume_requested_at =
-coalesce(resume_requested_at, now())` and 202 `QUEUED`; the freed-slot gate's
+coalesce(resume_requested_at, now())` and 202 `{state:"resume-in-progress",
+runStatus:"NeedsInputIdle"}`; the freed-slot gate's
 scratch arm admits it later), CASes `NeedsInputIdle → Running`, respawns the
 session with `session/resume`, and re-prompts the interrupted turn's newest
 user row; the scratch permission handler then rebinds the stored row to the
@@ -1309,8 +1314,9 @@ two other 410 reasons — `session_ended` (the child crashed or exited) and
 `permission_not_pending` (a live session with no such deferred) — map to 409
 `session_ended` and 410 `permission_not_pending` above (Implemented). **The
 crash boundary owns a dead session's answer** (Implemented — ADR-177
-2026-09-26 amendment): the respond route never writes a terminal run status.
-The reconcile sweep never loads a `NeedsInput` run, so the boundary that
+2026-09-26 amendment): the respond route never writes a terminal run status
+for a permission the host no longer holds. The reconcile sweep does not load a
+`NeedsInput` run (only an orphaned child of a gone coordinator), so the boundary that
 crashes a `NeedsInput` flow run after a host restart is the owner application
 of the prompt's `turn_lost` receipt — `closeTurnLostAttempt` →
 `crashRunningRun`, which stamps `resume_target_step_id`, closes every open
@@ -1337,8 +1343,9 @@ respond route.
 - Supervisor answered 410 with `details.reason: "session_checkpointed"`
   (Implemented — ADR-180): **not** terminal — park through the shared CAS and
   resume, 202 `{state:"resume-in-progress"}`.
-- Supervisor answered 410 `session_ended` (or a reason-less 410 over a dead
-  incarnation): 409 `session_ended`, answer kept; a same-payload retry asks the
+- Supervisor answered 410 `session_ended`, a reason-less 410, or
+  `permission_not_pending` over a dead incarnation: 409 `session_ended`,
+  answer kept; a same-payload retry asks the
   host again and lands in the same arm until the boundary closes the row.
 
 ### Resume failures

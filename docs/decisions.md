@@ -2090,3 +2090,14 @@ properties/lastAction` sets `nullable: true` beside an `allOf` with no sibling
   control first (which event reaches Postgres first, the prompt's terminal or
   the session's `session.crashed`, decides where the evidence can be read), so
   it is separate work (R9).
+- **A queued scratch dispatch that cannot resolve its host strands the row
+  (found 2026-09-27, ownership residuals truth pass; predates the branch).**
+  `dispatchQueuedScratchMessages` claims the oldest `queued` row (`queued →
+  prompted`, dialog `Running`) and only then resolves the run's execution host,
+  outside the `try` whose catch runs `failScratchMessageTurn`. A host that
+  cannot be resolved at that instant leaves the row `prompted` with no command
+  issued and the dialog `Running` over a live session, which neither the re-drive
+  (it selects `WaitingForUser` dialogs) nor the sweep (a live session is skipped)
+  picks up. The same shape existed on the `afterCommit` path before A4; the fix
+  resolves the host before the claim or returns the row to `queued` on that
+  failure, with its own control (R9).

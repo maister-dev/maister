@@ -3310,8 +3310,10 @@ paths:
             code and preview verified feedback. **(Implemented — ADR-177
             2026-09-26 amendment)** `CONFLICT` with `details.reason:
             session_ended` when the agent session ended before the answer
-            arrived (host 410 `session_ended`, or any 410 while the run
-            session's incarnation is dead): the answer stays stored, nothing is
+            arrived (host 410 `session_ended` or a reason-less 410, or
+            `permission_not_pending` while the permission's incarnation is
+            `crashed`, `exited`, `lost` or `deleted`; a host
+            `session_checkpointed` resumes with 202 instead): the answer stays stored, nothing is
             written to the run, and the crash boundary settles the run and
             closes the request.
           content:
@@ -3328,8 +3330,9 @@ paths:
             `HITL_TIMEOUT` with `details.reason: permission_not_pending` means
             the session is live but the request is no longer pending
             (answered, cancelled or never raised): the request is closed and
-            the run is untouched. The route never writes a terminal run status
-            (Implemented — ADR-177 2026-09-26 amendment); `agent_session_ended`
+            the run is untouched. Neither this arm nor the 409 `session_ended`
+            one writes a run status (Implemented — ADR-177 2026-09-26
+            amendment); `agent_session_ended`
             has no producer since and is deprecated. Existing terminal idle
             `CHECKPOINT` failures retain their body without this reason. A
             rejected original permission delivery after checkpoint carries
@@ -4647,7 +4650,7 @@ components:
               description: A `MaisterErrorCode`, or null when the cause has none (an abandon).
             reason:
               type: string
-              description: The emitter's reason token.
+              description: The emitter's reason token (snake_case; the orchestrator cascade writes `cascade/<token>`).
             source:
               type: string
               enum:

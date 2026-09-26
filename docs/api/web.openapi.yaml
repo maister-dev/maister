@@ -5708,13 +5708,17 @@ paths:
             promotion inside its claim: the run stays `Crashed`, no generation
             is minted, and the recover is retryable once that operation ends.
             **(Implemented — ADR-175 2026-09-26 amendment)** Recover is a CAS on
-            `runs.status = 'Crashed'`: any other status answers `CONFLICT` with
+            `runs.status = 'Crashed'`. Before it, a removed workspace or a
+            `Done`/`Abandoned` dialog answers `PRECONDITION`, and a `Review`
+            dialog or a live host session answers 200 `{action: "open"}`; any
+            other run or dialog that is not `Crashed` answers `CONFLICT` with
             `details.reason: scratch_not_recoverable`, `details.status` (the
             observed `runs.status`) and, for `NeedsInputIdle`,
             `details.next: respond` (answer the pending permission instead). A
             `Failed` (budget) run is terminal; a `Running`, `NeedsInput` or
             `Pending` run whose host session is dead waits for the reconcile
             sweep to crash it. Nothing is written and no placement is minted.
+            A lost CAS race answers `CONFLICT` without a reason.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -5722,12 +5726,12 @@ paths:
                 scratch-not-recoverable-failed:
                   value:
                     code: CONFLICT
-                    message: scratch run is not recoverable (status Failed)
+                    message: scratch run 3f1c9a52-7d4e-4b8a-9c21-6e0d5a8b7f10 is not recoverable (status Failed)
                     details: { reason: scratch_not_recoverable, status: Failed }
                 scratch-not-recoverable-parked:
                   value:
                     code: CONFLICT
-                    message: scratch run is parked on a permission; answer it to resume
+                    message: scratch run 3f1c9a52-7d4e-4b8a-9c21-6e0d5a8b7f10 is not recoverable (status NeedsInputIdle)
                     details: { reason: scratch_not_recoverable, status: NeedsInputIdle, next: respond }
         "503":
           description: |
@@ -7727,12 +7731,14 @@ paths:
             no response/artifact/runner wake is written. **(Implemented —
             ADR-177 2026-09-26 amendment)** `CONFLICT` with
             `details.reason: session_ended` when the host answered 410
-            `session_ended` — or any 410, including a reason-less one, while the
-            run session's newest incarnation is `crashed`, `exited` or `lost`:
-            the answer stays stored (`respondedAt` NULL), no run state or event
-            is written, and the crash boundary that settles the run closes the
-            row. A same-payload retry asks the host again and lands in the same
-            arm.
+            `session_ended` or a reason-less 410 (a host too old to name one),
+            or `permission_not_pending` while the permission's incarnation (the
+            flow prompt's own, else the run session's newest) is `crashed`,
+            `exited`, `lost` or `deleted`: the answer stays stored
+            (`respondedAt` NULL), no run state or event is written, and the
+            crash boundary that settles the run closes the row. A host 410
+            `session_checkpointed` is never this arm (202 resume, ADR-180). A
+            same-payload retry asks the host again and lands in the same arm.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/HitlRespondErrorBody" }
@@ -7794,9 +7800,10 @@ paths:
             cancelled or never raised): `HITL_TIMEOUT` with
             `details.reason: permission_not_pending`, the HITL row is closed
             (`respondedAt` set) and the run is untouched (Implemented — ADR-177
-            2026-09-26 amendment; the respond route never writes `Failed` or
-            `Crashed`, and `agent_session_ended` has no producer since and is
-            deprecated); a host 410 that carries `session_checkpointed` is NOT
+            2026-09-26 amendment; a permission the host no longer holds never
+            moves the run — neither this arm nor the 409 `session_ended` one
+            writes `Failed` or `Crashed` — and `agent_session_ended` has no
+            producer since and is deprecated); a host 410 that carries `session_checkpointed` is NOT
             this arm — it parks and resumes with 202 (ADR-180), and
             `session_ended` answers 409 above; or (M8 idle branch)
             `resumeRun` failed terminally (`CHECKPOINT`) — supervisor
@@ -19690,9 +19697,10 @@ components:
           description: |
             (Implemented) Why the run ended `Failed | Crashed | Abandoned`: the
             `cause` of the newest terminal domain event whose kind matches
-            `run.status`, falling back to `{code: scratch.errorCode, source:
-            scratch}` when no event exists (a project-less run). Null for any
-            other status.
+            `run.status`; for a `Crashed` or `Failed` run with no such event
+            (always, for a project-less run) it falls back to `{code:
+            scratch.errorCode, source: scratch}` when that code is a
+            `MaisterErrorCode`. Null otherwise.
         run:
           type: object
           required:
@@ -19855,7 +19863,7 @@ components:
           description: A `MaisterErrorCode`, or null when the cause has none (an abandon).
         reason:
           type: string
-          description: The emitter's reason token (snake_case where MAIster mints it).
+          description: The emitter's reason token (snake_case where MAIster mints it; the orchestrator cascade writes `cascade/<token>`).
         source:
           type: string
           enum:
