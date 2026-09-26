@@ -1068,9 +1068,11 @@ export type RemoteOnlyCommitsArgs = {
 // squash that never reached the remote replaced the run's own commits, not the
 // publication's, and the reflog is what still knows them; once it no longer
 // records a head (expired, or reflogs off), only the patch match is left and
-// the push is refused rather than guessed. Merges author no change of their
-// own and are not counted. A `remoteSha` missing from the object store (the
-// remote moved after the fetch) is a CONFLICT, never a silent zero.
+// the push is refused rather than guessed. A merge counts unless it is exactly
+// what git makes of its two parents (a provider's "Update branch"): one that
+// resolved a conflict or carries an edit of its own holds changes nothing else
+// does. A `remoteSha` missing from the object store (the remote moved after the
+// fetch) is a CONFLICT, never a silent zero.
 export async function remoteOnlyCommitCount(
   args: RemoteOnlyCommitsArgs,
 ): Promise<number> {
@@ -1118,6 +1120,7 @@ export async function remoteOnlyCommitCount(
     local,
   ]);
   const formerHeads = new Set(reflog.stdout.split("\n").filter(Boolean));
+  const excluded = [...kept, ...formerHeads].map((sha) => `^${sha}`);
 
   const { stdout } = await runGit(repo, [
     "rev-list",
@@ -1126,9 +1129,25 @@ export async function remoteOnlyCommitCount(
     "--cherry-pick",
     "--right-only",
     `${local}...${remoteSha}`,
-    ...[...kept, ...formerHeads].map((sha) => `^${sha}`),
+    ...excluded,
   ]);
-  const count = Number.parseInt(stdout.trim(), 10);
+  const merges = (
+    await runGit(repo, [
+      "rev-list",
+      "--merges",
+      "--right-only",
+      `${local}...${remoteSha}`,
+      ...excluded,
+    ])
+  ).stdout
+    .split("\n")
+    .filter(Boolean);
+  let mergesWithChanges = 0;
+
+  for (const merge of merges) {
+    if (!(await mergeOnlyJoinsItsParents(repo, merge))) mergesWithChanges += 1;
+  }
+  const count = Number.parseInt(stdout.trim(), 10) + mergesWithChanges;
 
   log.debug(
     {
@@ -1137,12 +1156,48 @@ export async function remoteOnlyCommitCount(
       remoteSha,
       kept,
       formerHeads: formerHeads.size,
+      merges: merges.length,
+      mergesWithChanges,
       count,
     },
     "remoteOnlyCommitCount",
   );
 
   return count;
+}
+
+// Its parents keep everything a merge has when its tree is what git makes of
+// them. A conflict, an octopus, or a git too old for `merge-tree --write-tree`
+// (2.38) cannot show that, so the merge counts.
+async function mergeOnlyJoinsItsParents(
+  repo: string,
+  merge: string,
+): Promise<boolean> {
+  const parents = (
+    await runGit(repo, ["rev-list", "--parents", "--max-count=1", merge])
+  ).stdout
+    .trim()
+    .split(" ")
+    .slice(1);
+
+  if (parents.length !== 2) return false;
+
+  const [tree, merged] = await Promise.all([
+    runGit(repo, ["rev-parse", "--verify", `${merge}^{tree}`]).then((out) =>
+      out.stdout.trim(),
+    ),
+    runGit(repo, [
+      "merge-tree",
+      "--write-tree",
+      "--no-messages",
+      ...parents,
+    ]).then(
+      (out) => out.stdout.trim(),
+      () => null,
+    ),
+  ]);
+
+  return merged === tree;
 }
 
 export type ListRemotesArgs = {

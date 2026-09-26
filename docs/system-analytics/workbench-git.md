@@ -379,7 +379,9 @@ is `CONFLICT`, the rest `PRECONDITION`), and an unknown run is 404 with
   confirming exactly that head (`expectedRemoteHead`). Commits the update's ref
   brings anyway (a provider's "Update branch" merge) and the run's own
   commits — any head the run branch's reflog records, a rebased copy by its
-  patch — do not count. A squashing PR promotion refuses the same way, before
+  patch — do not count. A merge counts when it is not exactly what git makes of
+  its two parents: it resolved a conflict or carries an edit of its own. A
+  squashing PR promotion refuses the same way, before
   the squash, and releases its claim.
 - A request `branchName` git would refuse (a trailing `.`, `//`, a component
   starting with `.` or ending in `.lock`) → `MaisterError("CONFIG")` (400) at the

@@ -6620,8 +6620,10 @@ paths:
         has — reachable from the lease head, from neither the update's ref nor
         `origin/<ref>` nor any head the run branch's reflog records (a rebase
         or squash that never reached the remote replaced the run's own
-        commits), and not the same patch as one of the run's own; merges do not
-        count. A non-zero count refuses `409 CONFLICT`
+        commits), and not the same patch as one of the run's own. A merge
+        counts only when it is not exactly what git makes of its two parents
+        (it resolved a conflict, or carries an edit of its own). A non-zero
+        count refuses `409 CONFLICT`
         `details.reason: publication_diverged` with `remoteHead`, `remoteRef`
         and `remoteOnlyCommits`, and nothing moves. `onto: published` brings
         those commits in and `push: false` pushes nothing, so neither is

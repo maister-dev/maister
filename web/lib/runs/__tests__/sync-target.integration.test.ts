@@ -2317,6 +2317,51 @@ describe("ADR-181 — update onto base | target | published", () => {
       ).resolves.toMatchObject({ outcome: "synced", pushed: true });
     });
 
+    // The same merge carrying an edit of its own holds a change neither
+    // parent has: dropping it is dropping the reviewer's work.
+    it("counts a merge onto the publication that carries an edit of its own", async () => {
+      const { remote, parent, baseSha } = await initRepoWithRemote();
+      const wt = await addRunWorktree(parent, "sync/div-evil");
+
+      await git(wt, [
+        "push",
+        "--set-upstream",
+        "origin",
+        "refs/heads/sync/div-evil:refs/heads/feature/DIV-evil",
+      ]);
+      await advanceOriginMain(remote);
+      const c = join(root, `upd-${randomUUID()}`);
+
+      await git(root, ["clone", "-b", "feature/DIV-evil", remote, c]);
+      await identity(c);
+      await git(c, ["merge", "--no-ff", "--no-commit", "origin/main"]);
+      await writeFile(join(c, "fixup.txt"), "reviewer\n");
+      await git(c, ["add", "fixup.txt"]);
+      await git(c, ["commit", "-m", "Merge main into feature, with a fixup"]);
+      await git(c, ["push", "origin", "feature/DIV-evil"]);
+      await rm(c, { recursive: true, force: true });
+      const { projectId, flowId } = await seedGraph(parent);
+      const { runId } = await seedRun({
+        projectId,
+        flowId,
+        worktreePath: wt,
+        branch: "sync/div-evil",
+        parentRepoPath: parent,
+        baseCommit: baseSha,
+        status: "Failed",
+        published: { branch: "feature/DIV-evil", remote: "origin" },
+      });
+
+      const err = (await refusal(
+        syncRunTarget({ runId, actor: actor(), admission: "workbench", db }),
+      )) as MaisterError & Record<string, unknown>;
+
+      expect(err).toMatchObject({
+        details: { reason: "publication_diverged" },
+        remoteOnlyCommits: 1,
+      });
+    });
+
     // Automation (the ext API, ai_rebase_merge, the resolver) has no human to
     // confirm with: the refusal stands whatever it passes.
     it("refuses the review admission even with a head it never had confirmed", async () => {

@@ -194,7 +194,9 @@ sequenceDiagram
   ADR-141, ADR-181). Before the claim, a push onto the target or base MUST NOT
   drop commits only the publication has — commits the run branch never had
   (its reflog keeps the heads a rebase or a squash replaced), counted by patch,
-  excluding the update's ref and merges — unless a human confirmed exactly
+  excluding the update's ref and every merge that is exactly what git makes of
+  its two parents (one that resolved a conflict or carries an edit of its own
+  counts) — unless a human confirmed exactly
   `remote_sha_before`
   through the web route's `expectedRemoteHead`; otherwise it is `CONFLICT`
   `publication_diverged` with nothing moved, for every caller (the ext API, the
@@ -227,7 +229,8 @@ sequenceDiagram
   `failed`; deterministic abort.
 - **Push lease rejected** (branch moved remotely) → `CONFLICT`; local result kept.
 - **Publication has commits the push would drop** (a reviewer's fixup, a
-  suggestion committed on the PR) → `CONFLICT` `publication_diverged` before the
+  suggestion committed on the PR, a conflict resolved in an "Update branch"
+  merge) → `CONFLICT` `publication_diverged` before the
   claim, nothing moved; the operator updates onto the publication or confirms
   that head in the git panel. The resolver's finalize and the recovery sweep
   push on the lease the admission checked. A retry after a lease rejection
