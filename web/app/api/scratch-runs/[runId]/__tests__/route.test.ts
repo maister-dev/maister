@@ -207,6 +207,21 @@ function seedScratchRun(): string {
       respondedAt: null,
     },
   ];
+  dbState.tables.scratch_messages = [
+    {
+      id: "message-1",
+      runId,
+      sequence: 1,
+      role: "user",
+      content: "also X",
+      supervisorEventId: null,
+      createdAt: new Date("2026-09-26T10:00:00.000Z"),
+      delivery: "steered",
+      steerCommandId: "steer-command-1",
+      promptDispatchKey: null,
+      nodeAttemptId: null,
+    },
+  ];
   dbState.tables.scratch_attachments = [
     {
       id: "attachment-1",
@@ -243,6 +258,7 @@ describe("GET /api/scratch-runs/[runId]", () => {
       scratch: Record<string, unknown>;
       workspace: Record<string, unknown>;
       attachments: Array<Record<string, unknown>>;
+      messages: Array<Record<string, unknown>>;
     };
 
     expect(res.status).toBe(200);
@@ -293,6 +309,19 @@ describe("GET /api/scratch-runs/[runId]", () => {
         ".maister/demo/runs/scratch-get-run/uploads/launch/notes.txt",
     });
     expect(body.attachments[0]).not.toHaveProperty("storagePath");
+    // ADR-182: the steer's ledger command id stays on the server.
+    expect(body.messages).toEqual([
+      {
+        id: "message-1",
+        runId,
+        sequence: 1,
+        role: "user",
+        content: "also X",
+        supervisorEventId: null,
+        createdAt: "2026-09-26T10:00:00.000Z",
+        delivery: "steered",
+      },
+    ]);
   });
 });
 

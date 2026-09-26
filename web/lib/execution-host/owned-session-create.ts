@@ -64,6 +64,7 @@ const ResultSchema = z.object({
   sessionId: z.string().min(1),
   acpSessionId: z.string().min(1),
   pid: z.number().int(),
+  steeringSupported: z.boolean().optional(),
 });
 
 function storedFailure(command: ExecutionCommand): MaisterError {
@@ -270,7 +271,10 @@ export async function createOwnedSession(input: {
         assignmentId: current.executionAssignmentId,
         nodeAttemptId: owner.variant === "agent" ? null : owner.nodeAttemptId,
         sessionName: envelope.payload.sessionName ?? "default",
-        result,
+        result: {
+          ...result,
+          steeringSupported: result.steeringSupported ?? null,
+        },
       });
     const resultValue = (result: CreateSessionResult) => ({
       ...result,

@@ -36,6 +36,9 @@ export type AdapterReadinessSummary = {
   readonly cause: AdapterReadinessCause;
   readonly detail: string | null;
   readonly runners: readonly RailRunnerDTO[];
+  // ADR-182: the family's smoke-cached steering advertisement (informational;
+  // `null` = no evidence or diagnostics unavailable). Never gates a launch.
+  readonly steering: boolean | null;
 };
 
 export type RunnerReadinessRow = {
@@ -70,6 +73,9 @@ export function summarizeAdapterReadiness(args: {
       (runner) => runner.readinessStatus === "Ready",
     );
     const runnerDtos = own.map(toRailRunnerDTO);
+    const steering =
+      diagAdapters?.find((item) => item.id === adapter.id)?.smoke.steering
+        ?.supported ?? null;
 
     const verdict = ((): RunnerVerdict => {
       // Supervisor diagnostics unreachable: adapter availability is unknown.
@@ -111,7 +117,7 @@ export function summarizeAdapterReadiness(args: {
       return { state: "amber", cause: "not_ready", detail: firstReason };
     })();
 
-    return { adapter: adapter.id, ...verdict, runners: runnerDtos };
+    return { adapter: adapter.id, ...verdict, runners: runnerDtos, steering };
   });
 }
 

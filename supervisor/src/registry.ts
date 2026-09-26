@@ -8,6 +8,7 @@ import { pendingPermissions } from "./pending-permissions";
 import { type RuntimeEventPublisher } from "./runtime-event-publisher";
 import {
   SupervisorError,
+  type SessionCapabilities,
   type SessionEvent,
   type SessionRecord,
 } from "./types";
@@ -144,6 +145,7 @@ export class SessionRegistry {
     sessionId: string,
     connection: acp.ClientSideConnection,
     acpSessionId: string,
+    capabilities?: SessionCapabilities,
   ): void {
     const entry = this.entries.get(sessionId);
 
@@ -156,6 +158,7 @@ export class SessionRegistry {
 
     entry.connection = connection;
     entry.acpSessionId = acpSessionId;
+    if (capabilities) entry.record.capabilities = capabilities;
   }
 
   markIntentionalShutdown(

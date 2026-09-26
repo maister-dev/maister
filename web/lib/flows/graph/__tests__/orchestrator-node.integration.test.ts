@@ -81,6 +81,7 @@ vi.mock("@/lib/flows/runner-agent", async (importOriginal) => ({
           result: {
             sessionId: "sup-coordinator-1",
             acpSessionId: "acp-coordinator-1",
+            steeringSupported: null,
           },
         }),
       );

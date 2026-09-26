@@ -19,6 +19,7 @@ import {
   OPEN_COMMANDS_PAGE_SIZE,
   requeueDelivering,
   type OpenCommandsCursor,
+  type TransitionResult,
 } from "./commands";
 import { applyCreateAck } from "./create-ack";
 import { deliverCommand, startAsyncPrompt } from "./deliverer";
@@ -44,6 +45,11 @@ import {
   RuntimeObjectEvidenceError,
 } from "./runtime-object-evidence";
 import { runEventWakeBus } from "./events/run-wake";
+import {
+  settleSteerCommand,
+  type SteerOutcome,
+  type SteerSettlement,
+} from "./steer-settlement";
 
 import { parseRuntimeObjectWireMetadata } from "@/lib/supervisor-client";
 import { executionAssignments, runs } from "@/lib/db/schema";
@@ -185,6 +191,71 @@ async function applyRuntimeObjectReceipt(
   }
 }
 
+// ADR-182 C26: a kind whose terminal state has a domain outcome settles it in
+// the SAME transaction as the ledger write, run lock first (the live ack and
+// refusal paths use that order too). Every other kind writes the ledger alone.
+// A ledger write that changes nothing means another path terminalized the
+// command, and that path settled the domain in its own transaction.
+async function settleInLedgerTx(
+  db: Db,
+  row: ExecutionCommand,
+  outcome: SteerOutcome,
+  logger: Logger,
+  now: Date,
+  write: (tx: Db) => Promise<TransitionResult>,
+): Promise<void> {
+  if (row.kind !== "session.steer") {
+    await write(db);
+
+    return;
+  }
+  const settlement = await db.transaction(async (tx) => {
+    const txDb = tx as unknown as Db;
+
+    await tx
+      .select({ id: runs.id })
+      .from(runs)
+      .where(eq(runs.id, row.runId))
+      .for("update");
+    const written = await write(txDb);
+
+    if (!written.changed) return null;
+
+    return settleSteerCommand(txDb, row, outcome, { logger, now });
+  });
+
+  await wakeRequeuedScratchMessage(db, settlement, logger);
+}
+
+// ADR-182 D-D3: a scratch message converted here may find its dialog already
+// waiting — the previous turn's completion saw nothing queued — so recovery
+// wakes the dispatcher exactly as the live refusal path does.
+async function wakeRequeuedScratchMessage(
+  db: Db,
+  settlement: SteerSettlement | null,
+  logger: Logger,
+): Promise<void> {
+  if (settlement?.domain !== "scratch" || settlement.kind !== "requeued")
+    return;
+  const { wakeQueuedScratchDispatch } = await import(
+    "@/lib/scratch-runs/service"
+  );
+
+  logger.info(
+    { runId: settlement.runId, messageId: settlement.messageId },
+    "scratch-steer-requeued-by-recovery",
+  );
+  wakeQueuedScratchDispatch(db, settlement.runId);
+}
+
+// ADR-182: a steer goes back to `queued` between attempts after an unknown
+// outcome, so a `queued` steer that was attempted may have been injected on an
+// attempt whose answer was lost. It is reconciled from its receipt like a
+// `delivering` row — orphaning it blind would deliver the message twice.
+function isAttemptedSteer(row: ExecutionCommand): boolean {
+  return row.kind === "session.steer" && row.attempts > 0;
+}
+
 // ADR-166 D5 W2/W4: fold a host receipt into the ledger together with the
 // result-derived domain writes the lost ack tx would have made.
 async function foldReceipt(
@@ -198,13 +269,27 @@ async function foldReceipt(
     await db.transaction(async (tx) => {
       const txDb = tx as unknown as Db;
 
-      if (row.kind === "session.create")
+      if (row.kind === "session.create" || row.kind === "session.steer")
         await tx
           .select({ id: runs.id })
           .from(runs)
           .where(eq(runs.id, row.runId))
           .for("update");
-      await markSucceeded(txDb, row.id, null, receipt.body, { logger, now });
+      const succeeded = await markSucceeded(txDb, row.id, null, receipt.body, {
+        logger,
+        now,
+      });
+
+      if (row.kind === "session.steer" && succeeded.changed)
+        await settleSteerCommand(
+          txDb,
+          row,
+          { kind: "injected" },
+          {
+            logger,
+            now,
+          },
+        );
       if (row.kind === "session.create") {
         const payload = row.payload as {
           sessionName?: unknown;
@@ -213,6 +298,7 @@ async function foldReceipt(
         const body = receipt.body as {
           sessionId?: unknown;
           acpSessionId?: unknown;
+          steeringSupported?: unknown;
         };
 
         if (typeof body.sessionId === "string") {
@@ -233,6 +319,10 @@ async function foldReceipt(
               acpSessionId:
                 typeof body.acpSessionId === "string"
                   ? body.acpSessionId
+                  : null,
+              steeringSupported:
+                typeof body.steeringSupported === "boolean"
+                  ? body.steeringSupported
                   : null,
             },
           });
@@ -302,10 +392,18 @@ async function foldReceipt(
       ...(reason ? { reason } : {}),
     };
 
-    await (fenced ? markFenced : markFailed)(db, row.id, null, error, {
+    await settleInLedgerTx(
+      db,
+      row,
+      { kind: "refused", reason: reason ?? error.code },
       logger,
       now,
-    });
+      (tx) =>
+        (fenced ? markFenced : markFailed)(tx, row.id, null, error, {
+          logger,
+          now,
+        }),
+    );
     logger.warn(
       {
         commandId: row.id,
@@ -321,12 +419,20 @@ async function foldReceipt(
 
   if (receipt.inflight) return "skippedInFlight";
 
-  await markFailed(
+  await settleInLedgerTx(
     db,
-    row.id,
-    null,
-    { code: "ACP_PROTOCOL", reason: "turn_lost" },
-    { logger, now },
+    row,
+    { kind: "refused", reason: "turn_lost" },
+    logger,
+    now,
+    (tx) =>
+      markFailed(
+        tx,
+        row.id,
+        null,
+        { code: "ACP_PROTOCOL", reason: "turn_lost" },
+        { logger, now },
+      ),
   );
   logger.warn(
     {
@@ -348,12 +454,16 @@ async function orphan(
   now: Date,
   logger: Logger,
 ): Promise<void> {
-  await markFailed(
+  // ADR-182 W1: an orphaned steer never reached the host, so converting it
+  // delivers the message exactly once.
+  await settleInLedgerTx(
     db,
-    row.id,
-    null,
-    { code: "CRASH", reason },
-    { logger, now },
+    row,
+    { kind: "refused", reason },
+    logger,
+    now,
+    (tx) =>
+      markFailed(tx, row.id, null, { code: "CRASH", reason }, { logger, now }),
   );
   logger.warn(
     { commandId: row.id, commandKind: row.kind, runId: row.runId, reason },
@@ -590,20 +700,46 @@ export async function recoverExecutionCommands(
       return;
     }
 
-    if (row.state === "queued") {
+    if (row.state === "queued" && !isAttemptedSteer(row)) {
       await redeliver(row);
 
       return;
     }
 
-    const receipt = await transport.getCommandReceipt(row.id);
+    let open = row;
+
+    if (row.state === "queued") {
+      // Claimed back to `delivering` so the live deliverer cannot re-claim it
+      // while its receipt is folded.
+      const reclaimed = await casTransition(
+        db,
+        row.id,
+        ["queued"],
+        row.attempts,
+        { state: "delivering", deliveringSince: at, nextAttemptAt: null },
+        { logger, now: at },
+      );
+
+      if (!reclaimed.changed || !reclaimed.row) {
+        summary.skippedInFlight += 1;
+
+        return;
+      }
+      logger.info(
+        { commandId: row.id, runId: row.runId, attempts: row.attempts },
+        "steer-attempted-reconciled-from-receipt",
+      );
+      open = reclaimed.row;
+    }
+
+    const receipt = await transport.getCommandReceipt(open.id);
 
     if (!receipt) {
       // W2 with no receipt: the host never saw it. A `delivering` row goes
       // back to `queued` first (the deliverer claims from `queued` only), then
       // follows W1; an `accepted` row without a receipt cannot be re-sent.
-      if (row.state === "delivering") {
-        const requeued = await requeueDelivering(db, row.id, {
+      if (open.state === "delivering") {
+        const requeued = await requeueDelivering(db, open.id, {
           logger,
           now: at,
         });
@@ -612,27 +748,30 @@ export async function recoverExecutionCommands(
 
         return;
       }
-      await orphan(db, row, "receipt_missing", at, logger);
+      await orphan(db, open, "receipt_missing", at, logger);
       summary.orphaned += 1;
 
       return;
     }
     if (
-      row.kind === "runtime_object.delete" &&
-      row.state === "delivering" &&
+      open.kind === "runtime_object.delete" &&
+      open.state === "delivering" &&
       receipt.phase === "accepted" &&
       !receipt.inflight
     ) {
       // D5: the host re-runs an accepted delete against its durable object
       // row, so the exact same request is redelivered instead of losing the
       // turn and stranding the catalogue's delete intent.
-      const requeued = await requeueDelivering(db, row.id, { logger, now: at });
+      const requeued = await requeueDelivering(db, open.id, {
+        logger,
+        now: at,
+      });
 
       if (requeued.changed && requeued.row) await redeliver(requeued.row);
 
       return;
     }
-    summary[await foldReceipt(db, row, receipt, at, logger)] += 1;
+    summary[await foldReceipt(db, open, receipt, at, logger)] += 1;
   };
 
   let cursor: OpenCommandsCursor | undefined;

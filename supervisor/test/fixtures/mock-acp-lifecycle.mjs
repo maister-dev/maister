@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { createHash, randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import { appendFile, open, writeFile } from "node:fs/promises";
 import { Readable, Writable } from "node:stream";
 
@@ -20,6 +21,25 @@ let supportsResume = false;
 let invocationLog;
 let controlledPrompt = false;
 let releasePrompt;
+// ADR-182 steering fixture: advertise `_meta.steering.supported`, register the
+// `_session/steering` extension request and script its answer. `auto` behaves
+// like a host-honouring adapter: `injected` while a prompt runs, otherwise
+// `promptRequired`. Without --steering the method is not registered at all.
+let steering = false;
+let steerOutcome = "auto";
+let steerDelayMs = 0;
+let steerEcho = false;
+// --steer-hold-file <path>: a steer is answered only once the file exists, so
+// a test controls exactly how long the host waits on it. Steers being held are
+// counted so a prompt or a second steer that arrives meanwhile is flagged.
+let steerHoldFile;
+let steersHeld = 0;
+// Text the controlled prompt emits BEFORE it holds, so a steer lands between
+// assistant output the operator already saw and the reply to the steer.
+let preHoldText;
+let promptInFlight = false;
+const steerQueue = [];
+let unownedTurn;
 const outputWrites = [];
 const sizedOutputWrites = [];
 
@@ -58,7 +78,34 @@ for (let i = 0; i < args.length; i += 1) {
     outputWrites.push({ envName: args[++i], content: args[++i] });
   } else if (arg === "--write-env-bytes") {
     sizedOutputWrites.push({ envName: args[++i], sizeBytes: Number(args[++i]) });
+  } else if (arg === "--steering") {
+    steering = true;
+  } else if (arg === "--steer-outcome") {
+    steerOutcome = args[++i];
+    if (!["auto", "injected", "promptRequired", "startedNewTurn", "failed", "error", "hang"].includes(steerOutcome))
+      throw new Error(`unknown --steer-outcome ${steerOutcome}`);
+  } else if (arg === "--steer-delay-ms") {
+    steerDelayMs = Number.parseInt(args[++i], 10);
+  } else if (arg === "--steer-echo") {
+    steerEcho = true;
+  } else if (arg === "--steer-hold-file") {
+    steerHoldFile = args[++i];
+  } else if (arg === "--pre-hold-text") {
+    preHoldText = args[++i];
+    if (preHoldText === undefined) throw new Error("--pre-hold-text requires a value");
   }
+}
+
+async function logInvocation(entry) {
+  if (!invocationLog) return;
+  await appendFile(invocationLog, `${JSON.stringify({ pid: process.pid, ...entry })}\n`);
+}
+
+function steerText(prompt) {
+  return (prompt ?? [])
+    .filter((block) => block?.type === "text")
+    .map((block) => block.text)
+    .join("");
 }
 
 function never() {
@@ -69,6 +116,92 @@ class LifecycleAgent {
   constructor(connection) {
     this.connection = connection;
     this.resumed = false;
+    // Registered only when advertised: the SDK wires an extension handler iff
+    // the agent object defines `extMethod`.
+    if (steering) this.extMethod = (method, params) => this.steer(method, params);
+  }
+
+  async steer(method, params) {
+    if (method !== "_session/steering")
+      throw acp.RequestError.methodNotFound(method);
+    const idleBehavior = params?._meta?.steering?.idleBehavior ?? null;
+    const text = steerText(params?.prompt);
+
+    await logInvocation({
+      sessionId: params.sessionId,
+      method: "_session/steering/received",
+      text,
+      overlapping: steersHeld > 0,
+    });
+    if (steerHoldFile) {
+      steersHeld += 1;
+      while (!existsSync(steerHoldFile)) await new Promise((resolve) => setTimeout(resolve, 20));
+      steersHeld -= 1;
+    }
+    if (steerDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, steerDelayMs));
+    if (steerOutcome === "hang") return never();
+    if (steerOutcome === "error") throw acp.RequestError.internalError({ reason: "scripted" });
+    if (steerEcho) {
+      await this.connection.sessionUpdate({
+        sessionId: params.sessionId,
+        update: { sessionUpdate: "user_message_chunk", content: { type: "text", text } },
+      });
+    }
+    const outcome =
+      steerOutcome === "auto"
+        ? promptInFlight ? "injected" : "promptRequired"
+        : steerOutcome;
+
+    if (outcome === "injected") steerQueue.push(text);
+    if (outcome === "startedNewTurn") this.startUnownedTurn(params.sessionId);
+    await logInvocation({
+      sessionId: params.sessionId,
+      method: "_session/steering",
+      requestSha256: createHash("sha256").update(JSON.stringify(params)).digest("hex"),
+      idleBehavior,
+      outcome,
+    });
+    if (outcome === "failed") return { outcome: "failed" };
+
+    return outcome === "promptRequired"
+      ? { outcome, reason: "noRunningTurn" }
+      : { outcome };
+  }
+
+  // A turn nobody owns: chunks every 50 ms until `session/cancel` arrives, and
+  // (with --hang-permission) a permission request the host must release.
+  startUnownedTurn(sessionId) {
+    let stopped = false;
+    let count = 0;
+    const timer = setInterval(() => {
+      if (stopped) return;
+      count += 1;
+      void this.connection.sessionUpdate({
+        sessionId,
+        update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: `unowned:${count}` } },
+      });
+    }, 50);
+
+    unownedTurn = () => {
+      stopped = true;
+      clearInterval(timer);
+      unownedTurn = undefined;
+      // How many chunks the turn produced: none follows this row.
+      void logInvocation({ sessionId, method: "unowned/stopped", count });
+    };
+    if (hangPermission) {
+      void this.connection
+        .requestPermission({
+          sessionId,
+          toolCall: { toolCallId: "unowned-permission", title: "unowned write", kind: "edit", status: "pending" },
+          options: [
+            { optionId: "allow", kind: "allow_once", name: "Allow" },
+            { optionId: "deny", kind: "reject_once", name: "Deny" },
+          ],
+        })
+        .then((decision) => logInvocation({ sessionId, method: "unowned/permission", outcome: decision.outcome.outcome }))
+        .catch(() => undefined);
+    }
   }
 
   async initialize() {
@@ -80,6 +213,7 @@ class LifecycleAgent {
         promptCapabilities: {},
         ...(supportsResume ? { sessionCapabilities: { resume: {} } } : {}),
       },
+      ...(steering ? { _meta: { steering: { supported: true } } } : {}),
     };
   }
 
@@ -124,11 +258,41 @@ class LifecycleAgent {
     return {};
   }
 
-  async cancel() {
+  async cancel(params) {
+    if (steering) {
+      await logInvocation({ sessionId: params?.sessionId, method: "session/cancel", unowned: Boolean(unownedTurn) });
+      if (unownedTurn) {
+        unownedTurn();
+
+        return;
+      }
+    }
     if (controlledPrompt && releasePrompt) releasePrompt("cancelled");
   }
 
   async prompt(params) {
+    promptInFlight = true;
+    try {
+      return await this.runPrompt(params);
+    } finally {
+      promptInFlight = false;
+    }
+  }
+
+  // Emitted only after the steer was acknowledged (the controlled prompt holds
+  // until released), so transcript order is the host's acceptance order.
+  async drainSteers(sessionId) {
+    while (steerQueue.length > 0) {
+      const text = steerQueue.shift();
+
+      await this.connection.sessionUpdate({
+        sessionId,
+        update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: `steered:${text}` } },
+      });
+    }
+  }
+
+  async runPrompt(params) {
     // Install the release before publishing the reached witness to the test.
     const held = controlledPrompt ? new Promise((resolve) => {
       if (releasePrompt) throw new Error("controlled prompt already owns the adapter");
@@ -140,12 +304,20 @@ class LifecycleAgent {
         sessionId: params.sessionId,
         method: "session/prompt",
         requestSha256: createHash("sha256").update(JSON.stringify(params)).digest("hex"),
+        ...(steerHoldFile ? { duringSteer: steersHeld > 0 } : {}),
       })}\n`);
     }
     if (controlledPrompt) {
+      if (preHoldText !== undefined) {
+        await this.connection.sessionUpdate({
+          sessionId: params.sessionId,
+          update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: preHoldText } },
+        });
+      }
       const outcome = await held;
       if (outcome === "cancelled") return { stopReason: "cancelled" };
     }
+    await this.drainSteers(params.sessionId);
     // Exercise real ACP framing without putting megabyte arguments in argv.
     const fixtureText = params.prompt.find(
       (block) => block.type === "text",
@@ -235,6 +407,7 @@ class LifecycleAgent {
         });
       }
       if (spec.terminalDelayMs) await new Promise((resolve) => setTimeout(resolve, spec.terminalDelayMs));
+      await this.drainSteers(params.sessionId);
       return {
         stopReason: spec.stopReason ?? "end_turn",
         ...(spec.usageTokens ? { usage: { input_tokens: spec.usageTokens, output_tokens: 0 } } : {}),

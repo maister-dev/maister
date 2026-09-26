@@ -207,6 +207,16 @@ components:
             acpSessionId:
               type: [string, 'null']
               description: Terminal resume handle; null when ACP initialization never completed.
+            steeringSupported:
+              type: boolean
+              description: |
+                (Implemented — ADR-182) On `session.created` only: whether the
+                adapter advertised `_meta.steering.supported` on this
+                connection's `initialize`. The lifecycle projector fills a NULL
+                `run_session_incarnations.steering_supported` from it and never
+                overwrites a value the create ACK already wrote. `session.command`
+                v1 payloads for kind `session.steer` carry the parent link in
+                `result.parentCommandId` / `error.details.parentCommandId`.
             stdoutSegment: { $ref: "#/components/schemas/StdoutSegmentMetadata" }
           additionalProperties: true
           description: Open JSON only after a known eventType/payloadSchema validator and deterministic redactor accepts it.

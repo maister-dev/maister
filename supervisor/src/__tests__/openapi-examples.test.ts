@@ -19,6 +19,7 @@ import {
   REASON_TOKENS,
   SessionCommandEventSchema,
   StartSessionRequestSchema,
+  SteerBodySchema,
 } from "../types";
 import { RuntimeEventSpanSchema } from "../runtime-events";
 
@@ -106,6 +107,7 @@ describe("supervisor OpenAPI 0.8.0 examples ↔ Zod", () => {
       ["/sessions/{id}/checkpoint", "post", "enveloped"],
       ["/sessions/{id}/cancel", "post", "enveloped"],
       ["/sessions/{id}/input", "post", "envelopedSelect"],
+      ["/sessions/{id}/steer", "post", "enveloped"],
       ["/sessions/{id}", "delete", "enveloped"],
     ];
 
@@ -197,6 +199,52 @@ describe("supervisor OpenAPI 0.8.0 examples ↔ Zod", () => {
         expect(typeof value.message, status).toBe("string");
         expect(documented.has(value.details.reason), status).toBe(true);
       }
+    }
+  });
+
+  // ADR-182: the steer route's request, success and refusal examples are the
+  // shapes the host actually sends.
+  it("steer route examples parse and carry published reasons", () => {
+    const route = openapi.paths["/sessions/{id}/steer"].post;
+    const request = route.requestBody.content["application/json"].examples
+      .enveloped.value as { payload: unknown };
+
+    expect(SteerBodySchema.safeParse(request.payload).success).toBe(true);
+    expect(
+      route.responses["200"].content["application/json"].examples.injected
+        .value,
+    ).toEqual({
+      outcome: "injected",
+      parentCommandId: expect.any(String),
+      latencyMs: expect.any(Number),
+    });
+    const documented = new Set<string>(
+      openapi.components.schemas.ReasonToken.enum as string[],
+    );
+    const detailKeys = new Set<string>(
+      Object.keys(
+        openapi.components.schemas.SupervisorErrorDetails.properties as object,
+      ),
+    );
+    const refusals = Object.values(
+      route.responses["409"].content["application/json"].examples as Record<
+        string,
+        { value: { code: string; details: Record<string, unknown> } }
+      >,
+    );
+
+    expect(refusals.map(({ value }) => value.details.reason).sort()).toEqual([
+      "assignment_fenced",
+      "steer_no_active_turn",
+      "steer_no_active_turn",
+      "steer_timeout",
+      "steer_unsupported",
+    ]);
+    for (const { value } of refusals) {
+      expect(["CONFLICT", "FENCED"]).toContain(value.code);
+      expect(documented.has(value.details.reason as string)).toBe(true);
+      for (const key of Object.keys(value.details))
+        expect(detailKeys.has(key), key).toBe(true);
     }
   });
 

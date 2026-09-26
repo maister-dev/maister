@@ -343,6 +343,9 @@ Adapter diagnostic entries are:
       probeVersion: number | null;
       staleReason: "probe_contract" | "freshness" | null; // required; non-null exactly for status="stale"
     }
+    // Implemented — ADR-182. Optional: absent from hosts older than the steering
+    // contract. `supported: null` = the cache holds no steering evidence.
+    steering?: { supported: boolean | null; checkedAt: string | null }
   }
 }
 ```
@@ -411,7 +414,7 @@ Responses:
 
 | Status | Body                                                                | When                                                                                                                                                                                                                                                                                                                 |
 | ------ | ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `201`  | `{ "sessionId": "<uuid>", "pid": 12345, "acpSessionId": "<uuid>" }` | Spawn succeeded; ACP handshake completed.                                                                                                                                                                                                                                                                            |
+| `201`  | `{ "sessionId": "<uuid>", "pid": 12345, "acpSessionId": "<uuid>", "steeringSupported": false }` — `steeringSupported` is the connection's `initialize` advertisement (Implemented — ADR-182) | Spawn succeeded; ACP handshake completed.                                                                                                                                                                                                                                                                            |
 | `409`  | `{ "code": "PRECONDITION", "message": "<zod path>: <issue>" }`      | Body failed Zod validation.                                                                                                                                                                                                                                                                                          |
 | `500`  | `{ "code": "SPAWN", "message": "spawn <bin> failed: ENOENT" }`      | Low-level spawn failed despite readiness: ENOENT, EACCES, first-run state failure, or OOM at fork.                                                                                                                                                                                                                   |
 | `503`  | `{ "code": "EXECUTOR_UNAVAILABLE", "message": "..." }`              | Runner, adapter, env-ref, or checkpoint strategy is not launchable before spawn: adapter unsupported, binary diagnostics unavailable, required env ref missing, unsupported provider or permission policy, or supervisor readiness failure. Web-tier translation: `MaisterError("EXECUTOR_UNAVAILABLE")` → HTTP 503. |
@@ -625,7 +628,8 @@ structured ACP `session/update` events.
 Returns the current `SessionRecord[]` projection — sessionId, adapter, runId,
 projectSlug, stepId, nodeAttemptId, sessionName, status
 (`live | exited | crashed`), pid, startedAt, exitedAt, exitCode, signal,
-monotonicId, acpSessionId. Used by
+monotonicId, acpSessionId, and `capabilities.steering.supported` — the
+connection's `initialize` advertisement (Implemented — ADR-182). Used by
 `lib/reconcile.ts` and admin views. **(Implemented — ADR-166)** The projection
 carries `executionWorkspaceId`, `assignmentId`, `assignmentEpoch`, and
 `createdByCommandId`; host-private paths (`logPath`, `worktreePath`,
@@ -771,6 +775,66 @@ The supervisor never writes input artifacts: durable form / human
 responses are written by the web tier's
 `POST /api/runs/[runId]/hitl/[hitlRequestId]/respond` route after
 its row-level claim succeeds.
+
+### `POST /sessions/:id/steer` _(Implemented — ADR-182)_
+
+Injects a user message into the session's RUNNING owned prompt turn
+([ADR-182](decisions/adr-182.md)). A v1 command envelope (kind
+`session.steer`) through the same fence → receipt → execute → receipt path as
+`/input`; the payload is strict:
+
+```
+{ contentBlocks: ContentBlock[] (≥ 1, the prompt route's shape),
+  parentCommandId: <uuid> }
+```
+
+The host checks, in order, without touching the adapter: the session is
+`live` with an ACP connection (else `409 PRECONDITION`), the connection
+advertised `_meta.steering.supported` on `initialize` (else `409 CONFLICT
+steer_unsupported`), and `parentCommandId` is the session's active prompt
+(else `409 CONFLICT steer_no_active_turn` with `activePromptCommandId`). Only
+then are `contentBlocks` confined to the session's roots and runtime-object
+references resolved exactly as for a prompt, after which the same checks run
+again right before the ACP call — so a steer to a session without the
+advertisement is refused `steer_unsupported` whatever its content. The
+active prompt is cleared only after the parent's terminal receipt, so a late
+steer never attaches to the next prompt.
+
+It then calls the ACP extension request `_session/steering {sessionId,
+prompt: contentBlocks, _meta: {steering: {idleBehavior: "promptRequired"}}}`
+bounded by `STEER_ACP_TIMEOUT_MS` (30 s):
+
+- `injected` → `200 {outcome: "injected", parentCommandId, latencyMs}`;
+- `promptRequired`, `failed`, or an ACP error → `409 CONFLICT
+  steer_no_active_turn` with `adapterOutcome`;
+- `startedNewTurn` → the adapter started a turn nobody owns: the host sends
+  `session/cancel` (best effort — the adapter decides when the turn stops) and
+  cancels every pending permission of the session, then refuses
+  `steer_no_active_turn` (`adapterOutcome: "startedNewTurn"`);
+- not answered within 30 s → `409 CONFLICT steer_timeout`.
+
+The steers of one session reach the adapter one at a time: a steer waits for
+the previous one's answer, then re-runs the checks above. The 30 s is one
+budget per steer, the wait included, so the host still answers inside the
+manager's 45 s transport timeout; a steer that spent the budget waiting is
+refused `steer_timeout` without an ACP call. A fence taken after the ACP call
+answered is still `FENCED` — the manager converts, and if the adapter had
+injected, the message is delivered at least once (ADR-182 EDGE-STR-09).
+
+Every refusal of an admitted steer writes a `rejected` receipt; every outcome
+emits the `session.command{kind: "session.steer"}` pair and replays by command
+id (`x-maister-command-replayed`). The fence refusal, a missing envelope and
+the unknown-session `503` are answered before any receipt and write neither.
+While an ACP call is in flight the session holds a `steerInFlight` barrier:
+the next `POST /sessions/:id/prompts` waits for every steer named before it
+(bounded by the same 30 s) before writing to the adapter, so a steer aimed at
+an earlier turn never lands in the next one. The steered output carries the
+PARENT's `sourceCommandId`; the parent's receipt and span are unchanged.
+
+Logs: INFO `steer-injected {sessionId, commandId, parentCommandId,
+promptBytes, latencyMs}`, WARN `steer-refused {…, reason, adapterOutcome}`,
+WARN `steer-timeout`, WARN `steer-started-unowned-turn`, ERROR
+`steer-unowned-turn-cancel-failed`. Prompt text is never logged.
 
 ### `POST /model-catalog/resolve` _(Implemented — ADR-076)_
 
@@ -964,6 +1028,7 @@ JSON at the HTTP boundary.
 | `CHECKPOINT`           | 500                              | Checkpoint or resume contract failure.                                                                                                                                                                                                                            |
 | `CRASH`                | 500                              | Reserved for heartbeat-promoted crash conditions.                                                                                                                                                                                                                 |
 | `FENCED`               | 409                              | **(Implemented — ADR-166)** `fence.assignmentEpoch` is below the host's persisted high-water for the run, or a session evicted by a higher epoch answered its pending prompt. Web maps it to `CONFLICT {details.reason: "assignment_fenced"}`; the driver yields. |
+| `CONFLICT`             | 409                              | **(Implemented — ADR-182)** A `session.steer` refusal: `steer_unsupported`, `steer_no_active_turn` or `steer_timeout`. Definitive (never retried); web maps it to `CONFLICT` with the same `details`, and the manager converts the message into a queued one.                          |
 
 `SupervisorErrorBody` **(Implemented — ADR-166)** carries an optional typed
 `details` object (`reason`, `rule`, `field`, `mount`, `runId`, `commandEpoch`,

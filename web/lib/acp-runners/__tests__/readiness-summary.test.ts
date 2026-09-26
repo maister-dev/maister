@@ -180,6 +180,37 @@ describe("summarizeAdapterReadiness", () => {
     });
   });
 
+  // ADR-182: steering evidence is informational and never moves the verdict.
+  it("carries the smoke steering evidence without changing the verdict", () => {
+    const steering = diagAdapter("claude", true);
+    const withEvidence: DiagAdapter = {
+      ...steering,
+      smoke: {
+        ...steering.smoke,
+        steering: { supported: true, checkedAt: "2026-09-25T10:00:00.000Z" },
+      },
+    };
+    const runners = [runner("claude", true, "Ready")];
+    const before = findAdapter(
+      summarizeAdapterReadiness({
+        runners,
+        diagnostics: readyDiag([steering]),
+      }),
+      "claude",
+    );
+    const after = findAdapter(
+      summarizeAdapterReadiness({
+        runners,
+        diagnostics: readyDiag([withEvidence]),
+      }),
+      "claude",
+    );
+
+    expect(before.steering).toBeNull();
+    expect(after.steering).toBe(true);
+    expect({ ...after, steering: null }).toEqual(before);
+  });
+
   it("hides an adapter missing from the diagnostics adapter list", () => {
     const result = summarizeAdapterReadiness({
       runners: [],

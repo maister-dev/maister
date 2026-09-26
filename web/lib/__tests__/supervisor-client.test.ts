@@ -848,6 +848,74 @@ describe("checkSupervisorDiagnostics", () => {
       reason: "malformed",
     });
   });
+
+  // ADR-182: a host older than the steering contract omits `smoke.steering`
+  // (the fixture above); a current host sends it. Both parse to ready.
+  it("accepts smoke.steering evidence when the host sends it", async () => {
+    const [first, second, ...rest] = diagnostics.adapters;
+    const withSteering = {
+      ...diagnostics,
+      adapters: [
+        {
+          ...first,
+          smoke: {
+            ...first.smoke,
+            steering: {
+              supported: true,
+              checkedAt: "2026-09-25T10:00:00.000Z",
+            },
+          },
+        },
+        {
+          ...second,
+          smoke: {
+            ...second.smoke,
+            steering: { supported: null, checkedAt: null },
+          },
+        },
+        ...rest,
+      ],
+    };
+
+    mockOnce(new Response(JSON.stringify(withSteering), { status: 200 }));
+
+    await expect(checkSupervisorDiagnostics()).resolves.toEqual({
+      kind: "ready",
+      diagnostics: withSteering,
+    });
+  });
+
+  it("rejects a smoke.steering block with an unknown key", async () => {
+    const [first, ...rest] = diagnostics.adapters;
+
+    mockOnce(
+      new Response(
+        JSON.stringify({
+          ...diagnostics,
+          adapters: [
+            {
+              ...first,
+              smoke: {
+                ...first.smoke,
+                steering: {
+                  supported: true,
+                  checkedAt: null,
+                  adapter: "claude",
+                },
+              },
+            },
+            ...rest,
+          ],
+        }),
+        { status: 200 },
+      ),
+    );
+
+    await expect(checkSupervisorDiagnostics()).resolves.toMatchObject({
+      kind: "unavailable",
+      reason: "malformed",
+    });
+  });
 });
 
 describe("streamSession", () => {

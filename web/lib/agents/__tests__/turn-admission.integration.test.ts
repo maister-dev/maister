@@ -107,7 +107,11 @@ describe("Durable agent turn admission", () => {
           sessionName: "default",
           assignmentId: assignment.id,
           nodeAttemptId: null,
-          result: { sessionId: `host-${runId}`, acpSessionId: `acp-${runId}` },
+          result: {
+            sessionId: `host-${runId}`,
+            acpSessionId: `acp-${runId}`,
+            steeringSupported: null,
+          },
         }),
       );
       const [incarnation] = await db
@@ -411,6 +415,54 @@ describe("Durable agent turn admission", () => {
 
     expect(other.ordinal).toBe(1);
     expect(accepted.map((turn) => turn.id)).not.toContain(other.id);
+  });
+
+  // ADR-182 D-C2: every status accepts or refuses by one allow-list. A run
+  // blocked on a permission keeps its input and defers it (`run_state`)
+  // without asking for a resume — its own turn is still in flight.
+  it("accepts input exactly in the D-C2 statuses and defers it while a permission blocks the turn", async () => {
+    const accepting = ["Running", "NeedsInput", "NeedsInputIdle"] as const;
+    const refusing = [
+      "Pending",
+      "HumanWorking",
+      "WaitingOnChildren",
+      "Review",
+      "Done",
+      "Failed",
+      "Abandoned",
+      "Crashed",
+    ] as const;
+
+    for (const status of [...accepting, ...refusing]) {
+      const runId = await seedRun();
+
+      try {
+        await db.update(runs).set({ status }).where(eq(runs.id, runId));
+        if ((refusing as readonly string[]).includes(status)) {
+          await expect(
+            acceptAgentMessage(db, runId, `input in ${status}`),
+          ).rejects.toMatchObject({
+            code: "PRECONDITION",
+            details: { runId, status },
+          });
+          continue;
+        }
+        const turn = await acceptAgentMessage(db, runId, `input in ${status}`);
+
+        expect(turn).toMatchObject({ state: "queued" });
+        if (status !== "NeedsInput") continue;
+        expect(await claimAgentMessage(db, turn.id, host)).toMatchObject({
+          kind: "queued",
+          reason: "run_state",
+        });
+        expect(
+          (await db.select().from(runs).where(eq(runs.id, runId)))[0]
+            .resumeRequestedAt,
+        ).toBeNull();
+      } finally {
+        await db.delete(runs).where(eq(runs.id, runId));
+      }
+    }
   });
 
   it("refuses new input after termination and preserves a previous acknowledgment", async () => {

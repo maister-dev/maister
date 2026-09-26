@@ -67,6 +67,17 @@ const UNSTORABLE_SQLSTATES = new Set(["22P05", "22P02", "22021"]);
 // may be continued, and the usage row starts again.
 const SCRATCH_BOUNDARY_EVENTS = new Set(["session.command", "session.created"]);
 
+// ADR-182 D-B8 (C29): a steer is text arriving INSIDE a running turn, so its
+// acceptance closes the open assistant rows for every run kind — what the agent
+// says next is a reply to the steered message — but it is not a new turn, so
+// the usage row keeps accumulating.
+function isSteerCommand(event: ExecutionEvent): boolean {
+  return (
+    event.eventType === "session.command" &&
+    event.payload?.kind === "session.steer"
+  );
+}
+
 function unstorableSqlState(error: unknown): string | null {
   for (let cause = error, depth = 0; cause && depth < 5; depth += 1) {
     const code = (cause as { code?: unknown }).code;
@@ -99,12 +110,17 @@ export async function projectTranscriptEvent(
   if (!run)
     throw new ExecutionEventProjectionError("transcript run is missing", true);
   const scratchBoundary =
-    run.kind === "scratch" && SCRATCH_BOUNDARY_EVENTS.has(event.eventType);
+    run.kind === "scratch" &&
+    SCRATCH_BOUNDARY_EVENTS.has(event.eventType) &&
+    !isSteerCommand(event);
+  const steerBoundary =
+    isSteerCommand(event) && event.payload?.phase === "accepted";
 
   if (
     event.eventType !== "session.update" &&
     !RESET_EVENTS.has(event.eventType) &&
-    !scratchBoundary
+    !scratchBoundary &&
+    !steerBoundary
   )
     return false;
   const nodeAttemptId =
@@ -136,7 +152,7 @@ export async function projectTranscriptEvent(
   const id = transcriptStateId(event.runId, nodeAttemptId);
   const state = await lockTranscriptState(tx, event.runId, nodeAttemptId);
 
-  if (RESET_EVENTS.has(event.eventType) || scratchBoundary) {
+  if (RESET_EVENTS.has(event.eventType) || scratchBoundary || steerBoundary) {
     await tx
       .update(runTranscriptStates)
       .set({

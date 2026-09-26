@@ -17,7 +17,8 @@ info:
     - `session.command` (Implemented — ADR-166) — command acceptance and
       completion for the enveloped session routes (`session.prompt`,
       `session.cancel`, `session.checkpoint`, `session.input`,
-      `session.delete`): the durable completion signal. `session.exited.reason` gains `fenced` for
+      `session.delete`, and — Implemented, ADR-182 — `session.steer`): the
+      durable completion signal. `session.exited.reason` gains `fenced` for
       a session evicted by a higher assignment epoch.
 
     Permission deferreds age out after the absolute
@@ -286,6 +287,39 @@ components:
                   runId: run-abc,
                   commandEpoch: 1,
                   hostEpoch: 2,
+                }
+        - name: steer-injected
+          payload:
+            type: session.command
+            sessionId: "5f3a8a2b-7e34-4f6d-9d2c-1d4e5f6a7b8c"
+            monotonicId: 12
+            commandId: "9d0e1f2a-3b4c-4d5e-8f6a-7b8c9d0e1f2a"
+            kind: session.steer
+            phase: completed
+            status: succeeded
+            result:
+              {
+                outcome: injected,
+                parentCommandId: "3d4e5f6a-7b8c-4d9e-8f0a-1b2c3d4e5f6a",
+                latencyMs: 42,
+              }
+        - name: steer-refused
+          payload:
+            type: session.command
+            sessionId: "5f3a8a2b-7e34-4f6d-9d2c-1d4e5f6a7b8c"
+            monotonicId: 13
+            commandId: "0e1f2a3b-4c5d-4e6f-9a7b-8c9d0e1f2a3b"
+            kind: session.steer
+            phase: completed
+            status: failed
+            error:
+              code: CONFLICT
+              message: "the parent prompt is not the session's running turn"
+              details:
+                {
+                  reason: steer_no_active_turn,
+                  parentCommandId: "3d4e5f6a-7b8c-4d9e-8f0a-1b2c3d4e5f6a",
+                  activePromptCommandId: null,
                 }
     SessionHookTrip:
       name: session.hook_trip
@@ -601,6 +635,7 @@ components:
                 [
                   session.prompt,
                   session.input,
+                  session.steer,
                   session.cancel,
                   session.checkpoint,
                   session.delete,
@@ -624,6 +659,14 @@ components:
         (Implemented — ADR-166) Command acceptance/completion signal for the
         enveloped session routes. See `../supervisor.openapi.yaml`
         `CommandReceipt` for the durable equivalent.
+
+        (Implemented — ADR-182) A `session.steer` pair carries the parent link
+        in its body: `result = {outcome: "injected", parentCommandId,
+        latencyMs}` on success, `error.details = {reason:
+        steer_unsupported | steer_no_active_turn | steer_timeout,
+        parentCommandId, …}` on a refusal. The parent prompt's own events,
+        receipt and span are unchanged; output the steered agent produces
+        rides the parent's `sourceCommandId`.
     SessionHookTripEvent:
       allOf:
         - $ref: "#/components/schemas/EventBase"

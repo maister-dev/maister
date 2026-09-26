@@ -299,6 +299,15 @@ export async function prepareScratchPrompt(input: {
 
       return "applied";
     },
+    // ADR-182 D-D3 caller 1: the turn that just ended hands the dialog to the
+    // oldest queued message. Detached — the dispatch awaits the whole next
+    // turn, and the owner application awaits this hook (C27). The queued row
+    // is durable, so a process that dies first leaves it for the next send.
+    afterCommit: async () => {
+      const { wakeQueuedScratchDispatch } = await import("./service");
+
+      wakeQueuedScratchDispatch(input.db, ref.runId);
+    },
   };
 }
 

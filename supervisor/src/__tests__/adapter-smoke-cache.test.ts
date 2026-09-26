@@ -193,7 +193,76 @@ describe("adapter smoke diagnostics", () => {
         checkedAt,
         protocolVersion: 1,
       },
+      steering: { supported: null, checkedAt: null },
     });
+  });
+
+  // ADR-182: steering evidence is optional in the cache; an old v2 cache
+  // parses unchanged and reads `null`, and a write without it keeps the last.
+  it("parses a cache without steering evidence and serves null", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "maister-smoke-cache-"));
+    const cachePath = join(directory, "adapter-smoke-cache.json");
+
+    try {
+      await writeFile(
+        cachePath,
+        JSON.stringify({
+          version: 2,
+          adapters: { claude: { status: "ok", checkedAt, protocolVersion: 1 } },
+        }),
+      );
+      const cache = await readAdapterSmokeCache(cachePath);
+
+      expect(cache.error).toBeNull();
+      expect(
+        smokeDiagnosticForAdapter("claude", cache, evaluatedAt).steering,
+      ).toEqual({ supported: null, checkedAt: null });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("records steering evidence and keeps it across a write without it", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "maister-smoke-cache-"));
+    const cachePath = join(directory, "adapter-smoke-cache.json");
+
+    try {
+      await writeAdapterSmokeCache(cachePath, [
+        {
+          adapter: "claude",
+          status: "ok",
+          protocolVersion: 1,
+          steering: { supported: true },
+        },
+      ]);
+      const first = smokeDiagnosticForAdapter(
+        "claude",
+        await readAdapterSmokeCache(cachePath),
+        evaluatedAt,
+      ).steering;
+
+      expect(first.supported).toBe(true);
+      expect(first.checkedAt).toEqual(expect.any(String));
+
+      await writeAdapterSmokeCache(cachePath, [
+        {
+          adapter: "claude",
+          status: "ok",
+          protocolVersion: 1,
+          capabilityEnforcement: { status: "ok", protocolVersion: 1 },
+        },
+      ]);
+
+      expect(
+        smokeDiagnosticForAdapter(
+          "claude",
+          await readAdapterSmokeCache(cachePath),
+          evaluatedAt,
+        ).steering,
+      ).toEqual(first);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 
   it("surfaces capability-enforcement evidence for claude (generic smoke not_required)", () => {

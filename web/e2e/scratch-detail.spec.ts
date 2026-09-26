@@ -5,10 +5,17 @@
 // (e2e/_seed/seed-e2e.ts → seedScratchDetailFixture). ONE scratch run parked at
 // dialog_status WaitingForUser with a committed branch diff (README.md), tracked
 // files, and a two-message transcript.
-import { readFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 import { test, expect } from "@playwright/test";
+
+import { singleValue } from "./_seed/db";
+import {
+  E2E_HOLD_TURN_MARKER,
+  STUB_SESSIONS_DIR,
+} from "./_seed/stub-supervisor";
 
 type ScratchDetailFixture = {
   projectSlug: string;
@@ -185,4 +192,127 @@ test("scratch workbench exposes the shared Diff renderer and a readable file tre
   await expect(
     page.locator('[data-testid="markdown-rich-view"]'),
   ).toBeVisible();
+});
+
+// ADR-182 (T4.6): a message sent while the agent is busy is accepted by the
+// server — the test supervisor advertises no steering, so it is QUEUED behind
+// the running turn and dispatched when that turn ends. The browser holds no
+// queue of its own. The launch prompt carries the seed's hold marker, so its
+// turn stays open until the spec drops `<sessionId>.turn-release`.
+test("sending while the agent is busy shows a Queued row and the composer stays usable", async ({
+  page,
+}) => {
+  test.setTimeout(150_000);
+  const fx = loadScratchDetailFixture();
+  const projectId = await singleValue<string>(
+    "SELECT id AS value FROM projects WHERE slug = $1",
+    [fx.projectSlug],
+  );
+  const name = `Busy send ${randomUUID().slice(0, 8)}`;
+  // The launch answers after its first turn, which the seed holds: fire it
+  // and find the run in the database.
+  const launching = page.request.post("/api/scratch-runs", {
+    data: {
+      projectId,
+      baseBranch: "main",
+      name,
+      // The fixture's own branch `maister/<slug>` would shadow the derived
+      // `maister/<slug>/scratch/...` ref.
+      branchName: `e2e-busy-send/${randomUUID().slice(0, 8)}`,
+      prompt: `${E2E_HOLD_TURN_MARKER} Keep working until told otherwise.`,
+      reasoningEffort: "high",
+      attachments: [],
+    },
+    timeout: 150_000,
+  });
+  let runId: string | null = null;
+  let launchFailure: string | null = null;
+
+  // The launch streams its stages; a refusal after the headers is an error
+  // frame in a 200 body, and a held first turn never finishes the body.
+  void launching.then(
+    async (launch) => {
+      launchFailure = `${launch.status()} ${await launch.text()}`;
+    },
+    (error: unknown) => {
+      launchFailure = String(error);
+    },
+  );
+  await expect
+    .poll(
+      async () => {
+        runId = await singleValue<string>(
+          "SELECT run_id AS value FROM scratch_runs WHERE name = $1",
+          [name],
+        );
+
+        if (!runId && launchFailure)
+          throw new Error(`launch ended without a run: ${launchFailure}`);
+
+        return runId
+          ? singleValue<string>(
+              "SELECT dialog_status AS value FROM scratch_runs WHERE run_id = $1",
+              [runId],
+            )
+          : null;
+      },
+      { timeout: 60_000 },
+    )
+    .toBe("Running");
+
+  await page.goto(`/scratch-runs/${runId}`);
+  const composer = page.locator(
+    '[data-testid="scratch-message-composer"] [data-testid="capability-composer-input"]',
+  );
+
+  await expect(page.getByTestId("scratch-composer-stop")).toBeVisible({
+    timeout: 30_000,
+  });
+  await composer.click();
+  await page.keyboard.type("Queued while the agent works");
+  const sent = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      response.url().includes(`/api/scratch-runs/${runId}/messages`),
+  );
+
+  await page.getByTestId("scratch-composer-send").click();
+  const response = await sent;
+
+  expect(response.status()).toBe(202);
+  expect(await response.json()).toMatchObject({
+    delivery: "queued",
+    dialogStatus: "Running",
+  });
+  const badge = page.locator(
+    '[data-testid="scratch-delivery-badge"][data-delivery="queued"]',
+  );
+
+  await expect(badge).toBeVisible({ timeout: 30_000 });
+  await expect(badge).toHaveText("Queued");
+  await expect(page.getByTestId("scratch-delivery-notice")).toBeVisible();
+  // The composer stays usable while the agent works.
+  await expect(composer).toBeEditable();
+
+  // End the running turn: the queued message is dispatched as the next turn,
+  // so its row loses the badge.
+  const hostSessionId = await singleValue<string>(
+    "SELECT host_session_id AS value FROM run_sessions WHERE run_id = $1",
+    [runId],
+  );
+
+  writeFileSync(
+    path.join(STUB_SESSIONS_DIR, `${hostSessionId}.turn-release`),
+    "",
+  );
+  await expect(page.getByTestId("scratch-delivery-badge")).toHaveCount(0, {
+    timeout: 60_000,
+  });
+  expect(
+    await singleValue<string>(
+      "SELECT delivery AS value FROM run_messages WHERE run_id = $1 AND content = $2",
+      [runId, "Queued while the agent works"],
+    ),
+  ).toBe("prompted");
+  expect((await launching).status()).toBe(200);
 });

@@ -4,6 +4,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   localPackages as localPackagesTable,
   projects as projectsTable,
+  runMessages as runMessagesTable,
   runs as runsTable,
   scratchCapabilityProfiles as scratchCapabilityProfilesTable,
   scratchRuns as scratchRunsTable,
@@ -35,6 +36,9 @@ type Tables = {
   projects: Row[];
   scratch_capability_profiles: Row[];
   local_packages: Row[];
+  // ADR-182: Recover asks whether messages are still queued from before the
+  // crash; none are in these cases.
+  run_messages: Row[];
 };
 type FakeDb = {
   execute: (query: unknown) => Promise<void>;
@@ -51,6 +55,7 @@ const dbState: { tables: Tables } = {
     projects: [],
     scratch_capability_profiles: [],
     local_packages: [],
+    run_messages: [],
   },
 };
 
@@ -63,6 +68,7 @@ function tableOf(t: unknown): keyof Tables {
     return "scratch_capability_profiles";
   }
   if (t === localPackagesTable) return "local_packages";
+  if (t === runMessagesTable) return "run_messages";
   throw new Error("unknown table");
 }
 
@@ -71,6 +77,7 @@ const selectChain = () => ({
     const rows = async () => dbState.tables[tableOf(table)];
     const query = {
       for: async () => rows(),
+      limit: async () => rows(),
       then: <TResult1 = Row[], TResult2 = never>(
         onfulfilled?:
           | ((value: Row[]) => TResult1 | PromiseLike<TResult1>)
@@ -267,6 +274,7 @@ function emptyTables(): Tables {
     projects: [],
     scratch_capability_profiles: [],
     local_packages: [],
+    run_messages: [],
   };
 }
 

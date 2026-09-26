@@ -24,8 +24,10 @@ import { ScratchPermissionPanel } from "@/components/scratch/scratch-permission-
 import {
   attachmentSummary,
   canCompose,
+  canSendWhileBusy,
   errorText,
   hitlErrorText,
+  queuedMessageUnsendable,
 } from "@/lib/scratch-runs/dialog";
 import { buildRunningCommandCatalog } from "@/lib/capabilities/running-catalog";
 import { getAdapterSupportById } from "@/lib/acp-runners/adapter-support";
@@ -135,6 +137,10 @@ export function ScratchConversation({
     | null
   >(null);
   const [pendingHitlKey, setPendingHitlKey] = useState<string | null>(null);
+  // ADR-182: how the last message sent while the agent was busy reached it.
+  const [deliveryNotice, setDeliveryNotice] = useState<
+    "steered" | "queued" | null
+  >(null);
   const activeRunId = useRef(runId);
 
   const currentHitlRequestKey =
@@ -302,6 +308,12 @@ export function ScratchConversation({
     return usage;
   }, [detail?.messages]);
 
+  // A notice describes the turn that was running when its message was sent;
+  // the next turn (a dispatched queued message) must not inherit it.
+  useEffect(() => {
+    if (!canSendWhileBusy(status)) setDeliveryNotice(null);
+  }, [status]);
+
   useEffect(() => {
     onHeaderInfo?.({
       status,
@@ -320,6 +332,12 @@ export function ScratchConversation({
     clearedHistory: (count) => t("clearedHistory", { count }),
     hookTrip: ({ rule, disposition }) =>
       t("hookTripNotice", { rule, disposition }),
+    deliveryBadge: (delivery) =>
+      delivery === "steered"
+        ? t("deliverySteeredBadge")
+        : queuedMessageUnsendable(status)
+          ? t("deliveryNotSentBadge")
+          : t("deliveryQueuedBadge"),
   };
   const quickReplies = useMemo(() => {
     if (!canCompose(status)) return [];
@@ -404,7 +422,15 @@ export function ScratchConversation({
 
           return false;
         }
+        const accepted = (await response.json().catch(() => null)) as {
+          delivery?: string;
+        } | null;
 
+        setDeliveryNotice(
+          accepted?.delivery === "steered" || accepted?.delivery === "queued"
+            ? accepted.delivery
+            : null,
+        );
         await loadDetail();
         onMessageSettled?.();
 
@@ -761,10 +787,14 @@ export function ScratchConversation({
         attachmentsEnabled={attachmentsEnabled}
         catalog={commandCatalog}
         compact={compact}
+        deliveryNotice={canSendWhileBusy(status) ? deliveryNotice : null}
         disabledReason={sendDisabledReason}
         pending={pendingAction === "send"}
         quickReplies={quickReplies}
         recoverEnabled={resolvedRecoverEndpoint !== null}
+        // ADR-182 D-D5: only project scratch runs accept a message while busy;
+        // the local-package assistant (its own endpoint) keeps the idle gate.
+        sendWhileBusy={messageEndpoint === undefined}
         status={status}
         onInterrupt={interrupt}
         onRecover={recover}

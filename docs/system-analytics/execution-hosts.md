@@ -540,9 +540,10 @@ a Stage-C deletion obligation (ADR-166 D9).
 | -------------------- | -------------------------------- | ---------------------------------------------------------------------------------------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------- |
 | `workspace.adopt`    | `POST /workspaces/adopt`         | register path → handle (idempotent on `(runId, realpath)` among ACTIVE handles; a released path mints a NEW one) | immediate    | HTTP 200                                                                                                      |
 | `workspace.release`  | `DELETE /workspaces/{id}`        | unregister handle                                                                                                | immediate    | HTTP 200                                                                                                      |
-| `session.create`     | `POST /sessions`                 | spawn + ACP handshake                                                                                            | ≤ 60 s       | HTTP 201 `{sessionId, pid, acpSessionId}`                                                                     |
-| `session.prompt`     | `POST /sessions/{id}/prompt`     | start a turn                                                                                                     | long         | SSE `session.command{accepted}` → HTTP 200 `{stopReason}` and/or SSE `session.command{completed}` and receipt |
+| `session.create`     | `POST /sessions`                 | spawn + ACP handshake                                                                                            | ≤ 60 s       | HTTP 201 `{sessionId, pid, acpSessionId, steeringSupported}`                                                  |
+| `session.prompt`     | `POST /sessions/{id}/prompts`    | start a turn                                                                                                     | long         | SSE `session.command{accepted}` → HTTP 200 `{stopReason}` and/or SSE `session.command{completed}` and receipt |
 | `session.input`      | `POST /sessions/{id}/input`      | resolve a deferred                                                                                               | immediate    | HTTP 200                                                                                                      |
+| `session.steer`      | `POST /sessions/{id}/steer`      | inject a message into the active owned turn (ADR-182)                                                            | ≤ 30 s       | HTTP 200 `{outcome:"injected", parentCommandId, latencyMs}` + SSE `session.command{completed}` and receipt    |
 | `session.cancel`     | `POST /sessions/{id}/cancel`     | ACP cancel                                                                                                       | immediate    | HTTP 200                                                                                                      |
 | `session.checkpoint` | `POST /sessions/{id}/checkpoint` | cancel deferreds + SIGTERM + wait                                                                                | ≤ kill grace | HTTP 200 + SSE `session.exited{reason:"checkpoint"}`                                                          |
 | `session.delete`     | `DELETE /sessions/{id}`          | SIGTERM/SIGKILL                                                                                                  | ≤ kill grace | HTTP 204 + SSE `session.exited`                                                                               |
@@ -568,20 +569,25 @@ re-prompts through the ordinary resume claim rather than handing a historical
 result forward.
 
 Unknown-outcome retry budgets (same command id): adopt 3 (0.5 s·2ⁿ), create 3
-(1 s·2ⁿ), prompt 3 before acceptance / 0 after, input 3, cancel 3, checkpoint
-3, delete 3 (`driverless`), release 3 (`driverless`). Transport timeouts: adopt
-10 s, create 60 s, input/cancel 10 s, checkpoint/delete 30 s, prompt none.
+(1 s·2ⁿ), prompt 3 before acceptance / 0 after, input 3, steer 3 (0.5 s·2ⁿ),
+cancel 3, checkpoint 3, delete 3 (`driverless`), release 3 (`driverless`).
+Transport timeouts: adopt 10 s, create 60 s, input/cancel 10 s, steer 45 s,
+checkpoint/delete 30 s, prompt none. The steer's 45 s exceeds the host's own
+bound on a steer (`STEER_ACP_TIMEOUT_MS`, 30 s, waiting on an earlier steer
+of the session included), so a live host answers first — `injected` or a
+definitive refusal; a dead host or network leaves an unknown outcome the
+receipt decides (Implemented — ADR-182).
 
 ## Command admission by assignment state
 
 | Assignment state | Admitted kinds                                                                                                                 | Otherwise                    |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------ | ---------------------------- |
-| `active`         | all eight                                                                                                                      | —                            |
+| `active`         | all twelve                                                                                                                     | —                            |
 | `released`       | teardown only: `session.checkpoint`, `session.delete`, `session.cancel`, `session.input{action:"cancel"}`, `workspace.release` | local `fenced`, no wire call |
 | `superseded`     | none                                                                                                                           | local `fenced`, no wire call |
 
-`session.create`, `session.prompt`, `session.input{select}`, and
-`workspace.adopt` require `active`. The orchestrator park checkpoint is the
+`session.create`, `session.prompt`, `session.steer`, `session.input{select}`,
+and `workspace.adopt` require `active`. The orchestrator park checkpoint is the
 reason teardown kinds stay admissible under `released` — so a stale teardown
 command issued under a `released` assignment GOES TO THE WIRE and is fenced
 by the host (409 `FENCED`) once a newer epoch has landed; local admission
@@ -606,12 +612,19 @@ token, never the message.
 | legacy path field after the strict flip                                  | 409 `PRECONDITION` | `legacy_field` + `field`                                                                                                                                                                                                                                   | `PRECONDITION`                                                  |
 | envelope absent after the strict flip                                    | 409 `PRECONDITION` | `missing_envelope`                                                                                                                                                                                                                                         | `PRECONDITION`                                                  |
 | receipt write failed after executing                                     | 500 `ACP_PROTOCOL` | —                                                                                                                                                                                                                                                          | definitive failure; reconcile catches an orphan session         |
+| steer: the connection did not advertise steering                         | 409 `CONFLICT`     | `steer_unsupported` (+ `parentCommandId`)                                                                                                                                                                                                                  | `CONFLICT` → the message is queued (ADR-182)                    |
+| steer: `parentCommandId` is not the active prompt, or the adapter answered anything but `injected` | 409 `CONFLICT`     | `steer_no_active_turn` (+ `parentCommandId`, `activePromptCommandId`, `adapterOutcome`)                                                                                                                                                 | `CONFLICT` → the message is queued                              |
+| steer: the adapter did not answer within `STEER_ACP_TIMEOUT_MS` (30 s)   | 409 `CONFLICT`     | `steer_timeout` (+ `parentCommandId`)                                                                                                                                                                                                                      | `CONFLICT` → the message is queued                              |
 
 The first four rows are the fence, evaluated in that order: the run binding
 is checked BEFORE the epoch, so a wrong-run fence can never advance or evict
 another run's sessions. Rejection messages carry the offending path, never
 the configured roots. `FENCED → CONFLICT`; every other supervisor code keeps
-its existing mapping. The tokens the web mints itself
+its existing mapping. The three steer refusals mint the `CONFLICT` code on the
+session routes (command retirement's ineligible answer is the other
+`CONFLICT`); they are definitive (never retried) and are checked in order:
+session live, advertisement, active prompt, then the ACP call (Implemented —
+ADR-182). The tokens the web mints itself
 (`host_identity_mismatch`, `assignment_missing`, `delivery_deferred`,
 `receipt_lookup_failed`, …) never travel the wire — their table is in
 [`../error-taxonomy.md`](../error-taxonomy.md#execution-host-contract-implemented--adr-166).
@@ -801,7 +814,12 @@ Preserve `MaisterError`/`SupervisorError` conventions. Add a strict reason union
   whose command returns `assignment_fenced` MUST write no run, attempt, HITL,
   or scratch state. Enforced by: every claim transition returns its minted
   assignment; the `fenced:true` result + early returns in every driver; test
-  P3.
+  P3. One exception (ADR-166 amendment 2026-09-26, ADR-182): a fenced
+  `session.steer`'s message still becomes a queued message — an agent
+  successor turn plus `runs.resume_requested_at`, or a scratch row's
+  `delivery = 'queued'` — in the transaction of the ledger's `fenced` write;
+  no run status is written (`steer-deliverer.integration.test.ts`,
+  `agent-steering.integration.test.ts` T3.0(c)).
 - **E-EH-12** — No secret value or prompt body MUST be persisted in
   `execution_commands.payload`, receipt bodies, or logs. Enforced by:
   `redactPayload()` at ledger insert — a per-kind ALLOW-list projection (ids,

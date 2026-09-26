@@ -30,6 +30,8 @@ import type {
   ReserveRuntimeObjectPayload,
   RuntimeObjectMetadata,
   InputPayload,
+  SteerPayload,
+  SteerResult,
   WorkspaceRecord,
 } from "./contracts";
 import type { SessionBindingDisposition } from "./session-binding";
@@ -125,6 +127,19 @@ export type PreparedInput = {
   }): Promise<InputDeliveryResult>;
 };
 
+// ADR-182: a steer is issued inside the caller's intent transaction (the ledger
+// row is `queued` before the wire) and delivered after it commits. `onAck` and
+// `onReject` each run in the transaction that writes the ledger's terminal
+// state, so the steer's domain outcome can never lag its command.
+export type PreparedSteer = {
+  readonly commandId: string;
+  readonly payload: SteerPayload;
+  deliver(opts?: {
+    onAck?: (tx: Db, result: SteerResult) => Promise<void>;
+    onReject?: (tx: Db, error: unknown) => Promise<void>;
+  }): Promise<SteerResult>;
+};
+
 // ADR-166 D3/D4: every host-bound command of a run goes through the client
 // bound to the run's ACTIVE assignment. Each method is a thin wrapper over
 // ONE `issue → deliver` path; kind differences live in `COMMAND_POLICY`.
@@ -197,6 +212,11 @@ export interface BoundClient {
       optionId: string;
     },
   ): Promise<PreparedInput>;
+  prepareSteer(
+    tx: Db,
+    sessionId: HostSessionId | string,
+    payload: SteerPayload,
+  ): Promise<PreparedSteer>;
   // The host's session records for THIS run (any status); callers pick the
   // live one for the node they act on.
   sessionsForRun(): Promise<SupervisorSessionRecord[]>;
@@ -336,6 +356,7 @@ export function createExecutionHosts(
         tx: Db,
         result: TResult,
       ) => Promise<void | SessionBindingDisposition>;
+      onReject?: (tx: Db, error: unknown) => Promise<void>;
       resultSummary?: (result: TResult) => Record<string, unknown> | null;
     };
 
@@ -372,6 +393,7 @@ export function createExecutionHosts(
         envelope: issued.envelope,
         send: (env) => send(env as CommandEnvelope<TPayload>),
         onAck: opts.onAck,
+        onReject: opts.onReject,
         resultSummary: opts.resultSummary,
         logger,
         sleep: deps.sleep,
@@ -499,12 +521,18 @@ export function createExecutionHosts(
                   sessionName,
                   assignmentId: current.id,
                   nodeAttemptId: payload.nodeAttemptId ?? null,
-                  result,
+                  result: {
+                    ...result,
+                    steeringSupported: result.steeringSupported ?? null,
+                  },
                 }),
               resultSummary: (result) => ({
                 sessionId: result.sessionId,
                 acpSessionId: result.acpSessionId,
                 pid: result.pid,
+                ...(typeof result.steeringSupported === "boolean"
+                  ? { steeringSupported: result.steeringSupported }
+                  : {}),
               }),
             },
           );
@@ -636,6 +664,30 @@ export function createExecutionHosts(
                   timeoutFor("session.input"),
                 ),
               { targetSessionId: sessionId, onAck: opts?.onAck },
+            ),
+        };
+      },
+      async prepareSteer(tx, sessionId, payload) {
+        const issued = await issue(tx, "session.steer", payload, sessionId);
+
+        return {
+          commandId: issued.row.id,
+          payload,
+          deliver: (opts) =>
+            deliver<SteerPayload, SteerResult>(
+              issued,
+              (env) =>
+                transport.steer(sessionId, env, timeoutFor("session.steer")),
+              {
+                targetSessionId: sessionId,
+                onAck: opts?.onAck,
+                onReject: opts?.onReject,
+                resultSummary: (result) => ({
+                  outcome: result.outcome,
+                  parentCommandId: result.parentCommandId,
+                  latencyMs: result.latencyMs,
+                }),
+              },
             ),
         };
       },

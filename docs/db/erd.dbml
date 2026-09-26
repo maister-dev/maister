@@ -101,6 +101,7 @@ table agent_turns {
   variant text [not null]
   logical_key text [not null]
   prompt text [not null]
+  parent_turn_id text
   state text [not null, default: 'queued']
   execution_assignment_id text
   assignment_epoch integer
@@ -117,6 +118,7 @@ table agent_turns {
     command_id [name: 'agent_turns_command_uq', unique]
     run_id [name: 'agent_turns_active_run_uq', unique]
     (state, created_at, run_id) [name: 'agent_turns_due_idx']
+
 
 
   }
@@ -1866,12 +1868,17 @@ table run_messages {
   supervisor_event_id text
   projection_tool_key text
   prompt_dispatch_key text
+  delivery text
+  steer_command_id text
   created_at "timestamp with time zone" [not null, default: `now()`]
 
   indexes {
     (run_id, node_attempt_id, projection_tool_key, sequence) [name: 'run_messages_projection_tool_idx']
     (run_id, node_attempt_id, sequence) [name: 'run_messages_run_node_attempt_sequence_uq', unique]
     (run_id, node_attempt_id, prompt_dispatch_key) [name: 'run_messages_prompt_dispatch_key_uq', unique]
+
+    (run_id, sequence) [name: 'run_messages_queued_idx']
+    steer_command_id [name: 'run_messages_steer_command_uq', unique]
   }
 }
 
@@ -1948,6 +1955,7 @@ table run_session_incarnations {
   acp_session_id text
   state text [not null]
   origin text [not null]
+  steering_supported boolean
   created_at "timestamp with time zone" [not null, default: `now()`]
   activated_at "timestamp with time zone"
   ended_at "timestamp with time zone"
@@ -2884,6 +2892,8 @@ ref agent_schedules_project_id_projects_id_fk: agent_schedules.project_id > proj
 
 ref agent_turns_run_id_runs_id_fk: agent_turns.run_id > runs.id [delete: cascade, update: no action]
 
+ref agent_turns_parent_turn_id_agent_turns_id_fk: agent_turns.parent_turn_id > agent_turns.id [delete: cascade, update: no action]
+
 ref agent_turns_execution_assignment_id_execution_assignments_id_fk: agent_turns.execution_assignment_id > execution_assignments.id [delete: restrict, update: no action]
 
 ref agent_turns_run_session_id_run_sessions_id_fk: agent_turns.run_session_id > run_sessions.id [delete: restrict, update: no action]
@@ -3257,6 +3267,8 @@ ref run_cost_rollups_flow_id_flows_id_fk: run_cost_rollups.flow_id > flows.id [d
 ref run_messages_run_id_runs_id_fk: run_messages.run_id > runs.id [delete: cascade, update: no action]
 
 ref run_messages_node_attempt_id_node_attempts_id_fk: run_messages.node_attempt_id > node_attempts.id [delete: cascade, update: no action]
+
+ref run_messages_steer_command_id_execution_commands_id_fk: run_messages.steer_command_id > execution_commands.id [delete: restrict, update: no action]
 
 ref run_results_run_id_runs_id_fk: run_results.run_id > runs.id [delete: cascade, update: no action]
 

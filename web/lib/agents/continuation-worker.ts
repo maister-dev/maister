@@ -20,6 +20,7 @@ import {
 import pino from "pino";
 
 import { startAgentSession } from "./launch";
+import { OWNED_TURN_VARIANTS } from "./turn-variants";
 import { AgentPromptContinuationPending } from "./prompt-owner";
 
 import {
@@ -121,6 +122,9 @@ export function startAgentContinuationWorker(input: {
                             inArray(agentTurns.state, [
                               "claimed",
                               "dispatched",
+                            ]),
+                            inArray(agentTurns.variant, [
+                              ...OWNED_TURN_VARIANTS,
                             ]),
                           ),
                         ),

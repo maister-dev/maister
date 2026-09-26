@@ -483,7 +483,161 @@ describe("POST /api/v1/ext/runs/message (M37 Phase 8)", () => {
       messageId: turns.rows[0].id,
       messageState: "applied",
       status: "NeedsInputIdle",
+      delivery: "queued",
     });
+  });
+
+  // ADR-182 D-C7: `mode: "steer"` reaches a RUNNING turn when the session
+  // advertised steering; a parked child has none, so the message queues and
+  // resumes the child exactly as `queue` would — the caller learns only how
+  // it was delivered.
+  it("(2c) mode steer on a parked child → queued delivery, no steer command", async () => {
+    const orchestrator = await seedAgent("orchestrator");
+    const worker = await seedAgent("reviewer-agent");
+    const { runId: rootRunId, secret } =
+      await seedOrchestratorRun(orchestrator);
+    const childRunId = await seedParkedChild({
+      agentId: worker,
+      rootRunId,
+      parentRunId: rootRunId,
+      addressableKey: "reviewer",
+      acpSessionId: "acp-reviewer-steer",
+    });
+    const res = await messagePost(
+      jsonReq(MSG_URL, secret, {
+        addressableKey: "reviewer",
+        prompt: "also check the migration",
+        mode: "steer",
+      }),
+      {},
+    );
+    const turns = await pool.query<{ id: string; variant: string }>(
+      `SELECT id, variant FROM agent_turns WHERE run_id = $1`,
+      [childRunId],
+    );
+
+    expect(res.status).toBe(200);
+    expect(turns.rows).toEqual([
+      { id: turns.rows[0].id, variant: "persistent_message" },
+    ]);
+    expect(await res.json()).toEqual({
+      childRunId,
+      messageId: turns.rows[0].id,
+      messageState: "applied",
+      status: "NeedsInputIdle",
+      delivery: "queued",
+    });
+    expect(fake.callsOf("steer")).toEqual([]);
+    expect(promptsSent()).toHaveLength(1);
+  });
+
+  // ADR-182 D-C7: the positive path — a running child whose session
+  // advertised steering gets the message injected into its running turn.
+  it("(2e) mode steer on a child whose turn is running → steered, one steer, no new prompt", async () => {
+    let finishTurn: () => void = () => {};
+    const turnHeld = new Promise<void>((resolve) => {
+      finishTurn = resolve;
+    });
+
+    fake.setSteering(true);
+    fake.setPromptBehavior(async () => {
+      await turnHeld;
+
+      return { stopReason: "end_turn", meta: null };
+    });
+    try {
+      const orchestrator = await seedAgent("orchestrator");
+      const worker = await seedAgent("reviewer-agent");
+      const { runId: rootRunId, secret } =
+        await seedOrchestratorRun(orchestrator);
+      const childRunId = await seedRunningChild({
+        agentId: worker,
+        parentRunId: rootRunId,
+        rootRunId,
+        addressableKey: "steerable",
+        acpSessionId: "acp-steerable",
+      });
+
+      await seedLive(childRunId, "acp-steerable");
+      const running = sendAgentMessage(childRunId, "start the review", {
+        db,
+        executionHosts: hosts,
+      });
+
+      await expect
+        .poll(
+          async () =>
+            (
+              await pool.query<{ state: string }>(
+                `SELECT state FROM execution_commands WHERE run_id = $1 AND kind = 'session.prompt'`,
+                [childRunId],
+              )
+            ).rows.map((row) => row.state),
+          { timeout: 15_000, interval: 25 },
+        )
+        .toEqual(["accepted"]);
+      const res = await messagePost(
+        jsonReq(MSG_URL, secret, {
+          addressableKey: "steerable",
+          prompt: "also check the migration",
+          mode: "steer",
+        }),
+        {},
+      );
+      const turns = await pool.query<{ id: string; variant: string }>(
+        `SELECT id, variant FROM agent_turns WHERE run_id = $1 ORDER BY ordinal`,
+        [childRunId],
+      );
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({
+        childRunId,
+        messageId: turns.rows[1].id,
+        messageState: "applied",
+        status: "Running",
+        delivery: "steered",
+      });
+      expect(turns.rows.map((row) => row.variant)).toEqual([
+        "live_message",
+        "steer",
+      ]);
+      expect(fake.callsOf("steer")).toHaveLength(1);
+      expect(promptsSent()).toHaveLength(1);
+      finishTurn();
+      await running;
+    } finally {
+      finishTurn();
+      fake.setSteering(false);
+    }
+  });
+
+  it("(2d) an unknown delivery mode is refused before any acceptance", async () => {
+    const orchestrator = await seedAgent("orchestrator");
+    const worker = await seedAgent("reviewer-agent");
+    const { runId: rootRunId, secret } =
+      await seedOrchestratorRun(orchestrator);
+    const childRunId = await seedParkedChild({
+      agentId: worker,
+      rootRunId,
+      parentRunId: rootRunId,
+      addressableKey: "reviewer",
+    });
+    const res = await messagePost(
+      jsonReq(MSG_URL, secret, {
+        addressableKey: "reviewer",
+        prompt: "x",
+        mode: "interrupt",
+      }),
+      {},
+    );
+    const turns = await pool.query(
+      `SELECT id FROM agent_turns WHERE run_id = $1`,
+      [childRunId],
+    );
+
+    expect(res.status).toBe(422);
+    expect(((await res.json()) as { code: string }).code).toBe("CONFIG");
+    expect(turns.rows).toEqual([]);
   });
 
   it("(2b) a key in ANOTHER tree → PRECONDITION, no delivery", async () => {
@@ -645,6 +799,7 @@ describe("POST /api/v1/ext/runs/message (M37 Phase 8)", () => {
       messageId: turns.rows[0].id,
       messageState: "applied",
       status: "NeedsInputIdle",
+      delivery: "queued",
     });
     expect(fake.callsOf("createSession")).toHaveLength(1);
     expect(promptsSent()).toHaveLength(1);
@@ -682,6 +837,7 @@ describe("POST /api/v1/ext/runs/message (M37 Phase 8)", () => {
       messageId: turns.rows[0].id,
       messageState: "queued",
       status: "Running",
+      delivery: "queued",
     });
     expect(promptsSent()).toEqual([]);
   });
@@ -714,6 +870,7 @@ describe("POST /api/v1/ext/runs/message (M37 Phase 8)", () => {
       messageId: turns.rows[0].id,
       messageState: "queued",
       status: "Running",
+      delivery: "queued",
     });
     expect(promptsSent()).toEqual([]);
   });

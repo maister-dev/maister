@@ -57,6 +57,7 @@ import { E2E_EXECUTION_HOST_SLUG } from "./fixtures";
 import {
   STUB_BOOT_ID,
   STUB_HOST_KEY,
+  E2E_HOLD_TURN_MARKER,
   stubAdopt,
   stubEnvelope,
   stubExitSession,
@@ -77,6 +78,7 @@ import {
 
 const STUB_RELEASE_BACKSTOP_MS = 15_000;
 const STUB_RELEASE_POLL_MS = 150;
+const E2E_HOLD_TURN_BACKSTOP_MS = 120_000;
 const STAGE_B_STREAM_ID = "9de93d52-7097-44df-977f-d912143f09e8";
 
 const EVENT_PAYLOAD_SCHEMAS = {
@@ -2108,30 +2110,56 @@ export async function startTestSupervisor(
         if (rec.stub) {
           stubAppendPrompt(promptMatch[1], body);
           const out = { stopReason: "end_turn" };
+          const armExit = (): void => {
+            const releasePath = path.join(
+              opts.stubCompat!.sessionsDir,
+              `${rec.sessionId}.release`,
+            );
+            const startedAt = Date.now();
+            const timer = setInterval(() => {
+              if (
+                !existsSync(releasePath) &&
+                Date.now() - startedAt <= STUB_RELEASE_BACKSTOP_MS
+              ) {
+                return;
+              }
+              clearInterval(timer);
+              stubExitSession(rec.sessionId);
+              emitOrQueue(rec, {
+                type: "session.exited",
+                sessionId: rec.sessionId,
+                monotonicId: nextId(),
+                exitCode: 0,
+              });
+            }, STUB_RELEASE_POLL_MS);
+          };
 
+          // ADR-182 (T4.6): a held turn completes only when the spec drops
+          // `<sessionId>.turn-release`; the session's exit backstop starts
+          // after it, so a slow first page compile cannot end the session
+          // under the spec.
+          if (JSON.stringify(body).includes(E2E_HOLD_TURN_MARKER)) {
+            const turnRelease = path.join(
+              opts.stubCompat!.sessionsDir,
+              `${rec.sessionId}.turn-release`,
+            );
+            const heldAt = Date.now();
+            const hold = setInterval(() => {
+              if (
+                !existsSync(turnRelease) &&
+                Date.now() - heldAt <= E2E_HOLD_TURN_BACKSTOP_MS
+              ) {
+                return;
+              }
+              clearInterval(hold);
+              complete(out);
+              armExit();
+            }, STUB_RELEASE_POLL_MS);
+
+            return;
+          }
           complete(out);
-
-          const releasePath = path.join(
-            opts.stubCompat!.sessionsDir,
-            `${rec.sessionId}.release`,
-          );
-          const startedAt = Date.now();
-          const timer = setInterval(() => {
-            if (
-              !existsSync(releasePath) &&
-              Date.now() - startedAt <= STUB_RELEASE_BACKSTOP_MS
-            ) {
-              return;
-            }
-            clearInterval(timer);
-            stubExitSession(rec.sessionId);
-            emitOrQueue(rec, {
-              type: "session.exited",
-              sessionId: rec.sessionId,
-              monotonicId: nextId(),
-              exitCode: 0,
-            });
-          }, STUB_RELEASE_POLL_MS);
+          armExit();
 
           return;
         }

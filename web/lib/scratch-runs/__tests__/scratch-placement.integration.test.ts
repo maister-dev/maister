@@ -58,6 +58,8 @@ vi.mock("@/lib/authz", () => ({
 let launchScratchRunStaged: typeof import("@/lib/scratch-runs/service").launchScratchRunStaged;
 let interruptScratchRun: typeof import("@/lib/scratch-runs/service").interruptScratchRun;
 let markScratchCrashed: typeof import("@/lib/scratch-runs/service").markScratchCrashed;
+let sendScratchUserMessage: typeof import("@/lib/scratch-runs/service").sendScratchUserMessage;
+let finalizeLifecycleOperation: typeof import("@/lib/workbench-lifecycle/service").finalizeLifecycleOperation;
 let recoverRoute: typeof import("@/app/api/scratch-runs/[runId]/recover/route").POST;
 
 let testDatabase: StartedPostgresTestDb;
@@ -82,8 +84,15 @@ beforeAll(async () => {
   db = testDatabase.db;
   fake = createFakeExecutionHost();
   ({ hosts } = await fakeExecutionHosts(db, { fake }));
-  ({ launchScratchRunStaged, interruptScratchRun, markScratchCrashed } =
-    await import("@/lib/scratch-runs/service"));
+  ({
+    launchScratchRunStaged,
+    interruptScratchRun,
+    markScratchCrashed,
+    sendScratchUserMessage,
+  } = await import("@/lib/scratch-runs/service"));
+  ({ finalizeLifecycleOperation } = await import(
+    "@/lib/workbench-lifecycle/service"
+  ));
   ({ POST: recoverRoute } = await import(
     "@/app/api/scratch-runs/[runId]/recover/route"
   ));
@@ -536,4 +545,157 @@ describe("scratch run placement (ADR-166 Q1–Q3)", () => {
     expect(await assignmentRows(runId)).toHaveLength(generations);
     expect(fake.callsOf("createSession")).toHaveLength(creates);
   }, 60_000);
+
+  // ADR-182: a message queued behind a turn that crashed is still the older
+  // message — Recover sends it first and queues its own text behind it.
+  it("Q7: messages queued before a crash are sent before the message that recovers it", async () => {
+    // Q6 left the run Crashed under a live workbench claim; that operation
+    // finishes and the run is recovered into an open dialog first.
+    const [claimed] = await db
+      .select({
+        id: schema.workspaces.id,
+        attemptId: schema.workspaces.lifecycleOperationAttemptId,
+      })
+      .from(schema.workspaces)
+      .where(eq(schema.workspaces.runId, runId));
+
+    await finalizeLifecycleOperation({
+      database: db,
+      workspaceId: claimed.id,
+      attemptId: claimed.attemptId as string,
+      state: "done",
+    });
+    expect((await recover()).status).toBe(202);
+    await expect
+      .poll(async () => (await scratchAndSession(runId)).scratch.dialogStatus, {
+        timeout: 15_000,
+        interval: 25,
+      })
+      .toBe("WaitingForUser");
+    const { session: live } = await scratchAndSession(runId);
+    let finishTurn: () => void = () => {};
+    const turnHeld = new Promise<void>((resolve) => {
+      finishTurn = resolve;
+    });
+
+    fake.setPromptBehavior(async () => {
+      await turnHeld;
+
+      return { stopReason: "end_turn", meta: null };
+    });
+    const longTurn = sendScratchUserMessage({
+      runId,
+      body: { content: "long task", attachments: [] },
+      executionHosts: hosts,
+    }).catch(() => undefined);
+
+    await expect
+      .poll(async () => (await scratchAndSession(runId)).scratch.dialogStatus, {
+        timeout: 15_000,
+        interval: 25,
+      })
+      .toBe("Running");
+    const queued = await sendScratchUserMessage({
+      runId,
+      body: { content: "queued before the crash", attachments: [] },
+      executionHosts: hosts,
+    });
+
+    expect(queued.delivery).toBe("queued");
+    fake.sessions.delete(live.hostSessionId as string);
+    await markScratchCrashed({
+      db,
+      runId,
+      err: new Error("supervisor restart"),
+    });
+    fake.setPromptBehavior(async () => ({
+      stopReason: "end_turn",
+      meta: null,
+    }));
+    finishTurn();
+    await longTurn;
+    const sentBefore = fake.callsOf("sendPrompt").length;
+    const response = await recoverRoute(
+      new NextRequest(`http://localhost/api/scratch-runs/${runId}/recover`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ prompt: "continue after the crash" }),
+      }),
+      { params: Promise.resolve({ runId }) },
+    );
+
+    expect(response.status).toBe(202);
+    await expect(response.json()).resolves.toMatchObject({
+      action: "recover",
+      dialogStatus: "WaitingForUser",
+      delivery: "queued",
+    });
+    await expect
+      .poll(
+        () =>
+          fake
+            .callsOf("sendPrompt")
+            .slice(sentBefore)
+            .map((call) => payloadOf(call).prompt),
+        { timeout: 30_000, interval: 25 },
+      )
+      .toEqual(["queued before the crash", "continue after the crash"]);
+    await expect
+      .poll(
+        async () =>
+          (
+            await db
+              .select({
+                content: schema.runMessages.content,
+                delivery: schema.runMessages.delivery,
+              })
+              .from(schema.runMessages)
+              .where(
+                and(
+                  eq(schema.runMessages.runId, runId),
+                  eq(schema.runMessages.role, "user"),
+                ),
+              )
+          ).filter((row) => row.delivery !== null),
+        { timeout: 30_000, interval: 25 },
+      )
+      .toEqual([
+        { content: "long task", delivery: "prompted" },
+        { content: "queued before the crash", delivery: "prompted" },
+        { content: "continue after the crash", delivery: "prompted" },
+      ]);
+    // Both turns of the recover generation settle before the test ends (the
+    // crashed generation's turn is never applied — its dialog had crashed).
+    const recoverEpoch = (await assignmentRows(runId)).at(-1)?.epoch;
+
+    await expect
+      .poll(
+        async () =>
+          (
+            await db
+              .select({
+                applicationState: schema.executionCommands.applicationState,
+              })
+              .from(schema.executionCommands)
+              .where(
+                and(
+                  eq(schema.executionCommands.runId, runId),
+                  eq(schema.executionCommands.kind, "session.prompt"),
+                  eq(
+                    schema.executionCommands.assignmentEpoch,
+                    recoverEpoch as number,
+                  ),
+                ),
+              )
+          ).map((row) => row.applicationState),
+        { timeout: 30_000, interval: 25 },
+      )
+      .toEqual(["applied", "applied"]);
+    await expect
+      .poll(async () => (await scratchAndSession(runId)).scratch.dialogStatus, {
+        timeout: 15_000,
+        interval: 25,
+      })
+      .toBe("WaitingForUser");
+  }, 90_000);
 });

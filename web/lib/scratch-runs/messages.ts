@@ -39,6 +39,12 @@ export async function appendScratchMessage(
     role: "user" | "system";
     content: string;
     supervisorEventId?: string;
+    // ADR-182: how a user row reaches the agent. A `steered` or `queued` row is
+    // appended while a turn runs, so it leaves that turn's open rows and usage
+    // alone — the steer's acceptance event closes them, a queued row's own
+    // dispatch starts the next turn.
+    delivery?: "queued" | "prompted" | "steered";
+    steerCommandId?: string;
   },
 ): Promise<{ id: string; sequence: number }> {
   const state = await lockTranscriptState(tx, input.runId, null);
@@ -57,15 +63,24 @@ export async function appendScratchMessage(
     role: input.role,
     content: input.content,
     supervisorEventId: input.supervisorEventId ?? null,
+    delivery: input.delivery ?? null,
+    steerCommandId: input.steerCommandId ?? null,
   });
+  const duringTurn =
+    input.delivery === "steered" || input.delivery === "queued";
+
   await tx
     .update(runTranscriptStates)
-    .set({
-      nextSequence: sequence + 1,
-      openTextSequence: null,
-      openThoughtSequence: null,
-      usageSequence: input.role === "user" ? null : state.usageSequence,
-    })
+    .set(
+      duringTurn
+        ? { nextSequence: sequence + 1 }
+        : {
+            nextSequence: sequence + 1,
+            openTextSequence: null,
+            openThoughtSequence: null,
+            usageSequence: input.role === "user" ? null : state.usageSequence,
+          },
+    )
     .where(eq(runTranscriptStates.id, state.id));
 
   return { id, sequence };

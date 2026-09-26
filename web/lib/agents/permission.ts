@@ -7,7 +7,7 @@ import type { ExecutionCommand } from "@/lib/db/schema";
 
 import { randomUUID } from "node:crypto";
 
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import pino from "pino";
 
@@ -30,6 +30,7 @@ import {
 } from "@/lib/execution-host/prompt-owners";
 import { nextKeepaliveAt } from "@/lib/runs/keepalive-config";
 import { findAgentPromptHalt } from "@/lib/execution-host/agent-pause-source";
+import { OWNED_TURN_VARIANTS } from "@/lib/agents/turn-variants";
 import { supersedeAgentPausePermissions } from "@/lib/execution-host/agent-pause-permissions";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 import { completeHitlAssignmentFromCurrentActor } from "@/lib/assignments/service";
@@ -198,6 +199,7 @@ export async function recordOwnedAgentPermissionInTransaction(
         eq(agentTurns.runId, assignment.runId),
         eq(agentTurns.executionAssignmentId, assignment.id),
         eq(agentTurns.state, "dispatched"),
+        inArray(agentTurns.variant, [...OWNED_TURN_VARIANTS]),
       ),
     );
 

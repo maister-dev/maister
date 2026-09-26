@@ -3,7 +3,7 @@ import type { SessionBindingDisposition } from "./session-binding";
 
 import { randomUUID } from "node:crypto";
 
-import { and, eq, isNotNull, sql } from "drizzle-orm";
+import { and, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { currentCreateCommand, createIntentError } from "./create-intent";
@@ -37,7 +37,14 @@ export async function applyCreateAck(
     sessionName: string;
     assignmentId: string;
     nodeAttemptId: string | null;
-    result: { sessionId: string; acpSessionId: string | null };
+    // ADR-182: the adapter's `initialize` steering advertisement; null from a
+    // host older than the steering contract (not observed). Required so a
+    // caller that forgets it does not compile — a silent null means "queue".
+    result: {
+      sessionId: string;
+      acpSessionId: string | null;
+      steeringSupported: boolean | null;
+    };
   },
 ): Promise<SessionBindingDisposition> {
   const assignment = await lockCurrentSessionAssignment(tx, input);
@@ -138,6 +145,7 @@ export async function applyCreateAck(
       );
   }
   const now = new Date();
+  const steeringSupported = input.result.steeringSupported;
   const binding = {
     hostSessionId: input.result.sessionId,
     acpSessionId: input.result.acpSessionId,
@@ -174,6 +182,7 @@ export async function applyCreateAck(
       acpSessionId: input.result.acpSessionId,
       state: "created",
       origin: "native",
+      steeringSupported,
       createdAt: now,
     });
     log.info(
@@ -181,8 +190,35 @@ export async function applyCreateAck(
         runId: input.runId,
         assignmentId: assignment.id,
         hostSessionId: input.result.sessionId,
+        steeringSupported,
       },
       "create-ack-incarnation-created",
+    );
+  } else if (
+    steeringSupported !== null &&
+    incarnation.steeringSupported === null
+  ) {
+    // Write-once: a later ACK or event fills an unobserved capability and never
+    // rewrites one already recorded for this incarnation.
+    const filled = await tx
+      .update(runSessionIncarnations)
+      .set({ steeringSupported })
+      .where(
+        and(
+          eq(runSessionIncarnations.id, incarnation.id),
+          isNull(runSessionIncarnations.steeringSupported),
+        ),
+      )
+      .returning({ id: runSessionIncarnations.id });
+
+    log.info(
+      {
+        runId: input.runId,
+        incarnationId: incarnation.id,
+        steeringSupported,
+        written: filled.length > 0,
+      },
+      "create-ack-steering-recorded",
     );
   }
   if (input.nodeAttemptId)

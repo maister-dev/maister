@@ -37,6 +37,8 @@ import {
   markScratchCrashed,
   markScratchPromptRetryable,
   noteScratchAdmissionYield,
+  queueScratchRecoverMessageBehind,
+  wakeQueuedScratchDispatch,
 } from "@/lib/scratch-runs/service";
 import { readScratchDialogStatus } from "@/lib/scratch-runs/turn-completion";
 import {
@@ -534,8 +536,8 @@ export async function POST(
       throw err;
     }
     const now = new Date();
-
-    await db.transaction(async (tx: Db) => {
+    const prompt = body.prompt;
+    const queuedBehind = await db.transaction(async (tx: Db) => {
       await assertCurrentSessionBinding(tx, {
         runId,
         sessionName: "default",
@@ -543,24 +545,42 @@ export async function POST(
         hostSessionId: session.sessionId,
         acpSessionId: session.acpSessionId,
       });
+      const queued = await queueScratchRecoverMessageBehind(tx, runId, prompt);
+
       await tx
         .update(scratchRuns)
         .set({
-          dialogStatus: "Running",
+          dialogStatus: queued ? "WaitingForUser" : "Running",
           errorCode: null,
           errorMessage: null,
           errorMetadata: null,
           updatedAt: now,
         })
         .where(eq(scratchRuns.runId, runId));
+
+      return queued;
     });
+
+    if (queuedBehind) {
+      wakeQueuedScratchDispatch(db as never, runId, hosts);
+
+      return NextResponse.json(
+        {
+          runId,
+          action,
+          dialogStatus: "WaitingForUser",
+          delivery: "queued",
+        },
+        { status: 202 },
+      );
+    }
 
     try {
       const promptResult = await sendScratchPromptAndProjectEvents({
         runId,
         sessionId: session.sessionId,
         stepId: scratchStepId(),
-        prompt: normalizeScratchPrompt(body.prompt, executor.agent, { runId }),
+        prompt: normalizeScratchPrompt(prompt, executor.agent, { runId }),
         execution,
         owner: { variant: "recovery" },
       });

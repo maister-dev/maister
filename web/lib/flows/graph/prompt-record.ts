@@ -109,7 +109,10 @@ type DbClientLike = any;
  * with no events keeps a first prompt ahead of event `0`. Only `accepted`
  * events count: a duplicate or skipped one never becomes a transcript row, so
  * anchoring past it would push the prompt beyond replies that follow. */
-async function eventHorizon(db: DbClientLike, runId: string): Promise<string> {
+export async function eventHorizon(
+  db: DbClientLike,
+  runId: string,
+): Promise<string> {
   const [row] = await db
     .select({
       horizon: sql<string | null>`max(${executionEvents.runSequence})`,

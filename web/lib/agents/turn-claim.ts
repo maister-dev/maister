@@ -17,6 +17,8 @@ import {
 import { capForPool, countLiveRuns, takeSchedulerLock } from "@/lib/scheduler";
 import { claimAgentIdleResumeInTransaction } from "@/lib/runs/state-transitions";
 import { MaisterError } from "@/lib/errors";
+import { OWNED_TURN_VARIANTS } from "@/lib/agents/turn-variants";
+import { CLOSES_MESSAGE_TURNS } from "@/lib/agents/turns";
 
 export type AgentTurnClaim =
   | Readonly<{ kind: "claimed"; turn: AgentTurn }>
@@ -81,7 +83,7 @@ export async function claimAgentMessage(
         { details: { turnId } },
       );
     if (
-      ["Done", "Failed", "Abandoned"].includes(run.status) ||
+      CLOSES_MESSAGE_TURNS[run.status] ||
       (turn.executionAssignmentId !== null &&
         turn.executionAssignmentId !== run.executionAssignmentId)
     ) {
@@ -119,6 +121,9 @@ export async function claimAgentMessage(
           eq(agentTurns.runId, run.id),
           lt(agentTurns.ordinal, turn.ordinal),
           inArray(agentTurns.state, ["queued", "claimed", "dispatched"]),
+          // ADR-182 C25: a steer rides its parent's turn; it never holds the
+          // next message back.
+          inArray(agentTurns.variant, [...OWNED_TURN_VARIANTS]),
         ),
       )
       .limit(1);

@@ -44,7 +44,11 @@ async function noop(): Promise<boolean> {
 function render(
   status: ScratchDialogStatus,
   quickReplies: QuickReply[] = [],
-  extra: { onInterrupt?: () => Promise<boolean> } = {},
+  extra: {
+    onInterrupt?: () => Promise<boolean>;
+    sendWhileBusy?: boolean;
+    deliveryNotice?: "steered" | "queued" | null;
+  } = {},
 ) {
   return renderToStaticMarkup(
     createElement(ScratchComposer, {
@@ -120,12 +124,39 @@ describe("ScratchComposer", () => {
     expect(html).toContain("scratch.agentBusy");
   });
 
-  it("swaps Send for a Stop button while busy when onInterrupt is provided", () => {
+  // ADR-182 D-D4: the browser queue is gone — while busy, Send stays the
+  // primary action (the server steers or queues) and Stop sits beside it.
+  it("keeps Send primary with Stop secondary while busy on a send-while-busy surface", () => {
+    const html = render("Running", [], {
+      onInterrupt: noop,
+      sendWhileBusy: true,
+    });
+
+    expect(html).toContain('data-testid="scratch-composer-stop"');
+    expect(html).toContain('data-testid="scratch-composer-send"');
+    expect(html.indexOf("scratch-composer-stop")).toBeLessThan(
+      html.indexOf("scratch-composer-send"),
+    );
+    expect(html).not.toContain("scratch.sending");
+  });
+
+  it("offers only Stop while busy where the run accepts input only when idle", () => {
     const html = render("Running", [], { onInterrupt: noop });
 
     expect(html).toContain('data-testid="scratch-composer-stop"');
-    expect(html).toContain("scratch.interrupt");
     expect(html).not.toContain('data-testid="scratch-composer-send"');
+  });
+
+  it("renders the delivery notice of a message sent while busy", () => {
+    expect(
+      render("Running", [], { sendWhileBusy: true, deliveryNotice: "queued" }),
+    ).toContain("scratch.deliveryQueuedNotice");
+    expect(
+      render("Running", [], { sendWhileBusy: true, deliveryNotice: "steered" }),
+    ).toContain("scratch.deliverySteeredNotice");
+    expect(render("Running", [], { sendWhileBusy: true })).not.toContain(
+      'data-testid="scratch-delivery-notice"',
+    );
   });
 
   it("keeps the Send button while busy when no onInterrupt is wired", () => {

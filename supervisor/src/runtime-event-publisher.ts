@@ -14,6 +14,7 @@ import type {
 import type { SessionEvent, SessionRecord } from "./types";
 
 import { commandReceiptPayloadV2 } from "./command-event";
+import { sessionSteeringSupported } from "./types";
 import { CONTROL_EVENT_MAX_BYTES } from "./runtime-limits";
 import {
   assertRuntimeEventPayloadSafe,
@@ -431,6 +432,7 @@ export class RuntimeEventPublisher {
           adapter: record.adapter,
           sessionName: record.sessionName,
           acpSessionId: record.acpSessionId ?? null,
+          steeringSupported: sessionSteeringSupported(record),
         },
       },
     });

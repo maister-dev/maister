@@ -196,6 +196,31 @@ function publicCapabilityProfile(
   };
 }
 
+// The documented `ScratchMessage`: a message row also carries ledger and
+// projection handles (`steer_command_id`, `prompt_dispatch_key`) the browser
+// has no use for.
+function publicMessage(row: {
+  id: string;
+  runId: string;
+  sequence: number;
+  role: string;
+  content: string;
+  supervisorEventId: string | null;
+  createdAt: Date;
+  delivery: string | null;
+}) {
+  return {
+    id: row.id,
+    runId: row.runId,
+    sequence: row.sequence,
+    role: row.role,
+    content: row.content,
+    supervisorEventId: row.supervisorEventId,
+    createdAt: row.createdAt,
+    delivery: row.delivery,
+  };
+}
+
 function publicAttachment(row: ScratchAttachmentRow) {
   const artifactRef = row.kind === "uploaded_file" ? row.value : null;
 
@@ -363,10 +388,12 @@ export async function GET(
         lastAgentMessageAt: scratch.lastAgentMessageAt,
       },
       workspace: publicWorkspace(workspaceRows[0]),
-      messages: [...messageRows].sort(
-        (a: { sequence: number }, b: { sequence: number }) =>
-          a.sequence - b.sequence,
-      ),
+      messages: [...messageRows]
+        .sort(
+          (a: { sequence: number }, b: { sequence: number }) =>
+            a.sequence - b.sequence,
+        )
+        .map(publicMessage),
       attachments: attachmentRows.map(publicAttachment),
       capabilityProfile: publicCapabilityProfile(profileRows[0]),
       pendingHitl: pendingHitl

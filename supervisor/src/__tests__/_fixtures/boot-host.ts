@@ -84,6 +84,7 @@ export type BootHostOptions = {
   workspaceRoots?: string[];
   pinnedKey?: string;
   killGraceMs?: number;
+  steerTimeoutMs?: number;
   logger?: Logger;
   hostState?: HostState;
   // Full override (a custom spawn function without a binary override); wins
@@ -132,6 +133,7 @@ export async function bootHost(
     logger,
     runtimeRoot,
     killGraceMs,
+    steerTimeoutMs: opts.steerTimeoutMs,
     spawnOverrides,
     hostState,
     workspaceRoots,

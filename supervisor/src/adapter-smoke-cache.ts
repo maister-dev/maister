@@ -20,10 +20,20 @@ const ReadOnlySmokeEvidenceSchema = AdapterSmokeEvidenceSchema.extend({
   probeVersion: z.number().int().positive().optional(),
 }).strict();
 
+// ADR-182: whether the smoke's `initialize` advertised steering. Optional, so
+// every existing v2 cache still parses without a version bump.
+const SteeringSmokeEvidenceSchema = z
+  .object({
+    supported: z.boolean(),
+    checkedAt: z.string().datetime(),
+  })
+  .strict();
+
 const AdapterSmokeCacheEntrySchema = AdapterSmokeEvidenceSchema.extend({
   readOnlySession: ReadOnlySmokeEvidenceSchema.optional(),
   // ADR-130: cached evidence that capability_guard enforcement is safe at the seam.
   capabilityEnforcement: AdapterSmokeEvidenceSchema.optional(),
+  steering: SteeringSmokeEvidenceSchema.optional(),
 }).strict();
 
 const AdapterSmokeAdaptersSchema = z
@@ -70,6 +80,13 @@ export type AdapterSmokeDiagnostic = {
   readonly protocolVersion: number | null;
   readonly readOnlySession: AdapterSmokeDimensionDiagnostic;
   readonly capabilityEnforcement: AdapterSmokeCapabilityDiagnostic;
+  readonly steering: AdapterSteeringDiagnostic;
+};
+
+// ADR-182: informational only — `supported: null` means no smoke evidence.
+export type AdapterSteeringDiagnostic = {
+  readonly supported: boolean | null;
+  readonly checkedAt: string | null;
 };
 
 type AdapterSmokeDimensionDiagnosticBase = {
@@ -122,6 +139,7 @@ export type AdapterSmokeCacheWriteEntry = {
     readonly reason?: string;
     readonly protocolVersion?: number;
   };
+  readonly steering?: { readonly supported: boolean };
 };
 
 const SMOKE_REQUIRED_ADAPTERS: ReadonlySet<ExecutorAgent> = new Set([
@@ -196,6 +214,7 @@ export function smokeDiagnosticForAdapter(
     adapter,
     cache,
   );
+  const steering = steeringDiagnosticForAdapter(adapter, cache);
 
   if (!SMOKE_REQUIRED_ADAPTERS.has(adapter)) {
     return {
@@ -205,6 +224,7 @@ export function smokeDiagnosticForAdapter(
       protocolVersion: null,
       readOnlySession,
       capabilityEnforcement,
+      steering,
     };
   }
 
@@ -216,6 +236,7 @@ export function smokeDiagnosticForAdapter(
       protocolVersion: null,
       readOnlySession,
       capabilityEnforcement,
+      steering,
     };
   }
 
@@ -229,6 +250,7 @@ export function smokeDiagnosticForAdapter(
       protocolVersion: null,
       readOnlySession,
       capabilityEnforcement,
+      steering,
     };
   }
 
@@ -239,6 +261,19 @@ export function smokeDiagnosticForAdapter(
     protocolVersion: entry.protocolVersion ?? null,
     readOnlySession,
     capabilityEnforcement,
+    steering,
+  };
+}
+
+function steeringDiagnosticForAdapter(
+  adapter: ExecutorAgent,
+  cache: AdapterSmokeCacheRead,
+): AdapterSteeringDiagnostic {
+  const entry = cache.error ? undefined : cache.entries[adapter]?.steering;
+
+  return {
+    supported: entry?.supported ?? null,
+    checkedAt: entry?.checkedAt ?? null,
   };
 }
 
@@ -469,6 +504,12 @@ export async function writeAdapterSmokeCache(
       prev?.capabilityEnforcement
         ? { capabilityEnforcement: prev.capabilityEnforcement }
         : {}),
+      // ADR-182: a write without steering evidence keeps the previous one.
+      ...(entry.steering
+        ? { steering: { supported: entry.steering.supported, checkedAt } }
+        : prev?.steering
+          ? { steering: prev.steering }
+          : {}),
       ...(entry.readOnlySession
         ? {
             readOnlySession: {

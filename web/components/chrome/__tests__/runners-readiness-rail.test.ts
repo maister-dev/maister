@@ -21,6 +21,8 @@ const labels: RunnersReadinessLabels = {
   disabledLabel: "Disabled",
   configureCta: "Configure in Settings",
   readiness: { Ready: "Ready", NotReady: "Not ready", Unknown: "Unknown" },
+  steering: "Steering",
+  steeringHint: "Adapter advertises steering",
 };
 
 const causeLabels: Record<AdapterReadinessCause, string> = {
@@ -54,6 +56,7 @@ function summary(
     cause: "ready",
     detail: null,
     runners: [],
+    steering: null,
     ...over,
   };
 }
@@ -126,6 +129,24 @@ describe("RunnersReadinessRailView", () => {
 
     expect(html).toContain("GEMINI_API_KEY is missing");
     expect(html).toContain('aria-label="Not ready"');
+  });
+
+  // ADR-182: an icon + label, shown only for an advertised family.
+  it("shows the Steering glyph only when the family advertises steering", () => {
+    const html = render({
+      isAdmin: false,
+      adapters: [
+        summary({ adapter: "claude", steering: true }),
+        summary({ adapter: "codex", steering: false }),
+        summary({ adapter: "gemini", steering: null }),
+      ],
+    });
+
+    expect(html).toContain('data-testid="runner-steering-claude"');
+    expect(html).toContain('title="Adapter advertises steering"');
+    expect(html).toContain(">Steering<");
+    expect(html).not.toContain("runner-steering-codex");
+    expect(html).not.toContain("runner-steering-gemini");
   });
 
   it("renders the empty state for an adapter with no runners", () => {

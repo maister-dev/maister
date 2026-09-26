@@ -83,6 +83,46 @@ const smokeReadyDiagnostics = {
 } as const;
 
 describe("evaluateRunnerReadiness", () => {
+  // ADR-182: family-level steering evidence is informational — no readiness
+  // verdict may depend on it, whichever way it reads.
+  it("returns the same verdict whatever smoke.steering says", () => {
+    const runners = [
+      {
+        adapter: "claude",
+        capabilityAgent: "claude",
+        enabled: true,
+        permissionPolicy: "default",
+        provider: { kind: "anthropic" },
+      },
+      {
+        adapter: "gemini",
+        capabilityAgent: "gemini",
+        enabled: true,
+        permissionPolicy: "default",
+        provider: { kind: "google_gemini", apiKey: "env:GEMINI_API_KEY" },
+      },
+    ] as const;
+
+    for (const supported of [true, false, null]) {
+      const withSteering = {
+        ...diagnostics,
+        adapters: diagnostics.adapters.map((adapter) => ({
+          ...adapter,
+          smoke: {
+            ...adapter.smoke,
+            steering: { supported, checkedAt: null },
+          },
+        })),
+      };
+
+      for (const runner of runners) {
+        expect(
+          evaluateRunnerReadiness({ runner, diagnostics: withSteering }),
+        ).toEqual(evaluateRunnerReadiness({ runner, diagnostics }));
+      }
+    }
+  });
+
   it("marks supported direct Claude and Codex runners ready", () => {
     expect(
       evaluateRunnerReadiness({

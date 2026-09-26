@@ -87,6 +87,15 @@ const PAYLOAD_PROJECTION: Readonly<Record<CommandKind, Projection>> = {
   }),
   "session.input": (p) =>
     pickScalars(p, ["kind", "action", "requestId", "optionId", "reason"]),
+  // ADR-182: the steer text never reaches the ledger — only its size.
+  "session.steer": (p) => ({
+    ...pickScalars(p, ["parentCommandId"]),
+    promptBytes: Buffer.byteLength(
+      JSON.stringify(p.contentBlocks ?? []),
+      "utf8",
+    ),
+    contentBlockCount: countOf(p.contentBlocks),
+  }),
   "session.cancel": () => ({}),
   "session.checkpoint": () => ({}),
   "session.delete": () => ({}),

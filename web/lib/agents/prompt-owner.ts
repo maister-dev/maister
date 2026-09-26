@@ -36,11 +36,15 @@ import {
 
 import {
   executionCommands,
+  runMessages,
   runs,
   runSessions,
   runSessionIncarnations,
   agentTurns,
 } from "@/lib/db/schema";
+import { appendRunMessage } from "@/lib/execution-host/events/run-message-store";
+import { steerTurnIdOfRequeueKey } from "@/lib/execution-host/steer-settlement";
+import { boundPromptBody, eventHorizon } from "@/lib/flows/graph/prompt-record";
 import {
   ADMISSIBLE_PROMPT_INCARNATION_STATES,
   lockCurrentSessionAssignment,
@@ -189,7 +193,16 @@ export async function admitInitialAgentPrompt(
 export async function bindAgentTurnCommand(
   tx: Db,
   input: Readonly<{
-    turn: Pick<AgentTurn, "id" | "runId" | "prompt" | "commandId">;
+    turn: Pick<
+      AgentTurn,
+      | "id"
+      | "runId"
+      | "prompt"
+      | "commandId"
+      | "variant"
+      | "ordinal"
+      | "logicalKey"
+    >;
     hostKey: string;
     incarnationId: string;
     logicalOperationKey: string;
@@ -224,6 +237,85 @@ export async function bindAgentTurnCommand(
       updatedAt: new Date(),
     })
     .where(eq(agentTurns.id, turn.id));
+  await recordAgentPrompt(tx, turn);
+}
+
+/** ADR-182 (owner decision Q1): every agent prompt reaches the transcript as
+ * a bounded user row in the SAME transaction as its dispatch binding — a
+ * rolled-back issue rolls the row back, a redelivered dispatch is a no-op
+ * (`run_messages_prompt_dispatch_key_uq`). A steer's successor re-uses the
+ * steer's acceptance row (`queued → prompted`) so a message is shown once —
+ * and a redelivered bind of that successor finds the row already `prompted`
+ * and writes nothing. */
+async function recordAgentPrompt(
+  tx: Db,
+  turn: Pick<
+    AgentTurn,
+    "id" | "runId" | "prompt" | "variant" | "ordinal" | "logicalKey"
+  >,
+): Promise<void> {
+  const steerTurnId = steerTurnIdOfRequeueKey(turn.logicalKey);
+
+  if (steerTurnId) {
+    const [steer] = await tx
+      .select({ commandId: agentTurns.commandId })
+      .from(agentTurns)
+      .where(eq(agentTurns.id, steerTurnId));
+    const [row] = steer?.commandId
+      ? await tx
+          .select({ id: runMessages.id, delivery: runMessages.delivery })
+          .from(runMessages)
+          .where(
+            and(
+              eq(runMessages.runId, turn.runId),
+              eq(runMessages.promptDispatchKey, `steer:${steer.commandId}`),
+            ),
+          )
+          .for("update")
+      : [];
+
+    if (row) {
+      if (row.delivery === "queued")
+        await tx
+          .update(runMessages)
+          .set({ delivery: "prompted" })
+          .where(eq(runMessages.id, row.id));
+      log.info(
+        {
+          runId: turn.runId,
+          turnId: turn.id,
+          messageId: row.id,
+          redelivered: row.delivery !== "queued",
+        },
+        "agent-prompt-recorded-from-steer",
+      );
+
+      return;
+    }
+  }
+  const bounded = boundPromptBody(turn.prompt);
+  const recorded = await appendRunMessage(tx, {
+    runId: turn.runId,
+    nodeAttemptId: null,
+    role: "user",
+    content: bounded.content,
+    promptDispatchKey: `agent_turn:${turn.variant}:${turn.id}:${turn.ordinal}`,
+    supervisorEventId: await eventHorizon(tx, turn.runId),
+    delivery: "prompted",
+  });
+
+  log.info(
+    {
+      runId: turn.runId,
+      turnId: turn.id,
+      variant: turn.variant,
+      promptBytes: Buffer.byteLength(turn.prompt, "utf8"),
+      truncated: bounded.truncated,
+      sequence: recorded.sequence,
+      inserted: recorded.inserted,
+    },
+    "agent-prompt-recorded",
+  );
 }
 
 export async function admitAgentMessagePrompt(
@@ -282,7 +374,8 @@ export async function admitAgentTurnPrompt(
       ? initialAgentPromptKey(session.assignmentId)
       : `agent_turn:${turn.variant}:${turn.id}:${turn.ordinal}`;
 
-  if (turn.variant === "consensus_draft")
+  // ADR-182: a steer rides its parent's prompt and never owns one.
+  if (turn.variant === "consensus_draft" || turn.variant === "steer")
     throw new PromptOwnerInvariantError("agent_message_variant");
   const source = { ...session, turnId: turn.id, promptOrdinal: turn.ordinal };
   const ref: Exclude<AdmittedAgentRef, { variant: "consensus_draft" }> =

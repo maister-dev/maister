@@ -39,13 +39,20 @@ moment.
 | Project admin / owner | Has member capabilities plus project-level delivery actions where configured. |
 | Global admin | Bypasses project role checks as owner-equivalent. |
 
-While the agent is working the composer stays editable so the user can draft
-the next message; its primary button becomes **Stop**, which interrupts the
-current turn (ACP `session/cancel`) while keeping the session live. A non-empty
-draft auto-sends once the interrupted turn settles back to `WaitingForUser`.
-Sending a new message is only enabled in `WaitingForUser`. A crashed run may
-expose a recover composer that sends the resume prompt instead of a normal
-message.
+While a turn runs the composer stays editable and **Send** stays the
+primary action (Implemented — ADR-182): the message is either steered into the
+running turn or queued for the next one, and the response says which — an
+inline notice under the composer, shown only while that turn runs, and a badge
+on the row ("Steered" / "Queued"). **Stop** is a secondary button beside Send;
+it interrupts the current turn (ACP `session/cancel`) while keeping the session
+live; the interrupted turn's end then dispatches any queued message, as any
+turn end does — a queued message cannot be withdrawn. There is no client-side
+queue: queued messages live on the server, so a reload loses nothing, and they
+are dispatched oldest first when the turn ends. While the dialog is `Starting`
+there is no session yet: only Stop is offered. A queued row on a dialog that
+ended (Review, Done, Abandoned) reads "Not sent". A
+crashed run may expose a recover composer that sends the resume prompt instead
+of a normal message.
 
 ## Navigation
 
@@ -89,10 +96,13 @@ The scratch screen uses the conversation as the primary center:
 3. **Composer** - fixed at the bottom of the conversation. It sends a normal
    message while the run waits for the user, and a recover prompt when the run
    is crashed and resumable. The editor is multi-line: `Cmd+Enter` on macOS and
-   `Ctrl+Enter` on Windows/Linux submit; a plain `Enter` inserts a newline. It
-   stays editable while the agent is busy, where the send control becomes a red
-   **Stop** button that interrupts the current turn; a typed draft is queued and
-   auto-sent once the turn ends. It supports structured attachments and uploaded
+   `Ctrl+Enter` on Windows/Linux submit (also while the agent is busy); a plain
+   `Enter` inserts a newline. It stays editable while the agent is busy: **Send**
+   stays primary (the message is steered into the running turn or queued —
+   ADR-182) and a secondary **Stop** button interrupts the current turn. A queued
+   row carries a "Queued" badge until it is dispatched ("Not sent" once the
+   dialog ended without sending it); a steered row carries "Steered". It
+   supports structured attachments and uploaded
    files. Slash suggestions include package skills plus the live ACP session's
    available commands; native runner commands are inserted as their exact raw
    command text rather than converted into capability chips.
@@ -161,7 +171,8 @@ stateDiagram-v2
 
 | State | Main focus |
 | --- | --- |
-| `Starting` / `Running` | Transcript with latest tool group expanded; composer editable for a draft with a red Stop button to interrupt the turn |
+| `Starting` | Transcript; composer editable for drafting, Stop only (no session to send to yet) |
+| `Running` | Transcript with latest tool group expanded; composer editable with Send primary (steer or queue) and a secondary Stop button to interrupt the turn |
 | `WaitingForUser` | Transcript plus enabled composer and live slash-command suggestions |
 | `NeedsInput` | Pending permission/HITL prompt in the conversation |
 | `Review` | Transcript plus inspector action shortcuts and change size |
@@ -175,11 +186,15 @@ stateDiagram-v2
   latest live available-command snapshot extracted from the run event log.
 - `GET /api/runs/{runId}/stream` triggers live transcript refreshes.
 - `POST /api/scratch-runs/{runId}/messages` sends follow-up messages and
-  message attachments. Exact slash commands are forwarded as prompt text; the UI
+  message attachments; while the agent is busy it answers at acceptance with
+  `delivery: "steered" | "queued"` (ADR-182), and the detail route returns each
+  user row's `delivery` for the badges. Exact slash commands are forwarded as prompt text; the UI
   may collapse local transcript history after `/clear`, but it does not filter
   the command or delete stored messages.
 - `POST /api/scratch-runs/{runId}/recover` resumes a crashed scratch session
-  with a user prompt.
+  with a user prompt; with messages still queued from before the crash it
+  queues the prompt behind them and answers `delivery: "queued"`, so the
+  oldest is sent first.
 - `POST /api/scratch-runs/{runId}/interrupt` interrupts the agent's in-flight
   turn (composer Stop) without ending the session; the dialog returns to
   `WaitingForUser` on its own.

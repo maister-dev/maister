@@ -164,23 +164,27 @@ describe("scratch message and state helpers", () => {
   });
 
   it("guards accepted input by dialog status and session presence", () => {
-    expect(() =>
+    const accept = (
+      dialogStatus: Parameters<
+        typeof assertScratchCanAcceptUserMessage
+      >[0]["dialogStatus"],
+      hostSessionId: string | null = "sup-1",
+    ) =>
       assertScratchCanAcceptUserMessage({
         runId: "run-1",
         runStatus: "Running",
-        dialogStatus: "WaitingForUser",
-        hostSessionId: "sup-1",
-      }),
-    ).not.toThrow();
+        dialogStatus,
+        hostSessionId,
+      });
 
-    expect(() =>
-      assertScratchCanAcceptUserMessage({
-        runId: "run-1",
-        runStatus: "Running",
-        dialogStatus: "Running",
-        hostSessionId: "sup-1",
-      }),
-    ).toThrow(/not accepted/);
+    expect(accept("WaitingForUser")).toBe("prompt");
+    // ADR-182 D-D1: a running turn accepts the message (steered or queued);
+    // `Starting` has no session to steer or queue for yet.
+    expect(accept("Running")).toBe("busy");
+    expect(() => accept("Starting", null)).toThrow(/not accepted/);
+    expect(() => accept("NeedsInput")).toThrow(/not accepted/);
+    expect(() => accept("Review")).toThrow(/terminal/);
+    expect(() => accept("Running", null)).toThrow(/no live supervisor session/);
 
     expect(dialogStatusAfterSupervisorStop({ hasWorkspace: true })).toBe(
       "Review",

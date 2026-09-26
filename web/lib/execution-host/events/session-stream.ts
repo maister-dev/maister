@@ -241,6 +241,7 @@ export function supervisorEventFromCanonicalRow(
         commandId === null ||
         (kind !== "session.prompt" &&
           kind !== "session.input" &&
+          kind !== "session.steer" &&
           kind !== "session.cancel" &&
           kind !== "session.checkpoint" &&
           kind !== "session.delete") ||

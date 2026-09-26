@@ -14,6 +14,8 @@ import type {
   RuntimeEventSpanPage,
   RuntimeObjectContent,
   RuntimeObjectMetadata,
+  SteerPayload,
+  SteerResult,
   WorkspaceRecord,
 } from "@/lib/execution-host/contracts";
 import type { RuntimeEventEnvelope } from "@/lib/execution-host/runtime-events";
@@ -112,6 +114,7 @@ export type FakeCanonicalEvent =
       monotonicId: number;
       sessionName: string;
       acpSessionId: string;
+      steeringSupported?: boolean;
     };
 
 export type FakeTransport = ExecutionHostTransport & {
@@ -159,7 +162,15 @@ export type FakeSession = {
   // its pending set is unknown, so any id is accepted while it is live.
   pending?: Set<string>;
   runtimeOutputObjectIds?: string[];
+  // ADR-182: the connection's `initialize` steering advertisement.
+  steeringSupported?: boolean;
 };
+
+// ADR-182: what the adapter answers a steer that passed the host's own checks.
+export type FakeSteerAnswer =
+  | "injected"
+  | "timeout"
+  | { refused: "promptRequired" | "startedNewTurn" | "failed" | "error" };
 
 export type PromptContext = {
   sessionId: string;
@@ -210,6 +221,15 @@ export type FakeExecutionHost = {
   setPresentEnvRefs(names: readonly string[]): void;
   setPromptBehavior(
     behavior: (ctx: PromptContext) => Promise<PromptResult>,
+  ): void;
+  // ADR-182: sessions created from now on advertise steering (or not), and a
+  // steer that passes the host's checks gets the scripted adapter answer.
+  setSteering(supported: boolean): void;
+  setSteerBehavior(
+    behavior: (ctx: {
+      sessionId: string;
+      envelope: CommandEnvelope<SteerPayload>;
+    }) => Promise<FakeSteerAnswer>,
   ): void;
   setCanonicalEventSink(
     sink: (input: {
@@ -352,6 +372,16 @@ function inputUnknownSessionError(sessionId: string): MaisterError {
   );
 }
 
+function steerRefusal(
+  reason: "steer_unsupported" | "steer_no_active_turn" | "steer_timeout",
+  parentCommandId: string,
+  extra: Record<string, unknown> = {},
+): MaisterError {
+  return new MaisterError("CONFLICT", `fake: steer refused (${reason})`, {
+    details: { reason, parentCommandId, ...extra, httpStatus: 409 },
+  });
+}
+
 function hitlTimeoutError(): MaisterError {
   return new MaisterError(
     "HITL_TIMEOUT",
@@ -386,6 +416,7 @@ function errorBodyOf(err: MaisterError): Record<string, unknown> {
 }
 
 const KNOWN_WIRE_CODES: ReadonlySet<string> = new Set([
+  "CONFLICT",
   "PRECONDITION",
   "SPAWN",
   "NEEDS_INPUT",
@@ -442,6 +473,7 @@ type Outcome<T> = { status: number; body: T };
 const REPLAY_FLAGGED: ReadonlySet<TransportMethod> = new Set([
   "adoptWorkspace",
   "deliverInput",
+  "steer",
 ]);
 
 function replayed<T>(method: TransportMethod, body: T): T {
@@ -522,6 +554,11 @@ export function createFakeExecutionHost(
     stopReason: "end_turn",
     meta: null,
   });
+  let steeringAdvertised = false;
+  let steerBehavior: (ctx: {
+    sessionId: string;
+    envelope: CommandEnvelope<SteerPayload>;
+  }) => Promise<FakeSteerAnswer> = async () => "injected";
   let canonicalEventSink:
     | ((input: {
         envelope: CommandEnvelope<unknown>;
@@ -1673,6 +1710,7 @@ export function createFakeExecutionHost(
             runtimeOutputObjectIds: payload.outputObjects?.map(
               (output) => output.objectId,
             ),
+            steeringSupported: steeringAdvertised,
           };
 
           sessions.set(session.sessionId, session);
@@ -1683,6 +1721,7 @@ export function createFakeExecutionHost(
             monotonicId: ++monotonicId,
             sessionName: session.sessionName ?? "default",
             acpSessionId: session.acpSessionId,
+            steeringSupported: steeringAdvertised,
           });
 
           return {
@@ -1691,6 +1730,7 @@ export function createFakeExecutionHost(
               sessionId: session.sessionId,
               pid: 4242,
               acpSessionId: session.acpSessionId,
+              steeringSupported: steeringAdvertised,
             },
           };
         },
@@ -1961,6 +2001,59 @@ export function createFakeExecutionHost(
         },
       });
     },
+    // ADR-182: rebuilt rule-by-rule against `POST /sessions/:id/steer` — live
+    // session, advertisement, active prompt == parent, then the adapter's
+    // answer; every refusal is a definitive 409 CONFLICT with its token.
+    steer(sessionId, envelope, opts) {
+      return runCommand<SteerResult>({
+        method: "steer",
+        envelope,
+        args: [sessionId, opts],
+        guard: () => {
+          const session = sessions.get(sessionId);
+
+          if (!session) throw inputUnknownSessionError(sessionId);
+
+          return session.runId;
+        },
+        execute: async () => {
+          const session = sessions.get(sessionId)!;
+          const parentCommandId = envelope.payload.parentCommandId;
+
+          if (session.status !== "live")
+            throw new MaisterError("PRECONDITION", "fake: session not live", {
+              details: { httpStatus: 409 },
+            });
+          if (!session.steeringSupported)
+            throw steerRefusal("steer_unsupported", parentCommandId);
+          const active =
+            activePromptEnvelopes.get(sessionId)?.command.id ?? null;
+
+          if (active !== parentCommandId)
+            throw steerRefusal("steer_no_active_turn", parentCommandId, {
+              activePromptCommandId: active,
+            });
+          const answer = await steerBehavior({ sessionId, envelope });
+
+          if (answer === "injected")
+            return {
+              status: 200,
+              body: {
+                outcome: "injected",
+                parentCommandId,
+                latencyMs: 0,
+                replayed: false,
+              },
+            };
+          if (answer === "timeout")
+            throw steerRefusal("steer_timeout", parentCommandId);
+
+          throw steerRefusal("steer_no_active_turn", parentCommandId, {
+            adapterOutcome: answer.refused,
+          });
+        },
+      });
+    },
     cancelPrompt(sessionId, envelope, opts) {
       return runCommand<{ cancelled: boolean }>({
         method: "cancelPrompt",
@@ -2122,6 +2215,12 @@ export function createFakeExecutionHost(
     },
     setPromptBehavior(behavior) {
       promptBehavior = behavior;
+    },
+    setSteering(supported) {
+      steeringAdvertised = supported;
+    },
+    setSteerBehavior(behavior) {
+      steerBehavior = behavior;
     },
     publishCanonical,
     holdIngest() {
@@ -2910,6 +3009,14 @@ export function memoryBoundClient(args: {
       throw new MaisterError(
         "PRECONDITION",
         "durable permission replay requires the Postgres-backed test client",
+      );
+    },
+    // A steer's outcome is settled in its ledger transaction (ADR-182); this
+    // client has no ledger to settle it in.
+    async prepareSteer() {
+      throw new MaisterError(
+        "PRECONDITION",
+        "durable steering requires the Postgres-backed test client",
       );
     },
     async sessionsForRun() {

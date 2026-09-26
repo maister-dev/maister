@@ -3,10 +3,11 @@ import "server-only";
 import type { Db } from "@/lib/execution-host/db";
 import type { ExecutionAssignment } from "@/lib/db/schema";
 
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import pino from "pino";
 
 import { admitAgentGenerationTurn } from "./generation-turn";
+import { OWNED_TURN_VARIANTS } from "./turn-variants";
 
 import { agentTurns, executionAssignments } from "@/lib/db/schema";
 
@@ -35,10 +36,16 @@ export async function admitCompletedAgentResume(
     .limit(1);
 
   if (queued) return;
+  // ADR-182: a steer is never a turn to repeat — it rode its parent's.
   const [source] = await tx
     .select()
     .from(agentTurns)
-    .where(eq(agentTurns.runId, assignment.runId))
+    .where(
+      and(
+        eq(agentTurns.runId, assignment.runId),
+        inArray(agentTurns.variant, [...OWNED_TURN_VARIANTS]),
+      ),
+    )
     .orderBy(desc(agentTurns.ordinal))
     .limit(1);
 

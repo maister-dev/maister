@@ -153,7 +153,9 @@ issued through a `BoundClient` bound to the run's active
 fence `{hostKey, assignmentId, assignmentEpoch, runId}`, is persisted
 `queued` before the wire call, and the supervisor rejects a stale epoch with
 `409 FENCED` → `CONFLICT {details.reason:"assignment_fenced"}`, on which the
-driver MUST yield without writing run state. Placement re-entries mint the
+driver MUST yield without writing run state (one exception: a fenced
+`session.steer`'s message still becomes a queued message — ADR-182 and its
+ADR-166 amendment). Placement re-entries mint the
 epoch inside their existing CAS claim. `POST /workspaces/adopt` is the only
 path-bearing route; session routes take the opaque `executionWorkspaceId`.
 Every `session.prompt` additionally carries a durable owner (ADR-167 S2.12):

@@ -22,7 +22,13 @@ import {
 } from "./prompt-owner";
 import { applyPersistentAgentPark, afterPersistentAgentPark } from "./park";
 import { acceptAgentMessage } from "./turns";
+import {
+  acceptAgentSteer,
+  steerAnswerTurn,
+  type AgentSteerAcceptance,
+} from "./steering";
 import { claimAgentMessage } from "./turn-claim";
+import { OWNED_TURN_VARIANTS } from "./turn-variants";
 import { admitAgentGenerationTurn, resumeVariantFor } from "./generation-turn";
 import { settleAgentCreateFailure } from "./create-failure";
 import {
@@ -113,7 +119,16 @@ import {
 } from "@/lib/db/schema";
 import { agentMessageText } from "@/lib/run-transcript/agent-text";
 import { appendCapped } from "@/lib/flows/capped-text";
-import { MaisterError, type MaisterErrorCode } from "@/lib/errors";
+import {
+  isMaisterError,
+  MaisterError,
+  type MaisterErrorCode,
+} from "@/lib/errors";
+import {
+  settleSteerCommand,
+  steerRefusalReason,
+  type SteerSettlement,
+} from "@/lib/execution-host/steer-settlement";
 import { cancelOpenAgentQuestionsForTaskInTransaction } from "@/lib/services/agent-question";
 import { resolveAgentChainDepth } from "@/lib/agents/chain-depth";
 import { maxAgentChainDepth } from "@/lib/instance-config";
@@ -2293,6 +2308,9 @@ export type SendAgentMessageResult = {
   messageId: string;
   status: Run["status"];
   messageState: AgentTurn["state"];
+  // ADR-182: `steered` — sent into the running turn; `queued` — it waits for
+  // the next turn. The caller never learns the adapter.
+  delivery: "steered" | "queued";
 };
 
 /** Acceptance persists before any capacity or host operation. */
@@ -2304,13 +2322,42 @@ export async function sendAgentMessage(
     executionHosts?: ExecutionHosts;
     requestKey?: string;
     signal?: AbortSignal;
+    // ADR-182 D-C1: `steer` reaches the running turn when it can and queues
+    // otherwise; `queue` (the default) always queues.
+    mode?: "steer" | "queue";
   } = {},
 ): Promise<SendAgentMessageResult> {
   const _db = opts.db ?? getDb();
   const hosts = opts.executionHosts ?? createExecutionHosts({ db: _db });
-  const turn = await acceptAgentMessage(_db, childRunId, prompt, {
-    requestKey: opts.requestKey,
-  });
+  let turn: AgentTurn;
+
+  if (opts.mode === "steer") {
+    const accepted = await acceptAgentSteer(
+      _db,
+      await steerClientFor(_db, hosts, childRunId),
+      childRunId,
+      prompt,
+      { requestKey: opts.requestKey },
+    );
+
+    if (accepted.kind === "issued") {
+      const successor = await deliverAgentSteer(_db, accepted);
+
+      if (!successor)
+        return agentMessageAnswer(_db, childRunId, accepted.steerTurn.id);
+      turn = successor;
+    } else {
+      turn = accepted.turn;
+    }
+  } else {
+    turn = await acceptAgentMessage(_db, childRunId, prompt, {
+      requestKey: opts.requestKey,
+    });
+  }
+  // D-C6: a same-key retry of a steer answers the row it created, or the
+  // successor a refusal left behind; nothing is issued again.
+  if (turn.variant === "steer")
+    return agentMessageAnswer(_db, childRunId, turn.id);
   const host = await localHost({ db: _db, transport: hosts.transport });
   const claim = await claimAgentMessage(_db, turn.id, host);
 
@@ -2323,27 +2370,106 @@ export async function sendAgentMessage(
       signal: opts.signal,
     });
   }
-  const [current]: Run[] = await _db
+
+  return agentMessageAnswer(_db, childRunId, turn.id);
+}
+
+// The bound client of the run's current generation, or null when the run has
+// none to steer through (the acceptance then queues).
+async function steerClientFor(
+  db: Db,
+  hosts: ExecutionHosts,
+  runId: string,
+): Promise<BoundClient | null> {
+  const [run]: Run[] = await db.select().from(runs).where(eq(runs.id, runId));
+
+  if (!run?.executionAssignmentId) return null;
+  try {
+    return await hosts.forAssignment({ id: run.executionAssignmentId });
+  } catch (err) {
+    log.info(
+      {
+        runId,
+        assignmentId: run.executionAssignmentId,
+        code: isMaisterError(err) ? err.code : "UNKNOWN",
+      },
+      "agent-steer-unbound",
+    );
+
+    return null;
+  }
+}
+
+// ADR-182 D-C5 live path: deliver after the intent commit; the settlement runs
+// in the transaction that writes the ledger's terminal state. Returns the
+// successor a refusal created (the caller claims it like any message), or null
+// when the steer reached the running turn. An unknown outcome settles nothing
+// and surfaces as EXECUTOR_UNAVAILABLE; the receipt fold settles it later.
+async function deliverAgentSteer(
+  db: Db,
+  accepted: Extract<AgentSteerAcceptance, { kind: "issued" }>,
+): Promise<AgentTurn | null> {
+  const command = {
+    id: accepted.prepared.commandId,
+    runId: accepted.steerTurn.runId,
+  };
+  const settled: { value: SteerSettlement | null } = { value: null };
+
+  try {
+    await accepted.prepared.deliver({
+      onAck: async (tx) => {
+        settled.value = await settleSteerCommand(tx, command, {
+          kind: "injected",
+        });
+      },
+      onReject: async (tx, error) => {
+        settled.value = await settleSteerCommand(tx, command, {
+          kind: "refused",
+          reason: steerRefusalReason(error),
+        });
+      },
+    });
+  } catch (err) {
+    if (!settled.value) throw err;
+  }
+  const settlement = settled.value as SteerSettlement | null;
+
+  if (settlement?.domain !== "agent") return null;
+
+  return settlement.kind === "applied" ? null : settlement.successor;
+}
+
+async function agentMessageAnswer(
+  db: Db,
+  childRunId: string,
+  turnId: string,
+): Promise<SendAgentMessageResult> {
+  const [current]: Run[] = await db
     .select()
     .from(runs)
     .where(eq(runs.id, childRunId));
-  const [message]: AgentTurn[] = await _db
+  const [stored]: AgentTurn[] = await db
     .select()
     .from(agentTurns)
-    .where(eq(agentTurns.id, turn.id));
+    .where(eq(agentTurns.id, turnId));
 
-  if (!current || !message)
+  if (!current || !stored)
     throw new MaisterError(
       "PRECONDITION",
       "agent message was removed before acknowledgment",
-      { details: { runId: childRunId, turnId: turn.id } },
+      { details: { runId: childRunId, turnId } },
     );
+  const { turn: message, delivery } =
+    stored.variant === "steer"
+      ? await steerAnswerTurn(db, stored)
+      : { turn: stored, delivery: "queued" as const };
 
   return {
     childRunId,
     messageId: message.id,
     status: current.status,
     messageState: message.state,
+    delivery,
   };
 }
 
@@ -2886,6 +3012,7 @@ export async function startAgentSession(
           eq(agentTurns.runId, runId),
           eq(agentTurns.executionAssignmentId, assignmentId),
           inArray(agentTurns.state, ["claimed", "dispatched"]),
+          inArray(agentTurns.variant, [...OWNED_TURN_VARIANTS]),
         ),
       )
       .limit(1);

@@ -10,12 +10,17 @@ import type {
 import type { QuickReply } from "@/lib/scratch-runs/transcript";
 import type { ReactElement } from "react";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import clsx from "clsx";
 
 import { CapabilityComposer } from "@/components/capabilities/capability-composer";
-import { canCompose, canRecover, canSend } from "@/lib/scratch-runs/dialog";
+import {
+  canCompose,
+  canRecover,
+  canSend,
+  canSendWhileBusy,
+} from "@/lib/scratch-runs/dialog";
 
 const inputBase =
   "min-w-0 max-w-full w-full rounded-lg border border-line bg-paper px-3.5 py-3 font-mono text-[13px] leading-[1.35] text-ink outline-none transition focus:border-amber focus:shadow-[0_0_0_3px_var(--amber-soft)] placeholder:text-mute";
@@ -39,6 +44,12 @@ export interface ScratchComposerProps {
   // short docked panel keeps maximum room for the transcript.
   compact?: boolean;
   disabledReason?: string | null;
+  // ADR-182: while the agent is busy Send stays the primary action (the server
+  // steers the message into the running turn or queues it) and Stop is
+  // secondary. Off for surfaces whose runs accept input only when idle.
+  sendWhileBusy?: boolean;
+  // How the last message sent while busy reached the agent.
+  deliveryNotice?: "steered" | "queued" | null;
   // Returns true when the message landed (the composer clears its draft);
   // false keeps the draft so the user can retry without retyping.
   onSend: (payload: {
@@ -48,8 +59,7 @@ export interface ScratchComposerProps {
   }) => Promise<boolean>;
   onRecover: (prompt: string) => Promise<boolean>;
   // Interrupt the agent's in-flight turn (session/cancel). Returns true when the
-  // cancel was accepted. While the agent is busy the Send button becomes Stop;
-  // a non-empty draft is auto-sent once the turn ends (back to WaitingForUser).
+  // cancel was accepted. The session stays open.
   onInterrupt?: () => Promise<boolean>;
 }
 
@@ -67,6 +77,8 @@ export function ScratchComposer({
   recoverEnabled = true,
   compact = false,
   disabledReason = null,
+  sendWhileBusy = false,
+  deliveryNotice = null,
   onSend,
   onRecover,
   onInterrupt,
@@ -83,10 +95,6 @@ export function ScratchComposer({
     attachments: [],
     files: [],
   });
-  // Armed by a Stop click (or Cmd/Ctrl+Enter while busy) that had a non-empty
-  // draft: the draft auto-sends once the cancelled turn returns to
-  // WaitingForUser. See the effect below.
-  const [autoSendArmed, setAutoSendArmed] = useState(false);
   const composerFileBytes = useMemo(
     () => composerFiles.reduce((sum, file) => sum + file.size, 0),
     [composerFiles],
@@ -127,71 +135,44 @@ export function ScratchComposer({
   }, []);
 
   const agentBusy = status === "Running" || status === "Starting";
+  const sendsWhileBusy =
+    canSendWhileBusy(status) && sendWhileBusy && disabledReason === null;
   const canUseComposer =
     canCompose(status) &&
     disabledReason === null &&
     (recoverEnabled || !canRecover(status));
-  // The editor stays editable while the agent is busy so the user can draft the
-  // next message (and Stop-then-send it) instead of waiting for the turn.
+  // The editor stays editable while the agent is busy so the user can write
+  // the next message instead of waiting for the turn.
   const composerEditable =
     disabledReason === null && (canUseComposer || agentBusy);
   const showStop = agentBusy && !!onInterrupt;
-  const canSubmitMessage = !!content.trim() && canUseComposer;
+  const canSubmitMessage =
+    !!content.trim() && (canUseComposer || sendsWhileBusy);
+  // A busy-arm send answers at acceptance; the turn-long request of the
+  // message that started the running turn must not hold Send disabled.
+  const sendPending = pending && !sendsWhileBusy;
   const placeholder = disabledReason
     ? disabledReason
     : canSend(status)
       ? t("messagePlaceholder")
-      : agentBusy
+      : sendsWhileBusy
         ? t("draftWhileBusy")
-        : canRecover(status) && recoverEnabled
-          ? t("recoverPlaceholder")
-          : t("messageDisabled");
+        : agentBusy
+          ? t("agentBusy")
+          : canRecover(status) && recoverEnabled
+            ? t("recoverPlaceholder")
+            : t("messageDisabled");
 
   async function handleStop(): Promise<void> {
     if (!onInterrupt || interrupting) return;
     setInterrupting(true);
 
     try {
-      const ok = await onInterrupt();
-
-      if (ok && content.trim()) setAutoSendArmed(true);
+      await onInterrupt();
     } finally {
       setInterrupting(false);
     }
   }
-
-  // Auto-send the armed draft once the interrupted turn settles back to a
-  // sendable state. Sends directly (the WaitingForUser path is always a plain
-  // send, never recover) and clears the draft on success.
-  useEffect(() => {
-    if (!autoSendArmed || !canSend(status) || pending) return;
-    const trimmed = content.trim();
-
-    if (!trimmed) {
-      setAutoSendArmed(false);
-
-      return;
-    }
-    setAutoSendArmed(false);
-    void (async () => {
-      const draft = clearDraft();
-      const sent = await onSend({
-        content: trimmed,
-        attachments: draft.attachments,
-        files: draft.files,
-      });
-
-      if (!sent) restoreDraftIfUntouched(draft);
-    })();
-  }, [
-    autoSendArmed,
-    status,
-    pending,
-    content,
-    clearDraft,
-    onSend,
-    restoreDraftIfUntouched,
-  ]);
 
   function updateComposerAttachment(
     index: number,
@@ -212,7 +193,7 @@ export function ScratchComposer({
     const trimmed = content.trim();
 
     if (!trimmed) return;
-    if (!canUseComposer) return;
+    if (!canSubmitMessage) return;
 
     if (canRecover(status)) {
       const draft = clearDraft();
@@ -270,10 +251,14 @@ export function ScratchComposer({
     <button
       className="rounded-full bg-amber px-4 py-2 text-[13px] font-semibold text-white transition hover:bg-amber-2 disabled:cursor-not-allowed disabled:opacity-60"
       data-testid="scratch-composer-send"
-      disabled={!canSubmitMessage || pending}
+      disabled={!canSubmitMessage || sendPending}
       type="submit"
     >
-      {pending ? t("sending") : canRecover(status) ? t("recover") : t("send")}
+      {sendPending
+        ? t("sending")
+        : canRecover(status)
+          ? t("recover")
+          : t("send")}
     </button>
   );
   const stopButton = (
@@ -292,7 +277,17 @@ export function ScratchComposer({
       {interrupting ? t("interrupting") : t("interrupt")}
     </button>
   );
-  const primaryButton = showStop ? stopButton : sendButton;
+  // Busy: Send stays primary where the run accepts it, Stop beside it.
+  const primaryButton = !showStop ? (
+    sendButton
+  ) : sendsWhileBusy ? (
+    <div className="flex items-center gap-2">
+      {stopButton}
+      {sendButton}
+    </div>
+  ) : (
+    stopButton
+  );
   const composer = (
     <CapabilityComposer
       agent={agent}
@@ -311,14 +306,7 @@ export function ScratchComposer({
       value={content}
       onChange={setContent}
       onSubmitShortcut={() => {
-        if (canSubmitMessage && !pending) {
-          void submit();
-
-          return;
-        }
-        // Cmd/Ctrl+Enter while the agent is busy stops the turn and queues the
-        // draft to auto-send once it settles.
-        if (showStop && content.trim() && !interrupting) void handleStop();
+        if (canSubmitMessage && !sendPending) void submit();
       }}
     />
   );
@@ -454,6 +442,18 @@ export function ScratchComposer({
           {attachmentCluster}
           {primaryButton}
         </div>
+      ) : null}
+      {deliveryNotice ? (
+        <p
+          className="mt-2 font-mono text-[11px] text-mute"
+          data-delivery={deliveryNotice}
+          data-testid="scratch-delivery-notice"
+          role="status"
+        >
+          {deliveryNotice === "steered"
+            ? t("deliverySteeredNotice")
+            : t("deliveryQueuedNotice")}
+        </p>
       ) : null}
     </form>
   );
