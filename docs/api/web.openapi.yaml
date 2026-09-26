@@ -10140,9 +10140,12 @@ paths:
         written.
 
         `git worktree add` (existing branch, no `-b`) is followed by the
-        provenance v2 stamp rebuilt from DB facts; only then are `removed_at`
-        and `scheduled_removal_at` cleared, in the statement that releases the
-        claim. `archived_*` stays as history. A crash between the stamp and
+        provenance v2 stamp rebuilt from DB facts; only then is `removed_at`
+        cleared, in the statement that releases the claim. The same statement
+        gives a run the GC collects (`Done | Abandoned | Failed`) a fresh
+        `scheduled_removal_at` of now + `MAISTER_GC_AGE_DAYS`, so the next sweep
+        does not take the tree back, and any other status none. `archived_*`
+        stays as history. A crash between the stamp and
         the DB write is completed by the workspace reconciler (finding
         `workspace_reattached`) or adopted by the retry; a failed add behind
         the claim leaves the row removed.

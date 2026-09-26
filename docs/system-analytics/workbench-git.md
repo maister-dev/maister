@@ -249,7 +249,7 @@ sequenceDiagram
     R->>Git: path occupied? own crashed attempt -> adopt, else CONFLICT
     R->>Git: local internal branch? else fetch published_remote and recreate at published head? else archived_branch?
     R->>Git: git worktree add (existing branch, no -b), then stamp provenance v2
-    R->>DB: removed_at=null, scheduled_removal_at=null, lifecycle op reattach released
+    R->>DB: removed_at=null, scheduled_removal_at=now+age (Done/Abandoned/Failed) else null, lifecycle op reattach released
     R-->>Op: 200 {source, head}
 ```
 
@@ -348,9 +348,12 @@ is `CONFLICT`, the rest `PRECONDITION`), and an unknown run is 404 with
   (enforced by `discardWorkbenchChanges` and `writeRescueRef`).
 - Reattach MUST be admitted only while the worktree is not usable, MUST try the
   local internal branch, then `<published_remote>/<published_branch>`, then
-  `archived_branch`, and MUST null `removed_at` and `scheduled_removal_at` only
-  after `git worktree add` succeeded and provenance v2 is stamped (enforced by
-  `reattachWorkbench`; the reconciler's `workspace_reattached` arm completes a
+  `archived_branch`, and MUST null `removed_at` only after `git worktree add`
+  succeeded and provenance v2 is stamped, in the same statement giving a run
+  the GC collects (`Done | Abandoned | Failed`) a fresh `scheduled_removal_at`
+  of now + `MAISTER_GC_AGE_DAYS` — the next sweep must not take the tree back —
+  and any other status none (enforced by `reattachWorkbench` and
+  `recordReattached`; the reconciler's `workspace_reattached` arm completes a
   crashed attempt).
 - `Failed` MUST be listed wherever `Crashed` is (portfolio, project workspace
   list, rail) with its worktree TTL countdown, its worktree MUST be collected

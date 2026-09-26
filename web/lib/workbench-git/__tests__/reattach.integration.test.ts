@@ -28,6 +28,8 @@ import {
 } from "vitest";
 
 import { MaisterError } from "@/lib/errors";
+import { runWorkspaceGcSweep } from "@/lib/gc/workspace-gc";
+import { gcAgeDays } from "@/lib/instance-config";
 import {
   addRunWorktree,
   gitConfigValue,
@@ -122,6 +124,7 @@ async function removedRun(opts: {
   keepLocal: boolean;
   published?: boolean;
   archive?: boolean;
+  status?: string;
 }) {
   const branch = `maister/task-${Math.random().toString(36).slice(2)}/attempt-1`;
   const worktree = await addRunWorktree(root, repo.parent, branch);
@@ -150,7 +153,7 @@ async function removedRun(opts: {
     worktreePath: worktree,
     branch,
     baseCommit: repo.baseSha,
-    status: "Abandoned",
+    status: opts.status ?? "Abandoned",
     taskKey: "ABC",
     task: { number: 9, title: "Bring it back" },
     removedAt: new Date(),
@@ -191,10 +194,47 @@ describe("POST /api/runs/{runId}/reattach", () => {
     const ws = await workspaceRow(db, run.workspaceId);
 
     expect(ws.removedAt).toBeNull();
-    expect(ws.scheduledRemovalAt).toBeNull();
     // The archive ref is the operator's recovery point; a re-attach keeps it.
     expect(ws.archivedBranch).toBe(run.archivedBranch);
     expect(ws.lifecycleOperationState).toBe("none");
+  });
+
+  // The tree was removed for age, and bringing it back does not make the run
+  // younger: without a window of its own, the next sweep takes it again.
+  it("gives the reattached tree a fresh retention window, so the next GC sweep leaves it", async () => {
+    const run = await removedRun({ keepLocal: true });
+
+    await testDatabase.pool.query(
+      `update runs set ended_at = now() - interval '30 days' where id = $1`,
+      [run.runId],
+    );
+    expect((await post(run.runId)).status).toBe(200);
+
+    const ws = await workspaceRow(db, run.workspaceId);
+
+    expect(ws.scheduledRemovalAt?.getTime()).toBeGreaterThan(
+      Date.now() + (gcAgeDays() - 1) * 86_400_000,
+    );
+
+    const removeOwnedWorktree = vi.fn(async () => undefined);
+
+    await runWorkspaceGcSweep({ db, removeOwnedWorktree });
+
+    expect(removeOwnedWorktree).not.toHaveBeenCalled();
+    expect((await workspaceRow(db, run.workspaceId)).removedAt).toBeNull();
+    expect(await exists(run.worktree)).toBe(true);
+  });
+
+  // A status the GC does not collect gets its window from its own terminal
+  // transition, and `Failed` stamps none: a window written now would carry
+  // into it and cut it short.
+  it("writes no removal window for a run the GC does not collect", async () => {
+    const run = await removedRun({ keepLocal: true, status: "Review" });
+
+    expect((await post(run.runId)).status).toBe(200);
+    expect(
+      (await workspaceRow(db, run.workspaceId)).scheduledRemovalAt,
+    ).toBeNull();
   });
 
   it("re-attaches from the publication when the local branch is gone, re-setting the upstream", async () => {

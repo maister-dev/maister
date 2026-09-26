@@ -3,12 +3,13 @@ import "server-only";
 import type { PrResult } from "@/lib/runs/pr-adapter";
 import type { MaisterProvenance } from "@/lib/worktree-provenance";
 
-import { and, eq, gt } from "drizzle-orm";
+import { and, eq, gt, inArray, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import { gcAgeDays } from "@/lib/instance-config";
 import { RELEASED_LIFECYCLE_CLAIM } from "@/lib/runs/lifecycle-claim";
 import {
   finalizeParkedPullRequest,
@@ -22,6 +23,7 @@ import {
   reviveWorktreeForWorkspace,
   type ReviveSource,
 } from "@/lib/runs/revive-worktree";
+import { WORKTREE_TTL_RUN_STATUSES } from "@/lib/runs/run-status-sets";
 import { worktreePresence } from "@/lib/workbench-git/presence";
 import { publishedTarget } from "@/lib/workbench-git/publication";
 import {
@@ -201,6 +203,11 @@ export type ReattachWorkbenchResult = {
 // exist, and the claim is released in the SAME statement. The op itself
 // writes under its live lease; the reconciler completes a crashed attempt
 // whose lease lapsed or whose claim failed (C31), fenced on that attempt.
+//
+// A tree the GC took for age comes back with a fresh window from now, or the
+// next sweep takes it again: the run is no younger. A status the GC does not
+// collect keeps no schedule — its terminal transition stamps one, and `Failed`
+// stamps none, so a window written now would carry into it and cut it short.
 export async function recordReattached(args: {
   database?: Db;
   workspaceId: string;
@@ -208,11 +215,21 @@ export async function recordReattached(args: {
   liveLease: boolean;
 }): Promise<boolean> {
   const client = (args.database ?? getDb()) as Db;
+  const freshRemovalAt = new Date(Date.now() + gcAgeDays() * 86_400_000);
+  const collectedByGc = client
+    .select({ id: runs.id })
+    .from(runs)
+    .where(
+      and(
+        eq(runs.id, workspaces.runId),
+        inArray(runs.status, [...WORKTREE_TTL_RUN_STATUSES]),
+      ),
+    );
   const rows = await client
     .update(workspaces)
     .set({
       removedAt: null,
-      scheduledRemovalAt: null,
+      scheduledRemovalAt: sql`CASE WHEN EXISTS (${collectedByGc}) THEN ${freshRemovalAt}::timestamptz ELSE NULL END`,
       ...RELEASED_LIFECYCLE_CLAIM,
     })
     .where(
@@ -228,7 +245,21 @@ export async function recordReattached(args: {
           : []),
       ),
     )
-    .returning({ id: workspaces.id });
+    .returning({
+      id: workspaces.id,
+      scheduledRemovalAt: workspaces.scheduledRemovalAt,
+    });
+
+  if (rows.length > 0) {
+    log.info(
+      {
+        workspaceId: args.workspaceId,
+        attemptId: args.attemptId,
+        scheduledRemovalAt: rows[0].scheduledRemovalAt,
+      },
+      "reattach recorded",
+    );
+  }
 
   return rows.length > 0;
 }

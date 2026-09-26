@@ -184,6 +184,7 @@ stateDiagram-v2
         Countdown --> Pruned: nothing to preserve<br/>(clean + merged)
         Pruned --> [*]
         Pruned --> [*]: reopen (Done only, ADR-141)<br/>re-attach worktree, clear scheduled_removal_at/archived_at/removed_at
+        Pruned --> Countdown: reattach (ADR-181)<br/>removed_at cleared, fresh scheduled_removal_at
     }
 ```
 
