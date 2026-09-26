@@ -16,8 +16,11 @@ export type FakeGhState = {
     title: string;
     draft: boolean;
     open: boolean;
+    repoPath: string;
   }[];
   creates: { head: string; base: string; title: string; draft: boolean }[];
+  // Every `gh pr view`, by PR number.
+  views: number[];
 };
 
 export function resetFakeGhState(): void {
@@ -27,5 +30,5 @@ export function resetFakeGhState(): void {
 export function readFakeGhState(): FakeGhState {
   return existsSync(FAKE_GH_STATE)
     ? (JSON.parse(readFileSync(FAKE_GH_STATE, "utf8")) as FakeGhState)
-    : { prs: [], creates: [] };
+    : { prs: [], creates: [], views: [] };
 }

@@ -117,8 +117,10 @@ test.describe("run git panel (ADR-181)", () => {
       timeout: 30_000,
     });
 
-    // The provider was asked to create exactly one PR — a finalize opens none.
+    // The provider was asked to create exactly one PR — a finalize opens none —
+    // and the finalize read the PR it declared delivered (Codex F5).
     expect(readFakeGhState().creates).toHaveLength(1);
+    expect(readFakeGhState().views).toContain(1);
 
     // The board follows the run: a Done run whose worktree is still present is
     // in its shipping window, the In Delivery column (lib/board.ts).
