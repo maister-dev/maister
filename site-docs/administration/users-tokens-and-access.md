@@ -77,6 +77,18 @@ the versioned external API. Every identified call records token, actor, scope,
 method, endpoint, result, and target project in the audit log without storing
 the plaintext secret.
 
+## Edit an issued token
+
+Use **Edit** in the personal or project token list to change its name, scopes,
+or expiration. Saving keeps the same secret, so clients need no replacement
+credential. Personal tokens are edited by their owner; project tokens require
+project admin access. Each changed field is recorded in the lifecycle audit.
+
+An expired token can become active again by extending or clearing expiration.
+A revoked token cannot be restored. Token identity, owner, and project cannot
+be changed. Machine-issued agent and coordinator tokens are not editable, and
+`agent-run:` / `orchestrator-run:` names are reserved.
+
 ## Platform-agent tokens
 
 Platform-agent Runs receive short-lived, project-bound tokens at launch. MAIster

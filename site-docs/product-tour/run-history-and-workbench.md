@@ -41,6 +41,12 @@ older attempts and marks superseded results as stale.
 
 ![Selected node and its execution state](/assets/screens/en/run-nodes.png)
 
+Recorded prompts are distinguished from template previews. A preview for an
+older attempt is not proof of what was sent. Standalone agent transcripts show
+dispatched initial, resume, rework, and message prompts alongside responses.
+Steered messages appear in the same conversation. Open full artifacts when a
+node or consensus result only shows a bounded excerpt.
+
 ## Open code, evidence, and history
 
 The lower workbench provides these views:
@@ -59,10 +65,14 @@ Run state again when you submit an action.
 
 ## History after workspace removal
 
-Removing an eligible workspace does not delete the Run row, transcript, cost,
-or evidence. File and diff actions become unavailable because their source
-workspace no longer exists; the historical page identifies the removal instead
-of reading another path as a fallback.
+Removing an eligible workspace keeps the Run and its recorded history. Runtime
+content remains subject to retention; a missing or expired artifact is reported
+explicitly. Live file and worktree-dependent diff actions require a worktree.
+
+The [Git panel](/guides/run-git) offers **Reattach** when a local branch,
+publication, or archive reference can restore it. Restoration does not restart
+the agent. Failed worktrees also have a cleanup countdown and are preserved
+before scheduled removal.
 
 ## Compare attempts
 

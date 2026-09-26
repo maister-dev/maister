@@ -24,6 +24,15 @@ If the tab cannot read the repository, check the repository path and the
 project member's `readRepoFiles` permission. The browser never accepts a host
 path from the URL.
 
+## Update the local repository from origin
+
+The repository's update-from-origin action updates local files by fast-forwarding
+its checked-out branch. Select that branch and commit or stash local changes
+first. Diverged history is refused instead of overwritten. An unreachable or
+unauthorized origin produces a retryable availability error; resolve access
+before retrying. This action updates the project checkout; use the
+[Run Git panel](/guides/run-git) to update a Run's worktree.
+
 ## Attach a package to the project
 
 ![Packages attached to a project](/assets/screens/en/project-packages.png)

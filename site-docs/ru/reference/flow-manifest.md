@@ -11,33 +11,49 @@ description: "Опишите в flow.yaml версионированный гр�
 
 ```yaml
 schemaVersion: 1
-id: feature
 name: Feature delivery
-version: 1.0.0
 compat:
   engine_min: 3.0.0
-start: implement
 nodes:
   - id: implement
-    kind: agent
+    type: ai_coding
+    action:
+      prompt: "Implement the task: {{ task.prompt }}"
     transitions:
       success: verify
   - id: verify
-    kind: check
+    type: check
+    action:
+      command: git diff --check
     transitions:
       success: review
-      failure: implement
+      failure: review
   - id: review
-    kind: human_review
+    type: human
+    finish:
+      human:
+        decisions: [approve, rework]
     transitions:
-      approved: done
+      approve: done
       rework: implement
-  - id: done
-    kind: terminal
+    rework:
+      allowedTargets: [implement]
+      workspacePolicies: [keep]
+      maxLoops: 3
+      commentsVar: review_comments
 ```
 
-Это структурный пример. Настройки зависят от вида узла и минимальной версии
-движка, объявленной пакетом.
+Исполнение начинается с первого узла. `done` — зарезервированная цель
+перехода, а не тип узла. Пример использует разрешённый раннер по умолчанию и
+только проверку пробельных ошибок. Перед применением для поставки добавьте
+реальные тесты проекта и обязательные доказательства. Неуспешную проверку
+изучает человек перед решением о доработке.
+
+Текущая версия движка — **3.8.0**. Указывайте минимальную версию, достаточную
+для контрактов Flow. Если Flow полагается на подстановку контекста прогона
+в промпт черновика консенсуса до запуска участников, задайте
+`engine_min: 3.8.0`. Вывод участников вставляется в запросы проверяющих и
+синтезатора как данные; похожий на шаблон текст в нём повторно не раскрывается.
 
 ## Правила автора
 

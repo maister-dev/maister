@@ -21,6 +21,7 @@ depend on your global role and project permissions.
 
 | Area | Use it for |
 | --- | --- |
+| Desk / Work / Activity | Follow current work, find tasks across projects, and catch up on changes. |
 | Projects | Open the portfolio, register repositories, and enter a project workspace. |
 | Inbox | Handle only the permissions, forms, reviews, escalations, and assignments that need a person. Fully automated transitions stay outside the Inbox. |
 | Runs | Inspect Flow, scratch, and platform-agent executions across the projects you can access. |
@@ -31,6 +32,27 @@ depend on your global role and project permissions.
 | Settings | Configure execution hosts, ACP runners, provider routes, webhooks, and Project Brain providers. |
 | Users and Scheduler | Administer accounts and the background clock. These areas are visible only to global administrators. |
 | Account | Change your profile and password, and issue personal API tokens. |
+
+## Start from Desk, Work, or Activity
+
+**Desk** (`/`) brings together work in flight, held decisions, and recent
+activity. Its five stage tiles filter the work table in place. Expand a row to
+answer an eligible HITL request, recover a crashed Run, inspect recent events,
+or follow the link to review. Promotion takes place on the Run page.
+
+**Work** (`/work`) lists tasks across your visible projects, including tasks
+that have never run. Filter and group by project, stage, or who is waiting on
+you. Rows link to the task, Run, or blocker that owns the next action. Filters
+are shareable URLs; named saved views stay in the current browser.
+
+**Activity** (`/activity`) shows what changed chronologically. Reading activity
+and marking it read do not resolve an Inbox decision. **Needs you** counts
+outstanding decisions; **Updates** tracks unread activity. Browser push
+notifications can be enabled from Account on supported browsers with permission.
+
+Administrators land on Desk after sign-in; members and viewers land on Work.
+Both surfaces retain project access boundaries. The Projects portfolio remains
+available at `/projects`.
 
 ## The main working surfaces
 

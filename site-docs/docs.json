@@ -108,7 +108,9 @@
               "guides/register-a-project",
               "guides/package-sources-and-versions",
               "guides/human-in-the-loop",
+              "guides/message-a-running-agent",
               "guides/review-and-promote",
+              "guides/run-git",
               "guides/review-rework-and-takeover",
               "guides/studio-and-evaluation"
             ]
@@ -191,7 +193,9 @@
               "ru/guides/register-a-project",
               "ru/guides/package-sources-and-versions",
               "ru/guides/human-in-the-loop",
+              "ru/guides/message-a-running-agent",
               "ru/guides/review-and-promote",
+              "ru/guides/run-git",
               "ru/guides/review-rework-and-takeover",
               "ru/guides/studio-and-evaluation"
             ]

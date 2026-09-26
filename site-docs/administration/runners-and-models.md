@@ -96,6 +96,15 @@ faster or cheaper profile for routine work. Confirm the result in
 [Observatory](/operations/costs-and-budgets) and compare quality in an
 [Evaluation Study](/evaluation/run-comparison).
 
+The launch dialog exposes every runner slot, including consensus participants
+and the synthesizer. Bind each unresolved slot; per-slot selections are saved
+automatically and remain visible when reopening the dialog. Editing project
+bindings requires the project administration rights shown in the dialog.
+
+The read-only **Steering** indicator reports observed adapter support. It does
+not gate launch, and the active session's capability determines whether a
+[message while running](/guides/message-a-running-agent) is steered or queued.
+
 ## Failure signals
 
 - `EXECUTOR_UNAVAILABLE`: no enabled, Ready runner satisfies the hard adapter

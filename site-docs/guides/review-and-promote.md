@@ -34,6 +34,12 @@ The project chooses one promotion mode:
 MAIster does not deploy the merged result. Deployment remains in your existing
 CI/CD system.
 
+## Publish before finalization
+
+Use the [Run Git panel](/guides/run-git) to publish a branch and open a PR before
+finalizing the Run. Opening a PR leaves the Run status unchanged. Finalize is a
+separate action; its readiness requirements depend on the Run's state.
+
 ## Conflicts
 
 If promotion conflicts, MAIster stops and reports the conflict. Resolve it in a

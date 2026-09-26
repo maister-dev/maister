@@ -25,6 +25,35 @@ supervisor host, verify that the adapter binary is installed, credentials are
 available to the service account, and configured `env:NAME` references resolve.
 MAIster does not substitute another runtime.
 
+## A saved answer has not resumed the Run
+
+Read the HITL card's saved choice and delivery status. Use its identical-answer
+retry when offered; do not submit a different choice to clear the wait. A
+session-ended error needs the recovery or relaunch action shown by the UI.
+See [saved answers and delivery](/guides/human-in-the-loop).
+
+## A Run is Crashed
+
+Inspect the failure classification, failed node, and retained work. **Recover**
+re-enters the eligible execution path; in a Flow it resumes graph processing
+rather than treating one finished agent turn as completion of the entire Flow.
+A node without a resumable session may require the author's `retry_safe`
+declaration before it can be repeated. Follow the refusal instead of repeatedly
+relaunching a side-effecting command.
+
+Use the [Git panel](/guides/run-git) to preserve or publish useful work, or to
+reattach a missing worktree before an eligible recovery. Reattach alone does
+not resume execution.
+
+## Transcript or status stops advancing
+
+Check both the Run connection indicator and execution-host health. A connected
+browser does not prove that the host's events and derived Run views have caught
+up. Inspect web and supervisor logs for stalled delivery, worker failures, or
+lag. Brief subscriber pauses under load can catch up from durable events; do
+not delete runtime state to force a refresh. See
+[execution hosts](/operations/execution-hosts).
+
 ## Evidence is missing or stale
 
 Open the responsible node attempt. Missing means the declared producer did not

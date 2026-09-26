@@ -33,6 +33,19 @@ target summary, cadence, next run, enabled state, consecutive failures, and the
 last attempt. The page also links task schedules and one-time launch intents
 back to their projects.
 
+The clock card identifies the active driver, interval, token configuration,
+active ticks, and last tick outcome. **Partial** means at least one claimed job
+failed or was skipped; **Failed** means the tick itself failed. Clock statistics
+belong to the current web process and reset on restart, while job history is
+retained. Check the dedicated maintenance and event-dispatch rows even when the
+general job list is filtered.
+
+The maintenance job's execution diagnostics distinguish host event backlog,
+processing backlog, blocked consumers, commands, and worker health. Missing
+samples are reported as unavailable. Subscriber pause counters can increase
+during normal catch-up; inspect progress and backlog before treating a pause
+as a failed connection. See [Execution hosts](/operations/execution-hosts).
+
 You can create two operator job types from this screen:
 
 - **Flow run** targets a task and starts it with the selected branches and

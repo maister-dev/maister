@@ -11,33 +11,48 @@ and bounded rework.
 
 ```yaml
 schemaVersion: 1
-id: feature
 name: Feature delivery
-version: 1.0.0
 compat:
   engine_min: 3.0.0
-start: implement
 nodes:
   - id: implement
-    kind: agent
+    type: ai_coding
+    action:
+      prompt: "Implement the task: {{ task.prompt }}"
     transitions:
       success: verify
   - id: verify
-    kind: check
+    type: check
+    action:
+      command: git diff --check
     transitions:
       success: review
-      failure: implement
+      failure: review
   - id: review
-    kind: human_review
+    type: human
+    finish:
+      human:
+        decisions: [approve, rework]
     transitions:
-      approved: done
+      approve: done
       rework: implement
-  - id: done
-    kind: terminal
+    rework:
+      allowedTargets: [implement]
+      workspacePolicies: [keep]
+      maxLoops: 3
+      commentsVar: review_comments
 ```
 
-Treat this as a structural example. Node settings depend on the node kind and
-the engine compatibility floor declared by the package.
+Execution starts at the first node. `done` is a reserved transition target, not
+a node type. This example uses the resolved default runner and only a whitespace
+check; add your project's actual tests and required evidence before using it
+for delivery. The reviewer inspects a failed check before requesting rework.
+
+The current engine is **3.8.0**. Keep the minimum at the earliest version that
+supports the Flow's contracts. Flows that rely on rendering a consensus draft
+prompt with Run context before fan-out should declare `engine_min: 3.8.0`.
+Participant output is inserted as data into verifier and synthesizer prompts;
+template-like text in that output is not expanded again.
 
 ## Authoring rules
 

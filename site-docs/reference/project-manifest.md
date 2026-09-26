@@ -58,6 +58,14 @@ Use `local_merge` when MAIster should land changes into a local target branch.
 Use `pull_request` with a configured remote when the host can push and
 authenticate to the provider.
 
+## Public branch names
+
+Set `project.public_branch_template` to control the name used when publishing a
+Run branch. The default is `feature/{task_key}-{slug}`. `{task_key}` is required;
+`{slug}` and `{attempt}` are optional. Without a task, the key uses the Run id.
+The result must be a valid Git branch name. An existing upstream or recorded
+publication takes precedence. See [Run Git operations](/guides/run-git).
+
 ## Capabilities and secrets
 
 Project capabilities may bind skills, MCP servers, tools, settings, agent

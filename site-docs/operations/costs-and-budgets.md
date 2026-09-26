@@ -50,6 +50,18 @@ control effectiveness, and evidence coverage. Cost is most useful beside these
 signals: fewer tokens are not an improvement when the result creates more
 rework or weaker evidence.
 
+### Overview and saved URLs
+
+**Overview** is the default view. It shows launched work per project, its current
+stage, and outcomes such as delivered changes, open PRs, result-only completion,
+or failures. Numeric Run counts link to the matching Run list. Choose **Cost**,
+**Quality**, or **Harness** for detailed analysis.
+
+Filters apply automatically and the selected view and period are stored in the
+URL. Preset periods use UTC calendar days. A custom date range includes both
+endpoint dates and is limited to 365 days; read the effective dates shown after
+applying it.
+
 ## Runner attribution
 
 Runner totals come from immutable session snapshots rather than the mutable

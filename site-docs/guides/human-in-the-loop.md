@@ -12,6 +12,23 @@ Inspect the requested action, affected resource, and current Run context. Allow
 or deny it in the UI. The decision is returned to the same live ACP session.
 Denial is an explicit result; the agent or Flow must respond to it.
 
+## Saved answer and pending delivery
+
+An answer can be saved before the agent receives it. **Answer saved — delivery
+pending** keeps the recorded choice visible and locks new choices. Use
+**Retry delivery** when offered: it resends the same saved answer. Refresh after
+a conflict to see the authoritative choice if another tab or person answered.
+
+A pending resume is not a failed decision. A delivery-unavailable error can be
+retried with the saved answer; an ended-session error instead directs you to
+Relaunch for a Flow, or Recover/relaunch for scratch. Keep the error code and
+diagnostic when requesting help.
+
+During a long pause MAIster may checkpoint the session and restore it for your
+answer. `MAISTER_PERMISSION_MAX_HOURS` is the host's absolute permission wait
+cap (default 24 hours); reaching it gracefully parks the session. It does not
+automatically approve or deny the requested action.
+
 ## Form request
 
 Complete the fields defined by the Flow and submit once the values are correct.
@@ -23,6 +40,14 @@ schema errors are shown before submission.
 Review the patch and current evidence. Accept the result or request rework with
 specific comments. Rework comments become input to the next attempt and remain
 visible in the history.
+
+## Consensus decision
+
+A consensus request distinguishes complete drafts, partial drafts with retained
+text, and unavailable drafts. Inspect the cause before selecting a partial
+draft; unavailable choices are disabled. Technical verifier failures are shown
+separately from substantive disagreements. Bounded excerpts link to available
+full draft or debate artifacts, subject to your access permissions.
 
 ## Manual takeover
 
@@ -59,6 +84,10 @@ setting `MAISTER_MAX_OPERATOR_RESTARTS` bounds them per Run.
 
 The Run's **Stop** action ends a live Run without interrupting a node first: the
 session is closed and the worktree stays available for review.
+
+For a correction that should reach a running scratch dialog without stopping
+it, see [Message a running agent](/guides/message-a-running-agent). Node
+interrupt remains the control for pausing or restarting a Flow node.
 
 ## Safety
 
