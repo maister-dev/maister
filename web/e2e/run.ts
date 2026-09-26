@@ -1,4 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import pino from "pino";
@@ -14,6 +16,15 @@ import {
   startBarePostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
+import {
+  createInvocation,
+  fixtureProcessEnvironment,
+  registerProcess,
+  registerSpawnedProcess,
+  releaseInvocation,
+  type Invocation,
+  type ProcessRole,
+} from "@/test-support/process-invocation";
 
 const E2E_SHUTDOWN_SIGNALS = ["SIGINT", "SIGTERM"] as const;
 const PLAYWRIGHT_SHUTDOWN_GRACE_MS = 5_000;
@@ -176,10 +187,60 @@ function worktreeLaneForE2eArguments(
   return arguments_.includes("playwright.live.config.ts") ? "e2e-live" : "e2e";
 }
 
+type E2eInvocation = {
+  invocation: Invocation;
+  environment: Record<string, string>;
+};
+
+function e2eProcessRecord(
+  invocation: Invocation,
+  lane: TestWorktreeLane,
+  role: ProcessRole,
+) {
+  return {
+    role,
+    caseName: lane,
+    rootRole: "invocation",
+    root: null,
+    bootId: invocation.id,
+    logFile: null,
+  };
+}
+
+/**
+ * The lane's process-ownership invocation, minted here and never adopted from
+ * the caller: a caller's ID may be shared, and this wrapper's final sweep kills
+ * whatever carries it. Every process Playwright starts inherits the tag, which
+ * is what lets a fixture such as the real supervisor register what it spawns
+ * and the sweep find whatever outlives the run.
+ */
+async function mintE2eInvocation(
+  environment: NodeJS.ProcessEnv,
+  lane: TestWorktreeLane,
+): Promise<E2eInvocation> {
+  const invocation = await createInvocation(
+    path.join(environment.MAISTER_TEST_EVIDENCE_DIR ?? tmpdir(), "maister-e2e"),
+  );
+  const invocationEnvironment = await fixtureProcessEnvironment(invocation);
+
+  await registerProcess(
+    invocation,
+    e2eProcessRecord(invocation, lane, "runner"),
+    process.pid,
+  );
+  logger.info(
+    { invocationId: invocation.id, ledger: invocation.directory, lane },
+    "e2e invocation minted",
+  );
+
+  return { invocation, environment: invocationEnvironment };
+}
+
 function runPlaywright(
   arguments_: readonly string[],
   environment: NodeJS.ProcessEnv,
   signal: AbortSignal | undefined,
+  registerChild: (child: ChildProcess) => Promise<unknown>,
 ): Promise<number> {
   return new Promise((resolve, reject) => {
     const child = spawn("pnpm", ["exec", "playwright", "test", ...arguments_], {
@@ -241,6 +302,14 @@ function runPlaywright(
     } else {
       signal?.addEventListener("abort", onAbort, { once: true });
     }
+
+    // A child whose ownership cannot be verified must not run unwatched; the
+    // caller's terminal sweep reaps it by its tag. When the child has already
+    // exited, its exit settled this promise first, so the real outcome wins.
+    void registerChild(child).catch((error: unknown) => {
+      removeAbortListener();
+      reject(error);
+    });
   });
 }
 
@@ -249,13 +318,14 @@ export async function runE2eInvocation(
   environment: NodeJS.ProcessEnv = process.env,
   signal?: AbortSignal,
 ): Promise<number> {
-  const worktreesRoot = createTestWorktreesRoot(
-    worktreeLaneForE2eArguments(arguments_),
-  );
+  const lane = worktreeLaneForE2eArguments(arguments_);
+  const worktreesRoot = createTestWorktreesRoot(lane);
   let invocationError: unknown;
+  let e2eInvocation: E2eInvocation | undefined;
   let testDatabase: StartedPostgresTestDb | undefined;
 
   try {
+    e2eInvocation = await mintE2eInvocation(environment, lane);
     testDatabase = await startBarePostgresTestDb({
       databaseName: "maister_e2e",
       lane: "e2e",
@@ -274,20 +344,41 @@ export async function runE2eInvocation(
     );
     throwIfE2eInvocationInterrupted(signal);
 
+    const { invocation } = e2eInvocation;
+
     return await runPlaywright(
       arguments_,
-      buildE2ePlaywrightEnvironment(
-        environment,
-        testDatabase.databaseUrl,
-        worktreesRoot,
-      ),
+      {
+        ...buildE2ePlaywrightEnvironment(
+          environment,
+          testDatabase.databaseUrl,
+          worktreesRoot,
+        ),
+        ...e2eInvocation.environment,
+      },
       signal,
+      (child) =>
+        registerSpawnedProcess(
+          invocation,
+          e2eProcessRecord(invocation, lane, "playwright"),
+          child,
+        ),
     );
   } catch (error) {
     invocationError = error;
 
     throw error;
   } finally {
+    // Owned processes, containers and roots go before the database and the
+    // worktrees root; the release never throws by contract, and the catch keeps
+    // the database teardown reachable if it ever does.
+    const invocationCleanupErrors =
+      e2eInvocation === undefined
+        ? []
+        : await releaseInvocation(
+            e2eInvocation.invocation,
+            "e2e invocation",
+          ).catch((error: unknown) => [error]);
     const cleanupOperations: Promise<unknown>[] = [
       cleanupTestWorktrees(worktreesRoot),
     ];
@@ -297,9 +388,12 @@ export async function runE2eInvocation(
     }
 
     const cleanupResults = await Promise.allSettled(cleanupOperations);
-    const cleanupErrors = cleanupResults.flatMap((result) =>
-      result.status === "rejected" ? [result.reason] : [],
-    );
+    const cleanupErrors = [
+      ...invocationCleanupErrors,
+      ...cleanupResults.flatMap((result) =>
+        result.status === "rejected" ? [result.reason] : [],
+      ),
+    ];
 
     if (cleanupErrors.length > 0) {
       if (invocationError !== undefined) {

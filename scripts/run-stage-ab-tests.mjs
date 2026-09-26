@@ -5,7 +5,7 @@ import { availableParallelism, tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { createInvocation, fixtureProcessEnvironment, FIXTURE_WATCHDOG, logInvocation, invocationRecords, fixtureLogTail, registerProcess, removeInvocationRoots, removeInvocationContainers, signalInvocationGroup, sweepInvocation } from "../web/test-support/process-invocation.ts";
+import { createInvocation, fixtureProcessEnvironment, FIXTURE_WATCHDOG, logInvocation, invocationRecords, fixtureLogTail, registerProcess, releaseInvocation, signalInvocationGroup } from "../web/test-support/process-invocation.ts";
 
 import { assertSupportedNode } from "../runtime/node-version.ts";
 
@@ -231,28 +231,8 @@ export async function runStageAbLane({ slice, files = laneSuites[slice], workspa
 
     if (escalation) clearTimeout(escalation);
     await Promise.all(signalDeliveries);
-    // S52-R6: each reclaimer owns a different resource class, so one throwing
-    // must not skip the others — a failed process sweep used to leave every
-    // container and root behind, which is the leak this runner exists to deny.
-    const cleanupErrors = [];
-    let leaks = [];
-    let containers = [];
+    const cleanupErrors = await releaseInvocation(invocation, "A/B invocation");
 
-    for (const step of [
-      async () => { leaks = await sweepInvocation(invocation); },
-      async () => { containers = await removeInvocationContainers(invocation); },
-      async () => { await removeInvocationRoots(invocation); },
-      async () => {
-        assert.equal(leaks.length, 0, "A/B invocation leaked processes; sweep reaped them");
-        assert.equal(containers.length, 0, "A/B invocation leaked containers; terminal cleanup removed them");
-      },
-    ]) {
-      try {
-        await step();
-      } catch (error) {
-        cleanupErrors.push(error);
-      }
-    }
     if (cleanupErrors.length) {
       const cleanupFailure = cleanupErrors.length === 1 ? cleanupErrors[0] : new AggregateError(cleanupErrors, "A/B terminal cleanup failed");
 
