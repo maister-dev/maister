@@ -176,6 +176,79 @@ describe("ExecutionHostStatus", () => {
     expect(html).not.toMatch(/<dl[^>]*>(?:(?!<\/dl>).)*<p[\s>]/);
   });
 
+  it("shows the host's subscriber pauses and closes by reason, or missing", async () => {
+    const stream = (
+      subscriberPauses: number | null,
+      closes: {
+        disconnect: number;
+        protocol: number;
+        floor: number;
+        shutdown: number;
+      } | null,
+    ) => ({
+      streamRowId: `row-${String(subscriberPauses)}`,
+      executionHostId: "host-1",
+      hostKey: "eh_local",
+      displayName: "Local",
+      readiness: "ready",
+      readinessReason: null,
+      hostLastSeenAt: sampledAt,
+      hostBootId: "boot-1",
+      streamId: "stream-1",
+      streamState: "active" as const,
+      lastReceivedSequence: "9",
+      lastContiguousSequence: "9",
+      lastAckConfirmedSequence: "9",
+      streamLastSeenAt: sampledAt,
+      lastError: null,
+      claimOwner: null,
+      claimExpiresAt: null,
+      hostTelemetry: {
+        streamId: "stream-1",
+        headSequence: "9",
+        unacknowledgedCount: 0,
+        retainedCount: 10,
+        pressured: false,
+        oldestUnacknowledgedAgeMs: null,
+        subscriberPauses,
+        closes,
+        sampledAt,
+        bootId: "boot-1",
+      },
+      hostTelemetryStatus: "available" as const,
+      hostTelemetryReason: null,
+      lag: {
+        hostToManager: "0",
+        contiguityGap: "0",
+        ackConfirmation: "0",
+        diagnostics: [],
+      },
+    });
+    const html = renderToStaticMarkup(
+      await ExecutionHostStatus({
+        status: {
+          ...status,
+          lag: {
+            ...lag,
+            streams: [
+              stream(4, { disconnect: 2, protocol: 1, floor: 0, shutdown: 3 }),
+              stream(null, null),
+            ],
+          },
+        },
+      }),
+    );
+
+    expect(html).toContain("streams.pauses: 4");
+    expect(html).toContain(
+      "streams.closes: closeReason.disconnect 2 · closeReason.protocol 1 · closeReason.floor 0 · closeReason.shutdown 3",
+    );
+    expect(html).toContain('title="streams.closesLegend"');
+    // An older host reports neither: the cells read as missing, never zero.
+    expect(html).toContain("streams.pauses: missing");
+    expect(html).toContain("streams.closes: missing");
+  });
+
   it("renders an explicit empty state when no host has host-span data", async () => {
     const html = renderToStaticMarkup(
       await ExecutionHostStatus({

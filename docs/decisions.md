@@ -1710,7 +1710,7 @@ Full record: [`decisions/adr-166.md`](decisions/adr-166.md)
 
 ### ADR-167: Durable execution-host event and runtime-data plane
 
-**Status:** Implemented; amended 2026-09-23 (retirement tombstone guards; host-evidence settlement); amended 2026-09-25 (steer inside a prompt span)
+**Status:** Implemented; amended 2026-09-23 (retirement tombstone guards; host-evidence settlement); amended 2026-09-25 (steer inside a prompt span; batched ingest and ACK, pausing subscriber)
 **Date:** 2026-09-04
 
 Full record: [`decisions/adr-167.md`](decisions/adr-167.md)

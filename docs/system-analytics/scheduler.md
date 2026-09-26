@@ -476,7 +476,12 @@ executionObservability = {
 ```
 
 Each source reports a safe `available | unsupported | unavailable` status; the
-top-level `errors[]` carries the reason codes. One runtime parser owns this JSON
+top-level `errors[]` carries the reason codes. (Implemented — ADR-167 amendment
+2026-09-25) The `stream` source's host backlog also carries the host's
+`subscriberPauses` and `closes` by reason when the host reports them. They are
+monotonic within one `bootId`, which the sample already carries, so an operator
+reads sweep-to-sweep deltas; `schemaVersion` stays 1 (additive optional
+fields), and no lag verdict reads them. One runtime parser owns this JSON
 for scheduler/admin readers; unsupported older/newer schemas render unavailable
 and restart qualification. The member is capped at 64 KiB UTF-8 JSON. If detail
 rows are dropped, identity, comparison state, exact totals and a numeric

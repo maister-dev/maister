@@ -524,6 +524,8 @@ function streamTelemetry(
   }
   const telemetry = {
     ...health.health.stream,
+    subscriberPauses: health.health.stream.subscriberPauses ?? null,
+    closes: health.health.stream.closes ?? null,
     sampledAt: health.health.checkedAt,
     bootId: health.health.host.bootId,
   };

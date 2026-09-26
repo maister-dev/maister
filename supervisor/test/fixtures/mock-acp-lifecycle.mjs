@@ -8,6 +8,10 @@ import * as acp from "@agentclientprotocol/sdk";
 
 const args = process.argv.slice(2);
 let lines = 3;
+// Load-control pacing for the `--lines` loop (R20): both default to 0, which
+// keeps the loop's original back-to-back `line ${i}` output byte for byte.
+let lineIntervalMs = 0;
+let lineBytes = 0;
 let exitCode = 0;
 let hang = false;
 let controlledExit = false;
@@ -48,6 +52,10 @@ for (let i = 0; i < args.length; i += 1) {
 
   if (arg === "--lines") {
     lines = Number.parseInt(args[++i], 10);
+  } else if (arg === "--line-interval-ms") {
+    lineIntervalMs = Number.parseInt(args[++i], 10);
+  } else if (arg === "--line-bytes") {
+    lineBytes = Number.parseInt(args[++i], 10);
   } else if (arg === "--exit-code") {
     exitCode = Number.parseInt(args[++i], 10);
   } else if (arg === "--hang") {
@@ -450,12 +458,18 @@ class LifecycleAgent {
 
     for (let i = 0; i < lines; i += 1) {
       const isLast = i === lines - 1;
+      const label = `line ${i}`;
 
+      if (i > 0 && lineIntervalMs > 0)
+        await new Promise((resolve) => setTimeout(resolve, lineIntervalMs));
       await this.connection.sessionUpdate({
         sessionId: params.sessionId,
         update: {
           sessionUpdate: "agent_message_chunk",
-          content: { type: "text", text: `line ${i}` },
+          content: {
+            type: "text",
+            text: lineBytes > label.length ? label.padEnd(lineBytes, "x") : label,
+          },
           ...(isLast && emitUsage
             ? {
                 model: "claude-sonnet-4-6",

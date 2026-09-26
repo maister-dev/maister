@@ -311,6 +311,53 @@ describe("reduceLagObservation", () => {
     ).toBeNull();
   });
 
+  it("keeps a persisted summary that carries the host's subscriber counters", () => {
+    // ADR-167 amendment 2026-09-25: a guard that did not know the two optional
+    // fields would parse the whole observation to null and drop it.
+    const observation = firstAboveThreshold();
+    const encoded = {
+      schemaVersion: 1,
+      attemptId: "attempt-1",
+      observerId: "observer-a",
+      sampledAt: "2026-09-22T12:00:00.000Z",
+      quality: "complete",
+      errors: [],
+      consumers: {
+        status: "available",
+        total: 0,
+        maximumBacklog: "0",
+        top: [],
+      },
+      poison: { status: "available", total: 0, rows: [] },
+      commands: { status: "available", total: 0, accepted: 0, impasse: 0 },
+      workers: { status: "available", states: {} },
+    };
+    const hostBacklog = {
+      status: "available",
+      unacknowledgedCount: 0,
+      oldestUnacknowledgedAgeMs: null,
+      subscriberPauses: 4,
+      closes: { disconnect: 1, protocol: 0, floor: 0, shutdown: 2 },
+    };
+
+    expect(
+      parseExecutionObservability({
+        ...encoded,
+        stream: { ...observation, hostBacklog },
+      })?.stream?.hostBacklog,
+    ).toEqual(hostBacklog);
+    for (const broken of [
+      { ...hostBacklog, subscriberPauses: -1 },
+      { ...hostBacklog, closes: { disconnect: 1 } },
+    ])
+      expect(
+        parseExecutionObservability({
+          ...encoded,
+          stream: { ...observation, hostBacklog: broken },
+        }),
+      ).toBeNull();
+  });
+
   it("reports missing telemetry on a FIRST sample as unknown, not observing", () => {
     const unidentified = reduceLagObservation({
       sample: sample({ identity: null, quality: "partial" }),

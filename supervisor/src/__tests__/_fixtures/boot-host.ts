@@ -4,6 +4,7 @@ import type { RuntimeLimits } from "../../runtime-limits";
 import type { FastifyInstance } from "fastify";
 import type { HostState } from "../../host-state";
 import type { CommandEnvelope, CommandKind } from "../../types";
+import type { RuntimeEventSubscribers } from "../../runtime-event-subscribers";
 
 import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
@@ -87,6 +88,7 @@ export type BootHostOptions = {
   steerTimeoutMs?: number;
   logger?: Logger;
   hostState?: HostState;
+  runtimeEventSubscribers?: RuntimeEventSubscribers;
   // Full override (a custom spawn function without a binary override); wins
   // over `fixture` / `fixtureArgs`.
   spawnOverrides?: SpawnOverrides;
@@ -137,6 +139,7 @@ export async function bootHost(
     spawnOverrides,
     hostState,
     workspaceRoots,
+    runtimeEventSubscribers: opts.runtimeEventSubscribers,
   });
 
   const stopHeartbeat = startHeartbeatWatcher({

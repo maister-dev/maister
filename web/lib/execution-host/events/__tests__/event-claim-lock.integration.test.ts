@@ -3,10 +3,12 @@ import type { ExecutionHostTransport } from "@/lib/execution-host/contracts";
 import type { RuntimeEventConsumerSummary } from "@/lib/execution-host/events/consumer";
 
 import { randomUUID } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 
 import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { INGEST_BATCH_WAIT_MS } from "@/lib/execution-host/events/batching";
 import { ingestRuntimeEvent } from "@/lib/execution-host/events/ingest";
 import {
   claimRuntimeEventStream,
@@ -221,6 +223,91 @@ describe("Event ingestion and assignment claim locks", () => {
       });
     } finally {
       await stopRuntimeEventConsumers();
+      await db
+        .delete(executionEventStreams)
+        .where(eq(executionEventStreams.id, streamRowId));
+    }
+  });
+
+  it("renews a long pass's claim in every batch, while a killed holder's claim still lapses", async () => {
+    // ADR-167 amendment 2026-09-25: a pass now stays open under load far
+    // longer than the 30 s lease. Each event below lands 20 s of lease time
+    // after the previous one, so without a renewal the claim would lapse
+    // under the live pass and a competitor would take the ACK watermark.
+    const targetStreamId = randomUUID();
+    const streamRowId = randomUUID();
+    let clock = new Date("2026-09-25T00:00:00.000Z").getTime();
+    const now = () => new Date(clock);
+    const competitors: unknown[] = [];
+    const transport: ExecutionHostTransport = {
+      ...createFakeExecutionHost().transport,
+      async *streamRuntimeEvents() {
+        for (let sequence = 0; sequence < 4; sequence += 1) {
+          clock += 20_000;
+          yield event(String(sequence), {
+            streamId: targetStreamId,
+            runId: randomUUID(),
+            assignmentId: randomUUID(),
+            hostSessionId: randomUUID(),
+            eventType: "session.update",
+            payloadSchema: "maister.session.update.v1",
+            payload: { update: { state: `working ${sequence}` } },
+          }) as never;
+          // The batch is cut T after its first row; let it commit first.
+          await delay(INGEST_BATCH_WAIT_MS + 250);
+          competitors.push(
+            await claimRuntimeEventStream({
+              db,
+              executionHostId: hostId,
+              owner: "competitor-consumer",
+              now: now(),
+            }),
+          );
+        }
+      },
+    };
+
+    await db.insert(executionEventStreams).values({
+      id: streamRowId,
+      executionHostId: hostId,
+      streamId: targetStreamId,
+      state: "active",
+    });
+    try {
+      const summary = await consumeRuntimeEventStreamOnce({
+        db,
+        executionHostId: hostId,
+        transport,
+        owner: "long-pass-consumer",
+        now,
+      });
+
+      expect(summary).toMatchObject({
+        received: 4,
+        batches: 4,
+        reconnectRequired: false,
+      });
+      expect(competitors).toEqual([null, null, null, null]);
+      // The holder is gone (the pass ended without releasing, as a killed
+      // process would): a successor is refused inside the last lease...
+      expect(
+        await claimRuntimeEventStream({
+          db,
+          executionHostId: hostId,
+          owner: "successor-consumer",
+          now: new Date(clock + 1_000),
+        }),
+      ).toBeNull();
+      // ...and claims once it lapses.
+      expect(
+        await claimRuntimeEventStream({
+          db,
+          executionHostId: hostId,
+          owner: "successor-consumer",
+          now: new Date(clock + 31_000),
+        }),
+      ).toMatchObject({ streamRowId, streamId: targetStreamId });
+    } finally {
       await db
         .delete(executionEventStreams)
         .where(eq(executionEventStreams.id, streamRowId));

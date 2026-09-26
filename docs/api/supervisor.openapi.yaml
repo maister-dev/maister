@@ -130,6 +130,18 @@ paths:
         replay starts strictly after it. Omission starts at the replay floor;
         a cursor before that floor or on another stream fails explicitly.
         Each event is redacted, ≤1 MiB, and uses SSE `id = sequence`.
+
+        (Implemented — ADR-167 amendment 2026-09-25) One connection pages through
+        the retained outbox (≤500 events and ≤1 MiB per read) until an empty
+        page, then serves committed appends live. When the socket's `write()`
+        returns `false` the subscriber is paused until `drain` and resumes from
+        the last sequence written; the host never closes the connection on
+        backpressure or at a page boundary. It closes only for `disconnect`,
+        `floor` (a catch-up read fell below the replay floor), `protocol` (the
+        stream was replaced or is corrupt, or a live event names another
+        stream) and `shutdown`; `GET /health?includeStream=true` counts pauses
+        and closes by reason. The `409` refusals below are answered before any
+        header is written.
       operationId: streamExecutionHostRuntimeEvents
       parameters:
         - name: Last-Event-ID
@@ -490,6 +502,12 @@ paths:
         legacy shape. The single literal `includeStream=true` adds the current
         event-stream head and bounded outbox counters. Empty, repeated, or
         other values are refused with PRECONDITION.
+
+        (Implemented — ADR-167 amendment 2026-09-25) The block also carries
+        `subscriberPauses` and `closes` by reason for `GET /runtime-events`
+        subscribers, counted since this boot. They are transport telemetry,
+        never lifecycle authority; a web tier reading an older host treats them
+        as unknown.
       operationId: getSupervisorHealth
       parameters:
         - name: includeStream
@@ -534,6 +552,8 @@ paths:
                       retainedCount: 0
                       pressured: false
                       oldestUnacknowledgedAgeMs: null
+                      subscriberPauses: 0
+                      closes: { disconnect: 0, protocol: 0, floor: 0, shutdown: 0 }
                 pending:
                   summary: A backlog awaiting acknowledgement.
                   value:
@@ -553,6 +573,8 @@ paths:
                       retainedCount: 240
                       pressured: false
                       oldestUnacknowledgedAgeMs: 180000
+                      subscriberPauses: 12
+                      closes: { disconnect: 2, protocol: 0, floor: 0, shutdown: 0 }
                 fullyAcknowledged:
                   summary: Steady state — age is null exactly at zero backlog.
                   value:
@@ -572,6 +594,8 @@ paths:
                       retainedCount: 12
                       pressured: false
                       oldestUnacknowledgedAgeMs: null
+                      subscriberPauses: 3
+                      closes: { disconnect: 1, protocol: 0, floor: 0, shutdown: 0 }
         "503":
           description: |
             Runtime storage failed, or the opt-in stream snapshot could not be
@@ -2206,7 +2230,7 @@ components:
     SupervisorEventStreamHealth:
       type: object
       additionalProperties: false
-      required: [streamId, headSequence, unacknowledgedCount, retainedCount, pressured, oldestUnacknowledgedAgeMs]
+      required: [streamId, headSequence, unacknowledgedCount, retainedCount, pressured, oldestUnacknowledgedAgeMs, subscriberPauses, closes]
       properties:
         streamId: { type: string, minLength: 1 }
         headSequence:
@@ -2221,6 +2245,44 @@ components:
           nullable: true
           minimum: 0
           maximum: 9007199254740991
+        subscriberPauses:
+          description: |
+            Times a `GET /runtime-events` subscriber was paused because its
+            socket stopped draining, since this boot (ADR-167 amendment
+            2026-09-25). Required from the host; a web tier reading an older
+            host treats its absence as unknown.
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        closes:
+          description: |
+            `GET /runtime-events` connections closed since this boot, by reason
+            (ADR-167 amendment 2026-09-25). The host never closes on
+            backpressure or at a page boundary.
+          type: object
+          additionalProperties: false
+          required: [disconnect, protocol, floor, shutdown]
+          properties:
+            disconnect:
+              description: The client socket closed or errored.
+              type: integer
+              minimum: 0
+              maximum: 9007199254740991
+            protocol:
+              description: The stream was replaced or is corrupt, or a live event named another stream.
+              type: integer
+              minimum: 0
+              maximum: 9007199254740991
+            floor:
+              description: A catch-up read fell below the replay floor.
+              type: integer
+              minimum: 0
+              maximum: 9007199254740991
+            shutdown:
+              description: The supervisor closed the subscriber while shutting down.
+              type: integer
+              minimum: 0
+              maximum: 9007199254740991
     SupervisorDiagnosticsResponse:
       type: object
       required: [status, version, checkedAt, adapters, envRefs]

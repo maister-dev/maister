@@ -3120,8 +3120,17 @@
       "observation": "last sweep verdict",
       "observationMeta": "{observer}, sampled {sampledAt}",
       "unacked": "host unACKed",
+      "pauses": "pauses",
+      "closes": "closes",
+      "closesLegend": "Why the host closed runtime-event connections since its boot",
       "watermarkLegend": "R received · C contiguous · A ACK-confirmed",
       "lagLegend": "H→M host to manager · G gap · A ACK confirmation"
+    },
+    "closeReason": {
+      "disconnect": "disconnect",
+      "protocol": "protocol",
+      "floor": "floor",
+      "shutdown": "shutdown"
     },
     "consumers": {
       "title": "Projection consumers",

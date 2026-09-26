@@ -31,7 +31,10 @@ details. There is no API or mutation route for this screen.
 
 1. Host row: readiness/reason, key, boot, last seen, version and capabilities.
 2. Stream row: state, manager watermarks, host head/unACKed/age/pressure,
-   last error, claim owner/expiry and separately labeled lag verdict.
+   subscriber pauses and closes by reason (disconnect/protocol/floor/shutdown;
+   "unavailable" when the host does not report them — Implemented, ADR-167
+   amendment 2026-09-25), last error, claim owner/expiry and separately labeled lag
+   verdict.
 3. Top 20 eligible consumer/run backlogs with exact totals and truncation.
 4. Stable poison pagination, including terminal runs. A complete row exposes a
    copy-only, shell-quoted `execution:projection:rearm` command containing
