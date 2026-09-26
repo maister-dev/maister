@@ -8,6 +8,7 @@ import type { LibrarianCardView } from "@/lib/librarian/read-models";
 import type {
   LibrarianConversationView,
   LibrarianMessageDto,
+  LibrarianUpdateDto,
 } from "@/lib/librarian/view";
 
 import {
@@ -135,6 +136,15 @@ function mergeMessages(
   );
 }
 
+function updateTaskPath(update: LibrarianUpdateDto | null): string | null {
+  const task = update?.task;
+  const number = task?.taskKey?.match(/-(\d+)$/)?.[1];
+
+  return task?.available && task.projectSlug && number
+    ? `/projects/${task.projectSlug}/tasks/${number}`
+    : null;
+}
+
 export function LibrarianPanel(): ReactElement | null {
   const librarian = useLibrarian();
 
@@ -144,6 +154,7 @@ export function LibrarianPanel(): ReactElement | null {
 function LibrarianPanelBody(): ReactElement {
   const librarian = useLibrarian()!;
   const t = useTranslations("librarian");
+  const stageT = useTranslations("workStage");
   const pathname = usePathname() ?? "/";
   const {
     open,
@@ -172,6 +183,7 @@ function LibrarianPanelBody(): ReactElement {
   const [sending, setSending] = useState(false);
   const [errorKey, setErrorKey] = useState<string | null>(null);
   const [busyCardId, setBusyCardId] = useState<string | null>(null);
+  const [busyUpdateId, setBusyUpdateId] = useState<string | null>(null);
   const [showJump, setShowJump] = useState(false);
 
   const mode: LibrarianPanelMode =
@@ -236,6 +248,7 @@ function LibrarianPanelBody(): ReactElement {
       messages
         .filter(
           (message) =>
+            (message.authorKind !== "update" || message.masked) &&
             message.deliveryState !== "queued" &&
             message.deliveryState !== "withdrawn" &&
             message.deliveryState !== "withdrawn_by_reset",
@@ -429,6 +442,24 @@ function LibrarianPanelBody(): ReactElement {
     }
   }
 
+  async function explainUpdate(updateId: string): Promise<void> {
+    setBusyUpdateId(updateId);
+    setErrorKey(null);
+    try {
+      const response = await fetch(
+        `/api/librarian/updates/${encodeURIComponent(updateId)}/explain`,
+        { method: "POST" },
+      );
+
+      if (!response.ok) setErrorKey("errorExplain");
+      await refresh();
+    } catch {
+      setErrorKey("errorExplain");
+    } finally {
+      setBusyUpdateId(null);
+    }
+  }
+
   const availability = view?.availability.state ?? null;
   const panelClass = clsx(
     "flex-col border-line bg-paper text-ink",
@@ -569,7 +600,8 @@ function LibrarianPanelBody(): ReactElement {
             role="log"
             onScroll={onListScroll}
           >
-            {transcript.length === 0 ? (
+            {transcript.length === 0 &&
+            !messages.some((message) => message.update) ? (
               <p className="m-0 text-[12.5px] text-mute">{t("empty")}</p>
             ) : (
               <TranscriptView
@@ -588,6 +620,63 @@ function LibrarianPanelBody(): ReactElement {
                 userLabel={t("you")}
               />
             )}
+            {messages
+              .filter((message) => message.update && !message.masked)
+              .map((message) => (
+                <article
+                  key={message.id}
+                  className="mt-3 rounded-lg border border-line bg-canvas px-3 py-2 text-[12px]"
+                  data-testid="librarian-update-card"
+                >
+                  <p className="m-0 font-semibold">{t("updateTitle")}</p>
+                  <p className="mt-1 text-mute">
+                    {message.update
+                      ? t(
+                          `updateKind_${message.update.eventKind.replaceAll(".", "_")}`,
+                        )
+                      : null}
+                    {message.update?.task?.title
+                      ? ` · ${message.update.task.title}`
+                      : ""}
+                  </p>
+                  {message.update?.workStage ? (
+                    <p className="mt-1 text-mute">
+                      {stageT(message.update.workStage)}
+                    </p>
+                  ) : null}
+                  {message.update?.promotedKind === "merge" ? (
+                    <p className="mt-1 text-mute">{t("updateMergedUnknown")}</p>
+                  ) : null}
+                  {message.update?.runStatus ? (
+                    <p className="mt-1 text-mute">
+                      {t("updateRunStatus", {
+                        status: message.update.runStatus,
+                      })}
+                    </p>
+                  ) : null}
+                  <div className="mt-2 flex gap-3">
+                    {updateTaskPath(message.update) ? (
+                      <a
+                        className="underline"
+                        href={updateTaskPath(message.update)!}
+                      >
+                        {t("updateOpenTask")}
+                      </a>
+                    ) : null}
+                    <button
+                      className="underline disabled:opacity-50"
+                      disabled={busyUpdateId === message.update?.updateId}
+                      type="button"
+                      onClick={() =>
+                        message.update &&
+                        void explainUpdate(message.update.updateId)
+                      }
+                    >
+                      {t("updateExplain")}
+                    </button>
+                  </div>
+                </article>
+              ))}
             {responding ? (
               <p
                 className="m-0 mt-2 font-mono text-[11px] text-mute"

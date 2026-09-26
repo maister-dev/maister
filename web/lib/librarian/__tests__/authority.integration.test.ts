@@ -7,6 +7,7 @@ import { projectTokens } from "@/lib/db/schema";
 import {
   issueLibrarianTurnToken,
   revokeLibrarianTurnToken,
+  scopesForLibrarianTurn,
 } from "@/lib/librarian/authority";
 import {
   actorUserIdForToken,
@@ -23,6 +24,7 @@ import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
+import { LIBRARIAN_READ_SCOPES } from "@/types/token-scopes";
 
 // ADR-184: a librarian turn token is minted for one turn, verified per request
 // with the owner's live account state, and dies with its turn.
@@ -52,6 +54,12 @@ afterAll(async () => {
 });
 
 describe("IT-LAU-02 part 2: a turn token is owner-bound and dies with its turn", () => {
+  it("IT-LAU-05: Explain turns receive only read scopes", () => {
+    expect(scopesForLibrarianTurn("explain")).toEqual(LIBRARIAN_READ_SCOPES);
+    expect(scopesForLibrarianTurn("explain")).not.toContain("tasks:create");
+    expect(scopesForLibrarianTurn("owner_message")).toContain("tasks:create");
+    expect(() => scopesForLibrarianTurn("summary")).toThrow();
+  });
   it("verifies as the owner acting through the librarian", async () => {
     const ownerId = await seedActiveUser(db);
     const turnId = await seedLibrarianTurn(db, ownerId);

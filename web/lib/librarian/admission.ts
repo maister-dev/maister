@@ -79,7 +79,7 @@ function utcDate(now: Date): string {
 
 /** D17: `MAISTER_LIBRARIAN_DAILY_TURNS_PER_USER`. The conversation row lock is
  * the per-user serialization (1:1), so the read-then-write is exact. */
-async function consumeDailyTurn(
+export async function consumeDailyTurn(
   tx: Db,
   conversation: LibrarianConversationRow,
   now: Date,
@@ -220,12 +220,16 @@ export async function admitNextTurnInTransaction(
       and(
         eq(librarianOperations.conversationId, conversation.id),
         eq(librarianOperations.status, "admitted"),
-        lt(librarianOperations.createdAt, staleBefore)),
+        lt(librarianOperations.createdAt, staleBefore),
+      ),
     )
     .limit(1);
 
   if (unsettled) {
-    log.warn({ conversationId: conversation.id, operationId: unsettled.id }, "librarian turn admission awaits operation reconciliation");
+    log.warn(
+      { conversationId: conversation.id, operationId: unsettled.id },
+      "librarian turn admission awaits operation reconciliation",
+    );
 
     return null;
   }

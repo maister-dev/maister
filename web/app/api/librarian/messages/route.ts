@@ -17,6 +17,7 @@ import {
 import {
   assertSubjectVisible,
   librarianMessageDto,
+  librarianMessageDtos,
 } from "@/lib/librarian/view";
 
 // ADR-183 (LCV-02, LCV-03, LUI-04): page back through, and send to, the
@@ -42,7 +43,11 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     );
 
     return NextResponse.json({
-      messages: page.messages.map(librarianMessageDto),
+      messages: await librarianMessageDtos(
+        page.messages,
+        user.id,
+        getDb() as unknown as Db,
+      ),
       hasMore: page.hasMore,
     });
   } catch (err) {

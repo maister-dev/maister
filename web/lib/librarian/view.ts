@@ -4,7 +4,7 @@ import type { Db } from "@/lib/execution-host/db";
 import type { LibrarianMessageRow, LibrarianTurnRow } from "@/lib/db/schema";
 import type { LibrarianSubject } from "./types";
 
-import { and, asc, desc, eq, gt, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, or } from "drizzle-orm";
 
 import { librarianTurnRef } from "./admission";
 import { lockOwnerConversation } from "./conversation";
@@ -23,13 +23,22 @@ import {
   librarianConversations,
   librarianCards,
   librarianMessages,
+  librarianUpdates,
   librarianTurns,
+  domainEvents,
+  projects,
   runs,
   tasks,
   users,
+  workspaces,
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import { getVisibleProjects } from "@/lib/queries/visible-projects";
+import {
+  deriveWorkStage,
+  type WorkStage,
+  type PromotedKind,
+} from "@/lib/work/stage";
 
 // ADR-183 / web.openapi.yaml: explicit DTO projections — never a row.
 
@@ -50,10 +59,29 @@ export type LibrarianMessageDto = {
   subject: LibrarianSubject | null;
   turnId: string | null;
   card: null;
-  update: null;
+  update: LibrarianUpdateDto | null;
   taskChips: never[];
   usedMemoryItemIds: string[];
   createdAt: string;
+};
+
+export type LibrarianUpdateDto = {
+  updateId: string;
+  eventKind: string;
+  task: {
+    taskId: string;
+    available: boolean;
+    taskKey: string | null;
+    title: string | null;
+    projectSlug: string | null;
+    status: string | null;
+    workStage: WorkStage | null;
+  } | null;
+  runId: string | null;
+  runStatus: string | null;
+  workStage: WorkStage | null;
+  promotedKind: PromotedKind | null;
+  occurredAt: string;
 };
 
 export type LibrarianTurnDto = {
@@ -71,23 +99,199 @@ export type LibrarianTurnDto = {
 
 export function librarianMessageDto(
   row: LibrarianMessageRow,
+  options: { masked?: boolean; update?: LibrarianUpdateDto | null } = {},
 ): LibrarianMessageDto {
   return {
     id: row.id,
     seq: row.seq.toString(),
     segmentId: row.segmentId,
     authorKind: row.authorKind,
-    body: row.body,
-    masked: false,
+    body: options.masked ? null : row.body,
+    masked: options.masked ?? false,
     deliveryState: row.deliveryState,
     subject: (row.subject ?? null) as LibrarianSubject | null,
     turnId: row.turnId ?? null,
     card: null,
-    update: null,
+    update: options.masked ? null : (options.update ?? null),
     taskChips: [],
     usedMemoryItemIds: [],
     createdAt: row.createdAt.toISOString(),
   };
+}
+
+/** Re-checks project visibility on every page read, including old updates. */
+export async function librarianMessageDtos(
+  rows: LibrarianMessageRow[],
+  ownerId: string,
+  db: Db,
+): Promise<LibrarianMessageDto[]> {
+  const [owner] = await db
+    .select({ role: users.role })
+    .from(users)
+    .where(eq(users.id, ownerId));
+  const visible = owner
+    ? await getVisibleProjects(ownerId, owner.role, db)
+    : [];
+  const visibleIds = new Set(visible.map((project) => project.id));
+  const visibleSlugs = new Map(
+    visible.map((project) => [project.id, project.slug]),
+  );
+  const updateIds = rows
+    .map((row) => row.updateId)
+    .filter((id): id is string => !!id);
+  const updates =
+    updateIds.length > 0
+      ? await db
+          .select()
+          .from(librarianUpdates)
+          .where(inArray(librarianUpdates.id, updateIds))
+      : [];
+  const updateById = new Map(updates.map((update) => [update.id, update]));
+  const taskIds = updates
+    .map((update) => update.taskId)
+    .filter((id): id is string => !!id);
+  const runIds = updates
+    .map((update) => update.runId)
+    .filter((id): id is string => !!id);
+  const [taskRows, runRows, projectRows, eventRows] = await Promise.all([
+    taskIds.length > 0
+      ? db
+          .select({
+            id: tasks.id,
+            projectId: tasks.projectId,
+            number: tasks.number,
+            title: tasks.title,
+            status: tasks.status,
+            stage: tasks.stage,
+            triageStatus: tasks.triageStatus,
+          })
+          .from(tasks)
+          .where(inArray(tasks.id, taskIds))
+      : Promise.resolve([]),
+    runIds.length > 0 || taskIds.length > 0
+      ? db
+          .select({
+            id: runs.id,
+            taskId: runs.taskId,
+            status: runs.status,
+            runKind: runs.runKind,
+            startedAt: runs.startedAt,
+          })
+          .from(runs)
+          .where(or(inArray(runs.taskId, taskIds), inArray(runs.id, runIds)))
+          .orderBy(desc(runs.startedAt))
+      : Promise.resolve([]),
+    visible.length > 0
+      ? db
+          .select({ id: projects.id, taskKey: projects.taskKey })
+          .from(projects)
+          .where(
+            inArray(
+              projects.id,
+              visible.map((project) => project.id),
+            ),
+          )
+      : Promise.resolve([]),
+    updates.length > 0
+      ? db
+          .select({ id: domainEvents.id, occurredAt: domainEvents.occurredAt })
+          .from(domainEvents)
+          .where(
+            inArray(
+              domainEvents.id,
+              updates.map((update) => update.domainEventId),
+            ),
+          )
+      : Promise.resolve([]),
+  ]);
+  const taskById = new Map(taskRows.map((task) => [task.id, task]));
+  const runById = new Map(runRows.map((run) => [run.id, run]));
+  const latestRunByTaskId = new Map<string, (typeof runRows)[number]>();
+
+  for (const run of runRows) {
+    if (run.taskId && !latestRunByTaskId.has(run.taskId))
+      latestRunByTaskId.set(run.taskId, run);
+  }
+  const runIdsForWorkspace = runRows.map((run) => run.id);
+  const workspaceRows =
+    runIdsForWorkspace.length > 0
+      ? await db
+          .select({
+            runId: workspaces.runId,
+            promotionState: workspaces.promotionState,
+            removedAt: workspaces.removedAt,
+          })
+          .from(workspaces)
+          .where(inArray(workspaces.runId, runIdsForWorkspace))
+      : [];
+  const workspaceByRunId = new Map(
+    workspaceRows.map((workspace) => [workspace.runId, workspace]),
+  );
+  const keyByProjectId = new Map(
+    projectRows.map((project) => [project.id, project.taskKey]),
+  );
+  const occurredAtByEventId = new Map(
+    eventRows.map((event) => [event.id, event.occurredAt]),
+  );
+
+  return rows.map((row) => {
+    const masked =
+      row.authorKind !== "owner" &&
+      row.sourceProjectIds.some((projectId) => !visibleIds.has(projectId));
+    const update = row.updateId ? updateById.get(row.updateId) : null;
+    const task = update?.taskId ? taskById.get(update.taskId) : null;
+    const slug = task ? visibleSlugs.get(task.projectId) : null;
+    const run = update?.runId
+      ? runById.get(update.runId)
+      : task
+        ? latestRunByTaskId.get(task.id)
+        : null;
+    const workspace = run ? workspaceByRunId.get(run.id) : null;
+    const stage = task
+      ? deriveWorkStage({
+          taskStatus: task.status,
+          taskStage: task.stage,
+          triageStatus: task.triageStatus,
+          runStatus: run?.status ?? null,
+          runKind: run?.runKind ?? null,
+          promotionState: workspace?.promotionState ?? null,
+          workspaceRemoved: !!workspace?.removedAt,
+          blockingRelationCount: 0,
+          openBlockingClarificationCount: 0,
+          progress: null,
+        })
+      : null;
+    const projectKey = task ? keyByProjectId.get(task.projectId) : null;
+
+    return librarianMessageDto(row, {
+      masked,
+      update:
+        update && !masked
+          ? {
+              updateId: update.id,
+              eventKind: update.kind,
+              task: task
+                ? {
+                    taskId: task.id,
+                    available: !!slug,
+                    taskKey: projectKey ? `${projectKey}-${task.number}` : null,
+                    title: slug ? task.title : null,
+                    projectSlug: slug ?? null,
+                    status: slug ? task.status : null,
+                    workStage: slug ? (stage?.stage ?? null) : null,
+                  }
+                : null,
+              runId: run?.id ?? null,
+              runStatus: run?.status ?? null,
+              workStage: stage?.stage ?? null,
+              promotedKind: stage?.promotedKind ?? null,
+              occurredAt:
+                occurredAtByEventId.get(update.domainEventId)?.toISOString() ??
+                update.createdAt.toISOString(),
+            }
+          : null,
+    });
+  });
 }
 
 export function librarianTurnDto(
@@ -254,7 +458,7 @@ export async function getLibrarianConversationView(
     cards: linkedWork.cards,
     operationReceipts: linkedWork.operations,
     relatedWork: linkedWork.tasks,
-    queuedMessages: queued.map(librarianMessageDto),
+    queuedMessages: queued.map((row) => librarianMessageDto(row)),
     activeTurn: active
       ? librarianTurnDto(active, activeRef?.queuePosition ?? null)
       : null,

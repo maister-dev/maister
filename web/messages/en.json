@@ -5675,6 +5675,25 @@
     "systemTurnFailed_host_lost": "The response was interrupted: the execution host was lost.",
     "systemTurnFailed_deadline": "The response ran past its time limit and was stopped.",
     "systemTurnFailed_capability_trip": "The response was stopped: it tried to use tools outside the librarian's toolset.",
-    "messageUnavailable": "This message is no longer available to you."
+    "messageUnavailable": "This message is no longer available to you.",
+    "updateTitle": "Work update",
+    "updateKind_run_done": "Run finished",
+    "updateKind_run_failed": "Run failed",
+    "updateKind_run_crashed": "Run crashed",
+    "updateKind_run_abandoned": "Run abandoned",
+    "updateKind_run_review": "Run ready for review",
+    "updateKind_run_review_opened": "Review opened",
+    "updateKind_run_needs_input": "Run needs input",
+    "updateKind_run_escalated": "Run escalated",
+    "updateKind_run_rework_claimed": "Rework started",
+    "updateKind_run_rework_returned": "Rework returned",
+    "updateKind_gate_failed": "Gate failed",
+    "updateKind_task_clarification_answered": "Clarification answered",
+    "updateKind_task_clarification_cancelled": "Clarification cancelled",
+    "updateRunStatus": "Current run status: {status}",
+    "updateMergedUnknown": "Merged · deployment unknown",
+    "updateOpenTask": "Open task",
+    "updateExplain": "Explain",
+    "errorExplain": "The update could not be explained. Try again."
   }
 }

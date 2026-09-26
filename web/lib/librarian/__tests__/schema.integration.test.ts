@@ -147,6 +147,29 @@ describe("IT-LCV-01: one conversation per user", () => {
   });
 });
 
+describe("IT-LOP-11: follow-up update uniqueness", () => {
+  it("refuses a second update for the same conversation and event", async () => {
+    const { conversationId } = await seedConversation();
+    const projectId = await seedProject(db);
+    const event = await db.execute(sql`
+      INSERT INTO domain_events (kind, project_id, payload, occurred_at)
+      VALUES ('run.done', ${projectId}, '{}'::jsonb, now())
+      RETURNING id
+    `);
+    const eventId = Number(event.rows[0].id);
+    const insert = () => db.execute(sql`
+      INSERT INTO librarian_updates
+        (id, conversation_id, domain_event_id, kind, status)
+      VALUES (${randomUUID()}, ${conversationId}, ${eventId}, 'run.done', 'pending')
+    `);
+
+    await insert();
+    expect(constraintOf(await insert().catch((error: unknown) => error))).toBe(
+      "librarian_updates_event_uq",
+    );
+  });
+});
+
 describe("Phase 3 database invariants", () => {
   it("IT-TST-01: accepted statement revisions refuse updates and deletes", async () => {
     const projectId = await seedProject(db);

@@ -1301,10 +1301,10 @@ inbox card, librarian clarification card. EN/RU. *RED*: component tests;
 
 ### Phase 5 — Follow-up delivery · `LOP-11..12`, `LAU-05`, `LUI-01`
 
-**T5.1 [ ] — Migration 0187.** Appendix A/0187 `librarian_updates`. *RED*: `IT-LOP-11`
+**T5.1 [x] — Migration 0187.** Appendix A/0187 `librarian_updates`. *RED*: `IT-LOP-11`
 part 1 (duplicate `(conversation_id, domain_event_id)` refused).
 
-**T5.2 [ ] — `librarian_followup` consumer.** `web/lib/librarian/followup.ts`
+**T5.2 [x] — `librarian_followup` consumer.** `web/lib/librarian/followup.ts`
 registered in `DOMAIN_EVENT_CONSUMERS`; follow set = links ∪ succeeded operations;
 access check; deterministic card payload (stage via `deriveWorkStage`, "deployment
 unknown" after merge). *RED*: `IT-LOP-11` (one event dispatched twice → one card; lost
@@ -1313,7 +1313,7 @@ code; cursor advanced; no duplicate business effect). Wiring test through
 `dispatchDomainEvents`. **Log**: `info` delivered `{conversationId, eventId, kind}`;
 `warn` skipped/failed.
 
-**T5.3 [ ] — Update cards, Explain, indicator.** Update card component; `POST
+**T5.3 [x] — Update cards, Explain, indicator.** Update card component; `POST
 /api/librarian/updates/{id}/explain` enqueues an `explain` turn with read scopes;
 indicator `unread` from `read_through_seq`, `action_required` from pending owner
 cards. *RED*: `IT-LAU-05` part 2 (Explain turn's token cannot create a task even if the

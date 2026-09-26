@@ -70,6 +70,7 @@ function request(method: string, token: string, body?: unknown): NextRequest {
     headers: {
       "content-type": "application/json",
       authorization: `Bearer ${token}`,
+      "idempotency-key": randomUUID(),
     },
   });
 }
@@ -170,7 +171,18 @@ describe("IT-LAU-03: every request re-checks the owner's live project role", () 
     const token = await turnToken(LIBRARIAN_TOKEN_SCOPES);
 
     const create = await tasks.POST(
-      request("POST", token, { title: "New", prompt: "Body" }),
+      request("POST", token, {
+        title: "New",
+        statement: {
+          context: "Project context",
+          goal: "Create the task",
+          acceptance: ["Task is available"],
+          constraints: [],
+          outOfScope: [],
+          links: [],
+          openQuestions: [],
+        },
+      }),
       slugParams(fx.memberProject.slug),
     );
 

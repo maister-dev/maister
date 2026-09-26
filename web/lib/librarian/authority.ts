@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { LibrarianTurnRow } from "@/lib/db/schema";
+
 import { randomUUID } from "node:crypto";
 
 import { and, eq, isNull } from "drizzle-orm";
@@ -9,7 +11,12 @@ import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import { generateToken } from "@/lib/tokens/secret";
-import { isTokenScope, TOKEN_SCOPE_ALL } from "@/types/token-scopes";
+import {
+  isTokenScope,
+  LIBRARIAN_READ_SCOPES,
+  LIBRARIAN_TOKEN_SCOPES,
+  TOKEN_SCOPE_ALL,
+} from "@/types/token-scopes";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { projectTokens } = schemaModule as unknown as Record<string, any>;
@@ -25,6 +32,15 @@ const log = pino({
 // ADR-184: the reserved name every librarian turn token carries. Human issuance
 // refuses it (`assertTokenNameAllowed`), so it can only come from here.
 export const LIBRARIAN_TOKEN_NAME_PREFIX = "librarian-turn:";
+
+export function scopesForLibrarianTurn(
+  variant: LibrarianTurnRow["variant"],
+): readonly string[] {
+  if (variant === "explain") return LIBRARIAN_READ_SCOPES;
+  if (variant === "owner_message") return LIBRARIAN_TOKEN_SCOPES;
+
+  throw new MaisterError("CONFIG", "summary turns cannot receive tool tokens");
+}
 
 export function librarianTokenName(turnId: string): string {
   return `${LIBRARIAN_TOKEN_NAME_PREFIX}${turnId}`;

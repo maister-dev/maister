@@ -8578,3 +8578,56 @@ export const librarianTaskLinks = pgTable(
   }),
 );
 export type LibrarianTaskLinkRow = typeof librarianTaskLinks.$inferSelect;
+
+export const librarianUpdates = pgTable(
+  "librarian_updates",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    conversationId: text("conversation_id")
+      .notNull()
+      .references(() => librarianConversations.id, { onDelete: "cascade" }),
+    domainEventId: bigint("domain_event_id", { mode: "number" })
+      .notNull()
+      .references(() => domainEvents.id),
+    taskId: text("task_id").references(() => tasks.id, { onDelete: "set null" }),
+    runId: text("run_id").references(() => runs.id, { onDelete: "set null" }),
+    kind: text("kind", { enum: DOMAIN_EVENT_KINDS }).notNull(),
+    status: text("status", {
+      enum: ["pending", "delivered", "skipped_no_access", "failed"],
+    }).notNull(),
+    attempts: integer("attempts").notNull().default(0),
+    messageId: text("message_id").references(() => librarianMessages.id, {
+      onDelete: "set null",
+    }),
+    lastErrorCode: text("last_error_code"),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    deliveredAt: timestamp("delivered_at", { withTimezone: true, mode: "date" }),
+  },
+  (t) => ({
+    uniqEvent: unique("librarian_updates_event_uq").on(
+      t.conversationId,
+      t.domainEventId,
+    ),
+    idxConversation: index("librarian_updates_conversation_created_idx").on(
+      t.conversationId,
+      t.createdAt,
+    ),
+    statusCheck: check(
+      "librarian_updates_status_check",
+      sql`${t.status} IN ('pending', 'delivered', 'skipped_no_access', 'failed')`,
+    ),
+    attemptsCheck: check(
+      "librarian_updates_attempts_check",
+      sql`${t.attempts} >= 0`,
+    ),
+    failedHasErrorCheck: check(
+      "librarian_updates_failed_has_error_check",
+      sql`${t.status} <> 'failed' OR ${t.lastErrorCode} IS NOT NULL`,
+    ),
+  }),
+);
+export type LibrarianUpdateRow = typeof librarianUpdates.$inferSelect;

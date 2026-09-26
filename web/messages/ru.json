@@ -5675,6 +5675,25 @@
     "systemTurnFailed_host_lost": "Ответ прерван: потерян хост исполнения.",
     "systemTurnFailed_deadline": "Ответ превысил лимит времени и был остановлен.",
     "systemTurnFailed_capability_trip": "Ответ остановлен: он пытался использовать инструменты вне набора библиотекаря.",
-    "messageUnavailable": "Это сообщение вам больше недоступно."
+    "messageUnavailable": "Это сообщение вам больше недоступно.",
+    "updateTitle": "Обновление работы",
+    "updateKind_run_done": "Запуск завершён",
+    "updateKind_run_failed": "Ошибка запуска",
+    "updateKind_run_crashed": "Аварийное завершение запуска",
+    "updateKind_run_abandoned": "Запуск оставлен",
+    "updateKind_run_review": "Запуск готов к проверке",
+    "updateKind_run_review_opened": "Проверка открыта",
+    "updateKind_run_needs_input": "Запуск ожидает ответа",
+    "updateKind_run_escalated": "Запуск передан на разбор",
+    "updateKind_run_rework_claimed": "Доработка начата",
+    "updateKind_run_rework_returned": "Доработка возвращена",
+    "updateKind_gate_failed": "Проверка не пройдена",
+    "updateKind_task_clarification_answered": "Уточнение получило ответ",
+    "updateKind_task_clarification_cancelled": "Уточнение отменено",
+    "updateRunStatus": "Текущий статус запуска: {status}",
+    "updateMergedUnknown": "Слито · развёртывание неизвестно",
+    "updateOpenTask": "Открыть задачу",
+    "updateExplain": "Объяснить",
+    "errorExplain": "Не удалось объяснить обновление. Попробуйте ещё раз."
   }
 }

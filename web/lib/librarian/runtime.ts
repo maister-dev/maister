@@ -11,7 +11,11 @@ import type { LibrarianSubject } from "./types";
 import { and, asc, desc, eq, inArray, lt } from "drizzle-orm";
 import pino from "pino";
 
-import { issueLibrarianTurnToken, revokeLibrarianTurnToken } from "./authority";
+import {
+  issueLibrarianTurnToken,
+  revokeLibrarianTurnToken,
+  scopesForLibrarianTurn,
+} from "./authority";
 import {
   composeLibrarianContext,
   composeResumePrompt,
@@ -58,7 +62,6 @@ import {
 } from "@/lib/db/schema";
 import { createExecutionHosts } from "@/lib/execution-host";
 import { isMaisterError } from "@/lib/errors";
-import { LIBRARIAN_TOKEN_SCOPES } from "@/types/token-scopes";
 
 const log = pino({
   name: "librarian.runtime",
@@ -277,7 +280,7 @@ async function prepareStart(
       {
         ownerUserId: ref.userId,
         turnId,
-        scopes: [...LIBRARIAN_TOKEN_SCOPES],
+        scopes: [...scopesForLibrarianTurn(turn.variant)],
         expiresAt: deadlineAt,
       },
       tx,
