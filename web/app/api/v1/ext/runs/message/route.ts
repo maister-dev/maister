@@ -27,7 +27,7 @@ const bodySchema = z
       .max(128)
       .regex(/^[A-Za-z0-9._-]+$/)
       .optional(),
-    childRunId: z.string().min(1).optional(),
+    childRunId: z.string().uuid().optional(),
     prompt: z.string().min(1).max(1_000_000),
     requestKey: z.string().min(1).max(128).optional(),
     // ADR-182: `steer` reaches the child's running turn when it can.

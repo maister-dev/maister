@@ -27,7 +27,7 @@ const ENDPOINT = "POST /api/v1/ext/runs/promote";
 
 const bodySchema = z
   .object({
-    childRunId: z.string().min(1),
+    childRunId: z.string().uuid(),
   })
   .strict();
 

@@ -21,7 +21,7 @@ const ENDPOINT = "POST /api/v1/ext/runs/collect";
 
 const bodySchema = z
   .object({
-    childRunId: z.string().min(1).optional(),
+    childRunId: z.string().uuid().optional(),
     all: z.boolean().optional(),
   })
   .strict()

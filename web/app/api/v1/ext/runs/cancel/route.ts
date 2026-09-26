@@ -21,7 +21,7 @@ const ENDPOINT = "POST /api/v1/ext/runs/cancel";
 
 const bodySchema = z
   .object({
-    childRunId: z.string().min(1),
+    childRunId: z.string().uuid(),
   })
   .strict();
 
