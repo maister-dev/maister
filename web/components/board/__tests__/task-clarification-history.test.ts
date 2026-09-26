@@ -4,6 +4,16 @@ import { describe, expect, it } from "vitest";
 
 import { TaskClarificationHistory } from "@/components/board/task-clarification-history";
 
+const agentFields = {
+  originKind: "agent_run" as const,
+  requesterUserId: null,
+  recipientUserId: null,
+  reason: null,
+  answerFormat: null,
+  blocking: false,
+  cancelReason: null,
+};
+
 describe("TaskClarificationHistory", () => {
   it("shows the active condition and only ordered answered clarification history", () => {
     const html = renderToStaticMarkup(
@@ -11,6 +21,7 @@ describe("TaskClarificationHistory", () => {
         awaitingClarification: true,
         history: [
           {
+            ...agentFields,
             id: "later",
             seq: 2,
             question: "Second?",
@@ -21,8 +32,10 @@ describe("TaskClarificationHistory", () => {
             originRunId: "run-2",
             originAgentId: "agent-2",
             reTriggerMode: "agent",
+            status: "answered",
           },
           {
+            ...agentFields,
             id: "first",
             seq: 1,
             question: "First?",
@@ -33,8 +46,10 @@ describe("TaskClarificationHistory", () => {
             originRunId: "run-1",
             originAgentId: "agent-1",
             reTriggerMode: "agent",
+            status: "answered",
           },
           {
+            ...agentFields,
             id: "superseded",
             seq: 3,
             question: "Do not render?",
@@ -45,6 +60,7 @@ describe("TaskClarificationHistory", () => {
             originRunId: "run-3",
             originAgentId: "agent-3",
             reTriggerMode: "agent",
+            status: "superseded",
           },
         ],
         labels: {

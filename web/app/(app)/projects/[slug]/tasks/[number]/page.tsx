@@ -9,6 +9,7 @@ import type {
 } from "@/lib/runs/execution-policy";
 
 import { QuestionMarkCircleIcon } from "@heroicons/react/24/outline";
+import { and, eq, inArray } from "drizzle-orm";
 import { getLocale, getTranslations } from "next-intl/server";
 import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
@@ -20,6 +21,7 @@ import {
 } from "@/components/board/task-card-editing";
 import { TaskQueueControls } from "@/components/board/task-queue-controls";
 import { TaskClarificationHistory } from "@/components/board/task-clarification-history";
+import { TaskUserClarifications } from "@/components/board/task-user-clarifications";
 import { type FlowGraphViewLabels } from "@/components/board/flow-graph-view";
 import { FlowGraphViewSection } from "@/components/board/flow-graph-view-section";
 import { CommentComposer } from "@/components/social/comment-composer";
@@ -30,6 +32,8 @@ import { TaskDetailPromptEditor } from "@/components/social/task-detail-prompt-e
 import { TaskTimeline } from "@/components/social/task-timeline";
 import RunDiff from "@/components/workbench/run-diff";
 import { getProjectRole, getSessionUser } from "@/lib/authz";
+import { getDb } from "@/lib/db/client";
+import { projectMembers, users } from "@/lib/db/schema";
 import { compileManifest } from "@/lib/flows/graph/compile";
 import { buildFlowNodeTooltipsFromManifest } from "@/lib/flows/graph/node-tooltips";
 import { presentationLayout } from "@/lib/flows/graph/presentation-layout";
@@ -39,6 +43,7 @@ import { getRunNodeStatuses } from "@/lib/queries/run-node-status";
 import { getProjectAgentsView } from "@/lib/agents/project-links";
 import { listMentionCandidateAgents } from "@/lib/agents/summonability";
 import { getTaskDetail } from "@/lib/queries/task-detail";
+import { countOpenBlockingClarifications } from "@/lib/tasks/clarification-gate";
 import { expandExecutionPolicy } from "@/lib/runs/execution-policy";
 import {
   classifyForceRelaunchLaunchability,
@@ -167,6 +172,52 @@ export default async function TaskDetailPage({
   if (!role) notFound();
 
   const canAct = role === "owner" || role === "admin" || role === "member";
+  const clarificationUserIds = [
+    ...new Set(
+      detail.task.clarifications.flatMap((row) =>
+        [row.requesterUserId, row.recipientUserId].filter(
+          (id): id is string => id !== null,
+        ),
+      ),
+    ),
+  ];
+  const clarificationPeople =
+    clarificationUserIds.length === 0
+      ? []
+      : await getDb()
+          .select({
+            id: users.id,
+            name: users.name,
+            email: users.email,
+            globalRole: users.role,
+            accountStatus: users.accountStatus,
+            projectRole: projectMembers.role,
+          })
+          .from(users)
+          .leftJoin(
+            projectMembers,
+            and(
+              eq(projectMembers.userId, users.id),
+              eq(projectMembers.projectId, detail.project.id),
+            ),
+          )
+          .where(inArray(users.id, clarificationUserIds));
+  const nameById = Object.fromEntries(
+    clarificationPeople.map((person) => [
+      person.id,
+      person.name ?? person.email,
+    ]),
+  );
+  const recipientEligibleById = Object.fromEntries(
+    clarificationPeople.map((person) => [
+      person.id,
+      person.accountStatus === "active" &&
+        (person.globalRole === "admin" ||
+          person.projectRole === "member" ||
+          person.projectRole === "admin" ||
+          person.projectRole === "owner"),
+    ]),
+  );
   const [t, tLaunch, tBoard, locale, platformStatus, launchConfig] =
     await Promise.all([
       getTranslations("taskDetail"),
@@ -176,6 +227,7 @@ export default async function TaskDetailPage({
       getPlatformStatus(),
       resolveTaskLaunchConfig(detail.task.id),
     ]);
+  const openBlocking = await countOpenBlockingClarifications(detail.task.id);
   const manualLaunchability = classifyManualTaskLaunchability(
     {
       status: detail.task.status as TaskStatus,
@@ -185,6 +237,7 @@ export default async function TaskDetailPage({
       ? { status: detail.latestFlowRun.status as RunStatus }
       : null,
     { openBlockers: detail.openBlockers },
+    { openBlocking },
   );
   const launchDisabledReason =
     platformStatus.kind !== "ready"
@@ -209,6 +262,7 @@ export default async function TaskDetailPage({
       ? { status: detail.latestFlowRun.status as RunStatus }
       : null,
     { openBlockers: detail.openBlockers },
+    { openBlocking },
   );
   const forceLaunchDisabledReason =
     platformStatus.kind !== "ready"
@@ -564,6 +618,33 @@ export default async function TaskDetailPage({
             question: t("clarificationQuestion"),
             title: t("clarificationsTitle"),
           }}
+        />
+        <TaskUserClarifications
+          canAct={canAct}
+          history={detail.task.clarifications}
+          labels={{
+            title: t("clarificationsTitle"),
+            blocking: t("clarificationBlocking"),
+            nonBlocking: t("clarificationNonBlocking"),
+            requestedBy: t("clarificationRequestedBy"),
+            recipient: t("clarificationRecipient"),
+            reason: t("clarificationReason"),
+            open: t("clarificationOpen"),
+            answered: t("clarificationAnswered"),
+            cancelled: t("clarificationCancelled"),
+            superseded: t("clarificationSuperseded"),
+            answer: t("clarificationAnswer"),
+            submit: t("clarificationSubmit"),
+            cancel: t("clarificationCancel"),
+            recipientUnavailable: t("clarificationRecipientUnavailable"),
+            yes: t("clarificationYes"),
+            no: t("clarificationNo"),
+          }}
+          nameById={nameById}
+          recipientEligibleById={recipientEligibleById}
+          slug={slug}
+          taskNumber={detail.task.number}
+          userId={user.id}
         />
         <RelationsEditor
           canEdit={canAct}

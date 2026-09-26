@@ -23,6 +23,7 @@ import { getOpenRelationBlockers } from "@/lib/social/relations";
 import { countLiveRuns, maxConcurrentRunsCap } from "@/lib/scheduler";
 import { schedulerAttemptTimeoutSeconds } from "@/lib/scheduler/jobs";
 import { launchRun } from "@/lib/services/runs";
+import { countOpenBlockingClarifications } from "@/lib/tasks/clarification-gate";
 
 const { runSchedules, tasks } = schema;
 
@@ -50,6 +51,7 @@ export type FireDecision =
         | "skipped_target_terminal"
         | "skipped_crashed"
         | "skipped_flagged"
+        | "skipped_clarification_pending"
         | "skipped_blocked"
         | "skipped_unconfigured";
     }
@@ -77,6 +79,9 @@ export function decideFire(input: {
   // classifier (flagged outranks blocked).
   if (input.launchability === "flagged") {
     return { action: "skip", outcome: "skipped_flagged" };
+  }
+  if (input.launchability === "clarification_pending") {
+    return { action: "skip", outcome: "skipped_clarification_pending" };
   }
   // ADR-078 D5: relations gate launching under EVERY policy; like crashed,
   // an existing queue_one flag is kept (unblocking fires the catch-up).
@@ -120,6 +125,7 @@ export type DispatchSummary = {
   skippedCap: number;
   skippedTerminal: number;
   skippedFlagged: number;
+  skippedClarificationPending: number;
   skippedBlocked: number;
   skippedUnconfigured: number;
   catchupQueued: number;
@@ -247,6 +253,7 @@ type StagedDecision =
         | "skipped_target_terminal"
         | "skipped_crashed"
         | "skipped_flagged"
+        | "skipped_clarification_pending"
         | "skipped_blocked"
         | "skipped_unconfigured"
         | "catchup_queued";
@@ -271,9 +278,18 @@ async function decideAndStage(
   const latestRun = await getLatestFlowRun(row.taskId, tx);
   const openBlockers =
     (await getOpenRelationBlockers([row.taskId], tx)).get(row.taskId) ?? [];
-  const launchability = classifyTaskLaunchability(task, latestRun, {
-    openBlockers,
-  });
+  const openBlocking = await countOpenBlockingClarifications(
+    row.taskId,
+    tx as unknown as ReturnType<typeof getDb>,
+  );
+  const launchability = classifyTaskLaunchability(
+    task,
+    latestRun,
+    {
+      openBlockers,
+    },
+    { openBlocking },
+  );
   // Launches staged earlier in the SAME batch haven't created runs yet —
   // count them as occupied slots, or every row in the batch sees the
   // pre-batch live count and skip/queue_one overshoot the cap into Pending.
@@ -472,6 +488,7 @@ export async function dispatchDueSchedules(
     skippedCap: 0,
     skippedTerminal: 0,
     skippedFlagged: 0,
+    skippedClarificationPending: 0,
     skippedBlocked: 0,
     skippedUnconfigured: 0,
     catchupQueued: 0,
@@ -523,6 +540,9 @@ export async function dispatchDueSchedules(
             break;
           case "skipped_flagged":
             summary.skippedFlagged += 1;
+            break;
+          case "skipped_clarification_pending":
+            summary.skippedClarificationPending += 1;
             break;
           case "skipped_blocked":
             summary.skippedBlocked += 1;

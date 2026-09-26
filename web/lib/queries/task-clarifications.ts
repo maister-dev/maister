@@ -23,10 +23,18 @@ const log = pino({
 export type ClarificationQueryDb = Pick<ReturnType<typeof getDb>, "select">;
 
 export type TaskClarificationHistory = ClarificationHistoryRow & {
-  sourceHitlRequestId: string;
-  originRunId: string;
-  originAgentId: string;
-  reTriggerMode: "agent" | "triage";
+  sourceHitlRequestId: string | null;
+  originRunId: string | null;
+  originAgentId: string | null;
+  originKind: "agent_run" | "user";
+  reTriggerMode: "agent" | "triage" | "none";
+  requesterUserId: string | null;
+  recipientUserId: string | null;
+  reason: string | null;
+  answerFormat: "text" | "choice" | "yes_no" | null;
+  blocking: boolean;
+  status: "open" | "answered" | "cancelled" | "superseded";
+  cancelReason: string | null;
 };
 
 export type TaskClarificationProjection = {
@@ -49,11 +57,19 @@ export async function getTaskClarificationProjection(
         sourceHitlRequestId: taskClarifications.sourceHitlRequestId,
         originRunId: taskClarifications.originRunId,
         originAgentId: taskClarifications.originAgentId,
+        originKind: taskClarifications.originKind,
         question: taskClarifications.question,
         answer: taskClarifications.answer,
         answeredAt: taskClarifications.answeredAt,
         supersededAt: taskClarifications.supersededAt,
         reTriggerMode: taskClarifications.reTriggerMode,
+        requesterUserId: taskClarifications.requesterUserId,
+        recipientUserId: taskClarifications.recipientUserId,
+        reason: taskClarifications.reason,
+        answerFormat: taskClarifications.answerFormat,
+        blocking: taskClarifications.blocking,
+        status: taskClarifications.status,
+        cancelReason: taskClarifications.cancelReason,
       })
       .from(taskClarifications)
       .where(eq(taskClarifications.taskId, taskId))
@@ -73,7 +89,7 @@ export async function getTaskClarificationProjection(
       ),
   ]);
 
-  const clarificationHistory = history as TaskClarificationHistory[];
+  const clarificationHistory: TaskClarificationHistory[] = history;
   const clarifications = orderedAnsweredClarifications(clarificationHistory);
   const awaitingClarification = deriveAwaitingClarification(
     requests as ClarificationRequestState[],
@@ -83,9 +99,9 @@ export async function getTaskClarificationProjection(
     {
       taskId,
       clarificationCount: clarifications.length,
-      sourceHitlRequestIds: clarificationHistory.map(
-        (row) => row.sourceHitlRequestId,
-      ),
+      sourceHitlRequestIds: clarificationHistory
+        .filter((row) => row.originKind === "agent_run")
+        .map((row) => row.sourceHitlRequestId),
       awaitingClarification,
     },
     "task clarification context assembled",

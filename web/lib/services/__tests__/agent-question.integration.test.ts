@@ -881,6 +881,8 @@ describe("agent-question lifecycle (ADR-136, integration)", () => {
         payload: {
           clarificationId: expect.any(String),
           hitlRequestId: winner.hitlRequestId,
+          originKind: "agent_run",
+          reTriggerMode: "agent",
           requestingAgentId: seeded.agentId,
         },
       },
@@ -1028,6 +1030,9 @@ describe("agent-question lifecycle (ADR-136, integration)", () => {
         ),
       );
 
-    expect(events).toEqual([{ kind: "task.triage_requeued" }]);
+    expect(events).toEqual([
+      { kind: "task.triage_requeued" },
+      { kind: "task.clarification_answered" },
+    ]);
   });
 });

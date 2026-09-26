@@ -83,6 +83,7 @@ import {
   closedAnswerResponse,
   type HitlClosedReason,
 } from "@/lib/hitl-closed-answer";
+import { countOpenBlockingClarifications } from "@/lib/tasks/clarification-gate";
 import {
   classifyForceRelaunchLaunchability,
   classifyManualTaskLaunchability,
@@ -125,7 +126,7 @@ import {
 import { launchRun } from "@/lib/services/runs";
 import { sendTaskToTriageInTransaction } from "@/lib/services/triage";
 import { requireNoLiveGateChatTurn } from "@/lib/services/gate-chat";
-import { actorForUserId } from "@/lib/social/activity";
+import { actorForUserId, recordTaskActivity } from "@/lib/social/activity";
 import { addTaskComment } from "@/lib/social/comments";
 import { getOpenRelationBlockers } from "@/lib/social/relations";
 import {
@@ -4487,11 +4488,22 @@ async function preflightBudgetRestartLaunchability(args: {
       : latestFlowRun;
   const openBlockers =
     (await getOpenRelationBlockers([taskId], args.db)).get(taskId) ?? [];
+  const openBlocking = await countOpenBlockingClarifications(taskId, args.db);
   const launchability = launchedLineageRestart
-    ? classifyForceRelaunchLaunchability(task, latestForRestart, {
-        openBlockers,
-      })
-    : classifyManualTaskLaunchability(task, latestForRestart, { openBlockers });
+    ? classifyForceRelaunchLaunchability(
+        task,
+        latestForRestart,
+        {
+          openBlockers,
+        },
+        { openBlocking },
+      )
+    : classifyManualTaskLaunchability(
+        task,
+        latestForRestart,
+        { openBlockers },
+        { openBlocking },
+      );
 
   if (launchability !== "launchable") {
     const blockerSuffix =
@@ -6481,7 +6493,11 @@ async function handleAgentQuestionResponse(
         .for("update");
       const clarification = clarificationRows[0];
 
-      if (!clarification) {
+      if (
+        !clarification ||
+        clarification.originKind !== "agent_run" ||
+        !clarification.originAgentId
+      ) {
         throw new MaisterError(
           "PRECONDITION",
           "agent_question clarification provenance is missing",
@@ -6593,6 +6609,7 @@ async function handleAgentQuestionResponse(
           answer: response,
           answeredByUserId: humanActor.userId,
           answeredAt: now,
+          status: "answered",
         })
         .where(
           and(
@@ -6634,6 +6651,7 @@ async function handleAgentQuestionResponse(
           .set({
             supersededAt: now,
             supersededByHitlRequestId: hitlRequestId,
+            status: "superseded",
           })
           .where(inArray(taskClarifications.sourceHitlRequestId, siblingIds));
 
@@ -6658,6 +6676,14 @@ async function handleAgentQuestionResponse(
 
       const eventActor = actorForUserId(humanActor.userId);
 
+      await recordTaskActivity(tx, {
+        taskId: task.id,
+        projectId: task.projectId,
+        actor: eventActor,
+        eventKind: "clarification_answered",
+        payload: { clarificationId: clarification.id, originKind: "agent_run" },
+      });
+
       if (reTriggerMode === "triage") {
         const projectRows = await tx
           .select({ taskKey: projects.taskKey })
@@ -6679,21 +6705,25 @@ async function handleAgentQuestionResponse(
           title: task.title,
           actor: eventActor,
         });
-      } else {
-        await emitDomainEvent({
-          db: tx,
-          kind: "task.clarification_answered",
-          projectId: task.projectId,
-          taskId: task.id,
-          runId,
-          actor: eventActor,
-          payload: {
-            clarificationId: clarification.id,
-            hitlRequestId,
-            requestingAgentId: clarification.originAgentId,
-          },
-        });
       }
+
+      await emitDomainEvent({
+        db: tx,
+        kind: "task.clarification_answered",
+        projectId: task.projectId,
+        taskId: task.id,
+        runId,
+        actor: eventActor,
+        payload: {
+          clarificationId: clarification.id,
+          hitlRequestId,
+          originKind: "agent_run",
+          reTriggerMode,
+          ...(reTriggerMode === "agent"
+            ? { requestingAgentId: clarification.originAgentId }
+            : {}),
+        },
+      });
 
       await args.recordSuccessAudit?.(tx, 200);
 

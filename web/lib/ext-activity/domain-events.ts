@@ -78,6 +78,26 @@ function mapDomainEvent(row: DomainEventActivityRow): DomainEventMapping {
         summary: `answered a clarification for ${taskLabel(row)}`,
         hitlRequestId: stringField(row.payload, "hitlRequestId"),
       };
+    case "task.clarification_requested":
+      return {
+        salience: "high",
+        action: {
+          verb: "request",
+          object: `clarification for ${taskLabel(row)}`,
+          outcome: "open",
+        },
+        summary: `requested a clarification for ${taskLabel(row)}`,
+      };
+    case "task.clarification_cancelled":
+      return {
+        salience: "high",
+        action: {
+          verb: "cancel",
+          object: `clarification for ${taskLabel(row)}`,
+          outcome: "cancelled",
+        },
+        summary: `cancelled a clarification for ${taskLabel(row)}`,
+      };
     case "run.done":
       return {
         salience: "high",

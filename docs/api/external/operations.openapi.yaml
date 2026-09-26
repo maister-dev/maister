@@ -6821,6 +6821,7 @@ components:
           taskKey,
           runId,
           hitlRequestId,
+          clarificationId,
           title,
           criticality,
           nextAction,

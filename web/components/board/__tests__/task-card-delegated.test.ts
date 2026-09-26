@@ -45,6 +45,7 @@ function card(over: Partial<BacklogCard> = {}): BacklogCard {
     awaitingClarification: false,
     runCount: 1,
     blockedBy: [],
+    clarificationPending: false,
     flowId: "flow-1",
     triageStatus: null,
     runnerId: null,

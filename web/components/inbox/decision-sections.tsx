@@ -6,13 +6,14 @@ import { DecisionCard } from "@/components/inbox/decision-card";
 
 type NonHitlDecision = Extract<
   DecisionItem,
-  { kind: "crashed" | "promotable" | "flagged" }
+  { kind: "crashed" | "promotable" | "flagged" | "clarification" }
 >;
 
 export interface DecisionSectionsLabels extends DecisionCardLabels {
   promotableTitle: string;
   crashedTitle: string;
   flaggedTitle: string;
+  clarificationTitle: string;
 }
 
 // The three decision populations that are NOT a pending HITL request. They were
@@ -32,6 +33,7 @@ export function DecisionSections({
     { kind: "promotable" as const, title: labels.promotableTitle },
     { kind: "crashed" as const, title: labels.crashedTitle },
     { kind: "flagged" as const, title: labels.flaggedTitle },
+    { kind: "clarification" as const, title: labels.clarificationTitle },
   ].flatMap((section) => {
     const rows = byKind(section.kind);
 

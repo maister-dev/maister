@@ -136,6 +136,7 @@ function Receipt({
   const runId = operation.result?.runId;
   const outcome = operation.result?.outcome ?? operation.result?.status;
   const queuePosition = operation.result?.queuePosition;
+  const clarificationSeq = operation.result?.seq;
 
   return (
     <li
@@ -144,7 +145,11 @@ function Receipt({
     >
       <div className="flex flex-wrap justify-between gap-1">
         <span className="font-medium">
-          {operation.kind.replaceAll("_", " ")}
+          {operation.kind === "clarification_request"
+            ? t("clarificationRequested")
+            : operation.kind === "clarification_cancel"
+              ? t("clarificationCancelled")
+              : operation.kind.replaceAll("_", " ")}
         </span>
         <span className="font-mono text-mute">{operation.status}</span>
       </div>
@@ -154,6 +159,14 @@ function Receipt({
         <div className="mt-1 flex flex-wrap gap-2 text-mute">
           {typeof runId === "string" ? (
             <Link href={`/runs/${runId}`}>{t("openRun")}</Link>
+          ) : null}
+          {operation.kind === "clarification_request" && operation.taskPath ? (
+            <Link href={operation.taskPath}>
+              {t("openClarificationTask", {
+                sequence:
+                  typeof clarificationSeq === "number" ? clarificationSeq : "?",
+              })}
+            </Link>
           ) : null}
           {operation.liveRunStatus ? (
             <span>

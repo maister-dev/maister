@@ -40,6 +40,7 @@ function row(over: Partial<WorkTableRow> = {}): WorkTableRow {
     projectName: "MyApp",
     stage: "WaitingOnHuman",
     blocked: false,
+    clarificationPending: false,
     promotedKind: null,
     progress: null,
     runId: "run-1",

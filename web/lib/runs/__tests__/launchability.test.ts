@@ -456,3 +456,59 @@ describe("classifyForceRelaunchLaunchability — task gates are preserved", () =
     ).toBe("launchable");
   });
 });
+
+describe("blocking user clarification launch hold", () => {
+  const relationGate: RelationGate = {
+    openBlockers: [{ key: "MAI", number: 7 }],
+  };
+  const pending = { openBlocking: 1 };
+
+  it("holds all three launch paths before relation blockers", () => {
+    const backlog = task("Backlog");
+
+    expect(
+      classifyTaskLaunchability(backlog, null, relationGate, pending),
+    ).toBe("clarification_pending");
+    expect(
+      classifyManualTaskLaunchability(backlog, null, relationGate, pending),
+    ).toBe("clarification_pending");
+    expect(
+      classifyForceRelaunchLaunchability(backlog, null, relationGate, pending),
+    ).toBe("clarification_pending");
+  });
+
+  it("keeps terminal, crashed, busy and flagged precedence", () => {
+    expect(
+      classifyTaskLaunchability(task("Done"), null, undefined, pending),
+    ).toBe("target_terminal");
+    expect(
+      classifyTaskLaunchability(
+        task("InFlight"),
+        run("Crashed"),
+        undefined,
+        pending,
+      ),
+    ).toBe("crashed");
+    expect(
+      classifyTaskLaunchability(
+        task("InFlight"),
+        run("Running"),
+        undefined,
+        pending,
+      ),
+    ).toBe("busy");
+    expect(
+      classifyTaskLaunchability(
+        task("Backlog", "flow-1", "flagged"),
+        null,
+        undefined,
+        pending,
+      ),
+    ).toBe("flagged");
+    expect(
+      classifyTaskLaunchability(task("Backlog"), null, undefined, {
+        openBlocking: 0,
+      }),
+    ).toBe("launchable");
+  });
+});

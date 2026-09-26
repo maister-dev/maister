@@ -3532,9 +3532,9 @@ async function seedHumanAskFixture(
   );
   await pool.query(
     `INSERT INTO task_clarifications
-       (id, task_id, seq, source_hitl_request_id, origin_run_id, origin_agent_id,
+       (id, task_id, seq, origin_kind, source_hitl_request_id, origin_run_id, origin_agent_id,
         question, question_schema, retrigger_mode)
-     VALUES ($1, $2, 1, $3, $4, $5, $6, $7, 'agent')`,
+     VALUES ($1, $2, 1, 'agent_run', $3, $4, $5, $6, $7, 'agent')`,
     [
       ids.clarification,
       ids.task,

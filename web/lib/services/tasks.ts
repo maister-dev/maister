@@ -28,6 +28,7 @@ import {
 } from "@/lib/services/triage";
 import { subscribe } from "@/lib/social/subscriptions";
 import { applyQueueWriteFields } from "@/lib/tasks/queue-fields";
+import { cancelClarificationsForAbandonedTasks } from "@/lib/tasks/clarification-requests";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (matches app/api/projects/[slug]/tasks/route.ts).
 const { projects, runs, tasks } = schemaModule as unknown as Record<
@@ -434,76 +435,90 @@ export async function updateTask(
       .where(and(eq(tasks.id, taskId), eq(tasks.projectId, projectId)))
       .for("update");
 
-  if (rows.length === 0) {
-    throw new MaisterError("PRECONDITION", `task not found: ${taskId}`);
-  }
+    if (rows.length === 0) {
+      throw new MaisterError("PRECONDITION", `task not found: ${taskId}`);
+    }
 
-  const task = rows[0];
+    const task = rows[0];
 
-  if (
-    input.expectedRevision !== undefined &&
-    task.revision !== input.expectedRevision
-  ) {
-    log.warn({ taskId, expectedRevision: input.expectedRevision, actualRevision: task.revision }, "task revision is stale");
-    throw new MaisterError("CONFLICT", "task has changed; reload before updating", {
-      details: { reason: "stale_revision", actualRevision: task.revision },
-    });
-  }
+    if (
+      input.expectedRevision !== undefined &&
+      task.revision !== input.expectedRevision
+    ) {
+      log.warn(
+        {
+          taskId,
+          expectedRevision: input.expectedRevision,
+          actualRevision: task.revision,
+        },
+        "task revision is stale",
+      );
+      throw new MaisterError(
+        "CONFLICT",
+        "task has changed; reload before updating",
+        {
+          details: { reason: "stale_revision", actualRevision: task.revision },
+        },
+      );
+    }
 
-  // ADR-121 (INV-10): the pause valve works while a task is InFlight (to dequeue
-  // a resume / stop an auto-relaunch); config fields stay Backlog-gated. Terminal
-  // tasks accept neither.
-  if (task.status !== "Backlog" && hasBacklogGatedField(input)) {
-    throw new MaisterError(
-      "PRECONDITION",
-      `task is not in Backlog (got ${task.status})`,
+    // ADR-121 (INV-10): the pause valve works while a task is InFlight (to dequeue
+    // a resume / stop an auto-relaunch); config fields stay Backlog-gated. Terminal
+    // tasks accept neither.
+    if (task.status !== "Backlog" && hasBacklogGatedField(input)) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `task is not in Backlog (got ${task.status})`,
+      );
+    }
+
+    if (
+      input.queuePaused !== undefined &&
+      task.status !== "Backlog" &&
+      task.status !== "InFlight"
+    ) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `task is terminal (got ${task.status}); cannot change pause`,
+      );
+    }
+
+    const patch = updateColumns(input);
+
+    if (Object.keys(patch).length === 1) {
+      throw new MaisterError("CONFIG", "at least one task field is required");
+    }
+
+    const resolvedVerdict = await validateVerdictRefs(
+      projectId,
+      verdictPatch(input),
+      tx,
     );
-  }
 
-  if (
-    input.queuePaused !== undefined &&
-    task.status !== "Backlog" &&
-    task.status !== "InFlight"
-  ) {
-    throw new MaisterError(
-      "PRECONDITION",
-      `task is terminal (got ${task.status}); cannot change pause`,
+    // `patch` was built before validation, so the resolved id has to be applied
+    // onto it explicitly — otherwise a flowId given as a ref is written verbatim.
+    if (resolvedVerdict.flowId !== undefined) {
+      patch.flowId = resolvedVerdict.flowId;
+    }
+
+    patch.revision = sql`${tasks.revision} + 1`;
+
+    await tx
+      .update(tasks)
+      .set(patch)
+      .where(and(eq(tasks.id, taskId), eq(tasks.projectId, projectId)));
+
+    const updatedRows = await tx
+      .select()
+      .from(tasks)
+      .where(and(eq(tasks.id, taskId), eq(tasks.projectId, projectId)));
+
+    log.debug(
+      { taskId, from: task.revision, to: updatedRows[0].revision },
+      "task revision advanced",
     );
-  }
 
-  const patch = updateColumns(input);
-
-  if (Object.keys(patch).length === 1) {
-    throw new MaisterError("CONFIG", "at least one task field is required");
-  }
-
-  const resolvedVerdict = await validateVerdictRefs(
-    projectId,
-    verdictPatch(input),
-    tx,
-  );
-
-  // `patch` was built before validation, so the resolved id has to be applied
-  // onto it explicitly — otherwise a flowId given as a ref is written verbatim.
-  if (resolvedVerdict.flowId !== undefined) {
-    patch.flowId = resolvedVerdict.flowId;
-  }
-
-  patch.revision = sql`${tasks.revision} + 1`;
-
-  await tx
-    .update(tasks)
-    .set(patch)
-    .where(and(eq(tasks.id, taskId), eq(tasks.projectId, projectId)));
-
-  const updatedRows = await tx
-    .select()
-    .from(tasks)
-    .where(and(eq(tasks.id, taskId), eq(tasks.projectId, projectId)));
-
-  log.debug({ taskId, from: task.revision, to: updatedRows[0].revision }, "task revision advanced");
-
-  return taskToDTO(updatedRows[0], tx);
+    return taskToDTO(updatedRows[0], tx);
   });
 }
 
@@ -538,5 +553,9 @@ export async function abandonUnlaunchedTasks(
     )
     .returning({ id: tasks.id })) as { id: string }[];
 
-  return rows.map((row) => row.id);
+  const abandonedIds = rows.map((row) => row.id);
+
+  await cancelClarificationsForAbandonedTasks(db, abandonedIds);
+
+  return abandonedIds;
 }

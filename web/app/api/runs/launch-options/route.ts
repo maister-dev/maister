@@ -24,6 +24,7 @@ import {
   type RunnerResolutionWarning,
 } from "@/lib/acp-runners/resolve";
 import { getDb } from "@/lib/db/client";
+import { countOpenBlockingClarifications } from "@/lib/tasks/clarification-gate";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import {
@@ -483,6 +484,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     const latestFlowRun = await getLatestFlowRun(task.id, db);
     const openBlockers =
       (await getOpenRelationBlockers([task.id], db)).get(task.id) ?? [];
+    const openBlocking = await countOpenBlockingClarifications(task.id, db);
     const launchabilityTask = {
       status: task.status ?? "Backlog",
       triageStatus: (task.triageStatus as "triaged" | "flagged" | null) ?? null,
@@ -491,6 +493,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       launchabilityTask,
       latestFlowRun,
       { openBlockers },
+      { openBlocking },
     );
     // ADR-119: the FORCE-relaunch verdict over the same in-memory data — feeds
     // the runs-history "Run again" button. Run status is not consulted; only the
@@ -499,6 +502,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       launchabilityTask,
       latestFlowRun,
       { openBlockers },
+      { openBlocking },
     );
     // M34 (ADR-089): flow setup issues layer over an otherwise-launchable task.
     // Run-state/relation blockers keep their precedence; users can still load

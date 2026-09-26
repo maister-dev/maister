@@ -35,6 +35,7 @@ import {
   getLatestFlowRun,
 } from "@/lib/runs/launchability";
 import { getOpenRelationBlockers } from "@/lib/social/relations";
+import { countOpenBlockingClarifications } from "@/lib/tasks/clarification-gate";
 
 const {
   flowRevisions,
@@ -287,6 +288,7 @@ export async function resolveTaskLaunchConfig(
   const latestFlowRun = await getLatestFlowRun(task.id, db);
   const openBlockers =
     (await getOpenRelationBlockers([task.id], db)).get(task.id) ?? [];
+  const openBlocking = await countOpenBlockingClarifications(task.id, db);
   const manual = classifyManualTaskLaunchability(
     {
       status: task.status ?? "Backlog",
@@ -294,6 +296,7 @@ export async function resolveTaskLaunchConfig(
     },
     latestFlowRun,
     { openBlockers },
+    { openBlocking },
   );
   const flowIssueReason =
     manifestCompatibility && !manifestCompatibility.compatible

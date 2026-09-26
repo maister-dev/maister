@@ -55,12 +55,14 @@ export interface DeriveWorkStageInput {
   promotionState: string | null;
   workspaceRemoved: boolean;
   blockingRelationCount: number;
+  openBlockingClarificationCount: number;
   progress: WorkProgress | null;
 }
 
 export interface WorkStageResult {
   stage: WorkStage;
   blocked: boolean;
+  clarificationPending: boolean;
   progress: WorkProgress | null;
   promotedKind: PromotedKind | null;
 }
@@ -146,6 +148,7 @@ export function deriveWorkStage(input: DeriveWorkStageInput): WorkStageResult {
     stage,
     // STG-05: an attribute beside the stage, never a member of it.
     blocked: input.blockingRelationCount > 0,
+    clarificationPending: input.openBlockingClarificationCount > 0,
     // k/N describes a graph that is running; it is meaningless anywhere else.
     progress: stage === "Executing" ? input.progress : null,
     promotedKind:

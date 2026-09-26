@@ -20,6 +20,7 @@ function answeredHistory(
   return history
     .filter(
       (clarification) =>
+        clarification.originKind === "agent_run" &&
         clarification.answeredAt !== null &&
         clarification.supersededAt === null &&
         clarification.answer !== null,

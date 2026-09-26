@@ -11,6 +11,7 @@ import pino from "pino";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import { cancelClarificationsForDeactivatedRecipient } from "@/lib/tasks/clarification-requests";
 import {
   generateTempPassword,
   hashPassword,
@@ -433,6 +434,12 @@ export async function updateAdminUser(
 
     try {
       await tx.update(users).set(patch).where(eq(users.id, targetUserId));
+      if (input.status === "disabled" && target.accountStatus === "active") {
+        await cancelClarificationsForDeactivatedRecipient(
+          tx as unknown as ReturnType<typeof getDb>,
+          targetUserId,
+        );
+      }
     } catch (err) {
       if (isUniqueViolation(err)) {
         throw new MaisterError(

@@ -5114,6 +5114,7 @@ export type RunScheduleFireOutcome =
   | "skipped_target_terminal"
   | "skipped_crashed"
   | "skipped_flagged"
+  | "skipped_clarification_pending"
   | "skipped_blocked"
   | "skipped_unconfigured"
   | "launch_failed"
@@ -5165,6 +5166,7 @@ export const runSchedules = pgTable(
         "skipped_target_terminal",
         "skipped_crashed",
         "skipped_flagged",
+        "skipped_clarification_pending",
         "skipped_blocked",
         "skipped_unconfigured",
         "launch_failed",
@@ -6417,14 +6419,34 @@ export const taskClarifications = pgTable(
       .notNull()
       .references(() => tasks.id, { onDelete: "cascade" }),
     seq: integer("seq").notNull(),
-    sourceHitlRequestId: text("source_hitl_request_id").notNull(),
-    originRunId: text("origin_run_id").notNull(),
-    originAgentId: text("origin_agent_id").notNull(),
+    sourceHitlRequestId: text("source_hitl_request_id"),
+    originRunId: text("origin_run_id"),
+    originAgentId: text("origin_agent_id"),
+    originKind: text("origin_kind", { enum: ["agent_run", "user"] }).notNull(),
     question: text("question").notNull(),
-    questionSchema: jsonb("question_schema").notNull(),
+    questionSchema: jsonb("question_schema"),
     reTriggerMode: text("retrigger_mode", {
-      enum: ["agent", "triage"],
+      enum: ["agent", "triage", "none"],
     }).notNull(),
+    requesterUserId: text("requester_user_id"),
+    recipientUserId: text("recipient_user_id"),
+    reason: text("reason"),
+    answerFormat: text("answer_format", { enum: ["text", "choice", "yes_no"] }),
+    blocking: boolean("blocking").notNull().default(false),
+    status: text("status", {
+      enum: ["open", "answered", "cancelled", "superseded"],
+    })
+      .notNull()
+      .default("open"),
+    cancelReason: text("cancel_reason"),
+    supersededByClarificationId: text("superseded_by_clarification_id"),
+    sourceMessageId: text("source_message_id").references(
+      () => librarianMessages.id,
+      {
+        onDelete: "set null",
+      },
+    ),
+    requestedViaOperationId: text("requested_via_operation_id"),
     answer: jsonb("answer"),
     answeredByUserId: text("answered_by_user_id"),
     answeredAt: timestamp("answered_at", {
@@ -6449,6 +6471,9 @@ export const taskClarifications = pgTable(
     uniqSourceHitlRequest: unique(
       "task_clarifications_source_hitl_request_uq",
     ).on(t.sourceHitlRequestId),
+    uniqRequestedViaOperation: unique(
+      "task_clarifications_requested_via_operation_uq",
+    ).on(t.requestedViaOperationId),
     idxAnsweredContext: index("task_clarifications_answered_context_idx")
       .on(t.taskId, t.seq, t.id)
       .where(sql`${t.answeredAt} IS NOT NULL AND ${t.supersededAt} IS NULL`),
@@ -6472,19 +6497,55 @@ export const taskClarifications = pgTable(
       "task_clarifications_supersession_check",
       sql`(
         ${t.supersededAt} IS NULL
-        AND ${t.supersededByHitlRequestId} IS NULL
-        AND ${t.supersededByRunId} IS NULL
+        AND num_nonnulls(${t.supersededByHitlRequestId}, ${t.supersededByRunId}, ${t.supersededByClarificationId}) = 0
       ) OR (
         ${t.supersededAt} IS NOT NULL
-        AND (
-          (${t.supersededByHitlRequestId} IS NOT NULL AND ${t.supersededByRunId} IS NULL)
-          OR (${t.supersededByHitlRequestId} IS NULL AND ${t.supersededByRunId} IS NOT NULL)
-        )
+        AND num_nonnulls(${t.supersededByHitlRequestId}, ${t.supersededByRunId}, ${t.supersededByClarificationId}) = 1
       )`,
     ),
     reTriggerModeCheck: check(
       "task_clarifications_retrigger_mode_check",
-      sql`${t.reTriggerMode} IN ('agent', 'triage')`,
+      sql`${t.reTriggerMode} IN ('agent', 'triage', 'none')`,
+    ),
+    originKindCheck: check(
+      "task_clarifications_origin_kind_check",
+      sql`${t.originKind} IN ('agent_run', 'user')`,
+    ),
+    originShapeCheck: check(
+      "task_clarifications_origin_shape_check",
+      sql`(
+        ${t.originKind} = 'agent_run'
+        AND ${t.sourceHitlRequestId} IS NOT NULL
+        AND ${t.originRunId} IS NOT NULL
+        AND ${t.originAgentId} IS NOT NULL
+        AND ${t.questionSchema} IS NOT NULL
+        AND ${t.reTriggerMode} <> 'none'
+      ) OR (
+        ${t.originKind} = 'user'
+        AND ${t.sourceHitlRequestId} IS NULL
+        AND ${t.originRunId} IS NULL
+        AND ${t.originAgentId} IS NULL
+        AND ${t.requesterUserId} IS NOT NULL
+        AND ${t.recipientUserId} IS NOT NULL
+        AND ${t.reason} IS NOT NULL
+        AND ${t.answerFormat} IS NOT NULL
+        AND ${t.reTriggerMode} = 'none'
+      )`,
+    ),
+    answerFormatCheck: check(
+      "task_clarifications_answer_format_check",
+      sql`${t.answerFormat} IS NULL OR ${t.answerFormat} IN ('text', 'choice', 'yes_no')`,
+    ),
+    statusCheck: check(
+      "task_clarifications_status_check",
+      sql`${t.status} IN ('open', 'answered', 'cancelled', 'superseded')`,
+    ),
+    statusShapeCheck: check(
+      "task_clarifications_status_shape_check",
+      sql`(${t.status} <> 'answered' OR ${t.answeredAt} IS NOT NULL)
+        AND (${t.status} NOT IN ('open', 'cancelled') OR ${t.answeredAt} IS NULL)
+        AND (${t.status} <> 'cancelled' OR ${t.cancelReason} IS NOT NULL)
+        AND ((${t.status} = 'superseded') = (${t.supersededAt} IS NOT NULL))`,
     ),
   }),
 );
@@ -7674,6 +7735,9 @@ export const TASK_ACTIVITY_EVENT_KINDS = [
   // idempotent by construction — see task_activity_agent_summon_uq.
   "agent_summon_suppressed",
   "statement_accepted",
+  "clarification_requested",
+  "clarification_answered",
+  "clarification_cancelled",
 ] as const;
 
 export type TaskActivityEventKind = (typeof TASK_ACTIVITY_EVENT_KINDS)[number];
@@ -7716,7 +7780,7 @@ export const taskActivity = pgTable(
     ),
     eventKindCheck: check(
       "task_activity_event_kind_check",
-      sql`${t.eventKind} in ('task_created', 'comment_added', 'task_mentioned', 'relation_added', 'relation_removed', 'run_launched', 'triage_set', 'triage_requeued', 'agent_quarantined', 'experiment_concluded', 'run_pr_merged', 'evaluation_decided', 'agent_summon_suppressed', 'statement_accepted')`,
+      sql`${t.eventKind} in ('task_created', 'comment_added', 'task_mentioned', 'relation_added', 'relation_removed', 'run_launched', 'triage_set', 'triage_requeued', 'agent_quarantined', 'experiment_concluded', 'run_pr_merged', 'evaluation_decided', 'agent_summon_suppressed', 'statement_accepted', 'clarification_requested', 'clarification_answered', 'clarification_cancelled')`,
     ),
     // ADR-151: the structural backstop for at-least-once event redelivery —
     // the consumer inserts with onConflictDoNothing instead of reading first,
@@ -7776,12 +7840,19 @@ export const taskSubscribers = pgTable(
   }),
 );
 
-export type InboxSourceRef = {
-  kind: "comment" | "mention";
-  taskId: string;
-  commentId: string;
-  activityId: string;
-};
+export type InboxSourceRef =
+  | {
+      kind: "comment" | "mention";
+      taskId: string;
+      commentId: string;
+      activityId: string;
+    }
+  | {
+      kind: "clarification";
+      taskId: string;
+      clarificationId: string;
+      activityId: string;
+    };
 
 export const inboxItems = pgTable(
   "inbox_items",
@@ -7821,7 +7892,7 @@ export const inboxItems = pgTable(
     ),
     eventKindCheck: check(
       "inbox_items_event_kind_check",
-      sql`${t.eventKind} in ('task_created', 'comment_added', 'task_mentioned', 'relation_added', 'relation_removed', 'run_launched', 'triage_set', 'triage_requeued', 'agent_quarantined', 'experiment_concluded', 'run_pr_merged')`,
+      sql`${t.eventKind} in ('task_created', 'comment_added', 'task_mentioned', 'relation_added', 'relation_removed', 'run_launched', 'triage_set', 'triage_requeued', 'agent_quarantined', 'experiment_concluded', 'run_pr_merged', 'clarification_requested')`,
     ),
   }),
 );
@@ -7882,7 +7953,7 @@ export const domainEvents = pgTable(
   (t) => ({
     kindCheck: check(
       "domain_events_kind_check",
-      sql`${t.kind} in ('task.created', 'task.comment_added', 'task.triage_requeued', 'task.clarification_answered', 'run.done', 'run.failed', 'run.crashed', 'run.abandoned', 'run.review', 'run.escalated', 'run.rework_claimed', 'run.rework_returned', 'gate.failed')`,
+      sql`${t.kind} in ('task.created', 'task.comment_added', 'task.triage_requeued', 'task.clarification_requested', 'task.clarification_answered', 'task.clarification_cancelled', 'run.done', 'run.failed', 'run.crashed', 'run.abandoned', 'run.review', 'run.review_opened', 'run.needs_input', 'run.escalated', 'run.rework_claimed', 'run.rework_returned', 'gate.failed')`,
     ),
     actorTypeCheck: check(
       "domain_events_actor_type_check",
@@ -8341,7 +8412,9 @@ export type LibrarianContextSnapshotRow =
 export const librarianOperations = pgTable(
   "librarian_operations",
   {
-    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
     conversationId: text("conversation_id")
       .notNull()
       .references(() => librarianConversations.id, { onDelete: "cascade" }),
@@ -8390,7 +8463,9 @@ export type LibrarianOperationRow = typeof librarianOperations.$inferSelect;
 export const librarianCards = pgTable(
   "librarian_cards",
   {
-    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
     conversationId: text("conversation_id")
       .notNull()
       .references(() => librarianConversations.id, { onDelete: "cascade" }),
@@ -8418,7 +8493,10 @@ export const librarianCards = pgTable(
     payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
     payloadDigest: text("payload_digest").notNull(),
     requiresOwner: boolean("requires_owner").notNull(),
-    expiresAt: timestamp("expires_at", { withTimezone: true, mode: "date" }).notNull(),
+    expiresAt: timestamp("expires_at", {
+      withTimezone: true,
+      mode: "date",
+    }).notNull(),
     decidedAt: timestamp("decided_at", { withTimezone: true, mode: "date" }),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
       .notNull()
@@ -8459,12 +8537,15 @@ export const taskStatementRevisions = pgTable(
     pk: primaryKey({ columns: [t.taskId, t.revision] }),
   }),
 );
-export type TaskStatementRevisionRow = typeof taskStatementRevisions.$inferSelect;
+export type TaskStatementRevisionRow =
+  typeof taskStatementRevisions.$inferSelect;
 
 export const librarianTaskLinks = pgTable(
   "librarian_task_links",
   {
-    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
     conversationId: text("conversation_id")
       .notNull()
       .references(() => librarianConversations.id, { onDelete: "cascade" }),
@@ -8474,9 +8555,12 @@ export const librarianTaskLinks = pgTable(
     meaning: text("meaning", {
       enum: ["created_from", "refined_in", "mentioned"],
     }).notNull(),
-    fromMessageId: text("from_message_id").references(() => librarianMessages.id, {
-      onDelete: "set null",
-    }),
+    fromMessageId: text("from_message_id").references(
+      () => librarianMessages.id,
+      {
+        onDelete: "set null",
+      },
+    ),
     toMessageId: text("to_message_id").references(() => librarianMessages.id, {
       onDelete: "set null",
     }),

@@ -68,6 +68,7 @@ import { admitDelegatedChild } from "@/lib/orchestrator/admission";
 import { resolveEffectiveFlowRevision } from "@/lib/flows/lifecycle";
 import { runFlow } from "@/lib/flows/runner";
 import { worktreesRoot } from "@/lib/instance-config";
+import { countOpenBlockingClarifications } from "@/lib/tasks/clarification-gate";
 import { runtimeRoot } from "@/lib/runtime-root";
 import {
   launchProgress,
@@ -713,14 +714,23 @@ export async function* launchRunStaged(
   const openBlockers =
     (await getOpenRelationBlockers([input.taskId], _db)).get(input.taskId) ??
     [];
+  const openBlocking = await countOpenBlockingClarifications(
+    input.taskId,
+    _db as unknown as ReturnType<typeof getDb>,
+  );
   // ADR-119: the force flag widens ONLY the run-status gate (busy → launchable)
   // for an additive concurrent run; the task gates flagged/blocked still refuse.
   const classifyLaunchability = allowConcurrentForLaunch
     ? classifyForceRelaunchLaunchability
     : classifyManualTaskLaunchability;
-  const launchability = classifyLaunchability(task, latestFlowRun, {
-    openBlockers,
-  });
+  const launchability = classifyLaunchability(
+    task,
+    latestFlowRun,
+    {
+      openBlockers,
+    },
+    { openBlocking },
+  );
 
   log.debug(
     {

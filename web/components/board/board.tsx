@@ -10,6 +10,7 @@ import { getTranslations } from "next-intl/server";
 import clsx from "clsx";
 
 import { FlightCard } from "@/components/board/flight-card";
+import { boardTaskGate } from "@/components/board/board-task-gate";
 import { TaskCard } from "@/components/board/task-card";
 import { buildWorkStageLabels } from "@/lib/work/work-row-labels";
 import { RUN_STATUS_KEYS } from "@/lib/runs/run-status-tone";
@@ -173,24 +174,44 @@ export async function Board({
     card: BoardData["columns"][BoardColumn]["flight"][number],
   ): string | undefined => {
     if (launchDisabledReason) return launchDisabledReason;
-    const flowReason = flowIncompatibilityReason(card.flowIncompatibility);
-
-    if (flowReason) return flowReason;
     if (!launchableLatestRunStatuses.has(card.runStatus)) {
       return t("launchBusy");
     }
-    // ADR-112: `flagged` outranks `blocked` (mirrors classifyTaskLaunchability) —
-    // a held task is not relaunchable even when its blockers have cleared.
-    if (card.triageStatus === "flagged") {
-      return t("launchFlagged");
-    }
-    if (card.blockedBy.length > 0) {
+    const gate = boardTaskGate({
+      triageStatus: card.triageStatus,
+      clarificationPending: card.workStageClarificationPending,
+      blockedByCount: card.blockedBy.length,
+    });
+
+    if (gate === "flagged") return t("launchFlagged");
+    if (gate === "clarification_pending")
+      return t("launchClarificationPending");
+    if (gate === "blocked") {
       return `${t("launchBlocked")} ${card.blockedBy
         .map((b) => `${b.key}-${b.number}`)
         .join(", ")}`;
     }
 
-    return undefined;
+    return flowIncompatibilityReason(card.flowIncompatibility);
+  };
+  const backlogLaunchDisabledReason = (
+    card: BoardData["columns"][BoardColumn]["backlog"][number],
+  ): string | undefined => {
+    if (launchDisabledReason) return launchDisabledReason;
+    const gate = boardTaskGate({
+      triageStatus: card.triageStatus,
+      clarificationPending: card.clarificationPending,
+      blockedByCount: card.blockedBy.length,
+    });
+
+    if (gate === "flagged") return t("launchFlagged");
+    if (gate === "clarification_pending")
+      return t("launchClarificationPending");
+    if (gate === "blocked") {
+      return `${t("launchBlocked")} ${card.blockedBy.map((b) => `${b.key}-${b.number}`).join(", ")}`;
+    }
+
+    return flowIncompatibilityReason(card.flowIncompatibility);
   };
 
   return (
@@ -272,17 +293,7 @@ export async function Board({
                         ? t("launchBlockedShort")
                         : t("launchUnavailable")
                     }
-                    launchDisabledReason={
-                      launchDisabledReason ??
-                      flowIncompatibilityReason(card.flowIncompatibility) ??
-                      (card.triageStatus === "flagged"
-                        ? t("launchFlagged")
-                        : card.blockedBy.length > 0
-                          ? `${t("launchBlocked")} ${card.blockedBy
-                              .map((b) => `${b.key}-${b.number}`)
-                              .join(", ")}`
-                          : undefined)
-                    }
+                    launchDisabledReason={backlogLaunchDisabledReason(card)}
                     launchLabel={
                       card.runCount > 0 ? t("runAgain") : t("launchFirst")
                     }

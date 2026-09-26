@@ -42,6 +42,7 @@ import {
   getOpenRelationBlockers,
   getTaskRelationsByTaskIds,
 } from "@/lib/social/relations";
+import { countOpenBlockingClarificationsByTask } from "@/lib/tasks/clarification-gate";
 
 const {
   flowRevisions,
@@ -124,6 +125,7 @@ export interface BacklogCard {
   // ADR-078 D5: open relation blockers — non-empty disables Launch and
   // renders the reason chip with the blocker KEY-Ns.
   blockedBy: Array<{ key: string; number: number }>;
+  clarificationPending: boolean;
   // M34 (ADR-089) launch-verdict fields — pre-fill the card's launch popover.
   flowId: string | null;
   triageStatus: "triaged" | "flagged" | null;
@@ -231,6 +233,7 @@ export interface FlightCard {
   // node is asking"). Derived per read; never persisted.
   workStage: WorkStage;
   workStageBlocked: boolean;
+  workStageClarificationPending: boolean;
   workStagePromotedKind: PromotedKind | null;
   // M37 Phase 6 (ADR-098): the orchestrator decomposition group (see BacklogCard).
   childTasks: ChildTaskRef[];
@@ -589,6 +592,11 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
   }
 
   const latestRunIds = [...latestRunByTask.values()].map((r) => r.runId);
+  const openBlockingClarificationsByTask =
+    await countOpenBlockingClarificationsByTask(
+      taskRows.map((task) => task.taskId),
+      client as ReturnType<typeof getDb>,
+    );
   const nodeAttemptsByRun = new Map<string, ProgressNodeAttempt[]>();
 
   if (latestRunIds.length > 0) {
@@ -746,6 +754,8 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
         awaitingClarification: awaitingClarificationTaskIds.has(task.taskId),
         runCount: runCountByTask.get(task.taskId) ?? 0,
         blockedBy: openBlockers.get(task.taskId) ?? [],
+        clarificationPending:
+          (openBlockingClarificationsByTask.get(task.taskId) ?? 0) > 0,
         flowId: task.flowId ?? null,
         triageStatus: (task.triageStatus ?? null) as
           | "triaged"
@@ -801,11 +811,14 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
       promotionState: run.promotionState ?? null,
       workspaceRemoved: run.removedAt != null,
       blockingRelationCount: (openBlockers.get(task.taskId) ?? []).length,
+      openBlockingClarificationCount:
+        openBlockingClarificationsByTask.get(task.taskId) ?? 0,
       progress: null,
     });
     const workStageFields = {
       workStage: derivedWorkStage.stage,
       workStageBlocked: derivedWorkStage.blocked,
+      workStageClarificationPending: derivedWorkStage.clarificationPending,
       workStagePromotedKind: derivedWorkStage.promotedKind,
     };
 

@@ -30,6 +30,7 @@ import { actorForUserId } from "@/lib/social/activity";
 import { addTaskComment } from "@/lib/social/comments";
 import { getOpenRelationBlockers } from "@/lib/social/relations";
 import { priorityWeightSql } from "@/lib/tasks/admission-selector";
+import { countOpenBlockingClarifications } from "@/lib/tasks/clarification-gate";
 import { type TaskPriority } from "@/lib/tasks/criticality";
 
 const log = pino({
@@ -287,6 +288,10 @@ export async function evaluateC2Candidate(
     (await getOpenRelationBlockers([candidate.taskId], db)).get(
       candidate.taskId,
     ) ?? [];
+  const openBlocking = await countOpenBlockingClarifications(
+    candidate.taskId,
+    db,
+  );
   const launchability = classifyTaskLaunchability(
     {
       status: candidate.status,
@@ -295,6 +300,7 @@ export async function evaluateC2Candidate(
     },
     latestRun,
     { openBlockers },
+    { openBlocking },
   );
 
   if (launchability !== "launchable") {

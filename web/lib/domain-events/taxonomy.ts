@@ -8,7 +8,9 @@ export const DOMAIN_EVENT_KINDS = [
   "task.created",
   "task.comment_added",
   "task.triage_requeued",
+  "task.clarification_requested",
   "task.clarification_answered",
+  "task.clarification_cancelled",
   "run.done",
   "run.failed",
   "run.crashed",
@@ -297,13 +299,14 @@ export function isAutoPromotableReviewCause(
 // creation score two, and rendering them in the feed prints the same line
 // twice, so the attention plane reads the complement instead.
 //
-// `task.clarification_answered` has NO twin — answering an agent's question is
-// visible nowhere else — which is why this is a classification and not simply
-// "the run.* axis".
+// Clarification answers and cancellations have task_activity twins, while a
+// request opens a recipient decision and belongs to the decision-opening set.
 export const TASK_ACTIVITY_TWINNED_EVENT_KINDS = [
   "task.created",
   "task.comment_added",
   "task.triage_requeued",
+  "task.clarification_answered",
+  "task.clarification_cancelled",
 ] as const satisfies readonly DomainEventKind[];
 
 export type TaskActivityTwinnedEventKind =
@@ -313,7 +316,6 @@ export type TaskActivityTwinnedEventKind =
 // and `UT-ATN-09` fails — either default (silently counted, silently invisible)
 // would be a bug nobody notices.
 export const ATTENTION_EVENT_KINDS = [
-  "task.clarification_answered",
   "run.done",
   "run.failed",
   "run.crashed",
@@ -340,6 +342,7 @@ export type AttentionEventKind = (typeof ATTENTION_EVENT_KINDS)[number];
  * The attention consumer wakes on the union of the two lists.
  */
 export const DECISION_OPENING_EVENT_KINDS = [
+  "task.clarification_requested",
   "run.review_opened",
   "run.needs_input",
 ] as const satisfies readonly DomainEventKind[];

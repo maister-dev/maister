@@ -271,6 +271,7 @@ describe("IT-LUI-10: linked work and confirmation cards", () => {
         status: "succeeded",
         result: { runId: "run-1", status: "Pending", queuePosition: 2 },
         liveRunStatus: "Running",
+        taskPath: null,
         available: true,
         createdAt: new Date().toISOString(),
       },
@@ -314,6 +315,30 @@ describe("IT-LUI-10: linked work and confirmation cards", () => {
     });
     expect(q("librarian-card-accepted")).not.toBeNull();
     expect(q("librarian-card-accepted")?.querySelector("button")).toBeNull();
+  });
+
+  it("links a clarification receipt to its task", async () => {
+    serverOperations = [
+      {
+        id: "clarification-operation",
+        kind: "clarification_request",
+        status: "succeeded",
+        result: { taskId: "task-1", seq: 3, status: "open" },
+        liveRunStatus: null,
+        taskPath: "/projects/example/tasks/7",
+        available: true,
+        createdAt: new Date().toISOString(),
+      },
+    ];
+
+    await mount();
+    await openPanel();
+    const receipt = q("librarian-operation-receipt");
+
+    expect(receipt?.textContent).toContain("clarificationRequested");
+    expect(receipt?.querySelector("a")?.getAttribute("href")).toBe(
+      "/projects/example/tasks/7",
+    );
   });
 });
 

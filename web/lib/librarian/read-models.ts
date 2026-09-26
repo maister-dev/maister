@@ -39,6 +39,7 @@ export type LibrarianOperationView = {
   status: string;
   result: Record<string, unknown> | null;
   liveRunStatus: string | null;
+  taskPath: string | null;
   available: boolean;
   createdAt: string;
 };
@@ -215,6 +216,7 @@ export async function getLinkedWork(
       operation.target.taskId ??
       (typeof body?.taskId === "string" ? body.taskId : null);
     const task = taskId ? taskById.get(taskId) : null;
+    const taskProject = task ? visibleById.get(task.projectId) : null;
     const targetProjectId =
       operation.target.projectId ?? run?.projectId ?? task?.projectId ?? null;
     const available =
@@ -229,6 +231,10 @@ export async function getLinkedWork(
       status: operation.status,
       result: available ? body : null,
       liveRunStatus: available && run ? run.status : null,
+      taskPath:
+        available && task && taskProject
+          ? `/projects/${taskProject.slug}/tasks/${task.number}`
+          : null,
       available,
       createdAt: operation.createdAt.toISOString(),
     };

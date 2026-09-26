@@ -24,13 +24,33 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
           properties: {
             context: { type: "string", minLength: 1 },
             goal: { type: "string", minLength: 1 },
-            acceptance: { type: "array", items: { type: "string", minLength: 1 } },
-            constraints: { type: "array", items: { type: "string", minLength: 1 } },
-            outOfScope: { type: "array", items: { type: "string", minLength: 1 } },
+            acceptance: {
+              type: "array",
+              items: { type: "string", minLength: 1 },
+            },
+            constraints: {
+              type: "array",
+              items: { type: "string", minLength: 1 },
+            },
+            outOfScope: {
+              type: "array",
+              items: { type: "string", minLength: 1 },
+            },
             links: { type: "array", items: { type: "string", minLength: 1 } },
-            openQuestions: { type: "array", items: { type: "string", minLength: 1 } },
+            openQuestions: {
+              type: "array",
+              items: { type: "string", minLength: 1 },
+            },
           },
-          required: ["context", "goal", "acceptance", "constraints", "outOfScope", "links", "openQuestions"],
+          required: [
+            "context",
+            "goal",
+            "acceptance",
+            "constraints",
+            "outOfScope",
+            "links",
+            "openQuestions",
+          ],
         },
         flowId: { type: "string", minLength: 1 },
         operationKey: {
@@ -45,7 +65,8 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
     },
   },
   task_statement_accept: {
-    description: "Accept a typed task statement at the current task revision. The task must still be in Backlog.",
+    description:
+      "Accept a typed task statement at the current task revision. The task must still be in Backlog.",
     inputSchema: {
       type: "object",
       properties: {
@@ -56,35 +77,66 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
           properties: {
             context: { type: "string", minLength: 1 },
             goal: { type: "string", minLength: 1 },
-            acceptance: { type: "array", items: { type: "string", minLength: 1 } },
-            constraints: { type: "array", items: { type: "string", minLength: 1 } },
-            outOfScope: { type: "array", items: { type: "string", minLength: 1 } },
+            acceptance: {
+              type: "array",
+              items: { type: "string", minLength: 1 },
+            },
+            constraints: {
+              type: "array",
+              items: { type: "string", minLength: 1 },
+            },
+            outOfScope: {
+              type: "array",
+              items: { type: "string", minLength: 1 },
+            },
             links: { type: "array", items: { type: "string", minLength: 1 } },
-            openQuestions: { type: "array", items: { type: "string", minLength: 1 } },
+            openQuestions: {
+              type: "array",
+              items: { type: "string", minLength: 1 },
+            },
           },
-          required: ["context", "goal", "acceptance", "constraints", "outOfScope", "links", "openQuestions"],
+          required: [
+            "context",
+            "goal",
+            "acceptance",
+            "constraints",
+            "outOfScope",
+            "links",
+            "openQuestions",
+          ],
         },
         expectedRevision: { type: "integer", minimum: 0 },
         operationKey: { type: "string", minLength: 1, maxLength: 128 },
       },
-      required: ["slug", "taskId", "statement", "expectedRevision", "operationKey"],
+      required: [
+        "slug",
+        "taskId",
+        "statement",
+        "expectedRevision",
+        "operationKey",
+      ],
     },
   },
   task_send_to_triage: {
-    description: "Send a task to triage and choose whether a later triage verdict may auto-launch it.",
+    description:
+      "Send a task to triage and choose whether a later triage verdict may auto-launch it.",
     inputSchema: {
       type: "object",
       properties: {
         slug: { type: "string" },
         taskId: { type: "string" },
-        launchIntent: { type: "string", enum: ["triage_only", "triage_then_launch"] },
+        launchIntent: {
+          type: "string",
+          enum: ["triage_only", "triage_then_launch"],
+        },
         operationKey: { type: "string", minLength: 1, maxLength: 128 },
       },
       required: ["slug", "taskId", "launchIntent", "operationKey"],
     },
   },
   task_publish_excerpt: {
-    description: "Explicitly publish a quoted excerpt from this conversation as a task comment visible to project members. The private transcript stays private.",
+    description:
+      "Explicitly publish a quoted excerpt from this conversation as a task comment visible to project members. The private transcript stays private.",
     inputSchema: {
       type: "object",
       properties: {
@@ -94,6 +146,66 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
         operationKey: { type: "string", minLength: 1, maxLength: 128 },
       },
       required: ["slug", "taskId", "excerpt", "operationKey"],
+    },
+  },
+  clarification_request: {
+    description:
+      "Ask a specific project member to clarify a task before execution. A blocking request holds launch until answered or cancelled.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        slug: { type: "string" },
+        taskId: { type: "string" },
+        recipientUserId: { type: "string" },
+        question: { type: "string", minLength: 1 },
+        reason: { type: "string", minLength: 1 },
+        answerFormat: { type: "string", enum: ["text", "choice", "yes_no"] },
+        blocking: { type: "boolean" },
+        operationKey: { type: "string", minLength: 1, maxLength: 128 },
+      },
+      required: [
+        "slug",
+        "taskId",
+        "recipientUserId",
+        "question",
+        "reason",
+        "answerFormat",
+        "blocking",
+        "operationKey",
+      ],
+    },
+  },
+  clarification_cancel: {
+    description: "Cancel an open task clarification you requested.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        slug: { type: "string" },
+        taskId: { type: "string" },
+        clarificationId: { type: "string" },
+        operationKey: { type: "string", minLength: 1, maxLength: 128 },
+      },
+      required: ["slug", "taskId", "clarificationId", "operationKey"],
+    },
+  },
+  clarification_list: {
+    description: "List task clarifications and their current states.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        slug: { type: "string" },
+        taskId: { type: "string" },
+      },
+      required: ["slug", "taskId"],
+    },
+  },
+  project_members_list: {
+    description:
+      "List active project members eligible to receive an addressed clarification.",
+    inputSchema: {
+      type: "object",
+      properties: { slug: { type: "string" } },
+      required: ["slug"],
     },
   },
   task_list: {
@@ -558,7 +670,8 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
     },
   },
   run_stop: {
-    description: "Stop a run through the operator stop path. Returns the run's resulting status.",
+    description:
+      "Stop a run through the operator stop path. Returns the run's resulting status.",
     inputSchema: {
       type: "object",
       properties: {
@@ -569,7 +682,8 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
     },
   },
   run_operator_message: {
-    description: "Send an owner message to a scratch or persistent agent run. A Flow run returns the rework controls needed instead.",
+    description:
+      "Send an owner message to a scratch or persistent agent run. A Flow run returns the rework controls needed instead.",
     inputSchema: {
       type: "object",
       properties: {
@@ -581,18 +695,30 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
     },
   },
   librarian_card_propose: {
-    description: "Propose a statement change or a human confirmation card. The owner reviews and decides it in the MAIster panel; this tool never performs the proposed action.",
+    description:
+      "Propose a statement change or a human confirmation card. The owner reviews and decides it in the MAIster panel; this tool never performs the proposed action.",
     inputSchema: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["statement_accept", "hitl_respond", "run_promote", "run_discard"] },
+        action: {
+          type: "string",
+          enum: [
+            "statement_accept",
+            "hitl_respond",
+            "run_promote",
+            "run_discard",
+          ],
+        },
         taskId: { type: "string" },
         expectedRevision: { type: "integer", minimum: 0 },
         statement: { type: "object" },
         runId: { type: "string" },
         hitlRequestId: { type: "string" },
         response: { type: "object" },
-        mode: { type: "string", enum: ["local_merge", "rebase_merge", "pull_request"] },
+        mode: {
+          type: "string",
+          enum: ["local_merge", "rebase_merge", "pull_request"],
+        },
         reviewedTargetCommit: { type: "string" },
         operationKey: { type: "string", minLength: 1, maxLength: 128 },
       },
@@ -1193,6 +1319,56 @@ function resolveRouting(
         body: { excerpt },
       };
     }
+    case "clarification_request": {
+      const {
+        slug,
+        taskId,
+        recipientUserId,
+        question,
+        reason,
+        answerFormat,
+        blocking,
+      } = args as {
+        slug: string;
+        taskId: string;
+        recipientUserId: string;
+        question: string;
+        reason: string;
+        answerFormat: "text" | "choice" | "yes_no";
+        blocking: boolean;
+      };
+
+      return {
+        method: "POST",
+        path: `/api/v1/ext/projects/${slug}/tasks/${taskId}/clarifications`,
+        body: { recipientUserId, question, reason, answerFormat, blocking },
+      };
+    }
+    case "clarification_cancel": {
+      const { slug, taskId, clarificationId } = args as {
+        slug: string;
+        taskId: string;
+        clarificationId: string;
+      };
+
+      return {
+        method: "DELETE",
+        path: `/api/v1/ext/projects/${slug}/tasks/${taskId}/clarifications/${clarificationId}`,
+      };
+    }
+    case "clarification_list": {
+      const { slug, taskId } = args as { slug: string; taskId: string };
+
+      return {
+        method: "GET",
+        path: `/api/v1/ext/projects/${slug}/tasks/${taskId}/clarifications`,
+      };
+    }
+    case "project_members_list": {
+      const { slug } = args as { slug: string };
+
+      return { method: "GET", path: `/api/v1/ext/projects/${slug}/members` };
+    }
     case "task_list": {
       const { slug } = args as { slug: string };
 
@@ -1518,7 +1694,11 @@ function resolveRouting(
     case "run_stop": {
       const { runId } = args as { runId: string };
 
-      return { method: "POST", path: `/api/v1/ext/runs/${runId}/stop`, body: {} };
+      return {
+        method: "POST",
+        path: `/api/v1/ext/runs/${runId}/stop`,
+        body: {},
+      };
     }
     case "run_operator_message": {
       const { runId, message } = args as { runId: string; message: string };
@@ -1530,8 +1710,22 @@ function resolveRouting(
       };
     }
     case "librarian_card_propose": {
-      const { action, taskId, expectedRevision, statement, runId, hitlRequestId, response, mode, reviewedTargetCommit } = args as {
-        action: "statement_accept" | "hitl_respond" | "run_promote" | "run_discard";
+      const {
+        action,
+        taskId,
+        expectedRevision,
+        statement,
+        runId,
+        hitlRequestId,
+        response,
+        mode,
+        reviewedTargetCommit,
+      } = args as {
+        action:
+          | "statement_accept"
+          | "hitl_respond"
+          | "run_promote"
+          | "run_discard";
         taskId?: string;
         expectedRevision?: number;
         statement?: Record<string, unknown>;
@@ -1541,13 +1735,14 @@ function resolveRouting(
         mode?: string;
         reviewedTargetCommit?: string;
       };
-      const body = action === "statement_accept"
-        ? { action, taskId, expectedRevision, statement }
-        : action === "hitl_respond"
-          ? { action, runId, hitlRequestId, response }
-          : action === "run_promote"
-            ? { action, runId, mode, reviewedTargetCommit }
-            : { action, runId };
+      const body =
+        action === "statement_accept"
+          ? { action, taskId, expectedRevision, statement }
+          : action === "hitl_respond"
+            ? { action, runId, hitlRequestId, response }
+            : action === "run_promote"
+              ? { action, runId, mode, reviewedTargetCommit }
+              : { action, runId };
 
       return { method: "POST", path: "/api/v1/ext/librarian/cards", body };
     }

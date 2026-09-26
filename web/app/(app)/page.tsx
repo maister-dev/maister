@@ -103,9 +103,10 @@ export default async function DeskPage({
   ]);
 
   const now = new Date();
-  // ADR-174 D2: `Held` is the one decision kind no work row carries, so it is
-  // the one that still needs a region of its own.
-  const heldItems = queue.items.filter((item) => item.kind === "flagged");
+  // Flagged tasks and addressed clarifications retain direct action cards.
+  const heldItems = queue.items.filter(
+    (item) => item.kind === "flagged" || item.kind === "clarification",
+  );
   const hasProjects = portfolio.projects.length > 0;
   const inFlight = table.rows.filter((row) => isWorkInFlight(row.stage));
   // REQ-D2: counted over EVERY in-flight row, before the filter and before the
@@ -265,6 +266,7 @@ export default async function DeskPage({
               promotableTitle: tInbox("decisions.promotableTitle"),
               crashedTitle: tInbox("decisions.crashedTitle"),
               flaggedTitle: tInbox("decisions.flaggedTitle"),
+              clarificationTitle: tInbox("decisions.clarificationTitle"),
               review: tInbox("decisions.review"),
               openTask: tInbox("decisions.openTask"),
               stage: workLabels.stage,

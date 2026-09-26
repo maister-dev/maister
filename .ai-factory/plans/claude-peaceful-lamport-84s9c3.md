@@ -1238,7 +1238,7 @@ component tests for card states. **Log**: `debug` read-model row counts.
 
 ### Phase 4 — Clarification before execution · `CLR-01..10`
 
-**T4.1 [ ] — Migration 0186.** Appendix A/0186: `task_clarifications` widening with
+**T4.1 [x] — Migration 0186.** Appendix A/0186: `task_clarifications` widening with
 backfill `origin_kind='agent_run'`, `retrigger_mode` CHECK + `none`, the origin-shape
 CHECK; `TASK_ACTIVITY_EVENT_KINDS` + `task_activity_event_kind_check`;
 `inbox_items_event_kind_check` + `InboxSourceRef`; `domain_events_kind_check`
@@ -1247,7 +1247,7 @@ fan-out: every reader of `origin_run_id`/`origin_agent_id`/`source_hitl_request_
 listed and branched. *RED*: `IT-CLR-01` (user-origin row with a run id, or agent-origin
 row without one, refused; `retrigger_mode='none'` accepted only for user origin).
 
-**T4.2 [ ] — Services and routes.** `web/lib/tasks/clarification-requests.ts`:
+**T4.2 [x] — Services and routes.** `web/lib/tasks/clarification-requests.ts`:
 `requestClarification` (operation-wrapped, recipient `member` check, inbox item,
 subscription, event), `answerClarification` (human only, row lock, status CAS),
 `cancelClarification`, `supersede`. Ext `POST …/clarifications`, `DELETE …/{id}`; MCP
@@ -1259,7 +1259,7 @@ statement, revision and launch state unchanged), `IT-CLR-09` (librarian and agen
 tokens refused; global personal token without exact `hitl:respond:human` refused).
 **Log**: `info` `{clarificationId, taskId, status}` — never question or answer text.
 
-**T4.3 [ ] — Launchability and work-stage fan-out.** `clarification_pending` in
+**T4.3 [x] — Launchability and work-stage fan-out.** `clarification_pending` in
 `TaskLaunchability` + precedence; every consumer in D10's verified list including the
 `decideFire` explicit arm and the two hand-mirrored board classifiers with a parity
 test; `deriveWorkStage` input `openBlockingClarificationCount` + attribute
@@ -1272,7 +1272,7 @@ clarification → launch `PRECONDITION` with classification, C2 skips, `decideFi
 refuses, `/work` row carries `clarificationPending`; non-blocking → launchable).
 **Log**: `debug` classification.
 
-**T4.4 [ ] — Decisions and inbox.** Fifth source in `computeDecisionsQueue`, the
+**T4.4 [x] — Decisions and inbox.** Fifth source in `computeDecisionsQueue`, the
 `clarification` kind fan-out (D10 list), attention stream `changed[]`,
 `ATTENTION_EVENT_KINDS`. Existing tests to migrate: `IT-ATN-01` fixtures (count
 equals list with the new population), `IT-ATN-02` (the answered event's twin is not
@@ -1280,18 +1280,18 @@ double-counted). *RED*: `IT-CLR-03` (recipient's count and list both include it;
 requester's do not; ext decisions row carries `next_action`). **Log**: `debug`
 population counts.
 
-**T4.5 [ ] — Cascades and return path.** Cancel on recipient deactivation (users
+**T4.5 [x] — Cascades and return path.** Cancel on recipient deactivation (users
 service), task abandonment (task status path), owner cancel; requester access check
 before delivery (D11 consumer handles delivery; this task emits the events). *RED*:
 `IT-CLR-08` (each cause → `cancelled` with reason + event), `IT-CLR-06` (requester
 removed from project → answer visible on task, not delivered to conversation).
 **Log**: `info` `{clarificationId, cause}`.
 
-**T4.6 [ ] — Prompt folding.** `composeEffectivePrompt` includes answered user-origin
+**T4.6 [x] — Prompt folding.** `composeEffectivePrompt` includes answered user-origin
 rows with attribution; `lib/queries/task-clarifications.ts` selects the new columns.
 *RED*: `IT-CLR-10`. **Log**: none.
 
-**T4.7 [ ] — UI (`CLR-03`, `CLR-06`).** Task detail clarifications section
+**T4.7 [x] — UI (`CLR-03`, `CLR-06`).** Task detail clarifications section
 (open/answered/cancelled, answer form for the recipient, cancel for the requester),
 inbox card, librarian clarification card. EN/RU. *RED*: component tests;
 `web/e2e/task-clarification.spec.ts` covering request → inbox → answer (added to

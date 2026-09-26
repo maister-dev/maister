@@ -18,10 +18,11 @@ const SCOPE = "decisions:read";
 // rather than to an absent action the contract has no room for.
 function nextActionOf(
   item: DecisionItem,
-): "respond" | "promote" | "recover" | "discard" | "review" {
+): "respond" | "promote" | "recover" | "discard" | "review" | "answer" {
   if (item.kind === "hitl") return "respond";
   if (item.kind === "promotable") return "promote";
   if (item.kind === "flagged") return "review";
+  if (item.kind === "clarification") return "answer";
 
   return item.crashed.action === "recover" ? "recover" : "discard";
 }
@@ -82,6 +83,8 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
           taskKey: item.taskKey,
           runId: item.runId,
           hitlRequestId: item.kind === "hitl" ? item.hitl.hitlRequestId : null,
+          clarificationId:
+            item.kind === "clarification" ? item.clarification.id : null,
           title: extTitle(item),
           criticality: item.criticality,
           nextAction: nextActionOf(item),

@@ -58,6 +58,18 @@ describe("CT-LAU-06 librarian discovery tools route to the visibility-scoped ext
     ["work_list", {}, "GET", "/api/v1/ext/work"],
     ["decisions_list", {}, "GET", "/api/v1/ext/decisions"],
     [
+      "clarification_list",
+      { slug: "alpha", taskId: "task-1" },
+      "GET",
+      "/api/v1/ext/projects/alpha/tasks/task-1/clarifications",
+    ],
+    [
+      "project_members_list",
+      { slug: "alpha" },
+      "GET",
+      "/api/v1/ext/projects/alpha/members",
+    ],
+    [
       "activity_feed",
       { projectId: "p1", kind: "created", limit: 20 },
       "GET",
@@ -107,13 +119,73 @@ describe("CT-LAU-06 librarian discovery tools route to the visibility-scoped ext
 
     expect(headers).not.toHaveProperty("Idempotency-Key");
   });
+
+  it("routes clarification requests and cancellations with operation keys", async () => {
+    await dispatchTool({
+      name: "clarification_request",
+      args: {
+        slug: "alpha",
+        taskId: "task-1",
+        recipientUserId: "recipient-1",
+        question: "Which region?",
+        reason: "The target is ambiguous",
+        answerFormat: "text",
+        blocking: true,
+        operationKey: "turn-1:clarification:1",
+      },
+      ctx,
+      baseUrl: BASE_URL,
+    });
+    expect(call()).toMatchObject({
+      url: `${BASE_URL}/api/v1/ext/projects/alpha/tasks/task-1/clarifications`,
+      init: { method: "POST" },
+    });
+    expect(
+      (call().init.headers as Record<string, string>)["Idempotency-Key"],
+    ).toBe("turn-1:clarification:1");
+    expect(JSON.parse(call().init.body as string)).toEqual({
+      recipientUserId: "recipient-1",
+      question: "Which region?",
+      reason: "The target is ambiguous",
+      answerFormat: "text",
+      blocking: true,
+    });
+
+    fetchSpy.mockClear();
+    await dispatchTool({
+      name: "clarification_cancel",
+      args: {
+        slug: "alpha",
+        taskId: "task-1",
+        clarificationId: "clarification-1",
+        operationKey: "turn-1:cancel:1",
+      },
+      ctx,
+      baseUrl: BASE_URL,
+    });
+    expect(call()).toMatchObject({
+      url: `${BASE_URL}/api/v1/ext/projects/alpha/tasks/task-1/clarifications/clarification-1`,
+      init: { method: "DELETE" },
+    });
+    expect(
+      (call().init.headers as Record<string, string>)["Idempotency-Key"],
+    ).toBe("turn-1:cancel:1");
+  });
 });
 
 describe("CT-LAU-06 the librarian toolset lists only librarian-permitted tools", () => {
   it("offers discovery and work-cycle tools but no human-only or coordinator tool", () => {
     const names = toolNamesForToolset("librarian");
 
-    for (const offered of ["task_search", "task_create", "run_launch"]) {
+    for (const offered of [
+      "task_search",
+      "task_create",
+      "run_launch",
+      "clarification_request",
+      "clarification_cancel",
+      "clarification_list",
+      "project_members_list",
+    ]) {
       expect(names).toContain(offered);
     }
     for (const withheld of [

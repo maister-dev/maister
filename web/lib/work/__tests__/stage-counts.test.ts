@@ -29,6 +29,7 @@ function row(stage: WorkStage, index: number): WorkTableRow {
     projectName: "MyApp",
     stage,
     blocked: false,
+    clarificationPending: false,
     promotedKind: null,
     progress: null,
     runId: `run-${index}`,
