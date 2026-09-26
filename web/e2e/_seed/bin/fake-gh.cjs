@@ -1,10 +1,12 @@
 // ADR-181 T4.1: the PR provider boundary for the workbench-git e2e smoke — a
 // fake `gh` on the dev server's PATH (C16: a local Gitea is unreachable, the
 // Gitea adapter forces https and drops the port). It answers exactly the calls
-// the GhCliAdapter makes and records every create in a JSON state file the
-// spec reads back. No network, no token check beyond presence.
+// the GhCliAdapter and the PR-state read make, and records every create and
+// every view in a JSON state file the spec reads back. No network, no token
+// check beyond presence.
 "use strict";
 
+const { execFileSync } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -21,7 +23,7 @@ function readState() {
   try {
     return JSON.parse(fs.readFileSync(statePath, "utf8"));
   } catch {
-    return { prs: [], creates: [] };
+    return { prs: [], creates: [], views: [] };
   }
 }
 
@@ -62,6 +64,9 @@ if (argv[0] === "pr" && argv[1] === "create") {
     title: flag("--title"),
     draft: argv.includes("--draft"),
     open: true,
+    // The adapter runs `gh` in the parent checkout; its origin is the remote
+    // the PR's branch lives on.
+    repoPath: process.cwd(),
   };
 
   state.prs.push(pr);
@@ -73,6 +78,40 @@ if (argv[0] === "pr" && argv[1] === "create") {
   });
   writeState(state);
   process.stdout.write(`${pr.url}\n`);
+  process.exit(0);
+}
+
+// `gh pr view <n> --repo <owner/repo> --json …`: the PR as GitHub reports it.
+// Its head (`headRefOid`) is the PR branch's tip on the remote, which is what a
+// finalize binds to (ADR-181, Codex F5).
+if (argv[0] === "pr" && argv[1] === "view") {
+  const state = readState();
+  const number = Number(argv[2]);
+  const pr = state.prs.find((candidate) => candidate.number === number);
+
+  if (!pr) {
+    process.stderr.write(`no pull requests found for #${argv[2]}\n`);
+    process.exit(1);
+  }
+
+  const tip = execFileSync(
+    "git",
+    ["-C", pr.repoPath, "ls-remote", "origin", `refs/heads/${pr.head}`],
+    { encoding: "utf8" },
+  ).split(/\s/)[0];
+
+  state.views = [...(state.views ?? []), number];
+  writeState(state);
+  process.stdout.write(
+    `${JSON.stringify({
+      state: pr.open ? "OPEN" : "CLOSED",
+      mergedAt: null,
+      mergeCommit: null,
+      mergeable: "MERGEABLE",
+      mergeStateStatus: "CLEAN",
+      headRefOid: tip || null,
+    })}\n`,
+  );
   process.exit(0);
 }
 
