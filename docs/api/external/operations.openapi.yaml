@@ -42,6 +42,14 @@ info:
     `decision_request`; a direct external response to one returns `403
     UNAUTHORIZED` without mutation. Typed Plan decisions are session-auth-only.
 
+    **(Designed — ADR-184/185) Personal librarian.** A second bearer scheme,
+    `librarianTurnToken`, admits the per-turn, owner-bound token the server
+    mints for one turn of a user's personal librarian. An operation admits
+    that token exactly when its `security` lists the scheme; every effectful
+    operation that admits it requires the `Idempotency-Key` header
+    (`#/components/parameters/IdempotencyKey`) for that token. New routes
+    and new fields added for the librarian are marked `(Designed)`.
+
 servers:
   - url: "{origin}"
     description: |
@@ -116,6 +124,22 @@ tags:
       judge result, host path, or session handle (D10/D12). A judge can browse
       nothing, mutate no task/comment, and submit exactly one result.
 
+  - name: portfolio
+    description: |
+      (Designed — ADR-184) Cross-project reads over the token owner's visible
+      projects: the project list and directory, task search, the work table and
+      the activity feed. Every list, search and count is filtered to the
+      owner's visible projects before aggregation.
+  - name: clarifications
+    description: |
+      (Designed — ADR-187) Addressed, user-origin task clarification before any
+      run exists: request and cancel (the requester), answer (the human
+      recipient only).
+  - name: librarian
+    description: |
+      (Designed — ADR-185/188) Routes only a librarian turn token can call:
+      proposal and confirmation cards, explicit personal memory, and search
+      over the owner's own conversation history.
 paths:
   /api/v1/ext/projects/{slug}/tasks:
     post:
@@ -133,10 +157,29 @@ paths:
         project's valid refs.
 
         Writes a `token_audit_log` row with scope `tasks:create` after success.
+
+        (Designed — ADR-186) The body carries exactly one of `prompt` or
+        `statement`. A `statement` (`TaskStatement`) is stored as the task's
+        first immutable statement revision and rendered deterministically into
+        `tasks.prompt` (`renderStatementPrompt`), so an executor never needs the
+        conversation it came from.
+
+        (Designed — ADR-184/185) Also admits a `librarianTurnToken`: the owner's
+        live role must allow `createTask` in the slug's project on every
+        request, and `Idempotency-Key` is required. The task is written with
+        `launch_intent='none'` (creating work never arms auto-launch),
+        `created_via_operation_id`, and a `created_from` conversation link, in
+        the same transaction as the operation finalize. A body without `flowId`
+        in a project with exactly one launchable flow gets that flow; otherwise
+        the response's `launchability` (e.g. `unconfigured`) says the task
+        cannot launch yet, never implying that it can.
       operationId: extCreateTask
       security:
         - projectToken: []
+        - librarianTurnToken: []
       parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/AllowDuplicate"
         - name: slug
           in: path
           required: true
@@ -160,6 +203,27 @@ paths:
                   taskId:
                     type: string
                     format: uuid
+                  revision:
+                    type: integer
+                    minimum: 0
+                    description: (Designed — ADR-186) The new task's `tasks.revision`.
+                  statementRevision:
+                    type: integer
+                    minimum: 1
+                    nullable: true
+                    description: (Designed — ADR-186) `1` when the body carried a `statement`, else null.
+                  launchIntent:
+                    allOf:
+                      - $ref: "#/components/schemas/TaskLaunchIntent"
+                    nullable: true
+                    description: (Designed — ADR-185) `none` for a task created with a librarian turn token; null otherwise.
+                  launchability:
+                    allOf:
+                      - $ref: "#/components/schemas/TaskLaunchability"
+                    description: |
+                      (Designed — ADR-185) The server launchability
+                      classification right after create, so a caller never
+                      reports an `unconfigured` task as launchable.
         "401":
           $ref: "#/components/responses/TokenUnauthorized"
         "403":
@@ -182,9 +246,15 @@ paths:
         compared against the token's project — mismatch → 404.
 
         Writes a `token_audit_log` row with scope `tasks:read` after success.
+
+        (Designed — ADR-184) Also admits a `librarianTurnToken`: the project
+        comes from the URL `slug` and the owner's live role must allow
+        `readBoard` there on every request; a project the owner cannot read
+        answers `404` exactly like a missing one.
       operationId: extListTasks
       security:
         - projectToken: []
+        - librarianTurnToken: []
       parameters:
         - name: slug
           in: path
@@ -222,9 +292,15 @@ paths:
         → 404. `taskId` ownership is re-validated against the token's project.
 
         Writes a `token_audit_log` row with scope `tasks:read` after success.
+
+        (Designed — ADR-184) Also admits a `librarianTurnToken`: the project
+        comes from the URL `slug` and the owner's live role must allow
+        `readBoard` there on every request; a project the owner cannot read
+        answers `404` exactly like a missing one.
       operationId: extGetTask
       security:
         - projectToken: []
+        - librarianTurnToken: []
       parameters:
         - name: slug
           in: path
@@ -262,10 +338,23 @@ paths:
 
         Returns the full updated `TaskDTO` on success. Writes a
         `token_audit_log` row with scope `tasks:update` after success.
+
+        (Designed — ADR-186) Optional `expectedRevision`: the update runs under
+        the task row lock (`SELECT … FOR UPDATE`), and a value that differs from
+        `tasks.revision` is refused `409 CONFLICT` with `details.reason:
+        "stale_revision"`, nothing written. Every successful update increments
+        `revision`, returned in the `TaskDTO`.
+
+        (Designed — ADR-184/185) Also admits a `librarianTurnToken`: the owner's
+        live role must allow `editTask` on every request, and `Idempotency-Key`
+        is required.
       operationId: extUpdateTask
       security:
         - projectToken: []
+        - librarianTurnToken: []
       parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/AllowDuplicate"
         - name: slug
           in: path
           required: true
@@ -316,9 +405,15 @@ paths:
         Calls the same `listTaskComments` domain function as the
         session-auth route. Writes a `token_audit_log` row with scope
         `comments:read` after success.
+
+        (Designed — ADR-184) Also admits a `librarianTurnToken`: the project
+        comes from the URL `slug` and the owner's live role must allow
+        `readBoard` there on every request; a project the owner cannot read
+        answers `404` exactly like a missing one.
       operationId: extListTaskComments
       security:
         - projectToken: []
+        - librarianTurnToken: []
       parameters:
         - name: slug
           in: path
@@ -384,10 +479,19 @@ paths:
 
         Writes a `token_audit_log` row with scope `comments:create` inside
         the same transaction (success-audit-in-work, ext idiom).
+
+        (Designed — ADR-184/185) Also admits a `librarianTurnToken`: the owner's
+        live role must allow `commentTask` in the addressed project on every
+        request, and `Idempotency-Key` is required. The comment's social actor
+        is the owner, and `task_comments.via_operation_id` records the
+        operation, so the thread shows the owner "via Librarian".
       operationId: extCreateTaskComment
       security:
         - projectToken: []
+        - librarianTurnToken: []
       parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/AllowDuplicate"
         - name: slug
           in: path
           required: true
@@ -428,6 +532,8 @@ paths:
           $ref: "#/components/responses/HitlForbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
         "422":
           $ref: "#/components/responses/UnprocessableEntity"
 
@@ -542,7 +648,15 @@ paths:
         with the canonical direction resolved into a per-row `role`
         (`from` = the URL task is the relation's from-end). Inverse labels
         are render-time concerns; the wire carries the canonical kind.
+
+        (Designed — ADR-184) Also admits a `librarianTurnToken`: the project
+        comes from the URL `slug` and the owner's live role must allow
+        `readBoard` there on every request; a project the owner cannot read
+        answers `404` exactly like a missing one.
       operationId: extListTaskRelations
+      security:
+        - projectToken: []
+        - librarianTurnToken: []
       parameters:
         - { name: slug, in: path, required: true, schema: { type: string } }
         - {
@@ -588,8 +702,17 @@ paths:
         against the owner's RBAC on both ends. Relations may cross projects,
         but the automation driven by them (auto-launch, abandon cascade) stays
         same-project.
+
+        (Designed — ADR-184/185) Also admits a `librarianTurnToken`: the owner's
+        live role must allow `manageTaskRelations` in the addressed project on
+        every request, and `Idempotency-Key` is required.
       operationId: extAddTaskRelation
+      security:
+        - projectToken: []
+        - librarianTurnToken: []
       parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/AllowDuplicate"
         - { name: slug, in: path, required: true, schema: { type: string } }
         - {
             name: taskId,
@@ -659,6 +782,9 @@ paths:
             advisory lock (a per-project lock cannot see a cycle whose edges
             are spread over four projects), and it also refuses `CONFLICT`
             when the traversal exceeds its node bound.
+            **(Designed — ADR-185)** With a librarian turn token, also the
+            `Idempotency-Key` refusals (`details.reason`
+            `idempotency_payload_mismatch` / `duplicate_of_operation`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ExtErrorBody" }
@@ -695,8 +821,17 @@ paths:
         stays indistinguishable from a missing relation — an outside agent
         never learns whether the edge exists. Same-project agent tokens and
         user tokens are unaffected.
+
+        (Designed — ADR-184/185) Also admits a `librarianTurnToken`: the owner's
+        live role must allow `manageTaskRelations` in the addressed project on
+        every request, and `Idempotency-Key` is required.
       operationId: extRemoveTaskRelation
+      security:
+        - projectToken: []
+        - librarianTurnToken: []
       parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/AllowDuplicate"
         - { name: slug, in: path, required: true, schema: { type: string } }
         - {
             name: taskId,
@@ -748,6 +883,8 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ExtErrorBody" }
+        "409":
+          $ref: "#/components/responses/Conflict"
         "422":
           description: |
             Request body failed schema validation (`CONFIG`) — including
@@ -777,9 +914,15 @@ paths:
         `CONFIG` otherwise).
 
         Writes a `token_audit_log` row with scope `flows:read` after success.
+
+        (Designed — ADR-184) Also admits a `librarianTurnToken`: the project
+        comes from the URL `slug` and the owner's live role must allow
+        `readBoard` there on every request; a project the owner cannot read
+        answers `404` exactly like a missing one.
       operationId: extListProjectFlows
       security:
         - projectToken: ["flows:read"]
+        - librarianTurnToken: []
       parameters:
         - name: slug
           in: path
@@ -820,9 +963,15 @@ paths:
         not filtered by project.
 
         Writes a `token_audit_log` row with scope `runners:read` after success.
+
+        (Designed — ADR-184) Also admits a `librarianTurnToken`: the project
+        comes from the URL `slug` and the owner's live role must allow
+        `readBoard` there on every request; a project the owner cannot read
+        answers `404` exactly like a missing one.
       operationId: extListProjectRunners
       security:
         - projectToken: ["runners:read"]
+        - librarianTurnToken: []
       parameters:
         - name: slug
           in: path
@@ -1058,9 +1207,15 @@ paths:
         Writes a `brain_snapshots` row (`trigger='explicit'`, `run_id` set only when
         the token is run-bound, actor always set) recording the query and the
         returned owned/indexed union for audit.
+
+        (Designed — ADR-184) Also admits a `librarianTurnToken`: the project
+        comes from the URL `slug` and the owner's live role must allow
+        `readBrain` there on every request; a project the owner cannot read
+        answers `404` exactly like a missing one.
       operationId: extRecallProjectMemory
       security:
         - projectToken: ["memory:read"]
+        - librarianTurnToken: []
       parameters:
         - name: slug
           in: path
@@ -1434,6 +1589,14 @@ paths:
         Returns 202 (may be `Pending` if the global concurrency cap is full,
         or `Running` if a slot was free). Writes a `token_audit_log` row with
         scope `runs:launch` after success.
+
+        (Designed — ADR-184/185) Also admits a `librarianTurnToken`: the owner's
+        live role must allow `launchRun` in the addressed project on every
+        request, and `Idempotency-Key` is required. The project comes from the
+        task row (`resolveProjectId`). Launch preconditions are unchanged;
+        `runs.librarian_operation_id` is written in the run's insert
+        transaction, and the response is the actual run id with `Pending` (+
+        `queuePosition`) or `Running`.
       operationId: extLaunchRun
       x-maister-m43-legacy-steps:
         status: 422
@@ -1442,6 +1605,10 @@ paths:
         message: "legacy steps[] flows are not supported since engine 3.0.0; republish the package with nodes[]"
       security:
         - projectToken: []
+        - librarianTurnToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/AllowDuplicate"
       requestBody:
         required: true
         content:
@@ -1891,6 +2058,10 @@ paths:
         after the cancel was applied.
 
         Writes a `token_audit_log` row with scope `runs:cancel` after success.
+
+        A `librarianTurnToken` is refused here (the librarian is not a
+        coordinator); it stops a run through
+        `POST /api/v1/ext/runs/{runId}/stop` (ADR-185 D10b).
       operationId: extCancelRun
       security:
         - projectToken: []
@@ -2198,6 +2369,13 @@ paths:
         rework cannot mutate the shared branch during the tree-promote merge.
 
         Writes a `token_audit_log` row with scope `runs:delegate` after success.
+
+        (Designed — ADR-184, open) ADR-184 D4 names this route among those the
+        librarian uses, but its scope is `runs:delegate`, which
+        `LIBRARIAN_TOKEN_SCOPES` excludes, and its target must be an agent child
+        of the calling orchestrator. The route therefore does NOT list
+        `librarianTurnToken` until ADR-184 fixes the scope and the target rule
+        for a caller with no orchestrator.
       operationId: extReworkRun
       security:
         - projectToken: []
@@ -2272,9 +2450,17 @@ paths:
         refused `409 CONFLICT` before anything moves. This surface cannot
         confirm the drop; an operator brings those commits in, or confirms
         replacing them, from the run git panel.
+
+        (Designed — ADR-184/185) Also admits a `librarianTurnToken`: the owner's
+        live role must allow `promoteRun` in the addressed project on every
+        request, and `Idempotency-Key` is required.
       operationId: extSyncRun
       security:
         - projectToken: []
+        - librarianTurnToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/AllowDuplicate"
       requestBody:
         required: true
         content:
@@ -2354,9 +2540,17 @@ paths:
         `404` on mismatch.
 
         Writes a `token_audit_log` row with scope `runs:sync` after success.
+
+        (Designed — ADR-184/185) Also admits a `librarianTurnToken`: the owner's
+        live role must allow `promoteRun` in the addressed project on every
+        request, and `Idempotency-Key` is required.
       operationId: extReopenRun
       security:
         - projectToken: []
+        - librarianTurnToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/AllowDuplicate"
       requestBody:
         required: true
         content:
@@ -2411,9 +2605,15 @@ paths:
         project — mismatch → 404 (existence-hide).
 
         Writes a `token_audit_log` row with scope `runs:read` after success.
+
+        (Designed — ADR-184) Also admits a `librarianTurnToken`: the project
+        comes from the run row (`resolveProjectId`) and the owner's live role
+        must allow `readBoard` there on every request; a project the owner
+        cannot read answers `404` exactly like a missing one.
       operationId: extGetRun
       security:
         - projectToken: []
+        - librarianTurnToken: []
       parameters:
         - name: runId
           in: path
@@ -2433,6 +2633,107 @@ paths:
           $ref: "#/components/responses/HitlForbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+
+  /api/v1/ext/projects/{slug}/members:
+    get:
+      tags: [projects]
+      summary: (Designed — ADR-187) List who can answer a clarification here
+      description: |
+        (Designed — ADR-187, `CLR-02`.) Scope `projects:read`. The project's
+        active members holding `member` or above (the `answerHitl` floor) —
+        the only eligible clarification recipients — as
+        `{userId, name, role}`. No email or account data. Admits a
+        `librarianTurnToken` (live `readBoard`).
+      operationId: extListProjectMembers
+      security:
+        - projectToken: []
+        - librarianTurnToken: []
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string, minLength: 1 }
+      responses:
+        "200":
+          description: The eligible recipients.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [members]
+                additionalProperties: false
+                properties:
+                  members:
+                    type: array
+                    items:
+                      type: object
+                      required: [userId, name, role]
+                      additionalProperties: false
+                      properties:
+                        userId: { type: string }
+                        name: { type: string, nullable: true }
+                        role:
+                          type: string
+                          enum: [member, admin, owner]
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/ext/runs/{runId}/stop:
+    post:
+      tags: [runs]
+      summary: (Designed — ADR-185) Stop a run as its human owner
+      description: |
+        (Designed — ADR-185 D10b.) Scope `runs:cancel`, mapped to the
+        `recoverRun` project action. The owner-authority "Stop run" — the same
+        run-stop service the session-auth workbench Stop uses
+        (`stopWorkbenchRunForToken`) — for a run addressed by id rather than as
+        an orchestrator child. Admits a `librarianTurnToken` and a global
+        personal token; the project is resolved from the run row and the
+        owner's live role must allow `recoverRun` on every request. A run the
+        owner cannot see answers exactly like a missing one (`404`).
+        `Idempotency-Key` is required for the librarian token. Stopping a run
+        never touches the librarian turn that asked for it, and stopping the
+        librarian's own response is the separate session route
+        `POST /api/librarian/turns/current/stop`.
+      operationId: extStopRun
+      security:
+        - projectToken: []
+        - librarianTurnToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/AllowDuplicate"
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "200":
+          description: Stop applied; the run's committed status is returned.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [runId, status]
+                additionalProperties: false
+                properties:
+                  runId:
+                    type: string
+                  status:
+                    type: string
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/HitlForbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
 
   /api/v1/ext/runs/{runId}/recover:
     post:
@@ -2478,10 +2779,18 @@ paths:
         and the response NEVER carries `acpSessionId` or any session handle.
 
         Writes a `token_audit_log` row with scope `runs:recover`.
+
+        (Designed — ADR-184/185) Also admits a `librarianTurnToken`: the owner's
+        live role must allow `recoverRun` in the addressed project on every
+        request, and `Idempotency-Key` is required. The project comes from the
+        run row (`resolveProjectId`).
       operationId: extRecoverRun
       security:
         - projectToken: []
+        - librarianTurnToken: []
       parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/AllowDuplicate"
         - name: runId
           in: path
           required: true
@@ -2619,9 +2928,15 @@ paths:
         The run's `projectId` is re-validated against the token's project —
         mismatch → 404. Writes a `token_audit_log` row with scope
         `readiness:read` after success.
+
+        (Designed — ADR-184) Also admits a `librarianTurnToken`: the project
+        comes from the run row (`resolveProjectId`) and the owner's live role
+        must allow `readBoard` there on every request; a project the owner
+        cannot read answers `404` exactly like a missing one.
       operationId: extGetRunReadiness
       security:
         - projectToken: []
+        - librarianTurnToken: []
       parameters:
         - name: runId
           in: path
@@ -2736,9 +3051,15 @@ paths:
         The payload is semantic only. Raw ACP JSON-RPC frames, tool payload
         blobs, diff bodies, token material, supervisor handles, and absolute
         paths never cross this boundary.
+
+        (Designed — ADR-184) Also admits a `librarianTurnToken`: the project
+        comes from the run row (`resolveProjectId`) and the owner's live role
+        must allow `readBoard` there on every request; a project the owner
+        cannot read answers `404` exactly like a missing one.
       operationId: extRunActivity
       security:
         - projectToken: []
+        - librarianTurnToken: []
       parameters:
         - name: runId
           in: path
@@ -2880,9 +3201,16 @@ paths:
         `project_id=NULL`, `endpoint='GET /api/v1/ext/hitl'`, and the returned
         HTTP status. The audit/log path must not record plaintext token, token
         hash, Authorization header, or held scope list.
+
+        (Designed — ADR-184) Also admits a `librarianTurnToken`, through the
+        shared `requirePersonalOrLibrarianActor(actor, {allowLibrarian: true})`
+        helper that replaces the inline "global personal token only" checks: the
+        token reads the owner's cross-project HITL inbox, over the same
+        visible-project set.
       operationId: extListHitlInbox
       security:
         - projectToken: []
+        - librarianTurnToken: []
       responses:
         "200":
           description: Cross-project HITL inbox for the token owner.
@@ -2954,9 +3282,23 @@ paths:
         `endpoint='GET /api/v1/ext/decisions'`, and the returned HTTP status.
         The audit/log path must not record plaintext token, token hash,
         Authorization header, or held scope list.
+
+        (Designed — ADR-184) Also admits a `librarianTurnToken`, through the
+        shared `requirePersonalOrLibrarianActor(actor, {allowLibrarian: true})`
+        helper that replaces the inline "global personal token only" checks: the
+        token reads the owner's decision queue — read, never answered, over the
+        same visible-project set.
+
+        (Designed — ADR-187) A fifth population, `clarification`: an `open`
+        user-origin clarification addressed to the owner (the recipient). It is
+        read from the same array as the other four, so `count` still equals
+        `items.length`; its `nextAction` is `answer`, which only the human
+        recipient performs (session UI, or a global personal token with exact
+        `hitl:respond:human`).
       operationId: extListDecisions
       security:
         - projectToken: []
+        - librarianTurnToken: []
       responses:
         "200":
           description: Cross-project decision queue for the token owner.
@@ -3149,9 +3491,15 @@ paths:
 
         Writes a `token_audit_log` row with scope `hitl:read` and the
         server-derived run project after success.
+
+        (Designed — ADR-184) Also admits a `librarianTurnToken`: the project
+        comes from the run row (`resolveProjectId`) and the owner's live role
+        must allow `readBoard` there on every request; a project the owner
+        cannot read answers `404` exactly like a missing one.
       operationId: extListRunHitl
       security:
         - projectToken: []
+        - librarianTurnToken: []
       parameters:
         - name: runId
           in: path
@@ -3431,6 +3779,874 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ExtErrorBody" }
 
+  # ── Personal librarian surface (Designed — ADR-184..188) ───────────────────
+  # Cross-project reads, statement / triage / clarification / operator-message
+  # effects, and the librarian-only routes. Each operation lists the token
+  # schemes that admit it; effectful operations that admit `librarianTurnToken`
+  # take `Idempotency-Key`.
+
+  /api/v1/ext/projects:
+    get:
+      tags: [portfolio]
+      summary: (ADR-184 — Designed) List the token owner's visible projects
+      description: |
+        (Designed — ADR-184, `LAU-06`.) Scope `projects:read`. Returns every
+        non-archived project the token owner can currently read — membership at
+        `viewer` or above, or every project for a global admin — through the one
+        `getVisibleProjects` query, with the owner's effective role in each.
+
+        Admitted for global personal user tokens (`token_kind=user`,
+        `project_id IS NULL`) and librarian turn tokens. Project-bound tokens,
+        project-scoped user tokens and agent tokens carry no user-wide project
+        set and are refused `403`.
+
+        Identifier labels:
+
+        | Identifier | Source | Trust |
+        | --- | --- | --- |
+        | token owner | auth-context | verified bearer token row |
+        | visible projects | server-state | owner membership/global-admin query |
+
+        Writes a `token_audit_log` row with `scope_used='projects:read'` and
+        `project_id=NULL` after success; a librarian call also records
+        `on_behalf_of_user_id` and `librarian_turn_id`.
+      operationId: extListVisibleProjects
+      security:
+        - projectToken: []
+        - librarianTurnToken: []
+      responses:
+        "200":
+          description: The owner's visible projects.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExtVisibleProjectList" }
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/HitlForbidden"
+
+  /api/v1/ext/projects/{slug}/directory:
+    get:
+      tags: [portfolio]
+      summary: (ADR-184 — Designed) Read one project's compact directory entry
+      description: |
+        (Designed — ADR-184.) Scope `projects:read`. A compact orientation card
+        for one project: its purpose (and where that text came from), its
+        launchable flows (the same launchable-only projection as
+        `GET /api/v1/ext/projects/{slug}/flows`), its default runner, whether a
+        triager is configured, whether Project Brain is enabled, and `asOf`, the
+        instant these facts were read. Read-only; it never exposes a repository
+        path, a secret reference or member identities.
+
+        The project comes from the URL `slug`. Project-bound tokens must match
+        it; global personal user tokens and librarian turn tokens authorize the
+        owner's live role (`readBoard`) on every request. A project the owner
+        cannot read answers `404` exactly like a missing one.
+
+        Writes a `token_audit_log` row with `scope_used='projects:read'` after
+        success.
+      operationId: extGetProjectDirectory
+      security:
+        - projectToken: []
+        - librarianTurnToken: []
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "200":
+          description: The project's directory entry.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExtProjectDirectory" }
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/HitlForbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/ext/tasks/search:
+    get:
+      tags: [portfolio]
+      summary: (ADR-184 — Designed) Search tasks across the token owner's visible projects
+      description: |
+        (Designed — ADR-184, `LAU-06`.) Scope `tasks:read`. Matches `q` against
+        the task key (`KEY-N`), title and prompt of tasks in the owner's visible
+        projects only. The visibility filter is applied BEFORE matching and
+        ranking, so a project the owner cannot see contributes no hit, no count
+        and no cursor position.
+
+        A page holds at most 25 hits. `nextCursor` continues the SAME query, and
+        `truncated` is `true` exactly when more hits exist, so a caller never
+        reasons from the first page as if it were the whole answer. The
+        librarian uses this route for its duplicate check before creating a
+        task.
+
+        Admitted for global personal user tokens and librarian turn tokens;
+        project-bound, project-scoped and agent tokens are refused `403`. Writes
+        a `token_audit_log` row with `scope_used='tasks:read'` and
+        `project_id=NULL` after success.
+      operationId: extSearchTasks
+      security:
+        - projectToken: []
+        - librarianTurnToken: []
+      parameters:
+        - name: q
+          in: query
+          required: true
+          description: Search text; matched against task key, title and prompt.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+        - name: cursor
+          in: query
+          required: false
+          description: |
+            Opaque `nextCursor` from the previous page of the same `q`. A cursor
+            from a different query, or a malformed one, → `422 CONFIG`.
+          schema:
+            type: string
+            maxLength: 512
+      responses:
+        "200":
+          description: One page of matching tasks.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExtTaskSearchPage" }
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/HitlForbidden"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+  /api/v1/ext/work:
+    get:
+      tags: [portfolio]
+      summary: (ADR-184 — Designed) Read the token owner's cross-project work table
+      description: |
+        (Designed — ADR-184, `LAU-06`.) Scope `work:read`. The token-surface
+        projection of the `/work` read model (ADR-170, `getWorkTable`): one row
+        per task the owner can see, across projects, with its derived work
+        stage. Scope is `getVisibleProjectIds` and nothing else; rows come in
+        the read model's order.
+
+        Admitted for global personal user tokens and librarian turn tokens
+        (`requirePersonalOrLibrarianActor`); project-bound, project-scoped and
+        agent tokens are refused `403`. Writes a `token_audit_log` row with
+        `scope_used='work:read'` and `project_id=NULL` after success.
+      operationId: extListWork
+      security:
+        - projectToken: []
+        - librarianTurnToken: []
+      responses:
+        "200":
+          description: The owner's work rows.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExtWorkPage" }
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/HitlForbidden"
+
+  /api/v1/ext/activity/feed:
+    get:
+      tags: [portfolio]
+      summary: (ADR-184 — Designed) Read the token owner's cross-project activity feed
+      description: |
+        (Designed — ADR-184, `LAU-06`.) Scope `activity:read`. The token-surface
+        projection of the `/activity` read model
+        (`getCrossProjectActivityFeed`): task activity, domain-event facts and
+        settled webhook deliveries across the owner's visible projects, newest
+        first. `projectId` and `kind` narrow it; a `projectId` the owner cannot
+        see intersects to nothing (an empty list, not a `404`). `hasMore` says
+        whether older items exist beyond `limit`.
+
+        Distinct from `GET /api/v1/ext/activity`, the project-bound assistant
+        pulse, which keeps its project-token-only rule. Admitted for global
+        personal user tokens and librarian turn tokens; project-bound,
+        project-scoped and agent tokens are refused `403`. Writes a
+        `token_audit_log` row with `scope_used='activity:read'` and
+        `project_id=NULL` after success.
+      operationId: extActivityFeed
+      security:
+        - projectToken: []
+        - librarianTurnToken: []
+      parameters:
+        - name: projectId
+          in: query
+          required: false
+          description: Narrow to one visible project.
+          schema:
+            type: string
+            format: uuid
+        - name: kind
+          in: query
+          required: false
+          description: |
+            Narrow to one feed kind (a `task_activity` event kind, an attention
+            domain-event kind, `webhook_delivered` or `webhook_dead`). An
+            unknown kind → `422 CONFIG`.
+          schema:
+            type: string
+            maxLength: 64
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 100
+      responses:
+        "200":
+          description: The owner's activity feed page.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExtActivityFeedPage" }
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/HitlForbidden"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+  /api/v1/ext/projects/{slug}/tasks/{taskId}/statement:
+    post:
+      tags: [tasks]
+      summary: (ADR-186 — Designed) Accept a task statement revision
+      description: |
+        (Designed — ADR-186, `TST-01`, `TST-02`, `TST-03`, `TST-07`.) Scope
+        `tasks:update`. Accepts `statement` as the task's next immutable
+        statement revision, in ONE transaction under the task row lock
+        (`SELECT … FOR UPDATE`):
+
+        1. `expectedRevision` is compared with `tasks.revision`; a mismatch is
+           refused `409 CONFLICT` with `details.reason: "stale_revision"` and
+           nothing is written;
+        2. a `task_statement_revisions` row is inserted (immutable — trigger
+           `task_statement_revisions_immutable` refuses UPDATE and DELETE);
+        3. `tasks.prompt` is rendered deterministically from the statement
+           (`renderStatementPrompt`, fixed section order), `tasks.revision` is
+           incremented and `tasks.statement_revision` is set;
+        4. `task_activity` records `statement_accepted`; with a librarian turn
+           token the `refined_in` conversation link and the operation finalize
+           commit in the same transaction.
+
+        **Backlog gate (`TST-07`).** Accepting a statement is a prompt write and
+        passes the same `BACKLOG_GATED_FIELDS` gate as a prompt edit: a task not
+        in `Backlog` is refused `409 PRECONDITION` and `tasks.prompt` is
+        unchanged, because a flow run re-reads `tasks.prompt` at every re-entry
+        and an agent run at every session start — the gate is the protection.
+        The refusal names the two supported ways to change running work:
+        `POST /api/v1/ext/runs/{runId}/operator-message` and the run page's
+        rework claim.
+
+        The project comes from `slug`; `taskId` is re-validated against it.
+        Project-bound tokens must match; user-owned and librarian tokens
+        authorize the owner's live `editTask` role on every request. Writes a
+        `token_audit_log` row with `scope_used='tasks:update'` inside the same
+        transaction.
+      operationId: extAcceptTaskStatement
+      security:
+        - projectToken: []
+        - librarianTurnToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/AllowDuplicate"
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ExtAcceptStatementBody" }
+      responses:
+        "200":
+          description: Statement accepted; the task's new revisions.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExtStatementAcceptResult" }
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/HitlForbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+  /api/v1/ext/projects/{slug}/tasks/{taskId}/send-to-triage:
+    post:
+      tags: [tasks]
+      summary: (ADR-185 — Designed) Send a task to triage with an explicit launch intent
+      description: |
+        (Designed — ADR-185 D8, `LOP-05`, `LOP-06`.) Scope `tasks:triage`. Wraps
+        `sendTaskToTriage` — `tasks.triage_status = NULL`, the
+        `task.triage_requeued` domain event and the `triage_requeued` activity
+        entry — and records `tasks.launch_intent` in the SAME transaction.
+
+        `launchIntent` bounds what the triager's next verdict may do. Under
+        `triage_only` a verdict stamps `triaged` but never arms
+        `launch_mode='auto'`, whatever its `enqueue` says. Under
+        `triage_then_launch` the verdict's `enqueue` may arm it, and C2 then
+        launches through the standard preconditions. A human Launch click
+        ignores the intent. Returns the requeued task.
+
+        The project comes from `slug`; `taskId` is re-validated against it.
+        User-owned and librarian tokens authorize the owner's live `editTask`
+        role on every request. Writes a `token_audit_log` row with
+        `scope_used='tasks:triage'` inside the same transaction.
+      operationId: extSendTaskToTriage
+      security:
+        - projectToken: []
+        - librarianTurnToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/AllowDuplicate"
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ExtSendToTriageBody" }
+      responses:
+        "200":
+          description: Task re-queued for triage with its recorded `launchIntent`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TaskDTO" }
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/HitlForbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+  /api/v1/ext/projects/{slug}/tasks/{taskId}/clarifications:
+    get:
+      tags: [tasks]
+      summary: (Designed — ADR-187) List a task's clarifications
+      description: |
+        (Designed — ADR-187, `CLR-06`.) Scope `tasks:read`. The task's
+        clarification requests with requester, recipient, status and, for an
+        answered row, the attributed answer — so the librarian can tell its
+        owner what a teammate answered. Answers are task content and follow
+        task visibility. Admits a `librarianTurnToken` (live `readBoard`).
+      operationId: extListTaskClarifications
+      security:
+        - projectToken: []
+        - librarianTurnToken: []
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string, minLength: 1 }
+        - name: taskId
+          in: path
+          required: true
+          schema: { type: string, minLength: 1 }
+      responses:
+        "200":
+          description: The task's clarifications, newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [clarifications]
+                additionalProperties: false
+                properties:
+                  clarifications:
+                    type: array
+                    items: { $ref: "#/components/schemas/TaskClarification" }
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      tags: [clarifications]
+      summary: (ADR-187 — Designed) Ask a named teammate to clarify a task before execution
+      description: |
+        (Designed — ADR-187, `CLR-01`, `CLR-02`, `CLR-03`, `CLR-05`.) Scope
+        `hitl:request`. Creates a user-origin `task_clarifications` row
+        (`origin_kind='user'`, `retrigger_mode='none'`, no source run, agent or
+        HITL row). No run is created to address someone, and a clarification
+        exists without any run.
+
+        The requester is the token OWNER (auth-context), never a body field;
+        with a librarian turn token the source message is the turn's owner
+        message (server-state). Tokens without a human owner — ownerless project
+        tokens and agent tokens — are refused `403`; an agent asks a human
+        through `POST …/human-asks`. The recipient must be able to act in the
+        task's project (`member` or above, the `answerHitl` minimum) now and
+        again at answer time; otherwise the request is refused `409
+        PRECONDITION`, and an unknown user id gets the same refusal.
+
+        One transaction writes the row (`open`; `requested_via_operation_id`
+        for a librarian token), `task_activity` `clarification_requested`, an
+        `inbox_items` row `clarification_requested` for the recipient, and the
+        `task.clarification_requested` domain event. The recipient's decision
+        queue gains a `clarification` item in the same array as its other
+        populations, so its count equals its list length. A `blocking` request
+        holds launch — the task classifies `clarification_pending` until the
+        request is answered, cancelled or superseded — and adds no task status.
+
+        `supersedesClarificationId` makes this a correction of an earlier
+        user-origin request on the same task: the successor is created first
+        and the earlier row becomes `superseded`. An answer is never
+        overwritten.
+
+        The project comes from `slug`; `taskId` is re-validated against it.
+        Writes a `token_audit_log` row with `scope_used='hitl:request'` inside
+        the same transaction. No question, reason or answer text is logged.
+      operationId: extRequestTaskClarification
+      security:
+        - projectToken: []
+        - librarianTurnToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/AllowDuplicate"
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ExtTaskClarificationRequestBody" }
+      responses:
+        "201":
+          description: Clarification requested; the recipient is notified.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [clarification]
+                properties:
+                  clarification: { $ref: "#/components/schemas/TaskClarification" }
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/HitlForbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+  /api/v1/ext/projects/{slug}/tasks/{taskId}/clarifications/{clarificationId}:
+    delete:
+      tags: [clarifications]
+      summary: (ADR-187 — Designed) Cancel an open clarification the token owner requested
+      description: |
+        (Designed — ADR-187, `CLR-04`, `CLR-08`.) Scope `hitl:request`. The
+        requester — the token owner — cancels an `open` user-origin request: the
+        row becomes `cancelled` with `cancel_reason = requester_cancelled`,
+        `task_activity` records `clarification_cancelled`, the
+        `task.clarification_cancelled` event is emitted, and a blocking hold is
+        released when no other blocking request on the task stays open.
+
+        Cancelling an already-cancelled row returns it unchanged. An answered or
+        superseded row → `409 CONFLICT`. Only the requester may cancel (`403`
+        for anyone else); an id that is not a user-origin clarification of this
+        task → `404`.
+      operationId: extCancelTaskClarification
+      security:
+        - projectToken: []
+        - librarianTurnToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/AllowDuplicate"
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: clarificationId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The cancelled clarification.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [clarification]
+                properties:
+                  clarification: { $ref: "#/components/schemas/TaskClarification" }
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/HitlForbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /api/v1/ext/projects/{slug}/tasks/{taskId}/clarifications/{clarificationId}/answer:
+    post:
+      tags: [clarifications]
+      summary: (ADR-187 — Designed) Answer a clarification addressed to the token owner
+      description: |
+        (Designed — ADR-187, `CLR-04`, `CLR-07`, `CLR-09`.) Requires a GLOBAL
+        personal user token (`token_kind=user`, `project_id IS NULL`) holding
+        the exact scope `hitl:respond:human`; `*` never satisfies it. Librarian
+        turn tokens, agent tokens, project tokens and project-scoped user tokens
+        are refused `403` — answering is a human act, and nothing a model
+        retrieves can answer on anyone's behalf. This route therefore does NOT
+        list `librarianTurnToken`.
+
+        The token twin of the session route
+        `POST /api/projects/{slug}/tasks/{number}/clarifications/{clarificationId}/answer`,
+        through the same service and rules: the owner must be the addressed
+        recipient AND hold `member` or above in the task's project now (`403`
+        otherwise); the answer is written once under the row lock with a status
+        CAS `open → answered`, so a row that is already answered, cancelled or
+        superseded — including the loser of two racing answers — is refused
+        `409 CONFLICT`; the answer must fit the row's `answerFormat` and
+        `choices` (`422 CONFIG` otherwise). Answering never changes the
+        statement, the task revision or launch state; it records
+        `task_activity` `clarification_answered` and emits
+        `task.clarification_answered`, which reaches the requester's
+        conversation only while the requester can still read the task.
+
+        Writes a `token_audit_log` row with `scope_used='hitl:respond:human'`.
+        No question or answer text is logged.
+      operationId: extAnswerTaskClarification
+      security:
+        - projectToken: []
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: clarificationId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TaskClarificationAnswerBody" }
+      responses:
+        "200":
+          description: The answered clarification.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [clarification]
+                properties:
+                  clarification: { $ref: "#/components/schemas/TaskClarification" }
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/HitlForbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+  /api/v1/ext/runs/{runId}/operator-message:
+    post:
+      tags: [runs]
+      summary: (ADR-185 — Designed) Send the owner's message to an existing run
+      description: |
+        (Designed — ADR-185 D10b, `LOP-10`.) Scope `runs:message` — never
+        `runs:delegate`: this is the owner's continuation seam, not a
+        coordinator re-message (`POST /api/v1/ext/runs/message` stays
+        orchestrator-only). The project comes from the run row
+        (`resolveProjectId`) and the owner's live project role there must be
+        `member` or above on every request; a run the owner cannot see answers
+        `404`. Tokens without a human owner are refused `403`.
+
+        The outcome is exactly one of:
+
+        - `delivered` / `queued` — a **scratch** run the token owner owns
+          (`sendScratchUserMessage`; another user's scratch run answers `404`),
+          or a **persistent agent** run (`sendAgentMessage` with a user
+          principal: `agent_turns.source='user'`, `requested_by_user_id` = the
+          owner). `delivered` means the live session took the message now;
+          `queued` means it waits, durably, for the run's next turn.
+        - `refused_requires_rework` — a **flow** run, which has no message
+          seam: its executor re-reads the task at re-entry. `reason` names the
+          run-page control that fits the run's status — the operator node
+          interrupt (ADR-161) or the rework claim (ADR-160). No message is
+          stored.
+
+        A terminal run (`Done`, `Abandoned`, `Failed`) → `409 PRECONDITION`.
+        Writes a `token_audit_log` row with `scope_used='runs:message'`. No
+        message text is logged.
+      operationId: extSendOperatorMessage
+      security:
+        - projectToken: []
+        - librarianTurnToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/AllowDuplicate"
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ExtOperatorMessageBody" }
+      responses:
+        "200":
+          description: The delivery outcome.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExtOperatorMessageResult" }
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/HitlForbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "503":
+          description: |
+            The execution host could not take a message bound for a live
+            session (`EXECUTOR_UNAVAILABLE`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExtErrorBody" }
+
+  /api/v1/ext/librarian/cards:
+    post:
+      tags: [librarian]
+      summary: (ADR-185 — Designed) Propose a card for the owner to decide
+      description: |
+        (Designed — ADR-185 D7, `LOP-08`, `LOP-09`, `LMM-01`.) Scope
+        `librarian:cards`; librarian turn tokens ONLY — any other token kind is
+        refused `403`. Creates a `pending` card in the owner's conversation,
+        bound to the current segment and turn, which the owner decides with one
+        click through the session route `POST
+        /api/librarian/cards/{cardId}/decide`.
+
+        The SERVER — never the body — binds the target's current revision
+        (`targetRevision`) and the payload digest: `tasks.revision` for a
+        statement proposal; for a confirmation, the reviewed head SHA
+        (`run_promote`), the HITL request id and its stored revision
+        (`hitl_respond`), or the run id and status (`run_discard`). The card
+        expires after `MAISTER_LIBRARIAN_CONFIRMATION_TTL_MINUTES` (default
+        60). Deciding it after its target moved, or after it expired, is
+        refused `409 CONFLICT` with `details.reason: "target_changed"`.
+
+        Kinds:
+
+        - `statement_proposal` — a proposed statement revision for an existing
+          task, shown as a diff against its current revision;
+        - `confirmation` — a human-only action the token itself can never
+          perform: a human HITL answer, a promotion, a discard;
+        - `memory_suggestion` — an inferred personal memory item, persisted only
+          if the owner accepts it.
+
+        Every target is visibility-checked against the owner (`404` for a
+        foreign or missing one). A target that is not actionable now — a HITL
+        request no longer pending, a run that cannot be promoted or discarded in
+        its current state — → `409 PRECONDITION`.
+      operationId: extProposeLibrarianCard
+      security:
+        - librarianTurnToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/AllowDuplicate"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LibrarianCardProposal" }
+      responses:
+        "201":
+          description: Card created and shown to the owner.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [card]
+                properties:
+                  card: { $ref: "#/components/schemas/LibrarianCard" }
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/HitlForbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+  /api/v1/ext/librarian/memory:
+    post:
+      tags: [librarian]
+      summary: (ADR-188 — Designed) Remember an item the owner explicitly asked to keep
+      description: |
+        (Designed — ADR-188, `LMM-01`, `LMM-02`, `LMM-07`, `LMM-11`.) Scope
+        `librarian:memory`; librarian turn tokens only, and only from an
+        `owner_message` turn — an Explain or summary turn's token is refused
+        `403`. Use it only for an explicit "remember" from the owner; anything
+        the librarian merely infers goes through a `memory_suggestion` card
+        instead.
+
+        Writes a `librarian_memory_items` row with `origin='explicit'`,
+        revision 1, and a source reference to the turn's owner message. A
+        `project`-scoped item names a project the owner can see (`404`
+        otherwise). The write is fenced on the conversation's
+        `(segment, forget_generation, history_generation)`: a turn that lost the
+        fence — a reset, forget or history clear committed meanwhile — writes
+        nothing and is refused `409 CONFLICT`. Personal memory never writes to
+        Project Brain or to an agent's `memory.md`. No memory content is logged.
+      operationId: extRememberLibrarianMemory
+      security:
+        - librarianTurnToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/AllowDuplicate"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LibrarianMemoryDraft" }
+      responses:
+        "201":
+          description: Memory item stored.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [item]
+                properties:
+                  item: { $ref: "#/components/schemas/LibrarianMemoryItem" }
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/HitlForbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+  /api/v1/ext/librarian/history/search:
+    get:
+      tags: [librarian]
+      summary: (ADR-188 — Designed) Search the owner's own earlier conversation
+      description: |
+        (Designed — ADR-188 D12, `LMM-04`.) Scope `librarian:history`; librarian
+        turn tokens only. Full-text search (a `simple` tsvector over
+        `librarian_messages.body`) of the OWNER's conversation, older segments
+        included — the only way older segments reach a turn, since automatic
+        context holds only the active segment. At most 20 hits; messages masked
+        for lost project visibility (`LMM-09`) are excluded. Hits from an older
+        segment are labelled `earlier_conversation`, and the reply must present
+        them as "from earlier conversation". There is no parameter naming a user
+        or a conversation.
+      operationId: extSearchLibrarianHistory
+      security:
+        - librarianTurnToken: []
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+      responses:
+        "200":
+          description: Matching messages, at most 20.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LibrarianHistorySearchResult" }
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/HitlForbidden"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
 components:
   securitySchemes:
     projectToken:
@@ -3450,6 +4666,99 @@ components:
         revoked, wrong-project, inaccessible-project) map to 401 or 404 per
         the existence-hide policy.
 
+    librarianTurnToken:
+      type: http
+      scheme: bearer
+      description: |
+        (Designed — ADR-184) The personal librarian's per-turn delegated token.
+        Issued by the SERVER, never user-creatable, and never listed, shown or
+        revoked through the token-management routes: when a librarian turn's
+        run flips `Running`, the web mints one `project_tokens` row with
+        `token_kind='librarian'`, `owner_user_id` = the conversation owner,
+        `project_id` and `agent_id` NULL, `librarian_turn_id` set, name
+        `librarian-turn:<turnId>` and `expires_at` = the turn deadline (CHECK
+        `project_tokens_librarian_check`); the turn-end transaction revokes it.
+        It reaches only that turn's `maister` MCP facade process as
+        `MAISTER_ACCESS_TOKEN`, so no token is shared across users or turns.
+        Same wire format, hashing and lookup as `projectToken`.
+
+        The token acts AS its owner, never as a separate principal. Every
+        request re-checks, at request time: the owner is active with no pending
+        password change; the turn is still `running`; the route scope is in the
+        token's scopes (`LIBRARIAN_TOKEN_SCOPES`; an Explain turn holds only the
+        read-only `LIBRARIAN_READ_SCOPES`); and the owner's LIVE project role
+        allows the scope's project action in the addressed project
+        (`requireProjectActionForUser`). Every list, search and count is
+        filtered to the owner's visible projects before aggregation, and a
+        foreign project answers exactly like a missing one (`404`). Audit rows
+        carry `on_behalf_of_user_id`, `librarian_turn_id` and, for effects,
+        `operation_id`; an audit failure fails the request. Effectful routes
+        require `Idempotency-Key`.
+
+        An operation admits this token exactly when its `security` lists this
+        scheme. It is never admitted on a HITL response of any kind, a
+        clarification answer, `runs/promote`, `runs/{runId}/discard`,
+        `runs/delegate`, `runs/collect`, `runs/message`, `runs/plan`,
+        `agent/memory`, or any token, settings or admin route — even where its
+        scopes would match, the route refuses the kind. Those human-only
+        actions reach the owner as confirmation cards decided through session
+        routes.
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: |
+        (Designed — ADR-185, `LOP-01`, `LOP-02`, `LOP-03`) Caller-chosen
+        operation key. **Required** on every effectful route when the request
+        is authenticated by `librarianTurnToken` — the MCP facade forwards each
+        effectful tool's `operationKey` argument here — and a librarian request
+        without it is refused `422 CONFIG` before anything is admitted. Not read
+        for any other token kind, whose semantics are unchanged. (OpenAPI cannot
+        make a header conditionally required, hence `required: false`.)
+
+        The key is scoped to the owner's conversation (UNIQUE
+        `librarian_operations_key_uq (conversation_id, idempotency_key)`). The
+        operation row commits `admitted` BEFORE the effect, and its finalize
+        rides the route's success audit (`recordRequiredTokenAudit`) inside the
+        route's own transaction, so a DB-only effect and its operation result
+        commit together or not at all. The request digest is the canonical JSON
+        (sorted keys, arrays in order) of the validated body without the key,
+        bound to the operation kind and the URL-derived target ids.
+
+        - Same key, same digest → the stored result is returned and the effect
+          is not repeated.
+        - Same key, different digest → `409 CONFLICT`,
+          `details.reason: "idempotency_payload_mismatch"`.
+        - A NEW key whose digest matches an operation that already succeeded in
+          the conversation's current segment → `409 CONFLICT`,
+          `details.reason: "duplicate_of_operation"`, with that operation's
+          receipt in `details.operation` — unless the request carries
+          `X-Maister-Allow-Duplicate: true`.
+
+        An operation whose outcome is unknown after a crash is settled by lookup
+        on its result column (`tasks.created_via_operation_id`,
+        `task_comments.via_operation_id`,
+        `task_clarifications.requested_via_operation_id`,
+        `runs.librarian_operation_id`), never re-issued.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+        pattern: "^[A-Za-z0-9._:-]+$"
+    AllowDuplicate:
+      name: X-Maister-Allow-Duplicate
+      in: header
+      required: false
+      description: |
+        (Designed — ADR-185, `LOP-02`) Librarian turn tokens only; ignored for
+        other token kinds. `true` lets a NEW `Idempotency-Key` repeat the digest
+        of an operation that already succeeded in the current segment — the
+        owner explicitly asked for the same effect again. It never relaxes the
+        same-key rules.
+      schema:
+        type: string
+        enum: ["true"]
   responses:
     TokenUnauthorized:
       description: |
@@ -3480,6 +4789,13 @@ components:
         `Failed`), or a task/run create/launch precondition conflict (task not
         in `Backlog`, project archived, branch/worktree taken). Code `CONFLICT`
         or `PRECONDITION`.
+
+        (Designed — ADR-185/186) `details.reason` discriminates the librarian
+        and task-revision refusals: `idempotency_payload_mismatch` (same
+        `Idempotency-Key`, different request), `duplicate_of_operation` (a new
+        key repeating an operation that already succeeded in the current
+        segment; its receipt is in `details.operation`), and `stale_revision`
+        (a task write whose `expectedRevision` is no longer current).
       content:
         application/json:
           schema: { $ref: "#/components/schemas/ExtErrorBody" }
@@ -3503,6 +4819,13 @@ components:
           - **Wrong token kind (inbox only)** — `/api/v1/ext/hitl` requires a
             global personal user token; project/agent/project-scoped tokens
             return 403.
+          - **(Designed — ADR-184) Librarian turn token** — presented to an
+            operation whose `security` does not list `librarianTurnToken`; its
+            turn is no longer `running`; or an Explain turn's read-only token on
+            an effectful route. Also any other token kind on
+            `/api/v1/ext/librarian/*`, and a token without a human owner on a
+            route that acts as the owner (cross-project reads, clarification
+            requests, operator messages).
 
         Cross-project access does NOT use 403 — it hides existence (404).
       content:
@@ -3558,6 +4881,20 @@ components:
                 The route's required scope label, e.g. `flows:read`. Identical
                 for every caller; also printed in this spec and in the route
                 source.
+            reason:
+              type: string
+              description: |
+                (Designed — ADR-185/186) Discriminator of a `409 CONFLICT`:
+                `idempotency_payload_mismatch`, `duplicate_of_operation`, or
+                `stale_revision`. Absent on other refusals.
+            operation:
+              allOf:
+                - $ref: "#/components/schemas/LibrarianOperationReceipt"
+              description: |
+                (Designed — ADR-185) With `reason: duplicate_of_operation` or
+                `idempotency_payload_mismatch`: the receipt of the operation
+                already recorded, so the caller can report its result instead
+                of repeating the effect.
 
     HitlRespondReason:
       type: string
@@ -4509,6 +5846,24 @@ components:
         createdAt:
           type: string
           format: date-time
+        revision:
+          type: integer
+          minimum: 0
+          description: |
+            (Designed — ADR-186, `TST-02`) Optimistic task revision, incremented
+            by every content write (UI PATCH, ext PATCH, statement accept) under
+            the task row lock. Send it back as `expectedRevision`. Present on
+            every response once migration `0184` lands.
+        statementRevision:
+          type: integer
+          minimum: 1
+          nullable: true
+          description: (Designed — ADR-186) The accepted statement revision rendered into `prompt`; null when the task has none.
+        launchIntent:
+          allOf:
+            - $ref: "#/components/schemas/TaskLaunchIntent"
+          nullable: true
+          description: (Designed — ADR-185) `tasks.launch_intent`; null on every non-librarian path.
 
     RunDTO:
       type: object
@@ -5205,6 +6560,11 @@ components:
 
     ExtCreateTaskBody:
       type: object
+      description: |
+        `prompt` is required today. (Designed — ADR-186) When statements land,
+        the body carries exactly one of `prompt` or `statement`; the
+        `x-maister-designed` marker on `statement` is removed in the same
+        change.
       required: [title, prompt]
       properties:
         title:
@@ -5213,6 +6573,13 @@ components:
         prompt:
           type: string
           minLength: 1
+        statement:
+          x-maister-designed: true
+          allOf:
+            - $ref: "#/components/schemas/TaskStatement"
+          description: |
+            (Designed — ADR-186) The agreed statement; the server renders
+            `tasks.prompt` from it and stores it as statement revision 1.
         flowId:
           type: string
           minLength: 1
@@ -5226,7 +6593,8 @@ components:
       type: object
       description: |
         Partial update for a `Backlog` task. At least one field must be present.
-        Fields absent from the body are left unchanged.
+        Fields absent from the body are left unchanged. `expectedRevision` does
+        not count as a field: a body carrying only it is refused `422 CONFIG`.
       minProperties: 1
       properties:
         title:
@@ -5235,6 +6603,14 @@ components:
         prompt:
           type: string
           minLength: 1
+        expectedRevision:
+          x-maister-designed: true
+          type: integer
+          minimum: 0
+          description: |
+            (Designed — ADR-186, `TST-02`) Optional optimistic guard: the
+            `TaskDTO.revision` the caller last read. A mismatch is refused
+            `409 CONFLICT` with `details.reason: "stale_revision"`.
 
     ExtLaunchRunBody:
       type: object
@@ -5353,10 +6729,12 @@ components:
       properties:
         kind:
           type: string
-          enum: [hitl, promotable, crashed, flagged]
+          enum: [hitl, promotable, crashed, flagged, clarification]
           description: |
-            Which of the four `decisions` populations this entry came from.
+            Which `decisions` population this entry came from.
             `decision_request` HITL rows are never surfaced (ADR-137).
+            `clarification` (Designed — ADR-187) is an open user-origin
+            clarification addressed to the owner.
         projectId: { type: string, format: uuid }
         projectSlug: { type: string }
         taskKey:
@@ -5370,7 +6748,7 @@ components:
           type: string
           format: uuid
           nullable: true
-          description: Null for `flagged` entries, which have no run yet.
+          description: Null for `flagged` and `clarification` entries, which have no run.
         hitlRequestId:
           type: string
           format: uuid
@@ -5384,10 +6762,17 @@ components:
           description: |
             HITL criticality. Null for non-HITL kinds, which carry the fixed
             rank crashed > promotable > flagged instead. Never `tasks.priority`.
+        clarificationId:
+          type: string
+          format: uuid
+          nullable: true
+          description: (Designed — ADR-187) Present only when `kind` is `clarification`.
         nextAction:
           type: string
-          enum: [respond, promote, recover, discard, review]
-          description: The single action that clears this entry.
+          enum: [respond, promote, recover, discard, review, answer]
+          description: |
+            The single action that clears this entry. `answer` (Designed —
+            ADR-187) is performed only by the human recipient.
         createdAt:
           type: string
           format: date-time
@@ -6229,10 +7614,1076 @@ components:
       type: object
       description: |
         (M37 — Implemented, ADR-098) `run_cancel` payload. `childRunId` must be a
-        child of the calling orchestrator.
+        child of the calling orchestrator. (Designed — ADR-184) With a librarian
+        turn token there is no orchestrator: `childRunId` names any run the
+        owner can act on (see `extCancelRun`).
       required: [childRunId]
       additionalProperties: false
       properties:
         childRunId:
           type: string
           format: uuid
+
+    # ── Personal librarian schemas (Designed — ADR-184..188) ──────────────────
+
+    TaskLaunchIntent:
+      type: string
+      enum: [none, triage_only, triage_then_launch]
+      description: |
+        (Designed — ADR-185 D8) `tasks.launch_intent`. `none` — created through
+        the librarian; a triage verdict never arms auto-launch and C2 never
+        admits the task. `triage_only` — triage runs, launch waits for a human.
+        `triage_then_launch` — the verdict's `enqueue` may arm auto-launch.
+        A NULL column (every non-librarian path) keeps today's behaviour.
+
+    TaskLaunchability:
+      type: string
+      enum:
+        [
+          launchable,
+          busy,
+          crashed,
+          target_terminal,
+          flagged,
+          clarification_pending,
+          blocked,
+          unconfigured,
+        ]
+      description: |
+        The server launchability classification. `clarification_pending`
+        (Designed — ADR-187) — an open blocking clarification holds launch; it
+        ranks after `flagged` and before `blocked`.
+
+    TaskStatement:
+      type: object
+      description: |
+        (Designed — ADR-186, `TST-01`) The agreed, self-contained task
+        statement. Every key is required; arrays may be empty except
+        `acceptance`. The same bounds hold on every entry point. Accepting a
+        statement stores an immutable `task_statement_revisions` row and
+        renders `tasks.prompt` from it deterministically
+        (`renderStatementPrompt`, fixed section order), so an executor never
+        needs the conversation.
+      additionalProperties: false
+      required:
+        [context, goal, acceptance, constraints, outOfScope, links, openQuestions]
+      properties:
+        context:
+          type: string
+          minLength: 1
+          maxLength: 8000
+          description: Background the executor needs.
+        goal:
+          type: string
+          minLength: 1
+          maxLength: 2000
+          description: The outcome the task must achieve.
+        acceptance:
+          type: array
+          minItems: 1
+          maxItems: 30
+          description: Acceptance criteria, each independently checkable.
+          items:
+            type: string
+            minLength: 1
+            maxLength: 1000
+        constraints:
+          type: array
+          maxItems: 30
+          items:
+            type: string
+            minLength: 1
+            maxLength: 1000
+        outOfScope:
+          type: array
+          maxItems: 30
+          items:
+            type: string
+            minLength: 1
+            maxLength: 1000
+        links:
+          type: array
+          maxItems: 20
+          items: { $ref: "#/components/schemas/TaskStatementLink" }
+        openQuestions:
+          type: array
+          maxItems: 20
+          description: |
+            Questions still open when the statement was agreed. A question that
+            must be answered before execution belongs in a clarification request.
+          items:
+            type: string
+            minLength: 1
+            maxLength: 1000
+
+    TaskStatementLink:
+      type: object
+      additionalProperties: false
+      required: [title, url]
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+        url:
+          type: string
+          format: uri
+          maxLength: 2000
+
+    ExtAcceptStatementBody:
+      type: object
+      additionalProperties: false
+      required: [statement, expectedRevision]
+      properties:
+        statement: { $ref: "#/components/schemas/TaskStatement" }
+        expectedRevision:
+          type: integer
+          minimum: 0
+          description: The `TaskDTO.revision` the statement was agreed against.
+
+    ExtStatementAcceptResult:
+      type: object
+      additionalProperties: false
+      required: [taskId, revision, statementRevision]
+      properties:
+        taskId:
+          type: string
+          format: uuid
+        revision:
+          type: integer
+          minimum: 1
+          description: The task's `revision` after the accept.
+        statementRevision:
+          type: integer
+          minimum: 1
+          description: The accepted statement revision now rendered into `prompt`.
+
+    ExtSendToTriageBody:
+      type: object
+      additionalProperties: false
+      required: [launchIntent]
+      properties:
+        launchIntent:
+          type: string
+          enum: [triage_only, triage_then_launch]
+          description: |
+            What the next triage verdict may do. `none` is not accepted here —
+            it is the create-time default, not a triage request.
+
+    ExtUserRef:
+      type: object
+      additionalProperties: false
+      required: [userId, label]
+      properties:
+        userId: { type: string }
+        label:
+          type: string
+          description: Display label resolved at read time.
+
+    ExtTaskClarificationRequestBody:
+      type: object
+      additionalProperties: false
+      required: [recipientUserId, question, reason, answerFormat, blocking]
+      description: |
+        (Designed — ADR-187, `CLR-01`) A user-origin clarification request.
+        `choices` is required when `answerFormat` is `choice` and refused
+        (`422 CONFIG`) otherwise. The requester and the source message are
+        never body fields.
+      properties:
+        recipientUserId:
+          type: string
+          minLength: 1
+          description: The teammate asked; must hold `member` or above in the task's project.
+        question:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 1000
+          description: Why the answer is needed, shown to the recipient.
+        answerFormat:
+          type: string
+          enum: [text, choice, yes_no]
+        choices:
+          type: array
+          minItems: 2
+          maxItems: 10
+          items:
+            type: string
+            minLength: 1
+            maxLength: 200
+        blocking:
+          type: boolean
+          description: |
+            `true` holds launch (`clarification_pending`) until the request is
+            answered, cancelled or superseded.
+        supersedesClarificationId:
+          type: string
+          format: uuid
+          description: |
+            An earlier user-origin request on the same task that this one
+            corrects; it becomes `superseded` once this row exists.
+
+    TaskClarificationAnswer:
+      description: |
+        (Designed — ADR-187) Exactly one form, matching the request's
+        `answerFormat`: `text`, `choice` (one of the request's `choices`), or
+        `yesNo`.
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [text]
+          properties:
+            text:
+              type: string
+              minLength: 1
+              maxLength: 4000
+        - type: object
+          additionalProperties: false
+          required: [choice]
+          properties:
+            choice:
+              type: string
+              minLength: 1
+              maxLength: 200
+        - type: object
+          additionalProperties: false
+          required: [yesNo]
+          properties:
+            yesNo: { type: boolean }
+
+    TaskClarificationAnswerBody:
+      type: object
+      additionalProperties: false
+      required: [answer]
+      properties:
+        answer: { $ref: "#/components/schemas/TaskClarificationAnswer" }
+
+    TaskClarification:
+      type: object
+      additionalProperties: false
+      description: |
+        (Designed — ADR-187) Explicit projection of one USER-origin
+        `task_clarifications` row — never the raw row. Agent-origin rows
+        (ADR-136) are not addressed by these routes.
+      required:
+        [
+          id,
+          taskId,
+          status,
+          question,
+          reason,
+          answerFormat,
+          choices,
+          blocking,
+          requester,
+          recipient,
+          answer,
+          answeredBy,
+          answeredAt,
+          cancelReason,
+          supersededByClarificationId,
+          createdAt,
+        ]
+      properties:
+        id:
+          type: string
+          format: uuid
+        taskId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [open, answered, cancelled, superseded]
+          description: |
+            `open → answered | cancelled | superseded`; `answered → superseded`
+            (the correcting successor is created first). An answer is never
+            overwritten.
+        question: { type: string }
+        reason: { type: string }
+        answerFormat:
+          type: string
+          enum: [text, choice, yes_no]
+        choices:
+          type: array
+          nullable: true
+          items: { type: string }
+          description: Present when `answerFormat` is `choice`; null otherwise.
+        blocking: { type: boolean }
+        requester: { $ref: "#/components/schemas/ExtUserRef" }
+        recipient: { $ref: "#/components/schemas/ExtUserRef" }
+        answer:
+          allOf:
+            - $ref: "#/components/schemas/TaskClarificationAnswer"
+          nullable: true
+        answeredBy:
+          allOf:
+            - $ref: "#/components/schemas/ExtUserRef"
+          nullable: true
+        answeredAt:
+          type: string
+          format: date-time
+          nullable: true
+        cancelReason:
+          type: string
+          nullable: true
+          enum:
+            [
+              requester_cancelled,
+              recipient_deactivated,
+              recipient_lost_access,
+              task_abandoned,
+              null,
+            ]
+          description: Set exactly when `status` is `cancelled`.
+        supersededByClarificationId:
+          type: string
+          format: uuid
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+
+    ExtOperatorMessageBody:
+      type: object
+      additionalProperties: false
+      required: [message]
+      properties:
+        message:
+          type: string
+          minLength: 1
+          maxLength: 20000
+          description: The owner's instruction, delivered verbatim.
+
+    ExtOperatorMessageResult:
+      type: object
+      additionalProperties: false
+      required: [runId, outcome, reason, runStatus]
+      properties:
+        runId:
+          type: string
+          format: uuid
+        outcome:
+          type: string
+          enum: [delivered, queued, refused_requires_rework]
+        reason:
+          type: string
+          nullable: true
+          enum: [use_node_interrupt, use_rework_claim, null]
+          description: |
+            Only with `refused_requires_rework`: the run-page control that fits
+            the flow run's status — the operator node interrupt (ADR-161) for a
+            live agent node, the rework claim (ADR-160) for a `Review` run. Null
+            in every other case, including a flow run where neither applies now.
+        runStatus:
+          type: string
+          description: The run's status after the call, a run-status string per the run state machine.
+
+    LibrarianOperationTarget:
+      type: object
+      additionalProperties: false
+      description: The ids an operation addressed; keys it did not address are absent.
+      properties:
+        projectSlug: { type: string }
+        taskId: { type: string, format: uuid }
+        taskKey: { type: string }
+        runId: { type: string, format: uuid }
+        hitlRequestId: { type: string, format: uuid }
+        clarificationId: { type: string, format: uuid }
+        cardId: { type: string, format: uuid }
+        memoryItemId: { type: string, format: uuid }
+
+    LibrarianOperationReceipt:
+      type: object
+      additionalProperties: false
+      description: |
+        (Designed — ADR-185, `LOP-01`..`LOP-04`) Explicit projection of one
+        `librarian_operations` row, never the raw row. `result` is the stored
+        route result; a reader re-reads the target's live status rather than
+        trusting it. A batch is a sequence of operations, one receipt each, and
+        a retry re-submits only the items whose receipt is not terminal.
+      required:
+        [
+          operationId,
+          idempotencyKey,
+          kind,
+          status,
+          target,
+          errorCode,
+          result,
+          createdAt,
+          settledAt,
+        ]
+      properties:
+        operationId:
+          type: string
+          format: uuid
+        idempotencyKey: { type: string }
+        kind:
+          type: string
+          pattern: "^[a-z][a-z_]*$"
+          description: |
+            The effect, named after the MCP tool or card action that requested
+            it — e.g. `task_create`, `task_update`, `task_statement_accept`,
+            `task_send_to_triage`, `comment_create`, `relation_add`,
+            `clarification_request`, `run_launch`, `run_operator_message`,
+            `librarian_card_propose`, `librarian_memory_remember`, and for a
+            decided card `hitl_respond`, `run_promote`, `run_discard`.
+        status:
+          type: string
+          enum: [admitted, succeeded, refused, failed, unknown]
+          description: |
+            `admitted → succeeded | refused | failed | unknown`; `unknown →
+            succeeded | failed` by reconcile only.
+        target: { $ref: "#/components/schemas/LibrarianOperationTarget" }
+        errorCode:
+          type: string
+          nullable: true
+          description: The `MaisterError` code; set exactly when `status` is `refused` or `failed`.
+        result:
+          type: object
+          nullable: true
+          additionalProperties: true
+          description: The stored success DTO of the route that performed the effect.
+        createdAt:
+          type: string
+          format: date-time
+        settledAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    LibrarianCardTarget:
+      type: object
+      additionalProperties: false
+      description: The exact objects a card is bound to; keys it does not address are absent.
+      properties:
+        taskId: { type: string, format: uuid }
+        taskKey: { type: string }
+        runId: { type: string, format: uuid }
+        hitlRequestId: { type: string, format: uuid }
+
+    LibrarianMemoryDraft:
+      type: object
+      additionalProperties: false
+      required: [kind, content, scope]
+      description: |
+        (Designed — ADR-188, `LMM-02`) A personal memory item to write.
+        `projectSlug` is required when `scope` is `project` and refused
+        otherwise (`422 CONFIG`).
+      properties:
+        kind:
+          type: string
+          enum: [preference, goal, commitment, fact]
+        content:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        scope:
+          type: string
+          enum: [general, project]
+        projectSlug:
+          type: string
+          minLength: 1
+        validUntil:
+          type: string
+          format: date-time
+          description: Optional expiry; an expired item is no longer used.
+
+    LibrarianStatementProposal:
+      type: object
+      additionalProperties: false
+      required: [kind, taskId, statement]
+      properties:
+        kind:
+          type: string
+          enum: [statement_proposal]
+        taskId:
+          type: string
+          format: uuid
+          description: The existing task the revision is proposed for.
+        statement: { $ref: "#/components/schemas/TaskStatement" }
+        rationale:
+          type: string
+          maxLength: 1000
+          description: Shown on the card beside the diff.
+
+    LibrarianConfirmationProposal:
+      type: object
+      additionalProperties: false
+      required: [kind, action, runId]
+      description: |
+        `hitlRequestId` and `response` are required when `action` is
+        `hitl_respond` and refused otherwise (`422 CONFIG`).
+      properties:
+        kind:
+          type: string
+          enum: [confirmation]
+        action:
+          type: string
+          enum: [hitl_respond, run_promote, run_discard]
+        runId:
+          type: string
+          format: uuid
+        hitlRequestId:
+          type: string
+          format: uuid
+        response:
+          type: object
+          additionalProperties: true
+          description: |
+            The proposed answer, in the body shape the session HITL respond
+            route takes for the request's kind; validated against the stored
+            request by the same service when the owner decides.
+        rationale:
+          type: string
+          maxLength: 1000
+
+    LibrarianMemorySuggestionProposal:
+      type: object
+      additionalProperties: false
+      required: [kind, memory]
+      properties:
+        kind:
+          type: string
+          enum: [memory_suggestion]
+        memory: { $ref: "#/components/schemas/LibrarianMemoryDraft" }
+        rationale:
+          type: string
+          maxLength: 1000
+
+    LibrarianCardProposal:
+      description: |
+        (Designed — ADR-185 D7) One card, discriminated by `kind`. The target
+        revision and payload digest are bound by the server, never sent.
+      oneOf:
+        - $ref: "#/components/schemas/LibrarianStatementProposal"
+        - $ref: "#/components/schemas/LibrarianConfirmationProposal"
+        - $ref: "#/components/schemas/LibrarianMemorySuggestionProposal"
+      discriminator:
+        propertyName: kind
+        mapping:
+          statement_proposal: "#/components/schemas/LibrarianStatementProposal"
+          confirmation: "#/components/schemas/LibrarianConfirmationProposal"
+          memory_suggestion: "#/components/schemas/LibrarianMemorySuggestionProposal"
+
+    LibrarianCard:
+      type: object
+      additionalProperties: false
+      description: |
+        (Designed — ADR-185 D7, `LOP-08`) Explicit projection of one
+        `librarian_cards` row.
+      required:
+        [
+          id,
+          kind,
+          status,
+          target,
+          targetRevision,
+          payload,
+          requiresOwner,
+          expiresAt,
+          decidedAt,
+          createdAt,
+        ]
+      properties:
+        id:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          enum: [statement_proposal, confirmation, memory_suggestion]
+        status:
+          type: string
+          enum:
+            [pending, accepted, rejected, expired, superseded, cleared_by_reset]
+        target: { $ref: "#/components/schemas/LibrarianCardTarget" }
+        targetRevision:
+          type: string
+          nullable: true
+          description: |
+            The server-bound revision the decision is checked against: the
+            task revision, the reviewed head SHA, the HITL request revision, or
+            the run status. Null for a memory suggestion.
+        payload:
+          description: The proposal as created; its `kind` repeats the card's.
+          oneOf:
+            - $ref: "#/components/schemas/LibrarianStatementProposal"
+            - $ref: "#/components/schemas/LibrarianConfirmationProposal"
+            - $ref: "#/components/schemas/LibrarianMemorySuggestionProposal"
+        requiresOwner:
+          type: boolean
+          description: True for a human-only action; the token can never decide any card.
+        expiresAt:
+          type: string
+          format: date-time
+        decidedAt:
+          type: string
+          format: date-time
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+
+    LibrarianMemoryItem:
+      type: object
+      additionalProperties: false
+      description: (Designed — ADR-188, `LMM-02`) Explicit projection of one personal memory item.
+      required:
+        [
+          id,
+          kind,
+          content,
+          scope,
+          projectSlug,
+          origin,
+          validUntil,
+          revision,
+          createdAt,
+          updatedAt,
+        ]
+      properties:
+        id:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          enum: [preference, goal, commitment, fact]
+        content: { type: string }
+        scope:
+          type: string
+          enum: [general, project]
+        projectSlug:
+          type: string
+          nullable: true
+        origin:
+          type: string
+          enum: [explicit, accepted_suggestion]
+        validUntil:
+          type: string
+          format: date-time
+          nullable: true
+        revision:
+          type: integer
+          minimum: 1
+          description: An edit writes a new revision; content is never updated in place.
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    LibrarianHistoryHit:
+      type: object
+      additionalProperties: false
+      required: [messageId, seq, authorKind, excerpt, label, createdAt]
+      properties:
+        messageId:
+          type: string
+          format: uuid
+        seq:
+          type: string
+          pattern: "^(0|[1-9][0-9]{0,18})$"
+          description: The message's `librarian_messages.seq` as a canonical decimal string.
+        authorKind:
+          type: string
+          enum: [owner, librarian, update]
+        excerpt:
+          type: string
+          maxLength: 500
+        label:
+          type: string
+          enum: [current_segment, earlier_conversation]
+          description: |
+            `earlier_conversation` — from a segment before the last reset; the
+            reply must present it as "from earlier conversation".
+        createdAt:
+          type: string
+          format: date-time
+
+    LibrarianHistorySearchResult:
+      type: object
+      additionalProperties: false
+      required: [hits, truncated]
+      properties:
+        hits:
+          type: array
+          maxItems: 20
+          items: { $ref: "#/components/schemas/LibrarianHistoryHit" }
+        truncated:
+          type: boolean
+          description: True when more than 20 messages matched.
+
+    ExtVisibleProject:
+      type: object
+      additionalProperties: false
+      required: [projectId, slug, name, taskKey, role]
+      properties:
+        projectId:
+          type: string
+          format: uuid
+        slug: { type: string }
+        name: { type: string }
+        taskKey:
+          type: string
+          description: The project's platform-unique task key (`KEY` in `KEY-N`).
+        role:
+          type: string
+          enum: [owner, admin, member, viewer]
+          description: The owner's effective project role; a global admin without a membership reads `admin`.
+
+    ExtVisibleProjectList:
+      type: object
+      additionalProperties: false
+      required: [projects, count]
+      properties:
+        projects:
+          type: array
+          items: { $ref: "#/components/schemas/ExtVisibleProject" }
+        count:
+          type: integer
+          minimum: 0
+          description: Equals `projects.length`.
+
+    ExtProjectDirectory:
+      type: object
+      additionalProperties: false
+      description: |
+        (Designed — ADR-184) A compact, read-only directory entry. Never carries
+        a repository path, secret reference or member identity.
+      required:
+        [
+          projectId,
+          slug,
+          name,
+          taskKey,
+          role,
+          purpose,
+          flows,
+          defaultRunner,
+          triagerConfigured,
+          brainEnabled,
+          asOf,
+        ]
+      properties:
+        projectId:
+          type: string
+          format: uuid
+        slug: { type: string }
+        name: { type: string }
+        taskKey: { type: string }
+        role:
+          type: string
+          enum: [owner, admin, member, viewer]
+        purpose:
+          type: object
+          additionalProperties: false
+          required: [text, source]
+          properties:
+            text:
+              type: string
+              nullable: true
+              maxLength: 2000
+              description: What the project is for; null when no source states it.
+            source:
+              type: string
+              enum: [config, readme, none]
+              description: Where `text` came from — the project configuration or a README excerpt.
+        flows:
+          type: array
+          description: Launchable flows only, as `GET …/flows` projects them.
+          items: { $ref: "#/components/schemas/ExtFlowSummary" }
+        defaultRunner:
+          allOf:
+            - $ref: "#/components/schemas/ExtRunnerSummary"
+          nullable: true
+        triagerConfigured:
+          type: boolean
+          description: True when a triager agent is attached and enabled for the project.
+        brainEnabled:
+          type: boolean
+          description: "`projects.brain_enabled`."
+        asOf:
+          type: string
+          format: date-time
+          description: When these facts were read; a caller states them as of this instant.
+
+    ExtTaskSearchHit:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          taskId,
+          taskKey,
+          title,
+          status,
+          projectId,
+          projectSlug,
+          projectName,
+          matchedOn,
+          latestRunId,
+          createdAt,
+        ]
+      properties:
+        taskId:
+          type: string
+          format: uuid
+        taskKey:
+          type: string
+          description: "`KEY-N`."
+        title: { type: string }
+        status:
+          type: string
+          enum: [Backlog, InFlight, Done, Abandoned]
+        projectId:
+          type: string
+          format: uuid
+        projectSlug: { type: string }
+        projectName: { type: string }
+        matchedOn:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            enum: [key, title, prompt]
+        latestRunId:
+          type: string
+          format: uuid
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+
+    ExtTaskSearchPage:
+      type: object
+      additionalProperties: false
+      required: [hits, nextCursor, truncated]
+      properties:
+        hits:
+          type: array
+          maxItems: 25
+          items: { $ref: "#/components/schemas/ExtTaskSearchHit" }
+        nextCursor:
+          type: string
+          nullable: true
+        truncated:
+          type: boolean
+          description: True exactly when `nextCursor` is non-null — more hits exist.
+
+    WorkStage:
+      type: string
+      enum:
+        [
+          Triage,
+          Held,
+          Ready,
+          Queued,
+          Executing,
+          WaitingOnHuman,
+          Review,
+          Crashed,
+          Promoted,
+          Abandoned,
+        ]
+      description: The derived work stage (ADR-170) — comparable across projects, never persisted.
+
+    ExtWorkRow:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          taskId,
+          taskKey,
+          title,
+          projectId,
+          projectSlug,
+          projectName,
+          stage,
+          blocked,
+          clarificationPending,
+          promotedKind,
+          progress,
+          runId,
+          runStatus,
+          readiness,
+          waitingOn,
+          blockers,
+          lastActivityAt,
+        ]
+      properties:
+        taskId:
+          type: string
+          format: uuid
+        taskKey: { type: string }
+        title: { type: string }
+        projectId:
+          type: string
+          format: uuid
+        projectSlug: { type: string }
+        projectName: { type: string }
+        stage: { $ref: "#/components/schemas/WorkStage" }
+        blocked:
+          type: boolean
+          description: An open blocking relation holds the task.
+        clarificationPending:
+          type: boolean
+          description: (Designed — ADR-187) An open blocking clarification holds the task.
+        promotedKind:
+          type: string
+          nullable: true
+          enum: [merge, result, null]
+          description: |
+            How a `Promoted` row finished. `merge` never claims deployment — a
+            merged change reads "merged · deployment unknown".
+        progress:
+          type: object
+          nullable: true
+          additionalProperties: false
+          required: [done, total]
+          properties:
+            done: { type: integer, minimum: 0 }
+            total: { type: integer, minimum: 0 }
+        runId:
+          type: string
+          format: uuid
+          nullable: true
+        runStatus:
+          type: string
+          nullable: true
+        readiness:
+          type: string
+          nullable: true
+          description: The latest run's readiness state, when it has one.
+        waitingOn:
+          type: object
+          nullable: true
+          additionalProperties: false
+          required: [kind, name, since]
+          properties:
+            kind:
+              type: string
+              enum: [you, person, anyone]
+              description: "`you` is the token owner."
+            name:
+              type: string
+              nullable: true
+            since:
+              type: string
+              format: date-time
+        blockers:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [taskId, taskKey]
+            properties:
+              taskId:
+                type: string
+                format: uuid
+              taskKey: { type: string }
+        lastActivityAt:
+          type: string
+          format: date-time
+
+    ExtWorkPage:
+      type: object
+      additionalProperties: false
+      required: [rows, projectCount]
+      properties:
+        rows:
+          type: array
+          items: { $ref: "#/components/schemas/ExtWorkRow" }
+        projectCount:
+          type: integer
+          minimum: 0
+          description: |
+            How many projects the owner can see at all, so an empty `rows` can
+            say "you belong to nothing" apart from "nothing matched".
+
+    ExtActivityFeedItem:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          id,
+          source,
+          kind,
+          occurredAt,
+          projectId,
+          projectSlug,
+          projectName,
+          actor,
+          taskId,
+          taskKey,
+          taskTitle,
+          runId,
+          gateId,
+          hitlRequestId,
+        ]
+      properties:
+        id: { type: string }
+        source:
+          type: string
+          enum: [task, event, webhook]
+        kind:
+          type: string
+          description: A `task_activity` kind, an attention domain-event kind, `webhook_delivered` or `webhook_dead`.
+        occurredAt:
+          type: string
+          format: date-time
+        projectId:
+          type: string
+          format: uuid
+        projectSlug: { type: string }
+        projectName: { type: string }
+        actor:
+          type: object
+          nullable: true
+          additionalProperties: false
+          required: [type, id, label]
+          properties:
+            type:
+              type: string
+              enum: [user, agent, system]
+            id:
+              type: string
+              nullable: true
+            label: { type: string }
+        taskId:
+          type: string
+          format: uuid
+          nullable: true
+        taskKey:
+          type: string
+          nullable: true
+        taskTitle:
+          type: string
+          nullable: true
+        runId:
+          type: string
+          format: uuid
+          nullable: true
+        gateId:
+          type: string
+          nullable: true
+        hitlRequestId:
+          type: string
+          format: uuid
+          nullable: true
+
+    ExtActivityFeedPage:
+      type: object
+      additionalProperties: false
+      required: [items, hasMore, projectCount]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/ExtActivityFeedItem" }
+        hasMore:
+          type: boolean
+        projectCount:
+          type: integer
+          minimum: 0

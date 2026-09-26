@@ -13,6 +13,12 @@
 > ([ADR-155](../decisions.md#adr-155-cross-project-task-relations)), and
 > opt-in cross-project reach for agent tokens at the ext-handler seam
 > ([ADR-156](../decisions.md#adr-156-cross-project-agent-facade-reach)).
+>
+> **Designed (personal librarian):** the `librarian` token kind with per-request
+> live RBAC ([ADR-184](../decisions.md#adr-184-librarian-delegated-authority-per-turn-owner-bound-tokens-with-live-rbac)),
+> `Idempotency-Key` on effectful routes, the new ext routes and the librarian MCP
+> toolset ([ADR-185](../decisions.md#adr-185-librarian-operation-ledger-confirmation-cards-and-launch-intent)).
+> See "Librarian external surface" below.
 
 ## Purpose
 
@@ -190,6 +196,17 @@ surface exists.
   cross-project pending HITL listing. `hitl:respond:human` is an exact critical
   scope for human, infra-recovery, and budget-breach HITL responses; `*` does
   not imply it.
+- **Librarian turn tokens** (Designed — ADR-184) — `token_kind='librarian'`
+  rows: one per personal-librarian turn, `owner_user_id` NOT NULL, `project_id`
+  and `agent_id` NULL, `librarian_turn_id` set, `expires_at` = the turn
+  deadline, named `librarian-turn:<turnId>`, issued when the conversation's run
+  flips `Running` and revoked in the turn-end transaction (CHECK
+  `project_tokens_librarian_check`, migration `0181`). The owner is the only
+  principal: `actorUserIdForToken` / `socialActorForToken` return the owner, and
+  `token_audit_log` gains `on_behalf_of_user_id`, `librarian_turn_id` and
+  `operation_id`. Scopes, admission and the MCP toolset are in "Librarian
+  external surface" below; the full contract is
+  [librarian-authority.md](librarian-authority.md).
 - **`token_audit_log`** — append-only audit record per `/api/v1/ext` call.
   Captures actor label, scope label, endpoint, method, result, and HTTP status
   code. Global personal inbox calls write `project_id IS NULL`; per-resource
@@ -546,6 +563,137 @@ boundary, but their semantic reduction and liveness rules are owned by
 [assistant-activity.md](assistant-activity.md). This domain owns only auth,
 scope, audit, and MCP forwarding for that surface.
 
+### Librarian turn token request (Designed — ADR-184 / ADR-185)
+
+A librarian token is a global token like a personal one, but every request
+re-proves the owner's authority live and every effect is recorded in the
+operation ledger before it happens. The finalize rides
+`recordRequiredTokenAudit` inside the route's own transaction, so a DB-only
+effect and its operation result commit together or not at all.
+
+```mermaid
+sequenceDiagram
+    participant F as maister MCP facade, stdio, one process per turn
+    participant H as handleExt librarian arm
+    participant DB as Postgres
+    participant W as route work transaction
+
+    F->>H: request, Bearer turn token, Idempotency-Key on effectful routes
+    H->>DB: verifyToken: kind librarian, not revoked or expired
+    H->>DB: owner active, no password change, turn status running
+    alt any check fails
+        H-->>F: 401 or 403, failure audit with librarian_turn_id
+    else token live
+        H->>DB: project from slug or resolveProjectId, requireProjectActionForUser owner
+        alt no live role or scope not in the token scopes
+            H-->>F: 404 existence-hidden or 403
+        else effectful route
+            H->>DB: upsert librarian_operations admitted by key and digest
+            alt same key, other digest, or duplicate of a succeeded operation
+                H-->>F: 409 CONFLICT with details.reason
+            else same key and digest already settled
+                H-->>F: the stored result
+            else admitted
+                H->>W: route work
+                W->>DB: domain write + recordRequiredTokenAudit with operation id and result
+                W-->>F: result
+            end
+        else read route
+            H->>W: route work, filtered by the owner's visible projects
+            W-->>F: result
+        end
+    end
+```
+
+## Librarian external surface (Designed — ADR-184 / ADR-185)
+
+The personal librarian reaches MAIster only through the `maister` MCP server
+attached to its turn session, over the ext routes below. Its token acts as its
+owner, never as a separate principal; the owner comes only from the token, and
+no route or tool accepts a user id. Behaviour contracts:
+[librarian-authority.md](librarian-authority.md) (`LAU-*`) and
+[librarian-operations.md](librarian-operations.md) (`LOP-*`).
+
+- **Security scheme.** `docs/api/external/operations.openapi.yaml` gains a
+  `librarianTurnToken` bearer scheme beside `projectToken`, listed on every
+  route that admits the kind. An agent token is refused on every
+  `/api/v1/ext/librarian/*` route.
+- **Live admission.** `handleExt`'s two global-token gates (the slug path and
+  the `resolveProjectId` path) admit the kind and then call
+  `requireProjectActionForUser(owner, project, projectActionForScope(scope))`
+  on every request, plus scope ∈ the token's scopes and the turn still
+  `running`. The run routes the librarian uses gain `resolveProjectId` so the
+  live check applies. Every list, search and count filters by the owner's
+  visible projects before aggregation; a foreign project answers exactly like a
+  missing one.
+- **Scopes.** `LIBRARIAN_TOKEN_SCOPES` (explicit list in
+  `web/types/token-scopes.ts`): tasks read/create/update/triage, comments,
+  relations, `flows:read`, `runners:read`, runs
+  read/launch/cancel/recover/rework/sync/reopen/message, HITL read (list and
+  inbox) but never respond, `decisions:read`, `memory:read`, `projects:read`,
+  `work:read`, `activity:read`, and `librarian:cards|memory|history`. Never:
+  `hitl:respond`, `hitl:respond:human`, `runs:promote`, `runs:discard`,
+  `runs:delegate`, `runs:collect`, token, settings, admin, package or flow
+  authoring routes, `agent_memory:write`. An Explain turn gets
+  `LIBRARIAN_READ_SCOPES`, the read-only subset. `AGENT_TOKEN_SCOPES` and
+  `CROSS_PROJECT_AGENT_SCOPES` are untouched.
+- **`Idempotency-Key`.** Required on every effectful route for the
+  `librarianTurnToken` scheme (`handleExt` option `idempotency: "required"`);
+  the MCP facade sends each effectful tool's `operationKey` argument as the
+  header. Same key + same canonical digest returns the stored result; same key
+  + different digest → `CONFLICT{reason:"idempotency_payload_mismatch"}`; a new
+  key matching a succeeded operation's digest in the same segment →
+  `CONFLICT{reason:"duplicate_of_operation"}` unless `allowDuplicate`. Read
+  routes never carry an operation.
+- **Human-only boundary.** Human HITL answers, promotion and discard are never
+  reachable with the token; they appear in the librarian panel as confirmation
+  cards whose click runs through a session route as `HitlActor{kind:"user"}`.
+
+New and extended ext routes (every path is under `/api/v1/ext`):
+
+| Method · path | Scope | Notes |
+| --- | --- | --- |
+| `GET /projects` | `projects:read` | the owner's visible projects |
+| `GET /projects/{slug}/directory` | `projects:read` | purpose, launchable flows, default runner, triager configured, Brain enabled, `asOf` |
+| `GET /tasks/search?q&cursor` | `tasks:read` | visible projects only, page 25, `truncated` flag |
+| `GET /work` · `GET /activity/feed` · `GET /decisions` | `work:read` · `activity:read` · `decisions:read` | librarian and personal tokens; the decision queue is read, never answered |
+| `POST /projects/{slug}/tasks` (+`statement`) · `PATCH …/tasks/{taskId}` (+`expectedRevision`) · `POST …/tasks/{taskId}/statement` | `tasks:create` · `tasks:update` | effectful; a stale `expectedRevision` → `CONFLICT{reason:"stale_revision"}` |
+| `POST …/tasks/{taskId}/send-to-triage {launchIntent}` | `tasks:triage` | effectful; see [triage.md](triage.md) |
+| `POST …/tasks/{taskId}/clarifications` · `DELETE …/clarifications/{id}` · `POST …/clarifications/{id}/answer` | `hitl:request` · `hitl:request` · exact `hitl:respond:human` (global personal token only) | effectful; the answer is never reachable with a librarian or agent token |
+| `POST /runs/{runId}/operator-message` | `runs:message` | effectful; outcome `delivered \| queued \| refused_requires_rework`; never `runs:delegate` |
+| `POST /librarian/cards` · `POST /librarian/memory` · `GET /librarian/history/search?q` | `librarian:cards` · `librarian:memory` · `librarian:history` | librarian token only |
+| Existing routes admitting the kind | as today | `runs` POST, `runs/{runId}` GET + `activity` / `readiness` / `hitl`, `runs/{cancel,rework}`, `runs/{runId}/recover`, `runs/{sync,reopen}`, `activity`, and the task, comment, relation, triage and memory reads |
+
+MCP tools (`mcp/src/tools.ts`), each a thin client of the route above it:
+
+| Tool | Status | Backing route |
+| --- | --- | --- |
+| `project_list` · `project_get` | new | `GET /projects` · `GET /projects/{slug}/directory` |
+| `task_search` · `work_list` · `decisions_list` · `activity_feed` | new | `GET /tasks/search` · `GET /work` · `GET /decisions` · `GET /activity/feed` |
+| `task_statement_accept` · `task_send_to_triage` | new | `POST …/statement` · `POST …/send-to-triage` |
+| `task_publish_excerpt` | new | the ext comment route, as an explicit comment quoting the excerpt, plus a `mentioned` link |
+| `clarification_request` · `clarification_cancel` | new | `POST …/clarifications` · `DELETE …/clarifications/{id}` |
+| `run_operator_message` | new | `POST /runs/{runId}/operator-message` |
+| `librarian_card_propose` · `librarian_memory_remember` · `librarian_history_search` | new | `POST /librarian/cards` · `POST /librarian/memory` · `GET /librarian/history/search` |
+| `task_create` · `task_update` | extended | `+statement` · `+expectedRevision` |
+| every effectful tool | extended | `+operationKey`, forwarded as `Idempotency-Key` |
+
+`MAISTER_MCP_TOOLSET=librarian` makes the facade list only the librarian's
+tools: the new tools above plus `task_list`, `task_get`, `task_create`,
+`task_update`, `flow_list`, `runner_list`, `memory_recall`, `run_launch`,
+`run_get`, `run_activity`, `readiness_get`, `run_cancel`, `run_recover`,
+`run_rework`, `run_sync`, `run_reopen`, `hitl_list`, `hitl_inbox`,
+`comment_list`, `comment_create`, `relation_list`, `relation_add` and
+`relation_remove`. Excluded: `hitl_respond`, `run_promote`, `run_discard`,
+`run_delegate`, `run_collect`, `run_message`, `run_plan`, `ask_human`,
+`triage_set`, `gate_report`, `agent_memory_write`, `evaluation_*`,
+`memory_propose` and `memory_retain`. Listing is a convenience, not the
+enforcement: the ext route refuses an out-of-scope call whatever the facade
+lists, and the supervisor's L1 allow-list denies any tool outside the same
+toolset at the session seam. The toolset, the instructions and the L1
+allow-list come from one source with a drift test
+(`web/lib/librarian/instructions.ts`).
+
 ## Expectations
 
 - `project_tokens.token_hash` MUST be `sha256_hex(fullTokenString)` — never bcrypt,
@@ -713,6 +861,25 @@ scope, audit, and MCP forwarding for that surface.
   `mcp/src` edit → the ext route sees neither locator and returns 422 `CONFIG`.
   `mcp/src/__tests__/tool-contract.test.ts` is the guard for both halves.
   (Designed)
+- **Librarian token replayed after its turn ended** (revoked, expired, or the
+  turn no longer `running`) → 401/403 with a failure audit row carrying
+  `librarian_turn_id`; no route work runs. (Designed — ADR-184)
+- **Owner loses membership, or is deactivated, mid-turn** → the next request of
+  the same turn is refused (existence-hidden 404 for the project, 403 for the
+  account) because admission re-reads the live role on every request.
+  (Designed — ADR-184)
+- **Librarian token on an excluded route** (`hitl_respond` of any kind,
+  `run_promote`, `run_discard`, `run_delegate`, `run_collect`, token, settings
+  or admin routes) → 403 `UNAUTHORIZED`; **agent token on
+  `/api/v1/ext/librarian/*`** → 403. (Designed — ADR-184)
+- **Effectful librarian request without `Idempotency-Key`** → 422 `CONFIG`,
+  nothing admitted. **Same key, different body** → 409 `CONFLICT`
+  `details.reason:"idempotency_payload_mismatch"`; **new key, digest of a
+  succeeded operation** → 409 `CONFLICT` `details.reason:"duplicate_of_operation"`.
+  (Designed — ADR-185)
+- **Audit write fails on a librarian request** → the request fails and its
+  route transaction rolls back; no effect exists without its audit row.
+  (Designed — ADR-184)
 
 ## Agent clarification request (Implemented — ADR-136)
 
@@ -735,7 +902,13 @@ a global personal token with exact `hitl:respond:human`; `*` is insufficient.
   403-vs-404 asymmetry; Designed),
   [ADR-156](../decisions.md#adr-156-cross-project-agent-facade-reach)
   (cross-project agent facade reach — `CROSS_PROJECT_AGENT_SCOPES`, the
-  attachment-as-grant model, `runs.agent_chain_depth`; Designed).
+  attachment-as-grant model, `runs.agent_chain_depth`; Designed),
+  [ADR-184](../decisions.md#adr-184-librarian-delegated-authority-per-turn-owner-bound-tokens-with-live-rbac)
+  (librarian turn tokens, live RBAC, scope policy; Designed),
+  [ADR-185](../decisions.md#adr-185-librarian-operation-ledger-confirmation-cards-and-launch-intent)
+  (operation ledger, `Idempotency-Key`, new ext routes and MCP tools; Designed).
+- Librarian contracts (Designed): [`librarian-authority.md`](librarian-authority.md),
+  [`librarian-operations.md`](librarian-operations.md).
 - DB ERD: [`../db/integrations-domain.md`](../db/integrations-domain.md),
   [`../db/erd.md`](../db/erd.md).
 - DB narrative: [`../database-schema.md`](../database-schema.md)

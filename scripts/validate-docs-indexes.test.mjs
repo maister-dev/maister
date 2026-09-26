@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import {
   validateAnalyticsGroup,
   validateDocsIndexes,
+  validateLibrarianAnalytics,
   validateM51Analytics,
   validateRunTraceAnalytics,
   validateStageBAnalytics,
@@ -45,7 +46,21 @@ const RUN_TRACE = {
   documents: [["run-trace.md", "TRC-01", "EDGE-TRC-01"]],
 };
 
-const GROUPS = [STAGE_B, M51, RUN_TRACE];
+const LIBRARIAN = {
+  label: "Librarian",
+  traceabilityFile: "librarian-traceability.md",
+  documents: [
+    ["librarian-conversation.md", "LCV-01", "EDGE-LCV-01"],
+    ["librarian-authority.md", "LAU-01", "EDGE-LAU-01"],
+    ["librarian-operations.md", "LOP-01", "EDGE-LOP-01"],
+    ["task-statements.md", "TST-01", "EDGE-TST-01"],
+    ["task-clarifications.md", "CLR-01", "EDGE-CLR-01"],
+    ["librarian-memory.md", "LMM-01", "EDGE-LMM-01"],
+    ["librarian-surface.md", "LUI-01", "EDGE-LUI-01"],
+  ],
+};
+
+const GROUPS = [STAGE_B, M51, RUN_TRACE, LIBRARIAN];
 
 function documentBody(requirement, edge, traceability = "") {
   return `# Fixture\n\n## Purpose\n\nText.\n\n## Domain entities\n\n- Entity.\n\n## State machine\n\nText.\n\n## Process flows\n\nText.\n\n## Expectations\n\n- **${requirement}:** Contract.\n\n## Edge cases\n\n- **${edge}:** Case.\n\n## Linked artifacts\n\n- [Artifact](artifact.md)\n${traceability}`;
@@ -136,6 +151,30 @@ test("accepts a complete, indexed M51 specification fixture", async () => {
 test("accepts a complete, indexed Run trace specification fixture", async () => {
   await withFixture(async (root) => {
     assert.deepEqual(validateRunTraceAnalytics(join(root, "system-analytics")), []);
+  });
+});
+
+test("accepts a complete, indexed Librarian specification fixture", async () => {
+  await withFixture(async (root) => {
+    assert.deepEqual(validateLibrarianAnalytics(join(root, "system-analytics")), []);
+    assert.deepEqual(validateDocsIndexes(root).failures, []);
+  });
+});
+
+test("rejects a missing Librarian document and an LMM id with no matrix row", async () => {
+  await withFixture(async (root) => {
+    const analytics = join(root, "system-analytics");
+    await rm(join(analytics, "task-clarifications.md"));
+    const matrix = join(analytics, "librarian-traceability.md");
+    const current = await readFile(matrix, "utf8");
+    await writeFile(
+      matrix,
+      current.replace("| LMM-01 | contract | enforcement | IT-LMM-01 | Designed |\n", ""),
+    );
+    const failures = validateLibrarianAnalytics(analytics).join("\n");
+    assert.match(failures, /task-clarifications\.md: missing Librarian analytics document/);
+    assert.match(failures, /LMM-01: missing traceability row with primary test/);
+    assert.deepEqual(validateM51Analytics(analytics), []);
   });
 });
 

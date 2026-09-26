@@ -224,6 +224,13 @@ validate:docs` enforces stub ↔ body equality and the file bijection.
 | [ADR-180](#adr-180-permission-deadline-has-one-owner) | Permission deadline has one owner | Implemented | 2026-09-22 |
 | [ADR-181](#adr-181-run-git-panel-status-independent-worktree-git-operations-public-branch-names-and-pr-before-promotion) | Run git panel: status-independent worktree git operations, public branch names, and PR before promotion | Implemented | 2026-09-22 |
 | [ADR-182](#adr-182-steering-a-running-agent-turn-as-a-durable-fenced-command) | Steering a running agent turn as a durable fenced command | Implemented | 2026-09-25 |
+| [ADR-183](#adr-183-librarian-runtime-a-project-less-run-kind-with-per-turn-acp-sessions) | Librarian runtime: a project-less run kind with per-turn ACP sessions | Accepted | 2026-09-26 |
+| [ADR-184](#adr-184-librarian-delegated-authority-per-turn-owner-bound-tokens-with-live-rbac) | Librarian delegated authority: per-turn owner-bound tokens with live RBAC | Accepted | 2026-09-26 |
+| [ADR-185](#adr-185-librarian-operation-ledger-confirmation-cards-and-launch-intent) | Librarian operation ledger, confirmation cards and launch intent | Accepted | 2026-09-26 |
+| [ADR-186](#adr-186-task-statements-task-revision-and-conversation-provenance) | Task statements, task revision and conversation provenance | Accepted | 2026-09-26 |
+| [ADR-187](#adr-187-addressed-task-clarification-before-execution) | Addressed task clarification before execution | Accepted | 2026-09-26 |
+| [ADR-188](#adr-188-librarian-memory-summaries-reset-barrier-and-history-deletion) | Librarian memory, summaries, reset barrier and history deletion | Accepted | 2026-09-26 |
+| [ADR-189](#adr-189-librarian-surface-top-navigation-entry-and-right-side-panel) | Librarian surface: top-navigation entry and right-side panel | Accepted | 2026-09-26 |
 
 ---
 
@@ -1851,6 +1858,69 @@ Full record: [`decisions/adr-181.md`](decisions/adr-181.md)
 **Date:** 2026-09-25
 
 Full record: [`decisions/adr-182.md`](decisions/adr-182.md)
+
+---
+
+### ADR-183: Librarian runtime: a project-less run kind with per-turn ACP sessions
+
+**Status:** Accepted
+**Date:** 2026-09-26
+
+Full record: [`decisions/adr-183.md`](decisions/adr-183.md)
+
+---
+
+### ADR-184: Librarian delegated authority: per-turn owner-bound tokens with live RBAC
+
+**Status:** Accepted
+**Date:** 2026-09-26
+
+Full record: [`decisions/adr-184.md`](decisions/adr-184.md)
+
+---
+
+### ADR-185: Librarian operation ledger, confirmation cards and launch intent
+
+**Status:** Accepted
+**Date:** 2026-09-26
+
+Full record: [`decisions/adr-185.md`](decisions/adr-185.md)
+
+---
+
+### ADR-186: Task statements, task revision and conversation provenance
+
+**Status:** Accepted
+**Date:** 2026-09-26
+
+Full record: [`decisions/adr-186.md`](decisions/adr-186.md)
+
+---
+
+### ADR-187: Addressed task clarification before execution
+
+**Status:** Accepted
+**Date:** 2026-09-26
+
+Full record: [`decisions/adr-187.md`](decisions/adr-187.md)
+
+---
+
+### ADR-188: Librarian memory, summaries, reset barrier and history deletion
+
+**Status:** Accepted
+**Date:** 2026-09-26
+
+Full record: [`decisions/adr-188.md`](decisions/adr-188.md)
+
+---
+
+### ADR-189: Librarian surface: top-navigation entry and right-side panel
+
+**Status:** Accepted
+**Date:** 2026-09-26
+
+Full record: [`decisions/adr-189.md`](decisions/adr-189.md)
 
 ---
 

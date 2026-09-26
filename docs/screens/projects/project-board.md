@@ -126,6 +126,24 @@ The board is a horizontally scrollable set of columns:
   saving as inherited task fields unless the operator chooses an override. Its
   comments/activity timeline sits below the run history; a threaded hierarchy can
   be added later without changing the current read flow.
+- **Clarifications section on the task detail page (Designed — ADR-187).** A
+  section lists the task's user-origin clarifications — questions one person
+  (usually through their personal librarian) addressed to another before any
+  run exists — grouped as **Open**, **Answered** and **Cancelled**, beside the
+  existing answered agent-clarification history. Each row shows requester,
+  recipient, question, reason, answer format (`text`, `choice` or `yes_no`),
+  a **Blocking** chip when it holds launch, and — once settled — the answer with
+  who answered and when, or the cancel reason (recipient deactivated, task
+  abandoned, or cancelled by the requester). A correction renders as a
+  superseding row linked to the one it replaces; an answered row is never
+  editable. Only the **recipient** sees an answer form (the control matches the
+  answer format); only the **requester** sees **Cancel**; everyone who can read
+  the task sees the rows. A row asked through the librarian is marked as such
+  but links to no conversation — the requester's transcript stays personal.
+  While a blocking row is open the page's Launch / Run again control is
+  disabled with a "waiting for a clarification" reason, and the task keeps its
+  status. Answering never edits the prompt or launches work. Behaviour:
+  [`../../system-analytics/task-clarifications.md`](../../system-analytics/task-clarifications.md).
 - **Comment composer — agent mentions (Implemented, ADR-151).** Typing `@` at a
   word boundary opens a hand-rolled popover (project convention — no HeroUI
   Autocomplete anywhere) listing up to 8 **summonable** agents of this
@@ -163,6 +181,10 @@ The board is a horizontally scrollable set of columns:
   [`../../system-analytics/branch-sync.md`](../../system-analytics/branch-sync.md).
 - **Relation blockers** disable launch when a task is blocked by open
   `blocks`, `depends_on`, or success-gated `requires` edges.
+- **Clarification hold (Designed — ADR-187)** disables launch on a card whose
+  task has an open blocking clarification, with a reason chip; the card reads
+  the shared `clarification_pending` classification (its hand-mirrored copy is
+  pinned by a parity test), never a new task status.
 - **Repository tab** (`?tab=repo`) shows the selected branch's committed files.
   **Pull from origin** updates that branch with `pull --ff-only`; it must
   already be checked out in the project repository and have no local changes.
@@ -275,6 +297,15 @@ to server-stored mode. The board never renders a stale question as answerable.
   `GET/POST /api/account/tokens` and
   `PATCH/DELETE /api/account/tokens/{tokenId}`.
 
+- Clarifications section (Designed, ADR-187): rows come with the task-detail
+  read; the recipient's answer posts
+  `POST /api/projects/{slug}/tasks/{number}/clarifications/{id}/answer`
+  (session auth, human only, recipient must still hold project `member`); a
+  second answer racing the first is refused `409 CONFLICT` and the section
+  refreshes to the stored answer. The requester's **Cancel** posts
+  `DELETE /api/projects/{slug}/tasks/{number}/clarifications/{id}`, the
+  session twin of the ext cancel route. Launch controls read
+  `clarification_pending` from `GET /api/runs/launch-options`.
 - Agent mentions (Implemented, ADR-151): **no new endpoint**. The task-detail
   page already loads the project's agents and computes launchability inline,
   so the composer's mention candidates are derived there and passed as
@@ -296,7 +327,9 @@ and planned `automations` namespaces from `web/messages/{locale}.json`.
 Uses `board`, `common`, `launch`, `run`, `readiness`, `taskDetail`, and
 `tokens` namespaces from `web/messages/{locale}.json`. The PR-state chip and
 Reopen labels (Implemented, ADR-140/141) live under the existing `board` / `run`
-namespaces; EN + RU parity required.
+namespaces; EN + RU parity required. The clarifications section (Designed,
+ADR-187) adds its keys — group titles, answer-format controls, blocking chip,
+cancel reasons, the launch-hold reason — to `taskDetail`, with EN + RU parity.
 
 ## Linked Artifacts
 
@@ -307,7 +340,10 @@ namespaces; EN + RU parity required.
   [#adr-139](../../decisions.md#adr-140-pr-lifecycle-tracking) (PR-state chip on
   flight cards),
   [#adr-140](../../decisions.md#adr-141-branch-sync-with-ai-conflict-resolver-and-reopen)
-  (reopen affordance).
+  (reopen affordance),
+  [#adr-187](../../decisions.md#adr-187-addressed-task-clarification-before-execution)
+  (clarifications section and launch hold; Designed).
+- Behaviour (Designed): [`../../system-analytics/task-clarifications.md`](../../system-analytics/task-clarifications.md).
 - Source: `web/components/board/board.tsx`,
   `web/components/board/task-card.tsx`,
   `web/components/board/task-card-description.tsx`,

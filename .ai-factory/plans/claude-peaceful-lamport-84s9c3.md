@@ -822,16 +822,16 @@ Requirement ids in the heading are the coverage gate's input.
 **T0.1 [x] — Save the brief.** `docs/pv/personal-librarian.md`, verbatim; 26 relative
 links resolve (`node scripts/validate-docs-links.mjs`). Done during planning.
 
-**T0.2 [ ] — Supersession banner.** In `docs/pv/team-visibility-and-po-intake.md`, add
+**T0.2 [x] — Supersession banner.** In `docs/pv/team-visibility-and-po-intake.md`, add
 one status line naming what `personal-librarian.md` replaces (D1, D2, D5, D7, librarian
 parts of F1/F2, owner decisions §7 rows 2 and 7). Surgical: no other edits (R9).
 
-**T0.3 [ ] — Reserve numbers.** ADR stubs `### ADR-183` … `### ADR-189` in
+**T0.3 [x] — Reserve numbers.** ADR stubs `### ADR-183` … `### ADR-189` in
 `docs/decisions.md` + `docs/decisions/adr-183.md` … `adr-189.md` from the template;
 migration numbers 0181–0188 recorded in Appendix A. *Verify*:
 `node scripts/validate-docs-adr-anchors.mjs --all`.
 
-**T0.4 [ ] — ADR-183: librarian runtime.** D2, D3, D19, D20, D5's runner guard, pool and
+**T0.4 [x] — ADR-183: librarian runtime.** D2, D3, D19, D20, D5's runner guard, pool and
 budgets. Amends ADR-166/167 (owner kind, placement reason, project-less directory
 adoption, reserved `projectSlug='_librarian'`) via their `**Amendments:**` lists.
 **Verification inside the ADR**: read `supervisor/src/workspace-registry.ts` and
@@ -839,35 +839,35 @@ adoption, reserved `projectSlug='_librarian'`) via their `**Amendments:**` lists
 for the reserved slug; if any code path resolves the slug against registered projects,
 record the change needed. Owns `LCV-*`.
 
-**T0.5 [ ] — ADR-184: delegated authority.** D4 + D5 + D16. States explicitly: no
+**T0.5 [x] — ADR-184: delegated authority.** D4 + D5 + D16. States explicitly: no
 `AGENT_TOKEN_SCOPES` change, no admin inspection in this release, follow-up turns
 read-only, `readOnlySession` not used and why (`acp-client.ts:516-545`). Owns `LAU-*`.
 
-**T0.6 [ ] — ADR-185: operation ledger.** D6, D7, D8, D10b, D11 with the crash-window
+**T0.6 [x] — ADR-185: operation ledger.** D6, D7, D8, D10b, D11 with the crash-window
 and interaction tables. Amends the triage ADR/analytics for `launch_intent`. Owns
 `LOP-*`.
 
-**T0.7 [ ] — ADR-186: statements and provenance.** D9 including the Backlog gate and
+**T0.7 [x] — ADR-186: statements and provenance.** D9 including the Backlog gate and
 the re-entry fact behind it; the rendering function contract; `task_activity` kind
 `statement_accepted`. Owns `TST-*`.
 
-**T0.8 [ ] — ADR-187: clarification before execution.** D10; amends ADR-169 (fifth
+**T0.8 [x] — ADR-187: clarification before execution.** D10; amends ADR-169 (fifth
 decisions population) and ADR-170 (`clarificationPending` attribute) and the
 launchability precedence. Owns `CLR-*`.
 
-**T0.9 [ ] — ADR-188: memory, history, reset, retention + transcript spike.** D12–D14;
+**T0.9 [x] — ADR-188: memory, history, reset, retention + transcript spike.** D12–D14;
 retention defaults (365 / 30 days, owner-chosen). Spike: locate each ready adapter's
 transcript storage for a cwd and whether the supervisor can delete it; record the
 outcome (purge mechanism or honest residual). Owns `LMM-*`.
 
-**T0.10 [ ] — ADR-189: librarian surface.** Top-nav entry + right panel (brief §4),
+**T0.10 [x] — ADR-189: librarian surface.** Top-nav entry + right panel (brief §4),
 breakpoints (docked ≥ `xl`, sheet `md`–`xl`, full screen < `md`), Studio/scratch
 composer coexistence (the panel never absorbs their history; focus owner rule), no
 Cmd/Ctrl+K, indicator semantics, live-token streaming via the run stream. Confirm
 layout on Desk, task detail, workbench, Studio and 390 px with a mockup attached to the
 ADR. Owns `LUI-*`.
 
-**T0.11 [ ] — Analytics documents.** The seven documents above, R5 sections in order,
+**T0.11 [x] — Analytics documents.** The seven documents above, R5 sections in order,
 `stateDiagram-v2` for the five machines in Appendix D; Expectations carry the ids above
 verbatim (≤ 12 each); Edge cases carry `EDGE-*` ids linked to `MaisterError` codes;
 every bullet names its enforcement point; R6 tags `(Designed)`. Update `triage.md`,
@@ -876,14 +876,14 @@ every bullet names its enforcement point; R6 tags `(Designed)`. Update `triage.m
 `agent-mentions.md` (one line: the librarian is not a summon). Index rows in
 `docs/system-analytics/README.md`.
 
-**T0.12 [ ] — Screen docs.** New `docs/screens/chrome/librarian-panel.md` on the
+**T0.12 [x] — Screen docs.** New `docs/screens/chrome/librarian-panel.md` on the
 9-section template (roles table, entry/exit links, regions, states diagram for
 closed/idle/running/queued/resetting/disabled/no-runner, data & APIs, i18n). Update
 `chrome/top-nav.md` (new entry), the task detail screen doc (clarifications section),
 `inbox.md` (clarification card), `settings-acp-runners.md` (librarian card). Index rows
 in `docs/screens/README.md`.
 
-**T0.13 [ ] — API, ERD, configuration specs.** Every D18 row, using Appendix A–C as the
+**T0.13 [x] — API, ERD, configuration specs.** Every D18 row, using Appendix A–C as the
 source: `docs/database-schema.md` sections in the `sql` DDL style with the constraint
 names given here; the ERD file; OpenAPI entries modelled on `extCreateTask`
 (`operations.openapi.yaml:120-165`: tags, summary, scope+audit description,
@@ -893,7 +893,7 @@ file registered in `scripts/validate-contracts.mjs` with an assertion function.
 *Verify*: break the new AsyncAPI file (RED) → `pnpm validate:contracts` fails → fix
 (GREEN).
 
-**T0.14 [ ] — Enforce the ids.** Add `LIBRARIAN_GROUP` (7 documents, 7 prefixes,
+**T0.14 [x] — Enforce the ids.** Add `LIBRARIAN_GROUP` (7 documents, 7 prefixes,
 `librarian-traceability.md`) to `scripts/validate-docs-indexes.mjs` + a test case in
 `validate-docs-indexes.test.mjs`. Generalize `validate-m51-coverage.mjs` into
 `validate-requirement-coverage.mjs --group m51|librarian`: group = `{planPath,
@@ -902,16 +902,16 @@ matrix regex (`:84`, prefixes parameterized) are unchanged; a regression case pi
 current result. *RED*: register the group before the documents exist → "missing
 Librarian analytics document".
 
-**T0.15 [ ] — Traceability matrix.** `docs/system-analytics/librarian-traceability.md`:
+**T0.15 [x] — Traceability matrix.** `docs/system-analytics/librarian-traceability.md`:
 one row per id and `EDGE-*` id (contract, tasks, primary test, `Planned`), plus the
 `LIB-01..16` / `L-01..12` mapping table (every LIB and every L maps to ≥ 1 id; every
 L maps to its `E2E-L-NN` and `QL-L-NN` where applicable). Index row in the README.
 
-**T0.16 [ ] — Roadmap amendment (via `/aif-roadmap`).** Amend the M51 entry: add the
+**T0.16 [x] — Roadmap amendment (via `/aif-roadmap`).** Amend the M51 entry: add the
 librarian scope line and remove "PO intake" from its non-goals, only with the owner's
 confirmation. If the owner prefers a separate milestone, update this plan's linkage.
 
-**T0.17 [ ] — Phase 0 exit.** `pnpm validate:docs`, `pnpm validate:contracts`, the
+**T0.17 [x] — Phase 0 exit.** `pnpm validate:docs`, `pnpm validate:contracts`, the
 coverage gate green. Owner confirms: breakpoints, env defaults (D17), retention,
 confirmation TTL, the transcript-purge outcome, the reserved-slug verification.
 Anything a later task needs that the specs do not state is fixed here.
@@ -1413,6 +1413,110 @@ lists shipped domains.
 specs, lint and typecheck green; qualification record complete.
 
 > **Checkpoint 8** — `test(librarian): L-01..L-12 acceptance, live-adapter qualification and docs`
+
+---
+
+## Amendments from implementation (2026-09-26)
+
+Phase 0 checked every plan statement against the code; these deltas are normative
+and win over the text above where they disagree. Each one is recorded in the owning
+ADR (named in brackets).
+
+**Runtime (ADR-183, ADR-188)**
+- The supervisor wire schema `projectSlugSchema` is kebab-case; it gains the one
+  literal `_librarian`. The web creates `<runtimeRoot>/.maister/_librarian/<conversationId>/`
+  before adopting it. `WorkspaceRegistry.release` deletes nothing today: releasing a
+  `_librarian` directory handle becomes a supervisor-side purge of the cwd and of
+  `~/.claude/projects/<encoded realpath>/` (codex's composed home already lives in the
+  cwd). The librarian runner is restricted to the `claude|codex` capabilities and may
+  not set `HOME`/`CLAUDE_CONFIG_DIR` in `executor.env`.
+- `librarian_turns.status` gains `withdrawn`; `librarian_conversations` gains a
+  monotonic `last_seq` counter (a deleted message never frees its `seq`);
+  `reset_state` gains `clearing`; partial unique `librarian_turns_one_summary_uq`.
+  `seq` is a canonical decimal string on the wire.
+- D19 gains the `admitted × NeedsInputIdle` row (a full-pool resume claim).
+- Summary turns use the owner-turn enforcement profile with `escalationThreshold: 1`
+  and no server attached — `mcps.allowServers: []` alone does not govern built-ins.
+- `classifyCommandRetirement` retires a parked librarian run's commands, retired
+  librarian event payloads are nulled, and the transcript projector writes no
+  `run_messages` for a librarian run (ADR-167 amendment). The budget pass
+  (`fetchBudgetCandidates`) excludes librarian runs, which own a deadline watchdog.
+- Every `/api/runs/[runId]/*` session route except the stream answers 404 for a
+  librarian run (a global admin otherwise passes `requireProjectAction` on a NULL
+  project); T2.3 lists them.
+
+**Authority (ADR-184)**
+- Admission is deny-by-default: `handleExt` refuses a librarian token unless the
+  route opts in (`admitLibrarian`), with `details.reason:"librarian_not_admitted"`.
+  LAU-04 holds by construction (discard shares `runs:recover`, the triage verdict
+  route shares `tasks:triage` — neither opts in). A project-less librarian token
+  reaches a resource-addressed route through `resolveLibrarianProjectId`, so global
+  personal tokens keep their existing answers.
+- A librarian whose owner can see the project but lacks the scope's action gets
+  `403 {requiredAction}`; an invisible project stays the existence-hidden 404.
+- The "turn is running" check needs `librarian_turns` (0182): it lands in T2.10 and
+  IT-LAU-03's turn-stopped case moves to T2.11. The agent-token-on-`/ext/librarian/*`
+  case of IT-LAU-04 moves to T3.9 (the first such route). Phase 1 relies on the
+  token being revoked in the turn-end transaction.
+- The facade reads `MAISTER_PROJECT_TOKEN` (preferred) — the turn token is injected
+  under that name, not `MAISTER_ACCESS_TOKEN`.
+- New scopes: `projects:read`, `work:read`, `activity:read`, `runs:message`,
+  `librarian:cards|memory|history` (the last three are librarian-only and hidden from
+  the personal-token picker). `runs:cancel` and `runs:message` map to explicit
+  project actions (`recoverRun`, `launchRun`).
+
+**Operations (ADR-185, ADR-186, ADR-187)**
+- `run_cancel`/`run_rework` are coordinator-only. The librarian stops a run through
+  the new `POST /api/v1/ext/runs/{runId}/stop` (`runs:cancel` → `recoverRun`,
+  wrapping `stopWorkbenchRunForToken`) with MCP tool `run_stop`; rework is not a
+  librarian operation. `activity_pulse` is not in the librarian toolset. The
+  toolset is therefore Appendix C minus `run_cancel`, `run_rework`, plus `run_stop`.
+- `agent_turns` has no `source` column: the operator-message seam adds nullable
+  `agent_turns.requested_by_user_id` (the guard trigger allows it on
+  `live_message|persistent_message|steer`). Scratch operator messages get
+  `run_messages.via_operation_id` UNIQUE.
+- The idempotency digest covers the canonical body plus the operation kind and the
+  URL target ids. `allowDuplicate` is the header `X-Maister-Allow-Duplicate: true`.
+  A missing `Idempotency-Key` on a librarian effect is `422 CONFIG`. A same-key
+  request while the operation is `admitted`/`unknown` returns the current receipt
+  (202) and never re-runs the effect.
+- The operator message body is `{message}`; the key rides the header.
+- D8's "project auto-launch enabled" axis has no server setting; the interaction
+  table's axes are the triager's `enqueue` and `launch_intent`.
+- D9 also covers the UI `PUT` route, and `updateTask` opens its own transaction so
+  `FOR UPDATE` is real.
+- D10: `task.clarification_answered` and `task.clarification_cancelled` move OUT of
+  `ATTENTION_EVENT_KINDS` into `TASK_ACTIVITY_TWINNED_EVENT_KINDS` (they gain a
+  twin); `task.clarification_requested` joins `DECISION_OPENING_EVENT_KINDS`; the
+  recipient's clarification inbox row is excluded from `updates` (it is a decision).
+  The answered event carries `originKind`, and the agent trigger consumer skips
+  user-origin answers. `task_clarifications_status_shape_check` admits
+  `answered → superseded`. Prompt folding renders both origins identically (no
+  author name). `classifyForceRelaunchLaunchability` also refuses
+  `clarification_pending` (ADR-119 amendment). New ext reads:
+  `GET …/tasks/{taskId}/clarifications` and `GET /ext/projects/{slug}/members`
+  (eligible recipients); session route `DELETE …/clarifications/{id}` (requester
+  cancel).
+- Schema corrections: `librarian_updates.domain_event_id` is `bigint` FK to
+  `domain_events` `ON DELETE CASCADE`; statement-revision immutability lets the
+  task's cascade delete through; memory content changes only with `revision + 1`;
+  `segment_id` columns reference `librarian_segments`; `body_tsv` lands in 0182.
+
+**Surface and deployment (ADR-189, D17)**
+- The panel docks only at ≥ `2xl` on the wide routes (`/runs/`, `/studio/edit/`,
+  `/studio/local`) and opens as the sheet whenever another assistant composer is
+  visible. Focus containment uses `useModalA11y`. The admin settings route gets a
+  `GET`; `PATCH /api/librarian/conversation {memoryEnabledNextSegment}` toggles next
+  segment memory.
+- No compose file defines a web service, so D17's env vars land in `.env.example`
+  and `docs/configuration.md` only.
+- New `details.reason` values: `task_not_backlog`, `reset_in_progress`,
+  `conversation_busy`, `clarification_not_open` (plus the six in D18).
+
+**T0.17 owner confirmations.** The breakpoints, the D17 env defaults, the 365/30-day
+retention, the 60-minute confirmation TTL, the transcript-purge outcome and the
+reserved-slug verification are adopted as proposed under the owner's instruction of
+2026-09-26 to implement the plan without further questions; each stays revisable.
 
 ---
 

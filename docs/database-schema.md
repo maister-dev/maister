@@ -1431,6 +1431,693 @@ expression is wrong once `webhook_events.project_id` can be NULL — see
 [ADR-173](decisions.md#adr-173) D3 and
 [`db/webhooks.md`](db/webhooks.md).
 
+## Personal librarian tables (Designed — ADR-183..188, migrations `0181`–`0188`)
+
+The persistence of the personal librarian: one conversation per user on a
+project-less `run_kind='librarian'` run ([ADR-183](decisions.md#adr-183)),
+per-turn owner-bound tokens ([ADR-184](decisions.md#adr-184)), the operation
+ledger and cards ([ADR-185](decisions.md#adr-185)), task statements and task
+revision ([ADR-186](decisions.md#adr-186)), user-origin clarifications
+([ADR-187](decisions.md#adr-187)), and memory, summaries, reset and history
+deletion ([ADR-188](decisions.md#adr-188)). The DDL below is the
+**specification**: the migrations implement it rather than becoming it.
+Constraint and index names are normative — requirement rows and tests cite
+them; an inline CHECK without a spelled-out name takes Postgres's
+`<table>_<column>_check`. Every migration is main-lineage and four-legged (SQL,
+`_journal.json` entry, `meta/<NNNN>_snapshot.json`, `schema.ts`) and ends with
+`drizzle-kit generate` reporting no change; the brain lineage is untouched. A
+shared CHECK re-derived below lists its values as of `0180`; the migration
+re-derives it from `schema.ts` at the time it is written. ERD:
+[`db/librarian-domain.md`](db/librarian-domain.md). Behaviour:
+[`system-analytics/librarian-conversation.md`](system-analytics/librarian-conversation.md)
+and the librarian documents it links.
+
+| Migration | Tables created | Shared tables changed |
+| --- | --- | --- |
+| `0181_librarian_token_kind` | — | `project_tokens`, `token_audit_log` |
+| `0182_librarian_conversations` | `librarian_conversations`, `librarian_segments`, `librarian_messages`, `librarian_turns`, `librarian_context_snapshots` | `platform_runtime_settings`, `project_tokens` (FK) |
+| `0183_librarian_run_kind` | — | `runs`, `run_sessions`, `execution_commands`, `execution_assignments` |
+| `0184_task_revision_launch_intent` | — | `tasks` |
+| `0185_librarian_operations` | `librarian_operations`, `librarian_cards`, `task_statement_revisions`, `librarian_task_links` | `task_comments`, `agent_turns`, `task_activity` |
+| `0186_task_clarifications_user_origin` | — | `task_clarifications`, `task_activity`, `inbox_items`, `domain_events` |
+| `0187_librarian_updates` | `librarian_updates` | — |
+| `0188_librarian_memory` | `librarian_memory_items`, `librarian_memory_item_revisions`, `librarian_memory_tombstones`, `librarian_segment_summaries` | — |
+
+The `runs` and `tasks` constraint changes sit in migrations of their own
+(`0183`, `0184`), so each is reviewable and revertable alone.
+
+### `0181_librarian_token_kind` (Designed — ADR-184)
+
+A librarian token is a `project_tokens` row minted for one turn when the
+librarian run flips `Running`, named `librarian-turn:<turnId>` (a reserved
+name), expiring at the turn deadline and revoked in the turn-end transaction.
+`token_kind` has no DB CHECK before this migration (TypeScript enum only);
+every existing row is `project | user | agent`, so the new CHECK validates
+without a backfill. The shipped `project_tokens_agent_kind_check`
+(`(token_kind = 'agent') = (agent_id IS NOT NULL)`) already holds for the new
+kind.
+
+```sql
+ALTER TABLE project_tokens ADD COLUMN librarian_turn_id text;
+ALTER TABLE project_tokens ADD CONSTRAINT project_tokens_kind_check
+  CHECK (token_kind IN ('project', 'user', 'agent', 'librarian'));
+ALTER TABLE project_tokens ADD CONSTRAINT project_tokens_librarian_check
+  CHECK (token_kind <> 'librarian' OR (
+    owner_user_id IS NOT NULL AND project_id IS NULL AND agent_id IS NULL
+    AND librarian_turn_id IS NOT NULL AND expires_at IS NOT NULL));
+CREATE INDEX project_tokens_librarian_turn_idx ON project_tokens (librarian_turn_id);
+
+ALTER TABLE token_audit_log
+  ADD COLUMN on_behalf_of_user_id text REFERENCES users(id) ON DELETE SET NULL,
+  ADD COLUMN librarian_turn_id    text,
+  ADD COLUMN operation_id         text;
+CREATE INDEX token_audit_librarian_turn_idx ON token_audit_log (librarian_turn_id);
+```
+
+Every librarian-token request writes its audit row through the mandatory
+`recordRequiredTokenAudit` path, inside the route's transaction:
+`actor_label = 'librarian:<ownerUserId>'`, `on_behalf_of_user_id` = the owner,
+`librarian_turn_id`, and `operation_id` for an effect. `DISTINCT project_id`
+over one turn's audit rows is that turn's project set, which the reply's
+`source_project_ids` records. `project_tokens.librarian_turn_id` gains its FK
+in `0182`, once `librarian_turns` exists; the audit columns stay plain text.
+
+### `0182_librarian_conversations` (Designed — ADR-183, ADR-188)
+
+```sql
+CREATE TABLE librarian_conversations (
+  id                          text        PRIMARY KEY,
+  user_id                     text        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  run_id                      text        REFERENCES runs(id) ON DELETE SET NULL,
+  context_epoch               integer     NOT NULL DEFAULT 0,
+  forget_generation           integer     NOT NULL DEFAULT 0,
+  history_generation          integer     NOT NULL DEFAULT 0,
+  current_segment_id          text,
+  reset_state                 text        NOT NULL DEFAULT 'none'
+                                          CHECK (reset_state IN ('none', 'resetting')),
+  subject                     jsonb,
+  read_through_seq            bigint      NOT NULL DEFAULT 0,
+  memory_enabled_next_segment boolean     NOT NULL DEFAULT true,
+  daily_turn_date             date,
+  daily_turn_count            integer     NOT NULL DEFAULT 0,
+  created_at                  timestamptz NOT NULL DEFAULT now(),
+  updated_at                  timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT librarian_conversations_user_uq UNIQUE (user_id),
+  CONSTRAINT librarian_conversations_run_uq  UNIQUE (run_id)
+);
+
+CREATE TABLE librarian_segments (
+  id              text        PRIMARY KEY,
+  conversation_id text        NOT NULL REFERENCES librarian_conversations(id) ON DELETE CASCADE,
+  ordinal         integer     NOT NULL,
+  started_at      timestamptz NOT NULL,
+  ended_at        timestamptz,
+  CONSTRAINT librarian_segments_ordinal_uq UNIQUE (conversation_id, ordinal)
+);
+
+CREATE TABLE librarian_messages (
+  id                 text        PRIMARY KEY,
+  conversation_id    text        NOT NULL REFERENCES librarian_conversations(id) ON DELETE CASCADE,
+  segment_id         text        NOT NULL REFERENCES librarian_segments(id),
+  seq                bigint      NOT NULL,
+  author_kind        text        NOT NULL
+                                 CHECK (author_kind IN ('owner', 'librarian', 'update', 'system')),
+  client_message_id  text,
+  body               text        NOT NULL,
+  body_tsv           tsvector    GENERATED ALWAYS AS (to_tsvector('simple', body)) STORED,
+  subject            jsonb,
+  delivery_state     text        NOT NULL DEFAULT 'accepted'
+                                 CHECK (delivery_state IN ('accepted', 'queued', 'withdrawn',
+                                                           'withdrawn_by_reset', 'processed')),
+  turn_id            text,
+  source_project_ids text[]      NOT NULL DEFAULT '{}',
+  card_id            text,
+  update_id          text,
+  created_at         timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT librarian_messages_seq_uq UNIQUE (conversation_id, seq)
+);
+CREATE UNIQUE INDEX librarian_messages_client_id_uq
+  ON librarian_messages (conversation_id, client_message_id)
+  WHERE client_message_id IS NOT NULL;
+CREATE INDEX librarian_messages_body_tsv_idx ON librarian_messages USING gin (body_tsv);
+
+CREATE TABLE librarian_turns (
+  id                  text        PRIMARY KEY,
+  conversation_id     text        NOT NULL REFERENCES librarian_conversations(id) ON DELETE CASCADE,
+  segment_id          text        NOT NULL REFERENCES librarian_segments(id),
+  message_id          text        REFERENCES librarian_messages(id) ON DELETE SET NULL,
+  variant             text        NOT NULL
+                                  CHECK (variant IN ('owner_message', 'explain', 'summary')),
+  status              text        NOT NULL
+                                  CHECK (status IN ('queued', 'admitted', 'running', 'completed',
+                                                    'stopped', 'failed', 'withdrawn')),
+  failure_reason      text,
+  context_snapshot_id text,
+  runner_snapshot     jsonb,
+  token_id            text,
+  deadline_at         timestamptz,
+  admitted_at         timestamptz,
+  started_at          timestamptz,
+  ended_at            timestamptz,
+  created_at          timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT librarian_turns_running_has_snapshot_check
+    CHECK (status <> 'running' OR context_snapshot_id IS NOT NULL),
+  CONSTRAINT librarian_turns_failed_has_reason_check
+    CHECK (status <> 'failed' OR failure_reason IS NOT NULL)
+);
+CREATE UNIQUE INDEX librarian_turns_one_active_uq
+  ON librarian_turns (conversation_id) WHERE status IN ('admitted', 'running');
+
+CREATE TABLE librarian_context_snapshots (
+  id                    text        PRIMARY KEY,
+  turn_id               text        NOT NULL REFERENCES librarian_turns(id) ON DELETE CASCADE,
+  instructions_version  text        NOT NULL,
+  message_ids           text[]      NOT NULL,
+  summary_revisions     jsonb       NOT NULL,
+  memory_item_revisions jsonb       NOT NULL,
+  authz_fingerprint     text        NOT NULL,
+  context_epoch         integer     NOT NULL,
+  char_count            integer     NOT NULL,
+  truncated             boolean     NOT NULL,
+  created_at            timestamptz NOT NULL DEFAULT now()
+);
+
+ALTER TABLE platform_runtime_settings
+  ADD COLUMN librarian_enabled   boolean NOT NULL DEFAULT false,
+  ADD COLUMN librarian_runner_id text REFERENCES platform_acp_runners(id) ON DELETE SET NULL;
+
+ALTER TABLE project_tokens ADD CONSTRAINT project_tokens_librarian_turn_fk
+  FOREIGN KEY (librarian_turn_id) REFERENCES librarian_turns(id) ON DELETE CASCADE;
+```
+
+- **`librarian_conversations`** — exactly one row per user, created by the
+  first `GET /api/librarian/conversation`; no route or tool creates a second.
+  `run_id` is the one `runs` row the conversation reuses across turns (created
+  on the first turn). `context_epoch` bumps on reset, forget, clear history and
+  every change of the owner's authz fingerprint; `forget_generation` and
+  `history_generation` fence late summary and memory writers.
+  `current_segment_id` has no FK (the segment references the conversation).
+  The conversation row lock (`SELECT … FOR UPDATE`) orders queue admission,
+  the single active turn, reset against admission, and the daily cap.
+- **`librarian_messages.seq`** — the conversation's durable sequence and the
+  replay cursor of [`librarian-stream.asyncapi.yaml`](api/async/librarian-stream.asyncapi.yaml).
+  It is allocated under the conversation row lock, strictly increases, and is
+  never reused — not after a history clear or the retention purge, both of
+  which delete rows, so the allocator cannot derive it from the surviving
+  `max(seq)` alone. `read_through_seq` only moves forward (`GREATEST`).
+  `turn_id`, `card_id` and `update_id` are plain references without FK.
+  `body_tsv` serves the history-search route (at most 20 hits, older segments
+  included).
+- **`librarian_turns`** — `withdrawn` is the terminal status of a queued turn
+  whose message the owner withdrew or the reset barrier withdrew (the message's
+  `delivery_state` becomes `withdrawn` / `withdrawn_by_reset`); it never held a
+  slot or a token. `failure_reason` is a closed, application-enforced
+  vocabulary: `start_failed`, `host_lost`, `deadline`, `capability_trip`. `context_snapshot_id` and
+  `token_id` carry no FK — the snapshot and the token each reference their
+  turn. `runner_snapshot` records the runner the turn's ACP session was
+  created under; `run_sessions.librarian_context_epoch` records the epoch.
+- **`librarian_context_snapshots`** — committed before the turn's prompt
+  command is queued; the snapshot is what makes a reply reproducible and what
+  "which memory this reply used" reads.
+- **`platform_runtime_settings`** — see
+  [Configuration](configuration.md#personal-librarian--platform_runtime_settings-designed--adr-183).
+
+### `0183_librarian_run_kind` (Designed — ADR-183)
+
+`run_kind` has no DB CHECK before this migration (TypeScript enum only). A
+librarian run is created on the conversation's first turn with
+`flow_version = 'librarian'` (the sentinel precedent of `'scratch'` and
+`'agent'`), parked `NeedsInputIdle` between turns, and never `NeedsInput`,
+`HumanWorking`, `Review`, `Done`, `Abandoned` or `Crashed`. `persistent = true`
+is its keep-alive exemption, and `created_by_user_id` is the run-stream
+authorization of a project-less run.
+
+```sql
+ALTER TABLE runs ADD CONSTRAINT runs_run_kind_check
+  CHECK (run_kind IN ('flow', 'scratch', 'agent', 'librarian'));
+ALTER TABLE runs ADD CONSTRAINT runs_librarian_shape_check
+  CHECK (run_kind <> 'librarian' OR (
+    project_id IS NULL AND task_id IS NULL AND persistent = true
+    AND created_by_user_id IS NOT NULL AND agent_workspace = 'none'));
+ALTER TABLE runs ADD COLUMN librarian_operation_id text;
+ALTER TABLE runs ADD CONSTRAINT runs_librarian_operation_uq UNIQUE (librarian_operation_id);
+
+ALTER TABLE run_sessions ADD COLUMN librarian_context_epoch integer;
+
+ALTER TABLE execution_commands DROP CONSTRAINT execution_commands_owner_shape_check;
+ALTER TABLE execution_commands ADD CONSTRAINT execution_commands_owner_shape_check CHECK (
+  (owner_kind IS NULL AND owner_ref IS NULL AND logical_operation_key IS NULL
+    AND request_schema IS NULL AND request_sha256 IS NULL)
+  OR (owner_kind IN ('flow_node_attempt', 'scratch_message', 'gate_chat',
+                     'agent_turn', 'sync_resolution', 'librarian_turn')
+    AND jsonb_typeof(owner_ref) = 'object' AND logical_operation_key IS NOT NULL
+    AND request_schema IS NOT NULL AND request_sha256 ~ '^[a-f0-9]{64}$'));
+
+ALTER TABLE execution_assignments DROP CONSTRAINT execution_assignments_placement_reason_check;
+ALTER TABLE execution_assignments ADD CONSTRAINT execution_assignments_placement_reason_check
+  CHECK (placement_reason IN ('launch', 'resume', 'recover', 'wait_resume',
+    'rework_return', 'gate_chat', 'sync_resolver', 'scratch_recover',
+    'node_interrupt', 'legacy_backfill', 'librarian_turn'));
+```
+
+`runs.librarian_operation_id` is the result column of a librarian **launch**
+operation — it is set on the launched flow or agent run, never on the
+librarian run itself, and is written in that run's insert transaction.
+`run_sessions.librarian_context_epoch` is the `context_epoch` the session was
+created under: ACP `session/resume` is used only when it and the runner
+snapshot match the conversation, otherwise the turn starts `session/new` from
+a composed context.
+
+The two generated CHECKs of the command ledger regenerate from their sources:
+
+- `execution_commands_request_v2_check` from `PROMPT_OWNER_SHAPES` — the new
+  owner family `librarian_turn` with variants
+  `owner_message | explain | summary`, each carrying `turnId` and
+  `promptOrdinal` beyond the common `version`, `runId`, `runSessionId`,
+  `incarnationId`, `assignmentId`, `assignmentEpoch`. Logical key
+  `librarian_turn:<variant>:<assignmentId>:<promptOrdinal>`.
+- `execution_commands_create_intent_check` — owner variant `librarian` beside
+  `node | gate_ai | gate_skill | agent`, shaped like `agent`: owner keys exactly
+  `{variant, turnId, promptOrdinal}`, `turnId` a string of 1–128 characters,
+  `promptOrdinal` a canonical non-negative decimal,
+  `operationKey = 'librarian-create:' || turnId || ':' || promptOrdinal`, and no
+  `nodeAttemptId` in the canonical request payload.
+
+`execution_commands_prompt_owner_required` is unchanged: a librarian prompt
+without an owner is refused like any other.
+
+### `0184_task_revision_launch_intent` (Designed — ADR-185, ADR-186)
+
+```sql
+ALTER TABLE tasks
+  ADD COLUMN revision                 integer NOT NULL DEFAULT 0,
+  ADD COLUMN statement_revision       integer,
+  ADD COLUMN launch_intent            text
+    CHECK (launch_intent IN ('none', 'triage_only', 'triage_then_launch')),
+  ADD COLUMN created_via_operation_id text;
+ALTER TABLE tasks ADD CONSTRAINT tasks_created_via_operation_uq UNIQUE (created_via_operation_id);
+```
+
+- `revision` increments on every content write — UI PATCH, ext PATCH,
+  statement accept — under the task row lock; a stale `expectedRevision` is
+  refused `CONFLICT` (`details.reason: stale_revision`).
+- `statement_revision` is the accepted `task_statement_revisions.revision`
+  that was rendered into `tasks.prompt`; NULL until a statement is accepted.
+- `launch_intent` NULL is today's behaviour on every non-librarian path. A
+  librarian `task_create` writes `none`; send-to-triage writes
+  `triage_only | triage_then_launch`; only `triage_then_launch` lets a triage
+  verdict arm `launch_mode = 'auto'`, and C2 admission skips `none`. A human
+  Launch click ignores it.
+- `created_via_operation_id` is the result column of the creating librarian
+  operation: a racing retry hits the unique and returns the existing task.
+
+### `0185_librarian_operations` (Designed — ADR-185, ADR-186)
+
+```sql
+CREATE TABLE librarian_operations (
+  id              text        PRIMARY KEY,
+  conversation_id text        NOT NULL REFERENCES librarian_conversations(id) ON DELETE CASCADE,
+  segment_id      text        NOT NULL REFERENCES librarian_segments(id),
+  turn_id         text,
+  card_id         text,
+  idempotency_key text        NOT NULL,
+  kind            text        NOT NULL,
+  request_digest  text        NOT NULL,
+  target          jsonb       NOT NULL,
+  status          text        NOT NULL
+                              CHECK (status IN ('admitted', 'succeeded', 'refused', 'failed', 'unknown')),
+  result          jsonb,
+  error_code      text,
+  created_at      timestamptz NOT NULL DEFAULT now(),
+  settled_at      timestamptz,
+  CONSTRAINT librarian_operations_key_uq UNIQUE (conversation_id, idempotency_key),
+  CONSTRAINT librarian_operations_terminal_shape_check
+    CHECK (status NOT IN ('refused', 'failed') OR error_code IS NOT NULL)
+);
+CREATE INDEX librarian_operations_segment_digest_idx
+  ON librarian_operations (segment_id, request_digest);
+
+CREATE TABLE librarian_cards (
+  id              text        PRIMARY KEY,
+  conversation_id text        NOT NULL REFERENCES librarian_conversations(id) ON DELETE CASCADE,
+  segment_id      text        NOT NULL REFERENCES librarian_segments(id),
+  message_id      text        REFERENCES librarian_messages(id) ON DELETE SET NULL,
+  kind            text        NOT NULL
+                              CHECK (kind IN ('statement_proposal', 'confirmation', 'memory_suggestion')),
+  status          text        NOT NULL
+                              CHECK (status IN ('pending', 'accepted', 'rejected', 'expired',
+                                                'superseded', 'cleared_by_reset')),
+  target          jsonb       NOT NULL,
+  target_revision text,
+  payload         jsonb       NOT NULL,
+  payload_digest  text        NOT NULL,
+  requires_owner  boolean     NOT NULL,
+  expires_at      timestamptz NOT NULL,
+  decided_at      timestamptz,
+  created_at      timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX librarian_cards_pending_idx ON librarian_cards (conversation_id) WHERE status = 'pending';
+
+CREATE TABLE task_statement_revisions (
+  task_id           text        NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  revision          integer     NOT NULL,
+  statement         jsonb       NOT NULL,
+  author_actor_type text        NOT NULL,
+  author_actor_id   text,
+  via_operation_id  text,
+  created_at        timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (task_id, revision)
+);
+CREATE FUNCTION task_statement_revisions_immutable() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  -- The cascade from a task delete runs after the task row is gone; only it passes.
+  IF TG_OP = 'DELETE' AND NOT EXISTS (SELECT 1 FROM tasks WHERE id = OLD.task_id) THEN
+    RETURN OLD;
+  END IF;
+  RAISE EXCEPTION USING ERRCODE = '23514', CONSTRAINT = 'task_statement_revisions_immutable',
+    MESSAGE = 'an accepted task statement revision is immutable';
+END $$;
+CREATE TRIGGER task_statement_revisions_immutable
+  BEFORE UPDATE OR DELETE ON task_statement_revisions
+  FOR EACH ROW EXECUTE FUNCTION task_statement_revisions_immutable();
+
+CREATE TABLE librarian_task_links (
+  id                 text        PRIMARY KEY,
+  conversation_id    text        NOT NULL REFERENCES librarian_conversations(id) ON DELETE CASCADE,
+  task_id            text        NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  meaning            text        NOT NULL
+                                 CHECK (meaning IN ('created_from', 'refined_in', 'mentioned')),
+  from_message_id    text        REFERENCES librarian_messages(id) ON DELETE SET NULL,
+  to_message_id      text        REFERENCES librarian_messages(id) ON DELETE SET NULL,
+  statement_revision integer,
+  created_at         timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX librarian_task_links_task_idx ON librarian_task_links (task_id);
+
+ALTER TABLE task_comments ADD COLUMN via_operation_id text;
+ALTER TABLE task_comments ADD CONSTRAINT task_comments_via_operation_uq UNIQUE (via_operation_id);
+
+ALTER TABLE agent_turns
+  ADD COLUMN requested_by_user_id text REFERENCES users(id) ON DELETE SET NULL;
+
+ALTER TABLE task_activity DROP CONSTRAINT task_activity_event_kind_check;
+ALTER TABLE task_activity ADD CONSTRAINT task_activity_event_kind_check CHECK (event_kind IN (
+  'task_created', 'comment_added', 'task_mentioned', 'relation_added', 'relation_removed',
+  'run_launched', 'triage_set', 'triage_requeued', 'agent_quarantined',
+  'experiment_concluded', 'run_pr_merged', 'evaluation_decided',
+  'agent_summon_suppressed', 'statement_accepted'));
+```
+
+- **`librarian_operations`** — one row per effectful librarian request, keyed
+  by the tool call's `operationKey` (sent as `Idempotency-Key`); inserted
+  `admitted` before the effect, and settled by the same transaction that
+  commits a DB-only effect (the finalize rides `recordRequiredTokenAudit`).
+  `request_digest` is the canonical JSON of the validated body minus the key:
+  same key and digest returns the stored `result`; same key, other digest is
+  `CONFLICT` (`idempotency_payload_mismatch`); a new key whose digest matches a
+  `succeeded` operation of the same segment is `CONFLICT`
+  (`duplicate_of_operation`) unless the call allows the duplicate —
+  `librarian_operations_segment_digest_idx` serves that check. `turn_id` and
+  `card_id` carry no FK, so an operation outlives a history clear with its
+  message references gone. An `admitted` row with no result row older than
+  `MAISTER_LIBRARIAN_OPERATION_RECONCILE_SECONDS` settles `failed`; `unknown`
+  settles only by reconcile.
+- **Result columns** — `tasks.created_via_operation_id`,
+  `task_comments.via_operation_id`,
+  `task_clarifications.requested_via_operation_id` and
+  `runs.librarian_operation_id` are nullable, UNIQUE and FK-free: a racing
+  retry hits the unique and returns the existing row, and reconciling an
+  `admitted` or `unknown` operation is a lookup on that column.
+- **`librarian_cards`** — a confirmation binds its exact targets in `target`
+  and their revision in `target_revision` (the task `revision`, the reviewed
+  head SHA of a promotion, the HITL request and its question revision, or the
+  run and its status for a discard); deciding a stale or expired card is
+  refused `CONFLICT` (`target_changed`). A decision executes as the operation
+  keyed `card:<cardId>`, so a double click is one effect. A reset marks pending
+  cards `cleared_by_reset`.
+- **`task_statement_revisions`** — accepted revisions are immutable; the
+  trigger refuses every UPDATE and every DELETE except the cascade of a task
+  delete. Reset and history clear never delete them.
+- **`librarian_task_links`** — many-to-many conversation↔task provenance; a
+  deleted source message leaves the link with a NULL message reference, which
+  renders as unavailable.
+- **`agent_turns.requested_by_user_id`** — `agent_turns` has no `source`
+  column; the names `agent_turns_source_check` and `guard_agent_turn_source`
+  refer to the turn's immutable source row. A persistent-agent message
+  delivered through the operator-message seam records the requesting user
+  here: a non-NULL value marks a user-requested turn. The trigger
+  `guard_agent_turn_source` is re-derived to refuse the value on any variant
+  other than `live_message | persistent_message | steer` and to keep it in the
+  turn's immutable source row, except that the FK's `SET NULL` may clear it.
+  No other writer sets it.
+- **`task_activity`** — `statement_accepted` is written in the accept
+  transaction; it is not fanned out to `inbox_items`.
+
+### `0186_task_clarifications_user_origin` (Designed — ADR-187)
+
+`task_clarifications` is widened rather than paralleled, so
+`composeEffectivePrompt` folds answers of both origins. No `hitl_requests`
+row and no run exist for a user-origin clarification; `hitl_requests.run_id`
+stays NOT NULL.
+
+```sql
+ALTER TABLE task_clarifications
+  ADD COLUMN origin_kind text NOT NULL DEFAULT 'agent_run'
+    CHECK (origin_kind IN ('agent_run', 'user')),
+  ADD COLUMN requester_user_id              text,
+  ADD COLUMN recipient_user_id              text,
+  ADD COLUMN reason                         text,
+  ADD COLUMN answer_format                  text
+    CHECK (answer_format IN ('text', 'choice', 'yes_no')),
+  ADD COLUMN blocking                       boolean NOT NULL DEFAULT false,
+  ADD COLUMN status                         text    NOT NULL DEFAULT 'open'
+    CHECK (status IN ('open', 'answered', 'cancelled', 'superseded')),
+  ADD COLUMN cancel_reason                  text,
+  ADD COLUMN superseded_by_clarification_id text,
+  ADD COLUMN source_message_id              text
+    REFERENCES librarian_messages(id) ON DELETE SET NULL,
+  ADD COLUMN requested_via_operation_id     text;
+UPDATE task_clarifications SET status = 'answered'   WHERE answered_at IS NOT NULL;
+UPDATE task_clarifications SET status = 'superseded' WHERE superseded_at IS NOT NULL;
+ALTER TABLE task_clarifications ALTER COLUMN origin_kind DROP DEFAULT;
+ALTER TABLE task_clarifications
+  ALTER COLUMN source_hitl_request_id DROP NOT NULL,
+  ALTER COLUMN origin_run_id          DROP NOT NULL,
+  ALTER COLUMN origin_agent_id        DROP NOT NULL,
+  ALTER COLUMN question_schema        DROP NOT NULL;
+ALTER TABLE task_clarifications ADD CONSTRAINT task_clarifications_requested_via_operation_uq
+  UNIQUE (requested_via_operation_id);
+
+ALTER TABLE task_clarifications DROP CONSTRAINT task_clarifications_retrigger_mode_check;
+ALTER TABLE task_clarifications ADD CONSTRAINT task_clarifications_retrigger_mode_check
+  CHECK (retrigger_mode IN ('agent', 'triage', 'none'));
+
+ALTER TABLE task_clarifications ADD CONSTRAINT task_clarifications_origin_shape_check CHECK (
+  (origin_kind = 'agent_run' AND source_hitl_request_id IS NOT NULL
+    AND origin_run_id IS NOT NULL AND origin_agent_id IS NOT NULL
+    AND question_schema IS NOT NULL AND retrigger_mode <> 'none')
+  OR (origin_kind = 'user' AND source_hitl_request_id IS NULL
+    AND origin_run_id IS NULL AND origin_agent_id IS NULL
+    AND requester_user_id IS NOT NULL AND recipient_user_id IS NOT NULL
+    AND retrigger_mode = 'none'));
+
+ALTER TABLE task_clarifications DROP CONSTRAINT task_clarifications_supersession_check;
+ALTER TABLE task_clarifications ADD CONSTRAINT task_clarifications_supersession_check CHECK (
+  (superseded_at IS NULL AND superseded_by_hitl_request_id IS NULL
+    AND superseded_by_run_id IS NULL AND superseded_by_clarification_id IS NULL)
+  OR (superseded_at IS NOT NULL AND num_nonnulls(superseded_by_hitl_request_id,
+    superseded_by_run_id, superseded_by_clarification_id) = 1));
+
+ALTER TABLE task_clarifications ADD CONSTRAINT task_clarifications_status_shape_check CHECK (
+  (status = 'answered') = (answered_at IS NOT NULL AND superseded_at IS NULL)
+  AND (status = 'superseded') = (superseded_at IS NOT NULL)
+  AND (status <> 'cancelled' OR cancel_reason IS NOT NULL));
+
+ALTER TABLE task_activity DROP CONSTRAINT task_activity_event_kind_check;
+ALTER TABLE task_activity ADD CONSTRAINT task_activity_event_kind_check CHECK (event_kind IN (
+  'task_created', 'comment_added', 'task_mentioned', 'relation_added', 'relation_removed',
+  'run_launched', 'triage_set', 'triage_requeued', 'agent_quarantined',
+  'experiment_concluded', 'run_pr_merged', 'evaluation_decided',
+  'agent_summon_suppressed', 'statement_accepted', 'clarification_requested',
+  'clarification_answered', 'clarification_cancelled'));
+
+ALTER TABLE inbox_items DROP CONSTRAINT inbox_items_event_kind_check;
+ALTER TABLE inbox_items ADD CONSTRAINT inbox_items_event_kind_check CHECK (event_kind IN (
+  'task_created', 'comment_added', 'task_mentioned', 'relation_added', 'relation_removed',
+  'run_launched', 'triage_set', 'triage_requeued', 'agent_quarantined',
+  'experiment_concluded', 'run_pr_merged', 'clarification_requested'));
+
+ALTER TABLE domain_events DROP CONSTRAINT domain_events_kind_check;
+ALTER TABLE domain_events ADD CONSTRAINT domain_events_kind_check CHECK (kind IN (
+  'task.created', 'task.comment_added', 'task.triage_requeued',
+  'task.clarification_answered', 'task.clarification_requested',
+  'task.clarification_cancelled', 'run.done', 'run.failed', 'run.crashed',
+  'run.abandoned', 'run.review', 'run.review_opened', 'run.needs_input',
+  'run.escalated', 'run.rework_claimed', 'run.rework_returned', 'gate.failed'));
+```
+
+- **Backfill.** Every existing row is agent-origin: the column default fills
+  `origin_kind`, and `status` follows the existing timestamps (`answered`,
+  then `superseded`, which wins for a row that has both). The default is
+  dropped afterwards, so a new row names its origin.
+- **`task_clarifications_status_shape_check`.** `answered` means answered
+  and not superseded: `answered → superseded` is a legal transition (a
+  correction creates the successor first), and pre-existing agent rows can
+  hold both timestamps, so the shape reads `superseded_at` as well as
+  `answered_at`. An answer is never overwritten.
+  `task_clarifications_answer_shape_check` is unchanged — `answered_by_user_id`
+  stays paired with `answer` and `answered_at`.
+- **Unchanged.** `task_clarifications_source_hitl_request_uq` stays (NULLs are
+  distinct), as do `task_clarifications_task_seq_uq` and
+  `task_clarifications_answered_context_idx`. `requester_user_id`,
+  `recipient_user_id` and `superseded_by_clarification_id` are snapshots
+  without FK, like the existing answerer and source ids.
+- **Inbox and events.** `InboxSourceRef` gains
+  `{kind: "clarification", taskId, clarificationId, activityId}` (jsonb, no
+  DB CHECK). `domain_events_kind_check` is re-derived from `0167`'s fifteen
+  kinds plus `task.clarification_requested` and
+  `task.clarification_cancelled`; `schema.ts` lists only thirteen today (it
+  lacks `run.review_opened` and `run.needs_input`) and is corrected in the same
+  change.
+
+### `0187_librarian_updates` (Designed — ADR-185)
+
+```sql
+CREATE TABLE librarian_updates (
+  id              text        PRIMARY KEY,
+  conversation_id text        NOT NULL REFERENCES librarian_conversations(id) ON DELETE CASCADE,
+  domain_event_id bigint      NOT NULL REFERENCES domain_events(id) ON DELETE CASCADE,
+  task_id         text,
+  run_id          text,
+  kind            text        NOT NULL,
+  status          text        NOT NULL
+                              CHECK (status IN ('pending', 'delivered', 'skipped_no_access', 'failed')),
+  attempts        integer     NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+  message_id      text        REFERENCES librarian_messages(id) ON DELETE SET NULL,
+  last_error_code text,
+  created_at      timestamptz NOT NULL DEFAULT now(),
+  delivered_at    timestamptz,
+  CONSTRAINT librarian_updates_event_uq UNIQUE (conversation_id, domain_event_id),
+  CONSTRAINT librarian_updates_failed_has_error_check
+    CHECK (status <> 'failed' OR last_error_code IS NOT NULL)
+);
+```
+
+One row per `(conversation, domain event)` written by the `librarian_followup`
+consumer — at-least-once dispatch collapses on the unique. Delivery inserts an
+`author_kind = 'update'` message (no model turn, no token). At most five
+attempts; a deterministic failure records `failed` with `last_error_code` and
+the consumer's cursor advances. `domain_event_id` is `bigint` because
+`domain_events.id` is a bigint identity, and it cascades because
+`domain_events` rows cascade from their project, task and run — a restricting
+reference would block those deletes. `task_id` and `run_id` are plain
+references without FK.
+
+### `0188_librarian_memory` (Designed — ADR-188)
+
+```sql
+CREATE TABLE librarian_memory_items (
+  id                 text        PRIMARY KEY,
+  user_id            text        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  kind               text        NOT NULL
+                                 CHECK (kind IN ('preference', 'goal', 'commitment', 'fact')),
+  content            text        NOT NULL,
+  scope              text        NOT NULL CHECK (scope IN ('general', 'project')),
+  project_id         text        REFERENCES projects(id) ON DELETE CASCADE,
+  source_refs        jsonb       NOT NULL DEFAULT '[]',
+  source_project_ids text[]      NOT NULL DEFAULT '{}',
+  origin             text        NOT NULL CHECK (origin IN ('explicit', 'accepted_suggestion')),
+  valid_until        timestamptz,
+  revision           integer     NOT NULL DEFAULT 1,
+  forgotten_at       timestamptz,
+  created_at         timestamptz NOT NULL DEFAULT now(),
+  updated_at         timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX librarian_memory_items_user_active_idx
+  ON librarian_memory_items (user_id) WHERE forgotten_at IS NULL;
+CREATE FUNCTION librarian_memory_items_content_immutable() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.content IS DISTINCT FROM OLD.content AND NEW.revision <> OLD.revision + 1 THEN
+    RAISE EXCEPTION USING ERRCODE = '23514', CONSTRAINT = 'librarian_memory_items_content_immutable',
+      MESSAGE = 'memory item content changes only through a new revision';
+  END IF;
+  RETURN NEW;
+END $$;
+CREATE TRIGGER librarian_memory_items_content_immutable
+  BEFORE UPDATE ON librarian_memory_items
+  FOR EACH ROW EXECUTE FUNCTION librarian_memory_items_content_immutable();
+
+CREATE TABLE librarian_memory_item_revisions (
+  item_id    text        NOT NULL REFERENCES librarian_memory_items(id) ON DELETE CASCADE,
+  revision   integer     NOT NULL,
+  content    text        NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (item_id, revision)
+);
+
+CREATE TABLE librarian_memory_tombstones (
+  user_id        text        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  content_digest text        NOT NULL,
+  created_at     timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, content_digest)
+);
+
+CREATE TABLE librarian_segment_summaries (
+  id                 text        PRIMARY KEY,
+  segment_id         text        NOT NULL REFERENCES librarian_segments(id) ON DELETE CASCADE,
+  revision           integer     NOT NULL,
+  from_seq           bigint      NOT NULL,
+  to_seq             bigint      NOT NULL,
+  content            jsonb       NOT NULL,
+  source_project_ids text[]      NOT NULL DEFAULT '{}',
+  forget_generation  integer     NOT NULL,
+  history_generation integer     NOT NULL,
+  invalidated_at     timestamptz,
+  created_at         timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT librarian_segment_summaries_revision_uq UNIQUE (segment_id, revision)
+);
+```
+
+- **Memory items** are written only on an explicit "remember" in an
+  owner-message turn or on acceptance of a visible suggestion card. An edit
+  inserts the next `librarian_memory_item_revisions` row and advances
+  `revision` in the same transaction — the trigger refuses a content change
+  that does not. Forget sets `forgotten_at` and inserts a tombstone digest;
+  summary and suggestion writers refuse tombstoned content. Every use
+  re-checks `source_project_ids` against the owner's current visibility.
+- **Summaries** are written by a tool-less `summary` turn, compare-and-set on
+  the segment being current and on `forget_generation` / `history_generation`
+  equal to the conversation's, so a writer that lost the fence writes nothing.
+  `invalidated_at` marks a summary dropped for an invisible source, queued for
+  rebuild.
+- Nothing here writes to Project Brain or to an agent's `memory.md`.
+
+### Deletion and retention (Designed — ADR-188)
+
+- **Clear history** is one transaction under the conversation row lock: it
+  deletes the conversation's messages (and with them their search rows),
+  summaries, context snapshots and cards; the `SET NULL` references clear on
+  `librarian_turns.message_id`, `librarian_task_links.*_message_id`,
+  `librarian_updates.message_id` and `task_clarifications.source_message_id`;
+  it bumps `history_generation` and `context_epoch`. It keeps operations,
+  turns, links, updates and the token audit. After commit the web releases the
+  conversation's host workspace (see [Supervisor](supervisor.md)).
+- **Retention** — a `system_sweep` pass deletes `librarian_messages` older
+  than `MAISTER_LIBRARIAN_HISTORY_RETENTION_DAYS` and
+  `librarian_context_snapshots` older than
+  `MAISTER_LIBRARIAN_SNAPSHOT_RETENTION_DAYS`, in keyset batches of 500.
+- **Reset** deletes nothing: it withdraws queued messages, inserts the next
+  segment, bumps `context_epoch` and marks pending cards `cleared_by_reset`.
+- **User deletion** cascades the conversation and everything under it, the
+  memory items and the tombstones. The conversation's `runs` row is not under
+  that cascade (the reference points from the conversation to the run). Admin
+  hard-delete is permitted only for a never-active pending user with no
+  referencing rows, so the `SET NULL` of `project_tokens.owner_user_id` and
+  `runs.created_by_user_id` — which `project_tokens_librarian_check` and
+  `runs_librarian_shape_check` would refuse — is unreachable.
+
 ## `runs`
 
 ```ts
@@ -4278,7 +4965,14 @@ users
   ├── sessions           (FK userId, cascade)
   ├── project_members    (FK userId, cascade)
   ├── node_attempts.owner_user_id (FK userId, SET NULL)  ← takeover owner
-  └── review_comments.author_user_id / .resolved_by_user_id (FK userId, SET NULL)  ← ADR-072
+  ├── review_comments.author_user_id / .resolved_by_user_id (FK userId, SET NULL)  ← ADR-072
+  ├── librarian_conversations (FK userId, cascade)  ← ADR-183 (Designed)
+  │     ├── librarian_segments / _messages / _turns / _operations / _cards / _task_links / _updates (cascade)
+  │     ├── librarian_turns → librarian_context_snapshots, project_tokens.librarian_turn_id (cascade)
+  │     └── librarian_segments → librarian_segment_summaries (cascade)
+  ├── librarian_memory_items (FK userId, cascade)  ← ADR-188 (Designed)
+  │     └── librarian_memory_item_revisions (FK itemId, cascade)
+  └── librarian_memory_tombstones (FK userId, cascade)  ← ADR-188 (Designed)
 
 projects
   ├── project_members    (FK projectId, cascade)
@@ -4292,12 +4986,15 @@ projects
   ├── agent_schedules     (FK projectId, cascade)     ← schedules for attached agents
   ├── project_tokens.agent_id (FK agentId, cascade)   ← ephemeral agent tokens
   ├── runs.agent_id       (FK agentId, SET NULL)      ← history survives catalog deletes
+  ├── librarian_memory_items (FK projectId, cascade)  ← ADR-188 (Designed) project-scoped memory
   ├── tasks              (FK projectId, cascade)
   │     ├── task_relations   (FK fromTaskId / toTaskId, cascade)   ← ADR-083
   │     ├── task_comments    (FK taskId,   cascade)                ← ADR-083
   │     ├── task_activity    (FK taskId,   cascade)                ← ADR-083
   │     ├── task_subscribers (FK taskId,   cascade)                ← ADR-083
   │     ├── inbox_items      (FK taskId,   cascade)                ← ADR-083
+  │     ├── task_statement_revisions (FK taskId, cascade)          ← ADR-186 (Designed)
+  │     ├── librarian_task_links     (FK taskId, cascade)          ← ADR-186 (Designed)
   │     └── runs         (FK taskId,    cascade)
   │           ├── workspaces      (FK runId,        cascade)
   │           ├── run_sessions    (FK runId,        cascade)       ← ADR-114

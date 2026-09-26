@@ -26,6 +26,10 @@ account actions (change password, sign out); admin destinations live in the
 - **Mobile rail trigger (Implemented):** below `md`, an icon button opens the
   one on-demand mobile left-rail drawer; it has an accessible name and receives
   restored focus when that drawer closes.
+- **Librarian entry (Designed — ADR-189):** opens the personal
+  [librarian panel](librarian-panel.md) in place (no navigation) and receives
+  restored focus when the panel closes. It binds no keyboard shortcut —
+  Cmd/Ctrl+K stays the scratch launcher.
 
 ## Layout & regions
 
@@ -47,6 +51,16 @@ switch, theme switch, and the user menu. The theme switch uses packaged
 Heroicons: a sun for light mode and a moon for dark mode. After WI-3 the
 breadcrumb no longer carries a supervisor status dot — supervisor status is
 shown once in the footer ([`status-bar.md`](status-bar.md)).
+
+**Librarian entry (Designed — ADR-189).** The right group gains the Librarian
+entry, rendered for every authenticated user on every `(app)` route: icon and
+label where the width allows, the icon alone below `md` with an explicit
+`aria-label`, and — like the mobile rail trigger — never dropped. It carries at
+most one indicator, `running`, `unread` or `action_required`, and never a
+numeric count, so it cannot compete with the canonical `decisions` / `updates`
+badges. When the librarian is disabled or has no ready runner the entry still
+renders; the panel states the reason. The panel itself is
+[`librarian-panel.md`](librarian-panel.md).
 
 **Narrow (Implemented — `NAV-07`).** The header is laid out narrow-first: `gap-2
 px-3` below `md`, widening to `gap-8 px-6` above it, with `min-w-0` on both
@@ -71,11 +85,19 @@ Authenticated only (the `(app)` group redirects unauthenticated requests to
 No data fetch of its own. The breadcrumb is static; the user identity comes from
 the session resolved in the layout.
 
+(Designed — ADR-189) The Librarian entry's indicator reads
+`GET /api/librarian/conversation` and is kept fresh by the
+`librarian.indicator` frames of `GET /api/librarian/stream`
+([`../../api/async/librarian-stream.asyncapi.yaml`](../../api/async/librarian-stream.asyncapi.yaml)):
+`unread` from the conversation's `read_through_seq`, `action_required` from a
+pending owner card, `running` from the active turn.
+
 ## i18n
 
 `nav` namespace (`crumbProjects`, `switchDesk`, `switchProjects`, `switchLabel`,
 `crumbDesk`, plus the section labels the crumb reuses); the user menu and
-locale/theme switches own their strings.
+locale/theme switches own their strings. The Librarian entry's label and
+indicator names live in the `librarian` namespace (Designed).
 
 ## Linked artifacts
 
@@ -89,3 +111,6 @@ locale/theme switches own their strings.
   `web/components/chrome/nav-crumb.tsx`.
 - IA: [`../../system-analytics/home-navigation.md`](../../system-analytics/home-navigation.md)
   (`NAV-04`, `NAV-05`).
+- Librarian entry (Designed): [`librarian-panel.md`](librarian-panel.md),
+  [`../../system-analytics/librarian-surface.md`](../../system-analytics/librarian-surface.md),
+  [ADR-189](../../decisions.md#adr-189-librarian-surface-top-navigation-entry-and-right-side-panel).

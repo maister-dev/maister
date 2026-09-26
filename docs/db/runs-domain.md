@@ -580,6 +580,66 @@ erDiagram
 > See [`../system-analytics/social-board.md`](../system-analytics/social-board.md)
 > and [ADR-083](../decisions.md#adr-083-social-board-substrate--per-project-task-numbering-typed-relations-polymorphic-actor).
 
+### Personal librarian additions (Designed — ADR-183..187)
+
+The personal librarian adds a fourth run kind and a few columns to the shared
+run and task tables (migrations `0183`–`0186`). Its own tables are drawn in
+[`librarian-domain.md`](librarian-domain.md); only the shared-table deltas and
+their edges appear here.
+
+```mermaid
+erDiagram
+    LIBRARIAN_CONVERSATIONS |o--o| RUNS : "the conversation's run_kind librarian run (SET NULL)"
+    TASKS ||--o{ TASK_STATEMENT_REVISIONS : "immutable accepted statements (cascade)"
+    TASKS ||--o{ LIBRARIAN_TASK_LINKS : "conversation provenance (cascade)"
+    LIBRARIAN_OPERATIONS |o..o| TASKS : "created_via_operation_id (UNIQUE, no FK)"
+    LIBRARIAN_OPERATIONS |o..o| TASK_COMMENTS : "via_operation_id (UNIQUE, no FK)"
+    LIBRARIAN_OPERATIONS |o..o| RUNS : "librarian_operation_id (UNIQUE, no FK)"
+
+    RUNS {
+        text run_kind "Designed 0183: flow|scratch|agent|librarian, runs_run_kind_check"
+        text librarian_operation_id "Designed 0183: NULL, UNIQUE runs_librarian_operation_uq"
+    }
+
+    RUN_SESSIONS {
+        integer librarian_context_epoch "Designed 0183: NULL, epoch the ACP session was created under"
+    }
+
+    TASKS {
+        integer revision "Designed 0184: NOT NULL DEFAULT 0, +1 per content write"
+        integer statement_revision "Designed 0184: NULL, accepted revision rendered into prompt"
+        text launch_intent "Designed 0184: NULL|none|triage_only|triage_then_launch"
+        text created_via_operation_id "Designed 0184: NULL, UNIQUE tasks_created_via_operation_uq"
+    }
+
+    TASK_COMMENTS {
+        text via_operation_id "Designed 0185: NULL, UNIQUE task_comments_via_operation_uq"
+    }
+
+    TASK_ACTIVITY {
+        text event_kind "Designed: + statement_accepted (0185), clarification_requested|answered|cancelled (0186)"
+    }
+
+    INBOX_ITEMS {
+        text event_kind "Designed 0186: + clarification_requested"
+        jsonb source_ref "Designed: + kind clarification with taskId, clarificationId, activityId"
+    }
+```
+
+- `runs_librarian_shape_check` — a `run_kind='librarian'` run has NULL
+  `project_id` and `task_id`, `persistent = true`, a `created_by_user_id` and
+  `agent_workspace = 'none'`; its `flow_version` is the sentinel `'librarian'`.
+  Its status moves only `Pending → Running ⇄ NeedsInputIdle`, and no board,
+  portfolio, `/runs`, work, decisions or Observatory read model includes it.
+- `runs.librarian_operation_id` is set on a flow or agent run the librarian
+  **launched**, in that run's insert transaction — never on the librarian run.
+- `tasks.launch_intent` NULL keeps today's behaviour for every non-librarian
+  path; only `triage_then_launch` lets a triage verdict arm `launch_mode='auto'`.
+- `agent_turns` (drawn in [`agents-domain.md`](agents-domain.md)) gains
+  `requested_by_user_id` (FK `users`, `SET NULL`, migration `0185`) for a
+  persistent-agent message sent through the librarian's operator-message seam.
+- Exact DDL: [`../database-schema.md`](../database-schema.md#personal-librarian-tables-designed--adr-183188-migrations-01810188).
+
 ## Constraints
 
 - `tasks_id_attempt_uq` on `(id, attempt_number)` — **vacuous**:

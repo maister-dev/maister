@@ -36,6 +36,11 @@ Both are **Implemented**.
   body or a target URL.
 - **Decision-queue item** — a projected DTO carrying kind, criticality, age and
   a next action. Never a database row.
+- **Clarification item** (Designed —
+  [ADR-187](../decisions.md#adr-187-addressed-task-clarification-before-execution))
+  — a fifth `decisions` population and a fifth `DecisionKind`,
+  `clarification`: an open user-origin `task_clarifications` row whose
+  `recipient_user_id` is the reader. See "Clarification population" below.
 - **Digest** — a deterministic sentence over a bounded window: promoted,
   crashed, new decisions, new events, tokens spent.
 
@@ -69,10 +74,12 @@ flowchart TD
     V --> P["promotable runs"]
     V --> C["Crashed runs"]
     V --> F["triage-flagged tasks"]
+    V --> K["open clarifications addressed to the reader, Designed ADR-187"]
     H --> Q["one decision-queue query"]
     P --> Q
     C --> Q
     F --> Q
+    K --> Q
     Q --> QC["decisions = list length"]
     V --> U["unread inbox_items"]
     V --> A["activity newer than cursor"]
@@ -148,6 +155,55 @@ sequenceDiagram
   No gate enumerates routes against paths, so the pairing is a convention a
   reviewer has to hold.
 
+## Clarification population (Designed — ADR-187)
+
+The personal librarian lets one user ask another a question about a task before
+any run exists. That question is work blocked on the recipient, so it belongs to
+`decisions`, and it enters through the same single query rather than beside it.
+
+- **Fifth source, same array.** `computeDecisionsQueue` gains a fifth source,
+  `listOpenClarificationsForRecipient`, read in the same `Promise.all` into the
+  same `items` array as the four existing populations. `count = items.length`
+  therefore keeps holding by construction: ATN-01's guarantee is unchanged and
+  its population list gains this member. The kind fans out through
+  `DECISION_KINDS`, `NON_HITL_RANK`, `STAGE_BY_KIND`, `compareDecisions`,
+  `nextActionOf` in the ext decisions route and the inbox card; the rank and
+  stage values it takes are ADR-187's. ATN-07's order among the four existing
+  kinds is unchanged, and `tasks.priority` is still never consulted.
+- **Addressed, not broadcast.** Unlike the other four populations the item is
+  counted only for its `recipient_user_id`; the requester's count and list never
+  include it. Scoping stays "projects the reader can ACT in": a recipient must
+  hold project `member` (`PROJECT_ACTION_MIN.answerHitl`) at creation and at
+  answer time, so a project viewer's queue stays empty (EDGE-ATN-05 still holds).
+- **Counted once per counter.** Creating a clarification writes, besides the
+  decision item, an `inbox_items` row (`event_kind='clarification_requested'`,
+  `InboxSourceRef` `{kind:"clarification", taskId, clarificationId,
+  activityId}`) for the recipient and a `task_activity` row. The inbox row's
+  `source_ref->>'activityId'` names that activity row, so ATN-02's overlap
+  subtraction counts the request once in `updates`, never twice.
+- **Twin classification.** `task_activity` gains `clarification_requested`,
+  `clarification_answered` and `clarification_cancelled`. The answer path writes
+  the `clarification_answered` twin for BOTH origins, so
+  `task.clarification_answered` — which had no twin and was counted from
+  `domain_events` — moves out of `ATTENTION_EVENT_KINDS` into
+  `TASK_ACTIVITY_TWINNED_EVENT_KINDS`, and the two new domain-event kinds
+  `task.clarification_requested` / `task.clarification_cancelled` are twinned
+  from birth. ADR-169 D4 is applied, not changed; `UT-ATN-09` still forces every
+  new kind into exactly one list, and `IT-ATN-02` proves the answered event is
+  not counted twice. The stream's changed-project scan already reads
+  `task_activity`, so moving the kind loses no invalidation.
+
+```mermaid
+flowchart LR
+    R["requestClarification, one transaction"] --> TA["task_activity clarification_requested"]
+    R --> IB["inbox_items clarification_requested, activityId = the twin"]
+    R --> DE["domain_events task.clarification_requested, twinned, not counted"]
+    TA --> U["updates, counted once after the overlap subtraction"]
+    IB --> U
+    R --> CQ["decisions item for the recipient only"]
+    CQ --> Q["computeDecisionsQueue, fifth source"]
+```
+
 ## Expectations
 
 - **ATN-01:** `decisions` MUST come from one query covering respondable HITL, promotable runs, `Crashed` runs and triage-flagged tasks, scoped to the projects the reader can ACT in (all four populations require project `member`; `readBoard` does not), and its count MUST equal the length of the list it labels.
@@ -178,6 +234,8 @@ sequenceDiagram
 
 - [ADR-169 — two canonical attention counters](../decisions.md#adr-169-two-canonical-attention-counters-decisions-and-updates)
 - [ADR-171 — user-scoped attention SSE stream](../decisions.md#adr-171-user-scoped-attention-sse-stream)
+- [ADR-187 — addressed task clarification before execution](../decisions.md#adr-187-addressed-task-clarification-before-execution) (Designed — the fifth population)
+- [Task clarifications](task-clarifications.md) (Designed)
 - [M51 requirement traceability](m51-traceability.md)
 - [Social board — inbox, mentions, subscriptions](social-board.md)
 - [HITL](hitl.md)
