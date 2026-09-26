@@ -2273,6 +2273,46 @@ force-push of a run branch, not only the panel's Update.
       (`claude/desk-empty-streamed-duplicate`, `3232dcac`). The other specs in
       that class are not scoped yet.
 
+**The streamed copy: the Desk flake, its class, and ADR-171 D7 (owner,
+2026-09-26).**
+
+`desk:485` failed about one run in two. It is React's doing, not the app's:
+- Every `(app)` page streams behind `app/(app)/loading.tsx`, and React 19.2
+  parks a finished page in `<div hidden id="S:0">` until a throttled reveal.
+- The attention stream's connect-time snapshot refreshed the router, and a
+  refresh that reached the still-dehydrated page client-rendered it into
+  `<main>` beside the parked copy.
+- Captured: the refresh's RSC request at 308 ms, both copies at 487 ms.
+
+The owner chose all three: merge the Desk fix here, scope the rest of the
+class now, and remove the trigger in the product.
+
+| # | Change | Commit |
+|---|---|---|
+| D1 | The Desk spec reads page content inside `<main>`. A red-first race test holds the reveal and opens the race; row counts wait for the Desk first. (Cherry-picked from `claude/desk-empty-streamed-duplicate` `3232dcac`, cut from `master`.) | 44 `47b60d25` |
+| D2 | `push-notifications:103/218`, `work-table:97` and `activity-feed:51` scoped the same way. Each was red first under the held race with the lanes' exact signature. `push-notifications:103` had a second cause: this headless Chromium reads `Notification.permission` as "denied" whatever the grant, so the count was only ever read off the server's markup. The test pins the permission "Allow" produces. `outbound-webhooks:363` is not in the class: a retry lied. | 45 `1f068a02` |
+| D3 | ADR-171 D7: the render is the stream's first cursor. The layout passes the render's cursor and counts, the first connect sends them, and the route seeds its sent counts from them, so a current page gets no tick and no refresh (EDGE-ATN-08). The Desk race test now pushes the tick itself. | 46 `4ad824c7` |
+
+**The Codex adversarial review (owner, 2026-09-26): five high findings, all
+confirmed in source, all fixed.** Each went red first and was falsified. The
+sweep and its classification are in `.ai-factory/patches/2026-09-26-12.05.md`.
+
+| # | Finding | Fix | Commit |
+|---|---|---|---|
+| F1 | A rescue ran `add -A` over a copy of the index: a file staged at one version and edited to another, or staged and deleted, was rescued at neither, and the reset dropped the index. `preserveWorktree` had the same `add -A`. | The index tree is written first and, when it differs from HEAD and the rescued tree, is the rescue's second parent (`<ref>^2`). Preserve (GC, archive, drop, scratch discard) writes a rescue ref first when a path is staged and changed again. | 47 `f4f1e549` |
+| F2 | The publication guard's `--no-merges` never counted a merge that resolved a conflict or carried its own edit. | A remote-only merge counts unless `git merge-tree --write-tree` of its two parents yields its tree; a conflict, an octopus or an old git counts. | 48 `cf4885e8` |
+| F3 | Re-attach nulled `scheduled_removal_at`, so the GC's fallback (`ended_at + age`) took the tree back on the next sweep. | A run the GC collects gets now + age in the same statement; any other status keeps null, since `Failed` stamps none and a window written earlier would carry into it. | 49 `3f1ac2cf` |
+| F5 | The parked finalize compared the latest publication, not the PR, to HEAD; a merged PR with a deleted branch could not finalize. | `getPrState` reports `headSha`; `readRecordedPullRequest` shares Open PR's provider resolution; the parked finalize binds to the PR's head (`pr_closed`, `publish_stale`, new `merged_pr_behind`, EN/RU). | 50 `4259c456` |
+| F4 | A `pull_request` promotion always pushed and called `createOrUpdatePr`, which finds open PRs only: a PR merged on the provider got a squash, a push and a second PR. | After the claim, at both apply sites (flow/agent and scratch): merged at HEAD is finalized as it stands; merged elsewhere is `merged_pr_behind`, claim released; unreadable while the scan saw it merged is EXECUTOR_UNAVAILABLE, nothing pushed. The review panel and the header name the refusal. | 51 `1e46268a` |
+
+Not fixed here, recorded: the workspace reconciler's orphan rescue
+(`gc/workspace-reconciler.ts:784`) has F1's class, but it predates the branch
+and nothing here makes it reachable. The execution-host `ledger` integration
+suite exits 1 on an unhandled "Cannot use a pool after calling end on the pool"
+from a projection that outlives teardown. It reproduces identically, idle, on a
+detached `master` 8ff196d4, in code this branch does not touch, so it is filed
+as its own task rather than widened into this branch.
+
 **Post-review fix lanes (the pre-rebase tree `2a42866c`, 2026-09-25; re-run on the rebased tree below).**
 - Battery, all exit 0: `next build`, the web, supervisor and mcp typechecks,
   the mcp build, `validate:docs:all` and `validate:contracts`.
@@ -2639,3 +2679,8 @@ are put to the owner rather than widened silently:
 | 1 | Fix the MAJOR findings now, or together with codex's | **now** | Commits 20-36 |
 | 2 | MINOR too | **all** | Commits 20-36 |
 | 3 | An update's push drops commits only the publication has: A (keep ADR-141), B (confirm when behind), or C (count them, refuse, confirm only in the panel) | **C, now, everywhere** | Commits 40-43 |
+| 4 | The Desk flake fix: its own branch off `master`, or merged here | **merge here** | Commit 44 |
+| 5 | Scope the other specs showing the streamed copy: now or later | **now** | Commit 45 |
+| 6 | Skip the connect-time refresh when nothing moved since the render (ADR-171) | **yes** | Commit 46 |
+| 7 | Codex review by the owner, then fixes and `merge --no-ff` with the owner's go-ahead | **yes** | merge step |
+| 8 | The Codex findings: fix all five now, or plan first | **all, now** | Commits 47-51 |
