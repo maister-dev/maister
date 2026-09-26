@@ -400,9 +400,11 @@ for compilation — the failure is warm-up, not behaviour.
   `holdStreamedReveal` test holds the window open and fails if the scoping
   regresses. Scoping has one cost: a one-shot `count()` taken before the page
   reaches `<main>` now reads 0, where it used to count the parked copy, so wait
-  for the region to be visible first. The same signature has been seen on `push-notifications:103/218`
-  (`notifications-panel`), `work-table:97` (`work-empty`), `activity-feed:51`
-  and `outbound-webhooks:363`, which are not scoped yet.
+  for the region to be visible first. The same signature showed on
+  `push-notifications:103/218` (`notifications-panel`), `work-table:97`
+  (`work-empty`) and `activity-feed:51`, and those specs now read page content
+  inside `<main>` too. `outbound-webhooks:363`'s violation was different: two
+  visible rows left by a failed first attempt, i.e. a retry that lied.
 
   **Assume things are collapsed.** Much of this UI now hides content behind a
   disclosure, a non-default tab, or a collapsed tree folder — the workbench
@@ -555,8 +557,12 @@ the spec creates after it sees the park (`e2e/_seed/delegated-release.ts`).
 budget-bound: ~19 s and ~22 s on a quiet host against the 30 s default, out of
 budget at load 40-72 with `--workers=2`; both now carry 120 s (m11b also waits
 15 s for the claim's refresh and 60 s for the post-return resume).
-`push-notifications.spec.ts:103` is intermittent here under either config
-(`Notification.permission === "denied"` at mount). What found the race was the
+`push-notifications.spec.ts:103` was intermittent here under either config
+(`Notification.permission === "denied"` at mount). Measured 2026-09-26: this
+headless Chromium reads it as "denied" whatever the context grants,
+context-wide or origin-scoped. The panel hides the other-browsers count in
+that state, so "1 other browser" was only ever read off the server's markup
+before the panel mounted. The test now pins the permission "Allow" produces. What found the race was the
 dev server's own log — temporarily set `webServer.stdout: "pipe"` in
 `playwright.config.ts` ("orchestrator turn ended with no pending children").
 That log also showed the observatory fixture's task-less `Pending` flow run
