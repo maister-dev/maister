@@ -45,6 +45,7 @@ const ensureLocalExecutionDataPlaneMock = vi.hoisted(() => vi.fn());
 const collectExecutionEventLagMock = vi.hoisted(() => vi.fn());
 const platformStatusMock = vi.hoisted(() => vi.fn());
 const executionCommandReconcilePassMock = vi.hoisted(() => vi.fn());
+const runLibrarianTurnSweepMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/runs/keepalive-sweeper", () => ({
   runSweepTick: runSweepTickMock,
@@ -81,6 +82,11 @@ vi.mock("@/lib/gc/agent-materialization-gc", () => ({
 // nothing asserted. The sweep was effectively absent from its own test.
 vi.mock("@/lib/runs/sync-recovery", () => ({
   runSyncRecoverySweep: runSyncRecoverySweepMock,
+}));
+// ADR-183 (D19/D20): the librarian backstop reads the DB; mocked for the same
+// reason, so `errors: []` keeps guarding the composition.
+vi.mock("@/lib/librarian/turn-recovery", () => ({
+  runLibrarianTurnSweep: runLibrarianTurnSweepMock,
 }));
 // ADR-166: the execution-host reconcile pass needs the DB + the local host;
 // mocked like every other arm so `errors: []` stays a real guard.
@@ -187,6 +193,9 @@ describe("scheduler system sweeps", () => {
   beforeEach(() => {
     vi.resetModules();
     runSweepTickMock.mockReset().mockResolvedValue({ idled: 0 });
+    runLibrarianTurnSweepMock
+      .mockReset()
+      .mockResolvedValue({ deadlines: 0, restarts: 0, admissions: 0 });
     runSyncRecoverySweepMock.mockReset().mockResolvedValue({
       candidates: 0,
       orphanOperationsAborted: 0,
@@ -511,6 +520,37 @@ describe("scheduler system sweeps", () => {
       summary.errors.some((e) => e.includes("sync recovery sweep failed")),
     ).toBe(true);
     expect(summary.syncRecovery).toBeNull();
+  });
+
+  it("ADR-183 D19: reports the librarian backstop summary", async () => {
+    runLibrarianTurnSweepMock.mockResolvedValueOnce({
+      deadlines: 1,
+      restarts: 2,
+      admissions: 3,
+    });
+
+    const { runSystemSweep } = await import("../system-sweeps");
+    const summary = await runSystemSweep();
+
+    expect(runLibrarianTurnSweepMock).toHaveBeenCalledTimes(1);
+    expect(summary.errors).toEqual([]);
+    expect(summary.librarian).toEqual({
+      deadlines: 1,
+      restarts: 2,
+      admissions: 3,
+    });
+  });
+
+  it("ADR-183 D19: surfaces a thrown librarian sweep as an error (207 contract)", async () => {
+    runLibrarianTurnSweepMock.mockRejectedValueOnce(
+      new Error("librarian boom"),
+    );
+
+    const { runSystemSweep } = await import("../system-sweeps");
+    const summary = await runSystemSweep();
+
+    expect(summary.errors).toContain("librarian sweep failed: librarian boom");
+    expect(summary.librarian).toBeNull();
   });
 
   it("surfaces deferred and quarantined reconciliation findings", async () => {

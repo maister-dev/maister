@@ -11,7 +11,7 @@ import { LIBRARIAN_TOKEN_SCOPES } from "@/types/token-scopes";
 import { seedProjectRow, seedRun } from "@/test-support/execution-host-seed";
 import {
   addProjectMember,
-  librarianTurnIdForToken,
+  seedLibrarianTurn,
   seedActiveUser,
 } from "@/test-support/librarian-seed";
 import {
@@ -83,7 +83,7 @@ beforeAll(async () => {
     await issueLibrarianTurnToken(
       {
         ownerUserId: fx.ownerId,
-        turnId: librarianTurnIdForToken(),
+        turnId: await seedLibrarianTurn(db, fx.ownerId),
         scopes: LIBRARIAN_TOKEN_SCOPES,
         expiresAt: new Date(Date.now() + 10 * 60_000),
       },

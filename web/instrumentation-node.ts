@@ -41,6 +41,11 @@ export async function registerNodeRuntime(): Promise<void> {
   );
 
   projectionLimitsFromEnv();
+  const { librarianConfig } = await import("@/lib/librarian/config");
+
+  // ADR-183 D17: a garbage librarian budget refuses boot with CONFIG, and the
+  // resolved numbers are logged once.
+  librarianConfig();
 
   // Migration-drift guard (2026-06-25 Studio crash): a journal migration that
   // never reached this DB — silently skipped by db:migrate on an out-of-order

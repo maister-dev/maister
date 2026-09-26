@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { CrashReason } from "@/lib/runs/state-transitions";
+import type { RunKind } from "@/lib/db/schema";
 import type { Db as ExecutionDb } from "@/lib/execution-host/db";
 import type {
   ExecutionHosts,
@@ -69,6 +70,8 @@ const {
   assignments,
   executionAssignments,
   hitlRequests,
+  librarianConversations,
+  librarianTurns,
   nodeAttempts,
   projects,
   runs,
@@ -121,10 +124,18 @@ export type ReconcileAction =
   // recover — abandon it rather than surface a "Crashed" run that has no
   // session to resume, and stop the scheduler starting it under a dead
   // coordinator later.
-  | "abandon";
+  | "abandon"
+  // ADR-183 (D19): a librarian run whose running turn lost its host. The turn
+  // fails `host_lost`, its token dies, the run parks and the next queued turn
+  // is admitted — a librarian run is never `Crashed`.
+  | "librarian-park";
 
 export type ReconcileReason =
   | "not-running"
+  // ADR-183: the librarian turn's session is live — its owner settles it.
+  | "live-librarian-session"
+  // ADR-183 (D19): `running` turn × run not live, past grace.
+  | "librarian-host-lost"
   | "worktree-gone"
   | "live-session"
   | "live-session-by-step"
@@ -183,7 +194,7 @@ export type ReconcileReason =
 
 export interface ReconcileInput {
   runStatus: string;
-  runKind: "flow" | "scratch" | "agent";
+  runKind: RunKind;
   acpSessionId: string | null;
   currentStepId: string | null;
   currentNodeKind:
@@ -328,7 +339,29 @@ const ORPHANABLE_PAUSED_STATUSES: ReadonlySet<string> = new Set([
   "Review",
 ]);
 
+// ADR-183 (D19): a librarian run is driven by its current turn, never by a
+// graph, and parks between turns. Reconcile owns exactly one window: a
+// `Running` run whose session is gone past grace. Queued and admitted turns
+// belong to admission; a live session belongs to the turn's prompt owner.
+function classifyLibrarian(input: ReconcileInput): ReconcileDecision {
+  if (input.runStatus !== "Running")
+    return { action: "skip", reason: "not-running" };
+  if (input.liveSession || input.liveRunStepSession)
+    return { action: "skip", reason: "live-librarian-session" };
+  const anchorMs = mostRecentMs(
+    input.resumeStartedAt,
+    input.latestAttemptStartedAt,
+  );
+
+  if (anchorMs !== null && (input.nowMs - anchorMs) / 1000 < input.graceSeconds)
+    return { action: "skip", reason: "grace-window" };
+
+  return { action: "librarian-park", reason: "librarian-host-lost" };
+}
+
 function classifyInner(input: ReconcileInput): ReconcileDecision {
+  if (input.runKind === "librarian") return classifyLibrarian(input);
+
   // 0. M36 (ADR-095) T7.1: a parked orchestrator (WaitingOnChildren). It is
   //    woken by a child-terminal event (orchestrator_resume) or a manual resume,
   //    so it is NOT crashed while it can still be woken. Crash it ONLY when it is
@@ -758,7 +791,7 @@ export function mapReasonToCrashReason(reason: ReconcileReason): CrashReason {
 
 type CandidateRow = {
   runId: string;
-  runKind: "flow" | "scratch" | "agent";
+  runKind: RunKind;
   status: string;
   acpSessionId: string | null;
   currentStepId: string | null;
@@ -987,6 +1020,32 @@ async function latestAttemptStartedAt(
   return rows[0]?.startedAt ?? null;
 }
 
+// ADR-183: the start of the conversation's admitted or running turn.
+async function activeLibrarianTurnStartedAt(
+  db: Db,
+  runId: string,
+): Promise<Date | null> {
+  const rows = await db
+    .select({
+      startedAt: librarianTurns.startedAt,
+      admittedAt: librarianTurns.admittedAt,
+    })
+    .from(librarianTurns)
+    .innerJoin(
+      librarianConversations,
+      eq(librarianConversations.id, librarianTurns.conversationId),
+    )
+    .where(
+      and(
+        eq(librarianConversations.runId, runId),
+        inArray(librarianTurns.status, ["admitted", "running"]),
+      ),
+    )
+    .limit(1);
+
+  return rows[0]?.startedAt ?? rows[0]?.admittedAt ?? null;
+}
+
 // M36 (ADR-095 T7.1 / ADR-097): the SETTLED child statuses an orchestrator no
 // longer actively waits on — terminal OR Review (a diff awaiting promote/rework).
 // A parked orchestrator with only settled children is woken by run.review/
@@ -1060,7 +1119,7 @@ async function loadCandidates(db: Db): Promise<CandidateRow[]> {
   for (const project of projectRows) {
     const rows: Array<{
       runId: string;
-      runKind: "flow" | "scratch" | "agent";
+      runKind: RunKind;
       status: string;
       acpSessionId: string | null;
       currentStepId: string | null;
@@ -1180,7 +1239,7 @@ async function loadCandidates(db: Db): Promise<CandidateRow[]> {
   // (no parent repo) and there is no worktree to reconcile against.
   const projectlessRows: Array<{
     runId: string;
-    runKind: "flow" | "scratch" | "agent";
+    runKind: RunKind;
     status: string;
     acpSessionId: string | null;
     currentStepId: string | null;
@@ -1711,6 +1770,7 @@ export async function runReconcileSweep(
     const { nodeKind: currentNodeKind } =
       cand.runKind === "scratch" ||
       cand.runKind === "agent" ||
+      cand.runKind === "librarian" ||
       cand.status === "WaitingOnChildren"
         ? { nodeKind: null }
         : await resolveCurrentNodeContext(db, {
@@ -1722,10 +1782,14 @@ export async function runReconcileSweep(
     // Agent runs (and project-less assistant scratch runs) have no node_attempts
     // ledger — anchor the grace window on the run's own startedAt so a
     // just-spawned session is never crashed before it registers.
+    // A librarian run is reused across turns: its grace anchors on the
+    // CURRENT turn's start, not on the conversation's first one.
     const attemptStartedAt =
-      cand.runKind === "agent" || cand.projectId == null
-        ? cand.runStartedAt
-        : await latestAttemptStartedAt(db, cand.runId);
+      cand.runKind === "librarian"
+        ? await activeLibrarianTurnStartedAt(db, cand.runId)
+        : cand.runKind === "agent" || cand.projectId == null
+          ? cand.runStartedAt
+          : await latestAttemptStartedAt(db, cand.runId);
 
     // ADR-177. Resolved HERE, beside the `crashRecoverPending` computation, so
     // it inherits this loop's PER_PASS_CONCURRENCY and needs no bound of its
@@ -2302,6 +2366,23 @@ export async function runReconcileSweep(
           },
           "reconcile: sync recovery",
         );
+
+        return;
+      }
+      case "librarian-park": {
+        // Lazy import: the librarian runtime pulls in the execution host and
+        // token modules, which the pure classifier must not load.
+        const { failLibrarianTurnForHostLoss } = await import(
+          "@/lib/librarian/turn-recovery"
+        );
+        const outcome = await failLibrarianTurnForHostLoss(db, cand.runId);
+
+        log.warn(
+          { runId: cand.runId, reason, outcome },
+          "reconcile: librarian turn lost its host",
+        );
+        if (outcome === "parked") crashed += 1;
+        else skipped += 1;
 
         return;
       }

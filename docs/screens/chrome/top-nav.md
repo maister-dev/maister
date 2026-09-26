@@ -73,7 +73,9 @@ person's name out of the control's accessible name — and the crumb truncates i
 the same way at the widths where it is shown. The mobile rail trigger, the only
 route to navigation below `md`, is never dropped. This replaced a header that
 overflowed a 390px viewport on every route (`/work` 471px, `/inbox` 479px) and
-made the whole page scroll sideways.
+made the whole page scroll sideways. Below `md` the logo's wordmark is
+`sr-only` (ADR-189 amendment): the mark stays visible and the wordmark stays the
+home link's accessible name, which is the room the Librarian entry needs.
 
 ## States
 
@@ -85,8 +87,9 @@ Authenticated only (the `(app)` group redirects unauthenticated requests to
 No data fetch of its own. The breadcrumb is static; the user identity comes from
 the session resolved in the layout.
 
-(Designed — ADR-189) The Librarian entry's indicator reads
-`GET /api/librarian/conversation` and is kept fresh by the
+(Designed — ADR-189) The Librarian entry's indicator is read once by the
+`(app)` layout (`readLibrarianIndicator`, which never creates a conversation —
+`none` for a user who never opened it) and is kept fresh by the
 `librarian.indicator` frames of `GET /api/librarian/stream`
 ([`../../api/async/librarian-stream.asyncapi.yaml`](../../api/async/librarian-stream.asyncapi.yaml)):
 `unread` from the conversation's `read_through_seq`, `action_required` from a

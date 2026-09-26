@@ -1,6 +1,6 @@
 import type { Db } from "./db";
 import type { ContextMountSnapshot } from "@/lib/context-mounts/types";
-import type { ExecutionAssignment } from "@/lib/db/schema";
+import type { ExecutionAssignment, RunKind } from "@/lib/db/schema";
 import type { AdoptWorkspaceResult, AdoptWorkspaceWire } from "./contracts";
 import type { ExecutionWorkspaceId } from "./types";
 
@@ -11,7 +11,13 @@ import pino, { type Logger } from "pino";
 
 import { asExecutionWorkspaceId } from "./types";
 
-import { localPackages, projects, runs, workspaces } from "@/lib/db/schema";
+import {
+  librarianConversations,
+  localPackages,
+  projects,
+  runs,
+  workspaces,
+} from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 
 const defaultLog = pino({
@@ -22,7 +28,7 @@ const defaultLog = pino({
 export type WorkspaceSpecInput = {
   run: {
     id: string;
-    runKind: "flow" | "scratch" | "agent";
+    runKind: RunKind;
     agentWorkspace: "none" | "repo_read" | "worktree" | null;
     localPackageId: string | null;
     contextMounts: ContextMountSnapshot[] | null;
@@ -38,6 +44,8 @@ export type WorkspaceSpecInput = {
     sharedWorktree: string | null;
   };
   ephemeralReadOnlyCheckoutExists: boolean;
+  /** ADR-183: the conversation's directory; set only for a librarian run. */
+  librarianWorkdir?: string | null;
 };
 
 function missingWorkspace(runId: string, what: string): MaisterError {
@@ -60,6 +68,14 @@ export function workspaceSpecFor(
       ? { contextMounts: run.contextMounts }
       : {};
   const base = { runId: run.id, projectSlug: project.slug, ...mounts };
+
+  if (run.runKind === "librarian") {
+    // ADR-183: an empty per-conversation directory under the reserved slug.
+    if (!input.librarianWorkdir)
+      throw missingWorkspace(run.id, "librarian conversation");
+
+    return { ...base, kind: "directory", path: input.librarianWorkdir };
+  }
 
   if (run.localPackageId) {
     if (!input.localPackage) throw missingWorkspace(run.id, "local package");
@@ -166,6 +182,44 @@ export async function loadWorkspaceSpecInput(
   // runtime identity (its slug names the runtime subtree, its working dir is
   // the adopted directory).
   let project: { slug: string; repoPath: string } | null = null;
+
+  if (run.runKind === "librarian") {
+    // ADR-183: a librarian run has no project either; its conversation names
+    // the directory and the reserved slug names the runtime subtree.
+    const [conversation] = await db
+      .select({ id: librarianConversations.id })
+      .from(librarianConversations)
+      .where(eq(librarianConversations.runId, runId))
+      .limit(1);
+
+    if (!conversation) throw missingWorkspace(runId, "librarian conversation");
+    const { ensureLibrarianWorkspace, LIBRARIAN_PROJECT_SLUG } = await import(
+      "@/lib/librarian/workspace"
+    );
+    const librarianWorkdir = await ensureLibrarianWorkspace(conversation.id);
+
+    return {
+      run: {
+        id: run.id,
+        runKind: run.runKind,
+        agentWorkspace: run.agentWorkspace,
+        localPackageId: null,
+        contextMounts: null,
+        rootRunId: null,
+        workspaceMode: null,
+      },
+      project: { slug: LIBRARIAN_PROJECT_SLUG, repoPath: librarianWorkdir },
+      workspace: null,
+      localPackage: null,
+      agentPaths: {
+        workdir: librarianWorkdir,
+        readOnlyWorkdir: librarianWorkdir,
+        sharedWorktree: null,
+      },
+      ephemeralReadOnlyCheckoutExists: false,
+      librarianWorkdir,
+    };
+  }
 
   if (run.projectId) {
     const [row] = await db

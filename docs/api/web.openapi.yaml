@@ -25460,7 +25460,8 @@ components:
             Its `GET /api/runs/{runId}/stream` carries the running turn's tokens.
         resetState:
           type: string
-          enum: [none, resetting]
+          enum: [none, resetting, clearing]
+          description: "`resetting` during a context reset, `clearing` during a history clear; both refuse new messages with CONFLICT `reset_in_progress`."
         readThroughSeq: { $ref: "#/components/schemas/LibrarianSeq" }
         lastSeq: { $ref: "#/components/schemas/LibrarianSeq" }
         memoryEnabledNextSegment:

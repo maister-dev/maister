@@ -30,6 +30,7 @@ import { useLocale, useTranslations } from "next-intl";
 
 import { FlowEditorTabs } from "@/components/flows/flow-editor-tabs";
 import { PackageFilesEditor } from "@/components/flows/package-files-editor";
+import { useLibrarianHostComposer } from "@/components/librarian/librarian-provider";
 import {
   applyRename,
   PackageComposition,
@@ -253,6 +254,9 @@ export function LocalPackageEditor({
   // right slot with the node-properties inspector (mutually exclusive): opening
   // it hides the inspector; selecting a node in the graph closes it again.
   const [aiOpen, setAiOpen] = useState(false);
+
+  // ADR-189 D6: while the AI drawer is open the librarian opens as a sheet.
+  useLibrarianHostComposer(aiOpen);
   const [aiHeader, setAiHeader] = useState<ScratchHeaderInfo | null>(null);
   const [inspectorEl, setInspectorEl] = useState<HTMLDivElement | null>(null);
   const [flowEditorDirty, setFlowEditorDirty] = useState(false);

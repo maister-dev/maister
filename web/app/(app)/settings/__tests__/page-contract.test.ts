@@ -56,6 +56,9 @@ vi.mock("@/components/settings/mcp-servers-panel", () => ({
 vi.mock("@/components/settings/brain-settings-panel", () => ({
   BrainSettingsPanel: () => null,
 }));
+vi.mock("@/components/settings/librarian-settings-card", () => ({
+  LibrarianSettingsCard: () => null,
+}));
 vi.mock("@/components/settings/webhooks-panel", () => ({
   WebhooksPanel: () => null,
 }));

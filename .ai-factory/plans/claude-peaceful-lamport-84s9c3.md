@@ -987,13 +987,13 @@ call `{tool, status}` without bodies.
 
 ### Phase 2 — Durable conversation, runtime and panel shell · `LCV-01..12`, `LAU-01`, `LAU-09`, `LAU-11`, `LUI-01..09`
 
-**T2.1 [ ] — Migration 0182: conversation tables + platform settings.** Appendix
+**T2.1 [x] — Migration 0182: conversation tables + platform settings.** Appendix
 A/0182. *RED*: `web/lib/librarian/__tests__/schema.integration.test.ts` `IT-LCV-01`
 (second conversation for one user refused), `IT-LCV-03` part 1 (second `running` turn
 refused by `librarian_turns_one_active_uq`), `IT-LCV-07` part 1 (a `running` turn
 without `context_snapshot_id` refused).
 
-**T2.2 [ ] — Migration 0183: `runs` / `execution_commands` / assignments.** Appendix
+**T2.2 [x] — Migration 0183: `runs` / `execution_commands` / assignments.** Appendix
 A/0183: `runs_run_kind_check`, `runs_librarian_shape_check`,
 `runs.librarian_operation_id`, `run_sessions.librarian_context_epoch`, owner-kind enum
 + `execution_commands_owner_shape_check` re-derived, `create_intent` variant,
@@ -1001,7 +1001,7 @@ placement reason. Re-derive shared CHECKs from `schema.ts` at rebase. *RED*:
 `IT-LCV-04` part 1 — a `librarian` run with a `project_id`, or with `persistent=false`,
 is refused; a prompt command without owner is refused.
 
-**T2.3 [ ] — `run_kind` fan-out.** Every consumer in D2's verified list, converted to
+**T2.3 [x] — `run_kind` fan-out.** Every consumer in D2's verified list, converted to
 exhaustive `satisfies Record<RunKind, …>` maps; reconcile crash arm `librarian`
 (D19); `workspaceSpecFor` + adoption refusal arm; keep-alive budget pass arm;
 `run-kind-invariants.ts` arm; librarian runs excluded from every project-scoped read
@@ -1013,7 +1013,7 @@ the keep-alive sweep (`persistent=true`); `IT-LCV-09` part 1 — reconcile with 
 host classifies the librarian run into its own arm, not `crashRunningRun`. **Log**:
 `warn` on the reconcile arm.
 
-**T2.4 [ ] — Conversation service.** `web/lib/librarian/conversation.ts`:
+**T2.4 [x] — Conversation service.** `web/lib/librarian/conversation.ts`:
 `getOrCreateConversation(ownerId)`, `appendOwnerMessage` (dedup by
 `client_message_id`, subject captured), `withdrawMessage` (queued only),
 `listMessages(beforeSeq)`, `advanceReadCursor` (GREATEST). *RED*: `IT-LCV-02` (two
@@ -1021,7 +1021,7 @@ concurrent inserts of one client id → one row, same response — `EDGE-LCV-01`
 `IT-LUI-04` (subject stored at send; a later subject change does not alter the queued
 message). **Log**: `info` `{conversationId, seq, deduped}`.
 
-**T2.5 [ ] — Admission, pool, budgets.** `web/lib/librarian/admission.ts` + the
+**T2.5 [x] — Admission, pool, budgets.** `web/lib/librarian/admission.ts` + the
 `librarian` pool (D2's verified list: `SchedulerPool`, `POOL_RUN_KINDS`,
 `poolForRunKind`, `capForPool`, the C1/C3 three-way dispatch) + daily cap +
 enabled/runner-ready checks + authz fingerprint → epoch bump. *RED*: `IT-LCV-03` part 2
@@ -1032,7 +1032,7 @@ runner not ready → `EXECUTOR_UNAVAILABLE` — `EDGE-LCV-03`), `IT-LAU-10` part
 (deactivated owner's queued turn refused at admission), the two-tab two-racer (D15).
 **Log**: `debug` pool counts and queue position; `warn` refusals.
 
-**T2.6 [ ] — Context composer and snapshot.** `web/lib/librarian/composer.ts` (pure
+**T2.6 [x] — Context composer and snapshot.** `web/lib/librarian/composer.ts` (pure
 selection over supplied rows) + `snapshot.ts` (persist before prompt). Memory and
 summaries are empty inputs until Phase 6. *RED*:
 `web/lib/librarian/__tests__/composer.test.ts` `UT-LCV-10` (owner's latest message
@@ -1041,14 +1041,14 @@ without a committed snapshot); `IT-LCV-06` (epoch mismatch → `session/new`; ma
 `session/resume`; runner change → `session/new`). **Log**: `debug` `{turnId,
 messages, chars, truncated, epochMatch}`.
 
-**T2.7 [ ] — Instructions SSOT.** `web/lib/librarian/instructions.ts` (versioned):
+**T2.7 [x] — Instructions SSOT.** `web/lib/librarian/instructions.ts` (versioned):
 role, the LIB-08 intent rules, ask-when-ambiguous, duplicate check via `task_search`
 before create, operation keys, cards for human-only actions, never claim deployment.
 The librarian toolset is exported once and feeds the instructions, the facade toolset
 and the L1 allow-list; a drift test asserts the three agree. *RED*: `UT-LCV-07`
 (version recorded in the snapshot; the drift test fails on a renamed tool). **Log**: none.
 
-**T2.8 [ ] — Supervisor MCP-only enforcement.** The librarian runtime builds the D5
+**T2.8 [x] — Supervisor MCP-only enforcement.** The librarian runtime builds the D5
 profile; L2 adapter deny settings via `web/lib/capabilities/adapter-home.ts`; execution
 policy `auto_approve`; runner guard. *RED*:
 `supervisor/src/__tests__/librarian-mcp-only.integration.test.ts` `IT-LAU-11` using
@@ -1057,7 +1057,7 @@ policy `auto_approve`; runner guard. *RED*:
 with a `hook_trip … halt` event; and `readOnlySession` is absent from the create
 payload. **Log**: supervisor `warn` on deny with `{sessionId, toolName}`.
 
-**T2.9 [ ] — Park and resume primitives.** `web/lib/librarian/park.ts`:
+**T2.9 [x] — Park and resume primitives.** `web/lib/librarian/park.ts`:
 `applyLibrarianPark(tx, runId)` and `claimLibrarianResumeInTransaction(tx, runId,
 turnId)` per D3, over `releaseAssignmentForRun` / `mintPlacement` / the scheduler
 advisory lock; no `agent_turns`, no `resume_requested_at`. *RED*:
@@ -1066,7 +1066,7 @@ releases the assignment as `parked` and the slot; a resume claim on a `Running` 
 refused; a claim under a full pool leaves the run `NeedsInputIdle` and the turn
 `admitted`. **Log**: `info` `{runId, from, to}`.
 
-**T2.10 [ ] — Turn runtime and prompt owner.** `web/lib/librarian/runtime.ts`:
+**T2.10 [x] — Turn runtime and prompt owner.** `web/lib/librarian/runtime.ts`:
 first-turn run insert (row shape per D2) + `run_sessions` + `mintPlacement` in one tx;
 directory adoption with the reserved slug; token issue at `Running`; facade
 `mcpServers` entry with the turn token; `createOwnedSession` (resume per D3);
@@ -1086,7 +1086,7 @@ whose adapter emits a halt ends `failed{capability_trip}` with no `hitl_requests
 against a mock adapter. **Log**: `info` turn transitions `{turnId, runId, from, to,
 durationMs}`; `error` on failure paths with `{turnId, code}`.
 
-**T2.11 [ ] — Stop, deadline, reconcile.** Stop route + service (cancel prompt via
+**T2.11 [x] — Stop, deadline, reconcile.** Stop route + service (cancel prompt via
 `BoundClient`, revoke token, turn `stopped`); deadline watchdog (existing duration
 watchdog pattern); D19 arms in the reconcile `librarian` arm and `system_sweep`.
 *RED*: `IT-LCV-08` (stop leaves a launched task run and its operation row untouched),
@@ -1094,7 +1094,7 @@ watchdog pattern); D19 arms in the reconcile `librarian` arm and `system_sweep`.
 after), `EDGE-LCV-04` (deadline during a tool call → token revoked, operation settles by
 reconcile). **Log**: `warn` on each arm firing.
 
-**T2.12 [ ] — Session routes and stream.** `web/app/api/librarian/**` routes from D16
+**T2.12 [x] — Session routes and stream.** `web/app/api/librarian/**` routes from D16
 (conversation, messages, withdraw, stop, read-cursor, stream). Stream: server-side poll
 of durable tables — 500 ms while a turn is running, 2 s idle, closes after 5 min quiet;
 frames per Appendix B; replay by `seq`. The running turn's tokens come from the
@@ -1106,7 +1106,7 @@ gets only their own conversation; no route returns another user's rows), `IT-LCV
 refuses another member). **Log**: `debug` stream open/close `{conversationId,
 lastEventId}`.
 
-**T2.13 [ ] — Admin enablement and readiness.** `PATCH /api/admin/platform/librarian`
+**T2.13 [x] — Admin enablement and readiness.** `PATCH /api/admin/platform/librarian`
 + a Librarian card on the ACP runners settings screen (enable toggle, runner select
 limited to ready read-only-capable runners, readiness line). Disable = stop admission;
 running turn finishes or hits its deadline; nothing deleted. `librarian_runner_id` is
@@ -1116,7 +1116,7 @@ unset → column NULL, readiness "not configured") → re-SET. *RED*: `IT-LCV-11
 SET/CLEAR/re-SET round trip); component test for the card's disabled reasons. EN/RU
 strings. **Log**: `info` `{enabled, runnerId, actorUserId}`.
 
-**T2.14 [ ] — Mock librarian adapter + round-trip test.**
+**T2.14 [x] — Mock librarian adapter + round-trip test.**
 `supervisor/test/fixtures/mock-acp-librarian.mjs`: reads a scripted plan from the
 prompt (a fenced JSON block), calls the attached `maister` stdio MCP server's tools,
 then replies. Integration test drives: owner message → admission → real supervisor →
@@ -1124,7 +1124,7 @@ mock adapter → real facade → ext route with the turn token → reply stored 
 *RED*: `web/lib/librarian/__tests__/round-trip.integration.test.ts` `IT-LCV-04`
 (end-to-end) fails before T2.10 wiring is complete. **Log**: fixture logs to stderr only.
 
-**T2.15 [ ] — Panel shell UI.** `web/components/librarian/` — `librarian-trigger.tsx`
+**T2.15 [x] — Panel shell UI.** `web/components/librarian/` — `librarian-trigger.tsx`
 (top-nav entry, indicator), `librarian-panel.tsx` (docked/sheet/full-screen, mounted in
 `web/app/(app)/layout.tsx`), message list on `TranscriptView`
 (`components/run-transcript/transcript-view.tsx:414`), live tokens via `useRunStream`
@@ -1136,7 +1136,7 @@ binding. Wire `top-nav.tsx` right group. i18n namespace `librarian`. *RED*:
 `UT-LUI-07`, `UT-LUI-08`; `web/e2e/librarian-panel.spec.ts` `E2E-LUI-01/02/03/05/09`
 (added to `AUTHED_SPEC`). **Log**: client — none.
 
-**T2.16 [ ] — Deployment wiring.** D17's pool, deadline, context, daily-cap and
+**T2.16 [x] — Deployment wiring.** D17's pool, deadline, context, daily-cap and
 reconcile-window vars in `.env.example`, compose files, `docs/configuration.md`; read
 through the existing env loader with validation (positive integers, refuse boot on
 garbage with `CONFIG`). *RED*: `web/lib/librarian/__tests__/config.test.ts`
