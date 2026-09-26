@@ -36,9 +36,10 @@ const patchBodySchema = z
     priority: z.enum(["low", "normal", "high", "urgent"]).nullable().optional(),
     triageConfidence: z.number().min(0).max(1).nullable().optional(),
     queuePaused: z.boolean().optional(),
+    expectedRevision: z.number().int().nonnegative().optional(),
   })
   .strict()
-  .refine((body) => Object.keys(body).length > 0, {
+  .refine((body) => Object.keys(body).some((key) => key !== "expectedRevision"), {
     message: "at least one field is required",
   });
 
@@ -59,6 +60,7 @@ const putBodySchema = z
     priority: z.enum(["low", "normal", "high", "urgent"]).nullable().optional(),
     triageConfidence: z.number().min(0).max(1).nullable().optional(),
     queuePaused: z.boolean().optional(),
+    expectedRevision: z.number().int().nonnegative().optional(),
   })
   .strict();
 
@@ -82,7 +84,7 @@ function httpStatusForCode(code: string): number {
 function errorResponse(err: unknown, slug: string): NextResponse {
   if (isMaisterError(err)) {
     return NextResponse.json(
-      { code: err.code, message: err.message },
+      { code: err.code, message: err.message, details: err.details },
       { status: httpStatusForCode(err.code) },
     );
   }
@@ -142,11 +144,11 @@ async function handleTaskUpdate<T extends z.ZodTypeAny>(
       );
     }
 
-    await updateTask(resolved.task.id, resolved.project.id, body);
+    const updated = await updateTask(resolved.task.id, resolved.project.id, body);
 
     log.info({ slug, taskNumber, fields: Object.keys(body) }, label);
 
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true, revision: updated.revision });
   } catch (err) {
     return errorResponse(err, slug);
   }

@@ -147,6 +147,54 @@ describe("IT-LCV-01: one conversation per user", () => {
   });
 });
 
+describe("Phase 3 database invariants", () => {
+  it("IT-TST-01: accepted statement revisions refuse updates and deletes", async () => {
+    const projectId = await seedProject(db);
+    const taskId = randomUUID();
+
+    await db.execute(sql`
+      INSERT INTO tasks (id, project_id, number, title, prompt)
+      VALUES (${taskId}, ${projectId}, 1, 'Statement task', 'Original prompt')
+    `);
+    await db.execute(sql`
+      INSERT INTO task_statement_revisions
+        (task_id, revision, statement, author_actor_type)
+      VALUES (${taskId}, 1, '{"goal":"Ship"}'::jsonb, 'user')
+    `);
+
+    const updateError = await refusal(sql`
+      UPDATE task_statement_revisions SET statement = '{"goal":"Changed"}'::jsonb
+      WHERE task_id = ${taskId} AND revision = 1
+    `);
+    const deleteError = await refusal(sql`
+      DELETE FROM task_statement_revisions WHERE task_id = ${taskId} AND revision = 1
+    `);
+
+    expect(constraintOf(updateError)).toBe("task_statement_revisions_immutable");
+    expect(constraintOf(deleteError)).toBe("task_statement_revisions_immutable");
+  });
+
+  it("IT-LOP-02: a conversation cannot reuse an operation key", async () => {
+    const { conversationId, segmentId } = await seedConversation();
+
+    await db.execute(sql`
+      INSERT INTO librarian_operations
+        (id, conversation_id, segment_id, idempotency_key, kind, request_digest, target, status)
+      VALUES
+        (${randomUUID()}, ${conversationId}, ${segmentId}, 'same-key', 'task_create', 'digest-1', '{}'::jsonb, 'admitted')
+    `);
+
+    const duplicateError = await refusal(sql`
+      INSERT INTO librarian_operations
+        (id, conversation_id, segment_id, idempotency_key, kind, request_digest, target, status)
+      VALUES
+        (${randomUUID()}, ${conversationId}, ${segmentId}, 'same-key', 'task_create', 'digest-2', '{}'::jsonb, 'admitted')
+    `);
+
+    expect(constraintOf(duplicateError)).toBe("librarian_operations_key_uq");
+  });
+});
+
 describe("IT-LCV-03 part 1: at most one active turn per conversation", () => {
   it("refuses a second admitted or running turn", async () => {
     const { conversationId, segmentId } = await seedConversation();

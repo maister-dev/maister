@@ -88,6 +88,11 @@ describe("external token scope contract", () => {
     expect(PROJECT_ACTION_MIN).toHaveProperty("recoverRun");
   });
 
+  it("maps librarian run write scopes to their live project actions", () => {
+    expect(PROJECT_ACTION_BY_SCOPE["runs:cancel"]).toBe("recoverRun");
+    expect(PROJECT_ACTION_BY_SCOPE["runs:message"]).toBe("launchRun");
+  });
+
   it("keeps runs:recover out of every machine-actor grant set", () => {
     // Recovering re-admits through the concurrency cap and discarding removes a
     // worktree. Neither belongs to an ephemeral agent, and — like every other

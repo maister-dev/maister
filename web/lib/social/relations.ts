@@ -191,6 +191,7 @@ export async function addTaskRelation(
     kind: TaskRelationKind;
     toTaskId: string;
     actor: SocialActor;
+    viaOperationId?: string;
   },
   db?: Db,
 ): Promise<{ created: boolean }> {
@@ -318,6 +319,7 @@ export async function addTaskRelation(
         toTaskId: to.id,
         fromRef: `${from.taskKey}-${from.number}`,
         toRef: `${to.taskKey}-${to.number}`,
+        ...(input.viaOperationId ? { viaOperationId: input.viaOperationId } : {}),
       },
     });
 
@@ -345,6 +347,7 @@ export async function removeTaskRelation(
     kind: TaskRelationKind;
     toTaskId: string;
     actor: SocialActor;
+    viaOperationId?: string;
     // ADR-156: when set, the delete matches ONLY a relation this exact actor
     // authored. The cross-project reach grant is justified by "an agent may
     // remove the edge it created" — without this the same grant would let an
@@ -394,6 +397,7 @@ export async function removeTaskRelation(
         toTaskId: to.id,
         fromRef: `${from.taskKey}-${from.number}`,
         toRef: `${to.taskKey}-${to.number}`,
+        ...(input.viaOperationId ? { viaOperationId: input.viaOperationId } : {}),
       },
     });
 

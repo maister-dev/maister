@@ -342,6 +342,7 @@ export default async function TaskDetailPage({
     formerUser: t("formerUser"),
     system: t("systemActor"),
     mentionNotSummonable: t("mentionNotSummonable"),
+    viaLibrarian: t("viaLibrarian"),
     event: {
       task_created: t("event.taskCreated"),
       task_mentioned: t("event.taskMentioned"),

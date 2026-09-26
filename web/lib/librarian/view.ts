@@ -12,9 +12,16 @@ import {
   readLibrarianSettings,
   type LibrarianAvailabilityState,
 } from "./settings";
+import {
+  getLinkedWork,
+  type LibrarianCardView,
+  type LibrarianOperationView,
+  type LibrarianRelatedTaskView,
+} from "./read-models";
 
 import {
   librarianConversations,
+  librarianCards,
   librarianMessages,
   librarianTurns,
   runs,
@@ -101,12 +108,24 @@ export function librarianTurnDto(
   };
 }
 
-/** ADR-189 D2: precedence `action_required > running > unread`. Owner cards
- * arrive with the operation ledger; until then nothing is action-required. */
+/** ADR-189 D2: pending owner confirmations precede running and unread state. */
 export async function librarianIndicator(
   db: Db,
   conversation: { id: string; readThroughSeq: bigint | string },
 ): Promise<LibrarianIndicatorState> {
+  const [pendingCard] = await db
+    .select({ id: librarianCards.id })
+    .from(librarianCards)
+    .where(
+      and(
+        eq(librarianCards.conversationId, conversation.id),
+        eq(librarianCards.status, "pending"),
+        gt(librarianCards.expiresAt, new Date()),
+      ),
+    )
+    .limit(1);
+
+  if (pendingCard) return "action_required";
   const [active] = await db
     .select({ id: librarianTurns.id })
     .from(librarianTurns)
@@ -169,10 +188,13 @@ export type LibrarianConversationView = {
   segment: { id: string; ordinal: number; startedAt: string };
   indicator: { state: LibrarianIndicatorState };
   availability: { state: LibrarianAvailabilityState };
-  pendingCards: never[];
+  pendingCards: LibrarianCardView[];
+  cards: LibrarianCardView[];
+  operationReceipts: LibrarianOperationView[];
+  relatedWork: LibrarianRelatedTaskView[];
   queuedMessages: LibrarianMessageDto[];
   activeTurn: LibrarianTurnDto | null;
-  pendingOperations: never[];
+  pendingOperations: LibrarianOperationView[];
 };
 
 /** One read that lets the panel resume after navigation or a reload. The
@@ -206,6 +228,10 @@ export async function getLibrarianConversationView(
     )
     .limit(1);
   const activeRef = active ? await librarianTurnRef(db, active) : null;
+  const linkedWork = await getLinkedWork(
+    ownerId,
+    db as unknown as ReturnType<typeof import("@/lib/db/client").getDb>,
+  );
 
   return {
     conversation: {
@@ -224,12 +250,18 @@ export async function getLibrarianConversationView(
     },
     indicator: { state: await librarianIndicator(db, conversation) },
     availability: { state: settings.availability },
-    pendingCards: [],
+    pendingCards: linkedWork.cards.filter((card) => card.status === "pending"),
+    cards: linkedWork.cards,
+    operationReceipts: linkedWork.operations,
+    relatedWork: linkedWork.tasks,
     queuedMessages: queued.map(librarianMessageDto),
     activeTurn: active
       ? librarianTurnDto(active, activeRef?.queuePosition ?? null)
       : null,
-    pendingOperations: [],
+    pendingOperations: linkedWork.operations.filter(
+      (operation) =>
+        operation.status === "admitted" || operation.status === "unknown",
+    ),
   };
 }
 

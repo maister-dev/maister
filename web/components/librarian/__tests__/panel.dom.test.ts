@@ -2,6 +2,11 @@
 
 import type { ComponentProps } from "react";
 import type { Root } from "react-dom/client";
+import type {
+  LibrarianCardView,
+  LibrarianOperationView,
+  LibrarianRelatedTaskView,
+} from "@/lib/librarian/read-models";
 
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -26,7 +31,8 @@ const { pathnameRef } = vi.hoisted(() => ({ pathnameRef: { value: "/" } }));
 vi.mock("next/navigation", () => ({ usePathname: () => pathnameRef.value }));
 vi.mock("next-intl", () => ({
   useTranslations: () => {
-    const t = (key: string) => key;
+    const t = (key: string, values?: Record<string, unknown>) =>
+      key === "liveRunStatus" ? `${key} ${values?.status}` : key;
 
     t.has = () => false;
 
@@ -83,6 +89,9 @@ const message = (
 let serverMessages: Msg[] = [];
 let availability = "ready";
 let activeTurn: Record<string, unknown> | null = null;
+let serverCards: LibrarianCardView[] = [];
+let serverOperations: LibrarianOperationView[] = [];
+let serverTasks: LibrarianRelatedTaskView[] = [];
 let root: Root;
 let container: HTMLDivElement;
 
@@ -101,41 +110,54 @@ function conversationView() {
     indicator: { state: "none" },
     availability: { state: availability },
     pendingCards: [],
+    cards: serverCards,
+    operationReceipts: serverOperations,
+    relatedWork: serverTasks,
     queuedMessages: [],
     activeTurn,
     pendingOperations: [],
   };
 }
 
-const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-  const url = String(input);
-  const json = (body: unknown) =>
-    new Response(JSON.stringify(body), {
-      status: 200,
-      headers: { "content-type": "application/json" },
-    });
+const fetchMock = vi.fn(
+  async (input: RequestInfo | URL, _init?: RequestInit) => {
+    const url = String(input);
+    const json = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
 
-  if (url.startsWith("/api/librarian/conversation"))
-    return json(conversationView());
-  if (url.startsWith("/api/librarian/messages"))
-    return json({
-      messages: serverMessages.map((row) => ({
-        ...row,
-        segmentId: "seg",
-        masked: false,
-        subject: null,
-        turnId: null,
-        card: null,
-        update: null,
-        taskChips: [],
-        usedMemoryItemIds: [],
-        createdAt: new Date().toISOString(),
-      })),
-      hasMore: false,
-    });
+    if (url.startsWith("/api/librarian/conversation"))
+      return json(conversationView());
+    if (url.startsWith("/api/librarian/cards/") && url.endsWith("/decide")) {
+      serverCards = serverCards.map((card) => ({
+        ...card,
+        status: "accepted",
+      }));
 
-  return new Response(null, { status: 204 });
-});
+      return json({ status: "accepted" });
+    }
+    if (url.startsWith("/api/librarian/messages"))
+      return json({
+        messages: serverMessages.map((row) => ({
+          ...row,
+          segmentId: "seg",
+          masked: false,
+          subject: null,
+          turnId: null,
+          card: null,
+          update: null,
+          taskChips: [],
+          usedMemoryItemIds: [],
+          createdAt: new Date().toISOString(),
+        })),
+        hasMore: false,
+      });
+
+    return new Response(null, { status: 204 });
+  },
+);
 
 async function flush(): Promise<void> {
   for (let i = 0; i < 5; i += 1) {
@@ -211,6 +233,9 @@ beforeEach(() => {
   serverMessages = [message(1, "owner"), message(2)];
   availability = "ready";
   activeTurn = null;
+  serverCards = [];
+  serverOperations = [];
+  serverTasks = [];
   pathnameRef.value = "/";
   window.localStorage.clear();
   Object.defineProperty(window, "innerWidth", {
@@ -220,6 +245,76 @@ beforeEach(() => {
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
+});
+
+describe("IT-LUI-10: linked work and confirmation cards", () => {
+  it("shows a statement diff, records the owner's click, and updates the card state", async () => {
+    serverCards = [
+      {
+        id: "card-1",
+        kind: "statement_proposal",
+        status: "pending",
+        action: "statement_accept",
+        target: { projectId: "project-1", taskId: "task-1" },
+        targetRevision: "2",
+        payload: {},
+        currentPrompt: "Old goal",
+        proposedPrompt: "New goal",
+        available: true,
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      },
+    ];
+    serverOperations = [
+      {
+        id: "operation-1",
+        kind: "run_launch",
+        status: "succeeded",
+        result: { runId: "run-1", status: "Pending", queuePosition: 2 },
+        liveRunStatus: "Running",
+        available: true,
+        createdAt: new Date().toISOString(),
+      },
+    ];
+    serverTasks = [
+      {
+        taskId: "task-1",
+        meaning: "refined_in",
+        fromMessageId: null,
+        toMessageId: null,
+        available: false,
+        projectSlug: null,
+        number: null,
+        title: null,
+        status: null,
+      },
+    ];
+
+    await mount();
+    await openPanel();
+    expect(q("librarian-statement-diff")?.textContent).toContain("Old goal");
+    expect(q("librarian-statement-diff")?.textContent).toContain("New goal");
+    expect(q("librarian-linked-work")?.textContent).toContain("Running");
+    expect(q("librarian-linked-work")?.textContent).toContain(
+      "linkedUnavailable",
+    );
+
+    const card = q("librarian-card-pending")!;
+
+    await act(async () => {
+      card.querySelector<HTMLButtonElement>("button")!.click();
+    });
+    await flush();
+    const request = fetchMock.mock.calls.find(([input]) =>
+      String(input).endsWith("/cards/card-1/decide"),
+    );
+
+    expect(request?.[1]).toMatchObject({
+      method: "POST",
+      body: JSON.stringify({ decision: "accept", expectedRevision: 2 }),
+    });
+    expect(q("librarian-card-accepted")).not.toBeNull();
+    expect(q("librarian-card-accepted")?.querySelector("button")).toBeNull();
+  });
 });
 
 afterEach(async () => {

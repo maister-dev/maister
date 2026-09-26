@@ -3,7 +3,7 @@ import { LIBRARIAN_TOOLSET } from "./toolset";
 // ADR-183 / ADR-185 (T2.7): the agent-facing SSOT. Bump the version on ANY
 // wording change; the context snapshot records it, so a reply stays
 // attributable to the instructions it ran under.
-export const LIBRARIAN_INSTRUCTIONS_VERSION = "librarian-instructions.v1";
+export const LIBRARIAN_INSTRUCTIONS_VERSION = "librarian-instructions.v2";
 
 export function librarianInstructions(
   tools: readonly string[] = LIBRARIAN_TOOLSET,
@@ -18,6 +18,11 @@ export function librarianInstructions(
     "Rules:",
     "- Ask when a request is ambiguous: which project, which task, what outcome. One short question beats a wrong action.",
     "- Before creating a task, call task_search for likely duplicates and mention any you find.",
+    "- Create tasks with a typed statement: context, goal, acceptance criteria, constraints, out-of-scope work, links and open questions. A task without a selected launchable flow needs triage or a flow choice before launch.",
+    "- Accept a revised statement only for a Backlog task, using its latest revision. For an active run, offer an operator message or rework instead.",
+    "- A newly created task has launch intent none. Send it to triage with triage_only to get a verdict without automatic launch, or triage_then_launch only when the owner asked for automatic execution.",
+    "- Keep this conversation private. Publish a quoted excerpt to a task only when the owner explicitly asks you to share it; project members can read that comment, not the conversation transcript.",
+    "- To steer an active scratch or persistent agent run, use run_operator_message with the owner's words. A Flow run requires its node interrupt or rework controls.",
     "- Every tool call that changes something carries an operationKey. Reuse the same key when you retry the same action; never reuse a key for a different action.",
     "- Some actions are for humans only: answering approvals, promoting or discarding runs. Never try them; say that the person must do it and where.",
     "- A merged or finished run says nothing about deployment. Never claim that work is deployed or live.",

@@ -7,6 +7,7 @@ import { z } from "zod";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
+import { refreshSucceededLibrarianReceipt } from "@/lib/librarian/operations";
 import { launchRun } from "@/lib/services/runs";
 import { tokenAuditIdentity } from "@/lib/tokens/audit";
 import {
@@ -55,9 +56,26 @@ export async function POST(
     req,
     {
       scopeLabel: "runs:launch",
+      admitLibrarian: true,
       endpoint: ENDPOINT,
       method: "POST",
       successAuditInWork: true,
+      resolveLibrarianProjectId: async ({ db: handlerDb }) => {
+        const parsed = postBodySchema.safeParse(await req.clone().json().catch(() => null));
+
+        if (!parsed.success) return null;
+
+        const rows = await handlerDb.select({ projectId: tasks.projectId })
+          .from(tasks)
+          .where(eq(tasks.id, parsed.data.taskId));
+
+        return rows[0]?.projectId ?? null;
+      },
+      idempotency: {
+        kind: "run_launch",
+        target: { route: "/api/v1/ext/runs" },
+        parseBody: async (request) => postBodySchema.parse(await request.json()),
+      },
       db,
     },
     async (ctx) => {
@@ -102,6 +120,7 @@ export async function POST(
             runnerId: body.runnerId ?? body.executorOverrideId,
             baseBranch: body.baseBranch,
             targetBranch: body.targetBranch,
+            librarianOperationId: ctx.operationId,
           },
           {
             actorUserId: actorUserIdForToken(ctx.actor),
@@ -110,7 +129,7 @@ export async function POST(
                 throw new TokenAuthError("wrong-project");
               }
             },
-            recordSuccessAudit: (tx) =>
+            recordSuccessAudit: (tx, runId) =>
               recordRequiredTokenAudit(
                 {
                   ...tokenAuditIdentity(ctx.actor),
@@ -120,12 +139,23 @@ export async function POST(
                   method: "POST",
                   result: "ok",
                   statusCode: 202,
+                  operationId: ctx.operationId,
+                  operation: ctx.operationId
+                    ? { id: ctx.operationId, result: { statusCode: 202, body: { runId, status: "Pending" } } }
+                    : undefined,
                 },
                 tx,
               ),
           },
           db,
         );
+
+        if (ctx.operationId) {
+          await refreshSucceededLibrarianReceipt({
+            id: ctx.operationId,
+            result: { statusCode: 202, body: result },
+          }, db);
+        }
 
         return NextResponse.json(result, { status: 202 });
       } catch (err) {

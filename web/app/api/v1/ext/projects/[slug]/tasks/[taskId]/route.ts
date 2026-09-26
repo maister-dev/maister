@@ -20,6 +20,7 @@ const patchBodySchema = z
   .object({
     title: z.string().min(1).optional(),
     prompt: z.string().min(1).optional(),
+    expectedRevision: z.number().int().nonnegative().optional(),
   })
   .strict();
 
@@ -76,6 +77,11 @@ export async function PATCH(
       endpoint: ENDPOINT_TASK_PATCH,
       method: "PATCH",
       successAuditInWork: true,
+      idempotency: {
+        kind: "task_update",
+        target: { slug, taskId },
+        parseBody: async (request) => patchBodySchema.parse(await request.json()),
+      },
       db,
     },
     async (ctx) => {
@@ -117,6 +123,10 @@ export async function PATCH(
                 method: "PATCH",
                 result: "ok",
                 statusCode: 200,
+                operationId: ctx.operationId,
+                operation: ctx.operationId
+                  ? { id: ctx.operationId, result: { statusCode: 200, body: { ...task } } }
+                  : undefined,
               },
               tx,
             );
@@ -129,7 +139,7 @@ export async function PATCH(
       } catch (err) {
         if (isMaisterError(err)) {
           return NextResponse.json(
-            { code: err.code, message: err.message },
+            { code: err.code, message: err.message, details: err.details },
             { status: httpStatusForExtCode(err.code) },
           );
         }

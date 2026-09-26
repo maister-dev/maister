@@ -21,10 +21,12 @@ import { promisify } from "node:util";
 
 import { and, asc, eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
+import { NextRequest } from "next/server";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import * as schema from "@/lib/db/schema";
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
+import { issueLibrarianTurnToken } from "@/lib/librarian/authority";
 import { canonicalProjectors } from "@/lib/execution-host/events/projection-runtime";
 import { createExecutionHosts } from "@/lib/execution-host/client";
 import { defaultTransport } from "@/lib/execution-host/default-transport";
@@ -34,6 +36,7 @@ import { startProjectionWorker } from "@/lib/execution-host/events/projection-wo
 import { stopRuntimeEventConsumers } from "@/lib/execution-host/events/consumer";
 import { resetRegistrarStateForTests } from "@/lib/execution-host/registrar";
 import { resetResolverForTests } from "@/lib/execution-host/resolver";
+import { seedLibrarianTurn } from "@/test-support/librarian-seed";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -59,6 +62,7 @@ vi.mock("@/lib/authz", () => ({
     role: "admin",
   })),
   requireProjectAction: vi.fn(async () => undefined),
+  requireProjectActionForUser: vi.fn(async () => undefined),
 }));
 
 type Service = typeof import("@/lib/scratch-runs/service");
@@ -478,6 +482,47 @@ function recover() {
 }
 
 describe("scratch message while the agent is busy — steering session (ADR-182)", () => {
+  it("IT-LOP-10: the librarian operator route delivers a scratch message once", async () => {
+    const { runId, done } = await launchHeld("operator message one");
+
+    await runningTurn(runId);
+    const turnId = await seedLibrarianTurn(db as unknown as NodePgDatabase, USER_ID);
+    const token = await issueLibrarianTurnToken({
+      ownerUserId: USER_ID,
+      turnId,
+      scopes: ["runs:message"],
+      expiresAt: new Date(Date.now() + 60_000),
+    }, db);
+    const { POST } = await import("@/app/api/v1/ext/runs/[runId]/operator-message/route");
+    const request = () => new NextRequest(`http://localhost/api/v1/ext/runs/${runId}/operator-message`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token.secret}`,
+        "content-type": "application/json",
+        "idempotency-key": `operator-${runId}`,
+      },
+      body: JSON.stringify({ message: "operator message two" }),
+    });
+
+    try {
+      const first = await POST(request(), { params: Promise.resolve({ runId }) });
+      const firstBody = await first.json();
+      const replay = await POST(request(), { params: Promise.resolve({ runId }) });
+
+      expect(first.status).toBe(202);
+      expect(firstBody).toMatchObject({ runId, outcome: "delivered" });
+      expect(await replay.json()).toEqual(firstBody);
+      const messages = await db.select().from(schema.runMessages).where(
+        and(eq(schema.runMessages.runId, runId), eq(schema.runMessages.content, "operator message two")),
+      );
+      expect(messages).toHaveLength(1);
+      expect(messages[0].viaOperationId).toBeTruthy();
+    } finally {
+      await releasePrompt(runId, 1);
+      await done;
+    }
+  }, 120_000);
+
   it("S4a: steers into the running turn; the dialog stays Running; the reply follows the steered row", async () => {
     const { runId, done } = await launchHeld("message one");
 

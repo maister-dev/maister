@@ -7,7 +7,9 @@ import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { resumeCrashedRun } from "@/lib/runs/recover";
 import { recoverHttpResponse } from "@/lib/runs/recover-http";
-import { handleExt } from "@/lib/tokens/ext-handler";
+import { tokenAuditIdentity } from "@/lib/tokens/audit";
+import { handleExt, recordRequiredTokenAudit, unknownLibrarianEffectResponse } from "@/lib/tokens/ext-handler";
+import { runProjectResolver } from "@/lib/tokens/run-project";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { runs } = schemaModule as unknown as Record<string, any>;
@@ -35,8 +37,16 @@ export async function POST(
     req,
     {
       scopeLabel: SCOPE,
+      admitLibrarian: true,
       endpoint: ENDPOINT,
       method: "POST",
+      successAuditInWork: true,
+      resolveLibrarianProjectId: runProjectResolver(runId),
+      idempotency: {
+        kind: "run_recover",
+        target: { runId },
+        parseBody: async () => ({}),
+      },
       requireScope: true,
       // Without this a GLOBAL operator token is refused on BINDING, before the
       // scope check, even though `runs:recover` already maps to `recoverRun`.
@@ -70,10 +80,54 @@ export async function POST(
         );
       }
 
-      const result = await resumeCrashedRun(runId);
-      const { httpStatus, body } = recoverHttpResponse(result);
+      try {
+        const result = await resumeCrashedRun(runId);
+        const { httpStatus, body } = recoverHttpResponse(result);
 
-      return NextResponse.json(body, { status: httpStatus });
+        if (result.state === "transient" && ctx.operationId) {
+          return unknownLibrarianEffectResponse({
+            actor: ctx.actor,
+            projectId: ctx.projectId,
+            operationId: ctx.operationId,
+            scopeLabel: SCOPE,
+            endpoint: ENDPOINT,
+            method: "POST",
+            error: new Error("recover outcome is transient"),
+          }, db);
+        }
+
+        if (httpStatus < 400) {
+          await db.transaction(async (tx: Db) => {
+            await recordRequiredTokenAudit({
+              ...tokenAuditIdentity(ctx.actor),
+              projectId: ctx.projectId,
+              scopeUsed: SCOPE,
+              endpoint: ENDPOINT,
+              method: "POST",
+              result: "ok",
+              statusCode: httpStatus,
+              operationId: ctx.operationId,
+              operation: ctx.operationId
+                ? { id: ctx.operationId, result: { statusCode: httpStatus, body } }
+                : undefined,
+            }, tx);
+          });
+        }
+
+        return NextResponse.json(body, { status: httpStatus });
+      } catch (err) {
+        if (!ctx.operationId) throw err;
+
+        return unknownLibrarianEffectResponse({
+          actor: ctx.actor,
+          projectId: ctx.projectId,
+          operationId: ctx.operationId,
+          scopeLabel: SCOPE,
+          endpoint: ENDPOINT,
+          method: "POST",
+          error: err,
+        }, db);
+      }
     },
   );
 }

@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { LAUNCHABLE_FLOW_ENABLEMENT_STATES } from "@/lib/flows/enablement-states";
@@ -34,6 +34,7 @@ const log = pino({
 });
 
 export type PromotionMode = "local_merge" | "pull_request";
+export type TaskLaunchIntent = "none" | "triage_only" | "triage_then_launch";
 
 // M34 (ADR-089) launch-verdict patch. The ext triage op uses the set-only
 // shape (no nulls); the web card PATCH is SET/CLEAR symmetric (null clears).
@@ -201,6 +202,8 @@ export async function applyTriageVerdict(
 
   if (input.queueFields) applyQueueWriteFields(input.queueFields, set);
   const now = new Date();
+  const arm = input.enqueue === true;
+  const armWhenAllowed = sql`CASE WHEN ${tasks.launchIntent} IS NULL OR ${tasks.launchIntent} = 'triage_then_launch' THEN ${arm} ELSE false END`;
 
   await tx
     .update(tasks)
@@ -213,8 +216,8 @@ export async function applyTriageVerdict(
       // request enqueue must never inherit an earlier auto-launch arm. The arm
       // also stamps launch_armed_at so the tick's retry cap counts only failures
       // from THIS enqueue intent — a re-arm earns a fresh attempt budget.
-      launchMode: input.enqueue ? "auto" : null,
-      launchArmedAt: input.enqueue ? now : null,
+      launchMode: sql`CASE WHEN ${armWhenAllowed} THEN 'auto' ELSE NULL END`,
+      launchArmedAt: sql`CASE WHEN ${armWhenAllowed} THEN ${now}::timestamptz ELSE NULL END`,
       updatedAt: now,
     })
     .where(
@@ -368,6 +371,7 @@ export type SendTaskToTriageInput = {
   taskRef: string;
   title: string;
   actor: SocialActor;
+  launchIntent?: TaskLaunchIntent;
 };
 
 // Shared transaction-level primitive: callers that have already locked and
@@ -386,6 +390,7 @@ export async function sendTaskToTriageInTransaction(
       triageStatus: null,
       launchMode: null,
       launchArmedAt: null,
+      ...(input.launchIntent === undefined ? {} : { launchIntent: input.launchIntent }),
       updatedAt: new Date(),
     })
     .where(

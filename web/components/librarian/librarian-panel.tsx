@@ -4,6 +4,7 @@ import type { ReactElement } from "react";
 import type { TranscriptMessage } from "@/components/run-transcript/transcript-view";
 import type { LibrarianPanelMode } from "@/components/librarian/panel-mode";
 import type { LibrarianSubject } from "@/lib/librarian/types";
+import type { LibrarianCardView } from "@/lib/librarian/read-models";
 import type {
   LibrarianConversationView,
   LibrarianMessageDto,
@@ -24,6 +25,7 @@ import { useTranslations } from "next-intl";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useLibrarian } from "@/components/librarian/librarian-provider";
+import { LibrarianWork } from "@/components/librarian/librarian-work";
 import { librarianPanelMode } from "@/components/librarian/panel-mode";
 import { TranscriptView } from "@/components/run-transcript/transcript-view";
 import { useModalA11y } from "@/components/use-modal-a11y";
@@ -169,6 +171,7 @@ function LibrarianPanelBody(): ReactElement {
   const [subject, setSubject] = useState<LibrarianSubject | null>(null);
   const [sending, setSending] = useState(false);
   const [errorKey, setErrorKey] = useState<string | null>(null);
+  const [busyCardId, setBusyCardId] = useState<string | null>(null);
   const [showJump, setShowJump] = useState(false);
 
   const mode: LibrarianPanelMode =
@@ -394,6 +397,38 @@ function LibrarianPanelBody(): ReactElement {
     await refresh();
   }
 
+  async function decideCard(
+    card: LibrarianCardView,
+    decision: "accept" | "reject",
+  ): Promise<void> {
+    setBusyCardId(card.id);
+    setErrorKey(null);
+
+    try {
+      const response = await fetch(
+        `/api/librarian/cards/${encodeURIComponent(card.id)}/decide`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            decision,
+            ...(card.action === "statement_accept" &&
+            card.targetRevision !== null
+              ? { expectedRevision: Number(card.targetRevision) }
+              : {}),
+          }),
+        },
+      );
+
+      if (!response.ok) setErrorKey("errorCardDecision");
+      await refresh();
+    } catch {
+      setErrorKey("errorCardDecision");
+    } finally {
+      setBusyCardId(null);
+    }
+  }
+
   const availability = view?.availability.state ?? null;
   const panelClass = clsx(
     "flex-col border-line bg-paper text-ink",
@@ -586,6 +621,16 @@ function LibrarianPanelBody(): ReactElement {
             </button>
           ) : null}
         </div>
+
+        {view ? (
+          <LibrarianWork
+            busyCardId={busyCardId}
+            cards={view.cards}
+            operations={view.operationReceipts}
+            tasks={view.relatedWork}
+            onDecide={(card, decision) => void decideCard(card, decision)}
+          />
+        ) : null}
 
         {view && view.queuedMessages.length > 0 ? (
           <ul

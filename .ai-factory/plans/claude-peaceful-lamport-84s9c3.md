@@ -1147,13 +1147,13 @@ garbage with `CONFIG`). *RED*: `web/lib/librarian/__tests__/config.test.ts`
 
 ### Phase 3 — Operations and the work cycle · `LOP-01..10`, `TST-01..05`, `TST-07..08`, `LAU-08`, `LUI-10`
 
-**T3.1 [ ] — Migrations 0184 + 0185.** Appendix A/0184 (`tasks`) and A/0185
+**T3.1 [x] — Migrations 0184 + 0185.** Appendix A/0184 (`tasks`) and A/0185
 (operations, cards, statement revisions, links, `task_comments.via_operation_id`,
 `agent_turns` user source + trigger, `task_activity` kind `statement_accepted`).
 *RED*: `IT-TST-01` (UPDATE on a statement revision refused by the trigger),
 `IT-LOP-02` part 1 (duplicate key refused by `librarian_operations_key_uq`).
 
-**T3.2 [ ] — Idempotency in `handleExt`.** `idempotency: "required"` option; librarian
+**T3.2 [x] — Idempotency in `handleExt`.** `idempotency: "required"` option; librarian
 arm: header, digest, upsert `admitted`, LOP-02 refusals, reconcile-by-lookup for
 `admitted`, admission gate (LOP-03); `recordRequiredTokenAudit` finalize (`operation?:
 {id, result}`). Files: `web/lib/tokens/ext-handler.ts`, `web/lib/librarian/operations.ts`.
@@ -1164,7 +1164,7 @@ key/other body → `idempotency_payload_mismatch`; new key/same digest →
 `duplicate_of_operation`), `IT-LOP-03` (crash-window table rows 1 and 4). **Log**:
 `info` settle `{operationId, kind, status}`; `warn` conflicts.
 
-**T3.3 [ ] — Task revision.** `updateTask` under `FOR UPDATE` with `expectedRevision`;
+**T3.3 [x] — Task revision.** `updateTask` under `FOR UPDATE` with `expectedRevision`;
 `TaskDTO.revision`; UI PATCH and ext PATCH accept it and return it. Existing tests to
 migrate: `app/api/v1/ext/projects/[slug]/tasks/[taskId]/__tests__/route.integration.test.ts:314-317,359`
 (gains a `revision` assertion), `app/api/projects/[slug]/tasks/[number]/__tests__/route.test.ts:105`
@@ -1174,7 +1174,7 @@ concurrent PATCHes with the same `expectedRevision` → one `stale_revision`
 `CONFLICT`; the racer is parked on the row lock). **Log**: `debug` `{taskId, from,
 to}`; `warn` stale.
 
-**T3.4 [ ] — Statements and task create/update via the librarian.**
+**T3.4 [x] — Statements and task create/update via the librarian.**
 `web/lib/tasks/statement.ts` (zod schema, `renderStatementPrompt`, `acceptStatement`
 through the Backlog gate); ext `POST …/tasks` gains `statement` (renders prompt,
 revision 1, link `created_from`, `launch_intent='none'` for librarian tokens); `POST
@@ -1188,21 +1188,21 @@ equal input; section order fixed), `IT-TST-04` (links with meaning and message r
 `EDGE-TST-01`; `tasks.prompt` unchanged), `IT-LOP-05` part 1 (librarian create →
 intent `none`). **Log**: `info` `{taskId, revision, operationId}`.
 
-**T3.5 [ ] — Launch intent and send-to-triage.** `applyTriageVerdict` and C2 honour
+**T3.5 [x] — Launch intent and send-to-triage.** `applyTriageVerdict` and C2 honour
 `launch_intent`; ext `send-to-triage` + MCP `task_send_to_triage`. *RED*:
 `web/lib/services/__tests__/launch-intent.integration.test.ts` `IT-LOP-05` (triager
 `enqueue:true` under `none` → `launch_mode` stays NULL and `runSchedulerTick` C2 admits
 nothing — `EDGE-LOP-04`), `IT-LOP-06` + the D8 interaction table as a parameterized
 test. **Log**: `debug` `{taskId, intent, enqueue, armed}`.
 
-**T3.6 [ ] — Comments, relations, excerpts.** Operation-wrapped `comment_create` /
+**T3.6 [x] — Comments, relations, excerpts.** Operation-wrapped `comment_create` /
 `relation_add|remove` for librarian tokens; `task_publish_excerpt` tool = explicit
 comment with a quoted excerpt and a `mentioned` link; no transcript link is rendered to
 other users. *RED*: `IT-TST-05` (another member sees the excerpt comment and cannot
 load any `/api/librarian/*` resource for it), `IT-LAU-08` part 1 (comment shows owner
 + "via Librarian"). **Log**: `info` `{taskId, commentId, operationId}`.
 
-**T3.7 [ ] — Launch and existing-work actions.** Admit librarian tokens on
+**T3.7 [x] — Launch and existing-work actions.** Admit librarian tokens on
 `run_launch`, `run_cancel`, `run_recover`, `run_rework`, `run_sync`, `run_reopen`
 (live RBAC per D4); `runs.librarian_operation_id` written in `launchRun`'s insert tx;
 receipts per item. *RED*: `IT-LOP-07` (launch returns `Pending` with queue position
@@ -1211,13 +1211,13 @@ dependency, item 1 kept and linked, retry re-issues item 2 only — `EDGE-LOP-02
 `IT-LOP-03` part 2 (launch crash window row 3/4). **Log**: `info` `{runId, status,
 operationId}`.
 
-**T3.8 [ ] — Operator message seam.** D10b route + MCP `run_operator_message`;
+**T3.8 [x] — Operator message seam.** D10b route + MCP `run_operator_message`;
 `agent_turns.source='user'` path in `sendAgentMessage`. *RED*: `IT-LOP-10` (scratch →
 delivered or queued; persistent agent → queued with `source='user'`; flow →
 `refused_requires_rework`; token lacking ownership → 404). **Log**: `info` `{runId,
 runKind, outcome}`.
 
-**T3.9 [ ] — Cards and human-only actions.** Ext `POST /ext/librarian/cards` + MCP
+**T3.9 [x] — Cards and human-only actions.** Ext `POST /ext/librarian/cards` + MCP
 `librarian_card_propose`; session `POST /api/librarian/cards/{id}/decide` executing
 through existing services as `HitlActor{kind:"user"}` (human HITL answer), `promoteRun`
 with expected head SHA, discard. *RED*:
@@ -1227,7 +1227,7 @@ click succeeds; the HITL row's responder is the user with no `via`; a budget-bre
 restart card works through the session path), `IT-LAU-08` part 2. **Log**: `info`
 `{cardId, kind, decision}`; `warn` drift.
 
-**T3.10 [ ] — Cards and receipts UI.** Statement card (diff against current revision),
+**T3.10 [x] — Cards and receipts UI.** Statement card (diff against current revision),
 proposal/confirmation cards, batch receipt, task chips, Needs attention / Related work
 region, all fed by one batched live read `web/lib/librarian/read-models.ts`
 (`getLinkedWork(ownerId)`). EN/RU. *RED*: `IT-TST-08` (receipts show live status after

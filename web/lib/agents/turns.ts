@@ -160,6 +160,7 @@ export async function insertAgentMessageTurn(
   run: Pick<Run, "id" | "status">,
   prompt: string,
   logicalKey: string,
+  requestedByUserId?: string,
 ): Promise<AgentTurn> {
   const [sequence] = await tx
     .select({
@@ -176,6 +177,7 @@ export async function insertAgentMessageTurn(
       variant: run.status === "Running" ? "live_message" : "persistent_message",
       logicalKey,
       prompt,
+      requestedByUserId: requestedByUserId ?? null,
     })
     .returning();
 
@@ -187,7 +189,11 @@ export async function acceptAgentMessage(
   db: Db,
   runId: string,
   prompt: string,
-  options: Readonly<{ requestKey?: string }> = {},
+  options: Readonly<{
+    requestKey?: string;
+    requestedByUserId?: string;
+    recordAccepted?: (tx: Db, turn: AgentTurn) => Promise<void>;
+  }> = {},
 ): Promise<AgentTurn> {
   if (prompt.length === 0 || prompt.length > 1_000_000)
     throw new MaisterError(
@@ -211,7 +217,11 @@ export async function acceptAgentMessage(
     if (existing) return existing;
     assertAcceptsAgentMessage(run);
 
-    return insertAgentMessageTurn(txDb, run, prompt, logicalKey);
+    const turn = await insertAgentMessageTurn(txDb, run, prompt, logicalKey, options.requestedByUserId);
+
+    await options.recordAccepted?.(txDb, turn);
+
+    return turn;
   });
 
   log.info(

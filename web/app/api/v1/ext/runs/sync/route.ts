@@ -10,7 +10,10 @@ import { socialActorForToken } from "@/lib/tokens/verify";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
 import { syncRunTarget, type SyncActor } from "@/lib/runs/sync-target";
-import { handleExt, httpStatusForExtCode } from "@/lib/tokens/ext-handler";
+import { handleExt, httpStatusForExtCode, unknownLibrarianEffectResponse } from "@/lib/tokens/ext-handler";
+import { recordRequiredTokenAudit } from "@/lib/tokens/ext-handler";
+import { tokenAuditIdentity } from "@/lib/tokens/audit";
+import { runProjectResolver } from "@/lib/tokens/run-project";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { runs } = schemaModule as unknown as Record<string, any>;
@@ -47,9 +50,21 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     req,
     {
       scopeLabel: SCOPE,
+      admitLibrarian: true,
       endpoint: ENDPOINT,
       method: "POST",
       requireScope: true,
+      successAuditInWork: true,
+      resolveLibrarianProjectId: async (handlerCtx) => {
+        const parsed = bodySchema.safeParse(await req.clone().json().catch(() => null));
+
+        return parsed.success ? runProjectResolver(parsed.data.runId)(handlerCtx) : null;
+      },
+      idempotency: {
+        kind: "run_sync",
+        target: { route: "/api/v1/ext/runs/sync" },
+        parseBody: async (request) => bodySchema.parse(await request.json()),
+      },
       db,
     },
     async (ctx) => {
@@ -113,17 +128,44 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           db,
         });
 
-        return NextResponse.json(
-          {
+        const receipt = {
             runId: body.runId,
             attemptId: result.attemptId,
             outcome: result.outcome,
             behind: result.behind,
             pushed: result.pushed,
-          },
-          { status: result.outcome === "agent_launched" ? 202 : 200 },
-        );
+          };
+        const statusCode = result.outcome === "agent_launched" ? 202 : 200;
+
+        await db.transaction(async (tx: Db) => {
+          await recordRequiredTokenAudit({
+            ...tokenAuditIdentity(ctx.actor),
+            projectId: ctx.projectId,
+            scopeUsed: SCOPE,
+            endpoint: ENDPOINT,
+            method: "POST",
+            result: "ok",
+            statusCode,
+            operationId: ctx.operationId,
+            operation: ctx.operationId
+              ? { id: ctx.operationId, result: { statusCode, body: receipt } }
+              : undefined,
+          }, tx);
+        });
+
+        return NextResponse.json(receipt, { status: statusCode });
       } catch (err) {
+        if (ctx.operationId) {
+          return unknownLibrarianEffectResponse({
+            actor: ctx.actor,
+            projectId: ctx.projectId,
+            operationId: ctx.operationId,
+            scopeLabel: SCOPE,
+            endpoint: ENDPOINT,
+            method: "POST",
+            error: err,
+          }, db);
+        }
         if (isMaisterError(err)) {
           return NextResponse.json(
             { code: err.code, message: err.message },

@@ -89,6 +89,9 @@ export async function loadC2CandidateRows(db: Db): Promise<C2CandidateRow[]> {
       and(
         eq(tasks.triageStatus, "triaged"),
         eq(tasks.launchMode, "auto"),
+        // The persisted intent is authoritative even if an old or racing
+        // triage writer left an auto arm on a librarian-created task.
+        sql`(${tasks.launchIntent} IS NULL OR ${tasks.launchIntent} = 'triage_then_launch')`,
         // ADR-121 (INV-10): a paused task is never auto-admitted (C2) or polled.
         eq(tasks.queuePaused, false),
         // An outstanding admission claim means another admitter owns the task

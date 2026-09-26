@@ -45,6 +45,7 @@ export async function appendScratchMessage(
     // dispatch starts the next turn.
     delivery?: "queued" | "prompted" | "steered";
     steerCommandId?: string;
+    viaOperationId?: string;
   },
 ): Promise<{ id: string; sequence: number }> {
   const state = await lockTranscriptState(tx, input.runId, null);
@@ -65,6 +66,7 @@ export async function appendScratchMessage(
     supervisorEventId: input.supervisorEventId ?? null,
     delivery: input.delivery ?? null,
     steerCommandId: input.steerCommandId ?? null,
+    viaOperationId: input.viaOperationId ?? null,
   });
   const duringTurn =
     input.delivery === "steered" || input.delivery === "queued";

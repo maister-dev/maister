@@ -7,12 +7,20 @@ import type { TokenActor } from "@/lib/tokens/verify";
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import pino from "pino";
+import { ZodError } from "zod";
 
 import { canAgentReachProject } from "@/lib/agents/cross-project-reach";
 import { requireProjectActionForUser } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
-import { isMaisterError } from "@/lib/errors";
+import { isMaisterError, MaisterError } from "@/lib/errors";
+import {
+  admitLibrarianOperation,
+  markLibrarianOperationUnknown,
+  refuseLibrarianOperation,
+  settleLibrarianOperation,
+  type LibrarianOperationResult,
+} from "@/lib/librarian/operations";
 import {
   bumpTokenLastUsed,
   recordTokenAudit,
@@ -26,12 +34,16 @@ import {
 } from "@/lib/tokens/verify";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { projects } = schemaModule as unknown as Record<string, any>;
+const { projects, librarianTurns } = schemaModule as unknown as Record<string, any>;
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 type Db = any;
 
-export type ExtCtx = { actor: TokenActor; projectId: string };
+export type ExtCtx = {
+  actor: TokenActor;
+  projectId: string;
+  operationId?: string;
+};
 type ResolveProjectCtx = { actor: TokenActor; db: Db };
 type ResolveScopeCtx = ExtCtx & { db: Db };
 
@@ -49,10 +61,15 @@ function errorFields(err: unknown): { error: string; stack?: string } {
 }
 
 export async function recordRequiredTokenAudit(
-  input: TokenAuditInput,
+  input: TokenAuditInput & {
+    operation?: { id: string; result: LibrarianOperationResult };
+  },
   db: Db,
 ): Promise<void> {
   try {
+    if (input.operation) {
+      await settleLibrarianOperation(input.operation, db);
+    }
     await recordTokenAudit(input, db);
   } catch (err) {
     log.error(
@@ -71,6 +88,43 @@ export async function recordRequiredTokenAudit(
 
     throw err;
   }
+}
+
+export async function unknownLibrarianEffectResponse(
+  input: {
+    actor: TokenActor;
+    projectId: string;
+    operationId: string;
+    scopeLabel: string;
+    endpoint: string;
+    method: string;
+    error: unknown;
+  },
+  db: Db,
+): Promise<NextResponse> {
+  const errorCode = isMaisterError(input.error) ? input.error.code : "outcome_unknown";
+
+  await db.transaction(async (tx: Db) => {
+    await markLibrarianOperationUnknown({ id: input.operationId, errorCode }, tx);
+    await recordRequiredTokenAudit({
+      ...tokenAuditIdentity(input.actor),
+      projectId: input.projectId,
+      scopeUsed: input.scopeLabel,
+      endpoint: input.endpoint,
+      method: input.method,
+      result: "error",
+      statusCode: 202,
+      operationId: input.operationId,
+    }, tx);
+  });
+  log.warn({
+    operationId: input.operationId,
+    endpoint: input.endpoint,
+    errorCode,
+    ...errorFields(input.error),
+  }, "external librarian effect has an unknown outcome");
+
+  return NextResponse.json({ operationId: input.operationId, status: "unknown" }, { status: 202 });
 }
 
 function bumpTokenLastUsedAsync(actor: TokenActor, db: Db): void {
@@ -99,6 +153,8 @@ export const PROJECT_ACTION_BY_SCOPE: Partial<Record<string, ProjectAction>> = {
   "flows:read": "readBoard",
   "runners:read": "readBoard",
   "runs:launch": "launchRun",
+  "runs:message": "launchRun",
+  "runs:cancel": "recoverRun",
   "runs:read": "readBoard",
   // ADR-141: sync + reopen are promote-class — a user token acting cross-project
   // must clear the SAME bar as internal promote, never the `readBoard` fallback.
@@ -302,6 +358,11 @@ export async function handleExt(
     resolveLibrarianProjectId?: (
       ctx: ResolveProjectCtx,
     ) => Promise<string | null>;
+    idempotency?: {
+      kind: string;
+      target: Record<string, string>;
+      parseBody: (req: Request) => Promise<unknown>;
+    };
   },
   work: (ctx: ExtCtx) => Promise<NextResponse>,
 ): Promise<NextResponse> {
@@ -597,11 +658,139 @@ export async function handleExt(
     );
   }
 
+  let operationId: string | undefined;
+
+  if (
+    actor.tokenKind === "librarian" &&
+    opts.admitLibrarian &&
+    req.method !== "GET" &&
+    req.method !== "HEAD" &&
+    !opts.idempotency
+  ) {
+    await recordRequiredTokenAudit({
+      ...tokenAuditIdentity(actor),
+      projectId: auditProjectId,
+      scopeUsed: scopeLabel,
+      endpoint: opts.endpoint,
+      method: opts.method,
+      result: "error",
+      statusCode: 503,
+    }, d);
+
+    return NextResponse.json({
+      code: "CONFIG",
+      message: "librarian effect route has no idempotency contract",
+    }, { status: 503 });
+  }
+
+  if (actor.tokenKind === "librarian" && opts.idempotency) {
+    if (!opts.successAuditInWork) {
+      throw new MaisterError("CONFIG", "a librarian operation route must audit inside its domain transaction");
+    }
+
+    const key = req.headers.get("Idempotency-Key")?.trim();
+
+    if (!key || key.length > 128) {
+      await recordRequiredTokenAudit({
+        ...tokenAuditIdentity(actor),
+        projectId: auditProjectId,
+        scopeUsed: scopeLabel,
+        endpoint: opts.endpoint,
+        method: opts.method,
+        result: "error",
+        statusCode: 422,
+      }, d);
+
+      return NextResponse.json({
+        code: "CONFIG",
+        message: "Idempotency-Key must contain 1 to 128 characters",
+      }, { status: 422 });
+    }
+
+    const turn = await d.query.librarianTurns.findFirst({
+      where: eq(librarianTurns.id, actor.librarianTurnId),
+      columns: { id: true, conversationId: true, segmentId: true },
+    });
+
+    if (!turn) {
+      throw new MaisterError("PRECONDITION", "verified librarian token has no running turn");
+    }
+
+    let body: unknown;
+
+    try {
+      body = await opts.idempotency.parseBody(req.clone());
+    } catch (err) {
+      if (!(err instanceof SyntaxError || err instanceof ZodError)) throw err;
+
+      await recordRequiredTokenAudit({
+        ...tokenAuditIdentity(actor),
+        projectId: auditProjectId,
+        scopeUsed: scopeLabel,
+        endpoint: opts.endpoint,
+        method: opts.method,
+        result: "error",
+        statusCode: 422,
+      }, d);
+
+      return NextResponse.json({ code: "CONFIG", message: "invalid request body" }, { status: 422 });
+    }
+    let operation: Awaited<ReturnType<typeof admitLibrarianOperation>>;
+
+    try {
+      operation = await admitLibrarianOperation({
+        conversationId: turn.conversationId,
+        segmentId: turn.segmentId,
+        turnId: turn.id,
+        idempotencyKey: key,
+        kind: opts.idempotency.kind,
+        target: opts.idempotency.target,
+        body,
+        allowDuplicate: req.headers.get("X-Maister-Allow-Duplicate") === "true",
+      }, d);
+    } catch (err) {
+      if (!isMaisterError(err)) throw err;
+
+      const status = httpStatusForExtCode(err.code);
+
+      await recordRequiredTokenAudit({
+        ...tokenAuditIdentity(actor),
+        projectId: auditProjectId,
+        scopeUsed: scopeLabel,
+        endpoint: opts.endpoint,
+        method: opts.method,
+        result: "error",
+        statusCode: status,
+      }, d);
+
+      return NextResponse.json({ code: err.code, message: err.message, details: err.details }, { status });
+    }
+
+    if (operation.reused) {
+      await recordRequiredTokenAudit({
+        ...tokenAuditIdentity(actor),
+        operationId: operation.id,
+        projectId: auditProjectId,
+        scopeUsed: scopeLabel,
+        endpoint: opts.endpoint,
+        method: opts.method,
+        result: operation.status === "succeeded" ? "ok" : "error",
+        statusCode: operation.result?.statusCode ?? 202,
+      }, d);
+
+      return operation.result
+        ? NextResponse.json(operation.result.body, { status: operation.result.statusCode })
+        : NextResponse.json({ operationId: operation.id, status: operation.status }, { status: 202 });
+    }
+
+    operationId = operation.id;
+  }
+
   // 4. Run work().
   let response: NextResponse;
 
   try {
-    response = await work({ actor, projectId: targetProjectId ?? "" });
+    response = await work({ actor, projectId: targetProjectId ?? "", operationId });
   } catch (err) {
     // Map TokenAuthError("wrong-project") thrown from authorize callback → 404.
     if (err instanceof TokenAuthError) {
@@ -636,10 +825,22 @@ export async function handleExt(
   // duplicate here on <400, but still write the failure audit on >=400.
   const statusCode = response.status;
 
+  if (operationId && statusCode >= 400) {
+    const body = (await response.clone().json()) as Record<string, unknown>;
+
+    await refuseLibrarianOperation({
+      id: operationId,
+      errorCode: typeof body.code === "string" ? body.code : "PRECONDITION",
+      statusCode,
+      body,
+    }, d);
+  }
+
   if (!(opts.successAuditInWork && statusCode < 400)) {
     await recordRequiredTokenAudit(
       {
         ...tokenAuditIdentity(actor),
+        operationId,
         projectId: auditProjectId,
         scopeUsed: scopeLabel,
         endpoint: opts.endpoint,

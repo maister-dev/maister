@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import { eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { NextRequest } from "next/server";
 import {
@@ -13,12 +14,14 @@ import {
 } from "vitest";
 
 import { MaisterError } from "@/lib/errors";
+import { issueLibrarianTurnToken } from "@/lib/librarian/authority";
 import { issueToken } from "@/lib/tokens/issue";
 import {
   testPlatformRunnerRow,
   testRunnerSnapshot,
 } from "@/lib/__tests__/runner-fixtures";
 import * as schemaModule from "@/lib/db/schema";
+import { addProjectMember, seedActiveUser, seedLibrarianTurn } from "@/test-support/librarian-seed";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -66,6 +69,35 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await testDatabase?.stop();
+});
+
+describe("librarian uncertain external run actions", () => {
+  it.each(["sync", "reopen"] as const)("keeps %s unknown after a post-effect error and does not repeat it", async (action) => {
+    const { projectId, executorId } = await seedProject(`lib-${action}-${randomUUID().slice(0, 8)}`);
+    const runId = await seedReviewRun(projectId, executorId);
+    const request = await librarianRequest(action, projectId, runId);
+    const retry = request.clone() as NextRequest;
+    const effect = action === "sync" ? syncRunTargetMock : reopenRunMock;
+
+    effect.mockImplementation(async () => {
+      await db.update(schema.runs).set({ status: "Done" }).where(eq(schema.runs.id, runId));
+      throw new MaisterError("CRASH", "lost response after the run changed");
+    });
+
+    const route = action === "sync" ? syncPOST : reopenPOST;
+    const first = await route(request);
+    const body = await first.json();
+    const replay = await route(retry);
+
+    expect(first.status).toBe(202);
+    expect(body).toMatchObject({ status: "unknown" });
+    expect(await replay.json()).toEqual(body);
+    expect(effect).toHaveBeenCalledTimes(1);
+    const operations = await db.select().from(schema.librarianOperations).where(
+      eq(schema.librarianOperations.id, body.operationId),
+    );
+    expect(operations[0].status).toBe("unknown");
+  });
 });
 
 async function seedProject(slug: string) {
@@ -129,6 +161,23 @@ async function auditRows() {
     .select()
     .from(schema.tokenAuditLog as any)
     .execute();
+}
+
+async function librarianRequest(path: "sync" | "reopen", projectId: string, runId: string): Promise<NextRequest> {
+  const userId = await seedActiveUser(db);
+  await addProjectMember(db, { projectId, userId, role: "owner" });
+  const turnId = await seedLibrarianTurn(db, userId);
+  const token = await issueLibrarianTurnToken({
+    ownerUserId: userId,
+    turnId,
+    scopes: ["runs:sync"],
+    expiresAt: new Date(Date.now() + 60_000),
+  }, db);
+  const req = makeReq(path, { runId });
+  req.headers.set("authorization", `Bearer ${token.secret}`);
+  req.headers.set("idempotency-key", randomUUID());
+
+  return req;
 }
 
 beforeEach(async () => {

@@ -40,6 +40,7 @@ export type TaskCommentRecord = {
   body: string;
   actorType: "user" | "agent" | "system";
   actorId: string | null;
+  viaOperationId: string | null;
   createdAt: Date;
 };
 
@@ -70,6 +71,7 @@ export async function addTaskComment(
     // and the agent-chain-depth walk has nothing to resolve — the cap would
     // never bind on exactly the kind that drives the same-project loop.
     producedByRunId?: string | null;
+    viaOperationId?: string;
   },
   db?: Db,
 ): Promise<AddTaskCommentResult> {
@@ -121,6 +123,7 @@ export async function addTaskComment(
         projectId: task.projectId,
         actorType: input.actor.type,
         actorId: input.actor.id,
+        viaOperationId: input.viaOperationId,
         body: expanded,
       })
       .returning()) as TaskCommentRecord[];
@@ -288,6 +291,7 @@ export type TaskCommentDTO = {
   taskId: string;
   body: string;
   actor: ActorDTO;
+  via?: "librarian";
   createdAt: Date;
 };
 
@@ -303,6 +307,7 @@ export async function toCommentDTOs(
     taskId: row.taskId,
     body: row.body,
     actor: actorDTO(row, labels),
+    ...(row.viaOperationId ? { via: "librarian" as const } : {}),
     createdAt: row.createdAt,
   }));
 }

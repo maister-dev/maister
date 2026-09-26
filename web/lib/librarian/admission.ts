@@ -12,7 +12,7 @@ import type { LibrarianSubject } from "@/lib/librarian/types";
 
 import { randomUUID } from "node:crypto";
 
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, lt } from "drizzle-orm";
 import pino from "pino";
 
 import { librarianConfig } from "./config";
@@ -35,6 +35,7 @@ import { getDb } from "@/lib/db/client";
 import {
   librarianConversations,
   librarianMessages,
+  librarianOperations,
   librarianTurns,
   runSessions,
   runs,
@@ -208,6 +209,26 @@ export async function admitNextTurnInTransaction(
   const { conversation } = input.locked;
 
   if (conversation.resetState !== "none") return null;
+
+  const staleBefore = new Date(
+    input.now.getTime() - librarianConfig().operationReconcileSeconds * 1000,
+  );
+  const [unsettled] = await tx
+    .select({ id: librarianOperations.id })
+    .from(librarianOperations)
+    .where(
+      and(
+        eq(librarianOperations.conversationId, conversation.id),
+        eq(librarianOperations.status, "admitted"),
+        lt(librarianOperations.createdAt, staleBefore)),
+    )
+    .limit(1);
+
+  if (unsettled) {
+    log.warn({ conversationId: conversation.id, operationId: unsettled.id }, "librarian turn admission awaits operation reconciliation");
+
+    return null;
+  }
   const [active] = await tx
     .select({ id: librarianTurns.id })
     .from(librarianTurns)

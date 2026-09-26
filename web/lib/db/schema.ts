@@ -1427,6 +1427,12 @@ export const tasks = pgTable(
     number: integer("number").notNull(),
     title: text("title").notNull(),
     prompt: text("prompt").notNull(),
+    revision: integer("revision").notNull().default(0),
+    statementRevision: integer("statement_revision"),
+    launchIntent: text("launch_intent", {
+      enum: ["none", "triage_only", "triage_then_launch"],
+    }),
+    createdViaOperationId: text("created_via_operation_id"),
     // M34 (ADR-089): NULLABLE — simple-intent tasks are created flowless and
     // classify `unconfigured` until a triage verdict or the launch popover
     // fills the flow.
@@ -1508,6 +1514,9 @@ export const tasks = pgTable(
   },
   (t) => ({
     uniqAttempt: unique("tasks_id_attempt_uq").on(t.id, t.attemptNumber),
+    uniqCreatedViaOperation: unique("tasks_created_via_operation_uq").on(
+      t.createdViaOperationId,
+    ),
     uniqProjectNumber: unique("tasks_project_number_uq").on(
       t.projectId,
       t.number,
@@ -1531,6 +1540,10 @@ export const tasks = pgTable(
     triageConfidenceCheck: check(
       "tasks_triage_confidence_check",
       sql`${t.triageConfidence} is null or (${t.triageConfidence} >= 0 and ${t.triageConfidence} <= 1)`,
+    ),
+    launchIntentCheck: check(
+      "tasks_launch_intent_check",
+      sql`${t.launchIntent} IS NULL OR ${t.launchIntent} IN ('none', 'triage_only', 'triage_then_launch')`,
     ),
   }),
 );
@@ -4021,6 +4034,9 @@ export const agentTurns = pgTable(
       (): AnyPgColumn => agentTurns.id,
       { onDelete: "cascade" },
     ),
+    requestedByUserId: text("requested_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
     state: text("state", {
       enum: ["queued", "claimed", "dispatched", "applied", "superseded"],
     })
@@ -5333,6 +5349,7 @@ export const runMessages = pgTable(
       () => executionCommands.id,
       { onDelete: "restrict" },
     ),
+    viaOperationId: text("via_operation_id"),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
       .notNull()
       .defaultNow(),
@@ -5346,6 +5363,9 @@ export const runMessages = pgTable(
     )
       .on(t.runId, t.nodeAttemptId, t.sequence)
       .nullsNotDistinct(),
+    uniqViaOperation: unique("run_messages_via_operation_uq").on(
+      t.viaOperationId,
+    ),
     // TRC-06 / EDGE-TRC-03. Idempotency is a CONSTRAINT, not application
     // ordering: a retry from another process must not double-write.
     //
@@ -7608,6 +7628,7 @@ export const taskComments = pgTable(
     }).notNull(),
     actorId: text("actor_id"),
     body: text("body").notNull(),
+    viaOperationId: text("via_operation_id"),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
       .notNull()
       .defaultNow(),
@@ -7616,6 +7637,9 @@ export const taskComments = pgTable(
     idxTaskCreated: index("task_comments_task_created_idx").on(
       t.taskId,
       t.createdAt,
+    ),
+    uniqViaOperation: unique("task_comments_via_operation_uq").on(
+      t.viaOperationId,
     ),
     actorTypeCheck: check(
       "task_comments_actor_type_check",
@@ -7649,6 +7673,7 @@ export const TASK_ACTIVITY_EVENT_KINDS = [
   // summon was skipped. Written by the agent_triggers consumer (system actor),
   // idempotent by construction — see task_activity_agent_summon_uq.
   "agent_summon_suppressed",
+  "statement_accepted",
 ] as const;
 
 export type TaskActivityEventKind = (typeof TASK_ACTIVITY_EVENT_KINDS)[number];
@@ -7691,7 +7716,7 @@ export const taskActivity = pgTable(
     ),
     eventKindCheck: check(
       "task_activity_event_kind_check",
-      sql`${t.eventKind} in ('task_created', 'comment_added', 'task_mentioned', 'relation_added', 'relation_removed', 'run_launched', 'triage_set', 'triage_requeued', 'agent_quarantined', 'experiment_concluded', 'run_pr_merged', 'evaluation_decided', 'agent_summon_suppressed')`,
+      sql`${t.eventKind} in ('task_created', 'comment_added', 'task_mentioned', 'relation_added', 'relation_removed', 'run_launched', 'triage_set', 'triage_requeued', 'agent_quarantined', 'experiment_concluded', 'run_pr_merged', 'evaluation_decided', 'agent_summon_suppressed', 'statement_accepted')`,
     ),
     // ADR-151: the structural backstop for at-least-once event redelivery —
     // the consumer inserts with onConflictDoNothing instead of reading first,
@@ -8312,3 +8337,160 @@ export const librarianContextSnapshots = pgTable(
 );
 export type LibrarianContextSnapshotRow =
   typeof librarianContextSnapshots.$inferSelect;
+
+export const librarianOperations = pgTable(
+  "librarian_operations",
+  {
+    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    conversationId: text("conversation_id")
+      .notNull()
+      .references(() => librarianConversations.id, { onDelete: "cascade" }),
+    segmentId: text("segment_id")
+      .notNull()
+      .references(() => librarianSegments.id),
+    turnId: text("turn_id").references(() => librarianTurns.id, {
+      onDelete: "set null",
+    }),
+    cardId: text("card_id"),
+    idempotencyKey: text("idempotency_key").notNull(),
+    kind: text("kind").notNull(),
+    requestDigest: text("request_digest").notNull(),
+    target: jsonb("target").$type<Record<string, string>>().notNull(),
+    status: text("status", {
+      enum: ["admitted", "succeeded", "refused", "failed", "unknown"],
+    }).notNull(),
+    result: jsonb("result").$type<Record<string, unknown>>(),
+    errorCode: text("error_code"),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    settledAt: timestamp("settled_at", { withTimezone: true, mode: "date" }),
+  },
+  (t) => ({
+    uniqKey: unique("librarian_operations_key_uq").on(
+      t.conversationId,
+      t.idempotencyKey,
+    ),
+    idxSegmentDigest: index("librarian_operations_segment_digest_idx").on(
+      t.segmentId,
+      t.requestDigest,
+    ),
+    statusCheck: check(
+      "librarian_operations_status_check",
+      sql`${t.status} IN ('admitted', 'succeeded', 'refused', 'failed', 'unknown')`,
+    ),
+    terminalShapeCheck: check(
+      "librarian_operations_terminal_shape_check",
+      sql`${t.status} NOT IN ('refused', 'failed') OR ${t.errorCode} IS NOT NULL`,
+    ),
+  }),
+);
+export type LibrarianOperationRow = typeof librarianOperations.$inferSelect;
+
+export const librarianCards = pgTable(
+  "librarian_cards",
+  {
+    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    conversationId: text("conversation_id")
+      .notNull()
+      .references(() => librarianConversations.id, { onDelete: "cascade" }),
+    segmentId: text("segment_id")
+      .notNull()
+      .references(() => librarianSegments.id),
+    messageId: text("message_id").references(() => librarianMessages.id, {
+      onDelete: "set null",
+    }),
+    kind: text("kind", {
+      enum: ["statement_proposal", "confirmation", "memory_suggestion"],
+    }).notNull(),
+    status: text("status", {
+      enum: [
+        "pending",
+        "accepted",
+        "rejected",
+        "expired",
+        "superseded",
+        "cleared_by_reset",
+      ],
+    }).notNull(),
+    target: jsonb("target").$type<Record<string, string>>().notNull(),
+    targetRevision: text("target_revision"),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+    payloadDigest: text("payload_digest").notNull(),
+    requiresOwner: boolean("requires_owner").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true, mode: "date" }).notNull(),
+    decidedAt: timestamp("decided_at", { withTimezone: true, mode: "date" }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    idxPending: index("librarian_cards_pending_idx")
+      .on(t.conversationId)
+      .where(sql`${t.status} = 'pending'`),
+    kindCheck: check(
+      "librarian_cards_kind_check",
+      sql`${t.kind} IN ('statement_proposal', 'confirmation', 'memory_suggestion')`,
+    ),
+    statusCheck: check(
+      "librarian_cards_status_check",
+      sql`${t.status} IN ('pending', 'accepted', 'rejected', 'expired', 'superseded', 'cleared_by_reset')`,
+    ),
+  }),
+);
+export type LibrarianCardRow = typeof librarianCards.$inferSelect;
+
+export const taskStatementRevisions = pgTable(
+  "task_statement_revisions",
+  {
+    taskId: text("task_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "cascade" }),
+    revision: integer("revision").notNull(),
+    statement: jsonb("statement").$type<Record<string, unknown>>().notNull(),
+    authorActorType: text("author_actor_type").notNull(),
+    authorActorId: text("author_actor_id"),
+    viaOperationId: text("via_operation_id"),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.taskId, t.revision] }),
+  }),
+);
+export type TaskStatementRevisionRow = typeof taskStatementRevisions.$inferSelect;
+
+export const librarianTaskLinks = pgTable(
+  "librarian_task_links",
+  {
+    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    conversationId: text("conversation_id")
+      .notNull()
+      .references(() => librarianConversations.id, { onDelete: "cascade" }),
+    taskId: text("task_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "cascade" }),
+    meaning: text("meaning", {
+      enum: ["created_from", "refined_in", "mentioned"],
+    }).notNull(),
+    fromMessageId: text("from_message_id").references(() => librarianMessages.id, {
+      onDelete: "set null",
+    }),
+    toMessageId: text("to_message_id").references(() => librarianMessages.id, {
+      onDelete: "set null",
+    }),
+    statementRevision: integer("statement_revision"),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    idxTask: index("librarian_task_links_task_idx").on(t.taskId),
+    meaningCheck: check(
+      "librarian_task_links_meaning_check",
+      sql`${t.meaning} IN ('created_from', 'refined_in', 'mentioned')`,
+    ),
+  }),
+);
+export type LibrarianTaskLinkRow = typeof librarianTaskLinks.$inferSelect;
