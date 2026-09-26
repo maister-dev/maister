@@ -386,19 +386,21 @@ for compilation — the failure is warm-up, not behaviour.
   streams behind `app/(app)/loading.tsx`. React 19.2 reveals a finished
   boundary on a throttle (`$RC` queues it, `$RV` swaps it in up to ~300 ms
   later), and until then the server's copy waits in a hidden
-  `<div id="S:0">` at the end of `<body>`. The attention stream's
-  connect-time snapshot calls `router.refresh()`, and an update that reaches
-  the still-dehydrated boundary makes React client-render the page into
-  `<main>`. For that window a page-level `getByTestId` or CSS locator matches
+  `<div id="S:0">` at the end of `<body>`. An update that reaches the
+  still-dehydrated boundary, such as an attention tick's `router.refresh()`,
+  makes React client-render the page into `<main>`. Until ADR-171 D7 every
+  load got that tick (the connect-time snapshot). Now only a page that
+  something moved under does, so the window is rarer but not gone. For that
+  window a page-level `getByTestId` or CSS locator matches
   both copies (role locators skip the hidden one). The signature is
   `strict mode violation: getByTestId('<page test id>') resolved to 2
   elements`, the second one outside `<main>`, often after a `Received: hidden`
   poll; a one-shot `count()` reads double. Measured on the Desk on 2026-09-26: the
   refresh's RSC request at 308 ms, both copies at 487 ms, the hidden one
   `display: none` under `div#S:0`. Read page content inside
-  `page.getByRole("main")`, as `desk.spec.ts` does; its
-  `holdStreamedReveal` test holds the window open and fails if the scoping
-  regresses. Scoping has one cost: a one-shot `count()` taken before the page
+  `page.getByRole("main")`, as `desk.spec.ts` does. Its race test holds the
+  reveal (`holdStreamedReveal`) and pushes a tick once the copy is parked, so
+  it fails if the scoping regresses. Scoping has one cost: a one-shot `count()` taken before the page
   reaches `<main>` now reads 0, where it used to count the parked copy, so wait
   for the region to be visible first. The same signature showed on
   `push-notifications:103/218` (`notifications-panel`), `work-table:97`

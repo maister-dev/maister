@@ -56,9 +56,9 @@ async function signIn(
 // React 19.2 reveals a streamed Suspense boundary on a throttle: `$RC` queues
 // it and `$RV` swaps it in up to ~300 ms later. Until then the server's copy
 // of the page waits in a hidden <div> at the end of <body>, and an update that
-// reaches the boundary first — the attention stream's initial refresh —
-// renders a second copy into <main>. Holding the reveal keeps that window open
-// for as long as a test needs it.
+// reaches the boundary first — an attention tick's refresh — renders a second
+// copy into <main>. Holding the reveal keeps that window open for as long as a
+// test needs it.
 async function holdStreamedReveal(page: Page, ms: number): Promise<void> {
   await page.addInitScript((holdMs) => {
     let reveal: ((batch: unknown) => void) | undefined;
@@ -75,9 +75,8 @@ async function holdStreamedReveal(page: Page, ms: number): Promise<void> {
 
 // Where the Desk renders: inside the shell's <main>. For a moment after a
 // load the document can hold the page twice — React's parked copy outside
-// <main> and the one the attention stream's first refresh rendered into it
-// (see `holdStreamedReveal`) — so page content is read here, never from the
-// whole page. The rail, the top nav and their badges are the layout's, outside
+// <main> and the one a refresh rendered into it (see `holdStreamedReveal`) —
+// so page content is read here, never from the whole page. The rail, the top nav and their badges are the layout's, outside
 // that boundary, and stay page-level.
 function desk(page: Page): Locator {
   return page.getByRole("main");
@@ -556,32 +555,53 @@ test("E2E-EDGE-NAV-01 the empty Desk reuses the first-run frame and drops the co
   }
 });
 
-// The flake E2E-EDGE-NAV-01 met one run in two, made certain. Holding the
-// attention stream until React has parked the server's copy orders the race:
-// the stream's connect-time snapshot refreshes the router, and the refresh
-// renders the Desk into <main> while the parked copy is still in the document.
+// The flake E2E-EDGE-NAV-01 met one run in two, made certain. The Desk is in
+// the DOM twice when a tick reaches the page while React still has the
+// server's copy parked: its refresh renders into <main> beside it. Since
+// ADR-171 D7 an unchanged page gets no tick, so this test pushes the one a
+// change between render and connect would produce — once the copy is parked.
 test("E2E-EDGE-NAV-01 the empty Desk is read where it renders while React parks its streamed copy", async ({
   browser,
 }) => {
   const fx = loadFixtures().byKey.desk;
   const { page } = await signIn(browser, fx.nobody);
   const parkedCopy = page.locator('[hidden] [data-testid="desk-empty"]');
-  let releaseStream = (): void => {};
+  let releaseTick = (): void => {};
   const parked = new Promise<void>((resolve) => {
-    releaseStream = resolve;
+    releaseTick = resolve;
   });
+  let pushed = false;
 
   try {
     await holdStreamedReveal(page, 15_000);
     await page.route("**/api/attention/stream**", async (route) => {
+      // Only the first connection: a reconnect reaches the real stream.
+      if (pushed) return route.continue();
+      pushed = true;
       await parked;
-      await route.continue();
+
+      const id = String(Date.now());
+      const tick = {
+        type: "attention.tick",
+        id,
+        occurredAt: new Date().toISOString(),
+        decisions: 0,
+        updates: 0,
+        changed: ["work"],
+        projectIds: [],
+      };
+
+      await route.fulfill({
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+        body: `id: ${id}\nevent: attention.tick\ndata: ${JSON.stringify(tick)}\n\n`,
+      });
     });
     await page.goto("/");
 
     // The server's copy is parked, hidden, outside <main>.
     await expect(parkedCopy).toHaveCount(1);
-    releaseStream();
+    releaseTick();
 
     await expect(desk(page).getByTestId("desk-empty")).toBeVisible({
       timeout: 15_000,
@@ -590,7 +610,45 @@ test("E2E-EDGE-NAV-01 the empty Desk is read where it renders while React parks 
     // exercised the race rather than a reveal that ended it.
     await expect(parkedCopy).toHaveCount(1);
   } finally {
-    releaseStream();
+    releaseTick();
+    await page.context().close();
+  }
+});
+
+// ADR-171 D7: the render is the stream's first cursor. A reader with no
+// project has nothing that can move under the page, so its load must not be
+// followed by a refresh — the connect-time refresh re-rendered every page on
+// the server a second time, and it is what put the Desk in the DOM twice.
+test("E2E-ATN-17 a load nothing moved under is not refreshed", async ({
+  browser,
+}) => {
+  const fx = loadFixtures().byKey.desk;
+  const { page } = await signIn(browser, fx.nobody);
+  const refreshes: string[] = [];
+
+  page.on("request", (request) => {
+    const headers = request.headers();
+
+    if (
+      headers.rsc === "1" &&
+      headers["next-router-prefetch"] === undefined &&
+      new URL(request.url()).pathname === "/"
+    ) {
+      refreshes.push(request.url());
+    }
+  });
+
+  try {
+    const stream = page.waitForRequest("**/api/attention/stream**");
+
+    await page.goto("/");
+    await expect(desk(page).getByTestId("desk-empty")).toBeVisible();
+    await stream;
+    // Past the stream's first poll and its first counter check.
+    await page.waitForTimeout(4000);
+
+    expect(refreshes).toEqual([]);
+  } finally {
     await page.context().close();
   }
 });

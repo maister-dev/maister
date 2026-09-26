@@ -7,7 +7,10 @@ import { useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 
 import { RunStreamLiveness } from "@/components/feedback/run-stream-liveness";
-import { useAttentionStream } from "@/lib/use-attention-stream";
+import {
+  useAttentionStream,
+  type AttentionStreamSince,
+} from "@/lib/use-attention-stream";
 
 /**
  * Keeps the app shell and current page fresh from the attention stream.
@@ -19,18 +22,22 @@ import { useAttentionStream } from "@/lib/use-attention-stream";
  */
 export function AttentionLiveRefresh({
   labels,
+  since,
 }: {
   labels: RunStreamLivenessLabels;
+  // ADR-171 D7: the render's cursor and counters. Without them the stream
+  // opens with a snapshot, and this component refreshes an unchanged page.
+  since?: AttentionStreamSince;
 }): ReactElement {
   const router = useRouter();
-  const { tick, liveness, reconnect } = useAttentionStream();
+  const { tick, liveness, reconnect } = useAttentionStream(since);
   const seenRef = useRef(0);
 
   useEffect(() => {
     if (tick === 0 || tick === seenRef.current) return;
     seenRef.current = tick;
-    // Initial and reconnect snapshots close the gap between the server render
-    // and subscription, including changes that happened while disconnected.
+    // Every tick means something the page shows moved since the render (D7)
+    // or since the last tick — including while disconnected.
     router.refresh();
   }, [router, tick]);
 

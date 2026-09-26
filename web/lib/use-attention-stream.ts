@@ -56,21 +56,56 @@ export interface UseAttentionStreamResult {
   reconnect: () => void;
 }
 
-function streamUrl(origin: string, lastEventId: string | null): string {
+/**
+ * ADR-171 D7: where the page stands — the render's cursor and the two counters
+ * it showed. The first connect carries them, so the server stays silent while
+ * the page is current rather than answering with a snapshot to refresh on.
+ */
+export interface AttentionStreamSince {
+  cursor: string;
+  decisions: number;
+  updates: number;
+}
+
+type Counters = Pick<AttentionTickFrame, "decisions" | "updates">;
+
+function streamUrl(
+  origin: string,
+  lastEventId: string | null,
+  counters: Counters | null,
+): string {
   const url = new URL("/api/attention/stream", origin);
 
-  if (lastEventId !== null) url.searchParams.set("lastEventId", lastEventId);
+  if (lastEventId !== null) {
+    url.searchParams.set("lastEventId", lastEventId);
+    // A baseline means something only beside the cursor it was read at.
+    if (counters !== null) {
+      url.searchParams.set("decisions", String(counters.decisions));
+      url.searchParams.set("updates", String(counters.updates));
+    }
+  }
 
   return url.toString();
 }
 
-export function useAttentionStream(): UseAttentionStreamResult {
+export function useAttentionStream(
+  since?: AttentionStreamSince,
+): UseAttentionStreamResult {
   const [tick, setTick] = useState(0);
   const [changed, setChanged] = useState<AttentionTickFrame["changed"]>([]);
   const [liveness, setLiveness] =
     useState<RunStreamLifecycleKind>("connecting");
   const sourceRef = useRef<EventSource | null>(null);
-  const lastEventIdRef = useRef<string | null>(null);
+  // Read once, at mount: later renders move the page, not this subscription —
+  // a reconnect resumes from the last tick instead.
+  const lastEventIdRef = useRef<string | null>(
+    since !== undefined && isSseCursor(since.cursor) ? since.cursor : null,
+  );
+  const countersRef = useRef<Counters | null>(
+    since === undefined
+      ? null
+      : { decisions: since.decisions, updates: since.updates },
+  );
   const lifecycleRef = useRef(initialRunStreamLifecycle);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [reconnectKey, setReconnectKey] = useState(0);
@@ -102,7 +137,9 @@ export function useAttentionStream(): UseAttentionStreamResult {
       typeof window !== "undefined"
         ? window.location.origin
         : "http://localhost";
-    const source = new EventSource(streamUrl(origin, lastEventIdRef.current));
+    const source = new EventSource(
+      streamUrl(origin, lastEventIdRef.current, countersRef.current),
+    );
 
     sourceRef.current = source;
     source.onopen = () => {
@@ -123,8 +160,15 @@ export function useAttentionStream(): UseAttentionStreamResult {
 
         const id = (event as MessageEvent<string>).lastEventId;
 
-        // Same spelling the route parses and the AsyncAPI declares.
-        if (isSseCursor(id)) lastEventIdRef.current = id;
+        // Same spelling the route parses and the AsyncAPI declares. The
+        // counters travel with the cursor they were read at.
+        if (isSseCursor(id)) {
+          lastEventIdRef.current = id;
+          countersRef.current = {
+            decisions: frame.decisions,
+            updates: frame.updates,
+          };
+        }
       } catch {
         /* a malformed frame is skipped, never thrown at the reader */
       }
