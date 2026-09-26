@@ -45,6 +45,38 @@ Use the [Git panel](/guides/run-git) to preserve or publish useful work, or to
 reattach a missing worktree before an eligible recovery. Reattach alone does
 not resume execution.
 
+## Recover staged work after worktree cleanup
+
+Before archive, drop, or automatic cleanup removes a worktree, MAIster preserves
+its changes. This also applies to orphan worktrees whose ownership has been
+verified. If a file was staged and then edited or deleted again, MAIster saves
+the index before taking the working-tree snapshot. A preservation failure
+prevents removal.
+
+The staged version is kept in the second parent of a local
+`refs/maister/rescue/<runId>/<n>` reference. The web service logs its name in
+`rescueRef`. For an orphan, the working-tree snapshot is kept separately on a
+`maister/orphan/...` branch; that snapshot does not contain the earlier staged
+version of the file.
+
+On the host, open the project's parent repository and list the retained refs:
+
+```bash
+git for-each-ref --format='%(refname)' refs/maister/rescue/ refs/heads/maister/orphan/
+```
+
+Match the Run id and inspect the staged file without changing your checkout.
+Replace `<runId>`, `<n>`, and `path/to/file` with the actual values:
+
+```bash
+git show 'refs/maister/rescue/<runId>/<n>^2:path/to/file'
+```
+
+Use [Reattach](/guides/run-git#5-restore-a-removed-worktree) when the Run still
+exists and you need its working tree back. Reattach does not automatically
+restore the separately preserved index. Rescue refs are local to the repository;
+they are not a remote backup.
+
 ## Transcript or status stops advancing
 
 Check both the Run connection indicator and execution-host health. A connected

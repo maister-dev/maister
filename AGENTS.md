@@ -184,7 +184,7 @@ runtime-data mount; Stage C owns remote repository/workspace placement.
 | API Contracts | `docs/api/` | Web/supervisor OpenAPI and SSE AsyncAPI contracts |
 | README (web) | `web/README.md` | HeroUI template README — replace when something to say |
 | Public documentation | `site-docs/` | Published EN/RU product docs authored as Markdown; separate from internal `docs/` |
-| Run Git guide | `site-docs/guides/run-git.md` | Worktree changes, publication, PRs, restoration; EN/RU |
+| Run Git guide | `site-docs/guides/run-git.md` | Worktree changes, publication, PRs, restoration, staged-work rescue; EN/RU |
 | Agent messaging guide | `site-docs/guides/message-a-running-agent.md` | Steering, queued messages, recovery; EN/RU |
 
 ## AI Context Files

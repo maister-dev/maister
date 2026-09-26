@@ -81,6 +81,10 @@ If no source remains or the destination is occupied by another directory, the
 action reports a refusal. Eligible terminal worktrees receive a fresh cleanup
 window after restoration.
 
+Cleanup also preserves staged content that a working-tree snapshot would
+overwrite. Reattach restores the working tree, not that separately saved index;
+see [recover staged work after cleanup](/operations/troubleshooting#recover-staged-work-after-worktree-cleanup).
+
 Archive and drop confirmations show work not present on a remote and can publish
 it before removal. Verify publication succeeded before relying on a remote copy.
 
