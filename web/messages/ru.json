@@ -1291,6 +1291,7 @@
     "deliveryQueuedNotice": "В очереди — отправится после завершения хода",
     "deliveryQueuedBadge": "В очереди",
     "deliverySteeredBadge": "В ход",
+    "deliveryNotSentBadge": "Не отправлено",
     "permission": "Нужно разрешение",
     "submit": "Отправить",
     "invalidJson": "Ответ должен быть валидным JSON.",

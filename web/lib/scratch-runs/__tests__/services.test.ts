@@ -178,9 +178,10 @@ describe("scratch message and state helpers", () => {
       });
 
     expect(accept("WaitingForUser")).toBe("prompt");
-    // ADR-182 D-D1: a busy dialog accepts the message (steered or queued).
+    // ADR-182 D-D1: a running turn accepts the message (steered or queued);
+    // `Starting` has no session to steer or queue for yet.
     expect(accept("Running")).toBe("busy");
-    expect(accept("Starting")).toBe("busy");
+    expect(() => accept("Starting", null)).toThrow(/not accepted/);
     expect(() => accept("NeedsInput")).toThrow(/not accepted/);
     expect(() => accept("Review")).toThrow(/terminal/);
     expect(() => accept("Running", null)).toThrow(/no live supervisor session/);

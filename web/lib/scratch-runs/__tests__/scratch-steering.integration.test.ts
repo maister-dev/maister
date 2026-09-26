@@ -26,6 +26,10 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import * as schema from "@/lib/db/schema";
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import { canonicalProjectors } from "@/lib/execution-host/events/projection-runtime";
+import { createExecutionHosts } from "@/lib/execution-host/client";
+import { defaultTransport } from "@/lib/execution-host/default-transport";
+import { recoverExecutionCommands } from "@/lib/execution-host/recovery";
+import { appendScratchMessage } from "@/lib/scratch-runs/messages";
 import { startProjectionWorker } from "@/lib/execution-host/events/projection-worker";
 import { stopRuntimeEventConsumers } from "@/lib/execution-host/events/consumer";
 import { resetRegistrarStateForTests } from "@/lib/execution-host/registrar";
@@ -43,7 +47,6 @@ import { startSupervisorFaultProxy } from "@/test-support/supervisor-fault-proxy
 const execFileAsync = promisify(execFile);
 const USER_ID = "scratch-steering-user";
 const PRE_HOLD = "before the steer";
-const STEER_PATH = /^\/sessions\/[^/]+\/steer$/;
 
 vi.mock("@/lib/db/client", () => ({
   getDb: () => db,
@@ -116,9 +119,13 @@ beforeAll(async () => {
     "DB_URL",
     "MAISTER_RUNTIME_ROOT",
     "MAISTER_WORKTREES_ROOT",
+    "MAISTER_MAX_CONCURRENT_RUNS",
   ])
     savedEnv[key] = process.env[key];
   process.env.DB_URL = testDatabase.container.getConnectionUri();
+  // Every test leaves its dialog open (a live run): the file outgrows the
+  // default cap of 6.
+  process.env.MAISTER_MAX_CONCURRENT_RUNS = "64";
   process.env.MAISTER_RUNTIME_ROOT = join(supervisor.runtimeRoot, "runtime");
   process.env.MAISTER_WORKTREES_ROOT = join(
     supervisor.runtimeRoot,
@@ -429,6 +436,47 @@ function send(runId: string, content: string) {
   });
 }
 
+// A proxy rule that matches only this run's steers, so a rule a failed test
+// left armed cannot capture the next test's steer.
+async function steerPath(runId: string): Promise<RegExp> {
+  let hostSessionId: string | null = null;
+
+  await expect
+    .poll(
+      async () => {
+        const [session] = await db
+          .select({ hostSessionId: schema.runSessions.hostSessionId })
+          .from(schema.runSessions)
+          .where(eq(schema.runSessions.runId, runId));
+
+        hostSessionId = session?.hostSessionId ?? null;
+
+        return hostSessionId;
+      },
+      { timeout: 30_000, interval: 25 },
+    )
+    .not.toBeNull();
+
+  return new RegExp(`^/sessions/${hostSessionId}/steer$`);
+}
+
+// A manager that dies in its retry backoff: the wait never ends, so nothing
+// after an unknown outcome runs in this process.
+function managerDyingInBackoff() {
+  return createExecutionHosts({
+    db: db as unknown as Db,
+    sleep: () => new Promise<void>(() => {}),
+  });
+}
+
+function recover() {
+  return recoverExecutionCommands({
+    db: db as unknown as Db,
+    transport: defaultTransport(),
+    graceMs: 0,
+  });
+}
+
 describe("scratch message while the agent is busy — steering session (ADR-182)", () => {
   it("S4a: steers into the running turn; the dialog stays Running; the reply follows the steered row", async () => {
     const { runId, done } = await launchHeld("message one");
@@ -475,18 +523,25 @@ describe("scratch message while the agent is busy — steering session (ADR-182)
 
     await runningTurn(runId);
     const barrier = proxy.arm(
-      { caseId: `scratch-refusal-${runId}`, method: "POST", path: STEER_PATH },
+      {
+        caseId: `scratch-refusal-${runId}`,
+        method: "POST",
+        path: await steerPath(runId),
+      },
       "hold-request",
     );
     const sending = send(runId, "late message");
 
-    await barrier.awaitReached();
-    // The turn ends while the steer is in flight: the WaitingForUser commit's
-    // dispatcher finds nothing queued (the row is still `steered`).
-    await releasePrompt(runId, 1);
-    await done;
-    await awaitDialog(runId, "WaitingForUser");
-    barrier.release();
+    try {
+      await barrier.awaitReached();
+      // The turn ends while the steer is in flight: the WaitingForUser
+      // commit's dispatcher finds nothing queued (the row is still `steered`).
+      await releasePrompt(runId, 1);
+      await done;
+      await awaitDialog(runId, "WaitingForUser");
+    } finally {
+      barrier.release();
+    }
     const response = await sending;
 
     expect(response).toMatchObject({ delivery: "queued" });
@@ -501,30 +556,85 @@ describe("scratch message while the agent is busy — steering session (ADR-182)
     await awaitDialog(runId, "WaitingForUser");
     expect(await adapterCalls(runId, "session/prompt")).toHaveLength(2);
     expect(await adapterCalls(runId, "_session/steering")).toHaveLength(0);
-    expect((await steers(runId)).map((command) => command.state)).toEqual([
-      "failed",
-    ]);
+    const [refused] = await steers(runId);
+
+    expect(refused.state).toBe("failed");
+    expect(refused.lastError).toMatchObject({
+      details: { reason: "steer_no_active_turn" },
+    });
     expect(
       (await prompts(runId)).map((command) => command.applicationState),
     ).toEqual(["applied", "applied"]);
   }, 150_000);
 
-  it("T4.4: two concurrent sends while running get consecutive rows, both steered", async () => {
+  it("T4.4: two concurrent sends while running serialize on the run row — consecutive rows, both steered", async () => {
     const { runId, done } = await launchHeld("message one");
 
     await runningTurn(runId);
-    const results = await Promise.all([
-      send(runId, "race one"),
-      send(runId, "race two"),
-    ]);
+    const trigger = `scratch_send_race_${runId.replaceAll("-", "")}`;
+    const lockKey = Math.floor(Math.random() * 2_000_000_000) + 1;
+    const lock = await testDatabase.pool.connect();
+    let results: Array<Awaited<ReturnType<typeof send>>> = [];
+
+    try {
+      await lock.query("SELECT pg_advisory_lock(260928, $1)", [lockKey]);
+      // The first sender parks while inserting its row, holding the run and
+      // scratch rows; the second must wait for them, not race the sequence.
+      await testDatabase.pool.query(
+        `CREATE FUNCTION ${trigger}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.run_id = '${runId}' AND NEW.role = 'user' AND NEW.delivery = 'steered' THEN PERFORM pg_advisory_xact_lock(260928, ${lockKey}); END IF; RETURN NEW; END $$`,
+      );
+      await testDatabase.pool.query(
+        `CREATE TRIGGER ${trigger} BEFORE INSERT ON run_messages FOR EACH ROW EXECUTE FUNCTION ${trigger}()`,
+      );
+      const first = send(runId, "race one");
+
+      await expect
+        .poll(
+          async () =>
+            (
+              await testDatabase.pool.query<{ count: number }>(
+                "SELECT count(*)::int AS count FROM pg_locks WHERE locktype = 'advisory' AND classid = 260928 AND objid = $1 AND NOT granted",
+                [lockKey],
+              )
+            ).rows[0].count,
+          { timeout: 30_000, interval: 25 },
+        )
+        .toBe(1);
+      const second = send(runId, "race two");
+
+      await expect
+        .poll(
+          async () =>
+            (
+              await testDatabase.pool.query<{ count: number }>(
+                `SELECT count(*)::int AS count FROM pg_stat_activity loser
+                 WHERE loser.wait_event_type = 'Lock'
+                   AND EXISTS (SELECT 1 FROM pg_locks winner
+                     WHERE winner.locktype = 'advisory' AND winner.classid = 260928
+                       AND winner.objid = $1 AND NOT winner.granted
+                       AND winner.pid = ANY (pg_blocking_pids(loser.pid)))`,
+                [lockKey],
+              )
+            ).rows[0].count,
+          { timeout: 30_000, interval: 25 },
+        )
+        .toBe(1);
+      await lock.query("SELECT pg_advisory_unlock_all()");
+      results = await Promise.all([first, second]);
+    } finally {
+      await lock.query("SELECT pg_advisory_unlock_all()");
+      lock.release();
+      await testDatabase.pool.query(
+        `DROP TRIGGER IF EXISTS ${trigger} ON run_messages`,
+      );
+      await testDatabase.pool.query(`DROP FUNCTION IF EXISTS ${trigger}()`);
+    }
 
     expect(results.map((result) => result.delivery)).toEqual([
       "steered",
       "steered",
     ]);
-    const sequences = results.map((result) => result.sequence).sort();
-
-    expect(sequences[1]).toBe(sequences[0] + 1);
+    expect(results[1].sequence).toBe(results[0].sequence + 1);
     await releasePrompt(runId, 1);
     await done;
     await awaitDialog(runId, "WaitingForUser");
@@ -534,6 +644,168 @@ describe("scratch message while the agent is busy — steering session (ADR-182)
       ),
     ).toEqual(["injected", "injected"]);
   }, 120_000);
+});
+
+describe("scratch steer with a lost answer (ADR-182 exactly-once)", () => {
+  it("answers an unknown steer outcome as steered, converts nothing, and the receipt fold applies it once", async () => {
+    const { runId, done } = await launchHeld("message one");
+
+    await runningTurn(runId);
+    const lost = proxy.arm(
+      {
+        caseId: `scratch-lost-answers-${runId}`,
+        method: "POST",
+        path: await steerPath(runId),
+      },
+      "drop-responses",
+    );
+    let response: Awaited<ReturnType<typeof send>>;
+
+    try {
+      // Every attempt reaches the host; every answer is lost.
+      response = await send(runId, "message two");
+      expect(lost.observations).toHaveLength(3);
+    } finally {
+      lost.release();
+    }
+    expect(response).toMatchObject({
+      delivery: "steered",
+      dialogStatus: "Running",
+    });
+    const [pending] = await steers(runId);
+
+    expect(pending.state).toBe("delivering");
+    expect((await row(response.messageId)).delivery).toBe("steered");
+
+    await recover();
+    const [folded] = await steers(runId);
+
+    expect(folded.state).toBe("succeeded");
+    expect((await row(response.messageId)).delivery).toBe("steered");
+    await releasePrompt(runId, 1);
+    await done;
+    await awaitDialog(runId, "WaitingForUser");
+    expect(await adapterCalls(runId, "_session/steering")).toHaveLength(1);
+    expect(await adapterCalls(runId, "session/prompt")).toHaveLength(1);
+  }, 150_000);
+
+  it("reconciles a steer whose answer was lost and whose manager died before the retry from its receipt — never re-queued", async () => {
+    const { runId, done } = await launchHeld("message one");
+
+    await runningTurn(runId);
+    const lost = proxy.arm(
+      {
+        caseId: `scratch-dead-manager-${runId}`,
+        method: "POST",
+        path: await steerPath(runId),
+      },
+      "hold-response",
+    );
+
+    void service
+      .sendScratchUserMessage({
+        runId,
+        body: { content: "message two", attachments: [] },
+        executionHosts: managerDyingInBackoff(),
+      })
+      .catch(() => undefined);
+    try {
+      await lost.awaitReached();
+    } finally {
+      if (lost.observations.length > 0) lost.cut();
+    }
+    // The first attempt injected; its answer is gone and the manager is dead
+    // in the backoff, leaving the command re-queued with one attempt.
+    await expect
+      .poll(async () => (await steers(runId))[0]?.state, {
+        timeout: 30_000,
+        interval: 25,
+      })
+      .toBe("queued");
+    expect((await steers(runId))[0].attempts).toBe(1);
+
+    await recover();
+    const [settled] = await steers(runId);
+    const [steered] = (await userRows(runId)).filter(
+      (message) => message.content === "message two",
+    );
+
+    expect(settled.state).toBe("succeeded");
+    expect(steered.delivery).toBe("steered");
+    await releasePrompt(runId, 1);
+    await done;
+    await awaitDialog(runId, "WaitingForUser");
+    expect(await adapterCalls(runId, "_session/steering")).toHaveLength(1);
+    expect(await adapterCalls(runId, "session/prompt")).toHaveLength(1);
+  }, 150_000);
+
+  it("a refusal folded by recovery re-queues the message and wakes the queue although the dialog is already waiting", async () => {
+    const { runId, done } = await launchHeld("message one");
+
+    await runningTurn(runId);
+    const path = await steerPath(runId);
+    const held = proxy.arm(
+      { caseId: `scratch-held-${runId}`, method: "POST", path },
+      "hold-request",
+    );
+    const lost = proxy.arm(
+      { caseId: `scratch-refusal-lost-${runId}`, method: "POST", path },
+      "drop-responses",
+    );
+
+    void service
+      .sendScratchUserMessage({
+        runId,
+        body: { content: "late message", attachments: [] },
+        executionHosts: managerDyingInBackoff(),
+      })
+      .catch(() => undefined);
+    let released = false;
+
+    try {
+      await held.awaitReached();
+      // The turn ends first: its completion finds nothing queued.
+      await releasePrompt(runId, 1);
+      await done;
+      await awaitDialog(runId, "WaitingForUser");
+      held.release();
+      released = true;
+      // The host refuses (the parent is over); the answer is lost and the
+      // manager dies in the backoff.
+      await expect
+        .poll(() => lost.observations.length, { timeout: 30_000 })
+        .toBe(1);
+    } finally {
+      // Only a reached rule can be disposed; an unreached one fails the
+      // drain check, which is the point.
+      if (!released && held.observations.length > 0) held.cut();
+      if (lost.observations.length > 0) lost.release();
+    }
+    await expect
+      .poll(async () => (await steers(runId))[0]?.state, {
+        timeout: 30_000,
+        interval: 25,
+      })
+      .toBe("queued");
+
+    await recover();
+    const [refused] = await steers(runId);
+    const [late] = (await userRows(runId)).filter(
+      (message) => message.content === "late message",
+    );
+
+    expect(refused.state).toBe("failed");
+    await expect
+      .poll(async () => (await row(late.id)).delivery, {
+        timeout: 45_000,
+        interval: 50,
+      })
+      .toBe("prompted");
+    await releasePrompt(runId, 2);
+    await awaitDialog(runId, "WaitingForUser");
+    expect(await adapterCalls(runId, "session/prompt")).toHaveLength(2);
+    expect(await adapterCalls(runId, "_session/steering")).toHaveLength(0);
+  }, 180_000);
 });
 
 describe("scratch message while the agent is busy — no steering (ADR-182 S4b)", () => {
@@ -694,4 +966,85 @@ describe("scratch message while the agent is busy — no steering (ADR-182 S4b)"
     expect((await row(queued.messageId)).delivery).toBe("prompted");
     expect(await adapterCalls(runId, "session/prompt")).toHaveLength(2);
   }, 150_000);
+
+  it("dispatches several queued messages oldest first, one per turn", async () => {
+    const { runId, done } = await launchHeld("message one");
+
+    await runningTurn(runId);
+    const second = await send(runId, "message two");
+    const third = await send(runId, "message three");
+
+    expect([second.delivery, third.delivery]).toEqual(["queued", "queued"]);
+    await releasePrompt(runId, 1);
+    await done;
+    await expect
+      .poll(async () => (await row(second.messageId)).delivery, {
+        timeout: 45_000,
+        interval: 50,
+      })
+      .toBe("prompted");
+    expect((await row(third.messageId)).delivery).toBe("queued");
+    await releasePrompt(runId, 2);
+    await expect
+      .poll(async () => (await row(third.messageId)).delivery, {
+        timeout: 45_000,
+        interval: 50,
+      })
+      .toBe("prompted");
+    await releasePrompt(runId, 3);
+    await awaitDialog(runId, "WaitingForUser");
+    // Prompt 1 is the launch turn; the queued messages follow oldest first.
+    expect(
+      (await prompts(runId))
+        .slice(1)
+        .map(
+          (command) => (command.ownerRef as { messageId?: string }).messageId,
+        ),
+    ).toEqual([second.messageId, third.messageId]);
+  }, 180_000);
+
+  it("A4 state: a send from WaitingForUser joins the queue behind a message stranded there and sends it first", async () => {
+    const { runId, done } = await launchHeld("message one");
+
+    await runningTurn(runId);
+    await releasePrompt(runId, 1);
+    await done;
+    await awaitDialog(runId, "WaitingForUser");
+    // The state a process death between a turn's completion commit and its
+    // detached dispatch leaves behind (ADR-182 open item A4).
+    const strandedId = randomUUID();
+
+    await db.transaction((tx) =>
+      appendScratchMessage(tx as never, {
+        id: strandedId,
+        runId,
+        role: "user",
+        content: "stranded",
+        delivery: "queued",
+      }),
+    );
+    const next = await send(runId, "next");
+
+    expect(next).toMatchObject({ delivery: "queued" });
+    await releasePrompt(runId, 2);
+    await releasePrompt(runId, 3);
+    await awaitDialog(runId, "WaitingForUser");
+    expect(
+      (await userRows(runId)).map((message) => [
+        message.content,
+        message.delivery,
+      ]),
+    ).toEqual([
+      ["message one", null],
+      ["stranded", "prompted"],
+      ["next", "prompted"],
+    ]);
+    expect(
+      (await prompts(runId))
+        .slice(1)
+        .map(
+          (command) => (command.ownerRef as { messageId?: string }).messageId,
+        ),
+    ).toEqual([strandedId, next.messageId]);
+  }, 180_000);
 });

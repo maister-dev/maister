@@ -18,6 +18,7 @@ vi.mock("next-intl", () => ({
 vi.mock("@/components/capabilities/capability-composer", () => ({
   CapabilityComposer: (props: {
     onChange: (value: string) => void;
+    onSubmitShortcut?: () => void;
     testId?: string;
     value: string;
   }) =>
@@ -26,6 +27,14 @@ vi.mock("@/components/capabilities/capability-composer", () => ({
       value: props.value,
       onChange: (event: { currentTarget: { value: string } }) =>
         props.onChange(event.currentTarget.value),
+      onKeyDown: (event: {
+        key: string;
+        metaKey: boolean;
+        ctrlKey: boolean;
+      }) => {
+        if (event.key === "Enter" && (event.metaKey || event.ctrlKey))
+          props.onSubmitShortcut?.();
+      },
     }),
 }));
 
@@ -131,22 +140,27 @@ describe("ScratchComposer draft clearing", () => {
 // queues it), so a reload has nothing client-side to lose, and nothing fires
 // later on its own.
 describe("ScratchComposer while the agent is busy", () => {
+  type BusyStatus = "Starting" | "Running" | "WaitingForUser";
+
   function mountBusy(props: {
-    status: "Running" | "WaitingForUser";
+    status: BusyStatus;
+    // The POST that started the running turn is still in flight — it stays
+    // pending for the whole turn.
+    pending?: boolean;
     onSend: (payload: { content: string }) => Promise<boolean>;
     onInterrupt: () => Promise<boolean>;
   }): {
     container: HTMLDivElement;
-    rerender: (status: "Running" | "WaitingForUser") => void;
+    rerender: (status: BusyStatus) => void;
   } {
     const container = document.createElement("div");
     const root = createRoot(container);
-    const render = (status: "Running" | "WaitingForUser"): void => {
+    const render = (status: BusyStatus): void => {
       act(() => {
         root.render(
           createElement(ScratchComposer, {
             status,
-            pending: false,
+            pending: props.pending ?? false,
             quickReplies: [],
             sendWhileBusy: true,
             onRecover: async () => true,
@@ -197,7 +211,7 @@ describe("ScratchComposer while the agent is busy", () => {
     expect(sent).toEqual(["also check the migration"]);
   });
 
-  it("a reload during Running loses nothing — Stop no longer arms an auto-send", async () => {
+  it("Stop no longer arms an auto-send: a draft is only ever sent by the user", async () => {
     const sent: string[] = [];
     const first = mountBusy({
       status: "Running",
@@ -232,5 +246,80 @@ describe("ScratchComposer while the agent is busy", () => {
         '[data-testid="scratch-message-composer"]',
       )?.value,
     ).toBe("draft only");
+  });
+  function sendButton(container: HTMLDivElement): HTMLButtonElement {
+    return container.querySelector<HTMLButtonElement>(
+      '[data-testid="scratch-composer-send"]',
+    ) as HTMLButtonElement;
+  }
+
+  it("keeps Send usable while the turn-starting request is still pending", async () => {
+    const sent: string[] = [];
+    const busy = mountBusy({
+      status: "Running",
+      pending: true,
+      onSend: async (payload) => {
+        sent.push(payload.content);
+
+        return true;
+      },
+      onInterrupt: async () => true,
+    });
+    const textarea = busy.container.querySelector<HTMLTextAreaElement>(
+      '[data-testid="scratch-message-composer"]',
+    ) as HTMLTextAreaElement;
+
+    setTextarea(textarea, "steer this");
+    expect(sendButton(busy.container).disabled).toBe(false);
+    expect(sendButton(busy.container).textContent).toBe("scratch.send");
+    act(() => sendButton(busy.container).click());
+    await flush();
+    expect(sent).toEqual(["steer this"]);
+
+    setTextarea(textarea, "and this");
+    act(() => {
+      textarea.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Enter",
+          metaKey: true,
+          bubbles: true,
+        }),
+      );
+    });
+    await flush();
+    expect(sent).toEqual(["steer this", "and this"]);
+  });
+
+  it("does not offer Send while the dialog is Starting — there is no session to steer or queue for yet", async () => {
+    const sent: string[] = [];
+    const starting = mountBusy({
+      status: "Starting",
+      onSend: async (payload) => {
+        sent.push(payload.content);
+
+        return true;
+      },
+      onInterrupt: async () => true,
+    });
+    const textarea = starting.container.querySelector<HTMLTextAreaElement>(
+      '[data-testid="scratch-message-composer"]',
+    ) as HTMLTextAreaElement;
+
+    setTextarea(textarea, "too early");
+    expect(sendButton(starting.container)).toBeNull();
+    expect(
+      starting.container.querySelector('[data-testid="scratch-composer-stop"]'),
+    ).not.toBeNull();
+    act(() => {
+      textarea.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Enter",
+          ctrlKey: true,
+          bubbles: true,
+        }),
+      );
+    });
+    await flush();
+    expect(sent).toEqual([]);
   });
 });

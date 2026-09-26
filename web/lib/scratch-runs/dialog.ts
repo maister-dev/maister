@@ -146,10 +146,16 @@ export function canSend(status: ScratchDialogStatus): boolean {
   return status === "WaitingForUser";
 }
 
-// ADR-182 D-D1: a project scratch dialog accepts a message while its agent is
-// busy — the server steers it into the running turn or queues it.
+// ADR-182 D-D1: a project scratch dialog accepts a message while a turn runs —
+// the server steers it into that turn or queues it.
 export function canSendWhileBusy(status: ScratchDialogStatus): boolean {
-  return status === "Running" || status === "Starting";
+  return status === "Running";
+}
+
+// ADR-182: a queued message waits for the dialog's next turn. A dialog that
+// ended — other than a crash, which Recover resumes — will never send it.
+export function queuedMessageUnsendable(status: ScratchDialogStatus): boolean {
+  return status === "Review" || status === "Done" || status === "Abandoned";
 }
 
 // A crashed run can be resumed by typing a message (routes Send to /recover,

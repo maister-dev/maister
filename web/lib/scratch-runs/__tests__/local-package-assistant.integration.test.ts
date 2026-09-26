@@ -114,6 +114,7 @@ let markScratchCrashed: typeof import("@/lib/scratch-runs/service").markScratchC
 let launchLocalPackageAssistant: typeof import("@/lib/scratch-runs/service").launchLocalPackageAssistant;
 let launchLocalPackageAssistantStaged: typeof import("@/lib/scratch-runs/service").launchLocalPackageAssistantStaged;
 let sendLocalPackageAssistantMessage: typeof import("@/lib/scratch-runs/service").sendLocalPackageAssistantMessage;
+let sendScratchUserMessage: typeof import("@/lib/scratch-runs/service").sendScratchUserMessage;
 let listLocalPackageAssistantRunners: typeof import("@/lib/scratch-runs/service").listLocalPackageAssistantRunners;
 let stopScratchWorkbench: typeof import("@/lib/scratch-runs/service").stopScratchWorkbench;
 let createLocalPackage: typeof import("@/lib/local-packages/service").createLocalPackage;
@@ -239,6 +240,7 @@ beforeAll(async () => {
     launchLocalPackageAssistant,
     launchLocalPackageAssistantStaged,
     sendLocalPackageAssistantMessage,
+    sendScratchUserMessage,
     listLocalPackageAssistantRunners,
     stopScratchWorkbench,
   } = await import("@/lib/scratch-runs/service"));
@@ -943,6 +945,69 @@ describe("launchLocalPackageAssistant + a turn (ADR-097 T5.7)", () => {
     const diff = await diffWorkingDir(fresh!);
 
     expect(diff.files.some((f) => f.path.endsWith("rules/more.md"))).toBe(true);
+  });
+
+  // ADR-182 D-D5: the assistant keeps its idle-only gate on EVERY route — the
+  // generic scratch message route included — so a busy assistant turn is
+  // never steered into or queued behind.
+  it("refuses a message on the generic scratch route while an assistant turn runs", async () => {
+    const pkg = await createLocalPackage({
+      name: `assistant-busy-${randomUUID().slice(0, 8)}`,
+      createdBy: userId,
+      db: db as never,
+    });
+    const sessionId = await lockLocalPackage(pkg.id, "assistant-busy");
+    const launched = await launchLocalPackageAssistant({
+      body: { localPackageId: pkg.id, sessionId, prompt: "first" },
+      userId,
+    });
+    let finishTurn: () => void = () => {};
+    const turnHeld = new Promise<void>((resolve) => {
+      finishTurn = resolve;
+    });
+
+    streamAssistantText("done");
+    supervisorMock.sendPrompt.mockImplementationOnce(async () => {
+      await turnHeld;
+
+      return { stopReason: "end_turn" as const };
+    });
+    const turn = sendLocalPackageAssistantMessage({
+      runId: launched.runId,
+      body: { localPackageId: pkg.id, sessionId, content: "long turn" },
+    });
+
+    try {
+      await expect
+        .poll(
+          async () =>
+            (
+              await db
+                .select({ dialogStatus: scratchRuns.dialogStatus })
+                .from(scratchRuns)
+                .where(eq(scratchRuns.runId, launched.runId))
+            )[0].dialogStatus,
+          { timeout: 15_000, interval: 25 },
+        )
+        .toBe("Running");
+      await expect(
+        sendScratchUserMessage({
+          runId: launched.runId,
+          body: { content: "sneaked in", attachments: [] },
+        }),
+      ).rejects.toMatchObject({ code: "CONFLICT" });
+      expect(
+        (
+          await db
+            .select({ content: scratchMessages.content })
+            .from(scratchMessages)
+            .where(eq(scratchMessages.runId, launched.runId))
+        ).map((row) => row.content),
+      ).not.toContain("sneaked in");
+    } finally {
+      finishTurn();
+      await turn;
+    }
   });
 
   // ADR-167 D5 amendment (2026-09-23): an admission fence timeout is a yield.

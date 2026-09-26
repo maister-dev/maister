@@ -11,6 +11,7 @@ const DELIVERY_KEYS = [
   "deliveryQueuedNotice",
   "deliveryQueuedBadge",
   "deliverySteeredBadge",
+  "deliveryNotSentBadge",
 ] as const;
 
 describe("scratch steering copy (ADR-182)", () => {

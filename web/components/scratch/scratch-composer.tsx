@@ -134,8 +134,9 @@ export function ScratchComposer({
     setComposerFiles(draft.files);
   }, []);
 
-  const agentBusy = canSendWhileBusy(status);
-  const sendsWhileBusy = agentBusy && sendWhileBusy && disabledReason === null;
+  const agentBusy = status === "Running" || status === "Starting";
+  const sendsWhileBusy =
+    canSendWhileBusy(status) && sendWhileBusy && disabledReason === null;
   const canUseComposer =
     canCompose(status) &&
     disabledReason === null &&

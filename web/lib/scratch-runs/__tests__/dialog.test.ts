@@ -63,7 +63,7 @@ describe("scratch dialog status helpers", () => {
 
   it("canSendWhileBusy only while the agent runs a turn (ADR-182)", () => {
     expect(canSendWhileBusy("Running")).toBe(true);
-    expect(canSendWhileBusy("Starting")).toBe(true);
+    expect(canSendWhileBusy("Starting")).toBe(false);
     expect(canSendWhileBusy("WaitingForUser")).toBe(false);
     expect(canSendWhileBusy("NeedsInput")).toBe(false);
     expect(canSendWhileBusy("Crashed")).toBe(false);

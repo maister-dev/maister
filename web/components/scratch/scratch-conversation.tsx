@@ -27,6 +27,7 @@ import {
   canSendWhileBusy,
   errorText,
   hitlErrorText,
+  queuedMessageUnsendable,
 } from "@/lib/scratch-runs/dialog";
 import { buildRunningCommandCatalog } from "@/lib/capabilities/running-catalog";
 import { getAdapterSupportById } from "@/lib/acp-runners/adapter-support";
@@ -307,6 +308,12 @@ export function ScratchConversation({
     return usage;
   }, [detail?.messages]);
 
+  // A notice describes the turn that was running when its message was sent;
+  // the next turn (a dispatched queued message) must not inherit it.
+  useEffect(() => {
+    if (!canSendWhileBusy(status)) setDeliveryNotice(null);
+  }, [status]);
+
   useEffect(() => {
     onHeaderInfo?.({
       status,
@@ -326,9 +333,11 @@ export function ScratchConversation({
     hookTrip: ({ rule, disposition }) =>
       t("hookTripNotice", { rule, disposition }),
     deliveryBadge: (delivery) =>
-      delivery === "queued"
-        ? t("deliveryQueuedBadge")
-        : t("deliverySteeredBadge"),
+      delivery === "steered"
+        ? t("deliverySteeredBadge")
+        : queuedMessageUnsendable(status)
+          ? t("deliveryNotSentBadge")
+          : t("deliveryQueuedBadge"),
   };
   const quickReplies = useMemo(() => {
     if (!canCompose(status)) return [];

@@ -2112,8 +2112,10 @@ async function prepareBusyScratchSteer(
 /** Deliver a busy-arm steer after its intent committed; the settlement runs in
  * the transaction that writes the ledger's terminal state. A refusal has
  * flipped the row back to `queued` — the turn may already have ended, so the
- * dispatcher is woken (D-D3 caller 2). An unknown outcome settles nothing and
- * surfaces as the delivery error; the receipt fold settles it later. */
+ * dispatcher is woken (D-D3 caller 2). An unsettled outcome is still an
+ * accepted message: the row and its open command are durable and the receipt
+ * fold settles them, so the caller is answered `steered` — an error here
+ * would invite a resend, and scratch has no idempotency key. */
 async function deliverBusyScratchSteer(
   db: Db,
   runId: string,
@@ -2139,7 +2141,20 @@ async function deliverBusyScratchSteer(
       },
     });
   } catch (err) {
-    if (!settled) throw err;
+    if (!settled) {
+      log.warn(
+        {
+          runId,
+          messageId,
+          commandId: steer.commandId,
+          code: isMaisterError(err) ? err.code : "UNKNOWN",
+          reason: isMaisterError(err) ? (err.details?.reason ?? null) : null,
+        },
+        "scratch-steer-outcome-pending",
+      );
+
+      return "steered";
+    }
   }
   const [row] = await db
     .select({ delivery: runMessages.delivery })
@@ -2154,6 +2169,37 @@ async function deliverBusyScratchSteer(
   wakeQueuedScratchDispatch(db, runId, executionHosts);
 
   return "queued";
+}
+
+/** ADR-182: messages that were queued when the dialog crashed are sent before
+ * the message that recovers it — the recover message joins the queue behind
+ * them. Returns whether it did; the caller then leaves the dialog
+ * `WaitingForUser` and wakes the dispatcher instead of prompting. */
+export async function queueScratchRecoverMessageBehind(
+  tx: Db,
+  runId: string,
+  content: string,
+): Promise<boolean> {
+  await lockRunRows(tx, runId);
+  const [queuedAhead] = await tx
+    .select({ id: runMessages.id })
+    .from(runMessages)
+    .where(
+      and(eq(runMessages.runId, runId), eq(runMessages.delivery, "queued")),
+    )
+    .limit(1);
+
+  if (!queuedAhead) return false;
+  const { sequence } = await appendScratchMessage(tx, {
+    runId,
+    role: "user",
+    content,
+    delivery: "queued",
+  });
+
+  log.info({ runId, sequence }, "scratch-recover-message-queued-behind");
+
+  return true;
 }
 
 /** Detached: a dispatch awaits the whole next turn, and no caller of this
@@ -2180,11 +2226,12 @@ export function wakeQueuedScratchDispatch(
  * ADR-182 D-D3: send the oldest queued message as the next turn. ONE
  * transaction under the run and `scratch_runs` locks requires the dialog to be
  * waiting, CASes the row `queued → prompted` and flips the dialog to
- * `Running`; the turn then runs outside it with the message's own owner, and
- * fails exactly like a directly sent message. Callers: the previous turn's
- * `afterCommit`, a refused steer, and a send that found older rows queued.
- * Concurrent callers serialize on the locks; the loser answers
- * `{dispatched: false}`.
+ * `Running`; the turn then runs outside it and fails exactly like a directly
+ * sent message — including the same window a direct send has between that
+ * commit and the prompt's admission (A4). Callers: the previous turn's
+ * `afterCommit`, a steer refusal (live or folded by recovery), a send that
+ * found older rows queued, and a Recover. Concurrent callers serialize on the
+ * locks; the loser answers `{dispatched: false}`.
  */
 export async function dispatchQueuedScratchMessages(
   db: Db,
@@ -2226,6 +2273,10 @@ export async function dispatchQueuedScratchMessages(
         "PRECONDITION",
         `scratch run ${runId} has no live supervisor session`,
       );
+    const [owner] = await tx
+      .select({ projectId: runs.projectId })
+      .from(runs)
+      .where(eq(runs.id, runId));
     const now = new Date();
 
     await tx
@@ -2255,6 +2306,7 @@ export async function dispatchQueuedScratchMessages(
 
     return {
       message: oldest as { id: string; sequence: number; content: string },
+      isLocalPackageAssistant: !owner?.projectId,
       hostSessionId: activeSession.hostSessionId as string,
       capabilityAgent: activeSession.capabilityAgent ?? null,
       remaining: remaining?.count ?? 0,
@@ -2316,7 +2368,7 @@ export async function dispatchQueuedScratchMessages(
       db,
       runId,
       hostSessionId: claim.hostSessionId,
-      isLocalPackageAssistant: false,
+      isLocalPackageAssistant: claim.isLocalPackageAssistant,
       err,
     });
     throw err;
@@ -2461,7 +2513,10 @@ async function appendScratchUserMessage(args: {
         hostSessionId: activeSession?.hostSessionId ?? null,
       });
 
-      if (arm === "busy" && !args.acceptWhileBusy)
+      // ADR-182 D-D5: only a project scratch run takes a message while its
+      // agent is busy. A local-package assistant keeps the idle-only gate on
+      // every route that reaches here (ADR-097), not only in its own UI.
+      if (arm === "busy" && (!args.acceptWhileBusy || !run.projectId))
         throw new MaisterError(
           "CONFLICT",
           `scratch run ${args.runId} is ${scratch.dialogStatus}; user input is not accepted now`,

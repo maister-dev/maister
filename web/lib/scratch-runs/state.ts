@@ -16,12 +16,10 @@ const inputReadyDialogStatuses = new Set<ScratchDialogStatus>([
   "WaitingForUser",
 ]);
 
-// ADR-182 D-D1: a message sent while the agent is busy is steered into the
-// running turn or queued for the next one — never refused.
-const busyDialogStatuses = new Set<ScratchDialogStatus>([
-  "Starting",
-  "Running",
-]);
+// ADR-182 D-D1: a message sent while a turn runs is steered into it or queued
+// for the next one. `Starting` is not busy — the session does not exist yet,
+// so the launch owns the dialog until its first turn or `WaitingForUser`.
+const busyDialogStatuses = new Set<ScratchDialogStatus>(["Running"]);
 
 /** `prompt` — the message becomes the next turn; `busy` — a turn is running. */
 export type ScratchMessageArm = "prompt" | "busy";
