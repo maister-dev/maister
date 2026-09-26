@@ -109,6 +109,7 @@ export async function GET(
     {
       slug,
       scopeLabel: "memory:read",
+      admitLibrarian: true,
       endpoint: ENDPOINT_GET,
       method: "GET",
       db,

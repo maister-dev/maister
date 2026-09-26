@@ -3819,6 +3819,10 @@
     "scopeMemoryRead": "Чтение памяти проекта",
     "scopeMemoryWrite": "Запись в память проекта",
     "scopeAgentMemoryWrite": "Запись памяти агента",
+    "scopeProjectsRead": "Чтение доступных вам проектов",
+    "scopeWorkRead": "Чтение сводной таблицы работ",
+    "scopeActivityRead": "Чтение сводной ленты активности",
+    "scopeRunsMessage": "Отправка сообщений оператора в прогоны",
     "audit": {
       "title": "Активность токенов",
       "description": "Действия через API-токены — вызовы внешнего API, а не из веб-интерфейса.",

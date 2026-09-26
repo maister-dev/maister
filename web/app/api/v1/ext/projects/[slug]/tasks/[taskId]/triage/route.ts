@@ -15,6 +15,7 @@ import {
   setTaskQueueFields,
   validateVerdictRefs,
 } from "@/lib/services/triage";
+import { tokenAuditIdentity } from "@/lib/tokens/audit";
 import {
   handleExt,
   httpStatusForExtCode,
@@ -162,9 +163,8 @@ export async function POST(
       const auditOk = (tx: unknown) =>
         recordRequiredTokenAudit(
           {
-            tokenId: ctx.actor.tokenId,
+            ...tokenAuditIdentity(ctx.actor),
             projectId: ctx.projectId,
-            actorLabel: ctx.actor.actorLabel,
             scopeUsed: "tasks:triage",
             endpoint: ENDPOINT_TRIAGE,
             method: "POST",

@@ -13,6 +13,7 @@ import {
   listTaskComments,
   toCommentDTOs,
 } from "@/lib/social/comments";
+import { tokenAuditIdentity } from "@/lib/tokens/audit";
 import {
   handleExt,
   httpStatusForExtCode,
@@ -71,6 +72,7 @@ export async function GET(
     {
       slug,
       scopeLabel: "comments:read",
+      admitLibrarian: true,
       endpoint: ENDPOINT_COMMENTS_GET,
       method: "GET",
       db,
@@ -114,6 +116,7 @@ export async function POST(
     {
       slug,
       scopeLabel: "comments:create",
+      admitLibrarian: true,
       endpoint: ENDPOINT_COMMENTS_POST,
       method: "POST",
       successAuditInWork: true,
@@ -176,9 +179,8 @@ export async function POST(
 
           await recordRequiredTokenAudit(
             {
-              tokenId: ctx.actor.tokenId,
+              ...tokenAuditIdentity(ctx.actor),
               projectId: ctx.projectId,
-              actorLabel: ctx.actor.actorLabel,
               scopeUsed: "comments:create",
               endpoint: ENDPOINT_COMMENTS_POST,
               method: "POST",

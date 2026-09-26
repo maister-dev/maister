@@ -920,7 +920,7 @@ Anything a later task needs that the specs do not state is fixed here.
 
 ### Phase 1 — Delegated authority and the read surface · `LAU-02..07`, `LAU-10`
 
-**T1.1 [ ] — Migration 0181: librarian token kind + audit columns.** Appendix A/0181.
+**T1.1 [x] — Migration 0181: librarian token kind + audit columns.** Appendix A/0181.
 Adding `project_tokens_kind_check` over existing rows fails loudly on any foreign value
 (none can exist: TS-enforced). Files: `web/lib/db/migrations/0181_*.sql`, journal,
 snapshot, `schema.ts` (`tokenKind` enum + constraints). *RED*:
@@ -928,7 +928,7 @@ snapshot, `schema.ts` (`tokenKind` enum + constraints). *RED*:
 inserting a librarian token with a `project_id`, or without `librarian_turn_id`, is
 refused by the CHECK. **Log**: none (DDL).
 
-**T1.2 [ ] — Issue, verify, revoke.** `web/lib/librarian/authority.ts`
+**T1.2 [x] — Issue, verify, revoke.** `web/lib/librarian/authority.ts`
 (`issueLibrarianTurnToken`, `revokeLibrarianTurnToken`); `TokenKind` + `TokenActor`
 librarian arm (`tokens/issue.ts:28`, `verify.ts:42-55`); `verifyToken` applies the
 owner-active/password checks to the kind (`verify.ts:117-146`); `actorUserIdForToken`,
@@ -938,7 +938,7 @@ revoked or expired turn token is refused on the next request (`EDGE-LAU-01`); a
 deactivated owner's live token is refused (`IT-LAU-10` part 1). **Log**: `info`
 issue/revoke `{turnId, tokenId, expiresAt}`.
 
-**T1.3 [ ] — Scope policy and live admission.** `LIBRARIAN_TOKEN_SCOPES`,
+**T1.3 [x] — Scope policy and live admission.** `LIBRARIAN_TOKEN_SCOPES`,
 `LIBRARIAN_READ_SCOPES` in `web/types/token-scopes.ts`; librarian arms at
 `ext-handler.ts:312` and `:419` calling `requireProjectActionForUser` per request; the
 turn-`running` check; `resolveProjectId` added to the run routes named in D4; the
@@ -955,13 +955,13 @@ one existing test asserting the 403 for global tokens
 (read-scope token on `task_create` → 403, on `task_get` → 200). **Log**: `debug`
 `{turnId, scope, action, projectId, decision}`; `warn` on deny.
 
-**T1.4 [ ] — Audit attribution.** `recordRequiredTokenAudit` input gains
+**T1.4 [x] — Audit attribution.** `recordRequiredTokenAudit` input gains
 `onBehalfOfUserId`, `librarianTurnId`, `operationId`; the librarian arm fills them.
 *RED*: `IT-LAU-07` asserts the row for a `task_create` carries owner, turn and
 operation ids, and an injected audit write failure fails the request with no task row.
 **Log**: none beyond existing audit.
 
-**T1.5 [ ] — Discovery and cross-project reads.** Ext routes: `GET /ext/projects`
+**T1.5 [x] — Discovery and cross-project reads.** Ext routes: `GET /ext/projects`
 (`getVisibleProjects`, `queries/visible-projects.ts:89`), `GET
 /ext/projects/{slug}/directory` (purpose from project config/README excerpt, launchable
 flows, default runner, triager configured, Brain enabled, `asOf`), `GET
@@ -975,7 +975,7 @@ seed a project the owner cannot see containing a matching task; search, work, fe
 decisions and directory return no row, no count and an identical 404 for its slug.
 **Log**: `debug` `{route, visibleProjects, rows, truncated}`.
 
-**T1.6 [ ] — MCP facade tools.** `mcp/src/tools.ts`: `project_list`, `project_get`,
+**T1.6 [x] — MCP facade tools.** `mcp/src/tools.ts`: `project_list`, `project_get`,
 `task_search`, `work_list`, `decisions_list`, `activity_feed`; `operationKey` argument
 on every effectful tool (sent as `Idempotency-Key`); `MAISTER_MCP_TOOLSET=librarian`
 lists only librarian-permitted tools (enforcement stays server-side). Appendix C.

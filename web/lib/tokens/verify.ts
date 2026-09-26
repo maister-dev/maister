@@ -52,6 +52,9 @@ export type TokenActor = {
   // `agent-run:<id>`). A delegation route reads the PARENT runId from here,
   // never from the request body.
   boundRunId: string | null;
+  // ADR-184: the librarian turn a `librarian` token was minted for; absent or
+  // null for every other kind.
+  librarianTurnId?: string | null;
 };
 
 // M37 (ADR-098): the run id baked into a per-launch ephemeral token's
@@ -114,7 +117,10 @@ export async function verifyToken(
   const agentId: string | null = row.agent_id ?? null;
   const ownerUserId: string | null = row.owner_user_id ?? null;
 
-  if (tokenKind === "user") {
+  // ADR-184: a librarian token acts for its owner, so it inherits the user
+  // token's per-request owner checks — deactivation or a pending password
+  // change refuses the next request of an in-flight turn.
+  if (tokenKind === "user" || tokenKind === "librarian") {
     if (ownerUserId === null) {
       throw new TokenAuthError("owner-unavailable", "token owner unavailable", {
         tokenId: row.id,
@@ -155,14 +161,20 @@ export async function verifyToken(
     actorLabel:
       tokenKind === "agent" && agentId
         ? `agent:${agentId}`
-        : `token:${row.name}`,
+        : tokenKind === "librarian"
+          ? `librarian:${ownerUserId}`
+          : `token:${row.name}`,
     scopes: (row.scopes as string[]) ?? ["*"],
     boundRunId: parseBoundRunId(row.name ?? ""),
+    librarianTurnId:
+      tokenKind === "librarian" ? (row.librarian_turn_id ?? null) : null,
   };
 }
 
 export function actorUserIdForToken(actor: TokenActor): string | null {
-  return actor.tokenKind === "user" ? actor.ownerUserId : null;
+  return actor.tokenKind === "user" || actor.tokenKind === "librarian"
+    ? actor.ownerUserId
+    : null;
 }
 
 // Token → polymorphic social actor (ADR-083/ADR-089): agent tokens act as the
@@ -178,7 +190,10 @@ export function socialActorForToken(
     return { type: "agent", id: actor.agentId };
   }
 
-  if (actor.tokenKind === "user" && actor.ownerUserId) {
+  if (
+    (actor.tokenKind === "user" || actor.tokenKind === "librarian") &&
+    actor.ownerUserId
+  ) {
     return { type: "user", id: actor.ownerUserId };
   }
 

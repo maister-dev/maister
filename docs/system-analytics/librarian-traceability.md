@@ -53,17 +53,17 @@ described piece is **Designed**.
 | EDGE-LCV-04 | deadline watchdog, token revoke, operation settles by reconcile lookup | T2.11 | IT-EDGE-LCV-04 | Planned |
 | EDGE-LCV-05 | keep-alive Pass2 persistent exemption for a parked librarian run | T2.3 | IT-EDGE-LCV-05 | Planned |
 | LAU-01 | ADR-184 route identifier table; owner from auth-context only | T2.12 | IT-LAU-01 | Planned |
-| LAU-02 | CHECK project_tokens_kind_check and project_tokens_librarian_check; issueLibrarianTurnToken and revokeLibrarianTurnToken | T1.1, T1.2, T2.10 | IT-LAU-02 | Planned |
-| LAU-03 | handleExt librarian arm; requireProjectActionForUser per request; turn running check | T1.3, T2.10, T2.11 | IT-LAU-03 | Planned |
-| LAU-04 | deny-by-default admitLibrarian opt-in; LIBRARIAN_TOKEN_SCOPES exclusions; agent-token refusal on /ext/librarian routes | T1.3, T3.9 | IT-LAU-04 | Planned |
-| LAU-05 | LIBRARIAN_READ_SCOPES for explain turns | T1.3, T5.3 | IT-LAU-05 | Planned |
-| LAU-06 | getVisibleProjects before aggregation in ext projects, directory, task search, work, activity feed and decisions; librarian MCP toolset | T1.5, T1.6 | IT-LAU-06 | Planned |
-| LAU-07 | token_audit_log on_behalf_of_user_id, librarian_turn_id, operation_id via recordRequiredTokenAudit | T1.4 | IT-LAU-07 | Planned |
+| LAU-02 | CHECK project_tokens_kind_check and project_tokens_librarian_check; issueLibrarianTurnToken and revokeLibrarianTurnToken | T1.1, T1.2, T2.10 | IT-LAU-02 | Partial (turn-end revoke: T2.10) |
+| LAU-03 | handleExt librarian arm; requireProjectActionForUser per request; turn running check | T1.3, T2.10, T2.11 | IT-LAU-03 | Partial (turn running check: T2.10, T2.11) |
+| LAU-04 | deny-by-default admitLibrarian opt-in; LIBRARIAN_TOKEN_SCOPES exclusions; agent-token refusal on /ext/librarian routes | T1.3, T3.9 | IT-LAU-04 | Partial (agent token on /ext/librarian: T3.9) |
+| LAU-05 | LIBRARIAN_READ_SCOPES for explain turns | T1.3, T5.3 | IT-LAU-05 | Partial (Explain turn wiring: T5.3) |
+| LAU-06 | getVisibleProjects before aggregation in ext projects, directory, task search, work, activity feed and decisions; librarian MCP toolset | T1.5, T1.6 | IT-LAU-06 | Implemented |
+| LAU-07 | token_audit_log on_behalf_of_user_id, librarian_turn_id, operation_id via recordRequiredTokenAudit | T1.4 | IT-LAU-07 | Partial (operation_id: T3.2) |
 | LAU-08 | socialActorForToken returns the owner; via_operation_id; session card decide for human-only actions | T3.6, T3.9 | IT-LAU-08 | Planned |
 | LAU-09 | owner-only server-state in every /api/librarian route; no admin inspection route | T2.12 | IT-LAU-09 | Planned |
-| LAU-10 | verifyToken owner-active checks; per-request RBAC; admission-time owner check | T1.2, T1.3, T2.5 | IT-LAU-10 | Planned |
+| LAU-10 | verifyToken owner-active checks; per-request RBAC; admission-time owner check | T1.2, T1.3, T2.5 | IT-LAU-10 | Partial (queued-turn admission: T2.5) |
 | LAU-11 | SessionEnforcementProfileSchema librarian profile; permissions auto_approve; adapter-home L2 deny settings; readOnlyCapable runner guard | T2.8, T2.10 | IT-LAU-11 | Planned |
-| EDGE-LAU-01 | verifyToken refuses revoked or expired turn tokens with 401 | T1.2 | IT-EDGE-LAU-01 | Planned |
+| EDGE-LAU-01 | verifyToken refuses revoked or expired turn tokens with 401 | T1.2 | IT-EDGE-LAU-01 | Implemented |
 | EDGE-LAU-02 | owner-resolved conversation; 404 on a foreign id | T2.12 | IT-EDGE-LAU-02 | Planned |
 | EDGE-LAU-03 | handleExt archived-project 404; operation not_applied reconcile | T1.3, T1.5, T3.2 | IT-EDGE-LAU-03 | Planned |
 | EDGE-LAU-04 | summary profile with mcps.allowServers empty; any tool call fails the turn capability_trip | T6.3 | IT-EDGE-LAU-04 | Planned |

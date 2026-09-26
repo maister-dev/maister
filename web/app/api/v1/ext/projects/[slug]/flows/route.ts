@@ -22,6 +22,7 @@ export async function GET(
     {
       slug,
       scopeLabel: "flows:read",
+      admitLibrarian: true,
       endpoint: ENDPOINT_FLOWS_GET,
       method: "GET",
       db,

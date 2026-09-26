@@ -10,6 +10,7 @@ import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
 import { createOrActivateAgentQuestion } from "@/lib/services/agent-question";
+import { tokenAuditIdentity } from "@/lib/tokens/audit";
 import {
   handleExt,
   httpStatusForExtCode,
@@ -110,9 +111,8 @@ export async function POST(
             recordSuccessAudit: (tx, statusCode) =>
               recordRequiredTokenAudit(
                 {
-                  tokenId: ctx.actor.tokenId,
+                  ...tokenAuditIdentity(ctx.actor),
                   projectId: ctx.projectId,
-                  actorLabel: ctx.actor.actorLabel,
                   scopeUsed: SCOPE,
                   endpoint: ENDPOINT,
                   method: "POST",

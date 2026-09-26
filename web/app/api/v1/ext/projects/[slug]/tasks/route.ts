@@ -7,6 +7,7 @@ import { getDb } from "@/lib/db/client";
 import { isMaisterError } from "@/lib/errors";
 import { createTask } from "@/lib/services/tasks";
 import { listTaskDTOs } from "@/lib/services/tasks";
+import { tokenAuditIdentity } from "@/lib/tokens/audit";
 import {
   handleExt,
   httpStatusForExtCode,
@@ -45,6 +46,7 @@ export async function POST(
     {
       slug,
       scopeLabel: "tasks:create",
+      admitLibrarian: true,
       endpoint: ENDPOINT_TASKS,
       method: "POST",
       successAuditInWork: true,
@@ -95,9 +97,8 @@ export async function POST(
 
             await recordRequiredTokenAudit(
               {
-                tokenId: ctx.actor.tokenId,
+                ...tokenAuditIdentity(ctx.actor),
                 projectId: ctx.projectId,
-                actorLabel: ctx.actor.actorLabel,
                 scopeUsed: "tasks:create",
                 endpoint: ENDPOINT_TASKS,
                 method: "POST",
@@ -137,6 +138,7 @@ export async function GET(
     {
       slug,
       scopeLabel: "tasks:read",
+      admitLibrarian: true,
       endpoint: ENDPOINT_TASKS_GET,
       method: "GET",
       db,

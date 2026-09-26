@@ -6,6 +6,7 @@ import { requireActiveUserById } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import { getCrossProjectHitlInbox } from "@/lib/queries/portfolio";
 import { handleExt } from "@/lib/tokens/ext-handler";
+import { requirePersonalOrLibrarianActor } from "@/lib/tokens/personal-actor";
 
 const ENDPOINT = "GET /api/v1/ext/hitl";
 const SCOPE = "hitl:inbox:read";
@@ -20,28 +21,17 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       endpoint: ENDPOINT,
       method: "GET",
       allowGlobalActorWithoutProject: true,
+      admitLibrarian: true,
       auditProjectId: null,
       db,
     },
     async (ctx) => {
-      if (ctx.actor.tokenKind !== "user" || ctx.actor.ownerUserId === null) {
-        return NextResponse.json(
-          {
-            code: "UNAUTHORIZED",
-            message: "global personal token required",
-          },
-          { status: 403 },
-        );
-      }
+      const refused = requirePersonalOrLibrarianActor(ctx.actor, {
+        allowLibrarian: true,
+      });
 
-      if (ctx.actor.projectId !== null) {
-        return NextResponse.json(
-          {
-            code: "UNAUTHORIZED",
-            message: "global personal token required",
-          },
-          { status: 403 },
-        );
+      if (refused || ctx.actor.ownerUserId === null) {
+        return refused as NextResponse;
       }
 
       const owner = await requireActiveUserById(ctx.actor.ownerUserId);

@@ -10,6 +10,7 @@ import { isMaisterError } from "@/lib/errors";
 import { publicHitlRespondError } from "@/lib/hitl-response-error";
 import { isReviewSchema } from "@/lib/flows/hitl-validate";
 import { respondToHitl } from "@/lib/services/hitl";
+import { tokenAuditIdentity } from "@/lib/tokens/audit";
 import {
   handleExt,
   httpStatusForExtCode,
@@ -177,9 +178,8 @@ export async function POST(
             recordSuccessAudit: (tx, statusCode) =>
               recordRequiredTokenAudit(
                 {
-                  tokenId: ctx.actor.tokenId,
+                  ...tokenAuditIdentity(ctx.actor),
                   projectId: ctx.projectId,
-                  actorLabel: ctx.actor.actorLabel,
                   scopeUsed,
                   endpoint: ENDPOINT,
                   method: "POST",

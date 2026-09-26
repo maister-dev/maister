@@ -23,7 +23,8 @@ type Db = any;
 // the run-binding authorization subject from the same names. A new run-bound
 // prefix added there without being added here leaves that credential class
 // editable and forgeable — keep the two in sync.
-export const RESERVED_TOKEN_NAME_PATTERN = /^(orchestrator-run|agent-run):/i;
+export const RESERVED_TOKEN_NAME_PATTERN =
+  /^(orchestrator-run|agent-run|librarian-turn):/i;
 
 export type TokenLifecycleEventName =
   | "issued"
@@ -57,7 +58,11 @@ export type ManagedTokenRow = {
 export function isManagedToken(row: ManagedTokenRow): boolean {
   const kind = row.token_kind ?? "project";
 
-  return kind !== "agent" && !RESERVED_TOKEN_NAME_PATTERN.test(row.name ?? "");
+  return (
+    kind !== "agent" &&
+    kind !== "librarian" &&
+    !RESERVED_TOKEN_NAME_PATTERN.test(row.name ?? "")
+  );
 }
 
 /**
@@ -77,8 +82,8 @@ export function assertTokenNameAllowed(name: string): void {
   if (RESERVED_TOKEN_NAME_PATTERN.test(name.trim())) {
     throw new MaisterError(
       "CONFIG",
-      "token name must not start with a reserved run-bound prefix " +
-        "(orchestrator-run: or agent-run:)",
+      "token name must not start with a reserved machine-token prefix " +
+        "(orchestrator-run:, agent-run: or librarian-turn:)",
       { details: { field: "name" } },
     );
   }

@@ -4,11 +4,13 @@ export async function callExt(opts: {
   method: "GET" | "POST" | "PATCH" | "DELETE";
   path: string;
   body?: unknown;
+  headers?: Record<string, string>;
   signal?: AbortSignal;
 }): Promise<Response> {
   const { baseUrl, authHeader, method, path, body, signal } = opts;
 
   const headers: Record<string, string> = {
+    ...opts.headers,
     Authorization: authHeader,
   };
 
