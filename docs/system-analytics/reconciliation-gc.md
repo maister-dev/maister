@@ -47,7 +47,10 @@ codes, rescue evidence, and resolved history.
 Each sweep observes the filesystem and missing owned paths first, then claims at
 most 100 due findings from the durable ledger ordered by retry time. A held or
 quarantined early path therefore cannot starve later work. Before orphan removal,
-the rescue ref/commit pair is persisted under the finding claim; a process death
+the rescue ref/commit pair is persisted under the finding claim. Staged work the
+orphan's snapshot would overwrite is kept before it, as a
+`refs/maister/rescue/<runId>/<n>` ref whose second parent is the index (ADR-181
+D8). That ref is logged, not part of the finding's evidence pair. A process death
 after deletion resolves that retained finding on the next due sweep without
 relying on a vanished path. A row whose owned path is already absent is marked
 removed only when it has a durable preservation result; otherwise it is
@@ -667,7 +670,9 @@ the worktree GC collects (`WORKTREE_TTL_RUN_STATUSES`). See
   preserve failure MUST skip the row (never force-remove unpreserved state).
   A path staged and then changed again in the tree MUST first be kept as a
   rescue ref whose second parent is the index (ADR-181 D8), since the
-  snapshot's `add -A` overwrites the only copy of the staged version.
+  snapshot's `add -A` overwrites the only copy of the staged version. The
+  reconciler's orphan rescue MUST do the same before its snapshot (enforced by
+  `rescueStagedWorkBeforeSnapshot`, shared by both).
 - Operator archive/drop actions reuse the same preserve-before-remove
   invariant immediately from the workbench lifecycle UI. Background GC remains
   schedule-driven; user-initiated drop is claim-serialized through

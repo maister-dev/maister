@@ -50,8 +50,8 @@ re-entry ([`run-continuation.md`](run-continuation.md)).
   (`public_branch_template_invalid`); attempts of one task share their name.
 - **Rescue ref** — `refs/maister/rescue/<runId>/<n>`: a detached snapshot commit
   of the dirty tree written before any discard, and by the preserve step of
-  every removal (GC, archive, drop) when a path is staged and then changed
-  again in the tree. When the index held something
+  every removal (GC, archive, drop) and the reconciler's orphan rescue when a
+  path is staged and then changed again in the tree. When the index held something
   that tree does not (a file staged at one version and edited to another, a
   staged file since deleted), the index as it stood is the commit's second
   parent (`<ref>^2`), stash-style. Repo-scoped, survives archive/drop, not

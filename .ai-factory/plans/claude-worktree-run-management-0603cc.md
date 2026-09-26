@@ -2305,9 +2305,16 @@ sweep and its classification are in `.ai-factory/patches/2026-09-26-12.05.md`.
 | F5 | The parked finalize compared the latest publication, not the PR, to HEAD; a merged PR with a deleted branch could not finalize. | `getPrState` reports `headSha`; `readRecordedPullRequest` shares Open PR's provider resolution; the parked finalize binds to the PR's head (`pr_closed`, `publish_stale`, new `merged_pr_behind`, EN/RU). | 50 `4259c456` |
 | F4 | A `pull_request` promotion always pushed and called `createOrUpdatePr`, which finds open PRs only: a PR merged on the provider got a squash, a push and a second PR. | After the claim, at both apply sites (flow/agent and scratch): merged at HEAD is finalized as it stands; merged elsewhere is `merged_pr_behind`, claim released; unreadable while the scan saw it merged is EXECUTOR_UNAVAILABLE, nothing pushed. The review panel and the header name the refusal. | 51 `1e46268a` |
 
-Not fixed here, recorded: the workspace reconciler's orphan rescue
-(`gc/workspace-reconciler.ts:784`) has F1's class, but it predates the branch
-and nothing here makes it reachable. The execution-host `ledger` integration
+After the merge (owner, 2026-09-26):
+- The post-merge e2e lane caught the fake `gh` answering no `pr view`, which
+  F5's finalize now calls. The fake learned it (`35154268`, merged as
+  `89618579`).
+- The workspace reconciler's orphan rescue (`gc/workspace-reconciler.ts`) had
+  F1's class too. It predates the branch, and the owner asked for it fixed.
+  It now calls the same `rescueStagedWorkBeforeSnapshot` preserve uses,
+  before its snapshot.
+
+The execution-host `ledger` integration
 suite exits 1 on an unhandled "Cannot use a pool after calling end on the pool"
 from a projection that outlives teardown. It reproduces identically, idle, on a
 detached `master` 8ff196d4, in code this branch does not touch, so it is filed
