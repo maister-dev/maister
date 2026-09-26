@@ -3676,7 +3676,11 @@ export async function startAgentSession(
         ))
       )
         return;
-      if (await settleAgentCreateFailure(_db, execution.client, agentTurn))
+      if (
+        await settleAgentCreateFailure(_db, execution.client, agentTurn, {
+          hostPressureRefusal: isHostPressuredError(err),
+        })
+      )
         return;
       throw err;
     }

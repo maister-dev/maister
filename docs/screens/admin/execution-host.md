@@ -36,8 +36,10 @@ details. There is no API or mutation route for this screen.
    amendment 2026-09-25), last error, claim owner/expiry and separately labeled lag
    verdict. The pressure cell (Implemented — ADR-183) renders the host's
    pressure episode — since, duration, unacknowledged rows at its start and the
-   episode count — in a warning tone while the host is pressured, and "No" in
-   the neutral tone otherwise (`adminExecutionHost.pressure.*`). Pressure is
+   count of earlier (completed) episodes — in a warning tone while the host is
+   pressured, "Not pressured" in the good (green) tone otherwise, and the
+   missing marker when the host does not report it
+   (`adminExecutionHost.pressure.*`). Pressure is
    the manager being behind (unacknowledged rows at the soft budget), never a
    lag verdict.
 3. Top 20 eligible consumer/run backlogs with exact totals and truncation.

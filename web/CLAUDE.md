@@ -335,6 +335,24 @@ load-sensitive names for this Mac: the Docker probe timeout,
 `permission-result-failure` (a 767 s file under load, 190 s idle). e2e
 `m19-reconcile-gc` + `scratch-detail` **13 passed** (`--workers=2`).
 
+**Measured 2026-09-26 (ADR-183 outbox-pressure branch on `881619a5`, this
+Mac).** unit **867 files / 9041 tests, 0 failures**; supervisor **84 files /
+777 tests, 0 failures** (unit 49 / 484, integration 35 / 293); integration
+**549 files / 4871 tests** in 29.4 min on a snapshot of the Phase 4 commit —
+544 passed, 2 skipped (the opt-in load suites), 3 red and all classified:
+`app/api/runs/[runId]/recover/__tests__/route.integration.test.ts` (Docker
+"No host port found for host IP" at container start — 11/11 re-run),
+`orchestrator-park` "re-drives a rebound orchestrator coordinator after death
+before its first command" (a 10 s poll at lane load 60–85 — 4/4 idle; a new
+load-sensitive name) and `execution-ab-partitions` P4 (6/6 re-run). The
+`ledger.integration` "pool after end" rejection recurs. The Phase 5 lane
+(same Mac, Docker Desktop saturated — setup 505 s against 19 s) had 72 files
+red, 67 of them `TestDatabaseDockerUnavailableError: container runtime probe
+timed out`; all 72 passed re-run (340 tests), as did the other 29 agent
+integration files: read the setup time before reading the failures. The opt-in R20
+(`MAISTER_EVENT_PLANE_LOAD=1`) is RED at the default budgets because of the
+open-span limit — read ADR-183's "Measured limit" before filing it.
+
 **A first-hit Next-dev compile can exhaust a 10s e2e timeout.** Before calling
 such a failure a regression, re-run the spec in isolation and read the RETRY
 time: `scratch-detail.spec.ts:50` ("suggests project skills"; `:57` since

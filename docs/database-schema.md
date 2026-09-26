@@ -1866,7 +1866,8 @@ execution_host_pressure {
                                   //   refusal inserts now() ON CONFLICT DO NOTHING
   unacknowledgedAtStart?          // integer CHECK >= 0; copied from
                                   //   stream.pressure.unacknowledgedCountAtStart;
-                                  //   NULL when a refusal opened the record
+                                  //   NULL until a pressured sample fills it
+                                  //   when a refusal opened the record
 }                                 // deleted only by a pressured=false sample
 
 execution_assignments {
@@ -2504,8 +2505,9 @@ agent path drives `Review→Running→…→Review`. Behavior:
   errorCode?,
   errorMessage?,
   errorMetadata?,                // jsonb; {cause: "host_pressure"} when the
-                                 //   execution host parked the turn under outbox
-                                 //   pressure (ADR-183 — no migration, unconstrained)
+                                 //   execution host's outbox pressure parked or
+                                 //   refused the turn (ADR-183 — no migration,
+                                 //   unconstrained)
   createdByUserId,               // FK -> users.id
   lastUserMessageAt?,
   lastAgentMessageAt?,
@@ -2569,7 +2571,9 @@ turn per run — migration `0180` re-created it with `AND variant <> 'steer'`, s
 a dispatched steer can sit beside its dispatched parent — and `command_id` is
 unique. A steer's `command_id` is its `session.steer` ledger row; a refusal
 supersedes it and inserts a successor `live_message | persistent_message` whose
-`logical_key` is `message:requeue:<steerTurnId>` (ADR-182).
+`logical_key` is `message:requeue:<steerTurnId>` (ADR-182). A message turn the
+execution host parked, or whose dispatch it refused, under outbox pressure is
+superseded by a successor keyed the same way (ADR-183).
 The due index covers unfinished turns. Postgres guards reject source/binding
 rewrites, phase regression and cross-run bindings. Migration `0180` extends
 the `guard_agent_turn_source` trigger: a `steer` row must name a non-steer
@@ -4608,7 +4612,7 @@ explicitly held for repair. They cannot be backfilled from redacted payloads.
 | `node_attempts.finish_continuation` | Nullable version-1 JSONB (`0144`) | Selected outgoing target, private injected context, resolved session policy and retry marker. The source close and cursor move commit together; recovery restores this decision without recalculating or granting an ACP turn. |
 | `execution_commands.create_intent` | Nullable private version-1 JSONB (`0146`, expanded by `0154`) | Exact Flow node ordinal, gate evaluation or agent turn ID/ordinal, create generation/source, canonical original envelope and SHA-256. Unique run/assignment/operation/generation; no prompt-owner or application fields are repurposed. Recovery preserves command ID and issue time. Payload bytes stay outside DTOs/logs. Agent creation does not use the Flow-specific fresh-session fallback on CHECKPOINT refusal. |
 | `gate_results.prompt_ordinal`, `gate_results.permission_resume` | Nonnegative integer default 0 / nullable version-1 JSONB (`0150`, expanded by `0151`–`0152`) | The existing gate evaluation owns its resumed prompt ordinal. The capacity claim records exact source/receiving assignments, command/incarnation/request/HITL/choice and ACP handle, plus a SHA-256 of the nullable parent action snapshot. It rebinds the same parent attempt and clears its obsolete action-turn authorization while preserving its action ordinal/result. A positive gate ordinal requires resume authority. Unavailable ACP handles fail without a fresh session; restart reuses the persisted turn. `kind: permission_result` instead preserves the ordinal (including 0) and complete verified verdict, with original input/checkpoint/incarnation lineage and a verdict digest. Its claim atomically settles the HITL; later graph reads validate both digests and historical authority before consuming the result. `kind: permission_continue` retains the same input/checkpoint lineage for a confirmed input interrupted by checkpoint, advances the gate ordinal, clears its unfinished verdict and preserves the parent action digest. |
-| `node_attempts.action_resume` | Nullable version-1 JSONB (`0145`, expanded by `0147`–`0149`, `0152` and `0182`) | Source command/assignment, admitted current assignment and ordinal, retained ACP resume handle. `kind: orchestrator` and `kind: permission` authorize a new turn under their capacity claims; permission also binds HITL/request/choice. They advance the ordinal and clear the old action snapshot atomically. `kind: permission_result` instead retains the original ordinal and verified action snapshot, with the original input, checkpoint command and incarnation IDs. Its CHECK binds the snapshot command to the source command. Historical owners remain fenced; only the current assignment can consume this handoff. An orchestrator wake after a handoff retains its full `permissionResult` source authorization, including the receiving assignment, through pre-prompt rollback/reclaim. The nested CHECK binds its source IDs, ACP handle and prior ordinal to the new turn. `kind: permission_continue` advances the ordinal after confirmed input and acknowledged checkpoint interruption, preserving the input/checkpoint/incarnation IDs and original ACP handle. Its claim settles the original HITL; later permissions require independent responses. `kind: interrupt` (Implemented — ADR-183, CHECK widened by `0182`) is written by every `node_interrupt` park that finds a live session — operator or host-pressure (`cause`) — and carries the ACP resume handle of the parked attempt, so a `resume` answer re-enters the node with `session/resume` instead of a fresh session. |
+| `node_attempts.action_resume` | Nullable version-1 JSONB (`0145`, expanded by `0147`–`0149`, `0152` and `0182`) | Source command/assignment, admitted current assignment and ordinal, retained ACP resume handle. `kind: orchestrator` and `kind: permission` authorize a new turn under their capacity claims; permission also binds HITL/request/choice. They advance the ordinal and clear the old action snapshot atomically. `kind: permission_result` instead retains the original ordinal and verified action snapshot, with the original input, checkpoint command and incarnation IDs. Its CHECK binds the snapshot command to the source command. Historical owners remain fenced; only the current assignment can consume this handoff. An orchestrator wake after a handoff retains its full `permissionResult` source authorization, including the receiving assignment, through pre-prompt rollback/reclaim. The nested CHECK binds its source IDs, ACP handle and prior ordinal to the new turn. `kind: permission_continue` advances the ordinal after confirmed input and acknowledged checkpoint interruption, preserving the input/checkpoint/incarnation IDs and original ACP handle. Its claim settles the original HITL; later permissions require independent responses. `kind: interrupt` (Implemented — ADR-183, CHECK widened by `0182`) is written by every `node_interrupt` park — operator or host-pressure (`cause`) — whose parked prompt ran on an ACP session (a create/prompt refusal park writes none); the park also advances the ordinal and clears the action snapshot, and the handle carries the ACP resume handle, so a `resume` answer re-enters the node with `session/resume` instead of a fresh session. |
 | `execution_commands.retirement_state` | `text`, `retained` | CHECK `retained|eligible|host_confirmed|tombstone`; eligible requires terminal evidence, owner disposition and run/delivery/ACK/grace predicates. |
 | `execution_commands.retirement_eligible_at` | `timestamptz`, null | Immutable time at eligibility-generation admission. |
 | `execution_commands.retirement_receipt` | `jsonb`, null | Exact host-confirmed eligibility identity; no compaction before confirmation. |

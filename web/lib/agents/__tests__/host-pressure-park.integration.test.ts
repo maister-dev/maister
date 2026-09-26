@@ -16,6 +16,11 @@
 //   dispatch a claimed message turn whose dispatch the host refused is
 //            superseded and re-queued as its successor (a claimed turn's
 //            binding is immutable), and the run parks.
+//   dispatch (generation) a one-shot agent whose dispatch the host refused
+//            keeps the create-failure settlement (`Failed`), never stranded
+//            `claimed` with no owner. Timing decides whether the refusal
+//            lands on the workspace adoption or on the create (both observed);
+//            both must settle the same way.
 import type { Db } from "@/lib/execution-host/db";
 import type { ExecutionHosts } from "@/lib/execution-host/client";
 import type { ExecutionHost } from "@/lib/db/schema";
@@ -431,6 +436,51 @@ describe("ADR-183 D3-agent — host-pressure park of agent turns", () => {
       .delete(schema.executionHostPressure)
       .where(eq(schema.executionHostPressure.executionHostId, host.id));
   });
+
+  // A generation cannot be repeated from a refused dispatch (the resume
+  // invariant needs an applied predecessor with the same input), so it keeps
+  // the create-failure settlement: the run fails and is never left `claimed`,
+  // whether the host refused its adoption or its create.
+  it("dispatch (generation): a one-shot agent whose create the host refused fails instead of stranding", async () => {
+    const seed = () =>
+      seedAgentRun(db, {
+        runtimeRoot: sup.runtimeRoot,
+        definition: AGENT_DEFINITION,
+        workspace: "none",
+        resultContract: null,
+      });
+    const flooding = await seed();
+    const refused = await seed();
+    const held = proxy.arm(
+      {
+        caseId: "adr183-agent-refused-generation",
+        method: "GET",
+        path: /^\/runtime-events$/,
+      },
+      "hold-events",
+    );
+
+    try {
+      void startAgentSession(flooding, { db, executionHosts: hosts }).catch(
+        () => undefined,
+      );
+      await waitFor(
+        async () => (await hostHealth()).stream?.pressured === true,
+        "the host to report outbox pressure",
+      );
+      // W9: the manager has not sampled the pressure, so nothing fences it.
+      await db.delete(schema.executionHostPressure);
+      await startAgentSession(refused, { db, executionHosts: hosts });
+    } finally {
+      held.release();
+      await db.delete(schema.executionHostPressure);
+    }
+
+    expect((await runRow(refused)).status).toBe("Failed");
+    const [initial] = await turnsOf(refused);
+
+    expect(initial).toMatchObject({ variant: "initial", state: "superseded" });
+  }, 240_000);
 });
 
 async function seedPersistentRun(): Promise<string> {

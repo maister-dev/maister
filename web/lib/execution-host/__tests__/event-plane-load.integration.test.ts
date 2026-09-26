@@ -22,6 +22,7 @@ import type { RealSupervisor } from "@/test-support/real-supervisor";
 import type { PlatformStatus } from "@/types/platform-status";
 
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -95,6 +96,8 @@ type Sample = {
   ackConfirmation: number | null;
   projectionMaxBacklog: number;
   unacknowledgedCount: number | null;
+  retainedCount: number | null;
+  pressured: boolean | null;
   subscriberPauses: number | null;
   closes: Record<string, number> | null;
   streamState: string | null;
@@ -199,6 +202,12 @@ async function sample(t0: number, hostId: string): Promise<Sample> {
     ackConfirmation: toNumber(stream?.lag.ackConfirmation),
     projectionMaxBacklog: Number(model.consumers.maximumBacklog),
     unacknowledgedCount: telemetry?.unacknowledgedCount ?? null,
+    retainedCount:
+      typeof telemetry?.retainedCount === "number"
+        ? telemetry.retainedCount
+        : null,
+    pressured:
+      typeof telemetry?.pressured === "boolean" ? telemetry.pressured : null,
     subscriberPauses:
       typeof telemetry?.subscriberPauses === "number"
         ? telemetry.subscriberPauses
@@ -369,6 +378,24 @@ describe.skipIf(!enabled)("event-plane throughput under load (R20)", () => {
         (sum, host) => sum + host.hostSpanSettled1h,
         0,
       );
+      // ADR-183: retained rows are housekeeping. At the default budgets the
+      // profile outgrows the soft row budget within minutes, so the host must
+      // prune early and never report pressure or refuse a command.
+      const refused = await database.pool.query<{ count: string }>(
+        `select count(*)::text as count from execution_commands
+         where run_id = any($1)
+           and last_error->'details'->>'reason' = 'event_outbox_backpressure'`,
+        [runIds],
+      );
+      const managerRecords = await database.pool.query<{ count: string }>(
+        "select count(*)::text as count from execution_host_pressure",
+      );
+      const supervisorLog = await readFile(supervisor.logFile, "utf8");
+      const logLines = (msg: string) =>
+        supervisorLog.split(`"msg":"${msg}"`).length - 1;
+      const retainedSamples = samples.flatMap((row) =>
+        row.retainedCount === null ? [] : [row.retainedCount],
+      );
       const post = samples.filter((row) => row.t >= WARMUP_MS);
       const firstMinute = post.filter((row) => row.t < WARMUP_MS + 60_000);
       const lastMinute = post.filter(
@@ -432,6 +459,17 @@ describe.skipIf(!enabled)("event-plane throughput under load (R20)", () => {
         lagMaxFirstMinute: maxOf(lagOf(firstMinute)),
         lagMaxLastMinute: maxOf(lagOf(lastMinute)),
         lagMax: maxOf(lagOf(post)),
+        pressure: {
+          pressuredSamples: samples.filter((row) => row.pressured === true)
+            .length,
+          retainedMax: maxOf(retainedSamples),
+          retainedPrunes: logLines("outbox-retained-pressure-prune"),
+          retainedPruneStalls: logLines(
+            "outbox-retained-pressure-prune-stalled",
+          ),
+          refusedCommands: Number(refused.rows[0].count),
+          managerRecords: Number(managerRecords.rows[0].count),
+        },
         atWindowEnd: {
           counts: atWindowEnd.counts,
           batches: atWindowEnd.batches,
@@ -488,6 +526,10 @@ describe.skipIf(!enabled)("event-plane throughput under load (R20)", () => {
       expect(summary.perMinute.at(-1)!.lagP95!).toBeLessThanOrEqual(
         summary.lagMaxFirstMinute!,
       );
+      // ADR-183 T5.1: on master these are the reds at the default budgets.
+      expect(summary.pressure.pressuredSamples).toBe(0);
+      expect(summary.pressure.refusedCommands).toBe(0);
+      expect(summary.pressure.managerRecords).toBe(0);
       expect(atWindowEnd.counts.serverEndedCloses).toBe(0);
       expect(atWindowEnd.counts.streamErrors).toBe(0);
       expect(atWindowEnd.counts.ackRequests).toBeLessThanOrEqual(

@@ -353,9 +353,11 @@ describe("ADR-183 retained-pressure prune: protected spans, floor, paging", () =
     const stopPruner = startRuntimeEventPruner(state, logger);
 
     cleanups.push(stopPruner);
-    // 200 + 1 + 700 rows stay under hard (1000); the appends never yield, so
-    // the prune starts after the ACK below.
-    appendBatch(state, 200);
+    // 250 + 1 + 700 rows stay under hard (1000); the appends never yield, so
+    // the prune starts after the ACK below. 250 puts the span mid-page (pages
+    // are 100 rows), the one shape where the last DELETED row differs from the
+    // last SCANNED one — at a page boundary B3b could not tell them apart.
+    appendBatch(state, 250);
     // An accepted v2 prompt whose terminal is not written: it owns every row
     // from its accepted sequence on.
     const accepted = state.putReceiptWithRuntimeEvent(

@@ -434,17 +434,18 @@ to a raw JSON response body.
 
 **Host-paused interrupt (Implemented — ADR-183).** When the execution host
 parked the node under outbox pressure, the same card opens with the
-`nodeInterrupt.hostPaused` notice ("The execution host paused this node — its
-event budget is exhausted. It resumes automatically when the host catches up;
-you can also stop or restart it.") instead of the operator-interrupt copy,
+`nodeInterrupt.hostPaused` notice ("The execution host paused node {node} —
+its event budget is exhausted. It resumes automatically when the host catches
+up; you can also stop or restart it.") in place of the operator-interrupt lead
+line,
 selected by the row's `schema.cause`. The four options are unchanged; the
 system answers *Resume* itself when the host recovers, and a card answered that
 way disappears like any answered HITL.
 
 **Queued by host pressure (Implemented — ADR-183).** A `Pending` run queued
-because the execution host is pressured shows the status label with the reason
-(`run.queueReason.host_pressured`) — derived on read from the host's pressure
-record, no column. There is no board queue badge.
+because the execution host is pressured shows an amber ▲ chip with the reason
+(`run.queueReason.host_pressured`) beside the unchanged `Pending` status chip —
+derived on read from the host's pressure record, no column. There is no board queue badge.
 
 ## Public result panel + tree cost facts (Implemented — ADR-165)
 

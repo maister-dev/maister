@@ -78,9 +78,9 @@ erDiagram
     }
 
     EXECUTION_HOST_PRESSURE {
-        text execution_host_id PK "FK execution_hosts(id) CASCADE; a row exists exactly while pressured (0182, ADR-183)"
+        text execution_host_id PK "FK execution_hosts(id) CASCADE; a row exists while the manager last saw the host pressured (0182, ADR-183)"
         timestamptz pressured_since "NOT NULL; the episode start (host sample) or the first refusal"
-        integer unacknowledged_at_start "nullable; CHECK >= 0; NULL when a refusal opened the record"
+        integer unacknowledged_at_start "nullable; CHECK >= 0; NULL until a pressured sample fills it when a refusal opened the record"
     }
 
     EXECUTION_ASSIGNMENTS {

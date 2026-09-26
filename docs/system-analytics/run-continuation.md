@@ -51,10 +51,14 @@ Implemented), promotion ([`readiness.md`](readiness.md)), or workspace removal
   (`{type: "user", id}` or `{type: "system"}`); a `resume` answer's `response`
   records `{optionId, actor, cause}` (Implemented — ADR-183). The option matrix
   is still computed on every read, so the extra keys are inert.
-- **Interrupt resume handle** (Implemented — ADR-183) — every interrupt park that
-  finds a live session writes `node_attempts.action_resume = {kind: "interrupt",
-  cause, acpSessionId, assignmentId, ordinal}` on the parked attempt, so a
-  `resume` re-enters the node with `session/resume` on the same ACP session.
+- **Interrupt resume handle** (Implemented — ADR-183) — every interrupt park
+  clears `action_completion` and advances `action_prompt_ordinal`; when the
+  parked prompt ran on a session incarnation it also writes
+  `node_attempts.action_resume = {version: 1, kind: "interrupt", cause,
+  sourceCommandId, sourceAssignmentId, assignmentId, promptOrdinal,
+  resumeSessionId}` on the parked attempt, so a `resume` re-enters the node with
+  `session/resume` on the same ACP session. With no incarnation (a refused
+  create or prompt) it writes no handle and the resume starts fresh.
 - **Operator restart attempt** (Implemented) — a `node_attempts` row closed
   `Reworked` with `decision='operator_interrupt'`. Excluded from
   `rework.maxLoops` accounting and from both Observatory correction counters.
@@ -88,7 +92,7 @@ stateDiagram-v2
     Running --> NeedsInput: operator interrupt (ADR-161)<br/>checkpoint pre-tx, then one park tx
     Running --> NeedsInput: host-pressure park (ADR-183)<br/>system interrupt, no checkpoint call
     Running --> Running: interrupt refused<br/>PRECONDITION / CONFLICT / 503
-    NeedsInput --> Running: resume<br/>claimGraphResumeSlot, session/resume, same attempt
+    NeedsInput --> Running: resume<br/>claimNodeInterruptResume, session/resume, same attempt
     NeedsInput --> Running: restart_node<br/>attempt closed Reworked/operator_interrupt
     NeedsInput --> Running: restart_from<br/>+ downstream staled
     NeedsInput --> Review: stop<br/>existing terminal stop
@@ -148,9 +152,9 @@ flowchart TD
     B -- yes --> D[checkpointSession pre-tx]
     D -- EXECUTOR_UNAVAILABLE --> E[re-throw 503, no mutation]
     D -- ok or other failure --> F[write needs-input.json pre-tx]
-    F --> G[ONE tx: CAS NeedsInput + markNodeNeedsInput +<br/>HITL + assignment + webhook + run.escalated]
+    F --> G[ONE tx: CAS NeedsInput + markNodeNeedsInput +<br/>completion cleared, ordinal +1, resume handle +<br/>HITL + assignment + webhook + run.escalated]
     G --> H{operator picks}
-    H --> I[resume — claimGraphResumeSlot, same attempt, session/resume]
+    H --> I[resume — claimNodeInterruptResume, same attempt, session/resume]
     H --> J[restart_node — default]
     H --> K[restart_from — ledger-derived targets only]
     H --> L[stop — existing terminal stop]
@@ -167,11 +171,14 @@ pause bound checkpoints it with `cause: "outbox_pressure"`) or refuses the
 node's `session.create` / first `session.prompt` with `event_outbox_backpressure`,
 the node is parked, not failed. The classification is persisted where both the
 live driver and a replaying continuation worker read it: the prompt owner maps
-a rejection carrying `details.reason: "session_checkpointed"` to the node's
-`action_completion = {ok: false, errorCode: "EXECUTOR_UNAVAILABLE", reason:
-"host_pressured", cause}` before its `turn_lost` arm, and the runner's common
-failure branch parks on `reason === "host_pressured"` before `markNodeFailed`.
-A create refusal reaches the same park from the live catch.
+a host-pressure failure (`isHostPressureFailure`: a `session_checkpointed`
+rejection with `cause: "outbox_pressure"`, or a refused admission) to the
+node's `action_completion.result = {ok: false, errorCode:
+"EXECUTOR_UNAVAILABLE", reason: "host_pressured"}` before its `turn_lost` arm,
+and the runner's common failure branch parks on `reason === "host_pressured"`
+before `markNodeFailed`. A create refusal reaches the same park from the live
+catch. A park the driver cannot commit becomes a driver yield (`parkOrYield`),
+replayed by the flow continuation worker from the stored completion.
 
 ```mermaid
 sequenceDiagram
@@ -182,24 +189,32 @@ sequenceDiagram
     H->>H: producer paused ≥ PRODUCER_PAUSE_MAX_MS → checkpoint (cause outbox_pressure)
     H-->>R: session.exited{checkpoint}, then prompt rejected {session_checkpointed}
     R->>D: action_completion {EXECUTOR_UNAVAILABLE, host_pressured}
-    R->>D: ONE tx: node_interrupt{cause host_pressure, actor system} +<br/>CAS Running→NeedsInput + same attempt NeedsInput +<br/>action_resume{kind interrupt, acpSessionId} + run.escalated
+    R->>D: ONE tx: node_interrupt{cause host_pressure, actor system} +<br/>CAS Running→NeedsInput + same attempt NeedsInput +<br/>completion cleared, ordinal +1,<br/>action_resume{kind interrupt, resumeSessionId} + run.escalated
     Note over D: keep-alive Pass 1b idles the run to NeedsInputIdle, slot freed
     S->>H: GET /health?includeStream=true → pressured false
-    S->>D: delete the pressure record, then for up to 25 open host-pressure interrupts<br/>applyNodeInterruptResume(actor system)
-    D->>R: claimGraphResumeSlot → runFlow (or resume_requested_at when full)
+    S->>D: for up to 25 open host-pressure interrupts<br/>applyNodeInterruptResume(actor system)
+    D->>R: claimNodeInterruptResume → runFlow, or markResumed when idle<br/>(deferred when over cap or fenced)
     R->>H: session.create {resumeSessionId} → session/resume, same attempt
-    S->>D: promoteNextPending per pool
+    S->>D: record deleted → promoteNextPending up to each pool's cap
 ```
 
 The system answer is a server-internal call of `applyNodeInterruptResume`, the
 same application the operator's `resume` reaches through `respondToHitl`: it
 locks the row, sets `responded_at` and `response = {optionId: "resume", actor:
-"system", cause}`, closes the open assignment, and claims through
-`claimGraphResumeSlot`. The sweep answers only rows whose `schema.cause` is
-`host_pressure`, at most `HOST_PRESSURE_RESUME_BATCH = 25` per tick oldest
-first; a row the operator answered meanwhile is skipped by the `responded_at`
-guard; a throwing claim logs `run-host-pressure-resume-failed` and is retried
-next tick, and after three failures the row is left to the operator. The
+{type: "system"}, cause}`, closes the open assignment, and claims through
+`claimNodeInterruptResume`: a `NeedsInput` run is re-driven with `runFlow`; a
+`NeedsInputIdle` run mints a `resume` generation through `markResumed` under
+the fenced flow cap, whose hook `authorizeNodeInterruptResume` rebinds the
+parked attempt and its handle; over cap or fenced the claim is deferred —
+never `resume_requested_at`, whose promotion re-enters through crash recovery.
+On any `pressured: false` sample the sweep answers only rows whose
+`schema.cause` is `host_pressure`, at most `HOST_PRESSURE_RESUME_BATCH = 25`
+per tick oldest first; a row the operator answered meanwhile is skipped by the
+`responded_at` guard. Every sample it also re-claims up to 25 interrupts
+already answered `resume` whose run is still parked (operator answers
+included). A throwing claim logs `run-host-pressure-resume-failed` and is
+retried next tick; a row failing three times in this process is left to the
+operator. The
 operator keeps every option (`stop`, `restart_node`, `restart_from`, `resume`)
 with unchanged semantics; the card reads `nodeInterrupt.hostPaused`.
 
@@ -208,9 +223,9 @@ Recovery windows (normative — the implementation must satisfy each):
 | # | State after the crash or gap | Owner that finishes it |
 | --- | --- | --- |
 | W1 | Host parked; `session.exited{cause}` and the rejection not yet ingested | catch-up ingest → lifecycle projector → prompt owner classifies |
-| W2 | Rejection folded, park transaction not committed | prompt-owner worker re-applies; the flow continuation worker replays the stored `action_completion` into the park |
-| W3 | `NeedsInput` interrupt, incarnation `checkpointed`, not yet idled | keep-alive Pass 1b (idempotent CAS) |
-| W4 | Auto-resume answered (`responded_at` set), claim not taken | the HITL already-delivered self-heal through `claimGraphResumeSlot`; over cap, `resume_requested_at` for `promoteNextPending` |
+| W2 | Rejection folded, park transaction not committed | the driver yields (`parkOrYield`); the flow continuation worker replays the stored `action_completion` into the park |
+| W3 | `NeedsInput` interrupt, incarnation `checkpointed`, not yet idled | keep-alive Pass 1b (idempotent CAS). When the rejection was applied before `session.created` projected, the create is judged stale and the incarnation projects `lost`: no Pass 1b, and the run keeps its slot in `NeedsInput` until the auto-resume or Pass 1 at `keepalive_until`; a refusal park (no incarnation) idles at `keepalive_until` |
+| W4 | Auto-resume answered (`responded_at` set), claim not taken | the `system_sweep` re-drives `claimNodeInterruptResume` every tick (a same-payload retry also re-claims); over cap or fenced the claim stays deferred — never `resume_requested_at` |
 | W5 | Host pressured again during the resumed create | a new park (a new interrupt row), logged per cycle |
 | W6 | Operator answered `stop` / `restart_*` before the auto-resume | the operator's arm; the auto-resume finds no open row |
 | W7 | Manager restart with open host-pressure interrupts and a stale record | the next sweep re-samples health: clears and resumes, or keeps them parked |
@@ -276,12 +291,14 @@ Recovery windows (normative — the implementation must satisfy each):
   when its payload is byte-identical to the stored decision; a conflicting
   payload MUST mutate nothing. `reset --hard` + `git clean -fd` on a request that
   turned out to be a replay is unrecoverable data loss. *(Implemented)*
-- Answering an interrupt — `resume` included, whether the operator or the
-  host-pressure sweep answers it — MUST wake the run through
-  `claimGraphResumeSlot`, not a bare `runFlow` dispatch: the keep-alive sweeper
-  can idle the run to `NeedsInputIdle` while the answer is pending, and
-  `runFlow` claims only `NeedsInput`. *(Implemented — `resume` widened by
-  ADR-183)*
+- Answering an interrupt MUST wake the run through a cap-safe claim, not a
+  bare `runFlow` dispatch — `restart_*` through `claimGraphResumeSlot`,
+  `resume` (the operator's or the host-pressure sweep's) through
+  `claimNodeInterruptResume` (`NeedsInput` → `runFlow`; `NeedsInputIdle` →
+  `markResumed` under the fenced cap, deferred otherwise, never
+  `resume_requested_at`): the keep-alive sweeper can idle the run to
+  `NeedsInputIdle` while the answer is pending, and `runFlow` claims only
+  `NeedsInput`. *(Implemented — `resume` widened by ADR-183)*
 - A `restart_from` MUST stale the target AND everything reachable from it in the
   pinned graph. `markDownstreamStale` stales exactly the ids it is given and
   derives nothing, so passing the target alone leaves the nodes between the
@@ -348,8 +365,8 @@ Crash windows — accepted residuals, each recovered rather than prevented (Impl
 | **CB3** restart recorded, `runFlow` not dispatched | `NeedsInput`, attempt `Reworked` | The HITL already-delivered self-heal branch re-drives `scheduleResume`. |
 | **CB4** workspace policy applied, ledger tx not committed | worktree rewound | Idempotent — re-deciding re-applies against the same `checkpoint_ref`. |
 | **CB5** interrupted run idled then abandoned at 24 h | terminal | Inherited `hook_trip` behaviour; both sweeper passes include `node_interrupt`. |
-| **CB6** host-pressure rejection folded, park tx not committed (ADR-183 W2) | node attempt `Running`, `action_completion` holds `host_pressured` | The prompt-owner worker re-applies; the continuation worker's replay of the stored completion reaches the same park branch. |
-| **CB7** auto-resume answered, claim not taken (ADR-183 W4) | `responded_at` set, run `NeedsInputIdle` | The already-delivered self-heal re-drives through `claimGraphResumeSlot`; over cap it leaves `resume_requested_at` for `promoteNextPending`. |
+| **CB6** host-pressure rejection folded, park tx not committed (ADR-183 W2) | node attempt `Running`, `action_completion` holds `host_pressured` | The driver yields; the continuation worker's replay of the stored completion reaches the same park branch. |
+| **CB7** auto-resume answered, claim not taken (ADR-183 W4) | `responded_at` set, run `NeedsInputIdle` | The `system_sweep` re-drives `claimNodeInterruptResume` every tick; over cap or fenced the claim stays deferred (never `resume_requested_at`). |
 
 Degradations that are not refusals (Implemented): a `checkpoint_ref` missing at
 restart time degrades to workspace policy `keep` with a WARN and is never guessed;

@@ -324,7 +324,12 @@ verbatim (checkpoint pre-transaction, one park transaction) and adds no
 `runs.status` value and no `node_attempts` status value. The keep-alive idle path,
 the 24 h `NeedsInputIdle → Abandoned` sweep, and the reconcile classifier treat it
 exactly like a `hook_trip` park. See [`hitl.md`](hitl.md) for the kind and
-[`run-continuation.md`](run-continuation.md) for the option matrix.
+[`run-continuation.md`](run-continuation.md) for the option matrix. Since
+ADR-183 the execution host's outbox pressure parks a node through the same
+transition with a `system` actor and no checkpoint call, and every interrupt
+park clears the attempt's `action_completion`, advances its prompt ordinal and
+writes a resume handle when the parked prompt had a session
+([run continuation](run-continuation.md#host-pressure-park-implemented--adr-183)).
 
 ### Reconcile-driven `Running → Crashed` + hybrid Recover (Implemented)
 

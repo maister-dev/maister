@@ -28,11 +28,15 @@ const log = pino({
 });
 
 /** A refused create produced no prompt; close only its original admitted input.
- * A create the host refused for outbox pressure parks instead (below). */
+ * A message whose create the host refused for outbox pressure parks instead
+ * (below). `hostPressureRefusal`: the host refused the dispatch for outbox
+ * pressure before any create was sent (its workspace adoption), which settles a
+ * generation turn like a refused create. */
 export async function settleAgentCreateFailure(
   db: Db,
   client: BoundClient,
   source: AgentTurn,
+  opts: { hostPressureRefusal?: boolean } = {},
 ): Promise<boolean> {
   const prepared = await prepareAgentRunFinalization(source.runId, "Failed", {
     db,
@@ -71,21 +75,32 @@ export async function settleAgentCreateFailure(
         },
       });
 
-      if (!create || create.state !== "failed") return { finalized: false };
-      const details = create.lastError?.details;
+      const message =
+        turn.variant === "live_message" ||
+        turn.variant === "persistent_message";
 
-      if (
-        details &&
-        typeof details === "object" &&
-        "transport" in details &&
-        details.transport === UNKNOWN_OUTCOME_DETAIL
-      )
-        return { finalized: false };
-      readCreateIntent(create, client.host.hostKey);
-      if (isHostPressureFailure(create.lastError)) {
-        hostPressured = true;
+      if (!create) {
+        // Nothing reached the host but the refused adoption.
+        if (!opts.hostPressureRefusal || message) return { finalized: false };
+      } else {
+        if (create.state !== "failed") return { finalized: false };
+        const details = create.lastError?.details;
 
-        return { finalized: false };
+        if (
+          details &&
+          typeof details === "object" &&
+          "transport" in details &&
+          details.transport === UNKNOWN_OUTCOME_DETAIL
+        )
+          return { finalized: false };
+        readCreateIntent(create, client.host.hostKey);
+        // Only a message can be re-queued from a refused dispatch; a
+        // generation keeps the failure settlement below.
+        if (isHostPressureFailure(create.lastError) && message) {
+          hostPressured = true;
+
+          return { finalized: false };
+        }
       }
       const result = await prepared.apply(tx);
 

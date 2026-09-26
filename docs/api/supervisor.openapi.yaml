@@ -372,7 +372,7 @@ paths:
         "409":
           description: |
             Fence, idempotency, or immutable object-state conflict.
-            Under outbox pressure (ADR-183) this `new_work` admission is refused `PRECONDITION` `event_outbox_backpressure` while unacknowledged rows are at the soft budget or retained rows at the hard budget; no receipt is written.
+            Under outbox pressure (ADR-183) this `new_work` admission is refused `PRECONDITION` `event_outbox_backpressure` while unacknowledged rows are at the soft budget, retained rows at the hard budget, or physical state headroom is short; no receipt is written.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
@@ -450,7 +450,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/RuntimeObjectMetadata" }
         "413": { description: Upload exceeds the reserved or negotiated fixed size limit. }
-        "409": { description: "Fence, integrity or idempotency conflict; or (ADR-183) the `new_work` admission refused `event_outbox_backpressure` under outbox pressure (unacknowledged rows at soft, or retained rows at hard)." }
+        "409": { description: "Fence, integrity or idempotency conflict; or (ADR-183) the `new_work` admission refused `event_outbox_backpressure` under outbox pressure (unacknowledged rows at soft, retained rows at hard, or physical state headroom short)." }
     get:
       tags: [execution-host]
       summary: Read a single byte range of an opaque runtime object (Implemented — ADR-167)
@@ -820,7 +820,8 @@ paths:
             rejection (`workspace_rejected` + `rule`); stale epoch → `FENCED`.
             Under outbox pressure (ADR-183) this `new_work` admission is
             refused `PRECONDITION` `event_outbox_backpressure` (unacknowledged
-            rows at soft, or retained rows at hard); no receipt is written.
+            rows at soft, retained rows at hard, or physical state headroom
+            short); no receipt is written.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
@@ -1150,8 +1151,8 @@ paths:
             (`legacy_field` + `details.field`). Under outbox pressure
             (ADR-183) the `producer` admission is refused `PRECONDITION`
             `event_outbox_backpressure` (unacknowledged rows at soft, retained
-            rows at hard, or the producer wallet unfundable); no receipt is
-            written.
+            rows at hard, physical state headroom short, or the producer wallet
+            unfundable); no receipt is written.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
@@ -1277,11 +1278,13 @@ paths:
             Invalid envelope, fenced/stale assignment, unavailable session, or
             restart-lost accepted turn. Under outbox pressure (ADR-183) this
             `new_work` admission is refused `PRECONDITION`
-            `event_outbox_backpressure` (unacknowledged rows at soft, or
-            retained rows at hard); no receipt is written. A prompt whose
-            session the host checkpoints mid-turn (the producer pause bound)
-            settles `rejected` with `code: ACP_PROTOCOL` and `details:
-            {reason: session_checkpointed, cause: outbox_pressure}`.
+            `event_outbox_backpressure` (unacknowledged rows at soft, retained
+            rows at hard, or physical state headroom short); no receipt is
+            written. Not a 409: a prompt already accepted (202) whose session
+            the host checkpoints mid-turn (the producer pause bound) settles
+            its receipt and `session.command` completion `rejected` with
+            `code: ACP_PROTOCOL` and `details: {reason: session_checkpointed,
+            cause: outbox_pressure}`.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
@@ -1346,8 +1349,12 @@ paths:
             (Implemented — ADR-166) A missing envelope (`missing_envelope`), a
             fence refusal (`host_mismatch`, `run_mismatch`,
             `assignment_mismatch`), or a stale epoch (`FENCED`). A delete is a
-            `teardown` admission, live session or not, and is never refused by
-            outbox pressure (ADR-183).
+            `teardown` admission, live session or not: outbox pressure never
+            refuses it (ADR-183). The one `event_outbox_backpressure` refusal
+            is the producer wallet's own serialization — a teardown of the same
+            wallet already in progress, or, while pressured, an
+            already-admitted step under a new command id (replay the original
+            id).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
@@ -1468,8 +1475,10 @@ paths:
             fence refusal / stale epoch (`FENCED`). A checkpoint arriving under
             a HIGHER epoch than the live session's evicts that session first
             (`session.exited {reason: fenced}`), then executes. A checkpoint is
-            a `teardown` admission, live session or not, and is never refused
-            by outbox pressure (ADR-183).
+            a `teardown` admission, live session or not: outbox pressure never
+            refuses it (ADR-183); the one `event_outbox_backpressure` refusal
+            is the producer wallet's own serialization (see the delete
+            route).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
@@ -1545,7 +1554,9 @@ paths:
             arriving under a HIGHER epoch than the live session's evicts that
             session first (`session.exited {reason: fenced}`), then acks
             `cancelled: false`. A cancel is a `teardown` admission, live
-            session or not, and is never refused by outbox pressure (ADR-183).
+            session or not: outbox pressure never refuses it (ADR-183); the one
+            `event_outbox_backpressure` refusal is the producer wallet's own
+            serialization (see the delete route).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
@@ -2401,7 +2412,7 @@ components:
               minimum: 0
               maximum: 9007199254740991
             episodes:
-              description: Episodes completed since the host state store was created (1→0 flips).
+              description: Episodes completed (1→0 flips) since the store reached schema v14; a first episode reads 0.
               type: integer
               minimum: 0
               maximum: 9007199254740991

@@ -281,11 +281,14 @@ The host-pressure fence (Implemented — ADR-183) sits beside it and is not the
 same thing: it claims nothing new but keeps the tick running. While the local
 execution host's pressure record (an `execution_host_pressure` row) is set,
 `effectivePoolCap` answers a zero cap with fence `host_pressured` to every
-admission edge — `tryStartRun`, `promoteNextPending`, the resume and turn
-claims — so launches queue `Pending` with `queueReason: "host_pressured"` and
-idle resumes stay queued. The `system_sweep` job keeps sampling host health;
-when a sample reports `pressured: false` it clears the record, auto-resumes the
-host-pressure node interrupts and calls `promoteNextPending` for each pool. The
+former `capForPool` reader — `tryStartRun`, `promoteNextPending`, the resume
+and turn claims — so launches queue `Pending` with `queueReason:
+"host_pressured"` and idle resumes stay queued (a node-interrupt resume is
+deferred instead). The scratch/assistant budgets and the `maxConcurrentRunsCap`
+readers (crash recover, the ADR-160 rework claim, schedule dispatch) are not
+fenced. The `system_sweep` job keeps sampling host health: any `pressured:
+false` sample auto-resumes the host-pressure node interrupts, and a sample that
+deletes the record also promotes queued work up to each pool's cap. The
 maintenance fence is not widened by this and still gates only the tick and the
 two promotion edges.
 
@@ -493,7 +496,11 @@ top-level `errors[]` carries the reason codes. (Implemented — ADR-167 amendmen
 `subscriberPauses` and `closes` by reason when the host reports them. They are
 monotonic within one `bootId`, which the sample already carries, so an operator
 reads sweep-to-sweep deltas; `schemaVersion` stays 1 (additive optional
-fields), and no lag verdict reads them. One runtime parser owns this JSON
+fields), and no lag verdict reads them. (Implemented — ADR-183) The host
+backlog also carries `pressure` — the host's episode `{since, durationMs,
+unacknowledgedAtStart, episodes}`, `null` when not pressured — and the sweep
+summary's `pressure` member carries the sample's transition, the resumed and
+re-driven interrupt counts and the promoted count. One runtime parser owns this JSON
 for scheduler/admin readers; unsupported older/newer schemas render unavailable
 and restart qualification. The member is capped at 64 KiB UTF-8 JSON. If detail
 rows are dropped, identity, comparison state, exact totals and a numeric

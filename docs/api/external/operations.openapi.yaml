@@ -3374,7 +3374,9 @@ paths:
             the answer stored and `responded_at` null. Retry the identical
             answer to send it; agent runs may also resume automatically. The web gives
             one `delivery_unavailable` reason for restart, parking and
-            post-grace host absence.
+            post-grace host absence, and `event_outbox_backpressure` when the
+            execution host refused the answer at its hard outbox bound
+            (ADR-183).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ExtHitlRespondErrorBody" }
@@ -3652,7 +3654,11 @@ components:
               required: [reason]
               additionalProperties: false
               properties:
-                reason: { type: string, enum: [delivery_unavailable] }
+                reason:
+                  {
+                    type: string,
+                    enum: [delivery_unavailable, event_outbox_backpressure],
+                  }
 
     ExtRecoverAccepted:
       type: object

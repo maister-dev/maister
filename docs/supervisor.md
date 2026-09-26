@@ -586,8 +586,11 @@ reserves the producer wallet), `resolve` (`session.input`, `session.steer`) or
 `teardown` (`session.cancel`/`checkpoint`/`delete` whatever the record's
 liveness, `workspace.release`, `runtime_object.delete`). Outbox pressure
 (unacknowledged rows at the soft budget) refuses `new_work` and `producer` only;
-the hard budget (retained rows) also refuses `resolve`; nothing refuses a
-teardown. A refusal is `409 PRECONDITION {reason: event_outbox_backpressure}`
+the hard budget (retained rows) and physical state headroom also refuse
+`resolve`; pressure never refuses a teardown (the one teardown refusal is the
+producer wallet's own serialization: a teardown of the same wallet already in
+progress, or, while pressured, an already-admitted step under a new command id
+— replay the original id). A refusal is `409 PRECONDITION {reason: event_outbox_backpressure}`
 with no receipt, logged `outbox-admission-refused`. The table is in
 [execution-event-plane.md](system-analytics/execution-event-plane.md#outbox-partitions-and-producer-pressure-implemented--adr-183).
 
@@ -991,7 +994,7 @@ deletes only the oldest eligible prefix, at most 100 rows and 1 MiB per
 transaction; since ADR-183 the grace is cut short while retained rows are at
 the soft budget (never for an unacknowledged row).
 Runtime writes also pass the physical guard described in
-[configuration](configuration.md#a-b-stabilization-resource-budget-implemented).
+[configuration](configuration.md#ab-stabilization-resource-budget-implemented).
 A native SQLite/filesystem capacity or I/O failure stops live producers and
 latches `GET /health` to `503 EXECUTOR_UNAVAILABLE` with
 `runtime_storage_unavailable`. Existing receipts/events and unfinished captured
@@ -1010,7 +1013,7 @@ buffers. Unknown files remain preserved and charged; a reservation overrun
 refuses startup. File pressure shares producer pause/wake and credited teardown
 with event pressure. ACK alone releases no file capacity. Size limits and the
 remaining immutable-output sealing work are described in the canonical
-[resource budget](configuration.md#a-b-stabilization-resource-budget-implemented).
+[resource budget](configuration.md#ab-stabilization-resource-budget-implemented).
 Version 13 adds host-private `runtime_objects.producer_path`, `sealed_device` and
 `sealed_inode`.
 Version 14 (Implemented — ADR-183) adds the pressure episode to

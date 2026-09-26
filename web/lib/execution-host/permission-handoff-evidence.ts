@@ -7,10 +7,7 @@ import type { CommandReceipt } from "./contracts";
 import { and, eq, sql } from "drizzle-orm";
 
 import { assertTerminalEventConfirmed } from "./prompt-owners";
-import {
-  HOST_PRESSURE_REFUSAL_REASON,
-  isHostPressureFailure,
-} from "./host-pressure";
+import { HOST_PRESSURE_REFUSAL_REASON } from "./host-pressure";
 
 import { executionEvents } from "@/lib/db/schema";
 
@@ -100,20 +97,6 @@ export function isPermissionResultCommand(
       (command.state === "failed" &&
         (command.lastError?.code === "ACP_PROTOCOL" ||
           command.lastError?.code === "EXECUTOR_UNAVAILABLE")))
-  );
-}
-
-/** ADR-183 D-M1: the host parked this prompt's session itself because the
- * manager fell behind its outbox (`session_checkpointed`, cause
- * `outbox_pressure`). Host-authored positive evidence, like `turn_lost`. */
-export function isHostParkedPromptRejection(
-  command: ExecutionCommand,
-): boolean {
-  return (
-    command.kind === "session.prompt" &&
-    command.state === "failed" &&
-    command.lastError?.code === "ACP_PROTOCOL" &&
-    isHostPressureFailure(command.lastError)
   );
 }
 
